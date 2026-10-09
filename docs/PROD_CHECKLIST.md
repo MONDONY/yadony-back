@@ -888,7 +888,8 @@ Préalable : staging au commit `19ed17e4` (#421 à #423 inclus, base V294 : c'es
 
 ## 9. Mise en prod du samedi 10/10/2026 — ce qui change depuis le 07/10
 
-> Rédigée le 08/10/2026. La section 8 reste le déroulé de référence (Firestore → back → app,
+> Rédigée le 08/10/2026, **mise à jour le 09/10/2026** pour `main` = `d5a99f55` (PR jusqu'à #457,
+> migrations jusqu'à **V307**). La section 8 reste le déroulé de référence (Firestore → back → app,
 > sauvegarde, Stripe, Stream, Sentry, contrôles G1 à G7, recette). Cette section ajoute ce qui a été
 > fusionné sur `main` depuis `19ed17e4` et ce que le test de charge du 07-08/10 a appris sur l'API.
 > Aucun secret ici.
@@ -901,11 +902,18 @@ Préalable : staging au commit `19ed17e4` (#421 à #423 inclus, base V294 : c'es
   ou `nginx/` depuis `19ed17e4` : les secrets et variables listés en 8.E/8.F/8.I suffisent.
 - Trois migrations de plus : **V295, V298, V299** (V296 et V297 n'existent pas, ce trou est sans effet pour Flyway).
 - Le pool de connexions prod passe de **10 à 20** avec un délai d'attente de **5 s** (cette PR, voir 9.4).
+- **Depuis le 08/10**, `main` a reçu **#440 à #457** (voir [9.10](#910-ajouts-du-08-au-0910--pr-440-à-457))
+  et **six migrations de plus : V301 à V305 et V307** (V300 et V306 n'existent pas, trous sans effet).
+  Dernière version Flyway attendue après la mise en prod : **307**.
+- Toujours **aucune nouvelle variable d'environnement obligatoire** ni modification de `deploy-prod.yml` :
+  #454 ajoute seulement `keepalive-time` et `max-lifetime` du pool dans `application.yml` (tous profils).
+- La prod tourne encore `dda67f58` (20/09) : la mise en prod emporte **tout** de #317 à #457 et les
+  migrations **V263 à V307** (8.C). La sauvegarde de 8.A n'est pas facultative.
 
 ### 9.2 Tag d'image à promouvoir
 
-- [ ] Redéployer la staging depuis `main` (dernier déploiement staging : `fc76151c`, #437 ; `main` a reçu
-      #438, #439 et cette PR depuis) :
+- [ ] Redéployer la staging depuis `main` (dernier déploiement staging connu : `f7347216`, #451, le 08/10 ;
+      `main` a reçu #452 à #457 depuis, dont V305 et V307) :
       ```bash
       gh workflow run deploy-staging.yml -R MONDONY/yadony-back -f ref=main
       gh run list -R MONDONY/yadony-back --workflow deploy-staging.yml --limit 1
@@ -915,7 +923,8 @@ Préalable : staging au commit `19ed17e4` (#421 à #423 inclus, base V294 : c'es
 
 ### 9.3 Migrations Flyway V295 à V299
 
-Après le déploiement, la requête de 8.C (étape 2) doit montrer **299** comme dernière version, toutes `success = t`.
+Après le déploiement, la requête de 8.C (étape 2) doit montrer **307** comme dernière version (V295 à V299 ici,
+V301 à V307 en [9.10](#910-ajouts-du-08-au-0910--pr-440-à-457)), toutes `success = t`.
 
 | Migration | Ce qu'elle fait | Risque | Contrôle préalable |
 |---|---|---|---|
@@ -984,13 +993,16 @@ saturait (187 requêtes en attente) et les requêtes finissaient en **500 après
       `hikaricp_connections_pending` à 0 la plupart du temps, `hikaricp_connections_timeout_total` stable.
 - [ ] Sentry prod : pas de nouvelle issue `DataIntegrityViolationException`, `TransactionRequiredException`
       ou `UnexpectedRollbackException` (les familles corrigées par #433/#437).
-- [ ] Flyway à **299** (9.3) et contrôles G1 à G7 de 8.G.
+- [ ] Flyway à **307** (9.3 et 9.10) et contrôles G1 à G7 de 8.G.
+- [ ] Grafana prod : `hikaricp_connections_usage_seconds_max` sous quelques secondes (connexion tenue anormalement
+      longue, cf. 9.9) et `/wallet/balance` sans `service-busy` en continu (#451).
 
 ### 9.8 Si ça se passe mal
 
 - Retour arrière de l'image : relancer `deploy-prod.yml` avec le tag précédent. **Attention** : les migrations
-  V295–V299 restent appliquées ; elles sont compatibles avec l'ancien code (colonnes à défaut, table neuve, données
-  seulement complétées). L'ancienne image redémarre sans erreur Flyway : la configuration garde le défaut
+  V295–V307 restent appliquées ; elles sont compatibles avec l'ancien code (colonnes nullables ou à défaut, tables
+  neuves, contraintes posées seulement sur des colonnes neuves que l'ancien code n'écrit jamais, index, données
+  seulement complétées). Vérifié fichier par fichier pour V301 à V307 le 09/10. L'ancienne image redémarre sans erreur Flyway : la configuration garde le défaut
   `ignore-migration-patterns: "*:future"`, qui ignore les versions appliquées plus récentes que le code.
 - Retour arrière du pool seul : remettre `maximum-pool-size: 10` dans `application-prod.yml` exige un nouveau build ;
   plus simple, surcharger par variable d'environnement `SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE=10` dans le `.env`
@@ -999,6 +1011,52 @@ saturait (187 requêtes en attente) et les requêtes finissaient en **500 après
 ### 9.9 Points ouverts du test de charge (non bloquants)
 
 - Une connexion tenue **346 s** sur la staging le 08/10 à 00:09 UTC (`hikaricp_connections_usage_seconds_max`) :
-  transaction anormalement longue, non expliquée. Surveiller la même métrique en prod.
+  **expliquée** depuis, gel mémoire du VPS staging (swap, k6 lancé sur la même machine), pas un défaut de l'API.
+  Surveiller quand même la même métrique en prod.
+- Mesures k6 staging du 08/10 (parcours `load-test/scenarios/journey.js`, 50 → 200 utilisateurs simultanés, un seul
+  compte) : p95 global **5,1 s → 3,2 s** après #441/#442/#446 ; `/conversations` 15 s → 4,5 s ; notes reçues
+  7,5 s → 2,0 s ; `/wallet/balance` **8,0 s → 4,2 s** après #451. À 200 utilisateurs, le CPU du VPS staging
+  (2 vCPU) est saturé et le pool à 20/20 : 0,2 % de `503 service-busy`. Le plafond est la machine, plus le code.
 - Une seule instance d'API en prod : la montée en charge horizontale (plusieurs conteneurs derrière nginx)
   reste à faire si le trafic dépasse ce que 20 connexions absorbent.
+
+### 9.10 Ajouts du 08 au 09/10 : PR #440 à #457
+
+| PR | Sujet | À savoir |
+|---|---|---|
+| #431 | Destinataire absent : procédure encadrée et partage admin du séquestre (FLUTTER-E2) | **V301**. |
+| #436 | Voyage à plusieurs étapes, publié en une transaction (FLUTTER-4D) | **V302**. |
+| #440 | Pool prod à 20 + 5 s, cette checklist | Voir 9.4. |
+| #441 | Listes sans N+1 : conversations, notes reçues, Mes trajets | Perf, contrat inchangé. |
+| #442 | Portefeuille : plus de connexion tenue pendant les appels Stripe | Perf. |
+| #443 | Scripts k6 (`load-test/`) | Outillage, rien en prod. |
+| #444 | Une seule clé de chiffrement dans la suite de tests | Tests seulement. |
+| #445 | Pop-up d'évaluation hors délai, cache trajets actifs, retrait d'offre acceptée | — |
+| #446 | `GET /bids/me` paginé et filtrable | Sans `page`, l'ancien contrat (tableau complet) reste servi aux apps installées. |
+| #447 | Annulation de trajet : retour des colis déjà remis, contact pendant le retour | — |
+| #448 | Messagerie : statut brut du colis et retour en cours dans la liste | — |
+| #449 | Mode recette des comptes testeurs (FLUTTER-FA/FB) | **V303**. Inactif en prod : `RecetteMode` l'ignore sous le profil prod. |
+| #450 | Annulation du trajet bloquée pendant un paiement | — |
+| #451 | `GET /wallet/balance` en une seule transaction de lecture | **V304** (index). |
+| #452 | Notifications : tous les types de push classés, trois nouveaux réglages (FLUTTER-GB) | **V305**, défaut `TRUE` : personne ne perd une notification qu'il recevait. |
+| #453 | Code de retrait bloqué notifié, favoris invités relus, audit favoris | — |
+| #454 | Pool : `keepalive-time` 60 s et `max-lifetime` 15 min, tous profils | Connexions mortes remplacées au lieu d'échouer à l'emprunt. |
+| #455 | Date limite de dépôt, offres envoyées, contrepartie du fil (FLUTTER-GA/GC/G8) | Nouveau cron `YADONY_MATCHING_HANDOVER_DEADLINE_EXPIRE_CRON`, défaut toutes les 5 min : rien à poser. |
+| #456 | Trajets : escales, filtre par moyen de paiement, carte facultative (FLUTTER-GE/GD/G0/FT) | **V307**. |
+| #457 | No-show voyageur calculé dans le fuseau du trajet | — |
+
+| Migration | Ce qu'elle fait | Risque |
+|---|---|---|
+| `V301__destinataire_absent_procedure_et_partage` | Colonnes nullables sur `bids`, `conversations`, `cancellations`, `disputes` ; table neuve `payment_splits` ; 2 index. | Faible. Contraintes uniquement sur les colonnes neuves. |
+| `V302__announcements_trip_group` | `announcements.trip_group_id` / `trip_leg_index` nullables + contrainte + index partiel. | Faible. La contrainte relit `announcements` une fois (toutes les lignes sont à NULL). |
+| `V303__users_recette_tester` | `users.recette_tester BOOLEAN NOT NULL DEFAULT FALSE`. | Très faible : instantané en PostgreSQL 16. |
+| `V304__wallet_refund_items_par_transaction` | Index sur `wallet_refund_request_items (wallet_transaction_id)`. | Très faible : petite table. |
+| `V305__notification_prefs_familles_completes` | 3 colonnes `BOOLEAN NOT NULL DEFAULT TRUE` sur `user_notification_preferences`. | Très faible. |
+| `V307__trajets_escales_et_refus_carte` | `stops_count` nullable + contrainte sur `announcements` et `trip_recurrences` ; `announcements.card_declined` à défaut `FALSE`. | Faible. Contraintes relues une fois, toutes les lignes à NULL. |
+
+- [ ] **Prochaine migration : V308.** Ne jamais créer V300 ni V306 après coup : une version inférieure à la
+      dernière appliquée est refusée par Flyway au démarrage (pas d'`out-of-order` configuré).
+- [ ] Recette staging en plus de 8.H et 9.6 : voyage à **plusieurs étapes** publié puis visible étape par étape ;
+      trajet en avion avec **escales**, filtre « Direct uniquement » ; publication **sans la carte** ;
+      écran **portefeuille** et **Mes colis** qui s'ouvrent normalement ; réglages de notifications avec les
+      trois nouveaux interrupteurs.
