@@ -45,6 +45,7 @@ class TripGroupIntegrationTest {
     @Autowired UserRepository userRepository;
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
     @Autowired ObjectMapper objectMapper;
+    @Autowired com.yadony.api.payments.currency.ExchangeRateRepository exchangeRateRepository;
 
     private static UsernamePasswordAuthenticationToken as(String uid) {
         return new UsernamePasswordAuthenticationToken(uid, null,
@@ -167,6 +168,51 @@ class TripGroupIntegrationTest {
                 .andExpect(jsonPath("$.legIndex").value(2));
 
         assertThat(announcementRepository.count()).isZero();
+    }
+
+    private static String withCurrency(String leg, String currency) {
+        return leg.replace("\"transportMode\": \"PLANE\",",
+                "\"transportMode\": \"PLANE\", \"currency\": \"" + currency + "\",");
+    }
+
+    // FLUTTER-GK : chaque étape respecte le plafond du prix au kilo de sa devise.
+    @Test
+    void legAboveCurrencyCeiling_isRefusedAndRollsBack() throws Exception {
+        LocalDate d = LocalDate.now().plusDays(10);
+        mockMvc.perform(post("/announcements/trips").with(authentication(as(OWNER)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(trip(leg("Paris", "Abidjan", d, 8, false),
+                                leg("Abidjan", "Douala", d.plusDays(4), 501, false))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("price-out-of-bounds"))
+                .andExpect(jsonPath("$.legIndex").value(2));
+        assertThat(announcementRepository.count()).isZero();
+    }
+
+    @Test
+    void legCeilingFollowsTheTripCurrency() throws Exception {
+        // Les trajets XOF stockent leur équivalent euro : taux requis.
+        for (String[] rate : new String[][] {{"EUR", "1"}, {"XOF", "655.957"}}) {
+            if (exchangeRateRepository.findById(rate[0]).isEmpty()) {
+                exchangeRateRepository.save(new com.yadony.api.payments.currency.ExchangeRateEntity(
+                        rate[0], new java.math.BigDecimal(rate[1])));
+            }
+        }
+        LocalDate d = LocalDate.now().plusDays(10);
+        // 3 000 F CFA/kg : refusé en euros, admis en XOF (plafond ~ 327 978).
+        JsonNode res = createTrip(trip(
+                withCurrency(leg("Paris", "Abidjan", d, 3000, false), "XOF"),
+                withCurrency(leg("Abidjan", "Douala", d.plusDays(4), 3500, false), "XOF")));
+        assertThat(res.get("legs")).hasSize(2);
+
+        mockMvc.perform(post("/announcements/trips").with(authentication(as(OWNER)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(trip(
+                                withCurrency(leg("Paris", "Abidjan", d, 3000, false), "XOF"),
+                                withCurrency(leg("Abidjan", "Douala", d.plusDays(4), 400000, false), "XOF"))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("price-out-of-bounds"))
+                .andExpect(jsonPath("$.legIndex").value(2));
     }
 
     @Test

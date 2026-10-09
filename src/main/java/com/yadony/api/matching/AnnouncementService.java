@@ -17,6 +17,8 @@ import com.yadony.api.config.ContentCategoryNormalizer;
 import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.config.YadonyConfigProperties;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
+import com.yadony.api.payments.currency.CurrencyBounds;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.currency.ExchangeRateService;
 import com.yadony.api.matching.dto.AnnouncementDetailResponse;
 import com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse;
@@ -98,6 +100,24 @@ public class AnnouncementService {
      * sinon repli sur {@link ActiveCurrencyResolver#resolve} (portefeuille, sinon pays).
      * Un client qui n'envoie pas de devise (champ omis) garde le comportement historique.
      */
+    /**
+     * Plafond du prix au kilo dans la devise de l'annonce (FLUTTER-GK), comme pour une
+     * récurrence ou un modèle de trajet. Le DTO ne garde qu'un garde-fou large : sans cette
+     * règle, chaque étape d'un voyage (POST /announcements/trips) passait n'importe quel
+     * prix. Appliqué à la création (trajet simple, étape, récurrence) et à la modification.
+     */
+    private static void assertPricePerKgWithinBounds(java.math.BigDecimal pricePerKg, String currency) {
+        if (pricePerKg == null) {
+            return;
+        }
+        SupportedCurrency supported = SupportedCurrency.fromCodeOrDefault(currency);
+        if (pricePerKg.compareTo(CurrencyBounds.maxPricePerKg(supported)) > 0) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "price-out-of-bounds", "Price Out Of Bounds",
+                    "Ce prix au kilo dépasse le plafond autorisé dans cette devise.");
+        }
+    }
+
     private String resolveAnnouncementCurrency(String requestedCurrency, java.util.UUID travelerId) {
         if (requestedCurrency == null || requestedCurrency.isBlank()) {
             return activeCurrencyResolver.resolve(travelerId);
@@ -604,6 +624,7 @@ public class AnnouncementService {
         announcement.setDeliveryLng(java.math.BigDecimal.valueOf(request.deliveryAddress().lng()));
         announcement.setAvailableKg(request.availableKg());
         announcement.setTotalKg(request.availableKg());
+        assertPricePerKgWithinBounds(request.pricePerKg(), announcement.getCurrency());
         announcement.setPricePerKg(request.pricePerKg());
         announcement.setPricePerKgEur(
                 exchangeRateService.toEurPivot(request.pricePerKg(), announcement.getCurrency()));
@@ -1128,6 +1149,7 @@ public class AnnouncementService {
         announcement.setAvailableKg(request.availableKg());
         // Update is blocked if any bid is ACCEPTED, so no booked weight to preserve → keep total in sync.
         announcement.setTotalKg(request.availableKg());
+        assertPricePerKgWithinBounds(request.pricePerKg(), announcement.getCurrency());
         announcement.setPricePerKg(request.pricePerKg());
         announcement.setPricePerKgEur(
                 exchangeRateService.toEurPivot(request.pricePerKg(), announcement.getCurrency()));
