@@ -180,6 +180,11 @@ yadony:
   money-integrity:
     enabled: ${MONEY_INTEGRITY_ENABLED:true}
     cron: "0 */15 * * * *"
+  # Rapprochement quotidien avec Stripe et pawaPay (ProviderReconciliationJob) : alerte
+  # RECON_<PRESTATAIRE>_<référence> par écart, jauges yadony_reconciliation_*.
+  reconciliation:
+    enabled: ${PROVIDER_RECONCILIATION_ENABLED:true}
+    cron: "0 30 4 * * *"
   # Numéro de suivi saisi par le voyageur à la remise du colis (DEPART, FLUTTER-BC). Vérifié dès
   # qu'il est envoyé ; exigé seulement si ce réglage est vrai (allumer une fois l'app à jour).
   tracking:

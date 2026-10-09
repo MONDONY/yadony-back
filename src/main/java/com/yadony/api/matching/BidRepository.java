@@ -826,4 +826,11 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     List<BidCounterparty> findSenderCounterpartiesForTraveler(
             @Param("travelerId") UUID travelerId,
             @Param("statuses") Collection<BidStatus> statuses);
+
+    /** Commissions de colis prélevées par carte et touchées depuis {@code since} (rapprochement Stripe). */
+    @Query("SELECT b FROM BidEntity b WHERE b.commissionChargedVia = :via "
+            + "AND b.commissionPaymentIntentId IS NOT NULL AND b.updatedAt >= :since")
+    List<BidEntity> findCardCommissionsUpdatedSince(
+            @Param("via") com.yadony.api.payments.cash.CommissionChargedVia via,
+            @Param("since") java.time.LocalDateTime since);
 }

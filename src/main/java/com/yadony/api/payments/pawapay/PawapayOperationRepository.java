@@ -139,4 +139,8 @@ public interface PawapayOperationRepository extends JpaRepository<PawapayOperati
                                     @Param("failureMessage") String failureMessage,
                                     @Param("finalizedAt") LocalDateTime finalizedAt,
                                     @Param("now") LocalDateTime now);
+
+    /** Opérations terminées depuis {@code since} (rapprochement pawaPay quotidien). */
+    List<PawapayOperationEntity> findByStatusInAndFinalizedAtAfter(
+            java.util.Collection<PawapayOperationStatus> statuses, java.time.LocalDateTime since);
 }

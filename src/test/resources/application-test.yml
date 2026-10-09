@@ -55,6 +55,9 @@ yadony:
   # H2 ne connaît ni LATERAL ni FILTER : la sonde ne tourne que sur Postgres (MoneyIntegrityMonitorIT l'appelle directement).
   money-integrity:
     enabled: false
+  # Pas d'appel Stripe ni pawaPay réel pendant les tests.
+  reconciliation:
+    enabled: false
   activation:
     first-action-reminders:
       cron: "-"

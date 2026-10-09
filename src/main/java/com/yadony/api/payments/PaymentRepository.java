@@ -438,4 +438,13 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
             WHERE id = :id AND status = 'ESCROW' AND payout_held_at IS NULL
             """, nativeQuery = true)
     int markPayoutHeld(@Param("id") UUID id, @Param("heldAt") LocalDateTime heldAt);
+
+    /**
+     * Paiements carte à relire chez Stripe par le rapprochement quotidien : tous ceux encore
+     * ouverts ({@code open}, quel que soit leur âge) et tous ceux créés depuis {@code since}.
+     */
+    @Query("SELECT p FROM PaymentEntity p WHERE p.rail = com.yadony.api.payments.PaymentRail.STRIPE "
+            + "AND p.stripePaymentIntentId IS NOT NULL AND (p.status IN :open OR p.createdAt >= :since)")
+    List<PaymentEntity> findForStripeReconciliation(@Param("open") java.util.Collection<PaymentStatus> open,
+                                                    @Param("since") java.time.LocalDateTime since);
 }
