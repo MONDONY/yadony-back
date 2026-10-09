@@ -39,6 +39,7 @@ class TripRecurrenceServiceTest {
     @Mock UserRepository userRepository;
     @Mock AuditService auditService;
     @Mock ApplicationEventPublisher eventPublisher;
+    @Mock com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver;
     @InjectMocks TripRecurrenceService service;
 
     private final UUID userId = UUID.randomUUID();
@@ -550,6 +551,74 @@ class TripRecurrenceServiceTest {
                 base.weekdays(), base.horizonDays(), base.startDate(), base.endDate(), base.weekInterval(),
                 base.publicationLeadDays(), base.handoverLeadDays(), base.pricingMode(), base.negotiable(),
                 base.currency(), base.active(), base.arrivalDayOffset(), base.stopsCount(), card);
+    }
+
+    // Le bug : sans devise envoyée, un modèle XOF/XAF était enregistré en euros.
+    @Test
+    void create_withoutCurrency_fallsBackToTheTravelersActiveCurrency() {
+        when(activeCurrencyResolver.resolve(userId)).thenReturn("XAF");
+
+        var dto = service.create(userId, request("1111111", 0, false));
+
+        assertThat(dto.currency()).isEqualTo("XAF");
+    }
+
+    @Test
+    void create_withCurrency_keepsItAndPublishesOccurrencesInIt() {
+        var req = withCurrency(request("1111111", 0, false), "xof");
+
+        var dto = service.create(userId, req);
+
+        assertThat(dto.currency()).isEqualTo("XOF");
+        verifyNoInteractions(activeCurrencyResolver);
+    }
+
+    @Test
+    void update_withoutCurrency_keepsTheRecurrenceCurrency() {
+        UUID id = UUID.randomUUID();
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+        rec.setCurrency("XOF");
+        when(repository.findByUserIdAndId(userId, id)).thenReturn(Optional.of(rec));
+
+        service.update(userId, id, request("1111111", 0, false));
+
+        assertThat(rec.getCurrency()).isEqualTo("XOF");
+    }
+
+    @Test
+    void create_unsupportedCurrency_isRejected() {
+        assertThatThrownBy(() -> service.create(userId, withCurrency(request("1111111", 0, false), "JPY")))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("currency-unsupported"));
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void create_priceAboveTheCapOfItsCurrency_isRejected() {
+        var base = request("1111111", 0, false);
+        var eur = new TripRecurrenceRequest(base.sourceTemplateId(), base.departureCity(), base.arrivalCity(),
+                base.transportMode(), base.capacityUnit(), base.availableKg(), 5000.0,
+                base.acceptedCategories(), base.refusedCategories(), base.description(), base.pickupAddress(),
+                base.deliveryAddress(), base.departureTime(), base.arrivalTime(), base.cashAccepted(),
+                base.weekdays(), base.horizonDays(), base.startDate(), base.endDate(), base.weekInterval(),
+                base.publicationLeadDays(), base.handoverLeadDays(), base.pricingMode(), base.negotiable(),
+                "EUR", base.active(), base.arrivalDayOffset(), base.stopsCount(), base.cardAccepted());
+
+        assertThatThrownBy(() -> service.create(userId, eur))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("price-out-of-bounds"));
+        // 5 000 F CFA le kilo reste sous le plafond du franc CFA.
+        assertThat(service.create(userId, withCurrency(eur, "XOF")).currency()).isEqualTo("XOF");
+    }
+
+    private static TripRecurrenceRequest withCurrency(TripRecurrenceRequest base, String currency) {
+        return new TripRecurrenceRequest(base.sourceTemplateId(), base.departureCity(), base.arrivalCity(),
+                base.transportMode(), base.capacityUnit(), base.availableKg(), base.pricePerKg(),
+                base.acceptedCategories(), base.refusedCategories(), base.description(), base.pickupAddress(),
+                base.deliveryAddress(), base.departureTime(), base.arrivalTime(), base.cashAccepted(),
+                base.weekdays(), base.horizonDays(), base.startDate(), base.endDate(), base.weekInterval(),
+                base.publicationLeadDays(), base.handoverLeadDays(), base.pricingMode(), base.negotiable(),
+                currency, base.active(), base.arrivalDayOffset(), base.stopsCount(), base.cardAccepted());
     }
 
     @Test

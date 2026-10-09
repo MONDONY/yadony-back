@@ -160,6 +160,75 @@ class TripRecurrenceControllerIntegrationTest {
                 .andExpect(jsonPath("$.cardAccepted").value(true));
     }
 
+    // Modèle en franc CFA : la devise envoyée par l'app est retenue, avec un prix réaliste
+    // dans cette devise (le plafond suit la devise, pas 500 figé).
+    @Test
+    void create_xofRecurrence_keepsTheCurrencyAndItsPrice() throws Exception {
+        ObjectNode payload = (ObjectNode) objectMapper.readTree(recurrenceJson("1000000", false));
+        payload.put("currency", "XOF");
+        payload.put("pricePerKg", 5000.0);
+        payload.put("cashAccepted", true);
+
+        String created = mockMvc.perform(post("/trip-recurrences")
+                .with(authentication(asTraveler(TRAVELER_UID)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.currency").value("XOF"))
+                .andExpect(jsonPath("$.pricePerKg").value(5000.0))
+                .andReturn().getResponse().getContentAsString();
+        String id = objectMapper.readTree(created).get("id").asText();
+
+        // Mise à jour sans devise (client antérieur) : la récurrence garde la sienne.
+        ObjectNode legacyUpdate = (ObjectNode) objectMapper.readTree(recurrenceJson("1000001", false));
+        legacyUpdate.put("pricePerKg", 5000.0);
+        legacyUpdate.put("cashAccepted", true);
+        mockMvc.perform(put("/trip-recurrences/" + id)
+                .with(authentication(asTraveler(TRAVELER_UID)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(legacyUpdate)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currency").value("XOF"));
+    }
+
+    // Client antérieur sans devise : celle du voyageur (ici déduite de son pays), comme un
+    // trajet simple, et non plus l'euro d'office.
+    @Test
+    void create_withoutCurrency_usesTheTravelersCurrency() throws Exception {
+        var user = userRepository.findByFirebaseUid(TRAVELER_UID).orElseThrow();
+        org.springframework.test.util.ReflectionTestUtils.setField(user, "country", "SN");
+        userRepository.save(user);
+
+        mockMvc.perform(post("/trip-recurrences")
+                .with(authentication(asTraveler(TRAVELER_UID)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(recurrenceJson("1000000", false)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.currency").value("XOF"));
+    }
+
+    @Test
+    void create_unsupportedCurrencyOrPriceAboveTheCap_returns422() throws Exception {
+        ObjectNode unsupported = (ObjectNode) objectMapper.readTree(recurrenceJson("1000000", false));
+        unsupported.put("currency", "JPY");
+        mockMvc.perform(post("/trip-recurrences")
+                .with(authentication(asTraveler(TRAVELER_UID)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(unsupported)))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("currency-unsupported"));
+
+        ObjectNode tooExpensive = (ObjectNode) objectMapper.readTree(recurrenceJson("1000000", false));
+        tooExpensive.put("currency", "EUR");
+        tooExpensive.put("pricePerKg", 5000.0);
+        mockMvc.perform(post("/trip-recurrences")
+                .with(authentication(asTraveler(TRAVELER_UID)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(tooExpensive)))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("price-out-of-bounds"));
+    }
+
     // FLUTTER-FT : la carte décochée sur la récurrence est stockée (V308) et relue.
     @Test
     void create_cardDeclined_roundTrips() throws Exception {

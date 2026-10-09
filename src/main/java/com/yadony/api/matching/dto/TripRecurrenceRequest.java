@@ -19,7 +19,8 @@ public record TripRecurrenceRequest(
         @NotBlank @Size(max = 20)  String capacityUnit,
 
         @NotNull @DecimalMin("1.0") @DecimalMax("40.0") Double availableKg,
-        @NotNull @Positive @DecimalMax("500.0") Double pricePerKg,
+        // Garde-fou large : le plafond réel dépend de la devise (CurrencyBounds, côté service).
+        @NotNull @Positive @DecimalMax("1000000.0") Double pricePerKg,
 
         List<String> acceptedCategories,
         List<String> refusedCategories,
