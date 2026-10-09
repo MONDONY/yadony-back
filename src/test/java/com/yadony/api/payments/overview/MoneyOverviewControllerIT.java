@@ -229,6 +229,35 @@ class MoneyOverviewControllerIT {
     }
 
     @Test
+    void softDeletedParcelOrTrip_withEscrow_isNeverListed() throws Exception {
+        UserEntity traveler = persistUser("Aissata", "Camara");
+        UserEntity sender = persistUser("Boubacar", "Sylla");
+        UUID trip = persistAnnouncement(traveler.getId(), "EUR", "Paris", "Conakry");
+        UUID deletedBid = persistBid(trip, sender.getId(), BidStatus.IN_TRANSIT, PaymentMethod.STRIPE, "EUR");
+        persistPayment(deletedBid, PaymentStatus.ESCROW, PaymentRail.STRIPE, "70.00", "8.40", "EUR", null);
+        jdbc.update("UPDATE bids SET deleted_at = now() WHERE id = ?", deletedBid);
+
+        UUID deletedTrip = persistAnnouncement(traveler.getId(), "EUR", "Lyon", "Dakar");
+        UUID bidOnDeletedTrip = persistBid(deletedTrip, sender.getId(), BidStatus.ACCEPTED, PaymentMethod.STRIPE, "EUR");
+        persistPayment(bidOnDeletedTrip, PaymentStatus.ESCROW, PaymentRail.STRIPE, "30.00", "3.60", "EUR", null);
+        jdbc.update("UPDATE announcements SET deleted_at = now() WHERE id = ?", deletedTrip);
+
+        UUID visibleBid = persistBid(trip, sender.getId(), BidStatus.ACCEPTED, PaymentMethod.STRIPE, "EUR");
+        persistPayment(visibleBid, PaymentStatus.ESCROW, PaymentRail.STRIPE, "10.00", "1.20", "EUR", null);
+
+        for (UserEntity user : List.of(traveler, sender)) {
+            mockMvc.perform(get("/payments/me/overview").with(authentication(as(user))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.traveler.items[*].bidId",
+                            user == traveler ? hasSize(1) : hasSize(0)))
+                    .andExpect(jsonPath("$.sender.items[*].bidId",
+                            user == sender ? hasSize(1) : hasSize(0)))
+                    .andExpect(jsonPath(user == traveler ? "$.traveler.items[0].bidId" : "$.sender.items[0].bidId")
+                            .value(visibleBid.toString()));
+        }
+    }
+
+    @Test
     void mobileMoneyPayoutAndRefundInFlight_areReported() throws Exception {
         UserEntity traveler = persistUser("Mariam", "Coulibaly");
         UserEntity sender = persistUser("Seydou", "Diarra");

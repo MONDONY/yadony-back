@@ -31,9 +31,10 @@ import java.util.UUID;
  * {@code idx_disputes_bid_id}, {@code idx_cancellations_bid_id} et {@code idx_pawapay_ops_payment}.
  * Pas de N+1 : un aller-retour pour toutes les lignes, borné par {@link #MAX_ROWS}.
  *
- * <p>Ne filtre volontairement pas {@code deleted_at} sur les colis et trajets : un argent en
- * séquestre ne doit jamais disparaître de la vue de son propriétaire parce que le trajet a été
- * retiré. Les paiements supprimés ({@code payments.deleted_at}) sont exclus.
+ * <p>Soft delete respecté partout : colis, trajets et paiements supprimés ({@code deleted_at}
+ * non nul) sont exclus, comme le font les {@code @Where} de {@code BidEntity},
+ * {@code AnnouncementEntity} et {@code PaymentEntity}. Un séquestre restant sur un colis ou un
+ * trajet supprimé est une anomalie suivie par {@code integrity.MoneyInvariants} (INV-04).
  */
 @Component
 public class MoneyOverviewReadModel {
@@ -51,6 +52,7 @@ public class MoneyOverviewReadModel {
                 FROM bids b
                 JOIN announcements a ON a.id = b.announcement_id
                 WHERE a.traveler_id = :userId
+                  AND b.deleted_at IS NULL AND a.deleted_at IS NULL
                 UNION ALL
                 SELECT 'SENDER' AS role, b.id, b.status, b.payment_method, b.currency,
                        b.tracking_number, b.weight_kg, b.commission_status, b.linked_negotiation_thread_id,
@@ -59,6 +61,7 @@ public class MoneyOverviewReadModel {
                 FROM bids b
                 JOIN announcements a ON a.id = b.announcement_id
                 WHERE b.sender_id = :userId
+                  AND b.deleted_at IS NULL AND a.deleted_at IS NULL
             )
             SELECT mb.role, mb.bid_id, mb.bid_status, mb.bid_payment_method, mb.bid_currency,
                    mb.tracking_number, mb.weight_kg, mb.commission_status, mb.announcement_id, mb.departure_city, mb.arrival_city,
