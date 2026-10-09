@@ -1056,7 +1056,7 @@ saturait (187 requêtes en attente) et les requêtes finissaient en **500 après
 | `V305__notification_prefs_familles_completes` | 3 colonnes `BOOLEAN NOT NULL DEFAULT TRUE` sur `user_notification_preferences`. | Très faible. |
 | `V307__trajets_escales_et_refus_carte` | `stops_count` nullable + contrainte sur `announcements` et `trip_recurrences` ; `announcements.card_declined` à défaut `FALSE`. | Faible. Contraintes relues une fois, toutes les lignes à NULL. |
 
-- [ ] **Prochaine migration : V309** (V308 prise le 09/10, voir 9.11). Ne jamais créer V300 ni V306 après coup : une version inférieure à la
+- [ ] **Prochaine migration : V310** (V308 prise le 09/10, voir 9.11 ; V309 prise par #469, voir 9.13). Ne jamais créer V300 ni V306 après coup : une version inférieure à la
       dernière appliquée est refusée par Flyway au démarrage (pas d'`out-of-order` configuré).
 - [ ] Recette staging en plus de 8.H et 9.6 : voyage à **plusieurs étapes** publié puis visible étape par étape ;
       trajet en avion avec **escales**, filtre « Direct uniquement » ; publication **sans la carte** ;
@@ -1242,3 +1242,22 @@ saturait (187 requêtes en attente) et les requêtes finissaient en **500 après
       PaymentIntent est « Succeeded » dans Stripe (et non « Uncaptured »).
 - [ ] Après la mise en prod : `yadony_money_invariant_violations{invariant="INV-08"}` reste à 0 ; le lendemain matin,
       `yadony_reconciliation_last_run_seconds` est daté d'après 04:30 UTC et `yadony_reconciliation_errors` vaut 0.
+
+#### 9.14 Fin du 09/10 : back #476, app #578 à #580 (FLUTTER-H2 à H7)
+
+> Ajoutée le 09/10/2026. Aucune migration (dernière : **V309**), aucun secret, aucune nouvelle variable.
+> `main` back = `4a09f6ad` (#476). Builds de recette staging : IPA **109** et AAB **110** depuis `dony_app` `main` (#578 à #580 inclus).
+
+| PR | Sujet | À savoir |
+|---|---|---|
+| back #476 | Accord de prix **en espèces** sur un trajet : le voyageur reçoit une notification dédiée `BID_NEGOTIATION_COMMISSION_DUE` (« Réglez la commission Yadony », lien `yadony://bids/{id}/negotiation`) au lieu de `BID_CREATED` « Nouvelle demande d'envoi » ; `commissionDueBy` ajouté en fin de `BidNegotiationResponse` (PENDING + espèces seulement) | Les demandes cash classiques gardent `BID_CREATED`. `notifications.type` est un `varchar(50)` sans CHECK : pas de migration. Une app ancienne ouvre le fil depuis le centre de notifications (lien serveur) ; un tap sur le push ouvre l'app sans naviguer, sans plantage. |
+| app #580 | Bouton « Régler la commission » dans le fil d'un trajet payé en espèces (biométrie/PIN, portefeuille, 3DS, recharge si solde insuffisant, compte à rebours), lien « Refuser le colis » ; le fil ne se ferme plus après l'acceptation | **Jumelle de #476** : back avant app. Sans #476, pas de compte à rebours, le bouton fonctionne quand même. |
+| app #578 | Plantage du fil d'étapes fermé en vol (FLUTTER-H3/H2) ; icône de signalement visible en thème sombre (FLUTTER-H6) | Client seul. |
+| app #579 | Intention « Votre destination principale » : 14 pays UEMOA + CEMAC (+ Autre) ; section « Destinations favorites » (sans effet) retirée des réglages | Client seul, le back accepte déjà ces pays (`CountryCatalog`). |
+
+- [ ] Tag prod : doit contenir `4a09f6ad` (#476) **et** `5d9da84b` (#472, voir 9.13) : `git merge-base --is-ancestor 4a09f6ad <commit> && echo OK`.
+- [ ] Recette staging : un voyageur accepte un prix en espèces dans le fil d'un trajet → notification « Réglez la commission Yadony »
+      qui ouvre le fil ; bouton « Régler la commission » avec compte à rebours ; solde insuffisant → recharge puis relance ;
+      succès → écran « accepté » ; « Refuser le colis » fonctionne.
+- [ ] Recette staging : fermer la fiche d'un voyage multi-étapes pendant son chargement (aucun plantage) ; icône de signalement
+      visible en thème sombre ; intention avec un pays hors des 4 historiques (ex. Gabon) acceptée.
