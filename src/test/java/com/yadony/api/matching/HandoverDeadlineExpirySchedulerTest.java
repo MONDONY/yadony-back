@@ -128,6 +128,7 @@ class HandoverDeadlineExpirySchedulerTest {
             assertThat(notif.travelerId()).isEqualTo(TRAVELER_ID);
             assertThat(notif.refunded()).isFalse();
             assertThat(notif.notifyTraveler()).isTrue();
+            assertThat(notif.requestRemoved()).as("demande conservée en EXPIRED : lien vers la demande").isFalse();
             verify(cache, times(2)).clear();
         }
 
@@ -268,6 +269,7 @@ class HandoverDeadlineExpirySchedulerTest {
             verify(eventPublisher).publishEvent(notif.capture());
             assertThat(notif.getValue().notifyTraveler()).isTrue();
             assertThat(notif.getValue().refunded()).isFalse();
+            assertThat(notif.getValue().requestRemoved()).as("supprimée à l'abandon : lien vers le trajet").isTrue();
         }
 
         @Test
@@ -283,6 +285,7 @@ class HandoverDeadlineExpirySchedulerTest {
                     ArgumentCaptor.forClass(BidHandoverDeadlinePassedEvent.class);
             verify(eventPublisher).publishEvent(notif.capture());
             assertThat(notif.getValue().notifyTraveler()).isFalse();
+            assertThat(notif.getValue().requestRemoved()).isTrue();
         }
 
         @Test

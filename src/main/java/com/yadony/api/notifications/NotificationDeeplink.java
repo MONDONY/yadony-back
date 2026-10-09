@@ -53,7 +53,7 @@ public final class NotificationDeeplink {
                     .or(() -> announcementId.map(id -> "announcements/" + id + "/bids"));
 
             case "BID_ACCEPTED", "DELIVERY_CONFIRMED", "PAYMENT_RELEASED", "DISPUTE_OPENED", "PARCEL_REFUSED",
-                 "BID_EXPIRED", "CONFIRMATION_CODE_READY", "CONFIRMATION_CODE_BLOCKED", "DELIVERY_NOSHOW_REPORTED", "MM_PAYMENT_PENDING",
+                 "CONFIRMATION_CODE_READY", "CONFIRMATION_CODE_BLOCKED", "DELIVERY_NOSHOW_REPORTED", "MM_PAYMENT_PENDING",
                  "HANDOVER_REMINDER_H2", "MOBILE_MONEY_PAYMENT_CONFIRMED", "SENDER_NOSHOW_REPORTED", "NOSHOW_DECISION", "MOBILE_MONEY_PAYMENT_FAILED",
                  "MM_PAYMENT_EXPIRED", "TRIP_ARRIVED",
                  "PARCEL_RETURNED", "PARCEL_RETURN_REQUIRED", "PARCEL_RETURN_TO_SENDER", "RETURN_DEADLINE_WARNING", "RETURN_DEADLINE_EXPIRED", "automation_last_minute",
@@ -62,6 +62,10 @@ public final class NotificationDeeplink {
                  "RECIPIENT_WITHDRAWN", "RECIPIENT_REPLACEMENT_REQUESTED",
                  "DELIVERY_RETRY_APPOINTMENT", "PARCEL_UNCLAIMED" ->
                     bidId.map(id -> "bids/" + id);
+            // Sans bidId : demande carte jamais payée, supprimée à la date limite de dépôt.
+            // Le trajet plutôt qu'une demande introuvable.
+            case "BID_EXPIRED" -> bidId.map(id -> "bids/" + id)
+                    .or(() -> announcementId.map(id -> "traveler/" + id));
 
             // Le destinataire n'est pas partie au colis : il le suit depuis ses réceptions.
             case "RECIPIENT_PARCEL_INCOMING", "RECIPIENT_PARCEL_ANNOUNCED", "RECIPIENT_PARCEL_DEPARTED", "RECIPIENT_PARCEL_ARRIVED",

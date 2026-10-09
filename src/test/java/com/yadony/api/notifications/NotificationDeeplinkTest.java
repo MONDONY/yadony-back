@@ -44,6 +44,17 @@ class NotificationDeeplinkTest {
         }
     }
 
+    /** Demande supprimée à la date limite de dépôt (pas de bidId) : le trajet. */
+    @Test
+    void bidExpiredWithoutBidOpensTheTrip() {
+        String announcementId = UUID.randomUUID().toString();
+        assertThat(NotificationDeeplink.of("BID_EXPIRED", Map.of("announcementId", announcementId)))
+                .contains("yadony://traveler/" + announcementId);
+        assertThat(NotificationDeeplink.of("BID_EXPIRED", Map.of("bidId", bidId, "announcementId", announcementId)))
+                .contains("yadony://bids/" + bidId);
+        assertThat(NotificationDeeplink.of("BID_EXPIRED", Map.of())).isEmpty();
+    }
+
     /** Le destinataire suit son colis depuis ses réceptions ; l'expéditeur reste sur le bid. */
     @Test
     void recipientTypesOpenTheReception() {
