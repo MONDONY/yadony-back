@@ -2,6 +2,7 @@ package com.yadony.api.tracking;
 
 import com.yadony.api.tracking.dto.ConfirmCodeResponse;
 import com.yadony.api.tracking.dto.ConfirmDeliveryRequest;
+import com.yadony.api.tracking.dto.PickupCodeRequestResponse;
 import com.yadony.api.tracking.dto.QrCodeResponse;
 import com.yadony.api.tracking.dto.QrScanRequest;
 import com.yadony.api.tracking.dto.TrackingEventResponse;
@@ -28,9 +29,12 @@ import java.util.UUID;
 public class TrackingController {
 
     private final TrackingService trackingService;
+    private final PickupCodeRequestService pickupCodeRequestService;
 
-    public TrackingController(TrackingService trackingService) {
+    public TrackingController(TrackingService trackingService,
+                              PickupCodeRequestService pickupCodeRequestService) {
         this.trackingService = trackingService;
+        this.pickupCodeRequestService = pickupCodeRequestService;
     }
 
     @GetMapping("/{bidId}/qr-code")
@@ -84,6 +88,19 @@ public class TrackingController {
             @PathVariable UUID bidId,
             @AuthenticationPrincipal String firebaseUid) {
         return ResponseEntity.ok(trackingService.refreshConfirmationCode(bidId, firebaseUid));
+    }
+
+    /**
+     * Le voyageur demande à l'expéditeur un nouveau code de retrait, bloqué ou expiré
+     * (FLUTTER-G2). Une demande par quart d'heure et par colis (429
+     * {@code code-request-too-soon}, avec {@code nextRequestAllowedAt}).
+     */
+    @PostMapping("/{bidId}/request-code")
+    @PreAuthorize("hasRole('TRAVELER')")
+    public ResponseEntity<PickupCodeRequestResponse> requestNewCode(
+            @PathVariable UUID bidId,
+            @AuthenticationPrincipal String firebaseUid) {
+        return ResponseEntity.ok(pickupCodeRequestService.requestNewCode(bidId, firebaseUid));
     }
 
     @PostMapping("/{bidId}/confirmation-code/public")

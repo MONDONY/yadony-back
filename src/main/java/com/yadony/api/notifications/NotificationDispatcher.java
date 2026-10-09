@@ -39,6 +39,7 @@ import com.yadony.api.payments.events.MobileMoneyPaymentConfirmedEvent;
 import com.yadony.api.payments.events.MobileMoneyPaymentExpiredEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
 import com.yadony.api.tracking.events.ConfirmationCodeBlockedEvent;
+import com.yadony.api.tracking.events.ConfirmationCodeRequestedEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -208,6 +209,22 @@ public class NotificationDispatcher {
         var text = NotificationTexts.confirmationCodeBlocked(messagesFor(event.senderId()));
         notifyUser(event.senderId(), text.title(), text.body(),
                 Map.of("type", "CONFIRMATION_CODE_BLOCKED", "bidId", event.bidId().toString()));
+    }
+
+    /**
+     * Le voyageur demande un nouveau code de retrait (FLUTTER-G2) : le code a été bloqué
+     * ou a expiré. Le lien {@code bids/{id}?action=new-code} ouvre directement la
+     * régénération ({@code POST /tracking/{bidId}/refresh-code}) ; une app antérieure qui
+     * ignore la query ouvre le colis, où le bloc « Générer un nouveau code » est affiché.
+     * Même préférence que le code bloqué (activité colis) : la notification reste dans
+     * le fil même si le push est coupé.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onConfirmationCodeRequested(ConfirmationCodeRequestedEvent event) {
+        var text = NotificationTexts.confirmationCodeRequested(messagesFor(event.senderId()));
+        notifyUser(event.senderId(), text.title(), text.body(),
+                Map.of("type", "CONFIRMATION_CODE_REQUESTED", "bidId", event.bidId().toString()));
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)

@@ -9,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface AuditLogRepository extends JpaRepository<AuditLogEntity, Long> {
@@ -59,4 +60,12 @@ public interface AuditLogRepository extends JpaRepository<AuditLogEntity, Long> 
 
     /** Historique d'une entité, du plus ancien au plus récent (chronologie d'un paiement). */
     List<AuditLogEntity> findTop200ByEntityTypeAndEntityIdOrderByCreatedAtAscIdAsc(String entityType, UUID entityId);
+
+    /**
+     * Dernière trace d'une action sur une entité. Sert de mémoire aux limites de fréquence
+     * sans colonne dédiée : l'audit, immuable, fait déjà foi (ex. demande de nouveau code
+     * de retrait, au plus une par quart d'heure et par colis).
+     */
+    Optional<AuditLogEntity> findFirstByEntityTypeAndEntityIdAndActionOrderByCreatedAtDescIdDesc(
+            String entityType, UUID entityId, String action);
 }

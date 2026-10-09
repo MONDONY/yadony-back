@@ -242,6 +242,11 @@ public final class NotificationTexts {
                 m.get("notification.confirmation-code-blocked.body"));
     }
 
+    public static NotificationText confirmationCodeRequested(Messages m) {
+        return new NotificationText(m.get("notification.confirmation-code-requested.title"),
+                m.get("notification.confirmation-code-requested.body"));
+    }
+
     public static NotificationText deliveryConfirmed(Messages m) {
         return new NotificationText(m.get("notification.delivery-confirmed.title"),
                 m.get("notification.delivery-confirmed.body"));

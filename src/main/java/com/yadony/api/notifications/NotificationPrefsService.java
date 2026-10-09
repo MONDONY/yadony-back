@@ -57,6 +57,7 @@ public class NotificationPrefsService {
             Map.entry("TRAVELER_INVITE",              "pushActivityBids"),
             Map.entry("CONFIRMATION_CODE_READY",      "pushActivityBids"),
             Map.entry("CONFIRMATION_CODE_BLOCKED",    "pushActivityBids"),
+            Map.entry("CONFIRMATION_CODE_REQUESTED",  "pushActivityBids"),
             Map.entry("DELIVERY_NOSHOW_REPORTED",     "pushActivityBids"),
             Map.entry("DELIVERY_RETRY_APPOINTMENT",   "pushActivityBids"),
             Map.entry("PARCEL_UNCLAIMED",             "pushActivityBids"),
