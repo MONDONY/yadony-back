@@ -3,9 +3,11 @@ package com.yadony.api.matching;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.YadonyNotFoundException;
 import com.yadony.api.matching.dto.AddressDto;
 import com.yadony.api.matching.dto.AnnouncementRequest;
+import com.yadony.api.matching.dto.AnnouncementResponse;
 import com.yadony.api.matching.dto.TripRecurrenceRequest;
 import com.yadony.api.payments.cash.PaymentMethod;
 import org.junit.jupiter.api.Test;
@@ -431,6 +433,123 @@ class TripRecurrenceServiceTest {
         assertThat(service.create(userId, req).stopsCount()).isZero();
         assertThat(service.create(userId, car).stopsCount()).isNull();
         assertThat(service.create(userId, base).stopsCount()).isNull();
+    }
+
+    // FLUTTER-FT : carte décochée sur la récurrence, aucune occurrence ne la propose.
+    @Test
+    void generate_cardDeclined_neverOffersTheCard() {
+        mockUser(true);
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+        rec.setCashAccepted(true);
+        rec.setCardDeclined(true);
+
+        service.generateForRecurrence(rec);
+
+        ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        assertThat(cap.getValue().acceptedPaymentMethods()).containsExactly(PaymentMethod.CASH);
+    }
+
+    @Test
+    void generate_cardAccepted_keepsTheCard() {
+        mockUser(true);
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+        rec.setCashAccepted(true);
+
+        service.generateForRecurrence(rec);
+
+        ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        assertThat(cap.getValue().acceptedPaymentMethods())
+                .containsExactlyInAnyOrder(PaymentMethod.STRIPE, PaymentMethod.CASH);
+        verify(announcementRepository, never()).findById(any());
+    }
+
+    // Générée pendant une restriction du compte Stripe, l'occurrence garde le refus de la
+    // récurrence : la réouverture après onboarding (FLUTTER-DH) ne lui rend pas la carte.
+    @Test
+    void generate_cardDeclined_marksEachOccurrenceEvenWithoutConnect() {
+        mockUser(false);
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+        rec.setCashAccepted(true);
+        rec.setCardDeclined(true);
+        UUID occurrenceId = UUID.randomUUID();
+        AnnouncementResponse response = mock(AnnouncementResponse.class);
+        when(response.id()).thenReturn(occurrenceId);
+        when(announcementService.createRecurringAnnouncement(anyString(), any(), eq(rec.getId())))
+                .thenReturn(response);
+        AnnouncementEntity occurrence = new AnnouncementEntity();
+        when(announcementRepository.findById(occurrenceId)).thenReturn(Optional.of(occurrence));
+
+        service.generateForRecurrence(rec);
+
+        assertThat(occurrence.isCardDeclined()).isTrue();
+        verify(announcementRepository).save(occurrence);
+    }
+
+    // En zone CFA la carte n'existe pas : rien à refuser, l'occurrence n'est pas marquée.
+    @Test
+    void generate_cardDeclinedInCfa_leavesOccurrenceUntouched() {
+        mockUser(false);
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+        rec.setCurrency("XOF");
+        rec.setCashAccepted(true);
+        rec.setCardDeclined(true);
+        AnnouncementResponse response = mock(AnnouncementResponse.class);
+        lenient().when(response.id()).thenReturn(UUID.randomUUID());
+        when(announcementService.createRecurringAnnouncement(anyString(), any(), eq(rec.getId())))
+                .thenReturn(response);
+
+        service.generateForRecurrence(rec);
+
+        verify(announcementRepository, never()).findById(any());
+    }
+
+    @Test
+    void create_storesCardChoice_andLegacyClientKeepsTheCard() {
+        var base = request("1111111", 0, false);
+        var declined = withCard(base, true, false);
+        var legacy = withCard(base, true, null);
+
+        ArgumentCaptor<TripRecurrenceEntity> captor = ArgumentCaptor.forClass(TripRecurrenceEntity.class);
+        assertThat(service.create(userId, declined).cardAccepted()).isFalse();
+        verify(repository).save(captor.capture());
+        assertThat(captor.getValue().isCardDeclined()).isTrue();
+        assertThat(service.create(userId, legacy).cardAccepted()).isTrue();
+        assertThat(service.create(userId, withCard(base, false, true)).cardAccepted()).isTrue();
+    }
+
+    // Au moins un moyen de paiement : ni carte ni espèces, la récurrence est refusée.
+    @Test
+    void create_cardDeclinedWithoutCash_isRejected() {
+        var req = withCard(request("1111111", 0, false), false, false);
+
+        assertThatThrownBy(() -> service.create(userId, req))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("payment-method-required"));
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void update_cardDeclined_isStoredOnTheRecurrence() {
+        UUID id = UUID.randomUUID();
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+        when(repository.findByUserIdAndId(userId, id)).thenReturn(Optional.of(rec));
+
+        var dto = service.update(userId, id, withCard(request("1111111", 0, false), true, false));
+
+        assertThat(rec.isCardDeclined()).isTrue();
+        assertThat(dto.cardAccepted()).isFalse();
+    }
+
+    private static TripRecurrenceRequest withCard(TripRecurrenceRequest base, boolean cash, Boolean card) {
+        return new TripRecurrenceRequest(base.sourceTemplateId(), base.departureCity(), base.arrivalCity(),
+                base.transportMode(), base.capacityUnit(), base.availableKg(), base.pricePerKg(),
+                base.acceptedCategories(), base.refusedCategories(), base.description(), base.pickupAddress(),
+                base.deliveryAddress(), base.departureTime(), base.arrivalTime(), cash,
+                base.weekdays(), base.horizonDays(), base.startDate(), base.endDate(), base.weekInterval(),
+                base.publicationLeadDays(), base.handoverLeadDays(), base.pricingMode(), base.negotiable(),
+                base.currency(), base.active(), base.arrivalDayOffset(), base.stopsCount(), card);
     }
 
     @Test

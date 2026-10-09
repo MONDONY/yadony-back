@@ -79,6 +79,13 @@ public class TripRecurrenceEntity extends BaseEntity {
     @Column(name = "cash_accepted", nullable = false)
     private boolean cashAccepted = false;
 
+    /**
+     * Carte décochée par le voyageur (FLUTTER-FT) : aucune occurrence ne la propose, et la
+     * réouverture automatique après un onboarding Stripe ne la leur ajoute pas.
+     */
+    @Column(name = "card_declined", nullable = false)
+    private boolean cardDeclined = false;
+
     @Column(name = "weekdays", nullable = false, length = 7)
     private String weekdays;
 
@@ -167,6 +174,8 @@ public class TripRecurrenceEntity extends BaseEntity {
     public void setArrivalTime(LocalTime arrivalTime) { this.arrivalTime = arrivalTime; }
     public boolean isCashAccepted() { return cashAccepted; }
     public void setCashAccepted(boolean cashAccepted) { this.cashAccepted = cashAccepted; }
+    public boolean isCardDeclined() { return cardDeclined; }
+    public void setCardDeclined(boolean cardDeclined) { this.cardDeclined = cardDeclined; }
     public String getWeekdays() { return weekdays; }
     public void setWeekdays(String weekdays) { this.weekdays = weekdays; }
     public Integer getHorizonDays() { return horizonDays; }

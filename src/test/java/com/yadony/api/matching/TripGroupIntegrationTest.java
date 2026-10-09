@@ -131,6 +131,28 @@ class TripGroupIntegrationTest {
                         + " AND entity_id = ?", Long.class, UUID.fromString(group))).isEqualTo(1L);
     }
 
+    // FLUTTER-GE : chaque étape en avion garde ses propres escales, sans reprendre la première.
+    @Test
+    void eachLegKeepsItsOwnStopsCount() throws Exception {
+        LocalDate d = LocalDate.now().plusDays(10);
+        JsonNode res = createTrip(trip(
+                withStops(leg("Paris", "Abidjan", d, 8, false), 0),
+                withStops(leg("Abidjan", "Douala", d.plusDays(4), 6, false), 2),
+                leg("Douala", "Yaoundé", d.plusDays(6), 5, false)));
+
+        assertThat(res.get("legs").get(0).get("stopsCount").asInt()).isZero();
+        assertThat(res.get("legs").get(1).get("stopsCount").asInt()).isEqualTo(2);
+        assertThat(res.get("legs").get(2).hasNonNull("stopsCount")).isFalse();
+        List<AnnouncementEntity> stored = announcementRepository.findByTripGroupIdOrderByTripLegIndexAsc(
+                UUID.fromString(res.get("tripGroupId").asText()));
+        assertThat(stored).extracting(AnnouncementEntity::getStopsCount).containsExactly(0, 2, null);
+    }
+
+    private static String withStops(String leg, int stopsCount) {
+        return leg.replace("\"transportMode\": \"PLANE\",",
+                "\"transportMode\": \"PLANE\", \"stopsCount\": " + stopsCount + ",");
+    }
+
     @Test
     void invalidSecondLeg_rollsBackTheWholeTrip() throws Exception {
         LocalDate d = LocalDate.now().plusDays(10);

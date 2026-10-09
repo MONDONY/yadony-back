@@ -56,8 +56,29 @@ public record TripRecurrenceRequest(
         @Min(0) @Max(3) Integer arrivalDayOffset,
 
         // Escales d'un trajet en avion (FLUTTER-GE) : 0, 1, 2 = deux ou plus. Absent = non renseigné.
-        @Min(0) @Max(2) Integer stopsCount
+        @Min(0) @Max(2) Integer stopsCount,
+
+        // Carte proposée sur chaque occurrence (FLUTTER-FT). Absent (client antérieur) = acceptée.
+        Boolean cardAccepted
 ) {
+    /** Arité sans choix de la carte, conservée pour les appels existants. */
+    public TripRecurrenceRequest(
+            UUID sourceTemplateId, String departureCity, String arrivalCity, String transportMode,
+            String capacityUnit, Double availableKg, Double pricePerKg, List<String> acceptedCategories,
+            List<String> refusedCategories, String description, AddressDto pickupAddress,
+            AddressDto deliveryAddress, LocalTime departureTime, LocalTime arrivalTime,
+            boolean cashAccepted, String weekdays, Integer horizonDays, LocalDate startDate,
+            LocalDate endDate, Integer weekInterval, Integer publicationLeadDays,
+            Integer handoverLeadDays, PricingMode pricingMode, Boolean negotiable, String currency,
+            boolean active, Integer arrivalDayOffset, Integer stopsCount
+    ) {
+        this(sourceTemplateId, departureCity, arrivalCity, transportMode, capacityUnit, availableKg,
+                pricePerKg, acceptedCategories, refusedCategories, description, pickupAddress,
+                deliveryAddress, departureTime, arrivalTime, cashAccepted, weekdays, horizonDays,
+                startDate, endDate, weekInterval, publicationLeadDays, handoverLeadDays, pricingMode,
+                negotiable, currency, active, arrivalDayOffset, stopsCount, null);
+    }
+
     /** Arité sans escales, conservée pour les appels existants. */
     public TripRecurrenceRequest(
             UUID sourceTemplateId, String departureCity, String arrivalCity, String transportMode,
@@ -73,7 +94,7 @@ public record TripRecurrenceRequest(
                 pricePerKg, acceptedCategories, refusedCategories, description, pickupAddress,
                 deliveryAddress, departureTime, arrivalTime, cashAccepted, weekdays, horizonDays,
                 startDate, endDate, weekInterval, publicationLeadDays, handoverLeadDays, pricingMode,
-                negotiable, currency, active, arrivalDayOffset, null);
+                negotiable, currency, active, arrivalDayOffset, null, null);
     }
 
     /** Arité sans jour d'arrivée, conservée pour les appels existants. */
@@ -91,7 +112,7 @@ public record TripRecurrenceRequest(
                 pricePerKg, acceptedCategories, refusedCategories, description, pickupAddress,
                 deliveryAddress, departureTime, arrivalTime, cashAccepted, weekdays, horizonDays,
                 startDate, endDate, weekInterval, publicationLeadDays, handoverLeadDays, pricingMode,
-                negotiable, currency, active, null, null);
+                negotiable, currency, active, null, null, null);
     }
 
     public TripRecurrenceRequest(
@@ -116,7 +137,13 @@ public record TripRecurrenceRequest(
                 availableKg, pricePerKg, acceptedCategories, null, null,
                 pickupAddress, deliveryAddress, departureTime, arrivalTime, cashAccepted,
                 weekdays, horizonDays, null, null, null, null, null,
-                null, null, null, active, null, null);
+                null, null, null, active, null, null, null);
+    }
+
+    /** Carte refusée explicitement ; absente, elle reste acceptée (contrat antérieur). */
+    @JsonIgnore
+    public boolean declinesCard() {
+        return Boolean.FALSE.equals(cardAccepted);
     }
 
     @JsonIgnore

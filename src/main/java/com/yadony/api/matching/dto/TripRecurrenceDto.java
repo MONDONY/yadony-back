@@ -39,6 +39,8 @@ public record TripRecurrenceDto(
         int arrivalDayOffset,
         /** Escales (FLUTTER-GE) ; null = non renseigné. */
         Integer stopsCount,
+        /** Carte proposée sur les occurrences (FLUTTER-FT) ; false = refusée par le voyageur. */
+        boolean cardAccepted,
         LocalDate lastGeneratedDate,
         String lastPublicationErrorCode,
         String lastPublicationErrorMessage,
