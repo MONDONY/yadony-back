@@ -199,6 +199,26 @@ public class AnnouncementService {
             Double userLat, Double userLng, Double radiusKm,
             String sortBy, String sortDir, Pageable pageable,
             String viewerFirebaseUid, Boolean urgent) {
+        return searchAnnouncements(departureCity, arrivalCity, departureDateFrom, departureDateTo,
+                minAvailableKg, maxAvailableKg, maxPricePerKg, minRating, kiloProOnly, weekendOnly,
+                transportMode, kycVerifiedOnly, contentType, userLat, userLng, radiusKm,
+                sortBy, sortDir, pageable, viewerFirebaseUid, urgent, AnnouncementSearchExtras.NONE);
+    }
+
+    /** Recherche avec les filtres ajoutés depuis (escales FLUTTER-GD, moyens de paiement FLUTTER-G0). */
+    @Transactional(readOnly = true)
+    @Cacheable(value = "announcements-search", key = "#departureCity + '_' + #arrivalCity + '_' + #departureDateFrom + '_' + #departureDateTo + '_' + #minAvailableKg + '_' + #maxAvailableKg + '_' + #maxPricePerKg + '_' + #minRating + '_' + #kiloProOnly + '_' + #weekendOnly + '_' + #transportMode + '_' + #kycVerifiedOnly + '_' + #contentType + '_' + #userLat + '_' + #userLng + '_' + #radiusKm + '_' + #sortBy + '_' + #sortDir + '_' + #pageable.pageNumber + '_' + #pageable.pageSize + '_' + #viewerFirebaseUid + '_' + #urgent + '_' + #extras?.cacheKey()")
+    public Page<AnnouncementSearchResponse> searchAnnouncements(
+            String departureCity, String arrivalCity,
+            LocalDate departureDateFrom, LocalDate departureDateTo,
+            BigDecimal minAvailableKg, BigDecimal maxAvailableKg,
+            BigDecimal maxPricePerKg, BigDecimal minRating,
+            Boolean kiloProOnly, Boolean weekendOnly,
+            String transportMode, Boolean kycVerifiedOnly, String contentType,
+            Double userLat, Double userLng, Double radiusKm,
+            String sortBy, String sortDir, Pageable pageable,
+            String viewerFirebaseUid, Boolean urgent, AnnouncementSearchExtras extras) {
+        AnnouncementSearchExtras filters = extras != null ? extras : AnnouncementSearchExtras.NONE;
 
         // Confidentialité v2 — exclure (dans les deux sens) les voyageurs en relation
         // de blocage avec le viewer. Le firebaseUid est intégré à la clé de cache pour
@@ -266,6 +286,11 @@ public class AnnouncementService {
             spec = spec.and(AnnouncementSpecification.kycVerifiedOnly());
         if (contentType != null && !contentType.isBlank())
             spec = spec.and(AnnouncementSpecification.hasAcceptedContentType(contentType));
+        Integer stopsBound = TripStops.searchBound(filters.maxStops());
+        if (stopsBound != null)
+            spec = spec.and(AnnouncementSpecification.maxStops(stopsBound));
+        if (!filters.paymentMethods().isEmpty())
+            spec = spec.and(AnnouncementSpecification.offersAnyPaymentMethod(filters.paymentMethods()));
 
         // Radius filter: only active when ALL 3 params provided
         if (userLat != null && userLng != null && radiusKm != null && radiusKm > 0) {
@@ -583,6 +608,7 @@ public class AnnouncementService {
         announcement.setPricePerKgEur(
                 exchangeRateService.toEurPivot(request.pricePerKg(), announcement.getCurrency()));
         announcement.setTransportMode(request.transportMode());
+        announcement.setStopsCount(TripStops.normalize(request.stopsCount(), request.transportMode()));
         announcement.setStatus(isDraft ? AnnouncementStatus.DRAFT : AnnouncementStatus.ACTIVE);
         announcement.setDescription(request.description());
         // Normalisé à l'écriture (C2) — cf. ContentCategoryNormalizer javadoc.
@@ -591,6 +617,7 @@ public class AnnouncementService {
         if (request.refusedTypes() != null)
             announcement.setRefusedTypes(ContentCategoryNormalizer.normalizeList(request.refusedTypes()));
         announcement.setAcceptedPaymentMethods(paymentMethods);
+        announcement.setCardDeclined(declinesCard(request.acceptedPaymentMethods(), user, currency));
         announcement.setCapacityUnit(
             request.capacityUnit() != null ? request.capacityUnit() : CapacityUnit.SUITCASE_23KG
         );
@@ -924,6 +951,7 @@ public class AnnouncementService {
                 com.yadony.api.common.GuestSession.travelerNetOrNull(announcement.getPricePerKg()),
                 pricePerKgDisplay(announcement.getPricePerKg(), announcement.getTravelerId()),
                 announcement.getTransportMode(),
+                announcement.getStopsCount(),
                 announcement.getStatus().name(),
                 bidsCount,
                 confirmedParcelCount,
@@ -1103,6 +1131,8 @@ public class AnnouncementService {
         announcement.setPricePerKg(request.pricePerKg());
         announcement.setPricePerKgEur(
                 exchangeRateService.toEurPivot(request.pricePerKg(), announcement.getCurrency()));
+        announcement.setStopsCount(TripStops.normalizeOnUpdate(
+                request.stopsCount(), announcement.getStopsCount(), request.transportMode()));
         announcement.setTransportMode(request.transportMode());
         announcement.setDescription(request.description());
         // Normalisé à l'écriture (C2) — cf. ContentCategoryNormalizer javadoc.
@@ -1117,6 +1147,8 @@ public class AnnouncementService {
                 assertStripeCapability(user, updatedMethods);
             }
             announcement.setAcceptedPaymentMethods(updatedMethods);
+            announcement.setCardDeclined(declinesCard(
+                    request.acceptedPaymentMethods(), user, announcement.getCurrency()));
         }
         if (request.capacityUnit() != null) {
             announcement.setCapacityUnit(request.capacityUnit());
@@ -1175,6 +1207,7 @@ public class AnnouncementService {
                 saved.getPricePerKg(),
                 pricePerKgDisplay(saved.getPricePerKg(), saved.getTravelerId()),
                 saved.getTransportMode(),
+                saved.getStopsCount(),
                 saved.getStatus().name(),
                 bidsCount,
                 confirmedParcelCount,
@@ -1958,6 +1991,7 @@ public class AnnouncementService {
                 entity.getPricePerKg(),
                 pricePerKgDisplay(entity.getPricePerKg(), entity.getTravelerId()),
                 entity.getTransportMode(),
+                entity.getStopsCount(),
                 entity.getStatus().name(),
                 pendingBidCount,
                 confirmedParcelCount,
@@ -2038,7 +2072,9 @@ public class AnnouncementService {
         int updated = 0;
         for (AnnouncementEntity announcement : announcementRepository.findActiveByTravelerId(travelerId)) {
             Set<PaymentMethod> current = announcement.getAcceptedPaymentMethods();
-            if (current.contains(PaymentMethod.STRIPE)) {
+            // Carte décochée par le voyageur alors qu'il pouvait l'offrir (FLUTTER-FT) : un
+            // nouvel onboarding (compte restreint puis rétabli) ne la lui réimpose pas.
+            if (current.contains(PaymentMethod.STRIPE) || announcement.isCardDeclined()) {
                 continue;
             }
             Set<PaymentMethod> withCard = EnumSet.of(PaymentMethod.STRIPE);
@@ -2080,8 +2116,15 @@ public class AnnouncementService {
                     "Wave et Orange Money ne sont plus proposés. Le mobile money passe par le compte "
                     + "de versement du voyageur.");
         }
+        // Liste explicitement vide : au moins un moyen de paiement doit rester actif
+        // (FLUTTER-FT, la carte devient décochable). Absente (null) = défaut historique.
+        if (requested != null && requested.isEmpty()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "payment-method-required", "Payment Method Required",
+                    "Choisissez au moins un moyen de paiement pour ce trajet.");
+        }
         Set<PaymentMethod> chosen;
-        if (requested == null || requested.isEmpty()) {
+        if (requested == null) {
             // Défaut aligné sur la capacité réelle : jamais STRIPE pour un
             // voyageur sans onboarding complet (le trajet serait invendable).
             chosen = traveler.hasActiveStripeConnect()
@@ -2099,6 +2142,17 @@ public class AnnouncementService {
         // 2026-09-09 : une annonce XOF acceptait la carte, et le séquestre Stripe partait en
         // euros pour un montant en francs CFA.
         return com.yadony.api.payments.currency.AnnouncementPaymentRails.restrictToCurrency(chosen, currency);
+    }
+
+    /**
+     * Refus explicite de la carte (FLUTTER-FT) : le voyageur pouvait l'offrir (Stripe Connect
+     * actif, devise qui l'autorise) et l'a décochée. Une liste absente n'est jamais un refus.
+     */
+    static boolean declinesCard(Set<PaymentMethod> requested, UserEntity traveler, String currency) {
+        return requested != null
+                && !requested.contains(PaymentMethod.STRIPE)
+                && traveler.hasActiveStripeConnect()
+                && com.yadony.api.payments.currency.CurrencyPaymentRails.allowsCode(currency, PaymentMethod.STRIPE);
     }
 
     /**

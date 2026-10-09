@@ -66,6 +66,11 @@ public class AnnouncementController {
             @RequestParam(required = false) String transportMode,
             @RequestParam(required = false) Boolean kycVerifiedOnly,
             @RequestParam(required = false) String contentType,
+            // FLUTTER-GD : 0 = direct uniquement, 1 = au plus une escale, absent = peu importe.
+            @RequestParam(required = false) Integer maxStops,
+            // FLUTTER-G0 : moyens de paiement acceptés (STRIPE ou CARD, CASH, MOBILE_MONEY),
+            // répétés ou séparés par des virgules. Garde les trajets qui en offrent au moins un.
+            @RequestParam(required = false) List<String> paymentMethods,
             @RequestParam(required = false) Double userLat,
             @RequestParam(required = false) Double userLng,
             @RequestParam(required = false) Double radiusKm,
@@ -78,7 +83,8 @@ public class AnnouncementController {
                 minAvailableKg, maxAvailableKg, maxPricePerKg, minRating, kiloProOnly, weekendOnly,
                 transportMode, kycVerifiedOnly, contentType,
                 userLat, userLng, radiusKm,
-                sortBy, sortDir, pageable, currentFirebaseUidOrNull(), urgent);
+                sortBy, sortDir, pageable, currentFirebaseUidOrNull(), urgent,
+                new AnnouncementSearchExtras(maxStops, PaymentMethodFilter.parse(paymentMethods)));
         return ResponseEntity.ok(PageResponse.from(page));
     }
 

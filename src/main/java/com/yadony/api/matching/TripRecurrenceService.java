@@ -248,7 +248,8 @@ public class TripRecurrenceService {
                 rec.getCurrency(),
                 // Vol de nuit mémorisé dans la récurrence : la date d'arrivée suit chaque
                 // occurrence. Nulle le même jour, comme un trajet saisi à la main.
-                rec.getArrivalDayOffset() > 0 ? date.plusDays(rec.getArrivalDayOffset()) : null
+                rec.getArrivalDayOffset() > 0 ? date.plusDays(rec.getArrivalDayOffset()) : null,
+                rec.getStopsCount()
         );
     }
 
@@ -275,6 +276,7 @@ public class TripRecurrenceService {
         e.setDepartureTime(r.departureTime());
         e.setArrivalTime(r.arrivalTime());
         e.setArrivalDayOffset(r.arrivalDayOffset() == null ? 0 : r.arrivalDayOffset());
+        e.setStopsCount(TripStops.normalize(r.stopsCount(), parseTransportMode(r.transportMode())));
         e.setCashAccepted(r.cashAccepted());
         e.setWeekdays(r.weekdays());
         int publicationLeadDays = r.publicationLeadDays() != null
@@ -291,6 +293,18 @@ public class TripRecurrenceService {
         e.setCurrency(r.currency() == null || r.currency().isBlank()
                 ? "EUR" : r.currency().toUpperCase(Locale.ROOT));
         e.setActive(r.active());
+    }
+
+    /** Mode inconnu : aucune escale enregistrée, la validation du mode reste à la publication. */
+    private static TransportMode parseTransportMode(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        try {
+            return TransportMode.valueOf(raw.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     private String joinCategories(List<String> categories) {
@@ -323,6 +337,7 @@ public class TripRecurrenceService {
                 e.getWeekdays(), e.getHorizonDays(), e.getStartDate(), e.getEndDate(),
                 e.getWeekInterval(), e.getPublicationLeadDays(), e.getHandoverLeadDays(), e.isActive(),
                 e.getArrivalDayOffset(),
+                e.getStopsCount(),
                 e.getLastGeneratedDate(), e.getLastPublicationErrorCode(),
                 e.getLastPublicationErrorMessage(), e.getLastPublicationErrorAt(), status,
                 nextOccurrence.map(TripRecurrenceCalendar.OccurrenceDate::departureDate).orElse(null),

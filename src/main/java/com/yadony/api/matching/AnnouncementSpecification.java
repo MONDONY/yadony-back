@@ -3,6 +3,13 @@ package com.yadony.api.matching;
 import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.UserBlockEntity;
 import com.yadony.api.auth.UserEntity;
+import com.yadony.api.auth.StripeAccountStatus;
+import com.yadony.api.auth.MobileMoneyPayoutStatus;
+import com.yadony.api.payments.cash.PaymentMethod;
+import com.yadony.api.payments.currency.CurrencyPaymentRails;
+import com.yadony.api.payments.currency.SupportedCurrency;
+import jakarta.persistence.criteria.CriteriaBuilder;
+import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Expression;
 import jakarta.persistence.criteria.Root;
 import jakarta.persistence.criteria.Subquery;
@@ -11,7 +18,11 @@ import org.springframework.data.jpa.domain.Specification;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 public class AnnouncementSpecification {
@@ -110,6 +121,101 @@ public class AnnouncementSpecification {
               .where(cb.isTrue(user.get("kiloPro")));
             return root.get("travelerId").in(sq);
         };
+    }
+
+    /**
+     * Filtre « escales » (FLUTTER-GD), borne lue par {@link TripStops#searchBound}.
+     *
+     * <p>Décision produit sur les trajets sans information (tous ceux publiés avant
+     * FLUTTER-GE, et tout trajet hors avion) :
+     * <ul>
+     *   <li>{@code maxStops = 0} (« Direct uniquement ») : exclus. L'expéditeur qui coche
+     *       « direct » veut une garantie, un trajet non renseigné ne la donne pas ;</li>
+     *   <li>{@code maxStops = 1} (« Max 1 escale ») : inclus, seul le « 2 escales ou plus »
+     *       déclaré est écarté ;</li>
+     *   <li>aucune borne (« Peu importe ») : pas de filtre, tout est inclus.</li>
+     * </ul>
+     */
+    public static Specification<AnnouncementEntity> maxStops(int maxStops) {
+        return (root, query, cb) -> {
+            Expression<Short> stops = root.get("stopsCount");
+            Short bound = (short) maxStops;
+            if (maxStops == 0) {
+                return cb.equal(stops, bound);
+            }
+            return cb.or(cb.isNull(stops), cb.lessThanOrEqualTo(stops, bound));
+        };
+    }
+
+    /**
+     * Filtre « moyens de paiement » (FLUTTER-G0) : garde les trajets qui offrent au moins un
+     * des moyens demandés. Pendant SQL exact de {@code AnnouncementPaymentRails#offerable},
+     * la règle qui calcule {@code availablePaymentMethods} renvoyé par la recherche :
+     * <pre>
+     * espèces      = acceptées par le trajet
+     * carte        = acceptée ET devise qui l'autorise ET voyageur Stripe Connect actif
+     * mobile money = accepté ET devise qui l'autorise ET compte de versement actif
+     * </pre>
+     * Évalué dans la requête, avant la pagination : la page et {@code totalElements} ne
+     * comptent que les trajets retenus. Toute évolution d'{@code offerable} doit être
+     * reportée ici ({@code AnnouncementPaymentMethodFilterIntegrationTest} vérifie l'accord).
+     */
+    public static Specification<AnnouncementEntity> offersAnyPaymentMethod(Collection<PaymentMethod> wanted) {
+        return (root, query, cb) -> {
+            List<Predicate> any = new ArrayList<>();
+            for (PaymentMethod method : wanted) {
+                Predicate offered = switch (method) {
+                    case CASH -> accepts(root, cb, PaymentMethod.CASH);
+                    case STRIPE -> cb.and(
+                            accepts(root, cb, PaymentMethod.STRIPE),
+                            currencyAllows(root, cb, PaymentMethod.STRIPE),
+                            travelerMatches(root, query, cb, "stripeAccountStatus",
+                                    StripeAccountStatus.ONBOARDING_COMPLETE));
+                    case MOBILE_MONEY -> cb.and(
+                            accepts(root, cb, PaymentMethod.MOBILE_MONEY),
+                            currencyAllows(root, cb, PaymentMethod.MOBILE_MONEY),
+                            travelerMatches(root, query, cb, "mobileMoneyStatus",
+                                    MobileMoneyPayoutStatus.ACTIVE));
+                    default -> null; // moyens retirés : jamais offerts
+                };
+                if (offered != null) {
+                    any.add(offered);
+                }
+            }
+            return any.isEmpty() ? cb.disjunction() : cb.or(any.toArray(Predicate[]::new));
+        };
+    }
+
+    /** La liste textuelle « {STRIPE,CASH} » (PaymentMethodSetConverter) contient le moyen. */
+    private static Predicate accepts(Root<AnnouncementEntity> root, CriteriaBuilder cb, PaymentMethod method) {
+        return cb.like(root.get("acceptedPaymentMethods").as(String.class), "%" + method.name() + "%");
+    }
+
+    /**
+     * La devise du trajet autorise le rail ({@link CurrencyPaymentRails}). Une devise inconnue
+     * retombe sur l'EUR ({@link SupportedCurrency#fromCodeOrDefault}) : pour le rail carte,
+     * on exclut donc les devises qui l'interdisent plutôt que de lister celles qui l'autorisent.
+     */
+    private static Predicate currencyAllows(Root<AnnouncementEntity> root, CriteriaBuilder cb, PaymentMethod method) {
+        Expression<String> currency = cb.upper(root.get("currency"));
+        boolean defaultAllows = CurrencyPaymentRails.allows(SupportedCurrency.EUR, method);
+        List<String> codes = Arrays.stream(SupportedCurrency.values())
+                .filter(c -> CurrencyPaymentRails.allows(c, method) != defaultAllows)
+                .map(c -> c.code().toUpperCase(Locale.ROOT))
+                .toList();
+        if (codes.isEmpty()) {
+            return defaultAllows ? cb.conjunction() : cb.disjunction();
+        }
+        return defaultAllows ? cb.not(currency.in(codes)) : currency.in(codes);
+    }
+
+    private static Predicate travelerMatches(Root<AnnouncementEntity> root,
+                                             jakarta.persistence.criteria.CriteriaQuery<?> query,
+                                             CriteriaBuilder cb, String attribute, Object value) {
+        Subquery<UUID> sq = query.subquery(UUID.class);
+        Root<UserEntity> user = sq.from(UserEntity.class);
+        sq.select(user.<UUID>get("id")).where(cb.equal(user.get(attribute), value));
+        return root.get("travelerId").in(sq);
     }
 
     public static Specification<AnnouncementEntity> hasTransportMode(TransportMode mode) {

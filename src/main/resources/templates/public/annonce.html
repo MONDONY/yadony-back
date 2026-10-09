@@ -149,6 +149,10 @@
         <dt>Départ</dt>
         <dd th:text="${departureDate}">jeudi 20 août 2026</dd>
       </div>
+      <div class="row" th:if="${stops != null}">
+        <dt>Vol</dt>
+        <dd th:text="${stops}">Direct</dd>
+      </div>
       <div class="row" th:if="${handoverDeadline != null}">
         <dt>Date limite de dépôt</dt>
         <dd th:text="${handoverDeadline}">mercredi 19 août à 19h00</dd>
