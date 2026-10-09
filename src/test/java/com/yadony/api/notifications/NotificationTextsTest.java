@@ -89,6 +89,7 @@ class NotificationTextsTest {
         map.put("handoverReminder sans lieu", NotificationTexts.handoverReminder(m, " "));
         map.put("confirmationCodeReady", NotificationTexts.confirmationCodeReady(m));
         map.put("confirmationCodeBlocked", NotificationTexts.confirmationCodeBlocked(m));
+        map.put("confirmationCodeRequested", NotificationTexts.confirmationCodeRequested(m));
         map.put("deliveryConfirmed", NotificationTexts.deliveryConfirmed(m));
         map.put("deliveryNoShowForSender", NotificationTexts.deliveryNoShowForSender(m));
         map.put("deliveryNoShowForTraveler", NotificationTexts.deliveryNoShowForTraveler(m));
@@ -281,6 +282,18 @@ class NotificationTextsTest {
         assertThat(fr.body()).contains("Trop d'essais").contains("nouveau code");
         assertThat(en.title()).isEqualTo("Pickup code blocked");
         assertThat(en.body()).contains("new code");
+    }
+
+    // FLUTTER-G2 : le voyageur demande un nouveau code ; l'expéditeur doit comprendre
+    // qu'il lui revient de le générer.
+    @Test
+    void confirmationCodeRequested_asksSenderToGenerateTheCode() {
+        var fr = NotificationTexts.confirmationCodeRequested(TestMessages.fr());
+        var en = NotificationTexts.confirmationCodeRequested(TestMessages.en());
+        assertThat(fr.title()).isEqualTo("Nouveau code demandé");
+        assertThat(fr.body()).isEqualTo("Le voyageur demande un nouveau code de retrait. Générez-le maintenant.");
+        assertThat(en.title()).isEqualTo("New code requested");
+        assertThat(en.body()).contains("new pickup code").contains("Generate");
     }
 
     @Test

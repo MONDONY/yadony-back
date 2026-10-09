@@ -55,6 +55,15 @@ class NotificationDeeplinkTest {
         assertThat(NotificationDeeplink.of("BID_EXPIRED", Map.of())).isEmpty();
     }
 
+    /** FLUTTER-G2 : la demande du voyageur ouvre le colis directement sur la régénération du code. */
+    @Test
+    void codeRequestedOpensTheBidOnTheCodeRenewal() {
+        assertThat(NotificationDeeplink.of("CONFIRMATION_CODE_REQUESTED", Map.of("bidId", bidId)))
+                .contains("yadony://bids/" + bidId + "?action=new-code");
+        assertThat(NotificationDeeplink.of("CONFIRMATION_CODE_REQUESTED", Map.of("bidId", "../admin"))).isEmpty();
+        assertThat(NotificationCategory.fromType("CONFIRMATION_CODE_REQUESTED")).isEqualTo(NotificationCategory.COLIS);
+    }
+
     /** Le destinataire suit son colis depuis ses réceptions ; l'expéditeur reste sur le bid. */
     @Test
     void recipientTypesOpenTheReception() {

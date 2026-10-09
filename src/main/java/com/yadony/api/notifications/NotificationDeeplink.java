@@ -52,6 +52,10 @@ public final class NotificationDeeplink {
             case "BID_CREATED" -> bidId.map(id -> "demandes?bid=" + id)
                     .or(() -> announcementId.map(id -> "announcements/" + id + "/bids"));
 
+            // Demande du voyageur (FLUTTER-G2) : le colis s'ouvre directement sur la
+            // régénération du code. Une app antérieure qui ignore la query ouvre le colis.
+            case "CONFIRMATION_CODE_REQUESTED" -> bidId.map(id -> "bids/" + id + "?action=new-code");
+
             case "BID_ACCEPTED", "DELIVERY_CONFIRMED", "PAYMENT_RELEASED", "DISPUTE_OPENED", "PARCEL_REFUSED",
                  "CONFIRMATION_CODE_READY", "CONFIRMATION_CODE_BLOCKED", "DELIVERY_NOSHOW_REPORTED", "MM_PAYMENT_PENDING",
                  "HANDOVER_REMINDER_H2", "MOBILE_MONEY_PAYMENT_CONFIRMED", "SENDER_NOSHOW_REPORTED", "NOSHOW_DECISION", "MOBILE_MONEY_PAYMENT_FAILED",
