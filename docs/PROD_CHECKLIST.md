@@ -1172,3 +1172,15 @@ saturait (187 requêtes en attente) et les requêtes finissaient en **500 après
 - [ ] Recette staging : archiver une conversation puis « Annuler » (pas de plantage) ; un message « Réessayer » disparaît seul ;
       photo blanche en plein écran fermée par la croix et par un glissement ; création d'un voyage avec « Publier en XOF »
       (confirmation, devise sur chaque étape, prix d'étape plafonné) ; sélection groupée « mode recette » dans Utilisateurs.
+
+#### 9.12 bis : prix minimum au kilo (back #468, app #577)
+
+- Minimum = **1 €/kg converti**, arrondi vers le haut : EUR 1,00 · USD 1,08 · CAD 1,47 · GBP 0,86 · CHF 0,95 · **XOF/XAF 656**.
+  Même erreur que le plafond (`422 price-out-of-bounds`, nouvelle propriété `reason` = `too-low` / `too-high`, plus `min`, `max`,
+  `currency`, `legIndex` sur une étape). Appliqué au trajet simple, aux étapes, à la modification, aux récurrences et aux modèles.
+- Les prix au kilo issus d'une négociation (`NegotiationService`) ne passent pas par ce plancher.
+- [ ] Contrôle prod (lecture seule) avant la mise en prod : annonces actives **sous** le minimum de leur devise (refusées à leur
+      prochaine modification), ex. `SELECT currency, count(*) FROM announcements WHERE deleted_at IS NULL AND status = 'ACTIVE'
+      AND ((currency = 'EUR' AND price_per_kg < 1) OR (currency IN ('XOF','XAF') AND price_per_kg < 656)) GROUP BY currency;`
+      (staging le 09/10 : 1 en EUR, 1 en XOF). Prévenir les voyageurs concernés.
+- [ ] Recette staging : une étape à 8 F CFA/kg est bloquée dans l'app (« Prix trop bas : minimum 656 F CFA/kg ») et refusée par le serveur.
