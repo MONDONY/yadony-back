@@ -117,16 +117,23 @@ public class BidController {
      *
      * <p>{@code status} se répète ({@code ?status=ACCEPTED&status=IN_TRANSIT}) ; absent,
      * tous les statuts de colis.
+     *
+     * <p>{@code includeNegotiating=true} ajoute les offres de prix encore ouvertes
+     * (NEGOTIATING) de l'appelant, quel que soit {@code status} : l'accueil marque
+     * ainsi « Offre envoyée » sur la carte du trajet (FLUTTER-GC). Absent ou faux,
+     * le contrat est inchangé — Suivi, hub et compteurs ne voient jamais de fil.
      */
     @GetMapping(value = "/bids/me", params = "page")
     public ResponseEntity<PageResponse<BidResponse>> getMyBidsPage(
             @RequestParam int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) Set<BidStatus> status,
-            @RequestParam(required = false) UUID announcementId) {
+            @RequestParam(required = false) UUID announcementId,
+            @RequestParam(defaultValue = "false") boolean includeNegotiating) {
         String firebaseUid = requireFirebaseUid();
         return ResponseEntity.ok(bidService.getMyBidsPage(
-                firebaseUid, status == null ? Set.of() : EnumSet.copyOf(status), announcementId, page, size));
+                firebaseUid, status == null ? Set.of() : EnumSet.copyOf(status), announcementId, page, size,
+                includeNegotiating));
     }
 
     /**

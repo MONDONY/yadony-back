@@ -362,6 +362,9 @@ yadony:
       inactivity-hours: ${YADONY_MATCHING_NEGOTIATION_INACTIVITY_HOURS:72}
       awaiting-payment-hours: ${YADONY_MATCHING_NEGOTIATION_AWAITING_PAYMENT_HOURS:24}
       expire-check-cron: ${YADONY_MATCHING_NEGOTIATION_EXPIRE_CRON:0 */15 * * * *}
+    # FLUTTER-GA : annulation des demandes non engagées à la date limite de dépôt du trajet.
+    handover-deadline:
+      expire-check-cron: ${YADONY_MATCHING_HANDOVER_DEADLINE_EXPIRE_CRON:0 */5 * * * *}
   negotiation:
     # Délai laissé au voyageur pour régler la commission Yadony d'un accord en
     # espèces avant que le thread expire et libère la demande (AWAITING_COMMISSION).

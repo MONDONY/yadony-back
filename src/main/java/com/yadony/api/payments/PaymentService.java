@@ -498,6 +498,12 @@ public class PaymentService {
                     "announcement-not-active", "Announcement Not Active",
                     "Cette annonce n'est plus disponible");
         }
+        // FLUTTER-GA : passé la date limite de dépôt, aucune demande pas encore acceptée ne
+        // s'engage plus. Un colis déjà ACCEPTED (ancien parcours « payer après acceptation »)
+        // reste payable : il est engagé, ce n'est plus à cette garde d'en décider.
+        if (bid.getStatus() != BidStatus.ACCEPTED) {
+            com.yadony.api.matching.HandoverDeadlineRules.assertNotPassed(announcement);
+        }
 
         SupportedCurrency currency = settleBidCurrency(bid, announcement, bidCurrency);
 

@@ -46,5 +46,9 @@ public record BidNegotiationResponse(
         List<BidNegotiationMessageResponse> messages,
         // Mode figé à la proposition (STRIPE, CASH, MOBILE_MONEY) : l'app en déduit le
         // geste de paiement après l'accord (carte → checkout, mobile money → dépôt pawaPay).
-        String paymentMethod
+        String paymentMethod,
+        // FLUTTER-G8 : identifiant de la contrepartie (voyageur pour l'expéditeur, et
+        // inversement), pour ouvrir son profil public depuis la carte du fil. Champ
+        // ajouté en fin de contrat : un client qui l'ignore ne change pas.
+        UUID counterpartyId
 ) {}

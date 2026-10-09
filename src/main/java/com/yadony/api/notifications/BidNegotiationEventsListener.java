@@ -60,10 +60,21 @@ public class BidNegotiationEventsListener {
         // les deux comptes sont masqués l'un pour l'autre, la discussion morte n'a plus à
         // être annoncée. Aucun risque de couper une coordination, une négociation expirée
         // ne liant plus personne.
-        var forSender = NotificationTexts.bidNegotiationExpired(dispatcher.messagesFor(e.senderId()));
+        // Date limite de dépôt passée (FLUTTER-GA) : la discussion ne s'est pas « éteinte »,
+        // elle a été annulée parce que le colis ne pouvait plus être remis — texte dédié.
+        boolean deadline = HANDOVER_DEADLINE_REASON.equals(e.reason());
+        var forSender = textForExpiry(dispatcher.messagesFor(e.senderId()), deadline);
         dispatcher.notifyUnlessBlocked(e.senderId(), e.travelerId(), forSender.title(), forSender.body(), data);
-        var forTraveler = NotificationTexts.bidNegotiationExpired(dispatcher.messagesFor(e.travelerId()));
+        var forTraveler = textForExpiry(dispatcher.messagesFor(e.travelerId()), deadline);
         dispatcher.notifyUnlessBlocked(e.travelerId(), e.senderId(), forTraveler.title(), forTraveler.body(), data);
+    }
+
+    static final String HANDOVER_DEADLINE_REASON = com.yadony.api.matching.HandoverDeadlineRules.EXPIRY_REASON;
+
+    private static NotificationText textForExpiry(Messages m, boolean handoverDeadline) {
+        return handoverDeadline
+                ? NotificationTexts.handoverDeadlinePassed(m)
+                : NotificationTexts.bidNegotiationExpired(m);
     }
 
     private static NotificationText textFor(Messages m, BidNegotiationMessagePostedEvent e) {

@@ -97,6 +97,22 @@ class BidNegotiationEventsListenerTest {
     }
 
     @Test
+    @DisplayName("date limite de dépôt passée : texte dédié aux deux parties (FLUTTER-GA)")
+    void handoverDeadlineExpiryUsesDedicatedText() {
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+
+        listener.onExpired(new BidNegotiationExpiredEvent(
+                BID_ID, ANNOUNCEMENT_ID, senderId, travelerId, "HANDOVER_DEADLINE_PASSED"));
+
+        verify(dispatcher).notifyUnlessBlocked(eq(senderId), eq(travelerId),
+                eq("Date limite de dépôt passée"),
+                eq("La date limite de dépôt est passée : demande annulée."), anyMap());
+        verify(dispatcher).notifyUnlessBlocked(eq(travelerId), eq(senderId),
+                eq("Date limite de dépôt passée"), anyString(), anyMap());
+    }
+
+    @Test
     @DisplayName("chaque type de message porte son propre titre")
     void everyKindHasItsOwnTitle() {
         for (BidNegotiationMessageKind kind : BidNegotiationMessageKind.values()) {

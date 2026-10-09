@@ -870,6 +870,38 @@ class MobileMoneyBidPaymentServiceTest {
         assertThat(announcement.getAvailableKg()).isEqualByComparingTo("20");
     }
 
+    @Test
+    void acceptBid_afterHandoverDeadline_is409_withoutReservingCapacity() {
+        stubLocks();
+        when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+        when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.empty());
+        announcement.setTimezone("Africa/Dakar");
+        announcement.setHandoverDeadline(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+
+        assertThatThrownBy(() -> service.acceptBid(bid.getId(), traveler.getId()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("handover-deadline-passed");
+        verify(paymentRepository, never()).save(any());
+        assertThat(announcement.getAvailableKg()).isEqualByComparingTo("20");
+    }
+
+    @Test
+    void initiateDeposit_afterHandoverDeadline_is409_withoutSubmitting() {
+        bid.setStatus(BidStatus.AWAITING_PAYMENT);
+        bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
+        PaymentEntity payment = pendingPayment();
+        when(paymentRepository.findByBidIdForUpdate(bid.getId())).thenReturn(Optional.of(payment));
+        when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
+        when(operations.findLive(any(), any())).thenReturn(Optional.empty());
+        announcement.setTimezone("Africa/Dakar");
+        announcement.setHandoverDeadline(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+
+        assertThatThrownBy(() -> service.initiateDeposit(bid.getId(), sender.getId(), null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("handover-deadline-passed");
+        verify(submission, never()).submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
     // ── Branches d'erreur d'initiateDeposit (résolution du payeur) ──────────
 
     @Test

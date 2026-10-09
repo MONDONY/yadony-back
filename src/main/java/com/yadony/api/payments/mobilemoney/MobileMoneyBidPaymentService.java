@@ -208,6 +208,8 @@ public class MobileMoneyBidPaymentService {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "announcement-not-accepting",
                     "Announcement Not Accepting", "Ce trajet n'accepte plus de colis");
         }
+        // FLUTTER-GA : acceptation refusée après la date limite de dépôt (fuseau du trajet).
+        com.yadony.api.matching.HandoverDeadlineRules.assertNotPassed(announcement);
         boolean kgFree = announcement.getCapacityUnit() == CapacityUnit.KG_FREE;
         if (!kgFree && bid.getWeightKg() != null && bid.getWeightKg().compareTo(announcement.getAvailableKg()) > 0) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "capacity-insufficient", "Insufficient Capacity",
@@ -294,6 +296,12 @@ public class MobileMoneyBidPaymentService {
         if (!props.enabled()) {
             throw PawapayErrors.disabled();
         }
+        // FLUTTER-GA : aucun NOUVEAU dépôt après la date limite de dépôt du trajet — placée
+        // après la branche idempotente, comme l'interrupteur : un dépôt déjà en vol se relit.
+        // HandoverDeadlineExpiryScheduler avance l'échéance de paiement, et l'expiration
+        // mobile money existante annule le colis et rend la capacité.
+        announcementRepository.findById(bid.getAnnouncementId())
+                .ifPresent(com.yadony.api.matching.HandoverDeadlineRules::assertNotPassed);
 
         String msisdn = resolvePayerMsisdn(bid, phoneOverride, payment.getCurrency());
         // Une panne pawaPay remonte en 502 normalisé du rail : en 500 générique, le verrou

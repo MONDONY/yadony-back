@@ -984,6 +984,9 @@ public class CashCommissionService {
                     "announcement-not-accepting", "Announcement Not Accepting",
                     "Ce trajet n'accepte plus de colis");
         }
+        // FLUTTER-GA : même garde avant tout débit — une demande acceptée après la date
+        // limite de dépôt deviendrait un colis que le voyageur ne peut plus recevoir.
+        com.yadony.api.matching.HandoverDeadlineRules.assertNotPassed(announcement);
         // « Kilo libre » (KG_FREE) : capacité non bornée — pas de rejet de capacité.
         // Un bid grille pure n'a pas de poids (weightKg null) → aucun contrôle de
         // capacité kilo à faire (sinon NPE).
