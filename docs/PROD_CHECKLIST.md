@@ -1282,3 +1282,26 @@ saturait (187 requêtes en attente) et les requêtes finissaient en **500 après
 - [ ] Recette staging : un fil de trajet réglé (ex. bid `1ca56398`, trajet Abidjan → Ouagadougou) apparaît dans « Terminées »,
       s'ouvre, s'archive puis se désarchive ; « Autre » → France enregistrée ; création de PIN en 2 étapes ; aperçu d'une demande
       en XOF affiché en F CFA ; tuiles colis cliquables.
+
+#### 9.16 Nuit du 09 au 10/10 : back #480 et #481, app #584 à #587 (FLUTTER-HN, HP, HQ, HR, HS, HT, HV)
+
+> Ajoutée le 10/10/2026. Aucune migration (dernière : **V309**, prochaine **V310**), aucun secret, aucune nouvelle variable.
+> Staging = `sha-f21ad41` (#480 + #481), déployé le 09/10 ~23:30 UTC, API saine.
+
+| PR | Sujet | À savoir |
+|---|---|---|
+| back #480 | `GET /bids/{id}` renvoie **404 `bid-not-found`** au participant qui a retiré la demande de sa liste (`deleted_by_sender` / `deleted_by_traveler`) ; l'autre participant la voit toujours (FLUTTER-HS). L'expéditeur ne reçoit plus « Demande refusée » quand il annule lui-même. | **Changement de comportement** : une notification d'une demande retirée ouvre désormais « demande introuvable ». L'app gère déjà le 404, pas de PR jumelle. |
+| back #481 | Nouvel endpoint en lecture seule `GET /api/v1/payments/me/overview` (« Mon argent ») : soldes du portefeuille par devise, montants en séquestre par colis avec état et condition/date de libération, totaux. | Requête SQL unique, filtrée sur l'utilisateur connecté, soft delete respecté. **Jumelle de app #587** : back avant app. |
+| app #584, #585 | Voyage multi-étapes : devise propre à chaque étape (défaut = pays de départ, modifiable), feuille d'étape refaite, moyens de paiement choisis dans la feuille de chaque étape (FLUTTER-HP, HN) | Client seul ; le back accepte déjà une devise et des moyens de paiement par étape. |
+| app #586 | Le détail d'un colis se rafraîchit après une note envoyée depuis l'invite automatique (FLUTTER-HQ) ; « Voir mon colis » depuis une notification de trajet ouvre bien le colis (FLUTTER-HR) | Client seul. |
+| app #587 | Pastille portefeuille dans l'en-tête de l'accueil + écran « Mon argent » (frise Payé → Remis → Livré → Versé) (FLUTTER-HV) | Sans #481, l'écran affiche un repli (ancien back) : déployer le back d'abord. |
+
+- [ ] Tag prod : doit contenir `f21ad41e` (#481), `abd89575` (#480), et les tags déjà exigés en 9.13 à 9.15.
+- [ ] Après la mise en prod : `GET /api/v1/payments/me/overview` répond en moins de 500 ms pour un voyageur actif ; aucun montant
+      d'un autre utilisateur (contrôle sur deux comptes de test).
+- [ ] Recette staging : demande retirée puis notification → « demande introuvable » ; annulation par l'expéditeur sans notification
+      « refusée » ; note depuis l'invite → bouton « Noter » disparu ; « Voir mon colis » depuis une alerte de trajet ; voyage
+      Paris → Bouaké → Bamako avec étape en F CFA et moyens de paiement cochés ; « Mon argent » : séquestre, date de libération,
+      soldes multi-devises, texte à 200 % (pastille en icône seule).
+- [ ] À trancher plus tard (hors périmètre) : « Annuler la demande » en `AWAITING_PAYMENT` ne fait que retirer la demande côté
+      expéditeur (`DELETE /bids/{id}/me`) sans changer son statut ; le voyageur la voit toujours en attente de paiement.
