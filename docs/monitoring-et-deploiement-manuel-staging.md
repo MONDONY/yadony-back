@@ -157,8 +157,8 @@ ssh debian@141.95.41.96 'docker exec yadony_prometheus wget -qO- "http://localho
 # Dashboards chargés dans Grafana ?
 ssh debian@141.95.41.96 'docker exec yadony_grafana wget -qO- "http://admin:admin@localhost:3000/api/search?type=dash-db" | grep -o "\"title\":\"[^\"]*\""'
 
-# Logs stripe-cli (doit afficher "Ready! ... webhook signing secret is whsec_...")
-ssh debian@141.95.41.96 'docker logs yadony_stripe_cli_payments --tail 5'
+# Derniers webhooks Stripe de paiement reçus (endpoint we_1UOeu69i7EY14IsEeZ5SPhqG, mode test)
+ssh debian@92.222.78.78 'docker exec -i yadony_db_staging sh -c "psql -U \$POSTGRES_USER -d \$POSTGRES_DB -tAc \"SELECT event_type, status, received_at FROM stripe_event_inbox WHERE source = \x27PAYMENTS\x27 ORDER BY received_at DESC LIMIT 5\""'
 ```
 
 ---
@@ -205,16 +205,13 @@ EOF
 ```
 
 ### Webhooks Stripe non validés (signature)
-`stripe listen` génère son **propre** secret de signature (`whsec_...`, visible dans
-`docker logs yadony_stripe_cli_payments`). L'API valide avec `STRIPE_WEBHOOK_SECRET`.
-Pour que les webhooks forwardés par stripe-cli soient acceptés, mettre dans `~/yadony/.env.staging` :
-```
-STRIPE_WEBHOOK_SECRET=whsec_<valeur affichée par stripe-cli>
-```
-puis recréer l'API :
-```bash
-ssh debian@141.95.41.96 'cd ~/yadony && docker compose --env-file .env.staging -f docker-compose.staging.yml up -d --force-recreate api'
-```
+Depuis le 09/10/2026, les paiements de staging arrivent par un vrai endpoint Stripe (mode test)
+`https://api-staging.yadony.com/api/v1/payments/webhook` (`we_1UOeu69i7EY14IsEeZ5SPhqG`), et non plus
+par le relais `stripe listen` (`stripe-cli-payments`, retiré : il ne transmettait que 6 types d'événements,
+sans `payment_intent.amount_capturable_updated`). L'API valide avec `STRIPE_WEBHOOK_PAYMENTS_SECRET`
+(environnement GitHub `staging`, réécrit dans `.env.staging` à chaque déploiement) = secret de signature de
+cet endpoint dans le tableau de bord Stripe. Un refus de signature laisse une ligne
+`Invalid Stripe webhook signature for source=PAYMENTS` dans `docker logs yadony_api`.
 
 ---
 
@@ -240,4 +237,4 @@ docker exec yadony_prometheus wget -qO- "http://localhost:9090/api/v1/query?quer
 ```
 
 Services : `api`, `db`, `db-backup`, `nginx`, `certbot`, `prometheus`, `grafana`, `alloy`,
-`stripe-cli-payments`, `stripe-cli-kyc`.
+`stripe-cli-kyc`.
