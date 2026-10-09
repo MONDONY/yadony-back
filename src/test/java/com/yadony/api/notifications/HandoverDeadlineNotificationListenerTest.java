@@ -68,4 +68,24 @@ class HandoverDeadlineNotificationListenerTest {
                 eq("La date limite de dépôt est passée : demande annulée."), anyMap());
         verify(dispatcher, never()).notifyUser(eq(TRAVELER_ID), anyString(), anyString(), anyMap());
     }
+
+    @Test
+    @DisplayName("demande carte jamais payée, supprimée : la notification ouvre le trajet, pas la demande")
+    void removedRequestOpensTheTrip() {
+        listener.onHandoverDeadlinePassed(new BidHandoverDeadlinePassedEvent(
+                BID_ID, ANNOUNCEMENT_ID, SENDER_ID, TRAVELER_ID, false, false, true));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, String>> data = ArgumentCaptor.forClass(Map.class);
+        verify(dispatcher).notifyUser(eq(SENDER_ID), anyString(),
+                eq("La date limite de dépôt est passée : demande annulée."), data.capture());
+        assertThat(data.getValue())
+                .containsEntry("type", "BID_EXPIRED")
+                .containsEntry("reason", "HANDOVER_DEADLINE_PASSED")
+                .containsEntry("announcementId", ANNOUNCEMENT_ID.toString())
+                .doesNotContainKey("bidId");
+        assertThat(NotificationDeeplink.of("BID_EXPIRED", data.getValue()))
+                .contains("yadony://traveler/" + ANNOUNCEMENT_ID);
+        verify(dispatcher, never()).notifyUser(eq(TRAVELER_ID), anyString(), anyString(), anyMap());
+    }
 }

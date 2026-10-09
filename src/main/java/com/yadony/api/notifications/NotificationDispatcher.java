@@ -447,11 +447,21 @@ public class NotificationDispatcher {
     @Async
     public void onTripCancelled(TripCancelledEvent event) {
         if (event.getAffectedSenderIds() == null) return;
-        // Retrait de l'expéditeur après un report : c'est lui qui a agi, le trajet n'est
-        // pas annulé. Le voyageur est prévenu par onTripRescheduleDecided.
-        if (CancellationReason.TRIP_RESCHEDULE_WITHDRAWN.name().equals(event.getReason())) return;
         List<UUID> senderIds = event.getAffectedSenderIds();
         List<UUID> bidIds = event.getAffectedBidIds();
+        // Retrait de l'expéditeur après un report : c'est lui qui a agi, le trajet n'est
+        // pas annulé (le voyageur est prévenu par onTripRescheduleDecided ou
+        // onParcelReturnToSenderRequested). Seul un colis déjà remis vaut à l'expéditeur
+        // PARCEL_RETURN_REQUIRED : son code de retour est dans le suivi.
+        if (CancellationReason.TRIP_RESCHEDULE_WITHDRAWN.name().equals(event.getReason())) {
+            if (bidIds == null || bidIds.size() != senderIds.size()) return;
+            for (int i = 0; i < senderIds.size(); i++) {
+                if (event.getReturnRequiredBidIds().contains(bidIds.get(i))) {
+                    notifyTripCancelledSender(event, senderIds.get(i), bidIds.get(i));
+                }
+            }
+            return;
+        }
         // Les deux listes sont alignées (un expéditeur par bid). Un émetteur qui ne les
         // alignerait pas retombe sur l'ancien envoi par expéditeur, sans colis cible.
         boolean aligned = bidIds != null && bidIds.size() == senderIds.size();
@@ -516,8 +526,11 @@ public class NotificationDispatcher {
     @Async
     public void onTripRescheduleDecided(TripRescheduleDecidedEvent event) {
         if (event.travelerId() == null) return;
-        Messages m = messagesFor(event.travelerId());
         boolean kept = event.decision() == RescheduleDecision.KEEP;
+        // Colis déjà remis : PARCEL_RETURN_TO_SENDER prévient le voyageur (date et code de
+        // retour), « colis retiré, il est remboursé » ferait doublon.
+        if (!kept && event.parcelReturnRequired()) return;
+        Messages m = messagesFor(event.travelerId());
         var text = kept ? NotificationTexts.tripRescheduleKept(m, event.senderFirstName()) : NotificationTexts.tripRescheduleWithdrawn(m);
         notifyUser(event.travelerId(), text.title(), text.body(),
                 Map.of("type", kept ? "TRIP_RESCHEDULE_KEPT" : "TRIP_RESCHEDULE_WITHDRAWN",

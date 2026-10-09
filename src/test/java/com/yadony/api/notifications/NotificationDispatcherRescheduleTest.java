@@ -115,6 +115,27 @@ class NotificationDispatcherRescheduleTest {
     }
 
     @Test
+    void onTripRescheduleDecided_withdrawalOfAHandedOverParcel_leavesItToTheReturnNotification() {
+        dispatcher.onTripRescheduleDecided(new TripRescheduleDecidedEvent(bidId, senderId, travelerId,
+                RescheduleDecision.WITHDRAW, "Awa", true));
+
+        verifyNoInteractions(fcmService, notificationService);
+    }
+
+    @Test
+    void onTripCancelled_afterAWithdrawalOfAHandedOverParcel_givesTheSenderTheReturnCode() {
+        dispatcher.onTripCancelled(new TripCancelledEvent(UUID.randomUUID(), travelerId, List.of(senderId),
+                "TRIP_RESCHEDULE_WITHDRAWN", List.of(bidId), Map.of(bidId, "STRIPE"), Map.of(), Map.of(),
+                java.util.Set.of(bidId)));
+
+        verify(notificationService).persist(eq(senderId), eq("PARCEL_RETURN_REQUIRED"), eq("Colis à vous restituer"),
+                eq("Remboursement en cours. Le code de retour est dans le suivi du colis."),
+                eq(Map.of("type", "PARCEL_RETURN_REQUIRED", "bidId", bidId.toString())), eq(false));
+        verify(notificationService, org.mockito.Mockito.times(1))
+                .persist(any(), any(), any(), any(), any(), anyBoolean());
+    }
+
+    @Test
     void onTripCancelled_afterAWithdrawal_staysSilent() {
         dispatcher.onTripCancelled(new TripCancelledEvent(UUID.randomUUID(), travelerId, List.of(senderId),
                 "TRIP_RESCHEDULE_WITHDRAWN", List.of(bidId)));

@@ -10,6 +10,10 @@ import java.util.UUID;
  * @param refunded       un paiement était en séquestre et va être rendu intégralement
  * @param notifyTraveler le voyageur connaissait la demande (une demande carte jamais payée
  *                       ni négociée ne lui a jamais été présentée)
+ * @param requestRemoved la demande va disparaître : une demande carte jamais payée est
+ *                       supprimée logiquement par l'expiration de paiement existante
+ *                       ({@code AwaitingPaymentCleanupScheduler}). La notification ouvre
+ *                       alors le trajet, jamais une demande devenue introuvable.
  */
 public record BidHandoverDeadlinePassedEvent(
         UUID bidId,
@@ -17,5 +21,12 @@ public record BidHandoverDeadlinePassedEvent(
         UUID senderId,
         UUID travelerId,
         boolean refunded,
-        boolean notifyTraveler
-) {}
+        boolean notifyTraveler,
+        boolean requestRemoved
+) {
+    /** Demande conservée (EXPIRED) : la notification ouvre la demande. */
+    public BidHandoverDeadlinePassedEvent(UUID bidId, UUID announcementId, UUID senderId, UUID travelerId,
+                                          boolean refunded, boolean notifyTraveler) {
+        this(bidId, announcementId, senderId, travelerId, refunded, notifyTraveler, false);
+    }
+}

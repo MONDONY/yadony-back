@@ -2,6 +2,7 @@ package com.yadony.api.cancellation;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.cancellation.events.ParcelReturnToSenderRequestedEvent;
 import com.yadony.api.cancellation.events.TravelerHighCancellationEvent;
 import com.yadony.api.cancellation.events.TripCancelledEvent;
 import com.yadony.api.cancellation.events.TripRescheduleDecidedEvent;
@@ -143,19 +144,46 @@ class RescheduleDecisionServiceTest {
         assertThat(refund.getAffectedBidIds()).containsExactly(bidId);
         assertThat(refund.getBidPaymentMethods()).containsEntry(bidId, "STRIPE");
         assertThat(refund.getRematchBySender().get(senderId).suggestionCount()).isEqualTo(2);
+        assertThat(refund.getReturnRequiredBidIds()).isEmpty();
         assertThat(events.getAllValues().get(1)).isEqualTo(new TripRescheduleDecidedEvent(
                 bidId, senderId, travelerId, RescheduleDecision.WITHDRAW, "Awa"));
     }
 
     @Test
-    void withdraw_handedOverParcel_generatesAReturnCode() {
+    void withdraw_handedOverParcel_opensTheSameReturnProcedureAsACancellationAfterHandover() {
         bid.setStatus(BidStatus.HANDED_OVER);
 
         service.decide("uid-sender", bidId, RescheduleDecision.WITHDRAW);
 
         assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
         assertThat(bid.getReturnCode()).hasSize(6);
-        assertThat(bid.getReturnDeadline()).isAfter(LocalDateTime.now().plusDays(2));
+        assertThat(bid.getReturnCodeAttempts()).isZero();
+        assertThat(bid.getReturnDeadline()).isAfter(LocalDateTime.now().plusDays(2))
+                .isBefore(LocalDateTime.now().plusDays(3).plusMinutes(1));
+        assertThat(bid.getReturnCodeExpiry()).isEqualTo(bid.getReturnDeadline());
+        // Contact ouvert pendant le retour, fermé à l'échéance.
+        assertThat(com.yadony.api.matching.ContactWindow.isOpen(bid, 7, LocalDateTime.now())).isTrue();
+
+        verify(auditService).log(eq("BID"), eq(bidId), eq("RETURN_CODE_GENERATED"), eq(senderId),
+                eq(Map.of("returnDeadline", String.valueOf(bid.getReturnDeadline()),
+                          "trigger", "TRIP_RESCHEDULE_WITHDRAWN")));
+        verify(auditService).log(eq("BID"), eq(bidId), eq("TRIP_RESCHEDULE_WITHDRAWN"), eq(senderId),
+                eq(Map.of("rescheduleId", rescheduleId.toString(), "handedOver", "true",
+                          "paymentMethod", "STRIPE")));
+
+        ArgumentCaptor<Object> events = ArgumentCaptor.forClass(Object.class);
+        verify(eventPublisher, times(3)).publishEvent(events.capture());
+        // Remboursement intégral, colis à restituer : PARCEL_RETURN_REQUIRED pour l'expéditeur.
+        TripCancelledEvent refund = (TripCancelledEvent) events.getAllValues().get(0);
+        assertThat(refund.getReason()).isEqualTo("TRIP_RESCHEDULE_WITHDRAWN");
+        assertThat(refund.getAffectedBidIds()).containsExactly(bidId);
+        assertThat(refund.getReturnRequiredBidIds()).containsExactly(bidId);
+        // Le voyageur rend le colis avant la date (PARCEL_RETURN_TO_SENDER).
+        assertThat(events.getAllValues().get(1)).isEqualTo(new ParcelReturnToSenderRequestedEvent(
+                bidId, travelerId, senderId, bid.getReturnDeadline().toLocalDate()));
+        // Pas de « colis retiré » en doublon : l'événement le signale.
+        assertThat(events.getAllValues().get(2)).isEqualTo(new TripRescheduleDecidedEvent(
+                bidId, senderId, travelerId, RescheduleDecision.WITHDRAW, "Awa", true));
     }
 
     @Test

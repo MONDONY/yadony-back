@@ -115,11 +115,12 @@ public class HandoverDeadlineExpiryRunner {
 
         // Mobile money : l'expiration existante prévient déjà les deux parties ; une seconde
         // notification ferait doublon. Carte : l'abandon est silencieux, on prévient ici —
-        // le voyageur seulement s'il connaissait la demande (accord négocié).
+        // le voyageur seulement s'il connaissait la demande (accord négocié). La demande
+        // carte sera supprimée logiquement à l'abandon : la notification ouvre le trajet.
         if (bid.getPaymentMethod() != PaymentMethod.MOBILE_MONEY) {
             eventPublisher.publishEvent(new BidHandoverDeadlinePassedEvent(
                     bid.getId(), announcement.getId(), bid.getSenderId(), announcement.getTravelerId(),
-                    false, bid.getNegotiatedGrossEur() != null));
+                    false, bid.getNegotiatedGrossEur() != null, true));
         }
         return Outcome.PAYMENT_WINDOW_CLOSED;
     }
