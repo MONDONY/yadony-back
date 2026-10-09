@@ -1184,3 +1184,37 @@ saturait (187 requêtes en attente) et les requêtes finissaient en **500 après
       AND ((currency = 'EUR' AND price_per_kg < 1) OR (currency IN ('XOF','XAF') AND price_per_kg < 656)) GROUP BY currency;`
       (staging le 09/10 : 1 en EUR, 1 en XOF). Prévenir les voyageurs concernés.
 - [ ] Recette staging : une étape à 8 F CFA/kg est bloquée dans l'app (« Prix trop bas : minimum 656 F CFA/kg ») et refusée par le serveur.
+
+#### 9.13 Argent : contraintes V309, rapprochement Stripe/pawaPay, capture des paiements négociés (back #469, #471, #472)
+
+> Ajoutée le 09/10/2026. Migration **V309**. Aucun secret, aucune nouvelle variable obligatoire.
+> Ces trois PR ne sont en staging qu'après le redéploiement de 9.2 (`sha-9bec623` en staging le 09/10 au soir ne les contient pas).
+
+| PR | Sujet | À savoir |
+|---|---|---|
+| back #469 | **V309** : CHECK sur `payments` (remboursé entre 0 et le montant, commission ≤ montant), sur `wallet_transactions` (solde après ≥ 0, signe du montant selon le type), `pawapay_operations.amount > 0`, index unique sur `provider_transaction_id` ; trigger `trg_wallet_transactions_append_only` | Le grand livre du wallet devient **ajout seul** : tout UPDATE/DELETE est refusé, même à la main en SQL. Une correction passe par un mouvement compensatoire (ajustement admin). Si une ligne existante viole une contrainte, Flyway échoue et l'API ne démarre pas : faire le contrôle ci-dessous avant. |
+| back #471 | Rapprochement quotidien avec Stripe et pawaPay (04:30 UTC) : paiements colis, recharges wallet, commissions carte, opérations pawaPay terminées | Alertes admin `RECON_STRIPE_*` / `RECON_PAWAPAY_*` (Telegram + écran Alertes). Jauges `yadony_reconciliation_{mismatches,errors}{provider}` et `yadony_reconciliation_last_run_seconds`. Coupure : `PROVIDER_RECONCILIATION_ENABLED=false`. pawaPay coupé en prod : aucune opération, aucun appel. |
+| back #472 | Capture du paiement carte d'une négociation passé en séquestre au `/checkout` | **Corrige une régression de #408** : sans #472, l'autorisation carte d'une négociation n'est jamais capturée, expire à J+7 et le voyageur n'est pas payé à la livraison. **Ne jamais promouvoir un tag qui contient #408 (`99b08aa6`) sans #472 (`5d9da84b`)** : le tag `sha-d5a99f5` est dans ce cas. |
+
+- [ ] Tag : le commit redéployé en staging (9.2) doit contenir `5d9da84b` :
+      `git merge-base --is-ancestor 5d9da84b <commit> && echo OK`.
+- [ ] Contrôle prod (lecture seule) avant la mise en prod de V309, chaque requête doit répondre **0** (prod vérifiée conforme le 09/10) :
+      ```sql
+      SELECT count(*) FROM payments
+       WHERE (refunded_amount IS NOT NULL AND (refunded_amount < 0 OR refunded_amount > amount)) OR commission_amount > amount;
+      SELECT count(*) FROM wallet_transactions
+       WHERE balance_after < 0
+          OR (type IN ('TOP_UP','REFUND','REFERRAL_REWARD','ADMIN_CREDIT') AND amount < 0)
+          OR (type IN ('BID_PAYMENT','COMMISSION_DEDUCTED','ADMIN_REFUND_OUT','SELF_REFUND_OUT','FORFEITED_ON_DELETION','ADMIN_DEBIT') AND amount > 0);
+      SELECT count(*) FROM pawapay_operations WHERE amount <= 0;
+      SELECT count(*) FROM (SELECT provider_transaction_id FROM pawapay_operations
+       WHERE provider_transaction_id IS NOT NULL GROUP BY 1 HAVING count(*) > 1) d;
+      ```
+- [ ] Stripe **live** et **test** (staging) : sur l'endpoint « Paiements & Connect », l'événement
+      `payment_intent.amount_capturable_updated` est coché (voir 8.D). Le 09/10, la staging recevait `payment_intent.canceled`
+      mais jamais celui-ci.
+- [ ] Recette staging : payer une négociation par carte, puis vérifier que le paiement a un `captured_at` dans la minute
+      (`SELECT status, captured_at FROM payments WHERE negotiation_thread_id = '<fil>';` → `ESCROW` + date) et que le
+      PaymentIntent est « Succeeded » dans Stripe (et non « Uncaptured »).
+- [ ] Après la mise en prod : `yadony_money_invariant_violations{invariant="INV-08"}` reste à 0 ; le lendemain matin,
+      `yadony_reconciliation_last_run_seconds` est daté d'après 04:30 UTC et `yadony_reconciliation_errors` vaut 0.
