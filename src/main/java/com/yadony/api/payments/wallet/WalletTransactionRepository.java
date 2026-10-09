@@ -43,4 +43,8 @@ public interface WalletTransactionRepository extends JpaRepository<WalletTransac
                                                                      WalletTransactionType type);
 
     List<WalletTransactionEntity> findByUserIdAndCurrencyOrderByCreatedAtAsc(UUID userId, String currency);
+
+    /** Crédits d'un type dont la clé commence par {@code prefix}, écrits après {@code since}. */
+    List<WalletTransactionEntity> findByTypeAndIdempotencyKeyStartingWithAndCreatedAtAfter(
+            WalletTransactionType type, String prefix, java.time.Instant since);
 }
