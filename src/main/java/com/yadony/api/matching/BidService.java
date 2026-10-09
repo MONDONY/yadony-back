@@ -672,8 +672,22 @@ public class BidService {
                     "Bid Not Found", "Demande introuvable");
         }
 
+        // FLUTTER-HS — une demande que l'appelant a retirée de sa liste (DELETE /bids/{id}/me)
+        // ne doit pas revenir par une notification rouverte : même 404 qu'un colis inexistant,
+        // comme getMyBids qui la filtre déjà. Le retrait est propre à chaque participant :
+        // l'autre partie continue de voir le colis.
+        if (applyBlockVisibility && isHiddenFor(bid, isSender, isTraveler)) {
+            throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "bid-not-found",
+                    "Bid Not Found", "Demande introuvable");
+        }
+
         UserEntity sender = userRepository.findById(bid.getSenderId()).orElse(null);
         return toResponse(bid, sender, requester.getId());
+    }
+
+    /** Le participant appelant a-t-il retiré ce colis de sa propre liste ? */
+    private static boolean isHiddenFor(BidEntity bid, boolean isSender, boolean isTraveler) {
+        return (isSender && bid.isDeletedBySender()) || (isTraveler && bid.isDeletedByTraveler());
     }
 
     /**
@@ -1100,7 +1114,7 @@ public class BidService {
         bid.setStatus(BidStatus.CANCELLED);
         bidRepository.save(bid);
 
-        String reason = isTraveler ? "CANCELLED_BY_TRAVELER" : "CANCELLED_BY_SENDER";
+        String reason = isTraveler ? "CANCELLED_BY_TRAVELER" : BidRejectedEvent.REASON_CANCELLED_BY_SENDER;
         auditService.log("BID", bidId, "BID_CANCELLED", caller.getId(),
                 Map.of("actor", isTraveler ? "TRAVELER" : "SENDER"));
 

@@ -539,6 +539,26 @@ class NotificationDispatcherTest {
         verifyNoInteractions(fcmService, notificationService);
     }
 
+    // FLUTTER-HS : l'expéditeur qui annule sa propre demande recevait « Demande refusée —
+    // Le voyageur a refusé votre demande ». Il est l'auteur de l'action : aucune notification.
+    @Test
+    void onBidRejected_cancelledBySenderHimself_notifiesNobody() {
+        dispatcher.onBidRejected(new BidRejectedEvent(
+                bidId, senderId, BidRejectedEvent.REASON_CANCELLED_BY_SENDER, annId, false));
+
+        verifyNoInteractions(fcmService, notificationService);
+    }
+
+    @Test
+    void onBidRejected_pendingBidWithdrawnByTraveler_stillNotifiesSender() {
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onBidRejected(new BidRejectedEvent(bidId, senderId, "CANCELLED_BY_TRAVELER", annId, false));
+
+        verify(fcmService).sendToUser(eq(senderId), eq("Demande refusée"), any(),
+                argThat(d -> "BID_REJECTED".equals(d.get("type"))));
+    }
+
     // Lot B (revue round 3) : removeByAdmin publie ANNOUNCEMENT_DELETED avec
     // rematchEligible=false — le libellé générique « Demande refusée » accusait à tort le
     // voyageur (c'est la modération qui a retiré le trajet) et ne mentionnait jamais le
