@@ -249,7 +249,7 @@ Un déploiement de règles envoie le fichier entier : déployer depuis `origin/m
       ```
 - [ ] Déployer les règles sur le projet de prod (remplacer `<projet>` par la valeur trouvée plus haut) :
       ```bash
-      npx firebase use <projet> && npx firebase deploy --only firestore:rules
+      npx firebase deploy --only firestore:rules --project yadony-prod   # mis à jour le 09/10, voir 9.11
       ```
 - [ ] Vérifier dans la console Firebase → Firestore → Règles que la version publiée contient
       `hasOnlyClientMessageKeys` et `isValidReplyTo`.
@@ -904,7 +904,7 @@ Préalable : staging au commit `19ed17e4` (#421 à #423 inclus, base V294 : c'es
 - Le pool de connexions prod passe de **10 à 20** avec un délai d'attente de **5 s** (cette PR, voir 9.4).
 - **Depuis le 08/10**, `main` a reçu **#440 à #457** (voir [9.10](#910-ajouts-du-08-au-0910--pr-440-à-457))
   et **six migrations de plus : V301 à V305 et V307** (V300 et V306 n'existent pas, trous sans effet).
-  Dernière version Flyway attendue après la mise en prod : **307**.
+  Dernière version Flyway attendue après la mise en prod : **308** (V308 ajoutée le 09/10, voir [9.11](#911-ajouts-du-09110--pr-459-à-463-app-556-à-574-admin-56-règles-7)).
 - Toujours **aucune nouvelle variable d'environnement obligatoire** ni modification de `deploy-prod.yml` :
   #454 ajoute seulement `keepalive-time` et `max-lifetime` du pool dans `application.yml` (tous profils).
 - La prod tourne encore `dda67f58` (20/09) : la mise en prod emporte **tout** de #317 à #457 et les
@@ -912,7 +912,7 @@ Préalable : staging au commit `19ed17e4` (#421 à #423 inclus, base V294 : c'es
 
 ### 9.2 Tag d'image à promouvoir
 
-- [ ] Redéployer la staging depuis `main` (dernier déploiement staging connu : `f7347216`, #451, le 08/10 ;
+- [ ] Redéployer la staging depuis `main` (dernier déploiement staging connu : `658aa3be`, #463, le 09/10, Flyway 308 ; avant lui `f7347216`, #451, le 08/10 ;
       `main` a reçu #452 à #457 depuis, dont V305 et V307) :
       ```bash
       gh workflow run deploy-staging.yml -R MONDONY/yadony-back -f ref=main
@@ -923,7 +923,7 @@ Préalable : staging au commit `19ed17e4` (#421 à #423 inclus, base V294 : c'es
 
 ### 9.3 Migrations Flyway V295 à V299
 
-Après le déploiement, la requête de 8.C (étape 2) doit montrer **307** comme dernière version (V295 à V299 ici,
+Après le déploiement, la requête de 8.C (étape 2) doit montrer **308** comme dernière version (V295 à V299 ici,
 V301 à V307 en [9.10](#910-ajouts-du-08-au-0910--pr-440-à-457)), toutes `success = t`.
 
 | Migration | Ce qu'elle fait | Risque | Contrôle préalable |
@@ -993,7 +993,7 @@ saturait (187 requêtes en attente) et les requêtes finissaient en **500 après
       `hikaricp_connections_pending` à 0 la plupart du temps, `hikaricp_connections_timeout_total` stable.
 - [ ] Sentry prod : pas de nouvelle issue `DataIntegrityViolationException`, `TransactionRequiredException`
       ou `UnexpectedRollbackException` (les familles corrigées par #433/#437).
-- [ ] Flyway à **307** (9.3 et 9.10) et contrôles G1 à G7 de 8.G.
+- [ ] Flyway à **308** (9.3, 9.10 et 9.11) et contrôles G1 à G7 de 8.G.
 - [ ] Grafana prod : `hikaricp_connections_usage_seconds_max` sous quelques secondes (connexion tenue anormalement
       longue, cf. 9.9) et `/wallet/balance` sans `service-busy` en continu (#451).
 
@@ -1054,9 +1054,100 @@ saturait (187 requêtes en attente) et les requêtes finissaient en **500 après
 | `V305__notification_prefs_familles_completes` | 3 colonnes `BOOLEAN NOT NULL DEFAULT TRUE` sur `user_notification_preferences`. | Très faible. |
 | `V307__trajets_escales_et_refus_carte` | `stops_count` nullable + contrainte sur `announcements` et `trip_recurrences` ; `announcements.card_declined` à défaut `FALSE`. | Faible. Contraintes relues une fois, toutes les lignes à NULL. |
 
-- [ ] **Prochaine migration : V308.** Ne jamais créer V300 ni V306 après coup : une version inférieure à la
+- [ ] **Prochaine migration : V309** (V308 prise le 09/10, voir 9.11). Ne jamais créer V300 ni V306 après coup : une version inférieure à la
       dernière appliquée est refusée par Flyway au démarrage (pas d'`out-of-order` configuré).
 - [ ] Recette staging en plus de 8.H et 9.6 : voyage à **plusieurs étapes** publié puis visible étape par étape ;
       trajet en avion avec **escales**, filtre « Direct uniquement » ; publication **sans la carte** ;
       écran **portefeuille** et **Mes colis** qui s'ouvrent normalement ; réglages de notifications avec les
       trois nouveaux interrupteurs.
+
+### 9.11 Ajouts du 09/10 : PR #459 à #463, app #556 à #574, admin #56, règles #7
+
+> Ajoutée le 09/10/2026. `main` back = `658aa3be` (déployé en staging le 09/10, Flyway **308**, API healthy).
+> Builds de recette staging : IPA **108** et AAB **109** depuis `dony_app` `main` = `bea5310e`. Aucun secret ici.
+
+#### Correction importante : le projet Firebase de prod est `yadony-prod`
+
+- `dony_app/env.prod.json` → `FIREBASE_PROJECT_ID` = **`yadony-prod`** ; `env.staging.json` → `yadony-f1f0f`.
+  Le `.firebaserc` local de `dony-functions` contient l'alias `prod` = `yadony-prod` (modification locale non
+  committée). **`yadony-f1f0f` sert uniquement la staging.**
+- Le 09/10, les règles Firestore de `main` (`7dbf47d`, #4 + #6 + #7) ont été déployées sur **`yadony-f1f0f`
+  seulement**. La prod n'a encore **aucune** de ces règles.
+- [ ] Étape 1 de 8.A, en prod :
+      ```bash
+      cd ~/Desktop/dony/dony-functions
+      git checkout -- firebase-debug.log   # fichier de log supprimé localement, bloque la mise à jour
+      git fetch origin && git merge --ff-only origin/main   # `git pull` refuse à cause de .firebaserc modifié (pull en rebase)
+      git log --oneline -1                 # doit afficher 7dbf47d … (#7)
+      npx firebase deploy --only firestore:rules --project yadony-prod
+      ```
+      La sortie doit dire « uploading rules firestore.rules ». « skipping upload » = mauvais fichier (copie en retard).
+- [ ] Console Firebase `yadony-prod` → Firestore → Règles : la version publiée contient `hasOnlyClientMessageKeys`,
+      `isValidReplyTo` et le refus des messages `IMAGE` écrits par un client.
+- À savoir (#7) : les photos de messagerie ne s'écrivent plus que par le serveur (#429). Sur les anciennes versions
+  de l'app encore installées, l'envoi de photo échoue jusqu'à la mise à jour : attendu, rien d'autre ne casse.
+- [ ] **À vérifier** : `onNewMessage` (#3/#5) déployée sur `yadony-prod` ? Sinon
+      `npx firebase deploy --only functions:onNewMessage --project yadony-prod` (après accord).
+
+#### Back : ce qui part en plus
+
+| PR | Sujet | À savoir |
+|---|---|---|
+| #459 | Retrait après report d'un colis déjà remis : même procédure de retour (code, 3 jours, remboursement intégral, notifications aux deux) ; lien de la notification d'une demande carte abandonnée vers le trajet | — |
+| #460 | Trajets récurrents : carte décochable, recopiée sur les occurrences ; escales par étape | **V308**. |
+| #461 | Voyageur : « Demander un nouveau code » de retrait (`POST /tracking/{bidId}/request-code`, 1 demande / 15 min / colis) | Notification `CONFIRMATION_CODE_REQUESTED`. Sans migration (limite lue dans `audit_log`). |
+| #462 | Suggestions de trajets aussi pour les colis annulés après remise | `PARCEL_RETURN_REQUIRED` peut porter `cancellationId`. |
+| #463 | Trajets récurrents : la devise du modèle est enregistrée (avant : euro par défaut) | 0 récurrence en staging ; **contrôle prod ci-dessous**. |
+
+| Migration | Ce qu'elle fait | Risque |
+|---|---|---|
+| `V308__trip_recurrences_refus_carte` | `trip_recurrences.card_declined BOOLEAN NOT NULL DEFAULT FALSE`. | Très faible : instantané en PostgreSQL 16. |
+
+- [ ] Contrôle prod (lecture seule) avant/après : récurrences en EUR créées par des voyageurs dont la devise active
+      n'est pas l'euro (créées avant #463) : `SELECT count(*) FROM trip_recurrences WHERE currency = 'EUR' AND deleted_at IS NULL;`
+      puis regarder, pour ces lignes, le pays du voyageur (`user_id`) et décider au cas par cas (aucune correction automatique).
+
+#### Mode recette : doit rester fermé en prod
+
+- `yadony.recette.enabled` vaut `false` par défaut et n'est vrai que dans `application-staging.yml` ; le profil prod
+  le ferme de toute façon (`RecetteMode`).
+- [ ] Vérifier que le `.env` prod ne contient **pas** `YADONY_RECETTE_ENABLED=true` (lire seulement ce nom de variable).
+- [ ] Après la mise en prod : `PUT /api/v1/admin/users/{id}/recette-tester` doit répondre **409 `recette-disabled`**.
+
+#### dony-admin (#54 à #56)
+
+- Chaque fusion sur `main` déploie la **staging** automatiquement (workflow « Deploy VPS ») ; la prod ne part qu'à la main.
+- [ ] Après le back : `gh workflow run deploy.yml -R MONDONY/dony-admin -f environment=production -f image_tag=sha-<7 car.>`
+      (tag du commit `main` recetté en staging ; `latest` = dernier `main`).
+- [ ] En prod, la section « Mode recette (staging) » de la fiche utilisateur doit afficher « Indisponible hors staging »
+      après la première tentative (409), jamais un interrupteur actif.
+
+#### App iOS et Android
+
+- `main` app embarque #556 à #574. Points sensibles :
+  - **#563/#565 (Android)** : Stripe rattaché à l'activité recréée par HyperOS (moteur Flutter en cache) ; libération
+    du module par réflexion sur un champ privé de `stripe_android` 12.1.0 (à revérifier à chaque montée de version).
+  - Plusieurs contrats tolèrent l'ancien back, mais certaines actions renvoient une erreur tant que le back n'est pas
+    à jour (ex. « Demander un nouveau code ») : **back avant app**, comme en 8.A.
+- [ ] Avant le build prod iOS : restaurer `ios/Flutter/Release-prod.xcconfig` depuis `Release-prod.xcconfig.prod`
+      (le fichier actif contient les valeurs **staging** depuis les builds de recette du 08/10). Contrôle :
+      `YADONY_ENV_FILE=env.prod.json tool/verify_ios_release_config.sh <ipa>` doit citer le projet de `yadony-prod`.
+- [ ] Recette Android réelle du paiement (carte et PayPal) sur l'AAB 109 : Options développeur
+      « Ne pas conserver les activités », puis « Texte en gras » ; la feuille Stripe s'ouvre, aucun
+      « FragmentManager has been destroyed ».
+
+#### CI : exception de sécurité temporaire
+
+- `.trivyignore` contient **CVE-2026-47890** (spring-webmvc 6.2.19, flux SSE ; le back n'utilise pas SSE).
+  Décision du 09/10 : on garde l'exception et on la retire dès qu'un correctif Spring 6.2.x sort.
+- [ ] À chaque mise en prod : vérifier si Spring a publié le correctif ; si oui, monter la version et retirer la ligne.
+
+#### Recette staging en plus de 8.H, 9.6 et 9.10
+
+- [ ] Report de trajet puis retrait d'un colis **déjà remis** : voyageur « rendez-lui le colis avant le … »,
+      expéditeur « code de retour dans le suivi », contact ouvert, une seule notification chacun.
+- [ ] Colis annulé après remise : bouton « Voir les trajets alternatifs » sur la fiche, bandeau « Colis à récupérer ».
+- [ ] Code de retrait : 3 codes faux → bloqué, expéditeur notifié, « Générer un nouveau code » ; code expiré →
+      voyageur « Demander un nouveau code », 2e demande avant 15 min refusée avec le délai.
+- [ ] Trajet récurrent en XOF : devise conservée ; carte décochable (EUR) ; voyage multi-étapes avec escales différentes.
+- [ ] Notification d'une demande carte abandonnée à la date limite : ouvre le trajet, jamais « demande introuvable ».
