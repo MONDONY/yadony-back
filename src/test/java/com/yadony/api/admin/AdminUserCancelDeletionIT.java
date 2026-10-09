@@ -130,7 +130,7 @@ class AdminUserCancelDeletionIT {
     void list_pendingDeletion_filtersAndExposesDates() throws Exception {
         UserEntity pending = user(UserStatus.PENDING_DELETION);
         pending.setDeletionRequestedAt(Instant.parse("2026-09-10T08:00:00Z"));
-        when(userRepository.findAdminFiltered(eq("PENDING_DELETION"), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(userRepository.findAdminFiltered(eq("PENDING_DELETION"), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(pending), PageRequest.of(0, 20), 1));
         when(firebaseContact.getContacts(any())).thenReturn(Map.of());
 
@@ -155,7 +155,7 @@ class AdminUserCancelDeletionIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.firebaseUid").value("FbUidAwa123XYZ"));
 
-        when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(u), PageRequest.of(0, 20), 1));
         when(firebaseContact.getContacts(any())).thenReturn(Map.of());
 

@@ -81,6 +81,7 @@ public class AdminUserController {
             @RequestParam(required = false) Boolean pro,
             @RequestParam(required = false) String city,
             @RequestParam(required = false) String query,
+            @RequestParam(required = false) Boolean recetteTester,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
 
@@ -98,6 +99,7 @@ public class AdminUserController {
                 normalizedQuery,
                 parseCanonicalUuid(normalizedQuery),
                 role != null ? role.name() : null,
+                recetteTester,
                 PageRequest.of(page, size)
         );
 

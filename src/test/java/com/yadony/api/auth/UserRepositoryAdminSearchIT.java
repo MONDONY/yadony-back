@@ -114,16 +114,32 @@ class UserRepositoryAdminSearchIT {
     @DisplayName("Sans terme → tous les utilisateurs, total cohérent")
     void noQuery_returnsAll() {
         Page<UserEntity> page = userRepository.findAdminFiltered(
-                null, null, null, null, null, null, null, null, null, PageRequest.of(0, 20));
+                null, null, null, null, null, null, null, null, null, null, PageRequest.of(0, 20));
 
         assertThat(page.getContent()).hasSize(2);
         assertThat(page.getTotalElements()).isEqualTo(2);
     }
 
+    @Test
+    @DisplayName("Filtre testeurs recette → seuls les comptes au drapeau demandé")
+    void recetteTesterFilter_matchesFlag() {
+        awa.setRecetteTester(true);
+        userRepository.save(awa);
+
+        Page<UserEntity> testers = userRepository.findAdminFiltered(
+                null, null, null, null, null, null, null, null, null, true, PageRequest.of(0, 20));
+        Page<UserEntity> others = userRepository.findAdminFiltered(
+                null, null, null, null, null, null, null, null, null, false, PageRequest.of(0, 20));
+
+        assertThat(testers.getContent()).extracting(UserEntity::getId).containsExactly(awa.getId());
+        assertThat(testers.getTotalElements()).isEqualTo(1);
+        assertThat(others.getContent()).extracting(UserEntity::getId).containsExactly(moussa.getId());
+    }
+
     private Page<UserEntity> search(String term) {
         UUID asId = asUuid(term);
         return userRepository.findAdminFiltered(
-                null, null, null, null, "%" + term + "%", null, term, asId, null, PageRequest.of(0, 20));
+                null, null, null, null, "%" + term + "%", null, term, asId, null, null, PageRequest.of(0, 20));
     }
 
     private static UUID asUuid(String term) {
