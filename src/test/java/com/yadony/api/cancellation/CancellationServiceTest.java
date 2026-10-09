@@ -240,8 +240,14 @@ class CancellationServiceTest {
             assertThat(afterHandover.getNoShowStatus()).isEqualTo(CancellationStatus.CONFIRMED);
             assertThat(afterHandover.getCancelledBy()).isEqualTo(TRAVELER_ID);
 
-            // Rematch : seulement le colis ouvert, jamais un colis à restituer.
-            verify(rematchService).generateForCancellations(eq(announcement), eq(List.of(acceptedBid)), anyList());
+            // Rematch : le colis ouvert et le colis à restituer qui reçoit ici son annulation
+            // (décision du propriétaire) ; pas la ligne HANDOVER déjà tranchée (no-show).
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<CancellationEntity>> rematchCancellations = ArgumentCaptor.forClass(List.class);
+            verify(rematchService).generateForCancellations(eq(announcement),
+                    eq(List.of(acceptedBid, handedOver)), rematchCancellations.capture());
+            assertThat(rematchCancellations.getValue()).extracting(CancellationEntity::getBidId)
+                    .containsExactly(BID_ID, handedBidId);
 
             verify(auditService).log(eq("BID"), eq(handedBidId), eq("BID_CANCELLED_AFTER_HANDOVER"), eq(TRAVELER_ID),
                     argThat(m -> "TRIP_CANCELLED".equals(m.get("trigger")) && "HANDED_OVER".equals(m.get("previousStatus"))));
@@ -333,7 +339,7 @@ class CancellationServiceTest {
                     announcementCaptor.capture(), bidsCaptor.capture(), cancellationsCaptor.capture());
 
             assertThat(announcementCaptor.getValue()).isSameAs(announcement);
-            assertThat(bidsCaptor.getValue()).isSameAs(affectedBidsList);
+            assertThat(bidsCaptor.getValue()).containsExactlyElementsOf(affectedBidsList);
             assertThat(cancellationsCaptor.getValue()).hasSize(1);
             assertThat(cancellationsCaptor.getValue().get(0).getBidId()).isEqualTo(acceptedBid.getId());
         }

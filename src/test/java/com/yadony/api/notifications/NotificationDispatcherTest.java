@@ -789,6 +789,50 @@ class NotificationDispatcherTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void onTripCancelled_handedOverParcelWithAlternatives_sendsOneReturnNotificationWithTheRematch() {
+        // Décision du propriétaire : le colis remis reçoit aussi les trajets du corridor, dans
+        // la même notification de retour (pas de « trajet annulé » en doublon).
+        UUID cancellationId = UUID.randomUUID();
+        TripCancelledEvent event = new TripCancelledEvent(
+                annId, travelerId, List.of(senderId), "TRAVELER_CANCEL_AFTER_HANDOVER", List.of(bidId),
+                Map.of(), Map.of(),
+                Map.of(senderId, new TripCancelledEvent.RematchBySenderInfo(cancellationId, 3)),
+                java.util.Set.of(bidId));
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onTripCancelled(event);
+
+        ArgumentCaptor<Map<String, String>> data = ArgumentCaptor.forClass(Map.class);
+        verify(fcmService).sendToUser(eq(senderId), eq("Colis à vous restituer"),
+                eq("Une fois votre colis récupéré, 3 trajets correspondent à votre envoi."),
+                data.capture());
+        assertThat(data.getValue()).containsEntry("type", "PARCEL_RETURN_REQUIRED")
+                .containsEntry("bidId", bidId.toString())
+                .containsEntry("cancellationId", cancellationId.toString());
+        verify(fcmService, org.mockito.Mockito.times(1)).sendToUser(any(), any(), any(), any());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void onTripCancelled_handedOverParcelWithoutAlternatives_keepsTheReturnCodeText() {
+        TripCancelledEvent event = new TripCancelledEvent(
+                annId, travelerId, List.of(senderId), "SENDER_CANCEL_AFTER_HANDOVER", List.of(bidId),
+                Map.of(), Map.of(),
+                Map.of(senderId, new TripCancelledEvent.RematchBySenderInfo(UUID.randomUUID(), 0)),
+                java.util.Set.of(bidId));
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onTripCancelled(event);
+
+        ArgumentCaptor<Map<String, String>> data = ArgumentCaptor.forClass(Map.class);
+        verify(fcmService).sendToUser(eq(senderId), eq("Colis à vous restituer"),
+                eq("Remboursement en cours. Le code de retour est dans le suivi du colis."),
+                data.capture());
+        assertThat(data.getValue()).doesNotContainKey("cancellationId");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void onParcelReturnToSenderRequested_notifiesTheTravelerTowardsTheParcel() {
         // PR #447 : l'expéditeur annule un colis déjà remis, le voyageur doit le rendre.
         when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);

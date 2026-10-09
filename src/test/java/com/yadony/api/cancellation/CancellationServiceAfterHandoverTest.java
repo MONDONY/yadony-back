@@ -55,6 +55,7 @@ class CancellationServiceAfterHandoverTest {
     private static final UUID ANN_ID = UUID.randomUUID();
     private static final UUID SENDER_ID = UUID.randomUUID();
     private static final UUID TRAVELER_ID = UUID.randomUUID();
+    private static final UUID CANCELLATION_ID = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
@@ -98,6 +99,41 @@ class CancellationServiceAfterHandoverTest {
         when(bidRepository.findByIdForUpdate(BID_ID)).thenReturn(Optional.of(bid(status)));
         when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(ann(departureAt)));
         when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.empty());
+        when(cancellationRepository.save(any(CancellationEntity.class))).thenAnswer(inv -> {
+            CancellationEntity c = inv.getArgument(0);
+            ReflectionTestUtils.setField(c, "id", CANCELLATION_ID);
+            return c;
+        });
+    }
+
+    @Test
+    void cancel_after_handover_offers_rematch_to_sender_in_the_same_event() {
+        for (UUID callerId : java.util.List.of(TRAVELER_ID, SENDER_ID)) {
+            org.mockito.Mockito.clearInvocations(eventPublisher, rematchService);
+            stubFullFlow(callerId, BidStatus.HANDED_OVER, OffsetDateTime.now().plusHours(5));
+            when(rematchService.generateForCancellations(any(), any(), any())).thenReturn(
+                    java.util.Map.of(SENDER_ID, new RematchService.RematchInfo(CANCELLATION_ID, 2)));
+
+            service.cancelAfterHandover(FIREBASE, BID_ID);
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<java.util.List<BidEntity>> bids = ArgumentCaptor.forClass(java.util.List.class);
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<java.util.List<CancellationEntity>> cancellations =
+                    ArgumentCaptor.forClass(java.util.List.class);
+            verify(rematchService).generateForCancellations(
+                    org.mockito.ArgumentMatchers.argThat(a -> ANN_ID.equals(a.getId())),
+                    bids.capture(), cancellations.capture());
+            assertThat(bids.getValue()).extracting(BidEntity::getId).containsExactly(BID_ID);
+            assertThat(cancellations.getValue()).extracting(CancellationEntity::getId)
+                    .containsExactly(CANCELLATION_ID);
+
+            ArgumentCaptor<TripCancelledEvent> eCap = ArgumentCaptor.forClass(TripCancelledEvent.class);
+            verify(eventPublisher).publishEvent(eCap.capture());
+            assertThat(eCap.getValue().getReturnRequiredBidIds()).containsExactly(BID_ID);
+            assertThat(eCap.getValue().getRematchBySender())
+                    .containsEntry(SENDER_ID, new TripCancelledEvent.RematchBySenderInfo(CANCELLATION_ID, 2));
+        }
     }
 
     @Test

@@ -3324,19 +3324,49 @@ class BidServiceTest {
         }
 
         @Test
-        @DisplayName("bid actif (announcement ACTIVE) avec cancellation HANDOVER (ex: après remise) → champs trip cancellation null")
-        void toResponse_activeAnnouncementWithNonTripCancellation_tripCancellationFieldsAreNull() {
+        @DisplayName("annulation après remise sur annonce ACTIVE → tripCancellationId exposé : "
+                + "trajets proposés pour renvoyer le colis une fois récupéré")
+        void toResponse_cancelAfterHandover_exposesRematchCancellation() {
+            for (String reason : java.util.List.of("SENDER_CANCEL_AFTER_HANDOVER", "TRAVELER_CANCEL_AFTER_HANDOVER")) {
+                UserEntity traveler = buildTraveler();
+                AnnouncementEntity announcement = buildAnnouncement(); // status = ACTIVE
+                BidEntity bid = buildBid();
+                bid.setStatus(BidStatus.CANCELLED);
+
+                UUID cancellationId = UUID.randomUUID();
+                CancellationEntity cancellation = new CancellationEntity();
+                setId(cancellation, cancellationId);
+                cancellation.setScope(CancellationScope.HANDOVER);
+                cancellation.setReason(reason);
+                cancellation.setNoShowStatus(CancellationStatus.CONFIRMED);
+                cancellation.setRematchStatus("SUGGESTED");
+
+                when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+                when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+                when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+                when(userRepository.findById(SENDER_ID)).thenReturn(Optional.empty());
+                when(cancellationRepository.findAllByBidId(BID_ID)).thenReturn(java.util.List.of(cancellation));
+
+                BidResponse resp = bidService.getBidById(BID_ID, TRAVELER_UID);
+
+                assertThat(resp.tripCancellationId()).as(reason).isEqualTo(cancellationId);
+                assertThat(resp.tripCancellationRematchStatus()).as(reason).isEqualTo("SUGGESTED");
+            }
+        }
+
+        @Test
+        @DisplayName("bid actif (announcement ACTIVE) avec cancellation no-show → champs trip cancellation null")
+        void toResponse_activeAnnouncementWithNoShowCancellation_tripCancellationFieldsAreNull() {
             UserEntity traveler = buildTraveler();
             AnnouncementEntity announcement = buildAnnouncement(); // status = ACTIVE
             BidEntity bid = buildBid();
             bid.setStatus(BidStatus.CANCELLED);
 
-            // Cancellation HANDOVER issue d'un flux qui n'annule pas le trajet entier
-            // (ex: annulation après remise ou no-show) — announcement reste ACTIVE.
+            // Cancellation HANDOVER no-show : n'annule pas le trajet, n'ouvre pas droit au rematch.
             CancellationEntity cancellation = new CancellationEntity();
             setId(cancellation, UUID.randomUUID());
             cancellation.setScope(CancellationScope.HANDOVER);
-            cancellation.setReason("SENDER_CANCEL_AFTER_HANDOVER");
+            cancellation.setReason("SENDER_NO_SHOW");
             cancellation.setRematchStatus("NONE");
 
             when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));

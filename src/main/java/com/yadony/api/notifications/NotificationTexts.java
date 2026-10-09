@@ -327,6 +327,17 @@ public final class NotificationTexts {
     }
 
     /**
+     * Colis à restituer pour lequel des trajets du même corridor existent : l'expéditeur
+     * pourra le renvoyer une fois récupéré. Le code de retour reste dans le suivi du colis,
+     * que le tap ouvre.
+     */
+    public static NotificationText parcelReturnRequiredWithRematch(Messages m, int alternatives) {
+        return new NotificationText(m.get("notification.parcel-return-required.title"),
+                m.plural("notification.parcel-return-required.rematch", alternatives,
+                        String.valueOf(alternatives)));
+    }
+
+    /**
      * L'expéditeur a annulé un colis déjà remis, vu par le voyageur : il le lui rend avant le
      * délai et saisit le code de retour que l'expéditeur détient (PR #447).
      */

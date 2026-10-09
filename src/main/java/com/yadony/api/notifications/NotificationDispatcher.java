@@ -480,14 +480,22 @@ public class NotificationDispatcher {
         Messages m = messagesFor(senderId);
         Map<String, String> data = new HashMap<>();
         if (bidId != null) data.put("bidId", bidId.toString());
+        TripCancelledEvent.RematchBySenderInfo info = event.getRematchBySender().get(senderId);
         if (bidId != null && event.getReturnRequiredBidIds().contains(bidId)) {
-            var text = NotificationTexts.parcelReturnRequired(m);
+            // Une seule notification : le retour du colis d'abord (le tap ouvre le colis et son
+            // code de retour), puis les trajets qui permettront de le renvoyer, s'il y en a.
             data.put("type", "PARCEL_RETURN_REQUIRED");
+            NotificationText text;
+            if (info != null && info.suggestionCount() > 0 && info.cancellationId() != null) {
+                text = NotificationTexts.parcelReturnRequiredWithRematch(m, info.suggestionCount());
+                data.put("cancellationId", info.cancellationId().toString());
+            } else {
+                text = NotificationTexts.parcelReturnRequired(m);
+            }
             notifyUser(senderId, text.title(), text.body(), Map.copyOf(data));
             return;
         }
         data.put("type", "TRIP_CANCELLED");
-        TripCancelledEvent.RematchBySenderInfo info = event.getRematchBySender().get(senderId);
         NotificationText text;
         if (info == null) {
             text = NotificationTexts.tripCancelledRefund(m);

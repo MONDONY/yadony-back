@@ -100,6 +100,8 @@ class NotificationTextsTest {
         map.put("returnDeadlineWarningForSender", NotificationTexts.returnDeadlineWarningForSender(m));
         map.put("returnDeadlineWarningForTraveler", NotificationTexts.returnDeadlineWarningForTraveler(m));
         map.put("parcelReturnRequired", NotificationTexts.parcelReturnRequired(m));
+        map.put("parcelReturnRequiredWithRematch 1", NotificationTexts.parcelReturnRequiredWithRematch(m, 1));
+        map.put("parcelReturnRequiredWithRematch 12", NotificationTexts.parcelReturnRequiredWithRematch(m, 12));
         map.put("parcelReturnToSender", NotificationTexts.parcelReturnToSender(m, java.time.LocalDate.of(2026, 9, 30)));
         map.put("returnDeadlineExpired", NotificationTexts.returnDeadlineExpired(m));
         map.put("disputeOpenedForSender", NotificationTexts.disputeOpenedForSender(m));
@@ -467,6 +469,18 @@ class NotificationTextsTest {
         assertThat(NotificationTexts.parcelReturnRequired(TestMessages.en())).isEqualTo(new NotificationText(
                 "Parcel to be returned",
                 "Refund in progress. Your return code is in the parcel tracking."));
+    }
+
+    @Test
+    void parcelReturnRequiredWithRematch_bothLanguages() {
+        assertThat(NotificationTexts.parcelReturnRequiredWithRematch(TestMessages.fr(), 1)).isEqualTo(new NotificationText(
+                "Colis à vous restituer", "Une fois votre colis récupéré, 1 trajet correspond à votre envoi."));
+        assertThat(NotificationTexts.parcelReturnRequiredWithRematch(TestMessages.fr(), 4).body())
+                .isEqualTo("Une fois votre colis récupéré, 4 trajets correspondent à votre envoi.");
+        assertThat(NotificationTexts.parcelReturnRequiredWithRematch(TestMessages.en(), 1)).isEqualTo(new NotificationText(
+                "Parcel to be returned", "Once you get your parcel back, 1 trip matches your shipment."));
+        assertThat(NotificationTexts.parcelReturnRequiredWithRematch(TestMessages.en(), 4).body())
+                .isEqualTo("Once you get your parcel back, 4 trips match your shipment.");
     }
 
     @Test
