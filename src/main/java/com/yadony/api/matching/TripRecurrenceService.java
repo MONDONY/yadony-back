@@ -12,7 +12,10 @@ import com.yadony.api.matching.dto.AnnouncementResponse;
 import com.yadony.api.matching.dto.TripRecurrenceDto;
 import com.yadony.api.matching.dto.TripRecurrenceRequest;
 import com.yadony.api.payments.cash.PaymentMethod;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
+import com.yadony.api.payments.currency.CurrencyBounds;
 import com.yadony.api.payments.currency.CurrencyPaymentRails;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -45,6 +48,7 @@ public class TripRecurrenceService {
     private final UserRepository userRepository;
     private final AuditService auditService;
     private final ApplicationEventPublisher eventPublisher;
+    private final ActiveCurrencyResolver activeCurrencyResolver;
     private final TripRecurrenceCalendar calendar = new TripRecurrenceCalendar();
 
     public TripRecurrenceService(TripRecurrenceRepository repository,
@@ -52,13 +56,15 @@ public class TripRecurrenceService {
                                  AnnouncementRepository announcementRepository,
                                  UserRepository userRepository,
                                  AuditService auditService,
-                                 ApplicationEventPublisher eventPublisher) {
+                                 ApplicationEventPublisher eventPublisher,
+                                 ActiveCurrencyResolver activeCurrencyResolver) {
         this.repository = repository;
         this.announcementService = announcementService;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
         this.eventPublisher = eventPublisher;
+        this.activeCurrencyResolver = activeCurrencyResolver;
     }
 
     public List<TripRecurrenceDto> findAll(UUID userId) {
@@ -70,7 +76,8 @@ public class TripRecurrenceService {
     public TripRecurrenceDto create(UUID userId, TripRecurrenceRequest request) {
         TripRecurrenceEntity entity = new TripRecurrenceEntity();
         entity.setUserId(userId);
-        applyFields(entity, request);
+        // Devise absente (client antérieur) : celle du voyageur, comme un trajet simple.
+        applyFields(entity, request, () -> activeCurrencyResolver.resolve(userId));
         repository.save(entity);
         auditService.log("TRIP_RECURRENCE", entity.getId(), "TRIP_RECURRENCE_CREATED", userId,
                 Map.of("corridor", request.departureCity() + "->" + request.arrivalCity(),
@@ -89,7 +96,8 @@ public class TripRecurrenceService {
     public TripRecurrenceDto update(UUID userId, UUID id, TripRecurrenceRequest request) {
         TripRecurrenceEntity entity = repository.findByUserIdAndId(userId, id)
                 .orElseThrow(() -> new YadonyNotFoundException("TripRecurrence", id));
-        applyFields(entity, request);
+        // Devise absente : la récurrence garde la sienne.
+        applyFields(entity, request, entity::getCurrency);
         repository.save(entity);
         auditService.log("TRIP_RECURRENCE", entity.getId(), "TRIP_RECURRENCE_UPDATED", userId,
                 Map.of("active", String.valueOf(request.active()),
@@ -284,7 +292,8 @@ public class TripRecurrenceService {
         );
     }
 
-    private void applyFields(TripRecurrenceEntity e, TripRecurrenceRequest r) {
+    private void applyFields(TripRecurrenceEntity e, TripRecurrenceRequest r,
+                             java.util.function.Supplier<String> fallbackCurrency) {
         e.setSourceTemplateId(r.sourceTemplateId());
         e.setDepartureCity(r.departureCity());
         e.setArrivalCity(r.arrivalCity());
@@ -321,8 +330,26 @@ public class TripRecurrenceService {
         e.setHandoverLeadDays(r.handoverLeadDays() != null ? r.handoverLeadDays() : 0);
         e.setPricingMode(r.pricingMode() != null ? r.pricingMode() : PricingMode.KG);
         e.setNegotiable(Boolean.TRUE.equals(r.negotiable()));
-        e.setCurrency(r.currency() == null || r.currency().isBlank()
-                ? "EUR" : r.currency().toUpperCase(Locale.ROOT));
+        // Même règle qu'un trajet simple (AnnouncementService#resolveAnnouncementCurrency) :
+        // devise envoyée validée, sinon repli. Le repli figé sur l'euro enregistrait un modèle
+        // XOF/XAF en euros : prix, carte et mobile money des trajets générés jugés sur l'euro.
+        SupportedCurrency currency = r.currency() == null || r.currency().isBlank()
+                ? SupportedCurrency.fromCodeOrDefault(fallbackCurrency.get())
+                : SupportedCurrency.fromCode(r.currency());
+        if (currency == null) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "currency-unsupported", "Currency Unsupported",
+                    "Cette devise n'est pas prise en charge par yadony.");
+        }
+        // Plafond du prix au kilo dans la devise de la récurrence, comme pour un modèle : le
+        // DTO ne garde qu'un garde-fou large (500 refusait tout prix réaliste en franc CFA).
+        if (r.pricePerKg() != null
+                && BigDecimal.valueOf(r.pricePerKg()).compareTo(CurrencyBounds.maxPricePerKg(currency)) > 0) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "price-out-of-bounds", "Price Out Of Bounds",
+                    "Ce prix au kilo dépasse le plafond autorisé dans cette devise.");
+        }
+        e.setCurrency(currency.code().toUpperCase(Locale.ROOT));
         e.setActive(r.active());
         // Au moins un moyen de paiement (FLUTTER-FT) : dans une devise où la carte est possible,
         // l'espèce doit rester cochée sans elle, comme sur un trajet simple où elle est imposée.
