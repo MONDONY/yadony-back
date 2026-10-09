@@ -21,6 +21,13 @@ public final class CurrencyBounds {
     /** Prix maximum au kilo, en euros, avant mise à l'échelle. */
     private static final BigDecimal MAX_PRICE_PER_KG_EUR = new BigDecimal("500");
 
+    /**
+     * Prix minimum au kilo, en euros, avant mise à l'échelle (FLUTTER-GK) : 1 €/kg,
+     * soit 656 F CFA/kg. En dessous, le prix trahit presque toujours une saisie dans
+     * la mauvaise devise (8 XOF/kg tapés en croyant saisir des euros).
+     */
+    private static final BigDecimal MIN_PRICE_PER_KG_EUR = BigDecimal.ONE;
+
     /** Budget maximum d'une demande de colis, en euros. */
     private static final BigDecimal MAX_PACKAGE_BUDGET_EUR = new BigDecimal("560");
 
@@ -44,6 +51,11 @@ public final class CurrencyBounds {
 
     public static BigDecimal maxPricePerKg(SupportedCurrency currency) {
         return scale(MAX_PRICE_PER_KG_EUR, currency, RoundingMode.DOWN);
+    }
+
+    /** Plancher du prix au kilo, arrondi vers le haut : 1 € vaut 655,957 XOF, donc 656. */
+    public static BigDecimal minPricePerKg(SupportedCurrency currency) {
+        return scale(MIN_PRICE_PER_KG_EUR, currency, RoundingMode.UP);
     }
 
     public static BigDecimal maxPackageBudget(SupportedCurrency currency) {

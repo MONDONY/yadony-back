@@ -13,7 +13,6 @@ import com.yadony.api.matching.dto.TripRecurrenceDto;
 import com.yadony.api.matching.dto.TripRecurrenceRequest;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
-import com.yadony.api.payments.currency.CurrencyBounds;
 import com.yadony.api.payments.currency.CurrencyPaymentRails;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import org.slf4j.Logger;
@@ -341,14 +340,11 @@ public class TripRecurrenceService {
                     "currency-unsupported", "Currency Unsupported",
                     "Cette devise n'est pas prise en charge par yadony.");
         }
-        // Plafond du prix au kilo dans la devise de la récurrence, comme pour un modèle : le
-        // DTO ne garde qu'un garde-fou large (500 refusait tout prix réaliste en franc CFA).
-        if (r.pricePerKg() != null
-                && BigDecimal.valueOf(r.pricePerKg()).compareTo(CurrencyBounds.maxPricePerKg(currency)) > 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "price-out-of-bounds", "Price Out Of Bounds",
-                    "Ce prix au kilo dépasse le plafond autorisé dans cette devise.");
-        }
+        // Bornes du prix au kilo dans la devise de la récurrence (FLUTTER-GK), comme pour un
+        // trajet simple : plancher 1 €/kg et plafond 500 €/kg mis à l'échelle. Le DTO ne garde
+        // qu'un garde-fou large (500 refusait tout prix réaliste en franc CFA).
+        com.yadony.api.payments.currency.PricePerKgBounds.assertWithinBounds(
+                r.pricePerKg(), currency, "price-out-of-bounds");
         e.setCurrency(currency.code().toUpperCase(Locale.ROOT));
         e.setActive(r.active());
         // Au moins un moyen de paiement (FLUTTER-FT) : dans une devise où la carte est possible,

@@ -558,14 +558,14 @@ class TripRecurrenceServiceTest {
     void create_withoutCurrency_fallsBackToTheTravelersActiveCurrency() {
         when(activeCurrencyResolver.resolve(userId)).thenReturn("XAF");
 
-        var dto = service.create(userId, request("1111111", 0, false));
+        var dto = service.create(userId, cfaPrice(request("1111111", 0, false)));
 
         assertThat(dto.currency()).isEqualTo("XAF");
     }
 
     @Test
     void create_withCurrency_keepsItAndPublishesOccurrencesInIt() {
-        var req = withCurrency(request("1111111", 0, false), "xof");
+        var req = withCurrency(cfaPrice(request("1111111", 0, false)), "xof");
 
         var dto = service.create(userId, req);
 
@@ -580,7 +580,7 @@ class TripRecurrenceServiceTest {
         rec.setCurrency("XOF");
         when(repository.findByUserIdAndId(userId, id)).thenReturn(Optional.of(rec));
 
-        service.update(userId, id, request("1111111", 0, false));
+        service.update(userId, id, cfaPrice(request("1111111", 0, false)));
 
         assertThat(rec.getCurrency()).isEqualTo("XOF");
     }
@@ -609,6 +609,36 @@ class TripRecurrenceServiceTest {
                         e -> assertThat(e.getErrorCode()).isEqualTo("price-out-of-bounds"));
         // 5 000 F CFA le kilo reste sous le plafond du franc CFA.
         assertThat(service.create(userId, withCurrency(eur, "XOF")).currency()).isEqualTo("XOF");
+    }
+
+    @Test
+    void create_priceBelowTheFloorOfItsCurrency_isRejected() {
+        var base = request("1111111", 0, false);
+        var cheap = new TripRecurrenceRequest(base.sourceTemplateId(), base.departureCity(), base.arrivalCity(),
+                base.transportMode(), base.capacityUnit(), base.availableKg(), 0.99,
+                base.acceptedCategories(), base.refusedCategories(), base.description(), base.pickupAddress(),
+                base.deliveryAddress(), base.departureTime(), base.arrivalTime(), base.cashAccepted(),
+                base.weekdays(), base.horizonDays(), base.startDate(), base.endDate(), base.weekInterval(),
+                base.publicationLeadDays(), base.handoverLeadDays(), base.pricingMode(), base.negotiable(),
+                "EUR", base.active(), base.arrivalDayOffset(), base.stopsCount(), base.cardAccepted());
+
+        assertThatThrownBy(() -> service.create(userId, cheap))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo("price-out-of-bounds");
+                    assertThat(e.getProperties()).containsEntry("reason", "too-low");
+                });
+        verify(repository, never()).save(any());
+    }
+
+    /** Prix réaliste en franc CFA : 8/kg passerait sous le plancher de 656 (FLUTTER-GK). */
+    private static TripRecurrenceRequest cfaPrice(TripRecurrenceRequest base) {
+        return new TripRecurrenceRequest(base.sourceTemplateId(), base.departureCity(), base.arrivalCity(),
+                base.transportMode(), base.capacityUnit(), base.availableKg(), 5000.0,
+                base.acceptedCategories(), base.refusedCategories(), base.description(), base.pickupAddress(),
+                base.deliveryAddress(), base.departureTime(), base.arrivalTime(), base.cashAccepted(),
+                base.weekdays(), base.horizonDays(), base.startDate(), base.endDate(), base.weekInterval(),
+                base.publicationLeadDays(), base.handoverLeadDays(), base.pricingMode(), base.negotiable(),
+                base.currency(), base.active(), base.arrivalDayOffset(), base.stopsCount(), base.cardAccepted());
     }
 
     private static TripRecurrenceRequest withCurrency(TripRecurrenceRequest base, String currency) {
