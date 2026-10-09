@@ -79,7 +79,6 @@ class MoneyIntegrityMonitorIT {
 
     @AfterEach
     void cleanDb() {
-        jdbcTemplate.update("DELETE FROM wallet_transactions");
         jdbcTemplate.update("DELETE FROM wallet_accounts");
     }
 
