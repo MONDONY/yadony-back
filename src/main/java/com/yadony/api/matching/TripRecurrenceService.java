@@ -3,16 +3,20 @@ package com.yadony.api.matching;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.YadonyNotFoundException;
 import com.yadony.api.config.ContentCategoryNormalizer;
 import com.yadony.api.matching.dto.AddressDto;
 import com.yadony.api.matching.dto.AnnouncementRequest;
+import com.yadony.api.matching.dto.AnnouncementResponse;
 import com.yadony.api.matching.dto.TripRecurrenceDto;
 import com.yadony.api.matching.dto.TripRecurrenceRequest;
 import com.yadony.api.payments.cash.PaymentMethod;
+import com.yadony.api.payments.currency.CurrencyPaymentRails;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -70,7 +74,8 @@ public class TripRecurrenceService {
         repository.save(entity);
         auditService.log("TRIP_RECURRENCE", entity.getId(), "TRIP_RECURRENCE_CREATED", userId,
                 Map.of("corridor", request.departureCity() + "->" + request.arrivalCity(),
-                        "weekdays", request.weekdays()));
+                        "weekdays", request.weekdays(),
+                        "cardDeclined", entity.isCardDeclined()));
         log.info("TripRecurrence created: id={} userId={}", entity.getId(), userId);
         // Génère les trajets dus sans attendre le scheduler, juste après le commit
         // (voir TripRecurrenceGenerationListener).
@@ -87,7 +92,8 @@ public class TripRecurrenceService {
         applyFields(entity, request);
         repository.save(entity);
         auditService.log("TRIP_RECURRENCE", entity.getId(), "TRIP_RECURRENCE_UPDATED", userId,
-                Map.of("active", String.valueOf(request.active())));
+                Map.of("active", String.valueOf(request.active()),
+                        "cardDeclined", entity.isCardDeclined()));
         if (entity.isActive()) {
             eventPublisher.publishEvent(new TripRecurrenceSavedEvent(entity.getId()));
         }
@@ -164,7 +170,9 @@ public class TripRecurrenceService {
                 continue;
             }
             try {
-                announcementService.createRecurringAnnouncement(firebaseUid, buildRequest(rec, d, user), rec.getId());
+                AnnouncementResponse occurrence = announcementService.createRecurringAnnouncement(
+                        firebaseUid, buildRequest(rec, d, user), rec.getId());
+                markCardDeclined(rec, occurrence);
                 created++;
             } catch (DataIntegrityViolationException exception) {
                 if (!isDuplicateOccurrence(exception)) {
@@ -179,6 +187,25 @@ public class TripRecurrenceService {
         rec.setLastGeneratedDate(end);
         repository.save(rec);
         return created;
+    }
+
+    /**
+     * Recopie le refus de la carte sur l'occurrence générée (FLUTTER-FT). La publication ne le
+     * déduit que si le compte Stripe Connect est actif à cet instant ({@code declinesCard}) :
+     * générée pendant une restriction du compte, l'occurrence se rouvrirait sinon à la carte
+     * au retour de l'onboarding (FLUTTER-DH), malgré le refus de la récurrence.
+     */
+    private void markCardDeclined(TripRecurrenceEntity rec, AnnouncementResponse occurrence) {
+        if (!rec.isCardDeclined() || occurrence == null || occurrence.id() == null
+                || !CurrencyPaymentRails.allowsCode(rec.getCurrency(), PaymentMethod.STRIPE)) {
+            return;
+        }
+        announcementRepository.findById(occurrence.id())
+                .filter(announcement -> !announcement.isCardDeclined())
+                .ifPresent(announcement -> {
+                    announcement.setCardDeclined(true);
+                    announcementRepository.save(announcement);
+                });
     }
 
     private boolean isDuplicateOccurrence(DataIntegrityViolationException exception) {
@@ -196,8 +223,12 @@ public class TripRecurrenceService {
     private AnnouncementRequest buildRequest(TripRecurrenceEntity rec, LocalDate date, UserEntity user) {
         // Carte et mobile money sont proposés dès que la devise et les comptes du voyageur
         // le permettent (comme la carte l'était déjà) ; l'espèce suit le choix explicite de
-        // la récurrence. Jamais vide : sans rail restant, l'espèce garde le trajet vendable.
-        EnumSet<PaymentMethod> wanted = EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.MOBILE_MONEY);
+        // la récurrence, la carte aussi quand le voyageur l'a décochée (FLUTTER-FT). Jamais
+        // vide : sans rail restant, l'espèce garde le trajet vendable.
+        EnumSet<PaymentMethod> wanted = EnumSet.of(PaymentMethod.MOBILE_MONEY);
+        if (!rec.isCardDeclined()) {
+            wanted.add(PaymentMethod.STRIPE);
+        }
         if (rec.isCashAccepted()) {
             wanted.add(PaymentMethod.CASH);
         }
@@ -293,6 +324,15 @@ public class TripRecurrenceService {
         e.setCurrency(r.currency() == null || r.currency().isBlank()
                 ? "EUR" : r.currency().toUpperCase(Locale.ROOT));
         e.setActive(r.active());
+        // Au moins un moyen de paiement (FLUTTER-FT) : dans une devise où la carte est possible,
+        // l'espèce doit rester cochée sans elle, comme sur un trajet simple où elle est imposée.
+        if (r.declinesCard() && !r.cashAccepted()
+                && CurrencyPaymentRails.allowsCode(e.getCurrency(), PaymentMethod.STRIPE)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "payment-method-required", "Payment Method Required",
+                    "Choisissez au moins un moyen de paiement pour ce trajet.");
+        }
+        e.setCardDeclined(r.declinesCard());
     }
 
     /** Mode inconnu : aucune escale enregistrée, la validation du mode reste à la publication. */
@@ -338,6 +378,7 @@ public class TripRecurrenceService {
                 e.getWeekInterval(), e.getPublicationLeadDays(), e.getHandoverLeadDays(), e.isActive(),
                 e.getArrivalDayOffset(),
                 e.getStopsCount(),
+                !e.isCardDeclined(),
                 e.getLastGeneratedDate(), e.getLastPublicationErrorCode(),
                 e.getLastPublicationErrorMessage(), e.getLastPublicationErrorAt(), status,
                 nextOccurrence.map(TripRecurrenceCalendar.OccurrenceDate::departureDate).orElse(null),

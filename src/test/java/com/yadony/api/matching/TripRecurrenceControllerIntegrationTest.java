@@ -156,7 +156,42 @@ class TripRecurrenceControllerIntegrationTest {
                 .andExpect(jsonPath("$.handoverLeadDays").value(0))
                 .andExpect(jsonPath("$.pricingMode").value("KG"))
                 .andExpect(jsonPath("$.negotiable").value(false))
-                .andExpect(jsonPath("$.currency").value("EUR"));
+                .andExpect(jsonPath("$.currency").value("EUR"))
+                .andExpect(jsonPath("$.cardAccepted").value(true));
+    }
+
+    // FLUTTER-FT : la carte décochée sur la récurrence est stockée (V308) et relue.
+    @Test
+    void create_cardDeclined_roundTrips() throws Exception {
+        ObjectNode payload = (ObjectNode) objectMapper.readTree(recurrenceJson("1000000", false));
+        payload.put("cashAccepted", true);
+        payload.put("cardAccepted", false);
+
+        mockMvc.perform(post("/trip-recurrences")
+                .with(authentication(asTraveler(TRAVELER_UID)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.cardAccepted").value(false));
+
+        mockMvc.perform(get("/trip-recurrences")
+                .with(authentication(asTraveler(TRAVELER_UID))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].cardAccepted").value(false));
+    }
+
+    @Test
+    void create_cardDeclinedWithoutCash_returns422() throws Exception {
+        ObjectNode payload = (ObjectNode) objectMapper.readTree(recurrenceJson("1000000", false));
+        payload.put("cashAccepted", false);
+        payload.put("cardAccepted", false);
+
+        mockMvc.perform(post("/trip-recurrences")
+                .with(authentication(asTraveler(TRAVELER_UID)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload)))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("payment-method-required"));
     }
 
     @Test
