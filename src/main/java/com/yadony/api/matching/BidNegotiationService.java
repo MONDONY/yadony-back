@@ -29,9 +29,13 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Moteur des tours de négociation d'un trajet, porté par le {@link BidEntity} lui-même.
@@ -424,14 +428,38 @@ public class BidNegotiationService {
         List<BidEntity> bids = archived
                 ? bidRepository.findArchivedNegotiationsForUser(user.getId())
                 : bidRepository.findNegotiationsForUser(user.getId());
+        if (bids.isEmpty()) {
+            return rows;
+        }
+        // Trois lectures groupées pour toute la liste (trajets, derniers messages,
+        // contreparties) au lieu de trois par ligne : la liste garde désormais les fils
+        // terminés (FLUTTER-HM) et grossit avec l'historique de l'utilisateur.
+        Map<UUID, AnnouncementEntity> announcements = new HashMap<>();
+        announcementRepository.findAllById(
+                        bids.stream().map(BidEntity::getAnnouncementId).collect(Collectors.toSet()))
+                .forEach(a -> announcements.put(a.getId(), a));
+        Map<UUID, BidNegotiationMessageEntity> lastMessages = new HashMap<>();
+        messageRepository.findLatestByBidIdIn(bids.stream().map(BidEntity::getId).toList())
+                .forEach(m -> lastMessages.putIfAbsent(m.getBidId(), m));
+        Set<UUID> counterpartIds = new HashSet<>();
         for (BidEntity bid : bids) {
-            AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                    .orElse(null);
+            AnnouncementEntity announcement = announcements.get(bid.getAnnouncementId());
+            if (announcement != null) {
+                counterpartIds.add(announcement.getTravelerId().equals(user.getId())
+                        ? bid.getSenderId() : announcement.getTravelerId());
+            }
+        }
+        Map<UUID, String> displayNames = new HashMap<>();
+        userRepository.findAllById(counterpartIds)
+                .forEach(u -> displayNames.put(u.getId(), u.publicDisplayName()));
+
+        for (BidEntity bid : bids) {
+            AnnouncementEntity announcement = announcements.get(bid.getAnnouncementId());
             if (announcement == null) {
                 continue;
             }
             boolean viewerIsTraveler = announcement.getTravelerId().equals(user.getId());
-            BidNegotiationMessageEntity last = lastMessage(bid.getId());
+            BidNegotiationMessageEntity last = lastMessages.get(bid.getId());
             LocalDateTime lastReadAt = viewerIsTraveler
                     ? bid.getTravelerLastReadAt() : bid.getSenderLastReadAt();
 
@@ -447,7 +475,9 @@ public class BidNegotiationService {
                     hasUnread(last, user.getId(), lastReadAt),
                     currentGross(bid, last),
                     bid.getCurrency(),
-                    displayName(viewerIsTraveler ? bid.getSenderId() : announcement.getTravelerId()),
+                    displayNames.getOrDefault(
+                            viewerIsTraveler ? bid.getSenderId() : announcement.getTravelerId(),
+                            UserEntity.UNKNOWN_DISPLAY_NAME),
                     announcement.getDepartureCity(),
                     announcement.getArrivalCity(),
                     announcement.getDepartureDate(),
@@ -539,11 +569,12 @@ public class BidNegotiationService {
     }
 
     /**
-     * Terminée = n'attend plus rien de personne. Les seuls états ouverts sont ceux que
-     * la liste « Discussions de prix » affiche comme tels (cf. findNegotiationsForUser) :
+     * Terminée = n'attend plus rien de personne. Les seuls états ouverts sont
      * NEGOTIATING, et l'accord conclu en attente de règlement (AWAITING_PAYMENT carte ou
      * mobile money, PENDING espèces). Tout le reste est terminé : NEGOTIATION_CLOSED
-     * (refus, retrait, péremption) et tout statut atteint après le règlement.
+     * (refus, retrait, péremption) et tout statut atteint après le règlement. Ces fils
+     * terminés restent listés (findNegotiationsForUser, FLUTTER-HM) : c'est là que
+     * l'utilisateur les range ou les retire.
      */
     private static void assertNegotiationTerminal(Participant ctx) {
         BidStatus status = ctx.bid().getStatus();

@@ -93,6 +93,7 @@ class BidNegotiationArchiveServiceTest {
         lenient().when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(user(TRAVELER_ID, TRAVELER_UID)));
         lenient().when(userRepository.findByFirebaseUid(THIRD_UID)).thenReturn(Optional.of(user(THIRD_ID, THIRD_UID)));
         lenient().when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+        lenient().when(announcementRepository.findAllById(any())).thenReturn(List.of(announcement));
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -169,7 +170,8 @@ class BidNegotiationArchiveServiceTest {
     }
 
     @ParameterizedTest
-    @EnumSource(value = BidStatus.class, names = {"ACCEPTED", "COMPLETED", "CANCELLED", "EXPIRED", "PAYMENT_ESCROWED"})
+    @EnumSource(value = BidStatus.class, names = {"ACCEPTED", "COMPLETED", "CANCELLED", "EXPIRED", "PAYMENT_ESCROWED",
+            "HANDED_OVER", "IN_TRANSIT", "ARRIVED", "NEGOTIATION_CLOSED"})
     @DisplayName("un accord négocié réglé puis mené à son terme est terminé : il se range")
     void archive_settledAgreement_isTerminal(BidStatus status) {
         bid(status, true);
@@ -177,6 +179,20 @@ class BidNegotiationArchiveServiceTest {
         service.archive(BID_ID, SENDER_UID);
 
         verify(bidRepository).updateNegotiationSenderArchivedAt(eq(BID_ID), any(LocalDateTime.class));
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = BidStatus.class, names = {"ACCEPTED", "PAYMENT_ESCROWED", "HANDED_OVER",
+            "IN_TRANSIT", "ARRIVED", "COMPLETED"})
+    @DisplayName("FLUTTER-HM : un fil de trajet conclu puis réglé, de nouveau listé, se retire aussi")
+    void hide_settledAgreement_isTerminal(BidStatus status) {
+        bid(status, true);
+
+        service.hide(BID_ID, TRAVELER_UID);
+
+        verify(bidRepository).updateNegotiationTravelerHiddenAt(eq(BID_ID), any(LocalDateTime.class));
+        verify(auditService).log("BID", BID_ID, "BID_NEGOTIATION_HIDDEN", TRAVELER_ID,
+                Map.of("role", "TRAVELER", "status", status.name()));
     }
 
     @ParameterizedTest

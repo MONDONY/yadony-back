@@ -24,6 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class BidNegotiationRepositoryTest {
 
     @Autowired private BidRepository bidRepository;
+    @Autowired private BidNegotiationMessageRepository messageRepository;
     @Autowired private TestEntityManager em;
 
     private UUID newAnnouncement(UUID travelerId, LocalDate departureDate) {
@@ -202,16 +203,113 @@ class BidNegotiationRepositoryTest {
     }
 
     @Test
-    @DisplayName("un accord négocié payé quitte la liste : il vit désormais dans Mes colis")
-    void paidNegotiationLeavesTheList() {
+    @DisplayName("FLUTTER-HM : un fil conclu, réglé ou clos reste listé des deux côtés, quel que soit son statut")
+    void settledOrClosedNegotiationStaysListed() {
         UUID travelerId = UUID.randomUUID();
         UUID senderId = UUID.randomUUID();
         UUID announcementId = newAnnouncement(travelerId, LocalDate.now().plusDays(10));
-        newBid(announcementId, senderId, BidStatus.PAYMENT_ESCROWED, true);
-        newBid(announcementId, senderId, BidStatus.ACCEPTED, true);
-        newBid(announcementId, senderId, BidStatus.NEGOTIATION_CLOSED, true);
+        UUID escrowed = newBid(announcementId, senderId, BidStatus.PAYMENT_ESCROWED, true);
+        UUID accepted = newBid(announcementId, senderId, BidStatus.ACCEPTED, true);
+        UUID handedOver = newBid(announcementId, senderId, BidStatus.HANDED_OVER, true);
+        UUID arrived = newBid(announcementId, senderId, BidStatus.ARRIVED, true);
+        UUID completed = newBid(announcementId, senderId, BidStatus.COMPLETED, true);
+        UUID closedAfterAgreement = newBid(announcementId, senderId, BidStatus.NEGOTIATION_CLOSED, true);
+        UUID closedWithoutAgreement = newBid(announcementId, senderId, BidStatus.NEGOTIATION_CLOSED, false);
+
+        // Avant : le fil disparaissait de « Discussions de prix » (Toutes, Terminées et
+        // Archivées) dès le règlement, sans que l'utilisateur ait rien rangé ni retiré.
+        UUID[] all = {escrowed, accepted, handedOver, arrived, completed,
+                closedAfterAgreement, closedWithoutAgreement};
+        assertThat(bidRepository.findNegotiationsForUser(senderId))
+                .extracting(BidEntity::getId).containsExactlyInAnyOrder(all);
+        assertThat(bidRepository.findNegotiationsForUser(travelerId))
+                .extracting(BidEntity::getId).containsExactlyInAnyOrder(all);
+    }
+
+    @Test
+    @DisplayName("une demande jamais négociée n'est jamais listée, quel que soit son statut")
+    void neverNegotiatedBid_isNeverListed() {
+        UUID travelerId = UUID.randomUUID();
+        UUID senderId = UUID.randomUUID();
+        UUID announcementId = newAnnouncement(travelerId, LocalDate.now().plusDays(10));
+        for (BidStatus status : List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT,
+                BidStatus.ARRIVED, BidStatus.COMPLETED, BidStatus.PAYMENT_ESCROWED, BidStatus.CANCELLED)) {
+            newBid(announcementId, senderId, status, false);
+        }
 
         assertThat(bidRepository.findNegotiationsForUser(senderId)).isEmpty();
+        assertThat(bidRepository.findNegotiationsForUser(travelerId)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("un fil réglé rangé par le voyageur quitte sa liste courante et passe dans Archivées")
+    void settledNegotiationArchivedByTraveler_movesToArchived() {
+        UUID travelerId = UUID.randomUUID();
+        UUID senderId = UUID.randomUUID();
+        UUID announcementId = newAnnouncement(travelerId, LocalDate.now().plusDays(10));
+        UUID bidId = newBid(announcementId, senderId, BidStatus.HANDED_OVER, true);
+
+        bidRepository.updateNegotiationTravelerArchivedAt(bidId, LocalDateTime.now(ZoneOffset.UTC));
+
+        assertThat(bidRepository.findNegotiationsForUser(travelerId)).isEmpty();
+        assertThat(bidRepository.findArchivedNegotiationsForUser(travelerId))
+                .extracting(BidEntity::getId).containsExactly(bidId);
+        assertThat(bidRepository.findNegotiationsForUser(senderId))
+                .extracting(BidEntity::getId).containsExactly(bidId);
+    }
+
+    @Test
+    @DisplayName("un fil réglé retiré par l'expéditeur n'apparaît plus dans aucune de ses listes")
+    void settledNegotiationHiddenBySender_leavesBothLists() {
+        UUID travelerId = UUID.randomUUID();
+        UUID senderId = UUID.randomUUID();
+        UUID announcementId = newAnnouncement(travelerId, LocalDate.now().plusDays(10));
+        UUID bidId = newBid(announcementId, senderId, BidStatus.ARRIVED, true);
+
+        bidRepository.updateNegotiationSenderHiddenAt(bidId, LocalDateTime.now(ZoneOffset.UTC));
+
+        assertThat(bidRepository.findNegotiationsForUser(senderId)).isEmpty();
+        assertThat(bidRepository.findArchivedNegotiationsForUser(senderId)).isEmpty();
+        assertThat(bidRepository.findNegotiationsForUser(travelerId))
+                .extracting(BidEntity::getId).containsExactly(bidId);
+    }
+
+    @Test
+    @DisplayName("un fil soft-deleted n'est jamais listé")
+    void softDeletedNegotiation_isNeverListed() {
+        UUID travelerId = UUID.randomUUID();
+        UUID senderId = UUID.randomUUID();
+        UUID announcementId = newAnnouncement(travelerId, LocalDate.now().plusDays(10));
+        UUID bidId = newBid(announcementId, senderId, BidStatus.COMPLETED, true);
+        BidEntity bid = em.find(BidEntity.class, bidId);
+        bid.setDeletedAt(LocalDateTime.now(ZoneOffset.UTC));
+        em.persistAndFlush(bid);
+
+        assertThat(bidRepository.findNegotiationsForUser(senderId)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("le dernier message de chaque fil remonte en une requête")
+    void latestMessages_areBatchedPerThread() {
+        UUID travelerId = UUID.randomUUID();
+        UUID senderId = UUID.randomUUID();
+        UUID announcementId = newAnnouncement(travelerId, LocalDate.now().plusDays(10));
+        UUID first = newNegotiatingBid(announcementId, senderId);
+        UUID second = newNegotiatingBid(announcementId, UUID.randomUUID());
+        UUID silent = newNegotiatingBid(announcementId, UUID.randomUUID());
+        newMessage(first, senderId);
+        backdateMessages(first, LocalDateTime.now(ZoneOffset.UTC).minusHours(2));
+        em.persistAndFlush(BidNegotiationMessageEntity.create(
+                first, travelerId, BidNegotiationMessageKind.ACCEPT, new BigDecimal("40.00"), null));
+        newMessage(second, travelerId);
+
+        List<BidNegotiationMessageEntity> latest =
+                messageRepository.findLatestByBidIdIn(List.of(first, second, silent));
+
+        assertThat(latest).extracting(BidNegotiationMessageEntity::getBidId)
+                .containsExactlyInAnyOrder(first, second);
+        assertThat(latest).filteredOn(m -> m.getBidId().equals(first)).singleElement()
+                .extracting(BidNegotiationMessageEntity::getKind).isEqualTo(BidNegotiationMessageKind.ACCEPT);
     }
 
     // ─── Rangement / retrait par participant (FLUTTER-EJ, V293) ────────────────
