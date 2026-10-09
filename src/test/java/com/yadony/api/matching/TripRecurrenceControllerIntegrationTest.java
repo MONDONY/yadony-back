@@ -198,11 +198,14 @@ class TripRecurrenceControllerIntegrationTest {
         var user = userRepository.findByFirebaseUid(TRAVELER_UID).orElseThrow();
         org.springframework.test.util.ReflectionTestUtils.setField(user, "country", "SN");
         userRepository.save(user);
+        // Prix réaliste en franc CFA : 8 F CFA/kg passerait sous le plancher (FLUTTER-GK).
+        ObjectNode payload = (ObjectNode) objectMapper.readTree(recurrenceJson("1000000", false));
+        payload.put("pricePerKg", 5000.0);
 
         mockMvc.perform(post("/trip-recurrences")
                 .with(authentication(asTraveler(TRAVELER_UID)))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(recurrenceJson("1000000", false)))
+                .content(objectMapper.writeValueAsString(payload)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.currency").value("XOF"));
     }
@@ -227,6 +230,23 @@ class TripRecurrenceControllerIntegrationTest {
                 .content(objectMapper.writeValueAsString(tooExpensive)))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.code").value("price-out-of-bounds"));
+    }
+
+    // FLUTTER-GK : une récurrence à 8 F CFA/kg régénérerait sans fin le prix mal saisi.
+    @Test
+    void create_priceBelowTheFloorOfItsCurrency_returns422() throws Exception {
+        ObjectNode tooCheap = (ObjectNode) objectMapper.readTree(recurrenceJson("1000000", false));
+        tooCheap.put("currency", "XOF");
+        tooCheap.put("pricePerKg", 8.0);
+        mockMvc.perform(post("/trip-recurrences")
+                .with(authentication(asTraveler(TRAVELER_UID)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(tooCheap)))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("price-out-of-bounds"))
+                .andExpect(jsonPath("$.reason").value("too-low"))
+                .andExpect(jsonPath("$.min").value(656))
+                .andExpect(jsonPath("$.currency").value("XOF"));
     }
 
     // FLUTTER-FT : la carte décochée sur la récurrence est stockée (V308) et relue.

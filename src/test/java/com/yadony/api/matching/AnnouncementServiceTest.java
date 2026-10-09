@@ -246,6 +246,11 @@ class AnnouncementServiceTest {
                 null);
     }
 
+    /** Prix réaliste dans la devise : 5 F CFA/kg passerait sous le plancher de 656 (FLUTTER-GK). */
+    private static boolean isCfa(String currency) {
+        return "XOF".equalsIgnoreCase(currency) || "XAF".equalsIgnoreCase(currency);
+    }
+
     private AnnouncementRequest requestWithPaymentMethodsAndCurrency(java.util.Set<PaymentMethod> methods,
                                                                      String currency) {
         LocalDate departure = LocalDate.now().plusDays(10);
@@ -255,7 +260,7 @@ class AnnouncementServiceTest {
                 LocalTime.of(10, 0), LocalTime.of(22, 0),
                 new AddressDto("CDG Terminal 2E", 49.009, 2.547),
                 new AddressDto("Aéroport LSS", 14.739, -17.490),
-                BigDecimal.valueOf(20), BigDecimal.valueOf(5),
+                BigDecimal.valueOf(20), BigDecimal.valueOf(isCfa(currency) ? 5000 : 5),
                 TransportMode.PLANE,
                 null, null, null, methods, null, null,
                 null, null,
@@ -1139,7 +1144,7 @@ class AnnouncementServiceTest {
                     LocalTime.of(10, 0), LocalTime.of(22, 0),
                     new AddressDto("CDG Terminal 2E", 49.009, 2.547),
                     new AddressDto("Aéroport LSS", 14.739, -17.490),
-                    BigDecimal.valueOf(20), BigDecimal.valueOf(5),
+                    BigDecimal.valueOf(20), BigDecimal.valueOf(5000),
                     TransportMode.PLANE,
                     null, null, null,
                     java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.CASH),

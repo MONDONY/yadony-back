@@ -269,7 +269,7 @@ class TripTemplateServiceTest {
     void create_legacyClientInCfaCurrency_dropsCardKeepsCash() {
         var request = new CreateTripTemplateRequest(
                 "Legacy XOF", null, "Paris", null, null, "Dakar", null, null,
-                "PLANE", "SUITCASE_23KG", 23, 8.0, null, false, null,
+                "PLANE", "SUITCASE_23KG", 23, 5000.0, null, false, null,
                 "XOF", null, null, null, null, null,
                 null, null, null, null, null, null);
 
@@ -425,6 +425,23 @@ class TripTemplateServiceTest {
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
                         .isEqualTo("trip-template/price-out-of-bounds"));
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void create_rejectsPricePerKgBelowTheCurrencyFloor() {
+        // FLUTTER-GK : 8 F CFA/kg, saisis en croyant taper des euros.
+        when(activeCurrencyResolver.resolve(userId)).thenReturn("XOF");
+        var request = new CreateTripTemplateRequest(
+                "Trop bas", "🇸🇳", "Paris", 48.85, 2.35, "Dakar", 14.71, -17.46,
+                "PLANE", "SUITCASE_23KG", 23, 8.0, List.of(), false, null,
+                null, null, null, null, null, null, null, null, null, null, null, null);
+
+        assertThatThrownBy(() -> service.create(userId, request))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo("trip-template/price-out-of-bounds");
+                    assertThat(e.getProperties()).containsEntry("reason", "too-low");
+                });
         verify(repository, never()).save(any());
     }
 

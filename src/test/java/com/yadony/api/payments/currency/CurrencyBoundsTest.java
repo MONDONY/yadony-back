@@ -60,4 +60,18 @@ class CurrencyBoundsTest {
                 .isZero();
     }
 
+    @Test
+    @DisplayName("FLUTTER-GK — plancher du prix au kilo : 1 €/kg arrondi vers le haut")
+    void minPricePerKgIsOneEuroRoundedUp() {
+        assertThat(CurrencyBounds.minPricePerKg(SupportedCurrency.EUR)).isEqualByComparingTo("1.00");
+        // 1 € vaut 655,957 F CFA : arrondi vers le haut pour qu'un prix accepté vaille au moins 1 €.
+        assertThat(CurrencyBounds.minPricePerKg(SupportedCurrency.XOF)).isEqualByComparingTo("656");
+        assertThat(CurrencyBounds.minPricePerKg(SupportedCurrency.XAF)).isEqualByComparingTo("656");
+        for (SupportedCurrency currency : SupportedCurrency.values()) {
+            assertThat(CurrencyBounds.minPricePerKg(currency).scale()).isEqualTo(currency.minorUnit());
+            assertThat(CurrencyBounds.minPricePerKg(currency))
+                    .isLessThan(CurrencyBounds.maxPricePerKg(currency));
+        }
+    }
+
 }

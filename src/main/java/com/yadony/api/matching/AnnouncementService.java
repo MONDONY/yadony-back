@@ -17,7 +17,6 @@ import com.yadony.api.config.ContentCategoryNormalizer;
 import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.config.YadonyConfigProperties;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
-import com.yadony.api.payments.currency.CurrencyBounds;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.currency.ExchangeRateService;
 import com.yadony.api.matching.dto.AnnouncementDetailResponse;
@@ -101,21 +100,16 @@ public class AnnouncementService {
      * Un client qui n'envoie pas de devise (champ omis) garde le comportement historique.
      */
     /**
-     * Plafond du prix au kilo dans la devise de l'annonce (FLUTTER-GK), comme pour une
-     * récurrence ou un modèle de trajet. Le DTO ne garde qu'un garde-fou large : sans cette
-     * règle, chaque étape d'un voyage (POST /announcements/trips) passait n'importe quel
-     * prix. Appliqué à la création (trajet simple, étape, récurrence) et à la modification.
+     * Bornes du prix au kilo dans la devise de l'annonce (FLUTTER-GK) : plancher de 1 €/kg
+     * et plafond de 500 €/kg, mis à l'échelle de la devise, comme pour une récurrence ou un
+     * modèle de trajet. Le DTO ne garde qu'un garde-fou large : sans cette règle, chaque
+     * étape d'un voyage (POST /announcements/trips) passait n'importe quel prix, jusqu'à
+     * 8 XOF/kg saisis en croyant taper des euros. Appliqué à la création (trajet simple,
+     * étape, récurrence) et à la modification.
      */
     private static void assertPricePerKgWithinBounds(java.math.BigDecimal pricePerKg, String currency) {
-        if (pricePerKg == null) {
-            return;
-        }
-        SupportedCurrency supported = SupportedCurrency.fromCodeOrDefault(currency);
-        if (pricePerKg.compareTo(CurrencyBounds.maxPricePerKg(supported)) > 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "price-out-of-bounds", "Price Out Of Bounds",
-                    "Ce prix au kilo dépasse le plafond autorisé dans cette devise.");
-        }
+        com.yadony.api.payments.currency.PricePerKgBounds.assertWithinBounds(
+                pricePerKg, SupportedCurrency.fromCodeOrDefault(currency), "price-out-of-bounds");
     }
 
     private String resolveAnnouncementCurrency(String requestedCurrency, java.util.UUID travelerId) {

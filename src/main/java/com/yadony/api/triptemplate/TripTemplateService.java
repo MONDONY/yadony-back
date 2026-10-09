@@ -7,8 +7,8 @@ import com.yadony.api.config.ContentCategoryNormalizer;
 import com.yadony.api.matching.dto.AddressDto;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
-import com.yadony.api.payments.currency.CurrencyBounds;
 import com.yadony.api.payments.currency.CurrencyPaymentRails;
+import com.yadony.api.payments.currency.PricePerKgBounds;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.triptemplate.dto.*;
 import org.slf4j.Logger;
@@ -226,8 +226,9 @@ public class TripTemplateService {
 
     /**
      * En mode KG le prix est obligatoire ; en mode MIXED (grille de profil) il est
-     * facultatif. Le plafond suit la devise du modèle : figé à 500 il valait 0,76 €/kg
-     * en franc CFA et aucun modèle XOF réaliste ne passait.
+     * facultatif. Les bornes suivent la devise du modèle : plafond figé à 500 il valait
+     * 0,76 €/kg en franc CFA et aucun modèle XOF réaliste ne passait ; plancher de 1 €/kg
+     * (FLUTTER-GK), pour qu'un modèle ne régénère pas un prix saisi dans la mauvaise devise.
      */
     private void assertPricePerKg(Double pricePerKg, String pricingMode, SupportedCurrency currency) {
         if (pricePerKg == null || pricePerKg <= 0) {
@@ -238,11 +239,7 @@ public class TripTemplateService {
             }
             return;
         }
-        if (BigDecimal.valueOf(pricePerKg).compareTo(CurrencyBounds.maxPricePerKg(currency)) > 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "trip-template/price-out-of-bounds", "Price Out Of Bounds",
-                    "Ce prix au kilo dépasse le plafond autorisé dans cette devise.");
-        }
+        PricePerKgBounds.assertWithinBounds(pricePerKg, currency, "trip-template/price-out-of-bounds");
     }
 
     /** Une adresse est mémorisée entière (libellé + coordonnées) ou pas du tout. */

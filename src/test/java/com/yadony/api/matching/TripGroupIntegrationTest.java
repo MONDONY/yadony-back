@@ -215,6 +215,111 @@ class TripGroupIntegrationTest {
                 .andExpect(jsonPath("$.legIndex").value(2));
     }
 
+    // ── Plancher du prix au kilo (FLUTTER-GK) : 1 €/kg mis à l'échelle de la devise ──
+
+    private void seedRates() {
+        for (String[] rate : new String[][] {{"EUR", "1"}, {"XOF", "655.957"}}) {
+            if (exchangeRateRepository.findById(rate[0]).isEmpty()) {
+                exchangeRateRepository.save(new com.yadony.api.payments.currency.ExchangeRateEntity(
+                        rate[0], new java.math.BigDecimal(rate[1])));
+            }
+        }
+    }
+
+    private org.springframework.test.web.servlet.ResultActions postSingle(String body) throws Exception {
+        return mockMvc.perform(post("/announcements").with(authentication(as(OWNER)))
+                .contentType(MediaType.APPLICATION_JSON).content(body));
+    }
+
+    @Test
+    void legBelowCurrencyFloor_isRefusedWithLegIndexAndRollsBack() throws Exception {
+        seedRates();
+        LocalDate d = LocalDate.now().plusDays(10);
+        // FLUTTER-GK : 8 F CFA/kg saisis en croyant taper des euros, sur la deuxième étape.
+        mockMvc.perform(post("/announcements/trips").with(authentication(as(OWNER)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(trip(
+                                withCurrency(leg("Paris", "Abidjan", d, 3000, false), "XOF"),
+                                withCurrency(leg("Abidjan", "Douala", d.plusDays(4), 8, false), "XOF"))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("price-out-of-bounds"))
+                .andExpect(jsonPath("$.reason").value("too-low"))
+                .andExpect(jsonPath("$.min").value(656))
+                .andExpect(jsonPath("$.max").value(327978))
+                .andExpect(jsonPath("$.currency").value("XOF"))
+                .andExpect(jsonPath("$.legIndex").value(2));
+        // L'étape 1, déjà enregistrée dans la transaction, est annulée avec l'étape fautive.
+        assertThat(announcementRepository.count()).isZero();
+
+        // Même refus en euros : 0,99 €/kg sur la deuxième étape.
+        mockMvc.perform(post("/announcements/trips").with(authentication(as(OWNER)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(trip(leg("Paris", "Abidjan", d, 8, false),
+                                leg("Abidjan", "Douala", d.plusDays(4), 0.99, false))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("price-out-of-bounds"))
+                .andExpect(jsonPath("$.reason").value("too-low"))
+                .andExpect(jsonPath("$.currency").value("EUR"))
+                .andExpect(jsonPath("$.legIndex").value(2));
+        assertThat(announcementRepository.count()).isZero();
+    }
+
+    @Test
+    void floorFollowsTheTripCurrency_onASingleTrip() throws Exception {
+        seedRates();
+        LocalDate d = LocalDate.now().plusDays(10);
+        // 1 € vaut 655,957 F CFA : le plancher est arrondi vers le haut, à 656.
+        postSingle(withCurrency(leg("Paris", "Abidjan", d, 8, false), "XOF"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("price-out-of-bounds"))
+                .andExpect(jsonPath("$.reason").value("too-low"))
+                .andExpect(jsonPath("$.min").value(656));
+        postSingle(withCurrency(leg("Paris", "Abidjan", d, 655, false), "XOF"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("price-out-of-bounds"));
+        postSingle(withCurrency(leg("Paris", "Abidjan", d, 656, false), "XOF"))
+                .andExpect(status().isCreated());
+
+        postSingle(leg("Paris", "Abidjan", d, 0.99, false))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("price-out-of-bounds"))
+                .andExpect(jsonPath("$.reason").value("too-low"))
+                .andExpect(jsonPath("$.min").value(1.0))
+                .andExpect(jsonPath("$.currency").value("EUR"));
+        postSingle(leg("Paris", "Abidjan", d, 1, false))
+                .andExpect(status().isCreated());
+        assertThat(announcementRepository.count()).isEqualTo(2);
+    }
+
+    @Test
+    void updateBelowTheFloor_isRefused() throws Exception {
+        LocalDate d = LocalDate.now().plusDays(10);
+        String json = postSingle(leg("Paris", "Abidjan", d, 8, false))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String id = objectMapper.readTree(json).get("id").asText();
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .put("/announcements/" + id).with(authentication(as(OWNER)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(leg("Paris", "Abidjan", d, 0.5, false)))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("price-out-of-bounds"))
+                .andExpect(jsonPath("$.reason").value("too-low"));
+        assertThat(announcementRepository.findById(UUID.fromString(id)).orElseThrow().getPricePerKg())
+                .isEqualByComparingTo("8");
+    }
+
+    @Test
+    void ceilingRefusal_carriesTheBounds() throws Exception {
+        LocalDate d = LocalDate.now().plusDays(10);
+        postSingle(leg("Paris", "Abidjan", d, 501, false))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("price-out-of-bounds"))
+                .andExpect(jsonPath("$.reason").value("too-high"))
+                .andExpect(jsonPath("$.max").value(500.0));
+    }
+
     @Test
     void unchainedCities_areRefusedWithTheFaultyLeg() throws Exception {
         LocalDate d = LocalDate.now().plusDays(10);
