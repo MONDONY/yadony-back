@@ -1261,3 +1261,24 @@ saturait (187 requêtes en attente) et les requêtes finissaient en **500 après
       succès → écran « accepté » ; « Refuser le colis » fonctionne.
 - [ ] Recette staging : fermer la fiche d'un voyage multi-étapes pendant son chargement (aucun plantage) ; icône de signalement
       visible en thème sombre ; intention avec un pays hors des 4 historiques (ex. Gabon) acceptée.
+
+#### 9.15 Soir du 09/10 : back #478, app #581 à #583 (FLUTTER-H8, H9, HB, HK, HM)
+
+> Ajoutée le 09/10/2026. Aucune migration (dernière : **V309**, prochaine **V310**), aucun secret, aucune nouvelle variable.
+
+| PR | Sujet | À savoir |
+|---|---|---|
+| back #478 | « Discussions de prix » : les fils de **trajet** réglés ou clos (ACCEPTED, PAYMENT_ESCROWED, HANDED_OVER, IN_TRANSIT, ARRIVED, COMPLETED, NEGOTIATION_CLOSED) restent listés (onglet « Terminées ») et deviennent archivables. Avant : ils disparaissaient dès l'accord, ni listés ni archivables (FLUTTER-HM). N+1 de `GET` mes négociations supprimé (3 requêtes groupées au lieu de 3 par ligne). | **Changement visible** : à la mise en prod, chaque utilisateur voit réapparaître d'un coup tous ses fils de trajet négociés et terminés de l'historique. L'endpoint n'est pas paginé : contrôle de volume ci-dessous. Pas de PR app jumelle, l'app gère déjà ces statuts. |
+| app #581 | « Autre » dans « Votre destination principale » ouvre un sélecteur des 24 autres pays du catalogue (zone euro, CH, GB, CA, US) (FLUTTER-H9) | Client seul. |
+| app #582 | Création de code PIN : 2 étapes au lieu de 3 (FLUTTER-H8) ; aperçu d'une demande de colis dans la devise du formulaire, plus celle du compte (FLUTTER-HB) | Client seul. |
+| app #583 | Fiche propriétaire d'un trajet : tuiles « colis acceptés » / « en attente » cliquables (FLUTTER-HK) | Client seul. |
+
+- [ ] Contrôle prod (lecture seule) avant la mise en prod de #478 : nombre de fils de trajet terminés qui vont réapparaître, et
+      plus gros volume par utilisateur (si un compte dépasse quelques centaines, prévoir la pagination avant la prod) :
+      `SELECT count(*) FROM bids WHERE deleted_at IS NULL AND (negotiated_gross_eur IS NOT NULL OR status = 'NEGOTIATION_CLOSED')
+       AND status NOT IN ('NEGOTIATING','AWAITING_PAYMENT','PENDING');` (noms de colonnes **à vérifier** dans `BidEntity`).
+- [ ] Après la mise en prod : `GET /api/v1/bids/negotiations` (chemin **à vérifier**) répond en moins de 500 ms pour un voyageur
+      actif ; Sentry sans nouvelle erreur sur la liste « Discussions de prix ».
+- [ ] Recette staging : un fil de trajet réglé (ex. bid `1ca56398`, trajet Abidjan → Ouagadougou) apparaît dans « Terminées »,
+      s'ouvre, s'archive puis se désarchive ; « Autre » → France enregistrée ; création de PIN en 2 étapes ; aperçu d'une demande
+      en XOF affiché en F CFA ; tuiles colis cliquables.
