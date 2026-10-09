@@ -273,6 +273,11 @@ public class CancellationService {
             }
         }
 
+        // Rematch : les colis ouverts, puis les colis à restituer qui reçoivent ici leur
+        // annulation (alignés index à index, cf. RematchService#generateForCancellations).
+        List<BidEntity> rematchBids = new ArrayList<>(affectedBids);
+        List<CancellationEntity> rematchCancellations = new ArrayList<>(cancellations);
+
         // Colis déjà remis : même procédure que l'annulation après remise par le voyageur.
         List<BidEntity> handedOverBids = returnHandedOver
                 ? bidRepository.findHandedOverByAnnouncementIdForUpdate(announcement.getId())
@@ -292,7 +297,8 @@ public class CancellationService {
                 c.setCancelledBy(actorId);
                 c.setReason(CancellationReason.TRAVELER_CANCEL_AFTER_HANDOVER.name());
                 c.setNoShowStatus(CancellationStatus.CONFIRMED);
-                cancellationRepository.save(c);
+                rematchBids.add(bid);
+                rematchCancellations.add(cancellationRepository.save(c));
             }
 
             auditService.log("BID", bid.getId(), "BID_CANCELLED_AFTER_HANDOVER", actorId,
@@ -316,10 +322,12 @@ public class CancellationService {
 
         // Generate rematch suggestions for each affected sender's cancellation (one
         // RematchService call per bid, capacity-filtered per sender — fix du bug qui ne
-        // générait des suggestions que pour le 1er expéditeur affecté). Un colis à restituer
-        // n'en reçoit pas, comme l'annulation après remise : il doit d'abord être rendu.
+        // générait des suggestions que pour le 1er expéditeur affecté). Un colis à restituer en
+        // reçoit aussi (décision du propriétaire) : l'expéditeur pourra le renvoyer une fois
+        // récupéré. Seule exception, une ligne HANDOVER déjà tranchée conservée plus haut :
+        // elle porte un autre motif (no-show) et n'ouvre pas droit au rematch.
         Map<UUID, RematchService.RematchInfo> rematchBySender =
-                rematchService.generateForCancellations(announcement, affectedBids, cancellations);
+                rematchService.generateForCancellations(announcement, rematchBids, rematchCancellations);
 
         // Publish event for notifications (Epic 8) and payment refunds (Story 6.7) — après
         // la génération des suggestions rematch. rematchInfo permet à NotificationDispatcher
@@ -640,8 +648,9 @@ public class CancellationService {
     /**
      * Annulation après remise du colis (HANDED_OVER) par l'expéditeur OU le voyageur.
      * Verrou D3, restauration du kilo, remboursement intégral (via per-bid
-     * {@link TripCancelledEvent}), génération du code de retour (D7). MVP : aucune
-     * pénalité monétaire.
+     * {@link TripCancelledEvent}), génération du code de retour (D7), suggestions de trajets
+     * du même corridor pour renvoyer le colis une fois récupéré. MVP : aucune pénalité
+     * monétaire.
      */
     @Transactional
     public void cancelAfterHandover(String firebaseUid, UUID bidId) {
@@ -700,7 +709,7 @@ public class CancellationService {
         c.setCancelledBy(caller.getId());
         c.setReason(reason.name());
         c.setNoShowStatus(CancellationStatus.CONFIRMED);
-        cancellationRepository.save(c);
+        c = cancellationRepository.save(c);
 
         // Réputation (D8 : l'annulation après remise est immédiatement CONFIRMED).
         // Voyageur → compteur d'annulations existant ; expéditeur → compteur d'incidents
@@ -727,13 +736,23 @@ public class CancellationService {
         if (bid.getCommissionChargedVia() != null) {
             bidCommissionChargedVia.put(bidId, bid.getCommissionChargedVia().name());
         }
+        // Trajets du même corridor à proposer à l'expéditeur pour renvoyer son colis une fois
+        // récupéré (décision du propriétaire), quel que soit celui qui annule.
+        Map<UUID, TripCancelledEvent.RematchBySenderInfo> rematchInfo = new HashMap<>();
+        if (announcement != null) {
+            rematchService.generateForCancellations(announcement, List.of(bid), List.of(c))
+                    .forEach((senderId, info) -> rematchInfo.put(senderId,
+                            new TripCancelledEvent.RematchBySenderInfo(info.cancellationId(), info.suggestionCount())));
+        }
+
         // Colis à restituer : l'expéditeur reçoit PARCEL_RETURN_REQUIRED vers son colis
-        // (code de retour), plus le « trajet annulé » générique (FLUTTER-FK, FLUTTER-F7).
+        // (code de retour, et les trajets proposés s'il y en a), jamais le « trajet annulé »
+        // générique en plus (FLUTTER-FK, FLUTTER-F7).
         eventPublisher.publishEvent(new TripCancelledEvent(
                 bid.getAnnouncementId(),
                 announcement != null ? announcement.getTravelerId() : null,
                 List.of(bid.getSenderId()), reason.name(),
-                List.of(bidId), bidPaymentMethods, bidCommissionChargedVia, Map.of(),
+                List.of(bidId), bidPaymentMethods, bidCommissionChargedVia, rematchInfo,
                 java.util.Set.of(bidId)));
 
         // L'expéditeur annule : le voyageur, qui a le colis en main, doit le rendre avant le

@@ -270,6 +270,47 @@ class CancellationReliabilityIT {
     }
 
     /**
+     * Décision du propriétaire : un colis déjà remis dont le transport est annulé reçoit les
+     * mêmes suggestions de trajets que les colis non remis, dans la seule notification de retour
+     * (pas de « trajet annulé » en plus), et le suivi du colis expose l'annulation à rematch.
+     */
+    @Test
+    void cancelledAfterHandover_offersMatchingTripsInTheReturnNotification() throws Exception {
+        UserEntity traveler = persistUser();
+        UserEntity sender = persistUser();
+        openWallet(traveler.getId());
+        // Plus tôt que les trajets laissés par les autres tests : en tête des 5 suggestions.
+        UUID alternative = persistAnnouncement(persistUser().getId(), LocalDate.now().plusDays(5));
+        UUID bidId = acceptedCashBid(persistAnnouncement(traveler.getId()), sender.getId(), traveler.getId());
+        jdbc.update("UPDATE bids SET status = 'HANDED_OVER' WHERE id = ?", bidId);
+
+        mockMvc.perform(post("/bids/{id}/cancel-after-handover", bidId).with(authentication(as(traveler))))
+                .andExpect(status().isOk());
+
+        UUID cancellationId = jdbc.queryForObject("SELECT id FROM cancellations WHERE bid_id = ?", UUID.class, bidId);
+        assertThat(jdbc.queryForObject("SELECT rematch_status FROM cancellations WHERE id = ?", String.class,
+                cancellationId)).isEqualTo("SUGGESTED");
+        assertThat(jdbc.queryForList("SELECT announcement_id FROM rematch_suggestions WHERE cancellation_id = ?",
+                UUID.class, cancellationId)).contains(alternative);
+
+        mockMvc.perform(get("/bids/{id}", bidId).with(authentication(as(sender))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tripCancellationId").value(cancellationId.toString()))
+                .andExpect(jsonPath("$.tripCancellationRematchStatus").value("SUGGESTED"));
+        mockMvc.perform(get("/cancellations/{id}/rematch-suggestions", cancellationId)
+                        .with(authentication(as(sender))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.announcementId == '" + alternative + "')]").exists());
+
+        assertThat(awaitNotificationTypes(sender.getId(), 1)).containsExactly("PARCEL_RETURN_REQUIRED");
+        Thread.sleep(300);
+        assertThat(notificationTypes(sender.getId())).containsExactly("PARCEL_RETURN_REQUIRED");
+        assertThat(jdbc.queryForObject("SELECT data->>'cancellationId' FROM notifications WHERE user_id = ? "
+                + "AND type = 'PARCEL_RETURN_REQUIRED'", String.class, sender.getId()))
+                .isEqualTo(cancellationId.toString());
+    }
+
+    /**
      * Retrait de l'expéditeur après le report du trajet, colis déjà remis : même procédure que
      * l'annulation après remise (code et délai de retour, commission rendue, contact ouvert),
      * avec une notification de retour pour chacun et sans « colis retiré » en doublon.
@@ -411,12 +452,16 @@ class CancellationReliabilityIT {
     }
 
     private UUID persistAnnouncement(UUID travelerId) {
+        return persistAnnouncement(travelerId, LocalDate.now().plusDays(10));
+    }
+
+    private UUID persistAnnouncement(UUID travelerId, LocalDate departureDate) {
         return tx.execute(status -> {
             AnnouncementEntity announcement = new AnnouncementEntity();
             announcement.setTravelerId(travelerId);
             announcement.setDepartureCity("Paris");
             announcement.setArrivalCity("Dakar");
-            announcement.setDepartureDate(LocalDate.now().plusDays(10));
+            announcement.setDepartureDate(departureDate);
             announcement.setTransportMode(TransportMode.PLANE);
             announcement.setPickupAddressLabel("Gare du Nord, Paris");
             announcement.setPickupLat(new BigDecimal("48.880756"));

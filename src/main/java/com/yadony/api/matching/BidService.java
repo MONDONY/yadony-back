@@ -1395,16 +1395,15 @@ public class BidService {
     }
 
     /** Valeurs programmatiques (non-libres) de {@code CancellationEntity.reason} écrites par les
-     * flux HANDOVER qui n'annulent PAS le trajet entier (no-show expéditeur, annulation après
-     * remise) — cf. {@code CancellationService#reportSenderNoShow} et le flux "cancel after
-     * handover". Sert à exclure ces cancellations quand on détecte la cancellation "trajet
-     * annulé" pour {@link BidResponse#tripCancellationId()} : `reason` y est du texte libre
-     * saisi par le voyageur, donc on ne peut identifier positivement "trajet annulé" que par
-     * élimination des seules autres valeurs jamais écrites sur une cancellation HANDOVER. */
+     * flux HANDOVER qui n'annulent PAS le trajet entier et n'ouvrent pas droit au rematch
+     * (no-show expéditeur) — cf. {@code CancellationService#reportSenderNoShow}. Sert à exclure
+     * ces cancellations quand on détecte la cancellation "trajet annulé" pour
+     * {@link BidResponse#tripCancellationId()} : `reason` y est du texte libre saisi par le
+     * voyageur, donc on ne peut identifier positivement "trajet annulé" que par élimination des
+     * seules autres valeurs jamais écrites sur une cancellation HANDOVER. L'annulation après
+     * remise ouvre désormais droit au rematch : cf. {@link #REMATCH_BID_REASONS}. */
     private static final java.util.Set<String> NON_TRIP_HANDOVER_REASONS = java.util.Set.of(
-            CancellationReason.SENDER_NO_SHOW.name(),
-            CancellationReason.SENDER_CANCEL_AFTER_HANDOVER.name(),
-            CancellationReason.TRAVELER_CANCEL_AFTER_HANDOVER.name());
+            CancellationReason.SENDER_NO_SHOW.name());
 
     /** Reasons de {@code CancellationEntity.reason} écrites par le flux "rematch bid-only"
      * (voyageur annule le transport d'un bid payé, ou refuse une demande payée) — le trajet
@@ -1415,7 +1414,11 @@ public class BidService {
             CancellationReason.BID_CANCELLED_BY_TRAVELER.name(),
             CancellationReason.BID_REJECTED_AFTER_PAYMENT.name(),
             // L'expéditeur s'est retiré après le report du trajet : autres trajets proposés.
-            CancellationReason.TRIP_RESCHEDULE_WITHDRAWN.name());
+            CancellationReason.TRIP_RESCHEDULE_WITHDRAWN.name(),
+            // Annulation après remise, par l'un ou l'autre, ou colis remis d'un trajet annulé :
+            // trajets proposés pour renvoyer le colis une fois récupéré.
+            CancellationReason.SENDER_CANCEL_AFTER_HANDOVER.name(),
+            CancellationReason.TRAVELER_CANCEL_AFTER_HANDOVER.name());
 
     /** Numéro révélé en clair seulement si l'offre est acceptée ou au-delà, sinon null. */
     static String phoneForStatus(String phone, BidStatus status) {
