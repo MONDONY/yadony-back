@@ -449,6 +449,8 @@ Le code traite trois webhooks Stripe distincts (liste relevée dans le code, 07/
       `transfer.created`, `transfer.reversed`, `transfer.updated`.
       **Point clé** : `payment_intent.amount_capturable_updated` fait passer un paiement carte en
       séquestre. D'après #408, la staging ne l'a pas reçu pendant des semaines (cause de INV-08) : vérifier qu'il est bien coché en live.
+      **Mis à jour le 09/10, voir 9.13** : un endpoint ne peut pas recevoir à la fois les événements du compte et ceux des comptes
+      connectés. Cocher les 16 événements du compte listés en 9.13 ; les 5 événements Connect attendent un changement back.
 - [ ] **KYC Stripe Identity** — `https://api.yadony.com/api/v1/kyc/webhook`, type « Compte »,
       secret → `STRIPE_WEBHOOK_KYC_SECRET`. 3 événements : `identity.verification_session.verified`,
       `identity.verification_session.requires_input`, `identity.verification_session.canceled`.
@@ -1188,7 +1190,8 @@ saturait (187 requêtes en attente) et les requêtes finissaient en **500 après
 #### 9.13 Argent : contraintes V309, rapprochement Stripe/pawaPay, capture des paiements négociés (back #469, #471, #472)
 
 > Ajoutée le 09/10/2026. Migration **V309**. Aucun secret, aucune nouvelle variable obligatoire.
-> Ces trois PR ne sont en staging qu'après le redéploiement de 9.2 (`sha-9bec623` en staging le 09/10 au soir ne les contient pas).
+> **Staging = `sha-d1da639`** depuis le 09/10 à 14:54 UTC (V309 appliquée, contrôles à 0 juste avant, API saine) :
+> c'est le tag à promouvoir, ou un tag plus récent recetté de la même façon.
 
 | PR | Sujet | À savoir |
 |---|---|---|
@@ -1196,8 +1199,8 @@ saturait (187 requêtes en attente) et les requêtes finissaient en **500 après
 | back #471 | Rapprochement quotidien avec Stripe et pawaPay (04:30 UTC) : paiements colis, recharges wallet, commissions carte, opérations pawaPay terminées | Alertes admin `RECON_STRIPE_*` / `RECON_PAWAPAY_*` (Telegram + écran Alertes). Jauges `yadony_reconciliation_{mismatches,errors}{provider}` et `yadony_reconciliation_last_run_seconds`. Coupure : `PROVIDER_RECONCILIATION_ENABLED=false`. pawaPay coupé en prod : aucune opération, aucun appel. |
 | back #472 | Capture du paiement carte d'une négociation passé en séquestre au `/checkout` | **Corrige une régression de #408** : sans #472, l'autorisation carte d'une négociation n'est jamais capturée, expire à J+7 et le voyageur n'est pas payé à la livraison. **Ne jamais promouvoir un tag qui contient #408 (`99b08aa6`) sans #472 (`5d9da84b`)** : le tag `sha-d5a99f5` est dans ce cas. |
 
-- [ ] Tag : le commit redéployé en staging (9.2) doit contenir `5d9da84b` :
-      `git merge-base --is-ancestor 5d9da84b <commit> && echo OK`.
+- [ ] Tag : **`image_tag=sha-d1da639`** (ou plus récent). **Jamais `sha-d5a99f5`** : il contient #408 sans #472.
+      Pour un autre commit, vérifier qu'il contient `5d9da84b` : `git merge-base --is-ancestor 5d9da84b <commit> && echo OK`.
 - [ ] Contrôle prod (lecture seule) avant la mise en prod de V309, chaque requête doit répondre **0** (prod vérifiée conforme le 09/10) :
       ```sql
       SELECT count(*) FROM payments
@@ -1210,10 +1213,31 @@ saturait (187 requêtes en attente) et les requêtes finissaient en **500 après
       SELECT count(*) FROM (SELECT provider_transaction_id FROM pawapay_operations
        WHERE provider_transaction_id IS NOT NULL GROUP BY 1 HAVING count(*) > 1) d;
       ```
-- [ ] Stripe **live** et **test** (staging) : sur l'endpoint « Paiements & Connect », l'événement
-      `payment_intent.amount_capturable_updated` est coché (voir 8.D). Le 09/10, la staging recevait `payment_intent.canceled`
-      mais jamais celui-ci.
-- [ ] Recette staging : payer une négociation par carte, puis vérifier que le paiement a un `captured_at` dans la minute
+- [ ] **Stripe Live, AVANT la mise en prod** : tableau de bord en mode **Live** → Développeurs → Webhooks → endpoint
+      `https://api.yadony.com/api/v1/payments/webhook` (événements « de votre compte ») → « Sélectionner des événements ».
+      Ces **16 événements** doivent être cochés, comme sur l'endpoint de test `we_1UOeu69i7EY14IsEeZ5SPhqG` :
+      - `payment_intent.amount_capturable_updated` ← **indispensable** : sans lui, un paiement carte reste PENDING et n'est jamais capturé
+      - `payment_intent.succeeded`, `payment_intent.payment_failed`, `payment_intent.canceled`
+      - `charge.refunded`, `charge.refund.updated`
+      - `transfer.created`, `transfer.reversed`, `transfer.updated`
+      - `charge.dispute.created`, `charge.dispute.closed`, `charge.dispute.funds_withdrawn`, `charge.dispute.funds_reinstated`
+      - `setup_intent.succeeded`, `payment_method.detached`
+      - `radar.early_fraud_warning.created`
+
+      Ne pas régénérer le secret de l'endpoint. Si tu le fais, mets à jour `STRIPE_WEBHOOK_PAYMENTS_SECRET` dans l'environnement GitHub
+      `production` **avant** de déployer.
+- [ ] Juste après, **tester l'endpoint Live** : « Envoyer un événement test » (`payment_intent.succeeded`) doit répondre **200**,
+      et l'événement doit apparaître dans `SELECT event_type, status, received_at FROM stripe_event_inbox ORDER BY received_at DESC LIMIT 3;`.
+      Un 400 signifie que le secret de l'endpoint ne correspond pas à `STRIPE_WEBHOOK_PAYMENTS_SECRET`.
+- [ ] **Ne pas créer d'endpoint « comptes connectés »** (`account.updated`, `capability.updated`, `payout.paid`, `payout.failed`,
+      `account.application.deauthorized`) tant que le back n'accepte qu'un secret par route : un endpoint Stripe reçoit soit les événements
+      de ton compte, soit ceux des comptes connectés, jamais les deux, et chacun a son propre secret. Les 21 événements de 8.D ne tiennent
+      donc pas dans un seul endpoint : les 5 événements Connect demandent d'abord un changement back (accepter un 2ᵉ secret).
+      L'app relit le statut Connect à l'ouverture, ce qui couvre ce manque en attendant.
+- [ ] Rappel staging (fait le 09/10) : l'endpoint de test `we_1UOeu69i7EY14IsEeZ5SPhqG` remplace le relais `stripe listen`
+      (`stripe-cli-payments`), qui ne transmettait que 6 types d'événements ; événement de test accepté à 14:52:59 UTC.
+      La prod n'a jamais eu de relais : Stripe Live appelle l'API directement.
+- [ ] Recette staging **avant la prod** (sur `sha-d1da639`) : payer une négociation par carte, puis vérifier que le paiement a un `captured_at` dans la minute
       (`SELECT status, captured_at FROM payments WHERE negotiation_thread_id = '<fil>';` → `ESCROW` + date) et que le
       PaymentIntent est « Succeeded » dans Stripe (et non « Uncaptured »).
 - [ ] Après la mise en prod : `yadony_money_invariant_violations{invariant="INV-08"}` reste à 0 ; le lendemain matin,
