@@ -270,6 +270,73 @@ class CancellationReliabilityIT {
     }
 
     /**
+     * Retrait de l'expéditeur après le report du trajet, colis déjà remis : même procédure que
+     * l'annulation après remise (code et délai de retour, commission rendue, contact ouvert),
+     * avec une notification de retour pour chacun et sans « colis retiré » en doublon.
+     */
+    @Test
+    void senderWithdrawsAfterRescheduleWithHandedOverParcel_opensReturn_andNotifiesBothOnce() throws Exception {
+        UserEntity traveler = persistUser();
+        UserEntity sender = persistUser();
+        openWallet(traveler.getId());
+        UUID announcementId = persistAnnouncement(traveler.getId());
+        UUID bidId = acceptedCashBid(announcementId, sender.getId(), traveler.getId());
+        UUID rescheduleId = UUID.randomUUID();
+        jdbc.update("INSERT INTO trip_reschedules (id, announcement_id, traveler_id, reason, "
+                        + "previous_departure_date, new_departure_date, created_at) "
+                        + "VALUES (?, ?, ?, 'POSTPONED', ?, ?, now())",
+                rescheduleId, announcementId, traveler.getId(),
+                LocalDate.now().plusDays(8), LocalDate.now().plusDays(10));
+        jdbc.update("UPDATE bids SET status = 'HANDED_OVER', pending_reschedule_id = ? WHERE id = ?",
+                rescheduleId, bidId);
+
+        mockMvc.perform(post("/cancellations/bids/{id}/reschedule-decision", bidId).with(authentication(as(sender)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"decision\":\"WITHDRAW\"}"))
+                .andExpect(status().is2xxSuccessful());
+
+        BidEntity bid = bidRepository.findById(bidId).orElseThrow();
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
+        assertThat(bid.getReturnCode()).matches("\\d{6}");
+        assertThat(bid.getReturnDeadline()).isNotNull();
+        assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
+        assertThat(walletBalance(traveler.getId())).isEqualByComparingTo("100");
+        assertThat(jdbc.queryForObject("SELECT reason FROM cancellations WHERE bid_id = ?", String.class, bidId))
+                .isEqualTo("TRIP_RESCHEDULE_WITHDRAWN");
+        assertThat(auditCount(bidId, "TRIP_RESCHEDULE_WITHDRAWN")).isEqualTo(1);
+        assertThat(auditCount(bidId, "RETURN_CODE_GENERATED")).isEqualTo(1);
+
+        mockMvc.perform(get("/bids/{id}", bidId).with(authentication(as(sender))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.contactWindowOpen").value(true))
+                .andExpect(jsonPath("$.travelerPhoneAvailable").value(true));
+
+        assertThat(awaitNotificationTypes(traveler.getId(), 1)).containsExactly("PARCEL_RETURN_TO_SENDER");
+        assertThat(awaitNotificationTypes(sender.getId(), 1)).containsExactly("PARCEL_RETURN_REQUIRED");
+        Thread.sleep(300);
+        assertThat(notificationTypes(traveler.getId())).containsExactly("PARCEL_RETURN_TO_SENDER");
+        assertThat(notificationTypes(sender.getId())).containsExactly("PARCEL_RETURN_REQUIRED");
+    }
+
+    /** Notifications d'annulation et de retour seulement : l'acceptation a les siennes. */
+    private List<String> notificationTypes(UUID userId) {
+        return jdbc.queryForList("SELECT type FROM notifications WHERE user_id = ? AND type IN "
+                        + "('PARCEL_RETURN_TO_SENDER', 'PARCEL_RETURN_REQUIRED', 'TRIP_RESCHEDULE_WITHDRAWN', "
+                        + "'TRIP_CANCELLED', 'BID_REJECTED')", String.class, userId);
+    }
+
+    /** Les notifications partent après le commit, sur un fil {@code @Async}. */
+    private List<String> awaitNotificationTypes(UUID userId, int expected) throws InterruptedException {
+        long until = System.currentTimeMillis() + 10_000;
+        List<String> types = notificationTypes(userId);
+        while (types.size() < expected && System.currentTimeMillis() < until) {
+            Thread.sleep(100);
+            types = notificationTypes(userId);
+        }
+        return types;
+    }
+
+    /**
      * Le rattrapage de V298 rejoué sur des traces d'audit réelles : seule l'annulation par
      * l'expéditeur d'un colis déjà accepté compte.
      */
