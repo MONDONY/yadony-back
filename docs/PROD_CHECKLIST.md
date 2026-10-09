@@ -1152,3 +1152,23 @@ saturait (187 requêtes en attente) et les requêtes finissaient en **500 après
       voyageur « Demander un nouveau code », 2e demande avant 15 min refusée avec le délai.
 - [ ] Trajet récurrent en XOF : devise conservée ; carte décochable (EUR) ; voyage multi-étapes avec escales différentes.
 - [ ] Notification d'une demande carte abandonnée à la date limite : ouvre le trajet, jamais « demande introuvable ».
+
+### 9.12 Ajouts de l'après-midi du 09/10 : back #465 et #466, app #575 et #576, admin #57
+
+> Aucune migration (dernière : **V308**). Aucun secret, aucune nouvelle variable.
+
+| PR | Sujet | À savoir |
+|---|---|---|
+| back #465 + admin #57 | Mode recette en masse : `PUT /api/v1/admin/users/recette-tester` (jusqu'à 200 comptes), `GET /api/v1/admin/recette/status`, champ et filtre `recetteTester` dans la liste admin | En prod : statut `enabled:false`, PUT en **409 `recette-disabled`**, barre de sélection masquée dans l'admin. |
+| back #466 | Plafond de prix au kilo par devise (`CurrencyBounds`, 422 `price-out-of-bounds`) à la création **et à la modification** de tout trajet, chaque étape d'un voyage comprise | **Changement de comportement** : une annonce existante au-dessus du plafond de sa devise sera refusée à sa prochaine modification. Contrôle prod ci-dessous. Pas de prix minimum (décision en attente). |
+| app #575 | Plantage « Annuler » après archivage (FLUTTER-GN) ; messages avec bouton qui disparaissent (4 s / 6 s avec « Annuler ») ; visionneuse photo (croix visible, glisser pour fermer) ; aperçu des moyens de paiement ; confirmation « Publier en XOF » et devise sur chaque étape ; route des retours testeurs depuis une feuille | Client seul, sauf le plafond (#466). |
+| app #576 | Ligne expéditeur sur la fiche publique d'une demande ; résumé des colis du trajet ; fiche trajet au format billet ; onglets Envois / Réceptions dans le Suivi | Client seul. |
+
+- [ ] Contrôle prod (lecture seule) avant la mise en prod de #466 : annonces actives au-dessus du plafond de leur devise.
+      Plafonds dans `CurrencyBounds` (back) ; exemple pour l'euro (500 €/kg) :
+      `SELECT currency, count(*) FROM announcements WHERE deleted_at IS NULL AND status = 'ACTIVE' AND currency = 'EUR' AND price_per_kg > 500 GROUP BY currency;`
+      À répéter pour chaque devise avec son plafond. Si des lignes sortent : prévenir les voyageurs concernés avant la mise en prod.
+- [ ] Après la mise en prod : `GET /api/v1/admin/recette/status` répond `{"enabled": false}`.
+- [ ] Recette staging : archiver une conversation puis « Annuler » (pas de plantage) ; un message « Réessayer » disparaît seul ;
+      photo blanche en plein écran fermée par la croix et par un glissement ; création d'un voyage avec « Publier en XOF »
+      (confirmation, devise sur chaque étape, prix d'étape plafonné) ; sélection groupée « mode recette » dans Utilisateurs.
