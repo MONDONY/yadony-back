@@ -178,6 +178,67 @@ class BidBlockVisibilityTest {
         assertThat(result.status()).isEqualTo("PENDING");
     }
 
+    // ─── FLUTTER-HS : colis retiré de sa liste par l'appelant ─────────────────
+
+    private void stubRead(UserEntity caller) {
+        when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcement.getId())).thenReturn(Optional.of(announcement));
+        when(userRepository.findByFirebaseUid(caller.getFirebaseUid())).thenReturn(Optional.of(caller));
+        lenient().when(userRepository.findById(sender.getId())).thenReturn(Optional.of(sender));
+    }
+
+    private static void assertBidNotFound(org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
+        assertThatThrownBy(call)
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    YadonyBusinessException ex = (YadonyBusinessException) e;
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+                    assertThat(ex.getErrorCode()).isEqualTo("bid-not-found");
+                });
+    }
+
+    @Test
+    @DisplayName("expéditeur ayant retiré la demande → 404 bid-not-found")
+    void getBidById_hiddenBySender_senderGetsNotFound() {
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setDeletedBySender(true);
+        stubRead(sender);
+
+        assertBidNotFound(() -> bidService.getBidById(bid.getId(), "uid-sender"));
+    }
+
+    @Test
+    @DisplayName("retrait par l'expéditeur → le voyageur voit toujours le colis")
+    void getBidById_hiddenBySender_travelerStillSeesIt() {
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setDeletedBySender(true);
+        stubRead(traveler);
+
+        assertThat(bidService.getBidById(bid.getId(), "uid-traveler").id()).isEqualTo(bid.getId());
+    }
+
+    @Test
+    @DisplayName("voyageur ayant retiré la demande → 404 ; l'expéditeur la voit toujours")
+    void getBidById_hiddenByTraveler_onlyTravelerGetsNotFound() {
+        bid.setStatus(BidStatus.REJECTED);
+        bid.setDeletedByTraveler(true);
+        stubRead(traveler);
+        assertBidNotFound(() -> bidService.getBidById(bid.getId(), "uid-traveler"));
+
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+        assertThat(bidService.getBidById(bid.getId(), "uid-sender").id()).isEqualTo(bid.getId());
+    }
+
+    @Test
+    @DisplayName("relecture après sa propre mutation → le retrait ne masque pas le colis")
+    void getBidAfterOwnMutation_hiddenBySender_returnsBidAnyway() {
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setDeletedBySender(true);
+        stubRead(sender);
+
+        assertThat(bidService.getBidAfterOwnMutation(bid.getId(), "uid-sender")).isNotNull();
+    }
+
     // ─── getBidsForAnnouncement ────────────────────────────────────────────────
 
     @Test

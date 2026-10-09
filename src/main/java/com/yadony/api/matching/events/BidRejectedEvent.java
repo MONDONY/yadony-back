@@ -3,6 +3,9 @@ package com.yadony.api.matching.events;
 import java.util.UUID;
 
 public class BidRejectedEvent {
+    /** Motif posé par {@code BidService.cancelBid} quand l'expéditeur annule lui-même sa demande. */
+    public static final String REASON_CANCELLED_BY_SENDER = "CANCELLED_BY_SENDER";
+
     private final UUID bidId;
     private final UUID senderId;
     private final String reason;

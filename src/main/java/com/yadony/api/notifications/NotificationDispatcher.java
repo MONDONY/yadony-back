@@ -429,6 +429,11 @@ public class NotificationDispatcher {
     @EventListener @Async
     public void onBidRejected(BidRejectedEvent event) {
         if (event.isRematchEligible()) return; // relayé par onBidLostRematchPrepared (X2/X3)
+        // FLUTTER-HS : l'expéditeur qui annule lui-même sa demande recevait « Demande refusée
+        // — Le voyageur a refusé votre demande ». Il est l'auteur de l'action : rien à lui
+        // notifier. Seule la notification est filtrée ; l'événement reste publié pour le
+        // remboursement, la restitution des kilos et les autres consommateurs.
+        if (BidRejectedEvent.REASON_CANCELLED_BY_SENDER.equals(event.getReason())) return;
         // Lot B (revue round 3) : le motif technique ANNOUNCEMENT_DELETED (posé par
         // AnnouncementService#removeByAdmin, rematchEligible=false car décision de
         // modération) n'est PAS un refus du voyageur — le libellé générique « Demande
