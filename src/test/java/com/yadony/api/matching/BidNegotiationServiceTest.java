@@ -36,6 +36,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -1119,11 +1120,11 @@ class BidNegotiationServiceTest {
             BidEntity bid = buildNegotiatingBid();
             when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(buildSender()));
             when(bidRepository.findNegotiationsForUser(SENDER_ID)).thenReturn(List.of(bid));
-            when(announcementRepository.findById(ANNOUNCEMENT_ID))
-                    .thenReturn(Optional.of(buildAnnouncement()));
-            when(messageRepository.findFirstByBidIdOrderByCreatedAtDesc(BID_ID))
-                    .thenReturn(Optional.of(lastMessageFrom(TRAVELER_ID, "40.00")));
-            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(buildTraveler()));
+            when(announcementRepository.findAllById(Set.of(ANNOUNCEMENT_ID)))
+                    .thenReturn(List.of(buildAnnouncement()));
+            when(messageRepository.findLatestByBidIdIn(List.of(BID_ID)))
+                    .thenReturn(List.of(lastMessageFrom(TRAVELER_ID, "40.00")));
+            when(userRepository.findAllById(Set.of(TRAVELER_ID))).thenReturn(List.of(buildTraveler()));
 
             List<BidNegotiationSummaryResponse> list = service.myNegotiations(SENDER_UID, false);
 
@@ -1148,19 +1149,77 @@ class BidNegotiationServiceTest {
             bid.setStatus(status);
             when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(buildSender()));
             when(bidRepository.findNegotiationsForUser(SENDER_ID)).thenReturn(List.of(bid));
-            when(announcementRepository.findById(ANNOUNCEMENT_ID))
-                    .thenReturn(Optional.of(buildAnnouncement()));
+            when(announcementRepository.findAllById(Set.of(ANNOUNCEMENT_ID)))
+                    .thenReturn(List.of(buildAnnouncement()));
             BidNegotiationMessageEntity accept = BidNegotiationMessageEntity.create(
                     BID_ID, TRAVELER_ID, BidNegotiationMessageKind.ACCEPT, new BigDecimal("40.00"), null);
             setId(accept, UUID.randomUUID());
-            when(messageRepository.findFirstByBidIdOrderByCreatedAtDesc(BID_ID))
-                    .thenReturn(Optional.of(accept));
-            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(buildTraveler()));
+            when(messageRepository.findLatestByBidIdIn(List.of(BID_ID)))
+                    .thenReturn(List.of(accept));
+            when(userRepository.findAllById(Set.of(TRAVELER_ID))).thenReturn(List.of(buildTraveler()));
 
             BidNegotiationSummaryResponse row = service.myNegotiations(SENDER_UID, false).get(0);
 
             assertThat(row.status()).isEqualTo(status.name());
             assertThat(row.myTurn()).isFalse();
+        }
+
+        /**
+         * FLUTTER-HM : les fils conclus puis réglés ou clos remontent avec leur statut réel
+         * (l'app les classe dans « Terminées »), et toute la liste se lit en trois requêtes
+         * groupées, pas trois par ligne.
+         */
+        @org.junit.jupiter.params.ParameterizedTest(name = "statut {0} listé, lectures groupées")
+        @org.junit.jupiter.params.provider.EnumSource(value = BidStatus.class,
+                names = {"ACCEPTED", "HANDED_OVER", "ARRIVED", "NEGOTIATION_CLOSED"})
+        void myNegotiations_terminalThread_isListedWithBatchedReads(BidStatus status) {
+            BidEntity bid = buildNegotiatingBid();
+            bid.setStatus(status);
+            bid.setNegotiatedGrossEur(new BigDecimal("40.00"));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+            when(bidRepository.findNegotiationsForUser(TRAVELER_ID)).thenReturn(List.of(bid));
+            when(announcementRepository.findAllById(Set.of(ANNOUNCEMENT_ID)))
+                    .thenReturn(List.of(buildAnnouncement()));
+            when(userRepository.findAllById(Set.of(SENDER_ID))).thenReturn(List.of(buildSender()));
+
+            BidNegotiationSummaryResponse row = service.myNegotiations(TRAVELER_UID, false).get(0);
+
+            assertThat(row.status()).isEqualTo(status.name());
+            assertThat(row.role()).isEqualTo("TRAVELER");
+            assertThat(row.myTurn()).isFalse();
+            assertThat(row.hasUnread()).isFalse();
+            assertThat(row.proposedGrossEur()).isEqualByComparingTo("40.00");
+            assertThat(row.counterpartyName()).isEqualTo(buildSender().publicDisplayName());
+            org.mockito.Mockito.verify(announcementRepository, org.mockito.Mockito.never()).findById(any());
+            org.mockito.Mockito.verify(userRepository, org.mockito.Mockito.never()).findById(any());
+            org.mockito.Mockito.verify(messageRepository, org.mockito.Mockito.never())
+                    .findFirstByBidIdOrderByCreatedAtDesc(any());
+        }
+
+        @Test
+        @DisplayName("myNegotiations sans aucun fil ne lit ni trajet, ni message, ni utilisateur")
+        void myNegotiations_empty_skipsBatchReads() {
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(buildSender()));
+            when(bidRepository.findNegotiationsForUser(SENDER_ID)).thenReturn(List.of());
+
+            assertThat(service.myNegotiations(SENDER_UID, false)).isEmpty();
+            org.mockito.Mockito.verifyNoInteractions(announcementRepository, messageRepository);
+        }
+
+        @Test
+        @DisplayName("un fil dont le trajet est introuvable est ignoré, contrepartie inconnue → nom par défaut")
+        void myNegotiations_missingAnnouncementSkipped_unknownCounterpartDefaulted() {
+            BidEntity orphan = buildNegotiatingBid();
+            orphan.setAnnouncementId(UUID.randomUUID());
+            BidEntity kept = buildNegotiatingBid();
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(buildSender()));
+            when(bidRepository.findNegotiationsForUser(SENDER_ID)).thenReturn(List.of(orphan, kept));
+            when(announcementRepository.findAllById(any())).thenReturn(List.of(buildAnnouncement()));
+
+            List<BidNegotiationSummaryResponse> rows = service.myNegotiations(SENDER_UID, false);
+
+            assertThat(rows).singleElement().satisfies(r ->
+                    assertThat(r.counterpartyName()).isEqualTo(UserEntity.UNKNOWN_DISPLAY_NAME));
         }
     }
 }

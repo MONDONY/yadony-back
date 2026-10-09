@@ -687,14 +687,24 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
                                   @Param("departureCity") String departureCity,
                                   @Param("arrivalCity") String arrivalCity);
 
-    /** Fils de négociation où l'utilisateur est expéditeur ou voyageur du trajet. */
+    /**
+     * « Discussions de prix » de l'utilisateur, expéditeur ou voyageur du trajet : tous
+     * ses fils ni rangés ni retirés de son côté, QUEL QUE SOIT leur statut.
+     *
+     * <p>Un fil se reconnaît comme dans {@link #findArchivedNegotiationsForUser} et
+     * {@code BidNegotiationService#loadNegotiation} : statut de discussion (NEGOTIATING /
+     * NEGOTIATION_CLOSED) ou prix d'accord, posé seulement par la négociation. Un fil
+     * conclu puis réglé (ACCEPTED, HANDED_OVER, DELIVERED…) ou clos reste listé : seul
+     * l'utilisateur range ou retire une discussion, jamais le serveur (FLUTTER-HM — le
+     * fil disparaissait de toutes les puces dès le paiement, alors que seules ces
+     * discussions terminées peuvent être rangées ou retirées).
+     */
     @Query("""
         SELECT b FROM BidEntity b
         JOIN AnnouncementEntity a ON b.announcementId = a.id
-        WHERE (b.status = com.yadony.api.matching.BidStatus.NEGOTIATING
-               OR (b.status IN (com.yadony.api.matching.BidStatus.AWAITING_PAYMENT,
-                                com.yadony.api.matching.BidStatus.PENDING)
-                   AND b.negotiatedGrossEur IS NOT NULL))
+        WHERE (b.status IN (com.yadony.api.matching.BidStatus.NEGOTIATING,
+                            com.yadony.api.matching.BidStatus.NEGOTIATION_CLOSED)
+               OR b.negotiatedGrossEur IS NOT NULL)
           AND ((b.senderId = :userId
                 AND b.negotiationSenderHiddenAt IS NULL AND b.negotiationSenderArchivedAt IS NULL)
                OR (a.travelerId = :userId
