@@ -1681,6 +1681,31 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("FLUTTER-GK — prix au kilo au-dessus du plafond de la devise → 422 price-out-of-bounds")
+        void update_priceAboveCurrencyCeiling_isRefused() {
+            UserEntity traveler = buildTraveler();
+            when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                    .thenReturn(Optional.of(buildAnnouncement(traveler)));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            AnnouncementRequest base = updateRequest("Paris", "Dakar", null, null);
+            AnnouncementRequest req = new AnnouncementRequest(
+                    base.departureCity(), base.arrivalCity(), base.departureDate(),
+                    null, null, base.pickupAddress(), base.deliveryAddress(),
+                    base.availableKg(), BigDecimal.valueOf(501),
+                    TransportMode.PLANE,
+                    null, null, null, null, null, null,
+                    null, null,
+                    base.handoverDeadline(),
+                    null,
+                    null,
+                null);
+
+            assertYadonyError(() -> announcementService.updateAnnouncement(
+                    ANNOUNCEMENT_ID, FIREBASE_UID, req), "price-out-of-bounds");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
         @DisplayName("FLUTTER-EH — modification sans code pays, villes inchangées → codes conservés et servis au détail")
         void update_withoutCodes_sameCities_keepsExistingCodes() {
             stubUpdatable("FR", "SN");
