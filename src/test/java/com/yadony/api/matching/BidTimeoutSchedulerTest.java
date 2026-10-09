@@ -106,4 +106,33 @@ class BidTimeoutSchedulerTest {
         verifyNoInteractions(auditService);
         verify(eventPublisher, never()).publishEvent(any());
     }
+
+    // ── deadlineFor : échéance annoncée au voyageur (FLUTTER-H7) ──────────────
+
+    private static final LocalDateTime PENDING_SINCE = LocalDateTime.of(2026, 10, 9, 10, 0);
+
+    @Test
+    void deadlineFor_farDeparture_is24hAfterPendingSince() {
+        assertThat(BidTimeoutScheduler.deadlineFor(PENDING_SINCE, LocalDate.of(2026, 10, 20)))
+                .isEqualTo(PENDING_SINCE.plusHours(24));
+    }
+
+    @Test
+    void deadlineFor_noDepartureDate_is24hAfterPendingSince() {
+        assertThat(BidTimeoutScheduler.deadlineFor(PENDING_SINCE, null))
+                .isEqualTo(PENDING_SINCE.plusHours(24));
+    }
+
+    @Test
+    void deadlineFor_departureTomorrow_isH12BeforeDepartureDay() {
+        // Départ le 10 : seuil H-12 = 9 octobre 12:00, avant les 24 h (10 octobre 10:00).
+        assertThat(BidTimeoutScheduler.deadlineFor(PENDING_SINCE, LocalDate.of(2026, 10, 10)))
+                .isEqualTo(LocalDateTime.of(2026, 10, 9, 12, 0));
+    }
+
+    @Test
+    void deadlineFor_departureThresholdAlreadyPassed_neverBeforeGrace() {
+        assertThat(BidTimeoutScheduler.deadlineFor(PENDING_SINCE, LocalDate.of(2026, 10, 9)))
+                .isEqualTo(PENDING_SINCE.plusMinutes(BidTimeoutScheduler.MIN_GRACE_MINUTES));
+    }
 }

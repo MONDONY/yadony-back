@@ -216,4 +216,15 @@ class NotificationDeeplinkTest {
         assertThat(NotificationDeeplink.of("FIRST_ACTION_REMINDER", Map.of("type", "FIRST_ACTION_REMINDER")))
                 .contains("yadony://first-steps");
     }
+
+    /** FLUTTER-H7 : le fil du trajet, où se trouve le bouton « Régler la commission ». */
+    @Test
+    void negotiatedCommissionDueOpensTheBidThread() {
+        assertThat(NotificationDeeplink.of("BID_NEGOTIATION_COMMISSION_DUE", Map.of("bidId", bidId, "announcementId", annId)))
+                .contains("yadony://bids/" + bidId + "/negotiation");
+        assertThat(NotificationDeeplink.of("BID_NEGOTIATION_COMMISSION_DUE", Map.of("bidId", "../admin"))).isEmpty();
+        // Une demande cash classique garde son lien.
+        assertThat(NotificationDeeplink.of("BID_CREATED", Map.of("bidId", bidId)))
+                .contains("yadony://demandes?bid=" + bidId);
+    }
 }

@@ -52,6 +52,10 @@ public final class NotificationDeeplink {
             case "BID_CREATED" -> bidId.map(id -> "demandes?bid=" + id)
                     .or(() -> announcementId.map(id -> "announcements/" + id + "/bids"));
 
+            // Accord en espèces conclu dans le fil d'un trajet (FLUTTER-H7) : le fil porte
+            // le bouton « Régler la commission ».
+            case "BID_NEGOTIATION_COMMISSION_DUE" -> bidId.map(id -> "bids/" + id + "/negotiation");
+
             // Demande du voyageur (FLUTTER-G2) : le colis s'ouvre directement sur la
             // régénération du code. Une app antérieure qui ignore la query ouvre le colis.
             case "CONFIRMATION_CODE_REQUESTED" -> bidId.map(id -> "bids/" + id + "?action=new-code");

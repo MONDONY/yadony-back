@@ -42,15 +42,39 @@ public class BidTimeoutScheduler {
     /** Minimum bid age before auto-cancellation kicks in (regardless of departure date). */
     static final int MIN_GRACE_MINUTES = 120;
 
+    /** Délai de réponse du voyageur, compté depuis {@code COALESCE(pendingSince, createdAt)}. */
+    static final int RESPONSE_HOURS = 24;
+
+    /** Une demande est annulée dès que {@code now + 12 h} atteint le jour du départ. */
+    static final int DEPARTURE_MARGIN_HOURS = 12;
+
+    /**
+     * Heure (UTC) à partir de laquelle {@link #autoCancelUnansweredBids} annule une demande
+     * entrée en attente à {@code pendingSince}, en miroir exact de
+     * {@code BidRepository.findPendingTimedOut} : jamais avant la grâce de
+     * {@value #MIN_GRACE_MINUTES} min, sinon au premier des deux seuils (24 h d'attente,
+     * ou H-12 avant le jour du départ). Le passage effectif peut accuser le retard d'un tick
+     * (5 min), jamais d'avance. Sert à annoncer l'échéance au voyageur.
+     */
+    public static LocalDateTime deadlineFor(LocalDateTime pendingSince, LocalDate departureDate) {
+        LocalDateTime deadline = pendingSince.plusHours(RESPONSE_HOURS);
+        if (departureDate != null) {
+            LocalDateTime departureThreshold = departureDate.atStartOfDay().minusHours(DEPARTURE_MARGIN_HOURS);
+            if (departureThreshold.isBefore(deadline)) deadline = departureThreshold;
+        }
+        LocalDateTime grace = pendingSince.plusMinutes(MIN_GRACE_MINUTES);
+        return deadline.isBefore(grace) ? grace : deadline;
+    }
+
     @Scheduled(fixedRate = 5 * 60 * 1000)
     @Transactional
     public void autoCancelUnansweredBids() {
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
-        LocalDateTime twentyFourHoursAgo = now.minusHours(24);
+        LocalDateTime twentyFourHoursAgo = now.minusHours(RESPONSE_HOURS);
         LocalDateTime minGraceThreshold = now.minusMinutes(MIN_GRACE_MINUTES);
         // H-12 threshold: a PENDING bid is past H-12 once `now + 12h` has reached
         // the start of `departureDate`. Equivalent to `departureDate <= (now + 12h).toLocalDate()`.
-        LocalDate halfDayThresholdDate = now.plusHours(12).toLocalDate();
+        LocalDate halfDayThresholdDate = now.plusHours(DEPARTURE_MARGIN_HOURS).toLocalDate();
 
         List<BidEntity> timedOut = bidRepository.findPendingTimedOut(
                 twentyFourHoursAgo, halfDayThresholdDate, minGraceThreshold);

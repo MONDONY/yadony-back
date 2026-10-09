@@ -175,8 +175,39 @@ public class NotificationDispatcher {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onCashBidCreated(CashBidCreatedEvent event) {
+        if (event.negotiated()) {
+            notifyNegotiatedCommissionDue(event);
+            return;
+        }
         notifyNewBid(event.bidId(), event.announcementId(), event.travelerId(),
                 event.senderId(), event.senderFirstName(), event.weightKg(), event.corridor());
+    }
+
+    /** Type de la notification « prix accepté, réglez la commission » (FLUTTER-H7). */
+    static final String BID_NEGOTIATION_COMMISSION_DUE = "BID_NEGOTIATION_COMMISSION_DUE";
+
+    /** Échéance absente (ne devrait pas arriver) : le délai nominal du voyageur. */
+    private static final long DEFAULT_COMMISSION_HOURS = 24;
+
+    /**
+     * Accord en espèces conclu dans le fil d'un trajet : le voyageur n'a pas de demande à
+     * étudier, il doit régler la commission avant l'annulation automatique. Le lien ouvre le
+     * fil ({@code bids/{id}/negotiation}), où se trouve le bouton de règlement. Même règle de
+     * blocage que la demande : l'accord vient de l'expéditeur autant que du voyageur.
+     */
+    private void notifyNegotiatedCommissionDue(CashBidCreatedEvent event) {
+        long hoursLeft = DEFAULT_COMMISSION_HOURS;
+        if (event.commissionDueBy() != null) {
+            long minutes = java.time.Duration.between(
+                    java.time.LocalDateTime.now(java.time.ZoneOffset.UTC), event.commissionDueBy()).toMinutes();
+            hoursLeft = Math.max(1, (minutes + 59) / 60);
+        }
+        var text = NotificationTexts.bidNegotiationCommissionDue(
+                messagesFor(event.travelerId()), event.senderFirstName(), hoursLeft);
+        notifyUnlessBlocked(event.travelerId(), event.senderId(), text.title(), text.body(),
+                Map.of("type", BID_NEGOTIATION_COMMISSION_DUE,
+                       "bidId", event.bidId().toString(),
+                       "announcementId", event.announcementId().toString()));
     }
 
     private void notifyNewBid(UUID bidId, UUID announcementId, UUID travelerId, UUID senderId,

@@ -34,7 +34,8 @@ public enum NotificationCategory {
             "KYC_VERIFIED", "KYC_ACTION_REQUIRED", "KYC_RESET",
             "STRIPE_ONBOARDING_INCOMPLETE", "CARD_EXPIRING", "WALLET_ADJUSTED",
             "negotiation_awaiting_payment", "negotiation_commission_pending",
-            "negotiation_commission_declined", "negotiation_commission_expired");
+            "negotiation_commission_declined", "negotiation_commission_expired",
+            "BID_NEGOTIATION_COMMISSION_DUE");
 
     private static final Set<String> TRAJETS_TYPES = Set.of(
             "TRIP_IN_PROGRESS", "CORRIDOR_ALERT", "TRAVELER_NEW_ANNOUNCEMENT",

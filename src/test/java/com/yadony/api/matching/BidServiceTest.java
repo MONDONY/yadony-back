@@ -819,6 +819,9 @@ class BidServiceTest {
             // aucun prénom, l'événement doit porter null (le rendu du repli générique, dans
             // la langue du destinataire, est délégué à NotificationTexts.newBid).
             assertThat(((CashBidCreatedEvent) eventCaptor.getValue()).senderFirstName()).isNull();
+            // Demande déposée directement : notification « nouvelle demande » inchangée.
+            assertThat(((CashBidCreatedEvent) eventCaptor.getValue()).negotiated()).isFalse();
+            assertThat(((CashBidCreatedEvent) eventCaptor.getValue()).commissionDueBy()).isNull();
         }
 
         @Test

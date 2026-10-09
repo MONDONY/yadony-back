@@ -174,6 +174,58 @@ class NotificationDispatcherTest {
         assertThat(listener.phase()).isEqualTo(TransactionPhase.AFTER_COMMIT);
     }
 
+    /** FLUTTER-H7 : accord de prix en espèces, la notification dit qu'il reste la commission. */
+    @Test
+    void onCashBidCreated_negotiated_sendsCommissionDueWithDeadline() {
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onCashBidCreated(new CashBidCreatedEvent(
+                bidId, annId, travelerId, senderId, "Mariama", BigDecimal.valueOf(3.5), "Paris → Dakar",
+                true, java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusHours(5).plusMinutes(30)));
+
+        verify(notificationService).persist(eq(travelerId), eq("BID_NEGOTIATION_COMMISSION_DUE"),
+                eq("Réglez la commission Yadony"), eq("Prix accepté avec Mariama : réglez la commission sous 6 h."),
+                any(), eq(false));
+        verify(fcmService).sendToUser(eq(travelerId), eq("Réglez la commission Yadony"), contains("sous 6 h"),
+                argThat(data -> "BID_NEGOTIATION_COMMISSION_DUE".equals(data.get("type"))
+                        && bidId.toString().equals(data.get("bidId"))
+                        && annId.toString().equals(data.get("announcementId"))));
+    }
+
+    @Test
+    void onCashBidCreated_negotiatedWithoutDeadline_announces24h() {
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onCashBidCreated(new CashBidCreatedEvent(
+                bidId, annId, travelerId, senderId, null, null, "Paris → Dakar", true, null));
+
+        verify(fcmService).sendToUser(eq(travelerId), any(),
+                eq("Prix accepté. Réglez la commission sous 24 h pour confirmer ce colis."), any());
+    }
+
+    @Test
+    void onCashBidCreated_negotiatedDeadlinePassed_announcesAtLeastOneHour() {
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onCashBidCreated(new CashBidCreatedEvent(
+                bidId, annId, travelerId, senderId, "Mariama", null, "Paris → Dakar", true,
+                java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(10)));
+
+        verify(fcmService).sendToUser(eq(travelerId), any(), contains("sous 1 h"), any());
+    }
+
+    @Test
+    void onCashBidCreated_negotiated_sendsNothing_whenSenderHiddenFromTraveler() {
+        when(blockVisibility.isHidden(travelerId, senderId)).thenReturn(true);
+
+        dispatcher.onCashBidCreated(new CashBidCreatedEvent(
+                bidId, annId, travelerId, senderId, "Mariama", null, "Paris → Dakar", true,
+                java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusHours(24)));
+
+        verifyNoInteractions(notificationService);
+        verifyNoInteractions(fcmService);
+    }
+
     // ── HandoverAlertEvent ───────────────────────────────────────────────────
 
     @Test
