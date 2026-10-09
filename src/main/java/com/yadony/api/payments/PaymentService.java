@@ -994,6 +994,10 @@ public class PaymentService {
             auditService.log("PAYMENT", payment.getId(), "PAYMENT_ESCROW_ACTIVE", threadId,
                     Map.of("piId", paymentIntentId, "source", "negotiationCheckout"));
             log.info("Negotiation payment {} set to ESCROW via checkout (PI={})", payment.getId(), paymentIntentId);
+            // Déclenche la capture (NegotiationCaptureListener, après commit). Le webhook qui
+            // arrive ensuite trouve le paiement déjà ESCROW et ne publie plus rien : sans cette
+            // ligne, l'autorisation n'était jamais capturée et expirait à J+7.
+            eventPublisher.publishEvent(new PaymentEscrowReadyEvent(null, payment.getId()));
         }
         if (changed) {
             paymentRepository.save(payment);

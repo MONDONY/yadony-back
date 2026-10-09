@@ -3,8 +3,12 @@ package com.yadony.api.payments;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.stripe.AdminAlertService;
+import com.yadony.api.payments.events.PaymentEscrowReadyEvent;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -25,6 +29,9 @@ class PaymentServiceNegotiationEscrowPromotionTest {
     private final AuditService auditService = mock(AuditService.class);
     private final PaymentService service = PaymentServiceTestFactory.bare(
             paymentRepository, mock(UserRepository.class), auditService, mock(AdminAlertService.class));
+
+    private final ApplicationEventPublisher eventPublisher =
+            (ApplicationEventPublisher) ReflectionTestUtils.getField(service, "eventPublisher");
 
     private final UUID THREAD = UUID.randomUUID();
 
@@ -54,6 +61,32 @@ class PaymentServiceNegotiationEscrowPromotionTest {
         assertThat(p.getStripeChargeId()).isEqualTo("ch_1");
         verify(paymentRepository).save(p);
         verify(auditService).log(eq("PAYMENT"), eq(p.getId()), eq("PAYMENT_ESCROW_ACTIVE"), eq(THREAD), any());
+    }
+
+    @Test
+    @DisplayName("PENDING → ESCROW publie PaymentEscrowReadyEvent : la capture de NegotiationCaptureListener part")
+    void pending_publishesEscrowReadySoTheCaptureRuns() {
+        // Sans cet événement, le webhook amount_capturable_updated arrivé après trouve le
+        // paiement déjà ESCROW et ne le publie pas non plus : l'autorisation n'est jamais
+        // capturée et expire à J+7 (staging, 5 paiements négociés du 07/10, sonde INV-08).
+        PaymentEntity p = locked(PaymentStatus.PENDING);
+
+        service.promoteNegotiationEscrowIfPending(THREAD, "pi_nego", "ch_1");
+
+        ArgumentCaptor<PaymentEscrowReadyEvent> event = ArgumentCaptor.forClass(PaymentEscrowReadyEvent.class);
+        verify(eventPublisher).publishEvent(event.capture());
+        assertThat(event.getValue().getPaymentId()).isEqualTo(p.getId());
+        assertThat(event.getValue().getBidId()).isNull();
+    }
+
+    @Test
+    @DisplayName("déjà ESCROW : aucun événement, le webhook l'a déjà publié")
+    void alreadyEscrow_publishesNothing() {
+        locked(PaymentStatus.ESCROW);
+
+        service.promoteNegotiationEscrowIfPending(THREAD, "pi_nego", "ch_1");
+
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
