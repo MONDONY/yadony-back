@@ -25,6 +25,7 @@ class NotificationCategoryTest {
         assertThat(NotificationCategory.fromType("CARD_EXPIRING")).isEqualTo(NotificationCategory.PAIEMENTS);
         assertThat(NotificationCategory.fromType("negotiation_commission_pending")).isEqualTo(NotificationCategory.PAIEMENTS);
         assertThat(NotificationCategory.fromType("negotiation_awaiting_payment")).isEqualTo(NotificationCategory.PAIEMENTS);
+        assertThat(NotificationCategory.fromType("BID_NEGOTIATION_COMMISSION_DUE")).isEqualTo(NotificationCategory.PAIEMENTS);
     }
 
     @Test

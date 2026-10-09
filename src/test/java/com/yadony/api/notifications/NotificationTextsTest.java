@@ -117,6 +117,8 @@ class NotificationTextsTest {
         map.put("bidNegotiationProposal", NotificationTexts.bidNegotiationProposal(m, "1250.50"));
         map.put("bidNegotiationCounter", NotificationTexts.bidNegotiationCounter(m, "1250.50", 3));
         map.put("bidNegotiationAccepted", NotificationTexts.bidNegotiationAccepted(m, "1250.50"));
+        map.put("bidNegotiationCommissionDue", NotificationTexts.bidNegotiationCommissionDue(m, NOM, 24));
+        map.put("bidNegotiationCommissionDue sans nom", NotificationTexts.bidNegotiationCommissionDue(m, null, 24));
         map.put("bidNegotiationClosed", NotificationTexts.bidNegotiationClosed(m));
         map.put("bidNegotiationExpired", NotificationTexts.bidNegotiationExpired(m));
         map.put("negotiationStarted", NotificationTexts.negotiationStarted(m, MONTANT, "XOF"));
@@ -538,5 +540,24 @@ class NotificationTextsTest {
         assertThat(NotificationTexts.firstActionReminder(m, "sender-trips", 3).body()).startsWith("3 trajets partent ");
         assertThat(NotificationTexts.firstActionReminder(m, "traveler-packages", 2).body()).startsWith("2 colis attendent ");
         assertThat(NotificationTexts.firstActionReminder(m, "sender-none", 0).title()).isEqualTo("Soyez prévenu en premier");
+    }
+
+    @Test
+    void bidNegotiationCommissionDue_namesSenderAndDeadline_inBothLanguages() {
+        NotificationText fr = NotificationTexts.bidNegotiationCommissionDue(TestMessages.fr(), "Mariama Diallo", 7);
+        assertThat(fr.title()).isEqualTo("Réglez la commission Yadony");
+        assertThat(fr.body()).isEqualTo("Prix accepté avec Mariama D. : réglez la commission sous 7 h.");
+        NotificationText en = NotificationTexts.bidNegotiationCommissionDue(TestMessages.en(), "Mariama", 7);
+        assertThat(en.title()).isEqualTo("Pay the Yadony commission");
+        assertThat(en.body()).isEqualTo("Price agreed with Mariama: pay the commission within 7 h.");
+    }
+
+    @Test
+    void bidNegotiationCommissionDue_unknownSenderOrZeroHours_staysGenericAndAtLeastOneHour() {
+        NotificationText sentinel = NotificationTexts.bidNegotiationCommissionDue(
+                TestMessages.fr(), com.yadony.api.auth.UserEntity.UNKNOWN_DISPLAY_NAME, 0);
+        assertThat(sentinel.body()).isEqualTo("Prix accepté. Réglez la commission sous 1 h pour confirmer ce colis.");
+        NotificationText blank = NotificationTexts.bidNegotiationCommissionDue(TestMessages.en(), " ", 3);
+        assertThat(blank.body()).isEqualTo("Price agreed. Pay the commission within 3 h to confirm this parcel.");
     }
 }

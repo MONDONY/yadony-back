@@ -397,6 +397,21 @@ public final class NotificationTexts {
                 m.get("notification.bid-negotiation-accepted.body", grossEur));
     }
 
+    /**
+     * Accord en espèces conclu dans le fil d'un trajet (FLUTTER-H7) : le voyageur doit
+     * régler la commission Yadony sous {@code hoursLeft} heures, sinon l'accord est annulé.
+     * {@code senderName} nul, vide ou sentinelle « Utilisateur » : texte sans nom.
+     */
+    public static NotificationText bidNegotiationCommissionDue(Messages m, String senderName, long hoursLeft) {
+        String hours = String.valueOf(Math.max(1, hoursLeft));
+        boolean anonymous = senderName == null || senderName.isBlank()
+                || com.yadony.api.auth.UserEntity.UNKNOWN_DISPLAY_NAME.equals(senderName);
+        String body = anonymous
+                ? m.get("notification.bid-negotiation-commission-due.anonymous-body", hours)
+                : m.get("notification.bid-negotiation-commission-due.body", shortDisplayName(senderName), hours);
+        return new NotificationText(m.get("notification.bid-negotiation-commission-due.title"), body);
+    }
+
     public static NotificationText bidNegotiationClosed(Messages m) {
         return new NotificationText(m.get("notification.bid-negotiation-closed.title"),
                 m.get("notification.bid-negotiation-closed.body"));

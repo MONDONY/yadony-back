@@ -192,7 +192,7 @@ class NotificationPrefsServiceTest {
         for (String type : new String[]{"negotiation_trip_changed", "negotiation_commission_pending",
                 "negotiation_commission_declined", "negotiation_commission_expired",
                 "negotiation_deposit_pending", "negotiation_deposit_reverted",
-                "bid_negotiation_message", "bid_negotiation_expired"}) {
+                "bid_negotiation_message", "bid_negotiation_expired", "BID_NEGOTIATION_COMMISSION_DUE"}) {
             assertThat(service.isAllowed(USER_ID, type)).as(type).isFalse();
         }
     }

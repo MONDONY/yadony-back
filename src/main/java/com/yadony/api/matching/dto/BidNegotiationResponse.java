@@ -50,5 +50,10 @@ public record BidNegotiationResponse(
         // FLUTTER-G8 : identifiant de la contrepartie (voyageur pour l'expéditeur, et
         // inversement), pour ouvrir son profil public depuis la carte du fil. Champ
         // ajouté en fin de contrat : un client qui l'ignore ne change pas.
-        UUID counterpartyId
+        UUID counterpartyId,
+        // FLUTTER-H7 : accord en espèces en attente du voyageur (PENDING + CASH), heure
+        // UTC à laquelle BidTimeoutScheduler l'annulera si la commission n'est pas réglée.
+        // Nulle dans tout autre état. Champ de fin de contrat : un client qui l'ignore ne
+        // change pas.
+        LocalDateTime commissionDueBy
 ) {}

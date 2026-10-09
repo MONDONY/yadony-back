@@ -896,7 +896,7 @@ class BidNegotiationServiceTest {
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(buildSender()));
             stubSavedBid();
 
-            service.accept(BID_ID, SENDER_UID);
+            BidNegotiationResponse response = service.accept(BID_ID, SENDER_UID);
 
             ArgumentCaptor<Object> events = ArgumentCaptor.forClass(Object.class);
             verify(eventPublisher, atLeastOnce()).publishEvent(events.capture());
@@ -908,7 +908,14 @@ class BidNegotiationServiceTest {
                         assertThat(cash.bidId()).isEqualTo(BID_ID);
                         assertThat(cash.travelerId()).isEqualTo(TRAVELER_ID);
                         assertThat(cash.senderId()).isEqualTo(SENDER_ID);
+                        // FLUTTER-H7 : accord négocié, échéance = celle du scheduler.
+                        assertThat(cash.negotiated()).isTrue();
+                        assertThat(cash.commissionDueBy()).isEqualTo(BidTimeoutScheduler.deadlineFor(
+                                bid.getPendingSince(), buildAnnouncement().getDepartureDate()));
                     });
+            // Le fil expose la même échéance, pour le compte à rebours de l'app.
+            assertThat(response.commissionDueBy()).isEqualTo(BidTimeoutScheduler.deadlineFor(
+                    bid.getPendingSince(), buildAnnouncement().getDepartureDate()));
         }
 
         @Test
@@ -925,7 +932,8 @@ class BidNegotiationServiceTest {
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(buildSender()));
             stubSavedBid();
 
-            service.accept(BID_ID, TRAVELER_UID);
+            BidNegotiationResponse response = service.accept(BID_ID, TRAVELER_UID);
+            assertThat(response.commissionDueBy()).isNull();
 
             assertThat(bid.getStatus()).isEqualTo(BidStatus.AWAITING_PAYMENT);
             ArgumentCaptor<Object> events = ArgumentCaptor.forClass(Object.class);

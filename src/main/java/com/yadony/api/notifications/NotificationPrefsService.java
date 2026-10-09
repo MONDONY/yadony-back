@@ -52,6 +52,8 @@ public class NotificationPrefsService {
             Map.entry("negotiation_deposit_reverted",    "pushActivityNegotiations"),
             Map.entry("bid_negotiation_message",         "pushActivityNegotiations"),
             Map.entry("bid_negotiation_expired",         "pushActivityNegotiations"),
+            // FLUTTER-H7 : prix accepté en espèces, commission à régler depuis le fil.
+            Map.entry("BID_NEGOTIATION_COMMISSION_DUE",  "pushActivityNegotiations"),
             // Famille « quelqu'un répond à mon colis » : ces trois-là appellent une action de
             // l'expéditeur et suivent donc le même interrupteur que les offres reçues.
             Map.entry("TRAVELER_INVITE",              "pushActivityBids"),

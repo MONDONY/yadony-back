@@ -332,14 +332,19 @@ public class BidNegotiationService {
                 BidNegotiationMessageKind.ACCEPT, split.grossEur());
 
         if (cash) {
-            // Même événement que BidService.createBid pour une demande cash : le
-            // voyageur reçoit la notification « demande à traiter » et retrouve le
-            // colis là où il traite les autres, sans écran ni notification dédiés.
+            // Même événement que BidService.createBid pour une demande cash, marqué
+            // « négocié » (FLUTTER-H7) : le voyageur n'a pas de demande à étudier mais la
+            // commission Yadony à régler, depuis le fil, avant que BidTimeoutScheduler
+            // n'annule l'accord. La notification le dit et ouvre le fil, où se trouve le
+            // bouton de règlement ; « Nouvelle demande d'envoi » le laissait chercher.
             eventPublisher.publishEvent(new CashBidCreatedEvent(
                     ctx.bid().getId(), ctx.announcement().getId(), ctx.announcement().getTravelerId(),
                     ctx.bid().getSenderId(), displayName(ctx.bid().getSenderId()),
                     ctx.bid().getWeightKg(),
-                    ctx.announcement().getDepartureCity() + " → " + ctx.announcement().getArrivalCity()));
+                    ctx.announcement().getDepartureCity() + " → " + ctx.announcement().getArrivalCity(),
+                    true,
+                    BidTimeoutScheduler.deadlineFor(ctx.bid().getPendingSince(),
+                            ctx.announcement().getDepartureDate())));
         }
 
         return buildResponse(saved != null ? saved : ctx.bid(), ctx.announcement(), ctx.userId(), message);
@@ -780,7 +785,21 @@ public class BidNegotiationService {
                 expiresAt(bid, last, open),
                 messages,
                 bid.getPaymentMethod() != null ? bid.getPaymentMethod().name() : null,
-                viewerIsTraveler ? bid.getSenderId() : announcement.getTravelerId());
+                viewerIsTraveler ? bid.getSenderId() : announcement.getTravelerId(),
+                commissionDueBy(bid, announcement));
+    }
+
+    /**
+     * Échéance du règlement de la commission d'un accord en espèces (FLUTTER-H7) : celle
+     * de {@link BidTimeoutScheduler}, seule à décider de l'annulation. Nulle hors de l'état
+     * PENDING + CASH, ou sans repère d'entrée dans la file du voyageur.
+     */
+    private static LocalDateTime commissionDueBy(BidEntity bid, AnnouncementEntity announcement) {
+        if (bid.getStatus() != BidStatus.PENDING || bid.getPaymentMethod() != PaymentMethod.CASH
+                || bid.getPendingSince() == null) {
+            return null;
+        }
+        return BidTimeoutScheduler.deadlineFor(bid.getPendingSince(), announcement.getDepartureDate());
     }
 
     /**
