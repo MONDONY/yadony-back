@@ -62,10 +62,13 @@ public interface AuditLogRepository extends JpaRepository<AuditLogEntity, Long> 
     List<AuditLogEntity> findTop200ByEntityTypeAndEntityIdOrderByCreatedAtAscIdAsc(String entityType, UUID entityId);
 
     /**
-     * Dernière trace d'une action sur une entité. Sert de mémoire aux limites de fréquence
+     * Date (UTC) de la dernière trace d'une action sur une entité. Sert de mémoire aux limites de fréquence
      * sans colonne dédiée : l'audit, immuable, fait déjà foi (ex. demande de nouveau code
      * de retrait, au plus une par quart d'heure et par colis).
      */
-    Optional<AuditLogEntity> findFirstByEntityTypeAndEntityIdAndActionOrderByCreatedAtDescIdDesc(
-            String entityType, UUID entityId, String action);
+    @Query("SELECT MAX(a.createdAt) FROM AuditLogEntity a WHERE a.entityType = :entityType "
+            + "AND a.entityId = :entityId AND a.action = :action")
+    Optional<LocalDateTime> findLastActionAt(@Param("entityType") String entityType,
+                                             @Param("entityId") UUID entityId,
+                                             @Param("action") String action);
 }

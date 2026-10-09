@@ -29,6 +29,7 @@ import com.yadony.api.payments.events.MobileMoneyPaymentConfirmedEvent;
 import com.yadony.api.payments.events.MobileMoneyPaymentExpiredEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
 import com.yadony.api.tracking.events.ConfirmationCodeBlockedEvent;
+import com.yadony.api.tracking.events.ConfirmationCodeRequestedEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -854,6 +855,24 @@ class NotificationDispatcherTest {
                 .containsEntry("type", "CONFIRMATION_CODE_BLOCKED")
                 .containsEntry("bidId", bid.toString());
         verify(notificationService).persist(eq(sender), eq("CONFIRMATION_CODE_BLOCKED"), any(), any(), any(), eq(false));
+    }
+
+    // FLUTTER-G2 : le voyageur demande un nouveau code → l'expéditeur est prévenu, non
+    // critique, le push porte le bidId (l'app ouvre la régénération).
+    @Test
+    void onConfirmationCodeRequested_notifiesSenderWithBidId() {
+        UUID sender = UUID.randomUUID();
+        UUID bid = UUID.randomUUID();
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onConfirmationCodeRequested(new ConfirmationCodeRequestedEvent(bid, sender));
+
+        var dataCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(fcmService).sendToUser(eq(sender), eq("Nouveau code demandé"), any(), dataCaptor.capture());
+        assertThat(dataCaptor.getValue())
+                .containsEntry("type", "CONFIRMATION_CODE_REQUESTED")
+                .containsEntry("bidId", bid.toString());
+        verify(notificationService).persist(eq(sender), eq("CONFIRMATION_CODE_REQUESTED"), any(), any(), any(), eq(false));
     }
 
     @Test

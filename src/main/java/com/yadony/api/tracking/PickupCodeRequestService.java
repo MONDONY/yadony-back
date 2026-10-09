@@ -2,7 +2,6 @@ package com.yadony.api.tracking;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
-import com.yadony.api.common.AuditLogEntity;
 import com.yadony.api.common.AuditLogRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
@@ -120,10 +119,7 @@ public class PickupCodeRequestService {
                     "Code Still Valid", m.get("problem.code-still-valid"));
         }
 
-        Optional<LocalDateTime> last = auditLogRepository
-                .findFirstByEntityTypeAndEntityIdAndActionOrderByCreatedAtDescIdDesc(
-                        AUDIT_ENTITY, bidId, AUDIT_ACTION)
-                .map(AuditLogEntity::getCreatedAt);
+        Optional<LocalDateTime> last = auditLogRepository.findLastActionAt(AUDIT_ENTITY, bidId, AUDIT_ACTION);
         if (last.isPresent() && last.get().plus(COOLDOWN).isAfter(now)) {
             LocalDateTime nextAllowed = last.get().plus(COOLDOWN);
             long seconds = Math.max(1, Duration.between(now, nextAllowed).toSeconds());
