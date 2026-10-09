@@ -548,8 +548,8 @@ class NotificationTextsTest {
         assertThat(fr.title()).isEqualTo("Réglez la commission Yadony");
         assertThat(fr.body()).isEqualTo("Prix accepté avec Mariama D. : réglez la commission sous 7 h.");
         NotificationText en = NotificationTexts.bidNegotiationCommissionDue(TestMessages.en(), "Mariama", 7);
-        assertThat(en.title()).isEqualTo("Pay the Yadony commission");
-        assertThat(en.body()).isEqualTo("Price agreed with Mariama: pay the commission within 7 h.");
+        assertThat(en.title()).isEqualTo("Pay the Yadony service fee");
+        assertThat(en.body()).isEqualTo("Price agreed with Mariama: pay the service fee within 7 h.");
     }
 
     @Test
@@ -558,6 +558,6 @@ class NotificationTextsTest {
                 TestMessages.fr(), com.yadony.api.auth.UserEntity.UNKNOWN_DISPLAY_NAME, 0);
         assertThat(sentinel.body()).isEqualTo("Prix accepté. Réglez la commission sous 1 h pour confirmer ce colis.");
         NotificationText blank = NotificationTexts.bidNegotiationCommissionDue(TestMessages.en(), " ", 3);
-        assertThat(blank.body()).isEqualTo("Price agreed. Pay the commission within 3 h to confirm this parcel.");
+        assertThat(blank.body()).isEqualTo("Price agreed. Pay the service fee within 3 h to confirm this parcel.");
     }
 }
