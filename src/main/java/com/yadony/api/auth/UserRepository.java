@@ -310,6 +310,9 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
      * (sensible à la casse, comme les UID), et {@code queryId}, non nul seulement quand le
      * terme a la forme canonique d'un UUID, à la clé primaire. Aucune correspondance
      * partielle sur les identifiants : les deux colonnes sont indexées (unique et PK).
+     *
+     * <p>{@code recetteTester}, non nul, restreint aux comptes testeurs du mode recette (ou
+     * à ceux qui ne le sont pas).
      */
     @Query(value = """
             SELECT u.* FROM users u
@@ -329,6 +332,7 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
                      AND u.id = :queryId))
             AND (CAST(:role AS VARCHAR) IS NULL OR EXISTS (
                  SELECT 1 FROM user_roles r WHERE r.user_id = u.id AND r.role = :role))
+            AND (:recetteTester IS NULL OR u.recette_tester = :recetteTester)
             ORDER BY u.created_at DESC
             """,
            countQuery = """
@@ -349,6 +353,7 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
                      AND u.id = :queryId))
             AND (CAST(:role AS VARCHAR) IS NULL OR EXISTS (
                  SELECT 1 FROM user_roles r WHERE r.user_id = u.id AND r.role = :role))
+            AND (:recetteTester IS NULL OR u.recette_tester = :recetteTester)
             """,
            nativeQuery = true)
     Page<UserEntity> findAdminFiltered(
@@ -361,6 +366,7 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
             @Param("queryRaw") String queryRaw,
             @Param("queryId") UUID queryId,
             @Param("role") String role,
+            @Param("recetteTester") Boolean recetteTester,
             Pageable pageable);
 
     java.util.List<UserEntity> findAllByCreatedAtBetweenOrderByCreatedAtAsc(

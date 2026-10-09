@@ -190,13 +190,13 @@ class AdminUserControllerTest {
         user.setFirebaseUid("uid-awa");
 
         when(firebaseContact.findUidByEmail("awa@example.com")).thenReturn(java.util.Optional.of("uid-awa"));
-        when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(user)));
         when(firebaseContact.getContacts(java.util.List.of("uid-awa"))).thenReturn(
                 java.util.Map.of("uid-awa", new com.yadony.api.auth.FirebaseContactService.Contact(
                         "+221701234567", "awa@example.com")));
 
-        var page = controller.listUsers(null, null, null, null, null, "awa@example.com", 0, 20);
+        var page = controller.listUsers(null, null, null, null, null, "awa@example.com", null, 0, 20);
 
         // L'UID résolu est passé à la requête, qui l'apparie exactement
         verify(userRepository).findAdminFiltered(
@@ -206,7 +206,7 @@ class AdminUserControllerTest {
                 org.mockito.ArgumentMatchers.eq("uid-awa"),
                 org.mockito.ArgumentMatchers.eq("awa@example.com"),
                 org.mockito.ArgumentMatchers.isNull(),
-                org.mockito.ArgumentMatchers.isNull(), any());
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), any());
         assertThat(page.getContent()).singleElement()
                 .extracting(com.yadony.api.admin.dto.AdminUserListItemResponse::phoneNumber)
                 .isEqualTo("+221701234567");
@@ -216,10 +216,10 @@ class AdminUserControllerTest {
     void listUsers_queryOnPhone_usesPhoneLookupOnly() {
         AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
         when(firebaseContact.findUidByPhone("+221701234567")).thenReturn(java.util.Optional.of("uid-awa"));
-        when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 
-        controller.listUsers(null, null, null, null, null, "+221701234567", 0, 20);
+        controller.listUsers(null, null, null, null, null, "+221701234567", null, 0, 20);
 
         // Un terme en E.164 ne déclenche que le lookup téléphone : le lookup email
         // était un aller-retour réseau voué à échouer.
@@ -230,10 +230,10 @@ class AdminUserControllerTest {
     @Test
     void listUsers_queryOnName_hitsNoFirebaseLookup() {
         AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
-        when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 
-        controller.listUsers(null, null, null, null, null, "Dupont", 0, 20);
+        controller.listUsers(null, null, null, null, null, "Dupont", null, 0, 20);
 
         // Cas dominant d'une liste admin : aucun appel Firebase ne doit partir.
         verify(firebaseContact, org.mockito.Mockito.never()).findUidByEmail(any());
@@ -244,10 +244,10 @@ class AdminUserControllerTest {
     void listUsers_queryShapedLikeUuid_passesTypedIdAndRawTerm() {
         AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
         UUID id = UUID.fromString("3f2b8c1e-9a4d-4e6f-8b21-7c5d0e9a1b34");
-        when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 
-        controller.listUsers(null, null, null, null, null, "  " + id + "  ", 0, 20);
+        controller.listUsers(null, null, null, null, null, "  " + id + "  ", null, 0, 20);
 
         verify(userRepository).findAdminFiltered(
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
@@ -256,7 +256,7 @@ class AdminUserControllerTest {
                 org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.eq(id.toString()),
                 org.mockito.ArgumentMatchers.eq(id),
-                org.mockito.ArgumentMatchers.isNull(), any());
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), any());
         verify(firebaseContact, org.mockito.Mockito.never()).findUidByEmail(any());
         verify(firebaseContact, org.mockito.Mockito.never()).findUidByPhone(any());
     }
@@ -264,30 +264,30 @@ class AdminUserControllerTest {
     @Test
     void listUsers_queryNotStrictUuid_passesNoTypedId() {
         AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
-        when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 
         // UUID.fromString accepterait « 1-1-1-1-1 » : seule la forme canonique compte.
-        controller.listUsers(null, null, null, null, null, "1-1-1-1-1", 0, 20);
-        controller.listUsers(null, null, null, null, null, "FbUidAwa123XYZ", 0, 20);
+        controller.listUsers(null, null, null, null, null, "1-1-1-1-1", null, 0, 20);
+        controller.listUsers(null, null, null, null, null, "FbUidAwa123XYZ", null, 0, 20);
 
         verify(userRepository).findAdminFiltered(
                 any(), any(), any(), any(), any(), any(),
                 org.mockito.ArgumentMatchers.eq("1-1-1-1-1"),
-                org.mockito.ArgumentMatchers.isNull(), any(), any());
+                org.mockito.ArgumentMatchers.isNull(), any(), any(), any());
         verify(userRepository).findAdminFiltered(
                 any(), any(), any(), any(), any(), any(),
                 org.mockito.ArgumentMatchers.eq("FbUidAwa123XYZ"),
-                org.mockito.ArgumentMatchers.isNull(), any(), any());
+                org.mockito.ArgumentMatchers.isNull(), any(), any(), any());
     }
 
     @Test
     void listUsers_withoutQuery_doesNotHitFirebaseLookups() {
         AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
-        when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 
-        controller.listUsers(null, null, null, null, null, "   ", 0, 20);
+        controller.listUsers(null, null, null, null, null, "   ", null, 0, 20);
 
         verify(firebaseContact, org.mockito.Mockito.never()).findUidByEmail(any());
         verify(firebaseContact, org.mockito.Mockito.never()).findUidByPhone(any());
@@ -447,12 +447,12 @@ class AdminUserControllerTest {
         user.setDeletionRequestedAt(java.time.Instant.parse("2026-09-10T08:00:00Z"));
         user.setFirebaseUid("uid-pending");
         when(userRepository.findAdminFiltered(org.mockito.ArgumentMatchers.eq("PENDING_DELETION"), any(), any(),
-                any(), any(), any(), any(), any(), any(), any()))
+                any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(user)));
         when(firebaseContact.getContacts(any())).thenReturn(java.util.Map.of());
 
         var page = newController().listUsers(com.yadony.api.auth.UserStatus.PENDING_DELETION,
-                null, null, null, null, null, 0, 20);
+                null, null, null, null, null, null, 0, 20);
 
         var item = page.getContent().get(0);
         assertThat(item.status()).isEqualTo("PENDING_DELETION");

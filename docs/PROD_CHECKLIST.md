@@ -1113,6 +1113,7 @@ saturait (187 requêtes en attente) et les requêtes finissaient en **500 après
   le ferme de toute façon (`RecetteMode`).
 - [ ] Vérifier que le `.env` prod ne contient **pas** `YADONY_RECETTE_ENABLED=true` (lire seulement ce nom de variable).
 - [ ] Après la mise en prod : `PUT /api/v1/admin/users/{id}/recette-tester` doit répondre **409 `recette-disabled`**.
+- [ ] Idem en masse : `PUT /api/v1/admin/users/recette-tester` → **409 `recette-disabled`**, et `GET /api/v1/admin/recette/status` → `{"enabled":false}` (l'admin masque alors la sélection « mode recette »).
 
 #### dony-admin (#54 à #56)
 

@@ -25,7 +25,9 @@ public record AdminUserListItemResponse(
         /** Demande de suppression en cours ; {@code null} sinon. */
         LocalDateTime deletionRequestedAt,
         /** Finalisation prevue de cette demande (demande + delai de grace) ; {@code null} sinon. */
-        LocalDateTime deletionScheduledFor
+        LocalDateTime deletionScheduledFor,
+        /** Compte testeur du mode recette (colonne {@code users.recette_tester}, V303). */
+        boolean recetteTester
 ) {
     /** Le téléphone et l'email proviennent de Firebase : ils ne sont plus stockés en base. */
     public static AdminUserListItemResponse from(UserEntity u, FirebaseContactService.Contact contact) {
@@ -45,7 +47,8 @@ public record AdminUserListItemResponse(
                 u.getTotalShipments(),
                 u.getCreatedAt(),
                 toUtc(u.getDeletionRequestedAt()),
-                toUtc(com.yadony.api.auth.AccountDeletionScheduler.scheduledFinalization(u.getDeletionRequestedAt()))
+                toUtc(com.yadony.api.auth.AccountDeletionScheduler.scheduledFinalization(u.getDeletionRequestedAt())),
+                u.isRecetteTester()
         );
     }
 
