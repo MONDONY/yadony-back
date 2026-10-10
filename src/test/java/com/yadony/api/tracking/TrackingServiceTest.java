@@ -591,28 +591,150 @@ class TrackingServiceTest {
     }
 
     @Test
-    void processScan_departAlreadyScanned_throwsConflict_withoutInsert() {
-        // Sentry YADONY-BACK-STAGING-8 : un second scan DEPART sur un colis déjà remis passait
-        // toutes les gardes (HANDED_OVER reste scannable) puis heurtait l'index unique
-        // uq_tracking_one_depart_per_bid → 500. Le doublon doit être refusé avant l'insert.
+    void processScan_departAlreadyScanned_returnsTheExistingEvent_withoutAnyEffect() {
+        // FLUTTER-JV / YADONY-BACK-STAGING-8 : le même DEPART renvoyé 0,5 s plus tard (envoi
+        // direct + file hors ligne) est idempotent : l'étape existante, aucun insert, ni
+        // code, ni audit, ni notification, ni événement.
+        BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
+        bid.setConfirmationCode("654321");
+        AnnouncementEntity ann = buildAnnouncement();
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
+        TrackingEventEntity existing = new TrackingEventEntity();
+        setId(existing, UUID.randomUUID());
+        existing.setBidId(bidId);
+        existing.setEventType(TrackingEventType.DEPART);
+        existing.setScannedAt(LocalDateTime.of(2026, 10, 10, 14, 45));
+        when(trackingEventRepository.findFirstByBidIdAndEventTypeOrderByScannedAtAsc(bidId, TrackingEventType.DEPART))
+                .thenReturn(Optional.of(existing));
+        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null);
+
+        TrackingService.ScanOutcome outcome = service.recordScan(req, "uid-traveler");
+
+        assertThat(outcome.created()).isFalse();
+        assertThat(outcome.event().id()).isEqualTo(existing.getId());
+        assertThat(outcome.event().eventType()).isEqualTo("DEPART");
+        assertThat(bid.getConfirmationCode()).isEqualTo("654321");
+        verify(bidRepository).lockForUpdate(bidId);
+        verify(trackingEventRepository, never()).save(any());
+        verify(bidRepository, never()).save(any());
+        verifyNoInteractions(auditService, notificationDispatcher, eventPublisher);
+    }
+
+    @Test
+    void processScan_departReplayedAfterDelivery_isStillIdempotent() {
+        // Rejeu tardif de la file hors ligne : le colis est livré, le DEPART existe.
+        BidEntity bid = buildBid(BidStatus.COMPLETED, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
+        TrackingEventEntity existing = new TrackingEventEntity();
+        setId(existing, UUID.randomUUID());
+        existing.setBidId(bidId);
+        existing.setEventType(TrackingEventType.DEPART);
+        existing.setScannedAt(LocalDateTime.of(2026, 10, 10, 14, 45));
+        when(trackingEventRepository.findFirstByBidIdAndEventTypeOrderByScannedAtAsc(bidId, TrackingEventType.DEPART))
+                .thenReturn(Optional.of(existing));
+
+        assertThat(service.processScan(
+                new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null),
+                "uid-traveler").id()).isEqualTo(existing.getId());
+        verify(trackingEventRepository, never()).save(any());
+    }
+
+    @Test
+    void processScan_departReplayByAnotherUser_isForbidden() {
+        BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        UserEntity stranger = buildUser(UUID.randomUUID(), "uid-stranger");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(userRepository.findByFirebaseUid("uid-stranger")).thenReturn(Optional.of(stranger));
+
+        Throwable thrown = catchThrowable(() -> service.recordScan(
+                new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null), "uid-stranger"));
+
+        assertThat(((YadonyBusinessException) thrown).getErrorCode()).isEqualTo("forbidden");
+        verify(trackingEventRepository, never()).findFirstByBidIdAndEventTypeOrderByScannedAtAsc(any(), any());
+    }
+
+    @Test
+    void processScan_newDepart_isCreated_andFlushedBeforeTheEffects() {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        stubDepartScan(bid);
+
+        TrackingService.ScanOutcome outcome = service.recordScan(
+                new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null), "uid-traveler");
+
+        assertThat(outcome.created()).isTrue();
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(trackingEventRepository, auditService);
+        order.verify(trackingEventRepository).save(any());
+        order.verify(trackingEventRepository).flush();
+        order.verify(auditService, org.mockito.Mockito.atLeastOnce())
+                .log(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void findRecordedDepart_returnsTheWinningEvent() {
         BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
         AnnouncementEntity ann = buildAnnouncement();
         UserEntity traveler = buildUser(travelerId, "uid-traveler");
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
         when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
-        when(trackingEventRepository.existsByBidIdAndEventType(bidId, TrackingEventType.DEPART))
-                .thenReturn(true);
-        QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null);
+        TrackingEventEntity existing = new TrackingEventEntity();
+        setId(existing, UUID.randomUUID());
+        existing.setBidId(bidId);
+        existing.setEventType(TrackingEventType.DEPART);
+        existing.setScannedAt(LocalDateTime.of(2026, 10, 10, 14, 45));
+        when(trackingEventRepository.findFirstByBidIdAndEventTypeOrderByScannedAtAsc(bidId, TrackingEventType.DEPART))
+                .thenReturn(Optional.of(existing));
 
-        Throwable thrown = catchThrowable(() -> service.processScan(req, "uid-traveler"));
+        assertThat(service.findRecordedDepart(bidId, "uid-traveler").id()).isEqualTo(existing.getId());
+    }
 
-        assertThat(thrown).isInstanceOf(YadonyBusinessException.class);
-        assertThat(((YadonyBusinessException) thrown).getErrorCode()).isEqualTo("depart-already-scanned");
+    @Test
+    void findRecordedDepart_withoutEvent_is409ScanAlreadyRecorded() {
+        BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
+        when(trackingEventRepository.findFirstByBidIdAndEventTypeOrderByScannedAtAsc(bidId, TrackingEventType.DEPART))
+                .thenReturn(Optional.empty());
+
+        Throwable thrown = catchThrowable(() -> service.findRecordedDepart(bidId, "uid-traveler"));
+
+        assertThat(((YadonyBusinessException) thrown).getErrorCode()).isEqualTo("scan-already-recorded");
         assertThat(((YadonyBusinessException) thrown).getStatus())
                 .isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
-        verify(trackingEventRepository, never()).save(any());
-        verify(bidRepository, never()).save(any());
+    }
+
+    @Test
+    void findRecordedDepart_guards() {
+        when(bidRepository.findById(bidId)).thenReturn(Optional.empty());
+        assertThat(((YadonyBusinessException) catchThrowable(() -> service.findRecordedDepart(bidId, "u")))
+                .getErrorCode()).isEqualTo("bid-not-found");
+
+        BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.empty());
+        assertThat(((YadonyBusinessException) catchThrowable(() -> service.findRecordedDepart(bidId, "u")))
+                .getErrorCode()).isEqualTo("announcement-not-found");
+
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
+        when(userRepository.findByFirebaseUid("u")).thenReturn(Optional.empty());
+        assertThat(((YadonyBusinessException) catchThrowable(() -> service.findRecordedDepart(bidId, "u")))
+                .getErrorCode()).isEqualTo("user-not-found");
+
+        when(userRepository.findByFirebaseUid("u")).thenReturn(Optional.of(buildUser(UUID.randomUUID(), "u")));
+        assertThat(((YadonyBusinessException) catchThrowable(() -> service.findRecordedDepart(bidId, "u")))
+                .getErrorCode()).isEqualTo("forbidden");
     }
 
     @Test
