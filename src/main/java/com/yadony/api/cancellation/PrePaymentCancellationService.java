@@ -35,12 +35,13 @@ import java.util.UUID;
  *
  * <p>Déroulé, dans une seule transaction :
  * <ol>
- *   <li>propriété (seul l'expéditeur) et statut ;</li>
- *   <li>libération de l'argent par {@link PrePaymentReleasePort} (verrou du paiement d'abord) :
+ *   <li>propriété (seul l'expéditeur) ;</li>
+ *   <li>verrou du colis, relu en base (ordre colis puis paiement, comme la livraison et
+ *       l'annulation admin) : un délai de paiement écoulé au même instant rend la demande déjà
+ *       annulée (réponse idempotente), une promotion déjà faite répond 409 ;</li>
+ *   <li>libération de l'argent par {@link PrePaymentReleasePort}, qui verrouille le paiement :
  *       PaymentIntent annulé, ou paiement mobile money en attente clos. Si l'argent est déjà
  *       autorisé ou en cours de validation, rien n'est touché et la requête répond 409 ;</li>
- *   <li>verrou du bid, relu en base : un délai de paiement écoulé au même instant rend la
- *       demande déjà annulée (réponse idempotente) ;</li>
  *   <li>bid {@code CANCELLED} avec le motif {@value #REASON}, kilos rendus à l'annonce quand ils
  *       étaient réservés (mobile money : le voyageur avait accepté), audit, puis
  *       {@link BidCancelledBeforePaymentEvent} (voyageur prévenu, message système dans la
@@ -102,27 +103,30 @@ public class PrePaymentCancellationService {
             throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
                     "Seul l'expéditeur peut annuler cette demande.");
         }
-        if (bid.getStatus() == BidStatus.CANCELLED) {
-            return alreadyCancelled(bid);
-        }
-        assertAwaitingPayment(bid.getStatus());
-
-        PrePaymentReleasePort.Outcome outcome =
-                releasePort.releaseBeforeCancellation(bidId, bid.getPaymentIntentId(), sender.getId());
-        switch (outcome) {
-            case ALREADY_PAID -> throw alreadyPaid();
-            case PAYMENT_IN_PROGRESS -> throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "payment-in-progress", "Payment In Progress",
-                    "Un paiement est en cours de validation. Réessayez dans quelques minutes.");
-            case RELEASED, NOTHING_TO_RELEASE -> { }
-        }
-
-        // Relu sous verrou : la lecture ci-dessus a pu précéder un délai de paiement écoulé.
+        // Verrou du colis D'ABORD, puis celui du paiement (dans le port) : même ordre que la
+        // livraison (TrackingService.confirmDelivery) et l'annulation admin. Relu sous verrou :
+        // la lecture ci-dessus a pu précéder un délai de paiement écoulé ou une promotion.
         bid = lockFresh(bid);
         if (bid.getStatus() == BidStatus.CANCELLED) {
             return alreadyCancelled(bid);
         }
         assertAwaitingPayment(bid.getStatus());
+
+        PrePaymentReleasePort.Outcome outcome;
+        try {
+            outcome = releasePort.releaseBeforeCancellation(bidId, bid.getPaymentIntentId(), sender.getId());
+        } catch (org.springframework.dao.PessimisticLockingFailureException e) {
+            // Interblocage détecté par PostgreSQL avec une confirmation de dépôt mobile money
+            // (MobileMoneyBidPaymentService verrouille le paiement puis le colis) : rien n'est
+            // écrit, l'expéditeur réessaie.
+            log.warn("Annulation avant paiement du bid {} : verrou du paiement refusé ({})", bidId, e.getMessage());
+            throw paymentInProgress();
+        }
+        switch (outcome) {
+            case ALREADY_PAID -> throw alreadyPaid();
+            case PAYMENT_IN_PROGRESS -> throw paymentInProgress();
+            case RELEASED, NOTHING_TO_RELEASE -> { }
+        }
 
         BigDecimal releasedKg = restoreCapacityIfReserved(bid);
         bid.setStatus(BidStatus.CANCELLED);
@@ -201,6 +205,11 @@ public class PrePaymentCancellationService {
         }
         throw new YadonyBusinessException(HttpStatus.CONFLICT, "bid-not-awaiting-payment",
                 "Bid Not Awaiting Payment", "Cette demande n'attend plus de paiement.");
+    }
+
+    private static YadonyBusinessException paymentInProgress() {
+        return new YadonyBusinessException(HttpStatus.CONFLICT, "payment-in-progress", "Payment In Progress",
+                "Un paiement est en cours de validation. Réessayez dans quelques minutes.");
     }
 
     private static YadonyBusinessException alreadyPaid() {

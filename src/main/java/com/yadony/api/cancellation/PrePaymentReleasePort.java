@@ -11,10 +11,11 @@ import java.util.UUID;
  * savoir, AVANT de passer le bid en {@code CANCELLED}, si l'argent est déjà parti (réponse 409),
  * ce qu'un écouteur asynchrone ne peut pas lui dire.
  *
- * <p><b>Contrat de verrou</b> : appelé dans la transaction de l'annulation, AVANT le verrou du
- * bid. L'implémentation verrouille la ligne du paiement : même ordre (paiement, puis bid) que
- * {@code MobileMoneyBidPaymentService#expire} et {@code #confirmEscrow}, sinon les deux
- * transactions s'attendraient en croix.
+ * <p><b>Contrat de verrou</b> : appelé dans la transaction de l'annulation, APRÈS le verrou du
+ * colis. L'implémentation verrouille la ligne du paiement : ordre colis puis paiement, celui de la
+ * livraison et de l'annulation admin. La confirmation d'un dépôt mobile money verrouille dans
+ * l'ordre inverse ; un interblocage avec elle est détecté par PostgreSQL et l'annulation répond
+ * 409 {@code payment-in-progress}.
  */
 public interface PrePaymentReleasePort {
 

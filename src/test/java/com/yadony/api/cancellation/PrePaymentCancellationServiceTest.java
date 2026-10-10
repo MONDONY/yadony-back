@@ -187,26 +187,46 @@ class PrePaymentCancellationServiceTest {
 
     @Test
     void expiredAtTheSameInstant_returnsAlreadyCancelled() {
-        when(releasePort.releaseBeforeCancellation(bidId, "pi_1", senderId)).thenReturn(Outcome.NOTHING_TO_RELEASE);
         doAnswer(inv -> {
             bid.setStatus(BidStatus.CANCELLED);
             return null;
         }).when(entityManager).refresh(bid, LockModeType.PESSIMISTIC_WRITE);
 
         assertThat(service.cancel("uid", bidId).alreadyCancelled()).isTrue();
+        verify(releasePort, never()).releaseBeforeCancellation(any(), any(), any());
         verify(eventPublisher, never()).publishEvent(any());
     }
 
     @Test
     void promotedUnderTheLock_conflict() {
-        when(releasePort.releaseBeforeCancellation(bidId, "pi_1", senderId)).thenReturn(Outcome.NOTHING_TO_RELEASE);
         doAnswer(inv -> {
             bid.setStatus(BidStatus.PAYMENT_ESCROWED);
             return null;
         }).when(entityManager).refresh(bid, LockModeType.PESSIMISTIC_WRITE);
 
         assertConflict("payment-already-authorized");
+        verify(releasePort, never()).releaseBeforeCancellation(any(), any(), any());
         verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void bidLockedBeforeThePayment() {
+        when(releasePort.releaseBeforeCancellation(bidId, "pi_1", senderId)).thenReturn(Outcome.RELEASED);
+
+        service.cancel("uid", bidId);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(entityManager, releasePort);
+        order.verify(entityManager).refresh(bid, LockModeType.PESSIMISTIC_WRITE);
+        order.verify(releasePort).releaseBeforeCancellation(bidId, "pi_1", senderId);
+    }
+
+    @Test
+    void deadlockOnThePaymentLock_conflictRetry() {
+        when(releasePort.releaseBeforeCancellation(bidId, "pi_1", senderId))
+                .thenThrow(new org.springframework.dao.CannotAcquireLockException("deadlock detected"));
+
+        assertConflict("payment-in-progress");
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.AWAITING_PAYMENT);
     }
 
     @Test

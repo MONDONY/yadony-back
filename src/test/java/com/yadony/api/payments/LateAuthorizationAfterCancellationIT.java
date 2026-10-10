@@ -146,6 +146,11 @@ class LateAuthorizationAfterCancellationIT {
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         assertThat(paymentRepository.findPendingCardPaymentIds(now.plusDays(1), now.minusDays(7),
                 org.springframework.data.domain.PageRequest.of(0, 500))).doesNotContain(paymentId);
+        // Ni la passe de capture des séquestres oubliés (#492) : ESCROW et colis engagé seulement.
+        assertThat(paymentRepository.findUncapturedDueEscrowIds(now.plusDays(1), now.minusDays(7),
+                EscrowCaptureService.ENGAGED_BID_STATUSES,
+                java.util.List.of(com.yadony.api.requests.entity.NegotiationThreadStatus.CANCELLED),
+                org.springframework.data.domain.PageRequest.of(0, 500))).doesNotContain(paymentId);
     }
 
     /** L'UPDATE conditionnel attend le verrou de l'annulation puis relit la ligne validée. */
@@ -159,8 +164,9 @@ class LateAuthorizationAfterCancellationIT {
 
         CountDownLatch locked = new CountDownLatch(1);
         Thread cancellation = new Thread(() -> tx.executeWithoutResult(s -> {
-            jdbc.queryForObject("SELECT id FROM payments WHERE id = ? FOR UPDATE", UUID.class, paymentId);
+            // Ordre de l'annulation avant paiement : colis, puis paiement.
             jdbc.queryForObject("SELECT id FROM bids WHERE id = ? FOR UPDATE", UUID.class, bidId);
+            jdbc.queryForObject("SELECT id FROM payments WHERE id = ? FOR UPDATE", UUID.class, paymentId);
             jdbc.update("UPDATE payments SET status = 'CANCELLED' WHERE id = ?", paymentId);
             jdbc.update("UPDATE bids SET status = 'CANCELLED' WHERE id = ?", bidId);
             locked.countDown();
