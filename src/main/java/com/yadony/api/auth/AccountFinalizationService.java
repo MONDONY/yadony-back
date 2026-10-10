@@ -46,6 +46,8 @@ public class AccountFinalizationService {
     public void finalize(UserEntity user, FinalizationReason reason) {
         UUID userId = user.getId();
         String uid = userId.toString();
+        // Capturé avant toute pseudonymisation : sert au préfixe R2 de l'avatar.
+        String firebaseUid = user.getFirebaseUid();
 
         // 1. Pseudonymise personal data
         // Téléphone et email ne sont plus stockés ici : ils disparaissent avec le
@@ -85,9 +87,15 @@ public class AccountFinalizationService {
             kycRepository.save(kyc);
         });
 
-        // 3. Delete Cloudflare R2 files
-        storageService.deleteByPrefix("kyc/" + userId + "/");
+        // 3. Fichiers R2 de l'utilisateur (avatar, photos de colis, captures, support).
+        // kyc/ n'est plus alimenté depuis Didit : rien à y supprimer.
         storageService.deleteByPrefix("support/" + userId + "/");
+        storageService.deleteByPrefix("bids/" + userId + "/");
+        storageService.deleteByPrefix("package_requests/" + userId + "/");
+        storageService.deleteByPrefix("reports/" + userId + "/");
+        if (firebaseUid != null && !firebaseUid.isBlank()) {
+            storageService.deleteByPrefix("users/" + firebaseUid + "/");
+        }
 
         // 4. Publish events → cross-package cleanup
         // AccountDeletionRequestedEvent : nécessaire ici car les chemins HARD_IMMEDIATE et

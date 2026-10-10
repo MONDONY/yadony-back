@@ -208,8 +208,29 @@ class AccountFinalizationServiceTest {
             service.finalize(user, FinalizationReason.HARD_IMMEDIATE);
         }
 
-        verify(storageService).deleteByPrefix("kyc/" + user.getId() + "/");
         verify(storageService).deleteByPrefix("support/" + user.getId() + "/");
+    }
+
+    @Test
+    @DisplayName("purge tous les préfixes R2 de l'utilisateur, sans kyc/")
+    void finalize_purgesEveryUserPrefix() {
+        UserEntity user = makeUser();
+        UUID userId = user.getId();
+        when(kycRepository.findByUserId(any())).thenReturn(Optional.empty());
+        FirebaseAuth mockAuth = mock(FirebaseAuth.class);
+
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class)) {
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockAuth);
+            service.finalize(user, FinalizationReason.HARD_IMMEDIATE);
+        }
+
+        verify(storageService).deleteByPrefix("support/" + userId + "/");
+        verify(storageService).deleteByPrefix("users/uid-test/");
+        verify(storageService).deleteByPrefix("bids/" + userId + "/");
+        verify(storageService).deleteByPrefix("package_requests/" + userId + "/");
+        verify(storageService).deleteByPrefix("reports/" + userId + "/");
+        verify(storageService, never()).deleteByPrefix("kyc/" + userId + "/");
+        verify(storageService, never()).deleteByPrefix("users/null/");
     }
 
     @Test
