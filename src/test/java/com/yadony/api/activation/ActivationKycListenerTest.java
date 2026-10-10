@@ -41,12 +41,55 @@ class ActivationKycListenerTest {
         UserEntity user = new UserEntity();
         Instant first = Instant.parse("2026-09-01T10:00:00Z");
         user.setKycVerifiedAt(first);
+        user.setOnboardingSeenAt(first);
         when(userRepository.findById(id)).thenReturn(Optional.of(user));
 
         listener.onKycVerified(new UserKycVerifiedEvent(id));
 
         assertThat(user.getKycVerifiedAt()).isEqualTo(first);
         verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void marksOnboardingSeen_whenIdentityVerified() {
+        UUID id = UUID.randomUUID();
+        UserEntity user = new UserEntity();
+        when(userRepository.findById(id)).thenReturn(Optional.of(user));
+
+        listener.onKycVerified(new UserKycVerifiedEvent(id));
+
+        assertThat(user.getOnboardingSeenAt()).isNotNull();
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void keepsExistingOnboardingSeenDate() {
+        UUID id = UUID.randomUUID();
+        UserEntity user = new UserEntity();
+        Instant seen = Instant.parse("2026-09-01T10:00:00Z");
+        user.setOnboardingSeenAt(seen);
+        when(userRepository.findById(id)).thenReturn(Optional.of(user));
+
+        listener.onKycVerified(new UserKycVerifiedEvent(id));
+
+        assertThat(user.getOnboardingSeenAt()).isEqualTo(seen);
+        assertThat(user.getKycVerifiedAt()).isNotNull();
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void marksOnboardingSeen_evenWhenKycDateAlreadyKnown() {
+        UUID id = UUID.randomUUID();
+        UserEntity user = new UserEntity();
+        Instant first = Instant.parse("2026-09-01T10:00:00Z");
+        user.setKycVerifiedAt(first);
+        when(userRepository.findById(id)).thenReturn(Optional.of(user));
+
+        listener.onKycVerified(new UserKycVerifiedEvent(id));
+
+        assertThat(user.getKycVerifiedAt()).isEqualTo(first);
+        assertThat(user.getOnboardingSeenAt()).isNotNull();
+        verify(userRepository).save(user);
     }
 
     @Test

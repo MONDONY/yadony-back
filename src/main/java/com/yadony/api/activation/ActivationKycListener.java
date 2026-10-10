@@ -10,7 +10,12 @@ import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.time.Instant;
 
-/** Horodate la première vérification KYC : point de départ des relances « première action ». */
+/**
+ * Horodate la première vérification KYC : point de départ des relances « première action ».
+ * Clôt aussi le parcours d'onboarding : l'identité en est la dernière étape, et l'app ne posait
+ * {@code onboarding_seen_at} qu'en quittant l'écran KYC pendant le parcours. Une vérification
+ * aboutie ailleurs (profil, webhook reçu app fermée) laissait des comptes complets « non terminés ».
+ */
 @Component
 public class ActivationKycListener {
 
@@ -26,10 +31,16 @@ public class ActivationKycListener {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onKycVerified(UserKycVerifiedEvent event) {
         userRepository.findById(event.getUserId()).ifPresent(user -> {
-            if (user.getKycVerifiedAt() != null) {
+            if (user.getKycVerifiedAt() != null && user.getOnboardingSeenAt() != null) {
                 return;
             }
-            user.setKycVerifiedAt(Instant.now());
+            Instant now = Instant.now();
+            if (user.getKycVerifiedAt() == null) {
+                user.setKycVerifiedAt(now);
+            }
+            if (user.getOnboardingSeenAt() == null) {
+                user.setOnboardingSeenAt(now);
+            }
             userRepository.save(user);
         });
     }
