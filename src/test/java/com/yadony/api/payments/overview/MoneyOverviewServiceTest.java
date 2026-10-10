@@ -71,7 +71,7 @@ class MoneyOverviewServiceTest {
     private MoneyRow payment(MoneyRole role, String paymentStatus, String bidStatus, String amount,
                              String commission, String currency, OffsetDateTime releasedAt, OffsetDateTime holdUntil) {
         return new MoneyRow(role, UUID.randomUUID(), bidStatus, "STRIPE", currency, "DON-TEST0001", new BigDecimal("10"), null,
-                UUID.randomUUID(), "Paris", "Dakar", LocalDate.of(2026, 10, 20), counterparty.getId(),
+                UUID.randomUUID(), "Paris", "Dakar", LocalDate.of(2026, 10, 20), LocalDate.of(2026, 10, 21), counterparty.getId(),
                 UUID.randomUUID(), paymentStatus, "STRIPE", new BigDecimal(amount), new BigDecimal(commission),
                 null, currency, false, null, releasedAt, releasedAt, 0, 0, holdUntil, 0, 0);
     }
@@ -170,7 +170,7 @@ class MoneyOverviewServiceTest {
     void senderTotals_blockedRefundPendingAndRefunded() {
         MoneyRow refundPending = new MoneyRow(MoneyRole.SENDER, UUID.randomUUID(), "CANCELLED", "MOBILE_MONEY", "XOF",
                 "DON-TEST0002", new BigDecimal("10"), null, UUID.randomUUID(), "Paris", "Abidjan", LocalDate.of(2026, 10, 12),
-                counterparty.getId(), UUID.randomUUID(), "ESCROW", "PAWAPAY", new BigDecimal("15000"),
+                LocalDate.of(2026, 10, 12), counterparty.getId(), UUID.randomUUID(), "ESCROW", "PAWAPAY", new BigDecimal("15000"),
                 new BigDecimal("1800"), null, "XOF", false, null, null, null, 0, 0, null, 0, 1);
         when(readModel.findRows(any(), any())).thenReturn(List.of(
                 payment(MoneyRole.SENDER, "ESCROW", "IN_TRANSIT", "100.00", "12.00", "EUR", null, null),
@@ -196,7 +196,7 @@ class MoneyOverviewServiceTest {
     void cashParcel_listedWithoutAmount_andExcludedFromTotals() {
         MoneyRow cash = new MoneyRow(MoneyRole.TRAVELER, UUID.randomUUID(), "ACCEPTED", "CASH", "EUR",
                 "DON-CASH0001", new BigDecimal("10"), "CHARGED", UUID.randomUUID(), "Lyon", "Bamako", LocalDate.of(2026, 10, 25),
-                null, null, null, null, null, null, null, null, false,
+                LocalDate.of(2026, 10, 25), null, null, null, null, null, null, null, null, false,
                 null, null, null, 0, 0, null, 0, 0);
         when(readModel.findRows(any(), any())).thenReturn(List.of(cash));
 
@@ -212,6 +212,30 @@ class MoneyOverviewServiceTest {
         });
         assertThat(r.traveler().totals()).isEmpty();
         verify(users, never()).findAllById(anyIterable());
+    }
+
+    @Test
+    void arrivalDate_isCarriedOnEachItem_andNotTruncatedUnderTheCap() {
+        when(readModel.findRows(any(), any())).thenReturn(List.of(
+                payment(MoneyRole.TRAVELER, "ESCROW", "ACCEPTED", "10.00", "1.20", "EUR", null, null)));
+        MoneyOverviewResponse r = service.overview(UID);
+        assertThat(r.traveler().items().get(0).arrivalDate()).isEqualTo(LocalDate.of(2026, 10, 21));
+        assertThat(r.traveler().items().get(0).departureDate()).isEqualTo(LocalDate.of(2026, 10, 20));
+        assertThat(r.truncated()).isFalse();
+    }
+
+    @Test
+    void moreRowsThanTheCap_areCut_andFlaggedTruncated() {
+        List<MoneyRow> rows = new java.util.ArrayList<>();
+        for (int i = 0; i <= MoneyOverviewReadModel.MAX_ROWS; i++) {
+            rows.add(payment(MoneyRole.TRAVELER, "ESCROW", "ACCEPTED", "10.00", "1.20", "EUR", null, null));
+        }
+        when(readModel.findRows(any(), any())).thenReturn(rows);
+        MoneyOverviewResponse r = service.overview(UID);
+        assertThat(r.truncated()).isTrue();
+        assertThat(r.traveler().items()).hasSize(MoneyOverviewReadModel.MAX_ROWS);
+        assertThat(r.traveler().totals().get(0).upcoming())
+                .isEqualByComparingTo(new BigDecimal("8.80").multiply(BigDecimal.valueOf(MoneyOverviewReadModel.MAX_ROWS)));
     }
 
     @Test

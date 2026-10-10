@@ -95,7 +95,9 @@ public class MoneyOverviewService {
         OffsetDateTime now = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC);
         OffsetDateTime since = now.minusDays(RECENT_WINDOW_DAYS);
 
-        List<MoneyRow> rows = readModel.findRows(userId, since);
+        List<MoneyRow> fetched = readModel.findRows(userId, since);
+        boolean truncated = fetched.size() > MoneyOverviewReadModel.MAX_ROWS;
+        List<MoneyRow> rows = truncated ? fetched.subList(0, MoneyOverviewReadModel.MAX_ROWS) : fetched;
         Map<UUID, String> names = counterpartyNames(rows);
 
         List<MoneyItemDto> travelerItems = new ArrayList<>();
@@ -119,7 +121,8 @@ public class MoneyOverviewService {
                 walletBalances(userId, activeCurrency),
                 new MoneyOverviewResponse.RoleSection<>(travelerTotals(travelerItems), travelerItems),
                 new MoneyOverviewResponse.RoleSection<>(senderTotals(senderItems), senderItems),
-                activeCurrency);
+                activeCurrency,
+                truncated);
     }
 
     private static final Comparator<MoneyItemDto> DISPLAY = Comparator
@@ -174,7 +177,8 @@ public class MoneyOverviewService {
                 row.departureCity(), row.arrivalCity(), row.departureDate(),
                 r.amount(), r.currency(), channel(row), r.state(), r.condition(),
                 r.releaseAt(), r.settledAt(), counterpartyName, row.bidStatus(), row.weightKg(),
-                r.state() == MoneyState.CASH ? row.commissionStatus() : null);
+                r.state() == MoneyState.CASH ? row.commissionStatus() : null,
+                row.arrivalDate());
     }
 
     static MoneyChannel channel(MoneyRow row) {

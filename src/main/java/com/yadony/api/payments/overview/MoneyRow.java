@@ -13,6 +13,9 @@ import java.util.UUID;
  * <p>{@code escrow_released_at} et {@code updated_at} sont des {@code TIMESTAMPTZ} (lus en
  * {@code OffsetDateTime}) ; {@code payout_held_at} est un {@code TIMESTAMP} sans fuseau, dont seule
  * la présence compte ici.
+ *
+ * <p>{@code arrivalDate} : date d'arrivée effective du trajet, {@code announcements.arrival_date}
+ * quand le voyage arrive après le jour du départ, sinon le jour du départ.
  */
 public record MoneyRow(
         MoneyRole role,
@@ -27,6 +30,7 @@ public record MoneyRow(
         String departureCity,
         String arrivalCity,
         LocalDate departureDate,
+        LocalDate arrivalDate,
         UUID counterpartyId,
         UUID paymentId,
         String paymentStatus,
