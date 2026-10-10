@@ -259,9 +259,7 @@ public class DeliveryEventListener {
         // gelé jusqu'à sa résolution. Même modèle que la garde chargeback : rien ne part, le
         // paiement reste ESCROW, un admin tranche dans Incidents. Limité aux litiges ADMIN_* :
         // les litiges d'absence ont leur propre procédure et ne changent pas de comportement.
-        if (disputeRepository != null && disputeRepository.existsByBidIdAndStatusAndTypeStartingWith(
-                event.getBidId(), com.yadony.api.disputes.DisputeTypes.STATUS_OPEN,
-                com.yadony.api.disputes.DisputeTypes.ADMIN_PREFIX)) {
+        if (adminDisputeOpen(event.getBidId())) {
             log.warn("Payment {} for bid {}: admin dispute open — payout frozen", payment.getId(), event.getBidId());
             auditService.log("PAYMENT", payment.getId(), "DELIVERY_TRANSFER_BLOCKED_DISPUTE",
                     event.getBidId(), Map.of("bidId", event.getBidId().toString(), "source", event.source()));
@@ -337,12 +335,37 @@ public class DeliveryEventListener {
         // l'événement de livraison est traité deux fois en parallèle. Le branchement par rail
         // ci-dessous se fait TOUJOURS après ce claim, jamais avant — un seul thread doit
         // pouvoir gagner, quel que soit le rail.
-        int claimed = paymentRepository.markReleasedIfEscrow(
+        // Les gardes chargeback / remboursement partiel / retenue sont REVÉRIFIÉES dans l'UPDATE
+        // conditionnel : la lecture plus haut n'est qu'un pré-filtre (alerte, audit), jamais la
+        // décision de verser.
+        int claimed = paymentRepository.markReleasedIfEscrowAndUnguarded(
                 payment.getId(), LocalDateTime.now(ZoneOffset.UTC));
         if (claimed == 0) {
+            PaymentStatus current = paymentRepository.findStatusById(payment.getId()).orElse(null);
+            if (current == PaymentStatus.ESCROW) {
+                // Toujours en séquestre : une garde est apparue entre la lecture et le claim
+                // (chargeback, remboursement partiel, retenue). Rien ne part.
+                log.warn("Payment {} for bid {}: a payout guard appeared concurrently — release skipped, stays ESCROW",
+                        payment.getId(), event.getBidId());
+                auditService.log("PAYMENT", payment.getId(), "DELIVERY_RELEASE_BLOCKED_CONCURRENT_GUARD",
+                        event.getBidId(), Map.of("bidId", event.getBidId().toString(), "source", event.source()));
+                return EscrowReleaseOutcome.BLOCKED_CHARGEBACK;
+            }
             log.info("Payment {} for bid {} already left ESCROW — skipping release",
                     payment.getId(), event.getBidId());
             return EscrowReleaseOutcome.ALREADY_RELEASED;
+        }
+
+        // Litige admin revérifié APRÈS le claim, par une nouvelle lecture : l'ouverture du litige
+        // verrouille la ligne du paiement avant d'écrire, le claim ci-dessus a donc attendu son
+        // commit et cette lecture le voit. Litige ouvert : le claim est annulé, rien ne part.
+        if (adminDisputeOpen(event.getBidId())) {
+            paymentRepository.revertReleaseClaim(payment.getId());
+            log.warn("Payment {} for bid {}: admin dispute opened concurrently — claim reverted", payment.getId(),
+                    event.getBidId());
+            auditService.log("PAYMENT", payment.getId(), "DELIVERY_TRANSFER_BLOCKED_DISPUTE",
+                    event.getBidId(), Map.of("bidId", event.getBidId().toString(), "source", event.source()));
+            return EscrowReleaseOutcome.BLOCKED_DISPUTE;
         }
 
         if (payment.getRail() == PaymentRail.PAWAPAY) {
@@ -546,6 +569,13 @@ public class DeliveryEventListener {
         if (transfer != null && transfer.getId() != null && payment.getId() != null) {
             paymentRepository.recordStripeTransferId(payment.getId(), transfer.getId());
         }
+    }
+
+    /** Litige ouvert par l'administration sur ce colis (lecture en base, jamais en cache). */
+    private boolean adminDisputeOpen(java.util.UUID bidId) {
+        return disputeRepository != null && disputeRepository.existsByBidIdAndStatusAndTypeStartingWith(
+                bidId, com.yadony.api.disputes.DisputeTypes.STATUS_OPEN,
+                com.yadony.api.disputes.DisputeTypes.ADMIN_PREFIX);
     }
 
     /**

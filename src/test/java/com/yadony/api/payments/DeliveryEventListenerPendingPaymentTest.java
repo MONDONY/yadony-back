@@ -142,7 +142,7 @@ class DeliveryEventListenerPendingPaymentTest {
         payment.setCommissionAmount(BigDecimal.valueOf(3.60));
         payment.setCurrency("EUR");
         when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.of(payment));
-        when(paymentRepository.markReleasedIfEscrow(eq(payment.getId()), any())).thenReturn(1);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(eq(payment.getId()), any())).thenReturn(1);
         com.yadony.api.auth.UserEntity traveler = new com.yadony.api.auth.UserEntity();
         traveler.setStripeAccountId("acct_t");
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));

@@ -90,7 +90,7 @@ class DeliveryEventListenerTransferGuardTest {
 
     @Test
     void transferDejaEmisChezStripe_aucunSecondTransfer_baseRealignee() throws Exception {
-        when(paymentRepository.markReleasedIfEscrow(eq(paymentId), any())).thenReturn(1);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(eq(paymentId), any())).thenReturn(1);
         when(transferLookup.findExistingTransfer(paymentId, "acct_t", payment.getCreatedAt()))
                 .thenReturn(Optional.of("tr_existing"));
 
@@ -109,7 +109,7 @@ class DeliveryEventListenerTransferGuardTest {
 
     @Test
     void aucunTransferExistant_creeLeTransferEtTraceSonIdentifiant() throws Exception {
-        when(paymentRepository.markReleasedIfEscrow(eq(paymentId), any())).thenReturn(1);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(eq(paymentId), any())).thenReturn(1);
         when(transferLookup.findExistingTransfer(any(), anyString(), any())).thenReturn(Optional.empty());
 
         try (MockedStatic<Transfer> transferStatic = mockStatic(Transfer.class)) {
@@ -129,7 +129,7 @@ class DeliveryEventListenerTransferGuardTest {
 
     @Test
     void lectureStripeEnEchec_aucunTransfer_claimAnnule() throws Exception {
-        when(paymentRepository.markReleasedIfEscrow(eq(paymentId), any())).thenReturn(1);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(eq(paymentId), any())).thenReturn(1);
         when(transferLookup.findExistingTransfer(any(), anyString(), any()))
                 .thenThrow(new ApiConnectionException("timeout"));
 
@@ -155,10 +155,42 @@ class DeliveryEventListenerTransferGuardTest {
         assertThat(outcome).isEqualTo(EscrowReleaseOutcome.BLOCKED_DISPUTE);
         assertThat(outcome.blockedByGuard()).isTrue();
         assertThat(outcome.released()).isFalse();
-        verify(paymentRepository, never()).markReleasedIfEscrow(any(), any());
+        verify(paymentRepository, never()).markReleasedIfEscrowAndUnguarded(any(), any());
         verify(auditService).log(eq("PAYMENT"), eq(paymentId), eq("DELIVERY_TRANSFER_BLOCKED_DISPUTE"), eq(bidId), any());
         verify(alertEscalator).raiseOnce(eq(DeliveryEventListener.DISPUTE_HOLD_ALERT_PREFIX + paymentId), anyString(), any());
         assertThat((DeliveryEventListener.DISPUTE_HOLD_ALERT_PREFIX + paymentId).length())
                 .isLessThanOrEqualTo(AdminAlertEscalator.TYPE_MAX_LENGTH);
+    }
+
+    @Test
+    void gardeApparueEntreLectureEtClaim_rienNePart() {
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(eq(paymentId), any())).thenReturn(0);
+        when(paymentRepository.findStatusById(paymentId)).thenReturn(Optional.of(PaymentStatus.ESCROW));
+
+        EscrowReleaseOutcome outcome;
+        try (MockedStatic<Transfer> transferStatic = mockStatic(Transfer.class)) {
+            outcome = listener.releaseAfterLateEscrow(bidId, UUID.randomUUID(), travelerId, "late-escrow");
+            transferStatic.verifyNoInteractions();
+        }
+        assertThat(outcome).isEqualTo(EscrowReleaseOutcome.BLOCKED_CHARGEBACK);
+        verify(auditService).log(eq("PAYMENT"), eq(paymentId), eq("DELIVERY_RELEASE_BLOCKED_CONCURRENT_GUARD"), eq(bidId), any());
+    }
+
+    @Test
+    void litigeOuvertPendantLeClaim_claimAnnule_aucuneRechercheNiTransfer() throws Exception {
+        // Avant le claim : pas de litige ; après (lecture fraîche) : le litige a été commité.
+        when(disputeRepository.existsByBidIdAndStatusAndTypeStartingWith(bidId, "OPEN", "ADMIN_"))
+                .thenReturn(false, true);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(eq(paymentId), any())).thenReturn(1);
+
+        EscrowReleaseOutcome outcome;
+        try (MockedStatic<Transfer> transferStatic = mockStatic(Transfer.class)) {
+            outcome = listener.releaseAfterLateEscrow(bidId, UUID.randomUUID(), travelerId, "late-escrow");
+            transferStatic.verifyNoInteractions();
+        }
+        assertThat(outcome).isEqualTo(EscrowReleaseOutcome.BLOCKED_DISPUTE);
+        verify(paymentRepository).revertReleaseClaim(paymentId);
+        verify(transferLookup, never()).findExistingTransfer(any(), any(), any());
+        verify(eventPublisher, never()).publishEvent(any());
     }
 }

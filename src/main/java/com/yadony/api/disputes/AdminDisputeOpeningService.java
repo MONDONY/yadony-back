@@ -83,7 +83,15 @@ public class AdminDisputeOpeningService {
         }
 
         Optional<PaymentEntity> payment = paymentRepository.findForBid(bidId);
-        if (payment.isPresent() && payment.get().getStatus() == PaymentStatus.RELEASED) {
+        // Verrou de la ligne du paiement AVANT la décision : un versement concurrent (claim
+        // ESCROW → RELEASED) attend notre commit puis voit le litige, ou l'a déjà posé et le
+        // statut relu en base ci-dessous le montre. Jamais de décision sur une lecture en cache.
+        PaymentStatus paymentStatusNow = null;
+        if (payment.isPresent()) {
+            paymentRepository.lockIfEscrow(payment.get().getId());
+            paymentStatusNow = paymentRepository.findStatusById(payment.get().getId()).orElse(payment.get().getStatus());
+        }
+        if (paymentStatusNow == PaymentStatus.RELEASED) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "payment-already-released",
                     "Payment Already Released",
                     "Le voyageur a déjà été payé pour ce colis : un litige ne peut plus geler l'argent. "
@@ -117,8 +125,8 @@ public class AdminDisputeOpeningService {
         dispute.setReason(request.description().trim());
         DisputeEntity saved = disputeRepository.save(dispute);
 
-        String paymentStatus = payment.map(p -> p.getStatus().name()).orElse(null);
-        boolean payoutFrozen = payment.isPresent() && payment.get().getStatus() == PaymentStatus.ESCROW;
+        String paymentStatus = paymentStatusNow != null ? paymentStatusNow.name() : null;
+        boolean payoutFrozen = paymentStatusNow == PaymentStatus.ESCROW;
 
         Map<String, Object> payload = new HashMap<>();
         payload.put("bidId", bidId.toString());

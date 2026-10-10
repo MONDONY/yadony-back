@@ -407,6 +407,13 @@ public class AdminPaymentController {
         if (updated == 0) {
             throw notInEscrow("Seuls les paiements en statut ESCROW peuvent faire l'objet d'une libération forcée");
         }
+        // Litige admin revérifié après le claim (verrou de ligne tenu) : un litige ouvert entre la
+        // lecture plus haut et le claim est vu ici ; l'exception annule le claim.
+        if (bidId != null && disputeRepository != null && disputeRepository.existsByBidIdAndStatusAndTypeStartingWith(
+                bidId, com.yadony.api.disputes.DisputeTypes.STATUS_OPEN, com.yadony.api.disputes.DisputeTypes.ADMIN_PREFIX)) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "dispute-open", "Dispute Open",
+                    "Un litige ouvert par l'administration gèle ce versement : résolvez-le d'abord dans Incidents.");
+        }
 
         // Rail mobile money : bifurque juste après le claim, avant tout appel Stripe. Réutilise
         // EXACTEMENT le chemin de la livraison (DeliveryEventListener#releaseMobileMoney) :

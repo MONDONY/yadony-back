@@ -90,7 +90,7 @@ class DeliveryEventListenerPartialRefundTest {
         }
 
         // Aucun claim ESCROW → RELEASED : le paiement reste en séquestre pour arbitrage.
-        verify(paymentRepository, never()).markReleasedIfEscrow(any(), any());
+        verify(paymentRepository, never()).markReleasedIfEscrowAndUnguarded(any(), any());
         assertThat(payment.getStatus()).isEqualTo(PaymentStatus.ESCROW);
         verify(auditService).log(
                 eq("PAYMENT"), eq(paymentId), eq("DELIVERY_TRANSFER_BLOCKED_PARTIAL_REFUND"), any(), anyMap());

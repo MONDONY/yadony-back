@@ -113,7 +113,7 @@ class DeliveryEventListenerPayoutHoldTest {
     }
 
     private void assertHeldAndNothingPaid() {
-        verify(paymentRepository, never()).markReleasedIfEscrow(any(), any());
+        verify(paymentRepository, never()).markReleasedIfEscrowAndUnguarded(any(), any());
         verify(paymentRepository).markPayoutHeld(eq(payment.getId()), any());
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
@@ -178,14 +178,14 @@ class DeliveryEventListenerPayoutHoldTest {
 
         verify(auditService).log(eq("PAYMENT"), eq(payment.getId()), eq("DELIVERY_TRANSFER_BLOCKED_CHARGEBACK"), any(), anyMap());
         verify(paymentRepository, never()).markPayoutHeld(any(), any());
-        verify(paymentRepository, never()).markReleasedIfEscrow(any(), any());
+        verify(paymentRepository, never()).markReleasedIfEscrowAndUnguarded(any(), any());
     }
 
     @Test
     void voyageurNonGele_versementNormal() {
         when(holdPolicy.isHeld(travelerId)).thenReturn(false);
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler(StripeAccountStatus.ONBOARDING_COMPLETE)));
-        when(paymentRepository.markReleasedIfEscrow(eq(payment.getId()), any())).thenReturn(1);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(eq(payment.getId()), any())).thenReturn(1);
         when(voucherService.consume(any(), any())).thenReturn(Optional.empty());
 
         try (MockedStatic<Transfer> transfer = mockStatic(Transfer.class)) {
@@ -207,7 +207,7 @@ class DeliveryEventListenerPayoutHoldTest {
             transfer.verifyNoInteractions();
         }
 
-        verify(paymentRepository, never()).markReleasedIfEscrow(any(), any());
+        verify(paymentRepository, never()).markReleasedIfEscrowAndUnguarded(any(), any());
         verify(paymentRepository, never()).markPayoutHeld(any(), any());
         verify(auditService).log(eq("PAYMENT"), eq(payment.getId()), eq("PAYOUT_BLOCKED_STRIPE_ACCOUNT_UNUSABLE"),
                 eq(bid.getId()), eq(Map.of("paymentId", payment.getId().toString(), "bidId", bid.getId().toString(),
@@ -219,7 +219,7 @@ class DeliveryEventListenerPayoutHoldTest {
     @Test
     void compteStripeEnCoursDOnboarding_transferTente() {
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler(StripeAccountStatus.PENDING_ONBOARDING)));
-        when(paymentRepository.markReleasedIfEscrow(eq(payment.getId()), any())).thenReturn(1);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(eq(payment.getId()), any())).thenReturn(1);
         when(voucherService.consume(any(), any())).thenReturn(Optional.empty());
 
         try (MockedStatic<Transfer> transfer = mockStatic(Transfer.class)) {

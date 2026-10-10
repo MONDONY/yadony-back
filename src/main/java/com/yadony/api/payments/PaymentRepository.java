@@ -170,6 +170,32 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     int markReleasedIfEscrow(@Param("id") UUID id, @Param("releasedAt") LocalDateTime releasedAt);
 
     /**
+     * Claim du versement automatique (livraison, colis non réclamé, rattrapage, job) : ESCROW →
+     * RELEASED seulement si, <b>dans le même UPDATE</b>, aucun litige bancaire, aucun remboursement
+     * partiel et aucune retenue ne sont posés. Les gardes lues avant le claim ne sont qu'un
+     * pré-filtre (alerte, audit) : un chargeback ou un remboursement arrivé entre la lecture et le
+     * claim fait répondre 0 ici, rien n'est versé. La garde d'un litige admin est revérifiée après
+     * ce claim (le verrou de ligne posé ici sérialise l'ouverture du litige, qui verrouille la même
+     * ligne avant d'écrire).
+     */
+    @Modifying
+    @Query("""
+            UPDATE PaymentEntity p SET p.status = com.yadony.api.payments.PaymentStatus.RELEASED,
+                   p.escrowReleasedAt = :releasedAt
+             WHERE p.id = :id AND p.status = com.yadony.api.payments.PaymentStatus.ESCROW
+               AND p.disputed = false
+               AND (p.refundedAmount IS NULL OR p.refundedAmount = 0)
+               AND p.payoutHeldAt IS NULL
+            """)
+    int markReleasedIfEscrowAndUnguarded(@Param("id") UUID id, @Param("releasedAt") LocalDateTime releasedAt);
+
+    /** Annule un claim RELEASED posé dans la transaction courante (garde revérifiée après le claim). */
+    @Modifying
+    @Query("UPDATE PaymentEntity p SET p.status = com.yadony.api.payments.PaymentStatus.ESCROW, p.escrowReleasedAt = NULL "
+            + "WHERE p.id = :id AND p.status = com.yadony.api.payments.PaymentStatus.RELEASED")
+    int revertReleaseClaim(@Param("id") UUID id);
+
+    /**
      * Claim d'un partage admin (FLUTTER-E2) : ESCROW → {@code status} (RELEASED si le voyageur
      * reçoit une part, REFUNDED sinon) et {@code refunded_amount} porté d'avance à sa valeur
      * finale. Stripe renverra la même valeur absolue par {@code charge.refunded} : le webhook la
