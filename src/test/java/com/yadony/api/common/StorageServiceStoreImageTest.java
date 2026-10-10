@@ -65,7 +65,7 @@ class StorageServiceStoreImageTest {
         verify(s3Client).putObject(put.capture(), any(RequestBody.class));
         assertThat(put.getValue().contentType()).isEqualTo("image/jpeg");
         ArgumentCaptor<MediaUploadEntity> row = ArgumentCaptor.forClass(MediaUploadEntity.class);
-        verify(uploads).save(row.capture());
+        verify(uploads).saveAndFlush(row.capture());
         assertThat(row.getValue().getObjectKey()).isEqualTo(key);
         assertThat(row.getValue().getPurpose()).isEqualTo(MediaPurpose.BID);
         assertThat(row.getValue().getSizeBytes()).isEqualTo(put.getValue().contentLength());
@@ -79,7 +79,7 @@ class StorageServiceStoreImageTest {
                 .isInstanceOfSatisfying(YadonyBusinessException.class,
                         e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS));
         verifyNoInteractions(s3Client);
-        verify(uploads, never()).save(any());
+        verify(uploads, never()).saveAndFlush(any());
     }
 
     @Test
@@ -87,6 +87,7 @@ class StorageServiceStoreImageTest {
         storage.storeImage(jpeg(10, 10),
                 new StorageService.MediaUpload("support/admin/" + owner + "/", owner, MediaPurpose.SUPPORT, null, true));
         verify(uploads, never()).countByOwnerIdAndCreatedAtAfter(any(), any());
+        verify(uploads).saveAndFlush(any(MediaUploadEntity.class));
     }
 
     @Test
@@ -118,5 +119,68 @@ class StorageServiceStoreImageTest {
             BufferedImage img = ImageIO.read(in);
             assertThat(img.getWidth()).isEqualTo(512);
         }
+    }
+
+    @Test
+    void putFails_reservationDeleted_andExceptionPropagates() throws Exception {
+        when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+                .thenThrow(new IllegalStateException("r2 down"));
+        assertThatThrownBy(() -> storage.storeImage(jpeg(10, 10),
+                StorageService.MediaUpload.of("bids/" + owner + "/", owner, MediaPurpose.BID)))
+                .isInstanceOf(IllegalStateException.class).hasMessage("r2 down");
+        ArgumentCaptor<MediaUploadEntity> reserved = ArgumentCaptor.forClass(MediaUploadEntity.class);
+        verify(uploads).saveAndFlush(reserved.capture());
+        verify(uploads).delete(reserved.getValue());
+    }
+
+    @Test
+    void reservationFails_noPutObject_failClosed() throws Exception {
+        when(uploads.saveAndFlush(any())).thenThrow(new IllegalStateException("db down"));
+        assertThatThrownBy(() -> storage.storeImage(jpeg(10, 10),
+                StorageService.MediaUpload.of("bids/" + owner + "/", owner, MediaPurpose.BID)))
+                .isInstanceOf(IllegalStateException.class);
+        verifyNoInteractions(s3Client);
+    }
+
+    @Test
+    void concurrentUploads_neverExceedQuota() throws Exception {
+        when(settings.photoUploadDailyQuota()).thenReturn(5);
+        java.util.concurrent.atomic.AtomicInteger rows = new java.util.concurrent.atomic.AtomicInteger();
+        when(uploads.countByOwnerIdAndCreatedAtAfter(eq(owner), any())).thenAnswer(i -> {
+            long n = rows.get();
+            Thread.sleep(5); // élargit la fenêtre de course entre compter et insérer
+            return n;
+        });
+        when(uploads.saveAndFlush(any())).thenAnswer(i -> {
+            rows.incrementAndGet();
+            return i.getArgument(0);
+        });
+        MockMultipartFile photo = jpeg(10, 10);
+        int n = 10;
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(n);
+        var start = new java.util.concurrent.CountDownLatch(1);
+        java.util.List<java.util.concurrent.Future<Boolean>> results = new java.util.ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            results.add(pool.submit(() -> {
+                start.await();
+                try {
+                    storage.storeImage(photo,
+                            StorageService.MediaUpload.of("bids/" + owner + "/", owner, MediaPurpose.BID));
+                    return true;
+                } catch (YadonyBusinessException e) {
+                    return e.getStatus() == HttpStatus.TOO_MANY_REQUESTS ? false : null;
+                }
+            }));
+        }
+        start.countDown();
+        int ok = 0;
+        int tooMany = 0;
+        for (var f : results) {
+            Boolean r = f.get();
+            if (Boolean.TRUE.equals(r)) ok++; else if (Boolean.FALSE.equals(r)) tooMany++;
+        }
+        pool.shutdown();
+        assertThat(ok).isEqualTo(5);
+        assertThat(tooMany).isEqualTo(5);
     }
 }

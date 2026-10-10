@@ -57,6 +57,17 @@ public class StorageService {
             // WebP validated separately: bytes 0-3 = "RIFF", bytes 8-11 = "WEBP"
     );
 
+    // Verrous par hash (bornés, pas de fuite mémoire) : voir reserve().
+    private static final Object[] QUOTA_LOCKS = newLocks(64);
+
+    private static Object[] newLocks(int n) {
+        Object[] locks = new Object[n];
+        for (int i = 0; i < n; i++) {
+            locks[i] = new Object();
+        }
+        return locks;
+    }
+
     private final S3Client s3Client;
     private final S3Presigner s3Presigner;
     private final ImageProcessingService imageProcessingService;
@@ -148,7 +159,6 @@ public class StorageService {
      */
     public String storeImage(MultipartFile file, MediaUpload upload) {
         validatePrefix(upload.prefix());
-        enforceQuotas(upload);
         validateFile(file);
         byte[] bytes;
         try {
@@ -157,22 +167,66 @@ public class StorageService {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "INVALID_FILE_TYPE", "Invalid File Type", "Cannot read file content");
         }
-        byte[] stored = upload.purpose() == MediaPurpose.AVATAR
-                ? imageProcessingService.resizeForStorage(bytes,
-                        ImageProcessingService.AVATAR_LONG_EDGE, ImageProcessingService.AVATAR_QUALITY)
-                : imageProcessingService.resizeForStorage(bytes,
-                        ImageProcessingService.STORAGE_LONG_EDGE, ImageProcessingService.STORAGE_QUALITY);
         String key = upload.prefix() + Instant.now().toEpochMilli() + "_" + UUID.randomUUID() + ".jpg";
-        putBytes(key, stored, "image/jpeg");
-        record(key, upload.ownerId(), upload.purpose(), upload.bidId(), stored.length);
-        log.info("storeImage: key={} purpose={} {} -> {} octets", key, upload.purpose(), bytes.length, stored.length);
-        return key;
+        MediaUploadEntity reservation = reserve(key, upload);
+        try {
+            byte[] stored = upload.purpose() == MediaPurpose.AVATAR
+                    ? imageProcessingService.resizeForStorage(bytes,
+                            ImageProcessingService.AVATAR_LONG_EDGE, ImageProcessingService.AVATAR_QUALITY)
+                    : imageProcessingService.resizeForStorage(bytes,
+                            ImageProcessingService.STORAGE_LONG_EDGE, ImageProcessingService.STORAGE_QUALITY);
+            putBytes(key, stored, "image/jpeg");
+            finalizeSize(reservation, stored.length);
+            log.info("storeImage: key={} purpose={} {} -> {} octets", key, upload.purpose(), bytes.length,
+                    stored.length);
+            return key;
+        } catch (RuntimeException e) {
+            release(reservation);
+            throw e;
+        }
+    }
+
+    /**
+     * Réserve la ligne du registre AVANT l'écriture R2, sous un verrou par propriétaire (et par
+     * bid pour le tracking) : le comptage et l'insertion deviennent atomiques, des envois
+     * simultanés ne dépassent donc pas le quota (le back tourne sur une seule instance).
+     * Fail-closed : si l'écriture de la réservation échoue, l'envoi échoue.
+     * Les envois exemptés (admin) ne sont pas comptés mais sont inscrits quand même.
+     */
+    private MediaUploadEntity reserve(String key, MediaUpload upload) {
+        MediaUploadEntity row = new MediaUploadEntity(key, upload.ownerId(), upload.purpose(), upload.bidId(), 0L);
+        if (upload.quotaExempt()) {
+            mediaUploadRepository.saveAndFlush(row);
+            return row;
+        }
+        int ownerStripe = stripeOf(upload.ownerId());
+        int bidStripe = upload.purpose() == MediaPurpose.TRACKING && upload.bidId() != null
+                ? stripeOf(upload.bidId()) : ownerStripe;
+        // Ordre croissant des verrous : pas d'interblocage entre deux envois.
+        int first = Math.min(ownerStripe, bidStripe);
+        int second = Math.max(ownerStripe, bidStripe);
+        synchronized (QUOTA_LOCKS[first]) {
+            if (second == first) {
+                checkQuotasAndSave(row, upload);
+            } else {
+                synchronized (QUOTA_LOCKS[second]) {
+                    checkQuotasAndSave(row, upload);
+                }
+            }
+        }
+        return row;
+    }
+
+    private void checkQuotasAndSave(MediaUploadEntity row, MediaUpload upload) {
+        enforceQuotas(upload);
+        mediaUploadRepository.saveAndFlush(row);
+    }
+
+    private static int stripeOf(UUID id) {
+        return Math.floorMod(id.hashCode(), QUOTA_LOCKS.length);
     }
 
     private void enforceQuotas(MediaUpload upload) {
-        if (upload.quotaExempt()) {
-            return;
-        }
         LocalDateTime since = LocalDateTime.now(ZoneOffset.UTC).minusHours(24);
         if (mediaUploadRepository.countByOwnerIdAndCreatedAtAfter(upload.ownerId(), since)
                 >= settings.photoUploadDailyQuota()) {
@@ -189,13 +243,26 @@ public class StorageService {
         }
     }
 
-    private void record(String key, UUID ownerId, MediaPurpose purpose, UUID bidId, long size) {
+    /** Met à jour la taille réelle ; la ligne est déjà comptée, un échec ici est seulement journalisé. */
+    private void finalizeSize(MediaUploadEntity reservation, long size) {
         try {
-            mediaUploadRepository.save(new MediaUploadEntity(key, ownerId, purpose, bidId, size));
+            reservation.setSizeBytes(size);
+            mediaUploadRepository.save(reservation);
         } catch (RuntimeException e) {
-            // Le registre ne sert qu'aux quotas : une écriture ratée ne doit pas faire
-            // perdre une photo déjà stockée (le rapprochement ne la touche pas, elle sera rattachée).
-            log.warn("storeImage: inscription au registre en échec pour {} : {}", key, e.toString());
+            log.warn("storeImage: taille non enregistrée pour {} : {}", reservation.getObjectKey(), e.toString());
+        }
+    }
+
+    /**
+     * Annule une réservation dont l'envoi a échoué. {@code media_uploads} est un registre technique
+     * de quotas, pas une entité métier : la ligne annulée est supprimée physiquement (exception
+     * assumée à la règle du soft delete).
+     */
+    private void release(MediaUploadEntity reservation) {
+        try {
+            mediaUploadRepository.delete(reservation);
+        } catch (RuntimeException e) {
+            log.warn("storeImage: réservation non annulée pour {} : {}", reservation.getObjectKey(), e.toString());
         }
     }
 
@@ -219,19 +286,24 @@ public class StorageService {
     public StoredImage storeMessagingImage(String prefix, String baseName, byte[] bytes, String contentType,
                                            UUID ownerId) {
         validatePrefix(prefix);
-        enforceQuotas(MediaUpload.of(prefix, ownerId, MediaPurpose.MESSAGING));
-        ImageProcessingService.ProcessedImage processed = imageProcessingService.process(bytes, contentType);
         String mainKey  = prefix + baseName + "_full.jpg";
         String thumbKey = prefix + baseName + "_thumb.jpg";
-        putBytes(mainKey, processed.main(), "image/jpeg");
+        MediaUploadEntity reservation = reserve(mainKey, MediaUpload.of(prefix, ownerId, MediaPurpose.MESSAGING));
         try {
-            putBytes(thumbKey, processed.thumbnail(), "image/jpeg");
+            ImageProcessingService.ProcessedImage processed = imageProcessingService.process(bytes, contentType);
+            putBytes(mainKey, processed.main(), "image/jpeg");
+            try {
+                putBytes(thumbKey, processed.thumbnail(), "image/jpeg");
+            } catch (RuntimeException e) {
+                deleteQuietly(mainKey);
+                throw e;
+            }
+            finalizeSize(reservation, processed.main().length + processed.thumbnail().length);
+            return new StoredImage(mainKey, thumbKey);
         } catch (RuntimeException e) {
-            deleteQuietly(mainKey);
+            release(reservation);
             throw e;
         }
-        record(mainKey, ownerId, MediaPurpose.MESSAGING, null, processed.main().length + processed.thumbnail().length);
-        return new StoredImage(mainKey, thumbKey);
     }
 
     /**

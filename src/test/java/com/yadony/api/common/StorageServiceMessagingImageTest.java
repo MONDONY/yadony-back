@@ -175,4 +175,48 @@ class StorageServiceMessagingImageTest {
         assertThatCode(() -> storageService.deleteQuietly("messaging/a")).doesNotThrowAnyException();
         verify(s3Client).deleteObject(any(DeleteObjectRequest.class));
     }
+
+    @Test
+    @DisplayName("quota journalier atteint → 429, aucun putObject")
+    void storeMessagingImage_quotaReached_is429() throws Exception {
+        java.util.UUID owner = java.util.UUID.randomUUID();
+        when(uploads.countByOwnerIdAndCreatedAtAfter(org.mockito.ArgumentMatchers.eq(owner), any())).thenReturn(60L);
+
+        assertThatThrownBy(() -> storageService.storeMessagingImage(
+                "messaging/conv_1/", "AbC123", jpegWithExif(), "image/jpeg", owner))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS));
+        org.mockito.Mockito.verifyNoInteractions(s3Client);
+    }
+
+    @Test
+    @DisplayName("la photo est inscrite au registre MESSAGING avec sa taille réelle")
+    void storeMessagingImage_recordsUpload() throws Exception {
+        java.util.UUID owner = java.util.UUID.randomUUID();
+        when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+                .thenReturn(PutObjectResponse.builder().build());
+
+        storageService.storeMessagingImage("messaging/conv_1/", "AbC123", jpegWithExif(), "image/jpeg", owner);
+
+        ArgumentCaptor<com.yadony.api.common.media.MediaUploadEntity> row =
+                ArgumentCaptor.forClass(com.yadony.api.common.media.MediaUploadEntity.class);
+        verify(uploads).saveAndFlush(row.capture());
+        assertThat(row.getValue().getObjectKey()).isEqualTo("messaging/conv_1/AbC123_full.jpg");
+        assertThat(row.getValue().getOwnerId()).isEqualTo(owner);
+        assertThat(row.getValue().getPurpose()).isEqualTo(com.yadony.api.common.media.MediaPurpose.MESSAGING);
+        assertThat(row.getValue().getSizeBytes()).isPositive();
+    }
+
+    @Test
+    @DisplayName("échec de la miniature → la réservation du registre est supprimée")
+    void storeMessagingImage_thumbFails_releasesReservation() throws Exception {
+        when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+                .thenReturn(PutObjectResponse.builder().build())
+                .thenThrow(S3Exception.builder().message("boom").build());
+
+        assertThatThrownBy(() -> storageService.storeMessagingImage(
+                "messaging/conv_1/", "AbC123", jpegWithExif(), "image/jpeg", java.util.UUID.randomUUID()))
+                .isInstanceOf(S3Exception.class);
+        verify(uploads).delete(any(com.yadony.api.common.media.MediaUploadEntity.class));
+    }
 }

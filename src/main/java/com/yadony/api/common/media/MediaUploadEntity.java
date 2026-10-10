@@ -45,4 +45,5 @@ public class MediaUploadEntity extends BaseEntity {
     public MediaPurpose getPurpose() { return purpose; }
     public UUID getBidId() { return bidId; }
     public long getSizeBytes() { return sizeBytes; }
+    public void setSizeBytes(long sizeBytes) { this.sizeBytes = sizeBytes; }
 }
