@@ -1080,6 +1080,9 @@ public class BidService {
     @Transactional
     @CacheEvict(value = {"announcements-search", "traveler-bids-me", "bids-me"}, allEntries = true)
     public BidResponse cancelBid(UUID bidId, String firebaseUid) {
+        // Verrou du colis : sérialisé avec la confirmation de livraison (TrackingService) et
+        // l'annulation admin ; le statut testé ci-dessous est celui relu sous verrou.
+        bidRepository.lockForUpdate(bidId);
         BidEntity bid = findBid(bidId);
         UserEntity caller = findUserByFirebaseUid(firebaseUid);
 

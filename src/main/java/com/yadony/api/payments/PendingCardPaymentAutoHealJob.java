@@ -25,7 +25,8 @@ import java.util.function.BiFunction;
 import java.util.function.Predicate;
 
 /**
- * Auto-réparation des paiements carte, toutes les 15 minutes, en deux passes bornées.
+ * Auto-réparation des paiements carte, toutes les 15 minutes, en trois passes bornées (la passe
+ * « séquestres non capturés », ajoutée après la 2, est décrite sur {@link #captureDueEscrows}).
  *
  * <p><b>1. Paiements PENDING.</b> Le passage en séquestre dépend du webhook
  * {@code payment_intent.amount_capturable_updated} (et, pour une négociation, du {@code /checkout}
@@ -78,6 +79,7 @@ public class PendingCardPaymentAutoHealJob {
     private final PaymentRepository paymentRepository;
     private final PaymentStripeResyncService resyncService;
     private final DeliveredEscrowReleaser releaser;
+    private final EscrowCaptureService escrowCapture;
     private final boolean enabled;
     private final Duration minAge;
     private final Duration maxAge;
@@ -88,25 +90,39 @@ public class PendingCardPaymentAutoHealJob {
     /** Prochaine relecture autorisée par paiement (absent = relu au prochain passage). */
     private final Map<UUID, Instant> nextCheck = new ConcurrentHashMap<>();
     private final Map<UUID, Instant> nextRelease = new ConcurrentHashMap<>();
+    private final Map<UUID, Instant> nextCapture = new ConcurrentHashMap<>();
+
+    /** Âge minimal d'un séquestre non capturé avant reprise : les traitements normaux ont eu leur chance. */
+    static final Duration CAPTURE_GRACE = Duration.ofHours(2);
+    static final String SOURCE_AUTO_CAPTURE = "auto-heal-capture";
+    /** Statuts Stripe d'une autorisation qui ne sera plus jamais capturable. */
+    static final Set<String> AUTHORIZATION_LOST = Set.of("canceled", "requires_payment_method");
+    /** Fils de négociation éteints : leur séquestre n'est jamais capturé ici. */
+    static final List<com.yadony.api.requests.entity.NegotiationThreadStatus> DEAD_THREADS = List.of(
+            com.yadony.api.requests.entity.NegotiationThreadStatus.REJECTED,
+            com.yadony.api.requests.entity.NegotiationThreadStatus.CANCELLED,
+            com.yadony.api.requests.entity.NegotiationThreadStatus.AUTO_REJECTED,
+            com.yadony.api.requests.entity.NegotiationThreadStatus.EXPIRED);
 
     @Autowired
     public PendingCardPaymentAutoHealJob(PaymentRepository paymentRepository, PaymentStripeResyncService resyncService,
-                                         DeliveredEscrowReleaser releaser,
+                                         DeliveredEscrowReleaser releaser, EscrowCaptureService escrowCapture,
                                          @Value("${yadony.payments.auto-heal.enabled:true}") boolean enabled,
                                          @Value("${yadony.payments.auto-heal.min-age:PT10M}") Duration minAge,
                                          @Value("${yadony.payments.auto-heal.max-age:P7D}") Duration maxAge,
                                          @Value("${yadony.payments.auto-heal.abandoned-after:PT24H}") Duration abandonedAfter,
                                          @Value("${yadony.payments.auto-heal.batch-size:20}") int batchSize) {
-        this(paymentRepository, resyncService, releaser, enabled, minAge, maxAge, abandonedAfter, batchSize,
-                Clock.systemUTC());
+        this(paymentRepository, resyncService, releaser, escrowCapture, enabled, minAge, maxAge, abandonedAfter,
+                batchSize, Clock.systemUTC());
     }
 
     PendingCardPaymentAutoHealJob(PaymentRepository paymentRepository, PaymentStripeResyncService resyncService,
-                                  DeliveredEscrowReleaser releaser, boolean enabled, Duration minAge, Duration maxAge,
+                                  DeliveredEscrowReleaser releaser, EscrowCaptureService escrowCapture, boolean enabled, Duration minAge, Duration maxAge,
                                   Duration abandonedAfter, int batchSize, Clock clock) {
         this.paymentRepository = paymentRepository;
         this.resyncService = resyncService;
         this.releaser = releaser;
+        this.escrowCapture = escrowCapture;
         this.enabled = enabled;
         this.minAge = minAge;
         this.maxAge = maxAge;
@@ -123,20 +139,40 @@ public class PendingCardPaymentAutoHealJob {
         }
     }
 
-    /** Un passage complet (PENDING puis séquestres livrés). @return le nombre de paiements traités */
+    /**
+     * Un passage complet : PENDING, puis séquestres non capturés, puis séquestres livrés. Le lot
+     * ({@code batch-size}) est partagé entre les trois passes : jamais plus d'appels Stripe par
+     * passage que ce plafond. @return le nombre de paiements traités
+     */
     public int run() {
-        return healPending() + releaseDeliveredEscrows();
+        int done = healPending(batchSize);
+        done += captureDueEscrows(Math.max(0, batchSize - done));
+        done += releaseDeliveredEscrows(Math.max(0, batchSize - done));
+        return done;
+    }
+
+    int healPending() {
+        return healPending(batchSize);
+    }
+
+    int releaseDeliveredEscrows() {
+        return releaseDeliveredEscrows(batchSize);
+    }
+
+    int captureDueEscrows() {
+        return captureDueEscrows(batchSize);
     }
 
     /** Passe 1 : paiements carte PENDING relus chez Stripe. @return le nombre relus */
-    int healPending() {
+    int healPending(int limit) {
+        if (limit <= 0) return 0;
         Instant now = clock.instant();
         LocalDateTime nowUtc = LocalDateTime.ofInstant(now, ZoneOffset.UTC);
         nextCheck.values().removeIf(at -> at.isBefore(now.minus(maxAge)));
         LocalDateTime olderThan = nowUtc.minus(minAge);
         LocalDateTime newerThan = nowUtc.minus(maxAge);
         List<UUID> due = dueCandidates((page, size) -> paymentRepository.findPendingCardPaymentIds(
-                olderThan, newerThan, PageRequest.of(page, size)), id -> isDue(nextCheck, id, now));
+                olderThan, newerThan, PageRequest.of(page, size)), id -> isDue(nextCheck, id, now), limit);
 
         int healed = 0;
         int released = 0;
@@ -176,15 +212,64 @@ public class PendingCardPaymentAutoHealJob {
         return checked;
     }
 
-    /** Passe 2 : séquestres carte de colis livrés, jamais versés. @return le nombre tentés */
-    int releaseDeliveredEscrows() {
+    /**
+     * Passe 2 : séquestres carte jamais capturés alors que le modèle les capture déjà (négociation
+     * au passage en séquestre, colis classique à l'acceptation), créés depuis plus de
+     * {@link #CAPTURE_GRACE}. Capture par {@link EscrowCaptureService#ensureCaptured} (même clé
+     * {@code capture-<id>}, mêmes gardes montant et devise). Un échec lève l'alerte unique
+     * {@code ESCROW_CAPTURE_FAILED_<id>} et le paiement est retenté dans 1 h, puis 6 h ; une
+     * autorisation perdue ({@code canceled}, {@code requires_payment_method}) n'est plus retentée.
+     * Jamais de capture pour un colis annulé, terminé ou en procédure d'annulation (requête).
+     * @return le nombre tentés
+     */
+    int captureDueEscrows(int limit) {
+        if (limit <= 0 || escrowCapture == null) return 0;
+        Instant now = clock.instant();
+        LocalDateTime olderThan = LocalDateTime.ofInstant(now, ZoneOffset.UTC).minus(CAPTURE_GRACE);
+        nextCapture.values().removeIf(at -> at.isBefore(now.minus(maxAge)));
+        LocalDateTime newerThan = LocalDateTime.ofInstant(now, ZoneOffset.UTC).minus(maxAge);
+        List<UUID> due = dueCandidates((page, size) -> paymentRepository.findUncapturedDueEscrowIds(
+                olderThan, newerThan, EscrowCaptureService.ENGAGED_BID_STATUSES, DEAD_THREADS, PageRequest.of(page, size)),
+                id -> isDue(nextCapture, id, now), limit);
+
+        int captured = 0;
+        for (UUID paymentId : due) {
+            try {
+                EscrowCaptureService.Outcome outcome = escrowCapture.ensureCaptured(paymentId, SOURCE_AUTO_CAPTURE);
+                nextCapture.remove(paymentId);
+                if (outcome.capturedNow()) {
+                    captured++;
+                    log.warn("Séquestre {} jamais capturé : capturé par l'auto-réparation", paymentId);
+                }
+            } catch (EscrowCaptureService.EscrowCaptureException e) {
+                // Alerte ESCROW_CAPTURE_FAILED levée (une seule tant qu'elle est ouverte).
+                boolean lost = e.getPiStatus() != null && AUTHORIZATION_LOST.contains(e.getPiStatus());
+                Instant previous = nextCapture.get(paymentId);
+                Duration wait = lost ? maxAge : (previous == null ? Duration.ofHours(1) : Duration.ofHours(6));
+                nextCapture.put(paymentId, now.plus(wait));
+                log.warn("Capture automatique du séquestre {} impossible ({}){}", paymentId, e.getMessage(),
+                        lost ? " : autorisation perdue, plus de nouvel essai" : "");
+            } catch (RuntimeException e) {
+                log.error("Capture automatique du séquestre {} en échec", paymentId, e);
+                nextCapture.put(paymentId, now.plus(Duration.ofHours(1)));
+            }
+        }
+        if (!due.isEmpty()) {
+            log.info("Auto-réparation des séquestres non capturés : {} tenté(s), {} capturé(s)", due.size(), captured);
+        }
+        return due.size();
+    }
+
+    /** Passe 3 : séquestres carte de colis livrés, jamais versés. @return le nombre tentés */
+    int releaseDeliveredEscrows(int limit) {
+        if (limit <= 0) return 0;
         Instant now = clock.instant();
         LocalDateTime nowUtc = LocalDateTime.ofInstant(now, ZoneOffset.UTC);
         nextRelease.values().removeIf(at -> at.isBefore(now.minus(RELEASE_WINDOW)));
         LocalDateTime graceBefore = nowUtc.minus(RELEASE_GRACE);
         LocalDateTime windowStart = nowUtc.minus(RELEASE_WINDOW);
         List<UUID> due = dueCandidates((page, size) -> paymentRepository.findDeliveredUnreleasedEscrowIds(
-                graceBefore, windowStart, PageRequest.of(page, size)), id -> isDue(nextRelease, id, now));
+                graceBefore, windowStart, PageRequest.of(page, size)), id -> isDue(nextRelease, id, now), limit);
 
         int released = 0;
         for (UUID paymentId : due) {
@@ -222,13 +307,13 @@ public class PendingCardPaymentAutoHealJob {
      * due, jusqu'à remplir le lot : les paiements en attente de relecture n'occupent jamais la place
      * des suivants.
      */
-    private List<UUID> dueCandidates(BiFunction<Integer, Integer, List<UUID>> page, Predicate<UUID> isDue) {
+    private List<UUID> dueCandidates(BiFunction<Integer, Integer, List<UUID>> page, Predicate<UUID> isDue, int limit) {
         int pageSize = Math.max(1, batchSize * 5);
         Set<UUID> due = new LinkedHashSet<>();
-        for (int p = 0; p < MAX_PAGES && due.size() < batchSize; p++) {
+        for (int p = 0; p < MAX_PAGES && due.size() < limit; p++) {
             List<UUID> ids = page.apply(p, pageSize);
             for (UUID id : ids) {
-                if (due.size() >= batchSize) {
+                if (due.size() >= limit) {
                     break;
                 }
                 if (isDue.test(id)) {
@@ -271,6 +356,11 @@ public class PendingCardPaymentAutoHealJob {
     /** Pour les tests : prochaine relecture prévue d'un paiement PENDING. */
     Instant nextCheckOf(UUID paymentId) {
         return nextCheck.get(paymentId);
+    }
+
+    /** Pour les tests : prochain essai de capture prévu d'un séquestre non capturé. */
+    Instant nextCaptureOf(UUID paymentId) {
+        return nextCapture.get(paymentId);
     }
 
     /** Pour les tests : prochain essai de versement prévu d'un séquestre livré. */

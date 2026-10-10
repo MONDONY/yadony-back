@@ -26,6 +26,7 @@ public class NotificationPrefsService {
             Map.entry("BID_CREATED",                  "pushActivityBids"),
             Map.entry("BID_ACCEPTED",                 "pushActivityBids"),
             Map.entry("BID_REJECTED",                 "pushActivityBids"),
+            Map.entry("BID_CANCELLED_BY_ADMIN",       "pushActivityBids"),
             Map.entry("PARCEL_REFUSED",               "pushActivityBids"),
             Map.entry("BID_EXPIRED",                  "pushActivityBids"),
             Map.entry("TRIP_CANCELLED",               "pushActivityBids"),

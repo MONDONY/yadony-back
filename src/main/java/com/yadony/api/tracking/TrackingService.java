@@ -660,6 +660,10 @@ public class TrackingService {
     @Transactional(noRollbackFor = YadonyBusinessException.class)
     public TrackingEventResponse confirmDelivery(UUID bidId, ConfirmDeliveryRequest request,
                                                  String firebaseUid) {
+        // Verrou du colis : la livraison et une annulation (expéditeur, voyageur, admin) se
+        // sérialisent ; le perdant relit le nouveau statut et refuse. Jamais COMPLETED et remboursé,
+        // ni CANCELLED et versé.
+        bidRepository.lockForUpdate(bidId);
         BidEntity bid = bidRepository.findById(bidId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "bid-not-found", "Bid Not Found",

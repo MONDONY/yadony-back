@@ -68,7 +68,7 @@ public final class NotificationDeeplink {
                  "TRIP_RESCHEDULED", "TRIP_RESCHEDULE_KEPT", "TRIP_RESCHEDULE_WITHDRAWN",
                  "RECIPIENT_CONFIRMED", "RECIPIENT_DECLINED", "RECIPIENT_CHANGED",
                  "RECIPIENT_WITHDRAWN", "RECIPIENT_REPLACEMENT_REQUESTED",
-                 "DELIVERY_RETRY_APPOINTMENT", "PARCEL_UNCLAIMED" ->
+                 "DELIVERY_RETRY_APPOINTMENT", "PARCEL_UNCLAIMED", "BID_CANCELLED_BY_ADMIN" ->
                     bidId.map(id -> "bids/" + id);
             // Sans bidId : demande carte jamais payée, supprimée à la date limite de dépôt.
             // Le trajet plutôt qu'une demande introuvable.

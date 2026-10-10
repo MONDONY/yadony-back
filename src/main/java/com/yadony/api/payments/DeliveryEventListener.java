@@ -87,6 +87,8 @@ public class DeliveryEventListener {
     private final PayoutHoldPolicy holdPolicy;
     private final AdminAlertEscalator alertEscalator;
     private final EscrowCaptureService escrowCapture;
+    private final StripeTransferLookup transferLookup;
+    private final com.yadony.api.disputes.DisputeRepository disputeRepository;
 
     public DeliveryEventListener(PaymentRepository paymentRepository,
                                  UserRepository userRepository,
@@ -98,7 +100,9 @@ public class DeliveryEventListener {
                                  com.yadony.api.payments.mobilemoney.MobileMoneyPayoutInitiator payoutInitiator,
                                  PayoutHoldPolicy holdPolicy,
                                  AdminAlertEscalator alertEscalator,
-                                 EscrowCaptureService escrowCapture) {
+                                 EscrowCaptureService escrowCapture,
+                                 StripeTransferLookup transferLookup,
+                                 com.yadony.api.disputes.DisputeRepository disputeRepository) {
         this.paymentRepository = paymentRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
@@ -110,6 +114,8 @@ public class DeliveryEventListener {
         this.holdPolicy = holdPolicy;
         this.alertEscalator = alertEscalator;
         this.escrowCapture = escrowCapture;
+        this.transferLookup = transferLookup;
+        this.disputeRepository = disputeRepository;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -183,6 +189,9 @@ public class DeliveryEventListener {
      */
     public static final String NOT_IN_ESCROW_ALERT_PREFIX = "DELIVERY_NOT_ESCROW_";
 
+    /** Alerte « versement gelé par un litige admin » : préfixe (20) + UUID (36) = 56 caractères. */
+    public static final String DISPUTE_HOLD_ALERT_PREFIX = "DISPUTE_PAYOUT_HOLD_";
+
     /** Ce qui déclenche la libération : la livraison confirmée ou le colis « non réclamé ». */
     record ReleaseTrigger(java.util.UUID bidId, java.util.UUID senderId, java.util.UUID travelerId, String source) {
         java.util.UUID getBidId() { return bidId; }
@@ -244,6 +253,21 @@ public class DeliveryEventListener {
                     "Tentative de liberation escrow bloquee — litige ouvert sur payment " + payment.getId(),
                     Map.of("paymentId", payment.getId().toString(), "bidId", event.getBidId().toString()));
             return EscrowReleaseOutcome.BLOCKED_CHARGEBACK;
+        }
+
+        // Litige ouvert par l'administration (POST /admin/bids/{id}/disputes) : le versement est
+        // gelé jusqu'à sa résolution. Même modèle que la garde chargeback : rien ne part, le
+        // paiement reste ESCROW, un admin tranche dans Incidents. Limité aux litiges ADMIN_* :
+        // les litiges d'absence ont leur propre procédure et ne changent pas de comportement.
+        if (adminDisputeOpen(event.getBidId())) {
+            log.warn("Payment {} for bid {}: admin dispute open — payout frozen", payment.getId(), event.getBidId());
+            auditService.log("PAYMENT", payment.getId(), "DELIVERY_TRANSFER_BLOCKED_DISPUTE",
+                    event.getBidId(), Map.of("bidId", event.getBidId().toString(), "source", event.source()));
+            alertEscalator.raiseOnce(DISPUTE_HOLD_ALERT_PREFIX + payment.getId(),
+                    "Versement gelé : un litige ouvert par l'administration est en cours sur le colis "
+                            + event.getBidId() + ", le paiement " + payment.getId() + " reste en séquestre",
+                    Map.of("paymentId", payment.getId().toString(), "bidId", event.getBidId().toString()));
+            return EscrowReleaseOutcome.BLOCKED_DISPUTE;
         }
 
         // Remboursement partiel déjà passé (charge.refunded non total : le paiement reste ESCROW).
@@ -311,12 +335,37 @@ public class DeliveryEventListener {
         // l'événement de livraison est traité deux fois en parallèle. Le branchement par rail
         // ci-dessous se fait TOUJOURS après ce claim, jamais avant — un seul thread doit
         // pouvoir gagner, quel que soit le rail.
-        int claimed = paymentRepository.markReleasedIfEscrow(
+        // Les gardes chargeback / remboursement partiel / retenue sont REVÉRIFIÉES dans l'UPDATE
+        // conditionnel : la lecture plus haut n'est qu'un pré-filtre (alerte, audit), jamais la
+        // décision de verser.
+        int claimed = paymentRepository.markReleasedIfEscrowAndUnguarded(
                 payment.getId(), LocalDateTime.now(ZoneOffset.UTC));
         if (claimed == 0) {
+            PaymentStatus current = paymentRepository.findStatusById(payment.getId()).orElse(null);
+            if (current == PaymentStatus.ESCROW) {
+                // Toujours en séquestre : une garde est apparue entre la lecture et le claim
+                // (chargeback, remboursement partiel, retenue). Rien ne part.
+                log.warn("Payment {} for bid {}: a payout guard appeared concurrently — release skipped, stays ESCROW",
+                        payment.getId(), event.getBidId());
+                auditService.log("PAYMENT", payment.getId(), "DELIVERY_RELEASE_BLOCKED_CONCURRENT_GUARD",
+                        event.getBidId(), Map.of("bidId", event.getBidId().toString(), "source", event.source()));
+                return EscrowReleaseOutcome.BLOCKED_CHARGEBACK;
+            }
             log.info("Payment {} for bid {} already left ESCROW — skipping release",
                     payment.getId(), event.getBidId());
             return EscrowReleaseOutcome.ALREADY_RELEASED;
+        }
+
+        // Litige admin revérifié APRÈS le claim, par une nouvelle lecture : l'ouverture du litige
+        // verrouille la ligne du paiement avant d'écrire, le claim ci-dessus a donc attendu son
+        // commit et cette lecture le voit. Litige ouvert : le claim est annulé, rien ne part.
+        if (adminDisputeOpen(event.getBidId())) {
+            paymentRepository.revertReleaseClaim(payment.getId());
+            log.warn("Payment {} for bid {}: admin dispute opened concurrently — claim reverted", payment.getId(),
+                    event.getBidId());
+            auditService.log("PAYMENT", payment.getId(), "DELIVERY_TRANSFER_BLOCKED_DISPUTE",
+                    event.getBidId(), Map.of("bidId", event.getBidId().toString(), "source", event.source()));
+            return EscrowReleaseOutcome.BLOCKED_DISPUTE;
         }
 
         if (payment.getRail() == PaymentRail.PAWAPAY) {
@@ -332,8 +381,11 @@ public class DeliveryEventListener {
         try {
             if (payment.isLegacyDestinationCharge()) {
                 releaseLegacy(payment);
-            } else {
-                releaseV2(payment, event, chargeId);
+            } else if (releaseV2(payment, event, chargeId)) {
+                // Transfer déjà émis chez Stripe : base réalignée et tracée
+                // (TRANSFER_ALREADY_EXISTS_REALIGNED), rien d'autre. Ni second audit de
+                // versement, ni nouvelle notification au voyageur.
+                return EscrowReleaseOutcome.RELEASED;
             }
         } catch (StripeException e) {
             log.error("Escrow release failed for payment {} (bid={}, legacy={}): {}",
@@ -460,7 +512,8 @@ public class DeliveryEventListener {
                         .build());
     }
 
-    private void releaseV2(PaymentEntity payment, ReleaseTrigger event, String chargeId) throws StripeException {
+    /** @return vrai si un Transfer existait déjà chez Stripe (base réalignée, aucun nouveau Transfer) */
+    private boolean releaseV2(PaymentEntity payment, ReleaseTrigger event, String chargeId) throws StripeException {
         // New separate-charges-and-transfers model: the PI is captured on the platform balance
         // (at acceptation, at escrow, or just above by EscrowCaptureService when it was still
         // requires_capture). Initiate a Transfer to the traveler's Connect account.
@@ -495,17 +548,60 @@ public class DeliveryEventListener {
                 .setDestination(traveler.getStripeAccountId())
                 .putMetadata("bid_id", event.getBidId().toString())
                 .putMetadata("payment_id", payment.getId() != null ? payment.getId().toString() : "");
+        if (payment.getId() != null) {
+            // Groupe stable, filtrable chez Stripe quel que soit le compte de destination.
+            builder.setTransferGroup(StripeTransferLookup.transferGroup(payment.getId()));
+        }
 
         if (chargeId != null && !chargeId.isBlank()) {
             builder.setSourceTransaction(chargeId);
         }
 
+        // La clé d'idempotence n'est valable que 24 h : au-delà, un rejeu recréerait un
+        // Transfer. On vérifie d'abord chez Stripe qu'aucun Transfer n'existe pour ce paiement ;
+        // s'il existe, la base est réalignée dessus (le claim RELEASED est déjà posé) au lieu de
+        // payer une seconde fois. Une lecture en échec remonte : aucun Transfer, claim annulé.
+        Optional<String> existing = transferLookup.findExistingTransfer(
+                payment.getId(), traveler.getStripeAccountId(), payment.getCreatedAt());
+        if (existing.isPresent()) {
+            realignOnExistingTransfer(payment, existing.get(), event.getBidId(), event.source());
+            return true;
+        }
+
         // Clé d'idempotence stable : un AFTER_COMMIT rejoué ou une redelivery de webhook
         // ne déclenche pas un second Transfer côté Stripe.
-        Transfer.create(builder.build(),
+        Transfer transfer = Transfer.create(builder.build(),
                 RequestOptions.builder()
                         .setIdempotencyKey("transfer-" + payment.getId())
                         .build());
+        if (transfer != null && transfer.getId() != null && payment.getId() != null) {
+            paymentRepository.recordStripeTransferId(payment.getId(), transfer.getId());
+        }
+        return false;
+    }
+
+    /** Litige ouvert par l'administration sur ce colis (lecture en base, jamais en cache). */
+    private boolean adminDisputeOpen(java.util.UUID bidId) {
+        return disputeRepository != null && disputeRepository.existsByBidIdAndStatusAndTypeStartingWith(
+                bidId, com.yadony.api.disputes.DisputeTypes.STATUS_OPEN,
+                com.yadony.api.disputes.DisputeTypes.ADMIN_PREFIX);
+    }
+
+    /**
+     * Un Transfer existe déjà chez Stripe pour ce paiement : aucun second Transfer. Le paiement
+     * est déjà passé RELEASED par le claim de l'appelant ; on y attache l'identifiant du Transfer
+     * existant et on trace le réalignement.
+     */
+    private void realignOnExistingTransfer(PaymentEntity payment, String transferId,
+                                           java.util.UUID bidId, String source) {
+        log.warn("Payment {} for bid {}: Stripe Transfer {} already exists — no second Transfer, DB realigned",
+                payment.getId(), bidId, transferId);
+        paymentRepository.recordStripeTransferId(payment.getId(), transferId);
+        auditService.log("PAYMENT", payment.getId(), "TRANSFER_ALREADY_EXISTS_REALIGNED", bidId, Map.of(
+                "paymentId", payment.getId().toString(),
+                "bidId", String.valueOf(bidId),
+                "transferId", transferId,
+                "source", source));
     }
 
     /**

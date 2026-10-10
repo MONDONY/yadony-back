@@ -56,7 +56,7 @@ class DeliveryEventListenerMobileMoneyTest {
         // champ contournable) — plus besoin de ReflectionTestUtils pour l'injecter.
         listener = new DeliveryEventListener(paymentRepository, userRepository, auditService, eventPublisher,
                 bidRepository, adminAlert, voucherService, payoutInitiator, holdPolicy, alertEscalator,
-                escrowCapture);
+                escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
         bid = new BidEntity();
         ReflectionTestUtils.setField(bid, "id", UUID.randomUUID());
         bid.setPaymentMethod(PaymentMethod.MOBILE_MONEY);
@@ -78,7 +78,7 @@ class DeliveryEventListenerMobileMoneyTest {
 
     @Test
     void pawapayRail_claimsOnce_thenReleasesNetThroughInitiator_withoutStripeAndWithoutReleasedEvent() {
-        when(paymentRepository.markReleasedIfEscrow(eq(payment.getId()), any())).thenReturn(1);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(eq(payment.getId()), any())).thenReturn(1);
         when(voucherService.consume(travelerId, bid.getId())).thenReturn(Optional.empty());
 
         listener.handleDeliveryConfirmed(event());
@@ -89,7 +89,7 @@ class DeliveryEventListenerMobileMoneyTest {
 
     @Test
     void secondDeliveryEvent_doesNotReleaseTwice() {
-        when(paymentRepository.markReleasedIfEscrow(eq(payment.getId()), any())).thenReturn(1).thenReturn(0);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(eq(payment.getId()), any())).thenReturn(1).thenReturn(0);
         when(voucherService.consume(any(), any())).thenReturn(Optional.empty());
 
         listener.handleDeliveryConfirmed(event());
@@ -100,7 +100,7 @@ class DeliveryEventListenerMobileMoneyTest {
 
     @Test
     void initiatorFailure_propagates_soTheClaimRollsBack() {
-        when(paymentRepository.markReleasedIfEscrow(eq(payment.getId()), any())).thenReturn(1);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(eq(payment.getId()), any())).thenReturn(1);
         when(voucherService.consume(any(), any())).thenReturn(Optional.empty());
         when(payoutInitiator.release(any(), any(), any(), any(), any())).thenThrow(new IllegalStateException("INSUFFICIENT_BALANCE"));
 

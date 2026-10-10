@@ -54,7 +54,7 @@ class DeliveryEventListenerPartialRefundTest {
         // jamais déréférencé (paiement disputé, bloqué avant tout branchement par rail).
         listener = new DeliveryEventListener(paymentRepository, userRepository,
                 auditService, eventPublisher, bidRepository, adminAlert, voucherService, null, holdPolicy, alertEscalator,
-                escrowCapture);
+                escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
     }
 
     private static void setId(Object entity, UUID id) throws Exception {
@@ -90,7 +90,7 @@ class DeliveryEventListenerPartialRefundTest {
         }
 
         // Aucun claim ESCROW → RELEASED : le paiement reste en séquestre pour arbitrage.
-        verify(paymentRepository, never()).markReleasedIfEscrow(any(), any());
+        verify(paymentRepository, never()).markReleasedIfEscrowAndUnguarded(any(), any());
         assertThat(payment.getStatus()).isEqualTo(PaymentStatus.ESCROW);
         verify(auditService).log(
                 eq("PAYMENT"), eq(paymentId), eq("DELIVERY_TRANSFER_BLOCKED_PARTIAL_REFUND"), any(), anyMap());

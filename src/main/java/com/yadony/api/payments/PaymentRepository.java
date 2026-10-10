@@ -81,6 +81,55 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
                                          org.springframework.data.domain.Pageable page);
 
     /**
+     * Séquestres carte jamais capturés alors que le modèle actuel les capture déjà (staging,
+     * 07/10/2026 : 5 paiements ESCROW sans {@code captured_at}, l'autorisation expirant à J+7) :
+     * paiement de négociation (capture au passage en séquestre, #472) ou colis classique engagé
+     * (capture à l'acceptation, {@code BidAcceptedEventListener}). Créés entre {@code newerThan}
+     * (au-delà de 7 jours l'autorisation carte est expirée : ces paiements n'occupent plus le lot à
+     * chaque redémarrage, leur alerte unique suffit) et {@code olderThan} (les traitements normaux
+     * ont eu le temps de capturer).
+     *
+     * <p>Exclus : legacy (capture à la livraison), litige bancaire, remboursement partiel, versement
+     * retenu ; colis annulé ou terminé (seuls les statuts engagés sont repris) ; colis portant une
+     * procédure d'annulation ou d'absence non résolue ; fil de négociation éteint, ou dont le colis
+     * rattaché n'est pas engagé. Plus récents d'abord ; paginé par le job.
+     */
+    @Query("""
+            SELECT p.id FROM PaymentEntity p
+             WHERE p.status = com.yadony.api.payments.PaymentStatus.ESCROW
+               AND p.rail = com.yadony.api.payments.PaymentRail.STRIPE
+               AND p.stripePaymentIntentId IS NOT NULL
+               AND p.capturedAt IS NULL
+               AND p.legacyDestinationCharge = false
+               AND p.disputed = false
+               AND (p.refundedAmount IS NULL OR p.refundedAmount = 0)
+               AND p.payoutHeldAt IS NULL
+               AND p.createdAt < :olderThan
+               AND p.createdAt > :newerThan
+               AND (
+                    (p.bidId IS NOT NULL AND EXISTS (
+                        SELECT 1 FROM com.yadony.api.matching.BidEntity b
+                         WHERE b.id = p.bidId AND b.status IN :engaged))
+                 OR (p.bidId IS NULL AND p.negotiationThreadId IS NOT NULL
+                     AND EXISTS (SELECT 1 FROM com.yadony.api.requests.entity.NegotiationThreadEntity t
+                                  WHERE t.id = p.negotiationThreadId AND t.status NOT IN :deadThreads)
+                     AND NOT EXISTS (SELECT 1 FROM com.yadony.api.matching.BidEntity b2
+                                      WHERE b2.linkedNegotiationThreadId = p.negotiationThreadId
+                                        AND b2.status NOT IN :engaged))
+               )
+               AND NOT EXISTS (SELECT 1 FROM com.yadony.api.cancellation.CancellationEntity c, com.yadony.api.matching.BidEntity b3
+                                WHERE c.bidId = b3.id
+                                  AND (b3.id = p.bidId OR (p.bidId IS NULL AND b3.linkedNegotiationThreadId = p.negotiationThreadId))
+                                  AND c.noShowStatus <> com.yadony.api.cancellation.CancellationStatus.RESOLVED)
+             ORDER BY p.createdAt DESC, p.id
+            """)
+    List<UUID> findUncapturedDueEscrowIds(@Param("olderThan") LocalDateTime olderThan,
+                                          @Param("newerThan") LocalDateTime newerThan,
+                                          @Param("engaged") java.util.Collection<com.yadony.api.matching.BidStatus> engaged,
+                                          @Param("deadThreads") java.util.Collection<com.yadony.api.requests.entity.NegotiationThreadStatus> deadThreads,
+                                          org.springframework.data.domain.Pageable page);
+
+    /**
      * Séquestres carte non versés dont le colis est livré ({@code COMPLETED}, par {@code bid_id} ou
      * par le colis rattaché au fil de négociation) : la livraison ou le rattrapage n'ont pas abouti.
      * Dernière activité (livraison ou passage en séquestre) entre {@code windowStart} et
@@ -123,6 +172,32 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     @Modifying
     @Query("UPDATE PaymentEntity p SET p.status = 'RELEASED', p.escrowReleasedAt = :releasedAt WHERE p.id = :id AND p.status = 'ESCROW'")
     int markReleasedIfEscrow(@Param("id") UUID id, @Param("releasedAt") LocalDateTime releasedAt);
+
+    /**
+     * Claim du versement automatique (livraison, colis non réclamé, rattrapage, job) : ESCROW →
+     * RELEASED seulement si, <b>dans le même UPDATE</b>, aucun litige bancaire, aucun remboursement
+     * partiel et aucune retenue ne sont posés. Les gardes lues avant le claim ne sont qu'un
+     * pré-filtre (alerte, audit) : un chargeback ou un remboursement arrivé entre la lecture et le
+     * claim fait répondre 0 ici, rien n'est versé. La garde d'un litige admin est revérifiée après
+     * ce claim (le verrou de ligne posé ici sérialise l'ouverture du litige, qui verrouille la même
+     * ligne avant d'écrire).
+     */
+    @Modifying
+    @Query("""
+            UPDATE PaymentEntity p SET p.status = com.yadony.api.payments.PaymentStatus.RELEASED,
+                   p.escrowReleasedAt = :releasedAt
+             WHERE p.id = :id AND p.status = com.yadony.api.payments.PaymentStatus.ESCROW
+               AND p.disputed = false
+               AND (p.refundedAmount IS NULL OR p.refundedAmount = 0)
+               AND p.payoutHeldAt IS NULL
+            """)
+    int markReleasedIfEscrowAndUnguarded(@Param("id") UUID id, @Param("releasedAt") LocalDateTime releasedAt);
+
+    /** Annule un claim RELEASED posé dans la transaction courante (garde revérifiée après le claim). */
+    @Modifying
+    @Query("UPDATE PaymentEntity p SET p.status = com.yadony.api.payments.PaymentStatus.ESCROW, p.escrowReleasedAt = NULL "
+            + "WHERE p.id = :id AND p.status = com.yadony.api.payments.PaymentStatus.RELEASED")
+    int revertReleaseClaim(@Param("id") UUID id);
 
     /**
      * Claim d'un partage admin (FLUTTER-E2) : ESCROW → {@code status} (RELEASED si le voyageur
@@ -514,6 +589,17 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
             WHERE id = :id AND status = 'ESCROW' AND payout_held_at IS NULL
             """, nativeQuery = true)
     int markPayoutHeld(@Param("id") UUID id, @Param("heldAt") LocalDateTime heldAt);
+
+    /**
+     * Trace le Transfer Stripe du versement (V310). Écriture ciblée, jamais par le flush d'une
+     * entité chargée avant le claim ESCROW → RELEASED. N'écrase pas un identifiant déjà posé.
+     */
+    @Modifying
+    @Query(value = """
+            UPDATE payments SET stripe_transfer_id = :transferId
+            WHERE id = :id AND stripe_transfer_id IS NULL
+            """, nativeQuery = true)
+    int recordStripeTransferId(@Param("id") UUID id, @Param("transferId") String transferId);
 
     /**
      * Paiements carte à relire chez Stripe par le rapprochement quotidien : tous ceux encore

@@ -59,7 +59,7 @@ class DeliveryEventListenerTest {
         // jamais déréférencé puisque tous les paiements de cette classe sont de rail STRIPE.
         listener = new DeliveryEventListener(paymentRepository, userRepository,
                 auditService, eventPublisher, bidRepository, adminAlert, voucherService, null, holdPolicy, alertEscalator,
-                escrowCapture);
+                escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
     }
 
     private PaymentEntity payment(boolean legacy, PaymentStatus status, String chargeId) {
@@ -89,7 +89,7 @@ class DeliveryEventListenerTest {
         PaymentEntity p = payment(true, PaymentStatus.ESCROW, "ch_legacy");
         UUID travelerId = UUID.randomUUID();
         when(paymentRepository.findByBidId(p.getBidId())).thenReturn(Optional.of(p));
-        when(paymentRepository.markReleasedIfEscrow(any(), any())).thenReturn(1);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(any(), any())).thenReturn(1);
 
         try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
              MockedStatic<Transfer> transferStatic = mockStatic(Transfer.class)) {
@@ -107,7 +107,7 @@ class DeliveryEventListenerTest {
         }
 
         // Transition de statut faite par le claim atomique markReleasedIfEscrow
-        verify(paymentRepository).markReleasedIfEscrow(any(), any());
+        verify(paymentRepository).markReleasedIfEscrowAndUnguarded(any(), any());
         verify(auditService).log(eq("PAYMENT"), any(), eq("ESCROW_RELEASED_LEGACY"), any(), any());
         verify(eventPublisher).publishEvent(any(PaymentReleasedEvent.class));
     }
@@ -117,7 +117,7 @@ class DeliveryEventListenerTest {
         PaymentEntity p = payment(false, PaymentStatus.ESCROW, "ch_new");
         UUID travelerId = UUID.randomUUID();
         when(paymentRepository.findByBidId(p.getBidId())).thenReturn(Optional.of(p));
-        when(paymentRepository.markReleasedIfEscrow(any(), any())).thenReturn(1);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(any(), any())).thenReturn(1);
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler()));
 
         try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
@@ -140,7 +140,7 @@ class DeliveryEventListenerTest {
             assertThat(optsCaptor.getValue().getIdempotencyKey()).startsWith("transfer-");
         }
 
-        verify(paymentRepository).markReleasedIfEscrow(any(), any());
+        verify(paymentRepository).markReleasedIfEscrowAndUnguarded(any(), any());
         verify(auditService).log(eq("PAYMENT"), any(), eq("ESCROW_RELEASED_TRANSFER"), any(), any());
         verify(eventPublisher).publishEvent(any(PaymentReleasedEvent.class));
     }
@@ -152,7 +152,7 @@ class DeliveryEventListenerTest {
         PaymentEntity p = payment(false, PaymentStatus.ESCROW, "ch_new");
         UUID travelerId = UUID.randomUUID();
         when(paymentRepository.findByBidId(p.getBidId())).thenReturn(Optional.of(p));
-        when(paymentRepository.markReleasedIfEscrow(any(), any())).thenReturn(1);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(any(), any())).thenReturn(1);
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler()));
         com.yadony.api.voucher.CommissionVoucherEntity voucher =
                 mock(com.yadony.api.voucher.CommissionVoucherEntity.class);
@@ -177,7 +177,7 @@ class DeliveryEventListenerTest {
         PaymentEntity p = payment(false, PaymentStatus.ESCROW, "ch_new");
         UUID travelerId = UUID.randomUUID();
         when(paymentRepository.findByBidId(p.getBidId())).thenReturn(Optional.of(p));
-        when(paymentRepository.markReleasedIfEscrow(any(), any())).thenReturn(1);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(any(), any())).thenReturn(1);
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler()));
         when(voucherService.consume(travelerId, p.getBidId())).thenReturn(Optional.empty());
 
@@ -202,7 +202,7 @@ class DeliveryEventListenerTest {
         p.setCommissionAmount(new BigDecimal("3600"));
         UUID travelerId = UUID.randomUUID();
         when(paymentRepository.findByBidId(p.getBidId())).thenReturn(Optional.of(p));
-        when(paymentRepository.markReleasedIfEscrow(any(), any())).thenReturn(1);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(any(), any())).thenReturn(1);
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler()));
 
         try (MockedStatic<Transfer> transferStatic = mockStatic(Transfer.class)) {
@@ -224,7 +224,7 @@ class DeliveryEventListenerTest {
         PaymentEntity p = payment(false, PaymentStatus.ESCROW, "ch_race");
         UUID travelerId = UUID.randomUUID();
         when(paymentRepository.findByBidId(p.getBidId())).thenReturn(Optional.of(p));
-        when(paymentRepository.markReleasedIfEscrow(any(), any())).thenReturn(0);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(any(), any())).thenReturn(0);
 
         try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
              MockedStatic<Transfer> transferStatic = mockStatic(Transfer.class)) {
@@ -267,7 +267,7 @@ class DeliveryEventListenerTest {
         PaymentEntity p = payment(false, PaymentStatus.ESCROW, null);
         UUID travelerId = UUID.randomUUID();
         when(paymentRepository.findByBidId(p.getBidId())).thenReturn(Optional.of(p));
-        when(paymentRepository.markReleasedIfEscrow(any(), any())).thenReturn(1);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(any(), any())).thenReturn(1);
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler()));
 
         try (MockedStatic<Transfer> transferStatic = mockStatic(Transfer.class)) {
@@ -319,7 +319,7 @@ class DeliveryEventListenerTest {
         p.setBidId(null); // thread-keyed payment
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
         when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.of(p));
-        when(paymentRepository.markReleasedIfEscrow(any(), any())).thenReturn(1);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(any(), any())).thenReturn(1);
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler()));
 
         try (MockedStatic<Transfer> transferStatic = mockStatic(Transfer.class)) {
@@ -336,7 +336,7 @@ class DeliveryEventListenerTest {
             assertThat(params.getMetadata().get("bid_id")).isEqualTo(bidId.toString());
         }
 
-        verify(paymentRepository).markReleasedIfEscrow(any(), any());
+        verify(paymentRepository).markReleasedIfEscrowAndUnguarded(any(), any());
         // actor id must be the delivered bid, not the null payment.getBidId()
         verify(auditService).log(eq("PAYMENT"), any(), eq("ESCROW_RELEASED_TRANSFER"), eq(bidId), any());
         verify(eventPublisher).publishEvent(any(PaymentReleasedEvent.class));
@@ -347,7 +347,7 @@ class DeliveryEventListenerTest {
         PaymentEntity p = payment(false, PaymentStatus.ESCROW, "ch_fail");
         UUID travelerId = UUID.randomUUID();
         when(paymentRepository.findByBidId(p.getBidId())).thenReturn(Optional.of(p));
-        when(paymentRepository.markReleasedIfEscrow(any(), any())).thenReturn(1);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(any(), any())).thenReturn(1);
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler()));
 
         try (MockedStatic<Transfer> transferStatic = mockStatic(Transfer.class)) {
@@ -371,7 +371,7 @@ class DeliveryEventListenerTest {
         PaymentEntity p = payment(false, PaymentStatus.ESCROW, "ch_unclaimed");
         UUID travelerId = UUID.randomUUID();
         when(paymentRepository.findByBidId(p.getBidId())).thenReturn(Optional.of(p));
-        when(paymentRepository.markReleasedIfEscrow(any(), any())).thenReturn(1);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(any(), any())).thenReturn(1);
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler()));
 
         try (MockedStatic<Transfer> transferStatic = mockStatic(Transfer.class)) {
@@ -401,7 +401,7 @@ class DeliveryEventListenerTest {
                     p.getBidId(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()));
             transferStatic.verifyNoInteractions();
         }
-        verify(paymentRepository, never()).markReleasedIfEscrow(any(), any());
+        verify(paymentRepository, never()).markReleasedIfEscrowAndUnguarded(any(), any());
     }
 
     // ── Séquestre carte non capturé (constat du 10/10, paiements de négociation) ──
@@ -409,7 +409,7 @@ class DeliveryEventListenerTest {
     private DeliveryEventListener listenerWith(EscrowCaptureService capture) {
         return new DeliveryEventListener(paymentRepository, userRepository,
                 auditService, eventPublisher, bidRepository, adminAlert, voucherService, null, holdPolicy, alertEscalator,
-                capture);
+                capture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
     }
 
     @Test
@@ -418,7 +418,7 @@ class DeliveryEventListenerTest {
         org.springframework.test.util.ReflectionTestUtils.setField(p, "id", UUID.randomUUID());
         UUID travelerId = UUID.randomUUID();
         when(paymentRepository.findByBidId(p.getBidId())).thenReturn(Optional.of(p));
-        when(paymentRepository.markReleasedIfEscrow(any(), any())).thenReturn(1);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(any(), any())).thenReturn(1);
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler()));
         EscrowCaptureService capture = mock(EscrowCaptureService.class);
         when(capture.ensureCaptured(p.getId(), "delivery")).thenReturn(new EscrowCaptureService.Outcome("ch_captured", true));
@@ -429,7 +429,7 @@ class DeliveryEventListenerTest {
                     .thenAnswer(inv -> {
                         // Le Transfer ne part qu'après la capture et le claim.
                         verify(capture).ensureCaptured(p.getId(), "delivery");
-                        verify(paymentRepository).markReleasedIfEscrow(any(), any());
+                        verify(paymentRepository).markReleasedIfEscrowAndUnguarded(any(), any());
                         return mock(Transfer.class);
                     });
 
@@ -437,7 +437,7 @@ class DeliveryEventListenerTest {
 
             org.mockito.InOrder order = inOrder(capture, paymentRepository);
             order.verify(capture).ensureCaptured(p.getId(), "delivery");
-            order.verify(paymentRepository).markReleasedIfEscrow(any(), any());
+            order.verify(paymentRepository).markReleasedIfEscrowAndUnguarded(any(), any());
             assertThat(captor.getValue().getSourceTransaction()).isEqualTo("ch_captured");
             assertThat(captor.getValue().getAmount()).isEqualTo(2640L);
         }
@@ -459,7 +459,7 @@ class DeliveryEventListenerTest {
                     listenerWith(capture).handleDeliveryConfirmed(event(p.getBidId(), travelerId)));
             transferStatic.verifyNoInteractions();
         }
-        verify(paymentRepository, never()).markReleasedIfEscrow(any(), any());
+        verify(paymentRepository, never()).markReleasedIfEscrowAndUnguarded(any(), any());
         verify(auditService).log(eq("PAYMENT"), eq(p.getId()), eq("DELIVERY_RELEASE_BLOCKED_CAPTURE_FAILED"), any(),
                 argThat(m -> "canceled".equals(m.get("piStatus"))));
         verify(eventPublisher, never()).publishEvent(any());
@@ -470,7 +470,7 @@ class DeliveryEventListenerTest {
     void legacy_doesNotGoThroughEscrowCapture() {
         PaymentEntity p = payment(true, PaymentStatus.ESCROW, "ch_legacy");
         when(paymentRepository.findByBidId(p.getBidId())).thenReturn(Optional.of(p));
-        when(paymentRepository.markReleasedIfEscrow(any(), any())).thenReturn(1);
+        when(paymentRepository.markReleasedIfEscrowAndUnguarded(any(), any())).thenReturn(1);
         EscrowCaptureService capture = mock(EscrowCaptureService.class);
 
         try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {

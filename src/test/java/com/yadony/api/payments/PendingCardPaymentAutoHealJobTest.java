@@ -46,7 +46,7 @@ class PendingCardPaymentAutoHealJobTest {
     }
 
     private PendingCardPaymentAutoHealJob newJob(boolean enabled, int batch, Instant now) {
-        return new PendingCardPaymentAutoHealJob(paymentRepository, resync, releaser, enabled, Duration.ofMinutes(10),
+        return new PendingCardPaymentAutoHealJob(paymentRepository, resync, releaser, null, enabled, Duration.ofMinutes(10),
                 Duration.ofDays(7), Duration.ofHours(24), batch, Clock.fixed(now, ZoneOffset.UTC));
     }
 

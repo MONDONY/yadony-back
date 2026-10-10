@@ -457,6 +457,18 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     Optional<BidEntity> findByIdForUpdate(@Param("id") UUID id);
 
     /**
+     * Verrou de ligne du colis, tenu jusqu'à la fin de la transaction, par un UPDATE neutre
+     * (exécutable aussi sous H2, contrairement à {@code SELECT … FOR NO KEY UPDATE}). À appeler
+     * AVANT de charger le colis : la lecture qui suit voit alors le dernier statut commité.
+     * Sérialise livraison, annulations (expéditeur, voyageur, admin) et libération forcée.
+     *
+     * @return 1 si le colis existe, 0 sinon
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE BidEntity b SET b.status = b.status WHERE b.id = :id")
+    int lockForUpdate(@Param("id") UUID id);
+
+    /**
      * Colis déjà remis au voyageur (HANDED_OVER, IN_TRANSIT, ARRIVED) d'un trajet, verrouillés :
      * l'annulation du trajet leur pose un code de retour (FLUTTER-FH). Le verrou évite qu'un scan
      * concurrent (livraison, arrivée) ne croise la procédure de retour.

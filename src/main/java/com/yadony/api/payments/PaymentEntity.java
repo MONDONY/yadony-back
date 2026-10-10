@@ -106,6 +106,14 @@ public class PaymentEntity extends BaseEntity {
     @Column(name = "payout_held_at", updatable = false)
     private LocalDateTime payoutHeldAt;
 
+    /**
+     * Transfer Stripe qui a versé le net au voyageur (V310). Même règle que
+     * {@link #payoutHeldAt} : écrite uniquement par l'UPDATE ciblé
+     * {@link PaymentRepository#recordStripeTransferId}, jamais par un flush.
+     */
+    @Column(name = "stripe_transfer_id", updatable = false)
+    private String stripeTransferId;
+
     public UUID getBidId() { return bidId; }
     public void setBidId(UUID bidId) { this.bidId = bidId; }
 
@@ -167,6 +175,9 @@ public class PaymentEntity extends BaseEntity {
 
     public LocalDateTime getPayoutHeldAt() { return payoutHeldAt; }
     public void setPayoutHeldAt(LocalDateTime payoutHeldAt) { this.payoutHeldAt = payoutHeldAt; }
+
+    public String getStripeTransferId() { return stripeTransferId; }
+    public void setStripeTransferId(String stripeTransferId) { this.stripeTransferId = stripeTransferId; }
 
     public boolean isDisputed() { return disputed; }
     public void setDisputed(boolean disputed) { this.disputed = disputed; }

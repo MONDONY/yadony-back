@@ -34,6 +34,9 @@ public interface DisputeRepository extends JpaRepository<DisputeEntity, UUID> {
     /** Litige non clos sur ce bid (rétention des photos de messagerie, FLUTTER-B4). */
     boolean existsByBidIdAndStatusNot(UUID bidId, String status);
 
+    /** Litige de ce statut dont le type commence par ce préfixe (litiges admin : {@code ADMIN_}). */
+    boolean existsByBidIdAndStatusAndTypeStartingWith(UUID bidId, String status, String typePrefix);
+
     List<DisputeEntity> findBySenderIdOrTravelerIdOrderByCreatedAtDesc(UUID senderId, UUID travelerId);
 
     @Query("SELECT d FROM DisputeEntity d WHERE (:status IS NULL OR d.status = :status) ORDER BY d.createdAt DESC")

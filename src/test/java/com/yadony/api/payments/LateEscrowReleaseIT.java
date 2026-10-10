@@ -99,7 +99,7 @@ class LateEscrowReleaseIT {
         tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         listener = new DeliveryEventListener(paymentRepository, userRepository, auditService, eventPublisher,
                 bidRepository, mock(AdminAlertService.class), voucherService, null, holdPolicy, alertEscalator,
-                escrowCapture) {
+                escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class)) {
             @Override
             public EscrowReleaseOutcome releaseAfterLateEscrow(UUID bidId, UUID senderId, UUID travelerId,
                                                                String source) {
@@ -152,7 +152,7 @@ class LateEscrowReleaseIT {
     }
 
     private PendingCardPaymentAutoHealJob job(Duration clockOffset) {
-        return new PendingCardPaymentAutoHealJob(paymentRepository, resync, releaser, true,
+        return new PendingCardPaymentAutoHealJob(paymentRepository, resync, releaser, null, true,
                 Duration.ZERO, Duration.ofDays(7), Duration.ofHours(24), 20,
                 Clock.offset(Clock.systemUTC(), clockOffset));
     }

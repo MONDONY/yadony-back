@@ -131,6 +131,20 @@ public final class NotificationTexts {
         return new NotificationText(m.get("notification.bid-rejected.title"), body);
     }
 
+    /** Colis annulé par l'administration, côté expéditeur. */
+    public static NotificationText bidCancelledByAdminForSender(Messages m, boolean refund) {
+        return new NotificationText(m.get("notification.bid-cancelled-by-admin.title"),
+                m.get(refund ? "notification.bid-cancelled-by-admin.sender.body-refund"
+                        : "notification.bid-cancelled-by-admin.sender.body"));
+    }
+
+    /** Colis annulé par l'administration, côté voyageur ; {@code parcelWithTraveler} : retour à organiser. */
+    public static NotificationText bidCancelledByAdminForTraveler(Messages m, boolean parcelWithTraveler) {
+        return new NotificationText(m.get("notification.bid-cancelled-by-admin.title"),
+                m.get(parcelWithTraveler ? "notification.bid-cancelled-by-admin.traveler.body-return"
+                        : "notification.bid-cancelled-by-admin.traveler.body"));
+    }
+
     public static NotificationText bidRejectedTripWithdrawn(Messages m) {
         return new NotificationText(m.get("notification.bid-rejected-trip-withdrawn.title"),
                 m.get("notification.bid-rejected-trip-withdrawn.body"));

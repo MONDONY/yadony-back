@@ -62,6 +62,19 @@ public class DisputeEntity extends BaseEntity {
     @Column(name = "split_currency", length = 3)
     private String splitCurrency;
 
+    /** Partie au nom de laquelle le litige est ouvert (colonne V6, renseignée par l'admin). */
+    @Column(name = "reporter_id")
+    private UUID reporterId;
+
+    /** Description du litige (colonne V6, renseignée par l'admin). */
+    @Column(name = "reason", columnDefinition = "TEXT")
+    private String reason;
+
+    public UUID getReporterId() { return reporterId; }
+    public void setReporterId(UUID reporterId) { this.reporterId = reporterId; }
+    public String getReason() { return reason; }
+    public void setReason(String reason) { this.reason = reason; }
+
     public java.math.BigDecimal getSenderRefundAmount() { return senderRefundAmount; }
     public void setSenderRefundAmount(java.math.BigDecimal v) { this.senderRefundAmount = v; }
     public java.math.BigDecimal getTravelerPayoutAmount() { return travelerPayoutAmount; }

@@ -14,6 +14,8 @@ public enum EscrowReleaseOutcome {
     ALREADY_RELEASED(false, "Versement déjà effectué par un autre traitement"),
     /** Litige bancaire ouvert : versement bloqué, alerte CHARGEBACK_TRANSFER_BLOCKED. */
     BLOCKED_CHARGEBACK(false, "Colis livré mais litige bancaire ouvert : versement bloqué, à trancher"),
+    /** Litige ouvert par l'administration : versement gelé, alerte DISPUTE_PAYOUT_HOLD. */
+    BLOCKED_DISPUTE(false, "Colis livré mais litige ouvert par l'administration : versement gelé, à trancher"),
     /** Remboursement partiel déjà passé : montant à décider, alerte PARTIAL_REFUND_HOLD. */
     BLOCKED_PARTIAL_REFUND(false, "Colis livré mais paiement partiellement remboursé : versement bloqué, montant à décider"),
     /** Voyageur gelé : versement retenu, alerte PAYOUT_HELD. */
@@ -54,7 +56,7 @@ public enum EscrowReleaseOutcome {
      * automatique ne changerait rien tant qu'un admin n'a pas tranché.
      */
     public boolean blockedByGuard() {
-        return this == BLOCKED_CHARGEBACK || this == BLOCKED_PARTIAL_REFUND || this == PAYOUT_HELD
+        return this == BLOCKED_CHARGEBACK || this == BLOCKED_DISPUTE || this == BLOCKED_PARTIAL_REFUND || this == PAYOUT_HELD
                 || this == STRIPE_ACCOUNT_UNUSABLE;
     }
 
