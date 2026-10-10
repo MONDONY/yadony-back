@@ -18,6 +18,7 @@ import java.util.UUID;
  */
 @Entity
 @Table(name = "package_request_photos")
+@org.hibernate.annotations.SQLRestriction("purged_at IS NULL")
 public class PackageRequestPhotoEntity {
 
     @Id
@@ -36,6 +37,9 @@ public class PackageRequestPhotoEntity {
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
+
+    @Column(name = "purged_at")
+    private LocalDateTime purgedAt;
 
     protected PackageRequestPhotoEntity() {
     }
@@ -58,4 +62,6 @@ public class PackageRequestPhotoEntity {
     public String getObjectKey() { return objectKey; }
     public int getPosition() { return position; }
     public LocalDateTime getCreatedAt() { return createdAt; }
+    public LocalDateTime getPurgedAt() { return purgedAt; }
+    public void markPurged(LocalDateTime at) { this.purgedAt = at; }
 }
