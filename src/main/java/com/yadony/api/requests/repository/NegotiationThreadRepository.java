@@ -129,6 +129,14 @@ public interface NegotiationThreadRepository extends JpaRepository<NegotiationTh
     List<NegotiationThreadEntity> findAwaitingPaymentExpired(@Param("cutoff") LocalDateTime cutoff);
 
     /**
+     * Fils en attente de paiement liés à un trajet : candidats à l'expiration anticipée
+     * quand le trajet ne peut plus être payé (cf. ExpirationScheduler).
+     */
+    @Query("SELECT t FROM NegotiationThreadEntity t WHERE t.status = 'AWAITING_PAYMENT' "
+         + "AND t.travelerAnnouncementId IS NOT NULL")
+    List<NegotiationThreadEntity> findAwaitingPaymentWithTrip();
+
+    /**
      * Fils dont le dépôt mobile money a dépassé son échéance, les plus anciens d'abord,
      * identifiants seulement : l'expiration relit le fil sous verrou de la demande.
      */

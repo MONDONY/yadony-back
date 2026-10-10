@@ -1569,6 +1569,55 @@ class NegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("accord sur un trajet terminé → 422 announcement/not-active, fil laissé OPEN")
+        void accept_onCompletedTrip_throws422AndKeepsThreadOpen() {
+            var ann = new com.yadony.api.matching.AnnouncementEntity();
+            UUID annId = UUID.randomUUID();
+            ann.setStatus(com.yadony.api.matching.AnnouncementStatus.COMPLETED);
+            thread.setTravelerAnnouncementId(annId);
+            var travelerProposal = NegotiationMessageEntity.create(
+                THREAD_ID, TRAVELER_ID, NegotiationMessageKind.PROPOSAL,
+                new java.math.BigDecimal("30"), null);
+            when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID))
+                .thenReturn(java.util.List.of(travelerProposal));
+            when(announcementRepo.findById(annId)).thenReturn(java.util.Optional.of(ann));
+
+            assertThatThrownBy(() -> service.accept(SENDER_ID, THREAD_ID, null))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("announcement/not-active");
+            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.OPEN);
+            verify(messageRepo, never()).save(any());
+            verify(threadRepo, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("accord après la date limite de remise → 409 handover-deadline-passed, fil laissé OPEN")
+        void accept_afterHandoverDeadline_throws409() {
+            var ann = new com.yadony.api.matching.AnnouncementEntity();
+            UUID annId = UUID.randomUUID();
+            ann.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
+            ann.setTimezone("UTC");
+            ann.setHandoverDeadline(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(30));
+            thread.setTravelerAnnouncementId(annId);
+            var travelerProposal = NegotiationMessageEntity.create(
+                THREAD_ID, TRAVELER_ID, NegotiationMessageKind.PROPOSAL,
+                new java.math.BigDecimal("30"), null);
+            when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID))
+                .thenReturn(java.util.List.of(travelerProposal));
+            when(announcementRepo.findById(annId)).thenReturn(java.util.Optional.of(ann));
+
+            assertThatThrownBy(() -> service.accept(SENDER_ID, THREAD_ID, null))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("handover-deadline-passed");
+            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.OPEN);
+            verify(messageRepo, never()).save(any());
+        }
+
+        @Test
         @DisplayName("tiers non participant → 403 not-thread-participant")
         void accept_thirdParty_throwsForbidden() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));

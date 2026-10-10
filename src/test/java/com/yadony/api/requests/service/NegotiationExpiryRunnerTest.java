@@ -180,4 +180,92 @@ class NegotiationExpiryRunnerTest {
         verify(requestRepo, never()).save(any());
         verifyNoInteractions(eventPublisher);
     }
+
+    // ─── Trajet devenu impayable (fil 594d3331, staging 10/10) ──────────────
+
+    private com.yadony.api.matching.AnnouncementEntity trip(com.yadony.api.matching.AnnouncementStatus status,
+                                                            java.time.LocalDateTime handoverDeadline) {
+        com.yadony.api.matching.AnnouncementEntity a = new com.yadony.api.matching.AnnouncementEntity();
+        setId(a, UUID.randomUUID());
+        a.setStatus(status);
+        a.setTimezone("UTC");
+        a.setHandoverDeadline(handoverDeadline);
+        return a;
+    }
+
+    @Test
+    @DisplayName("expireThreadIfTripUnavailable — trajet COMPLETED → fil EXPIRED (TRIP_UNAVAILABLE)")
+    void expireIfTripUnavailable_completedTrip_expires() {
+        NegotiationThreadEntity t = thread(NegotiationThreadStatus.AWAITING_PAYMENT);
+        var ann = trip(com.yadony.api.matching.AnnouncementStatus.COMPLETED, null);
+        t.setTravelerAnnouncementId(ann.getId());
+        when(threadRepo.findById(t.getId())).thenReturn(Optional.of(t));
+        when(announcementRepo.findById(ann.getId())).thenReturn(Optional.of(ann));
+
+        assertThat(runner.expireThreadIfTripUnavailable(t.getId())).isTrue();
+
+        assertThat(t.getStatus()).isEqualTo(NegotiationThreadStatus.EXPIRED);
+        verify(eventPublisher).publishEvent(any(NegotiationExpiredEvent.class));
+        verify(auditService).log(eq("NEGOTIATION_THREAD"), eq(t.getId()), eq("EXPIRED"), isNull(),
+            eq(java.util.Map.of("source", "SYSTEM", "reason", "TRIP_UNAVAILABLE")));
+    }
+
+    @Test
+    @DisplayName("expireThreadIfTripUnavailable — date limite de remise passée → fil EXPIRED")
+    void expireIfTripUnavailable_handoverPassed_expires() {
+        NegotiationThreadEntity t = thread(NegotiationThreadStatus.AWAITING_PAYMENT);
+        var ann = trip(com.yadony.api.matching.AnnouncementStatus.ACTIVE,
+            java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
+        t.setTravelerAnnouncementId(ann.getId());
+        when(threadRepo.findById(t.getId())).thenReturn(Optional.of(t));
+        when(announcementRepo.findById(ann.getId())).thenReturn(Optional.of(ann));
+
+        assertThat(runner.expireThreadIfTripUnavailable(t.getId())).isTrue();
+        assertThat(t.getStatus()).isEqualTo(NegotiationThreadStatus.EXPIRED);
+    }
+
+    @Test
+    @DisplayName("expireThreadIfTripUnavailable — trajet introuvable (supprimé) → fil EXPIRED")
+    void expireIfTripUnavailable_tripGone_expires() {
+        NegotiationThreadEntity t = thread(NegotiationThreadStatus.AWAITING_PAYMENT);
+        t.setTravelerAnnouncementId(UUID.randomUUID());
+        when(threadRepo.findById(t.getId())).thenReturn(Optional.of(t));
+        when(announcementRepo.findById(t.getTravelerAnnouncementId())).thenReturn(Optional.empty());
+
+        assertThat(runner.expireThreadIfTripUnavailable(t.getId())).isTrue();
+        assertThat(t.getStatus()).isEqualTo(NegotiationThreadStatus.EXPIRED);
+    }
+
+    @Test
+    @DisplayName("expireThreadIfTripUnavailable — trajet actif, remise à venir → fil intact")
+    void expireIfTripUnavailable_activeTrip_keepsThread() {
+        NegotiationThreadEntity t = thread(NegotiationThreadStatus.AWAITING_PAYMENT);
+        var ann = trip(com.yadony.api.matching.AnnouncementStatus.ACTIVE,
+            java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusDays(2));
+        t.setTravelerAnnouncementId(ann.getId());
+        when(threadRepo.findById(t.getId())).thenReturn(Optional.of(t));
+        when(announcementRepo.findById(ann.getId())).thenReturn(Optional.of(ann));
+
+        assertThat(runner.expireThreadIfTripUnavailable(t.getId())).isFalse();
+        assertThat(t.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_PAYMENT);
+        verify(threadRepo, never()).save(any());
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    @DisplayName("expireThreadIfTripUnavailable — fil déjà sorti d'AWAITING_PAYMENT ou sans trajet → rien")
+    void expireIfTripUnavailable_notAwaitingOrNoTrip_skips() {
+        NegotiationThreadEntity accepted = thread(NegotiationThreadStatus.ACCEPTED);
+        accepted.setTravelerAnnouncementId(UUID.randomUUID());
+        NegotiationThreadEntity noTrip = thread(NegotiationThreadStatus.AWAITING_PAYMENT);
+        when(threadRepo.findById(accepted.getId())).thenReturn(Optional.of(accepted));
+        when(threadRepo.findById(noTrip.getId())).thenReturn(Optional.of(noTrip));
+        UUID missing = UUID.randomUUID();
+        when(threadRepo.findById(missing)).thenReturn(Optional.empty());
+
+        assertThat(runner.expireThreadIfTripUnavailable(accepted.getId())).isFalse();
+        assertThat(runner.expireThreadIfTripUnavailable(noTrip.getId())).isFalse();
+        assertThat(runner.expireThreadIfTripUnavailable(missing)).isFalse();
+        verifyNoInteractions(announcementRepo, eventPublisher);
+    }
 }

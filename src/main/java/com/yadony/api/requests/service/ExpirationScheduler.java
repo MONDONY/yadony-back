@@ -79,6 +79,11 @@ public class ExpirationScheduler {
             UUID id = t.getId();
             safely(() -> runner.expireThread(id, NegotiationThreadStatus.AWAITING_PAYMENT, "AWAITING_PAYMENT_TIMEOUT"), "thread", id);
         }
+        // 4) AWAITING_PAYMENT sur un trajet devenu impayable (terminé, annulé, remise passée)
+        for (NegotiationThreadEntity t : threadRepo.findAwaitingPaymentWithTrip()) {
+            UUID id = t.getId();
+            safely(() -> runner.expireThreadIfTripUnavailable(id), "thread", id);
+        }
     }
 
     /**

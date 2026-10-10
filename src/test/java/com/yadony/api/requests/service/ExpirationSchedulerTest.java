@@ -131,4 +131,31 @@ class ExpirationSchedulerTest {
         verify(threadRepo).findAwaitingTripExpired(any());
         verify(threadRepo).findAwaitingPaymentExpired(any());
     }
+
+    @Test
+    @DisplayName("expireThreads() confie chaque fil AWAITING_PAYMENT lié à un trajet au contrôle de trajet impayable")
+    void expireThreads_delegatesTripUnavailableCheck() {
+        stubAllThreadFindersEmpty();
+        NegotiationThreadEntity t = thread(NegotiationThreadStatus.AWAITING_PAYMENT);
+        when(threadRepo.findAwaitingPaymentWithTrip()).thenReturn(List.of(t));
+
+        scheduler.expireThreads();
+
+        verify(runner).expireThreadIfTripUnavailable(t.getId());
+    }
+
+    @Test
+    @DisplayName("expireThreads() — conflit optimiste sur le contrôle de trajet → ignoré, lot poursuivi")
+    void expireThreads_tripUnavailableConflict_skipped() {
+        stubAllThreadFindersEmpty();
+        NegotiationThreadEntity a = thread(NegotiationThreadStatus.AWAITING_PAYMENT);
+        NegotiationThreadEntity b = thread(NegotiationThreadStatus.AWAITING_PAYMENT);
+        when(threadRepo.findAwaitingPaymentWithTrip()).thenReturn(List.of(a, b));
+        when(runner.expireThreadIfTripUnavailable(a.getId()))
+            .thenThrow(new ObjectOptimisticLockingFailureException(NegotiationThreadEntity.class, a.getId()));
+
+        scheduler.expireThreads();
+
+        verify(runner).expireThreadIfTripUnavailable(b.getId());
+    }
 }

@@ -47,6 +47,8 @@ public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     private static final String BASE_TYPE = "https://yadony.app/errors/";
+    private static final java.util.regex.Pattern KEBAB_CODE =
+            java.util.regex.Pattern.compile("[a-z0-9]+(-[a-z0-9]+)*");
 
     private final MessagesResolver messagesResolver;
 
@@ -157,6 +159,12 @@ public class GlobalExceptionHandler {
         } else {
             problem.setType(URI.create(BASE_TYPE + "generic"));
             problem.setTitle(reason != null ? reason : ex.getStatusCode().toString());
+            // Code kebab-case sans espace de noms (« handover-deadline-passed ») : exposé
+            // dans `code` comme les codes structurés, sinon le client ne lit qu'un titre
+            // et retombe sur un message générique (paiement d'un fil sur un trajet clos).
+            if (reason != null && KEBAB_CODE.matcher(reason).matches()) {
+                problem.setProperty("code", reason);
+            }
         }
 
         return ResponseEntity.status(ex.getStatusCode()).body(problem);
