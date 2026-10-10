@@ -104,4 +104,71 @@ class PhotoPurgeRunnerTest {
 
         verify(alerts).raise(eq("PHOTO_PURGE_STALE"), anyString(), anyMap());
     }
+
+    static class MutableClock extends Clock {
+        Instant now;
+        MutableClock(Instant now) { this.now = now; }
+        @Override public ZoneId getZone() { return ZoneOffset.UTC; }
+        @Override public Clock withZone(ZoneId zone) { return this; }
+        @Override public Instant instant() { return now; }
+    }
+
+    private void stubFailingRuns() {
+        when(settings.photoPurgeEnabled()).thenReturn(true);
+        when(tracking.purgeDue(anyInt(), anyBoolean(), anyInt(), any())).thenReturn(new PhotoPurgeOutcome(1, 0, 1));
+        when(requests.purgeDue(anyInt(), anyBoolean(), anyInt(), any())).thenReturn(PhotoPurgeOutcome.NONE);
+        PhotoPurgeRunEntity failing = new PhotoPurgeRunEntity("PURGE", false, "SCHEDULE", LocalDateTime.now());
+        failing.finish(new PhotoPurgeOutcome(1, 0, 1), LocalDateTime.now());
+        when(runs.findTop5ByKindOrderByStartedAtDesc("PURGE")).thenReturn(List.of(failing, failing, failing, failing, failing));
+    }
+
+    @Test
+    void failingAlert_isThrottledTo24h() {
+        MutableClock mc = new MutableClock(Instant.parse("2026-10-10T10:40:00Z"));
+        runner = new PhotoPurgeRunner(List.of(tracking, requests), settings, runs, alerts, mc);
+        stubFailingRuns();
+
+        runner.runPurge(PhotoPurgeRunner.TRIGGER_SCHEDULE);
+        mc.now = mc.now.plusSeconds(3600);
+        runner.runPurge(PhotoPurgeRunner.TRIGGER_SCHEDULE);
+        verify(alerts, times(1)).raise(eq("PHOTO_PURGE_FAILING"), anyString(), anyMap());
+
+        mc.now = mc.now.plusSeconds(25 * 3600);
+        runner.runPurge(PhotoPurgeRunner.TRIGGER_SCHEDULE);
+        verify(alerts, times(2)).raise(eq("PHOTO_PURGE_FAILING"), anyString(), anyMap());
+    }
+
+    @Test
+    void finalSaveThrows_runMarkedFailed_lockReleased_exceptionRethrown() {
+        when(settings.photoPurgeEnabled()).thenReturn(true);
+        when(tracking.purgeDue(anyInt(), anyBoolean(), anyInt(), any())).thenReturn(PhotoPurgeOutcome.NONE);
+        when(requests.purgeDue(anyInt(), anyBoolean(), anyInt(), any())).thenReturn(PhotoPurgeOutcome.NONE);
+        java.util.List<PhotoPurgeRunEntity> saved = new java.util.ArrayList<>();
+        when(runs.save(any())).thenAnswer(i -> {
+            saved.add(i.getArgument(0));
+            if (saved.size() >= 2) throw new IllegalStateException("db down");
+            return i.getArgument(0);
+        });
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> runner.runPurge(PhotoPurgeRunner.TRIGGER_SCHEDULE))
+                .isInstanceOf(IllegalStateException.class);
+
+        assertThat(runner.isRunning()).isFalse();
+        assertThat(saved.get(0).getError()).contains("db down");
+    }
+
+    @Test
+    void settingThrowsAfterRowCreated_rowMarkedFailed() {
+        when(settings.photoPurgeEnabled()).thenReturn(true);
+        when(settings.photoRetentionDays()).thenThrow(new IllegalStateException("settings down"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> runner.runPurge(PhotoPurgeRunner.TRIGGER_SCHEDULE))
+                .isInstanceOf(IllegalStateException.class);
+
+        org.mockito.ArgumentCaptor<PhotoPurgeRunEntity> cap = org.mockito.ArgumentCaptor.forClass(PhotoPurgeRunEntity.class);
+        verify(runs, atLeast(2)).save(cap.capture());
+        assertThat(cap.getAllValues().get(0).getError()).contains("settings down");
+        assertThat(cap.getAllValues().get(0).getFinishedAt()).isNotNull();
+        assertThat(runner.isRunning()).isFalse();
+    }
 }

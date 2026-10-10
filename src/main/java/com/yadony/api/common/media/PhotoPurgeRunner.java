@@ -30,12 +30,14 @@ public class PhotoPurgeRunner {
     public static final int BATCH_LIMIT = 500;
     static final int FAILING_RUNS_BEFORE_ALERT = 5;
     static final long STALE_HOURS = 48;
+    static final long ALERT_COOLDOWN_HOURS = 24;
 
     private final List<PhotoPurgeParticipant> participants;
     private final PlatformSettingsService settings;
     private final PhotoPurgeRunRepository runs;
     private final AdminAlertService alerts;
     private final Clock clock;
+    private final Map<String, LocalDateTime> lastAlertAt = new java.util.concurrent.ConcurrentHashMap<>();
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     @Autowired
@@ -63,37 +65,63 @@ public class PhotoPurgeRunner {
             return Optional.empty();
         }
         try {
-            warnIfStale();
             LocalDateTime now = now();
             boolean dryRun = !settings.photoPurgeEnabled();
-            int days = settings.photoRetentionDays();
             PhotoPurgeRunEntity run = runs.save(new PhotoPurgeRunEntity(
                     PhotoPurgeRunEntity.KIND_PURGE, dryRun, triggerSource, now));
-            PhotoPurgeOutcome total = PhotoPurgeOutcome.NONE;
-            for (PhotoPurgeParticipant p : participants) {
-                try {
-                    PhotoPurgeOutcome o = p.purgeDue(days, dryRun, BATCH_LIMIT, now);
-                    log.info("PhotoPurge[{}]{}: éligibles={} supprimées={} échecs={}",
-                            p.name(), dryRun ? " (à blanc)" : "", o.eligible(), o.deleted(), o.failed());
-                    total = total.plus(o);
-                } catch (RuntimeException e) {
-                    log.warn("PhotoPurge[{}] en échec : {}", p.name(), e.toString());
-                    total = total.plus(new PhotoPurgeOutcome(0, 0, 1));
+            try {
+                int days = settings.photoRetentionDays();
+                PhotoPurgeOutcome total = PhotoPurgeOutcome.NONE;
+                for (PhotoPurgeParticipant p : participants) {
+                    try {
+                        PhotoPurgeOutcome o = p.purgeDue(days, dryRun, BATCH_LIMIT, now);
+                        log.info("PhotoPurge[{}]{}: éligibles={} supprimées={} échecs={}",
+                                p.name(), dryRun ? " (à blanc)" : "", o.eligible(), o.deleted(), o.failed());
+                        total = total.plus(o);
+                    } catch (RuntimeException e) {
+                        log.warn("PhotoPurge[{}] en échec : {}", p.name(), e.toString());
+                        total = total.plus(new PhotoPurgeOutcome(0, 0, 1));
+                    }
                 }
+                run.finish(total, now());
+                runs.save(run);
+                alertIfFailing();
+                // Après le passage : l'alerte des 48 h mesure que la purge TOURNE (passage terminé
+                // sans exception, échecs partiels compris). Les échecs partiels relèvent de
+                // PHOTO_PURGE_FAILING. Une base neuve sans passage terminé ne lève rien : au
+                // déploiement, la purge tourne à blanc dès la première heure.
+                warnIfStale();
+                return Optional.of(run);
+            } catch (RuntimeException e) {
+                log.error("PhotoPurge: passage en erreur : {}", e.toString());
+                run.fail(e.toString(), now());
+                try {
+                    runs.save(run);
+                } catch (RuntimeException saveError) {
+                    log.error("PhotoPurge: journal du passage non enregistré : {}", saveError.toString());
+                }
+                throw e;
             }
-            run.finish(total, now());
-            runs.save(run);
-            alertIfFailing();
-            return Optional.of(run);
         } finally {
             unlock();
         }
     }
 
+    /** Une alerte par code au plus toutes les 24 h (AdminAlertService ne dédoublonne pas). */
+    private void raiseThrottled(String code, String detail, Map<String, Object> context) {
+        LocalDateTime now = now();
+        LocalDateTime last = lastAlertAt.get(code);
+        if (last != null && last.isAfter(now.minusHours(ALERT_COOLDOWN_HOURS))) {
+            return;
+        }
+        lastAlertAt.put(code, now);
+        alerts.raise(code, detail, context);
+    }
+
     private void alertIfFailing() {
         List<PhotoPurgeRunEntity> last = runs.findTop5ByKindOrderByStartedAtDesc(PhotoPurgeRunEntity.KIND_PURGE);
         if (last.size() >= FAILING_RUNS_BEFORE_ALERT && last.stream().allMatch(r -> r.getFailed() > 0)) {
-            alerts.raise("PHOTO_PURGE_FAILING",
+            raiseThrottled("PHOTO_PURGE_FAILING",
                     "La purge des photos échoue depuis " + FAILING_RUNS_BEFORE_ALERT + " passages",
                     Map.of("lastFailed", last.get(0).getFailed()));
         }
@@ -103,7 +131,7 @@ public class PhotoPurgeRunner {
         Optional<PhotoPurgeRunEntity> last = runs
                 .findTopByKindAndErrorIsNullAndFinishedAtIsNotNullOrderByStartedAtDesc(PhotoPurgeRunEntity.KIND_PURGE);
         if (last.isPresent() && last.get().getFinishedAt().isBefore(now().minusHours(STALE_HOURS))) {
-            alerts.raise("PHOTO_PURGE_STALE",
+            raiseThrottled("PHOTO_PURGE_STALE",
                     "Aucune purge des photos réussie depuis plus de " + STALE_HOURS + " h",
                     Map.of("lastSuccess", String.valueOf(last.get().getFinishedAt())));
         }
