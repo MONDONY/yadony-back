@@ -2,6 +2,7 @@ package com.yadony.api.requests.service;
 
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.MessagingMediaRetentionHold;
+import com.yadony.api.common.PackageRequestMediaRetentionHold;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.media.PhotoPurgeOutcome;
 import com.yadony.api.matching.BidEntity;
@@ -41,6 +42,7 @@ class PackageRequestPhotoPurgeParticipantTest {
     @Mock StorageService storage;
     @Mock AuditService audit;
     @Mock MessagingMediaRetentionHold hold;
+    @Mock PackageRequestMediaRetentionHold requestHold;
 
     static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 10, 10, 0);
     final UUID requestId = UUID.randomUUID();
@@ -48,7 +50,7 @@ class PackageRequestPhotoPurgeParticipantTest {
 
     @BeforeEach
     void setUp() {
-        participant = new PackageRequestPhotoPurgeParticipant(photos, requests, threads, bids, storage, audit, List.of(hold));
+        participant = new PackageRequestPhotoPurgeParticipant(photos, requests, threads, bids, storage, audit, List.of(hold), List.of(requestHold));
         lenient().when(photos.findRequestIdsWithLivePhotos()).thenReturn(List.of(requestId));
     }
 
@@ -107,13 +109,44 @@ class PackageRequestPhotoPurgeParticipantTest {
     }
 
     @Test
-    void absentOrSoftDeletedRequest_treatedAsDue_butBidsStillChecked() {
+    void absentOrSoftDeletedRequest_neverTouched() {
         when(requests.findById(requestId)).thenReturn(Optional.empty());
+
+        assertThat(participant.purgeDue(7, false, 500, NOW)).isEqualTo(PhotoPurgeOutcome.NONE);
+        verifyNoInteractions(storage);
+    }
+
+    @Test
+    void materializedBidNotFound_keepsPhotos() throws Exception {
+        when(requests.findById(requestId)).thenReturn(Optional.of(request(PackageRequestStatus.COMPLETED, 30)));
+        UUID bidId = UUID.randomUUID();
+        NegotiationThreadEntity thread = threadWithBid(bidId);
+        when(threads.findByPackageRequestId(requestId)).thenReturn(List.of(thread));
+        when(bids.findById(bidId)).thenReturn(Optional.empty());
+
+        assertThat(participant.purgeDue(7, false, 500, NOW)).isEqualTo(PhotoPurgeOutcome.NONE);
+        verifyNoInteractions(storage);
+    }
+
+    @Test
+    void openReportOnRequest_keepsPhotos() throws Exception {
+        when(requests.findById(requestId)).thenReturn(Optional.of(request(PackageRequestStatus.COMPLETED, 30)));
+        when(requestHold.holds(requestId)).thenReturn(true);
+
+        assertThat(participant.purgeDue(7, false, 500, NOW)).isEqualTo(PhotoPurgeOutcome.NONE);
+        verifyNoInteractions(storage);
+    }
+
+    @Test
+    void noOpenReportOnRequest_purgesNormally() throws Exception {
+        when(requests.findById(requestId)).thenReturn(Optional.of(request(PackageRequestStatus.COMPLETED, 30)));
+        when(requestHold.holds(requestId)).thenReturn(false);
         when(threads.findByPackageRequestId(requestId)).thenReturn(List.of());
         PackageRequestPhotoEntity p = new PackageRequestPhotoEntity(requestId, "package_requests/u/1.jpg", 0);
         when(photos.findByPackageRequestIdOrderByPositionAsc(requestId)).thenReturn(List.of(p));
 
         assertThat(participant.purgeDue(7, false, 500, NOW).deleted()).isEqualTo(1);
+        verify(storage).deleteFile("package_requests/u/1.jpg");
     }
 
     @Test

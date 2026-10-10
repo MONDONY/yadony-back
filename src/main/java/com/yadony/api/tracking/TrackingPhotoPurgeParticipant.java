@@ -78,10 +78,11 @@ public class TrackingPhotoPurgeParticipant implements PhotoPurgeParticipant {
 
     private boolean isDue(UUID bidId, int retentionDays, LocalDateTime now) {
         Optional<BidEntity> bid = bids.findById(bidId);
-        if (bid.isPresent()) {
-            Optional<LocalDateTime> end = BidMediaRetention.end(bid.get(), retentionDays);
-            if (end.isEmpty() || now.isBefore(end.get())) return false;
-        }
+        // Fermé par défaut : un bid soft-deleted (ou absent) peut porter un litige ou un
+        // signalement ; ses photos restent référencées, le rapprochement ne les touche pas.
+        if (bid.isEmpty()) return false;
+        Optional<LocalDateTime> end = BidMediaRetention.end(bid.get(), retentionDays);
+        if (end.isEmpty() || now.isBefore(end.get())) return false;
         return holds.stream().noneMatch(h -> h.holds(bidId, List.of()));
     }
 

@@ -2,6 +2,7 @@ package com.yadony.api.requests.service;
 
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.MessagingMediaRetentionHold;
+import com.yadony.api.common.PackageRequestMediaRetentionHold;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.media.PhotoPurgeOutcome;
 import com.yadony.api.common.media.PhotoPurgeParticipant;
@@ -50,11 +51,13 @@ public class PackageRequestPhotoPurgeParticipant implements PhotoPurgeParticipan
     private final StorageService storage;
     private final AuditService audit;
     private final List<MessagingMediaRetentionHold> holds;
+    private final List<PackageRequestMediaRetentionHold> requestHolds;
 
     public PackageRequestPhotoPurgeParticipant(PackageRequestPhotoRepository photos, PackageRequestRepository requests,
                                                NegotiationThreadRepository threads, BidRepository bids,
                                                StorageService storage, AuditService audit,
-                                               List<MessagingMediaRetentionHold> holds) {
+                                               List<MessagingMediaRetentionHold> holds,
+                                               List<PackageRequestMediaRetentionHold> requestHolds) {
         this.photos = photos;
         this.requests = requests;
         this.threads = threads;
@@ -62,6 +65,7 @@ public class PackageRequestPhotoPurgeParticipant implements PhotoPurgeParticipan
         this.storage = storage;
         this.audit = audit;
         this.holds = holds;
+        this.requestHolds = requestHolds;
     }
 
     @Override
@@ -99,21 +103,21 @@ public class PackageRequestPhotoPurgeParticipant implements PhotoPurgeParticipan
     }
 
     private boolean isDue(UUID requestId, int days, LocalDateTime now) {
-        // findById est filtré par @SQLRestriction : une demande absente ou soft-deleted
-        // est traitée comme échue côté demande, ses bids matérialisés restent vérifiés.
+        // Fermé par défaut : une demande soft-deleted (ou absente) peut porter un litige ou un
+        // signalement ; ses photos restent référencées, le rapprochement ne les touche pas.
         PackageRequestEntity request = requests.findById(requestId).orElse(null);
-        if (request != null) {
-            if (!CLOSED.contains(request.getStatus())) return false;
-            if (request.getUpdatedAt() == null || now.isBefore(request.getUpdatedAt().plusDays(days))) return false;
-        }
+        if (request == null) return false;
+        if (!CLOSED.contains(request.getStatus())) return false;
+        if (request.getUpdatedAt() == null || now.isBefore(request.getUpdatedAt().plusDays(days))) return false;
+        if (requestHolds.stream().anyMatch(h -> h.holds(requestId))) return false;
         for (NegotiationThreadEntity t : threads.findByPackageRequestId(requestId)) {
             UUID bidId = t.getMaterializedBidId();
             if (bidId == null) continue;
             Optional<BidEntity> bid = bids.findById(bidId);
-            if (bid.isPresent()) {
-                Optional<LocalDateTime> end = BidMediaRetention.end(bid.get(), days);
-                if (end.isEmpty() || now.isBefore(end.get())) return false;
-            }
+            // Bid matérialisé introuvable (soft-deleted) : fermé par défaut, on garde.
+            if (bid.isEmpty()) return false;
+            Optional<LocalDateTime> end = BidMediaRetention.end(bid.get(), days);
+            if (end.isEmpty() || now.isBefore(end.get())) return false;
             if (holds.stream().anyMatch(h -> h.holds(bidId, List.of()))) return false;
         }
         return true;

@@ -72,6 +72,13 @@ class TrackingPhotoPurgeParticipantTest {
     }
 
     @Test
+    void bidNotFound_keepsPhotos() {
+        when(bids.findById(bidId)).thenReturn(Optional.empty());
+        assertThat(participant.purgeDue(7, false, 500, NOW)).isEqualTo(PhotoPurgeOutcome.NONE);
+        verifyNoInteractions(storage);
+    }
+
+    @Test
     void deliveredRecently_untouched() {
         when(bids.findById(bidId)).thenReturn(Optional.of(completedDaysAgo(3)));
         assertThat(participant.purgeDue(7, false, 500, NOW)).isEqualTo(PhotoPurgeOutcome.NONE);
