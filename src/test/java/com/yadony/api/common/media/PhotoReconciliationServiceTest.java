@@ -352,4 +352,51 @@ class PhotoReconciliationServiceTest {
         verify(storage).listObjectsOlderThan(eq("bids/"), any(), anyInt());
         verify(storage, never()).deleteFile(any());
     }
+
+    // ---------------------------------------------------------------- levée ponctuelle de la garde
+
+    private void givenGuardTrippedOnTracking() {
+        List<String> listed = new ArrayList<>();
+        for (int i = 0; i < 101; i++) listed.add("tracking/b/orphan-" + i + ".jpg");
+        Set<String> live = IntStream.range(0, 49).mapToObj(i -> "tracking/b/live-" + i + ".jpg")
+                .collect(Collectors.toSet());
+        listed.addAll(live);
+        when(trackingSource.referencedKeys("tracking/")).thenReturn(live);
+        when(storage.listObjectsOlderThan(eq("tracking/"), any(), anyInt())).thenReturn(listed);
+    }
+
+    @Test
+    void allowBulk_false_guardStillBlocks() {
+        when(settings.photoPurgeEnabled()).thenReturn(true);
+        givenGuardTrippedOnTracking();
+
+        PhotoPurgeRunEntity run = service.reconcile(PhotoPurgeRunner.TRIGGER_ADMIN, false).orElseThrow();
+
+        verify(storage, never()).deleteFile(anyString());
+        assertThat(run.getFailed()).isEqualTo(1);
+    }
+
+    @Test
+    void allowBulk_true_switchOn_deletesDespiteGuard() {
+        when(settings.photoPurgeEnabled()).thenReturn(true);
+        givenGuardTrippedOnTracking();
+
+        PhotoPurgeRunEntity run = service.reconcile(PhotoPurgeRunner.TRIGGER_ADMIN, true).orElseThrow();
+
+        verify(storage, times(101)).deleteFile(org.mockito.ArgumentMatchers.startsWith("tracking/b/orphan-"));
+        assertThat(run.getDeleted()).isEqualTo(101);
+        assertThat(run.getFailed()).isZero();
+    }
+
+    @Test
+    void allowBulk_true_switchOff_stillDeletesNothing() {
+        when(settings.photoPurgeEnabled()).thenReturn(false);
+        givenGuardTrippedOnTracking();
+
+        PhotoPurgeRunEntity run = service.reconcile(PhotoPurgeRunner.TRIGGER_ADMIN, true).orElseThrow();
+
+        verify(storage, never()).deleteFile(anyString());
+        assertThat(run.isDryRun()).isTrue();
+        assertThat(run.getEligible()).isEqualTo(101);
+    }
 }

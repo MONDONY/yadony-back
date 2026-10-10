@@ -85,6 +85,15 @@ public class PhotoReconciliationService {
 
     /** Vide si un passage (purge ou rapprochement) est déjà en cours. */
     public Optional<PhotoPurgeRunEntity> reconcile(String triggerSource) {
+        return reconcile(triggerSource, false);
+    }
+
+    /**
+     * {@code allowBulk} lève ponctuellement la garde de volume pour ce passage (premier passage
+     * réel : l'historique d'avant chantier dépasse 50 % d'orphelins). Réservé à l'admin, le
+     * scheduler ne le passe jamais ; le reste (interrupteur, sources dédiées, budget, âge) est inchangé.
+     */
+    public Optional<PhotoPurgeRunEntity> reconcile(String triggerSource, boolean allowBulk) {
         if (!runner.tryLock()) {
             log.info("PhotoReconciliation: passage déjà en cours, {} ignoré", triggerSource);
             return Optional.empty();
@@ -109,7 +118,7 @@ public class PhotoReconciliationService {
                     // il doit être complet. En réel, au plus MAX_DELETES_PER_RUN suppressions.
                     int budget = dryRun ? Integer.MAX_VALUE : MAX_DELETES_PER_RUN - total.eligible();
                     if (budget <= 0) break;
-                    total = total.plus(reconcilePrefix(prefix, cutoff, budget, dryRun));
+                    total = total.plus(reconcilePrefix(prefix, cutoff, budget, dryRun, allowBulk));
                 }
                 run.finish(total, now());
                 runs.save(run);
@@ -137,7 +146,8 @@ public class PhotoReconciliationService {
                 .toList();
     }
 
-    private PhotoPurgeOutcome reconcilePrefix(String prefix, Instant cutoff, int budget, boolean dryRun) {
+    private PhotoPurgeOutcome reconcilePrefix(String prefix, Instant cutoff, int budget, boolean dryRun,
+                                           boolean allowBulk) {
         Set<String> live;
         List<String> listed;
         try {
@@ -155,11 +165,17 @@ public class PhotoReconciliationService {
         }
         List<String> orphans = listed.stream().filter(k -> !live.contains(k)).toList();
         if (guardTripped(prefix, orphans.size(), listed.size())) {
-            log.error("PhotoReconciliation[{}]{}: {} orphelins sur {} objets listés (plus de {} %), "
-                            + "préfixe suspendu : vérifier ses sources de références avant tout passage",
-                    prefix, dryRun ? " (à blanc)" : "", orphans.size(), listed.size(),
-                    (int) (GUARD_MAX_ORPHAN_SHARE * 100));
-            return new PhotoPurgeOutcome(0, 0, 1);
+            if (allowBulk) {
+                log.warn("PhotoReconciliation[{}]{}: garde de volume levée par l'admin, {} orphelins sur {} "
+                                + "objets listés traités malgré tout",
+                        prefix, dryRun ? " (à blanc)" : "", orphans.size(), listed.size());
+            } else {
+                log.error("PhotoReconciliation[{}]{}: {} orphelins sur {} objets listés (plus de {} %), "
+                                + "préfixe suspendu : vérifier ses sources de références avant tout passage",
+                        prefix, dryRun ? " (à blanc)" : "", orphans.size(), listed.size(),
+                        (int) (GUARD_MAX_ORPHAN_SHARE * 100));
+                return new PhotoPurgeOutcome(0, 0, 1);
+            }
         }
         int eligible = 0;
         int deleted = 0;
