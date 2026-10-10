@@ -47,7 +47,7 @@ class StorageServiceStoreImageTest {
         f.setAccessible(true);
         f.set(storage, "b");
         lenient().when(settings.photoUploadDailyQuota()).thenReturn(60);
-        lenient().when(settings.trackingPhotosMaxPerBid()).thenReturn(6);
+        lenient().when(settings.trackingPhotosMaxPerBid()).thenReturn(12);
     }
 
     static MockMultipartFile jpeg(int w, int h) throws Exception {
@@ -87,7 +87,7 @@ class StorageServiceStoreImageTest {
 
     @Test
     void dailyQuotaReached_is429_andNothingStored() throws Exception {
-        when(uploads.countByOwnerIdAndCreatedAtAfter(eq(owner), any())).thenReturn(60L);
+        when(uploads.countByOwnerIdAndPurposeNotAndCreatedAtAfter(eq(owner), eq(MediaPurpose.TRACKING), any())).thenReturn(60L);
         assertThatThrownBy(() -> storage.storeImage(jpeg(10, 10),
                 StorageService.MediaUpload.of("reports/" + owner + "/", owner, MediaPurpose.REPORT)))
                 .isInstanceOfSatisfying(YadonyBusinessException.class,
@@ -100,18 +100,53 @@ class StorageServiceStoreImageTest {
     void quotaExempt_skipsCount() throws Exception {
         storage.storeImage(jpeg(10, 10),
                 new StorageService.MediaUpload("support/admin/" + owner + "/", owner, MediaPurpose.SUPPORT, null, true));
-        verify(uploads, never()).countByOwnerIdAndCreatedAtAfter(any(), any());
+        verify(uploads, never()).countByOwnerIdAndPurposeNotAndCreatedAtAfter(any(), any(), any());
         verify(uploads).saveAndFlush(any(MediaUploadEntity.class));
     }
 
     @Test
-    void trackingCapReached_is429() throws Exception {
+    void trackingCapReachedWithin24h_is429() throws Exception {
         UUID bid = UUID.randomUUID();
-        when(uploads.countByBidIdAndPurpose(bid, MediaPurpose.TRACKING)).thenReturn(6L);
+        ArgumentCaptor<java.time.LocalDateTime> since = ArgumentCaptor.forClass(java.time.LocalDateTime.class);
+        when(uploads.countByBidIdAndPurposeAndCreatedAtAfter(eq(bid), eq(MediaPurpose.TRACKING), since.capture()))
+                .thenReturn(12L);
         assertThatThrownBy(() -> storage.storeImage(jpeg(10, 10), StorageService.MediaUpload.tracking(bid, owner)))
-                .isInstanceOfSatisfying(YadonyBusinessException.class,
-                        e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS));
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+                    assertThat(e.getErrorCode()).isEqualTo("tracking-photo-limit-reached");
+                });
         verifyNoInteractions(s3Client);
+        // Fenêtre glissante de 24 h, pas « depuis toujours ».
+        java.time.LocalDateTime expected = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(24);
+        assertThat(since.getValue()).isBetween(expected.minusMinutes(1), expected.plusMinutes(1));
+    }
+
+    @Test
+    void trackingUploadsOlderThan24h_doNotBlockA13th() throws Exception {
+        UUID bid = UUID.randomUUID();
+        // 12 envois il y a 25 h : hors fenêtre, la requête sur 24 h n'en compte aucun.
+        when(uploads.countByBidIdAndPurposeAndCreatedAtAfter(eq(bid), eq(MediaPurpose.TRACKING), any()))
+                .thenReturn(0L);
+        assertThat(storage.storeImage(jpeg(10, 10), StorageService.MediaUpload.tracking(bid, owner)))
+                .startsWith("tracking/" + bid + "/");
+    }
+
+    @Test
+    void trackingUpload_isExemptFromDailyQuota_evenAfter60RecentUploads() throws Exception {
+        UUID bid = UUID.randomUUID();
+        lenient().when(uploads.countByOwnerIdAndPurposeNotAndCreatedAtAfter(eq(owner), any(), any()))
+                .thenReturn(60L);
+        assertThat(storage.storeImage(jpeg(10, 10), StorageService.MediaUpload.tracking(bid, owner)))
+                .startsWith("tracking/" + bid + "/");
+        verify(uploads, never()).countByOwnerIdAndPurposeNotAndCreatedAtAfter(any(), any(), any());
+        verify(uploads).saveAndFlush(any(MediaUploadEntity.class));
+    }
+
+    @Test
+    void dailyQuota_excludesTrackingUploadsFromTheCount() throws Exception {
+        storage.storeImage(jpeg(10, 10),
+                StorageService.MediaUpload.of("bids/" + owner + "/", owner, MediaPurpose.BID));
+        verify(uploads).countByOwnerIdAndPurposeNotAndCreatedAtAfter(eq(owner), eq(MediaPurpose.TRACKING), any());
     }
 
     @Test
@@ -160,7 +195,7 @@ class StorageServiceStoreImageTest {
     void concurrentUploads_neverExceedQuota() throws Exception {
         when(settings.photoUploadDailyQuota()).thenReturn(5);
         java.util.concurrent.atomic.AtomicInteger rows = new java.util.concurrent.atomic.AtomicInteger();
-        when(uploads.countByOwnerIdAndCreatedAtAfter(eq(owner), any())).thenAnswer(i -> {
+        when(uploads.countByOwnerIdAndPurposeNotAndCreatedAtAfter(eq(owner), eq(MediaPurpose.TRACKING), any())).thenAnswer(i -> {
             long n = rows.get();
             Thread.sleep(5); // élargit la fenêtre de course entre compter et insérer
             return n;

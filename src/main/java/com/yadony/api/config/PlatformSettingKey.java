@@ -51,7 +51,8 @@ public enum PlatformSettingKey {
     /** Défauts des réglages photos : aucune property, le panel admin est le seul levier. */
     public static final int DEFAULT_PHOTO_RETENTION_DAYS = 7;
     public static final int DEFAULT_PHOTO_UPLOAD_DAILY_QUOTA = 60;
-    public static final int DEFAULT_TRACKING_PHOTOS_MAX_PER_BID = 6;
+    /** Photos de suivi par bid sur 24 h glissantes (bornes admin 1 à 20). */
+    public static final int DEFAULT_TRACKING_PHOTOS_MAX_PER_BID = 12;
 
     private final String key;
     private final PlatformSettingType type;

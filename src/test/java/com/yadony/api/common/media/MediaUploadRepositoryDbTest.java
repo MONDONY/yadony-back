@@ -26,9 +26,15 @@ class MediaUploadRepositoryDbTest {
         repository.save(new MediaUploadEntity("bids/" + owner + "/3.jpg", owner, MediaPurpose.BID, null, 3000));
 
         LocalDateTime dayAgo = LocalDateTime.now(ZoneOffset.UTC).minusHours(24);
-        assertThat(repository.countByOwnerIdAndCreatedAtAfter(owner, dayAgo)).isEqualTo(3);
-        assertThat(repository.countByOwnerIdAndCreatedAtAfter(UUID.randomUUID(), dayAgo)).isZero();
-        assertThat(repository.countByBidIdAndPurpose(bid, MediaPurpose.TRACKING)).isEqualTo(2);
+        // Le quota journalier ignore les photos de suivi (bornées par bid).
+        assertThat(repository.countByOwnerIdAndPurposeNotAndCreatedAtAfter(owner, MediaPurpose.TRACKING, dayAgo))
+                .isEqualTo(1);
+        assertThat(repository.countByOwnerIdAndPurposeNotAndCreatedAtAfter(
+                UUID.randomUUID(), MediaPurpose.TRACKING, dayAgo)).isZero();
+        assertThat(repository.countByBidIdAndPurposeAndCreatedAtAfter(bid, MediaPurpose.TRACKING, dayAgo))
+                .isEqualTo(2);
+        assertThat(repository.countByBidIdAndPurposeAndCreatedAtAfter(bid, MediaPurpose.TRACKING,
+                LocalDateTime.now(ZoneOffset.UTC).plusHours(1))).isZero();
 
         UploadStats stats = repository.statsSince(dayAgo);
         assertThat(stats.count()).isEqualTo(3);

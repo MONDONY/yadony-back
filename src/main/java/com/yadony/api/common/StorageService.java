@@ -193,17 +193,25 @@ public class StorageService {
         return Math.floorMod(id.hashCode(), QUOTA_LOCKS.length);
     }
 
+    /**
+     * Quota journalier par utilisateur (hors tracking) et plafond des photos de suivi par bid,
+     * tous deux sur 24 h glissantes. Le tracking est exempté du quota journalier : une étape de
+     * suivi (départ, transit, livraison) ne doit jamais être bloquée par les autres envois du
+     * voyageur, et un ancien client qui renvoie la photo à chaque essai retrouve son plafond
+     * le lendemain au lieu d'être bloqué à vie sur ce colis.
+     */
     private void enforceQuotas(MediaUpload upload) {
         LocalDateTime since = LocalDateTime.now(ZoneOffset.UTC).minusHours(24);
-        if (mediaUploadRepository.countByOwnerIdAndCreatedAtAfter(upload.ownerId(), since)
-                >= settings.photoUploadDailyQuota()) {
+        boolean tracking = upload.purpose() == MediaPurpose.TRACKING;
+        if (!tracking && mediaUploadRepository.countByOwnerIdAndPurposeNotAndCreatedAtAfter(
+                upload.ownerId(), MediaPurpose.TRACKING, since) >= settings.photoUploadDailyQuota()) {
             throw new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS,
                     "photo-upload-quota-exceeded", "Too Many Requests",
                     "Vous avez atteint la limite de photos pour aujourd'hui. Réessayez demain.");
         }
-        if (upload.purpose() == MediaPurpose.TRACKING && upload.bidId() != null
-                && mediaUploadRepository.countByBidIdAndPurpose(upload.bidId(), MediaPurpose.TRACKING)
-                        >= settings.trackingPhotosMaxPerBid()) {
+        if (tracking && upload.bidId() != null
+                && mediaUploadRepository.countByBidIdAndPurposeAndCreatedAtAfter(
+                        upload.bidId(), MediaPurpose.TRACKING, since) >= settings.trackingPhotosMaxPerBid()) {
             throw new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS,
                     "tracking-photo-limit-reached", "Too Many Requests",
                     "Ce colis a déjà le nombre maximum de photos de suivi.");

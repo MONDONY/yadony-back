@@ -180,7 +180,7 @@ class StorageServiceMessagingImageTest {
     @DisplayName("quota journalier atteint → 429, aucun putObject")
     void storeMessagingImage_quotaReached_is429() throws Exception {
         java.util.UUID owner = java.util.UUID.randomUUID();
-        when(uploads.countByOwnerIdAndCreatedAtAfter(org.mockito.ArgumentMatchers.eq(owner), any())).thenReturn(60L);
+        when(uploads.countByOwnerIdAndPurposeNotAndCreatedAtAfter(org.mockito.ArgumentMatchers.eq(owner), org.mockito.ArgumentMatchers.eq(com.yadony.api.common.media.MediaPurpose.TRACKING), any())).thenReturn(60L);
 
         assertThatThrownBy(() -> storageService.storeMessagingImage(
                 "messaging/conv_1/", "AbC123", jpegWithExif(), "image/jpeg", owner))

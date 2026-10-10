@@ -139,13 +139,13 @@ public class PlatformSettingsService {
                 PlatformSettingKey.DEFAULT_PHOTO_RETENTION_DAYS);
     }
 
-    /** Envois de photos autorisés par utilisateur sur 24 h glissantes, tous endpoints confondus. */
+    /** Envois de photos autorisés par utilisateur sur 24 h glissantes, tous endpoints sauf le tracking. */
     public int photoUploadDailyQuota() {
         return intOr(PlatformSettingKey.PHOTO_UPLOAD_DAILY_QUOTA,
                 PlatformSettingKey.DEFAULT_PHOTO_UPLOAD_DAILY_QUOTA);
     }
 
-    /** Photos de suivi (départ, transit, livraison) acceptées par bid. */
+    /** Photos de suivi (départ, transit, livraison) acceptées par bid sur 24 h glissantes. */
     public int trackingPhotosMaxPerBid() {
         return intOr(PlatformSettingKey.TRACKING_PHOTOS_MAX_PER_BID,
                 PlatformSettingKey.DEFAULT_TRACKING_PHOTOS_MAX_PER_BID);

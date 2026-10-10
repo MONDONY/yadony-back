@@ -41,7 +41,7 @@ class PlatformSettingsPhotoKeysTest {
         when(cache.all()).thenReturn(Map.of());
         assertThat(service.photoRetentionDays()).isEqualTo(7);
         assertThat(service.photoUploadDailyQuota()).isEqualTo(60);
-        assertThat(service.trackingPhotosMaxPerBid()).isEqualTo(6);
+        assertThat(service.trackingPhotosMaxPerBid()).isEqualTo(12);
         assertThat(service.photoPurgeEnabled()).isFalse();
     }
 

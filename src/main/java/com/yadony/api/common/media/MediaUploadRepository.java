@@ -9,9 +9,11 @@ import java.util.UUID;
 
 public interface MediaUploadRepository extends JpaRepository<MediaUploadEntity, UUID> {
 
-    long countByOwnerIdAndCreatedAtAfter(UUID ownerId, LocalDateTime since);
+    /** Quota journalier : envois du propriétaire depuis {@code since}, hors {@code excluded} (le tracking). */
+    long countByOwnerIdAndPurposeNotAndCreatedAtAfter(UUID ownerId, MediaPurpose excluded, LocalDateTime since);
 
-    long countByBidIdAndPurpose(UUID bidId, MediaPurpose purpose);
+    /** Plafond de suivi : envois du bid pour {@code purpose} depuis {@code since} (24 h glissantes). */
+    long countByBidIdAndPurposeAndCreatedAtAfter(UUID bidId, MediaPurpose purpose, LocalDateTime since);
 
     /** Nombre et octets des envois depuis {@code since} : carte « Stockage photos » de l'admin. */
     @Query("SELECT new com.yadony.api.common.media.UploadStats(COUNT(m), COALESCE(SUM(m.sizeBytes), 0)) "
