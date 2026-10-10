@@ -12,6 +12,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
@@ -69,6 +70,19 @@ class StorageServiceStoreImageTest {
         assertThat(row.getValue().getObjectKey()).isEqualTo(key);
         assertThat(row.getValue().getPurpose()).isEqualTo(MediaPurpose.BID);
         assertThat(row.getValue().getSizeBytes()).isEqualTo(put.getValue().contentLength());
+    }
+
+    @Test
+    void insideActiveTransaction_stillStores_andWarns() throws Exception {
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            String key = storage.storeImage(jpeg(10, 10),
+                    StorageService.MediaUpload.of("bids/" + owner + "/", owner, MediaPurpose.BID));
+            assertThat(key).startsWith("bids/" + owner + "/");
+            verify(uploads).saveAndFlush(any(MediaUploadEntity.class));
+        } finally {
+            TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
     }
 
     @Test

@@ -2,13 +2,13 @@ package com.yadony.api.matching;
 
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.media.MediaPurpose;
 import com.yadony.api.matching.dto.BidPhotoResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,13 +32,8 @@ public class BidPhotoService {
 
     /** Upload une photo sous le prefix bids/{senderId}/ ; renvoie la clé S3. */
     public String uploadPhoto(UUID senderId, MultipartFile file) {
-        try {
-            return storageService.uploadFile(file, PHOTO_PREFIX + senderId + "/");
-        } catch (IOException e) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "photo-upload-failed", "Photo Upload Failed",
-                    "Impossible d'enregistrer la photo");
-        }
+        return storageService.storeImage(file, StorageService.MediaUpload.of(
+                PHOTO_PREFIX + senderId + "/", senderId, MediaPurpose.BID));
     }
 
     /**

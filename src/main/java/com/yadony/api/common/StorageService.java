@@ -7,6 +7,7 @@ import com.yadony.api.config.PlatformSettingsService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -101,44 +102,6 @@ public class StorageService {
     }
 
     /**
-     * Upload a file to S3 under the given prefix.
-     * Allowed prefixes: "tracking/" and "users/"
-     *
-     * @return the S3 object key
-     *
-     * @deprecated remplacé par {@link #storeImage}; supprimé avec ses appelants (tâche 5).
-     */
-    @Deprecated
-    public String uploadFile(MultipartFile file, String prefix) throws IOException {
-        log.info("uploadFile: prefix={}, originalFilename={}, contentType={}, size={} bytes",
-            prefix, file.getOriginalFilename(), file.getContentType(), file.getSize());
-        validateFile(file);
-        validatePrefix(prefix);
-
-        String key = prefix + Instant.now().toEpochMilli() + "_" + UUID.randomUUID() + getExtension(file);
-
-        PutObjectRequest request = PutObjectRequest.builder()
-                .bucket(bucket)
-                .key(key)
-                .contentType(file.getContentType())
-                .contentLength(file.getSize())
-                .build();
-
-        long t0 = System.currentTimeMillis();
-        try {
-            s3Client.putObject(request, RequestBody.fromBytes(file.getBytes()));
-            log.info("uploadFile: putObject OK key={} bucket={} ({} ms)",
-                key, bucket, System.currentTimeMillis() - t0);
-        } catch (Exception ex) {
-            log.error("uploadFile: putObject FAILED key={} bucket={} ({} ms): {}",
-                key, bucket, System.currentTimeMillis() - t0, ex.toString(), ex);
-            throw ex;
-        }
-
-        return key;
-    }
-
-    /**
      * Destination et propriétaire d'un envoi. {@code bidId} n'est utile qu'au tracking
      * (plafond par bid) ; {@code quotaExempt} est réservé aux envois d'un admin.
      */
@@ -194,6 +157,10 @@ public class StorageService {
      * Les envois exemptés (admin) ne sont pas comptés mais sont inscrits quand même.
      */
     private MediaUploadEntity reserve(String key, MediaUpload upload) {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            log.warn("storeImage: réservation de quota dans une transaction englobante : "
+                    + "le quota peut être contourné (key={})", key);
+        }
         MediaUploadEntity row = new MediaUploadEntity(key, upload.ownerId(), upload.purpose(), upload.bidId(), 0L);
         if (upload.quotaExempt()) {
             mediaUploadRepository.saveAndFlush(row);
@@ -272,7 +239,7 @@ public class StorageService {
     /**
      * Valide une photo envoyée (non vide, 5 Mo, JPEG/PNG/WebP, octets d'en-tête cohérents
      * avec le type déclaré) sans la stocker. Mêmes règles et mêmes erreurs que
-     * {@link #uploadFile}.
+     * {@link #storeImage}.
      */
     public void validateImageUpload(MultipartFile file) {
         validateFile(file);
@@ -531,15 +498,5 @@ public class StorageService {
             throw new YadonyBusinessException(HttpStatus.BAD_REQUEST,
                     "INVALID_PREFIX", "Invalid Prefix", "Invalid upload destination");
         }
-    }
-
-    private String getExtension(MultipartFile file) {
-        String contentType = file.getContentType();
-        if (contentType == null) return ".jpg";
-        return switch (contentType) {
-            case "image/png" -> ".png";
-            case "image/webp" -> ".webp";
-            default -> ".jpg";
-        };
     }
 }

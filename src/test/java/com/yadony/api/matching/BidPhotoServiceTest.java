@@ -2,6 +2,7 @@ package com.yadony.api.matching;
 
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.media.MediaPurpose;
 import com.yadony.api.matching.dto.BidPhotoResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -73,21 +74,29 @@ class BidPhotoServiceTest {
     @Test
     void uploadPhoto_returnsKeyFromStorage() throws IOException {
         UUID sender = UUID.randomUUID();
-        when(storageService.uploadFile(eq(file), eq("bids/" + sender + "/")))
+        when(storageService.storeImage(eq(file), any(StorageService.MediaUpload.class)))
                 .thenReturn("bids/" + sender + "/1.jpg");
 
         assertThat(service.uploadPhoto(sender, file)).isEqualTo("bids/" + sender + "/1.jpg");
+
+        ArgumentCaptor<StorageService.MediaUpload> captor = ArgumentCaptor.forClass(StorageService.MediaUpload.class);
+        verify(storageService).storeImage(eq(file), captor.capture());
+        assertThat(captor.getValue().prefix()).isEqualTo("bids/" + sender + "/");
+        assertThat(captor.getValue().ownerId()).isEqualTo(sender);
+        assertThat(captor.getValue().purpose()).isEqualTo(MediaPurpose.BID);
+        assertThat(captor.getValue().quotaExempt()).isFalse();
     }
 
     @Test
-    void uploadPhoto_ioException_throws422() throws IOException {
+    void uploadPhoto_quotaExceeded_propagates429() {
         UUID sender = UUID.randomUUID();
-        when(storageService.uploadFile(any(), any())).thenThrow(new IOException("disk"));
+        when(storageService.storeImage(any(), any())).thenThrow(new YadonyBusinessException(
+                HttpStatus.TOO_MANY_REQUESTS, "photo-upload-quota-exceeded", "Too Many Requests", "max"));
 
         assertThatThrownBy(() -> service.uploadPhoto(sender, file))
                 .isInstanceOf(YadonyBusinessException.class)
-                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
-                        .isEqualTo("photo-upload-failed"));
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
+                        .isEqualTo(HttpStatus.TOO_MANY_REQUESTS));
     }
 
     @Test

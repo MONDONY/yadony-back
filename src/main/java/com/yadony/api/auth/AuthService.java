@@ -15,6 +15,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.FirebaseSignInProvider;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.media.MediaPurpose;
 import com.yadony.api.common.i18n.MessagesResolver;
 import com.google.firebase.auth.FirebaseToken;
 import org.slf4j.Logger;
@@ -27,7 +28,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.io.IOException;
 import java.time.Instant;
 import java.util.HashSet;
 import java.util.List;
@@ -715,8 +715,12 @@ public class AuthService {
                 .map(this::toResponse);
     }
 
-    @Transactional
-    public UserResponse updateAvatar(String firebaseUid, MultipartFile file) throws IOException {
+    /**
+     * Volontairement NON transactionnelle : {@code storeImage} réserve le quota par un
+     * {@code saveAndFlush} qui doit être commité immédiatement (visible des autres requêtes).
+     * Les collections de {@code UserEntity} sont EAGER, {@code toResponse} n'a donc pas besoin de session.
+     */
+    public UserResponse updateAvatar(String firebaseUid, MultipartFile file) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND,
@@ -730,16 +734,24 @@ public class AuthService {
                     "File Missing",
                     "Fichier manquant");
         }
-        if (file.getSize() > 10L * 1024 * 1024) {
+        if (file.getSize() > 5L * 1024 * 1024) {
             throw new YadonyBusinessException(
                     HttpStatus.PAYLOAD_TOO_LARGE,
                     "file-too-large",
                     "File Too Large",
-                    "Image trop volumineuse (max 10 Mo)");
+                    "Image trop volumineuse (max 5 Mo)");
         }
-        String key = storageService.uploadFile(file, "users/" + firebaseUid + "/");
+        String previous = user.getAvatarUrl();
+        String key = storageService.storeImage(file, StorageService.MediaUpload.of(
+                "users/" + firebaseUid + "/", user.getId(), MediaPurpose.AVATAR));
         user.setAvatarUrl(key);
-        return toResponse(userRepository.save(user));
+        UserResponse response = toResponse(userRepository.save(user));
+        // L'ancien avatar n'est supprimé qu'une fois le nouveau enregistré : un échec plus haut
+        // laisse l'utilisateur avec sa photo actuelle. Les URL externes (Google) ne sont pas à nous.
+        if (previous != null && previous.startsWith("users/") && !previous.equals(key)) {
+            storageService.deleteQuietly(previous);
+        }
+        return response;
     }
 
     public UserResponse toResponse(UserEntity user) {

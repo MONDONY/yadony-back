@@ -1,6 +1,7 @@
 package com.yadony.api.support;
 
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.media.MediaPurpose;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.support.dto.SupportAttachmentResponse;
 import org.springframework.http.HttpStatus;
@@ -8,7 +9,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
@@ -46,12 +46,14 @@ public class SupportAttachmentService {
     }
 
     /** Le prefixe est construit a partir de l'identifiant, jamais d'une entree client. */
-    public String uploadForUser(UUID userId, MultipartFile file) throws IOException {
-        return storageService.uploadFile(file, userPrefix(userId));
+    public String uploadForUser(UUID userId, MultipartFile file) {
+        return storageService.storeImage(file, StorageService.MediaUpload.of(
+                userPrefix(userId), userId, MediaPurpose.SUPPORT));
     }
 
-    public String uploadForAdmin(UUID adminId, MultipartFile file) throws IOException {
-        return storageService.uploadFile(file, adminPrefix(adminId));
+    public String uploadForAdmin(UUID adminId, MultipartFile file) {
+        return storageService.storeImage(file, new StorageService.MediaUpload(
+                adminPrefix(adminId), adminId, MediaPurpose.SUPPORT, null, true));
     }
 
     /**

@@ -180,10 +180,8 @@ public class E2EMockConfig {
         StorageService mock = Mockito.mock(StorageService.class);
         Mockito.when(mock.generatePresignedUrl(Mockito.anyString(), Mockito.any()))
                .thenReturn("https://fake-s3.yadony.test/photo.jpg");
-        try {
-            Mockito.when(mock.uploadFile(Mockito.any(), Mockito.anyString()))
-                   .thenReturn("tracking/test/fake-key.jpg");
-        } catch (Exception ignored) {}
+        Mockito.when(mock.storeImage(Mockito.any(), Mockito.any()))
+               .thenReturn("tracking/test/fake-key.jpg");
         return mock;
     }
 }

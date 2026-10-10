@@ -30,7 +30,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
 
 @RestController
 @RequestMapping("/auth")
@@ -227,7 +226,7 @@ public class AuthController {
     }
 
     @PostMapping(value = "/me/avatar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<UserResponse> uploadAvatar(@RequestParam("file") MultipartFile file) throws IOException {
+    public ResponseEntity<UserResponse> uploadAvatar(@RequestParam("file") MultipartFile file) {
         String firebaseUid = requireFirebaseUid();
         return ResponseEntity.ok(authService.updateAvatar(firebaseUid, file));
     }
