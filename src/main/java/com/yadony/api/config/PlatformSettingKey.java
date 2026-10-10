@@ -29,6 +29,10 @@ import java.util.Arrays;
  * de reception 60 secondes — chaque envoi est facture. Distinct de {@code SMS_ENABLED}, qui
  * coupe en plus les codes OTP de connexion : desactiver celui-ci coupe UNIQUEMENT ce repli,
  * jamais l'authentification. Faux par defaut : a activer depuis le back-office au besoin.
+ *
+ * <p>{@code PHOTO_PURGE_ENABLED} : faux, la purge des photos (après livraison, orphelins,
+ * historique) tourne à blanc et ne supprime rien de R2. Le premier passage réel est
+ * irréversible : on l'allume après avoir lu le décompte à blanc dans le panel.
  */
 public enum PlatformSettingKey {
 
@@ -38,7 +42,16 @@ public enum PlatformSettingKey {
     SMS_ENABLED("sms_enabled", PlatformSettingType.BOOLEAN),
     PRO_ENABLED("pro_enabled", PlatformSettingType.BOOLEAN),
     KYC_DIDIT_ENABLED("kyc_didit_enabled", PlatformSettingType.BOOLEAN),
-    CRITICAL_SMS_FALLBACK_ENABLED("critical_sms_fallback_enabled", PlatformSettingType.BOOLEAN);
+    CRITICAL_SMS_FALLBACK_ENABLED("critical_sms_fallback_enabled", PlatformSettingType.BOOLEAN),
+    PHOTO_RETENTION_DAYS_AFTER_DELIVERY("photo_retention_days_after_delivery", PlatformSettingType.INTEGER),
+    PHOTO_UPLOAD_DAILY_QUOTA("photo_upload_daily_quota", PlatformSettingType.INTEGER),
+    TRACKING_PHOTOS_MAX_PER_BID("tracking_photos_max_per_bid", PlatformSettingType.INTEGER),
+    PHOTO_PURGE_ENABLED("photo_purge_enabled", PlatformSettingType.BOOLEAN);
+
+    /** Défauts des réglages photos : aucune property, le panel admin est le seul levier. */
+    public static final int DEFAULT_PHOTO_RETENTION_DAYS = 7;
+    public static final int DEFAULT_PHOTO_UPLOAD_DAILY_QUOTA = 60;
+    public static final int DEFAULT_TRACKING_PHOTOS_MAX_PER_BID = 6;
 
     private final String key;
     private final PlatformSettingType type;

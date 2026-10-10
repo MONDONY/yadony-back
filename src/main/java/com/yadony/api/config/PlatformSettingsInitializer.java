@@ -77,6 +77,13 @@ public class PlatformSettingsInitializer {
                 String.valueOf(kycDiditEnabledProperty));
         defaults.put(PlatformSettingKey.CRITICAL_SMS_FALLBACK_ENABLED,
                 String.valueOf(criticalSmsFallbackEnabledProperty));
+        defaults.put(PlatformSettingKey.PHOTO_RETENTION_DAYS_AFTER_DELIVERY,
+                String.valueOf(PlatformSettingKey.DEFAULT_PHOTO_RETENTION_DAYS));
+        defaults.put(PlatformSettingKey.PHOTO_UPLOAD_DAILY_QUOTA,
+                String.valueOf(PlatformSettingKey.DEFAULT_PHOTO_UPLOAD_DAILY_QUOTA));
+        defaults.put(PlatformSettingKey.TRACKING_PHOTOS_MAX_PER_BID,
+                String.valueOf(PlatformSettingKey.DEFAULT_TRACKING_PHOTOS_MAX_PER_BID));
+        defaults.put(PlatformSettingKey.PHOTO_PURGE_ENABLED, "false");
 
         int inserted = 0;
         for (Map.Entry<PlatformSettingKey, String> entry : defaults.entrySet()) {
