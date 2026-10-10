@@ -21,6 +21,7 @@ import com.yadony.api.payments.PaymentRail;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.PaymentStatus;
 import com.yadony.api.payments.RefundProcessor;
+import com.yadony.api.payments.EscrowCaptureService;
 import com.yadony.api.payments.chargeback.ChargebackRepository;
 import com.yadony.api.payments.events.AdminPaymentRefundedEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
@@ -134,6 +135,7 @@ public class AdminPaymentController {
     /** Recherche, totaux, export et contexte (parties, colis, liens Stripe) des paiements. */
     private final AdminPaymentInsights insights;
     private final AdminPaymentTimeline timeline;
+    private final EscrowCaptureService escrowCapture;
 
     public AdminPaymentController(PaymentRepository paymentRepository,
                                   AdminAlertRepository adminAlertRepository,
@@ -151,7 +153,9 @@ public class AdminPaymentController {
                                   PlatformTransactionManager transactionManager,
                                   PayoutHoldPolicy holdPolicy,
                                   AdminPaymentInsights insights,
-                                  AdminPaymentTimeline timeline) {
+                                  AdminPaymentTimeline timeline,
+                                  EscrowCaptureService escrowCapture) {
+        this.escrowCapture = escrowCapture;
         this.holdPolicy = holdPolicy;
         this.insights = insights;
         this.timeline = timeline;
@@ -359,6 +363,31 @@ public class AdminPaymentController {
             requireUsableStripeAccount(payment, traveler, travelerId);
         }
 
+        // Séquestre carte (non legacy) : capture AVANT le claim, comme la livraison
+        // (DeliveryEventListener). La capture tourne dans sa propre transaction (captured_at
+        // conservé même si le Transfer échoue ensuite) et ne doit attendre aucun verrou posé ici.
+        // Échec (autorisation expirée, montant différent…) : 422, rien n'est versé, le paiement
+        // reste ESCROW, alerte ESCROW_CAPTURE_FAILED_<id> levée.
+        String capturedChargeId = null;
+        if (payment.getRail() != PaymentRail.PAWAPAY && !payment.isLegacyDestinationCharge()) {
+            if (traveler == null || traveler.getStripeAccountId() == null
+                    || traveler.getStripeAccountId().isBlank()) {
+                throw new YadonyBusinessException(
+                        HttpStatus.UNPROCESSABLE_ENTITY, "traveler-no-connect",
+                        "Invalid Traveler",
+                        "Voyageur introuvable ou sans compte Stripe Connect — transfert impossible");
+            }
+            try {
+                capturedChargeId = escrowCapture.ensureCaptured(id, "admin-force-release").chargeId();
+            } catch (EscrowCaptureService.EscrowCaptureException e) {
+                throw new YadonyBusinessException(
+                        HttpStatus.UNPROCESSABLE_ENTITY, "escrow-capture-failed",
+                        "Escrow Capture Failed",
+                        "Capture du paiement carte impossible (" + e.getMessage()
+                                + ") : aucun versement n'est parti, le paiement reste en séquestre");
+            }
+        }
+
         // Atomic ESCROW → RELEASED transition — prevents a double release/transfer race.
         int updated = paymentRepository.markReleasedIfEscrow(id, LocalDateTime.now(ZoneOffset.UTC));
         if (updated == 0) {
@@ -414,24 +443,11 @@ public class AdminPaymentController {
                     pi.capture();
                 }
             } else {
-                // Separate charges & transfers: the traveler must have a Connect account to receive
-                // the payout. Fail (and roll back the RELEASED flip) rather than trap captured funds.
-                if (traveler == null || traveler.getStripeAccountId() == null
-                        || traveler.getStripeAccountId().isBlank()) {
-                    throw new YadonyBusinessException(
-                            HttpStatus.UNPROCESSABLE_ENTITY, "traveler-no-connect",
-                            "Invalid Traveler",
-                            "Voyageur introuvable ou sans compte Stripe Connect — transfert impossible");
-                }
-
-                PaymentIntent pi = PaymentIntent.retrieve(payment.getStripePaymentIntentId());
-                // Ensure the funds are on the platform balance before transferring.
-                if (STATUS_REQUIRES_CAPTURE.equals(pi.getStatus())) {
-                    pi.capture();
-                }
-                String chargeId = (payment.getStripeChargeId() != null)
-                        ? payment.getStripeChargeId()
-                        : pi.getLatestCharge();
+                // Separate charges & transfers: Connect account checked before the capture above.
+                // Funds already on the platform balance: captured above (EscrowCaptureService).
+                String chargeId = (capturedChargeId != null)
+                        ? capturedChargeId
+                        : payment.getStripeChargeId();
 
                 // Devise du paiement, jamais « eur » en dur : un séquestre carte existe aussi en
                 // USD, CAD, GBP ou CHF, et un Transfer libellé dans une autre devise que la charge
@@ -474,7 +490,10 @@ public class AdminPaymentController {
         }
 
         // Reflect the committed DB transition on the managed entity (the @Modifying CAS above
-        // does not refresh it) so the response and any downstream flush are consistent.
+        // does not refresh it) so the response and any downstream flush are consistent. The
+        // refresh first: captured_at / stripe_charge_id were written by EscrowCaptureService in
+        // another transaction, and a flush from the stale snapshot would reset them to NULL.
+        entityManager.refresh(payment);
         payment.setStatus(PaymentStatus.RELEASED);
         payment.setEscrowReleasedAt(LocalDateTime.now(ZoneOffset.UTC));
 

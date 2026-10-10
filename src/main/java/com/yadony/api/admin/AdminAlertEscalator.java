@@ -3,6 +3,7 @@ package com.yadony.api.admin;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yadony.api.common.stripe.AdminAlertService;
+import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -87,6 +88,25 @@ public class AdminAlertEscalator {
         }
         alerts.raise(type, detail, context);
         return true;
+    }
+
+    /**
+     * Clôt les alertes non résolues du type donné (le problème a disparu : capture réussie
+     * après un échec, par exemple), dans une transaction indépendante.
+     *
+     * @return le nombre d'alertes closes
+     */
+    public int resolveOpen(String type) {
+        Integer resolved = independentTransaction.execute(status -> {
+            List<AdminAlertEntity> open = repository.findByTypeAndResolved(type, false);
+            for (AdminAlertEntity alert : open) {
+                alert.setResolved(true);
+                alert.setResolvedAt(java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC));
+                repository.save(alert);
+            }
+            return open.size();
+        });
+        return resolved == null ? 0 : resolved;
     }
 
     private String toJson(Map<String, Object> context) {

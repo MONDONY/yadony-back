@@ -160,4 +160,26 @@ class AdminAlertEscalatorTest {
         assertThat(saved.getValue().getSeverity()).isEqualTo("WARN");
         verify(alerts).raise(eq(type), eq("Remboursement wallet bloqué"), any());
     }
+
+    @Test
+    void resolveOpen_closesEveryOpenAlertOfTheType() {
+        String type = "ESCROW_CAPTURE_FAILED_" + UUID.randomUUID();
+        AdminAlertEntity a = new AdminAlertEntity();
+        a.setType(type);
+        when(repository.findByTypeAndResolved(type, false)).thenReturn(List.of(a));
+
+        assertThat(escalator.resolveOpen(type)).isEqualTo(1);
+
+        assertThat(a.isResolved()).isTrue();
+        assertThat(a.getResolvedAt()).isNotNull();
+        verify(repository).save(a);
+        verifyNoInteractions(alerts);
+    }
+
+    @Test
+    void resolveOpen_withoutOpenAlert_isANoOp() {
+        when(repository.findByTypeAndResolved("T", false)).thenReturn(List.of());
+        assertThat(escalator.resolveOpen("T")).isZero();
+        verify(repository, never()).save(any());
+    }
 }

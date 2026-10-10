@@ -5,6 +5,7 @@ import com.stripe.model.Charge;
 import com.stripe.model.PaymentIntent;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.payments.EscrowCaptureService;
 import com.yadony.api.payments.PaymentEntity;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.PaymentStatus;
@@ -25,6 +26,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -37,7 +39,8 @@ import java.util.Set;
  *
  * <p>Correspondance des statuts d'un paiement colis (capture manuelle, encaissement à
  * l'acceptation) : PENDING = pas encore autorisé ; ESCROW = autorisé ({@code requires_capture})
- * ou encaissé ({@code succeeded}) ; RELEASED = encaissé ; REFUNDED = annulé avant encaissement
+ * ou encaissé ({@code succeeded}) — encore autorisé au-delà de {@link #CAPTURE_GRACE} alors que la
+ * capture était due, il est signalé {@code SEQUESTRE_NON_CAPTURE} ; RELEASED = encaissé ; REFUNDED = annulé avant encaissement
  * ou encaissé puis remboursé en totalité ; CANCELLED et FAILED = jamais autorisé ni encaissé.
  *
  * <p>Aucune transaction ouverte ici : les lectures en base sont courtes et les appels Stripe,
@@ -55,6 +58,13 @@ public class StripeReconciler {
     static final Duration TOPUP_WINDOW = Duration.ofDays(3);
     /** Délai laissé aux webhooks avant de conclure qu'un événement Stripe a été manqué. */
     static final Duration WEBHOOK_GRACE = Duration.ofHours(1);
+    /**
+     * Délai laissé à la capture d'un séquestre carte (listener asynchrone après le passage en
+     * séquestre ou l'acceptation du colis) avant de signaler {@code SEQUESTRE_NON_CAPTURE}.
+     */
+    static final Duration CAPTURE_GRACE = Duration.ofHours(2);
+    private static final DateTimeFormatter CAPTURE_BEFORE_FORMAT =
+            DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm 'UTC'").withZone(ZoneOffset.UTC);
 
     private static final String TOPUP_KEY_PREFIX = "stripe-";
 
@@ -107,6 +117,7 @@ public class StripeReconciler {
             switch (payment.getStatus()) {
                 case ESCROW -> {
                     if (!captured && !authorized) codes.add("SEQUESTRE_SANS_FONDS");
+                    if (authorized && captureOverdue(payment, now)) codes.add("SEQUESTRE_NON_CAPTURE");
                 }
                 case RELEASED -> {
                     if (!captured) codes.add("VERSE_SANS_ENCAISSEMENT");
@@ -139,9 +150,44 @@ public class StripeReconciler {
                         "base : " + payment.getStatus() + " " + payment.getAmount() + " " + payment.getCurrency()
                                 + " (remboursé " + payment.getRefundedAmount() + ") ; Stripe " + pi.getId() + " : "
                                 + status + " " + pi.getAmount() + " " + pi.getCurrency()
-                                + " (remboursé " + refundedAtStripe + " en unités mineures)");
+                                + " (remboursé " + refundedAtStripe + " en unités mineures)"
+                                + (codes.contains("SEQUESTRE_NON_CAPTURE") ? captureDeadline(pi, payment) : ""));
             }
         }
+    }
+
+    /**
+     * Séquestre carte encore à l'état d'autorisation alors qu'il aurait dû être capturé : modèle
+     * non legacy (le legacy capture à la livraison), paiement de négociation (capturé au passage
+     * en séquestre) ou colis déjà accepté (capturé à l'acceptation), au-delà de
+     * {@link #CAPTURE_GRACE}. Un colis classique pas encore accepté reste une autorisation normale.
+     * {@code captured_at} n'entre pas en compte : une capture en échec a pu le laisser posé.
+     */
+    private boolean captureOverdue(PaymentEntity payment, Instant now) {
+        Instant limit = now.minus(CAPTURE_GRACE);
+        if (payment.isLegacyDestinationCharge() || !createdBefore(payment.getCreatedAt(), limit)) {
+            return false;
+        }
+        if (payment.getBidId() == null) {
+            return EscrowCaptureService.captureDue(payment, null);
+        }
+        return bids.findById(payment.getBidId())
+                .filter(bid -> EscrowCaptureService.captureDue(payment, bid.getStatus()))
+                .filter(bid -> bid.getUpdatedAt() == null || createdBefore(bid.getUpdatedAt(), limit))
+                .isPresent();
+    }
+
+    /** Urgence d'un séquestre non capturé : date limite de capture donnée par Stripe. */
+    private static String captureDeadline(PaymentIntent pi, PaymentEntity payment) {
+        Charge charge = pi.getLatestChargeObject();
+        Long before = charge == null || charge.getPaymentMethodDetails() == null
+                || charge.getPaymentMethodDetails().getCard() == null
+                ? null : charge.getPaymentMethodDetails().getCard().getCaptureBefore();
+        String deadline = before == null
+                ? "date limite de capture inconnue (autorisation carte ~7 jours)"
+                : "à capturer avant le " + CAPTURE_BEFORE_FORMAT.format(Instant.ofEpochSecond(before));
+        return " ; séquestre non capturé (captured_at " + payment.getCapturedAt() + "), " + deadline
+                + " : capturer à la livraison ou par la libération forcée admin, sinon le voyageur ne sera pas payé";
     }
 
     // ── Recharges wallet ─────────────────────────────────────────────────────

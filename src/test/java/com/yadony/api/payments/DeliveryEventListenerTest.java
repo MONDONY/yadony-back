@@ -38,6 +38,9 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class DeliveryEventListenerTest {
 
+    /** Capture déjà faite par défaut : PaymentIntent succeeded, aucun charge id renvoyé. */
+    private final com.yadony.api.payments.EscrowCaptureService escrowCapture = org.mockito.Mockito.mock(com.yadony.api.payments.EscrowCaptureService.class, invocation -> new com.yadony.api.payments.EscrowCaptureService.Outcome(null, false));
+
     @org.mockito.Mock com.yadony.api.payments.hold.PayoutHoldPolicy holdPolicy;
     @org.mockito.Mock com.yadony.api.admin.AdminAlertEscalator alertEscalator;
     @Mock private PaymentRepository paymentRepository;
@@ -55,7 +58,8 @@ class DeliveryEventListenerTest {
         // Ronde 1, point 5 : payoutInitiator est désormais un paramètre constructeur — null ici,
         // jamais déréférencé puisque tous les paiements de cette classe sont de rail STRIPE.
         listener = new DeliveryEventListener(paymentRepository, userRepository,
-                auditService, eventPublisher, bidRepository, adminAlert, voucherService, null, holdPolicy, alertEscalator);
+                auditService, eventPublisher, bidRepository, adminAlert, voucherService, null, holdPolicy, alertEscalator,
+                escrowCapture);
     }
 
     private PaymentEntity payment(boolean legacy, PaymentStatus status, String chargeId) {
@@ -398,5 +402,82 @@ class DeliveryEventListenerTest {
             transferStatic.verifyNoInteractions();
         }
         verify(paymentRepository, never()).markReleasedIfEscrow(any(), any());
+    }
+
+    // ── Séquestre carte non capturé (constat du 10/10, paiements de négociation) ──
+
+    private DeliveryEventListener listenerWith(EscrowCaptureService capture) {
+        return new DeliveryEventListener(paymentRepository, userRepository,
+                auditService, eventPublisher, bidRepository, adminAlert, voucherService, null, holdPolicy, alertEscalator,
+                capture);
+    }
+
+    @Test
+    void v2_requiresCapture_capturesBeforeClaimThenTransfers() {
+        PaymentEntity p = payment(false, PaymentStatus.ESCROW, null);
+        org.springframework.test.util.ReflectionTestUtils.setField(p, "id", UUID.randomUUID());
+        UUID travelerId = UUID.randomUUID();
+        when(paymentRepository.findByBidId(p.getBidId())).thenReturn(Optional.of(p));
+        when(paymentRepository.markReleasedIfEscrow(any(), any())).thenReturn(1);
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler()));
+        EscrowCaptureService capture = mock(EscrowCaptureService.class);
+        when(capture.ensureCaptured(p.getId(), "delivery")).thenReturn(new EscrowCaptureService.Outcome("ch_captured", true));
+
+        try (MockedStatic<Transfer> transferStatic = mockStatic(Transfer.class)) {
+            ArgumentCaptor<TransferCreateParams> captor = ArgumentCaptor.forClass(TransferCreateParams.class);
+            transferStatic.when(() -> Transfer.create(captor.capture(), any(RequestOptions.class)))
+                    .thenAnswer(inv -> {
+                        // Le Transfer ne part qu'après la capture et le claim.
+                        verify(capture).ensureCaptured(p.getId(), "delivery");
+                        verify(paymentRepository).markReleasedIfEscrow(any(), any());
+                        return mock(Transfer.class);
+                    });
+
+            listenerWith(capture).handleDeliveryConfirmed(event(p.getBidId(), travelerId));
+
+            org.mockito.InOrder order = inOrder(capture, paymentRepository);
+            order.verify(capture).ensureCaptured(p.getId(), "delivery");
+            order.verify(paymentRepository).markReleasedIfEscrow(any(), any());
+            assertThat(captor.getValue().getSourceTransaction()).isEqualTo("ch_captured");
+            assertThat(captor.getValue().getAmount()).isEqualTo(2640L);
+        }
+        verify(auditService).log(eq("PAYMENT"), any(), eq("ESCROW_RELEASED_TRANSFER"), any(), any());
+    }
+
+    @Test
+    void v2_captureFailure_noClaimNoTransfer_staysEscrowWithAudit() {
+        PaymentEntity p = payment(false, PaymentStatus.ESCROW, "ch_x");
+        org.springframework.test.util.ReflectionTestUtils.setField(p, "id", UUID.randomUUID());
+        UUID travelerId = UUID.randomUUID();
+        when(paymentRepository.findByBidId(p.getBidId())).thenReturn(Optional.of(p));
+        EscrowCaptureService capture = mock(EscrowCaptureService.class);
+        when(capture.ensureCaptured(p.getId(), "delivery"))
+                .thenThrow(new EscrowCaptureService.EscrowCaptureException("PaymentIntent canceled", "canceled", null));
+
+        try (MockedStatic<Transfer> transferStatic = mockStatic(Transfer.class)) {
+            assertThatNoException().isThrownBy(() ->
+                    listenerWith(capture).handleDeliveryConfirmed(event(p.getBidId(), travelerId)));
+            transferStatic.verifyNoInteractions();
+        }
+        verify(paymentRepository, never()).markReleasedIfEscrow(any(), any());
+        verify(auditService).log(eq("PAYMENT"), eq(p.getId()), eq("DELIVERY_RELEASE_BLOCKED_CAPTURE_FAILED"), any(),
+                argThat(m -> "canceled".equals(m.get("piStatus"))));
+        verify(eventPublisher, never()).publishEvent(any());
+        assertThat(p.getStatus()).isEqualTo(PaymentStatus.ESCROW);
+    }
+
+    @Test
+    void legacy_doesNotGoThroughEscrowCapture() {
+        PaymentEntity p = payment(true, PaymentStatus.ESCROW, "ch_legacy");
+        when(paymentRepository.findByBidId(p.getBidId())).thenReturn(Optional.of(p));
+        when(paymentRepository.markReleasedIfEscrow(any(), any())).thenReturn(1);
+        EscrowCaptureService capture = mock(EscrowCaptureService.class);
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            PaymentIntent pi = mock(PaymentIntent.class);
+            piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
+            listenerWith(capture).handleDeliveryConfirmed(event(p.getBidId(), UUID.randomUUID()));
+        }
+        verifyNoInteractions(capture);
     }
 }

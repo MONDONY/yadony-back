@@ -79,6 +79,9 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class AdminPaymentControllerHoldTest {
 
+    /** Capture déjà faite par défaut : PaymentIntent succeeded, aucun charge id renvoyé. */
+    private com.yadony.api.payments.EscrowCaptureService escrowCapture = org.mockito.Mockito.mock(com.yadony.api.payments.EscrowCaptureService.class, invocation -> new com.yadony.api.payments.EscrowCaptureService.Outcome(null, false));
+
     @Mock PaymentRepository paymentRepository;
     @Mock AdminAlertRepository adminAlertRepository;
     @Mock AuditService auditService;
@@ -110,7 +113,7 @@ class AdminPaymentControllerHoldTest {
         controller = new AdminPaymentController(paymentRepository, adminAlertRepository, auditService,
                 bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
                 payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
-                transactionManager, holdPolicy, insights, timeline);
+                transactionManager, holdPolicy, insights, timeline, escrowCapture);
         AnnouncementEntity a = new AnnouncementEntity();
         ReflectionTestUtils.setField(a, "id", UUID.randomUUID());
         a.setTravelerId(travelerId);
@@ -159,12 +162,12 @@ class AdminPaymentControllerHoldTest {
         return ((YadonyBusinessException) e).getStatus();
     }
 
+    /**
+     * PaymentIntent déjà capturé : la capture passe par EscrowCaptureService (simulé « déjà
+     * capturé » dans ce test), le contrôleur n'appelle plus Stripe en direct pour le PI.
+     */
     private MockedStatic<PaymentIntent> succeededPi() {
-        MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
-        PaymentIntent pi = mock(PaymentIntent.class);
-        when(pi.getStatus()).thenReturn("succeeded");
-        piStatic.when(() -> PaymentIntent.retrieve("pi_hold")).thenReturn(pi);
-        return piStatic;
+        return mockStatic(PaymentIntent.class);
     }
 
     // ── force-release ─────────────────────────────────────────────────────────────────────────

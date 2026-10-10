@@ -235,4 +235,94 @@ class StripeReconcilerTest {
         assertThat(reconciler.reconcile(NOW).mismatches()).singleElement()
                 .satisfies(m -> assertThat(m.code()).contains("COMMISSION_NON_ENCAISSEE"));
     }
+
+    // ── Séquestre carte non capturé (SEQUESTRE_NON_CAPTURE) ──────────────────
+
+    private static PaymentEntity negotiationEscrow(Instant createdAt) {
+        PaymentEntity p = payment(PaymentStatus.ESCROW, "64.50", "pi_nego");
+        p.setNegotiationThreadId(UUID.randomUUID());
+        ReflectionTestUtils.setField(p, BaseEntity.class, "createdAt",
+                LocalDateTime.ofInstant(createdAt, ZoneOffset.UTC), LocalDateTime.class);
+        return p;
+    }
+
+    private static PaymentIntent authorizedWithDeadline(long captureBefore) {
+        PaymentIntent pi = intent("pi_nego", "requires_capture", 6450, "eur", null);
+        Charge charge = mock(Charge.class, org.mockito.Mockito.RETURNS_DEEP_STUBS);
+        when(charge.getPaymentMethodDetails().getCard().getCaptureBefore()).thenReturn(captureBefore);
+        when(pi.getLatestChargeObject()).thenReturn(charge);
+        return pi;
+    }
+
+    @Test
+    void sequestreNegociationAutoriseDepuisPlusDeDeuxHeures_estSignaleAvecLaDateLimite() throws Exception {
+        PaymentEntity p = negotiationEscrow(NOW.minus(java.time.Duration.ofDays(3)));
+        long deadline = Instant.parse("2026-10-14T09:12:00Z").getEpochSecond();
+        stripeHas(p, authorizedWithDeadline(deadline));
+
+        assertThat(reconciler.reconcile(NOW).mismatches()).singleElement()
+                .satisfies(m -> {
+                    assertThat(m.reference()).isEqualTo(p.getId().toString());
+                    assertThat(m.code()).isEqualTo("SEQUESTRE_NON_CAPTURE");
+                    assertThat(m.detail()).contains("à capturer avant le 14/10/2026 09:12 UTC");
+                });
+    }
+
+    @Test
+    void sequestreNegociationAutoriseRecent_nestPasSignale() throws Exception {
+        PaymentEntity p = negotiationEscrow(NOW.minus(java.time.Duration.ofMinutes(30)));
+        stripeHas(p, intent("pi_nego", "requires_capture", 6450, "eur", null));
+
+        assertThat(reconciler.reconcile(NOW).mismatches()).isEmpty();
+    }
+
+    @Test
+    void sequestreNegociationCapture_nestPasSignale() throws Exception {
+        PaymentEntity p = negotiationEscrow(NOW.minus(java.time.Duration.ofDays(3)));
+        p.setCapturedAt(NOW.minus(java.time.Duration.ofDays(3)));
+        stripeHas(p, intent("pi_nego", "succeeded", 6450, "eur", 0L));
+
+        assertThat(reconciler.reconcile(NOW).mismatches()).isEmpty();
+    }
+
+    @Test
+    void sequestreLegacyAutorise_nestPasSignale_laCaptureEstALaLivraison() throws Exception {
+        PaymentEntity p = negotiationEscrow(NOW.minus(java.time.Duration.ofDays(3)));
+        p.setLegacyDestinationCharge(true);
+        stripeHas(p, intent("pi_nego", "requires_capture", 6450, "eur", null));
+
+        assertThat(reconciler.reconcile(NOW).mismatches()).isEmpty();
+    }
+
+    @Test
+    void sequestreColisAccepte_nonCapture_estSignaleSansDateLimiteConnue() throws Exception {
+        PaymentEntity p = payment(PaymentStatus.ESCROW, "25.00", "pi_bid");
+        UUID bidId = UUID.randomUUID();
+        p.setBidId(bidId);
+        BidEntity bid = new BidEntity();
+        bid.setStatus(com.yadony.api.matching.BidStatus.IN_TRANSIT);
+        ReflectionTestUtils.setField(bid, BaseEntity.class, "updatedAt",
+                LocalDateTime.ofInstant(NOW.minus(java.time.Duration.ofHours(5)), ZoneOffset.UTC), LocalDateTime.class);
+        when(bids.findById(bidId)).thenReturn(Optional.of(bid));
+        stripeHas(p, intent("pi_bid", "requires_capture", 2500, "eur", null));
+
+        assertThat(reconciler.reconcile(NOW).mismatches()).singleElement()
+                .satisfies(m -> {
+                    assertThat(m.code()).isEqualTo("SEQUESTRE_NON_CAPTURE");
+                    assertThat(m.detail()).contains("date limite de capture inconnue");
+                });
+    }
+
+    @Test
+    void sequestreColisPasEncoreAccepte_resteUneAutorisationNormale() throws Exception {
+        PaymentEntity p = payment(PaymentStatus.ESCROW, "25.00", "pi_bid");
+        UUID bidId = UUID.randomUUID();
+        p.setBidId(bidId);
+        BidEntity bid = new BidEntity();
+        bid.setStatus(com.yadony.api.matching.BidStatus.PENDING);
+        when(bids.findById(bidId)).thenReturn(Optional.of(bid));
+        stripeHas(p, intent("pi_bid", "requires_capture", 2500, "eur", null));
+
+        assertThat(reconciler.reconcile(NOW).mismatches()).isEmpty();
+    }
 }

@@ -1347,3 +1347,31 @@ saturait (187 requêtes en attente) et les requêtes finissaient en **500 après
       (`yadony-prod` → Authentication → Settings → SMS region policy).
 - [ ] Prod du portail : `workflow_dispatch` de `deploy.yml` avec `environment=production` et l'`image_tag` du commit recetté
       (contient `efc5044a`).
+
+#### 9.19 Capture du séquestre carte avant versement, resynchronisation admin Stripe (back #487)
+
+> Ajoutée le 10/10/2026. Aucune migration (dernière : **V309**, prochaine **V310**), aucun secret, aucune nouvelle variable.
+> Origine : alertes YADONY-BACK-STAGING-12 à 15. 5 paiements de négociation de staging sont `ESCROW` sans `captured_at`
+> (PaymentIntent `requires_capture`, checkout d'avant #472) : la livraison créait un Transfer sur une simple autorisation.
+
+| Sujet | À savoir |
+|---|---|
+| `EscrowCaptureService` | Avant tout versement d'un séquestre carte non legacy (livraison, colis non réclamé, force-release, passage en séquestre d'une négociation), le PaymentIntent est relu : `requires_capture` → capture du **montant attendu**, clé `capture-<paymentId>`, `captured_at` posé, audit `PAYMENT_CAPTURED_ON_PLATFORM`, puis seulement le claim et le Transfer. `succeeded` → pas de capture. La capture tourne dans sa propre transaction, **avant** le claim : un Transfer en échec annule le claim mais garde `captured_at`. Un paiement sorti du séquestre entre-temps (remboursé, versé) n'est jamais capturé. Le charge id s'écrit par UPDATE ciblé, jamais par `save` d'une entité lue avant l'appel Stripe. |
+| Échec de capture | Autorisation expirée, montant différent, Stripe indisponible : ni claim ni Transfer, paiement `ESCROW` sans `captured_at`, alerte **`ESCROW_CAPTURE_FAILED_<paymentId>`** (CRITICAL, Telegram + écran Alertes), audit `DELIVERY_RELEASE_BLOCKED_CAPTURE_FAILED` à la livraison. L'alerte est close d'elle-même à la capture suivante réussie. |
+| Rapprochement 04:30 UTC | Nouvel écart **`SEQUESTRE_NON_CAPTURE`** (alerte `RECON_STRIPE_<paymentId>`, jauge `yadony_reconciliation_mismatches`) : `ESCROW` + `requires_capture`, non legacy, capture due (négociation ou colis classique ACCEPTED…COMPLETED), plus de 2 h. Le détail donne la date limite `capture_before`. **Attendu** : il remonte les séquestres concernés au premier passage. |
+| force-release admin | Nouveau **422 `escrow-capture-failed`** (rien n'est versé, le paiement reste en séquestre). Compte Connect du voyageur vérifié avant la capture. Pas de condition J+48 ni de livraison. |
+| `POST /api/v1/admin/payments/{id}/resync-stripe` | **Super-admin seulement** (`ADMIN_MANAGE`). Relit le PaymentIntent et réaligne la base en réutilisant les traitements des webhooks (PENDING → ESCROW, FAILED, CANCELLED ; capture d'un séquestre dû ; `captured_at` manquant). Rejouable, audit `ADMIN_PAYMENT_RESYNC_STRIPE`, alertes `RECON_STRIPE_<id>` (AUTORISE_NON_ENREGISTRE / SEQUESTRE_NON_CAPTURE) et `ESCROW_CAPTURE_FAILED_<id>` closes quand l'écart a disparu. Autorisation expirée, montant différent, statut non géré : 409/422 RFC 7807, aucune écriture. |
+| DTO admin | `paymentId` ajouté aux alertes, `capturedAt` et `negotiationThreadId` au détail paiement (en fin d'objet, ancien back-office non cassé). **Jumelle dony-admin à venir** (boutons « Resynchroniser avec Stripe ») : back avant admin. |
+
+- [ ] Tag prod : doit contenir le commit de fusion de #487, plus les tags exigés en 9.13 à 9.17.
+- [ ] Recette staging après déploiement : sur un paiement de négociation `ESCROW` non capturé, `resync-stripe` (super-admin) → `ESCROW_CAPTURED`,
+      `captured_at` posé, PaymentIntent « Succeeded » dans Stripe ; puis livraison → Transfer vers le voyageur. Un admin non super-admin reçoit 403.
+- [ ] Régularisation des 9 paiements de staging (propriétaire, hors code) : 5 `ESCROW` non capturés → `resync-stripe` (ou attendre la livraison),
+      en vérifiant `capture_before` ; autorisation expirée → remboursement ou arbitrage. 4 PENDING + `requires_capture` (AUTORISE_NON_ENREGISTRE)
+      → `resync-stripe` ou régularisation manuelle prévue.
+- [ ] **Défaut préexistant, non corrigé par #487** : le type d'alerte `DELIVERY_PAYMENT_NOT_IN_ESCROW_<uuid>` fait 67 caractères, au-delà de la
+      limite de 60 de `admin_alerts.type` (`AdminAlertEscalator`) : sur un colis livré dont le paiement est PENDING, `raiseOnce` lève une
+      `IllegalArgumentException` au lieu d'alerter. À corriger en suivi.
+- [ ] **Constat hors périmètre, à traiter en suivi** : la clé d'idempotence Stripe `transfer-<paymentId>` n'est valable que 24 h. Un force-release
+      lancé plus de 24 h après un Transfer réussi chez Stripe mais non enregistré en base (transaction locale annulée ensuite) pourrait créer un
+      second Transfer. Vérifier les Transfers du paiement dans Stripe avant un force-release tardif.

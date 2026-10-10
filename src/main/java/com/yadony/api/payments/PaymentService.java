@@ -1026,6 +1026,16 @@ public class PaymentService {
             }
         }
 
+        applyPaymentEscrowActive(pi);
+    }
+
+    /**
+     * Traitement de {@code payment_intent.amount_capturable_updated} à partir du PaymentIntent
+     * déjà lu : PENDING → ESCROW + {@link PaymentEscrowReadyEvent}, charge id, promotion du bid,
+     * finalisation de la négociation. Partagé avec la resynchronisation admin
+     * ({@link PaymentStripeResyncService}) pour qu'elle applique EXACTEMENT le même traitement.
+     */
+    void applyPaymentEscrowActive(PaymentIntent pi) {
         final PaymentIntent finalPi = pi;
 
         paymentRepository.findByStripePaymentIntentId(finalPi.getId()).ifPresent(payment -> {
@@ -1202,18 +1212,20 @@ public class PaymentService {
     }
 
     void handlePaymentFailed(Event event) {
-        event.getDataObjectDeserializer().getObject().ifPresent(obj -> {
-            PaymentIntent pi = (PaymentIntent) obj;
-            paymentRepository.findByStripePaymentIntentId(pi.getId()).ifPresent(payment -> {
-                if (payment.getStatus() == PaymentStatus.PENDING) {
-                    payment.setStatus(PaymentStatus.FAILED);
-                    paymentRepository.save(payment);
-                    auditService.log("PAYMENT", payment.getId(), "PAYMENT_FAILED",
-                            payment.getBidId(),
-                            Map.of("piId", pi.getId()));
-                    log.warn("Payment {} FAILED (PI={})", payment.getId(), pi.getId());
-                }
-            });
+        event.getDataObjectDeserializer().getObject().ifPresent(obj -> applyPaymentFailed((PaymentIntent) obj));
+    }
+
+    /** Traitement de {@code payment_intent.payment_failed} (partagé avec la resynchronisation admin). */
+    void applyPaymentFailed(PaymentIntent pi) {
+        paymentRepository.findByStripePaymentIntentId(pi.getId()).ifPresent(payment -> {
+            if (payment.getStatus() == PaymentStatus.PENDING) {
+                payment.setStatus(PaymentStatus.FAILED);
+                paymentRepository.save(payment);
+                auditService.log("PAYMENT", payment.getId(), "PAYMENT_FAILED",
+                        payment.getBidId(),
+                        Map.of("piId", pi.getId()));
+                log.warn("Payment {} FAILED (PI={})", payment.getId(), pi.getId());
+            }
         });
     }
 
@@ -1480,18 +1492,20 @@ public class PaymentService {
     // ── Task 12 — payment_intent.canceled + transfer.* + payout.* ───────────
 
     void handlePaymentIntentCanceled(Event event) {
-        event.getDataObjectDeserializer().getObject().ifPresent(obj -> {
-            PaymentIntent pi = (PaymentIntent) obj;
-            paymentRepository.findByStripePaymentIntentId(pi.getId()).ifPresent(payment -> {
-                if (payment.getStatus() == PaymentStatus.ESCROW
-                        || payment.getStatus() == PaymentStatus.PENDING) {
-                    payment.setStatus(PaymentStatus.CANCELLED);
-                    paymentRepository.save(payment);
-                    auditService.log("PAYMENT", payment.getId(), "PAYMENT_INTENT_CANCELED",
-                            payment.getBidId(), Map.of("piId", pi.getId()));
-                    log.info("PaymentIntent {} canceled — payment {} set CANCELLED", pi.getId(), payment.getId());
-                }
-            });
+        event.getDataObjectDeserializer().getObject().ifPresent(obj -> applyPaymentIntentCanceled((PaymentIntent) obj));
+    }
+
+    /** Traitement de {@code payment_intent.canceled} (partagé avec la resynchronisation admin). */
+    void applyPaymentIntentCanceled(PaymentIntent pi) {
+        paymentRepository.findByStripePaymentIntentId(pi.getId()).ifPresent(payment -> {
+            if (payment.getStatus() == PaymentStatus.ESCROW
+                    || payment.getStatus() == PaymentStatus.PENDING) {
+                payment.setStatus(PaymentStatus.CANCELLED);
+                paymentRepository.save(payment);
+                auditService.log("PAYMENT", payment.getId(), "PAYMENT_INTENT_CANCELED",
+                        payment.getBidId(), Map.of("piId", pi.getId()));
+                log.info("PaymentIntent {} canceled — payment {} set CANCELLED", pi.getId(), payment.getId());
+            }
         });
     }
 

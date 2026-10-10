@@ -46,6 +46,9 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class AdminPaymentControllerTest {
 
+    /** Capture déjà faite par défaut : PaymentIntent succeeded, aucun charge id renvoyé. */
+    private com.yadony.api.payments.EscrowCaptureService escrowCapture = org.mockito.Mockito.mock(com.yadony.api.payments.EscrowCaptureService.class, invocation -> new com.yadony.api.payments.EscrowCaptureService.Outcome(null, false));
+
     @Mock private PaymentRepository paymentRepository;
     @Mock private AdminAlertRepository adminAlertRepository;
     @Mock private AuditService auditService;
@@ -82,7 +85,7 @@ class AdminPaymentControllerTest {
         controller = new AdminPaymentController(paymentRepository, adminAlertRepository, auditService,
                 bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
                 payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
-                transactionManager, holdPolicy, insights, timeline);
+                transactionManager, holdPolicy, insights, timeline, escrowCapture);
     }
 
     /**
@@ -149,9 +152,6 @@ class AdminPaymentControllerTest {
 
         try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
              MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
-            PaymentIntent pi = mock(PaymentIntent.class);
-            when(pi.getStatus()).thenReturn("succeeded");
-            piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
             ArgumentCaptor<TransferCreateParams> captor = ArgumentCaptor.forClass(TransferCreateParams.class);
             trStatic.when(() -> Transfer.create(captor.capture(), any(com.stripe.net.RequestOptions.class))).thenReturn(mock(Transfer.class));
 
@@ -189,15 +189,13 @@ class AdminPaymentControllerTest {
 
         try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
              MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
-            PaymentIntent pi = mock(PaymentIntent.class);
-            when(pi.getStatus()).thenReturn("succeeded"); // already captured (e.g. dashboard)
-            piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
             ArgumentCaptor<TransferCreateParams> captor = ArgumentCaptor.forClass(TransferCreateParams.class);
             trStatic.when(() -> Transfer.create(captor.capture(), any(com.stripe.net.RequestOptions.class))).thenReturn(mock(Transfer.class));
 
             ResponseEntity<AdminPaymentDetailResponse> resp = controller.forceRelease(paymentId, null);
 
-            verify(pi, never()).capture();
+            // Capture déléguée à EscrowCaptureService (ici : déjà capturé) — aucun appel direct.
+            piStatic.verifyNoInteractions();
             TransferCreateParams params = captor.getValue();
             assertThat(params.getAmount()).isEqualTo(8929L); // (100.00 - 10.71) * 100
             assertThat(params.getDestination()).isEqualTo("acct_traveler");
@@ -212,27 +210,66 @@ class AdminPaymentControllerTest {
         verify(eventPublisher).publishEvent(any(PaymentReleasedEvent.class));
     }
 
+    private AdminPaymentController controllerWith(com.yadony.api.payments.EscrowCaptureService capture) {
+        return new AdminPaymentController(paymentRepository, adminAlertRepository, auditService,
+                bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
+                payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
+                transactionManager, holdPolicy, insights, timeline, capture);
+    }
+
     @Test
     void thread_payment_requires_capture_is_captured_then_transferred() throws StripeException {
-        PaymentEntity p = threadPayment(PaymentStatus.ESCROW, false, "ch_held");
+        // Constat du 10/10 : paiement de négociation ESCROW jamais capturé (PI requires_capture).
+        // La capture (EscrowCaptureService) précède le claim, puis le Transfer.
+        PaymentEntity p = threadPayment(PaymentStatus.ESCROW, false, null);
         when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
         stubResolutionChain("acct_traveler");
         when(paymentRepository.markReleasedIfEscrow(eq(paymentId), any())).thenReturn(1);
+        com.yadony.api.payments.EscrowCaptureService capture = mock(com.yadony.api.payments.EscrowCaptureService.class);
+        when(capture.ensureCaptured(paymentId, "admin-force-release"))
+                .thenReturn(new com.yadony.api.payments.EscrowCaptureService.Outcome("ch_captured", true));
 
         try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
              MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
-            PaymentIntent pi = mock(PaymentIntent.class);
-            when(pi.getStatus()).thenReturn("requires_capture");
-            when(pi.capture()).thenReturn(pi);
-            piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
-            trStatic.when(() -> Transfer.create(any(TransferCreateParams.class), any(com.stripe.net.RequestOptions.class))).thenReturn(mock(Transfer.class));
+            ArgumentCaptor<TransferCreateParams> captor = ArgumentCaptor.forClass(TransferCreateParams.class);
+            trStatic.when(() -> Transfer.create(captor.capture(), any(com.stripe.net.RequestOptions.class))).thenReturn(mock(Transfer.class));
 
-            controller.forceRelease(paymentId, null);
+            controllerWith(capture).forceRelease(paymentId, null);
 
-            verify(pi).capture();
+            org.mockito.InOrder order = inOrder(capture, paymentRepository, entityManager);
+            order.verify(capture).ensureCaptured(paymentId, "admin-force-release");
+            order.verify(paymentRepository).markReleasedIfEscrow(eq(paymentId), any());
+            // Relecture de la ligne avant tout flush : captured_at écrit par la capture n'est pas écrasé.
+            order.verify(entityManager).refresh(p);
+            assertThat(captor.getValue().getSourceTransaction()).isEqualTo("ch_captured");
+            piStatic.verifyNoInteractions();
         }
         assertThat(p.getStatus()).isEqualTo(PaymentStatus.RELEASED);
         verify(eventPublisher).publishEvent(any(PaymentReleasedEvent.class));
+    }
+
+    @Test
+    void capture_failure_returns_422_without_claim_nor_transfer() {
+        // Autorisation expirée (ou montant différent) : rien n'est versé, le paiement reste ESCROW.
+        PaymentEntity p = threadPayment(PaymentStatus.ESCROW, false, "ch_held");
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
+        stubResolutionChain("acct_traveler");
+        com.yadony.api.payments.EscrowCaptureService capture = mock(com.yadony.api.payments.EscrowCaptureService.class);
+        when(capture.ensureCaptured(paymentId, "admin-force-release")).thenThrow(
+                new com.yadony.api.payments.EscrowCaptureService.EscrowCaptureException("PaymentIntent canceled", "canceled", null));
+
+        try (MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
+            assertThatThrownBy(() -> controllerWith(capture).forceRelease(paymentId, null))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("escrow-capture-failed");
+                        assertThat(((YadonyBusinessException) e).getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    });
+            trStatic.verifyNoInteractions();
+        }
+        verify(paymentRepository, never()).markReleasedIfEscrow(any(), any());
+        verify(eventPublisher, never()).publishEvent(any());
+        assertThat(p.getStatus()).isEqualTo(PaymentStatus.ESCROW);
     }
 
     @Test
@@ -286,7 +323,8 @@ class AdminPaymentControllerTest {
         PaymentEntity p = threadPayment(PaymentStatus.ESCROW, false, "ch_x");
         when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
         stubResolutionChain(null); // traveler has no Stripe account
-        when(paymentRepository.markReleasedIfEscrow(eq(paymentId), any())).thenReturn(1);
+        com.yadony.api.payments.EscrowCaptureService capture = mock(com.yadony.api.payments.EscrowCaptureService.class);
+        controller = controllerWith(capture);
 
         try (MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
             assertThatThrownBy(() -> controller.forceRelease(paymentId, null))
@@ -295,6 +333,9 @@ class AdminPaymentControllerTest {
                     .isEqualTo("traveler-no-connect");
             trStatic.verifyNoInteractions();
         }
+        // Vérifié avant la capture et le claim : on ne capture pas des fonds qu'on ne peut pas verser.
+        verifyNoInteractions(capture);
+        verify(paymentRepository, never()).markReleasedIfEscrow(any(), any());
     }
 
     // ── refund (sender) ─────────────────────────────────────────────────────────
@@ -526,9 +567,6 @@ class AdminPaymentControllerTest {
 
         try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
              MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
-            PaymentIntent pi = mock(PaymentIntent.class);
-            when(pi.getStatus()).thenReturn("succeeded");
-            piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
             trStatic.when(() -> Transfer.create(any(TransferCreateParams.class), any(com.stripe.net.RequestOptions.class)))
                     .thenThrow(mock(com.stripe.exception.InvalidRequestException.class));
 

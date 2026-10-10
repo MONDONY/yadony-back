@@ -96,6 +96,32 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     int markCapturedIfEscrow(@Param("id") UUID id, @Param("now") Instant now);
 
     /**
+     * Pose le verrou de ligne d'un paiement encore ESCROW, sans rien changer (UPDATE neutre) :
+     * 1 si le paiement est toujours en séquestre (verrou tenu jusqu'à la fin de la transaction,
+     * un remboursement ou un versement concurrent attend), 0 s'il l'a quitté. Sert à
+     * {@code EscrowCaptureService} quand {@link #markCapturedIfEscrow} répond 0, pour ne jamais
+     * capturer un paiement déjà remboursé, versé ou annulé. UPDATE plutôt que
+     * {@code SELECT … FOR NO KEY UPDATE} : exécutable aussi sous H2.
+     */
+    @Modifying
+    @Query("UPDATE PaymentEntity p SET p.capturedAt = p.capturedAt WHERE p.id = :id "
+            + "AND p.status = com.yadony.api.payments.PaymentStatus.ESCROW")
+    int lockIfEscrow(@Param("id") UUID id);
+
+    /** Statut lu en base (requête, pas le cache de la session). */
+    @Query("SELECT p.status FROM PaymentEntity p WHERE p.id = :id")
+    Optional<PaymentStatus> findStatusById(@Param("id") UUID id);
+
+    /**
+     * Enregistre le charge Stripe s'il manque, par une écriture ciblée : jamais un {@code save}
+     * d'entité chargée avant un appel Stripe ({@code PaymentEntity} n'a ni {@code @DynamicUpdate}
+     * ni {@code @Version}, un flush réécrirait statut, remboursé et litige depuis un état périmé).
+     */
+    @Modifying
+    @Query("UPDATE PaymentEntity p SET p.stripeChargeId = :chargeId WHERE p.id = :id AND p.stripeChargeId IS NULL")
+    int setStripeChargeIdIfMissing(@Param("id") UUID id, @Param("chargeId") String chargeId);
+
+    /**
      * Atomic status transition ESCROW → REFUNDED.
      * Returns 1 if the row was updated, 0 if it was already in a non-ESCROW state.
      * Guards the admin manual refund against a double-refund race.
