@@ -211,26 +211,81 @@ class AccountFinalizationServiceTest {
         verify(storageService).deleteByPrefix("support/" + user.getId() + "/");
     }
 
-    @Test
-    @DisplayName("purge tous les préfixes R2 de l'utilisateur, sans kyc/")
-    void finalize_purgesEveryUserPrefix() {
-        UserEntity user = makeUser();
-        UUID userId = user.getId();
-        when(kycRepository.findByUserId(any())).thenReturn(Optional.empty());
+    private void runFinalize(UserEntity user) {
         FirebaseAuth mockAuth = mock(FirebaseAuth.class);
-
         try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class)) {
             staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockAuth);
             service.finalize(user, FinalizationReason.HARD_IMMEDIATE);
         }
+    }
+
+    @Test
+    @DisplayName("purge support/ et l'avatar, jamais kyc/, bids/, package_requests/ ni reports/")
+    void finalize_purgesOnlySupportAndAvatar() {
+        UserEntity user = makeUser();
+        user.setAvatarUrl("users/uid-test/avatar.jpg");
+        UUID userId = user.getId();
+        when(kycRepository.findByUserId(any())).thenReturn(Optional.empty());
+
+        runFinalize(user);
 
         verify(storageService).deleteByPrefix("support/" + userId + "/");
         verify(storageService).deleteByPrefix("users/uid-test/");
-        verify(storageService).deleteByPrefix("bids/" + userId + "/");
-        verify(storageService).deleteByPrefix("package_requests/" + userId + "/");
-        verify(storageService).deleteByPrefix("reports/" + userId + "/");
         verify(storageService, never()).deleteByPrefix("kyc/" + userId + "/");
-        verify(storageService, never()).deleteByPrefix("users/null/");
+        verify(storageService, never()).deleteByPrefix("bids/" + userId + "/");
+        verify(storageService, never()).deleteByPrefix("package_requests/" + userId + "/");
+        verify(storageService, never()).deleteByPrefix("reports/" + userId + "/");
+        assertThat(user.getAvatarUrl()).isNull();
+    }
+
+    @Test
+    @DisplayName("uid null ou blanc : pas de purge users/")
+    void finalize_noUsersPurgeWhenUidNullOrBlank() {
+        when(kycRepository.findByUserId(any())).thenReturn(Optional.empty());
+        UserEntity nullUid = makeUser();
+        nullUid.setFirebaseUid(null);
+        runFinalize(nullUid);
+        UserEntity blankUid = makeUser();
+        blankUid.setFirebaseUid("  ");
+        runFinalize(blankUid);
+
+        verify(storageService, never()).deleteByPrefix(startsWith("users/"));
+    }
+
+    @Test
+    @DisplayName("la suppression R2 n'a lieu qu'après le commit")
+    void finalize_deletesOnlyAfterCommit() {
+        UserEntity user = makeUser();
+        UUID userId = user.getId();
+        when(kycRepository.findByUserId(any())).thenReturn(Optional.empty());
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        try {
+            runFinalize(user);
+            verify(storageService, never()).deleteByPrefix(anyString());
+
+            for (org.springframework.transaction.support.TransactionSynchronization sync :
+                    org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()) {
+                sync.afterCommit();
+            }
+            verify(storageService).deleteByPrefix("support/" + userId + "/");
+            verify(storageService).deleteByPrefix("users/uid-test/");
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    @DisplayName("une erreur R2 n'empêche ni les autres préfixes ni la finalisation")
+    void finalize_r2FailureDoesNotBreakFinalization() {
+        UserEntity user = makeUser();
+        UUID userId = user.getId();
+        when(kycRepository.findByUserId(any())).thenReturn(Optional.empty());
+        doThrow(new RuntimeException("R2 down")).when(storageService).deleteByPrefix("support/" + userId + "/");
+
+        runFinalize(user);
+
+        verify(storageService).deleteByPrefix("users/uid-test/");
+        verify(auditService).log(eq("USER"), eq(userId), eq("USER_GDPR_DELETION"), eq(userId), anyMap());
     }
 
     @Test
