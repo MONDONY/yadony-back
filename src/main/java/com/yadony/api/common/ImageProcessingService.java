@@ -24,6 +24,11 @@ public class ImageProcessingService {
     private static final int THUMB = 400;
     private static final double QUALITY = 0.80;
 
+    public static final int STORAGE_LONG_EDGE = 1600;
+    public static final double STORAGE_QUALITY = 0.80;
+    public static final int AVATAR_LONG_EDGE = 512;
+    public static final double AVATAR_QUALITY = 0.82;
+
     /** Container for the two derived images produced by {@link #process}. */
     public record ProcessedImage(byte[] main, byte[] thumbnail) {}
 
@@ -63,6 +68,46 @@ public class ImageProcessingService {
                     "Image Processing Failed",
                     "Échec du traitement de l'image : " + e.getMessage());
         }
+    }
+
+    /**
+     * Image de stockage : grand côté plafonné à {@code maxLongEdge} (jamais agrandie),
+     * JPEG à {@code quality}, EXIF retirés par le ré-encodage, transparence posée sur blanc
+     * (un PNG transparent passé tel quel en JPEG sortirait noir).
+     */
+    public byte[] resizeForStorage(byte[] input, int maxLongEdge, double quality) {
+        BufferedImage src = flattenOnWhite(decodeImage(input));
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            var builder = Thumbnails.of(src);
+            if (Math.max(src.getWidth(), src.getHeight()) > maxLongEdge) {
+                builder.size(maxLongEdge, maxLongEdge).keepAspectRatio(true);
+            } else {
+                builder.scale(1.0);
+            }
+            builder.outputFormat("jpg").outputQuality(quality).toOutputStream(out);
+            return out.toByteArray();
+        } catch (Exception e) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "image/processing-failed", "Image Processing Failed",
+                    "Échec du traitement de l'image : " + e.getMessage());
+        }
+    }
+
+    private static BufferedImage flattenOnWhite(BufferedImage src) {
+        if (!src.getColorModel().hasAlpha()) {
+            return src;
+        }
+        BufferedImage rgb = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D g = rgb.createGraphics();
+        try {
+            g.setColor(java.awt.Color.WHITE);
+            g.fillRect(0, 0, src.getWidth(), src.getHeight());
+            g.drawImage(src, 0, 0, null);
+        } finally {
+            g.dispose();
+        }
+        return rgb;
     }
 
     // -----------------------------------------------------------------------
