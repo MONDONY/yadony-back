@@ -154,7 +154,7 @@ class PrePaymentCancellationIT {
         assertThat(paymentStatus(paymentId)).isEqualTo("CANCELLED");
         assertThat(awaitNotification(traveler.getId())).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT body FROM notifications WHERE user_id = ? AND type = "
-                + "'BID_CANCELLED_BEFORE_PAYMENT'", String.class, traveler.getId())).contains("kilos réservés");
+                + "'BID_CANCELLED_BEFORE_PAYMENT'", String.class, traveler.getId())).contains("kilos sont de nouveau libres");
         verify(stripeGateway, never()).retrievePaymentIntent(any());
     }
 

@@ -515,7 +515,7 @@ class NotificationDispatcherTest {
                 UUID.randomUUID(), senderId, travelerId, UUID.randomUUID(), "MOBILE_MONEY", true,
                 new java.math.BigDecimal("5")));
         verify(fcmService).sendToUser(eq(travelerId), eq("Demande annulée"),
-                argThat(b -> b.contains("kilos réservés")),
+                argThat(b -> b.contains("kilos sont de nouveau libres")),
                 argThat(d -> "BID_CANCELLED_BEFORE_PAYMENT".equals(d.get("type")) && d.get("bidId") != null));
         verify(fcmService, never()).sendToUser(eq(senderId), any(), any(), any());
     }

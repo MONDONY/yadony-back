@@ -169,6 +169,8 @@ class NotificationTextsTest {
         map.put("mobileMoneyPaymentFailed", NotificationTexts.mobileMoneyPaymentFailed(m));
         map.put("mobileMoneyPaymentExpired", NotificationTexts.mobileMoneyPaymentExpired(m));
         map.put("mobileMoneyPaymentExpiredForTraveler", NotificationTexts.mobileMoneyPaymentExpiredForTraveler(m));
+        map.put("bidCancelledBeforePaymentForTraveler kg", NotificationTexts.bidCancelledBeforePaymentForTraveler(m, true));
+        map.put("bidCancelledBeforePaymentForTraveler", NotificationTexts.bidCancelledBeforePaymentForTraveler(m, false));
         map.put("kycVerified", NotificationTexts.kycVerified(m));
         map.put("kycActionRequired", NotificationTexts.kycActionRequired(m));
         map.put("kycReset", NotificationTexts.kycReset(m));
