@@ -3,12 +3,12 @@ package com.yadony.api.payments.overview;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.overview.dto.MoneyItemDto;
 import com.yadony.api.payments.overview.dto.MoneyOverviewResponse;
 import com.yadony.api.payments.overview.dto.SenderTotalDto;
 import com.yadony.api.payments.overview.dto.TravelerTotalDto;
 import com.yadony.api.payments.overview.dto.WalletBalanceLineDto;
-import com.yadony.api.payments.wallet.WalletAccountEntity;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -63,22 +63,26 @@ public class MoneyOverviewService {
     private final MoneyOverviewReadModel readModel;
     private final WalletAccountRepository walletAccountRepository;
     private final UserRepository userRepository;
+    private final ActiveCurrencyResolver activeCurrencyResolver;
     private final Clock clock;
 
     @org.springframework.beans.factory.annotation.Autowired
     public MoneyOverviewService(MoneyOverviewReadModel readModel,
                                 WalletAccountRepository walletAccountRepository,
-                                UserRepository userRepository) {
-        this(readModel, walletAccountRepository, userRepository, Clock.systemUTC());
+                                UserRepository userRepository,
+                                ActiveCurrencyResolver activeCurrencyResolver) {
+        this(readModel, walletAccountRepository, userRepository, activeCurrencyResolver, Clock.systemUTC());
     }
 
     MoneyOverviewService(MoneyOverviewReadModel readModel,
                          WalletAccountRepository walletAccountRepository,
                          UserRepository userRepository,
+                         ActiveCurrencyResolver activeCurrencyResolver,
                          Clock clock) {
         this.readModel = readModel;
         this.walletAccountRepository = walletAccountRepository;
         this.userRepository = userRepository;
+        this.activeCurrencyResolver = activeCurrencyResolver;
         this.clock = clock;
     }
 
@@ -108,12 +112,14 @@ public class MoneyOverviewService {
         travelerItems.sort(DISPLAY);
         senderItems.sort(DISPLAY);
 
+        String activeCurrency = activeCurrencyResolver.resolve(userId).toUpperCase(Locale.ROOT);
         return new MoneyOverviewResponse(
                 now,
                 RECENT_WINDOW_DAYS,
-                walletBalances(userId),
+                walletBalances(userId, activeCurrency),
                 new MoneyOverviewResponse.RoleSection<>(travelerTotals(travelerItems), travelerItems),
-                new MoneyOverviewResponse.RoleSection<>(senderTotals(senderItems), senderItems));
+                new MoneyOverviewResponse.RoleSection<>(senderTotals(senderItems), senderItems),
+                activeCurrency);
     }
 
     private static final Comparator<MoneyItemDto> DISPLAY = Comparator
@@ -122,11 +128,28 @@ public class MoneyOverviewService {
             .thenComparing(MoneyItemDto::settledAt, Comparator.nullsLast(Comparator.reverseOrder()))
             .thenComparing(MoneyItemDto::departureDate, Comparator.nullsLast(Comparator.naturalOrder()));
 
-    private List<WalletBalanceLineDto> walletBalances(UUID userId) {
-        return walletAccountRepository.findAllByUserId(userId).stream()
-                .sorted(Comparator.comparing(WalletAccountEntity::getCurrency))
+    /**
+     * Soldes du portefeuille, devise active en tête (FLUTTER-J4) : l'écran met en avant la
+     * première ligne, et l'ordre alphabétique montrait « 0 CA$ » à un utilisateur en USD. Les
+     * autres devises suivent par solde décroissant, puis par code.
+     *
+     * <p>Devise active lue comme {@code GET /wallet/balance} ({@link ActiveCurrencyResolver}, même
+     * repli sur le pays que {@code UserBusinessPrefsService.getPrefs}). Ce dernier crée à zéro le
+     * portefeuille de la devise active s'il manque : on reproduit la même ligne à 0 en tête, sans
+     * rien écrire (lecture seule).
+     */
+    private List<WalletBalanceLineDto> walletBalances(UUID userId, String activeCurrency) {
+        List<WalletBalanceLineDto> lines = new ArrayList<>(walletAccountRepository.findAllByUserId(userId).stream()
                 .map(w -> new WalletBalanceLineDto(w.getCurrency().toUpperCase(Locale.ROOT), w.getBalance()))
-                .toList();
+                .toList());
+        if (lines.stream().noneMatch(l -> l.currency().equals(activeCurrency))) {
+            lines.add(new WalletBalanceLineDto(activeCurrency, BigDecimal.ZERO));
+        }
+        lines.sort(Comparator
+                .comparing((WalletBalanceLineDto l) -> !l.currency().equals(activeCurrency))
+                .thenComparing(WalletBalanceLineDto::balance, Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(WalletBalanceLineDto::currency));
+        return List.copyOf(lines);
     }
 
     /** Prénom + initiale de la contrepartie, en une requête pour toutes les lignes. */

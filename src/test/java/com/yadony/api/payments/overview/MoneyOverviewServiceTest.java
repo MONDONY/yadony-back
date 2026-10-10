@@ -3,6 +3,7 @@ package com.yadony.api.payments.overview;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.overview.dto.MoneyItemDto;
 import com.yadony.api.payments.overview.dto.MoneyOverviewResponse;
 import com.yadony.api.payments.wallet.WalletAccountEntity;
@@ -39,8 +40,9 @@ class MoneyOverviewServiceTest {
     private final MoneyOverviewReadModel readModel = mock(MoneyOverviewReadModel.class);
     private final WalletAccountRepository wallets = mock(WalletAccountRepository.class);
     private final UserRepository users = mock(UserRepository.class);
-    private final MoneyOverviewService service =
-            new MoneyOverviewService(readModel, wallets, users, Clock.fixed(NOW, ZoneOffset.UTC));
+    private final ActiveCurrencyResolver activeCurrency = mock(ActiveCurrencyResolver.class);
+    private final MoneyOverviewService service = new MoneyOverviewService(
+            readModel, wallets, users, activeCurrency, Clock.fixed(NOW, ZoneOffset.UTC));
 
     private UUID userId;
     private UserEntity counterparty;
@@ -56,6 +58,14 @@ class MoneyOverviewServiceTest {
         counterparty.setFirstName("Aminata");
         counterparty.setLastName("Diallo");
         when(users.findAllById(anyIterable())).thenReturn(List.of(counterparty));
+        when(activeCurrency.resolve(userId)).thenReturn("EUR");
+    }
+
+    private static WalletAccountEntity account(String currency, String balance) {
+        WalletAccountEntity w = new WalletAccountEntity();
+        w.setCurrency(currency);
+        w.setBalance(new BigDecimal(balance));
+        return w;
     }
 
     private MoneyRow payment(MoneyRole role, String paymentStatus, String bidStatus, String amount,
@@ -88,19 +98,42 @@ class MoneyOverviewServiceTest {
     }
 
     @Test
-    void walletBalances_perCurrency_sortedAndUppercased() {
+    void walletBalances_activeCurrencyFirst_thenByBalanceDesc_thenCode_uppercased() {
         when(readModel.findRows(any(), any())).thenReturn(List.of());
-        WalletAccountEntity xof = new WalletAccountEntity();
-        xof.setCurrency("xof");
-        xof.setBalance(new BigDecimal("5000"));
-        WalletAccountEntity eur = new WalletAccountEntity();
-        eur.setCurrency("EUR");
-        eur.setBalance(new BigDecimal("12.50"));
-        when(wallets.findAllByUserId(userId)).thenReturn(List.of(xof, eur));
+        when(activeCurrency.resolve(userId)).thenReturn("usd");
+        when(wallets.findAllByUserId(userId)).thenReturn(List.of(
+                account("CAD", "0"), account("xof", "5000"), account("EUR", "12.50"),
+                account("USD", "3.00"), account("GBP", "12.50")));
 
         MoneyOverviewResponse r = service.overview(UID);
-        assertThat(r.wallet()).extracting(w -> w.currency()).containsExactly("EUR", "XOF");
-        assertThat(r.wallet().get(0).balance()).isEqualByComparingTo("12.50");
+        assertThat(r.wallet()).extracting(w -> w.currency())
+                .containsExactly("USD", "XOF", "EUR", "GBP", "CAD");
+        assertThat(r.wallet().get(0).balance()).isEqualByComparingTo("3.00");
+        assertThat(r.activeCurrency()).isEqualTo("USD");
+    }
+
+    @Test
+    void walletBalances_activeCurrencyWithoutWallet_isAddedFirstAtZero() {
+        when(readModel.findRows(any(), any())).thenReturn(List.of());
+        when(activeCurrency.resolve(userId)).thenReturn("USD");
+        when(wallets.findAllByUserId(userId)).thenReturn(List.of(account("CAD", "0"), account("EUR", "8.00")));
+
+        MoneyOverviewResponse r = service.overview(UID);
+        assertThat(r.wallet()).extracting(w -> w.currency()).containsExactly("USD", "EUR", "CAD");
+        assertThat(r.wallet().get(0).balance()).isEqualByComparingTo("0");
+        assertThat(r.activeCurrency()).isEqualTo("USD");
+    }
+
+    @Test
+    void walletBalances_noWalletAtAll_onlyTheActiveCurrencyAtZero() {
+        when(readModel.findRows(any(), any())).thenReturn(List.of());
+        when(wallets.findAllByUserId(userId)).thenReturn(List.of());
+
+        MoneyOverviewResponse r = service.overview(UID);
+        assertThat(r.wallet()).singleElement().satisfies(w -> {
+            assertThat(w.currency()).isEqualTo("EUR");
+            assertThat(w.balance()).isEqualByComparingTo("0");
+        });
     }
 
     @Test
