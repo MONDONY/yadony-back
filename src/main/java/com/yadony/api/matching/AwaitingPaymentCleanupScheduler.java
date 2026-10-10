@@ -102,8 +102,13 @@ public class AwaitingPaymentCleanupScheduler {
      * (reçu après commit : le code promo racheté à la création du PaymentIntent est rendu).
      */
     private void abandon(BidEntity bid) {
-        bid.softDelete();
-        bidRepository.save(bid);
+        // Écriture conditionnelle, jamais le save d'une entité lue avant l'appel Stripe : un bid
+        // annulé avant paiement (ou promu) entre-temps n'est pas écrasé, et l'événement (code
+        // promo rendu) ne part que si CETTE écriture a abandonné le bid.
+        if (bidRepository.softDeleteIfAwaitingPayment(bid.getId(), LocalDateTime.now(ZoneOffset.UTC)) == 0) {
+            log.info("Bid {} plus en AWAITING_PAYMENT : abandon ignoré", bid.getId());
+            return;
+        }
         eventPublisher.publishEvent(new BidAwaitingPaymentAbandonedEvent(bid.getId(), bid.getSenderId()));
     }
 }

@@ -1126,8 +1126,10 @@ public class PaymentService {
         }
         log.warn("Autorisation reçue pour le paiement {} déjà {} (PI={}) : aucune promotion",
                 payment.getId(), fresh, paymentIntentId);
+        // Le libérateur ne lève jamais : état terminal, un webhook en 500 bouclerait chez Stripe.
+        // REFUNDED : au plus l'annulation d'une autorisation encore en place, jamais de Refund.
         if (lateAuthorizationReleaser != null) {
-            lateAuthorizationReleaser.release(payment.getId(), paymentIntentId, payment.getBidId());
+            lateAuthorizationReleaser.release(payment.getId(), paymentIntentId, payment.getBidId(), fresh);
         }
         return true;
     }
@@ -1139,8 +1141,10 @@ public class PaymentService {
      * Idempotent: silent no-op if bid not in AWAITING_PAYMENT.
      */
     @Transactional
-    public void promoteBidOnPaymentAuthorized(String paymentIntentId) {
-        bidRepository.findByPaymentIntentId(paymentIntentId).ifPresent(bid -> promoteBid(bid, paymentIntentId));
+    public boolean promoteBidOnPaymentAuthorized(String paymentIntentId) {
+        return bidRepository.findByPaymentIntentId(paymentIntentId)
+                .map(bid -> promoteBid(bid, paymentIntentId))
+                .orElse(false);
     }
 
     /**
@@ -1166,13 +1170,14 @@ public class PaymentService {
      * Promotion effective {@code AWAITING_PAYMENT → PAYMENT_ESCROWED} d'un bid déjà
      * chargé. Idempotente : silencieuse si le bid n'est pas en {@code AWAITING_PAYMENT}.
      */
-    private void promoteBid(BidEntity bid, String paymentIntentId) {
-        if (bid.getStatus() != BidStatus.AWAITING_PAYMENT) return;
+    /** @return vrai si CETTE écriture a promu le bid */
+    private boolean promoteBid(BidEntity bid, String paymentIntentId) {
+        if (bid.getStatus() != BidStatus.AWAITING_PAYMENT) return false;
         // Écriture conditionnelle : jamais de promotion d'un bid annulé avant paiement entre la
         // lecture et ce point (l'UPDATE attend le verrou de l'annulation puis relit la ligne).
         if (bidRepository.promoteToEscrowedIfAwaitingPayment(bid.getId()) == 0) {
             log.info("Bid {} plus en AWAITING_PAYMENT (PI={}) : pas de promotion", bid.getId(), paymentIntentId);
-            return;
+            return false;
         }
 
         // Session alignée sur la ligne écrite, sauvegardée seulement APRÈS la promotion gagnée :
@@ -1200,6 +1205,7 @@ public class PaymentService {
                 senderName, bid.getWeightKg(), corridor));
 
         log.info("Bid {} promoted to PAYMENT_ESCROWED (PI={})", bid.getId(), paymentIntentId);
+        return true;
     }
 
     /**
@@ -1267,8 +1273,12 @@ public class PaymentService {
                 if (found.isPresent() && releaseIfPaymentDead(found.get(), piId)) {
                     return false;
                 }
-                promoteBidOnPaymentAuthorized(piId);
-                return true;
+                // Vrai résultat : promu ici, ou déjà promu par une écriture concurrente
+                // (webhook) ; faux si le bid a quitté AWAITING_PAYMENT autrement (annulé).
+                if (promoteBidOnPaymentAuthorized(piId)) {
+                    return true;
+                }
+                return bidRepository.findStatusById(bidId).orElse(null) == BidStatus.PAYMENT_ESCROWED;
             }
             log.info("Bid {} not promoted: PI {} status={}", bidId, piId, status);
             return false;

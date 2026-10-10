@@ -50,6 +50,15 @@ import java.util.UUID;
  *
  * <p>Aucune pénalité : ni compteur d'annulation, ni réputation, rien n'a été payé. La
  * conversation n'est jamais retirée ni archivée.
+ *
+ * <p><b>Limite connue : ordre de verrous inverse.</b> Le webhook {@code amount_capturable_updated}
+ * (puis {@code confirm-payment}) et la confirmation d'un dépôt mobile money verrouillent le
+ * paiement puis le colis, l'inverse d'ici. Un croisement est un interblocage que PostgreSQL
+ * détecte (après {@code deadlock_timeout}) en abandonnant l'une des deux transactions, sans état
+ * incohérent : si c'est l'annulation, elle répond 409 {@code payment-in-progress} et le colis
+ * apparaît payé ; si c'est le webhook, Stripe le rejoue, il trouve le paiement annulé et libère
+ * l'autorisation ({@code LateAuthorizationReleaser}). Couvert par
+ * {@code LateAuthorizationAfterCancellationIT}.
  */
 @Service
 public class PrePaymentCancellationService {

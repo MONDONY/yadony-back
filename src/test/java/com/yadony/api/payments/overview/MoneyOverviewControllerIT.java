@@ -208,7 +208,7 @@ class MoneyOverviewControllerIT {
                 .andExpect(jsonPath("$.traveler.items[0].counterpartyName").value("Ibrahima S."))
                 .andExpect(jsonPath("$.traveler.items[1].state").value("RELEASE_SCHEDULED"))
                 .andExpect(jsonPath("$.traveler.items[1].releaseCondition").value("AUTO_RELEASE_AFTER_HOLD_IF_NO_DISPUTE"))
-                .andExpect(jsonPath("$.traveler.items[1].releaseAt").value(holdUntil.toString()))
+                .andExpect(jsonPath("$.traveler.items[1].releaseAt").value(holdUntil.format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME)))
                 .andExpect(jsonPath("$.traveler.items[1].channel").value("MOBILE_MONEY"))
                 .andExpect(jsonPath("$.traveler.items[1].amount").value(17600))
                 .andExpect(jsonPath("$.traveler.items[2].state").value("AWAITING_DELIVERY_CONFIRMATION"))

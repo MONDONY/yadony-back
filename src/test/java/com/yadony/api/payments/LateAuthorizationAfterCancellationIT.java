@@ -153,6 +153,81 @@ class LateAuthorizationAfterCancellationIT {
                 org.springframework.data.domain.PageRequest.of(0, 500))).doesNotContain(paymentId);
     }
 
+    /**
+     * Ordre de verrous inverse : le webhook {@code amount_capturable_updated} prend le paiement puis
+     * le colis, l'annulation avant paiement le colis puis le paiement. PostgreSQL détecte
+     * l'interblocage et abandonne l'une des deux transactions ; quel que soit le perdant (puis, s'il
+     * s'agit du webhook, son rejeu par Stripe), l'état final est cohérent : colis annulé et paiement
+     * annulé sans autorisation, ou colis payé et paiement en séquestre.
+     */
+    @Test
+    void cancellationVersusWebhook_inverseLockOrder_neverLeavesAnInconsistentState() throws Exception {
+        UserEntity traveler = persistUser();
+        UserEntity sender = persistUser();
+        String piId = "pi_" + UUID.randomUUID();
+        UUID bidId = persistBid(persistAnnouncement(traveler.getId(), "20.00"), sender.getId(),
+                PaymentMethod.STRIPE, piId, false);
+        UUID paymentId = persistPayment(bidId, PaymentRail.STRIPE, piId);
+
+        PaymentIntent atCancel = mock(PaymentIntent.class);
+        when(atCancel.getId()).thenReturn(piId);
+        when(atCancel.getStatus()).thenReturn("requires_action");
+        PaymentIntent authorized = mock(PaymentIntent.class);
+        when(authorized.getId()).thenReturn(piId);
+        when(authorized.getStatus()).thenReturn("requires_capture");
+        when(authorized.getAmountCapturable()).thenReturn(4000L);
+        when(authorized.getMetadata()).thenReturn(Map.of());
+        when(stripeGateway.retrievePaymentIntent(piId)).thenReturn(atCancel, authorized);
+
+        CountDownLatch paymentLocked = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicBoolean webhookCommitted = new java.util.concurrent.atomic.AtomicBoolean();
+        Thread webhook = new Thread(() -> {
+            try {
+                tx.executeWithoutResult(s -> {
+                    // Même séquence que applyPaymentEscrowActive : paiement, puis colis.
+                    paymentRepository.markCardEscrowIfPending(paymentId);
+                    paymentLocked.countDown();
+                    try {
+                        Thread.sleep(400); // l'annulation prend le colis et attend le paiement
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    bidRepository.promoteToEscrowedIfAwaitingPayment(bidId);
+                });
+                webhookCommitted.set(true);
+            } catch (RuntimeException deadlockVictim) {
+                // Abandonné par PostgreSQL : Stripe rejouera l'événement.
+            } finally {
+                paymentLocked.countDown();
+            }
+        });
+        webhook.start();
+        assertThat(paymentLocked.await(5, TimeUnit.SECONDS)).isTrue();
+
+        int cancelStatus = mockMvc.perform(post("/bids/{id}/cancel-before-payment", bidId)
+                        .with(authentication(as(sender))))
+                .andReturn().getResponse().getStatus();
+        webhook.join(15_000);
+
+        // Les deux ne peuvent pas avoir gagné : l'un des deux a été abandonné ou refusé.
+        assertThat(cancelStatus == 200 && webhookCommitted.get()).isFalse();
+        if (!webhookCommitted.get()) {
+            // Rejeu Stripe du webhook abandonné.
+            tx.executeWithoutResult(s -> paymentService.applyPaymentEscrowActive(authorized));
+        }
+
+        String bidStatus = jdbc.queryForObject("SELECT status FROM bids WHERE id = ?", String.class, bidId);
+        String payStatus = paymentStatus(paymentId);
+        if ("CANCELLED".equals(bidStatus)) {
+            assertThat(cancelStatus).isEqualTo(200);
+            assertThat(payStatus).isEqualTo("CANCELLED");
+        } else {
+            assertThat(cancelStatus).isEqualTo(409);
+            assertThat(bidStatus).isEqualTo("PAYMENT_ESCROWED");
+            assertThat(payStatus).isEqualTo("ESCROW");
+        }
+    }
+
     /** L'UPDATE conditionnel attend le verrou de l'annulation puis relit la ligne validée. */
     @Test
     void promotionWaitingOnTheCancellationLock_neverOverwritesTheCancellation() throws Exception {

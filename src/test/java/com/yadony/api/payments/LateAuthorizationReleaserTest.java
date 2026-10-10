@@ -20,7 +20,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -60,7 +59,7 @@ class LateAuthorizationReleaserTest {
     void authorized_isReleased_andAudited() throws Exception {
         PaymentIntent pi = intent("requires_capture");
 
-        assertThat(releaser.release(paymentId, "pi_1", bidId)).isTrue();
+        assertThat(releaser.release(paymentId, "pi_1", bidId, PaymentStatus.CANCELLED)).isTrue();
 
         verify(pi).cancel(any(PaymentIntentCancelParams.class));
         verify(auditService).log(eq("PAYMENT"), eq(paymentId), eq(LateAuthorizationReleaser.AUDIT_RELEASED),
@@ -73,7 +72,7 @@ class LateAuthorizationReleaserTest {
     void nothingHeld_noAction(String status) throws Exception {
         PaymentIntent pi = intent(status);
 
-        assertThat(releaser.release(paymentId, "pi_1", bidId)).isFalse();
+        assertThat(releaser.release(paymentId, "pi_1", bidId, PaymentStatus.CANCELLED)).isFalse();
 
         verify(pi, never()).cancel(any(PaymentIntentCancelParams.class));
         verifyNoInteractions(auditService, alerts);
@@ -86,7 +85,7 @@ class LateAuthorizationReleaserTest {
             refund.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
                     .thenReturn(mock(Refund.class));
 
-            assertThat(releaser.release(paymentId, "pi_1", bidId)).isTrue();
+            assertThat(releaser.release(paymentId, "pi_1", bidId, PaymentStatus.CANCELLED)).isTrue();
 
             refund.verify(() -> Refund.create(any(RefundCreateParams.class),
                     org.mockito.ArgumentMatchers.<RequestOptions>argThat(
@@ -99,35 +98,103 @@ class LateAuthorizationReleaserTest {
     }
 
     @Test
-    void refundFailure_alertsAndThrows() throws Exception {
+    void refundFailure_alertsOnce_neverThrows() throws Exception {
         intent("succeeded");
         try (MockedStatic<Refund> refund = mockStatic(Refund.class)) {
             refund.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
                     .thenThrow(stripeError());
 
-            assertThatThrownBy(() -> releaser.release(paymentId, "pi_1", bidId))
-                    .isInstanceOf(IllegalStateException.class);
+            assertThat(releaser.release(paymentId, "pi_1", bidId, PaymentStatus.CANCELLED)).isFalse();
         }
         verify(alerts).raiseOnce(eq(LateAuthorizationReleaser.REFUND_ALERT_PREFIX + paymentId), anyString(), anyMap());
         verify(paymentRepository, never()).markRefundedIfCancelled(any());
     }
 
     @Test
-    void cancelFailure_throwsSoTheWebhookIsReplayed() throws Exception {
+    void cancelFailure_logsOnly_neverThrows() throws Exception {
         PaymentIntent pi = intent("requires_capture");
         when(pi.cancel(any(PaymentIntentCancelParams.class))).thenThrow(stripeError());
 
-        assertThatThrownBy(() -> releaser.release(paymentId, "pi_1", bidId))
-                .isInstanceOf(IllegalStateException.class);
-        verifyNoInteractions(auditService);
+        assertThat(releaser.release(paymentId, "pi_1", bidId, PaymentStatus.CANCELLED)).isFalse();
+        verifyNoInteractions(auditService, alerts);
     }
 
     @Test
-    void stripeUnreachable_throws() throws Exception {
+    void stripeUnreachable_logsOnly_neverThrows() throws Exception {
         when(stripeGateway.retrievePaymentIntent("pi_1")).thenThrow(stripeError());
 
-        assertThatThrownBy(() -> releaser.release(paymentId, "pi_1", bidId))
-                .isInstanceOf(IllegalStateException.class);
+        assertThat(releaser.release(paymentId, "pi_1", bidId, PaymentStatus.CANCELLED)).isFalse();
+        verifyNoInteractions(auditService, alerts);
+    }
+
+    /** Webhook rejoué sur un paiement déjà remboursé, PI capturé : jamais de second Refund. */
+    @Test
+    void refundedPayment_capturedIntent_noRefundEver() throws Exception {
+        intent("succeeded");
+        try (MockedStatic<Refund> refund = mockStatic(Refund.class)) {
+            assertThat(releaser.release(paymentId, "pi_1", bidId, PaymentStatus.REFUNDED)).isFalse();
+            refund.verifyNoInteractions();
+        }
+        verifyNoInteractions(auditService, alerts, paymentRepository);
+    }
+
+    @Test
+    void refundedPayment_authorizationStillHeld_isReleased() throws Exception {
+        PaymentIntent pi = intent("requires_capture");
+
+        assertThat(releaser.release(paymentId, "pi_1", bidId, PaymentStatus.REFUNDED)).isTrue();
+
+        verify(pi).cancel(any(PaymentIntentCancelParams.class));
+    }
+
+    @Test
+    void cancelledPayment_captureAlreadyRefunded_realignsWithoutRefund() throws Exception {
+        PaymentIntent pi = intent("succeeded");
+        com.stripe.model.Charge charge = mock(com.stripe.model.Charge.class);
+        when(charge.getRefunded()).thenReturn(false);
+        when(charge.getAmount()).thenReturn(4000L);
+        when(charge.getAmountRefunded()).thenReturn(4000L);
+        when(pi.getLatestChargeObject()).thenReturn(charge);
+        try (MockedStatic<Refund> refund = mockStatic(Refund.class)) {
+            assertThat(releaser.release(paymentId, "pi_1", bidId, PaymentStatus.CANCELLED)).isTrue();
+            refund.verifyNoInteractions();
+        }
+        verify(paymentRepository).markRefundedIfCancelled(paymentId);
+        verify(auditService).log(eq("PAYMENT"), eq(paymentId), eq(LateAuthorizationReleaser.AUDIT_REALIGNED),
+                eq(null), anyMap());
+        verifyNoInteractions(alerts);
+    }
+
+    @Test
+    void cancelledPayment_chargeFlaggedRefunded_realigns() throws Exception {
+        PaymentIntent pi = intent("succeeded");
+        com.stripe.model.Charge charge = mock(com.stripe.model.Charge.class);
+        when(charge.getRefunded()).thenReturn(true);
+        when(pi.getLatestChargeObject()).thenReturn(charge);
+        try (MockedStatic<Refund> refund = mockStatic(Refund.class)) {
+            assertThat(releaser.release(paymentId, "pi_1", bidId, PaymentStatus.CANCELLED)).isTrue();
+            refund.verifyNoInteractions();
+        }
+    }
+
+    @Test
+    void cancelledPayment_chargeOnlyById_partiallyRefunded_refundsTheRest() throws Exception {
+        PaymentIntent pi = intent("succeeded");
+        when(pi.getLatestChargeObject()).thenReturn(null);
+        when(pi.getLatestCharge()).thenReturn("ch_1");
+        com.stripe.model.Charge charge = mock(com.stripe.model.Charge.class);
+        when(charge.getRefunded()).thenReturn(false);
+        when(charge.getAmount()).thenReturn(4000L);
+        when(charge.getAmountRefunded()).thenReturn(1000L);
+        try (MockedStatic<com.stripe.model.Charge> charges = mockStatic(com.stripe.model.Charge.class);
+             MockedStatic<Refund> refund = mockStatic(Refund.class)) {
+            charges.when(() -> com.stripe.model.Charge.retrieve("ch_1")).thenReturn(charge);
+            refund.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
+                    .thenReturn(mock(Refund.class));
+
+            assertThat(releaser.release(paymentId, "pi_1", bidId, PaymentStatus.CANCELLED)).isTrue();
+            refund.verify(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)));
+        }
     }
 
     private static InvalidRequestException stripeError() {

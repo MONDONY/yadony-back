@@ -539,7 +539,7 @@ class PaymentServiceTest {
         service.handlePaymentEscrowActive(mockEvent);
 
         assertThat(payment.getStatus()).isEqualTo(PaymentStatus.CANCELLED);
-        verify(releaser).release(payment.getId(), "pi_late", payment.getBidId());
+        verify(releaser).release(payment.getId(), "pi_late", payment.getBidId(), PaymentStatus.CANCELLED);
         verify(paymentRepository, never()).markCardEscrowIfPending(any());
         verify(bidRepository, never()).findByPaymentIntentId(any());
         verifyNoInteractions(eventPublisher);
@@ -563,9 +563,67 @@ class PaymentServiceTest {
 
         verify(paymentRepository, never()).save(any());
         verify(paymentRepository).setStripeChargeIdIfMissing(payment.getId(), "ch_race");
-        verify(releaser).release(payment.getId(), "pi_race", payment.getBidId());
+        verify(releaser).release(payment.getId(), "pi_race", payment.getBidId(), PaymentStatus.CANCELLED);
         verify(bidRepository, never()).findByPaymentIntentId(any());
         verifyNoInteractions(eventPublisher);
+    }
+
+    /** Webhook rejoué sur un paiement déjà remboursé : pas d'exception (200), pas de promotion. */
+    @Test
+    void handlePaymentEscrowActive_refundedPayment_replayed_noThrow_noPromotion() {
+        LateAuthorizationReleaser releaser = mock(LateAuthorizationReleaser.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "lateAuthorizationReleaser", releaser);
+        PaymentEntity payment = buildPayment(PaymentStatus.REFUNDED, "pi_ref");
+        PaymentIntent mockPi = mock(PaymentIntent.class);
+        when(mockPi.getId()).thenReturn("pi_ref");
+        Event mockEvent = buildEventWith("payment_intent.amount_capturable_updated", mockPi);
+        when(paymentRepository.findByStripePaymentIntentId("pi_ref")).thenReturn(Optional.of(payment));
+        when(paymentRepository.findStatusById(payment.getId())).thenReturn(Optional.of(PaymentStatus.REFUNDED));
+
+        org.assertj.core.api.Assertions.assertThatCode(() -> service.handlePaymentEscrowActive(mockEvent))
+                .doesNotThrowAnyException();
+
+        verify(releaser).release(payment.getId(), "pi_ref", payment.getBidId(), PaymentStatus.REFUNDED);
+        verify(bidRepository, never()).findByPaymentIntentId(any());
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void confirmBidPayment_promotionLostToCancellation_returnsFalse() {
+        BidEntity bid = buildBid(BidStatus.AWAITING_PAYMENT);
+        bid.setPaymentIntentId("pi_lost");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(bidRepository.findByPaymentIntentId("pi_lost")).thenReturn(Optional.of(bid));
+        when(bidRepository.promoteToEscrowedIfAwaitingPayment(bid.getId())).thenReturn(0);
+        when(bidRepository.findStatusById(bidId)).thenReturn(Optional.of(BidStatus.CANCELLED));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            PaymentIntent pi = mock(PaymentIntent.class);
+            when(pi.getStatus()).thenReturn("requires_capture");
+            piStatic.when(() -> PaymentIntent.retrieve("pi_lost")).thenReturn(pi);
+
+            assertThat(service.confirmBidPayment(bidId)).isFalse();
+        }
+    }
+
+    @Test
+    void confirmBidPayment_promotedConcurrentlyByWebhook_returnsTrue() {
+        BidEntity bid = buildBid(BidStatus.AWAITING_PAYMENT);
+        bid.setPaymentIntentId("pi_wh");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(bidRepository.findByPaymentIntentId("pi_wh")).thenReturn(Optional.of(bid));
+        when(bidRepository.promoteToEscrowedIfAwaitingPayment(bid.getId())).thenReturn(0);
+        when(bidRepository.findStatusById(bidId)).thenReturn(Optional.of(BidStatus.PAYMENT_ESCROWED));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            PaymentIntent pi = mock(PaymentIntent.class);
+            when(pi.getStatus()).thenReturn("requires_capture");
+            piStatic.when(() -> PaymentIntent.retrieve("pi_wh")).thenReturn(pi);
+
+            assertThat(service.confirmBidPayment(bidId)).isTrue();
+        }
     }
 
     @Test
@@ -587,7 +645,7 @@ class PaymentServiceTest {
             assertThat(service.confirmBidPayment(bidId)).isFalse();
         }
         assertThat(bid.getStatus()).isEqualTo(BidStatus.AWAITING_PAYMENT);
-        verify(releaser).release(payment.getId(), "pi_c", payment.getBidId());
+        verify(releaser).release(payment.getId(), "pi_c", payment.getBidId(), PaymentStatus.CANCELLED);
         verify(bidRepository, never()).promoteToEscrowedIfAwaitingPayment(any());
     }
 
