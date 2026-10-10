@@ -1,6 +1,7 @@
 package com.yadony.api.promo;
 
 import com.yadony.api.cancellation.CancellationReason;
+import com.yadony.api.cancellation.events.BidCancelledBeforePaymentEvent;
 import com.yadony.api.cancellation.events.CancellationConfirmedEvent;
 import com.yadony.api.cancellation.events.TripCancelledEvent;
 import com.yadony.api.matching.events.BidAwaitingPaymentAbandonedEvent;
@@ -48,6 +49,8 @@ import java.util.UUID;
  *       <td>oui ; paiement porté par un fil : bid(s) matérialisé(s) de ce fil</td></tr>
  *   <tr><td>{@link BidAwaitingPaymentAbandonedEvent}</td><td>PaymentIntent jamais autorisé,
  *       annulé</td><td>oui</td></tr>
+ *   <tr><td>{@link BidCancelledBeforePaymentEvent}</td><td>annulée par l'expéditeur avant
+ *       paiement, rien d'encaissé</td><td>oui</td></tr>
  * </table>
  *
  * <p>Bids issus d'un fil de négociation : même traitement que les bids classiques. Leur
@@ -79,6 +82,7 @@ public class PromoReleaseListener {
     static final String REASON_PARCEL_REFUSED = "PARCEL_REFUSED";
     static final String REASON_ADMIN_REFUND = "ADMIN_REFUND";
     static final String REASON_PAYMENT_ABANDONED = "PAYMENT_ABANDONED";
+    static final String REASON_CANCELLED_BEFORE_PAYMENT = "CANCELLED_BEFORE_PAYMENT";
 
     private static final String CASH = "CASH";
 
@@ -142,6 +146,12 @@ public class PromoReleaseListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onBidAwaitingPaymentAbandoned(BidAwaitingPaymentAbandonedEvent event) {
         release(event.bidId(), REASON_PAYMENT_ABANDONED);
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onBidCancelledBeforePayment(BidCancelledBeforePaymentEvent event) {
+        // Annulée par l'expéditeur avant paiement : rien n'a été encaissé.
+        release(event.bidId(), REASON_CANCELLED_BEFORE_PAYMENT);
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)

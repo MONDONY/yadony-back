@@ -2,6 +2,7 @@ package com.yadony.api.notifications;
 
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.auth.events.UserSuspendedEvent;
+import com.yadony.api.cancellation.events.BidCancelledBeforePaymentEvent;
 import com.yadony.api.cancellation.events.BidLostRematchPreparedEvent;
 import com.yadony.api.cancellation.events.DeliveryNoShowReportedEvent;
 import com.yadony.api.cancellation.events.TripCancelledEvent;
@@ -424,6 +425,23 @@ public class NotificationDispatcher {
             var forTraveler = NotificationTexts.mobileMoneyPaymentExpiredForTraveler(messagesFor(event.travelerId()));
             notifyUser(event.travelerId(), forTraveler.title(), forTraveler.body(), data);
         }
+    }
+
+    /**
+     * L'expéditeur a annulé sa demande avant de payer : le voyageur est prévenu s'il la
+     * connaissait (acceptée en mobile money, ou prix négocié). Notification persistée (in-app)
+     * et poussée ; pas critique, donc pas de SMS de repli.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onBidCancelledBeforePayment(BidCancelledBeforePaymentEvent event) {
+        if (!event.travelerAware() || event.travelerId() == null) {
+            return;
+        }
+        var text = NotificationTexts.bidCancelledBeforePaymentForTraveler(
+                messagesFor(event.travelerId()), event.releasedKg() != null);
+        notifyUser(event.travelerId(), text.title(), text.body(),
+                Map.of("type", "BID_CANCELLED_BEFORE_PAYMENT", "bidId", event.bidId().toString()));
     }
 
     @EventListener @Async

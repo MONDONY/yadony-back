@@ -35,6 +35,7 @@ class AwaitingPaymentCleanupSchedulerTest {
     @BeforeEach
     void setUp() {
         scheduler = new AwaitingPaymentCleanupScheduler(bidRepository, paymentService, eventPublisher);
+        org.mockito.Mockito.lenient().when(bidRepository.softDeleteIfAwaitingPayment(any(), any())).thenReturn(1);
     }
 
     private BidEntity expired(String piId) {
@@ -55,8 +56,8 @@ class AwaitingPaymentCleanupSchedulerTest {
         scheduler.cleanupUnpaidBids();
 
         verify(paymentService).cancelPaymentIntent("pi_xxx");
-        assertThat(bid.getDeletedAt()).isNotNull();
-        verify(bidRepository).save(bid);
+        verify(bidRepository).softDeleteIfAwaitingPayment(eq(bid.getId()), any());
+        verify(bidRepository, never()).save(any());
         verify(paymentService, never()).promoteBidOnPaymentAuthorized(any());
         verify(eventPublisher).publishEvent(
                 new com.yadony.api.matching.events.BidAwaitingPaymentAbandonedEvent(bid.getId(), bid.getSenderId()));
@@ -122,8 +123,8 @@ class AwaitingPaymentCleanupSchedulerTest {
         }
 
         // Soft-delete the bid since payment is already canceled
-        assertThat(bid.getDeletedAt()).isNotNull();
-        verify(bidRepository).save(bid);
+        verify(bidRepository).softDeleteIfAwaitingPayment(eq(bid.getId()), any());
+        verify(bidRepository, never()).save(any());
         verify(eventPublisher).publishEvent(
                 new com.yadony.api.matching.events.BidAwaitingPaymentAbandonedEvent(bid.getId(), bid.getSenderId()));
         verify(paymentService, never()).promoteBidOnPaymentAuthorized(any());
@@ -185,5 +186,20 @@ class AwaitingPaymentCleanupSchedulerTest {
 
         verifyNoInteractions(paymentService);
         verify(bidRepository, never()).save(any());
+    }
+
+    /** Annulé avant paiement (ou promu) entre la sélection et l'abandon : rien n'est écrasé. */
+    @Test
+    void bidLeftAwaitingPaymentMeanwhile_notAbandoned_noPromoReleased() throws StripeException {
+        BidEntity bid = expired("pi_gone");
+        when(bidRepository.findByStatusAndPaymentMethodNotAndAwaitingPaymentExpiresAtBefore(
+                eq(BidStatus.AWAITING_PAYMENT), eq(PaymentMethod.MOBILE_MONEY), any())).thenReturn(List.of(bid));
+        when(bidRepository.softDeleteIfAwaitingPayment(eq(bid.getId()), any())).thenReturn(0);
+
+        scheduler.cleanupUnpaidBids();
+
+        verify(paymentService).cancelPaymentIntent("pi_gone");
+        verify(bidRepository, never()).save(any());
+        verifyNoInteractions(eventPublisher);
     }
 }

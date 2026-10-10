@@ -286,6 +286,7 @@ class NotificationPrefsServiceTest {
         assertThat(service.isAllowed(USER_ID, "DELIVERY_NOSHOW_REPORTED")).isFalse();
         assertThat(service.isAllowed(USER_ID, "MM_PAYMENT_PENDING")).isFalse();
         assertThat(service.isAllowed(USER_ID, "MM_PAYMENT_EXPIRED")).isFalse();
+        assertThat(service.isAllowed(USER_ID, "BID_CANCELLED_BEFORE_PAYMENT")).isFalse();
     }
 
     @Test

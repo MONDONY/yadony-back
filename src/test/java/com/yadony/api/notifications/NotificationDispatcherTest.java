@@ -506,6 +506,39 @@ class NotificationDispatcherTest {
         verify(fcmService).sendToUser(eq(travelerId), eq("Colis annulé"), any(), argThat(d -> "MM_PAYMENT_EXPIRED".equals(d.get("type"))));
     }
 
+    @Test
+    void onBidCancelledBeforePayment_travelerAware_notifiesTravelerOnly() {
+        UUID senderId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+        dispatcher.onBidCancelledBeforePayment(new com.yadony.api.cancellation.events.BidCancelledBeforePaymentEvent(
+                UUID.randomUUID(), senderId, travelerId, UUID.randomUUID(), "MOBILE_MONEY", true,
+                new java.math.BigDecimal("5")));
+        verify(fcmService).sendToUser(eq(travelerId), eq("Demande annulée"),
+                argThat(b -> b.contains("kilos sont de nouveau libres")),
+                argThat(d -> "BID_CANCELLED_BEFORE_PAYMENT".equals(d.get("type")) && d.get("bidId") != null));
+        verify(fcmService, never()).sendToUser(eq(senderId), any(), any(), any());
+    }
+
+    @Test
+    void onBidCancelledBeforePayment_withoutReleasedKg_usesGenericBody() {
+        UUID travelerId = UUID.randomUUID();
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+        dispatcher.onBidCancelledBeforePayment(new com.yadony.api.cancellation.events.BidCancelledBeforePaymentEvent(
+                UUID.randomUUID(), UUID.randomUUID(), travelerId, UUID.randomUUID(), "STRIPE", true, null));
+        verify(fcmService).sendToUser(eq(travelerId), eq("Demande annulée"),
+                argThat(b -> b.contains("Rien n'a été débité")), any());
+    }
+
+    @Test
+    void onBidCancelledBeforePayment_travelerUnaware_notifiesNobody() {
+        dispatcher.onBidCancelledBeforePayment(new com.yadony.api.cancellation.events.BidCancelledBeforePaymentEvent(
+                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "STRIPE", false, null));
+        dispatcher.onBidCancelledBeforePayment(new com.yadony.api.cancellation.events.BidCancelledBeforePaymentEvent(
+                UUID.randomUUID(), UUID.randomUUID(), null, UUID.randomUUID(), "STRIPE", true, null));
+        verify(fcmService, never()).sendToUser(any(), any(), any(), any());
+    }
+
     // ── BidRejectedEvent ──────────────────────────────────────────────────────
 
     @Test

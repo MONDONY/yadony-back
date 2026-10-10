@@ -403,6 +403,34 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
             BidStatus status, PaymentMethod excludedMethod, LocalDateTime threshold);
 
     /**
+     * Promotion {@code AWAITING_PAYMENT → PAYMENT_ESCROWED} par écriture conditionnelle : 1 si le
+     * bid attendait encore son paiement, 0 sinon. Sous PostgreSQL (READ COMMITTED), l'UPDATE attend
+     * le verrou d'une annulation avant paiement en cours puis réévalue la condition sur la ligne
+     * validée : un bid passé {@code CANCELLED} entre-temps n'est jamais promu (aucune écriture
+     * « lue avant, écrite après » ne peut écraser l'annulation).
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE BidEntity b SET b.status = com.yadony.api.matching.BidStatus.PAYMENT_ESCROWED, "
+            + "b.awaitingPaymentExpiresAt = NULL WHERE b.id = :id "
+            + "AND b.status = com.yadony.api.matching.BidStatus.AWAITING_PAYMENT")
+    int promoteToEscrowedIfAwaitingPayment(@Param("id") UUID id);
+
+    /** Statut lu en base (requête scalaire, jamais l'entité de la session). */
+    @Query("SELECT b.status FROM BidEntity b WHERE b.id = :id")
+    Optional<BidStatus> findStatusById(@Param("id") UUID id);
+
+    /**
+     * Abandon d'un bid carte resté AWAITING_PAYMENT au-delà de sa fenêtre
+     * ({@code AwaitingPaymentCleanupScheduler}) : soft delete conditionnel. 0 si le bid a quitté
+     * AWAITING_PAYMENT entre-temps (annulé avant paiement, promu) : il n'est jamais écrasé et le
+     * code promo n'est pas rendu deux fois.
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE BidEntity b SET b.deletedAt = :now WHERE b.id = :id "
+            + "AND b.status = com.yadony.api.matching.BidStatus.AWAITING_PAYMENT AND b.deletedAt IS NULL")
+    int softDeleteIfAwaitingPayment(@Param("id") UUID id, @Param("now") LocalDateTime now);
+
+    /**
      * Expiration des bids mobile money en attente de paiement (MobileMoneyPaymentDeadlineScheduler).
      * Identifiants seulement : le scheduler relit chaque bid sous verrou dans sa propre
      * transaction, hydrater l'entité complète ici (dont le numéro payeur chiffré) serait jeté.

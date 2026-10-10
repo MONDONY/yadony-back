@@ -102,6 +102,13 @@ public class PaymentService {
     private final com.yadony.api.voucher.CommissionVoucherService voucherService;
     private final ConnectAccountProvisioner connectAccountProvisioner;
 
+    /**
+     * Libère une autorisation carte arrivée sur un paiement déjà mort (annulé avant paiement…) ;
+     * optionnel, même motif que le champ suivant.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private LateAuthorizationReleaser lateAuthorizationReleaser;
+
     /** Rail mobile money d'un fil ; optionnel pour ne pas toucher aux constructeurs des tests existants. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.yadony.api.payments.mobilemoney.MobileMoneyNegotiationPaymentService mobileMoneyNegotiationPaymentService;
@@ -1046,19 +1053,23 @@ public class PaymentService {
      */
     void applyPaymentEscrowActive(PaymentIntent pi, boolean callerSettles) {
         final PaymentIntent finalPi = pi;
+        Optional<PaymentEntity> found = paymentRepository.findByStripePaymentIntentId(finalPi.getId());
 
-        paymentRepository.findByStripePaymentIntentId(finalPi.getId()).ifPresent(payment -> {
+        found.ifPresent(payment -> {
             boolean changed = false;
 
             // Persist the Stripe Charge id for later Transfer.sourceTransaction reconciliation.
             // Idempotent: only set once.
             String chargeId = finalPi.getLatestCharge();
-            if (chargeId != null && payment.getStripeChargeId() == null) {
+            boolean chargeMissing = chargeId != null && payment.getStripeChargeId() == null;
+            if (chargeMissing) {
                 payment.setStripeChargeId(chargeId);
-                changed = true;
             }
 
-            if (payment.getStatus() == PaymentStatus.PENDING) {
+            // Écriture conditionnelle : un paiement annulé entre la lecture ci-dessus et ce point
+            // (annulation avant paiement concurrente) n'est jamais ressuscité en séquestre.
+            if (payment.getStatus() == PaymentStatus.PENDING
+                    && paymentRepository.markCardEscrowIfPending(payment.getId()) == 1) {
                 payment.setStatus(PaymentStatus.ESCROW);
                 changed = true;
                 auditService.log("PAYMENT", payment.getId(), "PAYMENT_ESCROW_ACTIVE",
@@ -1070,11 +1081,23 @@ public class PaymentService {
             }
 
             if (changed) {
+                // Ligne déjà passée ESCROW par l'écriture conditionnelle : la sauvegarde ne
+                // réécrit que des valeurs à jour.
                 paymentRepository.save(payment);
+            } else if (chargeMissing) {
+                // Jamais de save d'une entité lue avant un claim perdu (elle réécrirait PENDING
+                // sur un paiement annulé) : écriture ciblée du seul charge id.
+                paymentRepository.setStripeChargeIdIfMissing(payment.getId(), chargeId);
             }
         });
 
-        // Promote the AWAITING_PAYMENT bid to PENDING (independent of Payment row state)
+        // Paiement mort (annulé avant paiement, remboursé) : l'autorisation est libérée, le bid
+        // n'est jamais promu, la négociation jamais finalisée.
+        if (found.isPresent() && releaseIfPaymentDead(found.get(), finalPi.getId())) {
+            return;
+        }
+
+        // Promotion conditionnelle du bid AWAITING_PAYMENT (écriture WHERE status = AWAITING_PAYMENT).
         promoteBidOnPaymentAuthorized(finalPi.getId());
 
         // Marketplace package_request flow: if this PI is bound to a negotiation thread,
@@ -1091,14 +1114,37 @@ public class PaymentService {
     }
 
     /**
+     * Statut RELU EN BASE (pas celui de la session, peut-être périmé) : CANCELLED ou REFUNDED,
+     * l'autorisation qui arrive est libérée par {@link LateAuthorizationReleaser}.
+     *
+     * @return vrai si le paiement est mort (l'appelant ne promeut rien)
+     */
+    private boolean releaseIfPaymentDead(PaymentEntity payment, String paymentIntentId) {
+        PaymentStatus fresh = paymentRepository.findStatusById(payment.getId()).orElse(payment.getStatus());
+        if (fresh != PaymentStatus.CANCELLED && fresh != PaymentStatus.REFUNDED) {
+            return false;
+        }
+        log.warn("Autorisation reçue pour le paiement {} déjà {} (PI={}) : aucune promotion",
+                payment.getId(), fresh, paymentIntentId);
+        // Le libérateur ne lève jamais : état terminal, un webhook en 500 bouclerait chez Stripe.
+        // REFUNDED : au plus l'annulation d'une autorisation encore en place, jamais de Refund.
+        if (lateAuthorizationReleaser != null) {
+            lateAuthorizationReleaser.release(payment.getId(), paymentIntentId, payment.getBidId(), fresh);
+        }
+        return true;
+    }
+
+    /**
      * Promotes a bid from AWAITING_PAYMENT → PENDING when the Stripe PaymentIntent
      * has been authorized (capture_method=manual hold posted).
      * Publishes BidCreatedEvent so the traveler is notified.
      * Idempotent: silent no-op if bid not in AWAITING_PAYMENT.
      */
     @Transactional
-    public void promoteBidOnPaymentAuthorized(String paymentIntentId) {
-        bidRepository.findByPaymentIntentId(paymentIntentId).ifPresent(bid -> promoteBid(bid, paymentIntentId));
+    public boolean promoteBidOnPaymentAuthorized(String paymentIntentId) {
+        return bidRepository.findByPaymentIntentId(paymentIntentId)
+                .map(bid -> promoteBid(bid, paymentIntentId))
+                .orElse(false);
     }
 
     /**
@@ -1124,9 +1170,18 @@ public class PaymentService {
      * Promotion effective {@code AWAITING_PAYMENT → PAYMENT_ESCROWED} d'un bid déjà
      * chargé. Idempotente : silencieuse si le bid n'est pas en {@code AWAITING_PAYMENT}.
      */
-    private void promoteBid(BidEntity bid, String paymentIntentId) {
-        if (bid.getStatus() != BidStatus.AWAITING_PAYMENT) return;
+    /** @return vrai si CETTE écriture a promu le bid */
+    private boolean promoteBid(BidEntity bid, String paymentIntentId) {
+        if (bid.getStatus() != BidStatus.AWAITING_PAYMENT) return false;
+        // Écriture conditionnelle : jamais de promotion d'un bid annulé avant paiement entre la
+        // lecture et ce point (l'UPDATE attend le verrou de l'annulation puis relit la ligne).
+        if (bidRepository.promoteToEscrowedIfAwaitingPayment(bid.getId()) == 0) {
+            log.info("Bid {} plus en AWAITING_PAYMENT (PI={}) : pas de promotion", bid.getId(), paymentIntentId);
+            return false;
+        }
 
+        // Session alignée sur la ligne écrite, sauvegardée seulement APRÈS la promotion gagnée :
+        // elle ne réécrit que des valeurs à jour (et le PaymentIntent reporté par createEscrow).
         bid.setStatus(BidStatus.PAYMENT_ESCROWED);
         bid.setAwaitingPaymentExpiresAt(null);
         bidRepository.save(bid);
@@ -1150,6 +1205,7 @@ public class PaymentService {
                 senderName, bid.getWeightKg(), corridor));
 
         log.info("Bid {} promoted to PAYMENT_ESCROWED (PI={})", bid.getId(), paymentIntentId);
+        return true;
     }
 
     /**
@@ -1188,16 +1244,18 @@ public class PaymentService {
             if ("requires_capture".equals(status)
                     || "succeeded".equals(status)
                     || "processing".equals(status)) {
-                promoteBidOnPaymentAuthorized(piId);
-                // Also transition the payment entity to ESCROW so DeliveryEventListener can release it.
-                paymentRepository.findByBidId(bidId).ifPresent(payment -> {
+                // Paiement d'abord (écriture conditionnelle), promotion ensuite et seulement si le
+                // paiement n'est pas mort : un bid annulé avant paiement n'est jamais ressuscité.
+                Optional<PaymentEntity> found = paymentRepository.findByBidId(bidId);
+                found.ifPresent(payment -> {
                     boolean changed = false;
                     String chargeId = pi.getLatestCharge();
-                    if (chargeId != null && payment.getStripeChargeId() == null) {
+                    boolean chargeMissing = chargeId != null && payment.getStripeChargeId() == null;
+                    if (chargeMissing) {
                         payment.setStripeChargeId(chargeId);
-                        changed = true;
                     }
-                    if (payment.getStatus() == PaymentStatus.PENDING) {
+                    if (payment.getStatus() == PaymentStatus.PENDING
+                            && paymentRepository.markCardEscrowIfPending(payment.getId()) == 1) {
                         payment.setStatus(PaymentStatus.ESCROW);
                         changed = true;
                         auditService.log("PAYMENT", payment.getId(), "PAYMENT_ESCROW_ACTIVE",
@@ -1208,9 +1266,19 @@ public class PaymentService {
                     }
                     if (changed) {
                         paymentRepository.save(payment);
+                    } else if (chargeMissing) {
+                        paymentRepository.setStripeChargeIdIfMissing(payment.getId(), chargeId);
                     }
                 });
-                return true;
+                if (found.isPresent() && releaseIfPaymentDead(found.get(), piId)) {
+                    return false;
+                }
+                // Vrai résultat : promu ici, ou déjà promu par une écriture concurrente
+                // (webhook) ; faux si le bid a quitté AWAITING_PAYMENT autrement (annulé).
+                if (promoteBidOnPaymentAuthorized(piId)) {
+                    return true;
+                }
+                return bidRepository.findStatusById(bidId).orElse(null) == BidStatus.PAYMENT_ESCROWED;
             }
             log.info("Bid {} not promoted: PI {} status={}", bidId, piId, status);
             return false;
