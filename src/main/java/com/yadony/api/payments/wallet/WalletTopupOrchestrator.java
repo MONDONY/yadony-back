@@ -4,6 +4,7 @@ import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
 import com.stripe.param.PaymentIntentCreateParams;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.stripe.StripeUnavailable;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.currency.CurrencyAmount;
 import com.yadony.api.payments.currency.CurrencyCatalog;
@@ -81,6 +82,9 @@ public class WalletTopupOrchestrator {
             com.stripe.model.checkout.Session session = com.stripe.model.checkout.Session.create(params);
             return new WalletTopupCheckoutResponse(session.getUrl());
         } catch (StripeException exception) {
+            if (StripeUnavailable.isNetworkFailure(exception)) {
+                throw StripeUnavailable.exception();
+            }
             throw new YadonyBusinessException(
                     HttpStatus.BAD_GATEWAY,
                     "wallet-topup-stripe-error", "Stripe Error",
@@ -134,6 +138,9 @@ public class WalletTopupOrchestrator {
             PaymentIntent paymentIntent = PaymentIntent.create(params);
             return WalletTopupResponse.stripe(paymentIntent.getClientSecret());
         } catch (StripeException exception) {
+            if (StripeUnavailable.isNetworkFailure(exception)) {
+                throw StripeUnavailable.exception();
+            }
             throw new YadonyBusinessException(
                     HttpStatus.BAD_GATEWAY,
                     "wallet-topup-stripe-error", "Stripe Error",

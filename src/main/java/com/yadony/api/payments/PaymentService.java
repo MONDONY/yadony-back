@@ -11,6 +11,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.AdminAlertService;
+import com.yadony.api.common.stripe.StripeUnavailable;
 import com.yadony.api.promo.PromoService;
 import com.yadony.api.config.StripeConnectProperties;
 import com.yadony.api.payments.exceptions.TravelerNotEligibleForPaymentException;
@@ -624,6 +625,10 @@ public class PaymentService {
                     }
                 } catch (StripeException e) {
                     log.error("Could not retrieve or cancel existing PaymentIntent for bid {}", bidId, e);
+                    // Rien n'a bougé (paiement PENDING, PI inchangé) : le nouvel essai reprend ici.
+                    if (StripeUnavailable.isNetworkFailure(e)) {
+                        throw StripeUnavailable.exception();
+                    }
                     throw stripeRecoveryFailed();
                 }
             }
@@ -743,6 +748,12 @@ public class PaymentService {
                         "Le voyageur doit reconfigurer son compte de paiement avant de pouvoir recevoir cette demande.");
             }
             log.error("Stripe PaymentIntent creation failed for bid {}", bidId, e);
+            // Exception non vérifiée : la transaction de l'appelant (checkout) est annulée,
+            // aucun paiement ni bid à moitié créé ne survit. Un PI éventuellement créé chez
+            // Stripe malgré la coupure reste requires_payment_method, sans débit possible.
+            if (StripeUnavailable.isNetworkFailure(e)) {
+                throw StripeUnavailable.exception();
+            }
             throw new YadonyBusinessException(HttpStatus.INTERNAL_SERVER_ERROR,
                     "payment-creation-failed", "Payment Error",
                     "Impossible de créer le paiement. Veuillez réessayer.");
@@ -789,6 +800,9 @@ public class PaymentService {
             return new EphemeralKeyResponse(key.getSecret(), customerId);
         } catch (StripeException e) {
             log.error("Failed to create Stripe ephemeral key for user {}", user.getId(), e);
+            if (StripeUnavailable.isNetworkFailure(e)) {
+                throw StripeUnavailable.exception();
+            }
             throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
                     "ephemeral-key-creation-failed", "Stripe Error",
                     "Impossible de préparer la fiche de paiement. Veuillez réessayer.");
@@ -1284,6 +1298,9 @@ public class PaymentService {
             return false;
         } catch (StripeException e) {
             log.error("Failed to retrieve PI {} for bid {}: {}", piId, bidId, e.getMessage());
+            if (StripeUnavailable.isNetworkFailure(e)) {
+                throw StripeUnavailable.exception();
+            }
             throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "stripe-error", "Stripe Error",
                     "Impossible de vérifier le paiement auprès de Stripe");
         }
@@ -1863,6 +1880,9 @@ public class PaymentService {
                 } catch (StripeException e) {
                     log.error("Could not retrieve or cancel existing PaymentIntent for thread {}",
                             threadId, e);
+                    if (StripeUnavailable.isNetworkFailure(e)) {
+                        throw StripeUnavailable.exception();
+                    }
                     throw stripeRecoveryFailed();
                 }
             }
@@ -1938,6 +1958,9 @@ public class PaymentService {
             return toNegotiationPaymentResponse(payment, pi, rate, promoApplied);
         } catch (StripeException e) {
             log.error("Stripe PaymentIntent creation failed for negotiation thread {}", threadId, e);
+            if (StripeUnavailable.isNetworkFailure(e)) {
+                throw StripeUnavailable.exception();
+            }
             throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
                     "stripe-error", "Stripe Error",
                     "Échec création PaymentIntent : " + e.getMessage());

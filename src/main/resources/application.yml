@@ -527,6 +527,8 @@ app:
 
 stripe:
   secret-key: ${STRIPE_SECRET_KEY}
+  # Relances réseau du SDK (Connection reset, timeout) : même clé d'idempotence à chaque relance.
+  max-network-retries: ${STRIPE_MAX_NETWORK_RETRIES:2}
   fx-quotes:
     api-version: ${STRIPE_FX_QUOTES_API_VERSION:2025-03-31.preview}
     lock-duration: ${STRIPE_FX_QUOTES_LOCK_DURATION:hour}

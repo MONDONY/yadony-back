@@ -1504,3 +1504,7 @@ Stripe mais une transaction locale annulée) pouvait payer le voyageur deux fois
                           WHERE (b3.id = p.bid_id OR (p.bid_id IS NULL AND b3.linked_negotiation_thread_id = p.negotiation_thread_id))
                             AND c.no_show_status <> 'RESOLVED' AND c.deleted_at IS NULL);
       ```
+
+#### 9.24 Stripe : retries réseau (YADONY-BACK-STAGING-17, branche `fix/stripe-retries-reseau`)
+
+- [ ] `stripe.max-network-retries` (env `STRIPE_MAX_NETWORK_RETRIES`, défaut **2**) : le SDK relance seul une erreur réseau transitoire (« Connection reset by peer », timeout), avec la même clé d'idempotence à chaque relance (clé explicite conservée, sinon clé générée une fois par requête). Rien à poser en prod sauf pour changer le défaut. Stripe injoignable après relances : 502 RFC 7807 `stripe-unavailable` (« Le service de paiement est momentanément injoignable, réessayez. ») sur `/bids/checkout`, le checkout négocié, `confirm-payment`, la clé éphémère et la recharge wallet carte, au lieu d'une 500 ; la transaction est annulée, aucun bid ni paiement à moitié créé. Remboursement admin : clé `admin-refund-<paymentId>`. Contrôle après mise en prod : plus d'`ApiConnectionException` non relancée dans Sentry sur `POST /bids/checkout`.
