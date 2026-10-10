@@ -197,4 +197,46 @@ class StorageServiceStoreImageTest {
         assertThat(ok).isEqualTo(5);
         assertThat(tooMany).isEqualTo(5);
     }
+
+    @Test
+    void unreadableFile_is422() throws Exception {
+        MockMultipartFile real = jpeg(10, 10);
+        org.springframework.web.multipart.MultipartFile file = spy(real);
+        doThrow(new java.io.IOException("disque")).when(file).getBytes();
+        assertThatThrownBy(() -> storage.storeImage(file,
+                StorageService.MediaUpload.of("bids/" + owner + "/", owner, MediaPurpose.BID)))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
+        verifyNoInteractions(s3Client);
+    }
+
+    @Test
+    void sizeNotSaved_stillReturnsKey() throws Exception {
+        when(uploads.save(any())).thenThrow(new IllegalStateException("db"));
+        String key = storage.storeImage(jpeg(10, 10),
+                StorageService.MediaUpload.of("bids/" + owner + "/", owner, MediaPurpose.BID));
+        assertThat(key).startsWith("bids/" + owner + "/");
+    }
+
+    @Test
+    void releaseFails_originalExceptionStillPropagates() throws Exception {
+        when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+                .thenThrow(new IllegalStateException("r2 down"));
+        doThrow(new IllegalStateException("db down")).when(uploads).delete(any());
+        assertThatThrownBy(() -> storage.storeImage(jpeg(10, 10),
+                StorageService.MediaUpload.of("bids/" + owner + "/", owner, MediaPurpose.BID)))
+                .isInstanceOf(IllegalStateException.class).hasMessage("r2 down");
+    }
+
+    @Test
+    void trackingUploads_acrossManyBids_allSucceed() throws Exception {
+        // Propriétaire et bid tombent sur des verrous différents pour au moins un des bids tirés.
+        MockMultipartFile photo = jpeg(10, 10);
+        for (int i = 0; i < 40; i++) {
+            UUID bid = UUID.randomUUID();
+            assertThat(storage.storeImage(photo, StorageService.MediaUpload.tracking(bid, owner)))
+                    .startsWith("tracking/" + bid);
+        }
+        verify(uploads, times(40)).saveAndFlush(any(MediaUploadEntity.class));
+    }
 }

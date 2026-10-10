@@ -74,4 +74,12 @@ class ImageProcessingServiceStorageTest {
         assertThatThrownBy(() -> service.resizeForStorage("pas une image".getBytes(), 1600, 0.80))
                 .isInstanceOf(YadonyBusinessException.class);
     }
+
+    @Test
+    void invalidQuality_isReportedAs422ProcessingFailed() throws Exception {
+        byte[] jpeg = encode(new BufferedImage(50, 50, BufferedImage.TYPE_INT_RGB), "jpg");
+        assertThatThrownBy(() -> service.resizeForStorage(jpeg, 1600, 5.0))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("image/processing-failed"));
+    }
 }
