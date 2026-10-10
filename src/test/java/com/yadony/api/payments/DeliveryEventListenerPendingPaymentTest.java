@@ -19,6 +19,7 @@ import java.math.BigDecimal;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -82,7 +83,7 @@ class DeliveryEventListenerPendingPaymentTest {
         }
         verify(auditService).log(eq("PAYMENT"), eq(payment.getId()), eq("DELIVERY_PAYMENT_NOT_IN_ESCROW"),
                 eq(bidId), any());
-        verify(alertEscalator).raiseOnce(eq("DELIVERY_PAYMENT_NOT_IN_ESCROW_" + payment.getId()), anyString(), any());
+        verify(alertEscalator).raiseOnce(eq("DELIVERY_NOT_ESCROW_" + payment.getId()), anyString(), any());
         verifyNoInteractions(eventPublisher);
     }
 
@@ -112,6 +113,53 @@ class DeliveryEventListenerPendingPaymentTest {
 
         listener.handleDeliveryConfirmed(new DeliveryConfirmedEvent(bidId, UUID.randomUUID(), UUID.randomUUID()));
 
-        verify(alertEscalator).raiseOnce(eq("DELIVERY_PAYMENT_NOT_IN_ESCROW_" + payment.getId()), anyString(), any());
+        verify(alertEscalator).raiseOnce(eq("DELIVERY_NOT_ESCROW_" + payment.getId()), anyString(), any());
+    }
+
+    @Test
+    void rattrapage_d_un_paiement_toujours_PENDING_ne_verse_rien_et_garde_l_alerte() throws Exception {
+        UUID bidId = UUID.randomUUID();
+        PaymentEntity payment = payment(PaymentStatus.PENDING, bidId);
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(payment));
+
+        EscrowReleaseOutcome outcome = listener.releaseAfterLateEscrow(bidId, UUID.randomUUID(), UUID.randomUUID(),
+                DeliveryEventListener.SOURCE_LATE_ESCROW);
+
+        assertThat(outcome).isEqualTo(EscrowReleaseOutcome.NOT_IN_ESCROW);
+        verify(alertEscalator, never()).resolveOpen(anyString());
+    }
+
+    @Test
+    void rattrapage_verse_et_clot_l_alerte_meme_si_la_cloture_echoue() throws Exception {
+        UUID bidId = UUID.randomUUID();
+        UUID threadId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        com.yadony.api.matching.BidEntity bid = new com.yadony.api.matching.BidEntity();
+        bid.setLinkedNegotiationThreadId(threadId);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        PaymentEntity payment = payment(PaymentStatus.ESCROW, null);
+        payment.setCommissionAmount(BigDecimal.valueOf(3.60));
+        payment.setCurrency("EUR");
+        when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.of(payment));
+        when(paymentRepository.markReleasedIfEscrow(eq(payment.getId()), any())).thenReturn(1);
+        com.yadony.api.auth.UserEntity traveler = new com.yadony.api.auth.UserEntity();
+        traveler.setStripeAccountId("acct_t");
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
+        when(alertEscalator.resolveOpen("DELIVERY_NOT_ESCROW_" + payment.getId()))
+                .thenThrow(new IllegalStateException("base indisponible"));
+
+        EscrowReleaseOutcome outcome;
+        try (MockedStatic<Transfer> transfer = mockStatic(Transfer.class)) {
+            transfer.when(() -> Transfer.create(any(com.stripe.param.TransferCreateParams.class),
+                    any(com.stripe.net.RequestOptions.class))).thenReturn(org.mockito.Mockito.mock(Transfer.class));
+            outcome = listener.releaseAfterLateEscrow(bidId, UUID.randomUUID(), travelerId,
+                    DeliveryEventListener.SOURCE_LATE_ESCROW);
+        }
+
+        assertThat(outcome).isEqualTo(EscrowReleaseOutcome.RELEASED);
+        verify(alertEscalator).resolveOpen("DELIVERY_NOT_ESCROW_" + payment.getId());
+        verify(auditService).log(eq("PAYMENT"), eq(payment.getId()), eq("ESCROW_RELEASED_TRANSFER"), eq(bidId),
+                org.mockito.ArgumentMatchers.argThat(m -> "late-escrow".equals(m.get("source"))));
     }
 }

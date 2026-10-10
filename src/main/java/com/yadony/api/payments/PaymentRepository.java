@@ -60,6 +60,24 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     /** Story 6.5 — Find all payments in a given status whose escrow started before the given threshold. */
     List<PaymentEntity> findByStatusAndCreatedAtBefore(PaymentStatus status, LocalDateTime threshold);
 
+    /**
+     * Paiements carte restés PENDING avec un PaymentIntent, créés dans la fenêtre
+     * {@code ]newerThan, olderThan[}, plus anciens d'abord : candidats à l'auto-réparation
+     * ({@link PendingCardPaymentAutoHealJob}).
+     */
+    @Query("""
+            SELECT p.id FROM PaymentEntity p
+             WHERE p.status = com.yadony.api.payments.PaymentStatus.PENDING
+               AND p.rail = com.yadony.api.payments.PaymentRail.STRIPE
+               AND p.stripePaymentIntentId IS NOT NULL
+               AND p.createdAt < :olderThan
+               AND p.createdAt > :newerThan
+             ORDER BY p.createdAt ASC
+            """)
+    List<UUID> findPendingCardPaymentIds(@Param("olderThan") LocalDateTime olderThan,
+                                         @Param("newerThan") LocalDateTime newerThan,
+                                         org.springframework.data.domain.Pageable page);
+
     List<PaymentEntity> findAllByCreatedAtBetweenOrderByCreatedAtAsc(LocalDateTime from, LocalDateTime to);
 
     /** Story 9.8 — GDPR: check active escrow payments for given bid IDs. */

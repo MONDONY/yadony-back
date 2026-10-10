@@ -185,6 +185,16 @@ yadony:
   reconciliation:
     enabled: ${PROVIDER_RECONCILIATION_ENABLED:true}
     cron: "0 30 4 * * *"
+  # Auto-réparation des paiements carte restés PENDING (PendingCardPaymentAutoHealJob) : relit le
+  # PaymentIntent chez Stripe et applique la resynchronisation (séquestre, versement si déjà livré).
+  payments:
+    auto-heal:
+      enabled: ${PAYMENT_AUTO_HEAL_ENABLED:true}
+      interval: PT15M
+      min-age: PT10M
+      max-age: P7D
+      abandoned-after: PT24H
+      batch-size: 20
   # Numéro de suivi saisi par le voyageur à la remise du colis (DEPART, FLUTTER-BC). Vérifié dès
   # qu'il est envoyé ; exigé seulement si ce réglage est vrai (allumer une fois l'app à jour).
   tracking:

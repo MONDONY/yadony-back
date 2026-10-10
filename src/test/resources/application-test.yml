@@ -58,6 +58,9 @@ yadony:
   # Pas d'appel Stripe ni pawaPay réel pendant les tests.
   reconciliation:
     enabled: false
+  payments:
+    auto-heal:
+      enabled: false
   activation:
     first-action-reminders:
       cron: "-"

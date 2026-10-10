@@ -42,6 +42,14 @@ import java.util.UUID;
  *       {@code payment_intent.payment_failed} ;</li>
  *   <li>déjà cohérent → aucune écriture ({@link Action#ALREADY_IN_SYNC}).</li>
  * </ul>
+ * Colis déjà livré ({@code COMPLETED}) et paiement en séquestre après l'alignement : le versement
+ * au voyageur part dans la foulée, par le chemin de la livraison ({@link DeliveredEscrowReleaser}),
+ * et la réponse le dit ({@link Result#released()}, message « Colis déjà livré : versement envoyé
+ * au voyageur »). La livraison ne repasse jamais : sans ce rattrapage, l'admin devait forcer le
+ * versement à la main.
+ *
+ * <p>Le même traitement tourne sans admin, toutes les 15 minutes, sur les paiements carte restés
+ * PENDING ({@link #resyncAutomatically}, {@link PendingCardPaymentAutoHealJob}).
  * Tout autre écart (autorisation expirée sur un séquestre, montant différent, PaymentIntent
  * introuvable, statut non géré) répond une erreur RFC 7807 sans aucune écriture. Rejouable :
  * un second appel trouve la base alignée et ne fait rien.
@@ -52,6 +60,9 @@ public class PaymentStripeResyncService {
     private static final Logger log = LoggerFactory.getLogger(PaymentStripeResyncService.class);
 
     static final String SOURCE = "admin-resync-stripe";
+    static final String SOURCE_AUTO = "auto-resync-stripe";
+    static final String AUDIT_ADMIN = "ADMIN_PAYMENT_RESYNC_STRIPE";
+    static final String AUDIT_AUTO = "PAYMENT_AUTO_RESYNC_STRIPE";
 
     /** Ce que la resynchronisation a fait. */
     public enum Action {
@@ -66,15 +77,30 @@ public class PaymentStripeResyncService {
         /** PENDING → FAILED (traitement du webhook {@code payment_failed}). */
         MARKED_FAILED,
         /** PENDING → CANCELLED (traitement du webhook {@code canceled}). */
-        MARKED_CANCELLED
+        MARKED_CANCELLED,
+        /**
+         * Paiement déjà en séquestre et capturé, colis déjà livré : seul le versement au voyageur
+         * restait à faire, il est parti. Ajouté après #487 : un back-office qui ne le connaît pas
+         * affiche le code brut et le message.
+         */
+        ESCROW_RELEASED
     }
 
     /** État d'un paiement vu par la base et par Stripe. */
     public record Snapshot(String status, Instant capturedAt, String stripeChargeId,
                            String stripeStatus, Long amountCapturable) {}
 
+    /**
+     * @param released vrai si le versement au voyageur est parti pendant cette resynchronisation
+     *                 (colis déjà livré)
+     */
     public record Result(UUID paymentId, String paymentIntentId, Action action,
-                         Snapshot before, Snapshot after, String message) {
+                         Snapshot before, Snapshot after, String message, boolean released) {
+        public Result(UUID paymentId, String paymentIntentId, Action action,
+                      Snapshot before, Snapshot after, String message) {
+            this(paymentId, paymentIntentId, action, before, after, message, false);
+        }
+
         public boolean changed() {
             return action != Action.ALREADY_IN_SYNC;
         }
@@ -85,21 +111,28 @@ public class PaymentStripeResyncService {
     private final EscrowCaptureService escrowCapture;
     private final BidRepository bidRepository;
     private final AuditService auditService;
+    private final DeliveredEscrowReleaser deliveredRelease;
     private final TransactionTemplate transaction;
 
     public PaymentStripeResyncService(PaymentRepository paymentRepository, PaymentService paymentService,
                                       EscrowCaptureService escrowCapture, BidRepository bidRepository,
-                                      AuditService auditService, PlatformTransactionManager transactionManager) {
+                                      AuditService auditService, DeliveredEscrowReleaser deliveredRelease,
+                                      PlatformTransactionManager transactionManager) {
         this.paymentRepository = paymentRepository;
         this.paymentService = paymentService;
         this.escrowCapture = escrowCapture;
         this.bidRepository = bidRepository;
         this.auditService = auditService;
+        this.deliveredRelease = deliveredRelease;
         this.transaction = new TransactionTemplate(transactionManager);
     }
 
     /** Décision prise sur l'état local relu après l'appel Stripe. */
-    private record Step(Action action, String message, boolean captureAfterCommit) {}
+    private record Step(Action action, String message, boolean captureAfterCommit, boolean releaseAfterCommit) {
+        Step(Action action, String message, boolean captureAfterCommit) {
+            this(action, message, captureAfterCommit, false);
+        }
+    }
 
     /**
      * Sans transaction englobante, volontairement : le PaymentIntent est lu chez Stripe AVANT
@@ -109,6 +142,18 @@ public class PaymentStripeResyncService {
      * une fois le passage en séquestre commité.
      */
     public Result resync(UUID paymentId, UUID adminId) {
+        return resync(paymentId, adminId, SOURCE, AUDIT_ADMIN);
+    }
+
+    /**
+     * Même resynchronisation, lancée par le système ({@link PendingCardPaymentAutoHealJob}) : audit
+     * {@code PAYMENT_AUTO_RESYNC_STRIPE} sans acteur, source {@code auto-resync-stripe}.
+     */
+    public Result resyncAutomatically(UUID paymentId) {
+        return resync(paymentId, null, SOURCE_AUTO, AUDIT_AUTO);
+    }
+
+    private Result resync(UUID paymentId, UUID actorId, String source, String auditAction) {
         PaymentEntity initial = load(paymentId);
         String piId = initial.getStripePaymentIntentId();
         if (initial.getRail() != PaymentRail.STRIPE || piId == null || piId.isBlank()) {
@@ -126,10 +171,11 @@ public class PaymentStripeResyncService {
         String afterStripeStatus = stripeStatus;
         Long afterCapturable = pi.getAmountCapturable();
 
+        boolean captureFailed = false;
         if (step.captureAfterCommit()) {
             boolean alreadyChanged = action != Action.ALREADY_IN_SYNC;
             try {
-                escrowCapture.ensureCaptured(paymentId, SOURCE);
+                escrowCapture.ensureCaptured(paymentId, source);
                 afterStripeStatus = "succeeded";
                 afterCapturable = 0L;
                 if (!alreadyChanged) {
@@ -146,8 +192,32 @@ public class PaymentStripeResyncService {
                                     + "le paiement reste en séquestre");
                 }
                 // Le passage en séquestre est commité et juste : seule la capture reste à faire.
+                captureFailed = true;
                 message = message + " ; capture impossible pour l'instant (" + e.getMessage()
                         + "), alerte ESCROW_CAPTURE_FAILED levée, l'encaissement sera retenté à la livraison";
+            }
+        }
+
+        boolean released = false;
+        if (step.releaseAfterCommit() && !captureFailed) {
+            try {
+                EscrowReleaseOutcome outcome = deliveredRelease.releaseIfDelivered(paymentId, source);
+                if (outcome.released()) {
+                    released = true;
+                    afterStripeStatus = "succeeded";
+                    afterCapturable = 0L;
+                    if (action == Action.ALREADY_IN_SYNC) {
+                        action = Action.ESCROW_RELEASED;
+                    }
+                }
+                if (!outcome.message().isEmpty()) {
+                    message = join(message, outcome.message());
+                }
+            } catch (RuntimeException e) {
+                // Transfer refusé : claim annulé, le paiement reste en séquestre (déjà commité).
+                log.error("Versement de rattrapage du paiement {} refusé : {}", paymentId, e.getMessage(), e);
+                message = join(message, "Colis déjà livré mais versement refusé par Stripe ("
+                        + rootMessage(e) + ") : le paiement reste en séquestre, relancer ou forcer le versement");
             }
         }
 
@@ -158,10 +228,24 @@ public class PaymentStripeResyncService {
             audit.put("action", action.name());
             audit.put("before", snapshotMap(before));
             audit.put("after", snapshotMap(after));
-            auditService.log("PAYMENT", paymentId, "ADMIN_PAYMENT_RESYNC_STRIPE", adminId, audit);
-            log.info("Paiement {} resynchronisé avec Stripe par l'admin {} : {}", paymentId, adminId, action);
+            audit.put("released", released);
+            auditService.log("PAYMENT", paymentId, auditAction, actorId, audit);
+            log.info("Paiement {} resynchronisé avec Stripe ({}, acteur {}) : {}{}", paymentId, source,
+                    actorId == null ? "système" : actorId, action, released ? ", versement envoyé" : "");
         }
-        return new Result(paymentId, piId, action, before, after, message);
+        return new Result(paymentId, piId, action, before, after, message, released);
+    }
+
+    private static String join(String message, String addition) {
+        return message == null || message.isBlank() ? addition : message + " ; " + addition;
+    }
+
+    private static String rootMessage(Throwable e) {
+        Throwable cause = e;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+        }
+        return String.valueOf(cause.getMessage());
     }
 
     private PaymentEntity load(UUID paymentId) {
@@ -182,8 +266,22 @@ public class PaymentStripeResyncService {
             case PENDING -> {
                 switch (stripeStatus) {
                     case "requires_capture", "succeeded" -> {
-                        paymentService.applyPaymentEscrowActive(pi);
                         boolean succeeded = "succeeded".equals(stripeStatus);
+                        if (deliveredRelease.deliveredBidOf(payment).isPresent()) {
+                            // Colis déjà livré : la livraison n'a rien versé (paiement PENDING) et ne
+                            // repassera pas. On capture (si besoin) puis on verse nous-mêmes après le
+                            // commit ; les écouteurs asynchrones du passage en séquestre s'effacent.
+                            paymentService.applyPaymentEscrowActive(pi, true);
+                            if (succeeded) {
+                                paymentRepository.markCapturedIfEscrow(paymentId, Instant.now());
+                            }
+                            boolean captureNow = !succeeded
+                                    && EscrowCaptureService.captureDue(payment, bidStatus(payment));
+                            return new Step(Action.ESCROW_ACTIVATED,
+                                    "Paiement passé en séquestre comme à la réception du webhook Stripe",
+                                    captureNow, true);
+                        }
+                        paymentService.applyPaymentEscrowActive(pi);
                         if (succeeded) {
                             // Déjà capturé chez Stripe : la trace locale suit, par écriture ciblée.
                             paymentRepository.markCapturedIfEscrow(paymentId, Instant.now());
@@ -230,18 +328,27 @@ public class PaymentStripeResyncService {
             case ESCROW -> {
                 switch (stripeStatus) {
                     case "requires_capture" -> {
+                        boolean delivered = deliveredRelease.deliveredBidOf(payment).isPresent();
                         if (!EscrowCaptureService.captureDue(payment, bidStatus(payment))) {
+                            if (delivered) {
+                                // Legacy : la capture fait partie du versement.
+                                return new Step(Action.ALREADY_IN_SYNC, "", false, true);
+                            }
                             return new Step(Action.ALREADY_IN_SYNC, payment.isLegacyDestinationCharge()
                                     ? "Séquestre legacy : la capture se fait à la livraison, base déjà à jour"
                                     : "Autorisation normale : la capture se fera à l'acceptation du colis", false);
                         }
-                        return new Step(Action.ALREADY_IN_SYNC, "", true);
+                        return new Step(Action.ALREADY_IN_SYNC, "", true, delivered);
                     }
                     case "succeeded" -> {
+                        boolean delivered = deliveredRelease.deliveredBidOf(payment).isPresent();
                         if (payment.getCapturedAt() == null) {
                             paymentRepository.markCapturedIfEscrow(paymentId, Instant.now());
                             return new Step(Action.CAPTURE_RECORDED,
-                                    "Déjà capturé chez Stripe : date de capture enregistrée", false);
+                                    "Déjà capturé chez Stripe : date de capture enregistrée", false, delivered);
+                        }
+                        if (delivered) {
+                            return new Step(Action.ALREADY_IN_SYNC, "", false, true);
                         }
                         return new Step(Action.ALREADY_IN_SYNC, "Séquestre capturé : base déjà à jour", false);
                     }

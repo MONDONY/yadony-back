@@ -135,8 +135,53 @@ public class DeliveryEventListener {
         release(new ReleaseTrigger(event.bidId(), event.senderId(), event.travelerId(), SOURCE_UNCLAIMED));
     }
 
+    /**
+     * Rattrapage : le paiement est passé en séquestre APRÈS la livraison (webhook
+     * {@code amount_capturable_updated} tardif, resynchronisation admin ou automatique). Le colis
+     * est livré, la livraison n'avait rien versé faute de séquestre : on verse maintenant, par le
+     * même chemin et avec les mêmes gardes, pour que l'admin n'ait plus à forcer le versement.
+     *
+     * <p>Transaction propre ({@code REQUIRES_NEW}), comme le listener de livraison : un échec du
+     * Transfer annule le claim, le paiement reste ESCROW. À appeler hors de toute transaction qui
+     * tiendrait un verrou sur la ligne {@code payments} (la capture tourne dans une autre).
+     *
+     * @param source chemin appelant, tracé dans l'audit ({@code late-escrow}, {@code admin-resync-stripe}…)
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public EscrowReleaseOutcome releaseAfterLateEscrow(java.util.UUID bidId, java.util.UUID senderId,
+                                                       java.util.UUID travelerId, String source) {
+        EscrowReleaseOutcome outcome = release(new ReleaseTrigger(bidId, senderId, travelerId, source));
+        if (outcome.released()) {
+            paymentRepository.findByBidId(bidId)
+                    .or(() -> bidRepository.findById(bidId)
+                            .map(BidEntity::getLinkedNegotiationThreadId)
+                            .flatMap(paymentRepository::findByNegotiationThreadId))
+                    .ifPresent(p -> resolveNotInEscrowAlert(p.getId()));
+        }
+        return outcome;
+    }
+
+    /** L'alerte « colis livré sans séquestre » n'a plus d'objet une fois le versement parti. */
+    private void resolveNotInEscrowAlert(java.util.UUID paymentId) {
+        try {
+            alertEscalator.resolveOpen(NOT_IN_ESCROW_ALERT_PREFIX + paymentId);
+        } catch (RuntimeException e) {
+            log.warn("Alerte {}{} non close après le versement : {}", NOT_IN_ESCROW_ALERT_PREFIX, paymentId,
+                    e.getMessage());
+        }
+    }
+
     static final String SOURCE_DELIVERY = "delivery";
     static final String SOURCE_UNCLAIMED = "unclaimed";
+    static final String SOURCE_LATE_ESCROW = "late-escrow";
+
+    /**
+     * Alerte « colis livré, paiement jamais passé en séquestre ». {@code admin_alerts.type} est
+     * limité à {@link AdminAlertEscalator#TYPE_MAX_LENGTH} caractères : préfixe (20) + UUID (36)
+     * = 56. L'ancien préfixe {@code DELIVERY_PAYMENT_NOT_IN_ESCROW_} donnait 67 caractères :
+     * {@code raiseOnce} levait une exception, l'alerte ne partait jamais et l'audit était annulé.
+     */
+    public static final String NOT_IN_ESCROW_ALERT_PREFIX = "DELIVERY_NOT_ESCROW_";
 
     /** Ce qui déclenche la libération : la livraison confirmée ou le colis « non réclamé ». */
     record ReleaseTrigger(java.util.UUID bidId, java.util.UUID senderId, java.util.UUID travelerId, String source) {
@@ -146,11 +191,11 @@ public class DeliveryEventListener {
         boolean unclaimed() { return SOURCE_UNCLAIMED.equals(source); }
     }
 
-    private void release(ReleaseTrigger event) {
+    private EscrowReleaseOutcome release(ReleaseTrigger event) {
         BidEntity bid = bidRepository.findById(event.getBidId()).orElse(null);
         if (bid != null && bid.getPaymentMethod() == PaymentMethod.CASH) {
             log.debug("CASH bid {} — no Stripe escrow to release", event.getBidId());
-            return;
+            return EscrowReleaseOutcome.CASH;
         }
 
         Optional<PaymentEntity> paymentOpt = paymentRepository.findByBidId(event.getBidId());
@@ -166,7 +211,7 @@ public class DeliveryEventListener {
         if (paymentOpt.isEmpty()) {
             log.warn("DeliveryConfirmedEvent received for bidId={} but no payment found — skipping",
                     event.getBidId());
-            return;
+            return EscrowReleaseOutcome.NO_PAYMENT;
         }
 
         PaymentEntity payment = paymentOpt.get();
@@ -181,13 +226,13 @@ public class DeliveryEventListener {
             if (payment.getStatus() == PaymentStatus.PENDING) {
                 auditService.log("PAYMENT", payment.getId(), "DELIVERY_PAYMENT_NOT_IN_ESCROW",
                         event.getBidId(), Map.of("bidId", event.getBidId().toString()));
-                alertEscalator.raiseOnce("DELIVERY_PAYMENT_NOT_IN_ESCROW_" + payment.getId(),
+                alertEscalator.raiseOnce(NOT_IN_ESCROW_ALERT_PREFIX + payment.getId(),
                         "Colis livré mais paiement " + payment.getId() + " jamais passé en séquestre (PENDING) : "
                                 + "le voyageur ne sera pas payé, l'autorisation carte expire à J+7",
                         Map.of("paymentId", payment.getId().toString(), "bidId", event.getBidId().toString(),
                                 "amount", String.valueOf(payment.getAmount())));
             }
-            return;
+            return EscrowReleaseOutcome.NOT_IN_ESCROW;
         }
 
         if (payment.isDisputed()) {
@@ -198,7 +243,7 @@ public class DeliveryEventListener {
             adminAlert.raise("CHARGEBACK_TRANSFER_BLOCKED",
                     "Tentative de liberation escrow bloquee — litige ouvert sur payment " + payment.getId(),
                     Map.of("paymentId", payment.getId().toString(), "bidId", event.getBidId().toString()));
-            return;
+            return EscrowReleaseOutcome.BLOCKED_CHARGEBACK;
         }
 
         // Remboursement partiel déjà passé (charge.refunded non total : le paiement reste ESCROW).
@@ -218,7 +263,7 @@ public class DeliveryEventListener {
                     Map.of("paymentId", payment.getId().toString(), "bidId", event.getBidId().toString(),
                             "refundedAmount", payment.getRefundedAmount().toPlainString(),
                             "amount", payment.getAmount().toPlainString()));
-            return;
+            return EscrowReleaseOutcome.BLOCKED_PARTIAL_REFUND;
         }
 
         // Bénéficiaire gelé (banni ou vérification d'identité retirée) : même modèle que la garde
@@ -227,14 +272,14 @@ public class DeliveryEventListener {
         // (force-release avec dérogation) le libère ensuite.
         if (holdPolicy.isHeld(event.getTravelerId())) {
             holdPayout(payment, event);
-            return;
+            return EscrowReleaseOutcome.PAYOUT_HELD;
         }
 
         // Compte Connect désactivé ou refusé : un Transfer serait refusé par Stripe après le
         // claim (rollback, nouvelle tentative à chaque rejeu). On le constate avant, sans claim.
         if (payment.getRail() != PaymentRail.PAWAPAY && !payment.isLegacyDestinationCharge()
                 && stripeAccountUnusable(payment, event)) {
-            return;
+            return EscrowReleaseOutcome.STRIPE_ACCOUNT_UNUSABLE;
         }
 
         // Séquestre carte (non legacy) : le Transfer ne part que de fonds capturés sur le solde
@@ -257,7 +302,7 @@ public class DeliveryEventListener {
                                 "piStatus", String.valueOf(e.getPiStatus()),
                                 "reason", String.valueOf(e.getMessage()),
                                 "source", event.source()));
-                return;
+                return EscrowReleaseOutcome.CAPTURE_FAILED;
             }
         }
 
@@ -271,7 +316,7 @@ public class DeliveryEventListener {
         if (claimed == 0) {
             log.info("Payment {} for bid {} already left ESCROW — skipping release",
                     payment.getId(), event.getBidId());
-            return;
+            return EscrowReleaseOutcome.ALREADY_RELEASED;
         }
 
         if (payment.getRail() == PaymentRail.PAWAPAY) {
@@ -281,7 +326,7 @@ public class DeliveryEventListener {
             // (MobileMoneyPayoutOutcomeListener). Un échec remonte pour annuler le claim
             // ci-dessus (rollback de la transaction REQUIRES_NEW ambiante).
             releaseMobileMoney(payment, event);
-            return;
+            return EscrowReleaseOutcome.RELEASED;
         }
 
         try {
@@ -331,6 +376,7 @@ public class DeliveryEventListener {
         eventPublisher.publishEvent(PaymentReleasedEvent.card(
                 event.getBidId(), event.getTravelerId(), event.getSenderId(), payment.getAmount(),
                 payment.getCommissionAmount(), payment.getCurrency()));
+        return EscrowReleaseOutcome.RELEASED;
     }
 
     /**

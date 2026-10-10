@@ -44,7 +44,10 @@ class PaymentListenerTransactionalContractTest {
                 Arguments.of(NoShowEventListener.class, "onVoyageurNoShow"),
                 Arguments.of(BidExpiredOnDepartureEventListener.class, "handleBidExpired"),
                 Arguments.of(TripCancelledEventListener.class, "handleTripCancelled"),
-                Arguments.of(SenderNoShowConfirmedListener.class, "onCancellationConfirmed")
+                Arguments.of(SenderNoShowConfirmedListener.class, "onCancellationConfirmed"),
+                // Versement de rattrapage d'un séquestre tardif : délègue au chemin de livraison,
+                // dont la transaction REQUIRES_NEW porte le claim.
+                Arguments.of(DeliveredEscrowReleaser.class, "onEscrowReady")
         );
     }
 
