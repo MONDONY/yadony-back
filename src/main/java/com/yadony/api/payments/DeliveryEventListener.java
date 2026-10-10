@@ -45,9 +45,10 @@ import java.util.Optional;
  *  - legacy=true  : destination charge model — capture the PaymentIntent (Stripe routes
  *                   funds to the traveler's Connect account via transfer_data set at PI
  *                   creation).
- *  - legacy=false : separate charges-and-transfers — the PI was already captured at
- *                   acceptation by BidAcceptedEventListener, so funds are on the platform
- *                   balance. Trigger a Transfer to the traveler's Connect account.
+ *  - legacy=false : separate charges-and-transfers — the PI is normally captured at
+ *                   acceptation (BidAcceptedEventListener) or at escrow (negotiation,
+ *                   NegotiationCaptureListener). Still requires_capture here → captured first
+ *                   by EscrowCaptureService, then a Transfer to the traveler's Connect account.
  *
  * Cross-package communication via Spring Events only.
  *
@@ -85,6 +86,7 @@ public class DeliveryEventListener {
 
     private final PayoutHoldPolicy holdPolicy;
     private final AdminAlertEscalator alertEscalator;
+    private final EscrowCaptureService escrowCapture;
 
     public DeliveryEventListener(PaymentRepository paymentRepository,
                                  UserRepository userRepository,
@@ -95,7 +97,8 @@ public class DeliveryEventListener {
                                  com.yadony.api.voucher.CommissionVoucherService voucherService,
                                  com.yadony.api.payments.mobilemoney.MobileMoneyPayoutInitiator payoutInitiator,
                                  PayoutHoldPolicy holdPolicy,
-                                 AdminAlertEscalator alertEscalator) {
+                                 AdminAlertEscalator alertEscalator,
+                                 EscrowCaptureService escrowCapture) {
         this.paymentRepository = paymentRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
@@ -106,6 +109,7 @@ public class DeliveryEventListener {
         this.payoutInitiator = payoutInitiator;
         this.holdPolicy = holdPolicy;
         this.alertEscalator = alertEscalator;
+        this.escrowCapture = escrowCapture;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -233,6 +237,30 @@ public class DeliveryEventListener {
             return;
         }
 
+        // Séquestre carte (non legacy) : le Transfer ne part que de fonds capturés sur le solde
+        // plateforme. Un paiement passé ESCROW sans capture (checkout d'avant #472) est encore une
+        // autorisation `requires_capture` : on le capture ici, AVANT le claim (la capture tourne
+        // dans sa propre transaction et ne doit attendre aucun verrou posé par celle-ci). Échec :
+        // aucun claim, aucun Transfer, le paiement reste ESCROW et une alerte admin est levée.
+        String chargeId = payment.getStripeChargeId();
+        if (payment.getRail() != PaymentRail.PAWAPAY && !payment.isLegacyDestinationCharge()) {
+            try {
+                EscrowCaptureService.Outcome captured = escrowCapture.ensureCaptured(payment.getId(), event.source());
+                if (captured.chargeId() != null) {
+                    chargeId = captured.chargeId();
+                }
+            } catch (EscrowCaptureService.EscrowCaptureException e) {
+                log.warn("Payment {} for bid {} could not be captured ({}) — release skipped, stays ESCROW",
+                        payment.getId(), event.getBidId(), e.getMessage());
+                auditService.log("PAYMENT", payment.getId(), "DELIVERY_RELEASE_BLOCKED_CAPTURE_FAILED",
+                        event.getBidId(), Map.of("bidId", event.getBidId().toString(),
+                                "piStatus", String.valueOf(e.getPiStatus()),
+                                "reason", String.valueOf(e.getMessage()),
+                                "source", event.source()));
+                return;
+            }
+        }
+
         // Claim atomique ESCROW → RELEASED, PARTAGÉ par les deux rails (Stripe et pawaPay) :
         // empêche un double versement (double capture / double Transfer / double payout) si
         // l'événement de livraison est traité deux fois en parallèle. Le branchement par rail
@@ -260,7 +288,7 @@ public class DeliveryEventListener {
             if (payment.isLegacyDestinationCharge()) {
                 releaseLegacy(payment);
             } else {
-                releaseV2(payment, event);
+                releaseV2(payment, event, chargeId);
             }
         } catch (StripeException e) {
             log.error("Escrow release failed for payment {} (bid={}, legacy={}): {}",
@@ -386,10 +414,10 @@ public class DeliveryEventListener {
                         .build());
     }
 
-    private void releaseV2(PaymentEntity payment, ReleaseTrigger event) throws StripeException {
-        // New separate-charges-and-transfers model: PI was already captured on the
-        // platform balance at acceptation (BidAcceptedEventListener). Initiate a
-        // Transfer to the traveler's Connect account.
+    private void releaseV2(PaymentEntity payment, ReleaseTrigger event, String chargeId) throws StripeException {
+        // New separate-charges-and-transfers model: the PI is captured on the platform balance
+        // (at acceptation, at escrow, or just above by EscrowCaptureService when it was still
+        // requires_capture). Initiate a Transfer to the traveler's Connect account.
         UserEntity traveler = userRepository.findById(event.getTravelerId())
                 .orElseThrow(() -> new IllegalStateException(
                         "Traveler not found: " + event.getTravelerId()));
@@ -422,8 +450,8 @@ public class DeliveryEventListener {
                 .putMetadata("bid_id", event.getBidId().toString())
                 .putMetadata("payment_id", payment.getId() != null ? payment.getId().toString() : "");
 
-        if (payment.getStripeChargeId() != null && !payment.getStripeChargeId().isBlank()) {
-            builder.setSourceTransaction(payment.getStripeChargeId());
+        if (chargeId != null && !chargeId.isBlank()) {
+            builder.setSourceTransaction(chargeId);
         }
 
         // Clé d'idempotence stable : un AFTER_COMMIT rejoué ou une redelivery de webhook

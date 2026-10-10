@@ -31,6 +31,9 @@ import org.springframework.test.util.ReflectionTestUtils;
 @ExtendWith(MockitoExtension.class)
 class DeliveryEventListenerMobileMoneyTest {
 
+    /** Capture déjà faite par défaut : PaymentIntent succeeded, aucun charge id renvoyé. */
+    private final com.yadony.api.payments.EscrowCaptureService escrowCapture = org.mockito.Mockito.mock(com.yadony.api.payments.EscrowCaptureService.class, invocation -> new com.yadony.api.payments.EscrowCaptureService.Outcome(null, false));
+
     @org.mockito.Mock com.yadony.api.payments.hold.PayoutHoldPolicy holdPolicy;
     @org.mockito.Mock com.yadony.api.admin.AdminAlertEscalator alertEscalator;
     @Mock PaymentRepository paymentRepository;
@@ -52,7 +55,8 @@ class DeliveryEventListenerMobileMoneyTest {
         // Ronde 1, point 5 : payoutInitiator est désormais un paramètre constructeur (jamais un
         // champ contournable) — plus besoin de ReflectionTestUtils pour l'injecter.
         listener = new DeliveryEventListener(paymentRepository, userRepository, auditService, eventPublisher,
-                bidRepository, adminAlert, voucherService, payoutInitiator, holdPolicy, alertEscalator);
+                bidRepository, adminAlert, voucherService, payoutInitiator, holdPolicy, alertEscalator,
+                escrowCapture);
         bid = new BidEntity();
         ReflectionTestUtils.setField(bid, "id", UUID.randomUUID());
         bid.setPaymentMethod(PaymentMethod.MOBILE_MONEY);

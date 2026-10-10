@@ -30,6 +30,9 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class DeliveryEventListenerChargebackTest {
 
+    /** Capture déjà faite par défaut : PaymentIntent succeeded, aucun charge id renvoyé. */
+    private final com.yadony.api.payments.EscrowCaptureService escrowCapture = org.mockito.Mockito.mock(com.yadony.api.payments.EscrowCaptureService.class, invocation -> new com.yadony.api.payments.EscrowCaptureService.Outcome(null, false));
+
     @org.mockito.Mock com.yadony.api.payments.hold.PayoutHoldPolicy holdPolicy;
     @org.mockito.Mock com.yadony.api.admin.AdminAlertEscalator alertEscalator;
     @Mock private PaymentRepository paymentRepository;
@@ -47,7 +50,8 @@ class DeliveryEventListenerChargebackTest {
         // Ronde 1, point 5 : payoutInitiator est désormais un paramètre constructeur — null ici,
         // jamais déréférencé (paiement disputé, bloqué avant tout branchement par rail).
         listener = new DeliveryEventListener(paymentRepository, userRepository,
-                auditService, eventPublisher, bidRepository, adminAlert, voucherService, null, holdPolicy, alertEscalator);
+                auditService, eventPublisher, bidRepository, adminAlert, voucherService, null, holdPolicy, alertEscalator,
+                escrowCapture);
     }
 
     private static void setId(Object entity, UUID id) throws Exception {

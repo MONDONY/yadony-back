@@ -46,7 +46,15 @@ public record AdminPaymentDetailResponse(
         /** Motif principal du gel : {@code BANNED} ou {@code KYC_REVOKED} ; {@code null} si non gele. */
         String beneficiaryHoldReason,
         /** Contexte (colis ou négociation, parties, trajet, liens Stripe) ; {@code null} hors back-office. */
-        AdminPaymentInsight insight
+        AdminPaymentInsight insight,
+        /**
+         * Capture carte enregistrée ({@code payments.captured_at}) ; {@code null} si le séquestre n'a
+         * jamais été marqué capturé. Lu en base, sans appel Stripe : l'état Stripe réel s'obtient par
+         * {@code POST /admin/payments/{id}/resync-stripe}.
+         */
+        java.time.Instant capturedAt,
+        /** Fil de négociation du paiement ({@code bid_id} nul tant que le colis n'est pas matérialisé). */
+        UUID negotiationThreadId
 ) {
     /** Paiement sans opération pawaPay (rail STRIPE). */
     public static AdminPaymentDetailResponse from(PaymentEntity p) {
@@ -82,7 +90,9 @@ public record AdminPaymentDetailResponse(
                 p.getPayoutHeldAt(),
                 h.held(),
                 h.primaryReason() != null ? h.primaryReason().name() : null,
-                null
+                null,
+                p.getCapturedAt(),
+                p.getNegotiationThreadId()
         );
     }
 
@@ -90,6 +100,6 @@ public record AdminPaymentDetailResponse(
         return new AdminPaymentDetailResponse(id, bidId, status, method, amountCents, commissionCents, currency,
                 createdAt, refundedCents, stripePaymentIntentId, escrowReleasedAt, disputed, rail, pawapayDepositId,
                 pawapayPayoutId, pawapayRefundId, travelerId, payoutHeldAt, beneficiaryHeld, beneficiaryHoldReason,
-                value);
+                value, capturedAt, negotiationThreadId);
     }
 }

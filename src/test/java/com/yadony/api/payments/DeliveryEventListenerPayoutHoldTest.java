@@ -55,6 +55,9 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class DeliveryEventListenerPayoutHoldTest {
 
+    /** Capture déjà faite par défaut : PaymentIntent succeeded, aucun charge id renvoyé. */
+    private final com.yadony.api.payments.EscrowCaptureService escrowCapture = org.mockito.Mockito.mock(com.yadony.api.payments.EscrowCaptureService.class, invocation -> new com.yadony.api.payments.EscrowCaptureService.Outcome(null, false));
+
     @Mock PaymentRepository paymentRepository;
     @Mock UserRepository userRepository;
     @Mock AuditService auditService;
@@ -74,7 +77,8 @@ class DeliveryEventListenerPayoutHoldTest {
     @BeforeEach
     void setUp() {
         listener = new DeliveryEventListener(paymentRepository, userRepository, auditService, eventPublisher,
-                bidRepository, adminAlert, voucherService, payoutInitiator, holdPolicy, alertEscalator);
+                bidRepository, adminAlert, voucherService, payoutInitiator, holdPolicy, alertEscalator,
+                escrowCapture);
         bid = new BidEntity();
         ReflectionTestUtils.setField(bid, "id", UUID.randomUUID());
         bid.setPaymentMethod(PaymentMethod.STRIPE);

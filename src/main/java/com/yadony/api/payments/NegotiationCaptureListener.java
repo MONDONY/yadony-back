@@ -1,9 +1,6 @@
 package com.yadony.api.payments;
 
-import com.yadony.api.common.AuditService;
 import com.yadony.api.payments.events.PaymentEscrowReadyEvent;
-import com.stripe.exception.StripeException;
-import com.stripe.model.PaymentIntent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
@@ -13,8 +10,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
-import java.time.Instant;
-import java.util.Map;
 
 /**
  * Negotiation / dedicated-trip Stripe escrow — capture onto the platform balance.
@@ -39,6 +34,9 @@ import java.util.Map;
  * {@code bid_id} null). Classic bid payments emit the same event but are captured by
  * {@link BidAcceptedEventListener}; we skip them to avoid a double capture.
  *
+ * <p>The capture itself is delegated to {@link EscrowCaptureService} (shared with the delivery
+ * release and the admin force-release).
+ *
  * <p>After capture the payment stays {@code ESCROW} (only {@code captured_at} is set), so
  * {@link DeliveryEventListener} still transfers it to the traveler at delivery — with no
  * card-authorization expiry, since the funds already left the card at acceptance.
@@ -48,16 +46,13 @@ public class NegotiationCaptureListener {
 
     private static final Logger log = LoggerFactory.getLogger(NegotiationCaptureListener.class);
 
-    /** Manual-capture PaymentIntent state where the card is authorized and funds are held. */
-    private static final String STATUS_REQUIRES_CAPTURE = "requires_capture";
-
     private final PaymentRepository paymentRepository;
-    private final AuditService auditService;
+    private final EscrowCaptureService escrowCapture;
 
     public NegotiationCaptureListener(PaymentRepository paymentRepository,
-                                      AuditService auditService) {
+                                      EscrowCaptureService escrowCapture) {
         this.paymentRepository = paymentRepository;
-        this.auditService = auditService;
+        this.escrowCapture = escrowCapture;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -83,39 +78,20 @@ public class NegotiationCaptureListener {
             return;
         }
 
+        // Capture partagée avec la livraison et la libération admin : garde markCapturedIfEscrow,
+        // clé d'idempotence capture-<paymentId>, montant attendu, audit, captured_at annulé si
+        // Stripe refuse (auparavant il restait posé sur un PaymentIntent jamais capturé), et
+        // alerte admin ESCROW_CAPTURE_FAILED_<id> en cas d'échec.
         try {
-            // Atomic capture-once guard: sets captured_at, keeps the status ESCROW so the
-            // delivery release (which requires status==ESCROW) still fires later.
-            int updated = paymentRepository.markCapturedIfEscrow(payment.getId(), Instant.now());
-            if (updated == 0) {
-                log.info("Negotiation payment {} already captured — skipping", payment.getId());
-                return;
-            }
-
-            PaymentIntent pi = PaymentIntent.retrieve(payment.getStripePaymentIntentId());
-            // Idempotent: only an authorized manual-capture hold can be captured. A PI already
-            // captured (succeeded) — e.g. an admin/manual capture — is left as-is.
-            if (STATUS_REQUIRES_CAPTURE.equals(pi.getStatus())) {
-                pi.capture();
-            }
-            // Persist the Stripe charge id for the delivery-time Transfer.sourceTransaction.
-            if (payment.getStripeChargeId() == null && pi.getLatestCharge() != null) {
-                payment.setStripeChargeId(pi.getLatestCharge());
-                paymentRepository.save(payment);
-            }
-
-            auditService.log("PAYMENT", payment.getId(), "PAYMENT_CAPTURED_ON_PLATFORM", null,
-                    Map.of("piId", payment.getStripePaymentIntentId(),
-                            "threadId", String.valueOf(payment.getNegotiationThreadId()),
-                            "source", "negotiation-escrow-ready"));
-            log.info("Negotiation PI {} captured on platform for thread {}",
-                    payment.getStripePaymentIntentId(), payment.getNegotiationThreadId());
-
-        } catch (StripeException ex) {
+            EscrowCaptureService.Outcome outcome =
+                    escrowCapture.ensureCaptured(payment.getId(), "negotiation-escrow-ready");
+            log.info("Negotiation PI {} {} on platform for thread {}", payment.getStripePaymentIntentId(),
+                    outcome.capturedNow() ? "captured" : "already captured", payment.getNegotiationThreadId());
+        } catch (EscrowCaptureService.EscrowCaptureException ex) {
+            // Not rethrown — the delivery release path (which captures first) and the admin
+            // force-release remain backstops; the daily reconciliation flags SEQUESTRE_NON_CAPTURE.
             log.error("Negotiation capture failed (thread={}, pi={}): {}",
-                    payment.getNegotiationThreadId(), payment.getStripePaymentIntentId(),
-                    ex.getMessage(), ex);
-            // Not rethrown — the delivery release path and the admin J+48 force-release remain backstops.
+                    payment.getNegotiationThreadId(), payment.getStripePaymentIntentId(), ex.getMessage());
         }
     }
 }
