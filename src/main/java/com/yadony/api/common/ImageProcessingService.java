@@ -39,6 +39,13 @@ public class ImageProcessingService {
      */
     public static final long MAX_PIXELS = 40_000_000L;
 
+    static {
+        // Enregistre les lecteurs ImageIO du classpath (WebP de TwelveMonkeys) avec le
+        // chargeur de classes de l'application : dans le jar Spring Boot, un registre
+        // initialisé depuis un autre thread pourrait ne pas les voir.
+        ImageIO.scanForPlugins();
+    }
+
     /** Container for the two derived images produced by {@link #process}. */
     public record ProcessedImage(byte[] main, byte[] thumbnail) {}
 

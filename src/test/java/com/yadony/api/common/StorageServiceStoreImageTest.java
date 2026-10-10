@@ -150,6 +150,27 @@ class StorageServiceStoreImageTest {
     }
 
     @Test
+    void webp_isDecoded_andReencodedAsJpeg() throws Exception {
+        byte[] webp;
+        try (var in = getClass().getResourceAsStream("/images/sample-16x12.webp")) {
+            webp = in.readAllBytes();
+        }
+        ArgumentCaptor<RequestBody> body = ArgumentCaptor.forClass(RequestBody.class);
+        String key = storage.storeImage(new MockMultipartFile("file", "p.webp", "image/webp", webp),
+                StorageService.MediaUpload.of("bids/" + owner + "/", owner, MediaPurpose.BID));
+        assertThat(key).endsWith(".jpg");
+        verify(s3Client).putObject(any(PutObjectRequest.class), body.capture());
+        try (var in = body.getValue().contentStreamProvider().newStream()) {
+            byte[] out = in.readAllBytes();
+            assertThat(out[0]).isEqualTo((byte) 0xFF);
+            assertThat(out[1]).isEqualTo((byte) 0xD8);
+            BufferedImage img = ImageIO.read(new java.io.ByteArrayInputStream(out));
+            assertThat(img.getWidth()).isEqualTo(16);
+            assertThat(img.getHeight()).isEqualTo(12);
+        }
+    }
+
+    @Test
     void over5Mb_is422() {
         byte[] big = new byte[5 * 1024 * 1024 + 1];
         big[0] = (byte) 0xFF; big[1] = (byte) 0xD8; big[2] = (byte) 0xFF;
