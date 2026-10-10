@@ -49,6 +49,9 @@ class PhotoReconciliationServiceTest {
         lenient().when(runs.save(any())).thenAnswer(i -> i.getArgument(0));
         lenient().when(trackingSource.prefixes()).thenReturn(Set.of("tracking/"));
         lenient().when(bidsSource.prefixes()).thenReturn(Set.of("bids/"));
+        // Mockito renvoie false pour une méthode default non bouchonnée.
+        lenient().when(trackingSource.dedicated()).thenReturn(true);
+        lenient().when(bidsSource.dedicated()).thenReturn(true);
         lenient().when(storage.listObjectsOlderThan(anyString(), any(), anyInt())).thenReturn(List.of());
         service = new PhotoReconciliationService(storage, List.of(trackingSource), settings, runs, runner, clock,
                 List.of("tracking/"));
@@ -144,6 +147,7 @@ class PhotoReconciliationServiceTest {
     void unionOfAllSourcesOfAPrefix_isKept() {
         MediaKeyReferenceSource other = org.mockito.Mockito.mock(MediaKeyReferenceSource.class);
         when(other.prefixes()).thenReturn(Set.of("tracking/", "bids/"));
+        lenient().when(other.dedicated()).thenReturn(false);
         when(other.referencedKeys("tracking/")).thenReturn(Set.of("tracking/b/other.jpg"));
         service = new PhotoReconciliationService(storage, List.of(trackingSource, other), settings, runs, runner,
                 clock, List.of("tracking/"));
@@ -302,5 +306,50 @@ class PhotoReconciliationServiceTest {
         assertThat(PhotoReconciliationService.RECONCILED_PREFIXES).doesNotContain("messaging/");
         assertThat(PhotoReconciliationService.RECONCILED_PREFIXES).containsExactlyInAnyOrder(
                 "package_requests/", "bids/", "tracking/", "users/", "reports/", "support/", "requests/");
+    }
+
+    @Test
+    void prefixCoveredOnlyByFreeValueSources_failsRun_andDeletesNothing() {
+        MediaKeyReferenceSource refusal = org.mockito.Mockito.mock(MediaKeyReferenceSource.class);
+        MediaKeyReferenceSource legacy = org.mockito.Mockito.mock(MediaKeyReferenceSource.class);
+        for (MediaKeyReferenceSource s : List.of(refusal, legacy)) {
+            lenient().when(s.dedicated()).thenReturn(false);
+            lenient().when(s.prefixes()).thenReturn(Set.of("tracking/", "bids/"));
+        }
+        service = new PhotoReconciliationService(storage, List.of(trackingSource, refusal, legacy), settings, runs,
+                runner, clock, List.of("tracking/", "bids/"));
+        lenient().when(settings.photoPurgeEnabled()).thenReturn(true);
+
+        PhotoPurgeRunEntity run = service.reconcile(PhotoPurgeRunner.TRIGGER_SCHEDULE).orElseThrow();
+
+        assertThat(run.getError()).contains("bids/").doesNotContain("tracking/");
+        verify(storage, never()).deleteFile(any());
+        verify(storage, never()).listObjectsOlderThan(anyString(), any(), anyInt());
+        verify(runner).unlock();
+    }
+
+    @Test
+    void dryRun_countsAllOrphans_withoutBudget() {
+        service = new PhotoReconciliationService(storage, List.of(trackingSource, bidsSource), settings, runs,
+                runner, clock, List.of("tracking/", "bids/"));
+        when(settings.photoPurgeEnabled()).thenReturn(false);
+        // 6000 orphelines pour 6001 vivantes (sous la garde de volume), puis 10 orphelines.
+        List<String> listed = new ArrayList<>();
+        for (int i = 0; i < 6000; i++) listed.add("tracking/b/orphan-" + i + ".jpg");
+        Set<String> live = IntStream.range(0, 6001).mapToObj(i -> "tracking/b/live-" + i + ".jpg")
+                .collect(Collectors.toSet());
+        listed.addAll(live);
+        when(trackingSource.referencedKeys("tracking/")).thenReturn(live);
+        when(storage.listObjectsOlderThan(eq("tracking/"), any(), anyInt())).thenReturn(listed);
+        when(bidsSource.referencedKeys("bids/")).thenReturn(Set.of());
+        when(storage.listObjectsOlderThan(eq("bids/"), any(), anyInt()))
+                .thenReturn(IntStream.range(0, 10).mapToObj(i -> "bids/s/" + i + ".jpg").toList());
+
+        PhotoPurgeRunEntity run = service.reconcile(PhotoPurgeRunner.TRIGGER_ADMIN).orElseThrow();
+
+        assertThat(run.isDryRun()).isTrue();
+        assertThat(run.getEligible()).isEqualTo(6010);
+        verify(storage).listObjectsOlderThan(eq("bids/"), any(), anyInt());
+        verify(storage, never()).deleteFile(any());
     }
 }

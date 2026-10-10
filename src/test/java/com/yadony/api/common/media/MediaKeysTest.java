@@ -66,4 +66,12 @@ class MediaKeysTest {
                 .containsExactlyInAnyOrder("tracking/b/1.jpg", "tracking/b/2.jpg");
         assertThat(MediaKeys.keysUnder("requests/", raw)).isEmpty();
     }
+
+    @Test
+    void everyReconciledPrefix_isRecognized() {
+        for (String prefix : PhotoReconciliationService.RECONCILED_PREFIXES) {
+            assertThat(MediaKeys.normalize(prefix + "x/1.jpg")).as("préfixe %s", prefix).contains(prefix + "x/1.jpg");
+            assertThat(MediaKeys.normalize("https://h/b/" + prefix + "x/1.jpg?sig=1")).contains(prefix + "x/1.jpg");
+        }
+    }
 }

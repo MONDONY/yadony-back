@@ -24,6 +24,11 @@ public class PackageRequestLegacyPhotoReferenceSource implements MediaKeyReferen
     }
 
     @Override
+    public boolean dedicated() {
+        return false;
+    }
+
+    @Override
     public Set<String> prefixes() {
         return new HashSet<>(PhotoReconciliationService.RECONCILED_PREFIXES);
     }

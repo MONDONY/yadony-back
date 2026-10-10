@@ -1,5 +1,6 @@
 package com.yadony.api.common;
 
+import com.yadony.api.common.media.MediaKeys;
 import com.yadony.api.common.media.MediaPurpose;
 import com.yadony.api.common.media.MediaUploadEntity;
 import com.yadony.api.common.media.MediaUploadRepository;
@@ -40,9 +41,8 @@ public class StorageService {
 
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(StorageService.class);
 
-    private static final Set<String> ALLOWED_PREFIXES = Set.of(
-            "tracking/", "users/", "messaging/", "package_requests/", "requests/", "bids/", "reports/",
-            "support/");
+    /** Source de vérité : MediaKeys.KNOWN_PREFIXES (le rapprochement reconnaît ainsi chaque préfixe). */
+    private static final Set<String> ALLOWED_PREFIXES = Set.copyOf(MediaKeys.KNOWN_PREFIXES);
     private static final long MAX_FILE_SIZE = 5L * 1024 * 1024; // 5 Mo : l'app compresse avant envoi
     private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of(
             "image/jpeg", "image/jpg", "image/png", "image/webp");

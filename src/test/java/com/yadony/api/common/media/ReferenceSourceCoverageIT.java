@@ -23,8 +23,8 @@ class ReferenceSourceCoverageIT {
     /** Source dédiée attendue par préfixe (les sources « tous préfixes » des saisies libres ne suffisent pas). */
     private static final Map<String, Set<String>> DEDICATED_SOURCES = Map.of(
             "tracking/", Set.of("TrackingPhotoReferenceSource"),
-            "package_requests/", Set.of("PackageRequestPhotoReferenceSource", "PackageRequestLegacyPhotoReferenceSource"),
-            "bids/", Set.of("BidPhotoReferenceSource", "BidRefusalPhotoReferenceSource"),
+            "package_requests/", Set.of("PackageRequestPhotoReferenceSource"),
+            "bids/", Set.of("BidPhotoReferenceSource"),
             "users/", Set.of("AvatarReferenceSource"),
             "reports/", Set.of("ReportPhotoReferenceSource"),
             "support/", Set.of("SupportAttachmentReferenceSource"));
@@ -32,8 +32,9 @@ class ReferenceSourceCoverageIT {
     @Autowired List<MediaKeyReferenceSource> sources;
 
     @Test
-    void everyReconciledPrefix_hasAtLeastOneSource() {
-        Set<String> covered = sources.stream().flatMap(s -> s.prefixes().stream()).collect(Collectors.toSet());
+    void everyReconciledPrefix_hasAtLeastOneDedicatedSource() {
+        Set<String> covered = sources.stream().filter(MediaKeyReferenceSource::dedicated)
+                .flatMap(s -> s.prefixes().stream()).collect(Collectors.toSet());
         for (String prefix : PhotoReconciliationService.RECONCILED_PREFIXES) {
             if (PhotoReconciliationService.PREFIXES_WITHOUT_SOURCE.contains(prefix)) continue;
             assertThat(covered).as("préfixe %s sans source de références", prefix).contains(prefix);
@@ -45,7 +46,7 @@ class ReferenceSourceCoverageIT {
         for (String prefix : PhotoReconciliationService.RECONCILED_PREFIXES) {
             if (PhotoReconciliationService.PREFIXES_WITHOUT_SOURCE.contains(prefix)) continue;
             Set<String> declaring = sources.stream()
-                    .filter(s -> s.prefixes().contains(prefix))
+                    .filter(s -> s.dedicated() && s.prefixes().contains(prefix))
                     .map(s -> org.springframework.aop.support.AopUtils.getTargetClass(s).getSimpleName())
                     .collect(Collectors.toSet());
             assertThat(DEDICATED_SOURCES).as("préfixe %s absent de la table des sources attendues", prefix)
@@ -69,5 +70,14 @@ class ReferenceSourceCoverageIT {
         assertThat(PhotoReconciliationService.RECONCILED_PREFIXES).doesNotContain("messaging/");
         assertThat(sources).noneMatch(s -> org.springframework.aop.support.AopUtils.getTargetClass(s)
                 .getSimpleName().contains("Messaging"));
+    }
+
+    @Test
+    void freeValueSources_areNotDedicated() {
+        Set<String> notDedicated = sources.stream().filter(s -> !s.dedicated())
+                .map(s -> org.springframework.aop.support.AopUtils.getTargetClass(s).getSimpleName())
+                .collect(Collectors.toSet());
+        assertThat(notDedicated).containsExactlyInAnyOrder(
+                "BidRefusalPhotoReferenceSource", "PackageRequestLegacyPhotoReferenceSource");
     }
 }

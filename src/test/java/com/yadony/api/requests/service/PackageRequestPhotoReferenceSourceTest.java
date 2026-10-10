@@ -78,6 +78,7 @@ class PackageRequestPhotoReferenceSourceTest {
         request("https://h/yadony-prod/package_requests/u/old.jpg?X-Amz-Signature=1", true);
         request("requests/u/dead.jpg", false);
 
+        assertThat(legacySource.dedicated()).isFalse();
         assertThat(legacySource.prefixes()).contains("package_requests/", "requests/");
         assertThat(legacySource.referencedKeys("package_requests/"))
                 .containsExactlyInAnyOrder("package_requests/u/legacy.jpg", "package_requests/u/old.jpg");

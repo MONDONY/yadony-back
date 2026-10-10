@@ -23,6 +23,11 @@ public class BidRefusalPhotoReferenceSource implements MediaKeyReferenceSource {
     }
 
     @Override
+    public boolean dedicated() {
+        return false;
+    }
+
+    @Override
     public Set<String> prefixes() {
         return new HashSet<>(PhotoReconciliationService.RECONCILED_PREFIXES);
     }

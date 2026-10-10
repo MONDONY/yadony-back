@@ -49,6 +49,8 @@ class BidPhotoReferenceSourceTest {
         deleted.softDelete();
         bids.saveAndFlush(deleted);
 
+        assertThat(refusalSource.dedicated()).isFalse();
+        assertThat(photoSource.dedicated()).isTrue();
         assertThat(refusalSource.prefixes()).contains("tracking/", "bids/", "users/", "requests/");
         assertThat(refusalSource.referencedKeys("tracking/")).containsExactly("tracking/b1/refus.jpg");
         assertThat(refusalSource.referencedKeys("bids/")).containsExactly("bids/s/refus.jpg");

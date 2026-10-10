@@ -40,8 +40,9 @@ public class PhotoReconciliationService {
     /** Préfixes morts : plus rien ne les référence, tout ce qui y traîne est à supprimer. */
     public static final Set<String> PREFIXES_WITHOUT_SOURCE = Set.of("requests/");
     /**
-     * Ne jamais réduire sous la durée la plus longue entre un envoi et son rattachement en base
-     * (formulaire de demande : un brouillon est enregistré en base, 24 h suffisent).
+     * Âge minimal d'un objet avant d'être jugé orphelin. Un envoi rattaché en base plus de 24 h
+     * après son upload (ex. scan hors ligne synchronisé tard) serait supprimé : 24 h est le
+     * minimum, ne JAMAIS réduire (formulaire de demande : un brouillon est enregistré en base).
      */
     public static final Duration ORPHAN_AGE = Duration.ofHours(24);
     public static final int MAX_DELETES_PER_RUN = 5000;
@@ -95,16 +96,18 @@ public class PhotoReconciliationService {
             try {
                 List<String> uncovered = uncoveredPrefixes();
                 if (!uncovered.isEmpty()) {
-                    log.error("PhotoReconciliation: préfixes sans source de références {}, rien n'est supprimé",
+                    log.error("PhotoReconciliation: préfixes sans source dédiée {}, rien n'est supprimé",
                             uncovered);
-                    run.fail("Préfixes sans source de références : " + uncovered, now());
+                    run.fail("Préfixes sans source de références dédiée : " + uncovered, now());
                     runs.save(run);
                     return Optional.of(run);
                 }
                 Instant cutoff = clock.instant().minus(ORPHAN_AGE);
                 PhotoPurgeOutcome total = PhotoPurgeOutcome.NONE;
                 for (String prefix : prefixes) {
-                    int budget = MAX_DELETES_PER_RUN - total.eligible();
+                    // À blanc, pas de budget : le décompte sert à décider d'allumer l'interrupteur,
+                    // il doit être complet. En réel, au plus MAX_DELETES_PER_RUN suppressions.
+                    int budget = dryRun ? Integer.MAX_VALUE : MAX_DELETES_PER_RUN - total.eligible();
                     if (budget <= 0) break;
                     total = total.plus(reconcilePrefix(prefix, cutoff, budget, dryRun));
                 }
@@ -130,7 +133,7 @@ public class PhotoReconciliationService {
     private List<String> uncoveredPrefixes() {
         return prefixes.stream()
                 .filter(p -> !PREFIXES_WITHOUT_SOURCE.contains(p))
-                .filter(p -> sources.stream().noneMatch(s -> s.prefixes().contains(p)))
+                .filter(p -> sources.stream().noneMatch(s -> s.dedicated() && s.prefixes().contains(p)))
                 .toList();
     }
 
@@ -188,7 +191,11 @@ public class PhotoReconciliationService {
         return live;
     }
 
-    /** Un préfixe mort n'a rien à protéger : la garde ne s'y applique pas. */
+    /**
+     * Garde de volume. Exemption voulue pour les préfixes morts ({@link #PREFIXES_WITHOUT_SOURCE},
+     * {@code requests/}) : rien ne les référence, ils sont orphelins à 100 % par nature, la garde
+     * les bloquerait à jamais et ils n'ont aucune photo vivante à protéger.
+     */
     private static boolean guardTripped(String prefix, int orphans, int listed) {
         if (PREFIXES_WITHOUT_SOURCE.contains(prefix)) return false;
         return orphans > GUARD_MIN_ORPHANS && orphans > listed * GUARD_MAX_ORPHAN_SHARE;

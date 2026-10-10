@@ -14,8 +14,11 @@ import java.util.Set;
  */
 public final class MediaKeys {
 
-    /** Préfixes R2 de l'application (StorageService.ALLOWED_PREFIXES). */
-    static final List<String> KNOWN_PREFIXES = List.of(
+    /**
+     * Préfixes R2 de l'application : SEULE source de vérité, StorageService en tire ses
+     * ALLOWED_PREFIXES. Un préfixe absent d'ici ferait passer toutes ses clés pour orphelines.
+     */
+    public static final List<String> KNOWN_PREFIXES = List.of(
             "package_requests/", "requests/", "tracking/", "users/", "messaging/", "bids/", "reports/", "support/");
 
     private MediaKeys() {
