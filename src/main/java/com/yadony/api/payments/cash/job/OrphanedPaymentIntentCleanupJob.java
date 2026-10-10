@@ -32,6 +32,12 @@ public class OrphanedPaymentIntentCleanupJob {
 
     private static final Logger log = LoggerFactory.getLogger(OrphanedPaymentIntentCleanupJob.class);
 
+    /**
+     * Préfixe (22) + UUID du bid (36) = 58, sous la limite de 60 de {@code admin_alerts.type}.
+     * L'ancien {@code COMMISSION_3DS_UNCONFIRMED_} donnait 63 caractères : l'alerte ne partait jamais.
+     */
+    static final String UNCONFIRMED_ALERT_PREFIX = "COMMISSION_3DS_UNCONF_";
+
     private final BidRepository bidRepo;
     private final CashCommissionProperties props;
     private final AdminAlertEscalator alertEscalator;
@@ -66,7 +72,7 @@ public class OrphanedPaymentIntentCleanupJob {
         String status = pi.getStatus();
         if ("succeeded".equals(status)) {
             log.warn("Commission PI {} du bid {} déjà encaissée mais jamais confirmée par l'app", piId, bid.getId());
-            alertEscalator.raiseOnce("COMMISSION_3DS_UNCONFIRMED_" + bid.getId(),
+            alertEscalator.raiseOnce(UNCONFIRMED_ALERT_PREFIX + bid.getId(),
                     "Commission encaissée (3DS aboutie) mais acceptation jamais confirmée par l'app pour le bid "
                             + bid.getId() + " : finaliser l'acceptation ou rembourser la commission",
                     Map.of("bidId", bid.getId().toString(), "paymentIntentId", piId));

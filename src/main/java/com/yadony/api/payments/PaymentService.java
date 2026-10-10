@@ -1036,6 +1036,15 @@ public class PaymentService {
      * ({@link PaymentStripeResyncService}) pour qu'elle applique EXACTEMENT le même traitement.
      */
     void applyPaymentEscrowActive(PaymentIntent pi) {
+        applyPaymentEscrowActive(pi, false);
+    }
+
+    /**
+     * Comme {@link #applyPaymentEscrowActive(PaymentIntent)}, l'appelant précisant s'il capture et
+     * verse lui-même juste après le commit ({@link PaymentEscrowReadyEvent#isCallerSettles()}) :
+     * c'est le cas de la resynchronisation d'un paiement dont le colis est déjà livré.
+     */
+    void applyPaymentEscrowActive(PaymentIntent pi, boolean callerSettles) {
         final PaymentIntent finalPi = pi;
 
         paymentRepository.findByStripePaymentIntentId(finalPi.getId()).ifPresent(payment -> {
@@ -1056,7 +1065,8 @@ public class PaymentService {
                         payment.getBidId(),
                         Map.of("piId", finalPi.getId(), "amountCapturable", finalPi.getAmountCapturable()));
                 log.info("Payment {} now in ESCROW (PI={})", payment.getId(), finalPi.getId());
-                eventPublisher.publishEvent(new PaymentEscrowReadyEvent(payment.getBidId(), payment.getId()));
+                eventPublisher.publishEvent(
+                        new PaymentEscrowReadyEvent(payment.getBidId(), payment.getId(), callerSettles));
             }
 
             if (changed) {

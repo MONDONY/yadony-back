@@ -117,7 +117,7 @@ class OrphanedPaymentIntentCleanupJobTest {
         assertThat(bid.getCommissionPaymentIntentId()).isEqualTo("pi_paid");
         assertThat(bid.getCommissionRetryCount()).isZero();
         verify(bidRepo, never()).save(any());
-        verify(alertEscalator).raiseOnce(eq("COMMISSION_3DS_UNCONFIRMED_" + bid.getId()), anyString(), anyMap());
+        verify(alertEscalator).raiseOnce(eq("COMMISSION_3DS_UNCONF_" + bid.getId()), anyString(), anyMap());
     }
 
     @Test

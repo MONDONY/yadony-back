@@ -44,8 +44,9 @@ public record AdminAlertResponse(
 
     /** Préfixes d'alertes dont le suffixe est l'identifiant d'un paiement. */
     private static final java.util.List<String> PAYMENT_SUFFIXED = java.util.List.of(
-            "RECON_STRIPE_", "ESCROW_CAPTURE_FAILED_", "DELIVERY_PAYMENT_NOT_IN_ESCROW_", "PARTIAL_REFUND_HOLD_",
-            "PAYOUT_HELD_", "PAYOUT_STRIPE_UNUSABLE_");
+            "RECON_STRIPE_", "ESCROW_CAPTURE_FAILED_", "DELIVERY_NOT_ESCROW_", "DELIVERY_PAYMENT_NOT_IN_ESCROW_",
+            "PARTIAL_REFUND_HOLD_",
+            "PAYOUT_HELD_", "PAYOUT_STRIPE_UNUSABLE_", "LATE_RELEASE_FAILED_");
 
     static UUID paymentIdOf(String type, Map<String, Object> payload) {
         UUID fromPayload = uuid(payload.get("paymentId"));

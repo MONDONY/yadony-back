@@ -127,4 +127,25 @@ class PaymentWebhookChargeIdTest {
 
         assertThat(payment.getStripeChargeId()).isEqualTo("ch_OLD");
     }
+
+    @Test
+    void escrowReadyEvent_carriesTheCallerSettlesFlag() {
+        PaymentIntent pi = mock(PaymentIntent.class);
+        when(pi.getId()).thenReturn("pi_789");
+        when(pi.getMetadata()).thenReturn(java.util.Map.of());
+        PaymentEntity payment = new PaymentEntity();
+        payment.setNegotiationThreadId(UUID.randomUUID());
+        payment.setStripePaymentIntentId("pi_789");
+        payment.setStatus(PaymentStatus.PENDING);
+        payment.setAmount(new BigDecimal("30.00"));
+        payment.setCommissionAmount(new BigDecimal("3.60"));
+        when(paymentRepository.findByStripePaymentIntentId("pi_789")).thenReturn(Optional.of(payment));
+
+        service.applyPaymentEscrowActive(pi, true);
+
+        verify(eventPublisher).publishEvent(org.mockito.ArgumentMatchers.argThat(
+                (Object e) -> e instanceof com.yadony.api.payments.events.PaymentEscrowReadyEvent ready
+                        && ready.isCallerSettles()));
+        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.ESCROW);
+    }
 }

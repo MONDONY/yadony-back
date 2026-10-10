@@ -108,4 +108,12 @@ class NegotiationCaptureListenerTest {
         listener.onEscrowReady(event());
         verifyNoInteractions(escrowCapture);
     }
+
+    @Test
+    void callerSettles_skipsTheCapture() {
+        // Resynchronisation d'un colis déjà livré : elle capture puis verse elle-même.
+        listener.onEscrowReady(new PaymentEscrowReadyEvent(null, paymentId, true));
+
+        org.mockito.Mockito.verifyNoInteractions(paymentRepository, escrowCapture);
+    }
 }

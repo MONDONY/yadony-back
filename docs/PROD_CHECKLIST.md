@@ -1375,3 +1375,49 @@ saturait (187 requêtes en attente) et les requêtes finissaient en **500 après
 - [ ] **Constat hors périmètre, à traiter en suivi** : la clé d'idempotence Stripe `transfer-<paymentId>` n'est valable que 24 h. Un force-release
       lancé plus de 24 h après un Transfer réussi chez Stripe mais non enregistré en base (transaction locale annulée ensuite) pourrait créer un
       second Transfer. Vérifier les Transfers du paiement dans Stripe avant un force-release tardif.
+
+#### 9.20 Séquestre tardif : versement automatique si le colis est déjà livré, auto-réparation des paiements PENDING, alertes trop longues (back, branche `fix/escrow-auto-heal`)
+
+> Ajoutée le 10/10/2026, complétée après la revue de #488. **Aucune migration** (dernière : **V309**, prochaine **V310**), aucun secret. Une variable facultative :
+> `PAYMENT_AUTO_HEAL_ENABLED` (défaut `true`). À déployer **après #487** (même tag ou plus récent).
+
+**Origine (staging, 04 au 10/10).** 4 paiements carte de négociation (d9f1fa40, b8fe0fb9, 9a193124, 2071ac96) sont restés `PENDING`
+alors que Stripe les avait autorisés (`requires_capture`). Cause : la staging n'a reçu **aucun** `payment_intent.amount_capturable_updated`
+avant le **09/10 19:30 UTC**. Jusqu'au 09/10, les événements passaient par le relais `stripe listen`, qui ne transmettait que 6 types
+(`payment_intent.succeeded`, `payment_intent.canceled`, `payment_intent.payment_failed`, `charge.refunded`, `charge.captured`, `charge.failed`).
+L'endpoint `we_1UOeu69i7EY14IsEeZ5SPhqG` (abonné aux 16 événements, voir 9.13) a été créé le 09/10, après ces 4 paiements, et Stripe
+n'envoie jamais à un endpoint les événements créés avant lui. Le filet du `/checkout` (#408, séquestre dès le paiement) n'était pas encore
+déployé (paiements du 04 au 06/10). Ensuite d9f1fa40 et b8fe0fb9 ont été livrés alors que `PENDING` : la livraison n'a rien versé et ne repasse
+jamais. La resynchronisation admin (#487) les a passés `ESCROW` et capturés, mais il fallait encore cliquer « Forcer le versement ».
+
+| Sujet | À savoir |
+|---|---|
+| Versement de rattrapage | Quand un paiement passe en séquestre **après** la livraison (colis `COMPLETED`, retrouvé par `bid_id` ou, pour une négociation, par le colis rattaché au fil), le versement part tout seul, par le chemin de la livraison : mêmes gardes (litige bancaire, remboursement partiel, voyageur gelé, compte Connect inutilisable), capture d'abord (`EscrowCaptureService`), claim `markReleasedIfEscrow`, clé Stripe `transfer-<paymentId>`, audit `ESCROW_RELEASED_TRANSFER` avec `source=late-escrow` (ou `admin-resync-stripe`, `auto-resync-stripe`). Trois déclencheurs : webhook `amount_capturable_updated` tardif, resynchronisation admin, job ci-dessous. L'alerte `DELIVERY_NOT_ESCROW_<id>` se clôt d'elle-même. |
+| `POST /admin/payments/{id}/resync-stripe` | Colis déjà livré : la réponse porte **`released: true`** (champ ajouté en fin d'objet) et le message « Colis déjà livré : versement envoyé au voyageur » ; `after.status` = `RELEASED`. Nouvelle action **`ESCROW_RELEASED`** quand seul le versement restait à faire (paiement déjà `ESCROW` et capturé). Versement bloqué (voyageur gelé, litige…) : `released: false` et le motif dans `message`. Un back-office qui ne connaît pas `ESCROW_RELEASED` affiche le code brut et le message ; le bouton « Forcer le versement » disparaît car le statut n'est plus `ESCROW`. |
+| Job `PendingCardPaymentAutoHealJob`, passe 1 (PENDING) | Toutes les 15 min (premier passage 3 min après le démarrage) : paiements carte `PENDING` avec PaymentIntent, créés il y a plus de 10 min et moins de 7 jours, **plus récents d'abord**, lecture paginée jusqu'à remplir le lot, au plus **20 appels Stripe par passe**. Même traitement que le bouton admin (séquestre, capture, versement si livré, `FAILED`, `CANCELLED`). Audit **`PAYMENT_AUTO_RESYNC_STRIPE`** sans acteur (système). Un paiement trouvé cohérent est relu de moins en moins souvent (toutes les 30 min la 1re heure, puis toutes les heures, puis toutes les 6 h). Checkout abandonné (`requires_payment_method`, `requires_confirmation`, `requires_action`) de plus de 24 h : plus relu, son sort reste aux traitements existants. Stripe indisponible : la passe s'arrête. Un stock de PENDING anciens ne peut plus affamer un paiement récent bloqué (revue #488). |
+| Job, passe 2 (séquestres livrés non versés) | Paiements carte `ESCROW` dont le colis est `COMPLETED` depuis plus de 15 min, dernière activité (livraison ou passage en séquestre) de moins de **20 h** : nouvel essai de versement, mêmes gardes. Exclus : litige, remboursement partiel, versement retenu. Garde bloquante (voyageur gelé, compte Connect inutilisable) : un seul essai par démarrage, pas de boucle. Échec technique : nouvel essai toutes les heures dans la fenêtre. Au-delà de 20 h, plus d'essai automatique : la clé d'idempotence Stripe `transfer-<id>` ne vaut que 24 h. Coupure des deux passes : `PAYMENT_AUTO_HEAL_ENABLED=false`. Agenda en mémoire, pas de verrou entre instances (traitements idempotents). |
+| Nouvelle alerte **`LATE_RELEASE_FAILED_<paymentId>`** (56 caractères, CRITICAL) | Colis livré, séquestre en place, versement automatique en échec (capture refusée, Transfer refusé), quel que soit le chemin : webhook tardif, resynchronisation admin ou automatique, job. Une seule alerte tant qu'elle n'est pas résolue, close d'elle-même au versement suivant réussi. Contexte : `paymentId`, `bidId`, montant, devise, raison, source. Geste admin : corriger la cause, puis « Forcer le versement ». Dans la réponse de `resync-stripe`, le message devient « Colis livré mais versement impossible : <raison>. Utilisez « Forcer le versement » après correction » (il ne promet plus un nouvel essai « à la livraison »). |
+| Alertes trop longues | `admin_alerts.type` est limité à 60 caractères. `DELIVERY_PAYMENT_NOT_IN_ESCROW_<uuid>` (67) devient **`DELIVERY_NOT_ESCROW_<uuid>`** (56) ; `COMMISSION_3DS_UNCONFIRMED_<uuid>` (63) devient **`COMMISSION_3DS_UNCONF_<uuid>`** (58). Avant, `raiseOnce` levait une exception : l'alerte ne partait jamais et l'audit `DELIVERY_PAYMENT_NOT_IN_ESCROW` était annulé avec la transaction. Un test vérifie désormais que tous les préfixes d'alerte tiennent avec un UUID. |
+
+- [ ] **Jumelle dony-admin à faire** (non bloquante, back d'abord) : dans `alertCatalog.ts`, ajouter les préfixes `DELIVERY_NOT_ESCROW_` et
+      `COMMISSION_3DS_UNCONF_` (mêmes fiches que les anciens, garder les anciens pour l'historique) et la fiche `LATE_RELEASE_FAILED_`
+      (« Colis livré, versement automatique impossible » : lire la raison, corriger, puis « Forcer le versement ») ; dans `stripeResync.ts`, ajouter le libellé
+      `ESCROW_RELEASED` (« Colis déjà livré : versement envoyé au voyageur ») et le type `StripeResyncAction`. Sans cette PR, ces alertes
+      s'affichent avec un titre générique (« Delivery not escrow ») et l'action avec son code brut.
+- [ ] **Stripe Live, à vérifier avant la prod** (aucun changement côté test : `we_1UOeu69i7EY14IsEeZ5SPhqG` est déjà abonné) : tableau de bord
+      en mode **Live** → Développeurs → Webhooks → endpoint `https://api.yadony.com/api/v1/payments/webhook` → les 16 événements de 9.13,
+      dont **`payment_intent.amount_capturable_updated`** et `transfer.created`. Le job rattrape un webhook manqué en 10 à 25 min, mais
+      ne remplace pas l'abonnement.
+- [ ] Tag prod : doit contenir le commit de fusion de cette PR et celui de #487.
+- [ ] Recette staging après déploiement : payer une négociation par carte, livrer le colis, puis vérifier dans les 30 min
+      `SELECT status, captured_at, escrow_released_at FROM payments WHERE negotiation_thread_id = '<fil>';` → `RELEASED`.
+      Dans les logs de l'API : `Auto-réparation des paiements carte PENDING` à chaque passage qui relit un paiement.
+- [ ] Contrôle (lecture seule), doit répondre 0 au lendemain de la mise en prod :
+      ```sql
+      SELECT count(*) FROM payments p
+        JOIN bids b ON b.id = p.bid_id OR b.linked_negotiation_thread_id = p.negotiation_thread_id
+       WHERE p.rail = 'STRIPE' AND p.status IN ('PENDING','ESCROW') AND b.status = 'COMPLETED' AND p.deleted_at IS NULL;
+      ```
+- [ ] Constat hors périmètre : l'endpoint de test ne reçoit pas les événements des comptes connectés (`account.updated`, `capability.updated`,
+      `payout.*`, `account.application.deauthorized`) : aucun n'est jamais arrivé dans `stripe_event_inbox`. Comme écrit en 9.13, ne pas créer
+      d'endpoint « comptes connectés » avant le changement back qui accepte un 2ᵉ secret.

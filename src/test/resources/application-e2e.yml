@@ -75,6 +75,9 @@ yadony:
   # Pas d'appel Stripe ni pawaPay réel pendant les tests.
   reconciliation:
     enabled: false
+  payments:
+    auto-heal:
+      enabled: false
   # E2E tests run with header-based auth and no real KYC/Stripe onboarding, so the
   # enforcement gates must be off (same as application-test.yml) — otherwise every
   # announcement/bid creation is blocked with 422. NEVER false in prod.

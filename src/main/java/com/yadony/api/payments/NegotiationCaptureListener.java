@@ -59,6 +59,11 @@ public class NegotiationCaptureListener {
     @Async
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onEscrowReady(PaymentEscrowReadyEvent event) {
+        if (event.isCallerSettles()) {
+            // La resynchronisation d'un colis déjà livré capture puis verse elle-même, juste après
+            // le commit : capturer ici en parallèle ne ferait que courir avec elle.
+            return;
+        }
         PaymentEntity payment = paymentRepository.findById(event.getPaymentId()).orElse(null);
         if (payment == null) {
             return;

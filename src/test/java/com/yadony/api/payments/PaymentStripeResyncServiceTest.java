@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -39,6 +40,7 @@ class PaymentStripeResyncServiceTest {
     @Mock private EscrowCaptureService escrowCapture;
     @Mock private BidRepository bidRepository;
     @Mock private AuditService auditService;
+    @Mock private DeliveredEscrowReleaser deliveredRelease;
     @Mock private org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     private PaymentStripeResyncService service;
@@ -49,7 +51,7 @@ class PaymentStripeResyncServiceTest {
     @BeforeEach
     void setUp() {
         service = new PaymentStripeResyncService(paymentRepository, paymentService, escrowCapture, bidRepository,
-                auditService, transactionManager);
+                auditService, deliveredRelease, transactionManager);
         payment = new PaymentEntity();
         ReflectionTestUtils.setField(payment, "id", paymentId);
         payment.setNegotiationThreadId(UUID.randomUUID());
@@ -410,5 +412,210 @@ class PaymentStripeResyncServiceTest {
     void unknownStripeStatus_isNotSupported() {
         payment.setStatus(PaymentStatus.ESCROW);
         assertThat(runExpectingError(pi("processing", 6450)).getErrorCode()).isEqualTo("resync-not-supported");
+    }
+
+    // ── Colis déjà livré : versement de rattrapage ───────────────────────────
+
+    private void delivered() {
+        when(deliveredRelease.deliveredBidOf(payment)).thenReturn(Optional.of(
+                new DeliveredEscrowReleaser.DeliveredBid(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID())));
+    }
+
+    private void releaseAnswers(EscrowReleaseOutcome outcome) {
+        when(deliveredRelease.releaseIfDelivered(eq(paymentId), any())).thenAnswer(inv -> {
+            if (outcome.released()) payment.setStatus(PaymentStatus.RELEASED);
+            return new DeliveredEscrowReleaser.LateRelease(outcome, outcome.failed() ? "raison" : null);
+        });
+    }
+
+    @Test
+    void pendingAuthorized_alreadyDelivered_activatesCapturesThenReleases() {
+        payment.setStatus(PaymentStatus.PENDING);
+        delivered();
+        PaymentIntent pi = pi("requires_capture", 6450);
+        doAnswer(inv -> { payment.setStatus(PaymentStatus.ESCROW); return null; })
+                .when(paymentService).applyPaymentEscrowActive(pi, true);
+        releaseAnswers(EscrowReleaseOutcome.RELEASED);
+
+        PaymentStripeResyncService.Result r = run(pi);
+
+        // Les écouteurs asynchrones s'effacent (callerSettles) : capture puis versement, ici, dans l'ordre.
+        verify(paymentService, never()).applyPaymentEscrowActive(pi);
+        var order = inOrder(escrowCapture, deliveredRelease);
+        order.verify(escrowCapture).ensureCaptured(paymentId, PaymentStripeResyncService.SOURCE);
+        order.verify(deliveredRelease).releaseIfDelivered(paymentId, PaymentStripeResyncService.SOURCE);
+        assertThat(r.action()).isEqualTo(PaymentStripeResyncService.Action.ESCROW_ACTIVATED);
+        assertThat(r.released()).isTrue();
+        assertThat(r.after().status()).isEqualTo("RELEASED");
+        assertThat(r.after().stripeStatus()).isEqualTo("succeeded");
+        assertThat(r.message()).contains("Colis déjà livré : versement envoyé au voyageur");
+        verify(auditService).log(eq("PAYMENT"), eq(paymentId), eq("ADMIN_PAYMENT_RESYNC_STRIPE"), eq(adminId),
+                argThat(m -> Boolean.TRUE.equals(m.get("released"))));
+    }
+
+    @Test
+    void pendingSucceeded_alreadyDelivered_recordsCaptureAndReleasesWithoutCapturing() {
+        payment.setStatus(PaymentStatus.PENDING);
+        delivered();
+        PaymentIntent pi = pi("succeeded", 6450);
+        doAnswer(inv -> { payment.setStatus(PaymentStatus.ESCROW); return null; })
+                .when(paymentService).applyPaymentEscrowActive(pi, true);
+        releaseAnswers(EscrowReleaseOutcome.RELEASED);
+
+        PaymentStripeResyncService.Result r = run(pi);
+
+        verify(paymentRepository).markCapturedIfEscrow(eq(paymentId), any());
+        verifyNoInteractions(escrowCapture);
+        assertThat(r.released()).isTrue();
+    }
+
+    @Test
+    void pendingDelivered_captureFails_noReleaseAttempted() {
+        payment.setStatus(PaymentStatus.PENDING);
+        delivered();
+        PaymentIntent pi = pi("requires_capture", 6450);
+        doAnswer(inv -> { payment.setStatus(PaymentStatus.ESCROW); return null; })
+                .when(paymentService).applyPaymentEscrowActive(pi, true);
+        when(escrowCapture.ensureCaptured(paymentId, PaymentStripeResyncService.SOURCE))
+                .thenThrow(new EscrowCaptureService.EscrowCaptureException("refus", "requires_capture", null));
+
+        PaymentStripeResyncService.Result r = run(pi);
+
+        verify(deliveredRelease, never()).releaseIfDelivered(any(), any());
+        assertThat(r.released()).isFalse();
+        // Colis livré : la livraison ne repassera pas, le message ne promet plus un nouvel essai.
+        assertThat(r.message()).contains("Colis livré mais versement impossible : capture du séquestre impossible (refus)")
+                .contains("Forcer le versement").doesNotContain("retenté à la livraison");
+        verify(deliveredRelease).reportFailure(eq(payment), isNull(), contains("refus"),
+                eq(PaymentStripeResyncService.SOURCE));
+    }
+
+    @Test
+    void escrowCaptured_alreadyDelivered_onlyTheReleaseRemained() {
+        payment.setStatus(PaymentStatus.ESCROW);
+        payment.setCapturedAt(Instant.now());
+        delivered();
+        releaseAnswers(EscrowReleaseOutcome.RELEASED);
+
+        PaymentStripeResyncService.Result r = run(pi("succeeded", 6450));
+
+        assertThat(r.action()).isEqualTo(PaymentStripeResyncService.Action.ESCROW_RELEASED);
+        assertThat(r.changed()).isTrue();
+        assertThat(r.message()).isEqualTo("Colis déjà livré : versement envoyé au voyageur");
+        verifyNoInteractions(escrowCapture);
+    }
+
+    @Test
+    void escrowSucceededWithoutCaptureDate_delivered_recordsThenReleases() {
+        payment.setStatus(PaymentStatus.ESCROW);
+        delivered();
+        releaseAnswers(EscrowReleaseOutcome.RELEASED);
+
+        PaymentStripeResyncService.Result r = run(pi("succeeded", 6450));
+
+        assertThat(r.action()).isEqualTo(PaymentStripeResyncService.Action.CAPTURE_RECORDED);
+        assertThat(r.released()).isTrue();
+        assertThat(r.message()).contains("date de capture enregistrée ; Colis déjà livré");
+    }
+
+    @Test
+    void escrowAuthorizedDue_delivered_capturesThenReleases() {
+        payment.setStatus(PaymentStatus.ESCROW);
+        delivered();
+        releaseAnswers(EscrowReleaseOutcome.RELEASED);
+
+        PaymentStripeResyncService.Result r = run(pi("requires_capture", 6450));
+
+        verify(escrowCapture).ensureCaptured(paymentId, PaymentStripeResyncService.SOURCE);
+        assertThat(r.action()).isEqualTo(PaymentStripeResyncService.Action.ESCROW_CAPTURED);
+        assertThat(r.released()).isTrue();
+    }
+
+    @Test
+    void escrowLegacyAuthorized_delivered_releaseCapturesItself() {
+        payment.setStatus(PaymentStatus.ESCROW);
+        payment.setLegacyDestinationCharge(true);
+        delivered();
+        releaseAnswers(EscrowReleaseOutcome.RELEASED);
+
+        PaymentStripeResyncService.Result r = run(pi("requires_capture", 6450));
+
+        verifyNoInteractions(escrowCapture);
+        assertThat(r.action()).isEqualTo(PaymentStripeResyncService.Action.ESCROW_RELEASED);
+    }
+
+    @Test
+    void escrowDelivered_releaseBlocked_reportsTheGuard() {
+        payment.setStatus(PaymentStatus.ESCROW);
+        payment.setCapturedAt(Instant.now());
+        delivered();
+        releaseAnswers(EscrowReleaseOutcome.PAYOUT_HELD);
+
+        PaymentStripeResyncService.Result r = run(pi("succeeded", 6450));
+
+        assertThat(r.action()).isEqualTo(PaymentStripeResyncService.Action.ALREADY_IN_SYNC);
+        assertThat(r.released()).isFalse();
+        assertThat(r.message()).isEqualTo(EscrowReleaseOutcome.PAYOUT_HELD.message());
+        verify(auditService, never()).log(any(), any(), any(), any(), anyMap());
+    }
+
+    @Test
+    void escrowDelivered_transferRefused_reportsAndKeepsEscrow() {
+        payment.setStatus(PaymentStatus.ESCROW);
+        payment.setCapturedAt(Instant.now());
+        delivered();
+        when(deliveredRelease.releaseIfDelivered(eq(paymentId), any())).thenReturn(new DeliveredEscrowReleaser.LateRelease(
+                EscrowReleaseOutcome.TRANSFER_FAILED, "versement refusé par Stripe (insufficient funds)"));
+
+        PaymentStripeResyncService.Result r = run(pi("succeeded", 6450));
+
+        assertThat(r.released()).isFalse();
+        assertThat(r.message()).isEqualTo("Colis livré mais versement impossible : versement refusé par Stripe "
+                + "(insufficient funds). Utilisez « Forcer le versement » après correction");
+        assertThat(r.after().status()).isEqualTo("ESCROW");
+    }
+
+    @Test
+    void escrowAuthorizedDue_delivered_captureFails_alertsThenConflict() {
+        payment.setStatus(PaymentStatus.ESCROW);
+        delivered();
+        when(escrowCapture.ensureCaptured(paymentId, PaymentStripeResyncService.SOURCE))
+                .thenThrow(new EscrowCaptureService.EscrowCaptureException("expirée", "requires_capture", null));
+
+        YadonyBusinessException e = runExpectingError(pi("requires_capture", 6450));
+
+        assertThat(e.getErrorCode()).isEqualTo("escrow-capture-failed");
+        verify(deliveredRelease).reportFailure(eq(payment), isNull(), contains("expirée"), any());
+        verify(deliveredRelease, never()).releaseIfDelivered(any(), any());
+    }
+
+    @Test
+    void escrowAuthorizedDue_delivered_capturedMessageDoesNotPromiseADelivery() {
+        payment.setStatus(PaymentStatus.ESCROW);
+        delivered();
+        releaseAnswers(EscrowReleaseOutcome.RELEASED);
+
+        PaymentStripeResyncService.Result r = run(pi("requires_capture", 6450));
+
+        assertThat(r.message()).isEqualTo("Séquestre capturé sur le solde plateforme ; "
+                + "Colis déjà livré : versement envoyé au voyageur");
+    }
+
+    @Test
+    void automaticResync_isAuditedAsTheSystem() {
+        payment.setStatus(PaymentStatus.PENDING);
+        PaymentIntent pi = pi("canceled", 6450);
+        doAnswer(inv -> { payment.setStatus(PaymentStatus.CANCELLED); return null; })
+                .when(paymentService).applyPaymentIntentCanceled(pi);
+
+        PaymentStripeResyncService.Result r;
+        try (MockedStatic<PaymentIntent> mocked = mockStatic(PaymentIntent.class)) {
+            mocked.when(() -> PaymentIntent.retrieve(eq("pi_r"), any(PaymentIntentRetrieveParams.class), isNull()))
+                    .thenReturn(pi);
+            r = service.resyncAutomatically(paymentId);
+        }
+
+        assertThat(r.action()).isEqualTo(PaymentStripeResyncService.Action.MARKED_CANCELLED);
+        verify(auditService).log(eq("PAYMENT"), eq(paymentId), eq("PAYMENT_AUTO_RESYNC_STRIPE"), isNull(), anyMap());
     }
 }

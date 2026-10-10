@@ -97,6 +97,7 @@ class AdminPaymentResyncControllerIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.action").value("ESCROW_ACTIVATED"))
                 .andExpect(jsonPath("$.changed").value(true))
+                .andExpect(jsonPath("$.released").value(false))
                 .andExpect(jsonPath("$.before.status").value("PENDING"))
                 .andExpect(jsonPath("$.after.status").value("ESCROW"))
                 .andExpect(jsonPath("$.after.stripeStatus").value("requires_capture"))
