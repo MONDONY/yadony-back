@@ -99,6 +99,7 @@ class MoneyOverviewControllerIT {
     @Autowired private EntityManager entityManager;
     @Autowired private TransactionTemplate tx;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private MoneyOverviewReadModel readModel;
 
     @Test
     void withoutToken_is401() throws Exception {
@@ -325,6 +326,58 @@ class MoneyOverviewControllerIT {
                         "PAYOUT_IN_PROGRESS", "REFUND_PENDING")))
                 .andExpect(jsonPath("$.sender.totals[0].refundPending").value(5000))
                 .andExpect(jsonPath("$.sender.totals[0].blocked").value(0));
+    }
+
+    @Test
+    void arrivalDate_isTheTripArrival_orItsDepartureDay_andTruncatedIsFalse() throws Exception {
+        UserEntity traveler = persistUser("Kadiatou", "Barry");
+        UserEntity sender = persistUser("Lamine", "Fofana");
+        UUID sameDayTrip = persistAnnouncement(traveler.getId(), "EUR", "Paris", "Dakar");
+        UUID overnightTrip = persistAnnouncement(traveler.getId(), "EUR", "Lyon", "Abidjan");
+        jdbc.update("UPDATE announcements SET arrival_date = departure_date + 1 WHERE id = ?", overnightTrip);
+
+        UUID sameDayBid = persistBid(sameDayTrip, sender.getId(), BidStatus.ACCEPTED, PaymentMethod.STRIPE, "EUR");
+        persistPayment(sameDayBid, PaymentStatus.ESCROW, PaymentRail.STRIPE, "20.00", "2.40", "EUR", null);
+        UUID overnightBid = persistBid(overnightTrip, sender.getId(), BidStatus.ACCEPTED, PaymentMethod.STRIPE, "EUR");
+        persistPayment(overnightBid, PaymentStatus.ESCROW, PaymentRail.STRIPE, "30.00", "3.60", "EUR", null);
+
+        LocalDate departure = LocalDate.now().plusDays(10);
+        mockMvc.perform(get("/payments/me/overview").with(authentication(as(traveler))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.truncated").value(false))
+                .andExpect(jsonPath("$.traveler.items[?(@.bidId == '" + sameDayBid + "')].arrivalDate")
+                        .value(departure.toString()))
+                .andExpect(jsonPath("$.traveler.items[?(@.bidId == '" + overnightBid + "')].arrivalDate")
+                        .value(departure.plusDays(1).toString()))
+                .andExpect(jsonPath("$.traveler.items[?(@.bidId == '" + overnightBid + "')].departureDate")
+                        .value(departure.toString()));
+    }
+
+    @Test
+    void beforeTheCap_activeMoneyComesFirst_nearestArrivalFirst_historyLast() {
+        UserEntity traveler = persistUser("Oumou", "Sangare");
+        UserEntity sender = persistUser("Daouda", "Kone");
+        UUID nearTrip = persistAnnouncement(traveler.getId(), "EUR", "Paris", "Bamako");
+        UUID farTrip = persistAnnouncement(traveler.getId(), "EUR", "Paris", "Douala");
+        UUID recentTrip = persistAnnouncement(traveler.getId(), "EUR", "Paris", "Dakar");
+        jdbc.update("UPDATE announcements SET departure_date = current_date + 30 WHERE id = ?", farTrip);
+        jdbc.update("UPDATE announcements SET departure_date = current_date + 60 WHERE id = ?", recentTrip);
+
+        UUID released = persistBid(recentTrip, sender.getId(), BidStatus.COMPLETED, PaymentMethod.STRIPE, "EUR");
+        persistPayment(released, PaymentStatus.RELEASED, PaymentRail.STRIPE, "10.00", "1.20", "EUR",
+                LocalDateTime.now(ZoneOffset.UTC).minusDays(1));
+        UUID far = persistBid(farTrip, sender.getId(), BidStatus.ACCEPTED, PaymentMethod.STRIPE, "EUR");
+        persistPayment(far, PaymentStatus.ESCROW, PaymentRail.STRIPE, "10.00", "1.20", "EUR", null);
+        UUID near = persistBid(nearTrip, sender.getId(), BidStatus.ACCEPTED, PaymentMethod.STRIPE, "EUR");
+        persistPayment(near, PaymentStatus.ESCROW, PaymentRail.STRIPE, "10.00", "1.20", "EUR", null);
+
+        List<MoneyRow> rows = readModel.findRows(traveler.getId(),
+                OffsetDateTime.now(ZoneOffset.UTC).minusDays(30), 3);
+        org.assertj.core.api.Assertions.assertThat(rows).extracting(MoneyRow::bidId).containsExactly(near, far, released);
+
+        List<MoneyRow> cut = readModel.findRows(traveler.getId(),
+                OffsetDateTime.now(ZoneOffset.UTC).minusDays(30), 2);
+        org.assertj.core.api.Assertions.assertThat(cut).extracting(MoneyRow::bidId).containsExactly(near, far);
     }
 
     // --- helpers ---

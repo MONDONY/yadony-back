@@ -42,7 +42,7 @@ class MoneyStateResolverTest {
 
         MoneyRow build() {
             return new MoneyRow(role, UUID.randomUUID(), bidStatus, "STRIPE", "EUR", "DON-ABCDEFGH", new BigDecimal("10"), null,
-                    UUID.randomUUID(), "Paris", "Dakar", LocalDate.of(2026, 10, 20), UUID.randomUUID(),
+                    UUID.randomUUID(), "Paris", "Dakar", LocalDate.of(2026, 10, 20), LocalDate.of(2026, 10, 20), UUID.randomUUID(),
                     paymentId, paymentStatus, rail, amount, commission, refunded, currency, chargeback,
                     payoutHeldAt, releasedAt, updatedAt, openDisputes, allDisputes, holdUntil, openPayouts, openRefunds);
         }
@@ -223,7 +223,7 @@ class MoneyStateResolverTest {
     void cashParcel_hasNoAmount_andNothingToReceiveThroughYadony() {
         MoneyRow cash = new MoneyRow(MoneyRole.TRAVELER, UUID.randomUUID(), "IN_TRANSIT", "CASH", "xof",
                 "DON-CASH0001", new BigDecimal("10"), null, UUID.randomUUID(), "Paris", "Bamako", LocalDate.of(2026, 10, 20),
-                UUID.randomUUID(), null, null, null, null, null, null, null, false,
+                LocalDate.of(2026, 10, 20), UUID.randomUUID(), null, null, null, null, null, null, null, false,
                 null, null, null, 0, 0, null, 0, 0);
         MoneyStateResolver.Resolution res = MoneyStateResolver.resolve(cash).orElseThrow();
         assertThat(res.state()).isEqualTo(MoneyState.CASH);

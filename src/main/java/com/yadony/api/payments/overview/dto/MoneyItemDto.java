@@ -26,6 +26,10 @@ import java.util.UUID;
  * @param weightKg        poids déclaré du colis, si connu.
  * @param cashCommissionStatus colis en espèces seulement : statut de la commission Yadony
  *                        ({@code CHARGED}, {@code PENDING}, {@code REFUNDED}…), sinon {@code null}.
+ * @param arrivalDate     date d'arrivée effective du trajet (jour du départ si le voyage arrive le
+ *                        jour même) : échéance prévisible d'un séquestre versé à la confirmation de
+ *                        livraison. Ajoutée en fin d'objet (FLUTTER-HV, suite), les apps antérieures
+ *                        l'ignorent.
  */
 public record MoneyItemDto(
         UUID bidId,
@@ -45,5 +49,6 @@ public record MoneyItemDto(
         String counterpartyName,
         String bidStatus,
         BigDecimal weightKg,
-        String cashCommissionStatus) {
+        String cashCommissionStatus,
+        LocalDate arrivalDate) {
 }

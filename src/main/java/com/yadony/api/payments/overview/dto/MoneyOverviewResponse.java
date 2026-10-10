@@ -10,6 +10,9 @@ import java.util.List;
  * @param wallet           soldes par devise, devise active en tête (FLUTTER-J4)
  * @param activeCurrency   devise active de l'utilisateur, code ISO en majuscules ; ajoutée en fin
  *                         d'objet (FLUTTER-J4), les apps antérieures l'ignorent
+ * @param truncated        vrai quand le plafond de lignes du read-model a coupé la liste : les
+ *                         totaux ne portent alors que sur les colis renvoyés. Ajouté en fin d'objet
+ *                         (FLUTTER-HV, suite), les apps antérieures l'ignorent
  */
 public record MoneyOverviewResponse(
         OffsetDateTime generatedAt,
@@ -17,7 +20,8 @@ public record MoneyOverviewResponse(
         List<WalletBalanceLineDto> wallet,
         RoleSection<TravelerTotalDto> traveler,
         RoleSection<SenderTotalDto> sender,
-        String activeCurrency) {
+        String activeCurrency,
+        boolean truncated) {
 
     /** Totaux par devise et montants d'un côté (voyageur ou expéditeur). */
     public record RoleSection<T>(List<T> totals, List<MoneyItemDto> items) {

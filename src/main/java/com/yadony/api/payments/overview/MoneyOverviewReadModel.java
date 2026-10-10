@@ -39,7 +39,15 @@ import java.util.UUID;
 @Component
 public class MoneyOverviewReadModel {
 
-    /** Plafond de lignes renvoyées : la vue n'est pas un relevé exhaustif. */
+    /**
+     * Plafond de lignes renvoyées : la vue n'est pas un relevé exhaustif. La requête en lit une de
+     * plus pour savoir si la liste a été coupée ({@code truncated} de la réponse).
+     *
+     * <p>Ordre avant la coupe : l'argent encore actif (séquestre, espèces en cours) passe d'abord,
+     * de l'arrivée la plus proche à la plus lointaine, puis l'historique récent (libéré, remboursé),
+     * du trajet le plus récent au plus ancien. Un gros voyageur perd ainsi d'abord l'historique et
+     * les trajets les plus lointains, jamais le prochain versement (FLUTTER-HV, suite).
+     */
     static final int MAX_ROWS = 200;
 
     private static final String SQL = """
@@ -48,6 +56,7 @@ public class MoneyOverviewReadModel {
                        b.payment_method AS bid_payment_method, b.currency AS bid_currency,
                        b.tracking_number, b.weight_kg, b.commission_status, b.linked_negotiation_thread_id,
                        a.id AS announcement_id, a.departure_city, a.arrival_city, a.departure_date,
+                       COALESCE(a.arrival_date, a.departure_date) AS arrival_date,
                        b.sender_id AS counterparty_id
                 FROM bids b
                 JOIN announcements a ON a.id = b.announcement_id
@@ -57,6 +66,7 @@ public class MoneyOverviewReadModel {
                 SELECT 'SENDER' AS role, b.id, b.status, b.payment_method, b.currency,
                        b.tracking_number, b.weight_kg, b.commission_status, b.linked_negotiation_thread_id,
                        a.id, a.departure_city, a.arrival_city, a.departure_date,
+                       COALESCE(a.arrival_date, a.departure_date),
                        a.traveler_id
                 FROM bids b
                 JOIN announcements a ON a.id = b.announcement_id
@@ -65,7 +75,7 @@ public class MoneyOverviewReadModel {
             )
             SELECT mb.role, mb.bid_id, mb.bid_status, mb.bid_payment_method, mb.bid_currency,
                    mb.tracking_number, mb.weight_kg, mb.commission_status, mb.announcement_id, mb.departure_city, mb.arrival_city,
-                   mb.departure_date, mb.counterparty_id,
+                   mb.departure_date, mb.arrival_date, mb.counterparty_id,
                    p.id AS payment_id, p.status AS payment_status, p.rail, p.amount, p.commission_amount,
                    p.refunded_amount, p.currency AS payment_currency, p.disputed, p.payout_held_at,
                    p.escrow_released_at, p.updated_at AS payment_updated_at,
@@ -96,7 +106,9 @@ public class MoneyOverviewReadModel {
                             AND COALESCE(p.escrow_released_at, p.updated_at) >= :since)))
                OR (p.id IS NULL AND mb.bid_payment_method = 'CASH'
                    AND mb.bid_status IN ('ACCEPTED', 'HANDED_OVER', 'IN_TRANSIT', 'ARRIVED'))
-            ORDER BY mb.departure_date DESC, mb.bid_id
+            ORDER BY CASE WHEN p.id IS NULL OR p.status = 'ESCROW' THEN 0 ELSE 1 END,
+                     CASE WHEN p.id IS NULL OR p.status = 'ESCROW' THEN mb.arrival_date END ASC NULLS LAST,
+                     mb.departure_date DESC, mb.bid_id
             LIMIT :limit
             """;
 
@@ -108,13 +120,19 @@ public class MoneyOverviewReadModel {
 
     /**
      * Colis de {@code userId} (comme voyageur ou comme expéditeur) dont l'argent est en séquestre,
-     * libéré ou remboursé depuis {@code since}, ou réglé en espèces et encore en cours.
+     * libéré ou remboursé depuis {@code since}, ou réglé en espèces et encore en cours. Rend au plus
+     * {@code MAX_ROWS + 1} lignes : la dernière, si elle existe, signale seulement la coupe.
      */
     public List<MoneyRow> findRows(UUID userId, OffsetDateTime since) {
+        return findRows(userId, since, MAX_ROWS + 1);
+    }
+
+    /** Même lecture avec un plafond choisi : sert aux tests de l'ordre avant la coupe. */
+    List<MoneyRow> findRows(UUID userId, OffsetDateTime since, int limit) {
         MapSqlParameterSource params = new MapSqlParameterSource()
                 .addValue("userId", userId)
                 .addValue("since", since)
-                .addValue("limit", MAX_ROWS);
+                .addValue("limit", limit);
         return jdbc.query(SQL, params, (rs, i) -> map(rs));
     }
 
@@ -132,6 +150,7 @@ public class MoneyOverviewReadModel {
                 rs.getString("departure_city"),
                 rs.getString("arrival_city"),
                 rs.getObject("departure_date", LocalDate.class),
+                rs.getObject("arrival_date", LocalDate.class),
                 uuid(rs, "counterparty_id"),
                 uuid(rs, "payment_id"),
                 rs.getString("payment_status"),
