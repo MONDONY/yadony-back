@@ -1,6 +1,7 @@
 package com.yadony.api.common.media;
 
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.config.PlatformSettingsService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -20,6 +21,8 @@ import java.util.stream.IntStream;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -37,6 +40,7 @@ class PhotoReconciliationServiceTest {
     @Mock PlatformSettingsService settings;
     @Mock PhotoPurgeRunRepository runs;
     @Mock PhotoPurgeRunner runner;   // pour le verrou partagé
+    @Mock AdminAlertService alerts;
     @Mock MediaKeyReferenceSource trackingSource;
     @Mock MediaKeyReferenceSource bidsSource;
 
@@ -53,7 +57,7 @@ class PhotoReconciliationServiceTest {
         lenient().when(trackingSource.dedicated()).thenReturn(true);
         lenient().when(bidsSource.dedicated()).thenReturn(true);
         lenient().when(storage.listObjectsOlderThan(anyString(), any(), anyInt())).thenReturn(List.of());
-        service = new PhotoReconciliationService(storage, List.of(trackingSource), settings, runs, runner, clock,
+        service = new PhotoReconciliationService(storage, List.of(trackingSource), settings, runs, runner, alerts, clock,
                 List.of("tracking/"));
     }
 
@@ -89,7 +93,7 @@ class PhotoReconciliationServiceTest {
 
     @Test
     void prefixWithoutSource_failsRun_andDeletesNothing() {
-        service = new PhotoReconciliationService(storage, List.of(trackingSource), settings, runs, runner, clock,
+        service = new PhotoReconciliationService(storage, List.of(trackingSource), settings, runs, runner, alerts, clock,
                 List.of("tracking/", "bids/"));
         lenient().when(settings.photoPurgeEnabled()).thenReturn(true);
 
@@ -102,7 +106,7 @@ class PhotoReconciliationServiceTest {
 
     @Test
     void declaredDeadPrefix_needsNoSource_andIsEmptied() {
-        service = new PhotoReconciliationService(storage, List.of(trackingSource), settings, runs, runner, clock,
+        service = new PhotoReconciliationService(storage, List.of(trackingSource), settings, runs, runner, alerts, clock,
                 List.of("tracking/", "requests/"));
         when(settings.photoPurgeEnabled()).thenReturn(true);
         // 200 clés mortes : le préfixe mort n'est pas soumis à la garde de volume.
@@ -149,7 +153,7 @@ class PhotoReconciliationServiceTest {
         when(other.prefixes()).thenReturn(Set.of("tracking/", "bids/"));
         lenient().when(other.dedicated()).thenReturn(false);
         when(other.referencedKeys("tracking/")).thenReturn(Set.of("tracking/b/other.jpg"));
-        service = new PhotoReconciliationService(storage, List.of(trackingSource, other), settings, runs, runner,
+        service = new PhotoReconciliationService(storage, List.of(trackingSource, other), settings, runs, runner, alerts,
                 clock, List.of("tracking/"));
         when(settings.photoPurgeEnabled()).thenReturn(true);
         when(trackingSource.referencedKeys("tracking/")).thenReturn(Set.of("tracking/b/live.jpg"));
@@ -166,7 +170,7 @@ class PhotoReconciliationServiceTest {
     @Test
     void sourceInError_skipsPrefix_withoutDeleting_andOtherPrefixesContinue() {
         service = new PhotoReconciliationService(storage, List.of(trackingSource, bidsSource), settings, runs,
-                runner, clock, List.of("tracking/", "bids/"));
+                runner, alerts, clock, List.of("tracking/", "bids/"));
         when(settings.photoPurgeEnabled()).thenReturn(true);
         when(trackingSource.referencedKeys("tracking/")).thenThrow(new IllegalStateException("base indisponible"));
         when(bidsSource.referencedKeys("bids/")).thenReturn(Set.of());
@@ -234,7 +238,7 @@ class PhotoReconciliationServiceTest {
     @Test
     void volumeGuard_tooManyOrphans_deletesNothingForPrefix_failsPlusOne_othersContinue() {
         service = new PhotoReconciliationService(storage, List.of(trackingSource, bidsSource), settings, runs,
-                runner, clock, List.of("tracking/", "bids/"));
+                runner, alerts, clock, List.of("tracking/", "bids/"));
         when(settings.photoPurgeEnabled()).thenReturn(true);
         // 101 orphelines sur 150 listées (67 %) : source probablement cassée.
         List<String> listed = new ArrayList<>();
@@ -317,7 +321,7 @@ class PhotoReconciliationServiceTest {
             lenient().when(s.prefixes()).thenReturn(Set.of("tracking/", "bids/"));
         }
         service = new PhotoReconciliationService(storage, List.of(trackingSource, refusal, legacy), settings, runs,
-                runner, clock, List.of("tracking/", "bids/"));
+                runner, alerts, clock, List.of("tracking/", "bids/"));
         lenient().when(settings.photoPurgeEnabled()).thenReturn(true);
 
         PhotoPurgeRunEntity run = service.reconcile(PhotoPurgeRunner.TRIGGER_SCHEDULE).orElseThrow();
@@ -331,7 +335,7 @@ class PhotoReconciliationServiceTest {
     @Test
     void dryRun_countsAllOrphans_withoutBudget() {
         service = new PhotoReconciliationService(storage, List.of(trackingSource, bidsSource), settings, runs,
-                runner, clock, List.of("tracking/", "bids/"));
+                runner, alerts, clock, List.of("tracking/", "bids/"));
         when(settings.photoPurgeEnabled()).thenReturn(false);
         // 6000 orphelines pour 6001 vivantes (sous la garde de volume), puis 10 orphelines.
         List<String> listed = new ArrayList<>();
@@ -398,5 +402,114 @@ class PhotoReconciliationServiceTest {
         verify(storage, never()).deleteFile(anyString());
         assertThat(run.isDryRun()).isTrue();
         assertThat(run.getEligible()).isEqualTo(101);
+    }
+
+    // --- Alerte « rapprochement bloqué » -------------------------------------------------
+
+    private List<String> guardTrippingListing() {
+        // 150 orphelines sur 150 : au-delà de 100 ET de 50 %, la garde se déclenche.
+        return IntStream.range(0, 150).mapToObj(i -> "tracking/b/o-" + i + ".jpg").toList();
+    }
+
+    @Test
+    void volumeGuard_raisesBlockedAlert() {
+        when(settings.photoPurgeEnabled()).thenReturn(true);
+        when(trackingSource.referencedKeys("tracking/")).thenReturn(Set.of());
+        when(storage.listObjectsOlderThan(eq("tracking/"), any(), anyInt())).thenReturn(guardTrippingListing());
+
+        service.reconcile(PhotoPurgeRunner.TRIGGER_SCHEDULE);
+
+        org.mockito.ArgumentCaptor<String> detail = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(alerts).raise(eq(PhotoReconciliationService.ALERT_BLOCKED), detail.capture(), anyMap());
+        assertThat(detail.getValue()).contains("tracking/").doesNotContain("(à blanc)");
+    }
+
+    @Test
+    void volumeGuard_inDryRun_raisesBlockedAlert_markedDryRun() {
+        when(settings.photoPurgeEnabled()).thenReturn(false);
+        when(trackingSource.referencedKeys("tracking/")).thenReturn(Set.of());
+        when(storage.listObjectsOlderThan(eq("tracking/"), any(), anyInt())).thenReturn(guardTrippingListing());
+
+        service.reconcile(PhotoPurgeRunner.TRIGGER_SCHEDULE);
+
+        verify(alerts).raise(eq(PhotoReconciliationService.ALERT_BLOCKED), contains("(à blanc)"), anyMap());
+    }
+
+    @Test
+    void volumeGuard_liftedByAdmin_raisesNoAlert() {
+        when(settings.photoPurgeEnabled()).thenReturn(true);
+        when(trackingSource.referencedKeys("tracking/")).thenReturn(Set.of());
+        when(storage.listObjectsOlderThan(eq("tracking/"), any(), anyInt())).thenReturn(guardTrippingListing());
+
+        service.reconcile(PhotoPurgeRunner.TRIGGER_ADMIN, true);
+
+        verifyNoInteractions(alerts);
+    }
+
+    @Test
+    void prefixWithoutDedicatedSource_raisesBlockedAlert() {
+        service = new PhotoReconciliationService(storage, List.of(trackingSource), settings, runs, runner, alerts,
+                clock, List.of("tracking/", "bids/"));
+        lenient().when(settings.photoPurgeEnabled()).thenReturn(true);
+
+        service.reconcile(PhotoPurgeRunner.TRIGGER_SCHEDULE);
+
+        verify(alerts).raise(eq(PhotoReconciliationService.ALERT_BLOCKED), contains("bids/"), anyMap());
+    }
+
+    @Test
+    void runFailure_raisesBlockedAlert() {
+        when(settings.photoPurgeEnabled()).thenReturn(true);
+        when(trackingSource.referencedKeys("tracking/")).thenReturn(Set.of());
+        when(storage.listObjectsOlderThan(eq("tracking/"), any(), anyInt())).thenReturn(List.of("tracking/b/o.jpg"));
+        when(runs.save(any())).thenAnswer(i -> i.getArgument(0))
+                .thenThrow(new IllegalStateException("base perdue"))
+                .thenAnswer(i -> i.getArgument(0));
+
+        PhotoPurgeRunEntity run = service.reconcile(PhotoPurgeRunner.TRIGGER_SCHEDULE).orElseThrow();
+
+        assertThat(run.getError()).contains("base perdue");
+        verify(alerts).raise(eq(PhotoReconciliationService.ALERT_BLOCKED), contains("base perdue"), anyMap());
+    }
+
+    @Test
+    void healthyRun_raisesNoAlert() {
+        when(settings.photoPurgeEnabled()).thenReturn(true);
+        when(trackingSource.referencedKeys("tracking/")).thenReturn(Set.of());
+        when(storage.listObjectsOlderThan(eq("tracking/"), any(), anyInt())).thenReturn(List.of("tracking/b/o.jpg"));
+
+        service.reconcile(PhotoPurgeRunner.TRIGGER_SCHEDULE);
+
+        verifyNoInteractions(alerts);
+    }
+
+    @Test
+    void blockedAlert_isThrottledTo24h() {
+        PhotoPurgeRunnerTest.MutableClock mc = new PhotoPurgeRunnerTest.MutableClock(Instant.parse("2026-10-10T04:10:00Z"));
+        service = new PhotoReconciliationService(storage, List.of(trackingSource), settings, runs, runner, alerts,
+                mc, List.of("tracking/", "bids/"));
+        lenient().when(settings.photoPurgeEnabled()).thenReturn(true);
+
+        service.reconcile(PhotoPurgeRunner.TRIGGER_SCHEDULE);
+        mc.now = mc.now.plusSeconds(3600);
+        service.reconcile(PhotoPurgeRunner.TRIGGER_ADMIN);
+        verify(alerts, times(1)).raise(eq(PhotoReconciliationService.ALERT_BLOCKED), anyString(), anyMap());
+
+        mc.now = mc.now.plusSeconds(25 * 3600);
+        service.reconcile(PhotoPurgeRunner.TRIGGER_SCHEDULE);
+        verify(alerts, times(2)).raise(eq(PhotoReconciliationService.ALERT_BLOCKED), anyString(), anyMap());
+    }
+
+    @Test
+    void alertFailure_doesNotBreakRun_andReleasesLock() {
+        service = new PhotoReconciliationService(storage, List.of(trackingSource), settings, runs, runner, alerts,
+                clock, List.of("tracking/", "bids/"));
+        lenient().when(settings.photoPurgeEnabled()).thenReturn(true);
+        doThrow(new IllegalStateException("telegram")).when(alerts).raise(anyString(), anyString(), anyMap());
+
+        PhotoPurgeRunEntity run = service.reconcile(PhotoPurgeRunner.TRIGGER_SCHEDULE).orElseThrow();
+
+        assertThat(run.getError()).contains("bids/");
+        verify(runner).unlock();
     }
 }

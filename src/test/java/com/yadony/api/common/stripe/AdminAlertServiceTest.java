@@ -213,6 +213,8 @@ class AdminAlertServiceTest {
                 .isEqualTo(AdminAlertService.Gravite.AVERTISSEMENT);
         assertThat(AdminAlertService.graviteDe("PHOTO_PURGE_STALE"))
                 .isEqualTo(AdminAlertService.Gravite.AVERTISSEMENT);
+        assertThat(AdminAlertService.graviteDe("PHOTO_RECONCILE_BLOCKED"))
+                .isEqualTo(AdminAlertService.Gravite.AVERTISSEMENT);
         assertThat(AdminAlertService.graviteDe("STRIPE_PAYOUT_FAILED"))
                 .isEqualTo(AdminAlertService.Gravite.INCIDENT);
         // Un code inconnu doit etre traite comme un incident, jamais minimise.

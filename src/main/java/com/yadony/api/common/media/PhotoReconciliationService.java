@@ -1,6 +1,7 @@
 package com.yadony.api.common.media;
 
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.config.PlatformSettingsService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,7 +14,10 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.HashSet;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -55,30 +59,38 @@ public class PhotoReconciliationService {
     /** Garde de volume : au-delà de ce nombre d'orphelins ET de cette part, le préfixe est suspendu. */
     static final int GUARD_MIN_ORPHANS = 100;
     static final double GUARD_MAX_ORPHAN_SHARE = 0.5;
+    /** Rapprochement bloqué (garde de volume, préfixe sans source dédiée, passage en erreur). */
+    public static final String ALERT_BLOCKED = "PHOTO_RECONCILE_BLOCKED";
+    /** Une alerte au plus toutes les 24 h, comme celles de la purge. */
+    static final long ALERT_COOLDOWN_HOURS = 24;
 
     private final StorageService storage;
     private final List<MediaKeyReferenceSource> sources;
     private final PlatformSettingsService settings;
     private final PhotoPurgeRunRepository runs;
     private final PhotoPurgeRunner runner;
+    private final AdminAlertService alerts;
     private final Clock clock;
     private final List<String> prefixes;
+    private volatile LocalDateTime lastBlockedAlertAt;
 
     @Autowired
     public PhotoReconciliationService(StorageService storage, List<MediaKeyReferenceSource> sources,
                                       PlatformSettingsService settings, PhotoPurgeRunRepository runs,
-                                      PhotoPurgeRunner runner) {
-        this(storage, sources, settings, runs, runner, Clock.systemUTC(), RECONCILED_PREFIXES);
+                                      PhotoPurgeRunner runner, AdminAlertService alerts) {
+        this(storage, sources, settings, runs, runner, alerts, Clock.systemUTC(), RECONCILED_PREFIXES);
     }
 
     PhotoReconciliationService(StorageService storage, List<MediaKeyReferenceSource> sources,
                                PlatformSettingsService settings, PhotoPurgeRunRepository runs,
-                               PhotoPurgeRunner runner, Clock clock, List<String> prefixes) {
+                               PhotoPurgeRunner runner, AdminAlertService alerts, Clock clock,
+                               List<String> prefixes) {
         this.storage = storage;
         this.sources = sources;
         this.settings = settings;
         this.runs = runs;
         this.runner = runner;
+        this.alerts = alerts;
         this.clock = clock;
         this.prefixes = prefixes;
     }
@@ -98,8 +110,10 @@ public class PhotoReconciliationService {
             log.info("PhotoReconciliation: passage déjà en cours, {} ignoré", triggerSource);
             return Optional.empty();
         }
+        List<String> blocked = new ArrayList<>();
+        boolean dryRun = false;
         try {
-            boolean dryRun = !settings.photoPurgeEnabled();
+            dryRun = !settings.photoPurgeEnabled();
             PhotoPurgeRunEntity run = runs.save(new PhotoPurgeRunEntity(
                     PhotoPurgeRunEntity.KIND_RECONCILE, dryRun, triggerSource, now()));
             try {
@@ -108,6 +122,7 @@ public class PhotoReconciliationService {
                     log.error("PhotoReconciliation: préfixes sans source dédiée {}, rien n'est supprimé",
                             uncovered);
                     run.fail("Préfixes sans source de références dédiée : " + uncovered, now());
+                    blocked.add("préfixes sans source de références dédiée " + uncovered);
                     runs.save(run);
                     return Optional.of(run);
                 }
@@ -118,7 +133,7 @@ public class PhotoReconciliationService {
                     // il doit être complet. En réel, au plus MAX_DELETES_PER_RUN suppressions.
                     int budget = dryRun ? Integer.MAX_VALUE : MAX_DELETES_PER_RUN - total.eligible();
                     if (budget <= 0) break;
-                    total = total.plus(reconcilePrefix(prefix, cutoff, budget, dryRun, allowBulk));
+                    total = total.plus(reconcilePrefix(prefix, cutoff, budget, dryRun, allowBulk, blocked));
                 }
                 run.finish(total, now());
                 runs.save(run);
@@ -127,6 +142,7 @@ public class PhotoReconciliationService {
             } catch (RuntimeException e) {
                 log.error("PhotoReconciliation: passage en erreur : {}", e.toString());
                 run.fail(e.toString(), now());
+                blocked.add("passage en erreur : " + e);
                 try {
                     runs.save(run);
                 } catch (RuntimeException saveError) {
@@ -136,6 +152,34 @@ public class PhotoReconciliationService {
             return Optional.of(run);
         } finally {
             runner.unlock();
+            // Hors du passage : une alerte en échec ne doit ni marquer le passage en erreur
+            // ni empêcher la libération du verrou.
+            alertIfBlocked(blocked, dryRun, triggerSource);
+        }
+    }
+
+    /**
+     * Rapprochement bloqué : rien n'est supprimé sur le préfixe concerné tant qu'un humain
+     * n'a pas regardé. Alerte aussi à blanc (le décompte à blanc doit signaler qu'un préfixe
+     * serait bloqué une fois l'interrupteur allumé), une fois par 24 h au plus.
+     */
+    private void alertIfBlocked(List<String> blocked, boolean dryRun, String triggerSource) {
+        if (blocked.isEmpty()) return;
+        try {
+            LocalDateTime now = now();
+            LocalDateTime last = lastBlockedAlertAt;
+            if (last != null && last.isAfter(now.minusHours(ALERT_COOLDOWN_HOURS))) {
+                return;
+            }
+            Map<String, Object> context = new LinkedHashMap<>();
+            context.put("dryRun", dryRun);
+            context.put("trigger", triggerSource);
+            context.put("reasons", List.copyOf(blocked));
+            alerts.raise(ALERT_BLOCKED, "Rapprochement des photos bloqué" + (dryRun ? " (à blanc)" : "")
+                    + " : " + String.join(" ; ", blocked), context);
+            lastBlockedAlertAt = now;
+        } catch (RuntimeException e) {
+            log.error("PhotoReconciliation: alerte de blocage non envoyée : {}", e.toString());
         }
     }
 
@@ -147,7 +191,7 @@ public class PhotoReconciliationService {
     }
 
     private PhotoPurgeOutcome reconcilePrefix(String prefix, Instant cutoff, int budget, boolean dryRun,
-                                           boolean allowBulk) {
+                                           boolean allowBulk, List<String> blocked) {
         Set<String> live;
         List<String> listed;
         try {
@@ -174,6 +218,8 @@ public class PhotoReconciliationService {
                                 + "préfixe suspendu : vérifier ses sources de références avant tout passage",
                         prefix, dryRun ? " (à blanc)" : "", orphans.size(), listed.size(),
                         (int) (GUARD_MAX_ORPHAN_SHARE * 100));
+                blocked.add("garde de volume sur " + prefix + " (" + orphans.size() + " orphelins sur "
+                        + listed.size() + " objets listés)");
                 return new PhotoPurgeOutcome(0, 0, 1);
             }
         }
