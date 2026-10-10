@@ -6,8 +6,6 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.MatchingTextUtil;
 import com.yadony.api.matching.*;
-import com.yadony.api.tracking.TrackingEventEntity;
-import com.yadony.api.tracking.TrackingEventRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -27,18 +25,19 @@ public class AdminBidsController {
 
     private final BidRepository bidRepo;
     private final AnnouncementRepository announcementRepo;
-    private final TrackingEventRepository trackingRepo;
     private final UserRepository userRepo;
     private final com.yadony.api.matching.BidGridItemRepository bidGridItemRepo;
+    private final AdminBidDetailAssembler detailAssembler;
 
     public AdminBidsController(BidRepository bidRepo, AnnouncementRepository announcementRepo,
-            TrackingEventRepository trackingRepo, UserRepository userRepo,
-            com.yadony.api.matching.BidGridItemRepository bidGridItemRepo) {
+            UserRepository userRepo,
+            com.yadony.api.matching.BidGridItemRepository bidGridItemRepo,
+            AdminBidDetailAssembler detailAssembler) {
         this.bidRepo = bidRepo;
         this.announcementRepo = announcementRepo;
-        this.trackingRepo = trackingRepo;
         this.userRepo = userRepo;
         this.bidGridItemRepo = bidGridItemRepo;
+        this.detailAssembler = detailAssembler;
     }
 
     @GetMapping("/admin/bids")
@@ -108,28 +107,27 @@ public class AdminBidsController {
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Colis introuvable"));
 
-        List<TrackingEventEntity> events = trackingRepo.findByBidIdOrderByScannedAtAsc(id);
-        List<AdminBidTimelineResponse.Entry> entries = events.stream()
-                .map(e -> new AdminBidTimelineResponse.Entry(
-                        e.getScannedAt(),
-                        "SCAN",
-                        e.getEventType() != null ? e.getEventType().name() : "SCAN",
-                        null,
-                        e.getPhotoUrl(),
-                        e.getGpsLat(),
-                        e.getGpsLon()
-                )).toList();
+        // Scans, journal d'audit du colis et de ses entités liées, vie du paiement : un colis
+        // accepté mais pas encore remis n'a aucun scan : avec les seuls scans, sa chronologie restait vide.
+        List<AdminBidTimelineResponse.Entry> entries = detailAssembler.timeline(bid);
 
         return ResponseEntity.ok(new AdminBidTimelineResponse(id, entries));
     }
 
     @GetMapping("/admin/announcements")
     public ResponseEntity<Page<AdminAnnouncementListItemResponse>> listAnnouncements(
+            @RequestParam(required = false) UUID id,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
 
-        Page<AnnouncementEntity> annPage = announcementRepo.findAll(
-                PageRequest.of(page, size, Sort.by("createdAt").descending()));
+        // ?id= : l'annonce d'un colis (lien « Voir l'annonce » de la fiche colis), seule.
+        Page<AnnouncementEntity> annPage;
+        if (id != null) {
+            List<AnnouncementEntity> one = announcementRepo.findById(id).map(List::of).orElse(List.of());
+            annPage = new org.springframework.data.domain.PageImpl<>(one, PageRequest.of(0, Math.max(1, size)), one.size());
+        } else {
+            annPage = announcementRepo.findAll(PageRequest.of(page, size, Sort.by("createdAt").descending()));
+        }
 
         // Batch load traveler names
         Set<UUID> travelerIds = annPage.stream()
@@ -204,13 +202,16 @@ public class AdminBidsController {
         java.math.BigDecimal gridNet = b.getId() != null
                 ? gridNetByBid(List.of(b.getId())).get(b.getId()) : null;
         AdminBidListItemResponse item = toBidListItem(b, ann, userNames, gridNet);
+        AdminBidDetailAssembler.Extras x = detailAssembler.extras(b, ann);
         return new AdminBidDetailResponse(
                 item.id(), item.status(), item.announcementId(),
                 item.senderName(), item.travelerName(), item.corridor(),
                 item.weightKg(), item.netEur(), item.paymentMethod(), item.createdAt(),
                 b.getContentCategory(), b.getRecipientName(),
                 b.getTrackingNumber(), b.getCommissionRate(), b.getRefusalReason(),
-                item.currency());
+                item.currency(),
+                b.getDescription(), x.trip(), x.sender(), x.traveler(), x.recipient(), x.money(), x.links(),
+                x.confirmationCodePresent(), x.photoUrls(), x.milestones());
     }
 
     private AdminAnnouncementListItemResponse toAnnouncementListItem(AnnouncementEntity a,
