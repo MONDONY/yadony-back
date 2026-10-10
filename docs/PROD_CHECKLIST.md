@@ -1422,7 +1422,7 @@ jamais. La resynchronisation admin (#487) les a passés `ESCROW` et capturés, m
       `payout.*`, `account.application.deauthorized`) : aucun n'est jamais arrivé dans `stripe_event_inbox`. Comme écrit en 9.13, ne pas créer
       d'endpoint « comptes connectés » avant le changement back qui accepte un 2ᵉ secret.
 
-#### 9.22 Admin : annuler un colis, ouvrir un litige, anti double Transfer (back, branche `feat/admin-annulation-litige`, admin jumelle)
+#### 9.22 Admin : annuler un colis, ouvrir un litige, anti double Transfer (back #492, admin jumelle)
 
 **Origine.** Décision propriétaire du 10/10 : un super-admin doit pouvoir annuler un colis bloqué et ouvrir un litige depuis la fiche
 colis du back-office, qui affichait jusque-là « pas d'endpoint admin ». En parallèle, la clé d'idempotence Stripe `transfer-<paymentId>`
