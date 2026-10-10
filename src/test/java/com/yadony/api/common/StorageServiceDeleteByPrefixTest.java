@@ -21,6 +21,8 @@ import static org.mockito.Mockito.*;
 @DisplayName("StorageService.deleteByPrefix")
 class StorageServiceDeleteByPrefixTest {
 
+    @Mock private com.yadony.api.common.media.MediaUploadRepository uploads;
+    @Mock private com.yadony.api.config.PlatformSettingsService settings;
     @Mock private S3Client s3Client;
     @Mock private S3Presigner s3Presigner;
     @Mock private ImageProcessingService imageProcessingService;
@@ -29,7 +31,7 @@ class StorageServiceDeleteByPrefixTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        storageService = new StorageService(s3Client, s3Presigner, imageProcessingService);
+        storageService = new StorageService(s3Client, s3Presigner, imageProcessingService, uploads, settings);
         var field = StorageService.class.getDeclaredField("bucket");
         field.setAccessible(true);
         field.set(storageService, "test-bucket");

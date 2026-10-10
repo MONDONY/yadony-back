@@ -65,8 +65,8 @@ spring:
   # photos coming from mobile cameras — bumped to match StorageService.MAX_FILE_SIZE)
   servlet:
     multipart:
-      max-file-size: 10MB
-      max-request-size: 12MB
+      max-file-size: 5MB
+      max-request-size: 6MB
 
 # Server
 server:

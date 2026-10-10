@@ -1,5 +1,9 @@
 package com.yadony.api.common;
 
+import com.yadony.api.common.media.MediaPurpose;
+import com.yadony.api.common.media.MediaUploadEntity;
+import com.yadony.api.common.media.MediaUploadRepository;
+import com.yadony.api.config.PlatformSettingsService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -23,6 +27,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -34,9 +40,9 @@ public class StorageService {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(StorageService.class);
 
     private static final Set<String> ALLOWED_PREFIXES = Set.of(
-            "tracking/", "users/", "messaging/", "kyc/", "package_requests/", "requests/", "bids/", "reports/",
+            "tracking/", "users/", "messaging/", "package_requests/", "requests/", "bids/", "reports/",
             "support/");
-    private static final long MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+    private static final long MAX_FILE_SIZE = 5L * 1024 * 1024; // 5 Mo : l'app compresse avant envoi
     private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of(
             "image/jpeg", "image/jpg", "image/png", "image/webp");
 
@@ -54,15 +60,21 @@ public class StorageService {
     private final S3Client s3Client;
     private final S3Presigner s3Presigner;
     private final ImageProcessingService imageProcessingService;
+    private final MediaUploadRepository mediaUploadRepository;
+    private final PlatformSettingsService settings;
 
     @Value("${aws.s3.bucket}")
     private String bucket;
 
     public StorageService(S3Client s3Client, S3Presigner s3Presigner,
-                          ImageProcessingService imageProcessingService) {
+                          ImageProcessingService imageProcessingService,
+                          MediaUploadRepository mediaUploadRepository,
+                          PlatformSettingsService settings) {
         this.s3Client = s3Client;
         this.s3Presigner = s3Presigner;
         this.imageProcessingService = imageProcessingService;
+        this.mediaUploadRepository = mediaUploadRepository;
+        this.settings = settings;
     }
 
     /**
@@ -82,7 +94,10 @@ public class StorageService {
      * Allowed prefixes: "tracking/" and "users/"
      *
      * @return the S3 object key
+     *
+     * @deprecated remplacé par {@link #storeImage}; supprimé avec ses appelants (tâche 5).
      */
+    @Deprecated
     public String uploadFile(MultipartFile file, String prefix) throws IOException {
         log.info("uploadFile: prefix={}, originalFilename={}, contentType={}, size={} bytes",
             prefix, file.getOriginalFilename(), file.getContentType(), file.getSize());
@@ -112,42 +127,83 @@ public class StorageService {
         return key;
     }
 
-    /** Keys returned after uploading a request photo (main + thumbnail). */
-    public record UploadedRequestPhoto(String mainKey, String thumbnailKey) {}
+    /**
+     * Destination et propriétaire d'un envoi. {@code bidId} n'est utile qu'au tracking
+     * (plafond par bid) ; {@code quotaExempt} est réservé aux envois d'un admin.
+     */
+    public record MediaUpload(String prefix, UUID ownerId, MediaPurpose purpose, UUID bidId, boolean quotaExempt) {
+        public static MediaUpload of(String prefix, UUID ownerId, MediaPurpose purpose) {
+            return new MediaUpload(prefix, ownerId, purpose, null, false);
+        }
+
+        public static MediaUpload tracking(UUID bidId, UUID ownerId) {
+            return new MediaUpload("tracking/" + bidId + "/", ownerId, MediaPurpose.TRACKING, bidId, false);
+        }
+    }
 
     /**
-     * Upload a sender's request photo with automatic resize + thumbnail.
-     * <ul>
-     *   <li>Main image: resized so long-edge ≤ 1280 px, JPEG 80 %, stored under
-     *       {@code requests/{senderId}/{ts}_request.jpg}</li>
-     *   <li>Thumbnail: 400×400 center-crop, JPEG 80 %, stored under
-     *       {@code requests/{senderId}/{ts}_request_thumb.jpg}</li>
-     * </ul>
-     * EXIF metadata is stripped as a side-effect of re-encoding.
-     *
-     * @param senderId    UUID of the sender who owns the photo
-     * @param bytes       raw bytes of the original upload
-     * @param contentType MIME type of the original file
-     * @return {@link UploadedRequestPhoto} containing both S3 keys
+     * Seule porte d'entrée des photos (hors chat) : quotas, validation, ré-encodage
+     * (1600 px / JPEG 80, avatar 512 px), écriture R2 puis inscription au registre.
+     * Les quotas sont vérifiés AVANT tout travail : un compte qui boucle ne coûte rien.
      */
-    public UploadedRequestPhoto uploadRequestPhoto(UUID senderId, byte[] bytes, String contentType) {
-        ImageProcessingService.ProcessedImage processed = imageProcessingService.process(bytes, contentType);
+    public String storeImage(MultipartFile file, MediaUpload upload) {
+        validatePrefix(upload.prefix());
+        enforceQuotas(upload);
+        validateFile(file);
+        byte[] bytes;
+        try {
+            bytes = file.getBytes();
+        } catch (IOException e) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "INVALID_FILE_TYPE", "Invalid File Type", "Cannot read file content");
+        }
+        byte[] stored = upload.purpose() == MediaPurpose.AVATAR
+                ? imageProcessingService.resizeForStorage(bytes,
+                        ImageProcessingService.AVATAR_LONG_EDGE, ImageProcessingService.AVATAR_QUALITY)
+                : imageProcessingService.resizeForStorage(bytes,
+                        ImageProcessingService.STORAGE_LONG_EDGE, ImageProcessingService.STORAGE_QUALITY);
+        String key = upload.prefix() + Instant.now().toEpochMilli() + "_" + UUID.randomUUID() + ".jpg";
+        putBytes(key, stored, "image/jpeg");
+        record(key, upload.ownerId(), upload.purpose(), upload.bidId(), stored.length);
+        log.info("storeImage: key={} purpose={} {} -> {} octets", key, upload.purpose(), bytes.length, stored.length);
+        return key;
+    }
 
-        long ts = Instant.now().toEpochMilli();
-        String mainKey  = "requests/" + senderId + "/" + ts + "_request.jpg";
-        String thumbKey = "requests/" + senderId + "/" + ts + "_request_thumb.jpg";
+    private void enforceQuotas(MediaUpload upload) {
+        if (upload.quotaExempt()) {
+            return;
+        }
+        LocalDateTime since = LocalDateTime.now(ZoneOffset.UTC).minusHours(24);
+        if (mediaUploadRepository.countByOwnerIdAndCreatedAtAfter(upload.ownerId(), since)
+                >= settings.photoUploadDailyQuota()) {
+            throw new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS,
+                    "photo-upload-quota-exceeded", "Too Many Requests",
+                    "Vous avez atteint la limite de photos pour aujourd'hui. Réessayez demain.");
+        }
+        if (upload.purpose() == MediaPurpose.TRACKING && upload.bidId() != null
+                && mediaUploadRepository.countByBidIdAndPurpose(upload.bidId(), MediaPurpose.TRACKING)
+                        >= settings.trackingPhotosMaxPerBid()) {
+            throw new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS,
+                    "tracking-photo-limit-reached", "Too Many Requests",
+                    "Ce colis a déjà le nombre maximum de photos de suivi.");
+        }
+    }
 
-        putBytes(mainKey,  processed.main(),      "image/jpeg");
-        putBytes(thumbKey, processed.thumbnail(), "image/jpeg");
-
-        return new UploadedRequestPhoto(mainKey, thumbKey);
+    private void record(String key, UUID ownerId, MediaPurpose purpose, UUID bidId, long size) {
+        try {
+            mediaUploadRepository.save(new MediaUploadEntity(key, ownerId, purpose, bidId, size));
+        } catch (RuntimeException e) {
+            // Le registre ne sert qu'aux quotas : une écriture ratée ne doit pas faire
+            // perdre une photo déjà stockée (le rapprochement ne la touche pas, elle sera rattachée).
+            log.warn("storeImage: inscription au registre en échec pour {} : {}", key, e.toString());
+        }
     }
 
     /** Clés d'une photo de messagerie : image redimensionnée et miniature carrée. */
     public record StoredImage(String mainKey, String thumbnailKey) {}
 
     /**
-     * Valide une photo envoyée (non vide, 10 Mo, JPEG/PNG/WebP, octets d'en-tête cohérents
+     * Valide une photo envoyée (non vide, 5 Mo, JPEG/PNG/WebP, octets d'en-tête cohérents
      * avec le type déclaré) sans la stocker. Mêmes règles et mêmes erreurs que
      * {@link #uploadFile}.
      */
@@ -156,13 +212,14 @@ public class StorageService {
     }
 
     /**
-     * Photo de messagerie (FLUTTER-B4) : même traitement que {@link #uploadRequestPhoto}
-     * (bord long ≤ 1280 px, miniature 400×400, JPEG 80 %, EXIF supprimées par le
-     * ré-encodage), stockée sous {@code {prefix}{baseName}_full.jpg} et
+     * Photo de messagerie (FLUTTER-B4) : bord long ≤ 1280 px, miniature 400×400, JPEG 80 %, EXIF supprimées par le
+     * ré-encodage, stockée sous {@code {prefix}{baseName}_full.jpg} et
      * {@code {prefix}{baseName}_thumb.jpg}.
      */
-    public StoredImage storeMessagingImage(String prefix, String baseName, byte[] bytes, String contentType) {
+    public StoredImage storeMessagingImage(String prefix, String baseName, byte[] bytes, String contentType,
+                                           UUID ownerId) {
         validatePrefix(prefix);
+        enforceQuotas(MediaUpload.of(prefix, ownerId, MediaPurpose.MESSAGING));
         ImageProcessingService.ProcessedImage processed = imageProcessingService.process(bytes, contentType);
         String mainKey  = prefix + baseName + "_full.jpg";
         String thumbKey = prefix + baseName + "_thumb.jpg";
@@ -173,6 +230,7 @@ public class StorageService {
             deleteQuietly(mainKey);
             throw e;
         }
+        record(mainKey, ownerId, MediaPurpose.MESSAGING, null, processed.main().length + processed.thumbnail().length);
         return new StoredImage(mainKey, thumbKey);
     }
 
@@ -328,7 +386,7 @@ public class StorageService {
         }
         if (file.getSize() > MAX_FILE_SIZE) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "FILE_TOO_LARGE", "File Too Large", "File exceeds 10MB limit");
+                    "FILE_TOO_LARGE", "File Too Large", "File exceeds 5MB limit");
         }
         if (!ALLOWED_CONTENT_TYPES.contains(file.getContentType())) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,

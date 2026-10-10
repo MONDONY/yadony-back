@@ -31,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -39,6 +40,8 @@ import static org.mockito.Mockito.when;
 @DisplayName("StorageService — photos de messagerie (FLUTTER-B4)")
 class StorageServiceMessagingImageTest {
 
+    @Mock private com.yadony.api.common.media.MediaUploadRepository uploads;
+    @Mock private com.yadony.api.config.PlatformSettingsService settings;
     @Mock private S3Client s3Client;
     @Mock private S3Presigner s3Presigner;
 
@@ -46,10 +49,11 @@ class StorageServiceMessagingImageTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        storageService = new StorageService(s3Client, s3Presigner, new ImageProcessingService());
+        storageService = new StorageService(s3Client, s3Presigner, new ImageProcessingService(), uploads, settings);
         var field = StorageService.class.getDeclaredField("bucket");
         field.setAccessible(true);
         field.set(storageService, "test-bucket");
+        lenient().when(settings.photoUploadDailyQuota()).thenReturn(60);
     }
 
     /** JPEG valide portant un segment APP1 Exif avec une donnée sensible (fausse position GPS). */
@@ -87,7 +91,7 @@ class StorageServiceMessagingImageTest {
                 .thenReturn(PutObjectResponse.builder().build());
 
         StorageService.StoredImage stored = storageService.storeMessagingImage(
-                "messaging/conv_1/", "AbC123", original, "image/jpeg");
+                "messaging/conv_1/", "AbC123", original, "image/jpeg", java.util.UUID.randomUUID());
 
         assertThat(stored.mainKey()).isEqualTo("messaging/conv_1/AbC123_full.jpg");
         assertThat(stored.thumbnailKey()).isEqualTo("messaging/conv_1/AbC123_thumb.jpg");
@@ -108,7 +112,7 @@ class StorageServiceMessagingImageTest {
     @Test
     @DisplayName("préfixe hors liste blanche → 400")
     void storeMessagingImage_rejectsUnknownPrefix() {
-        assertThatThrownBy(() -> storageService.storeMessagingImage("evil/", "x", new byte[]{1}, "image/jpeg"))
+        assertThatThrownBy(() -> storageService.storeMessagingImage("evil/", "x", new byte[]{1}, "image/jpeg", java.util.UUID.randomUUID()))
                 .isInstanceOf(YadonyBusinessException.class);
     }
 
@@ -120,7 +124,7 @@ class StorageServiceMessagingImageTest {
                 .thenThrow(S3Exception.builder().message("boom").build());
 
         assertThatThrownBy(() -> storageService.storeMessagingImage(
-                "messaging/conv_1/", "AbC123", jpegWithExif(), "image/jpeg"))
+                "messaging/conv_1/", "AbC123", jpegWithExif(), "image/jpeg", java.util.UUID.randomUUID()))
                 .isInstanceOf(S3Exception.class);
 
         ArgumentCaptor<DeleteObjectRequest> del = ArgumentCaptor.forClass(DeleteObjectRequest.class);
