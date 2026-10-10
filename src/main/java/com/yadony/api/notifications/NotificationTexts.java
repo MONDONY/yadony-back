@@ -683,6 +683,13 @@ public final class NotificationTexts {
                 m.get("notification.mobile-money-payment-expired.traveler.body"));
     }
 
+    /** Au voyageur : l'expéditeur a annulé sa demande avant de payer. */
+    public static NotificationText bidCancelledBeforePaymentForTraveler(Messages m, boolean kgReleased) {
+        return new NotificationText(m.get("notification.bid-cancelled-before-payment.traveler.title"),
+                m.get(kgReleased ? "notification.bid-cancelled-before-payment.traveler.body-kg"
+                        : "notification.bid-cancelled-before-payment.traveler.body"));
+    }
+
     public static NotificationText kycVerified(Messages m) {
         return new NotificationText(m.get("notification.kyc-verified.title"), m.get("notification.kyc-verified.body"));
     }

@@ -141,6 +141,16 @@ class PromoReleaseListenerTest {
         verify(promoService).releaseForBid(bidId, PromoReleaseListener.REASON_MM_PAYMENT_EXPIRED);
     }
 
+    @Test
+    void bid_cancelled_before_payment_releases() {
+        withActiveRedemption(bidId);
+
+        listener.onBidCancelledBeforePayment(new com.yadony.api.cancellation.events.BidCancelledBeforePaymentEvent(
+                bidId, senderId, travelerId, UUID.randomUUID(), "STRIPE", false, null));
+
+        verify(promoService).releaseForBid(bidId, PromoReleaseListener.REASON_CANCELLED_BEFORE_PAYMENT);
+    }
+
     @Nested
     @DisplayName("VoyageurNoShowEvent")
     class TravelerNoShow {

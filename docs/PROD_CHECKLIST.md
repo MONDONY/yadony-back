@@ -1422,6 +1422,37 @@ jamais. La resynchronisation admin (#487) les a passés `ESCROW` et capturés, m
       `payout.*`, `account.application.deauthorized`) : aucun n'est jamais arrivé dans `stripe_event_inbox`. Comme écrit en 9.13, ne pas créer
       d'endpoint « comptes connectés » avant le changement back qui accepte un 2ᵉ secret.
 
+#### 9.21 « Annuler la demande » avant paiement : vraie annulation (back, branche `feat/annulation-avant-paiement`, jumelle app)
+
+**Avant.** Sur un colis qui attend son paiement (`AWAITING_PAYMENT` : paiement carte jamais validé, accord de négociation à payer,
+ou mobile money après l'acceptation du voyageur), « Annuler la demande » appelait `DELETE /bids/{id}/me` : la demande était
+seulement **masquée** chez l'expéditeur. Le colis restait `AWAITING_PAYMENT`, l'autorisation carte en attente, les kilos réservés
+(mobile money), le voyageur sans nouvelle jusqu'à l'expiration du délai de paiement.
+
+**Après.** Nouvel endpoint **`POST /bids/{bidId}/cancel-before-payment`** (paquet `cancellation/`), réservé à l'expéditeur du colis.
+
+| Sujet | À savoir |
+|---|---|
+| Effet | Bid `CANCELLED`, `rejection_reason = SENDER_CANCELLED_BEFORE_PAYMENT`, délai de paiement effacé. Audit `BID_CANCELLED_BEFORE_PAYMENT` (bid) et `PAYMENT_CANCELLED_BEFORE_PAYMENT` (paiement). Aucune pénalité ni compteur d'annulation. Code promo rendu (`PromoReleaseListener`, motif `CANCELLED_BEFORE_PAYMENT`). |
+| Carte | Stripe fait foi. Tous les PaymentIntents du colis sont lus avant toute annulation. `requires_payment_method`, `requires_confirmation`, `requires_action` : PaymentIntent annulé (`abandoned`), paiement `PENDING → CANCELLED` par écriture conditionnelle. `canceled` : no-op. `requires_capture`, `succeeded` : **409 `payment-already-authorized`**, rien n'est touché. `processing` : **409 `payment-in-progress`**. Stripe injoignable : 502 `stripe-error`, rien n'est touché. |
+| Mobile money | Mêmes gardes que l'expiration du délai : dépôt pawaPay encore ouvert → 409 `payment-in-progress` (l'expéditeur valide peut-être son code) ; dépôt `COMPLETED` ou paiement en séquestre → 409 `payment-already-authorized`. Sinon paiement `CANCELLED` (`markCancelledIfPending`) et **kilos rendus à l'annonce** (`FULL` repasse `ACTIVE`). Un dépôt tardif qui aboutit malgré tout est remboursé par `confirmEscrow`, comme après une expiration. |
+| Course avec le webhook | Choix retenu : **refuser en 409** dès que le paiement est autorisé, plutôt qu'annuler puis rembourser. Un paiement autorisé a déjà un second écrivain en route (`amount_capturable_updated`, `confirm-payment`) qui promeut le bid sans verrou ; l'annuler en même temps pouvait laisser un bid « payé » sur une autorisation libérée. L'app recharge le colis, qui apparaît payé, et l'expéditeur passe par l'annulation existante (`PUT /bids/{id}/cancel`), qui libère l'autorisation ou rembourse. Verrous : paiement d'abord, bid ensuite (même ordre que `expire` et `confirmEscrow`). |
+| Idempotence | Second appel, ou délai de paiement écoulé au même instant : **200** `{"status":"CANCELLED","alreadyCancelled":true}`, rien n'est refait (ni notification, ni audit). Bid déjà supprimé par le nettoyage carte : 404 `bid-not-found`. |
+| Erreurs | 403 `forbidden` (pas l'expéditeur), 409 `bid-not-awaiting-payment` (négociation encore ouverte, colis terminé…), 409 `payment-already-authorized`, 409 `payment-in-progress`, en `application/problem+json`. |
+| Voyageur | Prévenu (push + notification in-app, type **`BID_CANCELLED_BEFORE_PAYMENT`**, lien vers le colis, préférence `pushActivityBids`, FR/EN) **seulement s'il connaissait la demande** : mobile money (il l'avait acceptée) ou prix négocié. Une réservation carte directe jamais payée ne lui a jamais été montrée : pas de notification. |
+| Conversation | Jamais retirée ni archivée. Si elle existe (le voyageur avait accepté), message système « L'expéditeur a annulé la demande avant le paiement. Aucun montant n'a été débité. » (langue de l'expéditeur). |
+| Migration | Aucune (`rejection_reason` est un `TEXT` libre). La prochaine migration reste V310. |
+
+- [ ] **Ordre** : déployer ce back avant l'app jumelle. L'app tolère l'ancien back : un 404 de route inconnue ou un 405 la ramène au masquage d'avant.
+- [ ] Recette staging, carte : créer une réservation carte, quitter la feuille de paiement, « Annuler la demande » → colis « Annulé », dans le tableau de bord Stripe (test) le PaymentIntent est `canceled`, et
+      `SELECT status, rejection_reason FROM bids WHERE id = '<bid>';` → `CANCELLED | SENDER_CANCELLED_BEFORE_PAYMENT` ; `SELECT status FROM payments WHERE bid_id = '<bid>';` → `CANCELLED`.
+- [ ] Recette staging, mobile money : le voyageur accepte une demande mobile money, l'expéditeur annule sans payer → kilos rendus sur le trajet, notification « Demande annulée » chez le voyageur, message système dans la conversation.
+- [ ] Recette staging, course : payer la carte (autorisation réussie) puis annuler depuis un écran resté sur « Payer » → message « Votre paiement vient d'être validé… », le colis se recharge en « payé ».
+- [ ] Contrôle (lecture seule), doit répondre 0 :
+      ```sql
+      SELECT count(*) FROM bids b JOIN payments p ON p.bid_id = b.id
+       WHERE b.rejection_reason = 'SENDER_CANCELLED_BEFORE_PAYMENT' AND p.status IN ('ESCROW','RELEASED');
+
 #### 9.22 Admin : annuler un colis, ouvrir un litige, anti double Transfer (back #492, admin jumelle)
 
 **Origine.** Décision propriétaire du 10/10 : un super-admin doit pouvoir annuler un colis bloqué et ouvrir un litige depuis la fiche
