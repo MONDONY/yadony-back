@@ -23,6 +23,7 @@ import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayOperationPurpose;
 import com.yadony.api.payments.wallet.WalletAccountEntity;
+import com.yadony.api.settings.UserBusinessPrefsEntity;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.AfterAll;
@@ -122,6 +123,44 @@ class MoneyOverviewControllerIT {
                 .andExpect(jsonPath("$.traveler.items", hasSize(0)))
                 .andExpect(jsonPath("$.traveler.totals", hasSize(0)))
                 .andExpect(jsonPath("$.sender.items", hasSize(0)));
+    }
+
+    @Test
+    void wallet_putsTheActiveCurrencyFirst_thenOthersByBalance() throws Exception {
+        UserEntity me = persistUser("Awa", "Traoré");
+        wallet(me.getId(), "CAD", "0");
+        wallet(me.getId(), "EUR", "4.00");
+        wallet(me.getId(), "XOF", "5000");
+        wallet(me.getId(), "USD", "7.25");
+        activeCurrency(me.getId(), "USD");
+
+        mockMvc.perform(get("/payments/me/overview").with(authentication(as(me))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.activeCurrency").value("USD"))
+                .andExpect(jsonPath("$.wallet", hasSize(4)))
+                .andExpect(jsonPath("$.wallet[0].currency").value("USD"))
+                .andExpect(jsonPath("$.wallet[0].balance").value(7.25))
+                .andExpect(jsonPath("$.wallet[1].currency").value("XOF"))
+                .andExpect(jsonPath("$.wallet[2].currency").value("EUR"))
+                .andExpect(jsonPath("$.wallet[3].currency").value("CAD"));
+    }
+
+    @Test
+    void wallet_activeCurrencyWithoutAccount_isShownFirstAtZero_withoutBeingCreated() throws Exception {
+        UserEntity me = persistUser("Ibrahim", "Cissé");
+        wallet(me.getId(), "CAD", "0");
+        activeCurrency(me.getId(), "USD");
+
+        mockMvc.perform(get("/payments/me/overview").with(authentication(as(me))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.activeCurrency").value("USD"))
+                .andExpect(jsonPath("$.wallet", hasSize(2)))
+                .andExpect(jsonPath("$.wallet[0].currency").value("USD"))
+                .andExpect(jsonPath("$.wallet[0].balance").value(0))
+                .andExpect(jsonPath("$.wallet[1].currency").value("CAD"));
+        Integer accounts = jdbc.queryForObject(
+                "SELECT count(*) FROM wallet_accounts WHERE user_id = ?", Integer.class, me.getId());
+        org.assertj.core.api.Assertions.assertThat(accounts).isEqualTo(1);
     }
 
     @Test
@@ -225,7 +264,9 @@ class MoneyOverviewControllerIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.traveler.items", hasSize(0)))
                 .andExpect(jsonPath("$.sender.items", hasSize(0)))
-                .andExpect(jsonPath("$.wallet", hasSize(0)));
+                .andExpect(jsonPath("$.wallet", hasSize(1)))
+                .andExpect(jsonPath("$.wallet[0].currency").value("EUR"))
+                .andExpect(jsonPath("$.wallet[0].balance").value(0));
     }
 
     @Test
@@ -303,6 +344,15 @@ class MoneyOverviewControllerIT {
         user.setFirstName(firstName);
         user.setLastName(lastName);
         return userRepository.saveAndFlush(user);
+    }
+
+    private void activeCurrency(UUID userId, String currency) {
+        tx.executeWithoutResult(s -> {
+            UserBusinessPrefsEntity prefs = new UserBusinessPrefsEntity();
+            prefs.setUserId(userId);
+            prefs.setCurrencyCode(currency);
+            entityManager.persist(prefs);
+        });
     }
 
     private void wallet(UUID userId, String currency, String balance) {
