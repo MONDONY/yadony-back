@@ -31,6 +31,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.server.ResponseStatusException;
@@ -307,6 +308,21 @@ public class GlobalExceptionHandler {
         problem.setType(URI.create(BASE_TYPE + "not-found"));
         problem.setTitle("Not Found");
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(problem);
+    }
+
+    /**
+     * Fichier au-delà de {@code spring.servlet.multipart.max-file-size} (5 Mo) : Spring lève
+     * {@link MaxUploadSizeExceededException} avant le contrôleur. 413 explicite plutôt que le
+     * 400 générique « multipart invalide », pour que l'app dise pourquoi l'envoi est refusé.
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ProblemDetail> handleMaxUploadSize(MaxUploadSizeExceededException ex) {
+        log.warn("Upload trop volumineux: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.PAYLOAD_TOO_LARGE, messagesResolver.forRequest().get("problem.file-too-large.detail"));
+        problem.setType(URI.create(BASE_TYPE + "file-too-large"));
+        problem.setTitle("Payload Too Large");
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(problem);
     }
 
     /**

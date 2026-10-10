@@ -518,6 +518,20 @@ class GlobalExceptionHandlerTest {
             assertThat(response.getBody().getTitle()).isEqualTo("Bad Request");
             assertThat(response.getBody().getType().toString()).contains("bad-multipart");
         }
+
+        @Test
+        @DisplayName("MaxUploadSizeExceededException (> 5 Mo) → 413 file-too-large")
+        void handleMaxUploadSize_returns413() {
+            var ex = new org.springframework.web.multipart.MaxUploadSizeExceededException(5L * 1024 * 1024);
+
+            ResponseEntity<ProblemDetail> response = handler.handleMaxUploadSize(ex);
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE);
+            assertThat(response.getBody()).isNotNull();
+            assertThat(response.getBody().getType().toString()).endsWith("/file-too-large");
+            assertThat(response.getBody().getTitle()).isEqualTo("Payload Too Large");
+            assertThat(response.getBody().getDetail()).isEqualTo("Image trop volumineuse (max 5 Mo)");
+        }
     }
 
     @Nested
