@@ -586,6 +586,12 @@ public class NegotiationService {
         if (lastMsg.getFromUserId().equals(callerId)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "negotiation/not-your-turn");
         }
+        // Même garde que initiate-payment, posée AVANT le passage en AWAITING_PAYMENT : un
+        // accord conclu sur un trajet clos (remise passée, trajet terminé ou annulé) laissait
+        // l'expéditeur devant « Payer » pendant tout le délai de paiement, chaque tap refusé
+        // (fil 594d3331, staging 10/10 : 409 handover-deadline-passed puis 422
+        // announcement/not-active).
+        assertTravelerAnnouncementActive(thread.getTravelerAnnouncementId());
 
         NegotiationMessageEntity acceptMsg = NegotiationMessageEntity.create(
             threadId, callerId, NegotiationMessageKind.ACCEPT, null,

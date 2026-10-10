@@ -62,4 +62,27 @@ class GlobalExceptionHandlerStructuredReasonTest {
         assertThat(pd).isNotNull();
         assertThat(pd.getType().toString()).endsWith("/generic");
     }
+
+    @Test
+    void responseStatus_withKebabReason_exposesCode() {
+        ResponseStatusException ex = new ResponseStatusException(
+                HttpStatus.CONFLICT, "handover-deadline-passed");
+
+        ProblemDetail pd = handler.handleResponseStatus(ex).getBody();
+
+        assertThat(pd).isNotNull();
+        assertThat(pd.getType().toString()).endsWith("/generic");
+        assertThat(pd.getProperties()).containsEntry("code", "handover-deadline-passed");
+    }
+
+    @Test
+    void responseStatus_withFreeTextReason_hasNoCode() {
+        ResponseStatusException ex = new ResponseStatusException(
+                HttpStatus.BAD_REQUEST, "Paramètre invalide");
+
+        ProblemDetail pd = handler.handleResponseStatus(ex).getBody();
+
+        assertThat(pd).isNotNull();
+        assertThat(pd.getProperties() == null || !pd.getProperties().containsKey("code")).isTrue();
+    }
 }

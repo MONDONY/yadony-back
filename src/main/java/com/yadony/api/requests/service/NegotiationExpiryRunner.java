@@ -2,6 +2,7 @@ package com.yadony.api.requests.service;
 
 import com.yadony.api.common.AuditService;
 import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.requests.entity.NegotiationThreadEntity;
 import com.yadony.api.requests.entity.NegotiationThreadStatus;
 import com.yadony.api.requests.entity.PackageRequestEntity;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Map;
@@ -60,6 +62,37 @@ public class NegotiationExpiryRunner {
         if (t == null || t.getStatus() != expectedStatus) {
             return;
         }
+        expire(t, reason);
+    }
+
+    /**
+     * Expire un fil {@code AWAITING_PAYMENT} dont le trajet ne peut plus être payé : trajet
+     * terminé, annulé, retiré (ou supprimé), ou date limite de remise passée. Sans cela le
+     * fil restait payable en apparence jusqu'au délai de 24 h, et chaque tentative de
+     * paiement était refusée par initiate-payment (même garde que celle-ci).
+     *
+     * @return {@code true} si le fil a été expiré
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean expireThreadIfTripUnavailable(UUID threadId) {
+        NegotiationThreadEntity t = threadRepo.findById(threadId).orElse(null);
+        if (t == null
+                || t.getStatus() != NegotiationThreadStatus.AWAITING_PAYMENT
+                || t.getTravelerAnnouncementId() == null) {
+            return false;
+        }
+        boolean unavailable = announcementRepo.findById(t.getTravelerAnnouncementId())
+            .map(ann -> AnnouncementStatus.OUT_OF_MARKET.contains(ann.getStatus())
+                || NegotiationService.isTripHandoverOver(ann, Instant.now()))
+            .orElse(true);
+        if (!unavailable) {
+            return false;
+        }
+        expire(t, "TRIP_UNAVAILABLE");
+        return true;
+    }
+
+    private void expire(NegotiationThreadEntity t, String reason) {
         t.setStatus(NegotiationThreadStatus.EXPIRED);
         t.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
         threadRepo.save(t);
