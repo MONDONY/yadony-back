@@ -1305,3 +1305,24 @@ saturait (187 requêtes en attente) et les requêtes finissaient en **500 après
       soldes multi-devises, texte à 200 % (pastille en icône seule).
 - [ ] À trancher plus tard (hors périmètre) : « Annuler la demande » en `AWAITING_PAYMENT` ne fait que retirer la demande côté
       expéditeur (`DELETE /bids/{id}/me`) sans changer son statut ; le voyageur la voit toujours en attente de paiement.
+
+#### 9.17 Matin du 10/10 : back #483 et #484, app #588 à #590 (FLUTTER-J1 à J4, refonte « Mon argent »)
+
+> Ajoutée le 10/10/2026. Aucune migration (dernière : **V309**, prochaine **V310**), aucun secret, aucune nouvelle variable.
+
+| PR | Sujet | À savoir |
+|---|---|---|
+| back #483 | « Mon argent » : devise active en tête de `wallet`, champ `activeCurrency` (FLUTTER-J4) | Un utilisateur sans portefeuille reçoit une ligne à 0 dans sa devise active (lecture seule, rien n'est créé en base). |
+| back #484 | « Mon argent » v2 : `arrivalDate` par colis (`COALESCE(arrival_date, departure_date)`), `truncated` quand la liste dépasse 200 lignes, argent actif trié en premier avant la coupe | Ajouts en fin d'objet, apps 111/112 non cassées. **Jumelle de app #590** : back avant app. |
+| app #588 | Chaîne d'intercepteurs réseau rétablie (FLUTTER-J1) : breadcrumbs, retries et reports Sentry `http.*` à nouveau actifs (inactifs depuis le 24/09) ; 502/503/504 → « Service momentanément indisponible » | **Attendu en prod** : nouvelles issues Sentry `http.*` (5xx, 400, TLS), dédoublonnées sur 10 min. Aucune écriture rejouée sans `Idempotency-Key` ; un GET en 5xx persistant fait jusqu'à 4 appels. Surveiller la charge et Sentry la première heure. |
+| app #589 | Libellés « Numéro de suivi » (public) / « Code de retrait » (secret, à transmettre au destinataire) (FLUTTER-J2) ; pastille « Mon argent » déplacée dans l'en-tête Activités (FLUTTER-J3) | Client seul. |
+| app #590 | Refonte « Mon argent » : prochains versements par échéance (cette semaine / semaine prochaine / plus tard / litige) + « Mes trajets » repliables avec barre d'avancement ; **plus aucun solde Yadony** dans cet écran (lien discret « Mon solde Yadony » vers le portefeuille) | Nécessite #484 pour des échéances exactes (repli sur la date de départ sinon). |
+
+- [ ] Tag prod : doit contenir `1ac63350` (#484) et `eb0121f3` (#483), plus les tags exigés en 9.13 à 9.16.
+- [ ] Après la mise en prod de l'app : vérifier dans Sentry l'arrivée des issues `http.*` et qu'aucune ne contient de jeton, de téléphone
+      ou de corps de requête.
+- [ ] Exploitation : ne pas redéployer la staging pendant les heures de recette (FLUTTER-J1 venait d'un redémarrage de l'API à 01:13) ;
+      à défaut, prévenir les testeurs.
+- [ ] Recette staging : « Mon argent » avec plusieurs trajets (tuiles d'échéance, groupes par trajet, « Détail des N colis »,
+      « Mes trajets » repliables, colis en litige), aucun solde Yadony affiché ; libellés numéro de suivi / code de retrait ; pastille
+      dans Activités ; message « Service momentanément indisponible » pendant une coupure de l'API.
