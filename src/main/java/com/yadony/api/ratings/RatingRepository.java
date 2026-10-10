@@ -15,6 +15,9 @@ public interface RatingRepository extends JpaRepository<RatingEntity, UUID> {
 
     Optional<RatingEntity> findByBidIdAndRaterId(UUID bidId, UUID raterId);
 
+    /** Notations d'un colis (expéditeur, voyageur, destinataire), pour la fiche admin. */
+    List<RatingEntity> findByBidId(UUID bidId);
+
     Optional<RatingEntity> findByBidIdAndTrackingToken(UUID bidId, String trackingToken);
 
     List<RatingEntity> findByRatedUserId(UUID ratedUserId);

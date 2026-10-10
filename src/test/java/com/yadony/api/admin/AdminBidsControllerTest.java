@@ -3,7 +3,6 @@ package com.yadony.api.admin;
 import com.yadony.api.admin.dto.*;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.matching.*;
-import com.yadony.api.tracking.TrackingEventRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -25,12 +24,12 @@ class AdminBidsControllerTest {
 
     @Mock BidRepository bidRepo;
     @Mock AnnouncementRepository announcementRepo;
-    @Mock TrackingEventRepository trackingRepo;
+    @Mock AdminBidDetailAssembler assembler;
     @Mock UserRepository userRepo;
     @Mock com.yadony.api.matching.BidGridItemRepository bidGridItemRepo;
 
     private AdminBidsController controller() {
-        return new AdminBidsController(bidRepo, announcementRepo, trackingRepo, userRepo, bidGridItemRepo);
+        return new AdminBidsController(bidRepo, announcementRepo, userRepo, bidGridItemRepo, assembler);
     }
 
     @Test
@@ -127,19 +126,82 @@ class AdminBidsControllerTest {
         when(bidRepo.findById(id)).thenReturn(Optional.empty());
         org.junit.jupiter.api.Assertions.assertThrows(
             com.yadony.api.common.YadonyBusinessException.class,
-            () -> controller().getBid(id)
+            () -> controller().getBid(id, null)
         );
     }
 
     @Test
-    void getTimeline_returnsEntriesFromTrackingEvents() {
+    void getTimeline_returnsTheAssembledEntries() {
         UUID bidId = UUID.randomUUID();
         BidEntity bid = new BidEntity();
         when(bidRepo.findById(bidId)).thenReturn(Optional.of(bid));
-        when(trackingRepo.findByBidIdOrderByScannedAtAsc(bidId)).thenReturn(List.of());
-        ResponseEntity<AdminBidTimelineResponse> resp = controller().getTimeline(bidId);
+        var entry = new AdminBidTimelineResponse.Entry(java.time.LocalDateTime.of(2026, 10, 6, 18, 54),
+                "EVENT", "PRESENCE_CONFIRMED", null, null, null, null, "AUDIT", "USER", "Awa Ndiaye");
+        when(assembler.timeline(eq(bid), any())).thenReturn(List.of(entry));
+        ResponseEntity<AdminBidTimelineResponse> resp = controller().getTimeline(bidId, null);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody().bidId()).isEqualTo(bidId);
+        assertThat(resp.getBody().entries()).containsExactly(entry);
+    }
+
+    @Test
+    void getTimeline_notFound_throws404() {
+        UUID id = UUID.randomUUID();
+        when(bidRepo.findById(id)).thenReturn(Optional.empty());
+        org.junit.jupiter.api.Assertions.assertThrows(
+            com.yadony.api.common.YadonyBusinessException.class,
+            () -> controller().getTimeline(id, null));
+    }
+
+    @Test
+    void getBid_appendsTheAssembledContextAtTheEnd() {
+        UUID bidId = UUID.randomUUID();
+        UUID annId = UUID.randomUUID();
+        BidEntity bid = new BidEntity();
+        org.springframework.test.util.ReflectionTestUtils.setField(bid, "id", bidId);
+        bid.setAnnouncementId(annId);
+        bid.setCurrency("EUR");
+        bid.setStatus(BidStatus.ACCEPTED);
+        AnnouncementEntity ann = new AnnouncementEntity();
+        org.springframework.test.util.ReflectionTestUtils.setField(ann, "id", annId);
+        ann.setDepartureCity("Paris");
+        ann.setArrivalCity("Bamako");
+        when(bidRepo.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
+        var links = new AdminBidDetailResponse.Links(null, null, null, "fs-1", null);
+        when(assembler.extras(eq(bid), eq(ann), any())).thenReturn(new AdminBidDetailAssembler.Extras(
+                null, null, null, null, null, links, true, List.of("https://r2.test/p?sig=1"), null));
+
+        AdminBidDetailResponse body = controller().getBid(bidId, null).getBody();
+
+        assertThat(body.status()).isEqualTo("ACCEPTED");
+        assertThat(body.links().conversationId()).isEqualTo("fs-1");
+        assertThat(body.confirmationCodePresent()).isTrue();
+        assertThat(body.photoUrls()).containsExactly("https://r2.test/p?sig=1");
+    }
+
+    @Test
+    void listAnnouncements_byId_returnsOnlyThatAnnouncement() {
+        UUID id = UUID.randomUUID();
+        AnnouncementEntity ann = new AnnouncementEntity();
+        ann.setStatus(AnnouncementStatus.ACTIVE);
+        when(announcementRepo.findById(id)).thenReturn(Optional.of(ann));
+
+        Page<AdminAnnouncementListItemResponse> page = controller().listAnnouncements(id, 0, 20).getBody();
+
+        assertThat(page.getContent()).hasSize(1);
+        assertThat(page.getTotalElements()).isEqualTo(1);
+    }
+
+    @Test
+    void listAnnouncements_byUnknownId_returnsAnEmptyPage() {
+        UUID id = UUID.randomUUID();
+        when(announcementRepo.findById(id)).thenReturn(Optional.empty());
+
+        Page<AdminAnnouncementListItemResponse> page = controller().listAnnouncements(id, 0, 20).getBody();
+
+        assertThat(page.getContent()).isEmpty();
+        assertThat(page.getTotalElements()).isZero();
     }
 
     @Test
@@ -152,7 +214,7 @@ class AdminBidsControllerTest {
         when(announcementRepo.findAll(any(Pageable.class))).thenReturn(page);
         // Annonce sans voyageur : aucun nom à charger, loadUserNames court-circuite.
 
-        ResponseEntity<Page<AdminAnnouncementListItemResponse>> resp = controller().listAnnouncements(0, 20);
+        ResponseEntity<Page<AdminAnnouncementListItemResponse>> resp = controller().listAnnouncements(null, 0, 20);
 
         assertThat(resp.getBody().getContent().get(0).currency()).isEqualTo("XOF");
     }
@@ -162,7 +224,7 @@ class AdminBidsControllerTest {
         Page<AnnouncementEntity> page = new PageImpl<>(List.of());
         when(announcementRepo.findAll(any(Pageable.class))).thenReturn(page);
         // empty page → travelerIds empty → loadUserNames short-circuits, no repo call needed
-        ResponseEntity<?> resp = controller().listAnnouncements(0, 20);
+        ResponseEntity<?> resp = controller().listAnnouncements(null, 0, 20);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody()).isNotNull();
     }
@@ -183,7 +245,7 @@ class AdminBidsControllerTest {
         when(announcementRepo.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(leg1, single)));
         when(announcementRepo.findByTripGroupIdIn(java.util.Set.of(group))).thenReturn(List.of(leg1, leg2));
 
-        var content = controller().listAnnouncements(0, 20).getBody().getContent();
+        var content = controller().listAnnouncements(null, 0, 20).getBody().getContent();
 
         assertThat(content.get(0).tripGroupId()).isEqualTo(group);
         assertThat(content.get(0).tripLegIndex()).isEqualTo(1);

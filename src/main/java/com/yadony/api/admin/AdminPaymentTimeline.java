@@ -84,7 +84,8 @@ public class AdminPaymentTimeline {
         return instant == null ? null : LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
     }
 
-    private Map<UUID, String> adminEmailsOf(Set<UUID> ids) {
+    /** E-mail des comptes admin parmi {@code ids} (auteurs d'une entrée d'audit). */
+    Map<UUID, String> adminEmailsOf(Set<UUID> ids) {
         if (ids.isEmpty()) {
             return Map.of();
         }
