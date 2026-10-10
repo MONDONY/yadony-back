@@ -18,6 +18,7 @@ import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidPhotoService;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.messaging.ConversationEntity;
 import com.yadony.api.messaging.ConversationRepository;
 import com.yadony.api.payments.PaymentEntity;
 import com.yadony.api.payments.PaymentRepository;
@@ -27,6 +28,8 @@ import com.yadony.api.tracking.TrackingEventEntity;
 import com.yadony.api.tracking.TrackingEventRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -105,6 +108,24 @@ public class AdminBidDetailAssembler {
         this.contactService = contactService;
     }
 
+    /**
+     * Ce que l'admin a le droit de voir au-delà de BID_VIEW : les mêmes autorités fines que les
+     * fiches dédiées (paiement : PAYMENT_VIEW, utilisateur : USER_VIEW, litige : DISPUTE_VIEW,
+     * conversation : MODERATION_VIEW, auteurs admin : PAYMENT_VIEW ou AUDIT_VIEW). Les
+     * surcharges de permissions peuvent retirer l'une d'elles à un rôle qui garde BID_VIEW.
+     */
+    public record Access(boolean payments, boolean users, boolean disputes, boolean moderation, boolean adminActors) {
+        public static final Access ALL = new Access(true, true, true, true, true);
+
+        public static Access of(Authentication auth) {
+            if (auth == null) return new Access(false, false, false, false, false);
+            Set<String> a = auth.getAuthorities().stream().map(GrantedAuthority::getAuthority)
+                    .collect(Collectors.toSet());
+            return new Access(a.contains("PAYMENT_VIEW"), a.contains("USER_VIEW"), a.contains("DISPUTE_VIEW"),
+                    a.contains("MODERATION_VIEW"), a.contains("PAYMENT_VIEW") || a.contains("AUDIT_VIEW"));
+        }
+    }
+
     /** Contexte du colis, à ajouter en fin de {@link AdminBidDetailResponse}. */
     public record Extras(
             AdminBidDetailResponse.Trip trip,
@@ -118,24 +139,27 @@ public class AdminBidDetailAssembler {
             AdminBidDetailResponse.Milestones milestones) {
     }
 
-    public Extras extras(BidEntity bid, AnnouncementEntity ann) {
+    public Extras extras(BidEntity bid, AnnouncementEntity ann, Access access) {
         UUID senderId = bid.getSenderId();
         UUID travelerId = ann != null ? ann.getTravelerId() : null;
         Map<UUID, UserEntity> users = usersOf(senderId, travelerId);
-        Map<String, FirebaseContactService.Contact> contacts = contactsOf(users.values());
+        // Téléphones : lus chez Firebase seulement pour qui peut voir les fiches utilisateur.
+        Map<String, FirebaseContactService.Contact> contacts = access.users() ? contactsOf(users.values()) : Map.of();
 
-        PaymentEntity payment = paymentOf(bid).orElse(null);
-        DisputeEntity dispute = latest(disputeRepo.findByBidIdIn(List.of(bid.getId())));
-        CancellationEntity cancellation = latest(cancellationRepo.findAllByBidId(bid.getId()));
-        String conversationId = conversationRepo.findByBidId(bid.getId())
-                .map(c -> c.getFirestoreConversationId()).orElse(null);
+        PaymentEntity payment = access.payments() ? paymentOf(bid).orElse(null) : null;
+        DisputeEntity dispute = access.disputes() ? latest(disputeRepo.findByBidIdIn(List.of(bid.getId()))) : null;
+        CancellationEntity cancellation = latest(cancellationsOf(bid.getId()));
+        String conversationId = access.moderation()
+                ? conversationOf(bid.getId()).map(ConversationEntity::getFirestoreConversationId).orElse(null)
+                : null;
 
         return new Extras(
                 trip(bid, ann),
-                party(users.get(senderId), contacts, false),
-                party(users.get(travelerId), contacts, true),
+                party(users.get(senderId), contacts, false, access.users()),
+                party(users.get(travelerId), contacts, true, access.users()),
                 bid.getRecipientName() == null && bid.getRecipientPhone() == null ? null
-                        : new AdminBidDetailResponse.Recipient(bid.getRecipientName(), maskPhone(bid.getRecipientPhone())),
+                        : new AdminBidDetailResponse.Recipient(bid.getRecipientName(),
+                                access.users() ? maskPhone(bid.getRecipientPhone()) : null),
                 money(payment),
                 new AdminBidDetailResponse.Links(
                         bid.getLinkedNegotiationThreadId() != null ? bid.getLinkedNegotiationThreadId()
@@ -153,23 +177,25 @@ public class AdminBidDetailAssembler {
 
     // ── Chronologie ─────────────────────────────────────────────────────────────
 
-    public List<AdminBidTimelineResponse.Entry> timeline(BidEntity bid) {
+    public List<AdminBidTimelineResponse.Entry> timeline(BidEntity bid, Access access) {
         UUID bidId = bid.getId();
         List<AdminBidTimelineResponse.Entry> entries = new ArrayList<>();
 
         List<TrackingEventEntity> scans = trackingRepo.findByBidIdOrderByScannedAtAsc(bidId);
         List<DisputeEntity> disputes = disputeRepo.findByBidIdIn(List.of(bidId));
-        List<CancellationEntity> cancellations = cancellationRepo.findAllByBidId(bidId);
+        List<CancellationEntity> cancellations = cancellationsOf(bidId);
         List<RatingEntity> ratings = ratingRepo.findByBidId(bidId);
-        Optional<String> conversationEntityId = conversationRepo.findByBidId(bidId)
+        Optional<String> conversationEntityId = conversationOf(bidId)
                 .map(c -> c.getId() != null ? c.getId().toString() : null);
 
         // Journal d'audit du colis et de ce qui en dépend : chaque type avec ses propres identifiants.
         Map<String, Set<UUID>> idsByType = new HashMap<>();
         BID_ENTITY_TYPES.forEach(t -> idsByType.put(t, Set.of(bidId)));
-        Set<UUID> scanIds = ids(scans.stream().map(TrackingEventEntity::getId).toList());
-        idsByType.put("TRACKING_EVENT", scanIds);
-        idsByType.put("TRACKING_DELIVERY_CONFIRMED", scanIds);
+        // Commissions (type « payment ») : de l'argent, réservées comme le paiement à PAYMENT_VIEW.
+        if (!access.payments()) idsByType.remove("payment");
+        // TRACKING_EVENT (SCAN_DEPART…) doublonne les scans déjà listés : seule la confirmation
+        // de livraison, qui n'a pas d'équivalent parmi eux, est reprise.
+        idsByType.put("TRACKING_DELIVERY_CONFIRMED", ids(scans.stream().map(TrackingEventEntity::getId).toList()));
         idsByType.put("DISPUTE", ids(disputes.stream().map(DisputeEntity::getId).toList()));
         idsByType.put("CANCELLATION", ids(cancellations.stream().map(CancellationEntity::getId).toList()));
         idsByType.put("RATING", ids(ratings.stream().map(RatingEntity::getId).toList()));
@@ -196,15 +222,18 @@ public class AdminBidDetailAssembler {
         // Auteurs : admins par leur e-mail, utilisateurs par leur nom.
         Set<UUID> actorIds = new LinkedHashSet<>();
         audit.forEach(a -> { if (a.getActorId() != null) actorIds.add(a.getActorId()); });
-        PaymentEntity payment = paymentOf(bid).orElse(null);
+        PaymentEntity payment = access.payments() ? paymentOf(bid).orElse(null) : null;
         List<AdminPaymentTimeline.Entry> paymentEntries = payment != null ? paymentTimeline.of(payment) : List.of();
         Map<UUID, String> admins = actorIds.isEmpty() ? Map.of() : paymentTimeline.adminEmailsOf(actorIds);
+        // Sans PAYMENT_VIEW ni AUDIT_VIEW : « admin » sans son e-mail.
+        java.util.function.Function<UUID, String> adminLabel = id -> access.adminActors() ? admins.get(id) : null;
         Map<UUID, String> names = namesOf(actorIds.stream().filter(id -> !admins.containsKey(id)).toList());
         for (AuditLogEntity a : audit) {
             UUID actor = a.getActorId();
             String kind = actor == null ? null : admins.containsKey(actor) ? "ADMIN" : names.containsKey(actor) ? "USER" : null;
-            String label = actor == null ? null : admins.containsKey(actor) ? admins.get(actor) : names.get(actor);
-            entries.add(new AdminBidTimelineResponse.Entry(a.getCreatedAt(), "EVENT", a.getAction(), null, null,
+            String label = actor == null ? null : admins.containsKey(actor) ? adminLabel.apply(actor) : names.get(actor);
+            String entryKind = "payment".equals(a.getEntityType()) ? "PAYMENT" : "EVENT";
+            entries.add(new AdminBidTimelineResponse.Entry(a.getCreatedAt(), entryKind, a.getAction(), null, null,
                     null, null, "AUDIT", kind, label));
         }
 
@@ -262,8 +291,13 @@ public class AdminBidDetailAssembler {
     }
 
     private static AdminBidDetailResponse.Party party(UserEntity u, Map<String, FirebaseContactService.Contact> contacts,
-                                                      boolean payee) {
+                                                      boolean payee, boolean userDetails) {
         if (u == null) return null;
+        if (!userDetails) {
+            // Sans USER_VIEW : l'identité seule, comme le nom déjà présent dans la fiche colis.
+            return new AdminBidDetailResponse.Party(u.getId(), MatchingTextUtil.buildName(u), u.getUsername(),
+                    null, null, null, null, null, null, null);
+        }
         FirebaseContactService.Contact contact = u.getFirebaseUid() != null
                 ? contacts.getOrDefault(u.getFirebaseUid(), FirebaseContactService.Contact.EMPTY)
                 : FirebaseContactService.Contact.EMPTY;
@@ -288,6 +322,16 @@ public class AdminBidDetailAssembler {
                 AdminWalletResponse.toCents(p.getRefundedAmount()),
                 p.getCurrency() != null ? p.getCurrency().toUpperCase(Locale.ROOT) : null,
                 p.getCapturedAt(), p.getEscrowReleasedAt(), p.getPayoutHeldAt(), p.isDisputed());
+    }
+
+    /** Annulations encore en vigueur (l'entité n'a pas de filtre de suppression logique). */
+    private List<CancellationEntity> cancellationsOf(UUID bidId) {
+        return cancellationRepo.findAllByBidId(bidId).stream().filter(c -> c.getDeletedAt() == null).toList();
+    }
+
+    /** Conversation expéditeur-voyageur non supprimée (l'entité n'a pas de filtre de suppression logique). */
+    private Optional<ConversationEntity> conversationOf(UUID bidId) {
+        return conversationRepo.findByBidId(bidId).filter(c -> c.getDeletedAt() == null);
     }
 
     /** Paiement direct du colis, sinon celui du fil de négociation dont il est issu. */

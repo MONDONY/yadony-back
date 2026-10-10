@@ -126,7 +126,7 @@ class AdminBidsControllerTest {
         when(bidRepo.findById(id)).thenReturn(Optional.empty());
         org.junit.jupiter.api.Assertions.assertThrows(
             com.yadony.api.common.YadonyBusinessException.class,
-            () -> controller().getBid(id)
+            () -> controller().getBid(id, null)
         );
     }
 
@@ -137,8 +137,8 @@ class AdminBidsControllerTest {
         when(bidRepo.findById(bidId)).thenReturn(Optional.of(bid));
         var entry = new AdminBidTimelineResponse.Entry(java.time.LocalDateTime.of(2026, 10, 6, 18, 54),
                 "EVENT", "PRESENCE_CONFIRMED", null, null, null, null, "AUDIT", "USER", "Awa Ndiaye");
-        when(assembler.timeline(bid)).thenReturn(List.of(entry));
-        ResponseEntity<AdminBidTimelineResponse> resp = controller().getTimeline(bidId);
+        when(assembler.timeline(eq(bid), any())).thenReturn(List.of(entry));
+        ResponseEntity<AdminBidTimelineResponse> resp = controller().getTimeline(bidId, null);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody().bidId()).isEqualTo(bidId);
         assertThat(resp.getBody().entries()).containsExactly(entry);
@@ -150,7 +150,7 @@ class AdminBidsControllerTest {
         when(bidRepo.findById(id)).thenReturn(Optional.empty());
         org.junit.jupiter.api.Assertions.assertThrows(
             com.yadony.api.common.YadonyBusinessException.class,
-            () -> controller().getTimeline(id));
+            () -> controller().getTimeline(id, null));
     }
 
     @Test
@@ -169,10 +169,10 @@ class AdminBidsControllerTest {
         when(bidRepo.findById(bidId)).thenReturn(Optional.of(bid));
         when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
         var links = new AdminBidDetailResponse.Links(null, null, null, "fs-1", null);
-        when(assembler.extras(bid, ann)).thenReturn(new AdminBidDetailAssembler.Extras(
+        when(assembler.extras(eq(bid), eq(ann), any())).thenReturn(new AdminBidDetailAssembler.Extras(
                 null, null, null, null, null, links, true, List.of("https://r2.test/p?sig=1"), null));
 
-        AdminBidDetailResponse body = controller().getBid(bidId).getBody();
+        AdminBidDetailResponse body = controller().getBid(bidId, null).getBody();
 
         assertThat(body.status()).isEqualTo("ACCEPTED");
         assertThat(body.links().conversationId()).isEqualTo("fs-1");

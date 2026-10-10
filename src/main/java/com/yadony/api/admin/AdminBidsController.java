@@ -13,6 +13,7 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -85,7 +86,7 @@ public class AdminBidsController {
     }
 
     @GetMapping("/admin/bids/{id}")
-    public ResponseEntity<AdminBidDetailResponse> getBid(@PathVariable UUID id) {
+    public ResponseEntity<AdminBidDetailResponse> getBid(@PathVariable UUID id, Authentication authentication) {
         BidEntity bid = bidRepo.findById(id)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Colis introuvable"));
@@ -98,18 +99,19 @@ public class AdminBidsController {
         if (ann != null && ann.getTravelerId() != null) userIds.add(ann.getTravelerId());
         Map<UUID, String> userNames = loadUserNames(userIds);
 
-        return ResponseEntity.ok(toBidDetail(bid, ann, userNames));
+        return ResponseEntity.ok(toBidDetail(bid, ann, userNames, AdminBidDetailAssembler.Access.of(authentication)));
     }
 
     @GetMapping("/admin/bids/{id}/timeline")
-    public ResponseEntity<AdminBidTimelineResponse> getTimeline(@PathVariable UUID id) {
+    public ResponseEntity<AdminBidTimelineResponse> getTimeline(@PathVariable UUID id, Authentication authentication) {
         BidEntity bid = bidRepo.findById(id)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Colis introuvable"));
 
         // Scans, journal d'audit du colis et de ses entités liées, vie du paiement : un colis
         // accepté mais pas encore remis n'a aucun scan : avec les seuls scans, sa chronologie restait vide.
-        List<AdminBidTimelineResponse.Entry> entries = detailAssembler.timeline(bid);
+        List<AdminBidTimelineResponse.Entry> entries = detailAssembler.timeline(bid,
+                AdminBidDetailAssembler.Access.of(authentication));
 
         return ResponseEntity.ok(new AdminBidTimelineResponse(id, entries));
     }
@@ -198,11 +200,11 @@ public class AdminBidsController {
     }
 
     private AdminBidDetailResponse toBidDetail(BidEntity b, AnnouncementEntity ann,
-            Map<UUID, String> userNames) {
+            Map<UUID, String> userNames, AdminBidDetailAssembler.Access access) {
         java.math.BigDecimal gridNet = b.getId() != null
                 ? gridNetByBid(List.of(b.getId())).get(b.getId()) : null;
         AdminBidListItemResponse item = toBidListItem(b, ann, userNames, gridNet);
-        AdminBidDetailAssembler.Extras x = detailAssembler.extras(b, ann);
+        AdminBidDetailAssembler.Extras x = detailAssembler.extras(b, ann, access);
         return new AdminBidDetailResponse(
                 item.id(), item.status(), item.announcementId(),
                 item.senderName(), item.travelerName(), item.corridor(),

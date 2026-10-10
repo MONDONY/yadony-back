@@ -124,7 +124,7 @@ class AdminBidsControllerIT {
                 "ACTIVE", "VERIFIED", "ONBOARDING_COMPLETE", true, "NOT_CONFIGURED", false);
         var money = new AdminBidDetailResponse.Money(paymentId, "ESCROW", "STRIPE", 4000, 480, 0, "EUR",
                 Instant.parse("2026-10-06T19:00:00Z"), null, null, false);
-        when(assembler.extras(any(), any())).thenReturn(new AdminBidDetailAssembler.Extras(
+        when(assembler.extras(any(), any(), any())).thenReturn(new AdminBidDetailAssembler.Extras(
                 trip, null, traveler, new AdminBidDetailResponse.Recipient("Fatou", "•••• 1122"), money,
                 new AdminBidDetailResponse.Links(null, null, null, "fs-42", null), true, List.of(), null));
 
@@ -150,7 +150,7 @@ class AdminBidsControllerIT {
     @Test
     void timeline_support_200_entreesAvecAuteur() throws Exception {
         when(bidRepo.findById(BID)).thenReturn(Optional.of(bid()));
-        when(assembler.timeline(any())).thenReturn(List.of(new AdminBidTimelineResponse.Entry(
+        when(assembler.timeline(any(), any())).thenReturn(List.of(new AdminBidTimelineResponse.Entry(
                 LocalDateTime.of(2026, 10, 6, 18, 54, 1), "EVENT", "PRESENCE_CONFIRMED", null, null, null, null,
                 "AUDIT", "USER", "Moussa Diallo")));
 
@@ -180,5 +180,57 @@ class AdminBidsControllerIT {
                 .andExpect(jsonPath("$.content.length()").value(1))
                 .andExpect(jsonPath("$.content[0].id").value(ANN.toString()))
                 .andExpect(jsonPath("$.totalElements").value(1));
+    }
+
+    @Test
+    void detail_nonAdmin_403() throws Exception {
+        var user = new UsernamePasswordAuthenticationToken("u", null,
+                List.of(new SimpleGrantedAuthority("ROLE_SENDER"), new SimpleGrantedAuthority("BID_VIEW")));
+        mockMvc.perform(get("/admin/bids/{id}", BID).with(authentication(user)))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/admin/bids/{id}/timeline", BID).with(authentication(user)))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void timeline_sansAuthentification_refuse() throws Exception {
+        mockMvc.perform(get("/admin/bids/{id}/timeline", BID)).andExpect(result ->
+                assertThat(result.getResponse().getStatus()).isIn(401, 403));
+    }
+
+    /** BID_VIEW seul (surcharge qui retire le reste) : l'assembleur reçoit des droits vides. */
+    @Test
+    void detail_bidViewSeul_droitsFinsTransmisVides() throws Exception {
+        when(bidRepo.findById(BID)).thenReturn(Optional.of(bid()));
+        when(assembler.extras(any(), any(), any())).thenReturn(new AdminBidDetailAssembler.Extras(
+                null, null, null, null, null, null, false, List.of(), null));
+        when(assembler.timeline(any(), any())).thenReturn(List.of());
+        var auth = new UsernamePasswordAuthenticationToken(
+                new AdminPrincipal(ADMIN_ID, "a@yadony.test", AdminRole.SUPPORT, false, "uid"), null,
+                List.of(new SimpleGrantedAuthority("ROLE_ADMIN"), new SimpleGrantedAuthority("BID_VIEW")));
+
+        mockMvc.perform(get("/admin/bids/{id}", BID).with(authentication(auth)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.money").doesNotExist());
+        mockMvc.perform(get("/admin/bids/{id}/timeline", BID).with(authentication(auth)))
+                .andExpect(status().isOk());
+
+        var none = new AdminBidDetailAssembler.Access(false, false, false, false, false);
+        org.mockito.Mockito.verify(assembler).extras(any(), any(), org.mockito.ArgumentMatchers.eq(none));
+        org.mockito.Mockito.verify(assembler).timeline(any(), org.mockito.ArgumentMatchers.eq(none));
+    }
+
+    @Test
+    void detail_support_droitsFinsDuRole() throws Exception {
+        when(bidRepo.findById(BID)).thenReturn(Optional.of(bid()));
+        when(assembler.extras(any(), any(), any())).thenReturn(new AdminBidDetailAssembler.Extras(
+                null, null, null, null, null, null, false, List.of(), null));
+
+        mockMvc.perform(get("/admin/bids/{id}", BID).with(authentication(as(AdminRole.SUPPORT))))
+                .andExpect(status().isOk());
+
+        // SUPPORT : paiement, utilisateurs, litiges, modération, mais pas AUDIT_VIEW (PAYMENT_VIEW suffit).
+        org.mockito.Mockito.verify(assembler).extras(any(), any(),
+                org.mockito.ArgumentMatchers.eq(new AdminBidDetailAssembler.Access(true, true, true, true, true)));
     }
 }

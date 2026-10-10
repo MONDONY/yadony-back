@@ -179,7 +179,7 @@ class AdminBidDetailAssemblerTest {
         when(disputeRepo.findByBidIdIn(List.of(BID))).thenReturn(List.of(older, newer));
         when(photoService.activePhotos(BID)).thenReturn(List.of(new BidPhotoResponse(UUID.randomUUID(), "https://r2/p?sig")));
 
-        AdminBidDetailAssembler.Extras x = assembler.extras(bid, ann);
+        AdminBidDetailAssembler.Extras x = assembler.extras(bid, ann, AdminBidDetailAssembler.Access.ALL);
 
         AdminBidDetailResponse.Trip trip = x.trip();
         assertThat(trip.announcementId()).isEqualTo(ANN);
@@ -210,7 +210,7 @@ class AdminBidDetailAssemblerTest {
 
     @Test
     void extras_sansAnnonceNiPersonnes() {
-        AdminBidDetailAssembler.Extras x = assembler.extras(bid, null);
+        AdminBidDetailAssembler.Extras x = assembler.extras(bid, null, AdminBidDetailAssembler.Access.ALL);
 
         assertThat(x.trip()).isNull();
         assertThat(x.sender()).isNull();
@@ -236,7 +236,7 @@ class AdminBidDetailAssemblerTest {
         setField(p, "capturedAt", captured);
         when(paymentRepo.findLinkedNegotiationPaymentOfBid(BID)).thenReturn(Optional.of(p));
 
-        AdminBidDetailAssembler.Extras x = assembler.extras(bid, ann);
+        AdminBidDetailAssembler.Extras x = assembler.extras(bid, ann, AdminBidDetailAssembler.Access.ALL);
 
         assertThat(x.money().paymentId()).isEqualTo(paymentId);
         assertThat(x.money().amountCents()).isEqualTo(4000);
@@ -251,7 +251,7 @@ class AdminBidDetailAssemblerTest {
     void extras_stockageIndisponible_fichesansPhotos() {
         when(photoService.activePhotos(BID)).thenThrow(new IllegalStateException("s3 down"));
 
-        assertThat(assembler.extras(bid, ann).photoUrls()).isEmpty();
+        assertThat(assembler.extras(bid, ann, AdminBidDetailAssembler.Access.ALL).photoUrls()).isEmpty();
     }
 
     @Test
@@ -277,7 +277,7 @@ class AdminBidDetailAssemblerTest {
                         audit("BID", BID, "CREATED_FROM_THREAD", null, T0),
                         audit("BID", BID, "PRESENCE_CONFIRMED", TRAVELER, T0.plusSeconds(26))));
 
-        List<AdminBidTimelineResponse.Entry> entries = assembler.timeline(bid);
+        List<AdminBidTimelineResponse.Entry> entries = assembler.timeline(bid, AdminBidDetailAssembler.Access.ALL);
 
         assertThat(entries).extracting(AdminBidTimelineResponse.Entry::label)
                 .containsExactly("CREATED_FROM_THREAD", "PRESENCE_CONFIRMED");
@@ -289,7 +289,7 @@ class AdminBidDetailAssemblerTest {
 
     @Test
     void timeline_sansAudit_dateDeCreationDuColis() {
-        List<AdminBidTimelineResponse.Entry> entries = assembler.timeline(bid);
+        List<AdminBidTimelineResponse.Entry> entries = assembler.timeline(bid, AdminBidDetailAssembler.Access.ALL);
 
         assertThat(entries).hasSize(1);
         assertThat(entries.get(0).label()).isEqualTo("BID_CREATED");
@@ -318,15 +318,15 @@ class AdminBidDetailAssemblerTest {
                 .thenReturn("https://r2/signed");
         when(auditRepo.findTop300ByEntityTypeInAndEntityIdInOrderByCreatedAtAscIdAsc(anyCollection(), anyCollection()))
                 .thenReturn(List.of(
-                        audit("TRACKING_EVENT", scanId, "SCAN_DEPART", ADMIN, T0.plusDays(1).plusSeconds(1)),
+                        audit("TRACKING_DELIVERY_CONFIRMED", scanId, "DELIVERY_CONFIRMED", ADMIN, T0.plusDays(1).plusSeconds(1)),
                         // Même identifiant, autre type : ce n'est pas une trace de ce colis.
                         audit("DISPUTE", scanId, "UNRELATED", null, T0.plusDays(1))));
         when(paymentTimeline.adminEmailsOf(any())).thenReturn(Map.of(ADMIN, "ops@yadony.test"));
 
-        List<AdminBidTimelineResponse.Entry> entries = assembler.timeline(bid);
+        List<AdminBidTimelineResponse.Entry> entries = assembler.timeline(bid, AdminBidDetailAssembler.Access.ALL);
 
         assertThat(entries).extracting(AdminBidTimelineResponse.Entry::label)
-                .containsExactly("BID_CREATED", "DEPART", "SCAN_DEPART", "ARRIVEE", "SCAN");
+                .containsExactly("BID_CREATED", "DEPART", "DELIVERY_CONFIRMED", "ARRIVEE", "SCAN");
         AdminBidTimelineResponse.Entry scan = entries.get(1);
         assertThat(scan.kind()).isEqualTo("SCAN");
         assertThat(scan.photoUrl()).isEqualTo("https://r2/signed");
@@ -346,7 +346,7 @@ class AdminBidDetailAssemblerTest {
         when(trackingRepo.findByBidIdOrderByScannedAtAsc(BID)).thenReturn(List.of(depart));
         when(storageService.generatePresignedUrl(any(), any())).thenThrow(new IllegalStateException("s3"));
 
-        assertThat(assembler.timeline(bid).get(1).photoUrl()).isNull();
+        assertThat(assembler.timeline(bid, AdminBidDetailAssembler.Access.ALL).get(1).photoUrl()).isNull();
     }
 
     @Test
@@ -384,7 +384,7 @@ class AdminBidDetailAssemblerTest {
                         audit("BID", BID, "BID_CREATED", null, T0),
                         audit("DISPUTE", auditedId, "DELIVERY_NOSHOW_DISPUTE_OPENED", null, T0.plusDays(4))));
 
-        List<AdminBidTimelineResponse.Entry> entries = assembler.timeline(bid);
+        List<AdminBidTimelineResponse.Entry> entries = assembler.timeline(bid, AdminBidDetailAssembler.Access.ALL);
 
         assertThat(entries).extracting(AdminBidTimelineResponse.Entry::label).containsExactly(
                 "BID_CREATED", "PAYMENT_CREATED", "PAYMENT_CAPTURED_ON_PLATFORM", "DELIVERED",
@@ -398,5 +398,99 @@ class AdminBidDetailAssemblerTest {
         assertThat(entries.get(8).detail()).isEqualTo("5/5");
         // 10 h à Paris (UTC+2) = 8 h UTC.
         assertThat(entries.get(7).at()).isEqualTo(LocalDateTime.of(2026, 10, 12, 8, 0));
+    }
+
+    // ── Autorités fines ─────────────────────────────────────────────────────
+
+    private static final AdminBidDetailAssembler.Access BID_ONLY =
+            new AdminBidDetailAssembler.Access(false, false, false, false, false);
+
+    @Test
+    void access_lesAutoritesFinesDuJeton() {
+        var auth = new org.springframework.security.authentication.UsernamePasswordAuthenticationToken("a", null,
+                List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN"),
+                        new org.springframework.security.core.authority.SimpleGrantedAuthority("BID_VIEW"),
+                        new org.springframework.security.core.authority.SimpleGrantedAuthority("AUDIT_VIEW")));
+        assertThat(AdminBidDetailAssembler.Access.of(auth))
+                .isEqualTo(new AdminBidDetailAssembler.Access(false, false, false, false, true));
+        assertThat(AdminBidDetailAssembler.Access.of(null)).isEqualTo(BID_ONLY);
+    }
+
+    @Test
+    void extras_sansAutoritesFines_niArgentNiCoordonneesNiLiens() {
+        UserEntity sender = user(SENDER, "Awa", "uid-s");
+        setField(sender, "kycStatus", KycStatus.VERIFIED);
+        when(userRepo.findAllById(any())).thenReturn(List.of(sender));
+        setField(bid, "recipientName", "Fatou");
+        setField(bid, "recipientPhone", "+22370001122");
+        ConversationEntity conv = new ConversationEntity();
+        setField(conv, "firestoreConversationId", "fs-42");
+        when(conversationRepo.findByBidId(BID)).thenReturn(Optional.of(conv));
+        DisputeEntity d = new DisputeEntity();
+        setField(d, "id", UUID.randomUUID());
+        when(disputeRepo.findByBidIdIn(List.of(BID))).thenReturn(List.of(d));
+        PaymentEntity p = new PaymentEntity();
+        setField(p, "id", UUID.randomUUID());
+        when(paymentRepo.findByBidId(BID)).thenReturn(Optional.of(p));
+
+        AdminBidDetailAssembler.Extras x = assembler.extras(bid, ann, BID_ONLY);
+
+        assertThat(x.money()).isNull();
+        assertThat(x.sender().name()).isEqualTo("Awa Diallo");
+        assertThat(x.sender().kycStatus()).isNull();
+        assertThat(x.sender().phoneMasked()).isNull();
+        assertThat(x.recipient().name()).isEqualTo("Fatou");
+        assertThat(x.recipient().phoneMasked()).isNull();
+        assertThat(x.links().disputeId()).isNull();
+        assertThat(x.links().conversationId()).isNull();
+        verify(contactService, never()).getContacts(any());
+        verify(paymentRepo, never()).findByBidId(any());
+    }
+
+    @Test
+    void extras_annulationEtConversationSupprimees_ignorees() {
+        CancellationEntity c = new CancellationEntity();
+        setField(c, "id", UUID.randomUUID());
+        setField(c, "deletedAt", T0);
+        when(cancellationRepo.findAllByBidId(BID)).thenReturn(List.of(c));
+        ConversationEntity conv = new ConversationEntity();
+        setField(conv, "firestoreConversationId", "fs-old");
+        setField(conv, "deletedAt", T0);
+        when(conversationRepo.findByBidId(BID)).thenReturn(Optional.of(conv));
+
+        AdminBidDetailAssembler.Extras x = assembler.extras(bid, ann, AdminBidDetailAssembler.Access.ALL);
+
+        assertThat(x.links().cancellationId()).isNull();
+        assertThat(x.links().conversationId()).isNull();
+    }
+
+    @Test
+    void timeline_sansPaymentView_niPaiementNiCommissionNiEmailAdmin() {
+        PaymentEntity p = new PaymentEntity();
+        setField(p, "id", UUID.randomUUID());
+        when(paymentRepo.findByBidId(BID)).thenReturn(Optional.of(p));
+        when(auditRepo.findTop300ByEntityTypeInAndEntityIdInOrderByCreatedAtAscIdAsc(anyCollection(), anyCollection()))
+                .thenReturn(List.of(
+                        audit("BID", BID, "BID_CREATED", ADMIN, T0),
+                        audit("payment", BID, "COMMISSION_CHARGED_WALLET", null, T0.plusMinutes(1))));
+        when(paymentTimeline.adminEmailsOf(any())).thenReturn(Map.of(ADMIN, "ops@yadony.test"));
+
+        List<AdminBidTimelineResponse.Entry> entries = assembler.timeline(bid, BID_ONLY);
+
+        assertThat(entries).extracting(AdminBidTimelineResponse.Entry::label).containsExactly("BID_CREATED");
+        assertThat(entries.get(0).actorKind()).isEqualTo("ADMIN");
+        assertThat(entries.get(0).actorLabel()).isNull();
+        verify(paymentTimeline, never()).of(any());
+    }
+
+    @Test
+    void timeline_commissionAvecPaymentView_entreeArgent() {
+        when(auditRepo.findTop300ByEntityTypeInAndEntityIdInOrderByCreatedAtAscIdAsc(anyCollection(), anyCollection()))
+                .thenReturn(List.of(audit("payment", BID, "COMMISSION_CHARGED_WALLET", null, T0.plusMinutes(1))));
+
+        List<AdminBidTimelineResponse.Entry> entries = assembler.timeline(bid, AdminBidDetailAssembler.Access.ALL);
+
+        assertThat(entries.get(1).label()).isEqualTo("COMMISSION_CHARGED_WALLET");
+        assertThat(entries.get(1).kind()).isEqualTo("PAYMENT");
     }
 }
