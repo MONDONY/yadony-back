@@ -85,13 +85,6 @@ public class PhotoPurgeRunner {
                 }
                 run.finish(total, now());
                 runs.save(run);
-                alertIfFailing();
-                // Après le passage : l'alerte des 48 h mesure que la purge TOURNE (passage terminé
-                // sans exception, échecs partiels compris). Les échecs partiels relèvent de
-                // PHOTO_PURGE_FAILING. Une base neuve sans passage terminé ne lève rien : au
-                // déploiement, la purge tourne à blanc dès la première heure.
-                warnIfStale();
-                return Optional.of(run);
             } catch (RuntimeException e) {
                 log.error("PhotoPurge: passage en erreur : {}", e.toString());
                 run.fail(e.toString(), now());
@@ -102,6 +95,22 @@ public class PhotoPurgeRunner {
                 }
                 throw e;
             }
+            // Après le passage : l'alerte des 48 h mesure que la purge TOURNE (passage terminé
+            // sans exception, échecs partiels compris). Les échecs partiels relèvent de
+            // PHOTO_PURGE_FAILING. Une base neuve sans passage terminé ne lève rien : au
+            // déploiement, la purge tourne à blanc dès la première heure.
+            // Hors du try du passage : une alerte en échec ne doit pas marquer le passage en erreur.
+            try {
+                alertIfFailing();
+            } catch (RuntimeException e) {
+                log.warn("PhotoPurge: contrôle des échecs en erreur : {}", e.toString());
+            }
+            try {
+                warnIfStale();
+            } catch (RuntimeException e) {
+                log.warn("PhotoPurge: contrôle de fraîcheur en erreur : {}", e.toString());
+            }
+            return Optional.of(run);
         } finally {
             unlock();
         }
@@ -114,8 +123,8 @@ public class PhotoPurgeRunner {
         if (last != null && last.isAfter(now.minusHours(ALERT_COOLDOWN_HOURS))) {
             return;
         }
-        lastAlertAt.put(code, now);
         alerts.raise(code, detail, context);
+        lastAlertAt.put(code, now);
     }
 
     private void alertIfFailing() {

@@ -155,6 +155,7 @@ class PhotoPurgeRunnerTest {
 
         assertThat(runner.isRunning()).isFalse();
         assertThat(saved.get(0).getError()).contains("db down");
+        assertThat(saved.get(0).getFinishedAt()).isNotNull();
     }
 
     @Test
@@ -170,5 +171,34 @@ class PhotoPurgeRunnerTest {
         assertThat(cap.getAllValues().get(0).getError()).contains("settings down");
         assertThat(cap.getAllValues().get(0).getFinishedAt()).isNotNull();
         assertThat(runner.isRunning()).isFalse();
+    }
+
+    @Test
+    void alertRaiseThrows_afterSuccessfulRun_runKeptClean() {
+        stubFailingRuns();
+        doThrow(new IllegalStateException("telegram down")).when(alerts).raise(eq("PHOTO_PURGE_FAILING"), anyString(), anyMap());
+
+        Optional<PhotoPurgeRunEntity> run = runner.runPurge(PhotoPurgeRunner.TRIGGER_SCHEDULE);
+
+        assertThat(run).isPresent();
+        assertThat(run.get().getError()).isNull();
+        assertThat(run.get().getFinishedAt()).isNotNull();
+        assertThat(runner.isRunning()).isFalse();
+        verify(runs, times(2)).save(any());
+    }
+
+    @Test
+    void raiseThatThrows_isNotThrottled() {
+        MutableClock mc = new MutableClock(Instant.parse("2026-10-10T10:40:00Z"));
+        runner = new PhotoPurgeRunner(List.of(tracking, requests), settings, runs, alerts, mc);
+        stubFailingRuns();
+        doThrow(new IllegalStateException("telegram down")).doNothing()
+                .when(alerts).raise(eq("PHOTO_PURGE_FAILING"), anyString(), anyMap());
+
+        runner.runPurge(PhotoPurgeRunner.TRIGGER_SCHEDULE);
+        mc.now = mc.now.plusSeconds(3600);
+        runner.runPurge(PhotoPurgeRunner.TRIGGER_SCHEDULE);
+
+        verify(alerts, times(2)).raise(eq("PHOTO_PURGE_FAILING"), anyString(), anyMap());
     }
 }
