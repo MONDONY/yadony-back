@@ -883,4 +883,12 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     List<BidEntity> findCardCommissionsUpdatedSince(
             @Param("via") com.yadony.api.payments.cash.CommissionChargedVia via,
             @Param("since") java.time.LocalDateTime since);
+
+    /**
+     * Rapprochement R2 : photos de refus de colis, saisies libres du client (n'importe quel
+     * préfixe). Requête native : les bids supprimés logiquement gardent leur photo.
+     */
+    @Query(value = "SELECT refusal_photo_url FROM bids WHERE refusal_photo_url LIKE CONCAT(:prefix, '%') "
+            + "OR refusal_photo_url LIKE CONCAT('%/', :prefix, '%')", nativeQuery = true)
+    List<String> findRefusalPhotoValuesMatchingIncludingDeleted(@Param("prefix") String prefix);
 }

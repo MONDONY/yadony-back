@@ -76,4 +76,12 @@ public interface PackageRequestRepository
     @Query("UPDATE PackageRequestEntity p SET p.viewCount = COALESCE(p.viewCount, 0) + 1 "
            + "WHERE p.id = :id")
     int incrementViewCount(@Param("id") UUID id);
+
+    /**
+     * Rapprochement R2 : ancienne photo unique des demandes, saisie libre du client (n'importe
+     * quel préfixe). Requête native : une demande supprimée logiquement garde sa photo.
+     */
+    @Query(value = "SELECT photo_url FROM package_requests WHERE photo_url LIKE CONCAT(:prefix, '%') "
+            + "OR photo_url LIKE CONCAT('%/', :prefix, '%')", nativeQuery = true)
+    List<String> findPhotoUrlValuesMatchingIncludingDeleted(@Param("prefix") String prefix);
 }

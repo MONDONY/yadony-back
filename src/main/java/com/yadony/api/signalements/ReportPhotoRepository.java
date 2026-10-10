@@ -25,4 +25,12 @@ public interface ReportPhotoRepository extends JpaRepository<ReportPhotoEntity, 
             ORDER BY r.resolvedAt ASC
             """)
     List<ReportPhotoEntity> findLiveOfClosedReportsBefore(@Param("cutoff") OffsetDateTime cutoff, Pageable page);
+
+    /**
+     * Rapprochement R2 : photos de signalement non supprimées. Une ligne supprimée logiquement
+     * l'a été par la purge APRÈS la suppression R2 : elle ne référence plus rien.
+     */
+    @Query("SELECT p.objectKey FROM ReportPhotoEntity p WHERE p.objectKey LIKE CONCAT(:prefix, '%') "
+            + "OR p.objectKey LIKE CONCAT('%/', :prefix, '%')")
+    List<String> findLiveObjectKeyValuesMatching(@Param("prefix") String prefix);
 }

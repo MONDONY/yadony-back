@@ -418,6 +418,26 @@ public class StorageService {
         return result;
     }
 
+    /** Au plus {@code max} clés du préfixe modifiées avant {@code cutoff} (rapprochement). */
+    public List<String> listObjectsOlderThan(String prefix, Instant cutoff, int max) {
+        validatePrefix(prefix);
+        List<String> result = new java.util.ArrayList<>();
+        String token = null;
+        do {
+            ListObjectsV2Request.Builder req = ListObjectsV2Request.builder().bucket(bucket).prefix(prefix);
+            if (token != null) req.continuationToken(token);
+            ListObjectsV2Response page = s3Client.listObjectsV2(req.build());
+            for (var o : page.contents()) {
+                if (o.lastModified().isBefore(cutoff)) {
+                    result.add(o.key());
+                    if (result.size() >= max) return result;
+                }
+            }
+            token = page.isTruncated() ? page.nextContinuationToken() : null;
+        } while (token != null);
+        return result;
+    }
+
     private void validateFile(MultipartFile file) {
         if (file.isEmpty()) {
             throw new YadonyBusinessException(HttpStatus.BAD_REQUEST,
