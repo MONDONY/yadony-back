@@ -2,6 +2,7 @@ package com.yadony.api.requests.repository;
 
 import com.yadony.api.requests.entity.PackageRequestPhotoEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 
 import java.util.Collection;
 import java.util.List;
@@ -18,4 +19,8 @@ public interface PackageRequestPhotoRepository extends JpaRepository<PackageRequ
 
     /** Batch-load photos for multiple package requests ordered by packageRequestId, position. */
     List<PackageRequestPhotoEntity> findByPackageRequestIdInOrderByPositionAsc(Collection<UUID> packageRequestIds);
+
+    /** Demandes ayant au moins une photo non purgée (lecture sous @SQLRestriction : purged_at IS NULL). */
+    @Query("SELECT DISTINCT p.packageRequestId FROM PackageRequestPhotoEntity p")
+    List<UUID> findRequestIdsWithLivePhotos();
 }
