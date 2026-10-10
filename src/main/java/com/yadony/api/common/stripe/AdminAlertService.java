@@ -55,7 +55,10 @@ public class AdminAlertService {
             "SENTRY_ISSUE_CREATED",
             "SENTRY_ISSUE_UNRESOLVED",
             "KYC_IDENTITY_REJECTED",
-            "EXCHANGE_RATE_SYNC_REJECTED");
+            "EXCHANGE_RATE_SYNC_REJECTED",
+            "PHOTO_PURGE_FAILING",
+            "PHOTO_PURGE_STALE",
+            "PHOTO_RECONCILE_BLOCKED");
 
     /** Préfixe du message (log et issue Sentry) de toute alerte admin. */
     public static final String PREFIXE_ALERTE = "[ADMIN ALERT] ";

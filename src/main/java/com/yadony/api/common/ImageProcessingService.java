@@ -6,9 +6,12 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.util.Iterator;
 
 /**
  * Processes uploaded images for request photos:
@@ -23,6 +26,25 @@ public class ImageProcessingService {
     private static final int MAX_LONG_EDGE = 1280;
     private static final int THUMB = 400;
     private static final double QUALITY = 0.80;
+
+    public static final int STORAGE_LONG_EDGE = 1600;
+    public static final double STORAGE_QUALITY = 0.80;
+    public static final int AVATAR_LONG_EDGE = 512;
+    public static final double AVATAR_QUALITY = 0.82;
+
+    /**
+     * Plafond de pixels déclarés (≈ 160 Mo en ARGB). Un PNG de quelques Ko peut annoncer
+     * 20 000 × 20 000 px : décoder sans ce garde provoque une OutOfMemoryError qu'aucun
+     * catch ne rattrape. Les dimensions sont lues dans l'en-tête, avant tout décodage.
+     */
+    public static final long MAX_PIXELS = 40_000_000L;
+
+    static {
+        // Enregistre les lecteurs ImageIO du classpath (WebP de TwelveMonkeys) avec le
+        // chargeur de classes de l'application : dans le jar Spring Boot, un registre
+        // initialisé depuis un autre thread pourrait ne pas les voir.
+        ImageIO.scanForPlugins();
+    }
 
     /** Container for the two derived images produced by {@link #process}. */
     public record ProcessedImage(byte[] main, byte[] thumbnail) {}
@@ -65,6 +87,46 @@ public class ImageProcessingService {
         }
     }
 
+    /**
+     * Image de stockage : grand côté plafonné à {@code maxLongEdge} (jamais agrandie),
+     * JPEG à {@code quality}, EXIF retirés par le ré-encodage, transparence posée sur blanc
+     * (un PNG transparent passé tel quel en JPEG sortirait noir).
+     */
+    public byte[] resizeForStorage(byte[] input, int maxLongEdge, double quality) {
+        BufferedImage src = flattenOnWhite(decodeImage(input));
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            var builder = Thumbnails.of(src);
+            if (Math.max(src.getWidth(), src.getHeight()) > maxLongEdge) {
+                builder.size(maxLongEdge, maxLongEdge).keepAspectRatio(true);
+            } else {
+                builder.scale(1.0);
+            }
+            builder.outputFormat("jpg").outputQuality(quality).toOutputStream(out);
+            return out.toByteArray();
+        } catch (Exception e) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "image/processing-failed", "Image Processing Failed",
+                    "Échec du traitement de l'image : " + e.getMessage());
+        }
+    }
+
+    private static BufferedImage flattenOnWhite(BufferedImage src) {
+        if (!src.getColorModel().hasAlpha()) {
+            return src;
+        }
+        BufferedImage rgb = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D g = rgb.createGraphics();
+        try {
+            g.setColor(java.awt.Color.WHITE);
+            g.fillRect(0, 0, src.getWidth(), src.getHeight());
+            g.drawImage(src, 0, 0, null);
+        } finally {
+            g.dispose();
+        }
+        return rgb;
+    }
+
     // -----------------------------------------------------------------------
     // Private helpers
     // -----------------------------------------------------------------------
@@ -76,6 +138,7 @@ public class ImageProcessingService {
                     "Invalid Image",
                     "Le fichier est vide ou absent");
         }
+        rejectOversizedDimensions(input);
         try {
             BufferedImage img = ImageIO.read(new ByteArrayInputStream(input));
             if (img == null) {
@@ -92,6 +155,39 @@ public class ImageProcessingService {
                     "image/invalid",
                     "Invalid Image",
                     "Le fichier n'est pas une image valide");
+        }
+    }
+
+    /**
+     * Lit largeur et hauteur dans l'en-tête (sans allouer l'image) et refuse au-delà de
+     * {@link #MAX_PIXELS}. Un fichier dont l'en-tête est illisible passe ici et sera
+     * refusé par le décodage ({@code image/invalid}).
+     */
+    private static void rejectOversizedDimensions(byte[] input) {
+        long pixels;
+        try (ImageInputStream in = ImageIO.createImageInputStream(new ByteArrayInputStream(input))) {
+            if (in == null) {
+                return;
+            }
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(in);
+            if (!readers.hasNext()) {
+                return;
+            }
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(in, true, true);
+                pixels = (long) reader.getWidth(0) * reader.getHeight(0);
+            } finally {
+                reader.dispose();
+            }
+        } catch (Exception e) {
+            return;
+        }
+        if (pixels > MAX_PIXELS) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "image/too-large",
+                    "Image Too Large",
+                    "Image trop grande (dimensions)");
         }
     }
 }

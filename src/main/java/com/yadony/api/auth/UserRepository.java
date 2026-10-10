@@ -433,4 +433,12 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     @Query(value = TRAVELER_DECISION_DELAY_SQL, nativeQuery = true)
     DecisionDelayStats travelerDecisionDelay(@Param("travelerId") UUID travelerId,
                                               @Param("since") java.time.OffsetDateTime since);
+
+    /**
+     * Rapprochement R2 : avatars, comptes supprimés logiquement compris (délai de grâce avant
+     * finalisation). Requête native pour ignorer {@code @Where(deleted_at IS NULL)}.
+     */
+    @Query(value = "SELECT avatar_url FROM users WHERE avatar_url LIKE CONCAT(:prefix, '%') "
+            + "OR avatar_url LIKE CONCAT('%/', :prefix, '%')", nativeQuery = true)
+    List<String> findAvatarValuesMatchingIncludingDeleted(@Param("prefix") String prefix);
 }

@@ -1,8 +1,14 @@
 package com.yadony.api.common;
 
+import com.yadony.api.common.media.MediaKeys;
+import com.yadony.api.common.media.MediaPurpose;
+import com.yadony.api.common.media.MediaUploadEntity;
+import com.yadony.api.common.media.MediaUploadRepository;
+import com.yadony.api.config.PlatformSettingsService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -23,6 +29,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -33,10 +41,9 @@ public class StorageService {
 
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(StorageService.class);
 
-    private static final Set<String> ALLOWED_PREFIXES = Set.of(
-            "tracking/", "users/", "messaging/", "kyc/", "package_requests/", "requests/", "bids/", "reports/",
-            "support/");
-    private static final long MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+    /** Source de vérité : MediaKeys.KNOWN_PREFIXES (le rapprochement reconnaît ainsi chaque préfixe). */
+    private static final Set<String> ALLOWED_PREFIXES = Set.copyOf(MediaKeys.KNOWN_PREFIXES);
+    private static final long MAX_FILE_SIZE = 5L * 1024 * 1024; // 5 Mo : l'app compresse avant envoi
     private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of(
             "image/jpeg", "image/jpg", "image/png", "image/webp");
 
@@ -51,18 +58,35 @@ public class StorageService {
             // WebP validated separately: bytes 0-3 = "RIFF", bytes 8-11 = "WEBP"
     );
 
+    // Verrous par hash (bornés, pas de fuite mémoire) : voir reserve().
+    private static final Object[] QUOTA_LOCKS = newLocks(64);
+
+    private static Object[] newLocks(int n) {
+        Object[] locks = new Object[n];
+        for (int i = 0; i < n; i++) {
+            locks[i] = new Object();
+        }
+        return locks;
+    }
+
     private final S3Client s3Client;
     private final S3Presigner s3Presigner;
     private final ImageProcessingService imageProcessingService;
+    private final MediaUploadRepository mediaUploadRepository;
+    private final PlatformSettingsService settings;
 
     @Value("${aws.s3.bucket}")
     private String bucket;
 
     public StorageService(S3Client s3Client, S3Presigner s3Presigner,
-                          ImageProcessingService imageProcessingService) {
+                          ImageProcessingService imageProcessingService,
+                          MediaUploadRepository mediaUploadRepository,
+                          PlatformSettingsService settings) {
         this.s3Client = s3Client;
         this.s3Presigner = s3Presigner;
         this.imageProcessingService = imageProcessingService;
+        this.mediaUploadRepository = mediaUploadRepository;
+        this.settings = settings;
     }
 
     /**
@@ -78,102 +102,183 @@ public class StorageService {
     }
 
     /**
-     * Upload a file to S3 under the given prefix.
-     * Allowed prefixes: "tracking/" and "users/"
-     *
-     * @return the S3 object key
+     * Destination et propriétaire d'un envoi. {@code bidId} n'est utile qu'au tracking
+     * (plafond par bid) ; {@code quotaExempt} est réservé aux envois d'un admin.
      */
-    public String uploadFile(MultipartFile file, String prefix) throws IOException {
-        log.info("uploadFile: prefix={}, originalFilename={}, contentType={}, size={} bytes",
-            prefix, file.getOriginalFilename(), file.getContentType(), file.getSize());
-        validateFile(file);
-        validatePrefix(prefix);
-
-        String key = prefix + Instant.now().toEpochMilli() + "_" + UUID.randomUUID() + getExtension(file);
-
-        PutObjectRequest request = PutObjectRequest.builder()
-                .bucket(bucket)
-                .key(key)
-                .contentType(file.getContentType())
-                .contentLength(file.getSize())
-                .build();
-
-        long t0 = System.currentTimeMillis();
-        try {
-            s3Client.putObject(request, RequestBody.fromBytes(file.getBytes()));
-            log.info("uploadFile: putObject OK key={} bucket={} ({} ms)",
-                key, bucket, System.currentTimeMillis() - t0);
-        } catch (Exception ex) {
-            log.error("uploadFile: putObject FAILED key={} bucket={} ({} ms): {}",
-                key, bucket, System.currentTimeMillis() - t0, ex.toString(), ex);
-            throw ex;
+    public record MediaUpload(String prefix, UUID ownerId, MediaPurpose purpose, UUID bidId, boolean quotaExempt) {
+        public static MediaUpload of(String prefix, UUID ownerId, MediaPurpose purpose) {
+            return new MediaUpload(prefix, ownerId, purpose, null, false);
         }
 
-        return key;
+        public static MediaUpload tracking(UUID bidId, UUID ownerId) {
+            return new MediaUpload("tracking/" + bidId + "/", ownerId, MediaPurpose.TRACKING, bidId, false);
+        }
     }
 
-    /** Keys returned after uploading a request photo (main + thumbnail). */
-    public record UploadedRequestPhoto(String mainKey, String thumbnailKey) {}
+    /**
+     * Seule porte d'entrée des photos (hors chat) : quotas, validation, ré-encodage
+     * (1600 px / JPEG 80, avatar 512 px), écriture R2 puis inscription au registre.
+     * Les quotas sont vérifiés AVANT tout travail : un compte qui boucle ne coûte rien.
+     */
+    public String storeImage(MultipartFile file, MediaUpload upload) {
+        validatePrefix(upload.prefix());
+        validateFile(file);
+        byte[] bytes;
+        try {
+            bytes = file.getBytes();
+        } catch (IOException e) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "INVALID_FILE_TYPE", "Invalid File Type", "Cannot read file content");
+        }
+        String key = upload.prefix() + Instant.now().toEpochMilli() + "_" + UUID.randomUUID() + ".jpg";
+        MediaUploadEntity reservation = reserve(key, upload);
+        try {
+            byte[] stored = upload.purpose() == MediaPurpose.AVATAR
+                    ? imageProcessingService.resizeForStorage(bytes,
+                            ImageProcessingService.AVATAR_LONG_EDGE, ImageProcessingService.AVATAR_QUALITY)
+                    : imageProcessingService.resizeForStorage(bytes,
+                            ImageProcessingService.STORAGE_LONG_EDGE, ImageProcessingService.STORAGE_QUALITY);
+            putBytes(key, stored, "image/jpeg");
+            finalizeSize(reservation, stored.length);
+            log.info("storeImage: key={} purpose={} {} -> {} octets", key, upload.purpose(), bytes.length,
+                    stored.length);
+            return key;
+        } catch (RuntimeException e) {
+            release(reservation);
+            throw e;
+        }
+    }
 
     /**
-     * Upload a sender's request photo with automatic resize + thumbnail.
-     * <ul>
-     *   <li>Main image: resized so long-edge ≤ 1280 px, JPEG 80 %, stored under
-     *       {@code requests/{senderId}/{ts}_request.jpg}</li>
-     *   <li>Thumbnail: 400×400 center-crop, JPEG 80 %, stored under
-     *       {@code requests/{senderId}/{ts}_request_thumb.jpg}</li>
-     * </ul>
-     * EXIF metadata is stripped as a side-effect of re-encoding.
-     *
-     * @param senderId    UUID of the sender who owns the photo
-     * @param bytes       raw bytes of the original upload
-     * @param contentType MIME type of the original file
-     * @return {@link UploadedRequestPhoto} containing both S3 keys
+     * Réserve la ligne du registre AVANT l'écriture R2, sous un verrou par propriétaire (et par
+     * bid pour le tracking) : le comptage et l'insertion deviennent atomiques, des envois
+     * simultanés ne dépassent donc pas le quota (le back tourne sur une seule instance).
+     * Fail-closed : si l'écriture de la réservation échoue, l'envoi échoue.
+     * Les envois exemptés (admin) ne sont pas comptés mais sont inscrits quand même.
      */
-    public UploadedRequestPhoto uploadRequestPhoto(UUID senderId, byte[] bytes, String contentType) {
-        ImageProcessingService.ProcessedImage processed = imageProcessingService.process(bytes, contentType);
+    private MediaUploadEntity reserve(String key, MediaUpload upload) {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            log.warn("storeImage: réservation de quota dans une transaction englobante : "
+                    + "le quota peut être contourné (key={})", key);
+        }
+        MediaUploadEntity row = new MediaUploadEntity(key, upload.ownerId(), upload.purpose(), upload.bidId(), 0L);
+        if (upload.quotaExempt()) {
+            mediaUploadRepository.saveAndFlush(row);
+            return row;
+        }
+        int ownerStripe = stripeOf(upload.ownerId());
+        int bidStripe = upload.purpose() == MediaPurpose.TRACKING && upload.bidId() != null
+                ? stripeOf(upload.bidId()) : ownerStripe;
+        // Ordre croissant des verrous : pas d'interblocage entre deux envois.
+        int first = Math.min(ownerStripe, bidStripe);
+        int second = Math.max(ownerStripe, bidStripe);
+        synchronized (QUOTA_LOCKS[first]) {
+            if (second == first) {
+                checkQuotasAndSave(row, upload);
+            } else {
+                synchronized (QUOTA_LOCKS[second]) {
+                    checkQuotasAndSave(row, upload);
+                }
+            }
+        }
+        return row;
+    }
 
-        long ts = Instant.now().toEpochMilli();
-        String mainKey  = "requests/" + senderId + "/" + ts + "_request.jpg";
-        String thumbKey = "requests/" + senderId + "/" + ts + "_request_thumb.jpg";
+    private void checkQuotasAndSave(MediaUploadEntity row, MediaUpload upload) {
+        enforceQuotas(upload);
+        mediaUploadRepository.saveAndFlush(row);
+    }
 
-        putBytes(mainKey,  processed.main(),      "image/jpeg");
-        putBytes(thumbKey, processed.thumbnail(), "image/jpeg");
+    private static int stripeOf(UUID id) {
+        return Math.floorMod(id.hashCode(), QUOTA_LOCKS.length);
+    }
 
-        return new UploadedRequestPhoto(mainKey, thumbKey);
+    /**
+     * Quota journalier par utilisateur (hors tracking) et plafond des photos de suivi par bid,
+     * tous deux sur 24 h glissantes. Le tracking est exempté du quota journalier : une étape de
+     * suivi (départ, transit, livraison) ne doit jamais être bloquée par les autres envois du
+     * voyageur, et un ancien client qui renvoie la photo à chaque essai retrouve son plafond
+     * le lendemain au lieu d'être bloqué à vie sur ce colis.
+     */
+    private void enforceQuotas(MediaUpload upload) {
+        LocalDateTime since = LocalDateTime.now(ZoneOffset.UTC).minusHours(24);
+        boolean tracking = upload.purpose() == MediaPurpose.TRACKING;
+        if (!tracking && mediaUploadRepository.countByOwnerIdAndPurposeNotAndCreatedAtAfter(
+                upload.ownerId(), MediaPurpose.TRACKING, since) >= settings.photoUploadDailyQuota()) {
+            throw new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS,
+                    "photo-upload-quota-exceeded", "Too Many Requests",
+                    "Vous avez atteint la limite de photos pour aujourd'hui. Réessayez demain.");
+        }
+        if (tracking && upload.bidId() != null
+                && mediaUploadRepository.countByBidIdAndPurposeAndCreatedAtAfter(
+                        upload.bidId(), MediaPurpose.TRACKING, since) >= settings.trackingPhotosMaxPerBid()) {
+            throw new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS,
+                    "tracking-photo-limit-reached", "Too Many Requests",
+                    "Ce colis a déjà le nombre maximum de photos de suivi.");
+        }
+    }
+
+    /** Met à jour la taille réelle ; la ligne est déjà comptée, un échec ici est seulement journalisé. */
+    private void finalizeSize(MediaUploadEntity reservation, long size) {
+        try {
+            reservation.setSizeBytes(size);
+            mediaUploadRepository.save(reservation);
+        } catch (RuntimeException e) {
+            log.warn("storeImage: taille non enregistrée pour {} : {}", reservation.getObjectKey(), e.toString());
+        }
+    }
+
+    /**
+     * Annule une réservation dont l'envoi a échoué. {@code media_uploads} est un registre technique
+     * de quotas, pas une entité métier : la ligne annulée est supprimée physiquement (exception
+     * assumée à la règle du soft delete).
+     */
+    private void release(MediaUploadEntity reservation) {
+        try {
+            mediaUploadRepository.delete(reservation);
+        } catch (RuntimeException e) {
+            log.warn("storeImage: réservation non annulée pour {} : {}", reservation.getObjectKey(), e.toString());
+        }
     }
 
     /** Clés d'une photo de messagerie : image redimensionnée et miniature carrée. */
     public record StoredImage(String mainKey, String thumbnailKey) {}
 
     /**
-     * Valide une photo envoyée (non vide, 10 Mo, JPEG/PNG/WebP, octets d'en-tête cohérents
+     * Valide une photo envoyée (non vide, 5 Mo, JPEG/PNG/WebP, octets d'en-tête cohérents
      * avec le type déclaré) sans la stocker. Mêmes règles et mêmes erreurs que
-     * {@link #uploadFile}.
+     * {@link #storeImage}.
      */
     public void validateImageUpload(MultipartFile file) {
         validateFile(file);
     }
 
     /**
-     * Photo de messagerie (FLUTTER-B4) : même traitement que {@link #uploadRequestPhoto}
-     * (bord long ≤ 1280 px, miniature 400×400, JPEG 80 %, EXIF supprimées par le
-     * ré-encodage), stockée sous {@code {prefix}{baseName}_full.jpg} et
+     * Photo de messagerie (FLUTTER-B4) : bord long ≤ 1280 px, miniature 400×400, JPEG 80 %, EXIF supprimées par le
+     * ré-encodage, stockée sous {@code {prefix}{baseName}_full.jpg} et
      * {@code {prefix}{baseName}_thumb.jpg}.
      */
-    public StoredImage storeMessagingImage(String prefix, String baseName, byte[] bytes, String contentType) {
+    public StoredImage storeMessagingImage(String prefix, String baseName, byte[] bytes, String contentType,
+                                           UUID ownerId) {
         validatePrefix(prefix);
-        ImageProcessingService.ProcessedImage processed = imageProcessingService.process(bytes, contentType);
         String mainKey  = prefix + baseName + "_full.jpg";
         String thumbKey = prefix + baseName + "_thumb.jpg";
-        putBytes(mainKey, processed.main(), "image/jpeg");
+        MediaUploadEntity reservation = reserve(mainKey, MediaUpload.of(prefix, ownerId, MediaPurpose.MESSAGING));
         try {
-            putBytes(thumbKey, processed.thumbnail(), "image/jpeg");
+            ImageProcessingService.ProcessedImage processed = imageProcessingService.process(bytes, contentType);
+            putBytes(mainKey, processed.main(), "image/jpeg");
+            try {
+                putBytes(thumbKey, processed.thumbnail(), "image/jpeg");
+            } catch (RuntimeException e) {
+                deleteQuietly(mainKey);
+                throw e;
+            }
+            finalizeSize(reservation, processed.main().length + processed.thumbnail().length);
+            return new StoredImage(mainKey, thumbKey);
         } catch (RuntimeException e) {
-            deleteQuietly(mainKey);
+            release(reservation);
             throw e;
         }
-        return new StoredImage(mainKey, thumbKey);
     }
 
     /**
@@ -321,6 +426,26 @@ public class StorageService {
         return result;
     }
 
+    /** Au plus {@code max} clés du préfixe modifiées avant {@code cutoff} (rapprochement). */
+    public List<String> listObjectsOlderThan(String prefix, Instant cutoff, int max) {
+        validatePrefix(prefix);
+        List<String> result = new java.util.ArrayList<>();
+        String token = null;
+        do {
+            ListObjectsV2Request.Builder req = ListObjectsV2Request.builder().bucket(bucket).prefix(prefix);
+            if (token != null) req.continuationToken(token);
+            ListObjectsV2Response page = s3Client.listObjectsV2(req.build());
+            for (var o : page.contents()) {
+                if (o.lastModified().isBefore(cutoff)) {
+                    result.add(o.key());
+                    if (result.size() >= max) return result;
+                }
+            }
+            token = page.isTruncated() ? page.nextContinuationToken() : null;
+        } while (token != null);
+        return result;
+    }
+
     private void validateFile(MultipartFile file) {
         if (file.isEmpty()) {
             throw new YadonyBusinessException(HttpStatus.BAD_REQUEST,
@@ -328,7 +453,7 @@ public class StorageService {
         }
         if (file.getSize() > MAX_FILE_SIZE) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "FILE_TOO_LARGE", "File Too Large", "File exceeds 10MB limit");
+                    "FILE_TOO_LARGE", "File Too Large", "File exceeds 5MB limit");
         }
         if (!ALLOWED_CONTENT_TYPES.contains(file.getContentType())) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
@@ -401,15 +526,5 @@ public class StorageService {
             throw new YadonyBusinessException(HttpStatus.BAD_REQUEST,
                     "INVALID_PREFIX", "Invalid Prefix", "Invalid upload destination");
         }
-    }
-
-    private String getExtension(MultipartFile file) {
-        String contentType = file.getContentType();
-        if (contentType == null) return ".jpg";
-        return switch (contentType) {
-            case "image/png" -> ".png";
-            case "image/webp" -> ".webp";
-            default -> ".jpg";
-        };
     }
 }

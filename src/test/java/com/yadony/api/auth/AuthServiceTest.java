@@ -8,6 +8,7 @@ import com.yadony.api.auth.dto.UserResponse;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.media.MediaPurpose;
 import com.yadony.api.common.i18n.AppLanguage;
 import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.payments.PaymentRepository;
@@ -788,7 +789,7 @@ class AuthServiceTest {
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             when(userRepository.save(any())).thenAnswer(i -> i.getArgument(0));
             MultipartFile file = new MockMultipartFile("file", "a.jpg", "image/jpeg", new byte[]{1, 2, 3});
-            when(storageService.uploadFile(eq(file), startsWith("users/" + FIREBASE_UID + "/")))
+            when(storageService.storeImage(eq(file), any(StorageService.MediaUpload.class)))
                     .thenReturn(key);
             when(storageService.avatarUrl(key)).thenReturn(presignedUrl);
 
@@ -826,17 +827,74 @@ class AuthServiceTest {
         }
 
         @Test
-        @DisplayName("fichier > 10 Mo → 413 PAYLOAD_TOO_LARGE")
+        @DisplayName("fichier > 5 Mo → 413 PAYLOAD_TOO_LARGE")
         void updateAvatar_fileTooLarge_throwsPayloadTooLarge() throws Exception {
             UserEntity user = buildUser();
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             MultipartFile bigFile = new MockMultipartFile("file", "big.jpg", "image/jpeg",
-                    new byte[10 * 1024 * 1024 + 1]);
+                    new byte[5 * 1024 * 1024 + 1]);
 
             assertThatThrownBy(() -> authService.updateAvatar(FIREBASE_UID, bigFile))
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
                             .isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE));
+            verifyNoInteractions(storageService);
+        }
+
+        @Test
+        @DisplayName("ancien avatar R2 supprimé après l'enregistrement du nouveau, MediaUpload AVATAR")
+        void updateAvatar_deletesPreviousKey_afterSavingNew() throws Exception {
+            UserEntity user = buildUser();
+            user.setAvatarUrl("users/" + FIREBASE_UID + "/old.jpg");
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(storageService.storeImage(any(), any())).thenReturn("users/" + FIREBASE_UID + "/new.jpg");
+            when(userRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+            MultipartFile file = new MockMultipartFile("file", "a.jpg", "image/jpeg", new byte[]{1, 2, 3});
+
+            authService.updateAvatar(FIREBASE_UID, file);
+
+            assertThat(user.getAvatarUrl()).isEqualTo("users/" + FIREBASE_UID + "/new.jpg");
+            var order = inOrder(userRepository, storageService);
+            order.verify(userRepository).save(user);
+            order.verify(storageService).deleteQuietly("users/" + FIREBASE_UID + "/old.jpg");
+            ArgumentCaptor<StorageService.MediaUpload> captor =
+                    ArgumentCaptor.forClass(StorageService.MediaUpload.class);
+            verify(storageService).storeImage(eq(file), captor.capture());
+            assertThat(captor.getValue().prefix()).isEqualTo("users/" + FIREBASE_UID + "/");
+            assertThat(captor.getValue().purpose()).isEqualTo(MediaPurpose.AVATAR);
+            assertThat(captor.getValue().ownerId()).isEqualTo(user.getId());
+        }
+
+        @Test
+        @DisplayName("avatar externe (URL Google) : jamais supprimé")
+        void updateAvatar_legacyHttpUrl_isNotDeleted() throws Exception {
+            UserEntity user = buildUser();
+            user.setAvatarUrl("https://lh3.googleusercontent.com/a/x");
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(storageService.storeImage(any(), any())).thenReturn("users/" + FIREBASE_UID + "/new.jpg");
+            when(userRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+            MultipartFile file = new MockMultipartFile("file", "a.jpg", "image/jpeg", new byte[]{1, 2, 3});
+
+            authService.updateAvatar(FIREBASE_UID, file);
+
+            verify(storageService, never()).deleteQuietly(any());
+        }
+
+        @Test
+        @DisplayName("échec d'envoi : ancien avatar conservé et jamais supprimé")
+        void updateAvatar_storeFails_keepsPrevious() {
+            UserEntity user = buildUser();
+            user.setAvatarUrl("users/" + FIREBASE_UID + "/old.jpg");
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(storageService.storeImage(any(), any())).thenThrow(new YadonyBusinessException(
+                    HttpStatus.TOO_MANY_REQUESTS, "photo-upload-quota-exceeded", "Too Many Requests", "max"));
+            MultipartFile file = new MockMultipartFile("file", "a.jpg", "image/jpeg", new byte[]{1, 2, 3});
+
+            assertThatThrownBy(() -> authService.updateAvatar(FIREBASE_UID, file))
+                    .isInstanceOf(YadonyBusinessException.class);
+
+            assertThat(user.getAvatarUrl()).isEqualTo("users/" + FIREBASE_UID + "/old.jpg");
+            verify(storageService, never()).deleteQuietly(any());
         }
     }
 

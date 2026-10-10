@@ -59,7 +59,7 @@ class ConversationMediaServiceTest {
         when(conversationRepository.findByIdAndParticipant(conv.getId(), sender.getId())).thenReturn(Optional.of(conv));
         when(conversationRepository.findByIdAndParticipantIgnoreDeleted(conv.getId(), sender.getId()))
                 .thenReturn(Optional.of(conv));
-        when(storageService.storeMessagingImage(anyString(), anyString(), any(), any()))
+        when(storageService.storeMessagingImage(anyString(), anyString(), any(), any(), any()))
                 .thenAnswer(inv -> new StorageService.StoredImage(
                         inv.getArgument(0) + inv.getArgument(1).toString() + "_full.jpg",
                         inv.getArgument(0) + inv.getArgument(1).toString() + "_thumb.jpg"));
@@ -75,7 +75,7 @@ class ConversationMediaServiceTest {
         String thumb = "messaging/" + conv.getFirestoreConversationId() + "/" + messageId + "_thumb.jpg";
         verify(storageService).validateImageUpload(file);
         verify(storageService).storeMessagingImage(eq("messaging/" + conv.getFirestoreConversationId() + "/"),
-                eq(messageId), any(), eq("image/jpeg"));
+                eq(messageId), any(), eq("image/jpeg"), eq(sender.getId()));
 
         ArgumentCaptor<MessagingImageEntity> row = ArgumentCaptor.forClass(MessagingImageEntity.class);
         verify(imageRepository).save(row.capture());
@@ -172,7 +172,7 @@ class ConversationMediaServiceTest {
 
     @Test
     void sendImage_processingError_isPropagated_andQuotaRefunded() {
-        when(storageService.storeMessagingImage(anyString(), anyString(), any(), any()))
+        when(storageService.storeMessagingImage(anyString(), anyString(), any(), any(), any()))
                 .thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "image/invalid", "t", "d"));
         assertThatThrownBy(() -> service.sendImage(conv.getId(), sender, file, null))
                 .isInstanceOfSatisfying(YadonyBusinessException.class,

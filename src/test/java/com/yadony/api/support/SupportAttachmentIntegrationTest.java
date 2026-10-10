@@ -79,10 +79,8 @@ class SupportAttachmentIntegrationTest {
         auditLogRepository.deleteAllInBatch();
 
         // Mock StorageService
-        try {
-            when(storageService.uploadFile(any(), anyString()))
-                    .thenAnswer(inv -> inv.getArgument(1, String.class) + "fake-key.jpg");
-        } catch (Exception ignored) {}
+        when(storageService.storeImage(any(), any()))
+                .thenAnswer(inv -> inv.getArgument(1, StorageService.MediaUpload.class).prefix() + "fake-key.jpg");
 
         when(storageService.generatePresignedUrl(anyString(), any()))
                 .thenReturn("https://fake-s3.yadony.test/photo.jpg");

@@ -18,5 +18,6 @@ public record TrackingEventResponse(
         String photoUrl,
         LocalDateTime offlineTimestamp,
         LocalDateTime createdAt,
-        String scanMethod
+        String scanMethod,
+        boolean photoPurged
 ) {}

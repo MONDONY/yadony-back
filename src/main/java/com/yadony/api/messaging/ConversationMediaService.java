@@ -111,7 +111,7 @@ public class ConversationMediaService {
         MessagingImageEntity row = null;
         try {
             byte[] bytes = file.getBytes();
-            stored = storageService.storeMessagingImage(prefix, messageId, bytes, file.getContentType());
+            stored = storageService.storeMessagingImage(prefix, messageId, bytes, file.getContentType(), sender.getId());
             row = imageRepository.save(new MessagingImageEntity(conv.getId(), conv.getBidId(), messageId,
                     sender.getId(), stored.mainKey(), stored.thumbnailKey()));
             firestoreService.addImageMessage(conv.getFirestoreConversationId(), messageId,

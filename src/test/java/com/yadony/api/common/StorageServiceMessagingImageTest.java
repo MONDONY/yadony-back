@@ -31,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -39,6 +40,8 @@ import static org.mockito.Mockito.when;
 @DisplayName("StorageService — photos de messagerie (FLUTTER-B4)")
 class StorageServiceMessagingImageTest {
 
+    @Mock private com.yadony.api.common.media.MediaUploadRepository uploads;
+    @Mock private com.yadony.api.config.PlatformSettingsService settings;
     @Mock private S3Client s3Client;
     @Mock private S3Presigner s3Presigner;
 
@@ -46,10 +49,11 @@ class StorageServiceMessagingImageTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        storageService = new StorageService(s3Client, s3Presigner, new ImageProcessingService());
+        storageService = new StorageService(s3Client, s3Presigner, new ImageProcessingService(), uploads, settings);
         var field = StorageService.class.getDeclaredField("bucket");
         field.setAccessible(true);
         field.set(storageService, "test-bucket");
+        lenient().when(settings.photoUploadDailyQuota()).thenReturn(60);
     }
 
     /** JPEG valide portant un segment APP1 Exif avec une donnée sensible (fausse position GPS). */
@@ -87,7 +91,7 @@ class StorageServiceMessagingImageTest {
                 .thenReturn(PutObjectResponse.builder().build());
 
         StorageService.StoredImage stored = storageService.storeMessagingImage(
-                "messaging/conv_1/", "AbC123", original, "image/jpeg");
+                "messaging/conv_1/", "AbC123", original, "image/jpeg", java.util.UUID.randomUUID());
 
         assertThat(stored.mainKey()).isEqualTo("messaging/conv_1/AbC123_full.jpg");
         assertThat(stored.thumbnailKey()).isEqualTo("messaging/conv_1/AbC123_thumb.jpg");
@@ -108,7 +112,7 @@ class StorageServiceMessagingImageTest {
     @Test
     @DisplayName("préfixe hors liste blanche → 400")
     void storeMessagingImage_rejectsUnknownPrefix() {
-        assertThatThrownBy(() -> storageService.storeMessagingImage("evil/", "x", new byte[]{1}, "image/jpeg"))
+        assertThatThrownBy(() -> storageService.storeMessagingImage("evil/", "x", new byte[]{1}, "image/jpeg", java.util.UUID.randomUUID()))
                 .isInstanceOf(YadonyBusinessException.class);
     }
 
@@ -120,7 +124,7 @@ class StorageServiceMessagingImageTest {
                 .thenThrow(S3Exception.builder().message("boom").build());
 
         assertThatThrownBy(() -> storageService.storeMessagingImage(
-                "messaging/conv_1/", "AbC123", jpegWithExif(), "image/jpeg"))
+                "messaging/conv_1/", "AbC123", jpegWithExif(), "image/jpeg", java.util.UUID.randomUUID()))
                 .isInstanceOf(S3Exception.class);
 
         ArgumentCaptor<DeleteObjectRequest> del = ArgumentCaptor.forClass(DeleteObjectRequest.class);
@@ -170,5 +174,49 @@ class StorageServiceMessagingImageTest {
         doThrow(S3Exception.builder().message("down").build()).when(s3Client).deleteObject(any(DeleteObjectRequest.class));
         assertThatCode(() -> storageService.deleteQuietly("messaging/a")).doesNotThrowAnyException();
         verify(s3Client).deleteObject(any(DeleteObjectRequest.class));
+    }
+
+    @Test
+    @DisplayName("quota journalier atteint → 429, aucun putObject")
+    void storeMessagingImage_quotaReached_is429() throws Exception {
+        java.util.UUID owner = java.util.UUID.randomUUID();
+        when(uploads.countByOwnerIdAndPurposeNotAndCreatedAtAfter(org.mockito.ArgumentMatchers.eq(owner), org.mockito.ArgumentMatchers.eq(com.yadony.api.common.media.MediaPurpose.TRACKING), any())).thenReturn(60L);
+
+        assertThatThrownBy(() -> storageService.storeMessagingImage(
+                "messaging/conv_1/", "AbC123", jpegWithExif(), "image/jpeg", owner))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS));
+        org.mockito.Mockito.verifyNoInteractions(s3Client);
+    }
+
+    @Test
+    @DisplayName("la photo est inscrite au registre MESSAGING avec sa taille réelle")
+    void storeMessagingImage_recordsUpload() throws Exception {
+        java.util.UUID owner = java.util.UUID.randomUUID();
+        when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+                .thenReturn(PutObjectResponse.builder().build());
+
+        storageService.storeMessagingImage("messaging/conv_1/", "AbC123", jpegWithExif(), "image/jpeg", owner);
+
+        ArgumentCaptor<com.yadony.api.common.media.MediaUploadEntity> row =
+                ArgumentCaptor.forClass(com.yadony.api.common.media.MediaUploadEntity.class);
+        verify(uploads).saveAndFlush(row.capture());
+        assertThat(row.getValue().getObjectKey()).isEqualTo("messaging/conv_1/AbC123_full.jpg");
+        assertThat(row.getValue().getOwnerId()).isEqualTo(owner);
+        assertThat(row.getValue().getPurpose()).isEqualTo(com.yadony.api.common.media.MediaPurpose.MESSAGING);
+        assertThat(row.getValue().getSizeBytes()).isPositive();
+    }
+
+    @Test
+    @DisplayName("échec de la miniature → la réservation du registre est supprimée")
+    void storeMessagingImage_thumbFails_releasesReservation() throws Exception {
+        when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+                .thenReturn(PutObjectResponse.builder().build())
+                .thenThrow(S3Exception.builder().message("boom").build());
+
+        assertThatThrownBy(() -> storageService.storeMessagingImage(
+                "messaging/conv_1/", "AbC123", jpegWithExif(), "image/jpeg", java.util.UUID.randomUUID()))
+                .isInstanceOf(S3Exception.class);
+        verify(uploads).delete(any(com.yadony.api.common.media.MediaUploadEntity.class));
     }
 }

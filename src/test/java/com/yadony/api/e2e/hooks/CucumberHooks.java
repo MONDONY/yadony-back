@@ -66,10 +66,8 @@ public class CucumberHooks {
         Mockito.reset(storageService);
         Mockito.when(storageService.generatePresignedUrl(Mockito.anyString(), Mockito.any()))
                .thenReturn("https://fake-s3.yadony.test/photo.jpg");
-        try {
-            Mockito.when(storageService.uploadFile(Mockito.any(), Mockito.anyString()))
-                   .thenReturn("tracking/test/fake-key.jpg");
-        } catch (Exception ignored) {}
+        Mockito.when(storageService.storeImage(Mockito.any(), Mockito.any()))
+               .thenReturn("tracking/test/fake-key.jpg");
 
         // Google Places / Geocoding stubs — POST = autocomplete, GET = details, getForObject = reverse.
         Mockito.reset(placesRestTemplate);

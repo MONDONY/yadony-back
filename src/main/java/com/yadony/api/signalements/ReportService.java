@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.media.MediaPurpose;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.messaging.ConversationEntity;
@@ -16,7 +17,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.HashMap;
@@ -77,13 +77,8 @@ public class ReportService {
     /** Upload d'une capture d'écran sous reports/{userId}/ ; renvoie la clé S3. */
     public String uploadPhoto(String firebaseUid, MultipartFile file) {
         UserEntity user = requireUser(firebaseUid);
-        try {
-            return storageService.uploadFile(file, PHOTO_PREFIX + user.getId() + "/");
-        } catch (IOException e) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "photo-upload-failed", "Photo Upload Failed",
-                    "Impossible d'enregistrer la capture d'écran");
-        }
+        return storageService.storeImage(file, StorageService.MediaUpload.of(
+                PHOTO_PREFIX + user.getId() + "/", user.getId(), MediaPurpose.REPORT));
     }
 
     /** Crée un signalement + attache jusqu'à MAX_PHOTOS captures déjà uploadées. */

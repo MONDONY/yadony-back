@@ -2,8 +2,11 @@ package com.yadony.api.support;
 
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.media.MediaPurpose;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.mock.web.MockMultipartFile;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -13,7 +16,10 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class SupportAttachmentServiceTest {
@@ -24,6 +30,39 @@ class SupportAttachmentServiceTest {
     @InjectMocks private SupportAttachmentService service;
 
     private final UUID userId = UUID.randomUUID();
+
+    @Test
+    void uploadForUser_usesUserPrefix_andCountsAgainstQuota() {
+        MockMultipartFile file = new MockMultipartFile("file", "a.jpg", "image/jpeg", new byte[]{1});
+        when(storageService.storeImage(eq(file), org.mockito.ArgumentMatchers.any(StorageService.MediaUpload.class)))
+                .thenReturn("support/" + userId + "/k.jpg");
+
+        assertThat(service.uploadForUser(userId, file)).isEqualTo("support/" + userId + "/k.jpg");
+
+        ArgumentCaptor<StorageService.MediaUpload> captor = ArgumentCaptor.forClass(StorageService.MediaUpload.class);
+        verify(storageService).storeImage(eq(file), captor.capture());
+        assertThat(captor.getValue().prefix()).isEqualTo("support/" + userId + "/");
+        assertThat(captor.getValue().ownerId()).isEqualTo(userId);
+        assertThat(captor.getValue().purpose()).isEqualTo(MediaPurpose.SUPPORT);
+        assertThat(captor.getValue().quotaExempt()).isFalse();
+    }
+
+    @Test
+    void uploadForAdmin_isQuotaExempt() {
+        UUID adminId = UUID.randomUUID();
+        MockMultipartFile file = new MockMultipartFile("file", "a.jpg", "image/jpeg", new byte[]{1});
+        when(storageService.storeImage(eq(file), org.mockito.ArgumentMatchers.any(StorageService.MediaUpload.class)))
+                .thenReturn("support/admin/" + adminId + "/k.jpg");
+
+        service.uploadForAdmin(adminId, file);
+
+        ArgumentCaptor<StorageService.MediaUpload> captor = ArgumentCaptor.forClass(StorageService.MediaUpload.class);
+        verify(storageService).storeImage(eq(file), captor.capture());
+        assertThat(captor.getValue().prefix()).isEqualTo("support/admin/" + adminId + "/");
+        assertThat(captor.getValue().ownerId()).isEqualTo(adminId);
+        assertThat(captor.getValue().purpose()).isEqualTo(MediaPurpose.SUPPORT);
+        assertThat(captor.getValue().quotaExempt()).isTrue();
+    }
 
     @Test
     void acceptsKeysThatBelongToTheCaller() {

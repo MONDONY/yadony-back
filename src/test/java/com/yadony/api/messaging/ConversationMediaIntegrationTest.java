@@ -103,7 +103,7 @@ class ConversationMediaIntegrationTest {
         doAnswer(inv -> new StorageService.StoredImage(
                 inv.getArgument(0) + inv.getArgument(1).toString() + "_full.jpg",
                 inv.getArgument(0) + inv.getArgument(1).toString() + "_thumb.jpg"))
-                .when(storageService).storeMessagingImage(anyString(), anyString(), any(), any());
+                .when(storageService).storeMessagingImage(anyString(), anyString(), any(), any(), any());
     }
 
     private MockMultipartHttpServletRequestBuilder upload(UUID conversationId, byte[] bytes, String contentType) {

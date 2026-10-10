@@ -56,7 +56,7 @@ class TrackingControllerScanMethodTest {
     private static TrackingEventResponse response(UUID bidId, String eventType, String scanMethod) {
         LocalDateTime now = LocalDateTime.of(2026, 9, 28, 10, 0);
         return new TrackingEventResponse(UUID.randomUUID(), bidId, eventType, now,
-                null, null, null, null, null, now, scanMethod);
+                null, null, null, null, null, now, scanMethod, false);
     }
 
     @Test

@@ -21,6 +21,8 @@ import static org.mockito.Mockito.*;
 @DisplayName("StorageService.deleteByPrefix")
 class StorageServiceDeleteByPrefixTest {
 
+    @Mock private com.yadony.api.common.media.MediaUploadRepository uploads;
+    @Mock private com.yadony.api.config.PlatformSettingsService settings;
     @Mock private S3Client s3Client;
     @Mock private S3Presigner s3Presigner;
     @Mock private ImageProcessingService imageProcessingService;
@@ -29,7 +31,7 @@ class StorageServiceDeleteByPrefixTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        storageService = new StorageService(s3Client, s3Presigner, imageProcessingService);
+        storageService = new StorageService(s3Client, s3Presigner, imageProcessingService, uploads, settings);
         var field = StorageService.class.getDeclaredField("bucket");
         field.setAccessible(true);
         field.set(storageService, "test-bucket");
@@ -84,5 +86,59 @@ class StorageServiceDeleteByPrefixTest {
 
         verify(s3Client, times(2)).listObjectsV2(any(ListObjectsV2Request.class));
         verify(s3Client, times(2)).deleteObjects(any(DeleteObjectsRequest.class));
+    }
+
+    // ------------------------------------------------------------ listObjectsOlderThan
+
+    private static S3Object obj(String key, String lastModified) {
+        return S3Object.builder().key(key).lastModified(java.time.Instant.parse(lastModified)).build();
+    }
+
+    @Test
+    @DisplayName("listObjectsOlderThan : filtre par date et suit la pagination")
+    void listObjectsOlderThan_filtersByDate_acrossPages() {
+        java.time.Instant cutoff = java.time.Instant.parse("2026-10-09T04:10:00Z");
+        ListObjectsV2Response page1 = ListObjectsV2Response.builder()
+                .contents(List.of(obj("tracking/b/old1.jpg", "2026-10-01T00:00:00Z"),
+                        obj("tracking/b/new.jpg", "2026-10-09T05:00:00Z")))
+                .isTruncated(true).nextContinuationToken("tok1").build();
+        ListObjectsV2Response page2 = ListObjectsV2Response.builder()
+                .contents(List.of(obj("tracking/b/old2.jpg", "2026-10-09T04:09:59Z")))
+                .isTruncated(false).build();
+        when(s3Client.listObjectsV2(any(ListObjectsV2Request.class))).thenReturn(page1, page2);
+
+        List<String> keys = storageService.listObjectsOlderThan("tracking/", cutoff, 100);
+
+        assertThat(keys).containsExactly("tracking/b/old1.jpg", "tracking/b/old2.jpg");
+        ArgumentCaptor<ListObjectsV2Request> captor = ArgumentCaptor.forClass(ListObjectsV2Request.class);
+        verify(s3Client, times(2)).listObjectsV2(captor.capture());
+        assertThat(captor.getAllValues().get(0).prefix()).isEqualTo("tracking/");
+        assertThat(captor.getAllValues().get(1).continuationToken()).isEqualTo("tok1");
+    }
+
+    @Test
+    @DisplayName("listObjectsOlderThan : s'arrête à max sans lire la page suivante")
+    void listObjectsOlderThan_stopsAtMax() {
+        java.time.Instant cutoff = java.time.Instant.parse("2026-10-09T04:10:00Z");
+        ListObjectsV2Response page1 = ListObjectsV2Response.builder()
+                .contents(List.of(obj("bids/s/1.jpg", "2026-10-01T00:00:00Z"),
+                        obj("bids/s/2.jpg", "2026-10-01T00:00:00Z"),
+                        obj("bids/s/3.jpg", "2026-10-01T00:00:00Z")))
+                .isTruncated(true).nextContinuationToken("tok1").build();
+        when(s3Client.listObjectsV2(any(ListObjectsV2Request.class))).thenReturn(page1);
+
+        List<String> keys = storageService.listObjectsOlderThan("bids/", cutoff, 2);
+
+        assertThat(keys).containsExactly("bids/s/1.jpg", "bids/s/2.jpg");
+        verify(s3Client, times(1)).listObjectsV2(any(ListObjectsV2Request.class));
+    }
+
+    @Test
+    @DisplayName("listObjectsOlderThan : préfixe inconnu refusé")
+    void listObjectsOlderThan_rejectsUnknownPrefix() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                        storageService.listObjectsOlderThan("kyc/", java.time.Instant.now(), 10))
+                .isInstanceOf(YadonyBusinessException.class);
+        verifyNoInteractions(s3Client);
     }
 }

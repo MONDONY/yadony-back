@@ -10,9 +10,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -46,6 +50,8 @@ public class AccountFinalizationService {
     public void finalize(UserEntity user, FinalizationReason reason) {
         UUID userId = user.getId();
         String uid = userId.toString();
+        // Capturé avant toute pseudonymisation : sert au préfixe R2 de l'avatar.
+        String firebaseUid = user.getFirebaseUid();
 
         // 1. Pseudonymise personal data
         // Téléphone et email ne sont plus stockés ici : ils disparaissent avec le
@@ -58,6 +64,9 @@ public class AccountFinalizationService {
         user.setResidenceLine2(null);
         user.setResidencePostalCode(null);
         user.setFcmToken(null);
+        // Filet : si la purge R2 de l'avatar échoue après commit, l'objet devient orphelin
+        // (plus référencé) et le rapprochement quotidien R2 <-> base le supprimera.
+        user.setAvatarUrl(null);
         // Lot C — le SIRET est un identifiant d'entreprise reel : chiffre au repos, mais
         // parfaitement re-identifiant tant qu'il subsiste. Le laisser vidait l'anonymisation
         // de son sens pour tout compte PRO.
@@ -85,9 +94,28 @@ public class AccountFinalizationService {
             kycRepository.save(kyc);
         });
 
-        // 3. Delete Cloudflare R2 files
-        storageService.deleteByPrefix("kyc/" + userId + "/");
-        storageService.deleteByPrefix("support/" + userId + "/");
+        // 3. Fichiers R2 : supprimés APRÈS le commit, pour ne rien perdre si une étape
+        // ultérieure lève et que la base est restaurée (compte resté actif).
+        // bids/, package_requests/ et reports/ ne sont volontairement PAS purgés ici : des bids
+        // en cours (HANDED_OVER/IN_TRANSIT/ARRIVED) ou un litige/signalement ouvert ont besoin de
+        // leurs preuves. Ces photos suivent la purge normale (BidPhotoCleanupScheduler, participants
+        // requests/ et signalements/, qui respectent les retenues) et le rapprochement quotidien
+        // R2 <-> base rattrape les restes.
+        List<String> prefixes = new ArrayList<>();
+        prefixes.add("support/" + userId + "/");
+        if (firebaseUid != null && !firebaseUid.isBlank()) {
+            prefixes.add("users/" + firebaseUid + "/");
+        }
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    purgePrefixes(prefixes);
+                }
+            });
+        } else {
+            purgePrefixes(prefixes);
+        }
 
         // 4. Publish events → cross-package cleanup
         // AccountDeletionRequestedEvent : nécessaire ici car les chemins HARD_IMMEDIATE et
@@ -106,5 +134,15 @@ public class AccountFinalizationService {
         auditService.log("USER", userId, "USER_GDPR_DELETION", userId,
                 Map.of("reason", reason.name(), "pseudonymized", true));
         log.info("Account finalized for user {} (reason: {})", uid, reason);
+    }
+
+    private void purgePrefixes(List<String> prefixes) {
+        for (String prefix : prefixes) {
+            try {
+                storageService.deleteByPrefix(prefix);
+            } catch (RuntimeException e) {
+                log.warn("Purge R2 du préfixe {} échouée : {}", prefix, e.getMessage());
+            }
+        }
     }
 }

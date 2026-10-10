@@ -33,6 +33,12 @@ public class PlatformSettingsService {
     private static final BigDecimal MAX_REIMBURSEMENT_CAP = new BigDecimal("500");
     private static final int MIN_URGENCY_DAYS = 1;
     private static final int MAX_URGENCY_DAYS = 30;
+    private static final int MIN_RETENTION_DAYS = 1;
+    private static final int MAX_RETENTION_DAYS = 365;
+    private static final int MIN_DAILY_QUOTA = 5;
+    private static final int MAX_DAILY_QUOTA = 1000;
+    private static final int MIN_TRACKING_PHOTOS = 1;
+    private static final int MAX_TRACKING_PHOTOS = 20;
 
     private final PlatformSettingRepository repository;
     private final PlatformSettingsCache cache;
@@ -127,6 +133,40 @@ public class PlatformSettingsService {
         return raw == null ? criticalSmsFallbackEnabledProperty : Boolean.parseBoolean(raw);
     }
 
+    /** Jours entre la livraison (ou la fin) d'un colis et la suppression de ses photos. */
+    public int photoRetentionDays() {
+        return intOr(PlatformSettingKey.PHOTO_RETENTION_DAYS_AFTER_DELIVERY,
+                PlatformSettingKey.DEFAULT_PHOTO_RETENTION_DAYS);
+    }
+
+    /** Envois de photos autorisés par utilisateur sur 24 h glissantes, tous endpoints sauf le tracking. */
+    public int photoUploadDailyQuota() {
+        return intOr(PlatformSettingKey.PHOTO_UPLOAD_DAILY_QUOTA,
+                PlatformSettingKey.DEFAULT_PHOTO_UPLOAD_DAILY_QUOTA);
+    }
+
+    /** Photos de suivi (départ, transit, livraison) acceptées par bid sur 24 h glissantes. */
+    public int trackingPhotosMaxPerBid() {
+        return intOr(PlatformSettingKey.TRACKING_PHOTOS_MAX_PER_BID,
+                PlatformSettingKey.DEFAULT_TRACKING_PHOTOS_MAX_PER_BID);
+    }
+
+    /** Faux : purge et rapprochement tournent à blanc. Voir {@link PlatformSettingKey#PHOTO_PURGE_ENABLED}. */
+    public boolean photoPurgeEnabled() {
+        String raw = cache.all().get(PlatformSettingKey.PHOTO_PURGE_ENABLED.key());
+        return raw != null && Boolean.parseBoolean(raw);
+    }
+
+    private int intOr(PlatformSettingKey key, int fallback) {
+        String raw = cache.all().get(key.key());
+        if (raw == null) return fallback;
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
     /**
      * Regle unique des quotas reserves aux comptes standard (annonces mensuelles,
      * brouillons) : un compte beneficie des plafonds PRO s'il EST PRO, ou si l'offre PRO
@@ -190,6 +230,10 @@ public class PlatformSettingsService {
             case PRO_ENABLED -> String.valueOf(proEnabled());
             case KYC_DIDIT_ENABLED -> String.valueOf(kycDiditEnabled());
             case CRITICAL_SMS_FALLBACK_ENABLED -> String.valueOf(criticalSmsFallbackEnabled());
+            case PHOTO_RETENTION_DAYS_AFTER_DELIVERY -> String.valueOf(photoRetentionDays());
+            case PHOTO_UPLOAD_DAILY_QUOTA -> String.valueOf(photoUploadDailyQuota());
+            case TRACKING_PHOTOS_MAX_PER_BID -> String.valueOf(trackingPhotosMaxPerBid());
+            case PHOTO_PURGE_ENABLED -> String.valueOf(photoPurgeEnabled());
         };
     }
 
@@ -312,7 +356,32 @@ public class PlatformSettingsService {
                 }
                 yield String.valueOf(Boolean.parseBoolean(value));
             }
+            case PHOTO_RETENTION_DAYS_AFTER_DELIVERY -> boundedInt(value, MIN_RETENTION_DAYS, MAX_RETENTION_DAYS,
+                    "Le délai de suppression des photos doit être un nombre entier de jours entre 1 et 365");
+            case PHOTO_UPLOAD_DAILY_QUOTA -> boundedInt(value, MIN_DAILY_QUOTA, MAX_DAILY_QUOTA,
+                    "Le quota journalier de photos doit être un entier entre 5 et 1000");
+            case TRACKING_PHOTOS_MAX_PER_BID -> boundedInt(value, MIN_TRACKING_PHOTOS, MAX_TRACKING_PHOTOS,
+                    "Le nombre de photos de suivi par colis doit être un entier entre 1 et 20");
+            case PHOTO_PURGE_ENABLED -> {
+                if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
+                    throw invalid("L'activation de la purge des photos attend true ou false");
+                }
+                yield String.valueOf(Boolean.parseBoolean(value));
+            }
         };
+    }
+
+    private String boundedInt(String value, int min, int max, String message) {
+        int parsed;
+        try {
+            parsed = Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            throw invalid(message);
+        }
+        if (parsed < min || parsed > max) {
+            throw invalid(message);
+        }
+        return String.valueOf(parsed);
     }
 
     private BigDecimal parseDecimal(PlatformSettingKey key, String value) {

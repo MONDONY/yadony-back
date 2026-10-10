@@ -2,6 +2,12 @@ package com.yadony.api.common;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.media.MediaPurpose;
+import com.yadony.api.matching.AnnouncementEntity;
+import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.BidEntity;
+import com.yadony.api.matching.BidRepository;
+import org.springframework.http.HttpStatus;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -20,7 +26,7 @@ import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.startsWith;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
@@ -35,6 +41,8 @@ class StorageControllerIT {
     @Autowired private MockMvc mockMvc;
     @MockBean private StorageService storageService;
     @MockBean private UserRepository userRepository;
+    @MockBean private BidRepository bidRepository;
+    @MockBean private AnnouncementRepository announcementRepository;
 
     private static UsernamePasswordAuthenticationToken authAs(String uid) {
         return new UsernamePasswordAuthenticationToken(
@@ -66,7 +74,9 @@ class StorageControllerIT {
         UserEntity user = new UserEntity();
         setId(user, userId);
         when(userRepository.findByFirebaseUid(uid)).thenReturn(Optional.of(user));
-        when(storageService.uploadFile(any(), startsWith("package_requests/" + userId + "/")))
+        when(storageService.storeImage(any(), argThat(u -> u != null
+                && u.prefix().startsWith("package_requests/" + userId + "/")
+                && u.purpose() == MediaPurpose.PACKAGE_REQUEST && userId.equals(u.ownerId()))))
             .thenReturn("package_requests/" + userId + "/1.jpg");
         when(storageService.generatePresignedUrl(eq("package_requests/" + userId + "/1.jpg"),
             any(Duration.class))).thenReturn("https://signed/1");
@@ -87,5 +97,63 @@ class StorageControllerIT {
                 .file(jpeg())
                 .with(authentication(authAs("ghost"))))
             .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void uploadProfile_endpointRemoved() throws Exception {
+        mockMvc.perform(multipart("/storage/upload/profile").file(jpeg())
+                .with(authentication(authAs("uid-1"))))
+            .andExpect(status().is4xxClientError())
+            .andExpect(result -> org.assertj.core.api.Assertions
+                .assertThat(result.getResponse().getStatus()).isNotEqualTo(200));
+    }
+
+    private UUID stubTrackingFixture(String uid) {
+        UUID travelerId = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        UUID announcementId = UUID.randomUUID();
+        UserEntity traveler = new UserEntity();
+        setId(traveler, travelerId);
+        when(userRepository.findByFirebaseUid(uid)).thenReturn(Optional.of(traveler));
+        BidEntity bid = new BidEntity();
+        bid.setAnnouncementId(announcementId);
+        AnnouncementEntity announcement = new AnnouncementEntity();
+        announcement.setTravelerId(travelerId);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(announcement));
+        trackingTravelerId = travelerId;
+        return bidId;
+    }
+
+    private UUID trackingTravelerId;
+
+    @Test
+    void uploadTracking_usesTrackingMediaUploadWithTravelerAsOwner() throws Exception {
+        UUID bidId = stubTrackingFixture("trav");
+        when(storageService.storeImage(any(), argThat(u -> u != null
+                && u.prefix().equals("tracking/" + bidId + "/")
+                && u.purpose() == MediaPurpose.TRACKING
+                && bidId.equals(u.bidId()) && trackingTravelerId.equals(u.ownerId()))))
+            .thenReturn("tracking/" + bidId + "/1.jpg");
+        when(storageService.generatePresignedUrl(eq("tracking/" + bidId + "/1.jpg"), any(Duration.class)))
+            .thenReturn("https://signed/t");
+
+        mockMvc.perform(multipart("/storage/upload/tracking").file(jpeg()).param("bidId", bidId.toString())
+                .with(authentication(authAs("trav"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.key").value("tracking/" + bidId + "/1.jpg"));
+    }
+
+    @Test
+    void uploadTracking_quotaExceeded_is429ProblemJson() throws Exception {
+        UUID bidId = stubTrackingFixture("trav");
+        when(storageService.storeImage(any(), any())).thenThrow(new YadonyBusinessException(
+            HttpStatus.TOO_MANY_REQUESTS, "tracking-photo-limit-reached", "Too Many Requests", "max"));
+
+        mockMvc.perform(multipart("/storage/upload/tracking").file(jpeg()).param("bidId", bidId.toString())
+                .with(authentication(authAs("trav"))))
+            .andExpect(status().isTooManyRequests())
+            .andExpect(jsonPath("$.type")
+                .value(org.hamcrest.Matchers.containsString("tracking-photo-limit-reached")));
     }
 }

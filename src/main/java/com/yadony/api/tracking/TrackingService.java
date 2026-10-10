@@ -519,7 +519,8 @@ public class TrackingService {
                 e.getId(), e.getBidId(), e.getEventType().name(),
                 e.getScannedAt(), e.getGpsLat(), e.getGpsLon(), e.getGpsLabel(),
                 resolvedPhotoUrl != null ? resolvedPhotoUrl : e.getPhotoUrl(),
-                e.getOfflineTimestamp(), e.getCreatedAt(), scanMethodName(e));
+                e.getOfflineTimestamp(), e.getCreatedAt(), scanMethodName(e),
+                e.getPhotoPurgedAt() != null);
     }
 
     private static String scanMethodName(TrackingEventEntity e) {

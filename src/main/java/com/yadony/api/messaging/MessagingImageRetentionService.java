@@ -3,9 +3,10 @@ package com.yadony.api.messaging;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.MessagingMediaRetentionHold;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
-import com.yadony.api.matching.BidStatus;
+import com.yadony.api.matching.BidMediaRetention;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,7 +18,6 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.EnumSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -29,11 +29,12 @@ import java.util.stream.Collectors;
 
 /**
  * Conservation des photos de messagerie (FLUTTER-B4).
+ * N = réglage {@code photo_retention_days_after_delivery}.
  *
  * <ul>
- *   <li>bid livré (COMPLETED) : purge 7 jours après la livraison ({@code delivered_at},
+ *   <li>bid livré (COMPLETED) : purge N jours après la livraison ({@code delivered_at},
  *       repli sur la dernière mise à jour du bid) ;</li>
- *   <li>bid terminé autrement (annulé, no-show, refusé, expiré…) : 7 jours après la fin,
+ *   <li>bid terminé autrement (annulé, no-show, refusé, expiré…) : N jours après la fin,
  *       approchée par la dernière mise à jour du bid, qui porte le changement de statut ;</li>
  *   <li>bid encore en cours : rien ;</li>
  *   <li>exception : rien n'est purgé tant qu'un litige ou un signalement est ouvert
@@ -49,13 +50,6 @@ public class MessagingImageRetentionService {
 
     private static final Logger log = LoggerFactory.getLogger(MessagingImageRetentionService.class);
 
-    static final int RETENTION_DAYS = 7;
-
-    /** Bids encore vivants : leurs photos ne sont jamais purgées par l'échéance. */
-    static final Set<BidStatus> RUNNING_STATUSES = EnumSet.of(
-            BidStatus.AWAITING_PAYMENT, BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.NEGOTIATING,
-            BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED);
-
     private final MessagingImageRepository imageRepository;
     private final ConversationRepository conversationRepository;
     private final BidRepository bidRepository;
@@ -63,6 +57,7 @@ public class MessagingImageRetentionService {
     private final FirestoreService firestoreService;
     private final AuditService auditService;
     private final List<MessagingMediaRetentionHold> holds;
+    private final PlatformSettingsService settings;
     private final Clock clock;
 
     @Autowired
@@ -72,9 +67,10 @@ public class MessagingImageRetentionService {
                                           StorageService storageService,
                                           FirestoreService firestoreService,
                                           AuditService auditService,
-                                          List<MessagingMediaRetentionHold> holds) {
+                                          List<MessagingMediaRetentionHold> holds,
+                                          PlatformSettingsService settings) {
         this(imageRepository, conversationRepository, bidRepository, storageService, firestoreService,
-                auditService, holds, Clock.systemUTC());
+                auditService, holds, settings, Clock.systemUTC());
     }
 
     MessagingImageRetentionService(MessagingImageRepository imageRepository,
@@ -84,6 +80,7 @@ public class MessagingImageRetentionService {
                                    FirestoreService firestoreService,
                                    AuditService auditService,
                                    List<MessagingMediaRetentionHold> holds,
+                                   PlatformSettingsService settings,
                                    Clock clock) {
         this.imageRepository = imageRepository;
         this.conversationRepository = conversationRepository;
@@ -92,20 +89,15 @@ public class MessagingImageRetentionService {
         this.firestoreService = firestoreService;
         this.auditService = auditService;
         this.holds = holds;
+        this.settings = settings;
         this.clock = clock;
     }
 
     /**
      * Fin de conservation des photos d'un bid ; vide tant que le bid est en cours.
      */
-    static Optional<LocalDateTime> retentionEnd(BidEntity bid) {
-        BidStatus status = bid.getStatus();
-        if (status == null || RUNNING_STATUSES.contains(status)) {
-            return Optional.empty();
-        }
-        LocalDateTime base = status == BidStatus.COMPLETED && bid.getDeliveredAt() != null
-                ? bid.getDeliveredAt() : bid.getUpdatedAt();
-        return base == null ? Optional.empty() : Optional.of(base.plusDays(RETENTION_DAYS));
+    static Optional<LocalDateTime> retentionEnd(BidEntity bid, int retentionDays) {
+        return BidMediaRetention.end(bid, retentionDays);
     }
 
     /** Passe planifiée : purge les photos de chaque bid échu. Rend le nombre de photos purgées. */
@@ -129,7 +121,7 @@ public class MessagingImageRetentionService {
         BidEntity bid = bidRepository.findById(bidId).orElse(null);
         // Bid disparu : plus rien ne justifie de garder ses photos.
         if (bid != null) {
-            Optional<LocalDateTime> end = retentionEnd(bid);
+            Optional<LocalDateTime> end = retentionEnd(bid, settings.photoRetentionDays());
             if (end.isEmpty() || now.isBefore(end.get())) {
                 return 0;
             }

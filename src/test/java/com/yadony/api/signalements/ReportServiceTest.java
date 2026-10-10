@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.media.MediaPurpose;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.ratings.RatingRepository;
@@ -81,24 +82,30 @@ class ReportServiceTest {
     void uploadPhoto_storesUnderReporterPrefix() throws IOException {
         stubUser();
         MockMultipartFile file = new MockMultipartFile("file", "s.png", "image/png", new byte[]{1});
-        when(storageService.uploadFile(eq(file), eq("reports/" + reporterId + "/")))
-                .thenReturn("reports/" + reporterId + "/123_s.png");
+        when(storageService.storeImage(eq(file), any(StorageService.MediaUpload.class)))
+                .thenReturn("reports/" + reporterId + "/123_s.jpg");
 
         String key = service().uploadPhoto("uid-1", file);
 
         assertThat(key).startsWith("reports/" + reporterId + "/");
+        ArgumentCaptor<StorageService.MediaUpload> captor = ArgumentCaptor.forClass(StorageService.MediaUpload.class);
+        verify(storageService).storeImage(eq(file), captor.capture());
+        assertThat(captor.getValue().prefix()).isEqualTo("reports/" + reporterId + "/");
+        assertThat(captor.getValue().ownerId()).isEqualTo(reporterId);
+        assertThat(captor.getValue().purpose()).isEqualTo(MediaPurpose.REPORT);
     }
 
     @Test
-    void uploadPhoto_ioError_throws422() throws IOException {
+    void uploadPhoto_quotaExceeded_propagates429() {
         stubUser();
         MockMultipartFile file = new MockMultipartFile("file", "s.png", "image/png", new byte[]{1});
-        when(storageService.uploadFile(any(), anyString())).thenThrow(new IOException("disk"));
+        when(storageService.storeImage(any(), any())).thenThrow(new YadonyBusinessException(
+                HttpStatus.TOO_MANY_REQUESTS, "photo-upload-quota-exceeded", "Too Many Requests", "max"));
 
         assertThatThrownBy(() -> service().uploadPhoto("uid-1", file))
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getStatus())
-                .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                .isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
     }
 
     @Test
