@@ -9,6 +9,7 @@ import com.yadony.api.tracking.dto.TrackingEventResponse;
 import com.yadony.api.tracking.dto.TrackingSearchResponse;
 import com.yadony.api.tracking.dto.TripScanHistoryEntryDto;
 import jakarta.validation.Valid;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -27,6 +28,8 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/tracking")
 public class TrackingController {
+
+    static final String DUPLICATE_DEPART_CONSTRAINT = "uq_tracking_one_depart_per_bid";
 
     private final TrackingService trackingService;
     private final PickupCodeRequestService pickupCodeRequestService;
@@ -56,8 +59,30 @@ public class TrackingController {
     public ResponseEntity<TrackingEventResponse> scan(
             @Valid @RequestBody QrScanRequest request,
             @AuthenticationPrincipal String firebaseUid) {
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(trackingService.processScan(request, firebaseUid));
+        try {
+            TrackingService.ScanOutcome outcome = trackingService.recordScan(request, firebaseUid);
+            // 201 pour une étape créée, 200 pour un scan déjà enregistré (rejeu idempotent).
+            return ResponseEntity.status(outcome.created() ? HttpStatus.CREATED : HttpStatus.OK)
+                    .body(outcome.event());
+        } catch (DataIntegrityViolationException e) {
+            // Filet de la course que le verrou du colis empêche déjà : l'insert concurrent a
+            // perdu sur uq_tracking_one_depart_per_bid. Sa transaction est annulée, l'étape
+            // gagnante est relue dans une transaction neuve et renvoyée comme un rejeu.
+            if (!isDuplicateDepart(e)) {
+                throw e;
+            }
+            return ResponseEntity.ok(trackingService.findRecordedDepart(request.bidId(), firebaseUid));
+        }
+    }
+
+    static boolean isDuplicateDepart(Throwable e) {
+        for (Throwable current = e; current != null; current = current.getCause()) {
+            if (current.getMessage() != null
+                    && current.getMessage().contains(DUPLICATE_DEPART_CONSTRAINT)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @GetMapping("/{bidId}/events")

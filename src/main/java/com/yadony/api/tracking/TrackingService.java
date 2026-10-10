@@ -254,6 +254,28 @@ public class TrackingService {
 
     @Transactional
     public TrackingEventResponse processScan(QrScanRequest request, String firebaseUid) {
+        return recordScan(request, firebaseUid).event();
+    }
+
+    /**
+     * Résultat d'un scan : l'étape enregistrée, et si elle vient d'être créée ({@code created})
+     * ou si elle l'était déjà (rejeu idempotent d'un DEPART, aucun effet relancé).
+     */
+    public record ScanOutcome(TrackingEventResponse event, boolean created) {
+    }
+
+    /**
+     * Enregistre un scan. Un DEPART déjà enregistré pour ce colis est idempotent : l'étape
+     * existante est renvoyée, sans nouvel insert, ni code de confirmation, ni audit, ni
+     * notification (FLUTTER-JV, YADONY-BACK-STAGING-8 : l'app envoyait le même scan deux fois
+     * à 0,5 s d'écart, envoi direct + file hors ligne, et le second heurtait l'index unique
+     * uq_tracking_one_depart_per_bid en 500).
+     */
+    @Transactional
+    public ScanOutcome recordScan(QrScanRequest request, String firebaseUid) {
+        // Verrou du colis : deux scans simultanés du même colis se sérialisent. Le second
+        // attend le commit du premier, puis voit son DEPART et le renvoie tel quel.
+        bidRepository.lockForUpdate(request.bidId());
         BidEntity bid = bidRepository.findById(request.bidId())
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "bid-not-found", "Bid Not Found",
@@ -274,6 +296,18 @@ public class TrackingService {
                     "Seul le voyageur de cette annonce peut scanner le QR code");
         }
 
+        // Un DEPART ne s'enregistre qu'une fois par colis (index unique V48). Le rejeu du
+        // même scan par le même voyageur, même après la suite du parcours, renvoie l'étape
+        // existante : le code de confirmation déjà généré reste intact.
+        if (request.eventType() == TrackingEventType.DEPART) {
+            Optional<TrackingEventEntity> recorded = trackingEventRepository
+                    .findFirstByBidIdAndEventTypeOrderByScannedAtAsc(bid.getId(), TrackingEventType.DEPART);
+            if (recorded.isPresent()) {
+                log.info("Scan DEPART déjà enregistré pour le colis {}, rejeu idempotent", bid.getId());
+                return new ScanOutcome(toEventResponse(recorded.get(), null), false);
+            }
+        }
+
         if (bid.getStatus() != BidStatus.ACCEPTED
                 && bid.getStatus() != BidStatus.HANDED_OVER
                 && bid.getStatus() != BidStatus.IN_TRANSIT) {
@@ -290,16 +324,6 @@ public class TrackingService {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "use-confirm-delivery",
                     "Use Confirm Delivery",
                     "L'arrivée doit être confirmée avec le code de confirmation fourni par l'expéditeur");
-        }
-
-        if (request.eventType() == TrackingEventType.DEPART
-                && trackingEventRepository.existsByBidIdAndEventType(bid.getId(), TrackingEventType.DEPART)) {
-            // HANDED_OVER et IN_TRANSIT restent scannables (TRANSIT), donc un second DEPART
-            // passait les gardes et heurtait l'index unique uq_tracking_one_depart_per_bid
-            // (V48) : 500 « Unexpected error » (Sentry YADONY-BACK-STAGING-8). Refus explicite,
-            // et le code de confirmation déjà généré reste intact.
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "depart-already-scanned",
-                    "Depart Already Scanned", "Le départ de ce colis a déjà été scanné");
         }
 
         if (request.offlineTimestamp() != null
@@ -341,6 +365,9 @@ public class TrackingService {
             event.setSyncedAt(LocalDateTime.now(ZoneOffset.UTC));
         }
         trackingEventRepository.save(event);
+        // Insert immédiat : une violation d'unicité éclate ici, avant le moindre effet
+        // (audit, code, notification), et annule toute la transaction.
+        trackingEventRepository.flush();
 
         auditService.log("TRACKING_EVENT", event.getId(), "SCAN_" + request.eventType(),
                 traveler.getId(), Map.of(
@@ -377,7 +404,37 @@ public class TrackingService {
             eventPublisher.publishEvent(new ParcelInTransitEvent(bid.getId(), bid.getAnnouncementId()));
         }
 
-        return toEventResponse(event, null);
+        return new ScanOutcome(toEventResponse(event, null), true);
+    }
+
+    /**
+     * Relecture, dans une transaction neuve, du DEPART qu'une requête concurrente vient de
+     * commiter (filet de {@code TrackingController} quand l'insert heurte l'index unique).
+     * Mêmes gardes que le scan : seul le voyageur de l'annonce y accède.
+     */
+    public TrackingEventResponse findRecordedDepart(UUID bidId, String firebaseUid) {
+        BidEntity bid = bidRepository.findById(bidId)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "bid-not-found", "Bid Not Found",
+                        "Transaction introuvable"));
+        AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found",
+                        "Annonce introuvable"));
+        UserEntity traveler = userRepository.findByFirebaseUid(firebaseUid)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.UNAUTHORIZED, "user-not-found", "User Not Found",
+                        "Utilisateur introuvable"));
+        if (!announcement.getTravelerId().equals(traveler.getId())) {
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
+                    "Seul le voyageur de cette annonce peut scanner le QR code");
+        }
+        return trackingEventRepository
+                .findFirstByBidIdAndEventTypeOrderByScannedAtAsc(bidId, TrackingEventType.DEPART)
+                .map(e -> toEventResponse(e, null))
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.CONFLICT,
+                        "scan-already-recorded", "Scan Already Recorded",
+                        "Ce scan est déjà en cours d'enregistrement, réessayez"));
     }
 
     @Transactional(readOnly = true)

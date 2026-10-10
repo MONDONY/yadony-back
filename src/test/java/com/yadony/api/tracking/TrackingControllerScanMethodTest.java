@@ -6,6 +6,7 @@ import com.yadony.api.tracking.dto.TrackingEventResponse;
 import com.yadony.api.tracking.dto.TripScanHistoryEntryDto;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -61,7 +62,8 @@ class TrackingControllerScanMethodTest {
     @Test
     void scan_withScanMethod_isPassedToServiceAndReturned() throws Exception {
         UUID bidId = UUID.randomUUID();
-        when(trackingService.processScan(any(), anyString())).thenReturn(response(bidId, "TRANSIT", "MANUAL"));
+        when(trackingService.recordScan(any(), anyString()))
+                .thenReturn(new TrackingService.ScanOutcome(response(bidId, "TRANSIT", "MANUAL"), true));
 
         mockMvc.perform(post("/tracking/events")
                         .with(authentication(user("uid-traveler-scan-method", "ROLE_TRAVELER")))
@@ -71,14 +73,15 @@ class TrackingControllerScanMethodTest {
                 .andExpect(jsonPath("$.scanMethod").value("MANUAL"));
 
         ArgumentCaptor<QrScanRequest> captor = ArgumentCaptor.forClass(QrScanRequest.class);
-        verify(trackingService).processScan(captor.capture(), eq("uid-traveler-scan-method"));
+        verify(trackingService).recordScan(captor.capture(), eq("uid-traveler-scan-method"));
         assertThat(captor.getValue().scanMethod()).isEqualTo(ScanMethod.MANUAL);
     }
 
     @Test
     void scan_withoutScanMethod_staysCompatibleAndReturnsNull() throws Exception {
         UUID bidId = UUID.randomUUID();
-        when(trackingService.processScan(any(), anyString())).thenReturn(response(bidId, "DEPART", null));
+        when(trackingService.recordScan(any(), anyString()))
+                .thenReturn(new TrackingService.ScanOutcome(response(bidId, "DEPART", null), true));
 
         mockMvc.perform(post("/tracking/events")
                         .with(authentication(user("uid-traveler-legacy", "ROLE_TRAVELER")))
@@ -88,8 +91,57 @@ class TrackingControllerScanMethodTest {
                 .andExpect(jsonPath("$.scanMethod").doesNotExist());
 
         ArgumentCaptor<QrScanRequest> captor = ArgumentCaptor.forClass(QrScanRequest.class);
-        verify(trackingService).processScan(captor.capture(), anyString());
+        verify(trackingService).recordScan(captor.capture(), anyString());
         assertThat(captor.getValue().scanMethod()).isNull();
+    }
+
+    @Test
+    void scan_alreadyRecorded_returns200WithTheExistingEvent() throws Exception {
+        // FLUTTER-JV : le rejeu d'un DEPART déjà enregistré est un succès idempotent.
+        UUID bidId = UUID.randomUUID();
+        TrackingEventResponse existing = response(bidId, "DEPART", "QR");
+        when(trackingService.recordScan(any(), anyString()))
+                .thenReturn(new TrackingService.ScanOutcome(existing, false));
+
+        mockMvc.perform(post("/tracking/events")
+                        .with(authentication(user("uid-traveler-replay", "ROLE_TRAVELER")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"bidId\":\"" + bidId + "\",\"eventType\":\"DEPART\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(existing.id().toString()))
+                .andExpect(jsonPath("$.eventType").value("DEPART"));
+    }
+
+    @Test
+    void scan_lostTheRaceOnTheUniqueIndex_returns200WithTheWinningEvent() throws Exception {
+        UUID bidId = UUID.randomUUID();
+        TrackingEventResponse winner = response(bidId, "DEPART", "QR");
+        when(trackingService.recordScan(any(), anyString())).thenThrow(new DataIntegrityViolationException(
+                "could not execute statement",
+                new RuntimeException("duplicate key value violates unique constraint \"uq_tracking_one_depart_per_bid\"")));
+        when(trackingService.findRecordedDepart(eq(bidId), eq("uid-traveler-race"))).thenReturn(winner);
+
+        mockMvc.perform(post("/tracking/events")
+                        .with(authentication(user("uid-traveler-race", "ROLE_TRAVELER")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"bidId\":\"" + bidId + "\",\"eventType\":\"DEPART\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(winner.id().toString()));
+    }
+
+    @Test
+    void scan_otherIntegrityViolation_isNotSwallowed() throws Exception {
+        UUID bidId = UUID.randomUUID();
+        when(trackingService.recordScan(any(), anyString()))
+                .thenThrow(new DataIntegrityViolationException("fk_tracking_events_bid"));
+
+        mockMvc.perform(post("/tracking/events")
+                        .with(authentication(user("uid-traveler-fk", "ROLE_TRAVELER")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"bidId\":\"" + bidId + "\",\"eventType\":\"DEPART\"}"))
+                .andExpect(result -> assertThat(result.getResponse().getStatus()).isNotIn(200, 201));
+
+        verify(trackingService, never()).findRecordedDepart(any(), anyString());
     }
 
     @Test
@@ -101,7 +153,7 @@ class TrackingControllerScanMethodTest {
                                 + "\",\"eventType\":\"TRANSIT\",\"scanMethod\":\"NFC\"}"))
                 .andExpect(status().isBadRequest());
 
-        verify(trackingService, never()).processScan(any(), anyString());
+        verify(trackingService, never()).recordScan(any(), anyString());
     }
 
     @Test

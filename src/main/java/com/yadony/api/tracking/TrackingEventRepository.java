@@ -3,6 +3,7 @@ package com.yadony.api.tracking;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface TrackingEventRepository extends JpaRepository<TrackingEventEntity, UUID> {
@@ -12,4 +13,7 @@ public interface TrackingEventRepository extends JpaRepository<TrackingEventEnti
     List<TrackingEventEntity> findByBidIdInOrderByScannedAtDesc(List<UUID> bidIds);
 
     boolean existsByBidIdAndEventType(UUID bidId, TrackingEventType eventType);
+
+    Optional<TrackingEventEntity> findFirstByBidIdAndEventTypeOrderByScannedAtAsc(UUID bidId,
+                                                                              TrackingEventType eventType);
 }
