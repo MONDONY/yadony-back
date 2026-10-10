@@ -308,6 +308,21 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
             + "WHERE p.id = :id AND p.status = 'PENDING'")
     int markEscrowIfPending(@Param("id") UUID id, @Param("now") Instant now);
 
+    /**
+     * Carte : PENDING → ESCROW à l'autorisation ({@code amount_capturable_updated},
+     * {@code confirm-payment}), sans toucher à {@code capturedAt} (la capture vient plus tard,
+     * contrairement à {@link #markEscrowIfPending} du mobile money). 0 si le paiement a quitté
+     * PENDING (annulé avant paiement, échoué) : il n'est jamais ressuscité en séquestre.
+     */
+    @Modifying
+    @Query("UPDATE PaymentEntity p SET p.status = 'ESCROW' WHERE p.id = :id AND p.status = 'PENDING'")
+    int markCardEscrowIfPending(@Param("id") UUID id);
+
+    /** CANCELLED → REFUNDED : capture tardive d'un paiement annulé, remboursée ({@code LateAuthorizationReleaser}). */
+    @Modifying
+    @Query("UPDATE PaymentEntity p SET p.status = 'REFUNDED' WHERE p.id = :id AND p.status = 'CANCELLED'")
+    int markRefundedIfCancelled(@Param("id") UUID id);
+
     /** PENDING → CANCELLED (deadline mobile money dépassée, ou remboursement d'un paiement jamais encaissé). */
     @Modifying
     @Query("UPDATE PaymentEntity p SET p.status = 'CANCELLED' WHERE p.id = :id AND p.status = 'PENDING'")

@@ -43,6 +43,12 @@ class PaymentWebhookBidPromotionTest {
 
     @BeforeEach
     void setUp() {
+        // Écritures conditionnelles de séquestre et de promotion (annulation avant paiement) :
+        // ici le paiement est encore PENDING et le bid AWAITING_PAYMENT.
+        org.mockito.Mockito.lenient().when(paymentRepository.markCardEscrowIfPending(
+                org.mockito.ArgumentMatchers.any())).thenReturn(1);
+        org.mockito.Mockito.lenient().when(bidRepository.promoteToEscrowedIfAwaitingPayment(
+                org.mockito.ArgumentMatchers.any())).thenReturn(1);
         service = new PaymentService(userRepository, bidRepository, mock(com.yadony.api.matching.BidGridItemRepository.class), announcementRepository,
             paymentRepository, auditService, eventPublisher,
             PaymentServiceTestFactory.defaultConnectProperties(),
@@ -87,6 +93,19 @@ class PaymentWebhookBidPromotionTest {
         verify(eventPublisher).publishEvent(evt.capture());
         assertThat(evt.getValue().getBidId()).isEqualTo(bid.getId());
         assertThat(evt.getValue().getTravelerId()).isEqualTo(announcement.getTravelerId());
+    }
+
+    /** Bid annulé avant paiement entre la lecture et l'écriture : l'UPDATE conditionnel perd. */
+    @Test
+    void promote_lostTheConditionalWrite_noSaveNoEvent() {
+        when(bidRepository.findByPaymentIntentId("pi_xxx")).thenReturn(Optional.of(bid));
+        when(bidRepository.promoteToEscrowedIfAwaitingPayment(bid.getId())).thenReturn(0);
+
+        service.promoteBidOnPaymentAuthorized("pi_xxx");
+
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.AWAITING_PAYMENT);
+        verify(bidRepository, never()).save(any());
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
