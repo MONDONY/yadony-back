@@ -6,9 +6,12 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.util.Iterator;
 
 /**
  * Processes uploaded images for request photos:
@@ -28,6 +31,13 @@ public class ImageProcessingService {
     public static final double STORAGE_QUALITY = 0.80;
     public static final int AVATAR_LONG_EDGE = 512;
     public static final double AVATAR_QUALITY = 0.82;
+
+    /**
+     * Plafond de pixels déclarés (≈ 160 Mo en ARGB). Un PNG de quelques Ko peut annoncer
+     * 20 000 × 20 000 px : décoder sans ce garde provoque une OutOfMemoryError qu'aucun
+     * catch ne rattrape. Les dimensions sont lues dans l'en-tête, avant tout décodage.
+     */
+    public static final long MAX_PIXELS = 40_000_000L;
 
     /** Container for the two derived images produced by {@link #process}. */
     public record ProcessedImage(byte[] main, byte[] thumbnail) {}
@@ -121,6 +131,7 @@ public class ImageProcessingService {
                     "Invalid Image",
                     "Le fichier est vide ou absent");
         }
+        rejectOversizedDimensions(input);
         try {
             BufferedImage img = ImageIO.read(new ByteArrayInputStream(input));
             if (img == null) {
@@ -137,6 +148,39 @@ public class ImageProcessingService {
                     "image/invalid",
                     "Invalid Image",
                     "Le fichier n'est pas une image valide");
+        }
+    }
+
+    /**
+     * Lit largeur et hauteur dans l'en-tête (sans allouer l'image) et refuse au-delà de
+     * {@link #MAX_PIXELS}. Un fichier dont l'en-tête est illisible passe ici et sera
+     * refusé par le décodage ({@code image/invalid}).
+     */
+    private static void rejectOversizedDimensions(byte[] input) {
+        long pixels;
+        try (ImageInputStream in = ImageIO.createImageInputStream(new ByteArrayInputStream(input))) {
+            if (in == null) {
+                return;
+            }
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(in);
+            if (!readers.hasNext()) {
+                return;
+            }
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(in, true, true);
+                pixels = (long) reader.getWidth(0) * reader.getHeight(0);
+            } finally {
+                reader.dispose();
+            }
+        } catch (Exception e) {
+            return;
+        }
+        if (pixels > MAX_PIXELS) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "image/too-large",
+                    "Image Too Large",
+                    "Image trop grande (dimensions)");
         }
     }
 }
