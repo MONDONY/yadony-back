@@ -10,7 +10,6 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -29,27 +28,43 @@ class StripeTransferLookupTest {
         return t;
     }
 
-    private StripeTransferLookup lookupReturning(List<Transfer> transfers, ArgumentCaptor<TransferListParams> captor)
-            throws Exception {
+    private static TransferCollection collection(List<Transfer> transfers) {
+        TransferCollection c = mock(TransferCollection.class);
+        when(c.autoPagingIterable()).thenReturn(transfers);
+        return c;
+    }
+
+    /** 1er appel : recherche par groupe ; 2e : repli par compte de destination. */
+    private StripeTransferLookup lookup(List<Transfer> byGroup, List<Transfer> byDestination,
+                                        ArgumentCaptor<TransferListParams> captor) throws Exception {
         StripeTransferLookup lookup = spy(new StripeTransferLookup());
-        TransferCollection collection = mock(TransferCollection.class);
-        when(collection.autoPagingIterable()).thenReturn(transfers);
-        doReturn(collection).when(lookup).list(captor != null ? captor.capture() : any());
+        doReturn(collection(byGroup), collection(byDestination)).when(lookup).list(captor.capture());
         return lookup;
     }
 
     @Test
-    void trouveLeTransferDuPaiementParSaMetadonnee() throws Exception {
+    void trouveParGroupe_independammentDuCompte() throws Exception {
+        ArgumentCaptor<TransferListParams> captor = ArgumentCaptor.forClass(TransferListParams.class);
+        StripeTransferLookup lookup = lookup(List.of(transfer("tr_reversed", null, true), transfer("tr_group", null, false)),
+                List.of(), captor);
+
+        assertThat(lookup.findExistingTransfer(paymentId, "acct_new", null)).contains("tr_group");
+        assertThat(captor.getAllValues()).hasSize(1);
+        assertThat(captor.getValue().getTransferGroup()).isEqualTo("payment_" + paymentId);
+    }
+
+    @Test
+    void ancienTransferSansGroupe_trouveParCompteEtMetadonnee() throws Exception {
         ArgumentCaptor<TransferListParams> captor = ArgumentCaptor.forClass(TransferListParams.class);
         LocalDateTime created = LocalDateTime.of(2026, 10, 1, 12, 0);
-        StripeTransferLookup lookup = lookupReturning(List.of(
+        StripeTransferLookup lookup = lookup(List.of(), List.of(
                 transfer("tr_other", UUID.randomUUID().toString(), false),
                 transfer("tr_nometa", null, false),
                 transfer("tr_mine", paymentId.toString(), false)), captor);
 
         assertThat(lookup.findExistingTransfer(paymentId, "acct_t", created)).contains("tr_mine");
 
-        TransferListParams params = captor.getValue();
+        TransferListParams params = captor.getAllValues().get(1);
         assertThat(params.getDestination()).isEqualTo("acct_t");
         assertThat(params.getLimit()).isEqualTo(100L);
         TransferListParams.Created range = (TransferListParams.Created) params.getCreated();
@@ -58,29 +73,23 @@ class StripeTransferLookupTest {
     }
 
     @Test
-    void transferEntierementAnnule_neComptePas() throws Exception {
-        StripeTransferLookup lookup = lookupReturning(List.of(
-                transfer("tr_reversed", paymentId.toString(), true)), null);
-
-        assertThat(lookup.findExistingTransfer(paymentId, "acct_t", null)).isEmpty();
-    }
-
-    @Test
-    void sansBorneDeDate_aucunFiltreCreated() throws Exception {
+    void transferEntierementAnnule_neComptePas_sansBorneDeDate() throws Exception {
         ArgumentCaptor<TransferListParams> captor = ArgumentCaptor.forClass(TransferListParams.class);
-        StripeTransferLookup lookup = lookupReturning(List.of(), captor);
+        StripeTransferLookup lookup = lookup(List.of(), List.of(transfer("tr_reversed", paymentId.toString(), true)), captor);
 
         assertThat(lookup.findExistingTransfer(paymentId, "acct_t", null)).isEmpty();
-        assertThat(captor.getValue().getCreated()).isNull();
+        assertThat(captor.getAllValues().get(1).getCreated()).isNull();
     }
 
     @Test
-    void sansCompteDeDestinationOuPaiement_aucunAppelStripe() throws Exception {
-        StripeTransferLookup lookup = spy(new StripeTransferLookup());
+    void sansCompte_seuleLaRechercheParGroupe_sansPaiement_aucunAppel() throws Exception {
+        ArgumentCaptor<TransferListParams> captor = ArgumentCaptor.forClass(TransferListParams.class);
+        StripeTransferLookup lookup = lookup(List.of(), List.of(), captor);
 
-        assertThat(lookup.findExistingTransfer(paymentId, null, null)).isEqualTo(Optional.empty());
         assertThat(lookup.findExistingTransfer(paymentId, " ", null)).isEmpty();
+        assertThat(lookup.findExistingTransfer(paymentId, null, null)).isEmpty();
+        verify(lookup, times(2)).list(any());
         assertThat(lookup.findExistingTransfer(null, "acct_t", null)).isEmpty();
-        verify(lookup, never()).list(any());
+        verify(lookup, times(2)).list(any());
     }
 }

@@ -68,7 +68,8 @@ public class AdminDisputeOpeningService {
 
     @Transactional
     public AdminOpenDisputeResponse open(UUID bidId, UUID adminId, AdminOpenDisputeRequest request) {
-        BidEntity bid = bidRepository.findByIdForUpdate(bidId)
+        bidRepository.lockForUpdate(bidId);
+        BidEntity bid = bidRepository.findById(bidId)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "bid-not-found",
                         "Not Found", "Colis introuvable"));
 

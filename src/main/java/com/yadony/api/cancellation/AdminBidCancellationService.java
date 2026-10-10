@@ -89,19 +89,39 @@ public class AdminBidCancellationService {
         }
 
         // Verrou de ligne : deux clics simultanés ne peuvent pas annuler (et notifier) deux fois.
-        BidEntity bid = bidRepository.findByIdForUpdate(bidId)
+        bidRepository.lockForUpdate(bidId);
+        BidEntity bid = bidRepository.findById(bidId)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "bid-not-found",
                         "Not Found", "Colis introuvable"));
 
         Optional<PaymentEntity> payment = paymentRepository.findForBid(bidId);
         String currency = payment.map(PaymentEntity::getCurrency).orElse(bid.getCurrency());
+        // Verrous dans l'ordre colis puis paiement (comme la libération forcée) : un versement
+        // concurrent (claim ESCROW → RELEASED non commité) est attendu ici, puis le statut est relu
+        // en base. Aucune décision sur le statut chargé en cache.
+        PaymentStatus paymentStatus = null;
+        if (payment.isPresent()) {
+            paymentRepository.lockIfEscrow(payment.get().getId());
+            paymentStatus = paymentRepository.findStatusById(payment.get().getId())
+                    .orElse(payment.get().getStatus());
+        }
+        boolean refundable = paymentStatus == PaymentStatus.ESCROW || paymentStatus == PaymentStatus.PENDING;
 
         if (bid.getStatus() == BidStatus.CANCELLED) {
+            // Idempotent, mais jamais un remboursement oublié : si le paiement est encore en
+            // séquestre (remboursement précédent en échec), on le relance (RefundProcessor est
+            // idempotent par claim atomique).
+            if (refundable) {
+                eventPublisher.publishEvent(new BidRejectedEvent(bidId, bid.getSenderId(),
+                        BidRejectedEvent.REASON_CANCELLED_BY_ADMIN, bid.getAnnouncementId(), false));
+                auditService.log("BID", bidId, "ADMIN_BID_CANCEL_REFUND_RETRIED", adminId,
+                        Map.of("paymentStatus", paymentStatus.name()));
+            }
             return new AdminBidCancelResponse(bidId, BidStatus.CANCELLED.name(), BidStatus.CANCELLED.name(),
-                    true, false, payment.map(p -> p.getStatus().name()).orElse(null),
-                    BigDecimal.ZERO, currency, false);
+                    true, refundable, paymentStatus != null ? paymentStatus.name() : null,
+                    refundAmountOf(payment, paymentStatus), currency, false);
         }
-        assertCancellable(bid, payment);
+        assertCancellable(bid, payment, paymentStatus);
 
         BidStatus previous = bid.getStatus();
         AnnouncementEntity announcement = bid.getAnnouncementId() != null
@@ -112,14 +132,8 @@ public class AdminBidCancellationService {
         bid.setStatus(BidStatus.CANCELLED);
         bidRepository.save(bid);
 
-        boolean refundRequested = payment.isPresent()
-                && (payment.get().getStatus() == PaymentStatus.ESCROW
-                    || payment.get().getStatus() == PaymentStatus.PENDING);
-        BigDecimal refundAmount = payment
-                .filter(p -> p.getStatus() == PaymentStatus.ESCROW)
-                .map(p -> p.getAmount().subtract(p.getRefundedAmount() != null ? p.getRefundedAmount() : BigDecimal.ZERO))
-                .orElse(BigDecimal.ZERO);
-        String paymentStatus = payment.map(p -> p.getStatus().name()).orElse(null);
+        boolean refundRequested = refundable;
+        BigDecimal refundAmount = refundAmountOf(payment, paymentStatus);
 
         Map<String, Object> payload = new HashMap<>();
         payload.put("reason", request.reason().name());
@@ -139,10 +153,18 @@ public class AdminBidCancellationService {
                 refundRequested, refundAmount, currency, parcelWithTraveler));
 
         return new AdminBidCancelResponse(bidId, BidStatus.CANCELLED.name(), previous.name(), false,
-                refundRequested, paymentStatus, refundAmount, currency, parcelWithTraveler);
+                refundRequested, paymentStatus != null ? paymentStatus.name() : null, refundAmount, currency,
+                parcelWithTraveler);
     }
 
-    private void assertCancellable(BidEntity bid, Optional<PaymentEntity> payment) {
+    /** Montant rendu : le reste encaissé d'un séquestre, 0 sinon (autorisation levée, rien débité). */
+    private static BigDecimal refundAmountOf(Optional<PaymentEntity> payment, PaymentStatus status) {
+        if (status != PaymentStatus.ESCROW || payment.isEmpty()) return BigDecimal.ZERO;
+        PaymentEntity p = payment.get();
+        return p.getAmount().subtract(p.getRefundedAmount() != null ? p.getRefundedAmount() : BigDecimal.ZERO);
+    }
+
+    private void assertCancellable(BidEntity bid, Optional<PaymentEntity> payment, PaymentStatus paymentStatus) {
         if (bid.getStatus() == BidStatus.COMPLETED) {
             throw conflict("bid-delivered", "Colis déjà livré : il ne peut plus être annulé.");
         }
@@ -154,7 +176,7 @@ public class AdminBidCancellationService {
             throw conflict("bid-already-closed",
                     "Ce colis est déjà terminé (statut " + bid.getStatus() + ") : rien à annuler.");
         }
-        if (payment.isPresent() && payment.get().getStatus() == PaymentStatus.RELEASED) {
+        if (paymentStatus == PaymentStatus.RELEASED) {
             throw conflict("payment-released",
                     "Le voyageur a déjà été payé pour ce colis : l'annulation rembourserait un argent déjà versé.");
         }

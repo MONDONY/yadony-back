@@ -129,6 +129,7 @@ class UncapturedEscrowAutoCaptureIT {
 
     private List<UUID> candidates() {
         return paymentRepository.findUncapturedDueEscrowIds(LocalDateTime.now(ZoneOffset.UTC).minusHours(2),
+                LocalDateTime.now(ZoneOffset.UTC).minusDays(7),
                 EscrowCaptureService.ENGAGED_BID_STATUSES, PendingCardPaymentAutoHealJob.DEAD_THREADS,
                 PageRequest.of(0, 500)).stream().filter(payments::contains).toList();
     }
@@ -168,6 +169,9 @@ class UncapturedEscrowAutoCaptureIT {
                 Timestamp.valueOf(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(30)), recent.getId());
         PaymentEntity legacy = escrow(bid(BidStatus.ACCEPTED), "requires_capture");
         jdbc.update("UPDATE payments SET legacy_destination_charge = true WHERE id = ?", legacy.getId());
+        PaymentEntity tooOld = escrow(bid(BidStatus.ACCEPTED), "requires_capture");   // autorisation expirée (> 7 j)
+        jdbc.update("UPDATE payments SET created_at = ? WHERE id = ?",
+                Timestamp.valueOf(LocalDateTime.now(ZoneOffset.UTC).minusDays(8)), tooOld.getId());
         PaymentEntity disputed = escrow(bid(BidStatus.ACCEPTED), "requires_capture");
         jdbc.update("UPDATE payments SET disputed = true WHERE id = ?", disputed.getId());
         BidEntity inCancellation = bid(BidStatus.HANDED_OVER);

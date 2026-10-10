@@ -84,8 +84,10 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
      * Séquestres carte jamais capturés alors que le modèle actuel les capture déjà (staging,
      * 07/10/2026 : 5 paiements ESCROW sans {@code captured_at}, l'autorisation expirant à J+7) :
      * paiement de négociation (capture au passage en séquestre, #472) ou colis classique engagé
-     * (capture à l'acceptation, {@code BidAcceptedEventListener}). Créés avant {@code olderThan}
-     * (les traitements normaux ont eu le temps de capturer).
+     * (capture à l'acceptation, {@code BidAcceptedEventListener}). Créés entre {@code newerThan}
+     * (au-delà de 7 jours l'autorisation carte est expirée : ces paiements n'occupent plus le lot à
+     * chaque redémarrage, leur alerte unique suffit) et {@code olderThan} (les traitements normaux
+     * ont eu le temps de capturer).
      *
      * <p>Exclus : legacy (capture à la livraison), litige bancaire, remboursement partiel, versement
      * retenu ; colis annulé ou terminé (seuls les statuts engagés sont repris) ; colis portant une
@@ -103,6 +105,7 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
                AND (p.refundedAmount IS NULL OR p.refundedAmount = 0)
                AND p.payoutHeldAt IS NULL
                AND p.createdAt < :olderThan
+               AND p.createdAt > :newerThan
                AND (
                     (p.bidId IS NOT NULL AND EXISTS (
                         SELECT 1 FROM com.yadony.api.matching.BidEntity b
@@ -121,6 +124,7 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
              ORDER BY p.createdAt DESC, p.id
             """)
     List<UUID> findUncapturedDueEscrowIds(@Param("olderThan") LocalDateTime olderThan,
+                                          @Param("newerThan") LocalDateTime newerThan,
                                           @Param("engaged") java.util.Collection<com.yadony.api.matching.BidStatus> engaged,
                                           @Param("deadThreads") java.util.Collection<com.yadony.api.requests.entity.NegotiationThreadStatus> deadThreads,
                                           org.springframework.data.domain.Pageable page);

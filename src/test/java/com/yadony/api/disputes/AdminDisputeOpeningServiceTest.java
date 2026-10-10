@@ -69,7 +69,7 @@ class AdminDisputeOpeningServiceTest {
         bid.setStatus(BidStatus.ARRIVED);
         AnnouncementEntity ann = new AnnouncementEntity();
         ann.setTravelerId(travelerId);
-        lenient().when(bidRepository.findByIdForUpdate(bidId)).thenReturn(Optional.of(bid));
+        lenient().when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
         lenient().when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(ann));
         lenient().when(paymentRepository.findForBid(bidId)).thenReturn(Optional.empty());
         lenient().when(disputeRepository.findByBidIdAndType(any(), any())).thenReturn(Optional.empty());
@@ -171,7 +171,7 @@ class AdminDisputeOpeningServiceTest {
 
     @Test
     void colisIntrouvable_404() {
-        when(bidRepository.findByIdForUpdate(bidId)).thenReturn(Optional.empty());
+        when(bidRepository.findById(bidId)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.open(bidId, adminId, REQUEST))
                 .isInstanceOfSatisfying(YadonyBusinessException.class,
                         e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.NOT_FOUND));

@@ -17,9 +17,9 @@ import java.util.UUID;
  * second Transfer et paierait le voyageur deux fois.
  *
  * <p>Avant chaque création, on demande donc à Stripe s'il existe déjà un Transfer pour ce
- * paiement. Les Transfers du versement portent la métadonnée {@code payment_id} mais aucun
- * {@code transfer_group} (non filtrable sur les métadonnées) : la recherche se fait par compte
- * de destination, bornée à la date de création du paiement, puis filtrée sur
+ * paiement : d'abord par {@code transfer_group = payment_<id>} (posé sur tout Transfer créé
+ * depuis V310, indépendant du compte de destination), puis, pour les Transfers plus anciens
+ * sans groupe, par compte de destination borné à la date de création du paiement et filtré sur
  * {@code metadata.payment_id}. Un Transfer entièrement annulé ({@code reversed}) ne compte pas.
  *
  * <p>Un échec de lecture remonte en {@link StripeException} : l'appelant n'émet alors aucun
@@ -37,7 +37,20 @@ public class StripeTransferLookup {
      */
     public Optional<String> findExistingTransfer(UUID paymentId, String destination, LocalDateTime notBefore)
             throws StripeException {
-        if (paymentId == null || destination == null || destination.isBlank()) {
+        if (paymentId == null) {
+            return Optional.empty();
+        }
+        String expected = paymentId.toString();
+        // 1. Par groupe (Transfers créés depuis V310) : indépendant du compte de destination,
+        //    donc juste même si le voyageur a changé de compte Connect entre-temps.
+        for (Transfer t : list(TransferListParams.builder().setTransferGroup(transferGroup(paymentId))
+                .setLimit(10L).build()).autoPagingIterable()) {
+            if (!Boolean.TRUE.equals(t.getReversed())) {
+                return Optional.of(t.getId());
+            }
+        }
+        // 2. Repli pour les Transfers plus anciens (sans groupe) : compte actuel + métadonnée.
+        if (destination == null || destination.isBlank()) {
             return Optional.empty();
         }
         TransferListParams.Builder params = TransferListParams.builder()
@@ -48,7 +61,6 @@ public class StripeTransferLookup {
                     .setGte(notBefore.toEpochSecond(ZoneOffset.UTC) - CREATED_MARGIN_SECONDS)
                     .build());
         }
-        String expected = paymentId.toString();
         for (Transfer t : list(params.build()).autoPagingIterable()) {
             if (t.getMetadata() != null && expected.equals(t.getMetadata().get("payment_id"))
                     && !Boolean.TRUE.equals(t.getReversed())) {
@@ -56,6 +68,11 @@ public class StripeTransferLookup {
             }
         }
         return Optional.empty();
+    }
+
+    /** Groupe Stripe des Transfers du versement d'un paiement. */
+    public static String transferGroup(UUID paymentId) {
+        return "payment_" + paymentId;
     }
 
     /** Point d'appel du SDK, isolé pour les tests. */

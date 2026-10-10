@@ -35,7 +35,7 @@ class PendingCardPaymentAutoHealJobCaptureTest {
     }
 
     private void candidates(List<UUID> ids) {
-        when(paymentRepository.findUncapturedDueEscrowIds(any(), any(), any(), any())).thenReturn(ids);
+        when(paymentRepository.findUncapturedDueEscrowIds(any(), any(), any(), any(), any())).thenReturn(ids);
     }
 
     @Test
@@ -49,6 +49,7 @@ class PendingCardPaymentAutoHealJobCaptureTest {
         assertThat(job.nextCaptureOf(id)).isNull();
         // La requête ne reprend que les séquestres créés depuis plus de 2 h.
         verify(paymentRepository).findUncapturedDueEscrowIds(eq(java.time.LocalDateTime.ofInstant(NOW, ZoneOffset.UTC).minusHours(2)),
+                eq(java.time.LocalDateTime.ofInstant(NOW, ZoneOffset.UTC).minusDays(7)),
                 eq(EscrowCaptureService.ENGAGED_BID_STATUSES), eq(PendingCardPaymentAutoHealJob.DEAD_THREADS), any());
     }
 
@@ -127,6 +128,6 @@ class PendingCardPaymentAutoHealJobCaptureTest {
                 null, true, Duration.ofMinutes(10), Duration.ofDays(7), Duration.ofHours(24), 20,
                 Clock.fixed(NOW, ZoneOffset.UTC));
         assertThat(job.captureDueEscrows()).isZero();
-        verify(paymentRepository, never()).findUncapturedDueEscrowIds(any(), any(), any(), any());
+        verify(paymentRepository, never()).findUncapturedDueEscrowIds(any(), any(), any(), any(), any());
     }
 }

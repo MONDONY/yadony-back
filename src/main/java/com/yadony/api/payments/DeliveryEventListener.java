@@ -381,8 +381,11 @@ public class DeliveryEventListener {
         try {
             if (payment.isLegacyDestinationCharge()) {
                 releaseLegacy(payment);
-            } else {
-                releaseV2(payment, event, chargeId);
+            } else if (releaseV2(payment, event, chargeId)) {
+                // Transfer déjà émis chez Stripe : base réalignée et tracée
+                // (TRANSFER_ALREADY_EXISTS_REALIGNED), rien d'autre. Ni second audit de
+                // versement, ni nouvelle notification au voyageur.
+                return EscrowReleaseOutcome.RELEASED;
             }
         } catch (StripeException e) {
             log.error("Escrow release failed for payment {} (bid={}, legacy={}): {}",
@@ -509,7 +512,8 @@ public class DeliveryEventListener {
                         .build());
     }
 
-    private void releaseV2(PaymentEntity payment, ReleaseTrigger event, String chargeId) throws StripeException {
+    /** @return vrai si un Transfer existait déjà chez Stripe (base réalignée, aucun nouveau Transfer) */
+    private boolean releaseV2(PaymentEntity payment, ReleaseTrigger event, String chargeId) throws StripeException {
         // New separate-charges-and-transfers model: the PI is captured on the platform balance
         // (at acceptation, at escrow, or just above by EscrowCaptureService when it was still
         // requires_capture). Initiate a Transfer to the traveler's Connect account.
@@ -544,6 +548,10 @@ public class DeliveryEventListener {
                 .setDestination(traveler.getStripeAccountId())
                 .putMetadata("bid_id", event.getBidId().toString())
                 .putMetadata("payment_id", payment.getId() != null ? payment.getId().toString() : "");
+        if (payment.getId() != null) {
+            // Groupe stable, filtrable chez Stripe quel que soit le compte de destination.
+            builder.setTransferGroup(StripeTransferLookup.transferGroup(payment.getId()));
+        }
 
         if (chargeId != null && !chargeId.isBlank()) {
             builder.setSourceTransaction(chargeId);
@@ -557,7 +565,7 @@ public class DeliveryEventListener {
                 payment.getId(), traveler.getStripeAccountId(), payment.getCreatedAt());
         if (existing.isPresent()) {
             realignOnExistingTransfer(payment, existing.get(), event.getBidId(), event.source());
-            return;
+            return true;
         }
 
         // Clé d'idempotence stable : un AFTER_COMMIT rejoué ou une redelivery de webhook
@@ -569,6 +577,7 @@ public class DeliveryEventListener {
         if (transfer != null && transfer.getId() != null && payment.getId() != null) {
             paymentRepository.recordStripeTransferId(payment.getId(), transfer.getId());
         }
+        return false;
     }
 
     /** Litige ouvert par l'administration sur ce colis (lecture en base, jamais en cache). */

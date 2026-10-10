@@ -104,7 +104,9 @@ class DeliveryEventListenerTransferGuardTest {
         verify(auditService).log(eq("PAYMENT"), eq(paymentId), eq("TRANSFER_ALREADY_EXISTS_REALIGNED"), eq(bidId),
                 argThat((Map<String, Object> m) -> "tr_existing".equals(m.get("transferId"))
                         && "delivery".equals(m.get("source"))));
-        verify(eventPublisher).publishEvent(any(PaymentReleasedEvent.class));
+        // Seule la trace du réalignement : ni second audit de versement, ni nouvelle notification.
+        verify(eventPublisher, never()).publishEvent(any(PaymentReleasedEvent.class));
+        verify(auditService, never()).log(any(), any(), eq("ESCROW_RELEASED_TRANSFER"), any(), any());
     }
 
     @Test
@@ -120,11 +122,15 @@ class DeliveryEventListenerTransferGuardTest {
 
             listener.handleDeliveryConfirmed(delivery());
 
-            transferStatic.verify(() -> Transfer.create(any(com.stripe.param.TransferCreateParams.class),
+            org.mockito.ArgumentCaptor<com.stripe.param.TransferCreateParams> captor =
+                    org.mockito.ArgumentCaptor.forClass(com.stripe.param.TransferCreateParams.class);
+            transferStatic.verify(() -> Transfer.create(captor.capture(),
                     any(com.stripe.net.RequestOptions.class)), times(1));
+            assertThat(captor.getValue().getTransferGroup()).isEqualTo("payment_" + paymentId);
         }
         verify(paymentRepository).recordStripeTransferId(paymentId, "tr_new");
         verify(auditService, never()).log(any(), any(), eq("TRANSFER_ALREADY_EXISTS_REALIGNED"), any(), any());
+        verify(eventPublisher).publishEvent(any(PaymentReleasedEvent.class));
     }
 
     @Test

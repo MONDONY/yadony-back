@@ -72,6 +72,9 @@ public class RefundProcessor {
     /** Idem, pour un remboursement refusé parce qu'un versement existe déjà. */
     static final String PAYOUT_EXISTS_ALERT_PREFIX = "PAWAPAY_REFUND_PAYOUT_";
 
+    /** Annulation d'un PaymentIntent PENDING refusée par Stripe : autorisation restée posée. */
+    static final String PENDING_CANCEL_FAILED_ALERT_PREFIX = "REFUND_FAILED_";
+
     private final PaymentRepository paymentRepository;
     private final AuditService auditService;
     private final AdminAlertService adminAlert;
@@ -149,6 +152,20 @@ public class RefundProcessor {
             return true;
         } catch (StripeException e) {
             log.error("Échec annulation PI {} : {}", payment.getStripePaymentIntentId(), e.getMessage(), e);
+            // Plus avalé en silence : l'autorisation reste posée sur la carte de l'expéditeur
+            // tant que personne n'agit. Alerte unique par paiement (préfixe 14 + UUID 36 = 50).
+            try {
+                alerts.raiseOnce(PENDING_CANCEL_FAILED_ALERT_PREFIX + payment.getId(),
+                        "Annulation du PaymentIntent " + payment.getStripePaymentIntentId() + " (paiement "
+                                + payment.getId() + ") refusée par Stripe : " + e.getMessage()
+                                + " ; l'autorisation carte de l'expéditeur reste posée, à annuler à la main",
+                        Map.of("paymentId", payment.getId().toString(),
+                                "piId", String.valueOf(payment.getStripePaymentIntentId()),
+                                "error", String.valueOf(e.getMessage())));
+            } catch (RuntimeException alertFailure) {
+                log.error("Alerte {} non levée pour le paiement {}", PENDING_CANCEL_FAILED_ALERT_PREFIX,
+                        payment.getId(), alertFailure);
+            }
             return false;
         }
     }

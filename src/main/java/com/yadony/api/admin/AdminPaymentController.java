@@ -318,6 +318,11 @@ public class AdminPaymentController {
         // Resolve the bid (classic or negotiation-materialised) → announcement → traveler.
         // Negotiation payments carry a null bid_id, so the bid is found via its linked thread id.
         BidEntity bid = resolveBid(payment);
+        // Verrou du colis AVANT toute décision (ordre colis puis paiement, comme l'annulation
+        // admin) : une annulation concurrente est attendue, puis son statut CANCELLED est vu.
+        if (bid != null && bid.getId() != null && bidRepository.lockForUpdate(bid.getId()) > 0) {
+            entityManager.refresh(bid);
+        }
 
         // Safety guard: a CANCELLED trip's escrow must be REFUNDED to the sender (cancellation
         // flow), never transferred to the traveler. Refuse the force-release before any status
@@ -456,6 +461,7 @@ public class AdminPaymentController {
             return ResponseEntity.ok(detail(payment));
         }
 
+        boolean realignedOnExistingTransfer = false;
         try {
             if (payment.isLegacyDestinationCharge()) {
                 // Destination-charge model: capturing routes funds to the traveler via transfer_data.
@@ -483,7 +489,8 @@ public class AdminPaymentController {
                         .setDestination(traveler.getStripeAccountId())
                         .putMetadata("bid_id", bidId != null ? bidId.toString() : "")
                         .putMetadata("payment_id", id.toString())
-                        .putMetadata("source", "admin-force-release");
+                        .putMetadata("source", "admin-force-release")
+                        .setTransferGroup(com.yadony.api.payments.StripeTransferLookup.transferGroup(id));
                 if (chargeId != null && !chargeId.isBlank()) {
                     builder.setSourceTransaction(chargeId);
                 }
@@ -493,6 +500,7 @@ public class AdminPaymentController {
                 java.util.Optional<String> existingTransfer = transferLookup.findExistingTransfer(
                         id, traveler.getStripeAccountId(), payment.getCreatedAt());
                 if (existingTransfer.isPresent()) {
+                    realignedOnExistingTransfer = true;
                     paymentRepository.recordStripeTransferId(id, existingTransfer.get());
                     auditService.log("PAYMENT", id, "TRANSFER_ALREADY_EXISTS_REALIGNED", bidId, Map.of(
                             "paymentId", id.toString(), "bidId", String.valueOf(bidId),
@@ -534,6 +542,11 @@ public class AdminPaymentController {
         // Resolve any open ESCROW_J48_TIMEOUT alerts for this payment
         resolveRelatedAlerts(id);
 
+        if (realignedOnExistingTransfer) {
+            // Transfer déjà émis : seule la trace TRANSFER_ALREADY_EXISTS_REALIGNED, ni audit de
+            // versement forcé ni nouvelle notification au voyageur.
+            return ResponseEntity.ok(detail(payment));
+        }
         auditService.log(
                 "PAYMENT",
                 payment.getId(),

@@ -19,6 +19,7 @@ import com.yadony.api.payments.chargeback.ChargebackRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -114,6 +115,8 @@ class AdminPaymentControllerTransferGuardTest {
         verify(paymentRepository).recordStripeTransferId(paymentId, "tr_existing");
         verify(auditService).log(eq("PAYMENT"), eq(paymentId), eq("TRANSFER_ALREADY_EXISTS_REALIGNED"), eq(bidId), any());
         assertThat(payment.getStatus()).isEqualTo(PaymentStatus.RELEASED);
+        verify(auditService, never()).log(any(), any(), eq("ESCROW_FORCE_RELEASED"), any(), any());
+        verify(eventPublisher, never()).publishEvent(any());
     }
 
     @Test
@@ -126,9 +129,14 @@ class AdminPaymentControllerTransferGuardTest {
             when(created.getId()).thenReturn("tr_new");
             trStatic.when(() -> Transfer.create(any(com.stripe.param.TransferCreateParams.class),
                     any(com.stripe.net.RequestOptions.class))).thenReturn(created);
+            ArgumentCaptor<com.stripe.param.TransferCreateParams> captor =
+                    ArgumentCaptor.forClass(com.stripe.param.TransferCreateParams.class);
             controller.forceRelease(paymentId, null);
+            trStatic.verify(() -> Transfer.create(captor.capture(), any(com.stripe.net.RequestOptions.class)));
+            assertThat(captor.getValue().getTransferGroup()).isEqualTo("payment_" + paymentId);
         }
         verify(paymentRepository).recordStripeTransferId(paymentId, "tr_new");
+        verify(auditService).log(eq("PAYMENT"), any(), eq("ESCROW_FORCE_RELEASED"), any(), any());
     }
 
     @Test

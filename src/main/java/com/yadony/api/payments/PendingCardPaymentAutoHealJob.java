@@ -227,8 +227,9 @@ public class PendingCardPaymentAutoHealJob {
         Instant now = clock.instant();
         LocalDateTime olderThan = LocalDateTime.ofInstant(now, ZoneOffset.UTC).minus(CAPTURE_GRACE);
         nextCapture.values().removeIf(at -> at.isBefore(now.minus(maxAge)));
+        LocalDateTime newerThan = LocalDateTime.ofInstant(now, ZoneOffset.UTC).minus(maxAge);
         List<UUID> due = dueCandidates((page, size) -> paymentRepository.findUncapturedDueEscrowIds(
-                olderThan, EscrowCaptureService.ENGAGED_BID_STATUSES, DEAD_THREADS, PageRequest.of(page, size)),
+                olderThan, newerThan, EscrowCaptureService.ENGAGED_BID_STATUSES, DEAD_THREADS, PageRequest.of(page, size)),
                 id -> isDue(nextCapture, id, now), limit);
 
         int captured = 0;

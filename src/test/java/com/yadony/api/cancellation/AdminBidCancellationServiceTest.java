@@ -83,7 +83,7 @@ class AdminBidCancellationServiceTest {
         announcement.setCapacityUnit(CapacityUnit.KG_EXACT);
         announcement.setAvailableKg(BigDecimal.ZERO);
         announcement.setStatus(AnnouncementStatus.FULL);
-        lenient().when(bidRepository.findByIdForUpdate(bidId)).thenReturn(Optional.of(bid));
+        lenient().when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
         lenient().when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(announcement));
         lenient().when(paymentRepository.findForBid(bidId)).thenReturn(Optional.empty());
     }
@@ -230,6 +230,34 @@ class AdminBidCancellationServiceTest {
     }
 
     @Test
+    void dejaAnnuleMaisPaiementEncoreEnSequestre_remboursementRelance() {
+        bid.setStatus(BidStatus.CANCELLED);
+        PaymentEntity p = payment(PaymentStatus.ESCROW);
+
+        AdminBidCancelResponse r = service.cancel(bidId, adminId, REQUEST);
+
+        assertThat(r.alreadyCancelled()).isTrue();
+        assertThat(r.refundRequested()).isTrue();
+        assertThat(r.refundAmount()).isEqualByComparingTo("42.00");
+        verify(paymentRepository).lockIfEscrow(p.getId());
+        verify(eventPublisher).publishEvent(argThat((Object e) -> e instanceof BidRejectedEvent ev
+                && BidRejectedEvent.REASON_CANCELLED_BY_ADMIN.equals(ev.getReason())));
+        verify(auditService).log(eq("BID"), eq(bidId), eq("ADMIN_BID_CANCEL_REFUND_RETRIED"), eq(adminId), any());
+        verify(bidRepository, never()).save(any());
+    }
+
+    @Test
+    void statutRelueSousVerrou_verseEntreTemps_409() {
+        // Entité chargée encore ESCROW, mais un versement concurrent a commité RELEASED.
+        PaymentEntity p = payment(PaymentStatus.ESCROW);
+        ReflectionTestUtils.setField(p, "id", UUID.randomUUID());
+        when(paymentRepository.findStatusById(p.getId())).thenReturn(Optional.of(PaymentStatus.RELEASED));
+
+        assertConflict("payment-released");
+        verify(paymentRepository).lockIfEscrow(p.getId());
+    }
+
+    @Test
     void colisLivre_409() {
         bid.setStatus(BidStatus.COMPLETED);
         assertConflict("bid-delivered");
@@ -290,7 +318,7 @@ class AdminBidCancellationServiceTest {
 
     @Test
     void colisIntrouvable_404() {
-        when(bidRepository.findByIdForUpdate(bidId)).thenReturn(Optional.empty());
+        when(bidRepository.findById(bidId)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.cancel(bidId, adminId, REQUEST))
                 .isInstanceOfSatisfying(YadonyBusinessException.class,

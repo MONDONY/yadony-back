@@ -24,6 +24,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -198,6 +199,28 @@ class RefundProcessorTest {
         }
         assertThat(p.getStatus()).isEqualTo(PaymentStatus.REFUNDED);
         verify(paymentRepository).save(p);
+    }
+
+    @Test
+    void pending_cancel_refusedByStripe_raisesSingleAlert_paymentUntouched() throws Exception {
+        PaymentEntity p = payment(PaymentStatus.PENDING);
+        UUID paymentId = UUID.randomUUID();
+        org.springframework.test.util.ReflectionTestUtils.setField(p, "id", paymentId);
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            PaymentIntent pi = mock(PaymentIntent.class);
+            when(pi.cancel(any(PaymentIntentCancelParams.class)))
+                    .thenThrow(new com.stripe.exception.ApiConnectionException("timeout"));
+            piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
+
+            assertThat(processor.processRefund(paymentId, "PAYMENT_CANCELLED_TEST", p.getBidId(), Map.of())).isFalse();
+        }
+        assertThat(p.getStatus()).isEqualTo(PaymentStatus.PENDING);
+        verify(paymentRepository, never()).save(any());
+        String type = RefundProcessor.PENDING_CANCEL_FAILED_ALERT_PREFIX + paymentId;
+        assertThat(type.length()).isLessThanOrEqualTo(com.yadony.api.admin.AdminAlertEscalator.TYPE_MAX_LENGTH);
+        verify(alerts).raiseOnce(eq(type), org.mockito.ArgumentMatchers.contains("autorisation carte"), anyMap());
     }
 
     @Test
