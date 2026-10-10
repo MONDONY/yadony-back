@@ -93,6 +93,13 @@ class PackageRequestPhotoPurgeParticipantTest {
     }
 
     @Test
+    void removedByAdminRequest_neverTouched() throws Exception {
+        when(requests.findById(requestId)).thenReturn(Optional.of(request(PackageRequestStatus.REMOVED_BY_ADMIN, 300)));
+        assertThat(participant.purgeDue(7, false, 500, NOW)).isEqualTo(PhotoPurgeOutcome.NONE);
+        verifyNoInteractions(storage);
+    }
+
+    @Test
     void closedRequestNotYetDue_keepsPhotos() throws Exception {
         when(requests.findById(requestId)).thenReturn(Optional.of(request(PackageRequestStatus.EXPIRED, 3)));
         assertThat(participant.purgeDue(7, false, 500, NOW)).isEqualTo(PhotoPurgeOutcome.NONE);

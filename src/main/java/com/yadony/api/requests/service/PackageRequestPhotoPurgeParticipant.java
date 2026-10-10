@@ -34,8 +34,14 @@ import java.util.UUID;
 public class PackageRequestPhotoPurgeParticipant implements PhotoPurgeParticipant {
 
     private static final Logger log = LoggerFactory.getLogger(PackageRequestPhotoPurgeParticipant.class);
+    /**
+     * Statuts définitifs. REMOVED_BY_ADMIN est exclu : la restauration admin
+     * (restoreByAdmin) remet la demande à son statut d'avant sans limite de délai, et une
+     * suppression R2 est irréversible. Une demande retirée garde donc ses photos, qui
+     * restent référencées (le rapprochement ne les touche pas).
+     */
     static final Set<PackageRequestStatus> CLOSED = EnumSet.of(PackageRequestStatus.COMPLETED,
-            PackageRequestStatus.EXPIRED, PackageRequestStatus.CANCELLED, PackageRequestStatus.REMOVED_BY_ADMIN);
+            PackageRequestStatus.EXPIRED, PackageRequestStatus.CANCELLED);
 
     private final PackageRequestPhotoRepository photos;
     private final PackageRequestRepository requests;
