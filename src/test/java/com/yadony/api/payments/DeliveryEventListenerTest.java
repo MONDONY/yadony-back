@@ -59,7 +59,7 @@ class DeliveryEventListenerTest {
         // jamais déréférencé puisque tous les paiements de cette classe sont de rail STRIPE.
         listener = new DeliveryEventListener(paymentRepository, userRepository,
                 auditService, eventPublisher, bidRepository, adminAlert, voucherService, null, holdPolicy, alertEscalator,
-                escrowCapture);
+                escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
     }
 
     private PaymentEntity payment(boolean legacy, PaymentStatus status, String chargeId) {
@@ -409,7 +409,7 @@ class DeliveryEventListenerTest {
     private DeliveryEventListener listenerWith(EscrowCaptureService capture) {
         return new DeliveryEventListener(paymentRepository, userRepository,
                 auditService, eventPublisher, bidRepository, adminAlert, voucherService, null, holdPolicy, alertEscalator,
-                capture);
+                capture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
     }
 
     @Test

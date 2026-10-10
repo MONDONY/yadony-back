@@ -88,7 +88,7 @@ class DeliveryEscrowCaptureIT {
     void setUp() {
         listener = new DeliveryEventListener(paymentRepository, userRepository, auditService, eventPublisher,
                 bidRepository, mock(AdminAlertService.class), voucherService, null, holdPolicy, alertEscalator,
-                escrowCapture);
+                escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
         tx = new TransactionTemplate(transactionManager);
         tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 

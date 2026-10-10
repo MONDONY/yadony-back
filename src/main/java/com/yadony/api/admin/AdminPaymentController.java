@@ -136,6 +136,8 @@ public class AdminPaymentController {
     private final AdminPaymentInsights insights;
     private final AdminPaymentTimeline timeline;
     private final EscrowCaptureService escrowCapture;
+    private final com.yadony.api.payments.StripeTransferLookup transferLookup;
+    private final com.yadony.api.disputes.DisputeRepository disputeRepository;
 
     public AdminPaymentController(PaymentRepository paymentRepository,
                                   AdminAlertRepository adminAlertRepository,
@@ -154,8 +156,12 @@ public class AdminPaymentController {
                                   PayoutHoldPolicy holdPolicy,
                                   AdminPaymentInsights insights,
                                   AdminPaymentTimeline timeline,
-                                  EscrowCaptureService escrowCapture) {
+                                  EscrowCaptureService escrowCapture,
+                                  com.yadony.api.payments.StripeTransferLookup transferLookup,
+                                  com.yadony.api.disputes.DisputeRepository disputeRepository) {
         this.escrowCapture = escrowCapture;
+        this.transferLookup = transferLookup;
+        this.disputeRepository = disputeRepository;
         this.holdPolicy = holdPolicy;
         this.insights = insights;
         this.timeline = timeline;
@@ -355,6 +361,14 @@ public class AdminPaymentController {
             throw notInEscrow("Seuls les paiements en statut ESCROW peuvent faire l'objet d'une libération forcée");
         }
 
+        // Litige ouvert par l'administration (fiche colis) : le versement est gelé jusqu'à sa
+        // résolution dans Incidents, même pour une libération forcée.
+        if (bidId != null && disputeRepository != null && disputeRepository.existsByBidIdAndStatusAndTypeStartingWith(
+                bidId, com.yadony.api.disputes.DisputeTypes.STATUS_OPEN, com.yadony.api.disputes.DisputeTypes.ADMIN_PREFIX)) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "dispute-open", "Dispute Open",
+                    "Un litige ouvert par l'administration gèle ce versement : résolvez-le d'abord dans Incidents.");
+        }
+
         // Bénéficiaire gelé ou paiement en litige : 409 sauf dérogation motivée, AVANT le claim.
         boolean holdOverridden = guardPayout(payment, travelerId, request, "admin-force-release");
 
@@ -466,12 +480,25 @@ public class AdminPaymentController {
                 if (chargeId != null && !chargeId.isBlank()) {
                     builder.setSourceTransaction(chargeId);
                 }
-                // Même clé que la livraison (DeliveryEventListener#releaseV2) : si la livraison a
-                // déjà émis ce Transfer (réussi chez Stripe, transaction locale annulée ensuite),
-                // Stripe renvoie le Transfer existant ou refuse la clé — jamais un second Transfer
-                // pendant la durée de vie de la clé.
-                Transfer.create(builder.build(),
-                        RequestOptions.builder().setIdempotencyKey("transfer-" + id).build());
+                // La clé d'idempotence ne vit que 24 h : on cherche d'abord chez Stripe un Transfer
+                // déjà émis pour ce paiement (livraison réussie chez Stripe, transaction locale
+                // annulée). S'il existe, la base est réalignée dessus, aucun second Transfer.
+                java.util.Optional<String> existingTransfer = transferLookup.findExistingTransfer(
+                        id, traveler.getStripeAccountId(), payment.getCreatedAt());
+                if (existingTransfer.isPresent()) {
+                    paymentRepository.recordStripeTransferId(id, existingTransfer.get());
+                    auditService.log("PAYMENT", id, "TRANSFER_ALREADY_EXISTS_REALIGNED", bidId, Map.of(
+                            "paymentId", id.toString(), "bidId", String.valueOf(bidId),
+                            "transferId", existingTransfer.get(), "source", "admin-force-release"));
+                } else {
+                    // Même clé que la livraison (DeliveryEventListener#releaseV2) : jamais un second
+                    // Transfer pendant la durée de vie de la clé.
+                    Transfer created = Transfer.create(builder.build(),
+                            RequestOptions.builder().setIdempotencyKey("transfer-" + id).build());
+                    if (created != null && created.getId() != null) {
+                        paymentRepository.recordStripeTransferId(id, created.getId());
+                    }
+                }
             }
         } catch (IdempotencyException e) {
             log.error("Admin force-release: idempotency key transfer-{} already used with other parameters: {}",

@@ -434,6 +434,9 @@ public class NotificationDispatcher {
         // notifier. Seule la notification est filtrée ; l'événement reste publié pour le
         // remboursement, la restitution des kilos et les autres consommateurs.
         if (BidRejectedEvent.REASON_CANCELLED_BY_SENDER.equals(event.getReason())) return;
+        // Annulation par l'administration : les deux parties sont prévenues par
+        // onAdminBidCancelled, avec un libellé qui n'accuse pas le voyageur d'un refus.
+        if (BidRejectedEvent.REASON_CANCELLED_BY_ADMIN.equals(event.getReason())) return;
         // Lot B (revue round 3) : le motif technique ANNOUNCEMENT_DELETED (posé par
         // AnnouncementService#removeByAdmin, rematchEligible=false car décision de
         // modération) n'est PAS un refus du voyageur — le libellé générique « Demande
@@ -450,6 +453,27 @@ public class NotificationDispatcher {
         var rejected = withReason != null ? withReason : NotificationTexts.bidRejected(messages);
         notifyUser(event.getSenderId(), rejected.title(), rejected.body(),
                 Map.of("type", "BID_REJECTED", "bidId", event.getBidId().toString()));
+    }
+
+    /**
+     * Colis annulé par l'administration : l'expéditeur (remboursé si un paiement était engagé)
+     * et le voyageur sont prévenus, chacun dans sa langue. Le motif interne de l'admin n'est
+     * jamais transmis.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onAdminBidCancelled(com.yadony.api.cancellation.events.AdminBidCancelledEvent event) {
+        Map<String, String> data = Map.of("type", "BID_CANCELLED_BY_ADMIN", "bidId", event.bidId().toString());
+        if (event.senderId() != null) {
+            var forSender = NotificationTexts.bidCancelledByAdminForSender(
+                    messagesFor(event.senderId()), event.refundRequested());
+            notifyUser(event.senderId(), forSender.title(), forSender.body(), data);
+        }
+        if (event.travelerId() != null) {
+            var forTraveler = NotificationTexts.bidCancelledByAdminForTraveler(
+                    messagesFor(event.travelerId()), event.parcelWithTraveler());
+            notifyUser(event.travelerId(), forTraveler.title(), forTraveler.body(), data);
+        }
     }
 
     // Notification unique (BID_REJECTED conservé) pour un bid perdu par annulation/refus voyageur,

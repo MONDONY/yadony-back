@@ -5,6 +5,8 @@ import java.util.UUID;
 public class BidRejectedEvent {
     /** Motif posé par {@code BidService.cancelBid} quand l'expéditeur annule lui-même sa demande. */
     public static final String REASON_CANCELLED_BY_SENDER = "CANCELLED_BY_SENDER";
+    /** Motif posé par {@code cancellation.AdminBidCancellationService} : colis annulé par l'administration. */
+    public static final String REASON_CANCELLED_BY_ADMIN = "CANCELLED_BY_ADMIN";
 
     private final UUID bidId;
     private final UUID senderId;

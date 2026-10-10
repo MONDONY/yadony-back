@@ -115,7 +115,10 @@ public class EscrowCaptureService {
         if (!STATUS_REQUIRES_CAPTURE.equals(status)) {
             // canceled (autorisation expirée ou annulée), requires_payment_method… : plus rien à capturer.
             throw failure(payment, source, status, captureBefore,
-                    "PaymentIntent " + status + " : autorisation non capturable", null);
+                    ("canceled".equals(status) || "requires_payment_method".equals(status))
+                            ? "autorisation carte expirée ou annulée chez Stripe (PaymentIntent " + status
+                                    + ") : plus rien à encaisser, rembourser l'expéditeur ou lui faire repayer"
+                            : "PaymentIntent " + status + " : autorisation non capturable", null);
         }
 
         SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(payment.getCurrency());

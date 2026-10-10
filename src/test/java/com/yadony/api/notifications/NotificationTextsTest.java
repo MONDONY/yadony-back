@@ -58,6 +58,10 @@ class NotificationTextsTest {
         map.put("handoverDeadlinePassed", NotificationTexts.handoverDeadlinePassed(m));
         map.put("handoverDeadlinePassedRefunded", NotificationTexts.handoverDeadlinePassedRefunded(m));
         map.put("bidRejectedTripWithdrawn", NotificationTexts.bidRejectedTripWithdrawn(m));
+        map.put("bidCancelledByAdminForSender remboursé", NotificationTexts.bidCancelledByAdminForSender(m, true));
+        map.put("bidCancelledByAdminForSender", NotificationTexts.bidCancelledByAdminForSender(m, false));
+        map.put("bidCancelledByAdminForTraveler retour", NotificationTexts.bidCancelledByAdminForTraveler(m, true));
+        map.put("bidCancelledByAdminForTraveler", NotificationTexts.bidCancelledByAdminForTraveler(m, false));
         for (com.yadony.api.matching.BidRejectionReason r : com.yadony.api.matching.BidRejectionReason.values()) {
             map.put("bidRejectedWithReason " + r, NotificationTexts.bidRejectedWithReason(m, r.name(), false));
             map.put("bidRejectedWithReason refund " + r, NotificationTexts.bidRejectedWithReason(m, r.name(), true));

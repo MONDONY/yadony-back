@@ -56,7 +56,7 @@ class DeliveryEventListenerMobileMoneyTest {
         // champ contournable) — plus besoin de ReflectionTestUtils pour l'injecter.
         listener = new DeliveryEventListener(paymentRepository, userRepository, auditService, eventPublisher,
                 bidRepository, adminAlert, voucherService, payoutInitiator, holdPolicy, alertEscalator,
-                escrowCapture);
+                escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
         bid = new BidEntity();
         ReflectionTestUtils.setField(bid, "id", UUID.randomUUID());
         bid.setPaymentMethod(PaymentMethod.MOBILE_MONEY);

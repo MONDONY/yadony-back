@@ -51,7 +51,7 @@ class DeliveryEventListenerPendingPaymentTest {
     void setUp() {
         listener = new DeliveryEventListener(paymentRepository, userRepository,
                 auditService, eventPublisher, bidRepository, adminAlert, voucherService, null, holdPolicy, alertEscalator,
-                escrowCapture);
+                escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
     }
 
     private static void setId(Object entity, UUID id) throws Exception {
