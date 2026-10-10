@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -423,7 +424,7 @@ class PaymentStripeResyncServiceTest {
     private void releaseAnswers(EscrowReleaseOutcome outcome) {
         when(deliveredRelease.releaseIfDelivered(eq(paymentId), any())).thenAnswer(inv -> {
             if (outcome.released()) payment.setStatus(PaymentStatus.RELEASED);
-            return outcome;
+            return new DeliveredEscrowReleaser.LateRelease(outcome, outcome.failed() ? "raison" : null);
         });
     }
 
@@ -482,7 +483,11 @@ class PaymentStripeResyncServiceTest {
 
         verify(deliveredRelease, never()).releaseIfDelivered(any(), any());
         assertThat(r.released()).isFalse();
-        assertThat(r.message()).contains("capture impossible");
+        // Colis livré : la livraison ne repassera pas, le message ne promet plus un nouvel essai.
+        assertThat(r.message()).contains("Colis livré mais versement impossible : capture du séquestre impossible (refus)")
+                .contains("Forcer le versement").doesNotContain("retenté à la livraison");
+        verify(deliveredRelease).reportFailure(eq(payment), isNull(), contains("refus"),
+                eq(PaymentStripeResyncService.SOURCE));
     }
 
     @Test
@@ -559,14 +564,41 @@ class PaymentStripeResyncServiceTest {
         payment.setStatus(PaymentStatus.ESCROW);
         payment.setCapturedAt(Instant.now());
         delivered();
-        when(deliveredRelease.releaseIfDelivered(eq(paymentId), any()))
-                .thenThrow(new IllegalStateException("release failed", new RuntimeException("insufficient funds")));
+        when(deliveredRelease.releaseIfDelivered(eq(paymentId), any())).thenReturn(new DeliveredEscrowReleaser.LateRelease(
+                EscrowReleaseOutcome.TRANSFER_FAILED, "versement refusé par Stripe (insufficient funds)"));
 
         PaymentStripeResyncService.Result r = run(pi("succeeded", 6450));
 
         assertThat(r.released()).isFalse();
-        assertThat(r.message()).contains("versement refusé par Stripe (insufficient funds)");
+        assertThat(r.message()).isEqualTo("Colis livré mais versement impossible : versement refusé par Stripe "
+                + "(insufficient funds). Utilisez « Forcer le versement » après correction");
         assertThat(r.after().status()).isEqualTo("ESCROW");
+    }
+
+    @Test
+    void escrowAuthorizedDue_delivered_captureFails_alertsThenConflict() {
+        payment.setStatus(PaymentStatus.ESCROW);
+        delivered();
+        when(escrowCapture.ensureCaptured(paymentId, PaymentStripeResyncService.SOURCE))
+                .thenThrow(new EscrowCaptureService.EscrowCaptureException("expirée", "requires_capture", null));
+
+        YadonyBusinessException e = runExpectingError(pi("requires_capture", 6450));
+
+        assertThat(e.getErrorCode()).isEqualTo("escrow-capture-failed");
+        verify(deliveredRelease).reportFailure(eq(payment), isNull(), contains("expirée"), any());
+        verify(deliveredRelease, never()).releaseIfDelivered(any(), any());
+    }
+
+    @Test
+    void escrowAuthorizedDue_delivered_capturedMessageDoesNotPromiseADelivery() {
+        payment.setStatus(PaymentStatus.ESCROW);
+        delivered();
+        releaseAnswers(EscrowReleaseOutcome.RELEASED);
+
+        PaymentStripeResyncService.Result r = run(pi("requires_capture", 6450));
+
+        assertThat(r.message()).isEqualTo("Séquestre capturé sur le solde plateforme ; "
+                + "Colis déjà livré : versement envoyé au voyageur");
     }
 
     @Test

@@ -62,8 +62,10 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
 
     /**
      * Paiements carte restés PENDING avec un PaymentIntent, créés dans la fenêtre
-     * {@code ]newerThan, olderThan[}, plus anciens d'abord : candidats à l'auto-réparation
-     * ({@link PendingCardPaymentAutoHealJob}).
+     * {@code ]newerThan, olderThan[}, <b>plus récents d'abord</b> : candidats à l'auto-réparation
+     * ({@link PendingCardPaymentAutoHealJob}). Le plus récent est le plus susceptible d'être un vrai
+     * blocage à rattraper avant l'expiration de l'autorisation ; un stock de checkouts abandonnés
+     * plus anciens ne peut donc jamais l'affamer. Paginé par le job.
      */
     @Query("""
             SELECT p.id FROM PaymentEntity p
@@ -72,11 +74,41 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
                AND p.stripePaymentIntentId IS NOT NULL
                AND p.createdAt < :olderThan
                AND p.createdAt > :newerThan
-             ORDER BY p.createdAt ASC
+             ORDER BY p.createdAt DESC, p.id
             """)
     List<UUID> findPendingCardPaymentIds(@Param("olderThan") LocalDateTime olderThan,
                                          @Param("newerThan") LocalDateTime newerThan,
                                          org.springframework.data.domain.Pageable page);
+
+    /**
+     * Séquestres carte non versés dont le colis est livré ({@code COMPLETED}, par {@code bid_id} ou
+     * par le colis rattaché au fil de négociation) : la livraison ou le rattrapage n'ont pas abouti.
+     * Dernière activité (livraison ou passage en séquestre) entre {@code windowStart} et
+     * {@code graceBefore} : le versement normal a eu le temps de partir, et tout essai précédent
+     * date de moins de 24 h (clé d'idempotence Stripe {@code transfer-<id>} encore valable).
+     * Exclus : litige, remboursement partiel, versement retenu — leur garde a déjà alerté et un
+     * nouvel essai n'y changerait rien. Plus récents d'abord ; un paiement peut sortir deux fois si
+     * deux colis sont rattachés au même fil (dédoublonné par l'appelant).
+     */
+    @Query("""
+            SELECT p.id FROM PaymentEntity p, com.yadony.api.matching.BidEntity b
+             WHERE p.status = com.yadony.api.payments.PaymentStatus.ESCROW
+               AND p.rail = com.yadony.api.payments.PaymentRail.STRIPE
+               AND p.disputed = false
+               AND (p.refundedAmount IS NULL OR p.refundedAmount = 0)
+               AND p.payoutHeldAt IS NULL
+               AND b.status = com.yadony.api.matching.BidStatus.COMPLETED
+               AND ((p.bidId IS NOT NULL AND b.id = p.bidId)
+                    OR (p.bidId IS NULL AND p.negotiationThreadId IS NOT NULL
+                        AND b.linkedNegotiationThreadId = p.negotiationThreadId))
+               AND COALESCE(b.deliveredAt, b.updatedAt) < :graceBefore
+               AND p.updatedAt < :graceBefore
+               AND (COALESCE(b.deliveredAt, b.updatedAt) > :windowStart OR p.updatedAt > :windowStart)
+             ORDER BY p.updatedAt DESC, p.id
+            """)
+    List<UUID> findDeliveredUnreleasedEscrowIds(@Param("graceBefore") LocalDateTime graceBefore,
+                                                @Param("windowStart") LocalDateTime windowStart,
+                                                org.springframework.data.domain.Pageable page);
 
     List<PaymentEntity> findAllByCreatedAtBetweenOrderByCreatedAtAsc(LocalDateTime from, LocalDateTime to);
 

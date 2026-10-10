@@ -171,6 +171,7 @@ public class PaymentStripeResyncService {
         String afterStripeStatus = stripeStatus;
         Long afterCapturable = pi.getAmountCapturable();
 
+        boolean delivered = step.releaseAfterCommit();
         boolean captureFailed = false;
         if (step.captureAfterCommit()) {
             boolean alreadyChanged = action != Action.ALREADY_IN_SYNC;
@@ -180,11 +181,18 @@ public class PaymentStripeResyncService {
                 afterCapturable = 0L;
                 if (!alreadyChanged) {
                     action = Action.ESCROW_CAPTURED;
-                    message = "Séquestre capturé sur le solde plateforme : le voyageur sera payé à la livraison";
+                    message = delivered
+                            ? "Séquestre capturé sur le solde plateforme"
+                            : "Séquestre capturé sur le solde plateforme : le voyageur sera payé à la livraison";
                 } else {
                     message = message + " ; séquestre capturé sur le solde plateforme";
                 }
             } catch (EscrowCaptureService.EscrowCaptureException e) {
+                if (delivered) {
+                    // Colis déjà livré : la livraison ne repassera pas, rien ne retentera seul.
+                    deliveredRelease.reportFailure(load(paymentId), null,
+                            "capture du séquestre impossible (" + e.getMessage() + ")", source);
+                }
                 if (!alreadyChanged) {
                     throw new YadonyBusinessException(HttpStatus.CONFLICT, "escrow-capture-failed",
                             "Escrow Capture Failed",
@@ -193,31 +201,30 @@ public class PaymentStripeResyncService {
                 }
                 // Le passage en séquestre est commité et juste : seule la capture reste à faire.
                 captureFailed = true;
-                message = message + " ; capture impossible pour l'instant (" + e.getMessage()
-                        + "), alerte ESCROW_CAPTURE_FAILED levée, l'encaissement sera retenté à la livraison";
+                message = delivered
+                        ? join(message, notReleasedMessage("capture du séquestre impossible (" + e.getMessage() + ")"))
+                        : message + " ; capture impossible pour l'instant (" + e.getMessage()
+                                + "), alerte ESCROW_CAPTURE_FAILED levée, l'encaissement sera retenté à la livraison";
             }
         }
 
         boolean released = false;
-        if (step.releaseAfterCommit() && !captureFailed) {
-            try {
-                EscrowReleaseOutcome outcome = deliveredRelease.releaseIfDelivered(paymentId, source);
-                if (outcome.released()) {
-                    released = true;
-                    afterStripeStatus = "succeeded";
-                    afterCapturable = 0L;
-                    if (action == Action.ALREADY_IN_SYNC) {
-                        action = Action.ESCROW_RELEASED;
-                    }
+        if (delivered && !captureFailed) {
+            DeliveredEscrowReleaser.LateRelease release = deliveredRelease.releaseIfDelivered(paymentId, source);
+            EscrowReleaseOutcome outcome = release.outcome();
+            if (outcome.released()) {
+                released = true;
+                afterStripeStatus = "succeeded";
+                afterCapturable = 0L;
+                if (action == Action.ALREADY_IN_SYNC) {
+                    action = Action.ESCROW_RELEASED;
                 }
-                if (!outcome.message().isEmpty()) {
-                    message = join(message, outcome.message());
-                }
-            } catch (RuntimeException e) {
-                // Transfer refusé : claim annulé, le paiement reste en séquestre (déjà commité).
-                log.error("Versement de rattrapage du paiement {} refusé : {}", paymentId, e.getMessage(), e);
-                message = join(message, "Colis déjà livré mais versement refusé par Stripe ("
-                        + rootMessage(e) + ") : le paiement reste en séquestre, relancer ou forcer le versement");
+            }
+            if (outcome.failed()) {
+                // Alerte LATE_RELEASE_FAILED levée par le releaser ; le paiement reste en séquestre.
+                message = join(message, notReleasedMessage(release.failure()));
+            } else if (!outcome.message().isEmpty()) {
+                message = join(message, outcome.message());
             }
         }
 
@@ -240,12 +247,10 @@ public class PaymentStripeResyncService {
         return message == null || message.isBlank() ? addition : message + " ; " + addition;
     }
 
-    private static String rootMessage(Throwable e) {
-        Throwable cause = e;
-        while (cause.getCause() != null && cause.getCause() != cause) {
-            cause = cause.getCause();
-        }
-        return String.valueOf(cause.getMessage());
+    /** Colis livré, versement automatique en échec : ce que l'admin doit faire. */
+    static String notReleasedMessage(String reason) {
+        return "Colis livré mais versement impossible : " + reason
+                + ". Utilisez « Forcer le versement » après correction";
     }
 
     private PaymentEntity load(UUID paymentId) {

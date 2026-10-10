@@ -20,6 +20,10 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -29,6 +33,7 @@ class DeliveredEscrowReleaserTest {
     @Mock private BidRepository bidRepository;
     @Mock private AnnouncementRepository announcementRepository;
     @Mock private DeliveryEventListener deliveryRelease;
+    @Mock private com.yadony.api.admin.AdminAlertEscalator alertEscalator;
 
     private DeliveredEscrowReleaser releaser;
     private final UUID paymentId = UUID.randomUUID();
@@ -39,7 +44,8 @@ class DeliveredEscrowReleaserTest {
 
     @BeforeEach
     void setUp() {
-        releaser = new DeliveredEscrowReleaser(paymentRepository, bidRepository, announcementRepository, deliveryRelease);
+        releaser = new DeliveredEscrowReleaser(paymentRepository, bidRepository, announcementRepository, deliveryRelease,
+                alertEscalator);
         payment = new PaymentEntity();
         ReflectionTestUtils.setField(payment, "id", paymentId);
         payment.setNegotiationThreadId(threadId);
@@ -64,7 +70,8 @@ class DeliveredEscrowReleaserTest {
         when(deliveryRelease.releaseAfterLateEscrow(bid.getId(), bid.getSenderId(), travelerId, "late-escrow"))
                 .thenReturn(EscrowReleaseOutcome.RELEASED);
 
-        assertThat(releaser.releaseIfDelivered(paymentId, "late-escrow")).isEqualTo(EscrowReleaseOutcome.RELEASED);
+        assertThat(releaser.releaseIfDelivered(paymentId, "late-escrow").outcome()).isEqualTo(EscrowReleaseOutcome.RELEASED);
+        verify(alertEscalator).resolveOpen("LATE_RELEASE_FAILED_" + paymentId);
     }
 
     @Test
@@ -74,8 +81,9 @@ class DeliveredEscrowReleaserTest {
         when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
         when(deliveryRelease.releaseAfterLateEscrow(any(), any(), any(), any())).thenReturn(EscrowReleaseOutcome.PAYOUT_HELD);
 
-        assertThat(releaser.releaseIfDelivered(paymentId, "admin-resync-stripe"))
+        assertThat(releaser.releaseIfDelivered(paymentId, "admin-resync-stripe").outcome())
                 .isEqualTo(EscrowReleaseOutcome.PAYOUT_HELD);
+        verifyNoInteractions(alertEscalator);
         verify(bidRepository, never()).findByLinkedNegotiationThreadId(any());
     }
 
@@ -84,15 +92,15 @@ class DeliveredEscrowReleaserTest {
         bid.setStatus(BidStatus.IN_TRANSIT);
         when(bidRepository.findByLinkedNegotiationThreadId(threadId)).thenReturn(Optional.of(bid));
 
-        assertThat(releaser.releaseIfDelivered(paymentId, "late-escrow")).isEqualTo(EscrowReleaseOutcome.NOT_DELIVERED);
+        assertThat(releaser.releaseIfDelivered(paymentId, "late-escrow").outcome()).isEqualTo(EscrowReleaseOutcome.NOT_DELIVERED);
         verifyNoInteractions(deliveryRelease);
     }
 
     @Test
     void paymentNotInEscrow_orMissing_nothingHappens() {
         payment.setStatus(PaymentStatus.PENDING);
-        assertThat(releaser.releaseIfDelivered(paymentId, "late-escrow")).isEqualTo(EscrowReleaseOutcome.NOT_DELIVERED);
-        assertThat(releaser.releaseIfDelivered(UUID.randomUUID(), "late-escrow"))
+        assertThat(releaser.releaseIfDelivered(paymentId, "late-escrow").outcome()).isEqualTo(EscrowReleaseOutcome.NOT_DELIVERED);
+        assertThat(releaser.releaseIfDelivered(UUID.randomUUID(), "late-escrow").outcome())
                 .isEqualTo(EscrowReleaseOutcome.NOT_DELIVERED);
         verifyNoInteractions(bidRepository, deliveryRelease);
     }
@@ -121,17 +129,68 @@ class DeliveredEscrowReleaserTest {
     }
 
     @Test
-    void listener_releasesAndSwallowsAStripeFailure() {
+    void transferRefused_raisesTheLateReleaseAlert_once_andReportsTheReason() {
         when(bidRepository.findByLinkedNegotiationThreadId(threadId)).thenReturn(Optional.of(bid));
         when(deliveryRelease.releaseAfterLateEscrow(any(), any(), any(), eq("late-escrow")))
-                .thenReturn(EscrowReleaseOutcome.RELEASED)
-                .thenThrow(new IllegalStateException("Stripe escrow release failed"));
+                .thenThrow(new IllegalStateException("Stripe escrow release failed",
+                        new RuntimeException("insufficient funds")));
+
+        DeliveredEscrowReleaser.LateRelease r = releaser.releaseIfDelivered(paymentId, "late-escrow");
+
+        assertThat(r.outcome()).isEqualTo(EscrowReleaseOutcome.TRANSFER_FAILED);
+        assertThat(r.failure()).isEqualTo("versement refusé par Stripe (insufficient funds)");
+        verify(alertEscalator).raiseOnce(eq("LATE_RELEASE_FAILED_" + paymentId), contains("Forcer le versement"),
+                argThat(m -> paymentId.toString().equals(m.get("paymentId")) && bid.getId().toString().equals(m.get("bidId"))
+                        && "late-escrow".equals(m.get("source"))));
+        assertThat(("LATE_RELEASE_FAILED_" + paymentId).length()).isLessThanOrEqualTo(
+                com.yadony.api.admin.AdminAlertEscalator.TYPE_MAX_LENGTH);
+    }
+
+    @Test
+    void captureFailed_raisesTheLateReleaseAlert() {
+        when(bidRepository.findByLinkedNegotiationThreadId(threadId)).thenReturn(Optional.of(bid));
+        when(deliveryRelease.releaseAfterLateEscrow(any(), any(), any(), any()))
+                .thenReturn(EscrowReleaseOutcome.CAPTURE_FAILED);
+
+        DeliveredEscrowReleaser.LateRelease r = releaser.releaseIfDelivered(paymentId, "auto-heal-release");
+
+        assertThat(r.outcome()).isEqualTo(EscrowReleaseOutcome.CAPTURE_FAILED);
+        assertThat(r.failure()).contains("capture du séquestre impossible");
+        verify(alertEscalator).raiseOnce(eq("LATE_RELEASE_FAILED_" + paymentId), anyString(), anyMap());
+    }
+
+    @Test
+    void alertFailures_neverEscape() {
+        when(bidRepository.findByLinkedNegotiationThreadId(threadId)).thenReturn(Optional.of(bid));
+        when(deliveryRelease.releaseAfterLateEscrow(any(), any(), any(), any()))
+                .thenReturn(EscrowReleaseOutcome.CAPTURE_FAILED, EscrowReleaseOutcome.RELEASED);
+        when(alertEscalator.raiseOnce(anyString(), anyString(), anyMap())).thenThrow(new IllegalStateException("db"));
+        when(alertEscalator.resolveOpen(anyString())).thenThrow(new IllegalStateException("db"));
+
+        assertThat(releaser.releaseIfDelivered(paymentId, "x").outcome()).isEqualTo(EscrowReleaseOutcome.CAPTURE_FAILED);
+        assertThat(releaser.releaseIfDelivered(paymentId, "x").outcome()).isEqualTo(EscrowReleaseOutcome.RELEASED);
+    }
+
+    @Test
+    void reportFailure_withoutBid_omitsTheBidId() {
+        releaser.reportFailure(payment, null, "capture impossible", "admin-resync-stripe");
+
+        verify(alertEscalator).raiseOnce(eq("LATE_RELEASE_FAILED_" + paymentId), anyString(),
+                argThat(m -> !m.containsKey("bidId")));
+    }
+
+    @Test
+    void listener_releasesAndSwallowsAReadFailure() {
+        when(bidRepository.findByLinkedNegotiationThreadId(threadId)).thenReturn(Optional.of(bid));
+        when(deliveryRelease.releaseAfterLateEscrow(any(), any(), any(), eq("late-escrow")))
+                .thenReturn(EscrowReleaseOutcome.RELEASED);
 
         releaser.onEscrowReady(new PaymentEscrowReadyEvent(null, paymentId));
-        // Échec du Transfer : journalisé, jamais remonté au publieur.
+        when(paymentRepository.findById(paymentId)).thenThrow(new IllegalStateException("base indisponible"));
+        // Lecture impossible : journalisée, jamais remontée au publieur.
         releaser.onEscrowReady(new PaymentEscrowReadyEvent(null, paymentId));
 
-        verify(deliveryRelease, times(2)).releaseAfterLateEscrow(any(), any(), any(), eq("late-escrow"));
+        verify(deliveryRelease).releaseAfterLateEscrow(any(), any(), any(), eq("late-escrow"));
     }
 
     @Test

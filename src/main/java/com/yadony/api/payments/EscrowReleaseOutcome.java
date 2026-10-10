@@ -22,6 +22,8 @@ public enum EscrowReleaseOutcome {
     STRIPE_ACCOUNT_UNUSABLE(false, "Colis livré mais compte Stripe du voyageur inutilisable : versement impossible"),
     /** Capture du séquestre impossible : alerte ESCROW_CAPTURE_FAILED. */
     CAPTURE_FAILED(false, "Colis livré mais capture du séquestre impossible : aucun versement"),
+    /** Transfer (ou capture legacy, payout mobile money) refusé : claim annulé, paiement ESCROW. */
+    TRANSFER_FAILED(false, "Colis livré mais versement refusé"),
     /** Colis payé en espèces : pas de séquestre carte. */
     CASH(false, "Colis payé en espèces : pas de séquestre"),
     /** Aucun paiement trouvé pour ce colis. */
@@ -44,5 +46,20 @@ public enum EscrowReleaseOutcome {
     /** Phrase destinée à l'admin (réponse de la resynchronisation). */
     public String message() {
         return message;
+    }
+
+    /**
+     * Garde métier qui bloque durablement le versement et lève déjà sa propre alerte (litige,
+     * remboursement partiel, voyageur gelé, compte Connect inutilisable) : un nouvel essai
+     * automatique ne changerait rien tant qu'un admin n'a pas tranché.
+     */
+    public boolean blockedByGuard() {
+        return this == BLOCKED_CHARGEBACK || this == BLOCKED_PARTIAL_REFUND || this == PAYOUT_HELD
+                || this == STRIPE_ACCOUNT_UNUSABLE;
+    }
+
+    /** Échec technique du versement automatique (capture ou Transfer) : alerte LATE_RELEASE_FAILED. */
+    public boolean failed() {
+        return this == CAPTURE_FAILED || this == TRANSFER_FAILED;
     }
 }

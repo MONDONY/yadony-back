@@ -107,7 +107,8 @@ class LateEscrowReleaseIT {
                 return tx.execute(s -> super.releaseAfterLateEscrow(bidId, senderId, travelerId, source));
             }
         };
-        releaser = new DeliveredEscrowReleaser(paymentRepository, bidRepository, announcementRepository, listener);
+        releaser = new DeliveredEscrowReleaser(paymentRepository, bidRepository, announcementRepository, listener,
+                alertEscalator);
         resync = new PaymentStripeResyncService(paymentRepository, paymentService, escrowCapture, bidRepository,
                 auditService, releaser, transactionManager);
 
@@ -139,10 +140,21 @@ class LateEscrowReleaseIT {
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
     }
 
+    private final List<UUID> extraPayments = new ArrayList<>();
+
     @AfterEach
     void cleanUp() {
+        for (UUID id : extraPayments) {
+            jdbc.update("DELETE FROM payments WHERE id = ?", id);
+        }
         jdbc.update("DELETE FROM payments WHERE id = ?", payment.getId());
         jdbc.update("DELETE FROM bids WHERE id = ?", bid.getId());
+    }
+
+    private PendingCardPaymentAutoHealJob job(Duration clockOffset) {
+        return new PendingCardPaymentAutoHealJob(paymentRepository, resync, releaser, true,
+                Duration.ZERO, Duration.ofDays(7), Duration.ofHours(24), 20,
+                Clock.offset(Clock.systemUTC(), clockOffset));
     }
 
     private PaymentEntity reload() {
@@ -267,9 +279,7 @@ class LateEscrowReleaseIT {
             jdbc.update("UPDATE payments SET status = 'ESCROW' WHERE id = ?", payment.getId());
             return null;
         }).when(paymentService).applyPaymentEscrowActive(any(PaymentIntent.class), eq(true));
-        PendingCardPaymentAutoHealJob job = new PendingCardPaymentAutoHealJob(paymentRepository, resync, true,
-                Duration.ZERO, Duration.ofDays(7), Duration.ofHours(24), 200,
-                Clock.offset(Clock.systemUTC(), Duration.ofMinutes(5)));
+        PendingCardPaymentAutoHealJob job = job(Duration.ofMinutes(5));
 
         withStripe(job::run, authorized, authorized, intent("succeeded"));
 
@@ -277,5 +287,77 @@ class LateEscrowReleaseIT {
         Integer systemAudits = jdbc.queryForObject("SELECT count(*) FROM audit_log WHERE entity_id = ? "
                 + "AND action = 'PAYMENT_AUTO_RESYNC_STRIPE' AND actor_id IS NULL", Integer.class, payment.getId());
         assertThat(systemAudits).isEqualTo(1);
+    }
+
+    @Test
+    void autoHealJob_isNotStarvedByMoreThanAHundredOlderPendingPayments() throws Exception {
+        // Revue #488 : plus de 100 PENDING anciens (checkouts abandonnés) dans la fenêtre de 7 jours.
+        // Triés du plus ancien au plus récent, ils occupaient toute la fenêtre lue et le paiement
+        // récent, vraiment bloqué, n'était jamais relu.
+        for (int i = 0; i < 105; i++) {
+            PaymentEntity old = new PaymentEntity();
+            old.setNegotiationThreadId(UUID.randomUUID());
+            old.setRail(PaymentRail.STRIPE);
+            old.setStripePaymentIntentId("pi_old_" + UUID.randomUUID());
+            old.setAmount(new BigDecimal("10.00"));
+            old.setCommissionAmount(new BigDecimal("1.00"));
+            old.setCurrency("EUR");
+            old.setStatus(PaymentStatus.PENDING);
+            extraPayments.add(paymentRepository.save(old).getId());
+        }
+        paymentRepository.flush();
+        tx.executeWithoutResult(s -> jdbc.update("UPDATE payments SET created_at = DATEADD('DAY', -3, created_at) "
+                + "WHERE stripe_payment_intent_id LIKE 'pi_old_%'"));
+        deliverWhilePending();
+        PaymentIntent authorized = intent("requires_capture");
+        when(authorized.getMetadata()).thenReturn(Map.of());
+        doAnswer(inv -> {
+            jdbc.update("UPDATE payments SET status = 'ESCROW' WHERE id = ?", payment.getId());
+            return null;
+        }).when(paymentService).applyPaymentEscrowActive(any(PaymentIntent.class), eq(true));
+
+        withStripe(job(Duration.ofMinutes(5))::run, authorized, authorized, intent("succeeded"));
+
+        assertReleasedOnce();
+    }
+
+    @Test
+    void resyncTransferRefused_alertsOnce_thenTheJobRetriesTheRelease() throws Exception {
+        deliverWhilePending();
+        PaymentIntent authorized = intent("requires_capture");
+        when(authorized.getMetadata()).thenReturn(Map.of());
+        doAnswer(inv -> {
+            jdbc.update("UPDATE payments SET status = 'ESCROW' WHERE id = ?", payment.getId());
+            return null;
+        }).when(paymentService).applyPaymentEscrowActive(any(PaymentIntent.class), eq(true));
+        when(authorized.capture(any(PaymentIntentCaptureParams.class), any(RequestOptions.class))).thenReturn(authorized);
+
+        PaymentStripeResyncService.Result[] result = new PaymentStripeResyncService.Result[1];
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
+            PaymentIntent captured = intent("succeeded");
+            piStatic.when(() -> PaymentIntent.retrieve(eq(payment.getStripePaymentIntentId()),
+                    any(PaymentIntentRetrieveParams.class), isNull())).thenReturn(authorized, authorized, captured);
+            trStatic.when(() -> Transfer.create(any(TransferCreateParams.class), any(RequestOptions.class)))
+                    .thenThrow(new com.stripe.exception.InvalidRequestException("insufficient funds", null, "req", null,
+                            400, null));
+            result[0] = resync.resync(payment.getId(), UUID.randomUUID());
+        }
+
+        // Séquestre et capture commités, Transfer refusé : claim annulé, alerte unique, message juste.
+        PaymentStripeResyncService.Result r = result[0];
+        assertThat(r.released()).isFalse();
+        assertThat(r.message()).contains("Colis livré mais versement impossible : versement refusé par Stripe")
+                .contains("Forcer le versement").doesNotContain("retenté à la livraison");
+        assertThat(reload().getStatus()).isEqualTo(PaymentStatus.ESCROW);
+        assertThat(reload().getCapturedAt()).isNotNull();
+        verify(alertEscalator).raiseOnce(eq("LATE_RELEASE_FAILED_" + payment.getId()), anyString(), anyMap());
+
+        // Le job reprend le séquestre livré non versé (colis livré depuis plus de 15 min).
+        withStripe(job(Duration.ofMinutes(30))::run, intent("succeeded"));
+
+        assertThat(stripeCalls).containsExactly("transfer:4762:acct_traveler:transfer-" + payment.getId());
+        assertThat(reload().getStatus()).isEqualTo(PaymentStatus.RELEASED);
+        verify(alertEscalator).resolveOpen("LATE_RELEASE_FAILED_" + payment.getId());
     }
 }

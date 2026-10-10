@@ -32,6 +32,7 @@ class PendingCardPaymentAutoHealJobTest {
 
     @Mock private PaymentRepository paymentRepository;
     @Mock private PaymentStripeResyncService resync;
+    @Mock private DeliveredEscrowReleaser releaser;
 
     private PendingCardPaymentAutoHealJob job;
 
@@ -41,8 +42,12 @@ class PendingCardPaymentAutoHealJobTest {
     }
 
     private PendingCardPaymentAutoHealJob newJob(boolean enabled, int batch) {
-        return new PendingCardPaymentAutoHealJob(paymentRepository, resync, enabled, Duration.ofMinutes(10),
-                Duration.ofDays(7), Duration.ofHours(24), batch, Clock.fixed(NOW, ZoneOffset.UTC));
+        return newJob(enabled, batch, NOW);
+    }
+
+    private PendingCardPaymentAutoHealJob newJob(boolean enabled, int batch, Instant now) {
+        return new PendingCardPaymentAutoHealJob(paymentRepository, resync, releaser, enabled, Duration.ofMinutes(10),
+                Duration.ofDays(7), Duration.ofHours(24), batch, Clock.fixed(now, ZoneOffset.UTC));
     }
 
     private UUID pendingCreated(Duration ago) {
@@ -57,7 +62,7 @@ class PendingCardPaymentAutoHealJobTest {
     }
 
     private void candidates(UUID... ids) {
-        when(paymentRepository.findPendingCardPaymentIds(any(), any(), any(Pageable.class))).thenReturn(List.of(ids));
+        lenient().when(paymentRepository.findPendingCardPaymentIds(any(), any(), any(Pageable.class))).thenReturn(List.of(ids));
     }
 
     private static PaymentStripeResyncService.Result result(UUID id, PaymentStripeResyncService.Action action,
@@ -76,7 +81,7 @@ class PendingCardPaymentAutoHealJobTest {
         LocalDateTime now = LocalDateTime.ofInstant(NOW, ZoneOffset.UTC);
         verify(paymentRepository).findPendingCardPaymentIds(eq(now.minusMinutes(10)), eq(now.minusDays(7)),
                 any(Pageable.class));
-        verifyNoInteractions(resync);
+        verifyNoInteractions(resync, releaser);
     }
 
     @Test
@@ -101,16 +106,14 @@ class PendingCardPaymentAutoHealJobTest {
 
         job.run();
 
-        assertThat(job.nextCheckOf(young)).isEqualTo(NOW);
+        assertThat(job.nextCheckOf(young)).isEqualTo(NOW.plus(Duration.ofMinutes(30)));
         assertThat(job.nextCheckOf(day)).isEqualTo(NOW.plus(Duration.ofHours(1)));
         assertThat(job.nextCheckOf(old)).isEqualTo(NOW.plus(Duration.ofHours(6)));
 
-        // Passage suivant, même instant : seul le plus jeune est relu.
+        // Passage suivant, même instant : aucun n'est dû, aucun appel Stripe.
         clearInvocations(resync);
         job.run();
-        verify(resync).resyncAutomatically(young);
-        verify(resync, never()).resyncAutomatically(day);
-        verify(resync, never()).resyncAutomatically(old);
+        verifyNoInteractions(resync);
     }
 
     @Test
@@ -193,6 +196,118 @@ class PendingCardPaymentAutoHealJobTest {
         job.run();
 
         assertThat(job.nextCheckOf(gone)).isEqualTo(NOW.plus(Duration.ofHours(6)));
-        assertThat(job.nextCheckOf(noDate)).isEqualTo(NOW);
+        assertThat(job.nextCheckOf(noDate)).isEqualTo(NOW.plus(Duration.ofMinutes(30)));
+    }
+
+    // ── Famine : plus récents d'abord, pagination jusqu'à remplir le lot ─────
+
+    @Test
+    void pagination_skipsPaymentsOnBackoff_untilTheBatchIsFull() {
+        // Lot de 2 → pages de 10. Page 0 : 10 paiements déjà relus (en attente) ; page 1 : 2 dus.
+        PendingCardPaymentAutoHealJob small = newJob(true, 2);
+        List<UUID> waiting = new java.util.ArrayList<>();
+        for (int i = 0; i < 10; i++) waiting.add(pendingCreated(Duration.ofHours(2)));
+        UUID dueA = pendingCreated(Duration.ofHours(3));
+        UUID dueB = pendingCreated(Duration.ofHours(3));
+        when(paymentRepository.findPendingCardPaymentIds(any(), any(), eq(org.springframework.data.domain.PageRequest.of(0, 10))))
+                .thenReturn(waiting);
+        when(paymentRepository.findPendingCardPaymentIds(any(), any(), eq(org.springframework.data.domain.PageRequest.of(1, 10))))
+                .thenReturn(List.of(dueA, dueB));
+        when(resync.resyncAutomatically(any())).thenAnswer(inv ->
+                result(inv.getArgument(0), PaymentStripeResyncService.Action.ALREADY_IN_SYNC, "processing", false));
+        // Premier passage : les deux plus récents de la page 0 passent et partent en attente.
+        small.run();
+        // Puis les 8 autres de la page 0, deux par passage.
+        for (int i = 0; i < 4; i++) small.run();
+        clearInvocations(resync);
+
+        small.run();
+
+        verify(resync).resyncAutomatically(dueA);
+        verify(resync).resyncAutomatically(dueB);
+        verify(resync, times(2)).resyncAutomatically(any());
+    }
+
+    @Test
+    void pagination_stopsAtTheLastPartialPage_andAtMaxPages() {
+        UUID only = pendingCreated(Duration.ofHours(2));
+        candidates(only);
+        when(resync.resyncAutomatically(only))
+                .thenReturn(result(only, PaymentStripeResyncService.Action.ALREADY_IN_SYNC, "processing", false));
+
+        job.run();
+        job.run();
+
+        // Une seule page lue par passage : elle était incomplète.
+        verify(paymentRepository, times(2)).findPendingCardPaymentIds(any(), any(), any(Pageable.class));
+
+        // Pages toujours pleines de paiements en attente : au plus MAX_PAGES lectures.
+        PendingCardPaymentAutoHealJob small = newJob(true, 1);
+        List<UUID> full = new java.util.ArrayList<>();
+        for (int i = 0; i < 5; i++) full.add(pendingCreated(Duration.ofHours(2)));
+        clearInvocations(paymentRepository);
+        when(paymentRepository.findPendingCardPaymentIds(any(), any(), any(Pageable.class))).thenReturn(full);
+        when(resync.resyncAutomatically(any())).thenAnswer(inv ->
+                result(inv.getArgument(0), PaymentStripeResyncService.Action.ALREADY_IN_SYNC, "processing", false));
+        for (int i = 0; i < 5; i++) small.run();
+        clearInvocations(paymentRepository);
+        small.run();
+        verify(paymentRepository, times(PendingCardPaymentAutoHealJob.MAX_PAGES))
+                .findPendingCardPaymentIds(any(), any(), any(Pageable.class));
+    }
+
+    // ── Séquestres livrés non versés ─────────────────────────────────────────
+
+    private void escrowCandidates(UUID... ids) {
+        when(paymentRepository.findDeliveredUnreleasedEscrowIds(any(), any(), any(Pageable.class))).thenReturn(List.of(ids));
+    }
+
+    @Test
+    void deliveredEscrow_queriesTheReleaseWindow() {
+        candidates();
+        escrowCandidates();
+
+        job.run();
+
+        LocalDateTime now = LocalDateTime.ofInstant(NOW, ZoneOffset.UTC);
+        verify(paymentRepository).findDeliveredUnreleasedEscrowIds(eq(now.minusMinutes(15)), eq(now.minusHours(20)),
+                any(Pageable.class));
+    }
+
+    @Test
+    void deliveredEscrow_released_failed_guarded_andNotDelivered() {
+        candidates();
+        UUID ok = UUID.randomUUID();
+        UUID failed = UUID.randomUUID();
+        UUID held = UUID.randomUUID();
+        UUID gone = UUID.randomUUID();
+        UUID broken = UUID.randomUUID();
+        escrowCandidates(ok, failed, held, gone, broken);
+        when(releaser.releaseIfDelivered(ok, "auto-heal-release"))
+                .thenReturn(DeliveredEscrowReleaser.LateRelease.of(EscrowReleaseOutcome.RELEASED));
+        when(releaser.releaseIfDelivered(failed, "auto-heal-release"))
+                .thenReturn(new DeliveredEscrowReleaser.LateRelease(EscrowReleaseOutcome.TRANSFER_FAILED, "refus"));
+        when(releaser.releaseIfDelivered(held, "auto-heal-release"))
+                .thenReturn(DeliveredEscrowReleaser.LateRelease.of(EscrowReleaseOutcome.PAYOUT_HELD));
+        when(releaser.releaseIfDelivered(gone, "auto-heal-release"))
+                .thenReturn(DeliveredEscrowReleaser.LateRelease.of(EscrowReleaseOutcome.ALREADY_RELEASED));
+        when(releaser.releaseIfDelivered(broken, "auto-heal-release")).thenThrow(new IllegalStateException("db"));
+
+        assertThat(job.run()).isEqualTo(5);
+
+        assertThat(job.nextReleaseOf(ok)).isNull();
+        assertThat(job.nextReleaseOf(gone)).isNull();
+        assertThat(job.nextReleaseOf(failed)).isEqualTo(NOW.plus(Duration.ofHours(1)));
+        assertThat(job.nextReleaseOf(broken)).isEqualTo(NOW.plus(Duration.ofHours(1)));
+        // Garde bloquante (voyageur gelé…) : plus d'essai, donc pas de boucle d'audits ni d'alertes.
+        assertThat(job.nextReleaseOf(held)).isEqualTo(NOW.plus(Duration.ofHours(20)));
+
+        // Passage suivant : échecs et gardes attendent ; seuls les paiements sortis de l'agenda sont
+        // relus (en vrai, versés ou plus en séquestre, la requête ne les renvoie plus).
+        clearInvocations(releaser);
+        job.run();
+        verify(releaser, never()).releaseIfDelivered(eq(failed), any());
+        verify(releaser, never()).releaseIfDelivered(eq(held), any());
+        verify(releaser, never()).releaseIfDelivered(eq(broken), any());
     }
 }
