@@ -244,4 +244,31 @@ class DeliveryEscrowCaptureIT {
         assertThat(after.getStatus()).isEqualTo(PaymentStatus.ESCROW);
         assertThat(after.getCapturedAt()).isNotNull();
     }
+
+    @Test
+    void refundCommittedDuringTheStripeRead_isNeverCaptured() throws Exception {
+        // Revue #487 : entre la lecture du PaymentIntent (requires_capture) et la garde, un
+        // remboursement admin commit REFUNDED depuis une autre connexion. La garde répond 0, la
+        // relecture verrouillée aussi : aucune capture, aucun Transfer.
+        PaymentIntent authorized = intent("requires_capture");
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
+            piStatic.when(() -> PaymentIntent.retrieve(eq(payment.getStripePaymentIntentId()),
+                    any(PaymentIntentRetrieveParams.class), isNull())).thenAnswer(inv -> {
+                Thread refund = new Thread(() -> jdbc.update(
+                        "UPDATE payments SET status = 'REFUNDED' WHERE id = ? AND status = 'ESCROW'", payment.getId()));
+                refund.start();
+                refund.join();
+                return authorized;
+            });
+
+            deliver();
+
+            trStatic.verifyNoInteractions();
+        }
+        verify(authorized, never()).capture(any(PaymentIntentCaptureParams.class), any(RequestOptions.class));
+        PaymentEntity after = reload();
+        assertThat(after.getStatus()).isEqualTo(PaymentStatus.REFUNDED);
+        assertThat(after.getCapturedAt()).isNull();
+    }
 }

@@ -106,6 +106,10 @@ public class EscrowCaptureService {
             if (payment.getCapturedAt() == null) {
                 paymentRepository.markCapturedIfEscrow(paymentId, Instant.now());
             }
+            if (payment.getStripeChargeId() == null && chargeId != null) {
+                paymentRepository.setStripeChargeIdIfMissing(paymentId, chargeId);
+            }
+            resolveCaptureFailedAlert(paymentId);
             return new Outcome(chargeId, false);
         }
         if (!STATUS_REQUIRES_CAPTURE.equals(status)) {
@@ -125,12 +129,21 @@ public class EscrowCaptureService {
                             + ") différent du montant attendu " + expected + " " + currency.code(), null);
         }
 
-        // Garde atomique avant la capture (règle 19) : pose captured_at. Annulée avec la
-        // transaction si Stripe refuse. 0 = captured_at déjà posé alors que le PaymentIntent n'est
-        // pas capturé (capture précédente en échec) : on capture quand même, la clé
+        // Garde atomique avant la capture (règle 19) : pose captured_at et le verrou de ligne,
+        // tenu jusqu'au commit (un remboursement ou un versement concurrent attend). Annulée avec
+        // la transaction si Stripe refuse.
+        int marked = paymentRepository.markCapturedIfEscrow(paymentId, Instant.now());
+        if (marked == 0 && paymentRepository.lockIfEscrow(paymentId) == 0) {
+            // Le paiement a quitté le séquestre depuis la lecture (remboursé, versé, annulé…) :
+            // capturer encaisserait un argent que la base dit rendu. Rien n'est capturé.
+            PaymentStatus current = paymentRepository.findStatusById(paymentId).orElse(null);
+            log.warn("Paiement {} plus en séquestre ({}) au moment de la capture (source {}) : capture abandonnée",
+                    paymentId, current, source);
+            throw new EscrowCaptureException("le paiement n'est plus en séquestre (" + current + ")", status, null);
+        }
+        // marked == 0 mais toujours ESCROW : captured_at déjà posé alors que le PaymentIntent
+        // n'est pas capturé (ancienne capture en échec). On capture, verrou tenu, la clé
         // d'idempotence protège d'un double appel.
-        Instant now = Instant.now();
-        int marked = paymentRepository.markCapturedIfEscrow(paymentId, now);
         PaymentIntent captured;
         try {
             captured = pi.capture(PaymentIntentCaptureParams.builder().setAmountToCapture(expected).build(),
@@ -139,17 +152,14 @@ public class EscrowCaptureService {
             throw failure(payment, source, status, captureBefore, "capture refusée par Stripe : " + e.getMessage(), e);
         }
 
-        // L'entité a été chargée avant l'UPDATE ciblé : on reporte captured_at sur elle avant
-        // tout flush, sinon l'enregistrement du charge id réécrirait captured_at à NULL.
-        if (marked == 1) {
-            payment.setCapturedAt(now);
-        }
+        // Écriture ciblée du charge id : l'entité, chargée avant l'appel Stripe, n'est jamais
+        // enregistrée (elle écraserait un statut, un remboursé ou un litige posé entre-temps).
         String capturedChargeId = captured != null && captured.getLatestCharge() != null
                 ? captured.getLatestCharge() : chargeId;
         if (payment.getStripeChargeId() == null && capturedChargeId != null) {
-            payment.setStripeChargeId(capturedChargeId);
-            paymentRepository.save(payment);
+            paymentRepository.setStripeChargeIdIfMissing(paymentId, capturedChargeId);
         }
+        resolveCaptureFailedAlert(paymentId);
 
         Map<String, Object> audit = new LinkedHashMap<>();
         audit.put("piId", piId);
@@ -162,6 +172,18 @@ public class EscrowCaptureService {
         auditService.log("PAYMENT", paymentId, "PAYMENT_CAPTURED_ON_PLATFORM", null, audit);
         log.info("PaymentIntent {} capturé sur le solde plateforme (paiement {}, source {})", piId, paymentId, source);
         return new Outcome(capturedChargeId, true);
+    }
+
+    /**
+     * Capture réussie (ou déjà faite) : l'alerte d'un échec précédent n'a plus d'objet. La
+     * clore évite que {@code raiseOnce} ne masque un futur échec sur ce paiement.
+     */
+    private void resolveCaptureFailedAlert(UUID paymentId) {
+        try {
+            alertEscalator.resolveOpen(ALERT_PREFIX + paymentId);
+        } catch (RuntimeException e) {
+            log.warn("Alerte {}{} non close après capture : {}", ALERT_PREFIX, paymentId, e.getMessage());
+        }
     }
 
     private EscrowCaptureException failure(PaymentEntity payment, String source, String piStatus,

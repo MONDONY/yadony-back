@@ -10,7 +10,6 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
-import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -40,7 +39,7 @@ class PaymentStripeResyncServiceTest {
     @Mock private EscrowCaptureService escrowCapture;
     @Mock private BidRepository bidRepository;
     @Mock private AuditService auditService;
-    @Mock private EntityManager entityManager;
+    @Mock private org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     private PaymentStripeResyncService service;
     private final UUID paymentId = UUID.randomUUID();
@@ -50,7 +49,7 @@ class PaymentStripeResyncServiceTest {
     @BeforeEach
     void setUp() {
         service = new PaymentStripeResyncService(paymentRepository, paymentService, escrowCapture, bidRepository,
-                auditService, entityManager);
+                auditService, transactionManager);
         payment = new PaymentEntity();
         ReflectionTestUtils.setField(payment, "id", paymentId);
         payment.setNegotiationThreadId(UUID.randomUUID());
@@ -126,8 +125,77 @@ class PaymentStripeResyncServiceTest {
         PaymentStripeResyncService.Result r = run(pi);
 
         assertThat(r.action()).isEqualTo(PaymentStripeResyncService.Action.ESCROW_ACTIVATED);
-        assertThat(payment.getCapturedAt()).isNotNull();
-        verify(paymentRepository).save(payment);
+        // Écriture ciblée, jamais de save de l'entité.
+        verify(paymentRepository).markCapturedIfEscrow(eq(paymentId), any());
+        verify(paymentRepository, never()).save(any());
+        verifyNoInteractions(escrowCapture);
+    }
+
+    @Test
+    void pendingClassicBidAlreadyAccepted_activatesThenCaptures() {
+        // Revue #487, point 4 : BidAcceptedEvent est passé pendant que le paiement était PENDING,
+        // aucune capture n'a eu lieu ; le modèle actuel capture à l'acceptation : on la lance.
+        payment.setStatus(PaymentStatus.PENDING);
+        payment.setNegotiationThreadId(null);
+        UUID bidId = UUID.randomUUID();
+        payment.setBidId(bidId);
+        BidEntity bid = new BidEntity();
+        bid.setStatus(BidStatus.ACCEPTED);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        PaymentIntent pi = pi("requires_capture", 6450);
+        doAnswer(inv -> { payment.setStatus(PaymentStatus.ESCROW); return null; })
+                .when(paymentService).applyPaymentEscrowActive(pi);
+        when(escrowCapture.ensureCaptured(paymentId, "admin-resync-stripe"))
+                .thenReturn(new EscrowCaptureService.Outcome("ch_1", true));
+
+        PaymentStripeResyncService.Result r = run(pi);
+
+        org.mockito.InOrder order = inOrder(paymentService, escrowCapture);
+        order.verify(paymentService).applyPaymentEscrowActive(pi);
+        order.verify(escrowCapture).ensureCaptured(paymentId, "admin-resync-stripe");
+        assertThat(r.action()).isEqualTo(PaymentStripeResyncService.Action.ESCROW_ACTIVATED);
+        assertThat(r.after().stripeStatus()).isEqualTo("succeeded");
+        assertThat(r.message()).contains("séquestre capturé");
+    }
+
+    @Test
+    void pendingClassicBidAccepted_captureFails_escrowStaysActivated() {
+        payment.setStatus(PaymentStatus.PENDING);
+        payment.setNegotiationThreadId(null);
+        UUID bidId = UUID.randomUUID();
+        payment.setBidId(bidId);
+        BidEntity bid = new BidEntity();
+        bid.setStatus(BidStatus.IN_TRANSIT);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        PaymentIntent pi = pi("requires_capture", 6450);
+        doAnswer(inv -> { payment.setStatus(PaymentStatus.ESCROW); return null; })
+                .when(paymentService).applyPaymentEscrowActive(pi);
+        when(escrowCapture.ensureCaptured(any(), any()))
+                .thenThrow(new EscrowCaptureService.EscrowCaptureException("refus", "requires_capture", null));
+
+        PaymentStripeResyncService.Result r = run(pi);
+
+        assertThat(r.action()).isEqualTo(PaymentStripeResyncService.Action.ESCROW_ACTIVATED);
+        assertThat(r.after().status()).isEqualTo("ESCROW");
+        assertThat(r.after().stripeStatus()).isEqualTo("requires_capture");
+        assertThat(r.message()).contains("capture impossible pour l'instant").contains("à la livraison");
+        verify(auditService).log(eq("PAYMENT"), eq(paymentId), eq("ADMIN_PAYMENT_RESYNC_STRIPE"), eq(adminId), anyMap());
+    }
+
+    @Test
+    void pendingClassicBidNotYetAccepted_saysWhenItWillBeCharged() {
+        payment.setStatus(PaymentStatus.PENDING);
+        payment.setNegotiationThreadId(null);
+        UUID bidId = UUID.randomUUID();
+        payment.setBidId(bidId);
+        BidEntity bid = new BidEntity();
+        bid.setStatus(BidStatus.PENDING);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+
+        PaymentStripeResyncService.Result r = run(pi("requires_capture", 6450));
+
+        assertThat(r.message()).contains("l'encaissement aura lieu à l'acceptation du colis");
+        verifyNoInteractions(escrowCapture);
     }
 
     @Test
@@ -173,9 +241,8 @@ class PaymentStripeResyncServiceTest {
     void escrowNegotiationAuthorized_isCapturedThroughTheSharedPath() {
         payment.setStatus(PaymentStatus.ESCROW);
         PaymentIntent pi = pi("requires_capture", 6450);
-        when(escrowCapture.ensureCaptured(paymentId, "admin-resync-stripe"))
-                .thenReturn(new EscrowCaptureService.Outcome("ch_1", true));
-        doAnswer(inv -> { payment.setCapturedAt(Instant.now()); return null; }).when(entityManager).refresh(payment);
+        doAnswer(inv -> { payment.setCapturedAt(Instant.now()); return new EscrowCaptureService.Outcome("ch_1", true); })
+                .when(escrowCapture).ensureCaptured(paymentId, "admin-resync-stripe");
 
         PaymentStripeResyncService.Result r = run(pi);
 

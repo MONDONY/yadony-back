@@ -94,13 +94,15 @@ class EscrowCaptureServiceTest {
         assertThat(options.getValue().getIdempotencyKey()).isEqualTo("capture-" + paymentId);
         assertThat(outcome.capturedNow()).isTrue();
         assertThat(outcome.chargeId()).isEqualTo("ch_nego");
-        // Charge id enregistré, et captured_at reporté sur l'entité (pas réécrit à NULL au flush).
-        assertThat(payment.getStripeChargeId()).isEqualTo("ch_nego");
-        assertThat(payment.getCapturedAt()).isNotNull();
-        verify(paymentRepository).save(payment);
+        // Charge id par écriture ciblée : l'entité lue avant l'appel Stripe n'est jamais enregistrée.
+        verify(paymentRepository).setStripeChargeIdIfMissing(paymentId, "ch_nego");
+        verify(paymentRepository, never()).save(any());
+        assertThat(payment.getStripeChargeId()).isNull();
+        // Capture réussie : l'alerte d'un échec précédent est close.
+        verify(alertEscalator).resolveOpen("ESCROW_CAPTURE_FAILED_" + paymentId);
         verify(auditService).log(eq("PAYMENT"), eq(paymentId), eq("PAYMENT_CAPTURED_ON_PLATFORM"), isNull(),
                 argThat(m -> "delivery".equals(m.get("source")) && Long.valueOf(6450L).equals(m.get("amountToCapture"))));
-        verifyNoInteractions(alertEscalator);
+        verify(alertEscalator, never()).raiseOnce(anyString(), anyString(), anyMap());
     }
 
     @Test
@@ -111,6 +113,7 @@ class EscrowCaptureServiceTest {
         PaymentIntent pi = pi("requires_capture", 6450L, 6450L);
         when(pi.capture(any(PaymentIntentCaptureParams.class), any(RequestOptions.class))).thenReturn(pi);
         when(paymentRepository.markCapturedIfEscrow(eq(paymentId), any())).thenReturn(0);
+        when(paymentRepository.lockIfEscrow(paymentId)).thenReturn(1); // toujours ESCROW, verrou pris
 
         try (MockedStatic<PaymentIntent> mocked = mockStatic(PaymentIntent.class)) {
             stubRetrieve(mocked, pi);
@@ -132,9 +135,11 @@ class EscrowCaptureServiceTest {
         }
         verify(pi, never()).capture(any(PaymentIntentCaptureParams.class), any(RequestOptions.class));
         verify(paymentRepository).markCapturedIfEscrow(eq(paymentId), any());
+        verify(paymentRepository).setStripeChargeIdIfMissing(paymentId, "ch_nego");
         assertThat(outcome.capturedNow()).isFalse();
         assertThat(outcome.chargeId()).isEqualTo("ch_nego");
-        verifyNoInteractions(auditService, alertEscalator);
+        verifyNoInteractions(auditService);
+        verify(alertEscalator).resolveOpen("ESCROW_CAPTURE_FAILED_" + paymentId);
     }
 
     @Test
@@ -149,6 +154,7 @@ class EscrowCaptureServiceTest {
             outcome = service.ensureCaptured(paymentId, "delivery");
         }
         verify(paymentRepository, never()).markCapturedIfEscrow(any(), any());
+        verify(paymentRepository, never()).setStripeChargeIdIfMissing(any(), any());
         assertThat(outcome.chargeId()).isEqualTo("ch_kept");
     }
 
@@ -166,6 +172,29 @@ class EscrowCaptureServiceTest {
         verify(pi, never()).capture(any(PaymentIntentCaptureParams.class), any(RequestOptions.class));
         verify(paymentRepository, never()).markCapturedIfEscrow(any(), any());
         verify(alertEscalator).raiseOnce(eq("ESCROW_CAPTURE_FAILED_" + paymentId), anyString(), anyMap());
+        verify(alertEscalator, never()).resolveOpen(anyString());
+    }
+
+    @Test
+    void paymentLeftEscrowConcurrently_isNeverCaptured() throws Exception {
+        // Revue #487 : le listener lit requires_capture, un remboursement admin passe le paiement
+        // REFUNDED (markRefundedIfEscrow) avant la garde : markCapturedIfEscrow répond 0. Sans
+        // relecture, la capture partait quand même et encaissait un argent que la base dit rendu.
+        PaymentIntent pi = pi("requires_capture", 6450L, 6450L);
+        when(paymentRepository.markCapturedIfEscrow(eq(paymentId), any())).thenReturn(0);
+        when(paymentRepository.lockIfEscrow(paymentId)).thenReturn(0);
+        when(paymentRepository.findStatusById(paymentId)).thenReturn(Optional.of(PaymentStatus.REFUNDED));
+
+        try (MockedStatic<PaymentIntent> mocked = mockStatic(PaymentIntent.class)) {
+            stubRetrieve(mocked, pi);
+            assertThatThrownBy(() -> service.ensureCaptured(paymentId, "negotiation-escrow-ready"))
+                    .isInstanceOf(EscrowCaptureService.EscrowCaptureException.class)
+                    .hasMessageContaining("plus en séquestre (REFUNDED)");
+        }
+        verify(pi, never()).capture(any(PaymentIntentCaptureParams.class), any(RequestOptions.class));
+        verifyNoInteractions(auditService);
+        // Course bénigne (aucun argent n'a bougé) : pas d'alerte.
+        verify(alertEscalator, never()).raiseOnce(anyString(), anyString(), anyMap());
     }
 
     @Test
@@ -207,6 +236,7 @@ class EscrowCaptureServiceTest {
         assertThat(detail.getValue()).contains("capture possible jusqu'au");
         // Aucun enregistrement local : la transaction REQUIRES_NEW est annulée par l'exception.
         verify(paymentRepository, never()).save(any());
+        verify(paymentRepository, never()).setStripeChargeIdIfMissing(any(), any());
         verifyNoInteractions(auditService);
     }
 

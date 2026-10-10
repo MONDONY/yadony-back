@@ -11,12 +11,12 @@ import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
 import com.yadony.api.payments.currency.CurrencyAmount;
 import com.yadony.api.payments.currency.SupportedCurrency;
-import jakarta.persistence.EntityManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -85,146 +85,73 @@ public class PaymentStripeResyncService {
     private final EscrowCaptureService escrowCapture;
     private final BidRepository bidRepository;
     private final AuditService auditService;
-    private final EntityManager entityManager;
+    private final TransactionTemplate transaction;
 
     public PaymentStripeResyncService(PaymentRepository paymentRepository, PaymentService paymentService,
                                       EscrowCaptureService escrowCapture, BidRepository bidRepository,
-                                      AuditService auditService, EntityManager entityManager) {
+                                      AuditService auditService, PlatformTransactionManager transactionManager) {
         this.paymentRepository = paymentRepository;
         this.paymentService = paymentService;
         this.escrowCapture = escrowCapture;
         this.bidRepository = bidRepository;
         this.auditService = auditService;
-        this.entityManager = entityManager;
+        this.transaction = new TransactionTemplate(transactionManager);
     }
 
-    @Transactional
+    /** Décision prise sur l'état local relu après l'appel Stripe. */
+    private record Step(Action action, String message, boolean captureAfterCommit) {}
+
+    /**
+     * Sans transaction englobante, volontairement : le PaymentIntent est lu chez Stripe AVANT
+     * toute lecture de l'entité qui sera écrite (aucun {@code save} d'une entité chargée avant un
+     * appel réseau) ; l'alignement local se fait dans une transaction courte qui relit le paiement ;
+     * une capture éventuelle part ensuite, dans sa propre transaction ({@link EscrowCaptureService}),
+     * une fois le passage en séquestre commité.
+     */
     public Result resync(UUID paymentId, UUID adminId) {
-        PaymentEntity payment = paymentRepository.findById(paymentId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "payment-not-found",
-                        "Not Found", "Paiement introuvable"));
-        String piId = payment.getStripePaymentIntentId();
-        if (payment.getRail() != PaymentRail.STRIPE || piId == null || piId.isBlank()) {
+        PaymentEntity initial = load(paymentId);
+        String piId = initial.getStripePaymentIntentId();
+        if (initial.getRail() != PaymentRail.STRIPE || piId == null || piId.isBlank()) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "not-a-card-payment",
                     "Not A Card Payment", "Ce paiement n'a pas de PaymentIntent Stripe : rien à resynchroniser");
         }
 
         PaymentIntent pi = retrieve(piId);
         String stripeStatus = pi.getStatus();
-        Snapshot before = snapshot(payment, stripeStatus, pi.getAmountCapturable());
+        Snapshot before = snapshot(initial, stripeStatus, pi.getAmountCapturable());
 
-        PaymentStatus status = payment.getStatus();
-        if (status == PaymentStatus.PENDING || status == PaymentStatus.ESCROW) {
-            requireSameAmount(payment, pi);
-        }
-
-        Action action;
-        String message;
+        Step step = transaction.execute(tx -> alignLocally(load(paymentId), pi));
+        Action action = step.action();
+        String message = step.message();
         String afterStripeStatus = stripeStatus;
-        switch (status) {
-            case PENDING -> {
-                switch (stripeStatus) {
-                    case "requires_capture", "succeeded" -> {
-                        paymentService.applyPaymentEscrowActive(pi);
-                        if ("succeeded".equals(stripeStatus) && payment.getStatus() == PaymentStatus.ESCROW
-                                && payment.getCapturedAt() == null) {
-                            // Déjà capturé chez Stripe : la trace locale suit, comme pour un séquestre.
-                            payment.setCapturedAt(Instant.now());
-                            paymentRepository.save(payment);
-                        }
-                        action = Action.ESCROW_ACTIVATED;
-                        message = "Paiement passé en séquestre comme à la réception du webhook Stripe"
-                                + (payment.getNegotiationThreadId() != null && "requires_capture".equals(stripeStatus)
-                                ? " ; la capture de la négociation part dans la foulée" : "");
-                    }
-                    case "canceled" -> {
-                        paymentService.applyPaymentIntentCanceled(pi);
-                        action = Action.MARKED_CANCELLED;
-                        message = "PaymentIntent annulé chez Stripe : paiement marqué annulé";
-                    }
-                    case "requires_payment_method" -> {
-                        if (pi.getLastPaymentError() != null) {
-                            paymentService.applyPaymentFailed(pi);
-                            action = Action.MARKED_FAILED;
-                            message = "Paiement refusé chez Stripe : paiement marqué en échec";
-                        } else {
-                            action = Action.ALREADY_IN_SYNC;
-                            message = "Paiement pas encore tenté par l'expéditeur : base déjà à jour";
-                        }
-                    }
-                    case "requires_confirmation", "requires_action", "processing" -> {
-                        action = Action.ALREADY_IN_SYNC;
-                        message = "Paiement en cours chez Stripe (" + stripeStatus + ") : base déjà à jour";
-                    }
-                    default -> throw unsupported(payment, stripeStatus);
+        Long afterCapturable = pi.getAmountCapturable();
+
+        if (step.captureAfterCommit()) {
+            boolean alreadyChanged = action != Action.ALREADY_IN_SYNC;
+            try {
+                escrowCapture.ensureCaptured(paymentId, SOURCE);
+                afterStripeStatus = "succeeded";
+                afterCapturable = 0L;
+                if (!alreadyChanged) {
+                    action = Action.ESCROW_CAPTURED;
+                    message = "Séquestre capturé sur le solde plateforme : le voyageur sera payé à la livraison";
+                } else {
+                    message = message + " ; séquestre capturé sur le solde plateforme";
                 }
-            }
-            case ESCROW -> {
-                switch (stripeStatus) {
-                    case "requires_capture" -> {
-                        if (!EscrowCaptureService.captureDue(payment, bidStatus(payment))) {
-                            action = Action.ALREADY_IN_SYNC;
-                            message = payment.isLegacyDestinationCharge()
-                                    ? "Séquestre legacy : la capture se fait à la livraison, base déjà à jour"
-                                    : "Autorisation normale : la capture se fera à l'acceptation du colis";
-                        } else {
-                            try {
-                                escrowCapture.ensureCaptured(paymentId, SOURCE);
-                            } catch (EscrowCaptureService.EscrowCaptureException e) {
-                                throw new YadonyBusinessException(HttpStatus.CONFLICT, "escrow-capture-failed",
-                                        "Escrow Capture Failed",
-                                        "Capture impossible (" + e.getMessage() + ") : rien n'a été écrit, "
-                                                + "le paiement reste en séquestre");
-                            }
-                            // La capture a écrit dans sa propre transaction : relire la ligne.
-                            entityManager.refresh(payment);
-                            afterStripeStatus = "succeeded";
-                            action = Action.ESCROW_CAPTURED;
-                            message = "Séquestre capturé sur le solde plateforme : le voyageur sera payé à la livraison";
-                        }
-                    }
-                    case "succeeded" -> {
-                        if (payment.getCapturedAt() == null) {
-                            paymentRepository.markCapturedIfEscrow(paymentId, Instant.now());
-                            entityManager.refresh(payment);
-                            action = Action.CAPTURE_RECORDED;
-                            message = "Déjà capturé chez Stripe : date de capture enregistrée";
-                        } else {
-                            action = Action.ALREADY_IN_SYNC;
-                            message = "Séquestre capturé : base déjà à jour";
-                        }
-                    }
-                    case "canceled" -> throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                            "authorization-expired", "Authorization Expired",
-                            "L'autorisation carte a expiré ou a été annulée chez Stripe : plus rien à capturer. "
-                                    + "Le paiement reste en séquestre, à rembourser ou à trancher à la main");
-                    default -> throw unsupported(payment, stripeStatus);
+            } catch (EscrowCaptureService.EscrowCaptureException e) {
+                if (!alreadyChanged) {
+                    throw new YadonyBusinessException(HttpStatus.CONFLICT, "escrow-capture-failed",
+                            "Escrow Capture Failed",
+                            "Capture impossible (" + e.getMessage() + ") : rien n'a été écrit, "
+                                    + "le paiement reste en séquestre");
                 }
+                // Le passage en séquestre est commité et juste : seule la capture reste à faire.
+                message = message + " ; capture impossible pour l'instant (" + e.getMessage()
+                        + "), alerte ESCROW_CAPTURE_FAILED levée, l'encaissement sera retenté à la livraison";
             }
-            case RELEASED -> {
-                if (!"succeeded".equals(stripeStatus)) throw unsupported(payment, stripeStatus);
-                action = Action.ALREADY_IN_SYNC;
-                message = "Paiement versé et encaissé : base déjà à jour";
-            }
-            case REFUNDED -> {
-                if (!"succeeded".equals(stripeStatus) && !"canceled".equals(stripeStatus)) {
-                    throw unsupported(payment, stripeStatus);
-                }
-                action = Action.ALREADY_IN_SYNC;
-                message = "Paiement remboursé : base déjà à jour";
-            }
-            case CANCELLED, FAILED -> {
-                if ("succeeded".equals(stripeStatus) || "requires_capture".equals(stripeStatus)) {
-                    throw unsupported(payment, stripeStatus);
-                }
-                action = Action.ALREADY_IN_SYNC;
-                message = "Paiement clos sans encaissement : base déjà à jour";
-            }
-            default -> throw unsupported(payment, stripeStatus);
         }
 
-        Snapshot after = snapshot(payment, afterStripeStatus,
-                action == Action.ESCROW_CAPTURED ? Long.valueOf(0L) : pi.getAmountCapturable());
+        Snapshot after = snapshot(load(paymentId), afterStripeStatus, afterCapturable);
         if (action != Action.ALREADY_IN_SYNC) {
             Map<String, Object> audit = new LinkedHashMap<>();
             audit.put("piId", piId);
@@ -235,6 +162,114 @@ public class PaymentStripeResyncService {
             log.info("Paiement {} resynchronisé avec Stripe par l'admin {} : {}", paymentId, adminId, action);
         }
         return new Result(paymentId, piId, action, before, after, message);
+    }
+
+    private PaymentEntity load(UUID paymentId) {
+        return paymentRepository.findById(paymentId)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "payment-not-found",
+                        "Not Found", "Paiement introuvable"));
+    }
+
+    /** Alignement local, dans la transaction courte, sur l'entité relue après l'appel Stripe. */
+    private Step alignLocally(PaymentEntity payment, PaymentIntent pi) {
+        UUID paymentId = payment.getId();
+        String stripeStatus = pi.getStatus();
+        PaymentStatus status = payment.getStatus();
+        if (status == PaymentStatus.PENDING || status == PaymentStatus.ESCROW) {
+            requireSameAmount(payment, pi);
+        }
+        switch (status) {
+            case PENDING -> {
+                switch (stripeStatus) {
+                    case "requires_capture", "succeeded" -> {
+                        paymentService.applyPaymentEscrowActive(pi);
+                        boolean succeeded = "succeeded".equals(stripeStatus);
+                        if (succeeded) {
+                            // Déjà capturé chez Stripe : la trace locale suit, par écriture ciblée.
+                            paymentRepository.markCapturedIfEscrow(paymentId, Instant.now());
+                        }
+                        String message = "Paiement passé en séquestre comme à la réception du webhook Stripe";
+                        boolean captureNow = false;
+                        if (!succeeded) {
+                            if (payment.getBidId() == null) {
+                                message += payment.getNegotiationThreadId() != null
+                                        ? " ; la capture de la négociation part dans la foulée"
+                                        : "";
+                            } else if (EscrowCaptureService.captureDue(payment, bidStatus(payment))) {
+                                // Colis classique déjà accepté : BidAcceptedEvent est passé sans
+                                // capture (paiement encore PENDING) ; on capture comme l'aurait fait
+                                // l'acceptation, après le commit du séquestre.
+                                captureNow = true;
+                            } else {
+                                message += " ; l'encaissement aura lieu à l'acceptation du colis par le voyageur";
+                            }
+                        }
+                        return new Step(Action.ESCROW_ACTIVATED, message, captureNow);
+                    }
+                    case "canceled" -> {
+                        paymentService.applyPaymentIntentCanceled(pi);
+                        return new Step(Action.MARKED_CANCELLED,
+                                "PaymentIntent annulé chez Stripe : paiement marqué annulé", false);
+                    }
+                    case "requires_payment_method" -> {
+                        if (pi.getLastPaymentError() != null) {
+                            paymentService.applyPaymentFailed(pi);
+                            return new Step(Action.MARKED_FAILED,
+                                    "Paiement refusé chez Stripe : paiement marqué en échec", false);
+                        }
+                        return new Step(Action.ALREADY_IN_SYNC,
+                                "Paiement pas encore tenté par l'expéditeur : base déjà à jour", false);
+                    }
+                    case "requires_confirmation", "requires_action", "processing" -> {
+                        return new Step(Action.ALREADY_IN_SYNC,
+                                "Paiement en cours chez Stripe (" + stripeStatus + ") : base déjà à jour", false);
+                    }
+                    default -> throw unsupported(payment, stripeStatus);
+                }
+            }
+            case ESCROW -> {
+                switch (stripeStatus) {
+                    case "requires_capture" -> {
+                        if (!EscrowCaptureService.captureDue(payment, bidStatus(payment))) {
+                            return new Step(Action.ALREADY_IN_SYNC, payment.isLegacyDestinationCharge()
+                                    ? "Séquestre legacy : la capture se fait à la livraison, base déjà à jour"
+                                    : "Autorisation normale : la capture se fera à l'acceptation du colis", false);
+                        }
+                        return new Step(Action.ALREADY_IN_SYNC, "", true);
+                    }
+                    case "succeeded" -> {
+                        if (payment.getCapturedAt() == null) {
+                            paymentRepository.markCapturedIfEscrow(paymentId, Instant.now());
+                            return new Step(Action.CAPTURE_RECORDED,
+                                    "Déjà capturé chez Stripe : date de capture enregistrée", false);
+                        }
+                        return new Step(Action.ALREADY_IN_SYNC, "Séquestre capturé : base déjà à jour", false);
+                    }
+                    case "canceled" -> throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                            "authorization-expired", "Authorization Expired",
+                            "L'autorisation carte a expiré ou a été annulée chez Stripe : plus rien à capturer. "
+                                    + "Le paiement reste en séquestre, à rembourser ou à trancher à la main");
+                    default -> throw unsupported(payment, stripeStatus);
+                }
+            }
+            case RELEASED -> {
+                if (!"succeeded".equals(stripeStatus)) throw unsupported(payment, stripeStatus);
+                return new Step(Action.ALREADY_IN_SYNC, "Paiement versé et encaissé : base déjà à jour", false);
+            }
+            case REFUNDED -> {
+                if (!"succeeded".equals(stripeStatus) && !"canceled".equals(stripeStatus)) {
+                    throw unsupported(payment, stripeStatus);
+                }
+                return new Step(Action.ALREADY_IN_SYNC, "Paiement remboursé : base déjà à jour", false);
+            }
+            case CANCELLED, FAILED -> {
+                if ("succeeded".equals(stripeStatus) || "requires_capture".equals(stripeStatus)) {
+                    throw unsupported(payment, stripeStatus);
+                }
+                return new Step(Action.ALREADY_IN_SYNC, "Paiement clos sans encaissement : base déjà à jour", false);
+            }
+            default -> throw unsupported(payment, stripeStatus);
+        }
     }
 
     private PaymentIntent retrieve(String piId) {
