@@ -1326,3 +1326,24 @@ saturait (187 requêtes en attente) et les requêtes finissaient en **500 après
 - [ ] Recette staging : « Mon argent » avec plusieurs trajets (tuiles d'échéance, groupes par trajet, « Détail des N colis »,
       « Mes trajets » repliables, colis en litige), aucun solde Yadony affiché ; libellés numéro de suivi / code de retrait ; pastille
       dans Activités ; message « Service momentanément indisponible » pendant une coupure de l'API.
+
+#### 9.18 Portail PRO (yadony-pro) : #37 et déploiement bloqué (FLUTTER-JD)
+
+> Ajoutée le 10/10/2026. Déploiement du portail laissé au propriétaire : **ne pas redéployer pro.yadony.com sans son accord.**
+
+| PR | Sujet | À savoir |
+|---|---|---|
+| yadony-pro #37 (`efc5044a`) | Connexion par téléphone : 41 indicatifs alignés sur l'app mobile (UE, GB, CH, US, CA, UEMOA, CEMAC, RDC, GN), recherche dans le sélecteur, numéro collé en « + » ou « 00 » accepté (FLUTTER-JD : une testeuse avec un numéro américain ne pouvait pas se connecter) | Client seul, aucune dépendance back. Fusionné sur `main`, **pas encore en ligne** (voir ci-dessous). |
+
+- [ ] **Déploiement staging du portail cassé depuis le 02/10** : l'étape « Déploiement Docker Compose » échoue sur
+      `Error response from daemon: Get "https://ghcr.io/v2/": denied` (runs du 02/10 et du 10/10 05:27 UTC). Cause probable :
+      le secret `GHCR_PAT` de MONDONY/yadony-pro (posé le 15/08) a expiré. Le VPS ne peut plus tirer l'image.
+      1. Créer un nouveau jeton pour le compte `GHCR_USERNAME`, avec `read:packages` sur les paquets MONDONY, expiration longue.
+      2. `gh secret set GHCR_PAT -R MONDONY/yadony-pro` (coller le jeton).
+      3. Relancer le dernier « Deploy VPS » (`gh run rerun <id> -R MONDONY/yadony-pro`), puis vérifier la connexion avec un +1.
+- [ ] Vérifier la date d'expiration des jetons GHCR équivalents des autres dépôts (yadony-back, dony-admin) : s'ils ont été créés
+      le même jour, ils vont expirer à leur tour.
+- [ ] Avant la prod du portail : si un +1 reste refusé après #37, vérifier le réglage des régions SMS dans la console Firebase
+      (`yadony-prod` → Authentication → Settings → SMS region policy).
+- [ ] Prod du portail : `workflow_dispatch` de `deploy.yml` avec `environment=production` et l'`image_tag` du commit recetté
+      (contient `efc5044a`).
