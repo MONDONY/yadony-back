@@ -85,7 +85,9 @@ class RecipientChangeServiceTest {
         announcement = new AnnouncementEntity();
         ReflectionTestUtils.setField(announcement, "id", UUID.randomUUID());
         announcement.setTravelerId(travelerId);
-        announcement.setDepartureDate(LocalDate.of(2026, 10, 10));
+        // Arrivée toujours à venir : le code régénéré vaut au moins 24 h à partir de
+        // l'heure réelle (renewedPickupCodeExpiry), une date figée expirait le test.
+        announcement.setDepartureDate(LocalDate.now(java.time.ZoneOffset.UTC).plusDays(30));
         announcement.setArrivalTime(LocalTime.of(18, 30));
 
         bid = new BidEntity();
