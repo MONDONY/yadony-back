@@ -3,6 +3,7 @@ package com.yadony.api.messaging;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.MessagingMediaRetentionHold;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
@@ -45,6 +46,7 @@ class MessagingImageRetentionServiceTest {
     AuditService auditService = mock(AuditService.class);
     MessagingMediaRetentionHold disputeHold = mock(MessagingMediaRetentionHold.class);
     MessagingMediaRetentionHold reportHold = mock(MessagingMediaRetentionHold.class);
+    PlatformSettingsService settings = mock(PlatformSettingsService.class);
     MessagingImageRetentionService service;
 
     UUID bidId = UUID.randomUUID();
@@ -54,12 +56,13 @@ class MessagingImageRetentionServiceTest {
     @BeforeEach
     void setUp() throws Exception {
         service = new MessagingImageRetentionService(imageRepository, conversationRepository, bidRepository,
-                storageService, firestoreService, auditService, List.of(disputeHold, reportHold),
+                storageService, firestoreService, auditService, List.of(disputeHold, reportHold), settings,
                 Clock.fixed(NOW, ZoneOffset.UTC));
         conv = ConversationMediaPolicyTest.withId(
                 new ConversationEntity(bidId, UUID.randomUUID(), UUID.randomUUID(), "conv_" + bidId));
         img = new MessagingImageEntity(conv.getId(), bidId, "Msg1", UUID.randomUUID(),
                 "messaging/conv_x/Msg1_full.jpg", "messaging/conv_x/Msg1_thumb.jpg");
+        org.mockito.Mockito.lenient().when(settings.photoRetentionDays()).thenReturn(7);
         when(imageRepository.findBidIdsWithLiveImages()).thenReturn(List.of(bidId));
         when(imageRepository.findLiveByBidId(bidId)).thenReturn(List.of(img));
         when(conversationRepository.findAllByBidId(bidId)).thenReturn(List.of(conv));
@@ -80,23 +83,23 @@ class MessagingImageRetentionServiceTest {
     @EnumSource(value = BidStatus.class, names = {"AWAITING_PAYMENT", "PENDING", "PAYMENT_ESCROWED", "NEGOTIATING",
             "ACCEPTED", "HANDED_OVER", "IN_TRANSIT", "ARRIVED"})
     void runningBid_hasNoRetentionEnd(BidStatus status) throws Exception {
-        assertThat(MessagingImageRetentionService.retentionEnd(bid(status, NOW_LDT.minusYears(1), null))).isEmpty();
+        assertThat(MessagingImageRetentionService.retentionEnd(bid(status, NOW_LDT.minusYears(1), null), 7)).isEmpty();
     }
 
     @Test
     void retentionEnd_isDeliveryPlus7_orEndOfBidPlus7() throws Exception {
         assertThat(MessagingImageRetentionService.retentionEnd(
-                bid(BidStatus.COMPLETED, NOW_LDT, NOW_LDT.minusDays(2)))).contains(NOW_LDT.plusDays(5));
+                bid(BidStatus.COMPLETED, NOW_LDT, NOW_LDT.minusDays(2)), 7)).contains(NOW_LDT.plusDays(5));
         // Livré sans date : repli sur la dernière mise à jour.
         assertThat(MessagingImageRetentionService.retentionEnd(
-                bid(BidStatus.COMPLETED, NOW_LDT.minusDays(1), null))).contains(NOW_LDT.plusDays(6));
+                bid(BidStatus.COMPLETED, NOW_LDT.minusDays(1), null), 7)).contains(NOW_LDT.plusDays(6));
         for (BidStatus s : List.of(BidStatus.CANCELLED, BidStatus.NO_SHOW, BidStatus.PARCEL_REFUSED,
                 BidStatus.REJECTED, BidStatus.EXPIRED, BidStatus.NEGOTIATION_CLOSED)) {
-            assertThat(MessagingImageRetentionService.retentionEnd(bid(s, NOW_LDT.minusDays(3), null)))
+            assertThat(MessagingImageRetentionService.retentionEnd(bid(s, NOW_LDT.minusDays(3), null), 7))
                     .contains(NOW_LDT.plusDays(4));
         }
-        assertThat(MessagingImageRetentionService.retentionEnd(bid(null, NOW_LDT, null))).isEmpty();
-        assertThat(MessagingImageRetentionService.retentionEnd(bid(BidStatus.CANCELLED, null, null))).isEmpty();
+        assertThat(MessagingImageRetentionService.retentionEnd(bid(null, NOW_LDT, null), 7)).isEmpty();
+        assertThat(MessagingImageRetentionService.retentionEnd(bid(BidStatus.CANCELLED, null, null), 7)).isEmpty();
     }
 
     @Test
@@ -118,6 +121,15 @@ class MessagingImageRetentionServiceTest {
     void purgeExpired_keepsPhotos_beforeTheDeadline() throws Exception {
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(
                 bid(BidStatus.COMPLETED, NOW_LDT, NOW_LDT.minusDays(6))));
+        assertThat(service.purgeExpired()).isZero();
+        verify(storageService, never()).deleteFile(anyString());
+    }
+
+    @Test
+    void purgeExpired_keepsPhotos_whenSettingRaisesRetentionTo30Days() throws Exception {
+        when(settings.photoRetentionDays()).thenReturn(30);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(
+                bid(BidStatus.COMPLETED, NOW_LDT.minusDays(10), NOW_LDT.minusDays(10))));
         assertThat(service.purgeExpired()).isZero();
         verify(storageService, never()).deleteFile(anyString());
     }
