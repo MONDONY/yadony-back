@@ -51,7 +51,7 @@ public class AnnouncementController {
     }
 
     @GetMapping
-    public ResponseEntity<PageResponse<AnnouncementSearchResponse>> searchAnnouncements(
+    public ResponseEntity<com.yadony.api.matching.dto.TripSearchPageResponse<AnnouncementSearchResponse>> searchAnnouncements(
             @RequestParam(required = false) String departureCity,
             @RequestParam(required = false) String arrivalCity,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate departureDateFrom,
@@ -71,6 +71,9 @@ public class AnnouncementController {
             // FLUTTER-G0 : moyens de paiement acceptés (STRIPE ou CARD, CASH, MOBILE_MONEY),
             // répétés ou séparés par des virgules. Garde les trajets qui en offrent au moins un.
             @RequestParam(required = false) List<String> paymentMethods,
+            // FLUTTER-JH : ajoute les trajets complets à venir, après les réservables.
+            // Absent (ancienne app, compteur « N trajets ») : réservables seuls.
+            @RequestParam(defaultValue = "false") boolean includeFull,
             @RequestParam(required = false) Double userLat,
             @RequestParam(required = false) Double userLng,
             @RequestParam(required = false) Double radiusKm,
@@ -84,8 +87,8 @@ public class AnnouncementController {
                 transportMode, kycVerifiedOnly, contentType,
                 userLat, userLng, radiusKm,
                 sortBy, sortDir, pageable, currentFirebaseUidOrNull(), urgent,
-                new AnnouncementSearchExtras(maxStops, PaymentMethodFilter.parse(paymentMethods)));
-        return ResponseEntity.ok(PageResponse.from(page));
+                new AnnouncementSearchExtras(maxStops, PaymentMethodFilter.parse(paymentMethods), includeFull));
+        return ResponseEntity.ok(com.yadony.api.matching.dto.TripSearchPageResponse.from(page));
     }
 
     @PostMapping

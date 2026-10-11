@@ -10,10 +10,12 @@ import jakarta.persistence.Column;
 import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
+import jakarta.persistence.EntityListeners;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import org.hibernate.annotations.Where;
 
 import java.math.BigDecimal;
@@ -31,7 +33,16 @@ import java.util.UUID;
 @Entity
 @Table(name = "announcements")
 @Where(clause = "deleted_at IS NULL")
+@EntityListeners(AnnouncementStatusTransitionListener.class)
 public class AnnouncementEntity extends BaseEntity {
+
+    /**
+     * Statut tel qu'il est en base (dernier chargement ou dernier flush). Sert uniquement à
+     * {@link AnnouncementStatusTransitionListener} pour reconnaître le passage
+     * {@code FULL → ACTIVE} ; jamais persisté.
+     */
+    @Transient
+    private AnnouncementStatus persistedStatus;
 
     @Column(name = "traveler_id", nullable = false)
     private UUID travelerId;
@@ -492,6 +503,10 @@ public class AnnouncementEntity extends BaseEntity {
     public void setPricePerKg(BigDecimal pricePerKg) { this.pricePerKg = pricePerKg; }
 
     public AnnouncementStatus getStatus() { return status; }
+
+    AnnouncementStatus getPersistedStatus() { return persistedStatus; }
+
+    void markStatusPersisted() { this.persistedStatus = status; }
     public void setStatus(AnnouncementStatus status) { this.status = status; }
 
     public AnnouncementStatus getStatusBeforeRemoval() { return statusBeforeRemoval; }

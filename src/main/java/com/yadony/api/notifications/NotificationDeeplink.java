@@ -101,7 +101,7 @@ public final class NotificationDeeplink {
             case "request_expired" -> packageRequestId.map(id -> "package-requests/" + id);
             case "TRAVELER_INVITE", "PACKAGE_MATCH", "SENDER_INVITE" ->
                     requestId.map(id -> "package-requests/" + id + "/public");
-            case "TRAVELER_NEW_ANNOUNCEMENT", "CORRIDOR_ALERT", "automation_loyal_sender" ->
+            case "TRAVELER_NEW_ANNOUNCEMENT", "CORRIDOR_ALERT", "TRIP_SPACE_FREED", "automation_loyal_sender" ->
                     announcementId.map(id -> "traveler/" + id);
             // Alerte prix d'un billet d'avion : la liste des alertes, prix du jour affiché.
             case "FLIGHT_PRICE_ALERT" -> Optional.of("flights/alerts");
