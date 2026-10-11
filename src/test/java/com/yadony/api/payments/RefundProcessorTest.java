@@ -243,4 +243,55 @@ class RefundProcessorTest {
         when(paymentRepository.findById(paymentId)).thenReturn(Optional.empty());
         assertThat(processor.processRefund(paymentId, "X", null, Map.of())).isFalse();
     }
+
+    @Test
+    void cancelRefusedBecauseCapturedMeanwhile_refundsTheCapturedCharge() throws Exception {
+        // La capture ne tient plus de verrou pendant l'appel Stripe (PROD_CHECKLIST 9.23) : elle
+        // peut passer entre la lecture du PI et l'annulation. On rembourse alors la charge.
+        PaymentEntity p = payment(PaymentStatus.ESCROW);
+        UUID paymentId = UUID.randomUUID();
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
+        when(paymentRepository.markRefundedIfEscrow(paymentId)).thenReturn(1);
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            PaymentIntent authorized = mock(PaymentIntent.class);
+            when(authorized.getStatus()).thenReturn("requires_capture");
+            when(authorized.cancel(any(PaymentIntentCancelParams.class)))
+                    .thenThrow(new com.stripe.exception.InvalidRequestException(
+                            "PaymentIntent status succeeded", null, "req", null, 400, null));
+            PaymentIntent captured = mock(PaymentIntent.class);
+            when(captured.getStatus()).thenReturn("succeeded");
+            piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(authorized, captured);
+            ArgumentCaptor<RequestOptions> optsCaptor = ArgumentCaptor.forClass(RequestOptions.class);
+            refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), optsCaptor.capture()))
+                    .thenReturn(mock(Refund.class));
+
+            assertThat(processor.processRefund(paymentId, "PAYMENT_REFUNDED_TEST", p.getBidId(), Map.of())).isTrue();
+            assertThat(optsCaptor.getValue().getIdempotencyKey()).isEqualTo("refund-" + paymentId);
+        }
+        verify(auditService).log(eq("PAYMENT"), any(), eq("PAYMENT_REFUNDED_TEST"), any(), any(Map.class));
+    }
+
+    @Test
+    void cancelRefusedWhilePiStillUncaptured_failsAndKeepsEscrow() throws Exception {
+        PaymentEntity p = payment(PaymentStatus.ESCROW);
+        UUID paymentId = UUID.randomUUID();
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
+        when(paymentRepository.markRefundedIfEscrow(paymentId)).thenReturn(1);
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            PaymentIntent authorized = mock(PaymentIntent.class);
+            when(authorized.getStatus()).thenReturn("requires_capture");
+            when(authorized.cancel(any(PaymentIntentCancelParams.class)))
+                    .thenThrow(new com.stripe.exception.ApiConnectionException("reset"));
+            piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(authorized);
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                            processor.processRefund(paymentId, "PAYMENT_REFUNDED_TEST", p.getBidId(), Map.of()))
+                    .isInstanceOf(IllegalStateException.class);
+            refundStatic.verifyNoInteractions();
+        }
+    }
 }

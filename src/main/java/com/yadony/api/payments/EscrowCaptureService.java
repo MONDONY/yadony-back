@@ -12,9 +12,12 @@ import com.yadony.api.payments.currency.CurrencyAmount;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionOperations;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -32,16 +35,16 @@ import java.util.UUID;
  * de fonds sur le solde plateforme, et l'autorisation expire à J+7. La livraison, le colis non
  * réclamé et la libération forcée admin passent donc par ici juste avant leur claim.
  *
- * <p><b>Transaction propre</b> ({@code REQUIRES_NEW}) : {@code captured_at} est enregistré dès que
- * Stripe a capturé, même si le {@code Transfer} qui suit échoue et annule la transaction de
- * l'appelant. Un échec de capture lève {@link EscrowCaptureException} : la transaction est annulée
- * (le {@code captured_at} posé par la garde {@code markCapturedIfEscrow} disparaît), le paiement
- * reste ESCROW, et une alerte admin {@code ESCROW_CAPTURE_FAILED_<paymentId>} est levée (persistée,
- * Telegram, une fois tant qu'elle n'est pas résolue).
+ * <p><b>Aucune transaction englobante</b> (PROD_CHECKLIST 9.23) : aucune connexion JDBC ni aucun
+ * verrou de ligne n'est tenu pendant {@code PaymentIntent.retrieve} et {@code pi.capture}. La
+ * garde « encore en séquestre » est relue juste avant la capture ; {@code captured_at}, le charge
+ * id et l'audit sont écrits après la réponse de Stripe, dans une transaction courte, par des
+ * UPDATE ciblés. Un échec de capture lève {@link EscrowCaptureException} (rien n'a été écrit), le
+ * paiement reste ESCROW, et une alerte admin {@code ESCROW_CAPTURE_FAILED_<paymentId>} est levée
+ * (persistée, Telegram, une fois tant qu'elle n'est pas résolue). Une capture faite chez Stripe
+ * dont la réponse s'est perdue est retrouvée au passage suivant ({@code succeeded}).
  *
- * <p>L'appelant ne doit avoir posé aucun verrou sur la ligne {@code payments} (pas de claim avant
- * cet appel) : la mise à jour faite ici, dans une autre connexion, attendrait sinon ce verrou
- * jusqu'à la fin de la transaction appelante.
+ * <p>L'appelant ne doit tenir aucune transaction : elle garderait sa connexion pendant l'appel.
  */
 @Component
 public class EscrowCaptureService {
@@ -56,11 +59,26 @@ public class EscrowCaptureService {
     private final AuditService auditService;
     private final AdminAlertEscalator alertEscalator;
 
+    private final TransactionOperations transaction;
+
+    @Autowired
     public EscrowCaptureService(PaymentRepository paymentRepository, AuditService auditService,
-                                AdminAlertEscalator alertEscalator) {
+                                AdminAlertEscalator alertEscalator, PlatformTransactionManager transactionManager) {
+        this(paymentRepository, auditService, alertEscalator, requiresNew(transactionManager));
+    }
+
+    EscrowCaptureService(PaymentRepository paymentRepository, AuditService auditService,
+                         AdminAlertEscalator alertEscalator, TransactionOperations transaction) {
         this.paymentRepository = paymentRepository;
         this.auditService = auditService;
         this.alertEscalator = alertEscalator;
+        this.transaction = transaction;
+    }
+
+    static TransactionTemplate requiresNew(PlatformTransactionManager transactionManager) {
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        return template;
     }
 
     /**
@@ -80,8 +98,9 @@ public class EscrowCaptureService {
      * @param source chemin appelant, tracé dans l'audit et l'alerte (livraison, admin…)
      * @throws EscrowCaptureException si le paiement ne peut pas être capturé : rien n'est versé
      */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Outcome ensureCaptured(UUID paymentId, String source) {
+        // Hors transaction (PROD_CHECKLIST 9.23) : lecture courte, appels Stripe sans connexion
+        // JDBC ni verrou de ligne, puis écritures ciblées dans des transactions courtes.
         PaymentEntity payment = paymentRepository.findById(paymentId)
                 .orElseThrow(() -> new IllegalStateException("Paiement introuvable : " + paymentId));
         String piId = payment.getStripePaymentIntentId();
@@ -101,13 +120,10 @@ public class EscrowCaptureService {
         String chargeId = payment.getStripeChargeId() != null ? payment.getStripeChargeId() : pi.getLatestCharge();
 
         if (STATUS_SUCCEEDED.equals(status)) {
-            // Déjà capturé (listener d'acceptation, capture manuelle, rejeu) : rien à capturer,
-            // on complète seulement la trace locale si elle manque.
-            if (payment.getCapturedAt() == null) {
-                paymentRepository.markCapturedIfEscrow(paymentId, Instant.now());
-            }
-            if (payment.getStripeChargeId() == null && chargeId != null) {
-                paymentRepository.setStripeChargeIdIfMissing(paymentId, chargeId);
+            // Déjà capturé (listener d'acceptation, capture manuelle, rejeu, capture précédente
+            // dont la finalisation locale s'est perdue) : on complète seulement la trace locale.
+            if (payment.getCapturedAt() == null || (payment.getStripeChargeId() == null && chargeId != null)) {
+                transaction.executeWithoutResult(tx -> recordCaptured(paymentId, chargeId));
             }
             resolveCaptureFailedAlert(paymentId);
             return new Outcome(chargeId, false);
@@ -132,38 +148,33 @@ public class EscrowCaptureService {
                             + ") différent du montant attendu " + expected + " " + currency.code(), null);
         }
 
-        // Garde atomique avant la capture (règle 19) : pose captured_at et le verrou de ligne,
-        // tenu jusqu'au commit (un remboursement ou un versement concurrent attend). Annulée avec
-        // la transaction si Stripe refuse.
-        int marked = paymentRepository.markCapturedIfEscrow(paymentId, Instant.now());
-        if (marked == 0 && paymentRepository.lockIfEscrow(paymentId) == 0) {
-            // Le paiement a quitté le séquestre depuis la lecture (remboursé, versé, annulé…) :
-            // capturer encaisserait un argent que la base dit rendu. Rien n'est capturé.
-            PaymentStatus current = paymentRepository.findStatusById(paymentId).orElse(null);
+        // Garde relue en base juste avant la capture (règle 19), sans verrou tenu pendant l'appel :
+        // un paiement sorti du séquestre (remboursé, versé, annulé) n'est jamais capturé. Une
+        // annulation qui passerait entre cette lecture et la capture est arbitrée par Stripe, qui
+        // sérialise les opérations d'un même PaymentIntent : soit l'annulation gagne et la capture
+        // échoue (rien d'encaissé), soit la capture gagne et le remboursement, qui relit le
+        // PaymentIntent, rembourse la charge capturée (RefundProcessor). Jamais de double capture :
+        // un PaymentIntent ne se capture qu'une fois, et la clé capture-<paymentId> est stable.
+        PaymentStatus current = paymentRepository.findStatusById(paymentId).orElse(null);
+        if (current != PaymentStatus.ESCROW) {
             log.warn("Paiement {} plus en séquestre ({}) au moment de la capture (source {}) : capture abandonnée",
                     paymentId, current, source);
             throw new EscrowCaptureException("le paiement n'est plus en séquestre (" + current + ")", status, null);
         }
-        // marked == 0 mais toujours ESCROW : captured_at déjà posé alors que le PaymentIntent
-        // n'est pas capturé (ancienne capture en échec). On capture, verrou tenu, la clé
-        // d'idempotence protège d'un double appel.
         PaymentIntent captured;
         try {
             captured = pi.capture(PaymentIntentCaptureParams.builder().setAmountToCapture(expected).build(),
                     RequestOptions.builder().setIdempotencyKey("capture-" + paymentId).build());
         } catch (StripeException e) {
+            // Rien n'a été écrit avant l'appel : rien à annuler. Une capture faite chez Stripe malgré
+            // une erreur réseau est retrouvée au prochain passage (PaymentIntent succeeded ci-dessus).
             throw failure(payment, source, status, captureBefore, "capture refusée par Stripe : " + e.getMessage(), e);
         }
 
-        // Écriture ciblée du charge id : l'entité, chargée avant l'appel Stripe, n'est jamais
-        // enregistrée (elle écraserait un statut, un remboursé ou un litige posé entre-temps).
+        // Écritures ciblées (captured_at, charge id) : l'entité, chargée avant l'appel Stripe,
+        // n'est jamais enregistrée (elle écraserait un statut, un remboursé ou un litige posé entre-temps).
         String capturedChargeId = captured != null && captured.getLatestCharge() != null
                 ? captured.getLatestCharge() : chargeId;
-        if (payment.getStripeChargeId() == null && capturedChargeId != null) {
-            paymentRepository.setStripeChargeIdIfMissing(paymentId, capturedChargeId);
-        }
-        resolveCaptureFailedAlert(paymentId);
-
         Map<String, Object> audit = new LinkedHashMap<>();
         audit.put("piId", piId);
         audit.put("amountToCapture", expected);
@@ -172,9 +183,21 @@ public class EscrowCaptureService {
         if (payment.getNegotiationThreadId() != null) {
             audit.put("threadId", payment.getNegotiationThreadId().toString());
         }
-        auditService.log("PAYMENT", paymentId, "PAYMENT_CAPTURED_ON_PLATFORM", null, audit);
+        transaction.executeWithoutResult(tx -> {
+            recordCaptured(paymentId, capturedChargeId);
+            auditService.log("PAYMENT", paymentId, "PAYMENT_CAPTURED_ON_PLATFORM", null, audit);
+        });
+        resolveCaptureFailedAlert(paymentId);
         log.info("PaymentIntent {} capturé sur le solde plateforme (paiement {}, source {})", piId, paymentId, source);
         return new Outcome(capturedChargeId, true);
+    }
+
+    /** Trace locale d'une capture confirmée par Stripe : {@code captured_at} et charge id s'ils manquent. */
+    private void recordCaptured(UUID paymentId, String chargeId) {
+        paymentRepository.markCapturedAt(paymentId, Instant.now());
+        if (chargeId != null) {
+            paymentRepository.setStripeChargeIdIfMissing(paymentId, chargeId);
+        }
     }
 
     /**

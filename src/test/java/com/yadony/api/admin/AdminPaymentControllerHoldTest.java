@@ -113,7 +113,7 @@ class AdminPaymentControllerHoldTest {
         controller = new AdminPaymentController(paymentRepository, adminAlertRepository, auditService,
                 bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
                 payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
-                transactionManager, holdPolicy, insights, timeline, escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
+                transactionManager, holdPolicy, insights, timeline, escrowCapture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
         AnnouncementEntity a = new AnnouncementEntity();
         ReflectionTestUtils.setField(a, "id", UUID.randomUUID());
         a.setTravelerId(travelerId);

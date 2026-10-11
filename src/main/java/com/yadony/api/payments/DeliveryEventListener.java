@@ -9,25 +9,18 @@ import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.payments.cash.PaymentMethod;
-import com.yadony.api.payments.events.PaymentReleasedEvent;
 import com.yadony.api.payments.hold.PayoutHoldPolicy;
 import com.yadony.api.payments.hold.PayoutHoldStatus;
 import com.yadony.api.payments.currency.CurrencyAmount;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
-import com.stripe.exception.StripeException;
-import com.stripe.model.PaymentIntent;
-import com.stripe.model.Transfer;
-import com.stripe.net.RequestOptions;
-import com.stripe.param.PaymentIntentCaptureParams;
-import com.stripe.param.TransferCreateParams;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionOperations;
 import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.transaction.event.TransactionPhase;
 
@@ -68,7 +61,6 @@ public class DeliveryEventListener {
     private final PaymentRepository paymentRepository;
     private final UserRepository userRepository;
     private final AuditService auditService;
-    private final ApplicationEventPublisher eventPublisher;
     private final BidRepository bidRepository;
     private final AdminAlertService adminAlert;
     private final com.yadony.api.voucher.CommissionVoucherService voucherService;
@@ -87,13 +79,15 @@ public class DeliveryEventListener {
     private final PayoutHoldPolicy holdPolicy;
     private final AdminAlertEscalator alertEscalator;
     private final EscrowCaptureService escrowCapture;
-    private final StripeTransferLookup transferLookup;
+    private final StripeReleaseExecutor releaseExecutor;
     private final com.yadony.api.disputes.DisputeRepository disputeRepository;
+    /** Transactions courtes (claim, retenue) : jamais de transaction autour d'un appel Stripe. */
+    private final TransactionOperations transaction;
 
+    @Autowired
     public DeliveryEventListener(PaymentRepository paymentRepository,
                                  UserRepository userRepository,
                                  AuditService auditService,
-                                 ApplicationEventPublisher eventPublisher,
                                  BidRepository bidRepository,
                                  AdminAlertService adminAlert,
                                  com.yadony.api.voucher.CommissionVoucherService voucherService,
@@ -101,12 +95,30 @@ public class DeliveryEventListener {
                                  PayoutHoldPolicy holdPolicy,
                                  AdminAlertEscalator alertEscalator,
                                  EscrowCaptureService escrowCapture,
-                                 StripeTransferLookup transferLookup,
-                                 com.yadony.api.disputes.DisputeRepository disputeRepository) {
+                                 StripeReleaseExecutor releaseExecutor,
+                                 com.yadony.api.disputes.DisputeRepository disputeRepository,
+                                 PlatformTransactionManager transactionManager) {
+        this(paymentRepository, userRepository, auditService, bidRepository, adminAlert,
+                voucherService, payoutInitiator, holdPolicy, alertEscalator, escrowCapture, releaseExecutor,
+                disputeRepository, EscrowCaptureService.requiresNew(transactionManager));
+    }
+
+    DeliveryEventListener(PaymentRepository paymentRepository,
+                                 UserRepository userRepository,
+                                 AuditService auditService,
+                                 BidRepository bidRepository,
+                                 AdminAlertService adminAlert,
+                                 com.yadony.api.voucher.CommissionVoucherService voucherService,
+                                 com.yadony.api.payments.mobilemoney.MobileMoneyPayoutInitiator payoutInitiator,
+                                 PayoutHoldPolicy holdPolicy,
+                                 AdminAlertEscalator alertEscalator,
+                                 EscrowCaptureService escrowCapture,
+                                 StripeReleaseExecutor releaseExecutor,
+                                 com.yadony.api.disputes.DisputeRepository disputeRepository,
+                                 TransactionOperations transaction) {
         this.paymentRepository = paymentRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
-        this.eventPublisher = eventPublisher;
         this.bidRepository = bidRepository;
         this.adminAlert = adminAlert;
         this.voucherService = voucherService;
@@ -114,13 +126,13 @@ public class DeliveryEventListener {
         this.holdPolicy = holdPolicy;
         this.alertEscalator = alertEscalator;
         this.escrowCapture = escrowCapture;
-        this.transferLookup = transferLookup;
+        this.releaseExecutor = releaseExecutor;
         this.disputeRepository = disputeRepository;
+        this.transaction = transaction;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void handleDeliveryConfirmed(DeliveryConfirmedEvent event) {
         release(new ReleaseTrigger(event.getBidId(), event.getSenderId(), event.getTravelerId(), SOURCE_DELIVERY));
     }
@@ -136,7 +148,6 @@ public class DeliveryEventListener {
      */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void handleParcelUnclaimed(com.yadony.api.cancellation.events.ParcelUnclaimedEvent event) {
         release(new ReleaseTrigger(event.bidId(), event.senderId(), event.travelerId(), SOURCE_UNCLAIMED));
     }
@@ -147,13 +158,12 @@ public class DeliveryEventListener {
      * est livré, la livraison n'avait rien versé faute de séquestre : on verse maintenant, par le
      * même chemin et avec les mêmes gardes, pour que l'admin n'ait plus à forcer le versement.
      *
-     * <p>Transaction propre ({@code REQUIRES_NEW}), comme le listener de livraison : un échec du
-     * Transfer annule le claim, le paiement reste ESCROW. À appeler hors de toute transaction qui
-     * tiendrait un verrou sur la ligne {@code payments} (la capture tourne dans une autre).
+     * <p>Sans transaction englobante, comme le listener de livraison (PROD_CHECKLIST 9.23) : claim
+     * et réservation dans une transaction courte, appel Stripe hors connexion, finalisation dans une
+     * autre. À appeler hors de toute transaction (refusé sinon, avant tout appel Stripe).
      *
      * @param source chemin appelant, tracé dans l'audit ({@code late-escrow}, {@code admin-resync-stripe}…)
      */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public EscrowReleaseOutcome releaseAfterLateEscrow(java.util.UUID bidId, java.util.UUID senderId,
                                                        java.util.UUID travelerId, String source) {
         EscrowReleaseOutcome outcome = release(new ReleaseTrigger(bidId, senderId, travelerId, source));
@@ -330,6 +340,49 @@ public class DeliveryEventListener {
             }
         }
 
+        // Phase 1 (transaction courte) : claim atomique ESCROW → RELEASED, gardes revérifiées,
+        // puis réservation du versement carte (ou payout mobile money). Aucun appel Stripe ici.
+        final String claimedChargeId = chargeId;
+        Phase1 phase1 = transaction.execute(tx -> claimAndReserve(payment, event, claimedChargeId));
+        if (phase1.outcome() != null) {
+            return phase1.outcome();
+        }
+
+        // Phases 2 et 3, hors transaction : appel Stripe (clé transfer-<id> / capture-<id>), puis
+        // finalisation conditionnelle (audit, PaymentReleasedEvent). Aucune connexion tenue pendant l'appel.
+        StripeReleaseExecutor.Execution execution = releaseExecutor.execute(phase1.intent(), payment);
+        switch (execution.result()) {
+            case RELEASED, REALIGNED, NOT_OWNED -> {
+                log.info("Escrow released for payment {} (bid={}, legacy={}) : {}",
+                        payment.getId(), event.getBidId(), payment.isLegacyDestinationCharge(), execution.result());
+                return EscrowReleaseOutcome.RELEASED;
+            }
+            case PENDING_RETRY -> {
+                return EscrowReleaseOutcome.RELEASE_PENDING;
+            }
+            default -> {
+                // Stripe a refusé sans rien créer : réservation annulée, paiement de nouveau ESCROW
+                // (comme l'ancien rollback) ; le job d'auto-réparation et la libération admin gardent la main.
+                log.error("Escrow release failed for payment {} (bid={}, legacy={}): {}",
+                        payment.getId(), event.getBidId(), payment.isLegacyDestinationCharge(), execution.error());
+                throw new IllegalStateException(
+                        "Stripe escrow release failed for payment " + payment.getId() + " : " + execution.error());
+            }
+        }
+    }
+
+    /** Issue de la phase 1 : soit une issue définitive, soit une réservation à exécuter. */
+    record Phase1(EscrowReleaseOutcome outcome, StripeReleaseIntentEntity intent) {
+        static Phase1 done(EscrowReleaseOutcome outcome) {
+            return new Phase1(outcome, null);
+        }
+    }
+
+    /**
+     * Phase 1, dans une transaction courte : claim, gardes revérifiées, réservation. Une exception
+     * annule le claim (le paiement reste ESCROW), comme avant.
+     */
+    private Phase1 claimAndReserve(PaymentEntity payment, ReleaseTrigger event, String chargeId) {
         // Claim atomique ESCROW → RELEASED, PARTAGÉ par les deux rails (Stripe et pawaPay) :
         // empêche un double versement (double capture / double Transfer / double payout) si
         // l'événement de livraison est traité deux fois en parallèle. Le branchement par rail
@@ -349,11 +402,11 @@ public class DeliveryEventListener {
                         payment.getId(), event.getBidId());
                 auditService.log("PAYMENT", payment.getId(), "DELIVERY_RELEASE_BLOCKED_CONCURRENT_GUARD",
                         event.getBidId(), Map.of("bidId", event.getBidId().toString(), "source", event.source()));
-                return EscrowReleaseOutcome.BLOCKED_CHARGEBACK;
+                return Phase1.done(EscrowReleaseOutcome.BLOCKED_CHARGEBACK);
             }
             log.info("Payment {} for bid {} already left ESCROW — skipping release",
                     payment.getId(), event.getBidId());
-            return EscrowReleaseOutcome.ALREADY_RELEASED;
+            return Phase1.done(EscrowReleaseOutcome.ALREADY_RELEASED);
         }
 
         // Litige admin revérifié APRÈS le claim, par une nouvelle lecture : l'ouverture du litige
@@ -365,7 +418,7 @@ public class DeliveryEventListener {
                     event.getBidId());
             auditService.log("PAYMENT", payment.getId(), "DELIVERY_TRANSFER_BLOCKED_DISPUTE",
                     event.getBidId(), Map.of("bidId", event.getBidId().toString(), "source", event.source()));
-            return EscrowReleaseOutcome.BLOCKED_DISPUTE;
+            return Phase1.done(EscrowReleaseOutcome.BLOCKED_DISPUTE);
         }
 
         if (payment.getRail() == PaymentRail.PAWAPAY) {
@@ -373,29 +426,10 @@ public class DeliveryEventListener {
             // versement est un payout pawaPay du net. Aucun appel Stripe, aucun
             // PaymentReleasedEvent ici : il part quand pawaPay confirme le payout
             // (MobileMoneyPayoutOutcomeListener). Un échec remonte pour annuler le claim
-            // ci-dessus (rollback de la transaction REQUIRES_NEW ambiante).
+            // ci-dessus (rollback de la transaction de phase 1).
+            // Point ouvert 9.23 : la soumission pawaPay tourne encore dans cette transaction.
             releaseMobileMoney(payment, event);
-            return EscrowReleaseOutcome.RELEASED;
-        }
-
-        try {
-            if (payment.isLegacyDestinationCharge()) {
-                releaseLegacy(payment);
-            } else if (releaseV2(payment, event, chargeId)) {
-                // Transfer déjà émis chez Stripe : base réalignée et tracée
-                // (TRANSFER_ALREADY_EXISTS_REALIGNED), rien d'autre. Ni second audit de
-                // versement, ni nouvelle notification au voyageur.
-                return EscrowReleaseOutcome.RELEASED;
-            }
-        } catch (StripeException e) {
-            log.error("Escrow release failed for payment {} (bid={}, legacy={}): {}",
-                    payment.getId(), event.getBidId(),
-                    payment.isLegacyDestinationCharge(), e.getMessage(), e);
-            // Rollback de la transaction REQUIRES_NEW : le claim ESCROW → RELEASED
-            // est annulé, le paiement reste en ESCROW — le scheduler admin J+48
-            // garde la main pour retenter la libération.
-            throw new IllegalStateException(
-                    "Stripe escrow release failed for payment " + payment.getId(), e);
+            return Phase1.done(EscrowReleaseOutcome.RELEASED);
         }
 
         String action = event.unclaimed()
@@ -403,32 +437,14 @@ public class DeliveryEventListener {
                 : payment.isLegacyDestinationCharge()
                         ? "ESCROW_RELEASED_LEGACY"
                         : "ESCROW_RELEASED_TRANSFER";
-        // Use event.getBidId() (the delivered bid) for the audit actor/payload: a
-        // negotiation/thread payment has a NULL payment.getBidId(), which would both
-        // lose the bid reference and NPE on toString().
-        auditService.log(
-                "PAYMENT",
-                payment.getId(),
-                action,
-                event.getBidId(),
-                Map.of(
-                        "bidId", event.getBidId().toString(),
-                        "piId", payment.getStripePaymentIntentId(),
-                        "amount", payment.getAmount().toPlainString(),
-                        "legacy", String.valueOf(payment.isLegacyDestinationCharge()),
-                        "source", event.source()
-                )
-        );
-
-        log.info("Escrow released for payment {} (bid={}, legacy={})",
-                payment.getId(), event.getBidId(), payment.isLegacyDestinationCharge());
-
-        // Notify traveler of payout (Story 8.2). event.getBidId() — payment.getBidId()
-        // is NULL for negotiation/thread payments.
-        eventPublisher.publishEvent(PaymentReleasedEvent.card(
-                event.getBidId(), event.getTravelerId(), event.getSenderId(), payment.getAmount(),
-                payment.getCommissionAmount(), payment.getCurrency()));
-        return EscrowReleaseOutcome.RELEASED;
+        if (payment.isLegacyDestinationCharge()) {
+            // Destination charge historique : la capture du PaymentIntent verse au voyageur
+            // (transfer_data posé à la création). Faite en phase 2, clé capture-<paymentId>.
+            return new Phase1(null, releaseExecutor.reserve(new StripeReleaseExecutor.ReleaseSpec(
+                    payment.getId(), StripeReleaseIntentEntity.Kind.LEGACY_CAPTURE, null, null, null, null,
+                    event.source(), action, event.getBidId(), event.getTravelerId(), event.getSenderId())));
+        }
+        return new Phase1(null, releaseExecutor.reserve(transferSpec(payment, event, chargeId, action)));
     }
 
     /**
@@ -441,7 +457,8 @@ public class DeliveryEventListener {
         String reasons = String.join(",", hold.reasons().stream().map(Enum::name).toList());
         log.warn("Payment {} for bid {}: traveler {} payouts are held ({}) — payout retained in escrow",
                 payment.getId(), event.getBidId(), event.getTravelerId(), reasons);
-        paymentRepository.markPayoutHeld(payment.getId(), LocalDateTime.now(ZoneOffset.UTC));
+        transaction.executeWithoutResult(tx ->
+                paymentRepository.markPayoutHeld(payment.getId(), LocalDateTime.now(ZoneOffset.UTC)));
         auditService.log("PAYMENT", payment.getId(), "PAYOUT_HELD_BENEFICIARY", event.getBidId(), Map.of(
                 "paymentId", payment.getId().toString(),
                 "bidId", event.getBidId().toString(),
@@ -499,24 +516,14 @@ public class DeliveryEventListener {
         log.info("Escrow released (mobile money) for payment {} (bid={})", payment.getId(), event.getBidId());
     }
 
-    private void releaseLegacy(PaymentEntity payment) throws StripeException {
-        // Old destination-charge model: capture the PaymentIntent. Stripe transfers
-        // funds directly to the traveler's Connect account because transfer_data was
-        // set at PaymentIntent creation.
-        PaymentIntent pi = PaymentIntent.retrieve(payment.getStripePaymentIntentId());
-        // Clé d'idempotence stable : un AFTER_COMMIT rejoué ou une redelivery de webhook
-        // ne déclenche pas une seconde capture côté Stripe.
-        pi.capture(PaymentIntentCaptureParams.builder().build(),
-                RequestOptions.builder()
-                        .setIdempotencyKey("capture-" + payment.getId())
-                        .build());
-    }
-
-    /** @return vrai si un Transfer existait déjà chez Stripe (base réalignée, aucun nouveau Transfer) */
-    private boolean releaseV2(PaymentEntity payment, ReleaseTrigger event, String chargeId) throws StripeException {
-        // New separate-charges-and-transfers model: the PI is captured on the platform balance
-        // (at acceptation, at escrow, or just above by EscrowCaptureService when it was still
-        // requires_capture). Initiate a Transfer to the traveler's Connect account.
+    /**
+     * Séparation charge / transfer : le PaymentIntent est capturé sur le solde plateforme (à
+     * l'acceptation, au séquestre, ou juste avant le claim par {@link EscrowCaptureService}). Le
+     * net à verser est figé ici, dans la transaction du claim, avec le bon de parrainage consommé
+     * (consommation idempotente par colis : une reprise retrouve le même bon, donc le même montant).
+     */
+    private StripeReleaseExecutor.ReleaseSpec transferSpec(PaymentEntity payment, ReleaseTrigger event,
+                                                           String chargeId, String action) {
         UserEntity traveler = userRepository.findById(event.getTravelerId())
                 .orElseThrow(() -> new IllegalStateException(
                         "Traveler not found: " + event.getTravelerId()));
@@ -541,43 +548,9 @@ public class DeliveryEventListener {
             currency = SupportedCurrency.EUR;
         }
         long netMinor = CurrencyAmount.of(net, currency).minor();
-
-        TransferCreateParams.Builder builder = TransferCreateParams.builder()
-                .setAmount(netMinor)
-                .setCurrency(currency.code())
-                .setDestination(traveler.getStripeAccountId())
-                .putMetadata("bid_id", event.getBidId().toString())
-                .putMetadata("payment_id", payment.getId() != null ? payment.getId().toString() : "");
-        if (payment.getId() != null) {
-            // Groupe stable, filtrable chez Stripe quel que soit le compte de destination.
-            builder.setTransferGroup(StripeTransferLookup.transferGroup(payment.getId()));
-        }
-
-        if (chargeId != null && !chargeId.isBlank()) {
-            builder.setSourceTransaction(chargeId);
-        }
-
-        // La clé d'idempotence n'est valable que 24 h : au-delà, un rejeu recréerait un
-        // Transfer. On vérifie d'abord chez Stripe qu'aucun Transfer n'existe pour ce paiement ;
-        // s'il existe, la base est réalignée dessus (le claim RELEASED est déjà posé) au lieu de
-        // payer une seconde fois. Une lecture en échec remonte : aucun Transfer, claim annulé.
-        Optional<String> existing = transferLookup.findExistingTransfer(
-                payment.getId(), traveler.getStripeAccountId(), payment.getCreatedAt());
-        if (existing.isPresent()) {
-            realignOnExistingTransfer(payment, existing.get(), event.getBidId(), event.source());
-            return true;
-        }
-
-        // Clé d'idempotence stable : un AFTER_COMMIT rejoué ou une redelivery de webhook
-        // ne déclenche pas un second Transfer côté Stripe.
-        Transfer transfer = Transfer.create(builder.build(),
-                RequestOptions.builder()
-                        .setIdempotencyKey("transfer-" + payment.getId())
-                        .build());
-        if (transfer != null && transfer.getId() != null && payment.getId() != null) {
-            paymentRepository.recordStripeTransferId(payment.getId(), transfer.getId());
-        }
-        return false;
+        return new StripeReleaseExecutor.ReleaseSpec(payment.getId(), StripeReleaseIntentEntity.Kind.TRANSFER,
+                netMinor, currency.code(), traveler.getStripeAccountId(), chargeId, event.source(), action,
+                event.getBidId(), event.getTravelerId(), event.getSenderId());
     }
 
     /** Litige ouvert par l'administration sur ce colis (lecture en base, jamais en cache). */
@@ -585,23 +558,6 @@ public class DeliveryEventListener {
         return disputeRepository != null && disputeRepository.existsByBidIdAndStatusAndTypeStartingWith(
                 bidId, com.yadony.api.disputes.DisputeTypes.STATUS_OPEN,
                 com.yadony.api.disputes.DisputeTypes.ADMIN_PREFIX);
-    }
-
-    /**
-     * Un Transfer existe déjà chez Stripe pour ce paiement : aucun second Transfer. Le paiement
-     * est déjà passé RELEASED par le claim de l'appelant ; on y attache l'identifiant du Transfer
-     * existant et on trace le réalignement.
-     */
-    private void realignOnExistingTransfer(PaymentEntity payment, String transferId,
-                                           java.util.UUID bidId, String source) {
-        log.warn("Payment {} for bid {}: Stripe Transfer {} already exists — no second Transfer, DB realigned",
-                payment.getId(), bidId, transferId);
-        paymentRepository.recordStripeTransferId(payment.getId(), transferId);
-        auditService.log("PAYMENT", payment.getId(), "TRANSFER_ALREADY_EXISTS_REALIGNED", bidId, Map.of(
-                "paymentId", payment.getId().toString(),
-                "bidId", String.valueOf(bidId),
-                "transferId", transferId,
-                "source", source));
     }
 
     /**

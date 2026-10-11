@@ -61,6 +61,8 @@ yadony:
   payments:
     auto-heal:
       enabled: false
+    release-recovery:
+      enabled: false
   activation:
     first-action-reminders:
       cron: "-"

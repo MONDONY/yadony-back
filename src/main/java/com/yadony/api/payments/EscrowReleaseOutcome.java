@@ -26,6 +26,13 @@ public enum EscrowReleaseOutcome {
     CAPTURE_FAILED(false, "Colis livré mais capture du séquestre impossible : aucun versement"),
     /** Transfer (ou capture legacy, payout mobile money) refusé : claim annulé, paiement ESCROW. */
     TRANSFER_FAILED(false, "Colis livré mais versement refusé"),
+    /**
+     * Versement réservé (paiement RELEASED) mais non confirmé par Stripe (réseau, 5xx) : reprise
+     * automatique avec la même clé par {@code StripeReleaseRecoveryJob}, alerte RELEASE_PENDING
+     * après plusieurs essais. Ni échec (aucune annulation du claim : un Transfer a pu partir) ni
+     * versement confirmé.
+     */
+    RELEASE_PENDING(false, "Colis livré : versement envoyé à Stripe, confirmation en attente (reprise automatique)"),
     /** Colis payé en espèces : pas de séquestre carte. */
     CASH(false, "Colis payé en espèces : pas de séquestre"),
     /** Aucun paiement trouvé pour ce colis. */

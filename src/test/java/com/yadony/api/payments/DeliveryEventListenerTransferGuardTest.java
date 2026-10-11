@@ -66,7 +66,7 @@ class DeliveryEventListenerTransferGuardTest {
 
     @BeforeEach
     void setUp() {
-        listener = new DeliveryEventListener(paymentRepository, userRepository, auditService, eventPublisher,
+        listener = ReleaseTestSupport.listener(paymentRepository, userRepository, auditService, eventPublisher,
                 bidRepository, adminAlert, voucherService, null, holdPolicy, alertEscalator, escrowCapture,
                 transferLookup, disputeRepository);
         payment = new PaymentEntity();

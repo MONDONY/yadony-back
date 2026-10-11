@@ -199,10 +199,7 @@ public class RefundProcessor {
                 stripeAction = "remboursement émis (PI capturé)";
             } else if (!"canceled".equals(pi.getStatus())) {
                 // requires_capture (et autres états pré-capture) → libère le hold.
-                pi.cancel(PaymentIntentCancelParams.builder()
-                        .setCancellationReason(PaymentIntentCancelParams.CancellationReason.ABANDONED)
-                        .build());
-                stripeAction = "autorisation annulée (PI non capturé)";
+                stripeAction = cancelOrRefundIfCapturedMeanwhile(pi, payment.getStripePaymentIntentId(), paymentId);
             } else {
                 // PI déjà 'canceled' → no-op idempotent bénin.
                 stripeAction = "aucune action (PI déjà annulé)";
@@ -225,6 +222,33 @@ public class RefundProcessor {
         log.info("Escrow libéré pour PI {} — {} ({})",
                 payment.getStripePaymentIntentId(), stripeAction, auditAction);
         return true;
+    }
+
+    /**
+     * Annule l'autorisation. La capture du séquestre ne tient plus de verrou pendant l'appel Stripe
+     * (PROD_CHECKLIST 9.23) : une capture concurrente peut passer entre la lecture du PaymentIntent
+     * et l'annulation, que Stripe refuse alors. On relit le PaymentIntent : s'il est désormais
+     * capturé, on rembourse la charge (même clé {@code refund-<paymentId>}) au lieu d'échouer.
+     */
+    private String cancelOrRefundIfCapturedMeanwhile(PaymentIntent pi, String piId, UUID paymentId)
+            throws StripeException {
+        try {
+            pi.cancel(PaymentIntentCancelParams.builder()
+                    .setCancellationReason(PaymentIntentCancelParams.CancellationReason.ABANDONED)
+                    .build());
+            return "autorisation annulée (PI non capturé)";
+        } catch (StripeException cancelFailure) {
+            PaymentIntent fresh = PaymentIntent.retrieve(piId);
+            if (fresh == null || !"succeeded".equals(fresh.getStatus())) {
+                throw cancelFailure;
+            }
+            log.warn("PaymentIntent {} capturé pendant le remboursement du paiement {} : remboursement de la charge",
+                    piId, paymentId);
+            Refund.create(
+                    RefundCreateParams.builder().setPaymentIntent(piId).build(),
+                    RequestOptions.builder().setIdempotencyKey("refund-" + paymentId).build());
+            return "remboursement émis (PI capturé pendant l'annulation)";
+        }
     }
 
     /**

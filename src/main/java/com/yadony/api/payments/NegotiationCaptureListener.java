@@ -5,8 +5,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
@@ -55,9 +53,10 @@ public class NegotiationCaptureListener {
         this.escrowCapture = escrowCapture;
     }
 
+    // Sans transaction (PROD_CHECKLIST 9.23) : la capture fait ses écritures dans des transactions
+    // courtes, aucune connexion n'est tenue pendant l'appel Stripe.
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onEscrowReady(PaymentEscrowReadyEvent event) {
         if (event.isCallerSettles()) {
             // La resynchronisation d'un colis déjà livré capture puis verse elle-même, juste après

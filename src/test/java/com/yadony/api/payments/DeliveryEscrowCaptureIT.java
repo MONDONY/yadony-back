@@ -58,8 +58,9 @@ import static org.mockito.Mockito.when;
  * <p>Le listener est construit à la main (appeler le bean passerait par {@code @Async} sur un
  * autre thread, hors des mocks statiques Stripe) mais avec le VRAI {@link EscrowCaptureService}
  * (transaction {@code REQUIRES_NEW}) et les vrais repositories ; l'appel est enveloppé dans une
- * transaction comme en production ({@code REQUIRES_NEW} du listener). Les lignes sont commitées
- * pour que la capture, dans sa propre transaction, les voie.
+ * transaction comme en production : aucune (claim, capture et finalisation ont chacun leur
+ * transaction courte, PROD_CHECKLIST 9.23). Les lignes sont commitées pour que chaque transaction
+ * les voie.
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -71,6 +72,7 @@ class DeliveryEscrowCaptureIT {
     @Autowired private AuditService auditService;
     @Autowired private PlatformTransactionManager transactionManager;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private StripeReleaseIntentRepository intentRepository;
     @MockitoBean private AdminAlertEscalator alertEscalator;
 
     private final UserRepository userRepository = mock(UserRepository.class);
@@ -86,9 +88,11 @@ class DeliveryEscrowCaptureIT {
 
     @BeforeEach
     void setUp() {
-        listener = new DeliveryEventListener(paymentRepository, userRepository, auditService, eventPublisher,
+        listener = ReleaseTestSupport.listener(paymentRepository, userRepository, auditService, eventPublisher,
                 bidRepository, mock(AdminAlertService.class), voucherService, null, holdPolicy, alertEscalator,
-                escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
+                escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class),
+                org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), intentRepository,
+                transactionManager);
         tx = new TransactionTemplate(transactionManager);
         tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 
@@ -117,13 +121,14 @@ class DeliveryEscrowCaptureIT {
 
     @AfterEach
     void cleanUp() {
+        jdbc.update("DELETE FROM stripe_release_intents WHERE payment_id = ?", payment.getId());
         jdbc.update("DELETE FROM payments WHERE id = ?", payment.getId());
         jdbc.update("DELETE FROM bids WHERE id = ?", bid.getId());
     }
 
+    /** Comme en production : listener appelé hors transaction (PROD_CHECKLIST 9.23). */
     private void deliver() {
-        tx.executeWithoutResult(s -> listener.handleDeliveryConfirmed(
-                new DeliveryConfirmedEvent(bid.getId(), bid.getSenderId(), travelerId)));
+        listener.handleDeliveryConfirmed(new DeliveryConfirmedEvent(bid.getId(), bid.getSenderId(), travelerId));
     }
 
     private PaymentEntity reload() {
@@ -216,7 +221,7 @@ class DeliveryEscrowCaptureIT {
         }
         PaymentEntity after = reload();
         assertThat(after.getStatus()).isEqualTo(PaymentStatus.ESCROW);
-        // La garde markCapturedIfEscrow a été annulée avec la transaction de capture.
+        // Rien n'est écrit avant la réponse de Stripe : captured_at reste nul.
         assertThat(after.getCapturedAt()).isNull();
         verify(alertEscalator).raiseOnce(eq("ESCROW_CAPTURE_FAILED_" + payment.getId()), anyString(), anyMap());
         Integer audits = jdbc.queryForObject(

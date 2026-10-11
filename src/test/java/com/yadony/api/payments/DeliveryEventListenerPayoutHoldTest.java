@@ -76,7 +76,7 @@ class DeliveryEventListenerPayoutHoldTest {
 
     @BeforeEach
     void setUp() {
-        listener = new DeliveryEventListener(paymentRepository, userRepository, auditService, eventPublisher,
+        listener = ReleaseTestSupport.listener(paymentRepository, userRepository, auditService, eventPublisher,
                 bidRepository, adminAlert, voucherService, payoutInitiator, holdPolicy, alertEscalator,
                 escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
         bid = new BidEntity();

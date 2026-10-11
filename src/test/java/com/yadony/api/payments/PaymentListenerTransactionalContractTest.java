@@ -54,9 +54,6 @@ class PaymentListenerTransactionalContractTest {
     /** Listeners portant encore leur propre transaction : AFTER_COMMIT + REQUIRES_NEW. */
     static Stream<Arguments> fullContractListeners() {
         return Stream.of(
-                Arguments.of(DeliveryEventListener.class, "handleDeliveryConfirmed"),
-                Arguments.of(NegotiationCaptureListener.class, "onEscrowReady"),
-                Arguments.of(BidAcceptedEventListener.class, "onBidAccepted"),
                 // Tâche 14, avancé de la tâche 19 (Ronde 1, point 8) : les deux premiers
                 // écouteurs des événements pawaPay génériques (PawapayOperationCompletedEvent/
                 // FailedEvent), publiés à l'intérieur de la transaction qui applique la
@@ -75,6 +72,44 @@ class PaymentListenerTransactionalContractTest {
                 Arguments.of(WalletTopupOutcomeListener.class, "onCompleted"),
                 Arguments.of(WalletTopupOutcomeListener.class, "onFailed")
         );
+    }
+
+    /**
+     * Listeners qui appellent Stripe (capture, Transfer) : AFTER_COMMIT et SANS transaction propre
+     * (PROD_CHECKLIST 9.23). Une transaction englobante garderait une connexion JDBC (et les
+     * verrous du claim) pendant l'appel réseau ; claim, appel et finalisation ont chacun la leur.
+     */
+    static Stream<Arguments> stripeCallingListeners() {
+        return Stream.of(
+                Arguments.of(DeliveryEventListener.class, "handleDeliveryConfirmed"),
+                Arguments.of(DeliveryEventListener.class, "handleParcelUnclaimed"),
+                Arguments.of(NegotiationCaptureListener.class, "onEscrowReady"),
+                Arguments.of(BidAcceptedEventListener.class, "onBidAccepted")
+        );
+    }
+
+    @ParameterizedTest(name = "{0}#{1}")
+    @MethodSource("stripeCallingListeners")
+    void stripe_calling_listener_is_after_commit_without_own_transaction(Class<?> listenerClass, String methodName) {
+        Method handler = handlerMethod(listenerClass, methodName);
+        TransactionalEventListener tel = handler.getAnnotation(TransactionalEventListener.class);
+        assertThat(tel).as("%s#%s doit être @TransactionalEventListener", listenerClass.getSimpleName(), methodName)
+                .isNotNull();
+        assertThat(tel.phase()).isEqualTo(TransactionPhase.AFTER_COMMIT);
+        assertThat(handler.getAnnotation(Transactional.class))
+                .as("%s#%s ne doit pas ouvrir de transaction autour de l'appel Stripe",
+                        listenerClass.getSimpleName(), methodName)
+                .isNull();
+    }
+
+    @Test
+    void release_and_capture_entry_points_have_no_surrounding_transaction() throws NoSuchMethodException {
+        assertThat(EscrowCaptureService.class.getMethod("ensureCaptured", UUID.class, String.class)
+                .getAnnotation(Transactional.class)).isNull();
+        assertThat(DeliveryEventListener.class.getMethod("releaseAfterLateEscrow", UUID.class, UUID.class,
+                UUID.class, String.class).getAnnotation(Transactional.class)).isNull();
+        assertThat(com.yadony.api.admin.AdminPaymentController.class.getMethod("forceRelease", UUID.class,
+                com.yadony.api.admin.dto.PayoutReleaseRequest.class).getAnnotation(Transactional.class)).isNull();
     }
 
     @ParameterizedTest(name = "{0}")

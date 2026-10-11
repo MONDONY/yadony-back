@@ -49,7 +49,7 @@ class DeliveryEventListenerChargebackTest {
     void setUp() {
         // Ronde 1, point 5 : payoutInitiator est désormais un paramètre constructeur — null ici,
         // jamais déréférencé (paiement disputé, bloqué avant tout branchement par rail).
-        listener = new DeliveryEventListener(paymentRepository, userRepository,
+        listener = ReleaseTestSupport.listener(paymentRepository, userRepository,
                 auditService, eventPublisher, bidRepository, adminAlert, voucherService, null, holdPolicy, alertEscalator,
                 escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
     }

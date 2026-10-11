@@ -62,8 +62,7 @@ import static org.mockito.Mockito.when;
  *
  * <p>Base H2 réelle, Stripe simulé (mocks statiques, sur le thread du test). Les composants sont
  * construits à la main autour des vrais repositories et du vrai {@link EscrowCaptureService},
- * comme {@link DeliveryEscrowCaptureIT} ; la transaction {@code REQUIRES_NEW} du versement est
- * reproduite par une sous-classe qui l'enveloppe.
+ * comme {@link DeliveryEscrowCaptureIT}, sans transaction autour du versement (comme en production).
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -75,6 +74,7 @@ class LateEscrowReleaseIT {
     @Autowired private AuditService auditService;
     @Autowired private PlatformTransactionManager transactionManager;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private StripeReleaseIntentRepository intentRepository;
     @MockitoBean private AdminAlertEscalator alertEscalator;
 
     private final UserRepository userRepository = mock(UserRepository.class);
@@ -97,16 +97,13 @@ class LateEscrowReleaseIT {
     void setUp() {
         tx = new TransactionTemplate(transactionManager);
         tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        listener = new DeliveryEventListener(paymentRepository, userRepository, auditService, eventPublisher,
+        // Comme en production : aucune transaction autour du versement (claim, appel Stripe et
+        // finalisation séparés, PROD_CHECKLIST 9.23).
+        listener = ReleaseTestSupport.listener(paymentRepository, userRepository, auditService, eventPublisher,
                 bidRepository, mock(AdminAlertService.class), voucherService, null, holdPolicy, alertEscalator,
-                escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class)) {
-            @Override
-            public EscrowReleaseOutcome releaseAfterLateEscrow(UUID bidId, UUID senderId, UUID travelerId,
-                                                               String source) {
-                // Ce que fait le proxy Spring en production (REQUIRES_NEW).
-                return tx.execute(s -> super.releaseAfterLateEscrow(bidId, senderId, travelerId, source));
-            }
-        };
+                escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class),
+                org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), intentRepository,
+                transactionManager);
         releaser = new DeliveredEscrowReleaser(paymentRepository, bidRepository, announcementRepository, listener,
                 alertEscalator);
         resync = new PaymentStripeResyncService(paymentRepository, paymentService, escrowCapture, bidRepository,
@@ -145,8 +142,10 @@ class LateEscrowReleaseIT {
     @AfterEach
     void cleanUp() {
         for (UUID id : extraPayments) {
+            jdbc.update("DELETE FROM stripe_release_intents WHERE payment_id = ?", id);
             jdbc.update("DELETE FROM payments WHERE id = ?", id);
         }
+        jdbc.update("DELETE FROM stripe_release_intents WHERE payment_id = ?", payment.getId());
         jdbc.update("DELETE FROM payments WHERE id = ?", payment.getId());
         jdbc.update("DELETE FROM bids WHERE id = ?", bid.getId());
     }

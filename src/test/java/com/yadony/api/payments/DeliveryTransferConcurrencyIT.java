@@ -69,6 +69,7 @@ class DeliveryTransferConcurrencyIT {
     @Autowired AuditService auditService;
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired JdbcTemplate jdbc;
+    @Autowired StripeReleaseIntentRepository intentRepository;
     @MockitoBean AdminAlertEscalator alertEscalator;
 
     private final UserRepository userRepository = mock(UserRepository.class);
@@ -85,15 +86,11 @@ class DeliveryTransferConcurrencyIT {
     void setUp() {
         tx = new TransactionTemplate(transactionManager);
         tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        listener = new DeliveryEventListener(paymentRepository, userRepository, auditService,
+        // Sans transaction autour du versement, comme en production (PROD_CHECKLIST 9.23).
+        listener = ReleaseTestSupport.listener(paymentRepository, userRepository, auditService,
                 mock(ApplicationEventPublisher.class), bidRepository, mock(AdminAlertService.class),
                 mock(CommissionVoucherService.class), null, mock(PayoutHoldPolicy.class), alertEscalator,
-                escrowCapture, lookup, disputeRepository) {
-            @Override
-            public EscrowReleaseOutcome releaseAfterLateEscrow(UUID bidId, UUID senderId, UUID travelerId, String source) {
-                return tx.execute(s -> super.releaseAfterLateEscrow(bidId, senderId, travelerId, source));
-            }
-        };
+                escrowCapture, lookup, disputeRepository, intentRepository, transactionManager);
         UUID announcementId = UUID.randomUUID();
         AnnouncementEntity announcement = mock(AnnouncementEntity.class);
         when(announcement.getTravelerId()).thenReturn(travelerId);
@@ -121,6 +118,7 @@ class DeliveryTransferConcurrencyIT {
 
     @AfterEach
     void cleanUp() {
+        jdbc.update("DELETE FROM stripe_release_intents WHERE payment_id = ?", payment.getId());
         jdbc.update("DELETE FROM payments WHERE id = ?", payment.getId());
         jdbc.update("DELETE FROM bids WHERE id = ?", bid.getId());
     }

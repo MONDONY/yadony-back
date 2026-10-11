@@ -221,6 +221,25 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     int markCapturedIfEscrow(@Param("id") UUID id, @Param("now") Instant now);
 
     /**
+     * Trace locale d'une capture que Stripe vient de confirmer ({@code EscrowCaptureService},
+     * après l'appel, hors verrou). Sans condition de statut : l'argent est capturé chez Stripe même
+     * si un remboursement concurrent a fait sortir le paiement du séquestre entre-temps.
+     */
+    @Modifying
+    @Query("UPDATE PaymentEntity p SET p.capturedAt = :now WHERE p.id = :id AND p.capturedAt IS NULL")
+    int markCapturedAt(@Param("id") UUID id, @Param("now") Instant now);
+
+    /**
+     * Annule un claim de versement carte commité avant l'appel Stripe, quand Stripe a refusé sans
+     * rien créer (PROD_CHECKLIST 9.23) : RELEASED → ESCROW, seulement si aucun Transfer n'est
+     * enregistré. 0 si le paiement n'est plus dans cet état.
+     */
+    @Modifying
+    @Query("UPDATE PaymentEntity p SET p.status = com.yadony.api.payments.PaymentStatus.ESCROW, p.escrowReleasedAt = NULL "
+            + "WHERE p.id = :id AND p.status = com.yadony.api.payments.PaymentStatus.RELEASED AND p.stripeTransferId IS NULL")
+    int revertUnpaidReleaseClaim(@Param("id") UUID id);
+
+    /**
      * Pose le verrou de ligne d'un paiement encore ESCROW, sans rien changer (UPDATE neutre) :
      * 1 si le paiement est toujours en séquestre (verrou tenu jusqu'à la fin de la transaction,
      * un remboursement ou un versement concurrent attend), 0 s'il l'a quitté. Sert à
@@ -339,6 +358,11 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     @Modifying
     @Query("UPDATE PaymentEntity p SET p.status = 'CANCELLED' WHERE p.id = :id AND p.status = 'PENDING'")
     int markCancelledIfPending(@Param("id") UUID id);
+
+    /** ESCROW → CANCELLED (autorisation annulée chez Stripe avant toute capture). 0 si le paiement a changé. */
+    @Modifying
+    @Query("UPDATE PaymentEntity p SET p.status = 'CANCELLED' WHERE p.id = :id AND p.status = 'ESCROW'")
+    int markCancelledIfEscrow(@Param("id") UUID id);
 
     /**
      * Vrai si l'utilisateur a au moins un paiement en séquestre actif, qu'il soit

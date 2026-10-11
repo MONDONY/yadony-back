@@ -54,7 +54,7 @@ class DeliveryEventListenerMobileMoneyTest {
     void setUp() {
         // Ronde 1, point 5 : payoutInitiator est désormais un paramètre constructeur (jamais un
         // champ contournable) — plus besoin de ReflectionTestUtils pour l'injecter.
-        listener = new DeliveryEventListener(paymentRepository, userRepository, auditService, eventPublisher,
+        listener = ReleaseTestSupport.listener(paymentRepository, userRepository, auditService, eventPublisher,
                 bidRepository, adminAlert, voucherService, payoutInitiator, holdPolicy, alertEscalator,
                 escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
         bid = new BidEntity();
