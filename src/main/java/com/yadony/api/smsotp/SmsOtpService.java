@@ -304,8 +304,8 @@ public class SmsOtpService {
         }
 
         if (!validCode) {
-            token.setAttempts(token.getAttempts() + 1);
-            smsOtpRepository.save(token);
+            // Transaction séparée : l'exception ci-dessous annule celle de l'appelant.
+            smsOtpRepository.incrementAttempts(token.getId());
             throw new YadonyBusinessException(
                     HttpStatus.BAD_REQUEST, "phone-otp-invalid",
                     "Invalid OTP", "Code invalide");

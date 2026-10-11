@@ -240,8 +240,8 @@ public class EmailOtpService {
         }
 
         if (!validCode) {
-            token.setAttempts(token.getAttempts() + 1);
-            emailOtpRepository.save(token);
+            // Transaction séparée : l'exception ci-dessous annule celle de l'appelant.
+            emailOtpRepository.incrementAttempts(token.getId());
             throw new YadonyBusinessException(
                     HttpStatus.BAD_REQUEST, "otp-invalid",
                     "Invalid OTP", "Code invalide");

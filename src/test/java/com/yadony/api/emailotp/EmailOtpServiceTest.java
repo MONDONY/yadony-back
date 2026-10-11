@@ -203,7 +203,6 @@ class EmailOtpServiceTest {
             when(emailOtpRepository.findTopByEmailAndUsedAtIsNullOrderByCreatedAtDesc(EMAIL))
                     .thenReturn(Optional.of(validToken()));
             when(passwordEncoder.matches("000000", "$2a$10$hash")).thenReturn(false);
-            when(emailOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
             assertThatThrownBy(() -> emailOtpService.attachEmailToAccount(UID, EMAIL, "000000"))
                     .isInstanceOf(YadonyBusinessException.class);
@@ -378,15 +377,15 @@ class EmailOtpServiceTest {
             when(emailOtpRepository.findTopByEmailAndUsedAtIsNullOrderByCreatedAtDesc(EMAIL))
                     .thenReturn(Optional.of(token));
             when(passwordEncoder.matches("000000", "$2a$10$hash")).thenReturn(false);
-            when(emailOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
             assertThatThrownBy(() -> emailOtpService.verifyOtp(EMAIL, "000000"))
                     .isInstanceOf(YadonyBusinessException.class)
                     .extracting(e -> ((YadonyBusinessException) e).getStatus())
                     .isEqualTo(HttpStatus.BAD_REQUEST);
 
-            assertThat(token.getAttempts()).isEqualTo(1);
-            verify(emailOtpRepository).save(argThat(e -> e.getAttempts() == 1));
+            // Incrément hors de la transaction de l'appelant, que l'exception annule.
+            verify(emailOtpRepository).incrementAttempts(token.getId());
+            verify(emailOtpRepository, never()).save(any());
         }
 
         @Test

@@ -398,15 +398,15 @@ class SmsOtpServiceTest {
             when(smsOtpRepository.findTopByPhoneNumberAndUsedAtIsNullOrderByCreatedAtDesc(PHONE))
                     .thenReturn(Optional.of(token));
             when(passwordEncoder.matches("000000", "$2a$10$hash")).thenReturn(false);
-            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
             assertThatThrownBy(() -> service.verifyOtp(PHONE, "000000"))
                     .isInstanceOf(YadonyBusinessException.class)
                     .extracting(e -> ((YadonyBusinessException) e).getStatus())
                     .isEqualTo(HttpStatus.BAD_REQUEST);
 
-            assertThat(token.getAttempts()).isEqualTo(1);
-            verify(smsOtpRepository).save(argThat(e -> e.getAttempts() == 1));
+            // Incrément hors de la transaction de l'appelant, que l'exception annule.
+            verify(smsOtpRepository).incrementAttempts(token.getId());
+            verify(smsOtpRepository, never()).save(any());
         }
 
         @Test
@@ -497,7 +497,6 @@ class SmsOtpServiceTest {
             when(smsOtpRepository.findTopByPhoneNumberAndUsedAtIsNullOrderByCreatedAtDesc(PHONE))
                     .thenReturn(Optional.of(validToken()));
             when(passwordEncoder.matches("000000", "$2a$10$hash")).thenReturn(false);
-            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
             assertThatThrownBy(() -> service.attachPhoneToAccount(UID, PHONE, "000000"))
                     .isInstanceOf(YadonyBusinessException.class);
@@ -734,13 +733,12 @@ class SmsOtpServiceTest {
             when(smsOtpRepository.findTopByPhoneNumberAndUsedAtIsNullOrderByCreatedAtDesc(US_PHONE))
                     .thenReturn(Optional.of(token));
             when(twilioVerify.check(US_PHONE, "000000")).thenReturn(false);
-            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
             assertThatThrownBy(() -> service.consumeOtp(US_PHONE, "000000"))
                     .isInstanceOf(YadonyBusinessException.class)
                     .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
                     .isEqualTo("phone-otp-invalid");
-            assertThat(token.getAttempts()).isEqualTo(1);
+            verify(smsOtpRepository).incrementAttempts(token.getId());
             assertThat(token.getUsedAt()).isNull();
         }
 
@@ -759,7 +757,7 @@ class SmsOtpServiceTest {
                     .isInstanceOf(YadonyBusinessException.class)
                     .extracting(e -> ((YadonyBusinessException) e).getStatus())
                     .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
-            assertThat(token.getAttempts()).isZero();
+            verify(smsOtpRepository, never()).incrementAttempts(any());
         }
     }
 
