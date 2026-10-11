@@ -28,9 +28,14 @@ public class StorageConfig {
     @Value("${aws.s3.endpoint:}")
     private String endpoint;
 
+    /**
+     * Client HTTP des SMS (Africa's Talking, Twilio, Twilio Verify). Sans délai, un
+     * fournisseur qui ne répond pas gardait le thread indéfiniment, et la connexion JDBC
+     * avec lui quand l'appel part d'une transaction (OTP, relance SMS planifiée).
+     */
     @Bean
     public RestTemplate restTemplate() {
-        return new RestTemplate();
+        return new RestTemplate(OutboundHttpTimeouts.requestFactory());
     }
 
     @Bean

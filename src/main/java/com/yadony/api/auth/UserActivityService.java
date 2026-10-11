@@ -7,8 +7,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -43,9 +41,14 @@ public class UserActivityService {
         this.clock = clock;
     }
 
-    /** Hors de la transaction en lecture de l'appelant ; un échec n'empêche jamais la connexion. */
+    /**
+     * Un échec n'empêche jamais la connexion. Pas de transaction ici : un rappel dans le
+     * quart d'heure ne touche pas la base, et l'écriture ({@link UserRepository#touchLastSeen},
+     * REQUIRES_NEW) n'emprunte une connexion qu'au moment d'écrire. Avant, la transaction
+     * REQUIRES_NEW s'ouvrait à chaque GET /auth/me, cache plein ou non : une seconde
+     * connexion par requête (YADONY-BACK-STAGING-W).
+     */
     @EventListener
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onUserSeen(UserSeenEvent event) {
         if (recentlyWritten.getIfPresent(event.userId()) != null) {
             return;

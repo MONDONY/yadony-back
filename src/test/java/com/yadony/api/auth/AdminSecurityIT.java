@@ -1,5 +1,6 @@
 package com.yadony.api.auth;
 
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.admin.account.AdminAuthService;
 import com.yadony.api.admin.account.AdminAuthorities;
 import com.yadony.api.admin.account.AdminPermission;
@@ -73,7 +74,7 @@ class AdminSecurityIT {
     // -------------------------------------------------------------------------
 
     private FirebaseTokenFilter buildFilter() {
-        return new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService, false, "", "test");
+        return new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService, TestMessages.resolver(), false, "", "test");
     }
 
     /**

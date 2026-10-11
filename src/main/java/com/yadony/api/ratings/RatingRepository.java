@@ -48,6 +48,9 @@ public interface RatingRepository extends JpaRepository<RatingEntity, UUID> {
 
     boolean existsByBidIdAndRaterId(UUID bidId, UUID raterId);
 
+    /** Notes de plusieurs colis d'un coup : remplace existsByBidIdAndRaterId dans les listes. */
+    List<RatingEntity> findByBidIdIn(java.util.Collection<UUID> bidIds);
+
     boolean existsByBidIdAndTrackingToken(UUID bidId, String trackingToken);
 
     /**

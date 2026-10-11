@@ -396,7 +396,13 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
             @Param("firstDueBefore") Instant firstDueBefore,
             @Param("secondDueBefore") Instant secondDueBefore);
 
-    /** Dernière ouverture de l'app, sans passer par l'entité (verrou optimiste {@code version}). */
+    /**
+     * Dernière ouverture de l'app, sans passer par l'entité (verrou optimiste {@code version}).
+     * Transaction propre : l'appelant peut être dans une transaction en lecture seule,
+     * où Postgres refuserait l'UPDATE.
+     */
+    @org.springframework.transaction.annotation.Transactional(
+            propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     @Modifying
     @Query(value = "UPDATE users SET last_seen_at = :now WHERE id = :id", nativeQuery = true)
     int touchLastSeen(@Param("id") UUID id, @Param("now") java.time.LocalDateTime now);

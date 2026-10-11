@@ -1505,6 +1505,67 @@ Stripe mais une transaction locale annulée) pouvait payer le voyageur deux fois
                             AND c.no_show_status <> 'RESOLVED' AND c.deleted_at IS NULL);
       ```
 
+#### 9.23 Pool JDBC saturé sous charge : réglages Hikari, OSIV, métriques à surveiller (back, branche `fix/pool-jdbc-sature`, YADONY-BACK-STAGING-W)
+
+**Origine.** Pendant les tests de charge staging du 07/10 à 23:40 UTC et du 08/10 à 22:19 UTC, Sentry a remonté 5 fois `Unable to acquire JDBC Connection … (total=20, active=20, idle=0, waiting=151)`. L'erreur sortait de `AdminAuthService.resolve`, première lecture de la base de chaque requête. Cette méthode subit la saturation sans la causer : son cache `adminAuthz` fonctionne (29 468 hits pour 57 misses pendant le test). Elle levait cependant une **500** et un événement Sentry, parce que le filtre d'authentification s'exécute avant le `GlobalExceptionHandler`.
+
+**Ce que disent les métriques (Prometheus staging, lecture seule).**
+
+| Mesure (08/10, 22:13 → 22:20 UTC) | Valeur | Lecture |
+|---|---|---|
+| CPU du VPS (2 vCPU) | **99,8 %** ; load average **24** ; JVM = 80 % de la machine | La machine est le plafond. La veille, à 26 % de CPU, une connexion était tenue 27 ms en moyenne ; à saturation, **93 ms**. |
+| `hikaricp_connections_active` / `_pending` | 20/20, jusqu'à **152** requêtes en attente | 201 emprunts/s × 93 ms ≈ 18,8 connexions occupées : la limite de 20 est atteinte. |
+| `hikaricp_connections_usage_seconds_max` | **124,5 s** | C'est **`GET /bids/me` sans pagination** (max de la route : 125,2 s, 65 s en moyenne sur 5 appels) : 741 colis sur le compte k6, une dizaine de requêtes par colis dans une seule transaction. |
+| Emprunts par requête | 2,7 | Le filtre emprunte une connexion (compte), puis le service une autre. `GET /auth/me` en emprunte **une deuxième en tenant la première** (`UserSeenEvent`, REQUIRES_NEW). |
+| OSIV | `spring.jpa.open-in-view: false` depuis longtemps | **OSIV n'est pas en cause.** |
+| Appels externes | Le test ne contenait que des GET | Stripe, R2, FCM et SMS ne sont pas en cause ce soir-là. L'audit relève quand même des transactions qui englobent un appel externe (voir plus bas). |
+| Fuite | aucune | Le pool revient à 0 actif dès la fin du test. |
+
+**Corrections de cette branche.**
+
+| Sujet | Changement |
+|---|---|
+| Filtre d'authentification | Un pool épuisé pendant la résolution du compte (admin ou utilisateur) donne désormais **503 `service-busy`** au format RFC 7807, avec `Retry-After: 2` et un WARN, comme dans les contrôleurs. Fini la 500 et l'issue Sentry à chaque requête. Les autres pannes de la résolution admin remontent comme avant (500 et Sentry). Le code est partagé dans `common/ServiceBusyProblem`. |
+| `GET /bids/me` (paginé ou non), `GET /travelers/me/bids`, colis d'un trajet | Les lectures par colis (lien destinataire, notes, annulations, articles de grille, photos, taux de commission) sont faites en **lots `IN (...)`** de 500 au plus (`BidResponsePrefetch`). Trajets et voyageurs sont chargés une seule fois dans le contexte de persistance. Le nombre de requêtes ne dépend plus du nombre de colis : test `MyBidsQueryCountIntegrationTest`, réponses identiques à la conversion à l'unité. |
+| `GET /auth/me` | Plus de transaction englobante. La lecture Firebase (contact) se fait hors connexion, et `UserSeenEvent` ne prend plus de seconde connexion : la vérification « déjà écrit dans le quart d'heure » passe avant toute transaction, et seule l'écriture `touchLastSeen` ouvre la sienne (REQUIRES_NEW). |
+| Photos de messagerie (lecture) | Plus de transaction pendant l'appel Firestore et le téléchargement R2 de l'image. |
+| `POST /internal/messaging/notify` | `ensureFirestoreDocument` ne tient plus de connexion pendant l'appel Firestore. |
+| SMS (Africa's Talking, Twilio, Twilio Verify) et email Resend | Délais posés sur les clients HTTP, qui n'en avaient aucun : connexion 5 s, lecture 15 s (`OutboundHttpTimeouts`). |
+| Staging | `leak-detection-threshold: 10000` : toute connexion tenue plus de 10 s journalise en WARN (onglet Logs de Sentry) la pile de l'emprunteur. Elle n'est ni fermée ni reprise. |
+| Preuve | `JdbcPoolExternalCallIntegrationTest` : pool de 2, délai d'emprunt de 500 ms, appel externe simulé de 800 ms, 8 requêtes simultanées. Toutes répondent 200 et aucune connexion n'est active pendant l'appel. Avec l'ancien code, une connexion reste active pendant l'appel et le test échoue. |
+
+**Chemin argent : rien ne change.** Aucune transaction de paiement n'est modifiée (claim atomique, verrous, clés d'idempotence intacts). L'audit a relevé des appels Stripe, pawaPay ou R2 dans des transactions ; ils restent en l'état et sont listés ci-dessous comme points ouverts, parce que les sortir touche aux garanties d'argent.
+
+**Réglages Hikari de prod (inchangés, à confirmer).**
+
+```yaml
+spring.datasource.hikari:
+  maximum-pool-size: 20        # application-prod.yml ; Postgres max_connections = 100
+  minimum-idle: 2
+  connection-timeout: 5000     # échec rapide en 503 service-busy plutôt que 30 s d'attente
+  keepalive-time: 60000        # application.yml, commun
+  max-lifetime: 900000
+```
+
+Sur un VPS de 2 vCPU, agrandir le pool ne sert à rien : la limite vient du CPU partagé entre la JVM, Postgres et la supervision. Au-delà de 20, Postgres se dispute le même CPU et chaque connexion tient plus longtemps. Si la prod sature, il faut ajouter des cœurs ou une seconde instance d'API derrière nginx (2 × 20 connexions restent sous 100). Agrandir le pool ne réglera rien.
+
+- [ ] Contrôle prod (lecture seule) : `SHOW max_connections` ≥ 100, et `SELECT count(*) FROM pg_stat_activity;` largement sous cette limite.
+- [ ] Optionnel en prod : `SPRING_DATASOURCE_HIKARI_LEAKDETECTIONTHRESHOLD=30000`, variable d'environnement sans redéploiement de code. Ce n'est qu'un WARN, sans effet sur les requêtes.
+- [ ] Après la mise en prod, surveiller dans Grafana / Prometheus :
+      - `hikaricp_connections_pending{pool="HikariPool-1"}` : doit rester à 0 hors pic. Une valeur > 0 pendant plus d'une minute indique une saturation.
+      - `hikaricp_connections_usage_seconds_max` : doit rester **sous 5 s**. Une valeur qui monte désigne une transaction trop longue ; la pile apparaît dans Sentry Logs si la détection de fuite est active.
+      - `rate(hikaricp_connections_timeout_total[5m])` : 0 attendu. Sinon, des 503 `service-busy` sont partis.
+      - `histogram_quantile(0.95, sum by (le) (rate(hikaricp_connections_acquire_seconds_bucket[5m])))` : doit rester sous 25 ms.
+      - `system_cpu_usage` > 0,9 de façon prolongée : la machine est le plafond, la faire grossir.
+      - `max by (uri) (http_server_requests_seconds_max)` : une route au-dessus de 10 s mérite une enquête.
+- [ ] Sentry : YADONY-BACK-STAGING-W ne doit plus recevoir d'événement. Sous charge, cherchez « Connection pool exhausted » dans l'onglet Logs (WARN).
+
+**Points ouverts (non traités ici, à arbitrer).**
+- Le SDK Stripe garde ses délais par défaut (connexion 30 s, lecture 80 s) et tourne parfois dans une transaction. C'est le cas de `EscrowCaptureService.ensureCaptured`, qui garde un verrou de ligne pendant `pi.capture`, et du checkout carte (`PaymentService.createEscrow`). Les relances réseau du SDK (9.24, `stripe.max-network-retries`, 2 par défaut) allongent encore ce temps dans le pire cas. Raccourcir ces délais ou sortir ces appels de la transaction touche au chemin argent : à traiter dans une PR dédiée, avec une revue des clés d'idempotence.
+- `GET /me/payment-methods` lit Stripe (`PaymentMethod.list`) dans une transaction en lecture ; les OTP SMS et email appellent Firebase dans une transaction SERIALIZABLE.
+- Les listeners `AFTER_COMMIT` synchrones (remboursements wallet, commission espèces, FCM d'automatisation) appellent un service externe pendant que la connexion de la requête émettrice n'est pas encore rendue.
+- Les schedulers `AwaitingPaymentCleanupScheduler`, `OrphanedPaymentIntentCleanupJob` et `BidPhotoCleanupScheduler` bouclent sur Stripe ou R2 dans une seule transaction.
+
 #### 9.24 Stripe : retries réseau (YADONY-BACK-STAGING-17, branche `fix/stripe-retries-reseau`)
 
 - [ ] `stripe.max-network-retries` (env `STRIPE_MAX_NETWORK_RETRIES`, défaut **2**) : le SDK relance seul une erreur réseau transitoire (« Connection reset by peer », timeout), avec la même clé d'idempotence à chaque relance (clé explicite conservée, sinon clé générée une fois par requête). Rien à poser en prod sauf pour changer le défaut. Stripe injoignable après relances : 502 RFC 7807 `stripe-unavailable` (« Le service de paiement est momentanément injoignable, réessayez. ») sur `/bids/checkout`, le checkout négocié, `confirm-payment`, la clé éphémère et la recharge wallet carte, au lieu d'une 500 ; la transaction est annulée, aucun bid ni paiement à moitié créé. Remboursement admin : clé `admin-refund-<paymentId>`. Contrôle après mise en prod : plus d'`ApiConnectionException` non relancée dans Sentry sur `POST /bids/checkout`.

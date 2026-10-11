@@ -55,7 +55,9 @@ import org.springframework.web.multipart.MultipartFile;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.Collection;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -778,8 +780,9 @@ public class BidService {
         Map<UUID, UserEntity> sendersById = userRepository.findAllById(
                         visible.stream().map(BidEntity::getSenderId).distinct().toList())
                 .stream().collect(Collectors.toMap(UserEntity::getId, u -> u));
+        BidResponsePrefetch prefetch = prefetchFor(visible);
         return visible.stream()
-                .map(b -> toResponse(b, sendersById.get(b.getSenderId())))
+                .map(b -> toResponse(b, sendersById.get(b.getSenderId()), null, prefetch))
                 .toList();
     }
 
@@ -801,11 +804,16 @@ public class BidService {
         // Un fil de négociation, ouvert ou clos, n'est pas un envoi : il vit dans
         // /bids/negotiations/me. Les fils clos (NEGOTIATION_CLOSED) remontaient
         // dans « Mes colis » sans puce de filtre qui les contienne (FLUTTER-4Q).
-        return mine.stream()
+        List<BidEntity> shipments = mine.stream()
                 .filter(b -> !BidStatus.NEGOTIATION_STATUSES.contains(b.getStatus()))
+                .toList();
+        // Lectures groupées : sans elles, ~10 requêtes par colis tenaient la connexion
+        // jusqu'à 125 s sur 741 colis (YADONY-BACK-STAGING-W, cf. BidResponsePrefetch).
+        BidResponsePrefetch prefetch = prefetchFor(shipments);
+        return shipments.stream()
                 // L'appelant est l'expéditeur : il reçoit ses numéros et liens de
                 // suivi, et le téléphone de ses destinataires.
-                .map(b -> toResponse(b, user, user.getId()))
+                .map(b -> toResponse(b, user, user.getId(), prefetch))
                 .toList();
     }
 
@@ -853,7 +861,8 @@ public class BidService {
         }
         Page<BidEntity> bids = bidRepository.findBySenderIdFiltered(user.getId(), allowed, announcementId, pageable);
         // L'appelant est l'expéditeur : mêmes champs que la liste complète.
-        return PageResponse.from(bids.map(b -> toResponse(b, user, user.getId())));
+        BidResponsePrefetch prefetch = prefetchFor(bids.getContent());
+        return PageResponse.from(bids.map(b -> toResponse(b, user, user.getId(), prefetch)));
     }
 
     // Même rationale que getMyBids ci-dessus (données bilatérales, TTL courte).
@@ -875,7 +884,8 @@ public class BidService {
         Map<UUID, UserEntity> sendersById = userRepository.findAllById(
                         bids.getContent().stream().map(BidEntity::getSenderId).distinct().toList())
                 .stream().collect(Collectors.toMap(UserEntity::getId, u -> u));
-        return bids.map(b -> toResponse(b, sendersById.get(b.getSenderId())));
+        BidResponsePrefetch prefetch = prefetchFor(bids.getContent());
+        return bids.map(b -> toResponse(b, sendersById.get(b.getSenderId()), null, prefetch));
     }
 
     @Transactional
@@ -1461,6 +1471,49 @@ public class BidService {
     }
 
     BidResponse toResponse(BidEntity bid, UserEntity sender, UUID callerId) {
+        return toResponse(bid, sender, callerId, null);
+    }
+
+    /**
+     * Charge en lots ce que {@link #toResponse} lit pour chaque colis d'une liste. Le
+     * trajet, le voyageur et le destinataire inscrit sont chargés dans le contexte de
+     * persistance (les {@code findById} de la conversion les y trouvent sans requête) ;
+     * le reste est rangé dans {@link BidResponsePrefetch}. À appeler dans la transaction
+     * de la lecture.
+     */
+    BidResponsePrefetch prefetchFor(Collection<BidEntity> bids) {
+        List<UUID> bidIds = bids.stream().map(BidEntity::getId).toList();
+        List<AnnouncementEntity> announcements = BidResponsePrefetch.loadInChunks(
+                bids.stream().map(BidEntity::getAnnouncementId).filter(java.util.Objects::nonNull).toList(),
+                announcementRepository::findAllById);
+        Map<UUID, com.yadony.api.matching.reception.BidRecipientLinkEntity> links = new HashMap<>();
+        BidResponsePrefetch.loadInChunks(bidIds, recipientLinkRepository::findByBidIdIn)
+                .forEach(l -> links.putIfAbsent(l.getBidId(), l));
+        java.util.Set<UUID> userIds = new java.util.HashSet<>();
+        announcements.forEach(a -> userIds.add(a.getTravelerId()));
+        links.values().forEach(l -> userIds.add(l.getRecipientUserId()));
+        userIds.remove(null);
+        BidResponsePrefetch.loadInChunks(userIds, userRepository::findAllById);
+
+        java.util.Set<String> raterPairs = new java.util.HashSet<>();
+        BidResponsePrefetch.loadInChunks(bidIds, ratingRepository::findByBidIdIn).stream()
+                .filter(r -> r.getRaterId() != null)
+                .forEach(r -> raterPairs.add(BidResponsePrefetch.pairKey(r.getBidId(), r.getRaterId())));
+        Map<UUID, List<CancellationEntity>> cancellations =
+                BidResponsePrefetch.loadInChunks(bidIds, cancellationRepository::findAllByBidIdIn).stream()
+                        .collect(Collectors.groupingBy(CancellationEntity::getBidId));
+        Map<UUID, List<BidGridItemEntity>> gridItems =
+                BidResponsePrefetch.loadInChunks(bidIds, bidGridItemRepository::findByBidIdIn).stream()
+                        .collect(Collectors.groupingBy(BidGridItemEntity::getBidId));
+        return new BidResponsePrefetch(links, raterPairs, cancellations, gridItems,
+                bidPhotoService.activePhotosByBid(bidIds));
+    }
+
+    /**
+     * @param prefetch lectures groupées d'une liste ({@link #prefetchFor}), ou null pour
+     *                 un colis isolé : chaque lecture est alors faite à l'unité.
+     */
+    BidResponse toResponse(BidEntity bid, UserEntity sender, UUID callerId, BidResponsePrefetch prefetch) {
         String senderName = buildSenderName(sender);
         boolean senderPhoneAvailable = phoneAvailableForBid(sender, bid);
         Integer senderTotalShipments = sender != null ? sender.getTotalShipments() : null;
@@ -1503,8 +1556,9 @@ public class BidService {
         // Le voyageur ne le reçoit qu'une fois le colis pris en charge ; le jeton du
         // lien de suivi public reste à l'expéditeur seul.
         boolean callerIsSender = callerId != null && callerId.equals(bid.getSenderId());
-        com.yadony.api.matching.reception.BidRecipientLinkEntity recipientLink =
-                recipientLinkRepository.findByBidId(bid.getId()).orElse(null);
+        com.yadony.api.matching.reception.BidRecipientLinkEntity recipientLink = prefetch != null
+                ? prefetch.recipientLink(bid.getId())
+                : recipientLinkRepository.findByBidId(bid.getId()).orElse(null);
         // Destinataire qui a refusé le colis ou s'en est retiré : le voyageur ne voit plus
         // ni son nom ni son numéro (règle unique : ReceptionLinkStatus#hidesRecipientFromTraveler).
         boolean recipientDeclined = !callerIsSender && recipientLink != null
@@ -1528,14 +1582,20 @@ public class BidService {
         Integer travelerTotalTrips = traveler != null ? traveler.getTotalTrips() : null;
         java.math.BigDecimal travelerAverageRating = traveler != null ? traveler.getAverageRating() : null;
 
-        boolean senderHasRated = ratingRepository.existsByBidIdAndRaterId(bid.getId(), bid.getSenderId());
+        boolean senderHasRated = prefetch != null
+                ? prefetch.hasRated(bid.getId(), bid.getSenderId())
+                : ratingRepository.existsByBidIdAndRaterId(bid.getId(), bid.getSenderId());
         boolean travelerHasRated = travelerId != null
-                && ratingRepository.existsByBidIdAndRaterId(bid.getId(), travelerId);
+                && (prefetch != null
+                        ? prefetch.hasRated(bid.getId(), travelerId)
+                        : ratingRepository.existsByBidIdAndRaterId(bid.getId(), travelerId));
 
         // Une seule requête pour les 2 cancellations possibles du bid (HANDOVER +
         // DELIVERY, UNIQUE(bid_id, scope) garantit au plus 2 lignes), partitionnées
         // en mémoire — évite un second aller-retour DB par bid sur les endpoints de liste.
-        java.util.List<CancellationEntity> bidCancellations = cancellationRepository.findAllByBidId(bid.getId());
+        java.util.List<CancellationEntity> bidCancellations = prefetch != null
+                ? prefetch.cancellations(bid.getId())
+                : cancellationRepository.findAllByBidId(bid.getId());
         var cancellation = bidCancellations.stream()
                 .filter(c -> c.getScope() == CancellationScope.HANDOVER)
                 .findFirst().orElse(null);
@@ -1602,7 +1662,10 @@ public class BidService {
         if (bid.getNegotiatedNetEur() != null) {
             totalNetAmountEur = bid.getNegotiatedNetEur().setScale(2, java.math.RoundingMode.HALF_UP);
         } else {
-            java.math.BigDecimal gridNet = bidGridItemRepository.findByBidId(bid.getId()).stream()
+            java.util.List<BidGridItemEntity> bidGridItems = prefetch != null
+                    ? prefetch.gridItems(bid.getId())
+                    : bidGridItemRepository.findByBidId(bid.getId());
+            java.math.BigDecimal gridNet = bidGridItems.stream()
                     .map(i -> i.getUnitPriceNetSnapshot().multiply(java.math.BigDecimal.valueOf(i.getQuantity())))
                     .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
             java.math.BigDecimal kgNet = (bid.getWeightKg() != null && pricePerKg != null)
@@ -1627,7 +1690,11 @@ public class BidService {
         // pour le dériver.
         java.math.BigDecimal effectiveRate = bid.getCommissionRate();
         if (effectiveRate == null && announcement != null) {
-            effectiveRate = commissionRateResolver.resolve(announcement.getTravelerId(), bid.getSenderId());
+            UUID rateTravelerId = announcement.getTravelerId();
+            effectiveRate = prefetch != null
+                    ? prefetch.commissionRate(rateTravelerId, bid.getSenderId(),
+                            () -> commissionRateResolver.resolve(rateTravelerId, bid.getSenderId()))
+                    : commissionRateResolver.resolve(rateTravelerId, bid.getSenderId());
         }
         // Brut négocié : le nombre exact sur lequel les deux parties se sont mises
         // d'accord, et exactement celui que débitera l'escrow. Le redériver du net
@@ -1727,7 +1794,7 @@ public class BidService {
                 bid.getReturnedAt(),
                 storageService.avatarUrl(sender != null ? sender.getAvatarUrl() : null),
                 storageService.avatarUrl(traveler != null ? traveler.getAvatarUrl() : null),
-                bidPhotoService.activePhotos(bid.getId()),
+                prefetch != null ? prefetch.photos(bid.getId()) : bidPhotoService.activePhotos(bid.getId()),
                 tripCancellationId,
                 tripCancellationRematchStatus,
                 bid.getCurrency(),

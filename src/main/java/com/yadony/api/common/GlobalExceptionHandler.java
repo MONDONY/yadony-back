@@ -38,7 +38,6 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.net.URI;
-import java.sql.SQLTransientConnectionException;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -439,35 +438,16 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler({CannotCreateTransactionException.class, DataAccessResourceFailureException.class})
     public ResponseEntity<ProblemDetail> handleDatabaseUnavailable(Exception ex) {
-        if (!isConnectionPoolTimeout(ex)) {
+        if (!ServiceBusyProblem.isConnectionPoolTimeout(ex)) {
             return handleGeneric(ex);
         }
         String requestId = MDC.get(RequestCorrelationFilter.MDC_KEY);
         log.warn("Connection pool exhausted requestId={}: {}", requestId, ex.getMessage());
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
-                HttpStatus.SERVICE_UNAVAILABLE,
-                messagesResolver.forRequest().get("problem.service-busy.detail"));
-        problem.setType(URI.create(BASE_TYPE + "service-busy"));
-        problem.setTitle("Service Busy");
-        problem.setProperty("code", "service-busy");
-        if (requestId != null) {
-            problem.setProperty("requestId", requestId);
-        }
+        ProblemDetail problem = ServiceBusyProblem.of(
+                messagesResolver.forRequest().get("problem.service-busy.detail"), requestId);
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                .header(HttpHeaders.RETRY_AFTER, "2")
+                .header(HttpHeaders.RETRY_AFTER, ServiceBusyProblem.RETRY_AFTER_SECONDS)
                 .body(problem);
-    }
-
-    private static boolean isConnectionPoolTimeout(Throwable ex) {
-        for (Throwable t = ex; t != null; t = t.getCause()) {
-            if (t instanceof SQLTransientConnectionException) {
-                return true;
-            }
-            if (t.getCause() == t) {
-                break;
-            }
-        }
-        return false;
     }
 
     @ExceptionHandler(Exception.class)

@@ -198,7 +198,9 @@ public class ConversationService {
      * <p>Ne propage aucune erreur : la réparation est un bonus, jamais une
      * condition de l'envoi d'une notification.
      */
-    @Transactional(readOnly = true)
+    // Pas de transaction : Firestore est interrogé à chaque message de chat, et une
+    // transaction ouverte ici tenait une connexion JDBC pendant cet appel. Les deux
+    // lectures d'utilisateurs ont leur propre transaction courte.
     public void ensureFirestoreDocument(ConversationEntity conv) {
         String firestoreId = conv.getFirestoreConversationId();
         try {

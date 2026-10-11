@@ -11,6 +11,10 @@ public interface BidPhotoRepository extends JpaRepository<BidPhotoEntity, UUID> 
 
     List<BidPhotoEntity> findByBidIdAndStatusOrderByPositionAsc(UUID bidId, BidPhotoStatus status);
 
+    /** Même lecture pour une liste de colis ; l'ordre par position est conservé dans chaque colis. */
+    List<BidPhotoEntity> findByBidIdInAndStatusOrderByPositionAsc(java.util.Collection<UUID> bidIds,
+                                                                  BidPhotoStatus status);
+
     List<BidPhotoEntity> findByStatus(BidPhotoStatus status);
 
     /** Rapprochement R2 : clés de toutes les photos de bid, tous statuts (DELETING compris). */

@@ -11,7 +11,6 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -147,7 +146,10 @@ public class ConversationMediaService {
      *
      * @throws YadonyBusinessException 404 {@code image-not-found}, 410 {@code image-unavailable}
      */
-    @Transactional(readOnly = true)
+    // Pas de transaction englobante (YADONY-BACK-STAGING-W) : chaque lecture de la base a
+    // sa transaction courte, et la connexion JDBC est rendue avant l'appel Firestore puis
+    // le téléchargement R2 de l'image entière. Tenue pendant ces deux appels, elle bloquait
+    // une connexion du pool par miniature affichée.
     public byte[] loadImage(UUID conversationId, UUID userId, String messageId, Variant variant) {
         ConversationEntity conv = conversationRepository.findByIdAndParticipantIgnoreDeleted(conversationId, userId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN,
