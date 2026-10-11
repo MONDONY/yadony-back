@@ -783,8 +783,15 @@ public class CancellationService {
      * Le voyageur saisit le code de retour (détenu par l'expéditeur) pour confirmer
      * la restitution physique du colis (D7). Réutilise la plomberie du confirmationCode
      * en sens inverse (expiry / tentatives / égalité). Publie {@link ParcelReturnedEvent}.
+     *
+     * <p>Un code faux enregistre l'essai avant de lever l'erreur : sans noRollbackFor,
+     * l'exception annulait la transaction, incrément compris, la limite de
+     * trois essais ne s'appliquait jamais et le code à 6 chiffres
+     * se devinait (colis marqué rendu sans restitution). Même parade que
+     * {@code TrackingService.confirmDelivery}. Pas d'incrément en REQUIRES_NEW : la ligne du
+     * bid est verrouillée par cette transaction, une seconde s'y bloquerait.
      */
-    @Transactional
+    @Transactional(noRollbackFor = YadonyBusinessException.class)
     public ReturnCodeResponse confirmReturn(String firebaseUid, UUID bidId, String code) {
         UserEntity caller = findUserByFirebaseUid(firebaseUid);
         BidEntity bid = bidRepository.findByIdForUpdate(bidId)
