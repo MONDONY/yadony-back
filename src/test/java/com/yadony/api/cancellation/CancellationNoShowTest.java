@@ -89,6 +89,67 @@ class CancellationNoShowTest {
     @Nested
     class ReportSenderNoShow {
 
+        @BeforeEach
+        void annonceDuVoyageur() {
+            lenient().when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                    .thenReturn(Optional.of(announcementWithTraveler(TRAVELER_ID)));
+        }
+
+        @Test
+        void refuseUnCompteQuiNEstPasLeVoyageurDuBid() {
+            // Régression : le rôle TRAVELER est attribué à tout compte, il ne prouvait pas la
+            // participation au bid. N'importe qui pouvait déclarer l'expéditeur d'un autre absent.
+            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now().minusHours(1));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            UUID intrus = UUID.randomUUID();
+
+            assertThatThrownBy(() -> service.reportSenderNoShow(BID_ID, intrus))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .extracting(e -> ((YadonyBusinessException) e).getStatus())
+                    .isEqualTo(HttpStatus.FORBIDDEN);
+            verify(cancellationRepository, never()).save(any());
+            verify(eventPublisher, never()).publishEvent(any());
+            verify(auditService, never()).log(any(), any(), any(), any(), any());
+        }
+
+        @Test
+        void bidIntrouvable_404() {
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.reportSenderNoShow(BID_ID, TRAVELER_ID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .extracting(e -> ((YadonyBusinessException) e).getStatus())
+                    .isEqualTo(HttpStatus.NOT_FOUND);
+        }
+
+        @Test
+        void annonceIntrouvable_404() {
+            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now().minusHours(1));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.reportSenderNoShow(BID_ID, TRAVELER_ID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                    .isEqualTo("announcement-not-found");
+            verify(cancellationRepository, never()).save(any());
+        }
+
+        @Test
+        void journaliseLaDeclarationDansLAudit() {
+            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now().minusHours(1));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(cancellationRepository.existsByBidIdAndNoShowStatusIn(any(), any())).thenReturn(false);
+            when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.reportSenderNoShow(BID_ID, TRAVELER_ID);
+
+            verify(auditService).log(org.mockito.ArgumentMatchers.eq("BID"),
+                    org.mockito.ArgumentMatchers.eq(BID_ID),
+                    org.mockito.ArgumentMatchers.eq("SENDER_NO_SHOW_REPORTED"),
+                    org.mockito.ArgumentMatchers.eq(TRAVELER_ID), any());
+        }
+
         @Test
         void allowsStripeBid() {
             // Produit : le signalement « expéditeur absent » couvre désormais cash ET Stripe.

@@ -429,7 +429,18 @@ public class CancellationService {
 
     @Transactional
     public CancellationEntity reportSenderNoShow(UUID bidId, UUID travelerId) {
-        BidEntity bid = bidRepository.findById(bidId).orElseThrow();
+        BidEntity bid = bidRepository.findById(bidId)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Bid introuvable"));
+        // Seul le voyageur du trajet peut déclarer l'expéditeur absent : le rôle TRAVELER est
+        // attribué à tout compte, il ne prouve pas la participation au bid.
+        AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "announcement-not-found", "Not Found", "Annonce introuvable"));
+        if (!travelerId.equals(announcement.getTravelerId())) {
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
+                    "Vous n'êtes pas le voyageur de ce bid.");
+        }
         if (bid.getStatus() != BidStatus.ACCEPTED) {
             throw new IllegalStateException("Le bid doit être en statut ACCEPTED.");
         }
@@ -455,6 +466,8 @@ public class CancellationService {
         c.setNoShowStatus(CancellationStatus.PENDING_CONFIRMATION);
         c.setContestationDeadline(OffsetDateTime.now().plusHours(contestationHours));
         CancellationEntity saved = cancellationRepository.save(c);
+        auditService.log("BID", bidId, "SENDER_NO_SHOW_REPORTED", travelerId,
+                Map.of("bidId", bidId.toString(), "cancellationId", String.valueOf(saved.getId())));
         // L'expéditeur est prévenu après commit (NoShowNotificationListener) : sans cela, il
         // découvrait la déclaration une fois le délai de contestation écoulé.
         eventPublisher.publishEvent(new SenderNoShowReportedEvent(
