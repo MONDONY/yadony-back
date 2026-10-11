@@ -6,6 +6,8 @@ import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.PageResponse;
 import com.yadony.api.common.YadonyBusinessException;
 import java.util.List;
+import com.yadony.api.messaging.dto.BatchConversationRequest;
+import com.yadony.api.messaging.dto.BatchConversationResponse;
 import com.yadony.api.messaging.dto.ConversationResponse;
 import com.yadony.api.messaging.dto.LastMessageRequest;
 import jakarta.validation.Valid;
@@ -32,15 +34,18 @@ public class ConversationController {
     private final ConversationService conversationService;
     private final UserRepository userRepository;
     private final BlockVisibility blockVisibility;
+    private final ConversationBatchService batchService;
 
     public ConversationController(ConversationRepository conversationRepository,
                                    ConversationService conversationService,
                                    UserRepository userRepository,
-                                   BlockVisibility blockVisibility) {
+                                   BlockVisibility blockVisibility,
+                                   ConversationBatchService batchService) {
         this.conversationRepository = conversationRepository;
         this.conversationService = conversationService;
         this.userRepository = userRepository;
         this.blockVisibility = blockVisibility;
+        this.batchService = batchService;
     }
 
     // GET /conversations — paginated list for the authenticated user
@@ -191,6 +196,29 @@ public class ConversationController {
         UserEntity currentUser = resolveCurrentUser();
         conversationService.unmuteNotifications(id, currentUser.getId());
         return ResponseEntity.noContent().build();
+    }
+
+    // POST /conversations/batch/archive|unarchive|delete — sélection multiple de la liste
+    // (FLUTTER-M4). Corps { "ids": [...] }, 1 à 100 identifiants (422 sinon). Chaque id
+    // suit la règle de l'appel unitaire (propriété vérifiée, soft delete, audit) ; la
+    // réponse est toujours 200 avec un résultat par id, un refus n'annulant pas les autres.
+    // Les chemins littéraux priment sur /{id}/archive dans le routage Spring.
+    @PostMapping("/batch/archive")
+    public ResponseEntity<BatchConversationResponse> archiveConversations(
+            @Valid @RequestBody BatchConversationRequest body) {
+        return ResponseEntity.ok(batchService.archive(body.ids(), resolveCurrentUser().getId()));
+    }
+
+    @PostMapping("/batch/unarchive")
+    public ResponseEntity<BatchConversationResponse> unarchiveConversations(
+            @Valid @RequestBody BatchConversationRequest body) {
+        return ResponseEntity.ok(batchService.unarchive(body.ids(), resolveCurrentUser().getId()));
+    }
+
+    @PostMapping("/batch/delete")
+    public ResponseEntity<BatchConversationResponse> deleteConversations(
+            @Valid @RequestBody BatchConversationRequest body) {
+        return ResponseEntity.ok(batchService.delete(body.ids(), resolveCurrentUser().getId()));
     }
 
     // POST /conversations/{id}/restore — restore the requesting user's deleted copy
