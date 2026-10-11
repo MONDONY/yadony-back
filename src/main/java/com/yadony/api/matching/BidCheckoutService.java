@@ -79,6 +79,13 @@ public class BidCheckoutService {
             userRepository.save(sender);
         }
 
+        // Ordre global des verrous colis → annonce → paiement (PROD_CHECKLIST 9.25), le même que
+        // negotiationCheckout : le colis repris est verrouillé AVANT l'annonce, et avant d'être
+        // chargé (identifiant lu par requête scalaire), pour qu'il soit relu à jour plus bas.
+        bidRepository.findIdBySenderIdAndAnnouncementIdAndStatus(
+                sender.getId(), req.announcementId(), BidStatus.AWAITING_PAYMENT)
+            .ifPresent(bidRepository::lockForUpdate);
+
         AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(req.announcementId())
             .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                 "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
@@ -141,7 +148,8 @@ public class BidCheckoutService {
         BidContentRules.assertNotRefused(announcement, normalizedContentCategory);
 
         // Idempotency: if an AWAITING_PAYMENT bid exists (e.g. payment sheet crashed),
-        // resume it instead of creating a new one.
+        // resume it instead of creating a new one. Relu ICI, sous le verrou de l'annonce : deux
+        // checkouts simultanés sans colis préalable ne créent jamais de doublon.
         Optional<BidEntity> awaitingBid = bidRepository.findBySenderIdAndAnnouncementIdAndStatus(
             sender.getId(), announcement.getId(), BidStatus.AWAITING_PAYMENT);
         if (awaitingBid.isPresent()) {
@@ -422,10 +430,12 @@ public class BidCheckoutService {
         }
         boolean settled;
         try {
-            settled = paymentService.confirmBidPayment(bid.getId());
-        } catch (RuntimeException e) {
-            // Stripe injoignable : on ne transforme pas un incident transitoire en
-            // refus de paiement, le parcours normal continue.
+            // Variante qui ne marque pas rollback-only CETTE transaction sur une erreur métier.
+            settled = paymentService.confirmBidPaymentWithinCaller(bid.getId());
+        } catch (YadonyBusinessException e) {
+            // Stripe injoignable (avant toute écriture) : on ne transforme pas un incident
+            // transitoire en refus de paiement, le parcours normal continue. Un conflit de
+            // verrou, lui, n'est jamais avalé : PostgreSQL a déjà avorté la transaction.
             return;
         }
         if (settled) {

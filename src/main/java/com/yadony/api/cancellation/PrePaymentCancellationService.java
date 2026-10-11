@@ -125,9 +125,9 @@ public class PrePaymentCancellationService {
         try {
             outcome = releasePort.releaseBeforeCancellation(bidId, bid.getPaymentIntentId(), sender.getId());
         } catch (org.springframework.dao.PessimisticLockingFailureException e) {
-            // Interblocage détecté par PostgreSQL avec une confirmation de dépôt mobile money
-            // (MobileMoneyBidPaymentService verrouille le paiement puis le colis) : rien n'est
-            // écrit, l'expéditeur réessaie.
+            // Filet : tous les chemins verrouillent désormais le colis puis le paiement
+            // (PROD_CHECKLIST 9.25), un interblocage ne devrait plus arriver ; s'il arrive
+            // (verrou refusé), rien n'est écrit et l'expéditeur réessaie.
             log.warn("Annulation avant paiement du bid {} : verrou du paiement refusé ({})", bidId, e.getMessage());
             throw paymentInProgress();
         }

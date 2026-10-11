@@ -135,6 +135,25 @@ class MobileMoneyBidPaymentServiceEscrowTest {
         verify(submission, never()).submitRefund(any(), any(), any());
     }
 
+    /** Ordre unique colis → paiement (PROD_CHECKLIST 9.25) : le colis est verrouillé avant le claim. */
+    @Test
+    void confirmEscrow_locksTheBidBeforeClaimingThePayment() {
+        PawapayOperationEntity op = deposit(PawapayOperationStatus.COMPLETED);
+        when(paymentRepository.findBidIdById(payment.getId())).thenReturn(Optional.of(bid.getId()));
+        when(paymentRepository.markEscrowIfPending(eq(payment.getId()), any())).thenReturn(1);
+        when(paymentRepository.findById(payment.getId())).thenReturn(Optional.of(payment));
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcement.getId())).thenReturn(Optional.of(announcement));
+
+        service.confirmEscrow(op.getId(), payment.getId());
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(bidRepository, paymentRepository);
+        order.verify(paymentRepository).findBidIdById(payment.getId());
+        order.verify(bidRepository).lockForUpdate(bid.getId());
+        order.verify(paymentRepository).markEscrowIfPending(eq(payment.getId()), any());
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
+    }
+
     @Test
     void confirmEscrow_replay_isNoop() {
         PawapayOperationEntity op = deposit(PawapayOperationStatus.COMPLETED);
