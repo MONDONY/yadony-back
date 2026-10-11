@@ -3,6 +3,8 @@ package com.yadony.api.payments.wallet;
 import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
 import com.stripe.param.PaymentIntentCreateParams;
+import com.yadony.api.auth.UserEntity;
+import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.StripeUnavailable;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
@@ -24,15 +26,18 @@ public class WalletTopupOrchestrator {
     private final ActiveCurrencyResolver activeCurrencyResolver;
     private final WalletTopupProperties properties;
     private final WalletMobileMoneyTopupService mobileMoneyTopupService;
+    private final UserRepository userRepository;
 
     public WalletTopupOrchestrator(CurrencyCatalog currencyCatalog,
                                    ActiveCurrencyResolver activeCurrencyResolver,
                                    WalletTopupProperties properties,
-                                   WalletMobileMoneyTopupService mobileMoneyTopupService) {
+                                   WalletMobileMoneyTopupService mobileMoneyTopupService,
+                                   UserRepository userRepository) {
         this.currencyCatalog = currencyCatalog;
         this.activeCurrencyResolver = activeCurrencyResolver;
         this.properties = properties;
         this.mobileMoneyTopupService = mobileMoneyTopupService;
+        this.userRepository = userRepository;
     }
 
     /**
@@ -126,13 +131,20 @@ public class WalletTopupOrchestrator {
                 currencyCatalog.resolve(activeCurrencyResolver.resolve(userId));
         CurrencyAmount amount = CurrencyAmount.of(request.getAmount(), currency);
 
-        PaymentIntentCreateParams params = PaymentIntentCreateParams.builder()
+        PaymentIntentCreateParams.Builder paramsBuilder = PaymentIntentCreateParams.builder()
                 .setAmount(amount.minor())
                 .setCurrency(currency.code())
                 .putMetadata("wallet_topup", "true")
                 .putMetadata("user_id", userId.toString())
-                .putMetadata("wallet_currency", currency.code())
-                .build();
+                .putMetadata("wallet_currency", currency.code());
+        // L'app ouvre la PaymentSheet avec le customer Stripe de l'utilisateur (clé
+        // éphémère) : elle propose donc ses cartes enregistrées. Une carte attachée à
+        // un customer ne confirme pas un PaymentIntent qui n'en porte aucun, Stripe la
+        // refuse alors que la même carte ressaisie passe (Sentry FLUTTER-MZ, FLUTTER-MW).
+        // Même customer que la clé éphémère et que le paiement d'une offre. Sans customer
+        // encore créé, la sheet n'a aucune carte enregistrée à proposer : rien à changer.
+        stripeCustomerIdOf(userId).ifPresent(paramsBuilder::setCustomer);
+        PaymentIntentCreateParams params = paramsBuilder.build();
 
         try {
             PaymentIntent paymentIntent = PaymentIntent.create(params);
@@ -146,5 +158,11 @@ public class WalletTopupOrchestrator {
                     "wallet-topup-stripe-error", "Stripe Error",
                     "Impossible de préparer la recharge du wallet. Veuillez réessayer.");
         }
+    }
+
+    private java.util.Optional<String> stripeCustomerIdOf(UUID userId) {
+        return userRepository.findById(userId)
+                .map(UserEntity::getStripeCustomerId)
+                .filter(id -> !id.isBlank());
     }
 }

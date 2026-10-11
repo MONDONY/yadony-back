@@ -2,6 +2,8 @@ package com.yadony.api.payments.wallet;
 
 import com.stripe.model.PaymentIntent;
 import com.stripe.param.PaymentIntentCreateParams;
+import com.yadony.api.auth.UserEntity;
+import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.currency.CurrencyCatalog;
@@ -15,6 +17,7 @@ import org.mockito.MockedStatic;
 
 import java.math.BigDecimal;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -148,11 +151,68 @@ class WalletTopupCurrencyTest {
 
     private static WalletTopupOrchestrator orchestrator(UUID userId, String resolvedCurrency,
                                                         WalletMobileMoneyTopupService mobileMoneyTopupService) {
+        return orchestrator(userId, resolvedCurrency, mobileMoneyTopupService, mock(UserRepository.class));
+    }
+
+    private static WalletTopupOrchestrator orchestrator(UUID userId, String resolvedCurrency,
+                                                        WalletMobileMoneyTopupService mobileMoneyTopupService,
+                                                        UserRepository userRepository) {
         ActiveCurrencyResolver resolver = mock(ActiveCurrencyResolver.class);
         when(resolver.resolve(userId)).thenReturn(resolvedCurrency);
         return new WalletTopupOrchestrator(new CurrencyCatalog(), resolver, new WalletTopupProperties(
                 "https://pro.example/parametres?topup=success", "https://pro.example/parametres?topup=canceled"),
-                mobileMoneyTopupService);
+                mobileMoneyTopupService, userRepository);
+    }
+
+    private static PaymentIntentCreateParams captureTopupParams(WalletTopupOrchestrator orchestrator, UUID userId) {
+        AtomicReference<PaymentIntentCreateParams> capturedParams = new AtomicReference<>();
+        try (MockedStatic<PaymentIntent> mockedPi = mockStatic(PaymentIntent.class)) {
+            PaymentIntent fakePi = mock(PaymentIntent.class);
+            when(fakePi.getClientSecret()).thenReturn("secret_test");
+            mockedPi.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class)))
+                    .thenAnswer(invocation -> {
+                        capturedParams.set(invocation.getArgument(0));
+                        return fakePi;
+                    });
+            orchestrator.initiate(userId, topupRequest("10.00"));
+        }
+        return capturedParams.get();
+    }
+
+    /**
+     * FLUTTER-MZ / FLUTTER-MW : la PaymentSheet de recharge propose les cartes enregistrées
+     * du customer (clé éphémère). Sans ce customer sur le PaymentIntent, Stripe refuse la
+     * carte enregistrée alors que la même carte ressaisie passe.
+     */
+    @Test
+    void initiate_attachesTheUserStripeCustomer_soSavedCardsCanConfirm() {
+        UUID userId = UUID.randomUUID();
+        UserEntity user = new UserEntity();
+        user.setStripeCustomerId("cus_saved");
+        UserRepository users = mock(UserRepository.class);
+        when(users.findById(userId)).thenReturn(Optional.of(user));
+
+        PaymentIntentCreateParams params = captureTopupParams(
+                orchestrator(userId, "EUR", mock(WalletMobileMoneyTopupService.class), users), userId);
+
+        assertThat(params.getCustomer()).isEqualTo("cus_saved");
+        assertThat(params.getMetadata()).containsEntry("wallet_topup", "true");
+    }
+
+    /** Aucun customer encore créé (ou vide) : rien à rattacher, le PaymentIntent part sans. */
+    @ParameterizedTest
+    @CsvSource(value = {"NULL", "''", "'  '"}, nullValues = "NULL")
+    void initiate_withoutStripeCustomer_createsThePaymentIntentWithoutCustomer(String customerId) {
+        UUID userId = UUID.randomUUID();
+        UserEntity user = new UserEntity();
+        user.setStripeCustomerId(customerId);
+        UserRepository users = mock(UserRepository.class);
+        when(users.findById(userId)).thenReturn(Optional.of(user));
+
+        PaymentIntentCreateParams params = captureTopupParams(
+                orchestrator(userId, "EUR", mock(WalletMobileMoneyTopupService.class), users), userId);
+
+        assertThat(params.getCustomer()).isNull();
     }
 
     /**
