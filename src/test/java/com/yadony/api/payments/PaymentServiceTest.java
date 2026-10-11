@@ -626,6 +626,133 @@ class PaymentServiceTest {
         }
     }
 
+    // ── Ordre des verrous colis → paiement (YADONY-BACK-STAGING-18, PROD_CHECKLIST 9.25) ──
+
+    @Test
+    void confirmBidPayment_locksTheBidBeforeAnyPaymentWrite() {
+        BidEntity bid = buildBid(BidStatus.AWAITING_PAYMENT);
+        bid.setPaymentIntentId("pi_order");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(bidRepository.findByPaymentIntentId("pi_order")).thenReturn(Optional.of(bid));
+        PaymentEntity payment = buildPayment(PaymentStatus.PENDING, "pi_order");
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(payment));
+        when(paymentRepository.findStatusById(payment.getId())).thenReturn(Optional.of(PaymentStatus.ESCROW));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(buildAnnouncement()));
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            PaymentIntent pi = mock(PaymentIntent.class);
+            when(pi.getStatus()).thenReturn("requires_capture");
+            when(pi.getId()).thenReturn("pi_order");
+            piStatic.when(() -> PaymentIntent.retrieve("pi_order")).thenReturn(pi);
+
+            assertThat(service.confirmBidPayment(bidId)).isTrue();
+        }
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(bidRepository, paymentRepository);
+        order.verify(bidRepository).lockForUpdate(bidId);
+        order.verify(paymentRepository).findByBidId(bidId);
+        order.verify(paymentRepository).markCardEscrowIfPending(payment.getId());
+        order.verify(bidRepository).promoteToEscrowedIfAwaitingPayment(bidId);
+    }
+
+    @Test
+    void confirmBidPayment_bidPromotedDuringTheStripeCall_returnsTrueWithoutWriting() {
+        BidEntity bid = buildBid(BidStatus.AWAITING_PAYMENT);
+        bid.setPaymentIntentId("pi_race");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        jakarta.persistence.EntityManager em = mock(jakarta.persistence.EntityManager.class);
+        when(em.contains(bid)).thenReturn(true);
+        // Relu sous verrou : le webhook a promu le colis pendant l'appel Stripe.
+        org.mockito.Mockito.doAnswer(inv -> {
+            bid.setStatus(BidStatus.PAYMENT_ESCROWED);
+            return null;
+        }).when(em).refresh(bid);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "entityManager", em);
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            PaymentIntent pi = mock(PaymentIntent.class);
+            when(pi.getStatus()).thenReturn("requires_capture");
+            piStatic.when(() -> PaymentIntent.retrieve("pi_race")).thenReturn(pi);
+
+            assertThat(service.confirmBidPayment(bidId)).isTrue();
+        }
+        verify(bidRepository).lockForUpdate(bidId);
+        verify(paymentRepository, never()).markCardEscrowIfPending(any());
+        verify(bidRepository, never()).promoteToEscrowedIfAwaitingPayment(any());
+    }
+
+    @Test
+    void confirmBidPayment_bidCancelledOrRepricedDuringTheStripeCall_returnsFalseWithoutWriting() {
+        BidEntity bid = buildBid(BidStatus.AWAITING_PAYMENT);
+        bid.setPaymentIntentId("pi_old");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        jakarta.persistence.EntityManager em = mock(jakarta.persistence.EntityManager.class);
+        when(em.contains(bid)).thenReturn(true);
+        // Nouveau checkout entre-temps : autre PaymentIntent sur le colis.
+        org.mockito.Mockito.doAnswer(inv -> {
+            bid.setPaymentIntentId("pi_new");
+            return null;
+        }).when(em).refresh(bid);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "entityManager", em);
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            PaymentIntent pi = mock(PaymentIntent.class);
+            when(pi.getStatus()).thenReturn("requires_capture");
+            piStatic.when(() -> PaymentIntent.retrieve("pi_old")).thenReturn(pi);
+
+            assertThat(service.confirmBidPayment(bidId)).isFalse();
+        }
+        verify(paymentRepository, never()).findByBidId(any());
+        verify(paymentRepository, never()).markCardEscrowIfPending(any());
+    }
+
+    @Test
+    void applyPaymentEscrowActive_locksTheBidOfThePayment_beforeWritingIt() {
+        PaymentEntity payment = buildPayment(PaymentStatus.PENDING, "pi_wh_order");
+        when(paymentRepository.findBidIdByStripePaymentIntentId("pi_wh_order")).thenReturn(Optional.of(bidId));
+        when(paymentRepository.findByStripePaymentIntentId("pi_wh_order")).thenReturn(Optional.of(payment));
+        when(paymentRepository.findStatusById(payment.getId())).thenReturn(Optional.of(PaymentStatus.ESCROW));
+        PaymentIntent pi = mock(PaymentIntent.class);
+        when(pi.getId()).thenReturn("pi_wh_order");
+        when(pi.getMetadata()).thenReturn(java.util.Map.of());
+
+        service.applyPaymentEscrowActive(pi);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(bidRepository, paymentRepository);
+        order.verify(bidRepository).lockForUpdate(bidId);
+        order.verify(paymentRepository).findByStripePaymentIntentId("pi_wh_order");
+        order.verify(paymentRepository).markCardEscrowIfPending(payment.getId());
+        verify(bidRepository, never()).findIdByPaymentIntentId(any());
+    }
+
+    @Test
+    void applyPaymentEscrowActive_paymentWithoutBid_locksTheBidCarryingThePaymentIntent() {
+        UUID otherBid = UUID.randomUUID();
+        when(paymentRepository.findBidIdByStripePaymentIntentId("pi_nobid")).thenReturn(Optional.empty());
+        when(bidRepository.findIdByPaymentIntentId("pi_nobid")).thenReturn(Optional.of(otherBid));
+        when(paymentRepository.findByStripePaymentIntentId("pi_nobid")).thenReturn(Optional.empty());
+        PaymentIntent pi = mock(PaymentIntent.class);
+        when(pi.getId()).thenReturn("pi_nobid");
+        when(pi.getMetadata()).thenReturn(java.util.Map.of());
+
+        service.applyPaymentEscrowActive(pi);
+
+        verify(bidRepository).lockForUpdate(otherBid);
+    }
+
+    @Test
+    void applyPaymentEscrowActive_noBidAtAll_takesNoBidLock() {
+        when(paymentRepository.findBidIdByStripePaymentIntentId("pi_none")).thenReturn(Optional.empty());
+        when(bidRepository.findIdByPaymentIntentId("pi_none")).thenReturn(Optional.empty());
+        when(paymentRepository.findByStripePaymentIntentId("pi_none")).thenReturn(Optional.empty());
+        PaymentIntent pi = mock(PaymentIntent.class);
+        when(pi.getId()).thenReturn("pi_none");
+        when(pi.getMetadata()).thenReturn(java.util.Map.of());
+
+        service.applyPaymentEscrowActive(pi);
+
+        verify(bidRepository, never()).lockForUpdate(any());
+    }
+
     @Test
     void confirmBidPayment_paymentCancelledMeanwhile_releasesAndReturnsFalse() {
         LateAuthorizationReleaser releaser = mock(LateAuthorizationReleaser.class);

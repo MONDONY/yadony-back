@@ -300,14 +300,14 @@ class MobileMoneyBidPaymentServiceExpireTest {
     }
 
     /**
-     * Ronde 1, point 1 (CRITIQUE) — garde-fou de non-régression : le paiement doit être
-     * verrouillé AVANT le bid, exactement comme {@code confirmEscrow}/{@code initiateDeposit}.
-     * L'ordre inverse croise les deux transactions et PostgreSQL tue l'une des deux au bout
-     * d'une seconde — sans gravité si c'est {@code expire}, définitif si c'est
+     * Garde-fou de non-régression (YADONY-BACK-STAGING-18, PROD_CHECKLIST 9.25) : le bid est
+     * verrouillé AVANT le paiement, ordre unique colis → paiement partagé avec
+     * {@code confirmEscrow}, l'annulation avant paiement et le rail carte. Deux ordres opposés
+     * croiseraient les transactions et PostgreSQL tuerait l'une des deux — définitif si c'est
      * {@code confirmEscrow} (voir Javadoc de {@code expire}).
      */
     @Test
-    void expire_locksPaymentBeforeBid_toAvoidDeadlockWithConfirmEscrow() {
+    void expire_locksBidBeforePayment_sameOrderAsConfirmEscrow() {
         bid.setStatus(BidStatus.ACCEPTED); // sort tôt, seul l'ordre des appels nous intéresse ici
         when(paymentRepository.findByBidIdForUpdate(bid.getId())).thenReturn(Optional.of(payment));
         when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
@@ -316,7 +316,7 @@ class MobileMoneyBidPaymentServiceExpireTest {
 
         assertThat(outcome).isEqualTo(ExpireOutcome.IGNORED);
         InOrder order = inOrder(paymentRepository, bidRepository);
-        order.verify(paymentRepository).findByBidIdForUpdate(bid.getId());
         order.verify(bidRepository).findByIdForUpdate(bid.getId());
+        order.verify(paymentRepository).findByBidIdForUpdate(bid.getId());
     }
 }

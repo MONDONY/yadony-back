@@ -114,6 +114,13 @@ public class PaymentService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.yadony.api.payments.mobilemoney.MobileMoneyNegotiationPaymentService mobileMoneyNegotiationPaymentService;
 
+    /**
+     * Relit le colis après son verrou ({@link #lockBidFirst}) ; injecté par champ pour ne pas
+     * toucher aux constructeurs des tests unitaires (absent hors contexte Spring).
+     */
+    @jakarta.persistence.PersistenceContext
+    private jakarta.persistence.EntityManager entityManager;
+
     public PaymentService(UserRepository userRepository,
                           BidRepository bidRepository,
                           BidGridItemRepository bidGridItemRepository,
@@ -427,6 +434,9 @@ public class PaymentService {
         UserEntity sender = findUser(firebaseUid);
         UUID bidId = request.getBidId();
 
+        // Colis verrouillé AVANT toute écriture du paiement (recyclage, report du PaymentIntent,
+        // auto-réparation) — ordre unique colis → paiement, PROD_CHECKLIST 9.25.
+        lockBidFirst(bidId);
         BidEntity bid = bidRepository.findById(bidId)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "bid-not-found", "Bid Not Found", "Demande introuvable"));
@@ -1067,6 +1077,9 @@ public class PaymentService {
      */
     void applyPaymentEscrowActive(PaymentIntent pi, boolean callerSettles) {
         final PaymentIntent finalPi = pi;
+        // Colis verrouillé AVANT le paiement (YADONY-BACK-STAGING-18) : même ordre que
+        // confirm-payment, createEscrow, l'annulation avant paiement et la livraison.
+        lockBidOfPaymentIntent(finalPi.getId());
         Optional<PaymentEntity> found = paymentRepository.findByStripePaymentIntentId(finalPi.getId());
 
         found.ifPresent(payment -> {
@@ -1128,6 +1141,38 @@ public class PaymentService {
     }
 
     /**
+     * Ordre de verrous UNIQUE colis → paiement (PROD_CHECKLIST 9.25) : tout chemin qui écrit un
+     * paiement de colis pose d'abord le verrou de ligne du colis, tenu jusqu'au commit. Appelé
+     * AVANT toute lecture d'entité paiement et toute écriture (un setter sur une entité chargée
+     * déclenche un flush complet au premier UPDATE ciblé suivant, qui prendrait alors le verrou du
+     * paiement en premier). Réentrant : sans effet si la transaction tient déjà ce verrou
+     * (negotiation/checkout → confirmBidPayment).
+     */
+    private void lockBidFirst(UUID bidId) {
+        if (bidId != null) {
+            bidRepository.lockForUpdate(bidId);
+        }
+    }
+
+    /**
+     * Verrouille le colis d'un PaymentIntent : celui du paiement (requête scalaire), à défaut celui
+     * qui porte ce PaymentIntent. Aucun colis (paiement de négociation encore sans colis) : rien.
+     */
+    private void lockBidOfPaymentIntent(String paymentIntentId) {
+        UUID bidId = paymentRepository.findBidIdByStripePaymentIntentId(paymentIntentId)
+                .or(() -> bidRepository.findIdByPaymentIntentId(paymentIntentId))
+                .orElse(null);
+        lockBidFirst(bidId);
+    }
+
+    /** Relit le colis déjà chargé, maintenant qu'il est verrouillé (état commité le plus récent). */
+    private void refreshUnderLock(BidEntity bid) {
+        if (entityManager != null && entityManager.contains(bid)) {
+            entityManager.refresh(bid);
+        }
+    }
+
+    /**
      * Statut RELU EN BASE (pas celui de la session, peut-être périmé) : CANCELLED ou REFUNDED,
      * l'autorisation qui arrive est libérée par {@link LateAuthorizationReleaser}.
      *
@@ -1156,6 +1201,8 @@ public class PaymentService {
      */
     @Transactional
     public boolean promoteBidOnPaymentAuthorized(String paymentIntentId) {
+        // Écrit le colis seul : aucun verrou de paiement n'est pris ici, l'ordre colis → paiement
+        // est tenu par les appelants qui écrivent aussi le paiement (lockBidFirst en tête).
         return bidRepository.findByPaymentIntentId(paymentIntentId)
                 .map(bid -> promoteBid(bid, paymentIntentId))
                 .orElse(false);
@@ -1258,7 +1305,21 @@ public class PaymentService {
             if ("requires_capture".equals(status)
                     || "succeeded".equals(status)
                     || "processing".equals(status)) {
-                // Paiement d'abord (écriture conditionnelle), promotion ensuite et seulement si le
+                // Colis verrouillé AVANT le paiement, et relu sous ce verrou : l'appel Stripe
+                // ci-dessus s'est fait sans verrou, un webhook ou un checkout concurrent a pu
+                // passer entre-temps (YADONY-BACK-STAGING-18 : confirm-payment prenait le
+                // paiement puis le colis, negotiation/checkout le colis puis le paiement).
+                lockBidFirst(bidId);
+                refreshUnderLock(bid);
+                if (bid.getStatus() == BidStatus.PAYMENT_ESCROWED) {
+                    return true;
+                }
+                if (bid.getStatus() != BidStatus.AWAITING_PAYMENT || !piId.equals(bid.getPaymentIntentId())) {
+                    log.info("Bid {} a changé pendant la vérification Stripe (statut {}, PI {}) : pas de promotion",
+                            bidId, bid.getStatus(), bid.getPaymentIntentId());
+                    return false;
+                }
+                // Paiement ensuite (écriture conditionnelle), promotion enfin et seulement si le
                 // paiement n'est pas mort : un bid annulé avant paiement n'est jamais ressuscité.
                 Optional<PaymentEntity> found = paymentRepository.findByBidId(bidId);
                 found.ifPresent(payment -> {

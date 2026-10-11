@@ -41,7 +41,13 @@ public class StripeEventProcessor {
     public boolean processOne() {
         return repo.claimNext().map(inbox -> {
             try {
-                boolean handled = dispatcher.dispatch(inbox.getPayload());
+                // Conflit de verrou (interblocage avec confirm-payment…) : rejoué aussitôt, chaque
+                // tentative dans la transaction REQUIRES_NEW du dispatcher ; au-delà, l'échec suit
+                // la voie normale ci-dessous (FAILED puis nouvel essai différé).
+                boolean handled = com.yadony.api.common.TransientLockRetry.run(
+                        "Stripe event " + inbox.getEventId(),
+                        () -> dispatcher.dispatch(inbox.getPayload()),
+                        conflict -> conflict);
                 inbox.setStatus(handled ? StripeEventStatus.PROCESSED : StripeEventStatus.SKIPPED);
                 inbox.setProcessedAt(Instant.now());
             } catch (Exception e) {

@@ -154,8 +154,9 @@ class LateAuthorizationAfterCancellationIT {
     }
 
     /**
-     * Ordre de verrous inverse : le webhook {@code amount_capturable_updated} prend le paiement puis
-     * le colis, l'annulation avant paiement le colis puis le paiement. PostgreSQL détecte
+     * Ordre de verrous inverse SIMULÉ (celui du webhook {@code amount_capturable_updated} avant
+     * PROD_CHECKLIST 9.25 : paiement puis colis), l'annulation avant paiement le colis puis le
+     * paiement. Le vrai webhook prend désormais le colis d'abord ({@link PaymentLockOrderIT}). PostgreSQL détecte
      * l'interblocage et abandonne l'une des deux transactions ; quel que soit le perdant (puis, s'il
      * s'agit du webhook, son rejeu par Stripe), l'état final est cohérent : colis annulé et paiement
      * annulé sans autorisation, ou colis payé et paiement en séquestre.

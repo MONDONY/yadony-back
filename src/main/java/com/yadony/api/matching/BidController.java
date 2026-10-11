@@ -71,7 +71,11 @@ public class BidController {
     public ResponseEntity<BidResponse> confirmPayment(@PathVariable UUID bidId) {
         String firebaseUid = requireFirebaseUid();
         bidService.assertSenderOwnsBid(bidId, firebaseUid);
-        paymentService.confirmBidPayment(bidId);
+        // Interblocage avec une validation concurrente (YADONY-BACK-STAGING-18) : rejeu dans une
+        // transaction neuve, puis 409 payment-busy plutôt qu'une 500.
+        com.yadony.api.common.TransientLockRetry.run("confirm-payment " + bidId,
+                () -> paymentService.confirmBidPayment(bidId),
+                conflict -> com.yadony.api.payments.PaymentBusy.exception());
         return ResponseEntity.ok(bidService.getBidById(bidId, firebaseUid));
     }
 

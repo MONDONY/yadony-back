@@ -501,6 +501,11 @@ public class MobileMoneyBidPaymentService {
      */
     @Transactional
     public void confirmEscrow(UUID operationId, UUID paymentId) {
+        // Colis verrouillé AVANT le paiement — ordre unique colis → paiement (PROD_CHECKLIST
+        // 9.25), le même que l'annulation avant paiement, l'expiration et le rail carte : aucun
+        // interblocage possible, donc jamais de confirmation de dépôt perdue. Identifiant lu par
+        // requête scalaire : l'entité paiement n'est chargée qu'APRÈS le claim ci-dessous.
+        paymentRepository.findBidIdById(paymentId).ifPresent(bidRepository::lockForUpdate);
         int moved = paymentRepository.markEscrowIfPending(paymentId, Instant.now());
         // Aucun setter sur `payment` après ce claim bulk, dans aucune branche : l'entité peut
         // être un snapshot périmé (déjà chargée par l'appelant, ex. repairDepositCompletedNotApplied)
@@ -701,17 +706,15 @@ public class MobileMoneyBidPaymentService {
      * lui-même — le champ qui définit l'opération : ne jamais faire confiance au seul filtre du
      * scheduler appelant pour ces trois conditions.
      *
-     * <p><b>Ordre des verrous</b> : le paiement est verrouillé
-     * ({@link PaymentRepository#findByBidIdForUpdate}) AVANT le bid
-     * ({@link com.yadony.api.matching.BidRepository#findByIdForUpdate}) — exactement comme
-     * {@link #confirmEscrow} (qui touche le paiement en premier via {@code markEscrowIfPending})
-     * et {@link #initiateDeposit}. L'ordre inverse (bid puis paiement, tenté dans une version
-     * antérieure de cette méthode) croiserait les deux transactions en sens opposé à la seconde
-     * où la deadline tombe pendant qu'un dépôt vient d'aboutir : PostgreSQL détecte
-     * l'interblocage et tue l'une des deux transactions au bout d'une seconde. Perdre ce tirage
-     * ne coûte rien à {@code expire} (le tick suivant repasse) ; le perdre côté
-     * {@code confirmEscrow} serait définitif — son événement n'est publié qu'une fois et le
-     * poller de réconciliation ne relit jamais une opération déjà finale.
+     * <p><b>Ordre des verrous</b> : le bid est verrouillé
+     * ({@link com.yadony.api.matching.BidRepository#findByIdForUpdate}) AVANT le paiement
+     * ({@link PaymentRepository#findByBidIdForUpdate}) — ordre unique colis → paiement
+     * (PROD_CHECKLIST 9.25), exactement comme {@link #confirmEscrow}, l'annulation avant paiement,
+     * la livraison et le rail carte. Deux ordres opposés croiseraient les transactions à la
+     * seconde où la deadline tombe pendant qu'un dépôt vient d'aboutir : PostgreSQL détecterait
+     * l'interblocage et tuerait l'une des deux — perdu côté {@code confirmEscrow}, ce serait
+     * définitif (son événement n'est publié qu'une fois et le poller de réconciliation ne relit
+     * jamais une opération déjà finale). {@link #initiateDeposit} ne verrouille que le paiement.
      *
      * <p><b>Course avec {@link #confirmEscrow}</b> : les deux méthodes s'affrontent sur le même
      * {@code UPDATE … WHERE status = PENDING} du paiement — un seul gagne. Si
@@ -752,10 +755,10 @@ public class MobileMoneyBidPaymentService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ExpireOutcome expire(UUID bidId) {
-        // Paiement verrouillé AVANT le bid — voir Javadoc (ordre des verrous).
+        // Bid verrouillé AVANT le paiement — voir Javadoc (ordre des verrous).
+        BidEntity bid = bidRepository.findByIdForUpdate(bidId).orElse(null);
         Optional<PaymentEntity> payment = paymentRepository.findByBidIdForUpdate(bidId)
                 .filter(p -> p.getRail() == PaymentRail.PAWAPAY);
-        BidEntity bid = bidRepository.findByIdForUpdate(bidId).orElse(null);
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         if (bid == null || bid.getStatus() != BidStatus.AWAITING_PAYMENT
                 || bid.getPaymentMethod() != PaymentMethod.MOBILE_MONEY

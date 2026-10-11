@@ -238,6 +238,18 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     Optional<PaymentStatus> findStatusById(@Param("id") UUID id);
 
     /**
+     * Colis d'un paiement, lu par requête scalaire (jamais l'entité : la charger avant le verrou
+     * du colis laisserait en session un instantané périmé). Sert à verrouiller le colis AVANT
+     * toute écriture du paiement — ordre unique colis → paiement (PROD_CHECKLIST 9.25).
+     */
+    @Query("SELECT p.bidId FROM PaymentEntity p WHERE p.id = :id")
+    Optional<UUID> findBidIdById(@Param("id") UUID id);
+
+    /** Comme {@link #findBidIdById}, à partir du PaymentIntent Stripe (unique, V5). */
+    @Query("SELECT p.bidId FROM PaymentEntity p WHERE p.stripePaymentIntentId = :piId")
+    Optional<UUID> findBidIdByStripePaymentIntentId(@Param("piId") String piId);
+
+    /**
      * Enregistre le charge Stripe s'il manque, par une écriture ciblée : jamais un {@code save}
      * d'entité chargée avant un appel Stripe ({@code PaymentEntity} n'a ni {@code @DynamicUpdate}
      * ni {@code @Version}, un flush réécrirait statut, remboursé et litige depuis un état périmé).

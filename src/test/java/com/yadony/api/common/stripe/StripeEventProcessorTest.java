@@ -189,4 +189,34 @@ class StripeEventProcessorTest {
         when(event.getDataObjectDeserializer()).thenReturn(deserializer);
         return event;
     }
+
+    @Test
+    void processOne_replaysTheDispatch_afterALockConflict() {
+        var inbox = makeInbox("evt_lock", StripeEventStatus.RECEIVED);
+        when(repo.claimNext()).thenReturn(Optional.of(inbox));
+        when(dispatcher.dispatch("{}"))
+                .thenThrow(new org.springframework.dao.CannotAcquireLockException("deadlock detected"))
+                .thenReturn(true);
+
+        processor.processOne();
+
+        assertThat(inbox.getStatus()).isEqualTo(StripeEventStatus.PROCESSED);
+        assertThat(inbox.getRetryCount()).isZero();
+        verify(dispatcher, times(2)).dispatch("{}");
+    }
+
+    @Test
+    void processOne_persistentLockConflict_fallsBackToTheDeferredRetry() {
+        var inbox = makeInbox("evt_lock2", StripeEventStatus.RECEIVED);
+        when(repo.claimNext()).thenReturn(Optional.of(inbox));
+        when(dispatcher.dispatch("{}"))
+                .thenThrow(new org.springframework.dao.CannotAcquireLockException("deadlock detected"));
+
+        processor.processOne();
+
+        assertThat(inbox.getStatus()).isEqualTo(StripeEventStatus.FAILED);
+        assertThat(inbox.getRetryCount()).isEqualTo(1);
+        assertThat(inbox.getNextAttemptAt()).isNotNull();
+        verify(dispatcher, times(com.yadony.api.common.TransientLockRetry.MAX_ATTEMPTS)).dispatch("{}");
+    }
 }
