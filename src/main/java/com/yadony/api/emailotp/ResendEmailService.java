@@ -40,6 +40,8 @@ public class ResendEmailService {
         this.devProfile = profiles.contains("dev");
         this.prodProfile = profiles.contains("prod");
         this.restClient = RestClient.builder()
+                // Sans délai, un Resend muet bloquait l'envoi de l'OTP (et sa transaction).
+                .requestFactory(com.yadony.api.config.OutboundHttpTimeouts.requestFactory())
                 .baseUrl("https://api.resend.com")
                 .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + props.getResendApiKey())
                 .build();

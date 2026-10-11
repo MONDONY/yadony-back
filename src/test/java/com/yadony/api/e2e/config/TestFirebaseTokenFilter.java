@@ -3,6 +3,7 @@ package com.yadony.api.e2e.config;
 import com.yadony.api.admin.account.AdminAuthService;
 import com.yadony.api.auth.FirebaseTokenFilter;
 import com.yadony.api.auth.UserLinkerService;
+import com.yadony.api.common.i18n.TestMessages;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.firebase.auth.FirebaseToken;
 import jakarta.servlet.FilterChain;
@@ -38,7 +39,7 @@ public class TestFirebaseTokenFilter extends FirebaseTokenFilter {
     public TestFirebaseTokenFilter(UserLinkerService userLinkerService,
                                    ObjectMapper objectMapper,
                                    AdminAuthService adminAuthService) {
-        super(userLinkerService, objectMapper, adminAuthService, false, "", "e2e");
+        super(userLinkerService, objectMapper, adminAuthService, TestMessages.resolver(), false, "", "e2e");
     }
 
     @Override

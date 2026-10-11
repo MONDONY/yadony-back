@@ -174,7 +174,13 @@ public class AuthService {
         return saved;
     }
 
-    @Transactional(readOnly = true)
+    // Pas de transaction englobante (YADONY-BACK-STAGING-W) : la lecture de l'utilisateur
+    // a sa propre transaction courte, puis la conversion lit Firebase (contact, cache de
+    // 5 min) hors connexion JDBC. Avec @Transactional(readOnly), GET /auth/me tenait sa
+    // connexion pendant l'appel Firebase ET en empruntait une seconde pour UserSeenEvent
+    // (REQUIRES_NEW) : sous charge, des requêtes tenant chacune une connexion en
+    // attendaient une autre, et le pool se bloquait jusqu'au délai de 5 s. Les collections
+    // lues par toResponse (rôles, langues) sont EAGER.
     public UserResponse getProfile(String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> new YadonyBusinessException(

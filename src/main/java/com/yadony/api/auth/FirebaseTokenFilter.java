@@ -6,6 +6,9 @@ import com.yadony.api.admin.account.AdminPermission;
 import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.account.AdminRole;
 import com.yadony.api.common.FirebaseSignInProvider;
+import com.yadony.api.common.RequestCorrelationFilter;
+import com.yadony.api.common.ServiceBusyProblem;
+import com.yadony.api.common.i18n.MessagesResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.auth.FirebaseAuth;
@@ -17,7 +20,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
@@ -48,6 +53,7 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
     private final UserLinkerService userLinkerService;
     private final ObjectMapper objectMapper;
     private final AdminAuthService adminAuthService;
+    private final MessagesResolver messagesResolver;
     private final boolean devAuthBypassEnabled;
     /** Jeton de bypass — fourni via secret, aucune valeur par défaut. Vide = bypass inerte. */
     private final String devBypassToken;
@@ -56,12 +62,14 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
     public FirebaseTokenFilter(UserLinkerService userLinkerService,
                                ObjectMapper objectMapper,
                                AdminAuthService adminAuthService,
+                               MessagesResolver messagesResolver,
                                @Value("${yadony.dev.auth-bypass:false}") boolean devAuthBypassEnabled,
                                @Value("${yadony.dev.bypass-token:}") String devBypassToken,
                                @Value("${spring.profiles.active:}") String activeProfile) {
         this.userLinkerService = userLinkerService;
         this.objectMapper = objectMapper;
         this.adminAuthService = adminAuthService;
+        this.messagesResolver = messagesResolver;
         this.devBypassToken = devBypassToken != null ? devBypassToken.trim() : "";
         this.activeProfile = activeProfile != null ? activeProfile.trim() : "";
         // Fail-closed : le bypass n'est réellement actif que hors prod ET avec un jeton non vide.
@@ -124,8 +132,19 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
             return false;
         }
 
-        // Admin fast-path: resolve admin before normal user lookup
-        Optional<AdminAuthorities> adminOpt = adminAuthService.resolve(uid);
+        // Admin fast-path: resolve admin before normal user lookup. Première lecture de la
+        // base de chaque requête (hors cache) : c'est elle qui rencontre un pool épuisé.
+        Optional<AdminAuthorities> adminOpt;
+        try {
+            adminOpt = adminAuthService.resolve(uid);
+        } catch (RuntimeException e) {
+            if (ServiceBusyProblem.isConnectionPoolTimeout(e)) {
+                SecurityContextHolder.clearContext();
+                writeServiceBusy(response, e);
+                return true;
+            }
+            throw e;
+        }
         if (adminOpt.isPresent()) {
             AdminAuthorities admin = adminOpt.get();
             if (admin.mustChangePassword() && !isPasswordChangeAllowed(request)) {
@@ -185,8 +204,12 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
 
             setAuthentication(uid, decoded, authorities);
         } catch (Exception e) {
-            log.warn("Could not load user from DB for uid {}: {}", uid, e.getMessage());
             SecurityContextHolder.clearContext(); // do NOT grant access on DB failure
+            if (ServiceBusyProblem.isConnectionPoolTimeout(e)) {
+                writeServiceBusy(response, e);
+                return true;
+            }
+            log.warn("Could not load user from DB for uid {}: {}", uid, e.getMessage());
             response.sendError(HttpServletResponse.SC_SERVICE_UNAVAILABLE, "Service temporarily unavailable");
             return true;
         }
@@ -253,6 +276,26 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
 
         response.setStatus(HttpServletResponse.SC_FORBIDDEN);
         response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
+        objectMapper.writeValue(response.getWriter(), problem);
+    }
+
+    /**
+     * Pool JDBC épuisé pendant l'authentification : même 503 {@code service-busy} que
+     * {@code GlobalExceptionHandler}, que ce filtre précède (YADONY-BACK-STAGING-W : la
+     * résolution admin laissait l'exception remonter à Tomcat en 500, un événement Sentry
+     * par requête). Une saturation n'est qu'un WARN ; une base injoignable est en plus
+     * signalée à Sentry, une fois par minute au plus (cf. ServiceBusyProblem).
+     */
+    private void writeServiceBusy(HttpServletResponse response, Exception e) throws IOException {
+        String requestId = MDC.get(RequestCorrelationFilter.MDC_KEY);
+        // WARN + compteur ; Sentry ERROR (une fois par minute) si la base est injoignable.
+        ServiceBusyProblem.record(e, requestId, "auth-filter");
+        ProblemDetail problem = ServiceBusyProblem.of(
+                messagesResolver.forRequest().get("problem.service-busy.detail"), requestId);
+        response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+        response.setHeader(HttpHeaders.RETRY_AFTER, ServiceBusyProblem.RETRY_AFTER_SECONDS);
+        response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
+        response.setCharacterEncoding("UTF-8");
         objectMapper.writeValue(response.getWriter(), problem);
     }
 

@@ -76,6 +76,23 @@ public class BidPhotoService {
                 .toList();
     }
 
+    /**
+     * {@link #activePhotos} pour une liste de colis, en une requête par lot : clé = bid,
+     * photos triées par position. Un colis sans photo est absent de la table.
+     */
+    @Transactional(readOnly = true)
+    public java.util.Map<UUID, List<BidPhotoResponse>> activePhotosByBid(java.util.Collection<UUID> bidIds) {
+        java.util.Map<UUID, List<BidPhotoResponse>> byBid = new java.util.HashMap<>();
+        BidResponsePrefetch.loadInChunks(bidIds,
+                        chunk -> photoRepository.findByBidIdInAndStatusOrderByPositionAsc(chunk, BidPhotoStatus.ACTIVE))
+                .stream()
+                .sorted(java.util.Comparator.comparingInt(BidPhotoEntity::getPosition))
+                .forEach(p -> byBid.computeIfAbsent(p.getBidId(), k -> new ArrayList<>())
+                        .add(new BidPhotoResponse(p.getId(),
+                                storageService.generatePresignedUrl(p.getObjectKey(), PRESIGN_TTL))));
+        return byBid;
+    }
+
     /** Passe toutes les photos ACTIVE d'un bid en DELETING (idempotent). */
     @Transactional
     public void markDeletingForBid(UUID bidId) {

@@ -37,6 +37,9 @@ public interface CancellationRepository extends JpaRepository<CancellationEntity
      *  récupérer HANDOVER et DELIVERY ensemble (voir BidService#toResponse). */
     List<CancellationEntity> findAllByBidId(UUID bidId);
 
+    /** Même lecture pour une liste de colis (BidResponsePrefetch) : une requête au lieu d'une par colis. */
+    List<CancellationEntity> findAllByBidIdIn(java.util.Collection<UUID> bidIds);
+
     // ── Scope explicite — nouveau, utilisé par le flux DELIVERY. ──
 
     Optional<CancellationEntity> findByBidIdAndScope(UUID bidId, CancellationScope scope);

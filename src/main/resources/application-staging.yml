@@ -35,6 +35,12 @@ spring:
       maximum-pool-size: 20
       minimum-idle: 2
       connection-timeout: 5000
+      # YADONY-BACK-STAGING-W (08/10) : une connexion tenue 125 s par GET /bids/me
+      # (741 colis, ~10 requêtes par colis) n'était visible qu'en agrégat Prometheus
+      # (hikaricp_connections_usage_seconds_max). Au-delà de 10 s, Hikari journalise en
+      # WARN (Sentry Logs) la pile de l'emprunteur : la route fautive se lit directement.
+      # Aucun effet sur la connexion elle-même, qui n'est ni fermée ni reprise.
+      leak-detection-threshold: 10000
 
 # Stripe Connect : Stripe exige des URLs HTTPS pour return/refresh.
 # Le défaut de application.yml (yadony://) est un deep link invalide côté Stripe.
