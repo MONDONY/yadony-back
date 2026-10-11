@@ -87,6 +87,8 @@ public class StripeReleaseExecutor {
         PENDING_RETRY,
         /** Stripe a refusé sans rien créer : claim annulé, paiement ESCROW. */
         REVERTED,
+        /** Une garde est apparue avant l'appel (aucun appel Stripe) : claim annulé, paiement ESCROW. */
+        BLOCKED,
         /** Déjà finalisé ou annulé par un autre traitement, ou bail détenu ailleurs. */
         NOT_OWNED
     }
@@ -100,7 +102,25 @@ public class StripeReleaseExecutor {
     /** Ce que la réservation fige pour rejouer l'appel Stripe à l'identique. */
     public record ReleaseSpec(UUID paymentId, StripeReleaseIntentEntity.Kind kind, Long amountMinor, String currency,
                               String destination, String sourceTransaction, String source, String auditAction,
-                              UUID bidId, UUID travelerId, UUID senderId) {}
+                              UUID bidId, UUID travelerId, UUID senderId, boolean guardsOverridden) {
+        public ReleaseSpec(UUID paymentId, StripeReleaseIntentEntity.Kind kind, Long amountMinor, String currency,
+                           String destination, String sourceTransaction, String source, String auditAction,
+                           UUID bidId, UUID travelerId, UUID senderId) {
+            this(paymentId, kind, amountMinor, currency, destination, sourceTransaction, source, auditAction,
+                    bidId, travelerId, senderId, false);
+        }
+    }
+
+    /**
+     * Gardes revérifiées juste avant l'appel Stripe, dans une transaction courte.
+     * @return la raison du blocage, {@code null} si le versement peut partir
+     */
+    public interface ReleaseGuard {
+        String blockingReason(StripeReleaseIntentEntity intent);
+    }
+
+    /** Aucune garde (tests unitaires des autres composants). */
+    static final ReleaseGuard NO_GUARD = intent -> null;
 
     private final StripeReleaseIntentRepository intentRepository;
     private final PaymentRepository paymentRepository;
@@ -110,20 +130,21 @@ public class StripeReleaseExecutor {
     private final AdminAlertEscalator alertEscalator;
     private final TransactionOperations transaction;
     private final Clock clock;
+    private final ReleaseGuard guard;
 
     @Autowired
     public StripeReleaseExecutor(StripeReleaseIntentRepository intentRepository, PaymentRepository paymentRepository,
                                  StripeTransferLookup transferLookup, AuditService auditService,
                                  ApplicationEventPublisher eventPublisher, AdminAlertEscalator alertEscalator,
-                                 PlatformTransactionManager transactionManager) {
+                                 PlatformTransactionManager transactionManager, StripeReleaseGuard guard) {
         this(intentRepository, paymentRepository, transferLookup, auditService, eventPublisher, alertEscalator,
-                EscrowCaptureService.requiresNew(transactionManager), Clock.systemUTC());
+                EscrowCaptureService.requiresNew(transactionManager), Clock.systemUTC(), guard);
     }
 
     StripeReleaseExecutor(StripeReleaseIntentRepository intentRepository, PaymentRepository paymentRepository,
                           StripeTransferLookup transferLookup, AuditService auditService,
                           ApplicationEventPublisher eventPublisher, AdminAlertEscalator alertEscalator,
-                          TransactionOperations transaction, Clock clock) {
+                          TransactionOperations transaction, Clock clock, ReleaseGuard guard) {
         this.intentRepository = intentRepository;
         this.paymentRepository = paymentRepository;
         this.transferLookup = transferLookup;
@@ -132,6 +153,7 @@ public class StripeReleaseExecutor {
         this.alertEscalator = alertEscalator;
         this.transaction = transaction;
         this.clock = clock;
+        this.guard = guard != null ? guard : NO_GUARD;
     }
 
     /**
@@ -162,6 +184,7 @@ public class StripeReleaseExecutor {
         intent.setBidId(spec.bidId());
         intent.setTravelerId(spec.travelerId());
         intent.setSenderId(spec.senderId());
+        intent.setGuardsOverridden(spec.guardsOverridden());
         intent.setAttempts(1);
         intent.setLeaseUntil(now.plus(LEASE));
         intent.setLastError(null);
@@ -242,6 +265,11 @@ public class StripeReleaseExecutor {
                         paymentId, existing.get());
                 return finalizeDone(intent, payment, existing.get(), true);
             }
+            // Aucun Transfer chez Stripe : gardes revérifiées sous verrou juste avant l'appel.
+            String blocked = guard.blockingReason(intent);
+            if (blocked != null) {
+                return blockedBeforeCall(intent, blocked);
+            }
             Transfer transfer = Transfer.create(transferParams(intent),
                     RequestOptions.builder().setIdempotencyKey("transfer-" + paymentId).build());
             return finalizeDone(intent, payment, transfer != null ? transfer.getId() : null, false);
@@ -258,6 +286,10 @@ public class StripeReleaseExecutor {
             return revert(intent, "PaymentIntent " + status + " : plus rien à capturer");
         }
         if (!EscrowCaptureService.STATUS_SUCCEEDED.equals(status)) {
+            String blocked = guard.blockingReason(intent);
+            if (blocked != null) {
+                return blockedBeforeCall(intent, blocked);
+            }
             // Clé d'idempotence stable : une reprise ne déclenche pas une seconde capture.
             pi.capture(PaymentIntentCaptureParams.builder().build(),
                     RequestOptions.builder().setIdempotencyKey("capture-" + intent.getPaymentId()).build());
@@ -334,21 +366,69 @@ public class StripeReleaseExecutor {
 
     private Execution onStripeFailure(StripeReleaseIntentEntity intent, StripeException e) {
         String error = e.getClass().getSimpleName() + ": " + e.getMessage();
-        if (definitiveRefusal(e)) {
+        if (definitiveRefusal(e) && intent.getAttempts() <= 1) {
+            // Premier essai : aucun appel antérieur dont l'issue serait inconnue, rien n'a été créé.
             log.error("Versement du paiement {} refusé par Stripe : {}", intent.getPaymentId(), error, e);
             return revert(intent, error);
         }
-        return retryLater(intent, error);
+        if (definitiveRefusal(e)) {
+            // Un essai précédent a pu créer le Transfer (issue inconnue) : jamais de retour en
+            // séquestre. Réservation conservée, alerte immédiate, décision admin.
+            log.error("Versement du paiement {} refusé par Stripe après un essai incertain : {}",
+                    intent.getPaymentId(), error, e);
+            return retryLater(intent, error, true);
+        }
+        return retryLater(intent, error, false);
+    }
+
+    /**
+     * Une garde est apparue entre le claim et l'appel (aucun appel Stripe n'est parti). Premier
+     * essai : rien n'a jamais été demandé à Stripe pour cette réservation, le claim est annulé
+     * (ESCROW, la garde décide). Reprise : un essai précédent a pu créer un Transfer, le paiement
+     * reste réservé et l'admin tranche (alerte).
+     */
+    private Execution blockedBeforeCall(StripeReleaseIntentEntity intent, String reason) {
+        String error = "garde apparue avant l'appel Stripe : " + reason;
+        log.warn("Versement du paiement {} bloqué avant l'appel Stripe : {}", intent.getPaymentId(), reason);
+        raiseBlockedAlert(intent, reason);
+        if (intent.getAttempts() > 1) {
+            return retryLater(intent, error, true);
+        }
+        Execution reverted = revert(intent, error, "ESCROW_RELEASE_BLOCKED_BEFORE_STRIPE");
+        return reverted.result() == Result.REVERTED ? new Execution(Result.BLOCKED, null, error) : reverted;
+    }
+
+    /** Préfixe (16) + UUID (36) = 52 caractères. */
+    public static final String BLOCKED_ALERT_PREFIX = "RELEASE_BLOCKED_";
+
+    private void raiseBlockedAlert(StripeReleaseIntentEntity intent, String reason) {
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put("paymentId", String.valueOf(intent.getPaymentId()));
+        context.put("bidId", String.valueOf(intent.getBidId()));
+        context.put("source", intent.getSource());
+        context.put("reason", reason);
+        try {
+            alertEscalator.raiseOnce(BLOCKED_ALERT_PREFIX + intent.getPaymentId(),
+                    "Versement du paiement " + intent.getPaymentId() + " bloqué juste avant l'appel Stripe (" + reason
+                            + ") : aucun Transfer n'est parti, à trancher", context);
+        } catch (RuntimeException alertFailure) {
+            log.error("Alerte {}{} non levée", BLOCKED_ALERT_PREFIX, intent.getPaymentId(), alertFailure);
+        }
     }
 
     /** Issue incertaine : la réservation reste PENDING (paiement RELEASED), prochaine reprise différée. */
     private Execution retryLater(StripeReleaseIntentEntity intent, String error) {
+        return retryLater(intent, error, false);
+    }
+
+    /** @param needsAdmin issue que seule une décision admin tranchera : alerte immédiate, reprise espacée */
+    private Execution retryLater(StripeReleaseIntentEntity intent, String error, boolean needsAdmin) {
         int attempts = Math.max(1, intent.getAttempts());
-        LocalDateTime retryAt = now().plus(backoff(attempts));
+        LocalDateTime retryAt = now().plus(needsAdmin ? MAX_BACKOFF : backoff(attempts));
         transaction.executeWithoutResult(tx -> intentRepository.recordRetry(intent.getId(), error, retryAt));
         log.warn("Versement du paiement {} incertain (essai {}) : {} — paiement RELEASED, reprise à {}",
                 intent.getPaymentId(), attempts, error, retryAt);
-        if (attempts >= ALERT_AFTER_ATTEMPTS) {
+        if (needsAdmin || attempts >= ALERT_AFTER_ATTEMPTS) {
             raisePendingAlert(intent, error, attempts);
         }
         return new Execution(Result.PENDING_RETRY, null, error);
@@ -356,6 +436,10 @@ public class StripeReleaseExecutor {
 
     /** Stripe a refusé sans rien créer : réservation REVERTED et claim annulé (RELEASED → ESCROW). */
     private Execution revert(StripeReleaseIntentEntity intent, String error) {
+        return revert(intent, error, "ESCROW_RELEASE_REFUSED_BY_STRIPE");
+    }
+
+    private Execution revert(StripeReleaseIntentEntity intent, String error, String auditAction) {
         UUID paymentId = intent.getPaymentId();
         Boolean mine = transaction.execute(tx -> {
             if (intentRepository.markReverted(intent.getId(), error) == 0) {
@@ -368,7 +452,7 @@ public class StripeReleaseExecutor {
             audit.put("source", intent.getSource());
             audit.put("error", error);
             audit.put("claimReverted", String.valueOf(reverted == 1));
-            auditService.log("PAYMENT", paymentId, "ESCROW_RELEASE_REFUSED_BY_STRIPE", intent.getBidId(), audit);
+            auditService.log("PAYMENT", paymentId, auditAction, intent.getBidId(), audit);
             if (reverted == 0) {
                 log.error("Versement du paiement {} refusé mais claim non annulé (statut changé entre-temps)",
                         paymentId);

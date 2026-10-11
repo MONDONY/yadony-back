@@ -73,6 +73,7 @@ class DeliveryEscrowCaptureIT {
     @Autowired private PlatformTransactionManager transactionManager;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private StripeReleaseIntentRepository intentRepository;
+    @Autowired StripeReleaseGuard releaseGuard;
     @MockitoBean private AdminAlertEscalator alertEscalator;
 
     private final UserRepository userRepository = mock(UserRepository.class);
@@ -92,7 +93,7 @@ class DeliveryEscrowCaptureIT {
                 bidRepository, mock(AdminAlertService.class), voucherService, null, holdPolicy, alertEscalator,
                 escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class),
                 org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), intentRepository,
-                transactionManager);
+                transactionManager, releaseGuard);
         tx = new TransactionTemplate(transactionManager);
         tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 

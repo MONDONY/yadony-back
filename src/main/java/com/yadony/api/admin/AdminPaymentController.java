@@ -361,6 +361,10 @@ public class AdminPaymentController {
                         "Stripe n'a pas confirmé le versement : il est réservé et sera repris automatiquement "
                                 + "avec la même clé, ne relancez pas la libération");
             }
+            case BLOCKED -> throw new YadonyBusinessException(HttpStatus.CONFLICT, "payout-guard-changed",
+                    "Payout Guard Changed",
+                    "Une garde est apparue avant le versement (" + execution.error()
+                            + ") : rien n'est parti, le paiement reste en séquestre");
             default -> {
                 log.error("Admin force-release: Stripe refused payment {} (PI={}): {}",
                         id, plan.piId(), execution.error());
@@ -462,6 +466,17 @@ public class AdminPaymentController {
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "payment-not-found", "Not Found", "Paiement introuvable"));
         requireNotPartiallyRefunded(payment);
+        // Gardes revérifiées sous verrou (colis verrouillé, paiement relu après) : litige bancaire et
+        // voyageur gelé (sauf dérogation déjà auditée), compte Connect. Les lire avant la capture ne
+        // suffit pas, elles ont pu changer pendant l'appel Stripe.
+        if (!plan.holdOverridden() && (payment.isDisputed()
+                || (plan.travelerId() != null && holdOf(plan.travelerId()).held()))) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "payout-guard-changed", "Payout Guard Changed",
+                    "Paiement en litige ou voyageur gelé depuis la vérification : versement refusé sans dérogation");
+        }
+        if (payment.getRail() != PaymentRail.PAWAPAY && !payment.isLegacyDestinationCharge() && plan.travelerId() != null) {
+            requireUsableStripeAccount(payment, userRepository.findById(plan.travelerId()).orElse(null), plan.travelerId());
+        }
 
         // Atomic ESCROW → RELEASED transition — prevents a double release/transfer race.
         int updated = paymentRepository.markReleasedIfEscrow(id, LocalDateTime.now(ZoneOffset.UTC));
@@ -510,7 +525,7 @@ public class AdminPaymentController {
             return new ForceReleaseClaim(false, releaseExecutor.reserve(new StripeReleaseExecutor.ReleaseSpec(
                     id, StripeReleaseIntentEntity.Kind.LEGACY_CAPTURE, null, null, null, null,
                     "admin-force-release", "ESCROW_FORCE_RELEASED", plan.bidId(), plan.travelerId(),
-                    plan.senderId())), payment);
+                    plan.senderId(), plan.holdOverridden())), payment);
         }
         // Separate charges & transfers. Devise du paiement, jamais « eur » en dur : un séquestre
         // carte existe aussi en USD, CAD, GBP ou CHF.
@@ -522,7 +537,7 @@ public class AdminPaymentController {
         return new ForceReleaseClaim(false, releaseExecutor.reserve(new StripeReleaseExecutor.ReleaseSpec(
                 id, StripeReleaseIntentEntity.Kind.TRANSFER, localNet.minor(), localNet.currency().code(),
                 plan.stripeAccountId(), chargeId, "admin-force-release", "ESCROW_FORCE_RELEASED", plan.bidId(),
-                plan.travelerId(), plan.senderId())), payment);
+                plan.travelerId(), plan.senderId(), plan.holdOverridden())), payment);
     }
 
     /** Fins de colis où l'argent revient à l'expéditeur : jamais de versement au voyageur. */

@@ -70,6 +70,7 @@ class DeliveryTransferConcurrencyIT {
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired JdbcTemplate jdbc;
     @Autowired StripeReleaseIntentRepository intentRepository;
+    @Autowired StripeReleaseGuard releaseGuard;
     @MockitoBean AdminAlertEscalator alertEscalator;
 
     private final UserRepository userRepository = mock(UserRepository.class);
@@ -90,7 +91,7 @@ class DeliveryTransferConcurrencyIT {
         listener = ReleaseTestSupport.listener(paymentRepository, userRepository, auditService,
                 mock(ApplicationEventPublisher.class), bidRepository, mock(AdminAlertService.class),
                 mock(CommissionVoucherService.class), null, mock(PayoutHoldPolicy.class), alertEscalator,
-                escrowCapture, lookup, disputeRepository, intentRepository, transactionManager);
+                escrowCapture, lookup, disputeRepository, intentRepository, transactionManager, releaseGuard);
         UUID announcementId = UUID.randomUUID();
         AnnouncementEntity announcement = mock(AnnouncementEntity.class);
         when(announcement.getTravelerId()).thenReturn(travelerId);

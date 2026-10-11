@@ -70,6 +70,10 @@ public class StripeReleaseIntentEntity extends BaseEntity {
     @Column(name = "sender_id")
     private UUID senderId;
 
+    /** Dérogation admin motivée (litige bancaire, voyageur gelé) : ces deux gardes ne bloquent pas. */
+    @Column(name = "guards_overridden", nullable = false)
+    private boolean guardsOverridden;
+
     @Column(name = "attempts", nullable = false)
     private int attempts;
 
@@ -106,6 +110,8 @@ public class StripeReleaseIntentEntity extends BaseEntity {
     public void setTravelerId(UUID travelerId) { this.travelerId = travelerId; }
     public UUID getSenderId() { return senderId; }
     public void setSenderId(UUID senderId) { this.senderId = senderId; }
+    public boolean isGuardsOverridden() { return guardsOverridden; }
+    public void setGuardsOverridden(boolean guardsOverridden) { this.guardsOverridden = guardsOverridden; }
     public int getAttempts() { return attempts; }
     public void setAttempts(int attempts) { this.attempts = attempts; }
     public LocalDateTime getLeaseUntil() { return leaseUntil; }

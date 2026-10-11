@@ -360,6 +360,9 @@ public class DeliveryEventListener {
             case PENDING_RETRY -> {
                 return EscrowReleaseOutcome.RELEASE_PENDING;
             }
+            case BLOCKED -> {
+                return EscrowReleaseOutcome.BLOCKED_BEFORE_TRANSFER;
+            }
             default -> {
                 // Stripe a refusé sans rien créer : réservation annulée, paiement de nouveau ESCROW
                 // (comme l'ancien rollback) ; le job d'auto-réparation et la libération admin gardent la main.

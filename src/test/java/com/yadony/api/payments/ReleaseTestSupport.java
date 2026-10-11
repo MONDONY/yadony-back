@@ -53,7 +53,7 @@ public final class ReleaseTestSupport {
                                                  AdminAlertEscalator alertEscalator) {
         return new StripeReleaseExecutor(intents, paymentRepository, lookup, auditService, eventPublisher,
                 alertEscalator != null ? alertEscalator : mock(AdminAlertEscalator.class),
-                TransactionOperations.withoutTransaction(), Clock.systemUTC());
+                TransactionOperations.withoutTransaction(), Clock.systemUTC(), StripeReleaseExecutor.NO_GUARD);
     }
 
     /** Vrai exécuteur (base et transactions réelles), pour les tests d'intégration. */
@@ -61,9 +61,10 @@ public final class ReleaseTestSupport {
                                                  StripeTransferLookup lookup, AuditService auditService,
                                                  ApplicationEventPublisher eventPublisher,
                                                  AdminAlertEscalator alertEscalator,
-                                                 PlatformTransactionManager transactionManager) {
+                                                 PlatformTransactionManager transactionManager,
+                                                 StripeReleaseGuard guard) {
         return new StripeReleaseExecutor(intents, paymentRepository, lookup, auditService, eventPublisher,
-                alertEscalator, transactionManager);
+                alertEscalator, transactionManager, guard);
     }
 
     /** Ancienne signature du listener, pour les tests unitaires (réservations simulées). */
@@ -89,11 +90,12 @@ public final class ReleaseTestSupport {
                                                  AdminAlertEscalator alertEscalator, EscrowCaptureService escrowCapture,
                                                  StripeTransferLookup lookup, DisputeRepository disputeRepository,
                                                  StripeReleaseIntentRepository intents,
-                                                 PlatformTransactionManager transactionManager) {
+                                                 PlatformTransactionManager transactionManager,
+                                                 StripeReleaseGuard guard) {
         return new DeliveryEventListener(paymentRepository, userRepository, auditService, bidRepository, adminAlert,
                 voucherService, payoutInitiator, holdPolicy, alertEscalator, escrowCapture,
                 executor(intents, paymentRepository, lookup, auditService, eventPublisher, alertEscalator,
-                        transactionManager),
+                        transactionManager, guard),
                 disputeRepository, EscrowCaptureService.requiresNew(transactionManager));
     }
 }

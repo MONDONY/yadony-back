@@ -101,6 +101,8 @@ class StripeOutsideTransactionIT {
     @Autowired BidRepository bidRepository;
     @Autowired DisputeRepository disputeRepository;
     @Autowired StripeReleaseIntentRepository intentRepository;
+    @Autowired StripeReleaseGuard releaseGuard;
+    @Autowired com.yadony.api.disputes.AdminDisputeOpeningService disputeOpening;
     @Autowired EscrowCaptureService escrowCapture;
     @Autowired RefundProcessor refundProcessor;
     @Autowired AuditService auditService;
@@ -129,7 +131,7 @@ class StripeOutsideTransactionIT {
     void setUp() throws Exception {
         stripe = new FakeStripe();
         executor = new StripeReleaseExecutor(intentRepository, paymentRepository, lookup, auditService,
-                eventPublisher, alertEscalator, transactionManager);
+                eventPublisher, alertEscalator, transactionManager, releaseGuard);
         listener = new DeliveryEventListener(paymentRepository, userRepository, auditService, bidRepository,
                 mock(AdminAlertService.class), mock(CommissionVoucherService.class), null,
                 mock(PayoutHoldPolicy.class), alertEscalator, escrowCapture, executor, disputeRepository,
@@ -385,6 +387,109 @@ class StripeOutsideTransactionIT {
         assertThat(stripe.transfersCreated()).isEqualTo(1);
     }
 
+    // ── Gardes qui changent entre la réservation et l'appel Stripe ───────────
+
+    @Test
+    @DisplayName("Litige bancaire arrivé entre le claim et l'appel : aucun Transfer, séquestre rendu, alerte")
+    void chargebackBetweenClaimAndCall_noTransfer() throws Exception {
+        Seed s = seed(BidStatus.COMPLETED, true);
+        // La recherche Stripe a lieu après le claim commité et avant l'appel : on y fait arriver
+        // le webhook charge.dispute.created (seule garde que le paiement réservé ne peut refuser).
+        org.mockito.Mockito.doAnswer(inv -> {
+            jdbc.update("UPDATE payments SET disputed = true WHERE id = ?", s.paymentId);
+            return Optional.empty();
+        }).when(lookup).findExistingTransfer(any(), anyString(), any());
+
+        assertThat(stripe.onThisThread(() -> release(s))).isEqualTo(EscrowReleaseOutcome.BLOCKED_BEFORE_TRANSFER);
+
+        assertThat(stripe.transfersCreated()).isZero();
+        PaymentEntity after = paymentRepository.findById(s.paymentId).orElseThrow();
+        assertThat(after.getStatus()).isEqualTo(PaymentStatus.ESCROW);
+        assertThat(intentRepository.findByPaymentId(s.paymentId).orElseThrow().getStatus())
+                .isEqualTo(StripeReleaseIntentEntity.Status.REVERTED);
+        assertThat(auditCount(s.paymentId, "ESCROW_RELEASE_BLOCKED_BEFORE_STRIPE")).isEqualTo(1);
+        verify(alertEscalator).raiseOnce(org.mockito.ArgumentMatchers.eq("RELEASE_BLOCKED_" + s.paymentId),
+                anyString(), org.mockito.ArgumentMatchers.anyMap());
+    }
+
+    @Test
+    @DisplayName("Annulation du colis entre le claim et l'appel : aucun Transfer")
+    void bidCancelledBetweenClaimAndCall_noTransfer() throws Exception {
+        Seed s = seed(BidStatus.COMPLETED, true);
+        org.mockito.Mockito.doAnswer(inv -> {
+            jdbc.update("UPDATE bids SET status = 'CANCELLED' WHERE id = ?", s.bidId);
+            return Optional.empty();
+        }).when(lookup).findExistingTransfer(any(), anyString(), any());
+
+        assertThat(stripe.onThisThread(() -> release(s))).isEqualTo(EscrowReleaseOutcome.BLOCKED_BEFORE_TRANSFER);
+        assertThat(stripe.transfersCreated()).isZero();
+        assertThat(paymentRepository.findById(s.paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.ESCROW);
+    }
+
+    @Test
+    @DisplayName("Garde apparue lors d'une reprise : jamais de retour en séquestre, alerte pour décision admin")
+    void guardDuringResume_staysReservedNeverEscrow() throws Exception {
+        Seed s = seed(BidStatus.COMPLETED, true);
+        stripe.loseNextTransferResponse = true;
+        assertThat(stripe.onThisThread(() -> release(s))).isEqualTo(EscrowReleaseOutcome.RELEASE_PENDING);
+        // Le Transfer est parti chez Stripe mais la recherche ne le voit pas encore (cohérence à terme),
+        // et un litige bancaire arrive : la base ne revient pas en séquestre.
+        org.mockito.Mockito.doReturn(Optional.empty()).when(lookup).findExistingTransfer(any(), anyString(), any());
+        jdbc.update("UPDATE payments SET disputed = true WHERE id = ?", s.paymentId);
+        expireLease(s.paymentId);
+
+        assertThat(stripe.onThisThread(() -> job.run())).isEqualTo(1);
+
+        assertThat(stripe.transfersCreated()).isEqualTo(1);
+        assertThat(paymentRepository.findById(s.paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.RELEASED);
+        assertThat(intentRepository.findByPaymentId(s.paymentId).orElseThrow().getStatus())
+                .isEqualTo(StripeReleaseIntentEntity.Status.PENDING);
+        assertThat(refundProcessor.processRefund(s.paymentId, "TEST_REFUND", null, Map.of())).isFalse();
+        verify(alertEscalator).raiseOnce(org.mockito.ArgumentMatchers.eq("RELEASE_PENDING_" + s.paymentId),
+                anyString(), org.mockito.ArgumentMatchers.anyMap());
+    }
+
+    @Test
+    @DisplayName("Ouverture d'un litige admin et remboursement pendant le versement en cours : refusés proprement")
+    void disputeAndRefundDuringReservedRelease_areRefused() throws Exception {
+        Seed s = seed(BidStatus.COMPLETED, true);
+        List<Object> concurrent = new CopyOnWriteArrayList<>();
+        stripe.onTransferCall = () -> {
+            try {
+                disputeOpening.open(s.bidId, UUID.randomUUID(), new com.yadony.api.disputes.dto.AdminOpenDisputeRequest(
+                        com.yadony.api.disputes.DisputeParty.SENDER,
+                        com.yadony.api.disputes.AdminDisputeReason.PARCEL_DAMAGED, "Colis abîmé à l'arrivée"));
+                concurrent.add("dispute-opened");
+            } catch (YadonyBusinessException e) {
+                concurrent.add(e.getErrorCode());
+            }
+            concurrent.add(refundProcessor.processRefund(s.paymentId, "TEST_REFUND", null, Map.of()));
+        };
+
+        assertThat(stripe.onThisThread(() -> release(s))).isEqualTo(EscrowReleaseOutcome.RELEASED);
+
+        assertThat(concurrent).containsExactly("payment-already-released", false);
+        assertThat(stripe.transfersCreated()).isEqualTo(1);
+        assertThat(stripe.refunds).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Libération forcée : litige bancaire arrivé pendant la capture, refusé sous verrou avant le claim")
+    void forceRelease_chargebackDuringCapture_refusedUnderLock() throws Exception {
+        Seed s = seed(BidStatus.COMPLETED, false);
+        stripe.onCapture = () -> jdbc.update("UPDATE payments SET disputed = true WHERE id = ?", s.paymentId);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                        stripe.onThisThread(() -> admin.forceRelease(s.paymentId, null)))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("payout-guard-changed"));
+
+        assertThat(stripe.transfersCreated()).isZero();
+        PaymentEntity after = paymentRepository.findById(s.paymentId).orElseThrow();
+        assertThat(after.getStatus()).isEqualTo(PaymentStatus.ESCROW);
+        assertThat(intentRepository.findByPaymentId(s.paymentId)).isEmpty();
+    }
+
     // ── Outils ───────────────────────────────────────────────────────────────
 
     private record Seed(UUID bidId, UUID paymentId, UUID senderId) {}
@@ -479,6 +584,7 @@ class StripeOutsideTransactionIT {
         volatile boolean loseNextTransferResponse;
         volatile boolean refuseTransfers;
         volatile Runnable onTransferCall = () -> { };
+        volatile Runnable onCapture = () -> { };
 
         String transferOf(Object paymentId) {
             return transfersByPayment.get((UUID) paymentId);
@@ -548,6 +654,7 @@ class StripeOutsideTransactionIT {
                 if (slowCapture) {
                     slow();
                 }
+                onCapture.run();
                 captures.add(piId);
                 return pi;
             });

@@ -65,11 +65,13 @@ class StripeReleaseExecutorTest {
     private final UUID travelerId = UUID.randomUUID();
     private final UUID senderId = UUID.randomUUID();
     private PaymentEntity payment;
+    /** Raison de blocage renvoyée par la garde simulée ({@code null} : rien ne bloque). */
+    private String blockedBy;
 
     @BeforeEach
     void setUp() {
         executor = new StripeReleaseExecutor(intents, payments, lookup, audit, events, alerts,
-                TransactionOperations.withoutTransaction(), clock);
+                TransactionOperations.withoutTransaction(), clock, intent -> blockedBy);
         payment = new PaymentEntity();
         ReflectionTestUtils.setField(payment, "id", paymentId);
         payment.setStripePaymentIntentId("pi_1");
@@ -315,6 +317,62 @@ class StripeReleaseExecutorTest {
         StripeReleaseIntentEntity intent = reserved(1);
         when(payments.findById(paymentId)).thenReturn(Optional.empty());
         assertThat(executor.execute(intent).result()).isEqualTo(StripeReleaseExecutor.Result.NOT_OWNED);
+    }
+
+    // ── Garde revérifiée juste avant l'appel ─────────────────────────────────
+
+    @Test
+    void gardeApparueAvantLAppel_premierEssai_aucunTransferEtSequestreRendu() throws Exception {
+        StripeReleaseIntentEntity intent = reserved(1);
+        blockedBy = "litige bancaire ouvert";
+        when(payments.revertUnpaidReleaseClaim(paymentId)).thenReturn(1);
+        try (MockedStatic<Transfer> tr = mockStatic(Transfer.class)) {
+            StripeReleaseExecutor.Execution execution = executor.execute(intent);
+            assertThat(execution.result()).isEqualTo(StripeReleaseExecutor.Result.BLOCKED);
+            tr.verifyNoInteractions();
+        }
+        verify(payments).revertUnpaidReleaseClaim(paymentId);
+        verify(audit).log(eq("PAYMENT"), eq(paymentId), eq("ESCROW_RELEASE_BLOCKED_BEFORE_STRIPE"), eq(bidId), anyMap());
+        verify(alerts).raiseOnce(eq("RELEASE_BLOCKED_" + paymentId), anyString(), anyMap());
+    }
+
+    @Test
+    void gardeApparueEnReprise_resteReserveJamaisEscrow() throws Exception {
+        StripeReleaseIntentEntity intent = reserved(2);
+        blockedBy = "versements du voyageur gelés";
+        try (MockedStatic<Transfer> tr = mockStatic(Transfer.class)) {
+            assertThat(executor.execute(intent).result()).isEqualTo(StripeReleaseExecutor.Result.PENDING_RETRY);
+            tr.verifyNoInteractions();
+        }
+        verify(payments, never()).revertUnpaidReleaseClaim(any());
+        verify(intents).recordRetry(eq(intentId), anyString(), eq(now.plus(StripeReleaseExecutor.MAX_BACKOFF)));
+        verify(alerts).raiseOnce(eq("RELEASE_PENDING_" + paymentId), anyString(), anyMap());
+    }
+
+    @Test
+    void gardeApparueAvantCaptureLegacy_aucuneCapture() throws Exception {
+        StripeReleaseIntentEntity intent = legacyIntent();
+        blockedBy = "colis CANCELLED";
+        PaymentIntent pi = mock(PaymentIntent.class);
+        when(pi.getStatus()).thenReturn("requires_capture");
+        try (MockedStatic<PaymentIntent> st = mockStatic(PaymentIntent.class)) {
+            st.when(() -> PaymentIntent.retrieve("pi_1")).thenReturn(pi);
+            assertThat(executor.execute(intent).result()).isEqualTo(StripeReleaseExecutor.Result.BLOCKED);
+        }
+        verify(pi, never()).capture(any(PaymentIntentCaptureParams.class), any(RequestOptions.class));
+    }
+
+    @Test
+    void refusCertainApresUnEssaiIncertain_neRendJamaisLeSequestre() throws Exception {
+        StripeReleaseIntentEntity intent = reserved(2);
+        try (MockedStatic<Transfer> tr = mockStatic(Transfer.class)) {
+            tr.when(() -> Transfer.create(any(TransferCreateParams.class), any(RequestOptions.class)))
+                    .thenThrow(new InvalidRequestException("bad", null, "req", null, 400, null));
+            assertThat(executor.execute(intent).result()).isEqualTo(StripeReleaseExecutor.Result.PENDING_RETRY);
+        }
+        verify(payments, never()).revertUnpaidReleaseClaim(any());
+        verify(intents, never()).markReverted(any(), any());
+        verify(alerts).raiseOnce(eq("RELEASE_PENDING_" + paymentId), anyString(), anyMap());
     }
 
     // ── Destination charge legacy ────────────────────────────────────────────

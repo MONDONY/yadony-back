@@ -75,6 +75,7 @@ class LateEscrowReleaseIT {
     @Autowired private PlatformTransactionManager transactionManager;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private StripeReleaseIntentRepository intentRepository;
+    @Autowired StripeReleaseGuard releaseGuard;
     @MockitoBean private AdminAlertEscalator alertEscalator;
 
     private final UserRepository userRepository = mock(UserRepository.class);
@@ -103,7 +104,7 @@ class LateEscrowReleaseIT {
                 bidRepository, mock(AdminAlertService.class), voucherService, null, holdPolicy, alertEscalator,
                 escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class),
                 org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), intentRepository,
-                transactionManager);
+                transactionManager, releaseGuard);
         releaser = new DeliveredEscrowReleaser(paymentRepository, bidRepository, announcementRepository, listener,
                 alertEscalator);
         resync = new PaymentStripeResyncService(paymentRepository, paymentService, escrowCapture, bidRepository,
