@@ -86,6 +86,14 @@ public class StripeReleaseIntentEntity extends BaseEntity {
     @Column(name = "revision", nullable = false)
     private int revision = 1;
 
+    /** Jeton du détenteur actuel du bail (fencing) : renouvelé à chaque prise de bail. */
+    @Column(name = "lease_token")
+    private UUID leaseToken;
+
+    /** Dernier envoi de {@code Transfer.create} pour cette révision ({@code null} : jamais envoyé). */
+    @Column(name = "create_sent_at")
+    private LocalDateTime createSentAt;
+
     @Column(name = "attempts", nullable = false)
     private int attempts;
 
@@ -131,6 +139,10 @@ public class StripeReleaseIntentEntity extends BaseEntity {
     }
     public int getRevision() { return revision; }
     public void setRevision(int revision) { this.revision = revision; }
+    public UUID getLeaseToken() { return leaseToken; }
+    public void setLeaseToken(UUID leaseToken) { this.leaseToken = leaseToken; }
+    public LocalDateTime getCreateSentAt() { return createSentAt; }
+    public void setCreateSentAt(LocalDateTime createSentAt) { this.createSentAt = createSentAt; }
     public int getAttempts() { return attempts; }
     public void setAttempts(int attempts) { this.attempts = attempts; }
     public LocalDateTime getLeaseUntil() { return leaseUntil; }

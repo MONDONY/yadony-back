@@ -53,6 +53,14 @@ public class StripeReleaseGuard implements StripeReleaseExecutor.ReleaseGuard {
         this.holdPolicy = holdPolicy;
     }
 
+    /** Dans la transaction de l'appelant (aucune propagation propre) : verrou du colis, pris en premier. */
+    @Override
+    public void lockParcel(UUID bidId) {
+        if (bidId != null) {
+            bidRepository.lockForUpdate(bidId);
+        }
+    }
+
     @Override
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public String blockingReason(StripeReleaseIntentEntity intent) {

@@ -392,6 +392,11 @@ public class DeliveryEventListener {
      * annule le claim (le paiement reste ESCROW), comme avant.
      */
     private Phase1 claimAndReserve(PaymentEntity payment, ReleaseTrigger event, String chargeId) {
+        // Verrou du colis d'abord (ordre colis → annonce → paiement, comme la libération forcée, le
+        // retour en séquestre et l'annulation d'une réservation) : claim et réservation sérialisés.
+        if (event.getBidId() != null) {
+            bidRepository.lockForUpdate(event.getBidId());
+        }
         // Claim atomique ESCROW → RELEASED, PARTAGÉ par les deux rails (Stripe et pawaPay) :
         // empêche un double versement (double capture / double Transfer / double payout) si
         // l'événement de livraison est traité deux fois en parallèle. Le branchement par rail

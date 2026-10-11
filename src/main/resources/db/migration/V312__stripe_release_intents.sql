@@ -35,6 +35,13 @@ CREATE TABLE stripe_release_intents (
     -- DISPUTED (litige bancaire), BENEFICIARY_HELD (voyageur gelé). Jamais le litige admin, le
     -- colis annulé ou remboursé, ni le statut du paiement. NULL = aucune.
     overridden_guards  VARCHAR(64),
+    -- Jeton du détenteur du bail (fencing) : renouvelé à chaque prise de bail ; une écriture d'un
+    -- détenteur dont le bail a été repris est refusée, et il n'envoie plus d'appel Stripe.
+    lease_token        UUID,
+    -- Dernier envoi de Transfer.create pour la révision courante (NULL : jamais envoyé). Aucune
+    -- annulation de la réservation tant qu'un envoi est récent (marge de sûreté), même si la
+    -- recherche Stripe est vide : la réponse de Stripe peut être encore en route.
+    create_sent_at     TIMESTAMPTZ,
     attempts           INT          NOT NULL DEFAULT 0,
     lease_until        TIMESTAMPTZ  NOT NULL,
     last_error         TEXT,

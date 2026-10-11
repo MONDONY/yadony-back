@@ -437,6 +437,14 @@ class StripeOutsideTransactionIT {
         jdbc.update("UPDATE bids SET status = 'CANCELLED' WHERE id = ?", s.bidId);
         expireLease(s.paymentId);
 
+        // Envoi récent (la requête a pu partir) : recherche vide sans valeur, aucun retour en séquestre.
+        assertThat(stripe.onThisThread(() -> job.run())).isEqualTo(1);
+        assertThat(paymentRepository.findById(s.paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.RELEASED);
+        assertThat(refundProcessor.processRefund(s.paymentId, "TEST_REFUND", null, Map.of())).isFalse();
+
+        // Délai de sûreté écoulé : la recherche vide prouve l'absence de Transfer.
+        ageSend(s.paymentId);
+        expireLease(s.paymentId);
         assertThat(stripe.onThisThread(() -> job.run())).isEqualTo(1);
 
         assertThat(stripe.transfersCreated()).isZero();
@@ -457,6 +465,7 @@ class StripeOutsideTransactionIT {
         stripe.failNextTransferBeforeCreate = true;
         assertThat(stripe.onThisThread(() -> release(s))).isEqualTo(EscrowReleaseOutcome.RELEASE_PENDING);
         stripe.refuseTransfers = true;                // account rejected
+        ageSend(s.paymentId);                         // premier envoi trop ancien pour être en vol
         expireLease(s.paymentId);
 
         assertThat(stripe.onThisThread(() -> job.run())).isEqualTo(1);
@@ -474,6 +483,10 @@ class StripeOutsideTransactionIT {
         Seed none = seed(BidStatus.COMPLETED, true);
         stripe.failNextTransferBeforeCreate = true;
         assertThat(stripe.onThisThread(() -> release(none))).isEqualTo(EscrowReleaseOutcome.RELEASE_PENDING);
+        // Envoi récent : refusée tant que l'issue n'est pas certaine.
+        assertThat(executor.cancelReservation(none.paymentId, UUID.randomUUID(), "Compte Connect rejeté").result())
+                .isEqualTo(StripeReleaseExecutor.CancelResult.IN_PROGRESS);
+        ageSend(none.paymentId);
         assertThat(executor.cancelReservation(none.paymentId, UUID.randomUUID(), "Compte Connect rejeté").result())
                 .isEqualTo(StripeReleaseExecutor.CancelResult.CANCELLED);
         assertThat(paymentRepository.findById(none.paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.ESCROW);
@@ -488,6 +501,7 @@ class StripeOutsideTransactionIT {
         Seed sent = seed(BidStatus.COMPLETED, true);
         stripe.loseNextTransferResponse = true;
         assertThat(stripe.onThisThread(() -> release(sent))).isEqualTo(EscrowReleaseOutcome.RELEASE_PENDING);
+        ageSend(sent.paymentId);
         StripeReleaseExecutor.Cancellation realigned =
                 executor.cancelReservation(sent.paymentId, UUID.randomUUID(), "Vérification admin");
         assertThat(realigned.result()).isEqualTo(StripeReleaseExecutor.CancelResult.REALIGNED);
@@ -498,6 +512,7 @@ class StripeOutsideTransactionIT {
         Seed down = seed(BidStatus.COMPLETED, true);
         stripe.failNextTransferBeforeCreate = true;
         assertThat(stripe.onThisThread(() -> release(down))).isEqualTo(EscrowReleaseOutcome.RELEASE_PENDING);
+        ageSend(down.paymentId);
         org.mockito.Mockito.doThrow(new ApiConnectionException("timeout"))
                 .when(lookup).findExistingTransfer(org.mockito.ArgumentMatchers.eq(down.paymentId), anyString(), any());
         assertThat(executor.cancelReservation(down.paymentId, UUID.randomUUID(), "Vérification admin").result())
@@ -587,6 +602,145 @@ class StripeOutsideTransactionIT {
         assertThat(intentRepository.findByPaymentId(s.paymentId)).isEmpty();
     }
 
+    // ── Revue race-condition : jamais deux Transfers (cas 1 à 4) ─────────────
+
+    @Test
+    @DisplayName("Cas 1 : bail repris par le job pendant la recherche du détenteur : l'ancien détenteur n'envoie rien")
+    void case1_staleHolderAfterLeaseTakeover_sendsNothing() throws Exception {
+        Seed s = seed(BidStatus.COMPLETED, true);
+        CountDownLatch inLookup = new CountDownLatch(1);
+        CountDownLatch resumeLookup = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicBoolean first = new java.util.concurrent.atomic.AtomicBoolean(true);
+        org.mockito.Mockito.doAnswer(inv -> {
+            if (first.compareAndSet(true, false)) {
+                inLookup.countDown();
+                resumeLookup.await(30, TimeUnit.SECONDS);
+            }
+            return Optional.ofNullable(stripe.transferOf(inv.getArgument(0)));
+        }).when(lookup).findExistingTransfer(any(), anyString(), any());
+
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            Future<EscrowReleaseOutcome> delivery = pool.submit(() -> stripe.onThisThread(() -> release(s)));
+            assertThat(inLookup.await(10, TimeUnit.SECONDS)).isTrue();
+            // Détenteur réputé mort (bail échu) : le job reprend avec un nouveau jeton ; son envoi
+            // échoue sans rien créer, la réservation reste au job.
+            expireLease(s.paymentId);
+            stripe.failNextTransferBeforeCreate = true;
+            assertThat(stripe.onThisThread(() -> job.run())).isEqualTo(1);
+            assertThat(stripe.createCalls.get()).isEqualTo(1);
+            String jobError = intentRepository.findByPaymentId(s.paymentId).orElseThrow().getLastError();
+
+            resumeLookup.countDown();
+            // L'ancien détenteur se réveille : jeton périmé, aucun Transfer.create, rien d'écrit.
+            assertThat(delivery.get(30, TimeUnit.SECONDS)).isEqualTo(EscrowReleaseOutcome.RELEASE_IN_PROGRESS);
+            assertThat(stripe.createCalls.get()).isEqualTo(1);
+            StripeReleaseIntentEntity intent = intentRepository.findByPaymentId(s.paymentId).orElseThrow();
+            assertThat(intent.getStatus()).isEqualTo(StripeReleaseIntentEntity.Status.PENDING);
+            assertThat(intent.getLastError()).isEqualTo(jobError);
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(stripe.transfersCreated()).isZero();
+        assertThat(paymentRepository.findById(s.paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.RELEASED);
+    }
+
+    @Test
+    @DisplayName("Cas 2 : garde apparue et recherche vide pendant un Transfer en vol : aucun retour en séquestre, un seul mouvement")
+    void case2_revertRefusedWhileTransferInFlight() throws Exception {
+        stripe.slowTransfer = true;
+        Seed s = seed(BidStatus.COMPLETED, true);
+        CountDownLatch inStripe = new CountDownLatch(1);
+        stripe.onTransferCall = inStripe::countDown;
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            Future<EscrowReleaseOutcome> delivery = pool.submit(() -> stripe.onThisThread(() -> release(s)));
+            assertThat(inStripe.await(10, TimeUnit.SECONDS)).isTrue();
+            stripe.onTransferCall = () -> { };
+            // Pendant l'appel (Transfer pas encore visible chez Stripe) : bail échu, colis annulé.
+            expireLease(s.paymentId);
+            jdbc.update("UPDATE bids SET status = 'CANCELLED' WHERE id = ?", s.bidId);
+            stripe.onThisThread(() -> job.run());
+            // Recherche vide mais envoi récent : jamais de retour en séquestre, donc pas de remboursement.
+            assertThat(paymentRepository.findById(s.paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.RELEASED);
+            assertThat(refundProcessor.processRefund(s.paymentId, "TEST_REFUND", null, Map.of())).isFalse();
+            delivery.get(30, TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(stripe.transfersCreated()).isEqualTo(1);
+        assertThat(stripe.refunds).isEmpty();
+        assertThat(intentRepository.findByPaymentId(s.paymentId).orElseThrow().getStatus())
+                .isEqualTo(StripeReleaseIntentEntity.Status.DONE);
+        assertThat(paymentRepository.findById(s.paymentId).orElseThrow().getStripeTransferId())
+                .isEqualTo(stripe.transferOf(s.paymentId));
+    }
+
+    @Test
+    @DisplayName("Cas 3 : annulation admin pendant un Transfer en vol (bail échu) : refusée, pas de seconde révision")
+    void case3_adminCancelRefusedWhileTransferInFlightAfterLeaseExpiry() throws Exception {
+        stripe.slowTransfer = true;
+        Seed s = seed(BidStatus.COMPLETED, true);
+        CountDownLatch inStripe = new CountDownLatch(1);
+        stripe.onTransferCall = inStripe::countDown;
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            Future<EscrowReleaseOutcome> delivery = pool.submit(() -> stripe.onThisThread(() -> release(s)));
+            assertThat(inStripe.await(10, TimeUnit.SECONDS)).isTrue();
+            stripe.onTransferCall = () -> { };
+            expireLease(s.paymentId);   // le bail ne protège plus : seul create_sent_at le fait
+            assertThat(executor.cancelReservation(s.paymentId, UUID.randomUUID(), "Vérification admin").result())
+                    .isEqualTo(StripeReleaseExecutor.CancelResult.IN_PROGRESS);
+            assertThat(paymentRepository.findById(s.paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.RELEASED);
+            delivery.get(30, TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
+        }
+        // Une nouvelle livraison ne peut pas ouvrir de révision 2.
+        stripe.onThisThread(() -> release(s));
+        assertThat(stripe.transfersCreated()).isEqualTo(1);
+        assertThat(stripe.transfersByKey).containsOnlyKeys("transfer-" + s.paymentId + "-r1");
+        assertThat(intentRepository.findByPaymentId(s.paymentId).orElseThrow().getStatus())
+                .isEqualTo(StripeReleaseIntentEntity.Status.DONE);
+    }
+
+    @Test
+    @DisplayName("Cas 4 : Transfer r1 arrivé en retard chez Stripe : ni annulation ni révision 2, un seul Transfer")
+    void case4_lateLandingR1_neverOpensRevision2() throws Exception {
+        Seed s = seed(BidStatus.COMPLETED, true);
+        CountDownLatch land = new CountDownLatch(1);
+        stripe.landLateGate = land;
+        // Délai de lecture côté client : la requête r1 est en route, rien n'est encore visible.
+        assertThat(stripe.onThisThread(() -> release(s))).isEqualTo(EscrowReleaseOutcome.RELEASE_PENDING);
+
+        // Recherche vide, mais envoi récent : ni annulation admin ni retour en séquestre.
+        assertThat(executor.cancelReservation(s.paymentId, UUID.randomUUID(), "Vérification admin").result())
+                .isEqualTo(StripeReleaseExecutor.CancelResult.IN_PROGRESS);
+        jdbc.update("UPDATE bids SET status = 'CANCELLED' WHERE id = ?", s.bidId);
+        expireLease(s.paymentId);
+        stripe.onThisThread(() -> job.run());
+        assertThat(paymentRepository.findById(s.paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.RELEASED);
+        assertThat(intentRepository.findByPaymentId(s.paymentId).orElseThrow().getStatus())
+                .isEqualTo(StripeReleaseIntentEntity.Status.PENDING);
+
+        // r1 atterrit enfin chez Stripe ; la reprise suivante la retrouve et réaligne.
+        land.countDown();
+        for (Thread t : stripe.landers) {
+            t.join(10_000);
+        }
+        jdbc.update("UPDATE bids SET status = 'COMPLETED' WHERE id = ?", s.bidId);
+        ageSend(s.paymentId);
+        expireLease(s.paymentId);
+        assertThat(stripe.onThisThread(() -> job.run())).isEqualTo(1);
+
+        assertThat(stripe.transfersCreated()).isEqualTo(1);
+        assertThat(stripe.transfersByKey).containsOnlyKeys("transfer-" + s.paymentId + "-r1");
+        assertThat(intentRepository.findByPaymentId(s.paymentId).orElseThrow().getStatus())
+                .isEqualTo(StripeReleaseIntentEntity.Status.DONE);
+        assertThat(paymentRepository.findById(s.paymentId).orElseThrow().getStripeTransferId())
+                .isEqualTo(stripe.transferOf(s.paymentId));
+    }
+
     // ── Outils ───────────────────────────────────────────────────────────────
 
     private record Seed(UUID bidId, UUID paymentId, UUID senderId) {}
@@ -627,6 +781,16 @@ class StripeOutsideTransactionIT {
         new TransactionTemplate(transactionManager).executeWithoutResult(tx -> entityManager
                 .createQuery("UPDATE StripeReleaseIntentEntity i SET i.leaseUntil = :t WHERE i.paymentId = :p")
                 .setParameter("t", java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1))
+                .setParameter("p", paymentId)
+                .executeUpdate());
+    }
+
+    /** Recule le dernier envoi de Transfer.create au-delà du délai de sûreté. */
+    private void ageSend(UUID paymentId) {
+        new TransactionTemplate(transactionManager).executeWithoutResult(tx -> entityManager
+                .createQuery("UPDATE StripeReleaseIntentEntity i SET i.createSentAt = :t WHERE i.paymentId = :p")
+                .setParameter("t", java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)
+                        .minus(StripeReleaseExecutor.SEND_SAFETY).minusMinutes(1))
                 .setParameter("p", paymentId)
                 .executeUpdate());
     }
@@ -676,6 +840,10 @@ class StripeOutsideTransactionIT {
         final List<String> refunds = new CopyOnWriteArrayList<>();
         final List<Integer> activeDuringCall = new CopyOnWriteArrayList<>();
         final AtomicInteger counter = new AtomicInteger();
+        /** Appels à Transfer.create reçus, quelle que soit leur issue. */
+        final AtomicInteger createCalls = new AtomicInteger();
+        /** Prochain Transfer : délai de lecture côté client, mais Stripe le crée plus tard (requête en vol). */
+        volatile CountDownLatch landLateGate;
         volatile boolean slowCapture;
         volatile boolean slowTransfer;
         volatile boolean loseNextTransferResponse;
@@ -684,6 +852,7 @@ class StripeOutsideTransactionIT {
         final java.util.Set<String> capturing = ConcurrentHashMap.newKeySet();
         volatile Runnable onTransferCall = () -> { };
         volatile Runnable onCapture = () -> { };
+        final List<Thread> landers = new CopyOnWriteArrayList<>();
 
         String transferOf(Object paymentId) {
             return transfersByPayment.get((UUID) paymentId);
@@ -707,7 +876,29 @@ class StripeOutsideTransactionIT {
                 pi.when(() -> PaymentIntent.retrieve(anyString())).thenAnswer(inv -> intent(inv.getArgument(0)));
                 tr.when(() -> Transfer.create(any(TransferCreateParams.class), any(RequestOptions.class)))
                         .thenAnswer(inv -> {
+                            createCalls.incrementAndGet();
                             onTransferCall.run();
+                            CountDownLatch gate = landLateGate;
+                            if (gate != null) {
+                                landLateGate = null;
+                                TransferCreateParams late = inv.getArgument(0);
+                                String lateKey = ((RequestOptions) inv.getArgument(1)).getIdempotencyKey();
+                                Thread lander = new Thread(() -> {
+                                    try {
+                                        gate.await(30, TimeUnit.SECONDS);
+                                    } catch (InterruptedException e) {
+                                        Thread.currentThread().interrupt();
+                                    }
+                                    String id = transfersByKey.computeIfAbsent(lateKey, k -> {
+                                        transferAmounts.add(late.getAmount());
+                                        return "tr_" + counter.incrementAndGet();
+                                    });
+                                    transfersByPayment.put(UUID.fromString(late.getMetadata().get("payment_id")), id);
+                                });
+                                lander.start();
+                                landers.add(lander);
+                                throw new ApiConnectionException("Read timed out");
+                            }
                             if (failNextTransferBeforeCreate) {
                                 failNextTransferBeforeCreate = false;
                                 throw new ApiConnectionException("connect timed out");   // rien de créé

@@ -43,7 +43,7 @@ import java.util.UUID;
  *       devise, destination et charge source, avec un bail de {@link #LEASE} ;</li>
  *   <li><b>appeler</b> ({@link #execute}, hors transaction) : recherche d'un Transfer déjà émis
  *       ({@link StripeTransferLookup}), sinon {@code Transfer.create} avec la clé stable
- *       {@code transfer-<paymentId>} (ou capture legacy, clé {@code capture-<paymentId>}) ;</li>
+ *       {@code transfer-<paymentId>-r<révision>} (ou capture legacy, clé {@code capture-<paymentId>}) ;</li>
  *   <li><b>finaliser</b> (transaction courte) : UPDATE conditionnel {@code PENDING → DONE}, identifiant
  *       du Transfer, audit et {@link PaymentReleasedEvent} — un seul traitement y parvient.</li>
  * </ol>
@@ -60,6 +60,23 @@ import java.util.UUID;
  *       {@code RELEASE_PENDING_<paymentId>}. Plus jamais d'annulation du claim alors qu'un Transfer a
  *       pu partir.</li>
  * </ul>
+ *
+ * <p><b>Jamais deux Transfers</b> (revue race-condition, PROD_CHECKLIST 9.23) :
+ * <ul>
+ *   <li>chaque prise de bail (réservation, reprise du job, annulation admin) pose un nouveau
+ *       {@code lease_token} ; toute écriture conditionnelle (envoi, finalisation en échec, annulation,
+ *       reprise différée) l'exige : un détenteur dont le bail a expiré ne peut plus rien écrire, et
+ *       n'envoie plus rien ({@code markCreateSent} refusé avant {@code Transfer.create}) ;</li>
+ *   <li>{@code create_sent_at} trace chaque envoi de {@code Transfer.create}. Une recherche Stripe
+ *       vide ne prouve rien tant qu'un envoi a moins de {@link #SEND_SAFETY} (la requête peut être
+ *       encore en route, ou pas encore listée) : pas de retour en séquestre, pas d'annulation admin,
+ *       donc pas de nouvelle révision ni de nouvelle clé. Au sein d'une révision, la clé est la même :
+ *       Stripe déduplique ;</li>
+ *   <li>une nouvelle révision ne part que d'une réservation REVERTED ou CANCELLED, posée sous ces
+ *       conditions, et sa première action est encore une recherche Stripe par {@code transfer_group} ;</li>
+ *   <li>retour en séquestre, annulation et finalisation verrouillent d'abord le colis (ordre
+ *       colis → paiement), comme le claim de livraison et la libération forcée.</li>
+ * </ul>
  */
 @Component
 public class StripeReleaseExecutor {
@@ -71,6 +88,13 @@ public class StripeReleaseExecutor {
      * SDK (connexion 30 s + lecture 80 s, trois essais avec les relances de 9.24 : 5,5 min).
      */
     public static final Duration LEASE = Duration.ofMinutes(10);
+
+    /**
+     * Après un envoi de {@code Transfer.create}, délai pendant lequel une recherche Stripe vide ne
+     * prouve pas l'absence de Transfer (requête en vol d'un détenteur au bail expiré, réponse ou
+     * listage en retard) : bail + 5 min. Avant ce délai, ni retour en séquestre ni annulation.
+     */
+    public static final Duration SEND_SAFETY = LEASE.plus(Duration.ofMinutes(5));
 
     /** Préfixe (16) + UUID (36) = 52, sous la limite de 60 de {@code admin_alerts.type}. */
     public static final String PENDING_ALERT_PREFIX = "RELEASE_PENDING_";
@@ -117,6 +141,12 @@ public class StripeReleaseExecutor {
      */
     public interface ReleaseGuard {
         String blockingReason(StripeReleaseIntentEntity intent);
+
+        /**
+         * Verrou de ligne du colis dans la transaction courante, pris en premier (ordre colis →
+         * annonce → paiement) par le retour en séquestre, l'annulation et la finalisation.
+         */
+        default void lockParcel(UUID bidId) {}
     }
 
     /** Aucune garde (tests unitaires des autres composants). */
@@ -193,6 +223,9 @@ public class StripeReleaseExecutor {
         intent.setOverriddenGuards(overriddenGuards(spec.overriddenGuards()));
         intent.setAttempts(1);
         intent.setLeaseUntil(now.plus(LEASE));
+        intent.setLeaseToken(UUID.randomUUID());
+        // Nouvelle révision : aucun envoi encore (la précédente a été close sous preuve, ou jamais envoyée).
+        intent.setCreateSentAt(null);
         intent.setLastError(null);
         intent.setStripeObjectId(null);
         StripeReleaseIntentEntity saved = intentRepository.save(intent);
@@ -205,12 +238,15 @@ public class StripeReleaseExecutor {
      */
     public Execution resume(UUID intentId) {
         LocalDateTime now = now();
-        Boolean leased = transaction.execute(tx -> intentRepository.claimLease(intentId, now, now.plus(LEASE)) == 1);
+        UUID token = UUID.randomUUID();
+        Boolean leased = transaction.execute(tx ->
+                intentRepository.claimLease(intentId, now, now.plus(LEASE), token) == 1);
         if (!Boolean.TRUE.equals(leased)) {
             return new Execution(Result.NOT_OWNED, null, null);
         }
         StripeReleaseIntentEntity intent = intentRepository.findById(intentId).orElse(null);
-        if (intent == null) {
+        if (intent == null || !token.equals(intent.getLeaseToken())) {
+            // Bail repris entre-temps par un autre traitement : on ne fait rien.
             return new Execution(Result.NOT_OWNED, null, null);
         }
         try {
@@ -247,13 +283,16 @@ public class StripeReleaseExecutor {
             log.error("Versement réservé pour un paiement introuvable : {}", paymentId);
             return new Execution(Result.NOT_OWNED, null, "paiement introuvable");
         }
+        // Dernier envoi connu pour cette révision, lu APRÈS la prise de bail : aucun autre
+        // traitement ne peut plus envoyer (jeton), seul un envoi antérieur peut être en vol.
+        LocalDateTime priorSent = intent.getCreateSentAt();
         // Vrai dès que, DANS CETTE exécution, la recherche Stripe a réussi et n'a trouvé aucun
-        // Transfer : un refus ou une garde qui suit peut alors rendre le séquestre en toute sûreté,
-        // quel que soit le nombre d'essais précédents.
-        boolean noTransferAtStripe = false;
+        // Transfer, ET qu'aucun envoi antérieur ne peut être encore en vol : un refus ou une garde
+        // qui suit peut alors rendre le séquestre en toute sûreté.
+        boolean revertable = false;
         try {
             if (intent.getKind() == StripeReleaseIntentEntity.Kind.LEGACY_CAPTURE) {
-                return captureLegacy(intent, payment);
+                return captureLegacy(intent, payment, priorSent);
             }
             // La clé d'idempotence ne vit que 24 h : on cherche d'abord chez Stripe un Transfer déjà
             // émis pour ce paiement (essai précédent dont la réponse s'est perdue, Transfer d'avant
@@ -263,17 +302,17 @@ public class StripeReleaseExecutor {
                 existing = transferLookup.findExistingTransfer(
                         paymentId, intent.getDestination(), payment.getCreatedAt());
             } catch (StripeException lookupFailure) {
-                if (intent.getAttempts() <= 1) {
-                    // Premier essai de cette réservation : aucun Transfer n'a pu être demandé par
-                    // elle. Recherche impossible = on ne verse pas (fail-closed) et on rend le
-                    // séquestre, comme avant ; l'auto-réparation retentera.
+                if (priorSent == null) {
+                    // Aucun Transfer n'a jamais été envoyé pour cette révision (sinon create_sent_at
+                    // serait posé, sous jeton, avant l'envoi). Recherche impossible = on ne verse pas
+                    // (fail-closed) et on rend le séquestre ; l'auto-réparation retentera.
                     log.error("Versement du paiement {} : recherche Stripe d'un Transfer existant impossible ({})",
                             paymentId, lookupFailure.getMessage());
                     return revert(intent, "recherche Stripe impossible : "
                             + lookupFailure.getClass().getSimpleName() + ": " + lookupFailure.getMessage());
                 }
-                // Essai suivant : un Transfer a pu partir lors d'un essai précédent, la base ne
-                // revient jamais en séquestre sur une recherche ratée. On rejouera.
+                // Un Transfer a été envoyé lors d'un essai précédent : la base ne revient jamais en
+                // séquestre sur une recherche ratée. On rejouera.
                 return retryLater(intent, "recherche Stripe impossible : "
                         + lookupFailure.getClass().getSimpleName() + ": " + lookupFailure.getMessage());
             }
@@ -282,21 +321,49 @@ public class StripeReleaseExecutor {
                         paymentId, existing.get());
                 return finalizeDone(intent, payment, existing.get(), true);
             }
-            noTransferAtStripe = true;
-            // Aucun Transfer chez Stripe : gardes revérifiées sous verrou juste avant l'appel.
+            // Recherche vide : preuve seulement si aucun envoi antérieur n'est récent.
+            revertable = sendSettled(priorSent);
+            // Gardes revérifiées sous verrou juste avant l'appel.
             String blocked = guard.blockingReason(intent);
             if (blocked != null) {
-                return blockedBeforeCall(intent, blocked, true);
+                return blockedBeforeCall(intent, blocked, revertable);
+            }
+            if (!markCreateSent(intent)) {
+                // Bail repris pendant la recherche ou la garde : aucun envoi hors bail.
+                return new Execution(Result.NOT_OWNED, null, null);
             }
             Transfer transfer = Transfer.create(transferParams(intent),
                     RequestOptions.builder().setIdempotencyKey(transferKey(intent)).build());
             return finalizeDone(intent, payment, transfer != null ? transfer.getId() : null, false);
         } catch (StripeException e) {
-            return onStripeFailure(intent, e, noTransferAtStripe);
+            // Refus 4xx de NOTRE envoi : rien créé sous cette clé (une requête antérieure de même
+            // clé réussie aurait été rejouée, pas refusée) ; retour en séquestre seulement si aucun
+            // envoi antérieur n'est encore possible en vol.
+            return onStripeFailure(intent, e, revertable || priorSent == null);
         }
     }
 
-    private Execution captureLegacy(StripeReleaseIntentEntity intent, PaymentEntity payment) throws StripeException {
+    /** Aucun envoi, ou dernier envoi plus vieux que {@link #SEND_SAFETY} (plus aucune requête en vol). */
+    private boolean sendSettled(LocalDateTime sentAt) {
+        return sentAt == null || !sentAt.isAfter(now().minus(SEND_SAFETY));
+    }
+
+    /** Trace l'envoi sous jeton, juste avant l'appel ; {@code false} si le bail n'est plus à nous. */
+    private boolean markCreateSent(StripeReleaseIntentEntity intent) {
+        LocalDateTime sentAt = now();
+        Boolean marked = transaction.execute(tx ->
+                intentRepository.markCreateSent(intent.getId(), intent.getLeaseToken(), sentAt) == 1);
+        if (!Boolean.TRUE.equals(marked)) {
+            log.warn("Versement du paiement {} : bail repris par un autre traitement, aucun envoi",
+                    intent.getPaymentId());
+            return false;
+        }
+        intent.setCreateSentAt(sentAt);
+        return true;
+    }
+
+    private Execution captureLegacy(StripeReleaseIntentEntity intent, PaymentEntity payment,
+                                    LocalDateTime priorSent) throws StripeException {
         // Destination charge historique : capturer verse au voyageur (transfer_data posé à la création).
         PaymentIntent pi = PaymentIntent.retrieve(payment.getStripePaymentIntentId());
         String status = pi != null ? pi.getStatus() : null;
@@ -304,10 +371,14 @@ public class StripeReleaseExecutor {
             return revert(intent, "PaymentIntent " + status + " : plus rien à capturer");
         }
         if (!EscrowCaptureService.STATUS_SUCCEEDED.equals(status)) {
-            // PaymentIntent relu à l'instant et non capturé : rien n'a été versé.
+            // PaymentIntent relu à l'instant et non capturé : rien n'a été versé, sauf capture
+            // encore en vol d'un envoi récent.
             String blocked = guard.blockingReason(intent);
             if (blocked != null) {
-                return blockedBeforeCall(intent, blocked, true);
+                return blockedBeforeCall(intent, blocked, sendSettled(priorSent));
+            }
+            if (!markCreateSent(intent)) {
+                return new Execution(Result.NOT_OWNED, null, null);
             }
             // Clé d'idempotence stable : une reprise ne déclenche pas une seconde capture.
             pi.capture(PaymentIntentCaptureParams.builder().build(),
@@ -356,6 +427,7 @@ public class StripeReleaseExecutor {
                                    boolean realigned) {
         UUID paymentId = intent.getPaymentId();
         Boolean mine = transaction.execute(tx -> {
+            guard.lockParcel(intent.getBidId());
             if (intentRepository.markDone(intent.getId(), objectId) == 0) {
                 return false;
             }
@@ -400,11 +472,11 @@ public class StripeReleaseExecutor {
         return new Execution(realigned ? Result.REALIGNED : Result.RELEASED, objectId, null);
     }
 
-    private Execution onStripeFailure(StripeReleaseIntentEntity intent, StripeException e, boolean noTransferAtStripe) {
+    private Execution onStripeFailure(StripeReleaseIntentEntity intent, StripeException e, boolean revertable) {
         String error = e.getClass().getSimpleName() + ": " + e.getMessage();
-        if (definitiveRefusal(e) && (intent.getAttempts() <= 1 || noTransferAtStripe)) {
-            // Rien n'a été créé : premier essai (aucun appel antérieur à l'issue inconnue), ou
-            // recherche Stripe réussie et vide dans cette exécution, puis refus 4xx de la création.
+        if (definitiveRefusal(e) && revertable) {
+            // Rien n'a été créé : aucun envoi antérieur pour cette révision, ou recherche Stripe
+            // vide et dernier envoi antérieur trop ancien pour être en vol, puis refus 4xx.
             log.error("Versement du paiement {} refusé par Stripe : {}", intent.getPaymentId(), error, e);
             return revert(intent, error);
         }
@@ -424,10 +496,11 @@ public class StripeReleaseExecutor {
      * (ESCROW, la garde décide). Reprise : un essai précédent a pu créer un Transfer, le paiement
      * reste réservé et l'admin tranche (alerte).
      */
-    private Execution blockedBeforeCall(StripeReleaseIntentEntity intent, String reason, boolean noTransferAtStripe) {
+    private Execution blockedBeforeCall(StripeReleaseIntentEntity intent, String reason, boolean revertable) {
         String error = "garde apparue avant l'appel Stripe : " + reason;
         log.warn("Versement du paiement {} bloqué avant l'appel Stripe : {}", intent.getPaymentId(), reason);
-        if (intent.getAttempts() > 1 && !noTransferAtStripe) {
+        if (!revertable) {
+            // Un envoi récent peut être en vol : jamais de retour en séquestre, l'admin tranche.
             raiseBlockedAlert(intent, reason, false);
             return retryLater(intent, error, true);
         }
@@ -471,7 +544,13 @@ public class StripeReleaseExecutor {
     private Execution retryLater(StripeReleaseIntentEntity intent, String error, boolean needsAdmin) {
         int attempts = Math.max(1, intent.getAttempts());
         LocalDateTime retryAt = now().plus(needsAdmin ? MAX_BACKOFF : backoff(attempts));
-        transaction.executeWithoutResult(tx -> intentRepository.recordRetry(intent.getId(), error, retryAt));
+        Boolean mine = transaction.execute(tx ->
+                intentRepository.recordRetry(intent.getId(), intent.getLeaseToken(), error, retryAt) == 1);
+        if (!Boolean.TRUE.equals(mine)) {
+            // Bail repris (ou réservation close) entre-temps : le nouveau détenteur décide.
+            log.warn("Versement du paiement {} : bail repris, issue « {} » non enregistrée", intent.getPaymentId(), error);
+            return new Execution(Result.NOT_OWNED, null, error);
+        }
         log.warn("Versement du paiement {} incertain (essai {}) : {} — paiement RELEASED, reprise à {}",
                 intent.getPaymentId(), attempts, error, retryAt);
         if (needsAdmin || attempts >= ALERT_AFTER_ATTEMPTS) {
@@ -488,7 +567,8 @@ public class StripeReleaseExecutor {
     private Execution revert(StripeReleaseIntentEntity intent, String error, String auditAction) {
         UUID paymentId = intent.getPaymentId();
         Boolean mine = transaction.execute(tx -> {
-            if (intentRepository.markReverted(intent.getId(), error) == 0) {
+            guard.lockParcel(intent.getBidId());
+            if (intentRepository.markReverted(intent.getId(), intent.getLeaseToken(), error) == 0) {
                 return false;
             }
             int reverted = paymentRepository.revertUnpaidReleaseClaim(paymentId);
@@ -605,10 +685,23 @@ public class StripeReleaseExecutor {
             return new Cancellation(CancelResult.UNSUPPORTED, null, null);
         }
         LocalDateTime now = now();
+        UUID token = UUID.randomUUID();
         Boolean leased = transaction.execute(tx ->
-                intentRepository.claimForAdmin(intent.getId(), now, now.plus(LEASE)) == 1);
+                intentRepository.claimForAdmin(intent.getId(), now, now.plus(LEASE), token) == 1);
         if (!Boolean.TRUE.equals(leased)) {
             return new Cancellation(CancelResult.IN_PROGRESS, null, null);
+        }
+        // Relu après la prise de bail : plus aucun envoi possible, sauf un envoi antérieur en vol.
+        StripeReleaseIntentEntity held = intentRepository.findById(intent.getId()).orElse(null);
+        if (held == null || !token.equals(held.getLeaseToken())) {
+            return new Cancellation(CancelResult.IN_PROGRESS, null, null);
+        }
+        if (!sendSettled(held.getCreateSentAt())) {
+            // Transfer.create envoyé il y a moins de SEND_SAFETY : une recherche vide ne prouve rien.
+            String error = "annulation admin refusée : Transfer envoyé à " + held.getCreateSentAt()
+                    + ", issue pas encore certaine";
+            transaction.executeWithoutResult(tx -> intentRepository.releaseAdminLease(held.getId(), token, now(), error));
+            return new Cancellation(CancelResult.IN_PROGRESS, null, error);
         }
         PaymentEntity payment = paymentRepository.findById(paymentId).orElse(null);
         Optional<String> existing;
@@ -618,16 +711,17 @@ public class StripeReleaseExecutor {
         } catch (StripeException e) {
             String error = "annulation admin : recherche Stripe impossible : " + e.getClass().getSimpleName()
                     + ": " + e.getMessage();
-            transaction.executeWithoutResult(tx -> intentRepository.releaseAdminLease(intent.getId(), now(), error));
+            transaction.executeWithoutResult(tx -> intentRepository.releaseAdminLease(held.getId(), token, now(), error));
             return new Cancellation(CancelResult.LOOKUP_FAILED, null, error);
         }
         if (existing.isPresent()) {
-            Execution done = finalizeDone(intent, payment, existing.get(), true);
+            Execution done = finalizeDone(held, payment, existing.get(), true);
             return new Cancellation(done.result() == Result.REALIGNED ? CancelResult.REALIGNED : CancelResult.NOT_PENDING,
                     existing.get(), null);
         }
         Boolean cancelled = transaction.execute(tx -> {
-            if (intentRepository.markCancelled(intent.getId(), "annulée par l'admin : " + reason) == 0) {
+            guard.lockParcel(held.getBidId());
+            if (intentRepository.markCancelled(held.getId(), token, "annulée par l'admin : " + reason) == 0) {
                 return false;
             }
             int reverted = paymentRepository.revertUnpaidReleaseClaim(paymentId);

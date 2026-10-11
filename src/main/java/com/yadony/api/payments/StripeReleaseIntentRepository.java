@@ -21,20 +21,36 @@ public interface StripeReleaseIntentRepository extends JpaRepository<StripeRelea
     Optional<StripeReleaseIntentEntity> findByPaymentId(UUID paymentId);
 
     /**
-     * Prend le bail d'un versement en attente dont le bail est échu (reprise par le job) et compte
-     * la tentative. 1 si ce traitement le détient jusqu'à {@code until}, 0 sinon (finalisé, annulé
-     * ou détenu par un autre traitement).
+     * Prend le bail d'un versement en attente dont le bail est échu (reprise par le job), compte la
+     * tentative et pose un NOUVEAU jeton de bail : toute écriture d'un détenteur précédent (bail
+     * expiré pendant un appel trop long) est désormais refusée. 1 si ce traitement le détient.
      */
     @Modifying
     @Query("""
             UPDATE StripeReleaseIntentEntity i SET i.leaseUntil = :until, i.attempts = i.attempts + 1,
-                   i.lastError = NULL
+                   i.lastError = NULL, i.leaseToken = :token
              WHERE i.id = :id AND i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.PENDING
                AND i.leaseUntil <= :now
             """)
-    int claimLease(@Param("id") UUID id, @Param("now") LocalDateTime now, @Param("until") LocalDateTime until);
+    int claimLease(@Param("id") UUID id, @Param("now") LocalDateTime now, @Param("until") LocalDateTime until,
+                   @Param("token") UUID token);
 
-    /** Finalisation : 1 si ce traitement a fait passer le versement en DONE, 0 s'il ne l'était plus. */
+    /**
+     * Juste avant {@code Transfer.create} : trace l'envoi, sous le jeton du détenteur. 0 si le bail
+     * a été repris entre-temps : l'appel n'est alors PAS fait (aucun envoi hors bail).
+     */
+    @Modifying
+    @Query("""
+            UPDATE StripeReleaseIntentEntity i SET i.createSentAt = :now
+             WHERE i.id = :id AND i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.PENDING AND i.leaseToken = :token
+            """)
+    int markCreateSent(@Param("id") UUID id, @Param("token") UUID token, @Param("now") LocalDateTime now);
+
+    /**
+     * Finalisation : 1 si ce traitement a fait passer le versement en DONE, 0 s'il ne l'était plus.
+     * Sans jeton, volontairement : DONE est l'état sûr (versement prouvé chez Stripe, plus aucun
+     * remboursement possible), tout traitement qui tient la preuve peut le poser.
+     */
     @Modifying
     @Query("""
             UPDATE StripeReleaseIntentEntity i SET i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.DONE,
@@ -43,52 +59,55 @@ public interface StripeReleaseIntentRepository extends JpaRepository<StripeRelea
             """)
     int markDone(@Param("id") UUID id, @Param("objectId") String objectId);
 
-    /** Stripe a refusé (aucun versement créé) : 1 si ce traitement annule la réservation. */
+    /** Aucun versement chez Stripe : 1 si CE détenteur du bail annule la réservation. */
     @Modifying
     @Query("""
             UPDATE StripeReleaseIntentEntity i SET i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.REVERTED,
                    i.lastError = :error
-             WHERE i.id = :id AND i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.PENDING
+             WHERE i.id = :id AND i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.PENDING AND i.leaseToken = :token
             """)
-    int markReverted(@Param("id") UUID id, @Param("error") String error);
+    int markReverted(@Param("id") UUID id, @Param("token") UUID token, @Param("error") String error);
 
-    /** Issue incertaine (réseau, 5xx) : reste PENDING, prochaine reprise à {@code retryAt}. */
+    /** Issue incertaine : reste PENDING, prochaine reprise à {@code retryAt} (détenteur du bail seulement). */
     @Modifying
     @Query("""
             UPDATE StripeReleaseIntentEntity i SET i.lastError = :error, i.leaseUntil = :retryAt
-             WHERE i.id = :id AND i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.PENDING
+             WHERE i.id = :id AND i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.PENDING AND i.leaseToken = :token
             """)
-    int recordRetry(@Param("id") UUID id, @Param("error") String error, @Param("retryAt") LocalDateTime retryAt);
+    int recordRetry(@Param("id") UUID id, @Param("token") UUID token, @Param("error") String error,
+                    @Param("retryAt") LocalDateTime retryAt);
 
     /**
      * Bail pris par un super-admin pour annuler la réservation : seulement si aucun appel n'est en
      * vol, c'est-à-dire bail échu, ou réservation en attente de reprise après un échec ({@code
-     * last_error} posé ; un traitement en cours l'efface en prenant son bail). 1 si pris.
+     * last_error} posé ; un traitement en cours l'efface en prenant son bail). Nouveau jeton. 1 si pris.
      */
     @Modifying
     @Query("""
-            UPDATE StripeReleaseIntentEntity i SET i.leaseUntil = :until, i.lastError = NULL
+            UPDATE StripeReleaseIntentEntity i SET i.leaseUntil = :until, i.lastError = NULL, i.leaseToken = :token
              WHERE i.id = :id AND i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.PENDING
                AND (i.leaseUntil <= :now OR i.lastError IS NOT NULL)
             """)
-    int claimForAdmin(@Param("id") UUID id, @Param("now") LocalDateTime now, @Param("until") LocalDateTime until);
+    int claimForAdmin(@Param("id") UUID id, @Param("now") LocalDateTime now, @Param("until") LocalDateTime until,
+                      @Param("token") UUID token);
 
-    /** Annulation admin après recherche Stripe vide : 1 si ce traitement l'annule. */
+    /** Annulation admin après recherche Stripe vide : 1 si ce détenteur du bail l'annule. */
     @Modifying
     @Query("""
             UPDATE StripeReleaseIntentEntity i SET i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.CANCELLED,
                    i.lastError = :reason
-             WHERE i.id = :id AND i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.PENDING
+             WHERE i.id = :id AND i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.PENDING AND i.leaseToken = :token
             """)
-    int markCancelled(@Param("id") UUID id, @Param("reason") String reason);
+    int markCancelled(@Param("id") UUID id, @Param("token") UUID token, @Param("reason") String reason);
 
-    /** Recherche Stripe impossible pendant l'annulation admin : bail rendu, rien d'autre ne change. */
+    /** Annulation admin impossible : bail rendu, rien d'autre ne change. */
     @Modifying
     @Query("""
             UPDATE StripeReleaseIntentEntity i SET i.leaseUntil = :now, i.lastError = :error
-             WHERE i.id = :id AND i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.PENDING
+             WHERE i.id = :id AND i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.PENDING AND i.leaseToken = :token
             """)
-    int releaseAdminLease(@Param("id") UUID id, @Param("now") LocalDateTime now, @Param("error") String error);
+    int releaseAdminLease(@Param("id") UUID id, @Param("token") UUID token, @Param("now") LocalDateTime now,
+                          @Param("error") String error);
 
     /** Versements en attente dont le bail est échu, les plus anciens d'abord. */
     @Query("""
