@@ -154,7 +154,7 @@ class StripeReleaseExecutorTest {
 
             assertThat(execution.result()).isEqualTo(StripeReleaseExecutor.Result.RELEASED);
             assertThat(execution.paid()).isTrue();
-            assertThat(options.getValue().getIdempotencyKey()).isEqualTo("transfer-" + paymentId);
+            assertThat(options.getValue().getIdempotencyKey()).isEqualTo("transfer-" + paymentId + "-r1");
             assertThat(params.getValue().getAmount()).isEqualTo(4400L);
             assertThat(params.getValue().getDestination()).isEqualTo("acct_1");
             assertThat(params.getValue().getSourceTransaction()).isEqualTo("ch_1");
@@ -165,6 +165,7 @@ class StripeReleaseExecutorTest {
         verify(audit).log(eq("PAYMENT"), eq(paymentId), eq("ESCROW_RELEASED_TRANSFER"), eq(bidId), anyMap());
         verify(events).publishEvent(any(PaymentReleasedEvent.class));
         verify(alerts).resolveOpen("RELEASE_PENDING_" + paymentId);
+        verify(alerts).resolveOpen("RELEASE_BLOCKED_" + paymentId);
     }
 
     @Test
@@ -337,16 +338,33 @@ class StripeReleaseExecutorTest {
     }
 
     @Test
-    void gardeApparueEnReprise_resteReserveJamaisEscrow() throws Exception {
+    void gardeApparueEnReprise_apresRechercheVide_rendLeSequestre() throws Exception {
+        // Reprise (essai 2) : la recherche Stripe vient de réussir sans rien trouver, la garde
+        // (colis annulé…) bloque : le séquestre est rendu, le paiement redevient remboursable.
         StripeReleaseIntentEntity intent = reserved(2);
-        blockedBy = "versements du voyageur gelés";
+        blockedBy = "colis CANCELLED";
+        when(payments.revertUnpaidReleaseClaim(paymentId)).thenReturn(1);
         try (MockedStatic<Transfer> tr = mockStatic(Transfer.class)) {
-            assertThat(executor.execute(intent).result()).isEqualTo(StripeReleaseExecutor.Result.PENDING_RETRY);
+            assertThat(executor.execute(intent).result()).isEqualTo(StripeReleaseExecutor.Result.BLOCKED);
             tr.verifyNoInteractions();
         }
-        verify(payments, never()).revertUnpaidReleaseClaim(any());
-        verify(intents).recordRetry(eq(intentId), anyString(), eq(now.plus(StripeReleaseExecutor.MAX_BACKOFF)));
-        verify(alerts).raiseOnce(eq("RELEASE_PENDING_" + paymentId), anyString(), anyMap());
+        verify(payments).revertUnpaidReleaseClaim(paymentId);
+        // Alerte levée APRÈS l'annulation réussie (et l'éventuelle précédente close par l'annulation).
+        var order = org.mockito.Mockito.inOrder(payments, alerts);
+        order.verify(payments).revertUnpaidReleaseClaim(paymentId);
+        order.verify(alerts).resolveOpen("RELEASE_BLOCKED_" + paymentId);
+        order.verify(alerts).raiseOnce(eq("RELEASE_BLOCKED_" + paymentId), anyString(), anyMap());
+    }
+
+    @Test
+    void gardeApparue_annulationPerdue_aucuneAlerteBloquee() throws Exception {
+        StripeReleaseIntentEntity intent = reserved(1);
+        blockedBy = "litige bancaire ouvert";
+        when(intents.markReverted(any(), any())).thenReturn(0);
+        try (MockedStatic<Transfer> tr = mockStatic(Transfer.class)) {
+            assertThat(executor.execute(intent).result()).isEqualTo(StripeReleaseExecutor.Result.NOT_OWNED);
+        }
+        verify(alerts, never()).raiseOnce(eq("RELEASE_BLOCKED_" + paymentId), anyString(), anyMap());
     }
 
     @Test
@@ -363,15 +381,74 @@ class StripeReleaseExecutorTest {
     }
 
     @Test
-    void refusCertainApresUnEssaiIncertain_neRendJamaisLeSequestre() throws Exception {
+    void refus4xxEnReprise_apresRechercheVide_rendLeSequestre() throws Exception {
+        // Compte Connect rejeté après un premier essai en timeout : la recherche (réussie, vide)
+        // prouve qu'aucun Transfer n'existe, le refus 4xx de la création rend le séquestre.
+        StripeReleaseIntentEntity intent = reserved(2);
+        when(payments.revertUnpaidReleaseClaim(paymentId)).thenReturn(1);
+        try (MockedStatic<Transfer> tr = mockStatic(Transfer.class)) {
+            tr.when(() -> Transfer.create(any(TransferCreateParams.class), any(RequestOptions.class)))
+                    .thenThrow(new InvalidRequestException("account rejected", null, "req", null, 400, null));
+            assertThat(executor.execute(intent).result()).isEqualTo(StripeReleaseExecutor.Result.REVERTED);
+        }
+        verify(payments).revertUnpaidReleaseClaim(paymentId);
+    }
+
+    @Test
+    void cleDIdempotenceEnCoursEnReprise_neRendJamaisLeSequestre() throws Exception {
         StripeReleaseIntentEntity intent = reserved(2);
         try (MockedStatic<Transfer> tr = mockStatic(Transfer.class)) {
             tr.when(() -> Transfer.create(any(TransferCreateParams.class), any(RequestOptions.class)))
-                    .thenThrow(new InvalidRequestException("bad", null, "req", null, 400, null));
+                    .thenThrow(new IdempotencyException("in progress", "req", null, 409));
             assertThat(executor.execute(intent).result()).isEqualTo(StripeReleaseExecutor.Result.PENDING_RETRY);
         }
         verify(payments, never()).revertUnpaidReleaseClaim(any());
         verify(intents, never()).markReverted(any(), any());
+    }
+
+    @Test
+    void refusLegacyEnReprise_neRendJamaisLeSequestre() throws Exception {
+        // Capture legacy : pas de recherche de Transfer, un 4xx après un essai incertain laisse
+        // le paiement réservé (alerte, décision admin).
+        StripeReleaseIntentEntity intent = legacyIntent();
+        intent.setAttempts(2);
+        PaymentIntent pi = mock(PaymentIntent.class);
+        when(pi.getStatus()).thenReturn("requires_capture");
+        when(pi.capture(any(PaymentIntentCaptureParams.class), any(RequestOptions.class)))
+                .thenThrow(new InvalidRequestException("bad", null, "req", null, 400, null));
+        try (MockedStatic<PaymentIntent> st = mockStatic(PaymentIntent.class)) {
+            st.when(() -> PaymentIntent.retrieve("pi_1")).thenReturn(pi);
+            assertThat(executor.execute(intent).result()).isEqualTo(StripeReleaseExecutor.Result.PENDING_RETRY);
+        }
+        verify(payments, never()).revertUnpaidReleaseClaim(any());
+        verify(alerts).raiseOnce(eq("RELEASE_PENDING_" + paymentId), anyString(), anyMap());
+    }
+
+    @Test
+    void nouvelleReservationApresAnnulation_nouvelleRevisionDoncNouvelleCle() {
+        StripeReleaseIntentEntity old = new StripeReleaseIntentEntity();
+        old.setPaymentId(paymentId);
+        old.setStatus(StripeReleaseIntentEntity.Status.CANCELLED);
+        old.setRevision(1);
+        when(intents.findByPaymentId(paymentId)).thenReturn(Optional.of(old));
+
+        StripeReleaseIntentEntity intent = executor.reserve(transferSpec());
+
+        assertThat(intent.getRevision()).isEqualTo(2);
+        assertThat(StripeReleaseExecutor.transferKey(intent)).isEqualTo("transfer-" + paymentId + "-r2");
+    }
+
+    @Test
+    void repriseEnPanneLocale_delaiCroissantEtAlerteAuSeuil() {
+        StripeReleaseIntentEntity intent = reserved(StripeReleaseExecutor.ALERT_AFTER_ATTEMPTS);
+        when(intents.findById(intentId)).thenReturn(Optional.of(intent));
+        when(payments.findById(paymentId)).thenThrow(new IllegalStateException("db down"));
+
+        StripeReleaseExecutor.Execution execution = executor.resume(intentId);
+
+        assertThat(execution.result()).isEqualTo(StripeReleaseExecutor.Result.PENDING_RETRY);
+        verify(intents).recordRetry(eq(intentId), org.mockito.ArgumentMatchers.contains("db down"),
+                eq(now.plus(StripeReleaseExecutor.backoff(StripeReleaseExecutor.ALERT_AFTER_ATTEMPTS))));
         verify(alerts).raiseOnce(eq("RELEASE_PENDING_" + paymentId), anyString(), anyMap());
     }
 
@@ -448,6 +525,94 @@ class StripeReleaseExecutorTest {
     void resume_reservationDisparue_neFaitRien() {
         when(intents.findById(intentId)).thenReturn(Optional.empty());
         assertThat(executor.resume(intentId).result()).isEqualTo(StripeReleaseExecutor.Result.NOT_OWNED);
+    }
+
+    // ── Annulation par un super-admin ────────────────────────────────────────
+
+    private final UUID adminId = UUID.randomUUID();
+
+    private StripeReleaseIntentEntity pendingForAdmin() {
+        StripeReleaseIntentEntity intent = reserved(3);
+        when(intents.findByPaymentId(paymentId)).thenReturn(Optional.of(intent));
+        return intent;
+    }
+
+    @Test
+    void annulationAdmin_aucunTransfer_rendLeSequestreEtAudite() throws Exception {
+        pendingForAdmin();
+        when(payments.revertUnpaidReleaseClaim(paymentId)).thenReturn(1);
+        try (MockedStatic<Transfer> tr = mockStatic(Transfer.class)) {
+            StripeReleaseExecutor.Cancellation c = executor.cancelReservation(paymentId, adminId, "Compte Connect rejeté");
+            assertThat(c.result()).isEqualTo(StripeReleaseExecutor.CancelResult.CANCELLED);
+            tr.verifyNoInteractions();
+        }
+        verify(intents).markCancelled(eq(intentId), org.mockito.ArgumentMatchers.contains("Compte Connect rejeté"));
+        verify(payments).revertUnpaidReleaseClaim(paymentId);
+        verify(audit).log(eq("PAYMENT"), eq(paymentId), eq("ESCROW_RELEASE_CANCELLED_BY_ADMIN"), eq(adminId),
+                org.mockito.ArgumentMatchers.argThat(m -> "Compte Connect rejeté".equals(m.get("reason"))));
+        verify(alerts).resolveOpen("RELEASE_PENDING_" + paymentId);
+    }
+
+    @Test
+    void annulationAdmin_transferTrouve_realigneSansRendreLeSequestre() throws Exception {
+        pendingForAdmin();
+        when(lookup.findExistingTransfer(eq(paymentId), any(), any())).thenReturn(Optional.of("tr_found"));
+        StripeReleaseExecutor.Cancellation c = executor.cancelReservation(paymentId, adminId, "Vérification admin");
+        assertThat(c.result()).isEqualTo(StripeReleaseExecutor.CancelResult.REALIGNED);
+        assertThat(c.transferId()).isEqualTo("tr_found");
+        verify(payments).recordStripeTransferId(paymentId, "tr_found");
+        verify(payments, never()).revertUnpaidReleaseClaim(any());
+        verify(intents, never()).markCancelled(any(), any());
+    }
+
+    @Test
+    void annulationAdmin_rechercheImpossible_rienNeChange() throws Exception {
+        pendingForAdmin();
+        when(lookup.findExistingTransfer(any(), any(), any())).thenThrow(new ApiConnectionException("timeout"));
+        StripeReleaseExecutor.Cancellation c = executor.cancelReservation(paymentId, adminId, "Vérification admin");
+        assertThat(c.result()).isEqualTo(StripeReleaseExecutor.CancelResult.LOOKUP_FAILED);
+        verify(intents).releaseAdminLease(eq(intentId), any(), anyString());
+        verify(payments, never()).revertUnpaidReleaseClaim(any());
+        verify(intents, never()).markCancelled(any(), any());
+    }
+
+    @Test
+    void annulationAdmin_appelEnVol_refusee() {
+        pendingForAdmin();
+        when(intents.claimForAdmin(any(), any(), any())).thenReturn(0);
+        assertThat(executor.cancelReservation(paymentId, adminId, "Vérification admin").result())
+                .isEqualTo(StripeReleaseExecutor.CancelResult.IN_PROGRESS);
+        verify(payments, never()).revertUnpaidReleaseClaim(any());
+    }
+
+    @Test
+    void annulationAdmin_rienDeReserve_ouLegacy() {
+        assertThat(executor.cancelReservation(paymentId, adminId, "Vérification admin").result())
+                .isEqualTo(StripeReleaseExecutor.CancelResult.NOT_PENDING);
+        StripeReleaseIntentEntity legacy = legacyIntent();
+        when(intents.findByPaymentId(paymentId)).thenReturn(Optional.of(legacy));
+        assertThat(executor.cancelReservation(paymentId, adminId, "Vérification admin").result())
+                .isEqualTo(StripeReleaseExecutor.CancelResult.UNSUPPORTED);
+    }
+
+    @Test
+    void annulationAdmin_concurrenteDejaFaite_neRendRienDeuxFois() {
+        pendingForAdmin();
+        when(intents.markCancelled(any(), any())).thenReturn(0);
+        assertThat(executor.cancelReservation(paymentId, adminId, "Vérification admin").result())
+                .isEqualTo(StripeReleaseExecutor.CancelResult.NOT_PENDING);
+        verify(payments, never()).revertUnpaidReleaseClaim(any());
+    }
+
+    @Test
+    void annulationAdmin_sousTransaction_refusee() {
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            assertThatThrownBy(() -> executor.cancelReservation(paymentId, adminId, "x"))
+                    .isInstanceOf(IllegalStateException.class);
+        } finally {
+            TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
     }
 
     // ── Classement des erreurs, délais ───────────────────────────────────────

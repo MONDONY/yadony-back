@@ -163,11 +163,20 @@ public class EscrowCaptureService {
         }
         PaymentIntent captured;
         try {
-            captured = pi.capture(PaymentIntentCaptureParams.builder().setAmountToCapture(expected).build(),
-                    RequestOptions.builder().setIdempotencyKey("capture-" + paymentId).build());
+            captured = captureWaitingForConcurrentRequest(pi, expected, paymentId);
         } catch (StripeException e) {
-            // Rien n'a été écrit avant l'appel : rien à annuler. Une capture faite chez Stripe malgré
-            // une erreur réseau est retrouvée au prochain passage (PaymentIntent succeeded ci-dessus).
+            // Rien n'a été écrit avant l'appel : rien à annuler. Le PaymentIntent est relu : une
+            // capture concurrente (même clé, autre traitement) ou une capture faite malgré une erreur
+            // réseau le laisse succeeded — ce n'est pas un échec, on poursuit sans alerte.
+            PaymentIntent fresh = retrieveQuietly(piId);
+            if (fresh != null && STATUS_SUCCEEDED.equals(fresh.getStatus())) {
+                String freshChargeId = fresh.getLatestCharge() != null ? fresh.getLatestCharge() : chargeId;
+                log.info("PaymentIntent {} déjà capturé malgré l'erreur ({}) : poursuite (paiement {}, source {})",
+                        piId, e.getMessage(), paymentId, source);
+                transaction.executeWithoutResult(tx -> recordCaptured(paymentId, freshChargeId));
+                resolveCaptureFailedAlert(paymentId);
+                return new Outcome(freshChargeId, false);
+            }
             throw failure(payment, source, status, captureBefore, "capture refusée par Stripe : " + e.getMessage(), e);
         }
 
@@ -212,9 +221,73 @@ public class EscrowCaptureService {
         }
     }
 
+    /** Attente entre deux essais quand la même capture est en cours chez Stripe (même clé). */
+    private long inFlightRetryMillis = 1000L;
+    static final int IN_FLIGHT_RETRIES = 3;
+
+    void setInFlightRetryMillis(long millis) {
+        this.inFlightRetryMillis = millis;
+    }
+
+    /**
+     * Capture avec la clé stable {@code capture-<paymentId>}. Si un autre traitement capture le même
+     * paiement au même instant, Stripe répond « requête en cours » (idempotence) : on attend et on
+     * rejoue la MÊME requête, Stripe rend alors le résultat du premier. Hors transaction : l'attente
+     * ne tient aucune connexion.
+     */
+    private PaymentIntent captureWaitingForConcurrentRequest(PaymentIntent pi, long expected, UUID paymentId)
+            throws StripeException {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return pi.capture(PaymentIntentCaptureParams.builder().setAmountToCapture(expected).build(),
+                        RequestOptions.builder().setIdempotencyKey("capture-" + paymentId).build());
+            } catch (com.stripe.exception.IdempotencyException inFlight) {
+                if (attempt >= IN_FLIGHT_RETRIES) {
+                    throw inFlight;
+                }
+                try {
+                    Thread.sleep(inFlightRetryMillis * attempt);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw inFlight;
+                }
+            }
+        }
+    }
+
+    /** Relecture du PaymentIntent après un échec, sans lever : {@code null} si Stripe ne répond pas. */
+    private static PaymentIntent retrieveQuietly(String piId) {
+        try {
+            return PaymentIntent.retrieve(piId,
+                    PaymentIntentRetrieveParams.builder().addExpand("latest_charge").build(), null);
+        } catch (StripeException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Alerte utile seulement si le paiement attend encore une capture : toujours ESCROW et jamais
+     * capturé (relu en base). Un paiement remboursé, versé, ou capturé entre-temps par un autre
+     * traitement ne réclame aucune action.
+     */
+    private boolean stillAwaitingCapture(UUID paymentId) {
+        try {
+            return paymentRepository.findById(paymentId)
+                    .map(p -> p.getStatus() == PaymentStatus.ESCROW && p.getCapturedAt() == null)
+                    .orElse(false);
+        } catch (RuntimeException e) {
+            return true; // base illisible : mieux vaut une alerte de trop
+        }
+    }
+
     private EscrowCaptureException failure(PaymentEntity payment, String source, String piStatus,
                                            Long captureBefore, String reason, Exception cause) {
         UUID paymentId = payment.getId();
+        if (!stillAwaitingCapture(paymentId)) {
+            log.warn("Capture du paiement {} impossible ({}) mais il n'attend plus de capture : pas d'alerte",
+                    paymentId, reason);
+            return new EscrowCaptureException(reason, piStatus, cause);
+        }
         log.error("Capture du séquestre impossible (paiement {}, PI {}, source {}) : {}",
                 paymentId, payment.getStripePaymentIntentId(), source, reason, cause);
         Map<String, Object> context = new LinkedHashMap<>();

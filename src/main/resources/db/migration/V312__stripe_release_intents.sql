@@ -8,15 +8,20 @@
 -- entre l'appel et la finalisation. Le job StripeReleaseRecoveryJob reprend les lignes PENDING
 -- dont le bail (lease_until) est échu.
 --
--- Une ligne par paiement (uq_stripe_release_intents_payment) : un versement annulé (REVERTED)
--- puis retenté réutilise la même ligne. Jamais supprimée.
+-- Une ligne par paiement (uq_stripe_release_intents_payment) : un versement annulé (REVERTED,
+-- CANCELLED) puis retenté réutilise la même ligne, révision suivante. Jamais supprimée.
 CREATE TABLE stripe_release_intents (
     id                 UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     payment_id         UUID         NOT NULL REFERENCES payments (id),
     -- TRANSFER (séparation charge / transfer) | LEGACY_CAPTURE (destination charge historique)
     kind               VARCHAR(20)  NOT NULL,
-    -- PENDING (appel Stripe à faire ou à confirmer) | DONE | REVERTED (Stripe a refusé, claim annulé)
+    -- PENDING (appel Stripe à faire ou à confirmer) | DONE | REVERTED (Stripe a refusé ou garde
+    -- apparue, claim annulé) | CANCELLED (annulée par un super-admin après recherche Stripe vide)
     status             VARCHAR(16)  NOT NULL,
+    -- Révision de la réservation, incrémentée à chaque nouvelle réservation du même paiement :
+    -- la clé d'idempotence est transfer-<paymentId>-r<revision>, jamais réutilisée avec d'autres
+    -- paramètres (la recherche par transfer_group payment_<id> protège des doublons).
+    revision           INT          NOT NULL DEFAULT 1,
     amount_minor       BIGINT,
     currency           VARCHAR(3),
     destination        VARCHAR(255),
@@ -39,7 +44,7 @@ CREATE TABLE stripe_release_intents (
     deleted_at         TIMESTAMPTZ,
     CONSTRAINT uq_stripe_release_intents_payment UNIQUE (payment_id),
     CONSTRAINT ck_stripe_release_intents_kind CHECK (kind IN ('TRANSFER', 'LEGACY_CAPTURE')),
-    CONSTRAINT ck_stripe_release_intents_status CHECK (status IN ('PENDING', 'DONE', 'REVERTED')),
+    CONSTRAINT ck_stripe_release_intents_status CHECK (status IN ('PENDING', 'DONE', 'REVERTED', 'CANCELLED')),
     CONSTRAINT ck_stripe_release_intents_transfer CHECK (
         kind <> 'TRANSFER' OR (amount_minor IS NOT NULL AND amount_minor > 0
                               AND currency IS NOT NULL AND destination IS NOT NULL))

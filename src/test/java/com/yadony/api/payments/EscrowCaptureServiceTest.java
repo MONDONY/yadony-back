@@ -48,6 +48,7 @@ class EscrowCaptureServiceTest {
     void setUp() {
         service = new EscrowCaptureService(paymentRepository, auditService, alertEscalator,
                 org.springframework.transaction.support.TransactionOperations.withoutTransaction());
+        service.setInFlightRetryMillis(1);
         payment = new PaymentEntity();
         ReflectionTestUtils.setField(payment, "id", paymentId);
         payment.setNegotiationThreadId(UUID.randomUUID());
@@ -270,5 +271,58 @@ class EscrowCaptureServiceTest {
         UUID unknown = UUID.randomUUID();
         when(paymentRepository.findById(unknown)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.ensureCaptured(unknown, "delivery")).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void captureConcurrente_erreurMaisPiCapture_poursuitSansAlerte() throws Exception {
+        // Deux ensureCaptured simultanés (même clé) : le second reçoit une erreur d'idempotence
+        // pendant que le premier capture. Relu, le PaymentIntent est capturé : pas un échec.
+        PaymentIntent authorized = pi("requires_capture", 6450L, 6450L);
+        when(authorized.capture(any(PaymentIntentCaptureParams.class), any(RequestOptions.class)))
+                .thenThrow(new com.stripe.exception.IdempotencyException("in progress", "req", null, 409));
+        PaymentIntent captured = pi("succeeded", 6450L, 0L);
+
+        EscrowCaptureService.Outcome outcome;
+        try (MockedStatic<PaymentIntent> mocked = mockStatic(PaymentIntent.class)) {
+            mocked.when(() -> PaymentIntent.retrieve(eq("pi_nego"), any(PaymentIntentRetrieveParams.class), isNull()))
+                    .thenReturn(authorized, captured);
+            outcome = service.ensureCaptured(paymentId, "delivery");
+        }
+        assertThat(outcome.capturedNow()).isFalse();
+        assertThat(outcome.chargeId()).isEqualTo("ch_nego");
+        verify(paymentRepository).markCapturedAt(eq(paymentId), any());
+        verify(alertEscalator, never()).raiseOnce(anyString(), anyString(), anyMap());
+        verify(alertEscalator).resolveOpen("ESCROW_CAPTURE_FAILED_" + paymentId);
+    }
+
+    @Test
+    void echecDeCapture_paiementSortiDuSequestre_pasDAlerte() throws Exception {
+        PaymentIntent authorized = pi("requires_capture", 6450L, 6450L);
+        when(authorized.capture(any(PaymentIntentCaptureParams.class), any(RequestOptions.class)))
+                .thenThrow(new InvalidRequestException("canceled", null, "req", null, 400, null));
+        PaymentEntity refunded = new PaymentEntity();
+        refunded.setStatus(PaymentStatus.REFUNDED);
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(payment), Optional.of(refunded));
+
+        try (MockedStatic<PaymentIntent> mocked = mockStatic(PaymentIntent.class)) {
+            stubRetrieve(mocked, authorized);
+            assertThatThrownBy(() -> service.ensureCaptured(paymentId, "delivery"))
+                    .isInstanceOf(EscrowCaptureService.EscrowCaptureException.class);
+        }
+        verify(alertEscalator, never()).raiseOnce(anyString(), anyString(), anyMap());
+    }
+
+    @Test
+    void echecDeCapture_relectureStripeImpossible_alerteSiToujoursEnSequestre() throws Exception {
+        PaymentIntent authorized = pi("requires_capture", 6450L, 6450L);
+        when(authorized.capture(any(PaymentIntentCaptureParams.class), any(RequestOptions.class)))
+                .thenThrow(new com.stripe.exception.ApiConnectionException("reset"));
+        try (MockedStatic<PaymentIntent> mocked = mockStatic(PaymentIntent.class)) {
+            mocked.when(() -> PaymentIntent.retrieve(eq("pi_nego"), any(PaymentIntentRetrieveParams.class), isNull()))
+                    .thenReturn(authorized).thenThrow(new com.stripe.exception.ApiConnectionException("down"));
+            assertThatThrownBy(() -> service.ensureCaptured(paymentId, "delivery"))
+                    .isInstanceOf(EscrowCaptureService.EscrowCaptureException.class);
+        }
+        verify(alertEscalator).raiseOnce(eq("ESCROW_CAPTURE_FAILED_" + paymentId), anyString(), anyMap());
     }
 }

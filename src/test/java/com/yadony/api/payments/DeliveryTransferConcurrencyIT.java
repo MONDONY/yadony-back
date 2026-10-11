@@ -166,7 +166,7 @@ class DeliveryTransferConcurrencyIT {
         } finally {
             pool.shutdownNow();
         }
-        assertThat(transfers).containsExactly("transfer-" + payment.getId());
+        assertThat(transfers).containsExactly("transfer-" + payment.getId() + "-r1");
         verify(lookup, times(1)).findExistingTransfer(any(), anyString(), any());
         PaymentEntity after = paymentRepository.findById(payment.getId()).orElseThrow();
         assertThat(after.getStatus()).isEqualTo(PaymentStatus.RELEASED);

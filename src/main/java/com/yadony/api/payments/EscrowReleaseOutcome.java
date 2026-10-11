@@ -38,6 +38,11 @@ public enum EscrowReleaseOutcome {
      * l'appel Stripe : aucun Transfer, claim annulé, alerte RELEASE_BLOCKED.
      */
     BLOCKED_BEFORE_TRANSFER(false, "Colis livré mais une garde est apparue avant le versement : rien n'est parti, à trancher"),
+    /**
+     * Le versement est déjà traité par un autre traitement (finalisé ou en cours : bail détenu
+     * ailleurs). Ce n'est pas une confirmation de versement par CE traitement.
+     */
+    RELEASE_IN_PROGRESS(false, "Versement déjà pris en charge par un autre traitement"),
     /** Colis payé en espèces : pas de séquestre carte. */
     CASH(false, "Colis payé en espèces : pas de séquestre"),
     /** Aucun paiement trouvé pour ce colis. */

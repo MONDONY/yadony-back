@@ -387,7 +387,7 @@ class DeliveryEventListenerTest {
 
             assertThat(captor.getValue().getAmount()).isEqualTo(2640L);
             // Même clé que la livraison : jamais deux Transfers pour le même paiement.
-            assertThat(optsCaptor.getValue().getIdempotencyKey()).isEqualTo("transfer-" + p.getId());
+            assertThat(optsCaptor.getValue().getIdempotencyKey()).isEqualTo("transfer-" + p.getId() + "-r1");
         }
         verify(auditService).log(eq("PAYMENT"), any(), eq("ESCROW_RELEASED_UNCLAIMED"), any(), any());
         verify(eventPublisher).publishEvent(any(PaymentReleasedEvent.class));

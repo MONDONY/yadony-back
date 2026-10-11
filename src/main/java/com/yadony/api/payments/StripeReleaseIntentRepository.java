@@ -27,7 +27,8 @@ public interface StripeReleaseIntentRepository extends JpaRepository<StripeRelea
      */
     @Modifying
     @Query("""
-            UPDATE StripeReleaseIntentEntity i SET i.leaseUntil = :until, i.attempts = i.attempts + 1
+            UPDATE StripeReleaseIntentEntity i SET i.leaseUntil = :until, i.attempts = i.attempts + 1,
+                   i.lastError = NULL
              WHERE i.id = :id AND i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.PENDING
                AND i.leaseUntil <= :now
             """)
@@ -58,6 +59,36 @@ public interface StripeReleaseIntentRepository extends JpaRepository<StripeRelea
              WHERE i.id = :id AND i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.PENDING
             """)
     int recordRetry(@Param("id") UUID id, @Param("error") String error, @Param("retryAt") LocalDateTime retryAt);
+
+    /**
+     * Bail pris par un super-admin pour annuler la réservation : seulement si aucun appel n'est en
+     * vol, c'est-à-dire bail échu, ou réservation en attente de reprise après un échec ({@code
+     * last_error} posé ; un traitement en cours l'efface en prenant son bail). 1 si pris.
+     */
+    @Modifying
+    @Query("""
+            UPDATE StripeReleaseIntentEntity i SET i.leaseUntil = :until, i.lastError = NULL
+             WHERE i.id = :id AND i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.PENDING
+               AND (i.leaseUntil <= :now OR i.lastError IS NOT NULL)
+            """)
+    int claimForAdmin(@Param("id") UUID id, @Param("now") LocalDateTime now, @Param("until") LocalDateTime until);
+
+    /** Annulation admin après recherche Stripe vide : 1 si ce traitement l'annule. */
+    @Modifying
+    @Query("""
+            UPDATE StripeReleaseIntentEntity i SET i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.CANCELLED,
+                   i.lastError = :reason
+             WHERE i.id = :id AND i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.PENDING
+            """)
+    int markCancelled(@Param("id") UUID id, @Param("reason") String reason);
+
+    /** Recherche Stripe impossible pendant l'annulation admin : bail rendu, rien d'autre ne change. */
+    @Modifying
+    @Query("""
+            UPDATE StripeReleaseIntentEntity i SET i.leaseUntil = :now, i.lastError = :error
+             WHERE i.id = :id AND i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.PENDING
+            """)
+    int releaseAdminLease(@Param("id") UUID id, @Param("now") LocalDateTime now, @Param("error") String error);
 
     /** Versements en attente dont le bail est échu, les plus anciens d'abord. */
     @Query("""

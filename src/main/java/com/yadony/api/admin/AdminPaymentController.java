@@ -136,6 +136,7 @@ public class AdminPaymentController {
     private final AdminPaymentTimeline timeline;
     private final EscrowCaptureService escrowCapture;
     private final StripeReleaseExecutor releaseExecutor;
+    private final com.yadony.api.payments.ReleaseNetCalculator netCalculator;
     private final com.yadony.api.disputes.DisputeRepository disputeRepository;
     /** Transactions courtes de la libération forcée : jamais de transaction autour d'un appel Stripe. */
     private final TransactionTemplate shortTransaction;
@@ -159,7 +160,9 @@ public class AdminPaymentController {
                                   AdminPaymentTimeline timeline,
                                   EscrowCaptureService escrowCapture,
                                   StripeReleaseExecutor releaseExecutor,
-                                  com.yadony.api.disputes.DisputeRepository disputeRepository) {
+                                  com.yadony.api.disputes.DisputeRepository disputeRepository,
+                                  com.yadony.api.payments.ReleaseNetCalculator netCalculator) {
+        this.netCalculator = netCalculator;
         this.escrowCapture = escrowCapture;
         this.releaseExecutor = releaseExecutor;
         this.disputeRepository = disputeRepository;
@@ -341,7 +344,10 @@ public class AdminPaymentController {
 
         StripeReleaseExecutor.Execution execution = releaseExecutor.execute(claim.intent(), claim.payment());
         switch (execution.result()) {
-            case RELEASED, REALIGNED, NOT_OWNED -> {
+            case NOT_OWNED -> throw new YadonyBusinessException(HttpStatus.CONFLICT, "release-in-progress",
+                    "Release In Progress",
+                    "Ce versement est déjà pris en charge par un autre traitement : rechargez la fiche avant toute action");
+            case RELEASED, REALIGNED -> {
                 // Resolve any open ESCROW_J48_TIMEOUT alerts for this payment
                 resolveRelatedAlerts(id);
                 log.info("Admin force-released escrow for payment {} (bid={}) : {}", id, plan.bidId(),
@@ -538,8 +544,9 @@ public class AdminPaymentController {
         // Separate charges & transfers. Devise du paiement, jamais « eur » en dur : un séquestre
         // carte existe aussi en USD, CAD, GBP ou CHF.
         String chargeId = capturedChargeId != null ? capturedChargeId : payment.getStripeChargeId();
-        BigDecimal net = payment.getAmount().subtract(payment.getCommissionAmount());
-        CurrencyAmount localNet = CurrencyAmount.of(net, SupportedCurrency.fromCodeOrDefault(payment.getCurrency()));
+        // Même net que la livraison (bon de parrainage compris, consommation idempotente par colis) :
+        // toute réservation de ce paiement porte les mêmes paramètres de Transfer.
+        CurrencyAmount localNet = netCalculator.cardNet(payment, plan.travelerId(), plan.bidId());
         // Même clé que la livraison (transfer-<id>) : jamais un second Transfer pendant la durée de
         // vie de la clé ; au-delà, la recherche Stripe d'un Transfer existant prend le relais.
         return new ForceReleaseClaim(false, releaseExecutor.reserve(new StripeReleaseExecutor.ReleaseSpec(

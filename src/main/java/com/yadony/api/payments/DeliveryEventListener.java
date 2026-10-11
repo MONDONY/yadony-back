@@ -63,7 +63,6 @@ public class DeliveryEventListener {
     private final AuditService auditService;
     private final BidRepository bidRepository;
     private final AdminAlertService adminAlert;
-    private final com.yadony.api.voucher.CommissionVoucherService voucherService;
 
     /**
      * Injection par CONSTRUCTEUR, jamais par champ — une dépendance
@@ -83,6 +82,8 @@ public class DeliveryEventListener {
     private final com.yadony.api.disputes.DisputeRepository disputeRepository;
     /** Transactions courtes (claim, retenue) : jamais de transaction autour d'un appel Stripe. */
     private final TransactionOperations transaction;
+    /** Net versé (bon de parrainage compris) : même calcul que la libération forcée admin. */
+    private final ReleaseNetCalculator netCalculator;
 
     @Autowired
     public DeliveryEventListener(PaymentRepository paymentRepository,
@@ -121,7 +122,6 @@ public class DeliveryEventListener {
         this.auditService = auditService;
         this.bidRepository = bidRepository;
         this.adminAlert = adminAlert;
-        this.voucherService = voucherService;
         this.payoutInitiator = payoutInitiator;
         this.holdPolicy = holdPolicy;
         this.alertEscalator = alertEscalator;
@@ -129,6 +129,7 @@ public class DeliveryEventListener {
         this.releaseExecutor = releaseExecutor;
         this.disputeRepository = disputeRepository;
         this.transaction = transaction;
+        this.netCalculator = new ReleaseNetCalculator(voucherService);
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -352,7 +353,12 @@ public class DeliveryEventListener {
         // finalisation conditionnelle (audit, PaymentReleasedEvent). Aucune connexion tenue pendant l'appel.
         StripeReleaseExecutor.Execution execution = releaseExecutor.execute(phase1.intent(), payment);
         switch (execution.result()) {
-            case RELEASED, REALIGNED, NOT_OWNED -> {
+            case NOT_OWNED -> {
+                // Finalisé ou en cours ailleurs : état explicite, jamais compté comme « versé ici ».
+                log.info("Escrow release for payment {} (bid={}) handled elsewhere", payment.getId(), event.getBidId());
+                return EscrowReleaseOutcome.RELEASE_IN_PROGRESS;
+            }
+            case RELEASED, REALIGNED -> {
                 log.info("Escrow released for payment {} (bid={}, legacy={}) : {}",
                         payment.getId(), event.getBidId(), payment.isLegacyDestinationCharge(), execution.result());
                 return EscrowReleaseOutcome.RELEASED;
@@ -513,7 +519,8 @@ public class DeliveryEventListener {
      */
     private void releaseMobileMoney(PaymentEntity payment, ReleaseTrigger event) {
         BigDecimal net = payment.getAmount().subtract(payment.getCommissionAmount());
-        net = net.add(travelerVoucherTopUp(event.getTravelerId(), event.getBidId(), payment.getCommissionAmount()));
+        net = net.add(netCalculator.travelerVoucherTopUp(event.getTravelerId(), event.getBidId(),
+                payment.getCommissionAmount()));
         net = com.yadony.api.payments.pawapay.PawapayAmounts.round(net, payment.getCurrency());
         payoutInitiator.release(payment, event.getBidId(), event.getTravelerId(), net, event.source());
         log.info("Escrow released (mobile money) for payment {} (bid={})", payment.getId(), event.getBidId());
@@ -536,21 +543,13 @@ public class DeliveryEventListener {
                     "Traveler " + traveler.getId() + " has no Stripe Connect account");
         }
 
-        // TODO Q6 (spec bid-checkout-payment-first): si Stripe support révèle des frais
-        // de Transfer non-nuls pour les comptes Connect en zone CFA, ajuster le calcul :
-        //     net = total - commission - transferFees
-        // Pour l'instant on assume Transfers EUR gratuits (zone SEPA / hypothèse MVP).
-        BigDecimal net = payment.getAmount().subtract(payment.getCommissionAmount());
-        // Bon de parrainage du voyageur (lot 3) : majore le versement de la part de
-        // commission que le bon lui épargne. Le brut payé par l'expéditeur ne change
-        // pas — seul ce que yadony retient diminue. Best-effort : un souci côté bon ne
-        // doit jamais bloquer la libération de l'escrow.
-        net = net.add(travelerVoucherTopUp(event.getTravelerId(), event.getBidId(), payment.getCommissionAmount()));
-        SupportedCurrency currency = SupportedCurrency.fromCode(payment.getCurrency());
-        if (currency == null) {
-            currency = SupportedCurrency.EUR;
-        }
-        long netMinor = CurrencyAmount.of(net, currency).minor();
+        // TODO Q6 (spec bid-checkout-payment-first): frais de Transfer éventuels en zone CFA.
+        // Net unique (ReleaseNetCalculator) : même montant que la libération forcée admin, bon de
+        // parrainage du voyageur compris, pour que toute réservation du même paiement porte les
+        // mêmes paramètres de Transfer.
+        CurrencyAmount netAmount = netCalculator.cardNet(payment, event.getTravelerId(), event.getBidId());
+        long netMinor = netAmount.minor();
+        SupportedCurrency currency = netAmount.currency();
         return new StripeReleaseExecutor.ReleaseSpec(payment.getId(), StripeReleaseIntentEntity.Kind.TRANSFER,
                 netMinor, currency.code(), traveler.getStripeAccountId(), chargeId, event.source(), action,
                 event.getBidId(), event.getTravelerId(), event.getSenderId());
@@ -563,22 +562,5 @@ public class DeliveryEventListener {
                 com.yadony.api.disputes.DisputeTypes.ADMIN_PREFIX);
     }
 
-    /**
-     * Part de {@code commissionAmount} rendue au voyageur s'il détient un bon actif
-     * (consommé dans le même geste) — {@code commissionAmount × (1 − facteur)}, donc
-     * la moitié avec le facteur par défaut de 0,5. yadony perçoit alors exactement
-     * la moitié de la commission, jamais moins.
-     */
-    private BigDecimal travelerVoucherTopUp(java.util.UUID travelerId, java.util.UUID bidId,
-                                             BigDecimal commissionAmount) {
-        try {
-            return voucherService.consume(travelerId, bidId)
-                    .map(v -> commissionAmount.multiply(BigDecimal.ONE.subtract(v.getFactor()))
-                            .setScale(2, java.math.RoundingMode.HALF_UP))
-                    .orElse(BigDecimal.ZERO);
-        } catch (Exception ex) {
-            log.error("Échec consommation bon parrainage voyageur={} bid={}: {}", travelerId, bidId, ex.toString());
-            return BigDecimal.ZERO;
-        }
-    }
+
 }

@@ -215,7 +215,7 @@ class LateEscrowReleaseIT {
     private void assertReleasedOnce() {
         assertThat(stripeCalls).containsExactly(
                 "capture:capture-" + payment.getId(),
-                "transfer:4762:acct_traveler:transfer-" + payment.getId());
+                "transfer:4762:acct_traveler:transfer-" + payment.getId() + "-r1");
         PaymentEntity after = reload();
         assertThat(after.getStatus()).isEqualTo(PaymentStatus.RELEASED);
         assertThat(after.getCapturedAt()).isNotNull();
@@ -356,7 +356,7 @@ class LateEscrowReleaseIT {
         // Le job reprend le séquestre livré non versé (colis livré depuis plus de 15 min).
         withStripe(job(Duration.ofMinutes(30))::run, intent("succeeded"));
 
-        assertThat(stripeCalls).containsExactly("transfer:4762:acct_traveler:transfer-" + payment.getId());
+        assertThat(stripeCalls).containsExactly("transfer:4762:acct_traveler:transfer-" + payment.getId() + "-r2");
         assertThat(reload().getStatus()).isEqualTo(PaymentStatus.RELEASED);
         verify(alertEscalator).resolveOpen("LATE_RELEASE_FAILED_" + payment.getId());
     }

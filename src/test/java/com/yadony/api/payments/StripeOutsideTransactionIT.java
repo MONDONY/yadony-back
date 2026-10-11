@@ -142,7 +142,7 @@ class StripeOutsideTransactionIT {
                 mock(MobileMoneyPayoutInitiator.class), mock(PawapayOperationService.class),
                 mock(PawapaySubmissionService.class), mock(RefundProcessor.class), entityManager, transactionManager,
                 mock(PayoutHoldPolicy.class), mock(AdminPaymentInsights.class), mock(AdminPaymentTimeline.class),
-                escrowCapture, executor, disputeRepository);
+                escrowCapture, executor, disputeRepository, new ReleaseNetCalculator(null));
 
         UserEntity traveler = new UserEntity();
         traveler.setStripeAccountId("acct_traveler");
@@ -296,7 +296,9 @@ class StripeOutsideTransactionIT {
             expireLease(s.paymentId);
             stripe.onTransferCall = () -> { };
             Future<Integer> resumed = pool.submit(() -> stripe.onThisThread(() -> job.run()));
-            assertThat(delivery.get(30, TimeUnit.SECONDS)).isEqualTo(EscrowReleaseOutcome.RELEASED);
+            // Celui qui finalise en second n'est pas compté comme « versé ici » (état explicite).
+            assertThat(delivery.get(30, TimeUnit.SECONDS))
+                    .isIn(EscrowReleaseOutcome.RELEASED, EscrowReleaseOutcome.RELEASE_IN_PROGRESS);
             resumed.get(30, TimeUnit.SECONDS);
         } finally {
             pool.shutdownNow();
@@ -427,26 +429,121 @@ class StripeOutsideTransactionIT {
     }
 
     @Test
-    @DisplayName("Garde apparue lors d'une reprise : jamais de retour en séquestre, alerte pour décision admin")
-    void guardDuringResume_staysReservedNeverEscrow() throws Exception {
+    @DisplayName("Colis annulé entre le claim et la reprise : recherche vide, séquestre rendu, remboursable")
+    void bidCancelledBeforeResume_escrowRestoredAndRefundable() throws Exception {
         Seed s = seed(BidStatus.COMPLETED, true);
-        stripe.loseNextTransferResponse = true;
+        stripe.failNextTransferBeforeCreate = true;   // timeout réseau, rien n'est créé chez Stripe
         assertThat(stripe.onThisThread(() -> release(s))).isEqualTo(EscrowReleaseOutcome.RELEASE_PENDING);
-        // Le Transfer est parti chez Stripe mais la recherche ne le voit pas encore (cohérence à terme),
-        // et un litige bancaire arrive : la base ne revient pas en séquestre.
-        org.mockito.Mockito.doReturn(Optional.empty()).when(lookup).findExistingTransfer(any(), anyString(), any());
-        jdbc.update("UPDATE payments SET disputed = true WHERE id = ?", s.paymentId);
+        jdbc.update("UPDATE bids SET status = 'CANCELLED' WHERE id = ?", s.bidId);
         expireLease(s.paymentId);
 
         assertThat(stripe.onThisThread(() -> job.run())).isEqualTo(1);
 
-        assertThat(stripe.transfersCreated()).isEqualTo(1);
-        assertThat(paymentRepository.findById(s.paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.RELEASED);
+        assertThat(stripe.transfersCreated()).isZero();
+        assertThat(paymentRepository.findById(s.paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.ESCROW);
         assertThat(intentRepository.findByPaymentId(s.paymentId).orElseThrow().getStatus())
+                .isEqualTo(StripeReleaseIntentEntity.Status.REVERTED);
+        // Le paiement est de nouveau remboursable.
+        assertThat(stripe.onThisThread(() -> refundProcessor.processRefund(s.paymentId, "TEST_REFUND", null, Map.of())))
+                .isTrue();
+        assertThat(stripe.refunds).hasSize(1);
+        assertThat(paymentRepository.findById(s.paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.REFUNDED);
+    }
+
+    @Test
+    @DisplayName("Compte Connect rejeté après un timeout : recherche vide puis 4xx, séquestre rendu, remboursable")
+    void connectRejectedAfterTimeout_escrowRestoredAndRefundable() throws Exception {
+        Seed s = seed(BidStatus.COMPLETED, true);
+        stripe.failNextTransferBeforeCreate = true;
+        assertThat(stripe.onThisThread(() -> release(s))).isEqualTo(EscrowReleaseOutcome.RELEASE_PENDING);
+        stripe.refuseTransfers = true;                // account rejected
+        expireLease(s.paymentId);
+
+        assertThat(stripe.onThisThread(() -> job.run())).isEqualTo(1);
+
+        assertThat(stripe.transfersCreated()).isZero();
+        assertThat(paymentRepository.findById(s.paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.ESCROW);
+        assertThat(stripe.onThisThread(() -> refundProcessor.processRefund(s.paymentId, "TEST_REFUND", null, Map.of())))
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("Annulation super-admin d'une réservation bloquée : aucun Transfer → ESCROW ; Transfer → réaligné ; recherche KO → rien")
+    void adminCancelReservation_threeOutcomes() throws Exception {
+        // 1. Aucun Transfer chez Stripe : séquestre rendu, réservation CANCELLED, remboursable.
+        Seed none = seed(BidStatus.COMPLETED, true);
+        stripe.failNextTransferBeforeCreate = true;
+        assertThat(stripe.onThisThread(() -> release(none))).isEqualTo(EscrowReleaseOutcome.RELEASE_PENDING);
+        assertThat(executor.cancelReservation(none.paymentId, UUID.randomUUID(), "Compte Connect rejeté").result())
+                .isEqualTo(StripeReleaseExecutor.CancelResult.CANCELLED);
+        assertThat(paymentRepository.findById(none.paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.ESCROW);
+        assertThat(intentRepository.findByPaymentId(none.paymentId).orElseThrow().getStatus())
+                .isEqualTo(StripeReleaseIntentEntity.Status.CANCELLED);
+        assertThat(auditCount(none.paymentId, "ESCROW_RELEASE_CANCELLED_BY_ADMIN")).isEqualTo(1);
+        // Nouvelle tentative : révision suivante, nouvelle clé.
+        assertThat(stripe.onThisThread(() -> release(none))).isEqualTo(EscrowReleaseOutcome.RELEASED);
+        assertThat(stripe.transfersByKey).containsKey("transfer-" + none.paymentId + "-r2");
+
+        // 2. Transfer parti malgré la réponse perdue : réaligné, aucun retour en séquestre.
+        Seed sent = seed(BidStatus.COMPLETED, true);
+        stripe.loseNextTransferResponse = true;
+        assertThat(stripe.onThisThread(() -> release(sent))).isEqualTo(EscrowReleaseOutcome.RELEASE_PENDING);
+        StripeReleaseExecutor.Cancellation realigned =
+                executor.cancelReservation(sent.paymentId, UUID.randomUUID(), "Vérification admin");
+        assertThat(realigned.result()).isEqualTo(StripeReleaseExecutor.CancelResult.REALIGNED);
+        assertThat(realigned.transferId()).isEqualTo(stripe.transferOf(sent.paymentId));
+        assertThat(paymentRepository.findById(sent.paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.RELEASED);
+
+        // 3. Recherche Stripe impossible : rien ne change.
+        Seed down = seed(BidStatus.COMPLETED, true);
+        stripe.failNextTransferBeforeCreate = true;
+        assertThat(stripe.onThisThread(() -> release(down))).isEqualTo(EscrowReleaseOutcome.RELEASE_PENDING);
+        org.mockito.Mockito.doThrow(new ApiConnectionException("timeout"))
+                .when(lookup).findExistingTransfer(org.mockito.ArgumentMatchers.eq(down.paymentId), anyString(), any());
+        assertThat(executor.cancelReservation(down.paymentId, UUID.randomUUID(), "Vérification admin").result())
+                .isEqualTo(StripeReleaseExecutor.CancelResult.LOOKUP_FAILED);
+        assertThat(paymentRepository.findById(down.paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.RELEASED);
+        assertThat(intentRepository.findByPaymentId(down.paymentId).orElseThrow().getStatus())
                 .isEqualTo(StripeReleaseIntentEntity.Status.PENDING);
-        assertThat(refundProcessor.processRefund(s.paymentId, "TEST_REFUND", null, Map.of())).isFalse();
-        verify(alertEscalator).raiseOnce(org.mockito.ArgumentMatchers.eq("RELEASE_PENDING_" + s.paymentId),
-                anyString(), org.mockito.ArgumentMatchers.anyMap());
+    }
+
+    @Test
+    @DisplayName("Annulation super-admin pendant un appel en vol : refusée")
+    void adminCancelWhileInFlight_refused() throws Exception {
+        stripe.slowTransfer = true;
+        Seed s = seed(BidStatus.COMPLETED, true);
+        CountDownLatch inStripe = new CountDownLatch(1);
+        stripe.onTransferCall = inStripe::countDown;
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            Future<EscrowReleaseOutcome> delivery = pool.submit(() -> stripe.onThisThread(() -> release(s)));
+            assertThat(inStripe.await(10, TimeUnit.SECONDS)).isTrue();
+            assertThat(executor.cancelReservation(s.paymentId, UUID.randomUUID(), "Vérification admin").result())
+                    .isEqualTo(StripeReleaseExecutor.CancelResult.IN_PROGRESS);
+            assertThat(delivery.get(30, TimeUnit.SECONDS)).isEqualTo(EscrowReleaseOutcome.RELEASED);
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(stripe.transfersCreated()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Deux livraisons simultanées d'un séquestre non capturé : une capture, aucune fausse alerte, un versement")
+    void concurrentCaptures_noFalseAlert_releaseNotAbandoned() throws Exception {
+        stripe.slowCapture = true;
+        Seed s = seed(BidStatus.COMPLETED, false);
+        List<EscrowReleaseOutcome> outcomes = concurrently(List.of(
+                () -> stripe.onThisThread(() -> release(s)),
+                () -> stripe.onThisThread(() -> release(s))));
+
+        assertThat(stripe.captures).hasSize(1);
+        assertThat(stripe.transfersCreated()).isEqualTo(1);
+        assertThat(outcomes).contains(EscrowReleaseOutcome.RELEASED)
+                .doesNotContain(EscrowReleaseOutcome.CAPTURE_FAILED);
+        org.mockito.Mockito.verify(alertEscalator, org.mockito.Mockito.never()).raiseOnce(
+                org.mockito.ArgumentMatchers.eq("ESCROW_CAPTURE_FAILED_" + s.paymentId), anyString(),
+                org.mockito.ArgumentMatchers.anyMap());
+        assertThat(paymentRepository.findById(s.paymentId).orElseThrow().getCapturedAt()).isNotNull();
     }
 
     @Test
@@ -583,6 +680,8 @@ class StripeOutsideTransactionIT {
         volatile boolean slowTransfer;
         volatile boolean loseNextTransferResponse;
         volatile boolean refuseTransfers;
+        volatile boolean failNextTransferBeforeCreate;
+        final java.util.Set<String> capturing = ConcurrentHashMap.newKeySet();
         volatile Runnable onTransferCall = () -> { };
         volatile Runnable onCapture = () -> { };
 
@@ -609,6 +708,10 @@ class StripeOutsideTransactionIT {
                 tr.when(() -> Transfer.create(any(TransferCreateParams.class), any(RequestOptions.class)))
                         .thenAnswer(inv -> {
                             onTransferCall.run();
+                            if (failNextTransferBeforeCreate) {
+                                failNextTransferBeforeCreate = false;
+                                throw new ApiConnectionException("connect timed out");   // rien de créé
+                            }
                             if (slowTransfer) {
                                 slow();
                             }
@@ -651,11 +754,21 @@ class StripeOutsideTransactionIT {
             when(pi.getCurrency()).thenReturn("eur");
             when(pi.getLatestCharge()).thenReturn("ch_x");
             when(pi.capture(any(PaymentIntentCaptureParams.class), any(RequestOptions.class))).thenAnswer(inv -> {
-                if (slowCapture) {
-                    slow();
+                // Même clé en cours de traitement chez Stripe : erreur d'idempotence (409).
+                if (!capturing.add(piId)) {
+                    throw new com.stripe.exception.IdempotencyException("request in progress", "req", null, 409);
                 }
-                onCapture.run();
-                captures.add(piId);
+                try {
+                    if (slowCapture) {
+                        slow();
+                    }
+                    onCapture.run();
+                    if (!captures.contains(piId)) {
+                        captures.add(piId);
+                    }
+                } finally {
+                    capturing.remove(piId);
+                }
                 return pi;
             });
             return pi;

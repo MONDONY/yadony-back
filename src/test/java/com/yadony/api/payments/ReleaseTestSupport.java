@@ -38,6 +38,9 @@ public final class ReleaseTestSupport {
         lenient().when(repository.markReverted(any(), any())).thenReturn(1);
         lenient().when(repository.recordRetry(any(), any(), any())).thenReturn(1);
         lenient().when(repository.claimLease(any(), any(), any())).thenReturn(1);
+        lenient().when(repository.claimForAdmin(any(), any(), any())).thenReturn(1);
+        lenient().when(repository.markCancelled(any(), any())).thenReturn(1);
+        lenient().when(repository.releaseAdminLease(any(), any(), any())).thenReturn(1);
         return repository;
     }
 

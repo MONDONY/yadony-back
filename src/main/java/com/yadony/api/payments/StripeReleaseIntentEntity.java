@@ -30,7 +30,7 @@ public class StripeReleaseIntentEntity extends BaseEntity {
 
     public enum Kind { TRANSFER, LEGACY_CAPTURE }
 
-    public enum Status { PENDING, DONE, REVERTED }
+    public enum Status { PENDING, DONE, REVERTED, CANCELLED }
 
     @Column(name = "payment_id", nullable = false, unique = true, updatable = false)
     private UUID paymentId;
@@ -82,6 +82,10 @@ public class StripeReleaseIntentEntity extends BaseEntity {
     @Column(name = "overridden_guards", length = 64)
     private String overriddenGuards;
 
+    /** Révision : clé d'idempotence {@code transfer-<paymentId>-r<revision>}. */
+    @Column(name = "revision", nullable = false)
+    private int revision = 1;
+
     @Column(name = "attempts", nullable = false)
     private int attempts;
 
@@ -125,6 +129,8 @@ public class StripeReleaseIntentEntity extends BaseEntity {
     public boolean overrides(String guard) {
         return overriddenGuards != null && java.util.Arrays.asList(overriddenGuards.split(",")).contains(guard);
     }
+    public int getRevision() { return revision; }
+    public void setRevision(int revision) { this.revision = revision; }
     public int getAttempts() { return attempts; }
     public void setAttempts(int attempts) { this.attempts = attempts; }
     public LocalDateTime getLeaseUntil() { return leaseUntil; }
