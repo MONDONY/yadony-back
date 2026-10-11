@@ -70,9 +70,17 @@ public class StripeReleaseIntentEntity extends BaseEntity {
     @Column(name = "sender_id")
     private UUID senderId;
 
-    /** Dérogation admin motivée (litige bancaire, voyageur gelé) : ces deux gardes ne bloquent pas. */
-    @Column(name = "guards_overridden", nullable = false)
-    private boolean guardsOverridden;
+    /** Garde levée par une dérogation admin, une par une (DISPUTED, BENEFICIARY_HELD). */
+    public static final String GUARD_DISPUTED = "DISPUTED";
+    public static final String GUARD_BENEFICIARY_HELD = "BENEFICIARY_HELD";
+
+    /**
+     * Gardes levées par une dérogation admin motivée et auditée (liste séparée par des virgules),
+     * {@code null} si aucune. Seules {@link #GUARD_DISPUTED} et {@link #GUARD_BENEFICIARY_HELD}
+     * peuvent l'être ; litige admin, colis annulé ou remboursé et statut du paiement, jamais.
+     */
+    @Column(name = "overridden_guards", length = 64)
+    private String overriddenGuards;
 
     @Column(name = "attempts", nullable = false)
     private int attempts;
@@ -110,8 +118,13 @@ public class StripeReleaseIntentEntity extends BaseEntity {
     public void setTravelerId(UUID travelerId) { this.travelerId = travelerId; }
     public UUID getSenderId() { return senderId; }
     public void setSenderId(UUID senderId) { this.senderId = senderId; }
-    public boolean isGuardsOverridden() { return guardsOverridden; }
-    public void setGuardsOverridden(boolean guardsOverridden) { this.guardsOverridden = guardsOverridden; }
+    public String getOverriddenGuards() { return overriddenGuards; }
+    public void setOverriddenGuards(String overriddenGuards) { this.overriddenGuards = overriddenGuards; }
+
+    /** Vrai si CETTE garde, et elle seule, a été levée par la dérogation. */
+    public boolean overrides(String guard) {
+        return overriddenGuards != null && java.util.Arrays.asList(overriddenGuards.split(",")).contains(guard);
+    }
     public int getAttempts() { return attempts; }
     public void setAttempts(int attempts) { this.attempts = attempts; }
     public LocalDateTime getLeaseUntil() { return leaseUntil; }

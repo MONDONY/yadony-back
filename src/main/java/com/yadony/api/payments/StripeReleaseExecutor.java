@@ -102,12 +102,12 @@ public class StripeReleaseExecutor {
     /** Ce que la réservation fige pour rejouer l'appel Stripe à l'identique. */
     public record ReleaseSpec(UUID paymentId, StripeReleaseIntentEntity.Kind kind, Long amountMinor, String currency,
                               String destination, String sourceTransaction, String source, String auditAction,
-                              UUID bidId, UUID travelerId, UUID senderId, boolean guardsOverridden) {
+                              UUID bidId, UUID travelerId, UUID senderId, java.util.Set<String> overriddenGuards) {
         public ReleaseSpec(UUID paymentId, StripeReleaseIntentEntity.Kind kind, Long amountMinor, String currency,
                            String destination, String sourceTransaction, String source, String auditAction,
                            UUID bidId, UUID travelerId, UUID senderId) {
             this(paymentId, kind, amountMinor, currency, destination, sourceTransaction, source, auditAction,
-                    bidId, travelerId, senderId, false);
+                    bidId, travelerId, senderId, java.util.Set.of());
         }
     }
 
@@ -184,7 +184,7 @@ public class StripeReleaseExecutor {
         intent.setBidId(spec.bidId());
         intent.setTravelerId(spec.travelerId());
         intent.setSenderId(spec.senderId());
-        intent.setGuardsOverridden(spec.guardsOverridden());
+        intent.setOverriddenGuards(overriddenGuards(spec.overriddenGuards()));
         intent.setAttempts(1);
         intent.setLeaseUntil(now.plus(LEASE));
         intent.setLastError(null);
@@ -295,6 +295,17 @@ public class StripeReleaseExecutor {
                     RequestOptions.builder().setIdempotencyKey("capture-" + intent.getPaymentId()).build());
         }
         return finalizeDone(intent, payment, payment.getStripePaymentIntentId(), false);
+    }
+
+    /** Seules les gardes levables par dérogation sont retenues, dans un ordre stable. */
+    static String overriddenGuards(java.util.Set<String> guards) {
+        if (guards == null || guards.isEmpty()) {
+            return null;
+        }
+        String kept = java.util.stream.Stream.of(StripeReleaseIntentEntity.GUARD_DISPUTED,
+                        StripeReleaseIntentEntity.GUARD_BENEFICIARY_HELD)
+                .filter(guards::contains).collect(java.util.stream.Collectors.joining(","));
+        return kept.isEmpty() ? null : kept;
     }
 
     static TransferCreateParams transferParams(StripeReleaseIntentEntity intent) {

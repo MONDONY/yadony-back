@@ -72,13 +72,13 @@ public class StripeReleaseGuard implements StripeReleaseExecutor.ReleaseGuard {
                 bidId, DisputeTypes.STATUS_OPEN, DisputeTypes.ADMIN_PREFIX)) {
             return "litige admin ouvert";
         }
-        if (!intent.isGuardsOverridden()) {
-            if (payment.isDisputed()) {
-                return "litige bancaire ouvert";
-            }
-            if (intent.getTravelerId() != null && holdPolicy.isHeld(intent.getTravelerId())) {
-                return "versements du voyageur gelés";
-            }
+        // Dérogation admin : garde par garde, jamais globale.
+        if (payment.isDisputed() && !intent.overrides(StripeReleaseIntentEntity.GUARD_DISPUTED)) {
+            return "litige bancaire ouvert";
+        }
+        if (intent.getTravelerId() != null && !intent.overrides(StripeReleaseIntentEntity.GUARD_BENEFICIARY_HELD)
+                && holdPolicy.isHeld(intent.getTravelerId())) {
+            return "versements du voyageur gelés";
         }
         return null;
     }

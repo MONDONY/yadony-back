@@ -378,7 +378,11 @@ public class AdminPaymentController {
 
     /** Ce que les vérifications de la libération forcée transmettent aux étapes suivantes. */
     private record ForceReleasePlan(UUID bidId, UUID travelerId, UUID senderId, String stripeAccountId,
-                                    PaymentRail rail, boolean legacy, boolean holdOverridden, String piId) {}
+                                    PaymentRail rail, boolean legacy, Set<String> overriddenGuards, String piId) {
+        boolean holdOverridden() {
+            return !overriddenGuards.isEmpty();
+        }
+    }
 
     /** Issue du claim : payout mobile money soumis, ou versement carte réservé à exécuter. */
     private record ForceReleaseClaim(boolean mobileMoneyDone, StripeReleaseIntentEntity intent, PaymentEntity payment) {}
@@ -430,7 +434,7 @@ public class AdminPaymentController {
         requireNoAdminDispute(bidId);
 
         // Bénéficiaire gelé ou paiement en litige : 409 sauf dérogation motivée, AVANT le claim.
-        boolean holdOverridden = guardPayout(payment, travelerId, request, "admin-force-release");
+        Set<String> overriddenGuards = overriddenBlockers(payment, travelerId, request, "admin-force-release");
 
         // Compte Connect désactivé ou refusé : Stripe refuserait le Transfer après le claim.
         if (payment.getRail() != PaymentRail.PAWAPAY && !payment.isLegacyDestinationCharge()) {
@@ -449,7 +453,7 @@ public class AdminPaymentController {
         }
         return new ForceReleasePlan(bidId, travelerId, bid != null ? bid.getSenderId() : null,
                 traveler != null ? traveler.getStripeAccountId() : null, payment.getRail(),
-                payment.isLegacyDestinationCharge(), holdOverridden, payment.getStripePaymentIntentId());
+                payment.isLegacyDestinationCharge(), overriddenGuards, payment.getStripePaymentIntentId());
     }
 
     /**
@@ -469,8 +473,12 @@ public class AdminPaymentController {
         // Gardes revérifiées sous verrou (colis verrouillé, paiement relu après) : litige bancaire et
         // voyageur gelé (sauf dérogation déjà auditée), compte Connect. Les lire avant la capture ne
         // suffit pas, elles ont pu changer pendant l'appel Stripe.
-        if (!plan.holdOverridden() && (payment.isDisputed()
-                || (plan.travelerId() != null && holdOf(plan.travelerId()).held()))) {
+        // Dérogation garde par garde : elle ne couvre que ce que l'admin a vu, motivé et fait auditer.
+        boolean disputedNow = payment.isDisputed()
+                && !plan.overriddenGuards().contains(StripeReleaseIntentEntity.GUARD_DISPUTED);
+        boolean heldNow = plan.travelerId() != null && holdOf(plan.travelerId()).held()
+                && !plan.overriddenGuards().contains(StripeReleaseIntentEntity.GUARD_BENEFICIARY_HELD);
+        if (disputedNow || heldNow) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "payout-guard-changed", "Payout Guard Changed",
                     "Paiement en litige ou voyageur gelé depuis la vérification : versement refusé sans dérogation");
         }
@@ -525,7 +533,7 @@ public class AdminPaymentController {
             return new ForceReleaseClaim(false, releaseExecutor.reserve(new StripeReleaseExecutor.ReleaseSpec(
                     id, StripeReleaseIntentEntity.Kind.LEGACY_CAPTURE, null, null, null, null,
                     "admin-force-release", "ESCROW_FORCE_RELEASED", plan.bidId(), plan.travelerId(),
-                    plan.senderId(), plan.holdOverridden())), payment);
+                    plan.senderId(), plan.overriddenGuards())), payment);
         }
         // Separate charges & transfers. Devise du paiement, jamais « eur » en dur : un séquestre
         // carte existe aussi en USD, CAD, GBP ou CHF.
@@ -537,7 +545,7 @@ public class AdminPaymentController {
         return new ForceReleaseClaim(false, releaseExecutor.reserve(new StripeReleaseExecutor.ReleaseSpec(
                 id, StripeReleaseIntentEntity.Kind.TRANSFER, localNet.minor(), localNet.currency().code(),
                 plan.stripeAccountId(), chargeId, "admin-force-release", "ESCROW_FORCE_RELEASED", plan.bidId(),
-                plan.travelerId(), plan.senderId(), plan.holdOverridden())), payment);
+                plan.travelerId(), plan.senderId(), plan.overriddenGuards())), payment);
     }
 
     /** Fins de colis où l'argent revient à l'expéditeur : jamais de versement au voyageur. */
@@ -839,6 +847,17 @@ public class AdminPaymentController {
      * @return {@code true} si la dérogation a été utilisée
      */
     private boolean guardPayout(PaymentEntity payment, UUID travelerId, PayoutReleaseRequest request, String source) {
+        return !overriddenBlockers(payment, travelerId, request, source).isEmpty();
+    }
+
+    /**
+     * Même contrôle que {@link #guardPayout}, mais rend la liste EXACTE des gardes levées par la
+     * dérogation (celles présentes et auditées à cet instant : DISPUTED, BENEFICIARY_HELD), vide
+     * sans dérogation. Une garde apparue après ne sera pas couverte : la dérogation ne vaut que
+     * pour ce que l'admin a vu et motivé.
+     */
+    private Set<String> overriddenBlockers(PaymentEntity payment, UUID travelerId, PayoutReleaseRequest request,
+                                           String source) {
         PayoutHoldStatus hold = holdOf(travelerId);
         List<String> blockers = new java.util.ArrayList<>();
         if (payment.isDisputed()) {
@@ -859,7 +878,7 @@ public class AdminPaymentController {
             }
         }
         if (blockers.isEmpty()) {
-            return false;
+            return Set.of();
         }
         List<String> holdReasons = hold.reasons().stream().map(Enum::name).toList();
         if (!override) {
@@ -885,7 +904,7 @@ public class AdminPaymentController {
         independentAuditTransaction.executeWithoutResult(status ->
                 auditService.log("PAYMENT", payment.getId(), "PAYOUT_HOLD_OVERRIDDEN_BY_ADMIN", adminId, payload));
         log.warn("Admin {} overrode payout blockers {} on payment {} ({})", adminId, blockers, payment.getId(), source);
-        return true;
+        return Set.copyOf(blockers);
     }
 
     /**

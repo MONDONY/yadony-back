@@ -26,8 +26,10 @@ CREATE TABLE stripe_release_intents (
     bid_id             UUID,
     traveler_id        UUID,
     sender_id          UUID,
-    -- Dérogation admin motivée (litige bancaire, voyageur gelé) posée à la libération forcée.
-    guards_overridden  BOOLEAN      NOT NULL DEFAULT FALSE,
+    -- Gardes levées par une dérogation admin motivée et auditée (libération forcée), une par une :
+    -- DISPUTED (litige bancaire), BENEFICIARY_HELD (voyageur gelé). Jamais le litige admin, le
+    -- colis annulé ou remboursé, ni le statut du paiement. NULL = aucune.
+    overridden_guards  VARCHAR(64),
     attempts           INT          NOT NULL DEFAULT 0,
     lease_until        TIMESTAMPTZ  NOT NULL,
     last_error         TEXT,
