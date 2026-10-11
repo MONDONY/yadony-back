@@ -1,8 +1,11 @@
 package com.yadony.api.smsotp;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -22,4 +25,16 @@ public interface SmsOtpRepository extends JpaRepository<SmsOtpEntity, UUID> {
      */
     @Query("SELECT COALESCE(SUM(s.attempts), 0) FROM SmsOtpEntity s WHERE s.phoneNumber = :phone AND s.createdAt > :since")
     long sumAttemptsByPhoneSince(@Param("phone") String phone, @Param("since") LocalDateTime since);
+
+    /**
+     * Compte un essai raté, dans sa propre transaction. La vérification lève juste après
+     * pour refuser le code : dans la transaction de l'appelant, cette exception annulait
+     * l'incrément et le budget d'essais ne bougeait jamais (code à 6 chiffres devinable
+     * sans limite). L'incrément en SQL évite aussi de perdre un essai entre deux
+     * vérifications simultanées.
+     */
+    @Modifying
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Query("UPDATE SmsOtpEntity s SET s.attempts = s.attempts + 1 WHERE s.id = :id")
+    int incrementAttempts(@Param("id") UUID id);
 }
