@@ -116,7 +116,7 @@ class AdminPaymentControllerTransferGuardTest {
         verify(auditService).log(eq("PAYMENT"), eq(paymentId), eq("TRANSFER_ALREADY_EXISTS_REALIGNED"), eq(bidId), any());
         verify(paymentRepository).markReleasedIfEscrow(eq(paymentId), any());
         verify(auditService, never()).log(any(), any(), eq("ESCROW_FORCE_RELEASED"), any(), any());
-        verify(eventPublisher, never()).publishEvent(any());
+        verify(eventPublisher).publishEvent(any(com.yadony.api.payments.events.PaymentReleasedEvent.class));
     }
 
     @Test

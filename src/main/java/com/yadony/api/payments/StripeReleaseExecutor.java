@@ -441,6 +441,9 @@ public class StripeReleaseExecutor {
                 audit.put("transferId", objectId);
                 audit.put("source", intent.getSource());
                 auditService.log("PAYMENT", paymentId, "TRANSFER_ALREADY_EXISTS_REALIGNED", intent.getBidId(), audit);
+                // Versement confirmé : notification, cache et métrique comme un versement direct
+                // (markDone garantit un seul gagnant, donc un seul événement).
+                publishReleased(intent, payment);
                 return true;
             }
             Map<String, Object> audit = new LinkedHashMap<>();
@@ -454,11 +457,7 @@ public class StripeReleaseExecutor {
                 audit.put("transferId", objectId);
             }
             auditService.log("PAYMENT", paymentId, intent.getAuditAction(), intent.getBidId(), audit);
-            // Publié dans la transaction : les écouteurs AFTER_COMMIT (cache, notification) partent au commit.
-            if (intent.getBidId() != null && intent.getTravelerId() != null) {
-                eventPublisher.publishEvent(PaymentReleasedEvent.card(intent.getBidId(), intent.getTravelerId(),
-                        intent.getSenderId(), payment.getAmount(), payment.getCommissionAmount(), payment.getCurrency()));
-            }
+            publishReleased(intent, payment);
             return true;
         });
         if (!Boolean.TRUE.equals(mine)) {
@@ -470,6 +469,14 @@ public class StripeReleaseExecutor {
         log.info("Versement du paiement {} {} ({}, source {})", paymentId, realigned ? "réaligné" : "effectué",
                 objectId, intent.getSource());
         return new Execution(realigned ? Result.REALIGNED : Result.RELEASED, objectId, null);
+    }
+
+    /** Publié dans la transaction : les écouteurs AFTER_COMMIT (cache, notification) partent au commit. */
+    private void publishReleased(StripeReleaseIntentEntity intent, PaymentEntity payment) {
+        if (intent.getBidId() != null && intent.getTravelerId() != null && payment != null) {
+            eventPublisher.publishEvent(PaymentReleasedEvent.card(intent.getBidId(), intent.getTravelerId(),
+                    intent.getSenderId(), payment.getAmount(), payment.getCommissionAmount(), payment.getCurrency()));
+        }
     }
 
     private Execution onStripeFailure(StripeReleaseIntentEntity intent, StripeException e, boolean revertable) {
@@ -661,7 +668,7 @@ public class StripeReleaseExecutor {
         NOT_PENDING,
         /** Un appel Stripe est en vol (bail actif) : réessayer plus tard. */
         IN_PROGRESS,
-        /** Capture legacy : l'annulation n'est pas prise en charge (relire le PaymentIntent à la main). */
+        /** Réservé : type de versement non pris en charge par l'annulation (plus renvoyé depuis la capture legacy). */
         UNSUPPORTED
     }
 
@@ -669,9 +676,16 @@ public class StripeReleaseExecutor {
 
     /**
      * Annulation d'une réservation PENDING par un super-admin (paiement bloqué en RELEASED sans
-     * versement). Bail pris d'abord (refusé si un appel est en vol), puis recherche Stripe hors
-     * transaction : Transfer trouvé → réaligné DONE ; aucun → claim annulé (RELEASED → ESCROW,
-     * paiement remboursable) et réservation CANCELLED ; recherche impossible → rien ne change.
+     * versement). Bail pris d'abord sous un nouveau jeton (refusé si un appel est en vol ou si un
+     * envoi date de moins de {@link #SEND_SAFETY}), puis vérification chez Stripe hors transaction :
+     * <ul>
+     *   <li>Transfer : recherche par {@code transfer_group} ; trouvé → réaligné DONE ; aucun → claim
+     *       annulé (RELEASED → ESCROW, paiement remboursable) et réservation CANCELLED ;</li>
+     *   <li>capture legacy : PaymentIntent relu ; {@code succeeded} → DONE (le voyageur est payé) ;
+     *       sinon → CANCELLED et ESCROW ;</li>
+     *   <li>vérification impossible → rien ne change.</li>
+     * </ul>
+     * Chaque issue est auditée au nom de l'admin, avec son motif.
      */
     public Cancellation cancelReservation(UUID paymentId, UUID adminId, String reason) {
         if (TransactionSynchronizationManager.isActualTransactionActive()) {
@@ -681,43 +695,51 @@ public class StripeReleaseExecutor {
         if (intent == null || intent.getStatus() != StripeReleaseIntentEntity.Status.PENDING) {
             return new Cancellation(CancelResult.NOT_PENDING, null, null);
         }
-        if (intent.getKind() != StripeReleaseIntentEntity.Kind.TRANSFER) {
-            return new Cancellation(CancelResult.UNSUPPORTED, null, null);
-        }
         LocalDateTime now = now();
         UUID token = UUID.randomUUID();
         Boolean leased = transaction.execute(tx ->
                 intentRepository.claimForAdmin(intent.getId(), now, now.plus(LEASE), token) == 1);
         if (!Boolean.TRUE.equals(leased)) {
+            auditAdmin(intent, adminId, reason, "ESCROW_RELEASE_CANCEL_REFUSED_IN_PROGRESS", "appel Stripe en vol");
             return new Cancellation(CancelResult.IN_PROGRESS, null, null);
         }
         // Relu après la prise de bail : plus aucun envoi possible, sauf un envoi antérieur en vol.
         StripeReleaseIntentEntity held = intentRepository.findById(intent.getId()).orElse(null);
         if (held == null || !token.equals(held.getLeaseToken())) {
+            auditAdmin(intent, adminId, reason, "ESCROW_RELEASE_CANCEL_REFUSED_IN_PROGRESS", "bail repris");
             return new Cancellation(CancelResult.IN_PROGRESS, null, null);
         }
         if (!sendSettled(held.getCreateSentAt())) {
-            // Transfer.create envoyé il y a moins de SEND_SAFETY : une recherche vide ne prouve rien.
-            String error = "annulation admin refusée : Transfer envoyé à " + held.getCreateSentAt()
+            // Envoi de moins de SEND_SAFETY : une vérification Stripe vide ne prouve rien.
+            String error = "annulation admin refusée : appel Stripe envoyé à " + held.getCreateSentAt()
                     + ", issue pas encore certaine";
             transaction.executeWithoutResult(tx -> intentRepository.releaseAdminLease(held.getId(), token, now(), error));
+            auditAdmin(held, adminId, reason, "ESCROW_RELEASE_CANCEL_REFUSED_IN_PROGRESS", error);
             return new Cancellation(CancelResult.IN_PROGRESS, null, error);
         }
         PaymentEntity payment = paymentRepository.findById(paymentId).orElse(null);
-        Optional<String> existing;
+        Optional<String> paidWith;
         try {
-            existing = transferLookup.findExistingTransfer(paymentId, intent.getDestination(),
-                    payment != null ? payment.getCreatedAt() : null);
+            paidWith = held.getKind() == StripeReleaseIntentEntity.Kind.LEGACY_CAPTURE
+                    ? legacyCaptured(payment)
+                    : transferLookup.findExistingTransfer(paymentId, held.getDestination(),
+                            payment != null ? payment.getCreatedAt() : null);
         } catch (StripeException e) {
-            String error = "annulation admin : recherche Stripe impossible : " + e.getClass().getSimpleName()
+            String error = "annulation admin : vérification Stripe impossible : " + e.getClass().getSimpleName()
                     + ": " + e.getMessage();
             transaction.executeWithoutResult(tx -> intentRepository.releaseAdminLease(held.getId(), token, now(), error));
+            auditAdmin(held, adminId, reason, "ESCROW_RELEASE_CANCEL_LOOKUP_FAILED", error);
             return new Cancellation(CancelResult.LOOKUP_FAILED, null, error);
         }
-        if (existing.isPresent()) {
-            Execution done = finalizeDone(held, payment, existing.get(), true);
-            return new Cancellation(done.result() == Result.REALIGNED ? CancelResult.REALIGNED : CancelResult.NOT_PENDING,
-                    existing.get(), null);
+        if (paidWith.isPresent()) {
+            Execution done = finalizeDone(held, payment, paidWith.get(), true);
+            boolean realigned = done.result() == Result.REALIGNED;
+            if (realigned) {
+                auditAdmin(held, adminId, reason, "ESCROW_RELEASE_CANCEL_REALIGNED_BY_ADMIN",
+                        "versement trouvé chez Stripe : " + paidWith.get());
+            }
+            return new Cancellation(realigned ? CancelResult.REALIGNED : CancelResult.NOT_PENDING,
+                    held.getKind() == StripeReleaseIntentEntity.Kind.TRANSFER ? paidWith.get() : null, null);
         }
         Boolean cancelled = transaction.execute(tx -> {
             guard.lockParcel(held.getBidId());
@@ -725,13 +747,7 @@ public class StripeReleaseExecutor {
                 return false;
             }
             int reverted = paymentRepository.revertUnpaidReleaseClaim(paymentId);
-            Map<String, Object> audit = new LinkedHashMap<>();
-            audit.put("paymentId", String.valueOf(paymentId));
-            audit.put("bidId", String.valueOf(intent.getBidId()));
-            audit.put("source", intent.getSource());
-            audit.put("revision", String.valueOf(intent.getRevision()));
-            audit.put("attempts", String.valueOf(intent.getAttempts()));
-            audit.put("reason", reason);
+            Map<String, Object> audit = adminAudit(held, reason);
             audit.put("claimReverted", String.valueOf(reverted == 1));
             auditService.log("PAYMENT", paymentId, "ESCROW_RELEASE_CANCELLED_BY_ADMIN", adminId, audit);
             return true;
@@ -741,8 +757,42 @@ public class StripeReleaseExecutor {
         }
         resolvePendingAlert(paymentId);
         resolveBlockedAlert(paymentId);
-        log.warn("Réservation du versement {} annulée par l'admin {} : aucun Transfer chez Stripe", paymentId, adminId);
+        log.warn("Réservation du versement {} annulée par l'admin {} : aucun versement chez Stripe", paymentId, adminId);
         return new Cancellation(CancelResult.CANCELLED, null, null);
+    }
+
+    /** Capture legacy : le PaymentIntent relu dit seul si le voyageur a été payé. */
+    private Optional<String> legacyCaptured(PaymentEntity payment) throws StripeException {
+        if (payment == null || payment.getStripePaymentIntentId() == null) {
+            return Optional.empty();
+        }
+        PaymentIntent pi = PaymentIntent.retrieve(payment.getStripePaymentIntentId());
+        return pi != null && EscrowCaptureService.STATUS_SUCCEEDED.equals(pi.getStatus())
+                ? Optional.of(payment.getStripePaymentIntentId()) : Optional.empty();
+    }
+
+    private Map<String, Object> adminAudit(StripeReleaseIntentEntity intent, String reason) {
+        Map<String, Object> audit = new LinkedHashMap<>();
+        audit.put("paymentId", String.valueOf(intent.getPaymentId()));
+        audit.put("bidId", String.valueOf(intent.getBidId()));
+        audit.put("kind", String.valueOf(intent.getKind()));
+        audit.put("source", intent.getSource());
+        audit.put("revision", String.valueOf(intent.getRevision()));
+        audit.put("attempts", String.valueOf(intent.getAttempts()));
+        audit.put("reason", reason);
+        return audit;
+    }
+
+    /** Trace, au nom de l'admin et avec son motif, une demande d'annulation qui n'a pas annulé. */
+    private void auditAdmin(StripeReleaseIntentEntity intent, UUID adminId, String reason, String action, String outcome) {
+        try {
+            Map<String, Object> audit = adminAudit(intent, reason);
+            audit.put("outcome", outcome);
+            transaction.executeWithoutResult(tx ->
+                    auditService.log("PAYMENT", intent.getPaymentId(), action, adminId, audit));
+        } catch (RuntimeException e) {
+            log.error("Audit {} du paiement {} non écrit", action, intent.getPaymentId(), e);
+        }
     }
 
     private LocalDateTime now() {

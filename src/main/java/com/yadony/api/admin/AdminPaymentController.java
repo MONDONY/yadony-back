@@ -547,8 +547,9 @@ public class AdminPaymentController {
         // Même net que la livraison (bon de parrainage compris, consommation idempotente par colis) :
         // toute réservation de ce paiement porte les mêmes paramètres de Transfer.
         CurrencyAmount localNet = netCalculator.cardNet(payment, plan.travelerId(), plan.bidId());
-        // Même clé que la livraison (transfer-<id>) : jamais un second Transfer pendant la durée de
-        // vie de la clé ; au-delà, la recherche Stripe d'un Transfer existant prend le relais.
+        // Même réservation que la livraison (une par paiement, clé transfer-<id>-r<révision>) : jamais
+        // un second Transfer pendant la durée de vie de la clé ; au-delà, la recherche Stripe par
+        // transfer_group prend le relais.
         return new ForceReleaseClaim(false, releaseExecutor.reserve(new StripeReleaseExecutor.ReleaseSpec(
                 id, StripeReleaseIntentEntity.Kind.TRANSFER, localNet.minor(), localNet.currency().code(),
                 plan.stripeAccountId(), chargeId, "admin-force-release", "ESCROW_FORCE_RELEASED", plan.bidId(),

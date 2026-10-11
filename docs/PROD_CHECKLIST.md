@@ -1608,7 +1608,11 @@ Patron « réserver → appeler → finaliser » : aucune connexion JDBC ni aucu
 | Recherche Stripe impossible | 502 `stripe-unavailable` | Rien ne change. |
 | Aucune réservation en attente | 409 `no-pending-release` | — |
 | Appel en vol, ou envoi de moins de 15 min | 409 `release-in-progress` | Réessayer après 15 min. |
-| Capture legacy | 422 `release-intent-unsupported` | Traiter à la main dans Stripe. |
+| Capture legacy, PaymentIntent `succeeded` | 200 `{"result":"REALIGNED","transferId":null,"paymentStatus":"RELEASED"}` | Réservation DONE, voyageur payé par la capture. |
+| Capture legacy, PaymentIntent non capturé | 200 `CANCELLED`, `paymentStatus` ESCROW | Réservation CANCELLED, sous jeton et délai de sûreté (sort de la boucle d'un 4xx persistant après une capture incertaine). |
+
+Chaque demande est auditée au nom de l'admin, avec son motif : `ESCROW_RELEASE_CANCELLED_BY_ADMIN`, `ESCROW_RELEASE_CANCEL_REALIGNED_BY_ADMIN`, `ESCROW_RELEASE_CANCEL_LOOKUP_FAILED`, `ESCROW_RELEASE_CANCEL_REFUSED_IN_PROGRESS`. Un réalignement (par le job, la livraison ou l'admin) publie `PaymentReleasedEvent` comme un versement direct (notification `PAYMENT_RELEASED`, cache TripsSummary, métrique `yadony.payments.released`) ; `markDone` garantit un seul événement. Le code 422 `release-intent-unsupported` reste dans le contrat mais n'est plus renvoyé.
+- [ ] **Déploiement** : la clé passe de `transfer-<id>` à `transfer-<id>-r1`. Un Transfer envoyé par un pod sur l'ancienne version n'est donc plus protégé par la clé d'idempotence, seulement par la recherche `transfer_group` (`payment_<id>`) de la nouvelle version. Déployer hors des pics de livraison, et arrêter les pods de l'ancienne version avant que les nouveaux ne traitent des versements (pas de rolling update avec les deux versions actives).
 - [ ] Après la mise en prod : `SELECT status, count(*) FROM stripe_release_intents GROUP BY status;` — des PENDING de plus de 15 min signalent un Stripe injoignable (alerte `RELEASE_PENDING_` au 3e essai).
 - [ ] `hikaricp_connections_usage_seconds_max` ne doit plus refléter la durée d'un appel Stripe sur ces chemins.
 

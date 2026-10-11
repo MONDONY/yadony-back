@@ -146,11 +146,9 @@ class DeliveryTransferConcurrencyIT {
 
     @Test
     void deuxVersementsSimultanes_unSeulTransfer() throws Exception {
-        // Le gagnant tient son verrou un moment pendant la recherche Stripe : le perdant attend.
-        when(lookup.findExistingTransfer(any(), anyString(), any())).thenAnswer(inv -> {
-            Thread.sleep(300);
-            return Optional.empty();
-        });
+        // Le claim ESCROW → RELEASED est commité avant la recherche Stripe : le perdant voit
+        // RELEASED et n'émet rien, un seul Transfer.
+        when(lookup.findExistingTransfer(any(), anyString(), any())).thenReturn(Optional.empty());
         CountDownLatch start = new CountDownLatch(1);
         ExecutorService pool = Executors.newFixedThreadPool(2);
         try {

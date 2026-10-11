@@ -198,7 +198,8 @@ class StripeReleaseExecutorTest {
         }
         verify(payments).recordStripeTransferId(paymentId, "tr_old");
         verify(audit).log(eq("PAYMENT"), eq(paymentId), eq("TRANSFER_ALREADY_EXISTS_REALIGNED"), eq(bidId), anyMap());
-        verify(events, never()).publishEvent(any());
+        // Versement confirmé : notification, cache et métrique comme un versement direct.
+        verify(events).publishEvent(any(PaymentReleasedEvent.class));
     }
 
     @Test
@@ -687,6 +688,9 @@ class StripeReleaseExecutorTest {
         verify(payments).recordStripeTransferId(paymentId, "tr_found");
         verify(payments, never()).revertUnpaidReleaseClaim(any());
         verify(intents, never()).markCancelled(any(), any(), any());
+        verify(events).publishEvent(any(PaymentReleasedEvent.class));
+        verify(audit).log(eq("PAYMENT"), eq(paymentId), eq("ESCROW_RELEASE_CANCEL_REALIGNED_BY_ADMIN"), eq(adminId),
+                org.mockito.ArgumentMatchers.argThat(m -> "Vérification admin".equals(m.get("reason"))));
     }
 
     @Test
@@ -698,6 +702,8 @@ class StripeReleaseExecutorTest {
         verify(intents).releaseAdminLease(eq(intentId), any(), any(), anyString());
         verify(payments, never()).revertUnpaidReleaseClaim(any());
         verify(intents, never()).markCancelled(any(), any(), any());
+        verify(audit).log(eq("PAYMENT"), eq(paymentId), eq("ESCROW_RELEASE_CANCEL_LOOKUP_FAILED"), eq(adminId),
+                org.mockito.ArgumentMatchers.argThat(m -> "Vérification admin".equals(m.get("reason"))));
     }
 
     @Test
@@ -707,16 +713,82 @@ class StripeReleaseExecutorTest {
         assertThat(executor.cancelReservation(paymentId, adminId, "Vérification admin").result())
                 .isEqualTo(StripeReleaseExecutor.CancelResult.IN_PROGRESS);
         verify(payments, never()).revertUnpaidReleaseClaim(any());
+        verify(audit).log(eq("PAYMENT"), eq(paymentId), eq("ESCROW_RELEASE_CANCEL_REFUSED_IN_PROGRESS"), eq(adminId),
+                org.mockito.ArgumentMatchers.argThat(m -> "Vérification admin".equals(m.get("reason"))));
     }
 
     @Test
-    void annulationAdmin_rienDeReserve_ouLegacy() {
+    void annulationAdmin_rienDeReserve() {
         assertThat(executor.cancelReservation(paymentId, adminId, "Vérification admin").result())
                 .isEqualTo(StripeReleaseExecutor.CancelResult.NOT_PENDING);
+    }
+
+    private StripeReleaseIntentEntity legacyPendingForAdmin() {
         StripeReleaseIntentEntity legacy = legacyIntent();
+        legacy.setAttempts(5);
+        legacy.setCreateSentAt(settledSend());
         when(intents.findByPaymentId(paymentId)).thenReturn(Optional.of(legacy));
-        assertThat(executor.cancelReservation(paymentId, adminId, "Vérification admin").result())
-                .isEqualTo(StripeReleaseExecutor.CancelResult.UNSUPPORTED);
+        when(intents.findById(intentId)).thenReturn(Optional.of(legacy));
+        return legacy;
+    }
+
+    @Test
+    void annulationAdmin_legacyCapture_rendLeSequestre() throws Exception {
+        // 4xx persistant après une capture incertaine : PaymentIntent relu non capturé → ESCROW.
+        legacyPendingForAdmin();
+        when(payments.revertUnpaidReleaseClaim(paymentId)).thenReturn(1);
+        PaymentIntent pi = mock(PaymentIntent.class);
+        when(pi.getStatus()).thenReturn("requires_capture");
+        try (MockedStatic<PaymentIntent> st = mockStatic(PaymentIntent.class)) {
+            st.when(() -> PaymentIntent.retrieve("pi_1")).thenReturn(pi);
+            assertThat(executor.cancelReservation(paymentId, adminId, "Capture refusée").result())
+                    .isEqualTo(StripeReleaseExecutor.CancelResult.CANCELLED);
+        }
+        verify(pi, never()).capture(any(PaymentIntentCaptureParams.class), any(RequestOptions.class));
+        verify(intents).markCancelled(eq(intentId), any(), anyString());
+        verify(payments).revertUnpaidReleaseClaim(paymentId);
+        verify(lookup, never()).findExistingTransfer(any(), any(), any());
+    }
+
+    @Test
+    void annulationAdmin_legacyDejaCapture_realigneSansSequestre() throws Exception {
+        legacyPendingForAdmin();
+        PaymentIntent pi = mock(PaymentIntent.class);
+        when(pi.getStatus()).thenReturn("succeeded");
+        try (MockedStatic<PaymentIntent> st = mockStatic(PaymentIntent.class)) {
+            st.when(() -> PaymentIntent.retrieve("pi_1")).thenReturn(pi);
+            StripeReleaseExecutor.Cancellation c = executor.cancelReservation(paymentId, adminId, "Vérification admin");
+            assertThat(c.result()).isEqualTo(StripeReleaseExecutor.CancelResult.REALIGNED);
+            assertThat(c.transferId()).isNull();
+        }
+        verify(intents).markDone(intentId, "pi_1");
+        verify(payments, never()).recordStripeTransferId(any(), any());
+        verify(payments, never()).revertUnpaidReleaseClaim(any());
+        verify(events).publishEvent(any(PaymentReleasedEvent.class));
+    }
+
+    @Test
+    void annulationAdmin_legacyCaptureRecente_refusee() {
+        StripeReleaseIntentEntity legacy = legacyPendingForAdmin();
+        legacy.setCreateSentAt(now.minusMinutes(1));
+        try (MockedStatic<PaymentIntent> st = mockStatic(PaymentIntent.class)) {
+            assertThat(executor.cancelReservation(paymentId, adminId, "Vérification admin").result())
+                    .isEqualTo(StripeReleaseExecutor.CancelResult.IN_PROGRESS);
+            st.verifyNoInteractions();
+        }
+        verify(payments, never()).revertUnpaidReleaseClaim(any());
+    }
+
+    @Test
+    void annulationAdmin_legacyRelectureImpossible_rienNeChange() {
+        legacyPendingForAdmin();
+        try (MockedStatic<PaymentIntent> st = mockStatic(PaymentIntent.class)) {
+            st.when(() -> PaymentIntent.retrieve("pi_1")).thenThrow(new ApiConnectionException("timeout"));
+            assertThat(executor.cancelReservation(paymentId, adminId, "Vérification admin").result())
+                    .isEqualTo(StripeReleaseExecutor.CancelResult.LOOKUP_FAILED);
+        }
+        verify(payments, never()).revertUnpaidReleaseClaim(any());
+        verify(intents, never()).markCancelled(any(), any(), any());
     }
 
     @Test

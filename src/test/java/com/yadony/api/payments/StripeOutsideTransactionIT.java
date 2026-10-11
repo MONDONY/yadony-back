@@ -255,7 +255,12 @@ class StripeOutsideTransactionIT {
                             return lost.getStatus();
                         }
                     }),
-                    () -> stripe.onThisThread(() -> job.run()),
+                    () -> stripe.onThisThread(() -> {
+                        // Bail échu de force : le job reprend vraiment la réservation qu'il trouve
+                        // (sinon il ne ferait rien) ; jeton et délai de sûreté arbitrent.
+                        expireLease(s.paymentId);
+                        return job.run();
+                    }),
                     () -> stripe.onThisThread(() -> {
                         try {
                             return refundProcessor.processRefund(s.paymentId, "TEST_REFUND", null, Map.of());
@@ -341,6 +346,8 @@ class StripeOutsideTransactionIT {
         assertThat(intentRepository.findByPaymentId(s.paymentId).orElseThrow().getStatus())
                 .isEqualTo(StripeReleaseIntentEntity.Status.DONE);
         assertThat(auditCount(s.paymentId, "TRANSFER_ALREADY_EXISTS_REALIGNED")).isEqualTo(1);
+        // Versement confirmé par la reprise : une notification PAYMENT_RELEASED (cache, métrique).
+        verify(eventPublisher, times(1)).publishEvent(any(PaymentReleasedEvent.class));
         // Rejouer encore n'y change rien.
         expireLease(s.paymentId);
         assertThat(stripe.onThisThread(() -> job.run())).isZero();
@@ -506,6 +513,7 @@ class StripeOutsideTransactionIT {
                 executor.cancelReservation(sent.paymentId, UUID.randomUUID(), "Vérification admin");
         assertThat(realigned.result()).isEqualTo(StripeReleaseExecutor.CancelResult.REALIGNED);
         assertThat(realigned.transferId()).isEqualTo(stripe.transferOf(sent.paymentId));
+        assertThat(auditCount(sent.paymentId, "ESCROW_RELEASE_CANCEL_REALIGNED_BY_ADMIN")).isEqualTo(1);
         assertThat(paymentRepository.findById(sent.paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.RELEASED);
 
         // 3. Recherche Stripe impossible : rien ne change.
