@@ -11,7 +11,11 @@ public record UserBusinessPrefsDto(
     // moment, meme avec des soldes non nuls (FLUTTER-8F). Omise dans la requete, la
     // devise existante est conservee.
     @Pattern(regexp = "EUR|USD|CAD|GBP|CHF|XOF|XAF") String currencyCode,
-    @NotNull @Min(1) @Max(50) Integer pickupRadiusKm,
+    // Rayon de collecte : retire des reglages de l'app le 2026-10-11 (aucun effet, rien
+    // ne le lisait). La colonne reste en base et le champ reste servi pour les apps deja
+    // installees, qui le renvoient a chaque PUT. Optionnel en requete : omis (null), la
+    // valeur existante est conservee. Sans rapport avec le rayon « Pres de moi ».
+    @Deprecated @Min(1) @Max(50) Integer pickupRadiusKm,
     @NotNull @Min(1) @Max(50) Integer defaultPackageWeightKg,
     @NotNull @Min(0) @Max(50) Integer minBidPriceEur,
     @Pattern(regexp = "call|message|both") String contactMode,
