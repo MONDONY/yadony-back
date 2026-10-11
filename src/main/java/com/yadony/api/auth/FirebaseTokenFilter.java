@@ -283,11 +283,13 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
      * Pool JDBC épuisé pendant l'authentification : même 503 {@code service-busy} que
      * {@code GlobalExceptionHandler}, que ce filtre précède (YADONY-BACK-STAGING-W : la
      * résolution admin laissait l'exception remonter à Tomcat en 500, un événement Sentry
-     * par requête). WARN seulement : une surcharge passagère n'est pas un bug.
+     * par requête). Une saturation n'est qu'un WARN ; une base injoignable est en plus
+     * signalée à Sentry, une fois par minute au plus (cf. ServiceBusyProblem).
      */
     private void writeServiceBusy(HttpServletResponse response, Exception e) throws IOException {
         String requestId = MDC.get(RequestCorrelationFilter.MDC_KEY);
-        log.warn("Connection pool exhausted during authentication requestId={}: {}", requestId, e.getMessage());
+        // WARN + compteur ; Sentry ERROR (une fois par minute) si la base est injoignable.
+        ServiceBusyProblem.record(e, requestId, "auth-filter");
         ProblemDetail problem = ServiceBusyProblem.of(
                 messagesResolver.forRequest().get("problem.service-busy.detail"), requestId);
         response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);

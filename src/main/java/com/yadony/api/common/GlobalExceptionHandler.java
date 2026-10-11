@@ -430,11 +430,12 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * Pool de connexions épuisé : Hikari n'a pas fourni de connexion dans le délai
-     * {@code connection-timeout}. C'est une surcharge passagère, pas un bug : 503 avec
-     * {@code Retry-After}, un WARN dans les logs et pas d'événement Sentry (test de charge
-     * k6 du 07/10 sur staging : 187 requêtes en attente sur un pool de 10, des centaines
-     * de 500 envoyés à Sentry). Toute autre panne d'accès à la base garde le 500.
+     * Hikari n'a pas fourni de connexion dans le délai {@code connection-timeout} : 503
+     * avec {@code Retry-After}. Pool saturé, c'est une surcharge passagère : un WARN et
+     * pas d'événement Sentry (test de charge k6 du 07/10 sur staging : 187 requêtes en
+     * attente sur un pool de 10, des centaines de 500 envoyés à Sentry). Base injoignable,
+     * c'est une panne : même 503, mais signalée à Sentry une fois par minute au plus
+     * (cf. {@link ServiceBusyProblem#classify}). Toute autre panne d'accès à la base garde le 500.
      */
     @ExceptionHandler({CannotCreateTransactionException.class, DataAccessResourceFailureException.class})
     public ResponseEntity<ProblemDetail> handleDatabaseUnavailable(Exception ex) {
@@ -442,7 +443,8 @@ public class GlobalExceptionHandler {
             return handleGeneric(ex);
         }
         String requestId = MDC.get(RequestCorrelationFilter.MDC_KEY);
-        log.warn("Connection pool exhausted requestId={}: {}", requestId, ex.getMessage());
+        // WARN + compteur ; Sentry ERROR (une fois par minute) si la base est injoignable.
+        ServiceBusyProblem.record(ex, requestId, "controller");
         ProblemDetail problem = ServiceBusyProblem.of(
                 messagesResolver.forRequest().get("problem.service-busy.detail"), requestId);
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)

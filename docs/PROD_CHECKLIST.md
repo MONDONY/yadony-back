@@ -1525,7 +1525,7 @@ Stripe mais une transaction locale annulée) pouvait payer le voyageur deux fois
 
 | Sujet | Changement |
 |---|---|
-| Filtre d'authentification | Un pool épuisé pendant la résolution du compte (admin ou utilisateur) donne désormais **503 `service-busy`** au format RFC 7807, avec `Retry-After: 2` et un WARN, comme dans les contrôleurs. Fini la 500 et l'issue Sentry à chaque requête. Les autres pannes de la résolution admin remontent comme avant (500 et Sentry). Le code est partagé dans `common/ServiceBusyProblem`. |
+| Filtre d'authentification | Un pool épuisé pendant la résolution du compte (admin ou utilisateur) donne désormais **503 `service-busy`** au format RFC 7807, avec `Retry-After: 2` et un WARN, comme dans les contrôleurs. Les deux causes sont distinguées : pool **saturé** (délai Hikari sans erreur de connexion jointe et `active == total > 0`) donne un WARN et le compteur `cause=pool_saturated` ; base **injoignable** (erreur de connexion jointe par Hikari, ou connexions libres) donne en plus un événement Sentry ERROR, au plus un par minute (`cause=database_unreachable`). Fini la 500 et l'issue Sentry à chaque requête. Les autres pannes de la résolution admin remontent comme avant (500 et Sentry). Le code est partagé dans `common/ServiceBusyProblem`. |
 | `GET /bids/me` (paginé ou non), `GET /travelers/me/bids`, colis d'un trajet | Les lectures par colis (lien destinataire, notes, annulations, articles de grille, photos, taux de commission) sont faites en **lots `IN (...)`** de 500 au plus (`BidResponsePrefetch`). Trajets et voyageurs sont chargés une seule fois dans le contexte de persistance. Le nombre de requêtes ne dépend plus du nombre de colis : test `MyBidsQueryCountIntegrationTest`, réponses identiques à la conversion à l'unité. |
 | `GET /auth/me` | Plus de transaction englobante. La lecture Firebase (contact) se fait hors connexion, et `UserSeenEvent` ne prend plus de seconde connexion : la vérification « déjà écrit dans le quart d'heure » passe avant toute transaction, et seule l'écriture `touchLastSeen` ouvre la sienne (REQUIRES_NEW). |
 | Photos de messagerie (lecture) | Plus de transaction pendant l'appel Firestore et le téléchargement R2 de l'image. |
@@ -1558,7 +1558,14 @@ Sur un VPS de 2 vCPU, agrandir le pool ne sert à rien : la limite vient du CPU 
       - `histogram_quantile(0.95, sum by (le) (rate(hikaricp_connections_acquire_seconds_bucket[5m])))` : doit rester sous 25 ms.
       - `system_cpu_usage` > 0,9 de façon prolongée : la machine est le plafond, la faire grossir.
       - `max by (uri) (http_server_requests_seconds_max)` : une route au-dessus de 10 s mérite une enquête.
-- [ ] Sentry : YADONY-BACK-STAGING-W ne doit plus recevoir d'événement. Sous charge, cherchez « Connection pool exhausted » dans l'onglet Logs (WARN).
+- [ ] **Alertes Grafana à créer** (Prometheus de la machine, job `yadony-api`), notification vers le canal d'astreinte :
+      | Alerte | Requête PromQL | Seuil | Sévérité |
+      |---|---|---|---|
+      | Pool JDBC : délais d'emprunt expirés | `increase(hikaricp_connections_timeout_total{pool="HikariPool-1"}[5m])` | `> 0` pendant 2 min | critique : des 503 `service-busy` partent |
+      | Pool JDBC : requêtes en attente | `max_over_time(hikaricp_connections_pending{pool="HikariPool-1"}[1m])` | `> 5` pendant 3 min | avertissement : saturation en cours |
+      | Base injoignable | `increase(yadony_db_connection_unavailable_total{cause="database_unreachable"}[5m])` | `> 0` | critique : panne Postgres ou réseau (même 503 côté client, et un événement Sentry ERROR par minute) |
+      | Pool JDBC saturé (cause côté appli) | `increase(yadony_db_connection_unavailable_total{cause="pool_saturated"}[5m])` | `> 0` pendant 5 min | avertissement : lire `system_cpu_usage` et `hikaricp_connections_usage_seconds_max` |
+- [ ] Sentry : YADONY-BACK-STAGING-W ne doit plus recevoir d'événement. Sous charge, cherchez « Connection pool exhausted » dans l'onglet Logs (WARN). Une **base injoignable** (Postgres arrêté, connexion refusée, validation en échec) répond le même 503, mais crée un événement Sentry ERROR « Database unreachable », au plus un par minute. Le compteur `yadony_db_connection_unavailable_total{cause,where}` distingue les deux cas.
 
 **Points ouverts (non traités ici, à arbitrer).**
 - Le SDK Stripe garde ses délais par défaut (connexion 30 s, lecture 80 s) et tourne parfois dans une transaction. C'est le cas de `EscrowCaptureService.ensureCaptured`, qui garde un verrou de ligne pendant `pi.capture`, et du checkout carte (`PaymentService.createEscrow`). Les relances réseau du SDK (9.24, `stripe.max-network-retries`, 2 par défaut) allongent encore ce temps dans le pire cas. Raccourcir ces délais ou sortir ces appels de la transaction touche au chemin argent : à traiter dans une PR dédiée, avec une revue des clés d'idempotence.
