@@ -60,6 +60,19 @@ Fonctionnalité: Annulation d'un voyage
     Quand l'administrateur confirme le no-show pour l'offre "offre-ns-1"
     Alors la réponse HTTP est 200
 
+  Scénario: Un voyageur étranger au trajet ne peut pas déclarer l'expéditeur absent
+    Etant donné un utilisateur VOYAGEUR enregistré avec l'uid "ns-traveler-003" et le téléphone "+33700000014"
+    Et il existe une annonce de "Paris" à "Bamako" avec 20 kg disponibles à 5.0 €/kg sauvegardée sous "annonce-ns-3"
+    Etant donné un utilisateur EXPÉDITEUR enregistré avec l'uid "ns-sender-003" et le téléphone "+33700000015"
+    Et je dépose une offre de 5.0 kg à 50.0 € sur l'annonce "annonce-ns-3"
+    Et l'offre "offre-ns-3" est sauvegardée
+    Et l'offre "offre-ns-3" est une remise cash dont l'horaire est dépassé
+    Etant donné un utilisateur VOYAGEUR enregistré avec l'uid "ns-intrus-003" et le téléphone "+33700000016"
+    Et l'utilisateur "ns-intrus-003" est authentifié en tant que VOYAGEUR
+    Quand le voyageur signale un no-show pour l'offre "offre-ns-3"
+    Alors la réponse HTTP est 403
+    Et le code d'erreur de la réponse est "forbidden"
+
   @happy-path
   Scénario: Contestation d'un no-show par l'expéditeur et consultation des litiges
     Etant donné un utilisateur VOYAGEUR enregistré avec l'uid "ns-traveler-002" et le téléphone "+33700000012"
