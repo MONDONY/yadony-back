@@ -156,6 +156,40 @@ class AdminPaymentHoldIT {
     }
 
     @Test
+    void forceRelease_sansAutoritePaymentRelease_403() throws Exception {
+        mockMvc.perform(post("/admin/payments/{id}/force-release", payment.getId())
+                        .contentType(MediaType.APPLICATION_JSON).content(OVERRIDE)
+                        .with(authentication(admin("PAYMENT_VIEW"))))
+                .andExpect(status().isForbidden());
+        verify(paymentRepository, never()).markReleasedIfEscrow(any(), any());
+        verify(payoutInitiator, never()).release(any(), any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
+    void forceRelease_derogationDuGel_neCouvrePasUnLitigeBancaireApparuEnsuite_409() throws Exception {
+        // L'admin a vu et motivé le gel (BENEFICIARY_HELD) ; un chargeback arrive entre la
+        // vérification et le claim : la dérogation ne le couvre pas, rien n'est versé.
+        PaymentEntity disputedNow = new PaymentEntity();
+        ReflectionTestUtils.setField(disputedNow, "id", payment.getId());
+        disputedNow.setBidId(bid.getId());
+        disputedNow.setRail(PaymentRail.PAWAPAY);
+        disputedNow.setStatus(PaymentStatus.ESCROW);
+        disputedNow.setAmount(payment.getAmount());
+        disputedNow.setCommissionAmount(payment.getCommissionAmount());
+        disputedNow.setCurrency("XOF");
+        disputedNow.setDisputed(true);
+        when(paymentRepository.findById(payment.getId())).thenReturn(Optional.of(payment), Optional.of(disputedNow));
+
+        mockMvc.perform(post("/admin/payments/{id}/force-release", payment.getId())
+                        .contentType(MediaType.APPLICATION_JSON).content(OVERRIDE)
+                        .with(authentication(admin("PAYMENT_RELEASE"))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("payout-guard-changed"));
+        verify(paymentRepository, never()).markReleasedIfEscrow(any(), any());
+        verify(payoutInitiator, never()).release(any(), any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
     void forceRelease_motifTropCourt_422() throws Exception {
         mockMvc.perform(post("/admin/payments/{id}/force-release", payment.getId())
                         .contentType(MediaType.APPLICATION_JSON)

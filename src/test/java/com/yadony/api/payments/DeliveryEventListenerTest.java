@@ -57,7 +57,7 @@ class DeliveryEventListenerTest {
     void setUp() {
         // Ronde 1, point 5 : payoutInitiator est désormais un paramètre constructeur — null ici,
         // jamais déréférencé puisque tous les paiements de cette classe sont de rail STRIPE.
-        listener = new DeliveryEventListener(paymentRepository, userRepository,
+        listener = ReleaseTestSupport.listener(paymentRepository, userRepository,
                 auditService, eventPublisher, bidRepository, adminAlert, voucherService, null, holdPolicy, alertEscalator,
                 escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
     }
@@ -354,13 +354,15 @@ class DeliveryEventListenerTest {
             transferStatic.when(() -> Transfer.create(any(TransferCreateParams.class), any(RequestOptions.class)))
                     .thenThrow(mock(com.stripe.exception.InvalidRequestException.class));
 
-            // L'exception est propagée pour faire rollback la transaction REQUIRES_NEW :
-            // le claim ESCROW → RELEASED est annulé, le backstop admin J+48 garde la main.
+            // Refus certain de Stripe : la réservation est annulée et le claim ESCROW → RELEASED
+            // défait par UPDATE ciblé (PROD_CHECKLIST 9.23) ; l'exception remonte comme avant.
             assertThatThrownBy(() ->
                     listener.handleDeliveryConfirmed(event(p.getBidId(), travelerId)))
                     .isInstanceOf(IllegalStateException.class);
         }
-        verify(auditService, never()).log(any(), any(), any(), any(), any());
+        verify(paymentRepository).revertUnpaidReleaseClaim(p.getId());
+        verify(auditService).log(eq("PAYMENT"), any(), eq("ESCROW_RELEASE_REFUSED_BY_STRIPE"), any(), any());
+        verify(auditService, never()).log(any(), any(), eq("ESCROW_RELEASED_TRANSFER"), any(), any());
         verify(eventPublisher, never()).publishEvent(any(PaymentReleasedEvent.class));
     }
 
@@ -385,7 +387,7 @@ class DeliveryEventListenerTest {
 
             assertThat(captor.getValue().getAmount()).isEqualTo(2640L);
             // Même clé que la livraison : jamais deux Transfers pour le même paiement.
-            assertThat(optsCaptor.getValue().getIdempotencyKey()).isEqualTo("transfer-" + p.getId());
+            assertThat(optsCaptor.getValue().getIdempotencyKey()).isEqualTo("transfer-" + p.getId() + "-r1");
         }
         verify(auditService).log(eq("PAYMENT"), any(), eq("ESCROW_RELEASED_UNCLAIMED"), any(), any());
         verify(eventPublisher).publishEvent(any(PaymentReleasedEvent.class));
@@ -407,7 +409,7 @@ class DeliveryEventListenerTest {
     // ── Séquestre carte non capturé (constat du 10/10, paiements de négociation) ──
 
     private DeliveryEventListener listenerWith(EscrowCaptureService capture) {
-        return new DeliveryEventListener(paymentRepository, userRepository,
+        return ReleaseTestSupport.listener(paymentRepository, userRepository,
                 auditService, eventPublisher, bidRepository, adminAlert, voucherService, null, holdPolicy, alertEscalator,
                 capture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
     }

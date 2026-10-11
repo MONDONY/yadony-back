@@ -66,7 +66,7 @@ class DeliveryEventListenerTransferGuardTest {
 
     @BeforeEach
     void setUp() {
-        listener = new DeliveryEventListener(paymentRepository, userRepository, auditService, eventPublisher,
+        listener = ReleaseTestSupport.listener(paymentRepository, userRepository, auditService, eventPublisher,
                 bidRepository, adminAlert, voucherService, null, holdPolicy, alertEscalator, escrowCapture,
                 transferLookup, disputeRepository);
         payment = new PaymentEntity();
@@ -104,8 +104,9 @@ class DeliveryEventListenerTransferGuardTest {
         verify(auditService).log(eq("PAYMENT"), eq(paymentId), eq("TRANSFER_ALREADY_EXISTS_REALIGNED"), eq(bidId),
                 argThat((Map<String, Object> m) -> "tr_existing".equals(m.get("transferId"))
                         && "delivery".equals(m.get("source"))));
-        // Seule la trace du réalignement : ni second audit de versement, ni nouvelle notification.
-        verify(eventPublisher, never()).publishEvent(any(PaymentReleasedEvent.class));
+        // Seule la trace du réalignement (pas de second audit de versement) ; le versement confirmé
+        // est notifié une fois (cache, métrique, notification PAYMENT_RELEASED).
+        verify(eventPublisher, times(1)).publishEvent(any(PaymentReleasedEvent.class));
         verify(auditService, never()).log(any(), any(), eq("ESCROW_RELEASED_TRANSFER"), any(), any());
     }
 

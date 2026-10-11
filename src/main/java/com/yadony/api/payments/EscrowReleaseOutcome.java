@@ -26,6 +26,23 @@ public enum EscrowReleaseOutcome {
     CAPTURE_FAILED(false, "Colis livré mais capture du séquestre impossible : aucun versement"),
     /** Transfer (ou capture legacy, payout mobile money) refusé : claim annulé, paiement ESCROW. */
     TRANSFER_FAILED(false, "Colis livré mais versement refusé"),
+    /**
+     * Versement réservé (paiement RELEASED) mais non confirmé par Stripe (réseau, 5xx) : reprise
+     * automatique avec la même clé par {@code StripeReleaseRecoveryJob}, alerte RELEASE_PENDING
+     * après plusieurs essais. Ni échec (aucune annulation du claim : un Transfer a pu partir) ni
+     * versement confirmé.
+     */
+    RELEASE_PENDING(false, "Colis livré : versement envoyé à Stripe, confirmation en attente (reprise automatique)"),
+    /**
+     * Une garde (litige, gel, annulation, remboursement partiel) est apparue entre le claim et
+     * l'appel Stripe : aucun Transfer, claim annulé, alerte RELEASE_BLOCKED.
+     */
+    BLOCKED_BEFORE_TRANSFER(false, "Colis livré mais une garde est apparue avant le versement : rien n'est parti, à trancher"),
+    /**
+     * Le versement est déjà traité par un autre traitement (finalisé ou en cours : bail détenu
+     * ailleurs). Ce n'est pas une confirmation de versement par CE traitement.
+     */
+    RELEASE_IN_PROGRESS(false, "Versement déjà pris en charge par un autre traitement"),
     /** Colis payé en espèces : pas de séquestre carte. */
     CASH(false, "Colis payé en espèces : pas de séquestre"),
     /** Aucun paiement trouvé pour ce colis. */
@@ -57,7 +74,7 @@ public enum EscrowReleaseOutcome {
      */
     public boolean blockedByGuard() {
         return this == BLOCKED_CHARGEBACK || this == BLOCKED_DISPUTE || this == BLOCKED_PARTIAL_REFUND || this == PAYOUT_HELD
-                || this == STRIPE_ACCOUNT_UNUSABLE;
+                || this == STRIPE_ACCOUNT_UNUSABLE || this == BLOCKED_BEFORE_TRANSFER;
     }
 
     /** Échec technique du versement automatique (capture ou Transfer) : alerte LATE_RELEASE_FAILED. */

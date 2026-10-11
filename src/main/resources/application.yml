@@ -188,6 +188,11 @@ yadony:
   # Auto-réparation des paiements carte restés PENDING (PendingCardPaymentAutoHealJob) : relit le
   # PaymentIntent chez Stripe et applique la resynchronisation (séquestre, versement si déjà livré).
   payments:
+    # Reprise des versements carte réservés non confirmés par Stripe (PROD_CHECKLIST 9.23).
+    release-recovery:
+      enabled: ${PAYMENT_RELEASE_RECOVERY_ENABLED:true}
+      interval: PT5M
+      batch-size: 20
     auto-heal:
       enabled: ${PAYMENT_AUTO_HEAL_ENABLED:true}
       interval: PT15M

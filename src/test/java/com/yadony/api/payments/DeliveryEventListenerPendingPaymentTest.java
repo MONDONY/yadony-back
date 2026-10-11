@@ -49,7 +49,7 @@ class DeliveryEventListenerPendingPaymentTest {
 
     @BeforeEach
     void setUp() {
-        listener = new DeliveryEventListener(paymentRepository, userRepository,
+        listener = ReleaseTestSupport.listener(paymentRepository, userRepository,
                 auditService, eventPublisher, bidRepository, adminAlert, voucherService, null, holdPolicy, alertEscalator,
                 escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
     }

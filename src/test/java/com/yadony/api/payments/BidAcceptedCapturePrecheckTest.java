@@ -41,6 +41,7 @@ class BidAcceptedCapturePrecheckTest {
     @Mock private AuditService auditService;
     @Mock private UserRepository userRepository;
     @Mock private BidRepository bidRepository;
+    @Mock private EscrowCaptureService escrowCapture;
     private BidAcceptedEventListener listener;
 
     private final UUID travelerId = UUID.randomUUID();
@@ -48,7 +49,8 @@ class BidAcceptedCapturePrecheckTest {
 
     @BeforeEach
     void setUp() {
-        listener = new BidAcceptedEventListener(paymentRepository, auditService, userRepository, bidRepository);
+        listener = new BidAcceptedEventListener(paymentRepository, auditService, userRepository, bidRepository,
+                escrowCapture, org.springframework.transaction.support.TransactionOperations.withoutTransaction());
     }
 
     private PaymentEntity escrowPayment() {
@@ -76,23 +78,20 @@ class BidAcceptedCapturePrecheckTest {
 
         PaymentEntity payment = escrowPayment();
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(payment));
-        when(paymentRepository.markCapturedIfEscrow(any(), any())).thenReturn(1);
 
         UserEntity traveler = new UserEntity();
         traveler.setStripeAccountId("acct_ok");
         traveler.setStripeAccountStatus(StripeAccountStatus.ONBOARDING_COMPLETE);
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
+        when(escrowCapture.ensureCaptured(any(), eq("bid-accepted")))
+                .thenReturn(new EscrowCaptureService.Outcome("ch_ok", true));
 
         try (MockedStatic<PaymentIntent> mocked = mockStatic(PaymentIntent.class)) {
-            PaymentIntent pi = mock(PaymentIntent.class);
-            when(pi.capture()).thenReturn(pi);
-            mocked.when(() -> PaymentIntent.retrieve("pi_test")).thenReturn(pi);
-
             assertThatNoException().isThrownBy(() -> listener.onBidAccepted(event()));
 
-            verify(pi).capture();
-            verify(pi, never()).cancel();
-            verify(auditService).log(eq("PAYMENT"), any(), eq("PAYMENT_CAPTURED_ON_PLATFORM"), any(), any());
+            // Capture déléguée au service partagé (clé capture-<id>, montant attendu, hors transaction)
+            verify(escrowCapture).ensureCaptured(payment.getId(), "bid-accepted");
+            mocked.verifyNoInteractions();
         }
     }
 
@@ -112,7 +111,6 @@ class BidAcceptedCapturePrecheckTest {
         bid.setStatus(BidStatus.ACCEPTED);
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
         when(bidRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(paymentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         try (MockedStatic<PaymentIntent> mocked = mockStatic(PaymentIntent.class)) {
             PaymentIntent pi = mock(PaymentIntent.class);
@@ -125,12 +123,14 @@ class BidAcceptedCapturePrecheckTest {
             verify(pi).cancel();
             // capture must NOT be called
             verify(pi, never()).capture();
-            // bid must be set to CANCELLED
+            // bid must be set to CANCELLED (relu sous verrou, colis avant paiement)
             assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
+            verify(bidRepository).lockForUpdate(bidId);
             verify(bidRepository).save(bid);
-            // payment entity must be set to CANCELLED (Fix 1)
-            assertThat(payment.getStatus()).isEqualTo(PaymentStatus.CANCELLED);
-            verify(paymentRepository).save(payment);
+            // payment passé CANCELLED par écriture ciblée (jamais un save de l'entité lue avant l'appel Stripe)
+            verify(paymentRepository).markCancelledIfEscrow(payment.getId());
+            verify(paymentRepository, never()).save(any());
+            verifyNoInteractions(escrowCapture);
             // audit entry for the cancellation
             verify(auditService).log(eq("BID"), any(), eq("BID_CANCELLED_TRAVELER_INELIGIBLE"), any(), any());
         }
@@ -165,6 +165,7 @@ class BidAcceptedCapturePrecheckTest {
             // Payment status must NOT have been changed (PI is still live)
             assertThat(payment.getStatus()).isEqualTo(PaymentStatus.ESCROW);
             verify(paymentRepository, never()).save(any());
+            verify(paymentRepository, never()).markCancelledIfEscrow(any());
             // Bid must NOT have been cancelled (inconsistent state — ops must intervene)
             assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
             // Audit log must be written with failure event so ops can reconcile (Fix 2)

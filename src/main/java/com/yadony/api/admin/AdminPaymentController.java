@@ -22,9 +22,10 @@ import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.PaymentStatus;
 import com.yadony.api.payments.RefundProcessor;
 import com.yadony.api.payments.EscrowCaptureService;
+import com.yadony.api.payments.StripeReleaseExecutor;
+import com.yadony.api.payments.StripeReleaseIntentEntity;
 import com.yadony.api.payments.chargeback.ChargebackRepository;
 import com.yadony.api.payments.events.AdminPaymentRefundedEvent;
-import com.yadony.api.payments.events.PaymentReleasedEvent;
 import com.yadony.api.payments.hold.PayoutHoldPolicy;
 import com.yadony.api.payments.hold.PayoutHoldStatus;
 import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutInitiator;
@@ -38,10 +39,8 @@ import com.stripe.exception.IdempotencyException;
 import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.Refund;
-import com.stripe.model.Transfer;
 import com.stripe.net.RequestOptions;
 import com.stripe.param.RefundCreateParams;
-import com.stripe.param.TransferCreateParams;
 import jakarta.persistence.EntityManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -136,8 +135,11 @@ public class AdminPaymentController {
     private final AdminPaymentInsights insights;
     private final AdminPaymentTimeline timeline;
     private final EscrowCaptureService escrowCapture;
-    private final com.yadony.api.payments.StripeTransferLookup transferLookup;
+    private final StripeReleaseExecutor releaseExecutor;
+    private final com.yadony.api.payments.ReleaseNetCalculator netCalculator;
     private final com.yadony.api.disputes.DisputeRepository disputeRepository;
+    /** Transactions courtes de la libération forcée : jamais de transaction autour d'un appel Stripe. */
+    private final TransactionTemplate shortTransaction;
 
     public AdminPaymentController(PaymentRepository paymentRepository,
                                   AdminAlertRepository adminAlertRepository,
@@ -157,10 +159,12 @@ public class AdminPaymentController {
                                   AdminPaymentInsights insights,
                                   AdminPaymentTimeline timeline,
                                   EscrowCaptureService escrowCapture,
-                                  com.yadony.api.payments.StripeTransferLookup transferLookup,
-                                  com.yadony.api.disputes.DisputeRepository disputeRepository) {
+                                  StripeReleaseExecutor releaseExecutor,
+                                  com.yadony.api.disputes.DisputeRepository disputeRepository,
+                                  com.yadony.api.payments.ReleaseNetCalculator netCalculator) {
+        this.netCalculator = netCalculator;
         this.escrowCapture = escrowCapture;
-        this.transferLookup = transferLookup;
+        this.releaseExecutor = releaseExecutor;
         this.disputeRepository = disputeRepository;
         this.holdPolicy = holdPolicy;
         this.insights = insights;
@@ -180,6 +184,7 @@ public class AdminPaymentController {
         this.entityManager = entityManager;
         this.independentAuditTransaction = new TransactionTemplate(transactionManager);
         this.independentAuditTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.shortTransaction = new TransactionTemplate(transactionManager);
     }
 
     @PreAuthorize("hasAuthority('PAYMENT_VIEW')")
@@ -307,9 +312,98 @@ public class AdminPaymentController {
      */
     @PreAuthorize("hasAuthority('PAYMENT_RELEASE')")
     @PostMapping("/{id}/force-release")
-    @Transactional
     public ResponseEntity<AdminPaymentDetailResponse> forceRelease(@PathVariable UUID id,
             @RequestBody(required = false) PayoutReleaseRequest request) {
+        // Sans transaction englobante (PROD_CHECKLIST 9.23) : vérifications dans une transaction
+        // courte, capture hors connexion, claim et réservation dans une autre transaction courte,
+        // Transfer hors connexion, finalisation conditionnelle (StripeReleaseExecutor).
+        ForceReleasePlan plan = shortTransaction.execute(tx -> checkForceRelease(id, request));
+
+        // Séquestre carte (non legacy) : capture AVANT le claim, comme la livraison
+        // (DeliveryEventListener), hors transaction. Échec (autorisation expirée, montant
+        // différent…) : 422, rien n'est versé, le paiement reste ESCROW, alerte
+        // ESCROW_CAPTURE_FAILED_<id> levée.
+        String capturedChargeId = null;
+        if (plan.rail() != PaymentRail.PAWAPAY && !plan.legacy()) {
+            try {
+                capturedChargeId = escrowCapture.ensureCaptured(id, "admin-force-release").chargeId();
+            } catch (EscrowCaptureService.EscrowCaptureException e) {
+                throw new YadonyBusinessException(
+                        HttpStatus.UNPROCESSABLE_ENTITY, "escrow-capture-failed",
+                        "Escrow Capture Failed",
+                        "Capture du paiement carte impossible (" + e.getMessage()
+                                + ") : aucun versement n'est parti, le paiement reste en séquestre");
+            }
+        }
+
+        final String chargeIdAfterCapture = capturedChargeId;
+        ForceReleaseClaim claim = shortTransaction.execute(tx -> claimForceRelease(id, plan, chargeIdAfterCapture));
+        if (claim.mobileMoneyDone()) {
+            return ResponseEntity.ok(detail(reload(id)));
+        }
+
+        StripeReleaseExecutor.Execution execution = releaseExecutor.execute(claim.intent(), claim.payment());
+        switch (execution.result()) {
+            case NOT_OWNED -> throw new YadonyBusinessException(HttpStatus.CONFLICT, "release-in-progress",
+                    "Release In Progress",
+                    "Ce versement est déjà pris en charge par un autre traitement : rechargez la fiche avant toute action");
+            case RELEASED, REALIGNED -> {
+                // Resolve any open ESCROW_J48_TIMEOUT alerts for this payment
+                resolveRelatedAlerts(id);
+                log.info("Admin force-released escrow for payment {} (bid={}) : {}", id, plan.bidId(),
+                        execution.result());
+                return ResponseEntity.ok(detail(reload(id)));
+            }
+            case PENDING_RETRY -> {
+                if (execution.error() != null && execution.error().startsWith(IdempotencyException.class.getSimpleName())) {
+                    throw new YadonyBusinessException(HttpStatus.CONFLICT, "transfer-already-attempted",
+                            "Transfer Already Attempted",
+                            "Un Transfer a déjà été tenté pour ce paiement avec d'autres paramètres : le versement "
+                                    + "est réservé et la reprise automatique le réconcilie, vérifier dans Stripe "
+                                    + "avant toute autre action");
+                }
+                throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "stripe-release-pending",
+                        "Stripe Release Pending",
+                        "Stripe n'a pas confirmé le versement : il est réservé et sera repris automatiquement "
+                                + "avec la même clé, ne relancez pas la libération");
+            }
+            case BLOCKED -> throw new YadonyBusinessException(HttpStatus.CONFLICT, "payout-guard-changed",
+                    "Payout Guard Changed",
+                    "Une garde est apparue avant le versement (" + execution.error()
+                            + ") : rien n'est parti, le paiement reste en séquestre");
+            default -> {
+                log.error("Admin force-release: Stripe refused payment {} (PI={}): {}",
+                        id, plan.piId(), execution.error());
+                throw new YadonyBusinessException(
+                        HttpStatus.INTERNAL_SERVER_ERROR, "stripe-release-failed",
+                        "Stripe Error",
+                        "Impossible de libérer le paiement Stripe. Veuillez réessayer.");
+            }
+        }
+    }
+
+    /** Ce que les vérifications de la libération forcée transmettent aux étapes suivantes. */
+    private record ForceReleasePlan(UUID bidId, UUID travelerId, UUID senderId, String stripeAccountId,
+                                    PaymentRail rail, boolean legacy, Set<String> overriddenGuards, String piId) {
+        boolean holdOverridden() {
+            return !overriddenGuards.isEmpty();
+        }
+    }
+
+    /** Issue du claim : payout mobile money soumis, ou versement carte réservé à exécuter. */
+    private record ForceReleaseClaim(boolean mobileMoneyDone, StripeReleaseIntentEntity intent, PaymentEntity payment) {}
+
+    private PaymentEntity reload(UUID id) {
+        return paymentRepository.findById(id)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "payment-not-found", "Not Found", "Paiement introuvable"));
+    }
+
+    /**
+     * Étape 1, transaction courte : toutes les vérifications, colis verrouillé. Aucune écriture du
+     * paiement ; une erreur répond avant toute capture.
+     */
+    private ForceReleasePlan checkForceRelease(UUID id, PayoutReleaseRequest request) {
         PaymentEntity payment = paymentRepository.findById(id)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "payment-not-found", "Not Found",
@@ -323,10 +417,149 @@ public class AdminPaymentController {
         if (bid != null && bid.getId() != null && bidRepository.lockForUpdate(bid.getId()) > 0) {
             entityManager.refresh(bid);
         }
+        requireReleasableBid(bid);
+        requireNotPartiallyRefunded(payment);
 
+        AnnouncementEntity announcement = (bid != null)
+                ? announcementRepository.findById(bid.getAnnouncementId()).orElse(null)
+                : null;
+        UUID travelerId = (announcement != null) ? announcement.getTravelerId() : null;
+        UserEntity traveler = (travelerId != null)
+                ? userRepository.findById(travelerId).orElse(null)
+                : null;
+        UUID bidId = (bid != null) ? bid.getId() : payment.getBidId();
+
+        // Lecture non atomique, seulement pour l'ordre des erreurs : un paiement déjà sorti
+        // d'ESCROW répond 422 comme avant, pas 409 « gelé ». Le claim reste la garde.
+        if (payment.getStatus() != PaymentStatus.ESCROW) {
+            throw notInEscrow("Seuls les paiements en statut ESCROW peuvent faire l'objet d'une libération forcée");
+        }
+
+        // Litige ouvert par l'administration (fiche colis) : le versement est gelé jusqu'à sa
+        // résolution dans Incidents, même pour une libération forcée.
+        requireNoAdminDispute(bidId);
+
+        // Bénéficiaire gelé ou paiement en litige : 409 sauf dérogation motivée, AVANT le claim.
+        Set<String> overriddenGuards = overriddenBlockers(payment, travelerId, request, "admin-force-release");
+
+        // Compte Connect désactivé ou refusé : Stripe refuserait le Transfer après le claim.
+        if (payment.getRail() != PaymentRail.PAWAPAY && !payment.isLegacyDestinationCharge()) {
+            requireUsableStripeAccount(payment, traveler, travelerId);
+            if (traveler == null || traveler.getStripeAccountId() == null
+                    || traveler.getStripeAccountId().isBlank()) {
+                throw new YadonyBusinessException(
+                        HttpStatus.UNPROCESSABLE_ENTITY, "traveler-no-connect",
+                        "Invalid Traveler",
+                        "Voyageur introuvable ou sans compte Stripe Connect — transfert impossible");
+            }
+        }
+        if (payment.getRail() == PaymentRail.PAWAPAY && travelerId == null) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "traveler-not-found",
+                    "Invalid Traveler", "Voyageur introuvable pour ce paiement");
+        }
+        return new ForceReleasePlan(bidId, travelerId, bid != null ? bid.getSenderId() : null,
+                traveler != null ? traveler.getStripeAccountId() : null, payment.getRail(),
+                payment.isLegacyDestinationCharge(), overriddenGuards, payment.getStripePaymentIntentId());
+    }
+
+    /**
+     * Étape 3, transaction courte : colis reverrouillé et gardes revérifiées (une annulation ou un
+     * litige a pu passer pendant la capture), claim atomique ESCROW → RELEASED, puis payout mobile
+     * money (inchangé) ou réservation du versement carte. Toute exception annule le claim.
+     */
+    private ForceReleaseClaim claimForceRelease(UUID id, ForceReleasePlan plan, String capturedChargeId) {
+        // Ordre colis → paiement (9.25) : colis verrouillé, puis paiement relu (jamais avant le verrou).
+        if (plan.bidId() != null && bidRepository.lockForUpdate(plan.bidId()) > 0) {
+            requireReleasableBid(bidRepository.findById(plan.bidId()).orElse(null));
+        }
+        PaymentEntity payment = paymentRepository.findById(id)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "payment-not-found", "Not Found", "Paiement introuvable"));
+        requireNotPartiallyRefunded(payment);
+        // Gardes revérifiées sous verrou (colis verrouillé, paiement relu après) : litige bancaire et
+        // voyageur gelé (sauf dérogation déjà auditée), compte Connect. Les lire avant la capture ne
+        // suffit pas, elles ont pu changer pendant l'appel Stripe.
+        // Dérogation garde par garde : elle ne couvre que ce que l'admin a vu, motivé et fait auditer.
+        boolean disputedNow = payment.isDisputed()
+                && !plan.overriddenGuards().contains(StripeReleaseIntentEntity.GUARD_DISPUTED);
+        boolean heldNow = plan.travelerId() != null && holdOf(plan.travelerId()).held()
+                && !plan.overriddenGuards().contains(StripeReleaseIntentEntity.GUARD_BENEFICIARY_HELD);
+        if (disputedNow || heldNow) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "payout-guard-changed", "Payout Guard Changed",
+                    "Paiement en litige ou voyageur gelé depuis la vérification : versement refusé sans dérogation");
+        }
+        if (payment.getRail() != PaymentRail.PAWAPAY && !payment.isLegacyDestinationCharge() && plan.travelerId() != null) {
+            requireUsableStripeAccount(payment, userRepository.findById(plan.travelerId()).orElse(null), plan.travelerId());
+        }
+
+        // Atomic ESCROW → RELEASED transition — prevents a double release/transfer race.
+        int updated = paymentRepository.markReleasedIfEscrow(id, LocalDateTime.now(ZoneOffset.UTC));
+        if (updated == 0) {
+            throw notInEscrow("Seuls les paiements en statut ESCROW peuvent faire l'objet d'une libération forcée");
+        }
+        // Litige admin revérifié après le claim (verrou de ligne tenu) : un litige ouvert entre la
+        // lecture plus haut et le claim est vu ici ; l'exception annule le claim.
+        requireNoAdminDispute(plan.bidId());
+
+        // Rail mobile money : bifurque juste après le claim, avant tout appel Stripe. Réutilise
+        // EXACTEMENT le chemin de la livraison (DeliveryEventListener#releaseMobileMoney) :
+        // MobileMoneyPayoutInitiator#release porte toute la logique (compte de versement, payout
+        // déjà vivant repris sans jamais en resoumettre un second, soumission pawaPay), rien
+        // n'est réimplémenté ici. Point ouvert 9.23 : la soumission pawaPay tourne encore dans
+        // cette transaction.
+        if (payment.getRail() == PaymentRail.PAWAPAY) {
+            // Résout les alertes ESCROW_J48_TIMEOUT AVANT tout appel pawaPay — si cette écriture
+            // ambiante échouait APRÈS payoutInitiator.release, le rollback qu'elle provoquerait
+            // annulerait le claim pendant que pawaPay a déjà réellement versé.
+            resolveRelatedAlerts(id);
+            BigDecimal net = PawapayAmounts.round(
+                    payment.getAmount().subtract(payment.getCommissionAmount()), payment.getCurrency());
+            try {
+                if (plan.holdOverridden()) {
+                    payoutInitiator.release(payment, plan.bidId(), plan.travelerId(), net, "admin-force-release", true);
+                } else {
+                    payoutInitiator.release(payment, plan.bidId(), plan.travelerId(), net, "admin-force-release");
+                }
+            } catch (IllegalStateException e) {
+                // L'exception annule le claim, le paiement reste ESCROW.
+                throw payoutFailed("Versement mobile money impossible : " + e.getMessage());
+            }
+            // Le claim a posé status/escrowReleasedAt par une écriture ciblée : refresh relit la
+            // ligne réelle, aucun flush ultérieur ne réécrit un état périmé.
+            entityManager.refresh(payment);
+            auditMobileMoneyAction(payment.getId(), "ESCROW_FORCE_RELEASED",
+                    Map.of("paymentId", id.toString(), "bidId", String.valueOf(plan.bidId()), "rail", "PAWAPAY",
+                            "amount", payment.getAmount().toPlainString()));
+            log.info("Admin force-released mobile money escrow for payment {} (bid={})", id, plan.bidId());
+            return new ForceReleaseClaim(true, null, payment);
+        }
+
+        if (payment.isLegacyDestinationCharge()) {
+            // Destination charge : la capture verse au voyageur via transfer_data (clé capture-<id>).
+            return new ForceReleaseClaim(false, releaseExecutor.reserve(new StripeReleaseExecutor.ReleaseSpec(
+                    id, StripeReleaseIntentEntity.Kind.LEGACY_CAPTURE, null, null, null, null,
+                    "admin-force-release", "ESCROW_FORCE_RELEASED", plan.bidId(), plan.travelerId(),
+                    plan.senderId(), plan.overriddenGuards())), payment);
+        }
+        // Separate charges & transfers. Devise du paiement, jamais « eur » en dur : un séquestre
+        // carte existe aussi en USD, CAD, GBP ou CHF.
+        String chargeId = capturedChargeId != null ? capturedChargeId : payment.getStripeChargeId();
+        // Même net que la livraison (bon de parrainage compris, consommation idempotente par colis) :
+        // toute réservation de ce paiement porte les mêmes paramètres de Transfer.
+        CurrencyAmount localNet = netCalculator.cardNet(payment, plan.travelerId(), plan.bidId());
+        // Même réservation que la livraison (une par paiement, clé transfer-<id>-r<révision>) : jamais
+        // un second Transfer pendant la durée de vie de la clé ; au-delà, la recherche Stripe par
+        // transfer_group prend le relais.
+        return new ForceReleaseClaim(false, releaseExecutor.reserve(new StripeReleaseExecutor.ReleaseSpec(
+                id, StripeReleaseIntentEntity.Kind.TRANSFER, localNet.minor(), localNet.currency().code(),
+                plan.stripeAccountId(), chargeId, "admin-force-release", "ESCROW_FORCE_RELEASED", plan.bidId(),
+                plan.travelerId(), plan.senderId(), plan.overriddenGuards())), payment);
+    }
+
+    /** Fins de colis où l'argent revient à l'expéditeur : jamais de versement au voyageur. */
+    private static void requireReleasableBid(BidEntity bid) {
         // Safety guard: a CANCELLED trip's escrow must be REFUNDED to the sender (cancellation
-        // flow), never transferred to the traveler. Refuse the force-release before any status
-        // flip or Stripe transfer.
+        // flow), never transferred to the traveler.
         if (bid != null && bid.getStatus() == BidStatus.CANCELLED) {
             throw new YadonyBusinessException(
                     HttpStatus.UNPROCESSABLE_ENTITY, "bid-cancelled",
@@ -341,8 +574,10 @@ public class AdminPaymentController {
                     "Bid Not Releasable",
                     "Le colis est " + bid.getStatus() + " — l'escrow revient à l'expéditeur, pas au voyageur");
         }
-        // Remboursement partiel déjà passé : le net ci-dessous part du montant TOTAL et
-        // verserait au voyageur la part rendue à l'expéditeur. Montant à trancher à la main.
+    }
+
+    /** Remboursement partiel déjà passé : le net part du montant TOTAL, montant à trancher à la main. */
+    private static void requireNotPartiallyRefunded(PaymentEntity payment) {
         if (payment.getRefundedAmount() != null && payment.getRefundedAmount().signum() > 0) {
             throw new YadonyBusinessException(
                     HttpStatus.UNPROCESSABLE_ENTITY, "payment-partially-refunded",
@@ -350,227 +585,14 @@ public class AdminPaymentController {
                     "Ce paiement a déjà été partiellement remboursé (" + payment.getRefundedAmount().toPlainString()
                             + " " + payment.getCurrency() + ") — la libération forcée verserait le montant total");
         }
+    }
 
-        AnnouncementEntity announcement = (bid != null)
-                ? announcementRepository.findById(bid.getAnnouncementId()).orElse(null)
-                : null;
-        UUID travelerId = (announcement != null) ? announcement.getTravelerId() : null;
-        UserEntity traveler = (travelerId != null)
-                ? userRepository.findById(travelerId).orElse(null)
-                : null;
-        UUID bidId = (bid != null) ? bid.getId() : payment.getBidId();
-
-        // Lecture non atomique, seulement pour l'ordre des erreurs : un paiement déjà sorti
-        // d'ESCROW répond 422 comme avant, pas 409 « gelé ». Le claim ci-dessous reste la garde.
-        if (payment.getStatus() != PaymentStatus.ESCROW) {
-            throw notInEscrow("Seuls les paiements en statut ESCROW peuvent faire l'objet d'une libération forcée");
-        }
-
-        // Litige ouvert par l'administration (fiche colis) : le versement est gelé jusqu'à sa
-        // résolution dans Incidents, même pour une libération forcée.
+    private void requireNoAdminDispute(UUID bidId) {
         if (bidId != null && disputeRepository != null && disputeRepository.existsByBidIdAndStatusAndTypeStartingWith(
                 bidId, com.yadony.api.disputes.DisputeTypes.STATUS_OPEN, com.yadony.api.disputes.DisputeTypes.ADMIN_PREFIX)) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "dispute-open", "Dispute Open",
                     "Un litige ouvert par l'administration gèle ce versement : résolvez-le d'abord dans Incidents.");
         }
-
-        // Bénéficiaire gelé ou paiement en litige : 409 sauf dérogation motivée, AVANT le claim.
-        boolean holdOverridden = guardPayout(payment, travelerId, request, "admin-force-release");
-
-        // Compte Connect désactivé ou refusé : Stripe refuserait le Transfer après le claim.
-        if (payment.getRail() != PaymentRail.PAWAPAY && !payment.isLegacyDestinationCharge()) {
-            requireUsableStripeAccount(payment, traveler, travelerId);
-        }
-
-        // Séquestre carte (non legacy) : capture AVANT le claim, comme la livraison
-        // (DeliveryEventListener). La capture tourne dans sa propre transaction (captured_at
-        // conservé même si le Transfer échoue ensuite) et ne doit attendre aucun verrou posé ici.
-        // Échec (autorisation expirée, montant différent…) : 422, rien n'est versé, le paiement
-        // reste ESCROW, alerte ESCROW_CAPTURE_FAILED_<id> levée.
-        String capturedChargeId = null;
-        if (payment.getRail() != PaymentRail.PAWAPAY && !payment.isLegacyDestinationCharge()) {
-            if (traveler == null || traveler.getStripeAccountId() == null
-                    || traveler.getStripeAccountId().isBlank()) {
-                throw new YadonyBusinessException(
-                        HttpStatus.UNPROCESSABLE_ENTITY, "traveler-no-connect",
-                        "Invalid Traveler",
-                        "Voyageur introuvable ou sans compte Stripe Connect — transfert impossible");
-            }
-            try {
-                capturedChargeId = escrowCapture.ensureCaptured(id, "admin-force-release").chargeId();
-            } catch (EscrowCaptureService.EscrowCaptureException e) {
-                throw new YadonyBusinessException(
-                        HttpStatus.UNPROCESSABLE_ENTITY, "escrow-capture-failed",
-                        "Escrow Capture Failed",
-                        "Capture du paiement carte impossible (" + e.getMessage()
-                                + ") : aucun versement n'est parti, le paiement reste en séquestre");
-            }
-        }
-
-        // Atomic ESCROW → RELEASED transition — prevents a double release/transfer race.
-        int updated = paymentRepository.markReleasedIfEscrow(id, LocalDateTime.now(ZoneOffset.UTC));
-        if (updated == 0) {
-            throw notInEscrow("Seuls les paiements en statut ESCROW peuvent faire l'objet d'une libération forcée");
-        }
-        // Litige admin revérifié après le claim (verrou de ligne tenu) : un litige ouvert entre la
-        // lecture plus haut et le claim est vu ici ; l'exception annule le claim.
-        if (bidId != null && disputeRepository != null && disputeRepository.existsByBidIdAndStatusAndTypeStartingWith(
-                bidId, com.yadony.api.disputes.DisputeTypes.STATUS_OPEN, com.yadony.api.disputes.DisputeTypes.ADMIN_PREFIX)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "dispute-open", "Dispute Open",
-                    "Un litige ouvert par l'administration gèle ce versement : résolvez-le d'abord dans Incidents.");
-        }
-
-        // Rail mobile money : bifurque juste après le claim, avant tout appel Stripe. Réutilise
-        // EXACTEMENT le chemin de la livraison (DeliveryEventListener#releaseMobileMoney) :
-        // MobileMoneyPayoutInitiator#release porte toute la logique (compte de versement, payout
-        // déjà vivant repris sans jamais en resoumettre un second, soumission pawaPay), rien
-        // n'est réimplémenté ici.
-        if (payment.getRail() == PaymentRail.PAWAPAY) {
-            if (travelerId == null) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "traveler-not-found",
-                        "Invalid Traveler", "Voyageur introuvable pour ce paiement");
-            }
-            // Résout les alertes ESCROW_J48_TIMEOUT AVANT tout appel pawaPay — si cette écriture
-            // ambiante échouait APRÈS payoutInitiator.release, le rollback qu'elle provoquerait
-            // annulerait le claim pendant que pawaPay a déjà réellement versé.
-            resolveRelatedAlerts(id);
-            BigDecimal net = PawapayAmounts.round(
-                    payment.getAmount().subtract(payment.getCommissionAmount()), payment.getCurrency());
-            try {
-                if (holdOverridden) {
-                    payoutInitiator.release(payment, bidId, travelerId, net, "admin-force-release", true);
-                } else {
-                    payoutInitiator.release(payment, bidId, travelerId, net, "admin-force-release");
-                }
-            } catch (IllegalStateException e) {
-                // @Transactional : l'exception annule le claim, le paiement reste ESCROW.
-                throw payoutFailed("Versement mobile money impossible : " + e.getMessage());
-            }
-            // Le claim ci-dessus a posé status/escrowReleasedAt par une écriture ciblée, jamais
-            // vue par l'entité `payment` chargée en amont. Plutôt que de reposer ces colonnes une
-            // à une avec des setters — liste qui s'est révélée incomplète une première fois —
-            // entityManager.refresh(payment) relit la ligne réelle DANS la même transaction et
-            // rend à l'entité un snapshot propre : aucun flush ultérieur ne peut régénérer un
-            // UPDATE qui écraserait quoi que ce soit, quelle que soit la colonne, présente ou
-            // future (voir PaymentRepositoryMobileMoneyTest).
-            entityManager.refresh(payment);
-            auditMobileMoneyAction(payment.getId(), "ESCROW_FORCE_RELEASED",
-                    Map.of("paymentId", id.toString(), "bidId", String.valueOf(bidId), "rail", "PAWAPAY",
-                            "amount", payment.getAmount().toPlainString()));
-            log.info("Admin force-released mobile money escrow for payment {} (bid={})", id, bidId);
-            return ResponseEntity.ok(detail(payment));
-        }
-
-        boolean realignedOnExistingTransfer = false;
-        try {
-            if (payment.isLegacyDestinationCharge()) {
-                // Destination-charge model: capturing routes funds to the traveler via transfer_data.
-                PaymentIntent pi = PaymentIntent.retrieve(payment.getStripePaymentIntentId());
-                if (STATUS_REQUIRES_CAPTURE.equals(pi.getStatus())) {
-                    pi.capture();
-                }
-            } else {
-                // Separate charges & transfers: Connect account checked before the capture above.
-                // Funds already on the platform balance: captured above (EscrowCaptureService).
-                String chargeId = (capturedChargeId != null)
-                        ? capturedChargeId
-                        : payment.getStripeChargeId();
-
-                // Devise du paiement, jamais « eur » en dur : un séquestre carte existe aussi en
-                // USD, CAD, GBP ou CHF, et un Transfer libellé dans une autre devise que la charge
-                // est refusé par Stripe ou, pire, converti au taux du jour.
-                BigDecimal net = payment.getAmount().subtract(payment.getCommissionAmount());
-                CurrencyAmount localNet = CurrencyAmount.of(net,
-                        SupportedCurrency.fromCodeOrDefault(payment.getCurrency()));
-
-                TransferCreateParams.Builder builder = TransferCreateParams.builder()
-                        .setAmount(localNet.minor())
-                        .setCurrency(localNet.currency().code())
-                        .setDestination(traveler.getStripeAccountId())
-                        .putMetadata("bid_id", bidId != null ? bidId.toString() : "")
-                        .putMetadata("payment_id", id.toString())
-                        .putMetadata("source", "admin-force-release")
-                        .setTransferGroup(com.yadony.api.payments.StripeTransferLookup.transferGroup(id));
-                if (chargeId != null && !chargeId.isBlank()) {
-                    builder.setSourceTransaction(chargeId);
-                }
-                // La clé d'idempotence ne vit que 24 h : on cherche d'abord chez Stripe un Transfer
-                // déjà émis pour ce paiement (livraison réussie chez Stripe, transaction locale
-                // annulée). S'il existe, la base est réalignée dessus, aucun second Transfer.
-                java.util.Optional<String> existingTransfer = transferLookup.findExistingTransfer(
-                        id, traveler.getStripeAccountId(), payment.getCreatedAt());
-                if (existingTransfer.isPresent()) {
-                    realignedOnExistingTransfer = true;
-                    paymentRepository.recordStripeTransferId(id, existingTransfer.get());
-                    auditService.log("PAYMENT", id, "TRANSFER_ALREADY_EXISTS_REALIGNED", bidId, Map.of(
-                            "paymentId", id.toString(), "bidId", String.valueOf(bidId),
-                            "transferId", existingTransfer.get(), "source", "admin-force-release"));
-                } else {
-                    // Même clé que la livraison (DeliveryEventListener#releaseV2) : jamais un second
-                    // Transfer pendant la durée de vie de la clé.
-                    Transfer created = Transfer.create(builder.build(),
-                            RequestOptions.builder().setIdempotencyKey("transfer-" + id).build());
-                    if (created != null && created.getId() != null) {
-                        paymentRepository.recordStripeTransferId(id, created.getId());
-                    }
-                }
-            }
-        } catch (IdempotencyException e) {
-            log.error("Admin force-release: idempotency key transfer-{} already used with other parameters: {}",
-                    id, e.getMessage());
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "transfer-already-attempted",
-                    "Transfer Already Attempted",
-                    "Un Transfer a déjà été tenté pour ce paiement avec d'autres paramètres : vérifier dans "
-                            + "Stripe avant toute nouvelle tentative");
-        } catch (StripeException e) {
-            log.error("Admin force-release: Stripe op failed for payment {} (PI={}): {}",
-                    id, payment.getStripePaymentIntentId(), e.getMessage(), e);
-            throw new YadonyBusinessException(
-                    HttpStatus.INTERNAL_SERVER_ERROR, "stripe-release-failed",
-                    "Stripe Error",
-                    "Impossible de libérer le paiement Stripe. Veuillez réessayer.");
-        }
-
-        // Reflect the committed DB transition on the managed entity (the @Modifying CAS above
-        // does not refresh it) so the response and any downstream flush are consistent. The
-        // refresh first: captured_at / stripe_charge_id were written by EscrowCaptureService in
-        // another transaction, and a flush from the stale snapshot would reset them to NULL.
-        entityManager.refresh(payment);
-        payment.setStatus(PaymentStatus.RELEASED);
-        payment.setEscrowReleasedAt(LocalDateTime.now(ZoneOffset.UTC));
-
-        // Resolve any open ESCROW_J48_TIMEOUT alerts for this payment
-        resolveRelatedAlerts(id);
-
-        if (realignedOnExistingTransfer) {
-            // Transfer déjà émis : seule la trace TRANSFER_ALREADY_EXISTS_REALIGNED, ni audit de
-            // versement forcé ni nouvelle notification au voyageur.
-            return ResponseEntity.ok(detail(payment));
-        }
-        auditService.log(
-                "PAYMENT",
-                payment.getId(),
-                "ESCROW_FORCE_RELEASED",
-                bidId,
-                Map.of(
-                        "paymentId", id.toString(),
-                        "bidId", String.valueOf(bidId),
-                        "piId", payment.getStripePaymentIntentId(),
-                        "amount", payment.getAmount().toPlainString()
-                )
-        );
-
-        // Notify the traveler of the payout (parity with DeliveryEventListener).
-        if (bidId != null && travelerId != null) {
-            eventPublisher.publishEvent(PaymentReleasedEvent.card(
-                    bidId, travelerId, bid.getSenderId(), payment.getAmount(),
-                    payment.getCommissionAmount(), payment.getCurrency()));
-        }
-
-        log.info("Admin force-released escrow for payment {} (bid={}, PI={})",
-                id, bidId, payment.getStripePaymentIntentId());
-
-        return ResponseEntity.ok(detail(payment));
     }
 
     /**
@@ -833,6 +855,17 @@ public class AdminPaymentController {
      * @return {@code true} si la dérogation a été utilisée
      */
     private boolean guardPayout(PaymentEntity payment, UUID travelerId, PayoutReleaseRequest request, String source) {
+        return !overriddenBlockers(payment, travelerId, request, source).isEmpty();
+    }
+
+    /**
+     * Même contrôle que {@link #guardPayout}, mais rend la liste EXACTE des gardes levées par la
+     * dérogation (celles présentes et auditées à cet instant : DISPUTED, BENEFICIARY_HELD), vide
+     * sans dérogation. Une garde apparue après ne sera pas couverte : la dérogation ne vaut que
+     * pour ce que l'admin a vu et motivé.
+     */
+    private Set<String> overriddenBlockers(PaymentEntity payment, UUID travelerId, PayoutReleaseRequest request,
+                                           String source) {
         PayoutHoldStatus hold = holdOf(travelerId);
         List<String> blockers = new java.util.ArrayList<>();
         if (payment.isDisputed()) {
@@ -853,7 +886,7 @@ public class AdminPaymentController {
             }
         }
         if (blockers.isEmpty()) {
-            return false;
+            return Set.of();
         }
         List<String> holdReasons = hold.reasons().stream().map(Enum::name).toList();
         if (!override) {
@@ -879,7 +912,7 @@ public class AdminPaymentController {
         independentAuditTransaction.executeWithoutResult(status ->
                 auditService.log("PAYMENT", payment.getId(), "PAYOUT_HOLD_OVERRIDDEN_BY_ADMIN", adminId, payload));
         log.warn("Admin {} overrode payout blockers {} on payment {} ({})", adminId, blockers, payment.getId(), source);
-        return true;
+        return Set.copyOf(blockers);
     }
 
     /**

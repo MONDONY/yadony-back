@@ -85,7 +85,7 @@ class AdminPaymentControllerTest {
         controller = new AdminPaymentController(paymentRepository, adminAlertRepository, auditService,
                 bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
                 payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
-                transactionManager, holdPolicy, insights, timeline, escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
+                transactionManager, holdPolicy, insights, timeline, escrowCapture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), new com.yadony.api.payments.ReleaseNetCalculator(null));
     }
 
     /**
@@ -163,6 +163,66 @@ class AdminPaymentControllerTest {
         }
     }
 
+    @Test
+    void forceRelease_netAligneSurLaLivraison_bonDeParrainageCompris() {
+        // Même net que DeliveryEventListener : (100.00 − 10.71) + 10.71 × 0,5 = 94.645 → 94.65 € à verser.
+        PaymentEntity p = threadPayment(PaymentStatus.ESCROW, false, "ch_v");
+        p.setCurrency("EUR");
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
+        stubResolutionChain("acct_traveler");
+        when(paymentRepository.markReleasedIfEscrow(eq(paymentId), any())).thenReturn(1);
+        com.yadony.api.voucher.CommissionVoucherService vouchers = mock(com.yadony.api.voucher.CommissionVoucherService.class);
+        com.yadony.api.voucher.CommissionVoucherEntity voucher = mock(com.yadony.api.voucher.CommissionVoucherEntity.class);
+        when(voucher.getFactor()).thenReturn(new BigDecimal("0.50"));
+        when(vouchers.consume(travelerId, bidId)).thenReturn(Optional.of(voucher));
+        AdminPaymentController withVoucher = new AdminPaymentController(paymentRepository, adminAlertRepository,
+                auditService, bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
+                payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
+                transactionManager, holdPolicy, insights, timeline, escrowCapture,
+                com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository,
+                        mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null),
+                mock(com.yadony.api.disputes.DisputeRepository.class),
+                new com.yadony.api.payments.ReleaseNetCalculator(vouchers));
+
+        try (MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
+            ArgumentCaptor<TransferCreateParams> captor = ArgumentCaptor.forClass(TransferCreateParams.class);
+            trStatic.when(() -> Transfer.create(captor.capture(), any(com.stripe.net.RequestOptions.class)))
+                    .thenReturn(mock(Transfer.class));
+            withVoucher.forceRelease(paymentId, null);
+            assertThat(captor.getValue().getAmount()).isEqualTo(9465L);
+        }
+    }
+
+    @Test
+    void forceRelease_versementFinaliseAilleurs_409ReleaseInProgress() {
+        PaymentEntity p = threadPayment(PaymentStatus.ESCROW, false, "ch_x");
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
+        stubResolutionChain("acct_traveler");
+        when(paymentRepository.markReleasedIfEscrow(eq(paymentId), any())).thenReturn(1);
+        com.yadony.api.payments.StripeReleaseIntentRepository intents =
+                com.yadony.api.payments.ReleaseTestSupport.intentRepository();
+        when(intents.markDone(any(), any())).thenReturn(0);
+        AdminPaymentController busy = new AdminPaymentController(paymentRepository, adminAlertRepository,
+                auditService, bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
+                payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
+                transactionManager, holdPolicy, insights, timeline, escrowCapture,
+                com.yadony.api.payments.ReleaseTestSupport.executor(intents, paymentRepository,
+                        mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null),
+                mock(com.yadony.api.disputes.DisputeRepository.class),
+                new com.yadony.api.payments.ReleaseNetCalculator(null));
+
+        try (MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
+            trStatic.when(() -> Transfer.create(any(TransferCreateParams.class), any(com.stripe.net.RequestOptions.class)))
+                    .thenReturn(mock(Transfer.class));
+            assertThatThrownBy(() -> busy.forceRelease(paymentId, null))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("release-in-progress");
+                        assertThat(((YadonyBusinessException) e).getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    });
+        }
+    }
+
     /** Wire the thread → bid → announcement → traveler resolution chain. */
     private void stubResolutionChain(String travelerAccountId) {
         BidEntity bid = mock(BidEntity.class);
@@ -202,10 +262,11 @@ class AdminPaymentControllerTest {
             assertThat(params.getSourceTransaction()).isEqualTo("ch_old");
             assertThat(params.getMetadata().get("bid_id")).isEqualTo(bidId.toString());
             assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
-            assertThat(resp.getBody().status()).isEqualTo("RELEASED");
         }
 
-        assertThat(p.getStatus()).isEqualTo(PaymentStatus.RELEASED);
+        // Claim ESCROW → RELEASED par UPDATE ciblé, l'entité lue avant l'appel Stripe n'est jamais réécrite.
+        verify(paymentRepository).markReleasedIfEscrow(eq(paymentId), any());
+        verify(paymentRepository, never()).save(any());
         verify(auditService).log(eq("PAYMENT"), any(), eq("ESCROW_FORCE_RELEASED"), eq(bidId), any());
         verify(eventPublisher).publishEvent(any(PaymentReleasedEvent.class));
     }
@@ -214,7 +275,7 @@ class AdminPaymentControllerTest {
         return new AdminPaymentController(paymentRepository, adminAlertRepository, auditService,
                 bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
                 payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
-                transactionManager, holdPolicy, insights, timeline, capture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
+                transactionManager, holdPolicy, insights, timeline, capture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), new com.yadony.api.payments.ReleaseNetCalculator(null));
     }
 
     @Test
@@ -239,12 +300,11 @@ class AdminPaymentControllerTest {
             org.mockito.InOrder order = inOrder(capture, paymentRepository, entityManager);
             order.verify(capture).ensureCaptured(paymentId, "admin-force-release");
             order.verify(paymentRepository).markReleasedIfEscrow(eq(paymentId), any());
-            // Relecture de la ligne avant tout flush : captured_at écrit par la capture n'est pas écrasé.
-            order.verify(entityManager).refresh(p);
             assertThat(captor.getValue().getSourceTransaction()).isEqualTo("ch_captured");
             piStatic.verifyNoInteractions();
         }
-        assertThat(p.getStatus()).isEqualTo(PaymentStatus.RELEASED);
+        // Aucune écriture de l'entité lue avant la capture : captured_at écrit par la capture n'est pas écrasé.
+        verify(paymentRepository, never()).save(any());
         verify(eventPublisher).publishEvent(any(PaymentReleasedEvent.class));
     }
 
@@ -284,15 +344,18 @@ class AdminPaymentControllerTest {
              MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
             PaymentIntent pi = mock(PaymentIntent.class);
             when(pi.getStatus()).thenReturn("requires_capture");
-            when(pi.capture()).thenReturn(pi);
+            ArgumentCaptor<com.stripe.net.RequestOptions> options =
+                    ArgumentCaptor.forClass(com.stripe.net.RequestOptions.class);
+            when(pi.capture(any(com.stripe.param.PaymentIntentCaptureParams.class), options.capture())).thenReturn(pi);
             piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
 
             controller.forceRelease(paymentId, null);
 
-            verify(pi).capture();
+            // Capture legacy hors transaction, désormais avec la clé stable capture-<paymentId>.
+            assertThat(options.getValue().getIdempotencyKey()).isEqualTo("capture-" + paymentId);
             trStatic.verifyNoInteractions();
         }
-        assertThat(p.getStatus()).isEqualTo(PaymentStatus.RELEASED);
+        verify(paymentRepository).markReleasedIfEscrow(eq(paymentId), any());
     }
 
     @Test

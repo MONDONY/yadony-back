@@ -35,13 +35,15 @@ class BidAcceptedEventListenerTest {
     @Mock private AuditService auditService;
     @Mock private UserRepository userRepository;
     @Mock private BidRepository bidRepository;
+    @Mock private EscrowCaptureService escrowCapture;
     private BidAcceptedEventListener listener;
 
     private final UUID travelerId = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
-        listener = new BidAcceptedEventListener(paymentRepository, auditService, userRepository, bidRepository);
+        listener = new BidAcceptedEventListener(paymentRepository, auditService, userRepository, bidRepository,
+                escrowCapture, org.springframework.transaction.support.TransactionOperations.withoutTransaction());
     }
 
     private PaymentEntity paymentFor(UUID bidId, PaymentStatus status, boolean legacy) {
@@ -106,23 +108,21 @@ class BidAcceptedEventListenerTest {
     // ── Existing behaviour ────────────────────────────────────────────────────
 
     @Test
-    void captures_PI_for_non_legacy_payment_in_escrow() throws StripeException {
+    void captures_PI_for_non_legacy_payment_in_escrow() {
         UUID bidId = UUID.randomUUID();
         stubStripeBid(bidId);
         PaymentEntity payment = paymentFor(bidId, PaymentStatus.ESCROW, false);
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(payment));
-        when(paymentRepository.markCapturedIfEscrow(any(), any())).thenReturn(1);
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(eligibleTraveler()));
+        when(escrowCapture.ensureCaptured(any(), eq("bid-accepted")))
+                .thenReturn(new EscrowCaptureService.Outcome("ch_x", true));
 
         try (MockedStatic<PaymentIntent> mocked = mockStatic(PaymentIntent.class)) {
-            PaymentIntent pi = mock(PaymentIntent.class);
-            when(pi.capture()).thenReturn(pi);
-            mocked.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
-
             listener.onBidAccepted(eventFor(bidId));
 
-            verify(pi).capture();
-            verify(auditService).log(eq("PAYMENT"), any(), eq("PAYMENT_CAPTURED_ON_PLATFORM"), any(), any());
+            // Capture partagée (EscrowCaptureService) : plus de capture directe sous transaction.
+            verify(escrowCapture).ensureCaptured(payment.getId(), "bid-accepted");
+            mocked.verifyNoInteractions();
         }
     }
 
@@ -138,6 +138,7 @@ class BidAcceptedEventListenerTest {
             mocked.verifyNoInteractions();
         }
         verify(auditService, never()).log(eq("PAYMENT"), any(), eq("PAYMENT_CAPTURED_ON_PLATFORM"), any(), any());
+        verifyNoInteractions(escrowCapture);
     }
 
     @Test
@@ -164,21 +165,17 @@ class BidAcceptedEventListenerTest {
     }
 
     @Test
-    void capture_failure_is_logged_but_not_thrown() throws StripeException {
+    void capture_failure_is_logged_but_not_thrown() {
         UUID bidId = UUID.randomUUID();
         stubStripeBid(bidId);
         PaymentEntity payment = paymentFor(bidId, PaymentStatus.ESCROW, false);
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(payment));
-        when(paymentRepository.markCapturedIfEscrow(any(), any())).thenReturn(1);
         when(userRepository.findById(travelerId)).thenReturn(Optional.of(eligibleTraveler()));
+        when(escrowCapture.ensureCaptured(any(), any()))
+                .thenThrow(new EscrowCaptureService.EscrowCaptureException("capture refusée", "requires_capture", null));
 
-        try (MockedStatic<PaymentIntent> mocked = mockStatic(PaymentIntent.class)) {
-            PaymentIntent pi = mock(PaymentIntent.class);
-            when(pi.capture()).thenThrow(mock(com.stripe.exception.InvalidRequestException.class));
-            mocked.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
-
-            assertThatNoException().isThrownBy(() -> listener.onBidAccepted(eventFor(bidId)));
-        }
+        assertThatNoException().isThrownBy(() -> listener.onBidAccepted(eventFor(bidId)));
+        verify(paymentRepository, never()).markCancelledIfEscrow(any());
     }
 
     // ── New: pre-capture re-verification (PR-3) ───────────────────────────────

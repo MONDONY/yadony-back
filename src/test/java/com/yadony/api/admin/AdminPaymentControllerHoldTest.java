@@ -113,7 +113,7 @@ class AdminPaymentControllerHoldTest {
         controller = new AdminPaymentController(paymentRepository, adminAlertRepository, auditService,
                 bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
                 payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
-                transactionManager, holdPolicy, insights, timeline, escrowCapture, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class));
+                transactionManager, holdPolicy, insights, timeline, escrowCapture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), new com.yadony.api.payments.ReleaseNetCalculator(null));
         AnnouncementEntity a = new AnnouncementEntity();
         ReflectionTestUtils.setField(a, "id", UUID.randomUUID());
         a.setTravelerId(travelerId);
@@ -226,7 +226,7 @@ class AdminPaymentControllerHoldTest {
             var resp = controller.forceRelease(payment.getId(), new PayoutReleaseRequest(true, "  " + GOOD_REASON + "  "));
 
             assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
-            assertThat(opts.getValue().getIdempotencyKey()).isEqualTo("transfer-" + payment.getId());
+            assertThat(opts.getValue().getIdempotencyKey()).isEqualTo("transfer-" + payment.getId() + "-r1");
         }
         verify(auditService).log(eq("PAYMENT"), eq(payment.getId()), eq("PAYOUT_HOLD_OVERRIDDEN_BY_ADMIN"), eq(adminId),
                 eq(Map.of("paymentId", payment.getId().toString(), "travelerId", travelerId.toString(),
@@ -261,7 +261,7 @@ class AdminPaymentControllerHoldTest {
 
             // Meme cle que la livraison (DeliveryEventListener#releaseV2) : un double
             // declenchement ne paie pas deux fois.
-            assertThat(opts.getValue().getIdempotencyKey()).isEqualTo("transfer-" + payment.getId());
+            assertThat(opts.getValue().getIdempotencyKey()).isEqualTo("transfer-" + payment.getId() + "-r1");
         }
         verify(auditService, never()).log(any(), any(), eq("PAYOUT_HOLD_OVERRIDDEN_BY_ADMIN"), any(), anyMap());
     }

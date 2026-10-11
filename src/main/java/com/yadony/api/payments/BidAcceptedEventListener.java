@@ -14,12 +14,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionOperations;
 import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.transaction.event.TransactionPhase;
 
-import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
 
@@ -43,20 +43,37 @@ public class BidAcceptedEventListener {
     private final AuditService auditService;
     private final UserRepository userRepository;
     private final BidRepository bidRepository;
+    private final EscrowCaptureService escrowCapture;
+    private final TransactionOperations transaction;
 
+    @Autowired
     public BidAcceptedEventListener(PaymentRepository paymentRepository,
                                     AuditService auditService,
                                     UserRepository userRepository,
-                                    BidRepository bidRepository) {
+                                    BidRepository bidRepository,
+                                    EscrowCaptureService escrowCapture,
+                                    PlatformTransactionManager transactionManager) {
+        this(paymentRepository, auditService, userRepository, bidRepository, escrowCapture,
+                EscrowCaptureService.requiresNew(transactionManager));
+    }
+
+    BidAcceptedEventListener(PaymentRepository paymentRepository, AuditService auditService,
+                             UserRepository userRepository, BidRepository bidRepository,
+                             EscrowCaptureService escrowCapture, TransactionOperations transaction) {
         this.paymentRepository = paymentRepository;
         this.auditService = auditService;
         this.userRepository = userRepository;
         this.bidRepository = bidRepository;
+        this.escrowCapture = escrowCapture;
+        this.transaction = transaction;
     }
 
+    /**
+     * Sans transaction englobante (PROD_CHECKLIST 9.23) : lectures courtes, appels Stripe hors
+     * connexion, écritures ciblées dans des transactions courtes.
+     */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onBidAccepted(BidAcceptedEvent event) {
         BidEntity bid = bidRepository.findById(event.getBidId()).orElse(null);
         if (bid == null) {
@@ -114,16 +131,6 @@ public class BidAcceptedEventListener {
                 pi.cancel();
                 log.info("PaymentIntent {} cancelled due to traveler ineligibility (bid {})",
                         piId, event.getBidId());
-
-                payment.setStatus(PaymentStatus.CANCELLED);
-                paymentRepository.save(payment);
-
-                bid.setStatus(BidStatus.CANCELLED);
-                bidRepository.save(bid);
-                auditService.log("BID", bid.getId(), "BID_CANCELLED_TRAVELER_INELIGIBLE",
-                        event.getTravelerId(),
-                        Map.of("reason", "traveler-connect-ineligible",
-                                "piId", piId));
             } catch (StripeException cancelEx) {
                 log.error("Could not cancel PI {} for ineligible traveler {} on bid {}",
                         piId, event.getTravelerId(), event.getBidId(), cancelEx);
@@ -132,32 +139,40 @@ public class BidAcceptedEventListener {
                         Map.of("pi_id", piId,
                                 "traveler_id", event.getTravelerId().toString(),
                                 "reason", "traveler_not_eligible_pi_cancel_failed"));
+                return;
             }
+            // Autorisation annulée chez Stripe : alignement local dans une transaction courte, colis
+            // verrouillé avant le paiement (ordre colis → paiement, 9.25), écritures ciblées.
+            transaction.executeWithoutResult(tx -> {
+                bidRepository.lockForUpdate(event.getBidId());
+                if (paymentRepository.markCancelledIfEscrow(payment.getId()) == 0) {
+                    log.warn("Payment {} left ESCROW while its PI was cancelled (bid {})", payment.getId(),
+                            event.getBidId());
+                }
+                BidEntity locked = bidRepository.findById(event.getBidId()).orElse(null);
+                if (locked != null) {
+                    locked.setStatus(BidStatus.CANCELLED);
+                    bidRepository.save(locked);
+                }
+                auditService.log("BID", bid.getId(), "BID_CANCELLED_TRAVELER_INELIGIBLE",
+                        event.getTravelerId(),
+                        Map.of("reason", "traveler-connect-ineligible",
+                                "piId", piId));
+            });
             return;
         }
 
+        // Capture partagée (EscrowCaptureService) : garde « encore en séquestre » relue, montant
+        // attendu, clé capture-<paymentId>, captured_at écrit après la réponse de Stripe, alerte
+        // ESCROW_CAPTURE_FAILED en cas d'échec. Un échec n'est pas relancé : la livraison et
+        // l'auto-réparation capturent avant tout versement.
         try {
-            int updated = paymentRepository.markCapturedIfEscrow(payment.getId(), Instant.now());
-            if (updated == 0) {
-                log.info("Payment {} already captured or not in ESCROW — skipping", payment.getId());
-                return;
-            }
-
-            PaymentIntent pi = PaymentIntent.retrieve(payment.getStripePaymentIntentId());
-            pi.capture();
-
-            auditService.log("PAYMENT", payment.getId(), "PAYMENT_CAPTURED_ON_PLATFORM",
-                    payment.getBidId(),
-                    Map.of("piId", payment.getStripePaymentIntentId(),
-                            "bidId", event.getBidId().toString()));
-
-            log.info("PaymentIntent {} captured on platform for bid {}",
-                    payment.getStripePaymentIntentId(), event.getBidId());
-
-        } catch (StripeException e) {
+            EscrowCaptureService.Outcome outcome = escrowCapture.ensureCaptured(payment.getId(), "bid-accepted");
+            log.info("PaymentIntent {} {} on platform for bid {}", payment.getStripePaymentIntentId(),
+                    outcome.capturedNow() ? "captured" : "already captured", event.getBidId());
+        } catch (EscrowCaptureService.EscrowCaptureException e) {
             log.error("Capture failed for bid {} (PI={}): {}",
-                    event.getBidId(), payment.getStripePaymentIntentId(),
-                    e.getMessage(), e);
+                    event.getBidId(), payment.getStripePaymentIntentId(), e.getMessage(), e);
         }
     }
 }

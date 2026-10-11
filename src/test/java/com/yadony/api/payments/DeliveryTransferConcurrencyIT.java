@@ -69,6 +69,8 @@ class DeliveryTransferConcurrencyIT {
     @Autowired AuditService auditService;
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired JdbcTemplate jdbc;
+    @Autowired StripeReleaseIntentRepository intentRepository;
+    @Autowired StripeReleaseGuard releaseGuard;
     @MockitoBean AdminAlertEscalator alertEscalator;
 
     private final UserRepository userRepository = mock(UserRepository.class);
@@ -85,15 +87,11 @@ class DeliveryTransferConcurrencyIT {
     void setUp() {
         tx = new TransactionTemplate(transactionManager);
         tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        listener = new DeliveryEventListener(paymentRepository, userRepository, auditService,
+        // Sans transaction autour du versement, comme en production (PROD_CHECKLIST 9.23).
+        listener = ReleaseTestSupport.listener(paymentRepository, userRepository, auditService,
                 mock(ApplicationEventPublisher.class), bidRepository, mock(AdminAlertService.class),
                 mock(CommissionVoucherService.class), null, mock(PayoutHoldPolicy.class), alertEscalator,
-                escrowCapture, lookup, disputeRepository) {
-            @Override
-            public EscrowReleaseOutcome releaseAfterLateEscrow(UUID bidId, UUID senderId, UUID travelerId, String source) {
-                return tx.execute(s -> super.releaseAfterLateEscrow(bidId, senderId, travelerId, source));
-            }
-        };
+                escrowCapture, lookup, disputeRepository, intentRepository, transactionManager, releaseGuard);
         UUID announcementId = UUID.randomUUID();
         AnnouncementEntity announcement = mock(AnnouncementEntity.class);
         when(announcement.getTravelerId()).thenReturn(travelerId);
@@ -121,6 +119,7 @@ class DeliveryTransferConcurrencyIT {
 
     @AfterEach
     void cleanUp() {
+        jdbc.update("DELETE FROM stripe_release_intents WHERE payment_id = ?", payment.getId());
         jdbc.update("DELETE FROM payments WHERE id = ?", payment.getId());
         jdbc.update("DELETE FROM bids WHERE id = ?", bid.getId());
     }
@@ -147,11 +146,9 @@ class DeliveryTransferConcurrencyIT {
 
     @Test
     void deuxVersementsSimultanes_unSeulTransfer() throws Exception {
-        // Le gagnant tient son verrou un moment pendant la recherche Stripe : le perdant attend.
-        when(lookup.findExistingTransfer(any(), anyString(), any())).thenAnswer(inv -> {
-            Thread.sleep(300);
-            return Optional.empty();
-        });
+        // Le claim ESCROW → RELEASED est commité avant la recherche Stripe : le perdant voit
+        // RELEASED et n'émet rien, un seul Transfer.
+        when(lookup.findExistingTransfer(any(), anyString(), any())).thenReturn(Optional.empty());
         CountDownLatch start = new CountDownLatch(1);
         ExecutorService pool = Executors.newFixedThreadPool(2);
         try {
@@ -167,7 +164,7 @@ class DeliveryTransferConcurrencyIT {
         } finally {
             pool.shutdownNow();
         }
-        assertThat(transfers).containsExactly("transfer-" + payment.getId());
+        assertThat(transfers).containsExactly("transfer-" + payment.getId() + "-r1");
         verify(lookup, times(1)).findExistingTransfer(any(), anyString(), any());
         PaymentEntity after = paymentRepository.findById(payment.getId()).orElseThrow();
         assertThat(after.getStatus()).isEqualTo(PaymentStatus.RELEASED);

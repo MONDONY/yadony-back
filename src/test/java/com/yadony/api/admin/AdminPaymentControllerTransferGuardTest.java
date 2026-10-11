@@ -77,7 +77,7 @@ class AdminPaymentControllerTransferGuardTest {
         controller = new AdminPaymentController(paymentRepository, adminAlertRepository, auditService,
                 bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
                 payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
-                transactionManager, holdPolicy, insights, timeline, escrowCapture, transferLookup, disputeRepository);
+                transactionManager, holdPolicy, insights, timeline, escrowCapture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, transferLookup, auditService, eventPublisher, null), disputeRepository, new com.yadony.api.payments.ReleaseNetCalculator(null));
         payment = new PaymentEntity();
         payment.setNegotiationThreadId(threadId);
         payment.setStripePaymentIntentId("pi_1");
@@ -114,9 +114,9 @@ class AdminPaymentControllerTransferGuardTest {
 
         verify(paymentRepository).recordStripeTransferId(paymentId, "tr_existing");
         verify(auditService).log(eq("PAYMENT"), eq(paymentId), eq("TRANSFER_ALREADY_EXISTS_REALIGNED"), eq(bidId), any());
-        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.RELEASED);
+        verify(paymentRepository).markReleasedIfEscrow(eq(paymentId), any());
         verify(auditService, never()).log(any(), any(), eq("ESCROW_FORCE_RELEASED"), any(), any());
-        verify(eventPublisher, never()).publishEvent(any());
+        verify(eventPublisher).publishEvent(any(com.yadony.api.payments.events.PaymentReleasedEvent.class));
     }
 
     @Test
