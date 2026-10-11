@@ -165,7 +165,13 @@ public class PaymentStripeResyncService {
         String stripeStatus = pi.getStatus();
         Snapshot before = snapshot(initial, stripeStatus, pi.getAmountCapturable());
 
-        Step step = transaction.execute(tx -> alignLocally(load(paymentId), pi));
+        // Colis verrouillé AVANT de relire le paiement (ordre colis → paiement, PROD_CHECKLIST
+        // 9.25) : l'entité chargée ensuite est à jour et le webhook rejoué n'écrit que des
+        // UPDATE ciblés.
+        Step step = transaction.execute(tx -> {
+            paymentService.lockBidOfPayment(paymentId);
+            return alignLocally(load(paymentId), pi);
+        });
         Action action = step.action();
         String message = step.message();
         String afterStripeStatus = stripeStatus;

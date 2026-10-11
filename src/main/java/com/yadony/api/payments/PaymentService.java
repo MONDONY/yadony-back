@@ -1083,22 +1083,18 @@ public class PaymentService {
         Optional<PaymentEntity> found = paymentRepository.findByStripePaymentIntentId(finalPi.getId());
 
         found.ifPresent(payment -> {
-            boolean changed = false;
 
             // Persist the Stripe Charge id for later Transfer.sourceTransaction reconciliation.
             // Idempotent: only set once.
-            String chargeId = finalPi.getLatestCharge();
-            boolean chargeMissing = chargeId != null && payment.getStripeChargeId() == null;
-            if (chargeMissing) {
-                payment.setStripeChargeId(chargeId);
-            }
+            // Écritures ciblées seulement, jamais de save de l'entité : chargée par l'appelant
+            // (resynchronisation), elle peut précéder le verrou et réécrirait des colonnes
+            // périmées. La session est ensuite réalignée sur la ligne écrite.
+            writeChargeIdIfMissing(payment, finalPi.getLatestCharge());
 
             // Écriture conditionnelle : un paiement annulé entre la lecture ci-dessus et ce point
             // (annulation avant paiement concurrente) n'est jamais ressuscité en séquestre.
             if (payment.getStatus() == PaymentStatus.PENDING
                     && paymentRepository.markCardEscrowIfPending(payment.getId()) == 1) {
-                payment.setStatus(PaymentStatus.ESCROW);
-                changed = true;
                 auditService.log("PAYMENT", payment.getId(), "PAYMENT_ESCROW_ACTIVE",
                         payment.getBidId(),
                         Map.of("piId", finalPi.getId(), "amountCapturable", finalPi.getAmountCapturable()));
@@ -1106,16 +1102,7 @@ public class PaymentService {
                 eventPublisher.publishEvent(
                         new PaymentEscrowReadyEvent(payment.getBidId(), payment.getId(), callerSettles));
             }
-
-            if (changed) {
-                // Ligne déjà passée ESCROW par l'écriture conditionnelle : la sauvegarde ne
-                // réécrit que des valeurs à jour.
-                paymentRepository.save(payment);
-            } else if (chargeMissing) {
-                // Jamais de save d'une entité lue avant un claim perdu (elle réécrirait PENDING
-                // sur un paiement annulé) : écriture ciblée du seul charge id.
-                paymentRepository.setStripeChargeIdIfMissing(payment.getId(), chargeId);
-            }
+            realign(payment);
         });
 
         // Paiement mort (annulé avant paiement, remboursé) : l'autorisation est libérée, le bid
@@ -1148,10 +1135,16 @@ public class PaymentService {
      * paiement en premier). Réentrant : sans effet si la transaction tient déjà ce verrou
      * (negotiation/checkout → confirmBidPayment).
      */
-    private void lockBidFirst(UUID bidId) {
-        if (bidId != null) {
-            bidRepository.lockForUpdate(bidId);
-        }
+    private int lockBidFirst(UUID bidId) {
+        return bidId == null ? 0 : bidRepository.lockForUpdate(bidId);
+    }
+
+    /**
+     * Verrou du colis d'un paiement, pour un appelant qui va relire puis écrire ce paiement
+     * ({@link PaymentStripeResyncService}) : à appeler AVANT de charger l'entité paiement.
+     */
+    void lockBidOfPayment(UUID paymentId) {
+        lockBidFirst(paymentRepository.findBidIdById(paymentId).orElse(null));
     }
 
     /**
@@ -1165,10 +1158,28 @@ public class PaymentService {
         lockBidFirst(bidId);
     }
 
-    /** Relit le colis déjà chargé, maintenant qu'il est verrouillé (état commité le plus récent). */
-    private void refreshUnderLock(BidEntity bid) {
-        if (entityManager != null && entityManager.contains(bid)) {
-            entityManager.refresh(bid);
+    /**
+     * Réaligne une entité de la session sur sa ligne en base (verrou pris, ou écritures ciblées
+     * faites) : jamais d'entité périmée ni sale qu'un flush réécrirait en entier.
+     *
+     * @return faux si la ligne a disparu entre-temps (soft delete, filtre {@code deleted_at})
+     */
+    private boolean realign(Object entity) {
+        if (entityManager == null || !entityManager.contains(entity)) {
+            return true;
+        }
+        try {
+            entityManager.refresh(entity);
+            return true;
+        } catch (jakarta.persistence.EntityNotFoundException gone) {
+            return false;
+        }
+    }
+
+    /** Charge id Stripe reporté par écriture ciblée (jamais par un setter sur l'entité). */
+    private void writeChargeIdIfMissing(PaymentEntity payment, String chargeId) {
+        if (chargeId != null && payment.getStripeChargeId() == null) {
+            paymentRepository.setStripeChargeIdIfMissing(payment.getId(), chargeId);
         }
     }
 
@@ -1280,6 +1291,17 @@ public class PaymentService {
      *
      * @return true if the bid is now in PENDING state, false otherwise
      */
+    /**
+     * {@link #confirmBidPayment} rejoué DANS la transaction d'un checkout (auto-réparation) : une
+     * erreur métier (Stripe injoignable, colis introuvable) survient avant toute écriture et ne
+     * doit pas marquer rollback-only la transaction de l'appelant, qui poursuit son parcours.
+     * Un conflit de verrou, lui, remonte et annule tout : PostgreSQL a déjà avorté la transaction.
+     */
+    @Transactional(noRollbackFor = YadonyBusinessException.class)
+    public boolean confirmBidPaymentWithinCaller(UUID bidId) {
+        return confirmBidPayment(bidId);
+    }
+
     @Transactional
     public boolean confirmBidPayment(UUID bidId) {
         BidEntity bid = bidRepository.findById(bidId).orElseThrow(() ->
@@ -1309,8 +1331,13 @@ public class PaymentService {
                 // ci-dessus s'est fait sans verrou, un webhook ou un checkout concurrent a pu
                 // passer entre-temps (YADONY-BACK-STAGING-18 : confirm-payment prenait le
                 // paiement puis le colis, negotiation/checkout le colis puis le paiement).
-                lockBidFirst(bidId);
-                refreshUnderLock(bid);
+                if (lockBidFirst(bidId) == 0 || !realign(bid)) {
+                    // Colis retiré pendant l'appel Stripe (abandon AWAITING_PAYMENT expiré, soft
+                    // delete) : plus rien à promouvoir, jamais de 500.
+                    log.info("Bid {} plus disponible pendant la vérification Stripe (PI {}) : pas de promotion",
+                            bidId, piId);
+                    return false;
+                }
                 if (bid.getStatus() == BidStatus.PAYMENT_ESCROWED) {
                     return true;
                 }
@@ -1323,27 +1350,17 @@ public class PaymentService {
                 // paiement n'est pas mort : un bid annulé avant paiement n'est jamais ressuscité.
                 Optional<PaymentEntity> found = paymentRepository.findByBidId(bidId);
                 found.ifPresent(payment -> {
-                    boolean changed = false;
-                    String chargeId = pi.getLatestCharge();
-                    boolean chargeMissing = chargeId != null && payment.getStripeChargeId() == null;
-                    if (chargeMissing) {
-                        payment.setStripeChargeId(chargeId);
-                    }
+                    // Écritures ciblées seulement (jamais de save d'entité), comme le webhook.
+                    writeChargeIdIfMissing(payment, pi.getLatestCharge());
                     if (payment.getStatus() == PaymentStatus.PENDING
                             && paymentRepository.markCardEscrowIfPending(payment.getId()) == 1) {
-                        payment.setStatus(PaymentStatus.ESCROW);
-                        changed = true;
                         auditService.log("PAYMENT", payment.getId(), "PAYMENT_ESCROW_ACTIVE",
                                 payment.getBidId(),
                                 Map.of("piId", pi.getId(), "source", "confirmBidPayment"));
                         log.info("Payment {} set to ESCROW via confirmBidPayment (PI={})",
                                 payment.getId(), pi.getId());
                     }
-                    if (changed) {
-                        paymentRepository.save(payment);
-                    } else if (chargeMissing) {
-                        paymentRepository.setStripeChargeIdIfMissing(payment.getId(), chargeId);
-                    }
+                    realign(payment);
                 });
                 if (found.isPresent() && releaseIfPaymentDead(found.get(), piId)) {
                     return false;

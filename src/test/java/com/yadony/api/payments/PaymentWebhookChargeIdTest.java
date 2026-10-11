@@ -75,8 +75,9 @@ class PaymentWebhookChargeIdTest {
 
         service.handlePaymentEscrowActive(event);
 
-        assertThat(payment.getStripeChargeId()).isEqualTo("ch_abc");
-        verify(paymentRepository).save(payment);
+        // Écriture ciblée, jamais de save d'une entité chargée avant le verrou (PROD_CHECKLIST 9.25).
+        verify(paymentRepository).setStripeChargeIdIfMissing(payment.getId(), "ch_abc");
+        verify(paymentRepository, org.mockito.Mockito.never()).save(payment);
     }
 
     @Test
@@ -152,6 +153,6 @@ class PaymentWebhookChargeIdTest {
         verify(eventPublisher).publishEvent(org.mockito.ArgumentMatchers.argThat(
                 (Object e) -> e instanceof com.yadony.api.payments.events.PaymentEscrowReadyEvent ready
                         && ready.isCallerSettles()));
-        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.ESCROW);
+        verify(paymentRepository).markCardEscrowIfPending(payment.getId());
     }
 }

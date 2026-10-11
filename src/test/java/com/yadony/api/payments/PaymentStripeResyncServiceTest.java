@@ -226,7 +226,7 @@ class PaymentStripeResyncServiceTest {
         PaymentStripeResyncService.Result r = run(pi);
         assertThat(r.action()).isEqualTo(PaymentStripeResyncService.Action.ALREADY_IN_SYNC);
         assertThat(r.changed()).isFalse();
-        verifyNoInteractions(paymentService, auditService);
+        verifyOnlyBidLocked(); verifyNoInteractions(auditService);
     }
 
     @Test
@@ -234,7 +234,7 @@ class PaymentStripeResyncServiceTest {
         payment.setStatus(PaymentStatus.PENDING);
         assertThat(run(pi("requires_action", 6450)).action())
                 .isEqualTo(PaymentStripeResyncService.Action.ALREADY_IN_SYNC);
-        verifyNoInteractions(paymentService);
+        verifyOnlyBidLocked();
     }
 
     // ── ESCROW ───────────────────────────────────────────────────────────────
@@ -306,7 +306,7 @@ class PaymentStripeResyncServiceTest {
         PaymentStripeResyncService.Result r = run(pi("succeeded", 6450));
         assertThat(r.action()).isEqualTo(PaymentStripeResyncService.Action.ALREADY_IN_SYNC);
         verify(paymentRepository, never()).markCapturedIfEscrow(any(), any());
-        verifyNoInteractions(auditService, escrowCapture, paymentService);
+        verifyOnlyBidLocked(); verifyNoInteractions(auditService, escrowCapture);
     }
 
     @Test
@@ -315,7 +315,7 @@ class PaymentStripeResyncServiceTest {
         YadonyBusinessException e = runExpectingError(pi("canceled", 6450));
         assertThat(e.getErrorCode()).isEqualTo("authorization-expired");
         assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
-        verifyNoInteractions(paymentService, escrowCapture, auditService);
+        verifyOnlyBidLocked(); verifyNoInteractions(escrowCapture, auditService);
     }
 
     @Test
@@ -323,7 +323,7 @@ class PaymentStripeResyncServiceTest {
         payment.setStatus(PaymentStatus.PENDING);
         YadonyBusinessException e = runExpectingError(pi("requires_capture", 9999));
         assertThat(e.getErrorCode()).isEqualTo("amount-mismatch");
-        verifyNoInteractions(paymentService, auditService);
+        verifyOnlyBidLocked(); verifyNoInteractions(auditService);
     }
 
     // ── Statuts clos ─────────────────────────────────────────────────────────
@@ -617,5 +617,11 @@ class PaymentStripeResyncServiceTest {
 
         assertThat(r.action()).isEqualTo(PaymentStripeResyncService.Action.MARKED_CANCELLED);
         verify(auditService).log(eq("PAYMENT"), eq(paymentId), eq("PAYMENT_AUTO_RESYNC_STRIPE"), isNull(), anyMap());
+    }
+
+    /** Seul le verrou du colis est pris (ordre colis → paiement, PROD_CHECKLIST 9.25), rien n'est écrit. */
+    private void verifyOnlyBidLocked() {
+        verify(paymentService).lockBidOfPayment(any());
+        org.mockito.Mockito.verifyNoMoreInteractions(paymentService);
     }
 }

@@ -426,6 +426,12 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     @Query("SELECT b.id FROM BidEntity b WHERE b.paymentIntentId = :piId")
     Optional<UUID> findIdByPaymentIntentId(@Param("piId") String piId);
 
+    /** Identifiant du colis repris par le checkout carte, lu sans charger l'entité avant son verrou. */
+    @Query("SELECT b.id FROM BidEntity b WHERE b.senderId = :senderId AND b.announcementId = :announcementId "
+            + "AND b.status = :status")
+    Optional<UUID> findIdBySenderIdAndAnnouncementIdAndStatus(@Param("senderId") UUID senderId,
+            @Param("announcementId") UUID announcementId, @Param("status") BidStatus status);
+
     /**
      * Abandon d'un bid carte resté AWAITING_PAYMENT au-delà de sa fenêtre
      * ({@code AwaitingPaymentCleanupScheduler}) : soft delete conditionnel. 0 si le bid a quitté

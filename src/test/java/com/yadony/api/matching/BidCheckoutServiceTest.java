@@ -316,6 +316,59 @@ class BidCheckoutServiceTest {
         verify(bidRepository, never()).save(any());
     }
 
+    /** Ordre global colis → annonce → paiement (PROD_CHECKLIST 9.25), le même que negotiationCheckout. */
+    @Test
+    void checkout_resume_locksTheBidBeforeTheAnnouncement_andReloadsItUnderLock() {
+        BidEntity existing = new BidEntity();
+        ReflectionTestUtils.setField(existing, "id", UUID.randomUUID());
+        existing.setStatus(BidStatus.AWAITING_PAYMENT);
+        existing.setAwaitingPaymentExpiresAt(java.time.LocalDateTime.now().plusMinutes(10));
+        when(bidRepository.findIdBySenderIdAndAnnouncementIdAndStatus(
+                sender.getId(), announcement.getId(), BidStatus.AWAITING_PAYMENT))
+            .thenReturn(Optional.of(existing.getId()));
+        when(bidRepository.findBySenderIdAndAnnouncementIdAndStatus(
+                sender.getId(), announcement.getId(), BidStatus.AWAITING_PAYMENT))
+            .thenReturn(Optional.of(existing));
+        when(paymentService.createEscrow(any(), eq("uid-sender"))).thenReturn(stubPaymentResponse());
+
+        service.checkout("uid-sender", req, httpRequest);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(bidRepository, announcementRepository);
+        order.verify(bidRepository).lockForUpdate(existing.getId());
+        order.verify(announcementRepository).findByIdForUpdate(announcement.getId());
+        order.verify(bidRepository).findBySenderIdAndAnnouncementIdAndStatus(
+                sender.getId(), announcement.getId(), BidStatus.AWAITING_PAYMENT);
+    }
+
+    @Test
+    void checkout_withoutBidToResume_takesNoBidLock() {
+        when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> {
+            BidEntity b = inv.getArgument(0);
+            if (b.getId() == null) ReflectionTestUtils.setField(b, "id", UUID.randomUUID());
+            return b;
+        });
+        when(paymentService.createEscrow(any(CreatePaymentRequest.class), eq("uid-sender")))
+            .thenReturn(stubPaymentResponse());
+
+        service.checkout("uid-sender", req, httpRequest);
+
+        verify(bidRepository, never()).lockForUpdate(any());
+    }
+
+    /** La transaction PostgreSQL est déjà avortée : un conflit de verrou n'est jamais avalé. */
+    @Test
+    void negotiationCheckout_lockConflictDuringSelfHealing_isRethrown() {
+        BidEntity bid = negotiatedBid();
+        bid.setPaymentIntentId("pi_deadlock");
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+        when(paymentService.confirmBidPaymentWithinCaller(bid.getId()))
+                .thenThrow(new org.springframework.dao.CannotAcquireLockException("deadlock detected"));
+
+        assertThatThrownBy(() -> service.negotiationCheckout("uid-sender", bid.getId()))
+                .isInstanceOf(org.springframework.dao.PessimisticLockingFailureException.class);
+        verify(paymentService, never()).createEscrow(any(), anyString());
+    }
+
     @Test
     void resolveClientIp_uses_last_x_forwarded_for_value() {
         when(httpRequest.getHeader("X-Forwarded-For")).thenReturn("1.2.3.4, 5.6.7.8, 9.10.11.12");
@@ -389,7 +442,7 @@ class BidCheckoutServiceTest {
         bid.setPaymentIntentId("pi_already_paid");
         when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
         // Le filet rejoué depuis le serveur : Stripe confirme l'autorisation.
-        when(paymentService.confirmBidPayment(bid.getId())).thenReturn(true);
+        when(paymentService.confirmBidPaymentWithinCaller(bid.getId())).thenReturn(true);
 
         assertThatThrownBy(() -> service.negotiationCheckout("uid-sender", bid.getId()))
                 // Type dédié, déclaré en noRollbackFor : la promotion faite par
@@ -409,7 +462,7 @@ class BidCheckoutServiceTest {
         bid.setPaymentIntentId("pi_abandoned");
         when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
         when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(paymentService.confirmBidPayment(bid.getId())).thenReturn(false);
+        when(paymentService.confirmBidPaymentWithinCaller(bid.getId())).thenReturn(false);
         when(paymentService.createEscrow(any(), eq("uid-sender")))
                 .thenReturn(stubPaymentResponse());
 
@@ -425,7 +478,7 @@ class BidCheckoutServiceTest {
         when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
         when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> inv.getArgument(0));
         // Incident transitoire côté Stripe : ne doit jamais se transformer en refus.
-        when(paymentService.confirmBidPayment(bid.getId()))
+        when(paymentService.confirmBidPaymentWithinCaller(bid.getId()))
                 .thenThrow(new YadonyBusinessException(org.springframework.http.HttpStatus.BAD_GATEWAY,
                         "stripe-error", "Stripe Error", "Stripe injoignable"));
         when(paymentService.createEscrow(any(), eq("uid-sender")))

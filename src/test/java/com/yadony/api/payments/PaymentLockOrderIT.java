@@ -215,6 +215,45 @@ class PaymentLockOrderIT {
         }
     }
 
+    /** Colis abandonné (soft delete) pendant l'appel Stripe : false, jamais de 500 (EntityNotFound). */
+    @Test
+    void bidSoftDeletedDuringTheStripeCall_confirmPaymentAnswersFalse() throws Exception {
+        Fixture f = fixture();
+        PaymentIntent authorized = authorized(f.piId);
+        when(stripeGateway.retrievePaymentIntent(f.piId)).thenAnswer(inv -> {
+            // AwaitingPaymentCleanupScheduler passe pendant l'aller-retour Stripe (autre connexion).
+            jdbc.update("UPDATE bids SET deleted_at = now() WHERE id = ?", f.bidId);
+            return authorized;
+        });
+
+        assertThat(paymentService.confirmBidPayment(f.bidId)).isFalse();
+        assertThat(paymentStatus(f.paymentId)).isEqualTo("PENDING");
+        assertThat(auditCount(f.bidId, "BID_CREATED")).isZero();
+    }
+
+    /**
+     * Auto-réparation du checkout : Stripe injoignable dans confirmBidPaymentWithinCaller ne marque
+     * pas rollback-only la transaction de l'appelant, qui valide ses propres écritures.
+     */
+    @Test
+    void selfHealingStripeFailure_neverPoisonsTheCallersTransaction() throws Exception {
+        Fixture f = fixture();
+        when(stripeGateway.retrievePaymentIntent(f.piId))
+                .thenThrow(new com.stripe.exception.ApiException("boom", null, null, 500, null));
+
+        tx.executeWithoutResult(s -> {
+            jdbc.update("UPDATE bids SET weight_kg = 6 WHERE id = ?", f.bidId);
+            try {
+                paymentService.confirmBidPaymentWithinCaller(f.bidId);
+            } catch (com.yadony.api.common.YadonyBusinessException expected) {
+                // le checkout poursuit son parcours
+            }
+        });
+
+        assertThat(jdbc.queryForObject("SELECT weight_kg FROM bids WHERE id = ?", BigDecimal.class, f.bidId))
+                .isEqualByComparingTo("6");
+    }
+
     // --- helpers ---
 
     private record Fixture(UserEntity sender, UUID bidId, UUID paymentId, String piId) {
