@@ -645,10 +645,15 @@ public class AdminPaymentController {
                 // Fonds encore bloqués (non capturés) → annuler le PaymentIntent lève le hold.
                 pi.cancel();
             } else {
-                // Fonds déjà capturés → remboursement classique.
+                // Fonds déjà capturés → remboursement classique. Clé stable par paiement :
+                // une relance réseau du SDK (stripe.max-network-retries) ou un second clic
+                // admin rend le même remboursement au lieu d'en créer un second. Préfixe
+                // propre (pas « refund- » de RefundProcessor) : Stripe rejoue 24 h la réponse
+                // d'une clé, un échec antérieur d'un autre chemin ne doit pas être resservi ici.
                 Refund.create(RefundCreateParams.builder()
                         .setPaymentIntent(payment.getStripePaymentIntentId())
-                        .build());
+                        .build(),
+                        RequestOptions.builder().setIdempotencyKey("admin-refund-" + id).build());
             }
         } catch (StripeException e) {
             // Idempotence : si Stripe indique que le renversement a déjà eu lieu (charge déjà

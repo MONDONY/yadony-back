@@ -352,11 +352,16 @@ class AdminPaymentControllerTest {
             when(pi.getStatus()).thenReturn("succeeded"); // fonds déjà capturés
             piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
             ArgumentCaptor<RefundCreateParams> captor = ArgumentCaptor.forClass(RefundCreateParams.class);
-            refundStatic.when(() -> Refund.create(captor.capture())).thenReturn(mock(Refund.class));
+            ArgumentCaptor<com.stripe.net.RequestOptions> opts =
+                    ArgumentCaptor.forClass(com.stripe.net.RequestOptions.class);
+            refundStatic.when(() -> Refund.create(captor.capture(), opts.capture()))
+                    .thenReturn(mock(Refund.class));
 
             ResponseEntity<AdminPaymentDetailResponse> resp = controller.refund(paymentId);
 
             assertThat(captor.getValue().getPaymentIntent()).isEqualTo("pi_xxx");
+            // Clé stable par paiement : une relance réseau du SDK ne crée pas un second remboursement.
+            assertThat(opts.getValue().getIdempotencyKey()).isEqualTo("admin-refund-" + paymentId);
             assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
             assertThat(resp.getBody().status()).isEqualTo("REFUNDED");
         }
@@ -402,7 +407,8 @@ class AdminPaymentControllerTest {
             ResponseEntity<AdminPaymentDetailResponse> resp = controller.refund(paymentId);
 
             verify(pi).cancel(); // annulation du hold, pas de Refund
-            refundStatic.verify(() -> Refund.create(any(RefundCreateParams.class)), never());
+            refundStatic.verify(() -> Refund.create(any(RefundCreateParams.class),
+                    any(com.stripe.net.RequestOptions.class)), never());
             assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
             assertThat(resp.getBody().status()).isEqualTo("REFUNDED");
         }
@@ -442,7 +448,7 @@ class AdminPaymentControllerTest {
             piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
             var alreadyRefunded = mock(com.stripe.exception.InvalidRequestException.class);
             when(alreadyRefunded.getCode()).thenReturn("charge_already_refunded");
-            refundStatic.when(() -> Refund.create(any(RefundCreateParams.class))).thenThrow(alreadyRefunded);
+            refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(com.stripe.net.RequestOptions.class))).thenThrow(alreadyRefunded);
 
             ResponseEntity<AdminPaymentDetailResponse> resp = controller.refund(paymentId);
 
@@ -467,7 +473,8 @@ class AdminPaymentControllerTest {
 
             ResponseEntity<AdminPaymentDetailResponse> resp = controller.refund(paymentId);
 
-            refundStatic.verify(() -> Refund.create(any(RefundCreateParams.class)), never());
+            refundStatic.verify(() -> Refund.create(any(RefundCreateParams.class),
+                    any(com.stripe.net.RequestOptions.class)), never());
             assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
             assertThat(resp.getBody().status()).isEqualTo("REFUNDED");
         }
@@ -484,7 +491,7 @@ class AdminPaymentControllerTest {
             PaymentIntent pi = mock(PaymentIntent.class);
             when(pi.getStatus()).thenReturn("succeeded");
             piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
-            refundStatic.when(() -> Refund.create(any(RefundCreateParams.class)))
+            refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(com.stripe.net.RequestOptions.class)))
                     .thenThrow(mock(com.stripe.exception.InvalidRequestException.class));
             assertThatThrownBy(() -> controller.refund(paymentId))
                     .isInstanceOf(YadonyBusinessException.class)

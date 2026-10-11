@@ -111,4 +111,28 @@ class BidCheckoutControllerIntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.bidId").value(bidId.toString()));
     }
+
+    /** YADONY-BACK-STAGING-17 : Stripe injoignable → 502 RFC 7807 stripe-unavailable, pas une 500. */
+    @Test
+    void post_checkout_whenStripeUnreachable_returns_502_stripe_unavailable_problem() throws Exception {
+        when(bidCheckoutService.checkout(anyString(), any(), any()))
+                .thenThrow(com.yadony.api.common.stripe.StripeUnavailable.exception());
+
+        BidCheckoutRequest req = new BidCheckoutRequest(
+                UUID.randomUUID(), new BigDecimal("2"),
+                "x", "OTHER", "n", "+221", true, null, null);
+
+        mockMvc.perform(post("/bids/checkout")
+                        .with(authentication(authenticatedAs("uid-sender")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isBadGateway())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content()
+                        .contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.type").value(org.hamcrest.Matchers.endsWith("/stripe-unavailable")))
+                .andExpect(jsonPath("$.code").value("stripe-unavailable"))
+                .andExpect(jsonPath("$.status").value(502))
+                .andExpect(jsonPath("$.detail")
+                        .value("Le service de paiement est momentanément injoignable, réessayez."));
+    }
 }

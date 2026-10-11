@@ -458,7 +458,8 @@ class AdminPaymentControllerHoldTest {
             var resp = controller.refund(payment.getId());
 
             assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
-            refund.verify(() -> com.stripe.model.Refund.create(any(com.stripe.param.RefundCreateParams.class)));
+            refund.verify(() -> com.stripe.model.Refund.create(any(com.stripe.param.RefundCreateParams.class),
+                    any(com.stripe.net.RequestOptions.class)));
         }
         assertThat(payment.getStatus()).isEqualTo(PaymentStatus.REFUNDED);
     }

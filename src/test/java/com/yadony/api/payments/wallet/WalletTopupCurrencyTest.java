@@ -255,4 +255,49 @@ class WalletTopupCurrencyTest {
                     .hasMessageContaining("recharge");
         }
     }
+
+    /** YADONY-BACK-STAGING-17 : Stripe injoignable → 502 stripe-unavailable, pas l'erreur Stripe générique. */
+    @Test
+    void createCheckoutSession_networkFailure_is502StripeUnavailable() {
+        UUID userId = UUID.randomUUID();
+        WalletTopupOrchestrator orchestrator = orchestrator(userId, "EUR");
+        try (MockedStatic<com.stripe.model.checkout.Session> mocked = mockStatic(com.stripe.model.checkout.Session.class)) {
+            mocked.when(() -> com.stripe.model.checkout.Session.create(any(com.stripe.param.checkout.SessionCreateParams.class)))
+                    .thenThrow(new com.stripe.exception.ApiConnectionException("Connection reset by peer"));
+
+            assertThatThrownBy(() -> orchestrator.createCheckoutSession(userId, new BigDecimal("10")))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, error -> {
+                        assertThat(error.getStatus()).isEqualTo(org.springframework.http.HttpStatus.BAD_GATEWAY);
+                        assertThat(error.getErrorCode()).isEqualTo("stripe-unavailable");
+                    });
+        }
+    }
+
+    @Test
+    void initiate_networkFailure_is502StripeUnavailable() {
+        UUID userId = UUID.randomUUID();
+        WalletTopupOrchestrator orchestrator = orchestrator(userId, "EUR");
+        try (MockedStatic<PaymentIntent> mockedPi = mockStatic(PaymentIntent.class)) {
+            mockedPi.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class)))
+                    .thenThrow(new com.stripe.exception.ApiConnectionException("Connection reset by peer"));
+
+            assertThatThrownBy(() -> orchestrator.initiate(userId, topupRequest("10.00")))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            error -> assertThat(error.getErrorCode()).isEqualTo("stripe-unavailable"));
+        }
+    }
+
+    @Test
+    void initiate_stripeRefusal_keepsWalletTopupStripeError() {
+        UUID userId = UUID.randomUUID();
+        WalletTopupOrchestrator orchestrator = orchestrator(userId, "EUR");
+        try (MockedStatic<PaymentIntent> mockedPi = mockStatic(PaymentIntent.class)) {
+            mockedPi.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class)))
+                    .thenThrow(new com.stripe.exception.ApiException("boom", null, null, 500, null));
+
+            assertThatThrownBy(() -> orchestrator.initiate(userId, topupRequest("10.00")))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            error -> assertThat(error.getErrorCode()).isEqualTo("wallet-topup-stripe-error"));
+        }
+    }
 }

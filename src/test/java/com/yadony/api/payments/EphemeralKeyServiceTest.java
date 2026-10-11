@@ -162,4 +162,19 @@ class EphemeralKeyServiceTest {
 
         assertThat(thrown).isInstanceOf(YadonyBusinessException.class);
     }
+
+    @Test
+    void createEphemeralKey_networkFailure_is502StripeUnavailable() throws Exception {
+        when(userRepository.findByFirebaseUid("uid-user"))
+                .thenReturn(Optional.of(buildUser("cus_existing")));
+        when(stripeGateway.createEphemeralKey(any(EphemeralKeyCreateParams.class)))
+                .thenThrow(new com.stripe.exception.ApiConnectionException("Connection reset by peer"));
+
+        Throwable thrown = catchThrowable(() -> service.createEphemeralKey("uid-user", "2024-06-20"));
+
+        assertThat(thrown).isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+            assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.BAD_GATEWAY);
+            assertThat(e.getErrorCode()).isEqualTo("stripe-unavailable");
+        });
+    }
 }

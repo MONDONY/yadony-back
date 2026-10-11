@@ -3,6 +3,9 @@ package com.yadony.api.config;
 import com.yadony.api.common.stripe.StripeWebhookProperties;
 import com.stripe.Stripe;
 import com.stripe.StripeClient;
+import com.stripe.net.ApiResource;
+import com.stripe.net.LiveStripeResponseGetter;
+import com.yadony.api.common.stripe.ConnectionResetRetryingHttpClient;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -15,6 +18,17 @@ public class StripeConfig {
 
     @Value("${stripe.secret-key}")
     private String secretKey;
+
+    /**
+     * Relances réseau Stripe (YADONY-BACK-STAGING-17) : sans elles, un « Connection reset
+     * by peer » transitoire remonte tel quel au premier essai. Le SDK relance les échecs de
+     * connexion, les délais dépassés, les 409 et {@code Stripe-Should-Retry} ;
+     * {@link ConnectionResetRetryingHttpClient} y ajoute la connexion réinitialisée, que le
+     * SDK ne relance pas. Chaque POST garde la même clé d'idempotence d'une relance à
+     * l'autre : la clé explicite de l'appelant, sinon celle que le SDK génère une fois.
+     */
+    @Value("${stripe.max-network-retries:2}")
+    private int maxNetworkRetries;
 
     @Value("${stripe.webhook-secret:}")
     private String webhookSecret;
@@ -31,6 +45,11 @@ public class StripeConfig {
     @PostConstruct
     public void init() {
         Stripe.apiKey = secretKey;
+        Stripe.setMaxNetworkRetries(maxNetworkRetries);
+        // Points d'entrée statiques (PaymentIntent.create, Refund.create…) : même client
+        // que le StripeClient ci-dessous, qui relance aussi une connexion réinitialisée.
+        ApiResource.setGlobalResponseGetter(
+                new LiveStripeResponseGetter(new ConnectionResetRetryingHttpClient()));
     }
 
     /**
@@ -41,7 +60,11 @@ public class StripeConfig {
      */
     @Bean
     public StripeClient stripeClient() {
-        return new StripeClient(secretKey);
+        return StripeClient.builder()
+                .setApiKey(secretKey)
+                .setMaxNetworkRetries(maxNetworkRetries)
+                .setHttpClient(new ConnectionResetRetryingHttpClient())
+                .build();
     }
 
     @Bean("stripeWebhookSecret")

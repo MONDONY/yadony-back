@@ -322,6 +322,156 @@ class PaymentServiceLegacyIntentRecoveryTest {
         verify(paymentRepository, never()).save(any());
     }
 
+    // ── YADONY-BACK-STAGING-17 : Stripe injoignable → 502 stripe-unavailable ──────
+
+    private static com.stripe.exception.ApiConnectionException connectionReset() {
+        return new com.stripe.exception.ApiConnectionException(
+                "IOException during API request to Stripe (https://api.stripe.com): Connection reset by peer",
+                new java.io.IOException("Connection reset by peer"));
+    }
+
+    private static void assertStripeUnavailable(Throwable thrown) {
+        assertThat(thrown).isInstanceOfSatisfying(YadonyBusinessException.class, error -> {
+            assertThat(error.getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY);
+            assertThat(error.getErrorCode()).isEqualTo("stripe-unavailable");
+            assertThat(error.getMessage())
+                    .isEqualTo("Le service de paiement est momentanément injoignable, réessayez.");
+        });
+    }
+
+    @Test
+    void bidResumeRetrieveNetworkFailure_is502StripeUnavailable_withoutMutation() throws Exception {
+        PaymentEntity existing = bidPayment("pi_legacy", "28.00", "cad");
+        stubExistingBid(existing, new BigDecimal("0.12"), null);
+        when(stripeGateway.retrievePaymentIntent("pi_legacy")).thenThrow(connectionReset());
+
+        Throwable thrown = catchThrowable(() -> service.createEscrow(paymentRequest(), "uid-sender"));
+
+        assertStripeUnavailable(thrown);
+        verify(stripeGateway, never()).createPaymentIntent(any());
+        verify(paymentRepository, never()).save(any());
+        verify(bidRepository, never()).save(any());
+        assertThat(existing.getStripePaymentIntentId()).isEqualTo("pi_legacy");
+        assertThat(existing.getStatus()).isEqualTo(PaymentStatus.PENDING);
+    }
+
+    @Test
+    void bidCreateNetworkFailure_is502StripeUnavailable_andRetryReusesThePendingRow() throws Exception {
+        PaymentEntity existing = bidPayment("pi_old", "25.00", "eur");
+        BidEntity bid = stubExistingBid(existing, new BigDecimal("0.12"), null);
+        PaymentIntent canceled = mock(PaymentIntent.class);
+        when(canceled.getStatus()).thenReturn("canceled");
+        when(stripeGateway.retrievePaymentIntent("pi_old")).thenReturn(canceled);
+
+        PaymentIntent fresh = freshIntent("pi_fresh");
+        when(stripeGateway.createPaymentIntent(any()))
+                .thenThrow(connectionReset())
+                .thenReturn(fresh);
+        when(paymentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        Throwable firstFailure = catchThrowable(
+                () -> service.createEscrow(paymentRequest(), "uid-sender"));
+
+        assertStripeUnavailable(firstFailure);
+        // Rien n'a été écrit : la ligne PENDING reste la seule, sans PI fantôme ni audit.
+        verify(paymentRepository, never()).save(any());
+        verifyNoInteractions(auditService);
+        assertThat(existing.getStripePaymentIntentId()).isEqualTo("pi_old");
+        assertThat(existing.getStatus()).isEqualTo(PaymentStatus.PENDING);
+
+        PaymentResponse retried = service.createEscrow(paymentRequest(), "uid-sender");
+
+        // Le nouvel essai recycle la même ligne (pas de second paiement pour le bid).
+        assertThat(retried.getStripePaymentIntentId()).isEqualTo("pi_fresh");
+        assertThat(existing.getStripePaymentIntentId()).isEqualTo("pi_fresh");
+        assertThat(existing.getStatus()).isEqualTo(PaymentStatus.PENDING);
+        assertThat(bid.getPaymentIntentId()).isEqualTo("pi_fresh");
+        verify(paymentRepository).save(existing);
+    }
+
+    @Test
+    void bidCreateStripeRefusal_keepsPaymentCreationFailed() throws Exception {
+        PaymentEntity existing = bidPayment("pi_old", "25.00", "eur");
+        stubExistingBid(existing, new BigDecimal("0.12"), null);
+        PaymentIntent canceled = mock(PaymentIntent.class);
+        when(canceled.getStatus()).thenReturn("canceled");
+        when(stripeGateway.retrievePaymentIntent("pi_old")).thenReturn(canceled);
+        when(stripeGateway.createPaymentIntent(any()))
+                .thenThrow(new com.stripe.exception.ApiException("boom", "req_1", null, 500, null));
+
+        Throwable thrown = catchThrowable(() -> service.createEscrow(paymentRequest(), "uid-sender"));
+
+        assertThat(thrown).isInstanceOfSatisfying(YadonyBusinessException.class,
+                error -> assertThat(error.getErrorCode()).isEqualTo("payment-creation-failed"));
+    }
+
+    @Test
+    void negotiationRetrieveNetworkFailure_is502StripeUnavailable() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        PaymentEntity existing = negotiationPayment(threadId, "pi_legacy", "37.10", "eur");
+        stubExistingNegotiation(threadId, existing);
+        when(commissionRateResolver.resolve(travelerId, senderId))
+                .thenReturn(new BigDecimal("0.06"));
+        when(stripeGateway.retrievePaymentIntent("pi_legacy")).thenThrow(connectionReset());
+
+        Throwable thrown = catchThrowable(() -> service.createNegotiationEscrow(
+                threadId, senderId, travelerId, new BigDecimal("35.00"), null, "EUR"));
+
+        assertStripeUnavailable(thrown);
+        verify(paymentRepository, never()).save(any());
+    }
+
+    @Test
+    void negotiationCreateNetworkFailure_is502StripeUnavailable() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        PaymentEntity existing = negotiationPayment(threadId, "pi_old", "37.10", "eur");
+        stubExistingNegotiation(threadId, existing);
+        when(commissionRateResolver.resolve(travelerId, senderId))
+                .thenReturn(new BigDecimal("0.06"));
+        PaymentIntent canceled = mock(PaymentIntent.class);
+        when(canceled.getStatus()).thenReturn("canceled");
+        when(stripeGateway.retrievePaymentIntent("pi_old")).thenReturn(canceled);
+        when(stripeGateway.createPaymentIntent(any())).thenThrow(connectionReset());
+
+        Throwable thrown = catchThrowable(() -> service.createNegotiationEscrow(
+                threadId, senderId, travelerId, new BigDecimal("35.00"), null, "EUR"));
+
+        assertStripeUnavailable(thrown);
+        verify(paymentRepository, never()).save(any());
+        assertThat(existing.getStripePaymentIntentId()).isEqualTo("pi_old");
+    }
+
+    @Test
+    void confirmBidPaymentNetworkFailure_is502StripeUnavailable() throws Exception {
+        BidEntity bid = new BidEntity();
+        PaymentServiceTestFactory.setId(bid, bidId);
+        bid.setStatus(BidStatus.AWAITING_PAYMENT);
+        bid.setPaymentIntentId("pi_awaiting");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(stripeGateway.retrievePaymentIntent("pi_awaiting")).thenThrow(connectionReset());
+
+        Throwable thrown = catchThrowable(() -> service.confirmBidPayment(bidId));
+
+        assertStripeUnavailable(thrown);
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.AWAITING_PAYMENT);
+        verify(paymentRepository, never()).save(any());
+    }
+
+    @Test
+    void confirmBidPaymentStripeRefusal_keepsStripeError() throws Exception {
+        BidEntity bid = new BidEntity();
+        PaymentServiceTestFactory.setId(bid, bidId);
+        bid.setStatus(BidStatus.AWAITING_PAYMENT);
+        bid.setPaymentIntentId("pi_awaiting");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(stripeGateway.retrievePaymentIntent("pi_awaiting")).thenThrow(mock(StripeException.class));
+
+        Throwable thrown = catchThrowable(() -> service.confirmBidPayment(bidId));
+
+        assertThat(thrown).isInstanceOfSatisfying(YadonyBusinessException.class,
+                error -> assertThat(error.getErrorCode()).isEqualTo("stripe-error"));
+    }
+
     private BidEntity stubExistingBid(PaymentEntity payment, BigDecimal persistedRate, String promoCode)
             throws StripeException {
         UserEntity sender = sender();
