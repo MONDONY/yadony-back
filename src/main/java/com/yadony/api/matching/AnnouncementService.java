@@ -676,6 +676,9 @@ public class AnnouncementService {
 
         validateHandoverDeadline(request.handoverDeadline(),
                 request.departureDate(), request.departureTime());
+        assertNotAlreadyDeparted(request.departureDate(), request.departureTime(),
+                request.handoverDeadline(), TripTimezones.zoneOf(announcement.getTimezone()),
+                Instant.now());
         ArrivalRules.validate(request.departureDate(), request.departureTime(),
                 request.arrivalDate(), request.arrivalTime());
         announcement.setHandoverDeadline(request.handoverDeadline());
@@ -2196,6 +2199,31 @@ public class AnnouncementService {
      * Il n'y a plus de borne basse : le trajet accepte les colis dès sa
      * publication, et jusqu'à cette date limite.
      */
+    /**
+     * Refuse un trajet publié avec un départ ou une date limite de dépôt déjà passés.
+     * Le contrôle de date seule laissait passer un départ du jour à une heure écoulée :
+     * le trajet passait COMPLETED quelques secondes après sa publication et l'expéditeur
+     * alerté restait bloqué au paiement (409 announcement-not-active, FLUTTER-NR).
+     * Les heures sont des heures murales du fuseau du trajet.
+     */
+    static void assertNotAlreadyDeparted(LocalDate departureDate,
+                                         LocalTime departureTime,
+                                         LocalDateTime handoverDeadline,
+                                         ZoneId zone,
+                                         Instant now) {
+        if (departureDate != null && departureTime != null
+                && !departureDate.atTime(departureTime).atZone(zone).toInstant().isAfter(now)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "departure-time-passed", "Heure de départ passée",
+                    "L'heure de départ de ce trajet est déjà passée");
+        }
+        if (handoverDeadline != null && !handoverDeadline.atZone(zone).toInstant().isAfter(now)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "handover-deadline-in-past", "Date limite passée",
+                    "La date limite de dépôt est déjà passée");
+        }
+    }
+
     static void validateHandoverDeadline(LocalDateTime deadline,
                                           LocalDate departureDate,
                                           LocalTime departureTime) {
