@@ -440,15 +440,7 @@ public class BidService {
         // seuls les expéditeurs vérifiés peuvent lui écrire ; s'il le désactive, il
         // accepte sciemment les profils non vérifiés et l'app l'en avertit avant.
         // On ne charge le voyageur que si nécessaire (expéditeur non vérifié).
-        if (sender.getKycStatus() != KycStatus.VERIFIED) {
-            UserEntity traveler = userRepository.findById(travelerId).orElse(null);
-            // traveler null (suppression/race) => on laisse passer : la FK garantit normalement sa présence.
-            if (traveler != null && traveler.isContactKycOnly()) {
-                throw new YadonyBusinessException(
-                        HttpStatus.FORBIDDEN, "contact-kyc-required", "KYC Required",
-                        "Cet utilisateur n'accepte que les profils vérifiés");
-            }
-        }
+        assertTravelerAcceptsSender(sender, travelerId);
 
         abandonUnpaidCardBid(sender, announcement);
 
@@ -463,6 +455,26 @@ public class BidService {
         }
 
         return normalizedContentCategory;
+    }
+
+    /**
+     * Réglage « profils vérifiés uniquement » du voyageur ({@code contactKycOnly}) :
+     * un expéditeur non vérifié ne peut pas lui faire d'offre. Partagé par l'offre
+     * ferme, l'ouverture d'un fil de négociation ({@link #assertCanBidOn}) et la
+     * contre-offre de l'expéditeur ({@code BidNegotiationService#counter}), pour que
+     * le voyageur qui active l'option en cours de discussion soit aussi respecté.
+     */
+    void assertTravelerAcceptsSender(UserEntity sender, UUID travelerId) {
+        if (sender == null || sender.getKycStatus() == KycStatus.VERIFIED) {
+            return;
+        }
+        UserEntity traveler = userRepository.findById(travelerId).orElse(null);
+        // traveler null (suppression/race) => on laisse passer : la FK garantit normalement sa présence.
+        if (traveler != null && traveler.isContactKycOnly()) {
+            throw new YadonyBusinessException(
+                    HttpStatus.FORBIDDEN, "contact-kyc-required", "KYC Required",
+                    "Cet utilisateur n'accepte que les profils vérifiés");
+        }
     }
 
     /**

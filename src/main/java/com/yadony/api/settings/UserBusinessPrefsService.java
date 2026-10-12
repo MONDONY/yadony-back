@@ -163,7 +163,11 @@ public class UserBusinessPrefsService {
             }
         }
 
-        e.setPickupRadiusKm(dto.pickupRadiusKm());
+        // Reglage retire de l'app (aucun effet) : seules les anciennes versions l'envoient
+        // encore. Omis, on garde la valeur stockee plutot que d'echouer sur un NOT NULL.
+        if (dto.pickupRadiusKm() != null) {
+            e.setPickupRadiusKm(dto.pickupRadiusKm());
+        }
         e.setDefaultPackageWeightKg(dto.defaultPackageWeightKg());
         e.setMinBidPriceEur(dto.minBidPriceEur());
         e.setContactMode(dto.contactMode());

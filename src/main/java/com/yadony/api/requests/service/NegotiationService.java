@@ -143,12 +143,58 @@ public class NegotiationService {
         }
     }
 
+    /**
+     * Prix minimum par kilo du voyageur, appliqué à une contre-offre de l'expéditeur
+     * sur un fil de demande. Le prix d'un fil est le net du voyageur ; l'équivalent au
+     * kilo se rapporte au poids de la demande. Sans garde injectée (tests unitaires
+     * construits à la main), aucun contrôle.
+     */
+    private com.yadony.api.settings.MinPricePerKgGuard minPriceGuard;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setMinPriceGuard(com.yadony.api.settings.MinPricePerKgGuard minPriceGuard) {
+        this.minPriceGuard = minPriceGuard;
+    }
+
+    private void assertAtLeastTravelerMinimum(NegotiationThreadEntity thread, PackageRequestEntity request,
+                                              BigDecimal netPrice) {
+        if (minPriceGuard == null) {
+            return;
+        }
+        BigDecimal rate = thread.getCommissionRate() != null
+            ? thread.getCommissionRate() : commissionProperties.rate();
+        minPriceGuard.assertAtLeastMinimum(thread.getTravelerId(), netPrice, request.getWeightKg(),
+            thread.getCurrency(), rate);
+    }
+
+    /**
+     * Réglage « profils vérifiés uniquement » de l'expéditeur ({@code contactKycOnly}),
+     * appliqué au voyageur qui lui fait une offre : même 403 {@code contact-kyc-required}
+     * que l'expéditeur non vérifié sur le trajet d'un voyageur qui a activé l'option.
+     */
+    private void assertSenderAcceptsTraveler(UUID senderId, UserEntity traveler) {
+        if (traveler.getKycStatus() == KycStatus.VERIFIED) {
+            return;
+        }
+        UserEntity sender = userRepository.findById(senderId).orElse(null);
+        if (sender != null && sender.isContactKycOnly()) {
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "contact-kyc-required",
+                "KYC Required", "Cet utilisateur n'accepte que les profils vérifiés");
+        }
+    }
+
     @Transactional
     public NegotiationThreadResponse start(UUID travelerId, NegotiationStartRequest req) {
         UserEntity traveler = userRepository.findById(travelerId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user/not-found"));
 
         if (traveler.getKycStatus() != KycStatus.VERIFIED) {
+            // L'expéditeur qui a gardé « profils vérifiés uniquement » reçoit la même
+            // réponse que le voyageur dans le sens inverse (BidService#assertCanBidOn) :
+            // 403 contact-kyc-required, que l'app affiche déjà. Sinon, l'exigence
+            // propre à l'offre sur une demande (voyageur vérifié) reste kyc/not-verified.
+            requestRepo.findById(req.packageRequestId())
+                .ifPresent(r -> assertSenderAcceptsTraveler(r.getSenderId(), traveler));
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "kyc/not-verified");
         }
 
@@ -339,6 +385,16 @@ public class NegotiationService {
 
         if (thread.getRoundsCount() >= config.maxNegotiationRounds()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "negotiation/max-rounds-reached");
+        }
+
+        // Rejoués à chaque tour, dans le sens de l'offre : le voyageur doit rester
+        // admissible au réglage « profils vérifiés uniquement » de l'expéditeur, et la
+        // contre-offre de l'expéditeur respecter le prix minimum par kilo du voyageur.
+        if (callerId.equals(travelerId)) {
+            userRepository.findById(travelerId)
+                .ifPresent(t -> assertSenderAcceptsTraveler(senderId, t));
+        } else {
+            assertAtLeastTravelerMinimum(thread, request, req.proposedPriceEur());
         }
 
         List<NegotiationMessageEntity> messages = messageRepo.findByThreadIdOrderByCreatedAtAsc(threadId);

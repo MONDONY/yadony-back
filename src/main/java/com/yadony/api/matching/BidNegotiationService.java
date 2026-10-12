@@ -17,6 +17,7 @@ import com.yadony.api.matching.dto.BidNegotiationSummaryResponse;
 import com.yadony.api.matching.events.BidNegotiationMessagePostedEvent;
 import com.yadony.api.matching.events.CashBidCreatedEvent;
 import com.yadony.api.payments.cash.PaymentMethod;
+import com.yadony.api.settings.MinPricePerKgGuard;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -105,6 +106,17 @@ public class BidNegotiationService {
         this.mobileMoneyPort = mobileMoneyPort;
     }
 
+    /**
+     * Garde du prix minimum par kilo, injectée par mutateur pour ne pas allonger un
+     * constructeur déjà construit à la main par plusieurs tests. {@code null} hors Spring.
+     */
+    private MinPricePerKgGuard minPriceGuard;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setMinPriceGuard(MinPricePerKgGuard minPriceGuard) {
+        this.minPriceGuard = minPriceGuard;
+    }
+
     // ── Ouverture du fil ─────────────────────────────────────────────────────
 
     @Transactional
@@ -160,6 +172,7 @@ public class BidNegotiationService {
 
         // Taux figé ICI et nulle part ailleurs — accept() relira ce snapshot.
         BigDecimal rate = commissionRateResolver.resolve(announcement.getTravelerId(), sender.getId());
+        assertAtLeastTravelerMinimum(announcement, request.proposedTotalEur(), request.weightKg(), rate);
 
         BidEntity bid = new BidEntity();
         bid.setAnnouncementId(announcementId);
@@ -224,6 +237,17 @@ public class BidNegotiationService {
             throw new YadonyBusinessException(HttpStatus.CONFLICT,
                     "negotiation-round-limit-reached", "Negotiation Round Limit Reached",
                     "Le nombre maximum de propositions échangées est atteint");
+        }
+
+        // Côté expéditeur seulement : le voyageur fixe lui-même ses contre-offres, son
+        // minimum et son exigence de profil vérifié ne s'appliquent qu'aux propositions
+        // qu'on lui adresse. Rejoués à chaque tour, pour qu'un réglage activé en cours de
+        // discussion soit respecté.
+        if (!ctx.viewerIsTraveler()) {
+            UserEntity sender = userRepository.findById(ctx.userId()).orElse(null);
+            bidService.assertTravelerAcceptsSender(sender, ctx.announcement().getTravelerId());
+            assertAtLeastTravelerMinimum(ctx.announcement(), request.proposedTotalEur(),
+                    ctx.bid().getWeightKg(), ctx.bid().getCommissionRate());
         }
 
         ctx.bid().setNegotiationRound(ctx.bid().getNegotiationRound() + 1);
@@ -595,6 +619,23 @@ public class BidNegotiationService {
     }
 
     // ── Gardes et helpers ────────────────────────────────────────────────────
+
+    /**
+     * Prix minimum par kilo du voyageur ({@link MinPricePerKgGuard}). La négociation porte
+     * sur le brut : le net du voyageur en est déduit exactement comme à l'accord
+     * ({@link BidNegotiationPricing#split}), puis ramené au kilo comme sur la demande
+     * affichée au voyageur. Sans garde injectée (tests unitaires), aucun contrôle.
+     */
+    private void assertAtLeastTravelerMinimum(AnnouncementEntity announcement, BigDecimal grossTotal,
+                                              BigDecimal weightKg, BigDecimal rate) {
+        if (minPriceGuard == null || grossTotal == null || grossTotal.signum() <= 0) {
+            return;
+        }
+        BigDecimal effectiveRate = rate != null ? rate : BigDecimal.ZERO;
+        BigDecimal net = BidNegotiationPricing.split(grossTotal, effectiveRate).netEur();
+        minPriceGuard.assertAtLeastMinimum(announcement.getTravelerId(), net, weightKg,
+                announcement.getCurrency(), effectiveRate);
+    }
 
     /** Contexte d'une action : le fil, son trajet, et le rôle de l'appelant. */
     private record Participant(BidEntity bid, AnnouncementEntity announcement,

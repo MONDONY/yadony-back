@@ -30,6 +30,8 @@ public class UserBusinessPrefsEntity {
     @Column(name = "display_currency_code", length = 3)
     private String displayCurrencyCode;
 
+    // Rayon de collecte : plus aucun ecran ne le regle depuis le 2026-10-11 (il n'avait
+    // aucun effet). Colonne conservee, sans migration destructive.
     @Column(name = "pickup_radius_km", nullable = false)
     private int pickupRadiusKm = 10;
 
