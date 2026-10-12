@@ -16,7 +16,7 @@ import java.util.List;
 @Service
 public class FlightPriceService {
 
-    static final int MAX_RESULTS = 30;
+    static final int MAX_RESULTS = 50;
 
     private final TravelpayoutsClient client;
     private final Cache<String, List<TravelpayoutsPrice>> cache;
