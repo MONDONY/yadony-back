@@ -375,8 +375,8 @@ class ReceptionControllerIntegrationTest {
     void bidResponse_recipientHidesPhone_travelerGetsNoPhone_senderKeepsIt() throws Exception {
         recipient.setHidePhoneNumber(true);
         userRepository.save(recipient);
-        BidEntity confirmed = persistBid(BidStatus.ACCEPTED);
-        BidEntity pending = persistBid(BidStatus.ACCEPTED);
+        BidEntity confirmed = persistBid(BidStatus.HANDED_OVER);
+        BidEntity pending = persistBid(BidStatus.HANDED_OVER);
         link(confirmed, ReceptionLinkStatus.CONFIRMED);
         link(pending, ReceptionLinkStatus.PENDING);
 
@@ -397,13 +397,39 @@ class ReceptionControllerIntegrationTest {
 
     @Test
     void bidResponse_recipientKeepsPhoneVisible_travelerGetsPhone() throws Exception {
-        BidEntity confirmed = persistBid(BidStatus.ACCEPTED);
+        BidEntity confirmed = persistBid(BidStatus.HANDED_OVER);
         link(confirmed, ReceptionLinkStatus.CONFIRMED);
 
         mockMvc.perform(get("/bids/{id}", confirmed.getId()).with(authentication(as(traveler))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.recipientPhone").value(confirmed.getRecipientPhone()))
                 .andExpect(jsonPath("$.recipientPhoneHidden").value(false));
+    }
+
+    // Sentry FLUTTER-JT : le voyageur ne joint le destinataire qu'après le retrait du
+    // colis. À ACCEPTED, ni le détail ni la liste du trajet ne lui servent le numéro ;
+    // l'expéditeur, lui, le voit toujours.
+    @Test
+    void bidResponse_recipientPhone_travelerOnlyAfterHandover_senderAlways() throws Exception {
+        BidEntity accepted = persistBid(BidStatus.ACCEPTED);
+        BidEntity handedOver = persistBid(BidStatus.HANDED_OVER);
+
+        mockMvc.perform(get("/bids/{id}", accepted.getId()).with(authentication(as(traveler))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recipientPhone").doesNotExist())
+                .andExpect(jsonPath("$.recipientName").value(accepted.getRecipientName()))
+                .andExpect(jsonPath("$.recipientPhoneHidden").value(false));
+        mockMvc.perform(get("/announcements/{id}/bids", announcement.getId()).with(authentication(as(traveler))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.id == '" + accepted.getId() + "')].recipientPhone").isEmpty())
+                .andExpect(jsonPath("$[?(@.id == '" + handedOver.getId() + "')].recipientPhone")
+                        .value(handedOver.getRecipientPhone()));
+        mockMvc.perform(get("/bids/{id}", handedOver.getId()).with(authentication(as(traveler))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recipientPhone").value(handedOver.getRecipientPhone()));
+        mockMvc.perform(get("/bids/{id}", accepted.getId()).with(authentication(as(sender))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recipientPhone").value(accepted.getRecipientPhone()));
     }
 
     // ── Requête de rattrapage (H2 mode PostgreSQL) ──────────────────────────

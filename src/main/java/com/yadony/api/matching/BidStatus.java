@@ -70,6 +70,23 @@ public enum BidStatus {
     }
 
     /**
+     * Statuts pour lesquels le VOYAGEUR reçoit le numéro du destinataire (tiers au
+     * contrat) : à partir du retrait du colis seulement — remis en main, en transit,
+     * arrivé, livré. Plus étroit que {@link #PHONE_VISIBLE_STATUSES}, qui règle le
+     * contact expéditeur ↔ voyageur et reste ouvert dès ACCEPTED : avant la remise, le
+     * voyageur n'a aucune raison de joindre le destinataire (décision produit du
+     * 11/10/2026, Sentry FLUTTER-JT). L'expéditeur, lui, voit toujours le numéro qu'il
+     * a saisi.
+     */
+    public static final Set<BidStatus> RECIPIENT_PHONE_VISIBLE_TO_TRAVELER_STATUSES;
+
+    static {
+        EnumSet<BidStatus> recipientVisible = EnumSet.of(COMPLETED);
+        recipientVisible.addAll(EN_ROUTE);
+        RECIPIENT_PHONE_VISIBLE_TO_TRAVELER_STATUSES = recipientVisible;
+    }
+
+    /**
      * Colis « en vol » pour un trajet : accepté (paiement en séquestre, remise
      * pas encore faite) ou dans l'un des statuts {@link #EN_ROUTE}. Tant qu'au
      * moins un bid du trajet est dans cet ensemble, le trajet ne doit pas

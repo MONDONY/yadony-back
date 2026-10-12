@@ -2724,8 +2724,8 @@ class BidServiceTest {
     }
 
     @Test
-    @DisplayName("voyageur : téléphone du destinataire masqué en attente, servi une fois la demande acceptée")
-    void getBidById_traveler_recipientPhoneOnlyOnceAccepted() {
+    @DisplayName("voyageur : téléphone du destinataire masqué jusqu'au retrait, servi à partir de HANDED_OVER")
+    void getBidById_traveler_recipientPhoneOnlyAfterHandover() {
         BidEntity bid = buildBid();
         bid.setRecipientPhone("+221700000000");
         when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
@@ -2737,7 +2737,24 @@ class BidServiceTest {
         assertThat(bidService.getBidById(BID_ID, TRAVELER_UID).recipientPhone()).isNull();
 
         bid.setStatus(BidStatus.ACCEPTED);
+        assertThat(bidService.getBidById(BID_ID, TRAVELER_UID).recipientPhone()).isNull();
+
+        bid.setStatus(BidStatus.HANDED_OVER);
         assertThat(bidService.getBidById(BID_ID, TRAVELER_UID).recipientPhone()).isEqualTo("+221700000000");
+    }
+
+    @Test
+    @DisplayName("expéditeur : téléphone du destinataire toujours servi, y compris à ACCEPTED")
+    void getBidById_sender_recipientPhoneAlwaysVisible() {
+        BidEntity bid = buildBid();
+        bid.setRecipientPhone("+221700000000");
+        bid.setStatus(BidStatus.ACCEPTED);
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(buildAnnouncement()));
+        when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(buildSender()));
+        when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(buildSender()));
+
+        assertThat(bidService.getBidById(BID_ID, SENDER_UID).recipientPhone()).isEqualTo("+221700000000");
     }
 
     // ─── contactWindowOpen (FLUTTER-DK) ────────────────────────────────────────
@@ -3807,11 +3824,25 @@ class BidServiceTest {
         }
 
         @Test
-        @DisplayName("recipientPhone révélé une fois le bid accepté")
-        void toResponse_recipientPhoneRevealedWhenAccepted() {
+        @DisplayName("recipientPhone toujours masqué au voyageur à ACCEPTED (avant retrait, FLUTTER-JT)")
+        void toResponse_recipientPhoneHiddenWhenAcceptedBeforeHandover() {
             UserEntity sender = buildSender();
             BidEntity bid = buildBid();
             bid.setStatus(BidStatus.ACCEPTED);
+
+            BidResponse resp = bidService.toResponse(bid, sender);
+
+            assertThat(resp.recipientPhone()).isNull();
+            // Le contact expéditeur ↔ voyageur, lui, reste ouvert dès l'acceptation.
+            assertThat(resp.senderPhoneAvailable()).isTrue();
+        }
+
+        @Test
+        @DisplayName("recipientPhone révélé au voyageur une fois le colis retiré (HANDED_OVER)")
+        void toResponse_recipientPhoneRevealedAfterHandover() {
+            UserEntity sender = buildSender();
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.HANDED_OVER);
 
             BidResponse resp = bidService.toResponse(bid, sender);
 
@@ -3891,7 +3922,7 @@ class BidServiceTest {
         void toResponse_pendingRecipient_travelerView_keepsNameAndPhone() {
             UserEntity sender = buildSender();
             BidEntity bid = buildBid();
-            bid.setStatus(BidStatus.ACCEPTED);
+            bid.setStatus(BidStatus.HANDED_OVER);
             when(recipientLinkRepository.findByBidId(BID_ID)).thenReturn(Optional.of(
                     recipientLink(com.yadony.api.matching.reception.ReceptionLinkStatus.PENDING)));
 
