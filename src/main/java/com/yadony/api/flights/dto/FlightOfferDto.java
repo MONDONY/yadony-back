@@ -8,6 +8,8 @@ import java.math.BigDecimal;
  * @param durationMinutes durée totale de l'aller, escales comprises
  * @param offerPath       chemin de l'offre chez le partenaire, à renvoyer tel quel à
  *                        {@code POST /flights/clicks} pour obtenir le lien affilié
+ * @param logoUrl         logo de la compagnie (carré, déduit du code IATA), {@code null} si le code
+ *                        est absent ou si le modèle d'URL n'est pas configuré
  */
 public record FlightOfferDto(
         String originCode,
@@ -25,5 +27,6 @@ public record FlightOfferDto(
         Integer returnTransfers,
         Integer durationMinutes,
         String gate,
-        String offerPath) {
+        String offerPath,
+        String logoUrl) {
 }

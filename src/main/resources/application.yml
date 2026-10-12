@@ -182,6 +182,9 @@ yadony:
       booking-base-url: https://www.aviasales.com
       # <marker>.<subId> dans le lien : à activer une fois le format validé sur le compte partenaire.
       subid-enabled: ${TRAVELPAYOUTS_SUBID_ENABLED:false}
+    # Logo des compagnies : {code} = code IATA. Service d'images Travelpayouts (voir leur article
+    # « Airline logos by Aviasales »), https à valider sur le compte avant la mise en prod.
+    logo-url-template: ${FLIGHTS_LOGO_URL_TEMPLATE:https://img.wway.io/pics/root/{code}@png?exar=1&rs=fit:200:200}
     # Trajets des bons plans quand l'utilisateur n'a encore aucun corridor.
     default-routes: PAR-ABJ,PAR-DKR,PAR-BKO,PAR-DLA,PAR-CMN,PAR-COO,PAR-CKY,PAR-OUA
     alerts:

@@ -23,6 +23,8 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class FlightSearchServiceTest {
 
+    private static final String LOGO_TEMPLATE = "https://logos.test/{code}.png";
+
     @Mock FlightPriceService prices;
     @Mock AirlineDirectory airlines;
     @Mock FlightUsers users;
@@ -34,7 +36,7 @@ class FlightSearchServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new FlightSearchService(prices, new FlightOfferMapper(airlines), users, searches, CLOCK);
+        service = new FlightSearchService(prices, new FlightOfferMapper(airlines, LOGO_TEMPLATE), users, searches, CLOCK);
         lenient().when(prices.isAvailable()).thenReturn(true);
         lenient().when(users.resolve(UID)).thenReturn(new FlightUsers.Caller(owner, "en"));
         lenient().when(airlines.nameOf(anyString(), anyString())).thenAnswer(inv ->
@@ -56,6 +58,7 @@ class FlightSearchServiceTest {
         assertThat(first.currency()).isEqualTo("EUR");
         assertThat(first.offerPath()).startsWith("/search/");
         assertThat(first.durationMinutes()).isEqualTo(580);
+        assertThat(first.logoUrl()).isEqualTo("https://logos.test/AT.png");
 
         ArgumentCaptor<FlightSearchEntity> saved = ArgumentCaptor.forClass(FlightSearchEntity.class);
         verify(searches).save(saved.capture());
