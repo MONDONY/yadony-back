@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
+import java.time.LocalDate;
 
 /**
  * Recherche de vols de l'utilisateur. Volontairement sans {@code @Transactional} : aucune
@@ -49,7 +50,8 @@ public class FlightSearchService {
         var found = fetch(query);
         if (!caller.anonymous()) remember(caller, query);
         return new FlightSearchResponse(query.origin(), query.destination(), query.roundTrip(), query.currency(),
-                found.stream().map(p -> mapper.toDto(p, query.currency(), caller.language())).toList());
+                found.stream().map(p -> mapper.toDto(p, query.currency(), caller.language())).toList(),
+                query.searchPath(LocalDate.now(clock)));
     }
 
     private java.util.List<TravelpayoutsPrice> fetch(FlightQuery query) {

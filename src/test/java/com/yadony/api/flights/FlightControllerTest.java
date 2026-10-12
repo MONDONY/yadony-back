@@ -73,14 +73,23 @@ class FlightControllerTest {
     @Test
     void search_passesQueryToService() throws Exception {
         when(searchService.search(UID, "PAR", "ABJ", "2026-12", null, true, "XOF"))
-                .thenReturn(new FlightSearchResponse("PAR", "ABJ", false, "XOF", List.of()));
+                .thenReturn(new FlightSearchResponse("PAR", "ABJ", false, "XOF", List.of(
+                        new com.yadony.api.flights.dto.FlightOfferDto("PAR", "ABJ", "CDG", "ABJ",
+                                "2026-12-01T11:30:00+01:00", null, new BigDecimal("450000"), "XOF", "AF", "Air France",
+                                "702", 0, null, 375, "Air France", "/search/PAR0112ABJ1?t=AF702", null,
+                                375, null, "2026-12-01T16:45:00Z", null)), "/search/PAR0112ABJ1"));
 
         mockMvc.perform(get("/flights/search").with(authentication(memberWithoutRole()))
                         .param("origin", "PAR").param("destination", "ABJ")
                         .param("departureDate", "2026-12").param("direct", "true").param("currency", "XOF"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.currency").value("XOF"))
-                .andExpect(jsonPath("$.offers").isArray());
+                .andExpect(jsonPath("$.offers").isArray())
+                .andExpect(jsonPath("$.searchPath").value("/search/PAR0112ABJ1"))
+                .andExpect(jsonPath("$.offers[0].durationMinutes").value(375))
+                .andExpect(jsonPath("$.offers[0].outboundDurationMinutes").value(375))
+                .andExpect(jsonPath("$.offers[0].arrivalAt").value("2026-12-01T16:45:00Z"))
+                .andExpect(jsonPath("$.offers[0].returnArrivalAt").doesNotExist());
     }
 
     @Test
@@ -186,7 +195,7 @@ class FlightControllerTest {
     @Test
     void guests_canSearchAndBook_butNotUseAlerts() throws Exception {
         when(searchService.search(any(), any(), any(), any(), any(), anyBoolean(), any()))
-                .thenReturn(new FlightSearchResponse("PAR", "ABJ", false, "EUR", List.of()));
+                .thenReturn(new FlightSearchResponse("PAR", "ABJ", false, "EUR", List.of(), null));
         when(dealService.deals(any(), any())).thenReturn(new FlightDealsResponse("EUR", false, List.of()));
         when(placeService.suggest(any(), any())).thenReturn(List.of());
         when(defaultsService.defaults(any())).thenReturn(new FlightDefaultsDto("none", null, null));

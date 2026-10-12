@@ -86,4 +86,30 @@ class FlightQueryTest {
         assertThat(q.key()).isEqualTo("PAR-ABJ|2026-12-12|2027-01-08|false|EUR");
         assertThat(FlightQuery.of("PAR", "ABJ", "2026-10-15", null, false, null, CLOCK).departure().isDay()).isTrue();
     }
+
+    private static String path(String departure, String returnDate) {
+        return FlightQuery.of("par", "abj", departure, returnDate, false, null, CLOCK)
+                .searchPath(java.time.LocalDate.now(CLOCK));
+    }
+
+    @Test
+    void searchPath_dayOneWayAndRoundTrip() {
+        assertThat(path("2026-12-12", null)).isEqualTo("/search/PAR1212ABJ1");
+        assertThat(path("2026-12-12", "2027-01-08")).isEqualTo("/search/PAR1212ABJ08011");
+        assertThat(path("2026-10-15", null)).isEqualTo("/search/PAR1510ABJ1");
+    }
+
+    @Test
+    void searchPath_futureMonth_usesTheFirstDay() {
+        assertThat(path("2026-12", null)).isEqualTo("/search/PAR0112ABJ1");
+        assertThat(path("2026-12", "2027-01")).isEqualTo("/search/PAR0112ABJ01011");
+    }
+
+    @Test
+    void searchPath_isNull_withoutAUsableDay() {
+        assertThat(path(null, null)).isNull();
+        assertThat(path("2026-10", null)).isNull();
+        assertThat(path("2026-10-20", "2026-10")).isNull();
+        assertThat(path("2026-12-20", "2026-12")).isNull();
+    }
 }

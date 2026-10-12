@@ -44,7 +44,8 @@ class FlightDealServiceTest {
         lenient().when(mapper.toDto(any(), anyString(), anyString())).thenAnswer(inv -> {
             TravelpayoutsPrice p = inv.getArgument(0);
             return new FlightOfferDto(p.origin(), p.destination(), null, null, null, null, p.price(),
-                    inv.getArgument(1), null, null, null, null, null, null, null, p.link(), null);
+                    inv.getArgument(1), null, null, null, null, null, null, null, p.link(), null,
+                    null, null, null, null);
         });
     }
 
