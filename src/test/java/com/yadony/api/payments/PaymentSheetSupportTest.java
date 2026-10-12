@@ -23,6 +23,7 @@ import com.stripe.param.PaymentIntentUpdateParams;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import com.yadony.api.common.i18n.AppLanguage;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
@@ -189,7 +190,12 @@ class PaymentSheetSupportTest {
             assertThat(((PaymentIntentCreateParams.PaymentMethodOptions.Card)
                     params.getPaymentMethodOptions().getCard()).getSetupFutureUsage())
                     .isEqualTo(PaymentIntentCreateParams.PaymentMethodOptions.Card.SetupFutureUsage.OFF_SESSION);
-            assertThat(params.getPaymentMethodOptions().getPaypal()).isNull();
+            // Pas de setup_future_usage côté PayPal, seulement la langue (FLUTTER-NT)
+            assertThat(((PaymentIntentCreateParams.PaymentMethodOptions.Paypal)
+                    params.getPaymentMethodOptions().getPaypal()).getSetupFutureUsage()).isNull();
+            assertThat(((PaymentIntentCreateParams.PaymentMethodOptions.Paypal)
+                    params.getPaymentMethodOptions().getPaypal()).getPreferredLocale())
+                    .isEqualTo(PaymentIntentCreateParams.PaymentMethodOptions.Paypal.PreferredLocale.FR_FR);
             // Customer existant → jamais re-créé
             verify(userRepository, never()).save(any());
         }
@@ -250,8 +256,40 @@ class PaymentSheetSupportTest {
 
             assertThat(captor.getValue().getCustomer()).isEqualTo("cus_existing");
             assertThat(captor.getValue().getSetupFutureUsage()).isNull();
-            assertThat(captor.getValue().getPaymentMethodOptions()).isNull();
+            assertThat(captor.getValue().getPaymentMethodOptions().getCard()).isNull();
         }
+    }
+
+    // ── Langue de la page PayPal (FLUTTER-NT) ────────────────────────────────
+
+    @Test
+    void createEscrow_opensPayPalInEnglish_forEnglishSpeakingSender() {
+        UserEntity sender = buildSender("cus_existing");
+        sender.setPreferredLanguage(AppLanguage.EN);
+        stubCommonRepositories(sender);
+
+        try (MockedStatic<com.stripe.model.Account> acctStatic = mockStatic(com.stripe.model.Account.class);
+             MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            var captor = stubStripeStatics(acctStatic, piStatic);
+
+            service.createEscrow(requestWithSave(false), "uid-sender");
+
+            assertThat(((PaymentIntentCreateParams.PaymentMethodOptions.Paypal)
+                    captor.getValue().getPaymentMethodOptions().getPaypal()).getPreferredLocale())
+                    .isEqualTo(PaymentIntentCreateParams.PaymentMethodOptions.Paypal.PreferredLocale.EN_GB);
+        }
+    }
+
+    @Test
+    void paypalOptions_followsPreferredLanguage() {
+        UserEntity fr = new UserEntity();
+        UserEntity en = new UserEntity();
+        en.setPreferredLanguage(AppLanguage.EN);
+
+        assertThat(PaymentService.paypalOptions(fr).getPreferredLocale())
+                .isEqualTo(PaymentIntentCreateParams.PaymentMethodOptions.Paypal.PreferredLocale.FR_FR);
+        assertThat(PaymentService.paypalOptions(en).getPreferredLocale())
+                .isEqualTo(PaymentIntentCreateParams.PaymentMethodOptions.Paypal.PreferredLocale.EN_GB);
     }
 
     // ── Liste des cartes enregistrées ─────────────────────────────────────────

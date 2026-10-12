@@ -1259,6 +1259,10 @@ class PaymentServiceTest {
             assertThat(params.getTransferData()).isNull();                 // pas de destination charge
             assertThat(params.getOnBehalfOf()).isNull();                   // retiré (incompatible PayPal)
             assertThat(params.getPaymentMethodTypes()).containsExactly("card", "paypal");
+            // Page PayPal dans la langue de l'expéditeur, FR par défaut (FLUTTER-NT)
+            assertThat(((PaymentIntentCreateParams.PaymentMethodOptions.Paypal)
+                    params.getPaymentMethodOptions().getPaypal()).getPreferredLocale())
+                    .isEqualTo(PaymentIntentCreateParams.PaymentMethodOptions.Paypal.PreferredLocale.FR_FR);
 
             // L'entité paiement enregistre toujours gross + commission : la commission
             // sert au calcul du Transfer(net = gross - commission) à la livraison.

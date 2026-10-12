@@ -55,6 +55,7 @@ import com.stripe.param.PaymentMethodListParams;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.yadony.api.payments.events.PaymentEscrowReadyEvent;
+import com.yadony.api.common.i18n.AppLanguage;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -712,15 +713,17 @@ public class PaymentService {
             // Décochable ensuite via PATCH /payments/intents/{id}/save-payment-method.
             // Posé sur la carte seule : au niveau racine il s'applique aussi à PayPal,
             // que Stripe refuse sans paiements récurrents PayPal activés (FLUTTER-7S).
+            // La page PayPal s'affiche dans la langue de l'expéditeur (FLUTTER-NT).
+            PaymentIntentCreateParams.PaymentMethodOptions.Builder methodOptions =
+                    PaymentIntentCreateParams.PaymentMethodOptions.builder()
+                            .setPaypal(paypalOptions(sender));
             if (!Boolean.FALSE.equals(request.getSavePaymentMethod())) {
-                paramsBuilder.setPaymentMethodOptions(
-                        PaymentIntentCreateParams.PaymentMethodOptions.builder()
-                                .setCard(PaymentIntentCreateParams.PaymentMethodOptions.Card.builder()
-                                        .setSetupFutureUsage(PaymentIntentCreateParams.PaymentMethodOptions
-                                                .Card.SetupFutureUsage.OFF_SESSION)
-                                        .build())
-                                .build());
+                methodOptions.setCard(PaymentIntentCreateParams.PaymentMethodOptions.Card.builder()
+                        .setSetupFutureUsage(PaymentIntentCreateParams.PaymentMethodOptions
+                                .Card.SetupFutureUsage.OFF_SESSION)
+                        .build());
             }
+            paramsBuilder.setPaymentMethodOptions(methodOptions.build());
 
             PaymentIntent pi = stripeGateway.createPaymentIntent(paramsBuilder.build());
 
@@ -776,6 +779,20 @@ public class PaymentService {
      * Garantit un customer Stripe pour l'utilisateur (créé et persisté si absent).
      * Même pattern que CashCommissionService#ensureStripeCustomer.
      */
+    /**
+     * Langue de la page PayPal : celle choisie par le payeur dans l'app. Sans elle,
+     * PayPal suit la langue du navigateur et s'ouvrait en anglais (FLUTTER-NT).
+     */
+    static PaymentIntentCreateParams.PaymentMethodOptions.Paypal paypalOptions(UserEntity payer) {
+        PaymentIntentCreateParams.PaymentMethodOptions.Paypal.PreferredLocale locale =
+                payer.getPreferredLanguage() == AppLanguage.EN
+                        ? PaymentIntentCreateParams.PaymentMethodOptions.Paypal.PreferredLocale.EN_GB
+                        : PaymentIntentCreateParams.PaymentMethodOptions.Paypal.PreferredLocale.FR_FR;
+        return PaymentIntentCreateParams.PaymentMethodOptions.Paypal.builder()
+                .setPreferredLocale(locale)
+                .build();
+    }
+
     private String ensureStripeCustomer(UserEntity user) throws StripeException {
         if (user.getStripeCustomerId() != null) {
             return user.getStripeCustomerId();
@@ -2003,7 +2020,11 @@ public class PaymentService {
                     .putMetadata("traveler_id", traveler.getId().toString())
                     .putMetadata("commission_rate", rate.toPlainString())
                     .putMetadata("currency", currency.code())
-                    .putMetadata("scope", "NEGOTIATION");
+                    .putMetadata("scope", "NEGOTIATION")
+                    // Page PayPal dans la langue de l'expéditeur (FLUTTER-NT).
+                    .setPaymentMethodOptions(PaymentIntentCreateParams.PaymentMethodOptions.builder()
+                            .setPaypal(paypalOptions(sender))
+                            .build());
             PaymentIntentCreateParams params = paramsBuilder.build();
 
             PaymentIntent pi = stripeGateway.createPaymentIntent(params);
