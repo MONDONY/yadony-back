@@ -1,6 +1,7 @@
 package com.yadony.api.flights.dto;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -14,8 +15,10 @@ public record FlightAlertResponse(
         String destinationCode,
         String originLabel,
         String destinationLabel,
-        String departureMonth,
-        String returnMonth,
+        LocalDate departureFrom,
+        LocalDate departureTo,
+        LocalDate returnFrom,
+        LocalDate returnTo,
         boolean directOnly,
         BigDecimal maxPrice,
         String currency,

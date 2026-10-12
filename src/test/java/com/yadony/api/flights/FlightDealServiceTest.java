@@ -165,4 +165,15 @@ class FlightDealServiceTest {
                 .containsExactly(new CodePair("PAR", "ABJ"), new CodePair("DKR", "PAR"));
         assertThat(FlightDealService.parseRoutes(null)).isEmpty();
     }
+
+    @Test
+    void deals_guest_usesDefaultRoutes_withoutReadingAnyHistory() {
+        when(users.resolve("guest")).thenReturn(new FlightUsers.Caller(null, "fr"));
+        when(prices.prices(any())).thenReturn(dealPrices("PAR", "ABJ"));
+
+        var response = service.deals("guest", "EUR");
+
+        assertThat(response.personalized()).isFalse();
+        verifyNoInteractions(corridors);
+    }
 }

@@ -8,7 +8,7 @@ import org.hibernate.annotations.Where;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.time.YearMonth;
+import java.time.LocalDate;
 import java.util.UUID;
 
 /**
@@ -40,13 +40,19 @@ public class FlightPriceAlertEntity extends BaseEntity {
     @Column(name = "destination_label", length = 120)
     private String destinationLabel;
 
-    /** AAAA-MM, {@code null} = toutes les dates à venir. */
-    @Column(name = "departure_month", length = 7)
-    private String departureMonth;
+    /** Départ entre {@code departureFrom} et {@code departureTo} (inclus), {@code null} = toutes les dates à venir. */
+    @Column(name = "departure_from")
+    private LocalDate departureFrom;
 
-    /** AAAA-MM, {@code null} = aller simple. */
-    @Column(name = "return_month", length = 7)
-    private String returnMonth;
+    @Column(name = "departure_to")
+    private LocalDate departureTo;
+
+    /** Retour entre {@code returnFrom} et {@code returnTo} (inclus), {@code null} = aller simple. */
+    @Column(name = "return_from")
+    private LocalDate returnFrom;
+
+    @Column(name = "return_to")
+    private LocalDate returnTo;
 
     @Column(name = "direct_only", nullable = false)
     private boolean directOnly;
@@ -72,18 +78,9 @@ public class FlightPriceAlertEntity extends BaseEntity {
     @Column(name = "last_notified_at")
     private LocalDateTime lastNotifiedAt;
 
-    public YearMonth departureYearMonth() {
-        return departureMonth == null ? null : YearMonth.parse(departureMonth);
-    }
-
-    public YearMonth returnYearMonth() {
-        return returnMonth == null ? null : YearMonth.parse(returnMonth);
-    }
-
-    /** Requête de prix correspondant à l'alerte (clé de regroupement du scheduler). */
-    FlightQuery toQuery() {
-        return new FlightQuery(originCode, destinationCode, departureYearMonth(), returnYearMonth(),
-                directOnly, currency);
+    /** Période surveillée (clé de regroupement et filtre du scheduler). */
+    FlightAlertWindow window() {
+        return new FlightAlertWindow(departureFrom, departureTo, returnFrom, returnTo);
     }
 
     public UUID getOwnerId() { return ownerId; }
@@ -96,10 +93,14 @@ public class FlightPriceAlertEntity extends BaseEntity {
     public void setOriginLabel(String originLabel) { this.originLabel = originLabel; }
     public String getDestinationLabel() { return destinationLabel; }
     public void setDestinationLabel(String destinationLabel) { this.destinationLabel = destinationLabel; }
-    public String getDepartureMonth() { return departureMonth; }
-    public void setDepartureMonth(String departureMonth) { this.departureMonth = departureMonth; }
-    public String getReturnMonth() { return returnMonth; }
-    public void setReturnMonth(String returnMonth) { this.returnMonth = returnMonth; }
+    public LocalDate getDepartureFrom() { return departureFrom; }
+    public void setDepartureFrom(LocalDate departureFrom) { this.departureFrom = departureFrom; }
+    public LocalDate getDepartureTo() { return departureTo; }
+    public void setDepartureTo(LocalDate departureTo) { this.departureTo = departureTo; }
+    public LocalDate getReturnFrom() { return returnFrom; }
+    public void setReturnFrom(LocalDate returnFrom) { this.returnFrom = returnFrom; }
+    public LocalDate getReturnTo() { return returnTo; }
+    public void setReturnTo(LocalDate returnTo) { this.returnTo = returnTo; }
     public boolean isDirectOnly() { return directOnly; }
     public void setDirectOnly(boolean directOnly) { this.directOnly = directOnly; }
     public BigDecimal getMaxPrice() { return maxPrice; }

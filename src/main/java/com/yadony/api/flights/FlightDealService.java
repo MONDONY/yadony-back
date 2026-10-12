@@ -67,11 +67,11 @@ public class FlightDealService {
         if (!prices.isAvailable()) throw FlightErrors.unavailable();
         String currency = FlightQuery.currency(currencyParam);
         FlightUsers.Caller caller = users.resolve(firebaseUid);
-        String cacheKey = caller.id() + "|" + currency + "|" + caller.language();
+        String cacheKey = (caller.anonymous() ? "guest" : caller.id()) + "|" + currency + "|" + caller.language();
         FlightDealsResponse cached = responses.getIfPresent(cacheKey);
         if (cached != null) return cached;
 
-        List<CodePair> personal = personalRoutes(caller.id());
+        List<CodePair> personal = caller.anonymous() ? List.of() : personalRoutes(caller.id());
         boolean personalized = !personal.isEmpty();
         List<CodePair> routes = personalized ? personal : defaultRoutes;
 

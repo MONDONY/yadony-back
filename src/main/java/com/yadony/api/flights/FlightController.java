@@ -6,6 +6,7 @@ import com.yadony.api.flights.dto.FlightAlertUpdateRequest;
 import com.yadony.api.flights.dto.FlightClickRequest;
 import com.yadony.api.flights.dto.FlightClickResponse;
 import com.yadony.api.flights.dto.FlightDealsResponse;
+import com.yadony.api.flights.dto.FlightDefaultsDto;
 import com.yadony.api.flights.dto.FlightPlaceDto;
 import com.yadony.api.flights.dto.FlightSearchResponse;
 import jakarta.validation.Valid;
@@ -40,16 +41,18 @@ public class FlightController {
     private final FlightDealService dealService;
     private final FlightAlertService alertService;
     private final FlightClickService clickService;
+    private final FlightDefaultsService defaultsService;
     private final FlightUsers users;
 
     public FlightController(FlightSearchService searchService, FlightPlaceService placeService,
                             FlightDealService dealService, FlightAlertService alertService,
-                            FlightClickService clickService, FlightUsers users) {
+                            FlightClickService clickService, FlightDefaultsService defaultsService, FlightUsers users) {
         this.searchService = searchService;
         this.placeService = placeService;
         this.dealService = dealService;
         this.alertService = alertService;
         this.clickService = clickService;
+        this.defaultsService = defaultsService;
         this.users = users;
     }
 
@@ -57,11 +60,11 @@ public class FlightController {
     public FlightSearchResponse search(@AuthenticationPrincipal String firebaseUid,
                                        @RequestParam String origin,
                                        @RequestParam String destination,
-                                       @RequestParam(required = false) String departureMonth,
-                                       @RequestParam(required = false) String returnMonth,
+                                       @RequestParam(required = false) String departureDate,
+                                       @RequestParam(required = false) String returnDate,
                                        @RequestParam(defaultValue = "false") boolean direct,
                                        @RequestParam(required = false) String currency) {
-        return searchService.search(firebaseUid, origin, destination, departureMonth, returnMonth, direct, currency);
+        return searchService.search(firebaseUid, origin, destination, departureDate, returnDate, direct, currency);
     }
 
     @GetMapping("/flights/places")
@@ -74,6 +77,11 @@ public class FlightController {
     public FlightDealsResponse deals(@AuthenticationPrincipal String firebaseUid,
                                      @RequestParam(required = false) String currency) {
         return dealService.deals(firebaseUid, currency);
+    }
+
+    @GetMapping("/flights/defaults")
+    public FlightDefaultsDto defaults(@AuthenticationPrincipal String firebaseUid) {
+        return defaultsService.defaults(firebaseUid);
     }
 
     @PostMapping("/flights/clicks")

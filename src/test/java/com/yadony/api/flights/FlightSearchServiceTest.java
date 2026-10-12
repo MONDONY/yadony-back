@@ -95,4 +95,15 @@ class FlightSearchServiceTest {
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
                 .isEqualTo("flights-unavailable");
     }
+
+    @Test
+    void search_guest_isAnonymous_andNothingIsRemembered() {
+        when(users.resolve("guest")).thenReturn(new FlightUsers.Caller(null, "fr"));
+        when(prices.prices(any())).thenReturn(List.of(price("327")));
+
+        var response = service.search("guest", "PAR", "ABJ", "2026-12-12", null, false, null);
+
+        assertThat(response.offers()).hasSize(1);
+        verifyNoInteractions(searches);
+    }
 }

@@ -4,6 +4,7 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.flights.dto.FlightAlertResponse;
 import com.yadony.api.flights.dto.FlightClickResponse;
 import com.yadony.api.flights.dto.FlightDealsResponse;
+import com.yadony.api.flights.dto.FlightDefaultsDto;
 import com.yadony.api.flights.dto.FlightPlaceDto;
 import com.yadony.api.flights.dto.FlightSearchResponse;
 import org.junit.jupiter.api.Test;
@@ -24,6 +25,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
@@ -42,6 +44,7 @@ class FlightControllerTest {
     @MockBean FlightDealService dealService;
     @MockBean FlightAlertService alertService;
     @MockBean FlightClickService clickService;
+    @MockBean FlightDefaultsService defaultsService;
     @MockBean FlightUsers users;
 
     private static final String UID = "uid-flights";
@@ -61,7 +64,8 @@ class FlightControllerTest {
     }
 
     private static FlightAlertResponse alertResponse() {
-        return new FlightAlertResponse(UUID.randomUUID(), "PAR", "ABJ", "Paris", "Abidjan", "2026-12", null, false,
+        return new FlightAlertResponse(UUID.randomUUID(), "PAR", "ABJ", "Paris", "Abidjan", java.time.LocalDate.of(2026, 12, 1),
+                java.time.LocalDate.of(2026, 12, 31), null, null, false,
                 new BigDecimal("400.00"), "EUR", true, null, null, LocalDateTime.now());
     }
 
@@ -72,7 +76,7 @@ class FlightControllerTest {
 
         mockMvc.perform(get("/flights/search").with(authentication(memberWithoutRole()))
                         .param("origin", "PAR").param("destination", "ABJ")
-                        .param("departureMonth", "2026-12").param("direct", "true").param("currency", "XOF"))
+                        .param("departureDate", "2026-12").param("direct", "true").param("currency", "XOF"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.currency").value("XOF"))
                 .andExpect(jsonPath("$.offers").isArray());
@@ -177,20 +181,51 @@ class FlightControllerTest {
                 .andExpect(jsonPath("$.code").value("flight-alert-limit-reached"));
     }
 
-    /** Décision produit : les vols sont un outil des comptes inscrits, jamais des visiteurs. */
+    /** Décision produit : un visiteur cherche et réserve sans compte ; les alertes exigent un vrai compte. */
     @Test
-    void guests_cannotUseFlights() throws Exception {
+    void guests_canSearchAndBook_butNotUseAlerts() throws Exception {
+        when(searchService.search(any(), any(), any(), any(), any(), anyBoolean(), any()))
+                .thenReturn(new FlightSearchResponse("PAR", "ABJ", false, "EUR", List.of()));
+        when(dealService.deals(any(), any())).thenReturn(new FlightDealsResponse("EUR", false, List.of()));
+        when(placeService.suggest(any(), any())).thenReturn(List.of());
+        when(defaultsService.defaults(any())).thenReturn(new FlightDefaultsDto("none", null, null));
+        when(clickService.click(any(), any())).thenReturn(new FlightClickResponse("https://x.test/search/X?marker=1"));
+        when(users.resolve(any())).thenReturn(new FlightUsers.Caller(null, "fr"));
+
         mockMvc.perform(get("/flights/search").with(authentication(guest()))
                         .param("origin", "PAR").param("destination", "ABJ"))
-                .andExpect(status().isForbidden());
-        mockMvc.perform(get("/flights/deals").with(authentication(guest())))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/flights/deals").with(authentication(guest()))).andExpect(status().isOk());
+        mockMvc.perform(get("/flights/places").with(authentication(guest())).param("term", "abi"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/flights/defaults").with(authentication(guest())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.source").value("none"));
+        mockMvc.perform(post("/flights/clicks").with(authentication(guest()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"offerPath\":\"/search/X\",\"originCode\":\"PAR\","
+                                + "\"destinationCode\":\"ABJ\",\"source\":\"deal\"}"))
+                .andExpect(status().isOk());
+
         mockMvc.perform(get("/me/flight-alerts").with(authentication(guest())))
                 .andExpect(status().isForbidden());
-        mockMvc.perform(post("/flights/clicks").with(authentication(guest()))
+        mockMvc.perform(post("/me/flight-alerts").with(authentication(guest()))
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isForbidden());
-        verifyNoInteractions(searchService, dealService, alertService, clickService);
+        verifyNoInteractions(alertService);
+    }
+
+    @Test
+    void defaults_returnsPrefill() throws Exception {
+        when(defaultsService.defaults(UID)).thenReturn(new FlightDefaultsDto("search",
+                new FlightPlaceDto("PAR", "Paris", "FR", "France"),
+                new FlightPlaceDto("ABJ", "Abidjan", "CI", "Côte d'Ivoire")));
+
+        mockMvc.perform(get("/flights/defaults").with(authentication(memberWithoutRole())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.source").value("search"))
+                .andExpect(jsonPath("$.origin.code").value("PAR"))
+                .andExpect(jsonPath("$.destination.name").value("Abidjan"));
     }
 
     @Test

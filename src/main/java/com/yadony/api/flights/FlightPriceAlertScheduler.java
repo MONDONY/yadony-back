@@ -13,8 +13,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.LocalDateTime;
-import java.time.YearMonth;
-import java.util.Comparator;
+import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -61,27 +60,24 @@ public class FlightPriceAlertScheduler {
     public void run() {
         if (!enabled || !prices.isAvailable()) return;
         LocalDateTime now = LocalDateTime.now(clock);
-        YearMonth currentMonth = YearMonth.now(clock);
+        LocalDate today = LocalDate.now(clock);
 
         Map<String, List<FlightPriceAlertEntity>> byQuery = new LinkedHashMap<>();
         for (FlightPriceAlertEntity alert : alerts.findAllByActiveTrue()) {
-            if (isExpired(alert, currentMonth)) {
-                // Mois de départ passé : l'alerte n'a plus d'objet, on la met en pause.
+            if (isExpired(alert, today)) {
+                // Période de départ passée : l'alerte n'a plus d'objet, on la met en pause.
                 alert.setActive(false);
                 saveQuietly(alert);
                 continue;
             }
-            byQuery.computeIfAbsent(alert.toQuery().key(), k -> new java.util.ArrayList<>()).add(alert);
+            byQuery.computeIfAbsent(groupKey(alert), k -> new java.util.ArrayList<>()).add(alert);
         }
 
         int notified = 0;
         for (List<FlightPriceAlertEntity> group : byQuery.values()) {
             BigDecimal cheapest;
             try {
-                cheapest = prices.prices(group.get(0).toQuery()).stream()
-                        .map(TravelpayoutsPrice::price)
-                        .min(Comparator.naturalOrder())
-                        .orElse(null);
+                cheapest = cheapest(group.get(0));
             } catch (FlightProviderException e) {
                 // On réessaiera à la prochaine exécution ; l'état des alertes n'est pas touché.
                 continue;
@@ -98,9 +94,29 @@ public class FlightPriceAlertScheduler {
         if (notified > 0) log.info("[FlightPriceAlert] {} alerte(s) envoyée(s)", notified);
     }
 
-    static boolean isExpired(FlightPriceAlertEntity alert, YearMonth currentMonth) {
-        YearMonth departure = alert.departureYearMonth();
-        return departure != null && departure.isBefore(currentMonth);
+    /** Prix le plus bas dans la période de l'alerte, {@code null} si aucune offre n'y correspond. */
+    private BigDecimal cheapest(FlightPriceAlertEntity alert) {
+        FlightAlertWindow window = alert.window();
+        BigDecimal cheapest = null;
+        for (FlightQuery query : window.queries(alert.getOriginCode(), alert.getDestinationCode(),
+                alert.isDirectOnly(), alert.getCurrency())) {
+            for (TravelpayoutsPrice price : prices.prices(query)) {
+                if (window.accepts(price) && (cheapest == null || price.price().compareTo(cheapest) < 0)) {
+                    cheapest = price.price();
+                }
+            }
+        }
+        return cheapest;
+    }
+
+    /** Deux alertes de même trajet, période, filtre et devise partagent un seul passage. */
+    private static String groupKey(FlightPriceAlertEntity alert) {
+        return alert.getOriginCode() + "-" + alert.getDestinationCode() + "|" + alert.window().key()
+                + "|" + alert.isDirectOnly() + "|" + alert.getCurrency();
+    }
+
+    static boolean isExpired(FlightPriceAlertEntity alert, LocalDate today) {
+        return alert.getDepartureTo() != null && alert.getDepartureTo().isBefore(today);
     }
 
     private boolean saveQuietly(FlightPriceAlertEntity alert) {

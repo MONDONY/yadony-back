@@ -42,7 +42,7 @@ public class FlightPriceService {
         List<TravelpayoutsPrice> cached = cache.getIfPresent(query.key());
         if (cached != null) return cached;
         List<TravelpayoutsPrice> fresh = client.pricesForDates(query.origin(), query.destination(),
-                query.departureMonth(), query.returnMonth(), query.directOnly(), query.currency(), MAX_RESULTS);
+                query.departure(), query.returnDate(), query.directOnly(), query.currency(), MAX_RESULTS);
         List<TravelpayoutsPrice> valid = fresh.stream()
                 .filter(p -> p.price() != null && p.price().signum() > 0)
                 .toList();

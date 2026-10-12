@@ -12,7 +12,6 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.util.UriBuilder;
 
 import java.net.URI;
-import java.time.YearMonth;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -72,14 +71,14 @@ public class TravelpayoutsClient {
     /**
      * Prix les plus bas trouvés par Aviasales pour un trajet, triés par prix.
      *
-     * @param departureMonth mois de départ, {@code null} pour toutes les dates à venir
-     * @param returnMonth    mois de retour : présent = aller-retour, {@code null} = aller simple
+     * @param departure  jour ou mois de départ, {@code null} pour toutes les dates à venir
+     * @param returnDate jour ou mois de retour : présent = aller-retour, {@code null} = aller simple
      * @throws FlightProviderException si l'API est injoignable ou répond une erreur
      */
     public List<TravelpayoutsPrice> pricesForDates(String origin, String destination,
-                                                   YearMonth departureMonth, YearMonth returnMonth,
+                                                   FlightDate departure, FlightDate returnDate,
                                                    boolean directOnly, String currency, int limit) {
-        boolean oneWay = returnMonth == null;
+        boolean oneWay = returnDate == null;
         URI uri = uri(apiBaseUrl, b -> {
             b.path("/aviasales/v3/prices_for_dates")
                     .queryParam("origin", origin)
@@ -92,8 +91,8 @@ public class TravelpayoutsClient {
                     .queryParam("limit", limit)
                     .queryParam("page", 1)
                     .queryParam("token", token);
-            if (departureMonth != null) b.queryParam("departure_at", departureMonth.toString());
-            if (returnMonth != null) b.queryParam("return_at", returnMonth.toString());
+            if (departure != null) b.queryParam("departure_at", departure.providerValue());
+            if (returnDate != null) b.queryParam("return_at", returnDate.providerValue());
             return b;
         });
         PricesResponse body = get(uri, PricesResponse.class, "prix " + origin + "-" + destination);

@@ -39,15 +39,15 @@ public class FlightSearchService {
     }
 
     public FlightSearchResponse search(String firebaseUid, String origin, String destination,
-                                       String departureMonth, String returnMonth,
+                                       String departure, String returnDate,
                                        boolean directOnly, String currency) {
         if (!prices.isAvailable()) throw FlightErrors.unavailable();
-        FlightQuery query = FlightQuery.of(origin, destination, departureMonth, returnMonth,
+        FlightQuery query = FlightQuery.of(origin, destination, departure, returnDate,
                 directOnly, currency, clock);
         FlightUsers.Caller caller = users.resolve(firebaseUid);
 
         var found = fetch(query);
-        remember(caller, query);
+        if (!caller.anonymous()) remember(caller, query);
         return new FlightSearchResponse(query.origin(), query.destination(), query.roundTrip(), query.currency(),
                 found.stream().map(p -> mapper.toDto(p, query.currency(), caller.language())).toList());
     }

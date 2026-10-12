@@ -17,8 +17,8 @@ class FlightQueryTest {
 
         assertThat(q.origin()).isEqualTo("PAR");
         assertThat(q.destination()).isEqualTo("ABJ");
-        assertThat(q.departureMonth()).isEqualTo(YearMonth.of(2026, 12));
-        assertThat(q.returnMonth()).isNull();
+        assertThat(q.departure()).isEqualTo(FlightDate.ofMonth(YearMonth.of(2026, 12)));
+        assertThat(q.returnDate()).isNull();
         assertThat(q.roundTrip()).isFalse();
         assertThat(q.directOnly()).isTrue();
         assertThat(q.currency()).isEqualTo("XOF");
@@ -35,8 +35,8 @@ class FlightQueryTest {
 
     @Test
     void currentMonthIsAccepted() {
-        assertThat(FlightQuery.of("PAR", "ABJ", "2026-10", null, false, "EUR", CLOCK).departureMonth())
-                .isEqualTo(YearMonth.of(2026, 10));
+        assertThat(FlightQuery.of("PAR", "ABJ", "2026-10", null, false, "EUR", CLOCK).departure())
+                .isEqualTo(FlightDate.ofMonth(YearMonth.of(2026, 10)));
     }
 
     @Test
@@ -53,9 +53,13 @@ class FlightQueryTest {
 
     @Test
     void rejectsPastOrMalformedMonths() {
-        assertCode(() -> FlightQuery.of("PAR", "ABJ", "2026-09", null, false, null, CLOCK), "flights-month-past");
-        assertCode(() -> FlightQuery.of("PAR", "ABJ", null, "2026-01", false, null, CLOCK), "flights-month-past");
-        assertCode(() -> FlightQuery.of("PAR", "ABJ", "12/2026", null, false, null, CLOCK), "flights-invalid-month");
+        assertCode(() -> FlightQuery.of("PAR", "ABJ", "2026-09", null, false, null, CLOCK), "flights-date-past");
+        assertCode(() -> FlightQuery.of("PAR", "ABJ", "2026-10-14", null, false, null, CLOCK), "flights-date-past");
+        assertCode(() -> FlightQuery.of("PAR", "ABJ", null, "2026-01", false, null, CLOCK), "flights-date-past");
+        assertCode(() -> FlightQuery.of("PAR", "ABJ", "12/2026", null, false, null, CLOCK), "flights-invalid-date");
+        assertCode(() -> FlightQuery.of("PAR", "ABJ", "2026-12-40", null, false, null, CLOCK), "flights-invalid-date");
+        assertCode(() -> FlightQuery.of("PAR", "ABJ", "2026-12-20", "2026-12-19", false, null, CLOCK),
+                "flights-return-before-departure");
         assertCode(() -> FlightQuery.of("PAR", "ABJ", "2026-12", "2026-11", false, null, CLOCK),
                 "flights-return-before-departure");
     }
@@ -70,5 +74,16 @@ class FlightQueryTest {
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
                 .isEqualTo(code);
+    }
+
+    @Test
+    void acceptsAPreciseDay_andTodayItself() {
+        FlightQuery q = FlightQuery.of("PAR", "ABJ", "2026-12-12", "2027-01-08", false, null, CLOCK);
+
+        assertThat(q.departure()).isEqualTo(FlightDate.ofDay(java.time.LocalDate.of(2026, 12, 12)));
+        assertThat(q.departure().providerValue()).isEqualTo("2026-12-12");
+        assertThat(q.returnDate().providerValue()).isEqualTo("2027-01-08");
+        assertThat(q.key()).isEqualTo("PAR-ABJ|2026-12-12|2027-01-08|false|EUR");
+        assertThat(FlightQuery.of("PAR", "ABJ", "2026-10-15", null, false, null, CLOCK).departure().isDay()).isTrue();
     }
 }

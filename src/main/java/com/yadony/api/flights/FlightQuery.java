@@ -1,7 +1,7 @@
 package com.yadony.api.flights;
 
 import java.time.Clock;
-import java.time.YearMonth;
+import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.Locale;
 import java.util.Set;
@@ -9,12 +9,13 @@ import java.util.regex.Pattern;
 
 /**
  * Recherche de vols validée et normalisée : codes IATA en majuscules, devise en
- * majuscules et dans la liste autorisée, mois de départ jamais passé.
+ * majuscules et dans la liste autorisée, date de départ jamais passée.
  *
- * @param returnMonth présent = aller-retour, {@code null} = aller simple
+ * @param departure  jour ou mois de départ, {@code null} pour toutes les dates à venir
+ * @param returnDate présent = aller-retour, {@code null} = aller simple
  */
-public record FlightQuery(String origin, String destination, YearMonth departureMonth,
-                          YearMonth returnMonth, boolean directOnly, String currency) {
+public record FlightQuery(String origin, String destination, FlightDate departure,
+                          FlightDate returnDate, boolean directOnly, String currency) {
 
     static final String DEFAULT_CURRENCY = "EUR";
 
@@ -24,35 +25,35 @@ public record FlightQuery(String origin, String destination, YearMonth departure
     private static final Pattern IATA = Pattern.compile("^[A-Z]{3}$");
 
     public boolean roundTrip() {
-        return returnMonth != null;
+        return returnDate != null;
     }
 
     /** Clé de cache et de regroupement : deux requêtes identiques partagent un seul appel. */
     String key() {
-        return origin + "-" + destination + "|" + departureMonth + "|" + returnMonth + "|" + directOnly + "|" + currency;
+        return origin + "-" + destination + "|" + departure + "|" + returnDate + "|" + directOnly + "|" + currency;
     }
 
-    static FlightQuery of(String origin, String destination, String departureMonth, String returnMonth,
+    static FlightQuery of(String origin, String destination, String departure, String returnDate,
                           boolean directOnly, String currency, Clock clock) {
         String from = iata(origin, "origin");
         String to = iata(destination, "destination");
         if (from.equals(to)) {
             throw FlightErrors.invalid("flights-same-airport", "Le départ et l'arrivée doivent être différents.");
         }
-        YearMonth now = YearMonth.now(clock);
-        YearMonth departure = month(departureMonth, "departureMonth");
-        if (departure != null && departure.isBefore(now)) {
-            throw FlightErrors.invalid("flights-month-past", "Le mois de départ est déjà passé.");
+        LocalDate today = LocalDate.now(clock);
+        FlightDate out = date(departure, "departureDate");
+        if (out != null && out.last().isBefore(today)) {
+            throw FlightErrors.invalid("flights-date-past", "La date de départ est déjà passée.");
         }
-        YearMonth back = month(returnMonth, "returnMonth");
-        if (back != null && departure != null && back.isBefore(departure)) {
+        FlightDate back = date(returnDate, "returnDate");
+        if (back != null && out != null && back.last().isBefore(out.first())) {
             throw FlightErrors.invalid("flights-return-before-departure",
                     "Le retour ne peut pas précéder le départ.");
         }
-        if (back != null && back.isBefore(now)) {
-            throw FlightErrors.invalid("flights-month-past", "Le mois de retour est déjà passé.");
+        if (back != null && back.last().isBefore(today)) {
+            throw FlightErrors.invalid("flights-date-past", "La date de retour est déjà passée.");
         }
-        return new FlightQuery(from, to, departure, back, directOnly, currency(currency));
+        return new FlightQuery(from, to, out, back, directOnly, currency(currency));
     }
 
     static String iata(String raw, String field) {
@@ -72,12 +73,12 @@ public record FlightQuery(String origin, String destination, YearMonth departure
         return c;
     }
 
-    private static YearMonth month(String raw, String field) {
-        if (raw == null || raw.isBlank()) return null;
+    private static FlightDate date(String raw, String field) {
         try {
-            return YearMonth.parse(raw.trim());
+            return FlightDate.parse(raw);
         } catch (DateTimeParseException e) {
-            throw FlightErrors.invalid("flights-invalid-month", field + " doit être au format AAAA-MM.");
+            throw FlightErrors.invalid("flights-invalid-date",
+                    field + " doit être au format AAAA-MM-JJ (jour) ou AAAA-MM (mois entier).");
         }
     }
 }

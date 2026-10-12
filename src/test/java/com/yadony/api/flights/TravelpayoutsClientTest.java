@@ -49,7 +49,7 @@ class TravelpayoutsClientTest {
                         "gate":"Vayama","link":"/search/PAR0412ABJ1?t=AB1"}]}
                         """, MediaType.APPLICATION_JSON));
 
-        List<TravelpayoutsPrice> prices = client.pricesForDates("PAR", "ABJ", YearMonth.of(2026, 12), null,
+        List<TravelpayoutsPrice> prices = client.pricesForDates("PAR", "ABJ", FlightDate.ofMonth(YearMonth.of(2026, 12)), null,
                 false, "EUR", 30);
 
         assertThat(prices).hasSize(1);
@@ -66,10 +66,10 @@ class TravelpayoutsClientTest {
     void pricesForDates_roundTrip_sendsReturnMonth() {
         server.expect(requestTo(startsWith("https://api.test/aviasales/v3/prices_for_dates")))
                 .andExpect(queryParam("one_way", "false"))
-                .andExpect(queryParam("return_at", "2027-01"))
+                .andExpect(queryParam("return_at", "2027-01-08"))
                 .andRespond(withSuccess("{\"success\":true,\"data\":[]}", MediaType.APPLICATION_JSON));
 
-        assertThat(client.pricesForDates("PAR", "DKR", null, YearMonth.of(2027, 1), true, "XOF", 30)).isEmpty();
+        assertThat(client.pricesForDates("PAR", "DKR", null, FlightDate.ofDay(java.time.LocalDate.of(2027, 1, 8)), true, "XOF", 30)).isEmpty();
         server.verify();
     }
 

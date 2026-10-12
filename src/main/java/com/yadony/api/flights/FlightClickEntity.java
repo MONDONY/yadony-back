@@ -18,7 +18,8 @@ import java.util.UUID;
 @Where(clause = "deleted_at IS NULL")
 public class FlightClickEntity extends BaseEntity {
 
-    @Column(name = "owner_id", nullable = false)
+    /** Nul pour un visiteur sans compte. */
+    @Column(name = "owner_id")
     private UUID ownerId;
 
     @Column(name = "origin_code", nullable = false, length = 3)

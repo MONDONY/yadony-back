@@ -10,7 +10,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
-import java.time.YearMonth;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -104,7 +103,8 @@ class FlightPriceAlertSchedulerTest {
     @Test
     void expiredAlert_isPausedAndNotChecked() {
         FlightPriceAlertEntity a = alert(owner, "400");
-        a.setDepartureMonth("2026-09");
+        a.setDepartureFrom(java.time.LocalDate.of(2026, 9, 1));
+        a.setDepartureTo(java.time.LocalDate.of(2026, 9, 30));
         when(alerts.findAllByActiveTrue()).thenReturn(List.of(a));
 
         scheduler.run();
@@ -151,19 +151,47 @@ class FlightPriceAlertSchedulerTest {
     }
 
     @Test
-    void isExpired_onlyForPastDepartureMonth() {
+    void isExpired_onlyOnceTheDeparturePeriodIsOver() {
         FlightPriceAlertEntity a = alert(owner, "400");
-        YearMonth october = YearMonth.of(2026, 10);
-        assertThat(FlightPriceAlertScheduler.isExpired(a, october)).isFalse();
-        a.setDepartureMonth("2026-10");
-        assertThat(FlightPriceAlertScheduler.isExpired(a, october)).isFalse();
-        a.setDepartureMonth("2026-09");
-        assertThat(FlightPriceAlertScheduler.isExpired(a, october)).isTrue();
+        java.time.LocalDate today = java.time.LocalDate.of(2026, 10, 15);
+        assertThat(FlightPriceAlertScheduler.isExpired(a, today)).isFalse();
+        a.setDepartureFrom(java.time.LocalDate.of(2026, 10, 1));
+        a.setDepartureTo(java.time.LocalDate.of(2026, 10, 15));
+        assertThat(FlightPriceAlertScheduler.isExpired(a, today)).isFalse();
+        a.setDepartureTo(java.time.LocalDate.of(2026, 10, 14));
+        assertThat(FlightPriceAlertScheduler.isExpired(a, today)).isTrue();
     }
 
     @Test
     void formatPrice_euroSymbolOtherwiseCode() {
         assertThat(FlightPriceAlertScheduler.formatPrice(new BigDecimal("327.40"), "EUR")).isEqualTo("327 €");
         assertThat(FlightPriceAlertScheduler.formatPrice(new BigDecimal("215000"), "XOF")).isEqualTo("215000 XOF");
+    }
+
+    @Test
+    void offersOutsideThePeriod_areIgnored() {
+        FlightPriceAlertEntity a = alert(owner, "400");
+        a.setDepartureFrom(java.time.LocalDate.of(2026, 12, 10));
+        a.setDepartureTo(java.time.LocalDate.of(2026, 12, 20));
+        when(alerts.findAllByActiveTrue()).thenReturn(List.of(a));
+        when(prices.prices(any())).thenReturn(List.of(price("327")));
+
+        scheduler.run();
+
+        assertThat(a.getLastSeenPrice()).isNull();
+        verify(notifications, never()).notifyUser(any(), any(), any(), any());
+    }
+
+    @Test
+    void offerInsideThePeriod_isReported() {
+        FlightPriceAlertEntity a = alert(owner, "400");
+        a.setDepartureFrom(java.time.LocalDate.of(2026, 12, 1));
+        a.setDepartureTo(java.time.LocalDate.of(2026, 12, 31));
+        when(alerts.findAllByActiveTrue()).thenReturn(List.of(a));
+        when(prices.prices(any())).thenReturn(List.of(price("327")));
+
+        scheduler.run();
+
+        assertThat(a.getLastSeenPrice()).isEqualByComparingTo("327");
     }
 }
