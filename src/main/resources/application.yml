@@ -171,6 +171,22 @@ sentry:
 # Toutes les valeurs métier sont surchargeables par variable d'environnement
 # (${VAR:défaut}) — provisioning prod sans rebuild.
 yadony:
+  # Billets d'avion en affiliation (Travelpayouts / Aviasales, package flights). Sans token,
+  # les endpoints /flights répondent 503 flights-unavailable et le scheduler ne fait rien.
+  flights:
+    travelpayouts:
+      token: ${TRAVELPAYOUTS_TOKEN:}
+      marker: ${TRAVELPAYOUTS_MARKER:}
+      api-base-url: https://api.travelpayouts.com
+      autocomplete-url: https://autocomplete.travelpayouts.com
+      booking-base-url: https://www.aviasales.com
+      # <marker>.<subId> dans le lien : à activer une fois le format validé sur le compte partenaire.
+      subid-enabled: ${TRAVELPAYOUTS_SUBID_ENABLED:false}
+    # Trajets des bons plans quand l'utilisateur n'a encore aucun corridor.
+    default-routes: PAR-ABJ,PAR-DKR,PAR-BKO,PAR-DLA,PAR-CMN,PAR-COO,PAR-CKY,PAR-OUA
+    alerts:
+      enabled: ${FLIGHT_ALERTS_ENABLED:true}
+      cron: "0 7 */6 * * *"
   # Mode recette des comptes testeurs (FLUTTER-FA/FB) : fermé partout sauf en staging
   # (application-staging.yml). Toujours fermé sous le profil prod, quelle que soit la valeur.
   recette:

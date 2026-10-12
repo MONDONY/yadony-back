@@ -105,6 +105,10 @@ jobs:
           # l'environnement `production`, jamais celui du bac à sable). Un token absent
           # ne casse rien au démarrage tant que PAWAPAY_ENABLED (plus bas) reste false.
           PAWAPAY_API_TOKEN=${{ secrets.PAWAPAY_API_TOKEN }}
+          # Billets d avion en affiliation (Travelpayouts). Sans token, /flights repond 503
+          # et le scheduler des alertes prix ne fait rien : rien ne casse au demarrage.
+          TRAVELPAYOUTS_TOKEN=${{ secrets.TRAVELPAYOUTS_TOKEN }}
+          TRAVELPAYOUTS_MARKER=${{ vars.TRAVELPAYOUTS_MARKER }}
           YADONY_KYC_VERIFICATION_FLOW_ID=${{ secrets.YADONY_KYC_VERIFICATION_FLOW_ID }}
           # Didit — vérification d'identité. Les cinq valeurs sont des secrets de
           # l'environnement `production`, distincts de ceux du bac à sable : une clé
