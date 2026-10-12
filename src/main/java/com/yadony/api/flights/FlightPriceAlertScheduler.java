@@ -21,7 +21,7 @@ import java.util.Map;
 /**
  * Vérifie les alertes prix toutes les 6 heures.
  *
- * <p>Les alertes identiques (même trajet, mêmes mois, même devise) partagent un seul appel
+ * <p>Les alertes identiques (même trajet, même période, même devise) partagent leurs appels
  * à Travelpayouts. Aucune transaction n'enveloppe l'exécution : chaque alerte est
  * enregistrée par son propre {@code save}, si bien qu'aucune connexion JDBC n'est tenue
  * pendant les appels réseau, et qu'une erreur sur une alerte n'annule pas les autres.
@@ -81,9 +81,14 @@ public class FlightPriceAlertScheduler {
         for (List<FlightPriceAlertEntity> group : byQuery.values()) {
             BigDecimal cheapest;
             try {
-                cheapest = cheapest(group.get(0));
-            } catch (FlightProviderException e) {
-                // On réessaiera à la prochaine exécution ; l'état des alertes n'est pas touché.
+                cheapest = cheapest(group.get(0), today);
+            } catch (RuntimeException e) {
+                // Un seul mois en échec suffit à écarter le groupe : un prix partiel, plus haut
+                // que le vrai, remettrait l'anti-spam à zéro. On réessaiera à la prochaine
+                // exécution sans toucher aux alertes ; les autres groupes continuent.
+                if (!(e instanceof FlightProviderException)) {
+                    log.error("[FlightPriceAlert] groupe {} ignoré : {}", groupKey(group.get(0)), e.getMessage());
+                }
                 continue;
             }
             for (FlightPriceAlertEntity alert : group) {
@@ -99,11 +104,11 @@ public class FlightPriceAlertScheduler {
     }
 
     /** Prix le plus bas dans la période de l'alerte, {@code null} si aucune offre n'y correspond. */
-    private BigDecimal cheapest(FlightPriceAlertEntity alert) {
+    private BigDecimal cheapest(FlightPriceAlertEntity alert, LocalDate today) {
         FlightAlertWindow window = alert.window();
         BigDecimal cheapest = null;
         for (FlightQuery query : window.queries(alert.getOriginCode(), alert.getDestinationCode(),
-                alert.isDirectOnly(), alert.getCurrency())) {
+                alert.isDirectOnly(), alert.getCurrency(), today)) {
             for (TravelpayoutsPrice price : prices.prices(query)) {
                 if (window.accepts(price) && (cheapest == null || price.price().compareTo(cheapest) < 0)) {
                     cheapest = price.price();

@@ -30,8 +30,10 @@ import java.util.UUID;
  * alertes prix et lien affilié.
  *
  * <p>Pas de {@code @PreAuthorize} par rôle : ces routes ne demandent aucun rôle métier.
- * Elles sont absentes de la liste blanche invités de {@code SecurityConfig}, donc
- * réservées aux comptes inscrits (authentifiés et non invités) par la règle finale.
+ * Recherche, villes, bons plans, préremplissage et clic sont ouverts aux visiteurs
+ * ({@code ROLE_GUEST}, liste blanche de {@code SecurityConfig}) et les traitent en anonymes
+ * ({@link FlightUsers}). Les alertes ({@code /me/flight-alerts}) restent réservées aux comptes
+ * inscrits. Toutes répondent 503 tant que le réglage {@code flights_enabled} est éteint.
  */
 @RestController
 public class FlightController {

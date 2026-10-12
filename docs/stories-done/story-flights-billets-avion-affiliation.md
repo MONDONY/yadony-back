@@ -42,7 +42,7 @@ Recherche de billets d'avion, bons plans, alertes prix et lien partenaire dans Y
 2. Recherche : `GET /flights/search` → `FlightQuery.of` valide (codes, dates, devise) → `FlightPriceService` (cache 30 min, puis Travelpayouts) → `FlightOfferMapper` (nom de compagnie traduit, `logoUrl`) → réponse triée par prix.
 3. Bons plans : corridors de l'utilisateur (recherches puis trajets, demandes et alertes corridor convertis en IATA), un appel de prix par trajet, `FlightDealCalculator` garde les prix ≥ 20 % sous la médiane.
 4. Réservation : l'app renvoie l'`offerPath` à `POST /flights/clicks`, le serveur construit `booking-base-url + offerPath + marker`, enregistre le clic et rend l'URL que l'app ouvre dans le navigateur externe.
-5. Alertes : création sur une période ; toutes les 6 h le scheduler groupe les alertes identiques, interroge un mois par mois couvert, filtre les offres hors période, applique `FlightAlertRule` et notifie (`FLIGHT_PRICE_ALERT`).
+5. Alertes : création sur une période ; toutes les 6 h le scheduler groupe les alertes identiques, interroge un mois par mois encore à venir (une combinaison dont le retour finit avant le départ est sautée), filtre les offres hors période, applique `FlightAlertRule` et notifie (`FLIGHT_PRICE_ALERT`). Un échec sur un seul mois écarte le groupe jusqu'au passage suivant : un prix partiel remettrait l'anti-spam à zéro.
 
 ### Points d'entrée API
 - `GET /api/v1/config/flights-enabled` — public, `{"enabled": bool}`.
@@ -62,7 +62,8 @@ Recherche de billets d'avion, bons plans, alertes prix et lien partenaire dans Y
 ### Logique métier critique
 - Aucun appel réseau dans une transaction (recherche, bons plans, scheduler) : aucune connexion JDBC n'est tenue pendant Travelpayouts.
 - `offerPath` validé (chemin `/search/` du partenaire seulement) : pas de redirection ouverte.
-- Période d'alerte limitée à 31 jours (au plus deux mois couverts, donc au plus 4 appels par alerte aller-retour) ; une borne de départ passée est ramenée à aujourd'hui ; l'alerte se met en pause quand sa période de départ est passée.
+- Période d'alerte limitée à 31 jours (jusqu'à trois mois couverts, par exemple du 31 janvier au 2 mars) ; une borne de début passée est ramenée à aujourd'hui, à la création comme à chaque vérification (`FlightAlertWindow.from`), et le contrôle de doublon compare les périodes vues d'aujourd'hui ; l'alerte se met en pause quand sa période de départ est passée.
+- `TravelpayoutsClient` encode l'URI sans expansion de gabarit : un « {x} » saisi dans l'autocomplétion part tel quel au lieu de provoquer une 500.
 - Visiteur : rendu anonyme dans `FlightUsers` **même s'il a une ligne `users`** (née d'un favori) : rien du package ne la référence, car la purge nocturne des invités supprime ces lignes physiquement (clé étrangère).
 - `logoUrl` n'est construite que pour un code IATA bien formé (`[A-Z0-9]{2,3}`).
 

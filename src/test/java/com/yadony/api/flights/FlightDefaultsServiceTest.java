@@ -13,6 +13,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -58,13 +59,13 @@ class FlightDefaultsServiceTest {
         assertThat(result.origin().name()).isEqualTo("Paris");
         assertThat(result.destination().code()).isEqualTo("DKR");
         assertThat(result.destination().name()).isEqualTo("DKR");
-        verify(deals, never()).personalRoutes(any());
+        verify(deals, never()).personalRoutes(any(), anyInt());
     }
 
     @Test
     void withoutSearch_usesTheMostRecentCorridor() {
         when(corridors.recentSearchedRoutes(owner, 1)).thenReturn(List.of());
-        when(deals.personalRoutes(owner)).thenReturn(List.of(new CodePair("LYS", "ABJ"), new CodePair("PAR", "BKO")));
+        when(deals.personalRoutes(owner, 1)).thenReturn(List.of(new CodePair("LYS", "ABJ"), new CodePair("PAR", "BKO")));
 
         var result = service.defaults("uid");
 
@@ -81,7 +82,7 @@ class FlightDefaultsServiceTest {
         assertThat(service.defaults("uid").origin().name()).isEqualTo("PAR");
 
         when(corridors.recentSearchedRoutes(owner, 1)).thenReturn(List.of());
-        when(deals.personalRoutes(owner)).thenReturn(List.of());
+        when(deals.personalRoutes(owner, 1)).thenReturn(List.of());
         assertThat(service.defaults("uid").source()).isEqualTo("none");
     }
 }

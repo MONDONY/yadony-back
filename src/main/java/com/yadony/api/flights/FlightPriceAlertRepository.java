@@ -10,8 +10,6 @@ public interface FlightPriceAlertRepository extends JpaRepository<FlightPriceAle
 
     List<FlightPriceAlertEntity> findAllByOwnerIdOrderByCreatedAtDesc(UUID ownerId);
 
-    long countByOwnerId(UUID ownerId);
-
     Optional<FlightPriceAlertEntity> findByIdAndOwnerId(UUID id, UUID ownerId);
 
     List<FlightPriceAlertEntity> findAllByActiveTrue();

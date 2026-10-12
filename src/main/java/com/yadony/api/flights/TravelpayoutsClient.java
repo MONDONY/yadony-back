@@ -9,7 +9,7 @@ import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.util.UriBuilder;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
 import java.util.HashMap;
@@ -129,11 +129,16 @@ public class TravelpayoutsClient {
     }
 
     private interface UriCustomizer {
-        UriBuilder apply(UriBuilder builder);
+        UriComponentsBuilder apply(UriComponentsBuilder builder);
     }
 
+    /**
+     * Construit puis encode l'URI sans expansion de gabarit : {@code UriBuilder.build()} lirait
+     * un « {x} » saisi dans le terme d'autocomplétion comme une variable et lèverait une
+     * exception (500) au lieu d'envoyer le texte tel quel.
+     */
     private static URI uri(String base, UriCustomizer customizer) {
-        return customizer.apply(org.springframework.web.util.UriComponentsBuilder.fromUriString(base)).build();
+        return customizer.apply(UriComponentsBuilder.fromUriString(base)).build().encode().toUri();
     }
 
     private <T> T get(URI uri, Class<T> type, String what) {

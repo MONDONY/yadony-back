@@ -39,7 +39,8 @@ public class FlightDefaultsService {
         if (!searched.isEmpty()) {
             return of("search", searched.get(0), caller.language());
         }
-        List<CodePair> personal = deals.personalRoutes(caller.id());
+        // Un seul trajet sert : inutile de convertir les corridors suivants en codes IATA.
+        List<CodePair> personal = deals.personalRoutes(caller.id(), 1);
         if (!personal.isEmpty()) {
             return of("corridor", personal.get(0), caller.language());
         }

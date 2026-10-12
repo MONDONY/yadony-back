@@ -90,6 +90,23 @@ class FlightAlertServiceTest {
     }
 
     @Test
+    void create_rejectsDuplicate_whoseStartHasSinceBeenClampedToToday() {
+        // Créée plus tôt « à partir du 1er octobre » : vue d'aujourd'hui, c'est la même période
+        // que la demande du jour, ramenée elle aussi à aujourd'hui.
+        FlightPriceAlertEntity existing = alert(owner, "300");
+        existing.setDepartureFrom(LocalDate.of(2026, 10, 1));
+        existing.setDepartureTo(LocalDate.of(2026, 10, 31));
+        when(alerts.findAllByOwnerIdOrderByCreatedAtDesc(owner)).thenReturn(List.of(existing));
+        LocalDate today = LocalDate.now(CLOCK);
+
+        assertThatThrownBy(() -> service.create(UID, new FlightAlertRequest("PAR", "ABJ", null, null,
+                today.minusDays(2), LocalDate.of(2026, 10, 31), null, null, false, new BigDecimal("400"), "EUR")))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                .isEqualTo("flight-alert-duplicate");
+    }
+
+    @Test
     void create_validatesQuery() {
         assertThatThrownBy(() -> service.create(UID, new FlightAlertRequest("PAR", "PAR", null, null, null, null, null, null,
                 false, BigDecimal.TEN, null)))

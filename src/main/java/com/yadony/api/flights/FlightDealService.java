@@ -99,13 +99,21 @@ public class FlightDealService {
 
     /** Ses trajets aériens, recherches d'abord, sans doublon ni aller = retour. */
     List<CodePair> personalRoutes(UUID userId) {
+        return personalRoutes(userId, MAX_ROUTES);
+    }
+
+    /**
+     * Au plus {@code limit} trajets : chaque corridor converti peut coûter deux appels
+     * d'autocomplétion, on s'arrête dès que la liste est pleine.
+     */
+    List<CodePair> personalRoutes(UUID userId, int limit) {
         Set<CodePair> routes = new LinkedHashSet<>();
-        for (CodePair searched : corridors.recentSearchedRoutes(userId, MAX_ROUTES)) {
+        for (CodePair searched : corridors.recentSearchedRoutes(userId, limit)) {
             routes.add(searched);
         }
-        if (routes.size() < MAX_ROUTES) {
-            for (CityPair pair : corridors.recentCityCorridors(userId, MAX_ROUTES * 2)) {
-                if (routes.size() >= MAX_ROUTES) break;
+        if (routes.size() < limit) {
+            for (CityPair pair : corridors.recentCityCorridors(userId, limit * 2)) {
+                if (routes.size() >= limit) break;
                 Optional<String> from = places.resolveCity(pair.departureCity());
                 Optional<String> to = places.resolveCity(pair.arrivalCity());
                 if (from.isPresent() && to.isPresent() && !from.get().equals(to.get())) {

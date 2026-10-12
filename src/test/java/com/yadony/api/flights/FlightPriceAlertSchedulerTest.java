@@ -91,6 +91,24 @@ class FlightPriceAlertSchedulerTest {
     }
 
     @Test
+    void unexpectedFailureOnOneGroup_doesNotStopTheOthers() {
+        FlightPriceAlertEntity broken = alert(owner, "400");
+        broken.setDestinationCode("DKR");
+        FlightPriceAlertEntity ok = alert(owner, "400");
+        when(alerts.findAllByActiveTrue()).thenReturn(List.of(broken, ok));
+        when(prices.prices(any())).thenAnswer(inv -> {
+            FlightQuery q = inv.getArgument(0);
+            if ("DKR".equals(q.destination())) throw new IllegalStateException("boom");
+            return List.of(price("327"));
+        });
+
+        scheduler.run();
+
+        assertThat(broken.getLastCheckedAt()).isNull();
+        verify(notifications, times(1)).notifyUser(any(), anyString(), anyString(), anyMap());
+    }
+
+    @Test
     void providerFailure_leavesAlertsUntouched() {
         FlightPriceAlertEntity a = alert(owner, "400");
         when(alerts.findAllByActiveTrue()).thenReturn(List.of(a));

@@ -110,6 +110,14 @@ class TravelpayoutsClientTest {
     }
 
     @Test
+    void places_sendsBracesAndSpacesVerbatim_insteadOfExpandingThem() {
+        server.expect(requestTo(org.hamcrest.Matchers.containsString("term=ab%7Bc%7D%20d")))
+                .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+
+        assertThat(client.places("ab{c} d", "fr")).isEmpty();
+    }
+
+    @Test
     void airlineNames_mapsCodesToNames_ignoringIncompleteRows() {
         server.expect(requestTo("https://api.test/data/fr/airlines.json"))
                 .andRespond(withSuccess("""

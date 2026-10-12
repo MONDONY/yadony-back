@@ -50,7 +50,8 @@ public class FlightAlertService {
         UUID owner = users.resolveAccount(firebaseUid).id();
         FlightQuery query = FlightQuery.of(request.originCode(), request.destinationCode(),
                 null, null, request.directOnly(), request.currency(), clock);
-        FlightAlertWindow window = window(request);
+        LocalDate today = LocalDate.now(clock);
+        FlightAlertWindow window = window(request, today);
 
         List<FlightPriceAlertEntity> existing = alerts.findAllByOwnerIdOrderByCreatedAtDesc(owner);
         if (existing.size() >= MAX_ALERTS) {
@@ -61,7 +62,9 @@ public class FlightAlertService {
                 && a.getDestinationCode().equals(query.destination())
                 && a.isDirectOnly() == query.directOnly()
                 && a.getCurrency().equals(query.currency())
-                && a.window().key().equals(window.key()));
+                // Vue depuis aujourd'hui : une alerte créée hier « du 10 au 20 » et ramenée
+                // au 12 aujourd'hui couvre la même période.
+                && a.window().from(today).key().equals(window.key()));
         if (duplicate) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "flight-alert-duplicate",
                     "Duplicate Flight Alert", "Une alerte identique existe déjà pour ce trajet.");
@@ -118,8 +121,7 @@ public class FlightAlertService {
      * Période validée : bornes par paire, ordonnées, pas entièrement passées, 31 jours au plus ;
      * une borne de départ déjà passée est ramenée à aujourd'hui.
      */
-    private FlightAlertWindow window(FlightAlertRequest r) {
-        LocalDate today = LocalDate.now(clock);
+    private FlightAlertWindow window(FlightAlertRequest r, LocalDate today) {
         LocalDate[] departure = period(r.departureFrom(), r.departureTo(), "départ", today);
         LocalDate[] back = period(r.returnFrom(), r.returnTo(), "retour", today);
         if (departure[0] != null && back[0] != null && back[1].isBefore(departure[0])) {
