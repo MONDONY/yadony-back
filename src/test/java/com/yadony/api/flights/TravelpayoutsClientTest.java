@@ -42,6 +42,9 @@ class TravelpayoutsClientTest {
                 .andExpect(queryParam("direct", "false"))
                 .andExpect(queryParam("departure_at", "2026-12"))
                 .andExpect(queryParam("token", "secret-token"))
+                .andExpect(queryParam("sorting", "price"))
+                .andExpect(queryParam("limit", "30"))
+                .andExpect(queryParam("page", "1"))
                 .andRespond(withSuccess("""
                         {"success":true,"currency":"eur","data":[{"origin":"PAR","destination":"ABJ",
                         "origin_airport":"CDG","destination_airport":"ABJ","departure_at":"2026-12-04T11:30:00+01:00",
@@ -50,7 +53,7 @@ class TravelpayoutsClientTest {
                         """, MediaType.APPLICATION_JSON));
 
         List<TravelpayoutsPrice> prices = client.pricesForDates("PAR", "ABJ", FlightDate.ofMonth(YearMonth.of(2026, 12)), null,
-                false, "EUR", 30);
+                false, "EUR", 30, 1);
 
         assertThat(prices).hasSize(1);
         TravelpayoutsPrice p = prices.get(0);
@@ -69,7 +72,18 @@ class TravelpayoutsClientTest {
                 .andExpect(queryParam("return_at", "2027-01-08"))
                 .andRespond(withSuccess("{\"success\":true,\"data\":[]}", MediaType.APPLICATION_JSON));
 
-        assertThat(client.pricesForDates("PAR", "DKR", null, FlightDate.ofDay(java.time.LocalDate.of(2027, 1, 8)), true, "XOF", 30)).isEmpty();
+        assertThat(client.pricesForDates("PAR", "DKR", null, FlightDate.ofDay(java.time.LocalDate.of(2027, 1, 8)), true, "XOF", 30, 1)).isEmpty();
+        server.verify();
+    }
+
+    @Test
+    void pricesForDates_sendsRequestedPage() {
+        server.expect(requestTo(startsWith("https://api.test/aviasales/v3/prices_for_dates")))
+                .andExpect(queryParam("page", "2"))
+                .andExpect(queryParam("limit", "50"))
+                .andRespond(withSuccess("{\"success\":true,\"data\":[]}", MediaType.APPLICATION_JSON));
+
+        assertThat(client.pricesForDates("PAR", "ABJ", null, null, false, "EUR", 50, 2)).isEmpty();
         server.verify();
     }
 
@@ -78,7 +92,7 @@ class TravelpayoutsClientTest {
         server.expect(requestTo(startsWith("https://api.test/aviasales/v3/prices_for_dates")))
                 .andRespond(withSuccess("{\"success\":false,\"data\":null}", MediaType.APPLICATION_JSON));
 
-        assertThatThrownBy(() -> client.pricesForDates("PAR", "ABJ", null, null, false, "EUR", 30))
+        assertThatThrownBy(() -> client.pricesForDates("PAR", "ABJ", null, null, false, "EUR", 30, 1))
                 .isInstanceOf(FlightProviderException.class);
     }
 
@@ -87,7 +101,7 @@ class TravelpayoutsClientTest {
         server.expect(requestTo(startsWith("https://api.test/aviasales/v3/prices_for_dates")))
                 .andRespond(withStatus(HttpStatus.UNAUTHORIZED));
 
-        assertThatThrownBy(() -> client.pricesForDates("PAR", "ABJ", null, null, false, "EUR", 30))
+        assertThatThrownBy(() -> client.pricesForDates("PAR", "ABJ", null, null, false, "EUR", 30, 1))
                 .isInstanceOf(FlightProviderException.class)
                 .hasMessageNotContaining("secret-token");
     }
@@ -128,6 +142,44 @@ class TravelpayoutsClientTest {
         Map<String, String> names = client.airlineNames("fr");
 
         assertThat(names).containsOnly(Map.entry("U2", "easyJet"), Map.entry("AT", "Royal Air Maroc"));
+    }
+
+    @Test
+    void timeZones_mapsAirportCodesToZones_ignoringIncompleteRows() {
+        server.expect(requestTo("https://api.test/data/en/airports.json"))
+                .andRespond(withSuccess("""
+                        [{"code":"cdg","time_zone":"Europe/Paris","name":"Charles de Gaulle"},
+                         {"code":"ABJ","time_zone":"Africa/Abidjan"},{"code":"ZZZ","time_zone":""},
+                         {"code":null,"time_zone":"Europe/Paris"},{"code":"NOZ"}]
+                        """, MediaType.APPLICATION_JSON));
+
+        assertThat(client.timeZones("airports"))
+                .containsOnly(Map.entry("CDG", "Europe/Paris"), Map.entry("ABJ", "Africa/Abidjan"));
+        server.verify();
+    }
+
+    @Test
+    void timeZones_readsCitiesList_andRejectsOtherLists() {
+        server.expect(requestTo("https://api.test/data/en/cities.json"))
+                .andRespond(withSuccess("null", MediaType.APPLICATION_JSON));
+
+        assertThat(client.timeZones("cities")).isEmpty();
+        assertThatThrownBy(() -> client.timeZones("../secret")).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void pricesForDates_parsesDurationsToAndBack() {
+        server.expect(requestTo(startsWith("https://api.test/aviasales/v3/prices_for_dates")))
+                .andRespond(withSuccess("""
+                        {"success":true,"data":[{"origin":"PAR","destination":"ABJ","price":780,
+                        "duration":755,"duration_to":375,"duration_back":380,"transfers":0,"return_transfers":0}]}
+                        """, MediaType.APPLICATION_JSON));
+
+        TravelpayoutsPrice p = client.pricesForDates("PAR", "ABJ", null, null, false, "EUR", 50, 1).get(0);
+
+        assertThat(p.duration()).isEqualTo(755);
+        assertThat(p.durationTo()).isEqualTo(375);
+        assertThat(p.durationBack()).isEqualTo(380);
     }
 
     @Test

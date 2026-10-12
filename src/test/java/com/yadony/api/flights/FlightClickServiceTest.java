@@ -70,12 +70,22 @@ class FlightClickServiceTest {
     void click_rejectsPathsThatCouldLeaveThePartnerSite() {
         FlightClickService service = service("12345", false);
         for (String bad : new String[]{"https://evil.test/search/x", "//evil.test/search", "/account/delete",
-                "/search/../admin", "/search/x y", "/search//evil.test"}) {
+                "/search/../admin", "/search/x y", "/search//evil.test",
+                "search/PAR0112ABJ1", "/SEARCH/PAR0112ABJ1", "javascript:alert(1)", "\\\\evil.test/search/x"}) {
             assertThatThrownBy(() -> service.click(UID, request(bad)))
                     .as(bad)
                     .isInstanceOf(YadonyBusinessException.class);
         }
         verify(clicks, never()).save(any());
+    }
+
+    @Test
+    void click_acceptsTheRouteSearchPath_forSeeAllAirlines() {
+        var response = service("12345", false).click(UID,
+                new FlightClickRequest("/search/PAR0112ABJ01011", "PAR", "ABJ", null, "EUR", null, null, "search"));
+
+        assertThat(response.url()).isEqualTo("https://www.aviasales.com/search/PAR0112ABJ01011?marker=12345");
+        verify(clicks).save(any());
     }
 
     @Test

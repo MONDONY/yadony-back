@@ -27,6 +27,7 @@ class FlightSearchServiceTest {
 
     @Mock FlightPriceService prices;
     @Mock AirlineDirectory airlines;
+    @Mock AirportTimeZones timeZones;
     @Mock FlightUsers users;
     @Mock FlightSearchRepository searches;
 
@@ -36,7 +37,7 @@ class FlightSearchServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new FlightSearchService(prices, new FlightOfferMapper(airlines, LOGO_TEMPLATE), users, searches, CLOCK);
+        service = new FlightSearchService(prices, new FlightOfferMapper(airlines, timeZones, LOGO_TEMPLATE), users, searches, CLOCK);
         lenient().when(prices.isAvailable()).thenReturn(true);
         lenient().when(users.resolve(UID)).thenReturn(new FlightUsers.Caller(owner, "en"));
         lenient().when(airlines.nameOf(anyString(), anyString())).thenAnswer(inv ->
@@ -53,6 +54,7 @@ class FlightSearchServiceTest {
         assertThat(response.roundTrip()).isTrue();
         assertThat(response.currency()).isEqualTo("EUR");
         assertThat(response.offers()).hasSize(2);
+        assertThat(response.searchPath()).isEqualTo("/search/PAR0112ABJ01011");
         var first = response.offers().get(0);
         assertThat(first.airlineName()).isEqualTo("Royal Air Maroc");
         assertThat(first.currency()).isEqualTo("EUR");
@@ -83,7 +85,9 @@ class FlightSearchServiceTest {
         when(prices.prices(any())).thenReturn(List.of(price("327")));
         when(searches.save(any())).thenThrow(new RuntimeException("db down"));
 
-        assertThat(service.search(UID, "PAR", "ABJ", null, null, false, null).offers()).hasSize(1);
+        var response = service.search(UID, "PAR", "ABJ", null, null, false, null);
+        assertThat(response.offers()).hasSize(1);
+        assertThat(response.searchPath()).isNull();
     }
 
     @Test
@@ -104,6 +108,7 @@ class FlightSearchServiceTest {
         var response = service.search("guest", "PAR", "ABJ", "2026-12-12", null, false, null);
 
         assertThat(response.offers()).hasSize(1);
+        assertThat(response.searchPath()).isEqualTo("/search/PAR1212ABJ1");
         verifyNoInteractions(searches);
     }
 }

@@ -9,10 +9,10 @@ Recherche de billets d'avion, bons plans, alertes prix et lien partenaire dans Y
 ## Fichiers créés
 - `flights/FlightController.java` — les 9 routes REST, toutes gardées par `FlightFeature.requireEnabled()`.
 - `flights/FlightFeature.java` — lecture du flag `flights_enabled` ; 503 `flights-unavailable` s'il est éteint.
-- `flights/TravelpayoutsClient.java` — client HTTP (prix `prices_for_dates`, autocomplétion `places2`, annuaire des compagnies).
+- `flights/TravelpayoutsClient.java` — client HTTP (prix `prices_for_dates` paginés, autocomplétion `places2`, annuaire des compagnies, fuseaux `airports.json`/`cities.json`).
 - `flights/FlightDate.java` — date de départ/retour : jour précis (`AAAA-MM-JJ`) ou mois entier (`AAAA-MM`).
 - `flights/FlightQuery.java` — recherche validée et normalisée (codes IATA, devise, dates à venir, retour ≥ aller).
-- `flights/FlightPriceService.java` — prix d'un trajet, cache Caffeine 30 min partagé (recherche, bons plans, scheduler), 50 offres max.
+- `flights/FlightPriceService.java` — prix d'un trajet, cache Caffeine 30 min partagé (recherche, bons plans, scheduler) ; pages 1 et 2 de l'appel normal (50 par page) + appel `direct=true`, fusionnés, dédoublonnés, 150 offres max, vols directs jamais tronqués.
 - `flights/FlightSearchService.java` — `GET /flights/search` ; mémorise le trajet pour les bons plans (sauf visiteur).
 - `flights/FlightPlaceService.java` — autocomplétion des villes et conversion ville Yadony → code IATA (table `flight_city_codes`).
 - `flights/FlightDealService.java`, `FlightDealCalculator.java` — bons plans : prix le plus bas ≥ 20 % sous la médiane, sur les corridors de l'utilisateur, liste diaspora par défaut.
@@ -20,7 +20,8 @@ Recherche de billets d'avion, bons plans, alertes prix et lien partenaire dans Y
 - `flights/FlightClickService.java` — `POST /flights/clicks` : lien affilié construit côté serveur, clic enregistré.
 - `flights/FlightAlertService.java`, `FlightAlertWindow.java`, `FlightAlertRule.java` — alertes prix sur une période, règle d'envoi anti-spam.
 - `flights/FlightPriceAlertScheduler.java` — vérification des alertes toutes les 6 h.
-- `flights/FlightOfferMapper.java`, `AirlineDirectory.java` — offre affichable (nom traduit de la compagnie, `logoUrl`).
+- `flights/FlightOfferMapper.java`, `AirlineDirectory.java` — offre affichable (nom traduit de la compagnie, `logoUrl`, durées aller/retour, heures d'arrivée locales).
+- `flights/AirportTimeZones.java` — fuseau IANA d'un aéroport (repli : sa ville), cache 24 h, repli vide 10 min.
 - `flights/FlightUsers.java` — identité de l'appelant ; un visiteur (`ROLE_GUEST`) est anonyme.
 - `flights/*Entity.java`, `*Repository.java`, `FlightCorridorQueryRepository.java`, `dto/*` — persistance et contrats.
 - `config/dto/FlightsEnabledResponse.java` — réponse de `GET /config/flights-enabled`.
@@ -39,9 +40,9 @@ Recherche de billets d'avion, bons plans, alertes prix et lien partenaire dans Y
 
 ### Vue d'ensemble du flux
 1. L'app lit `GET /config/flights-enabled` au démarrage. Faux : aucun onglet Billets, et le back répond de toute façon 503 sur chaque route du package.
-2. Recherche : `GET /flights/search` → `FlightQuery.of` valide (codes, dates, devise) → `FlightPriceService` (cache 30 min, puis Travelpayouts) → `FlightOfferMapper` (nom de compagnie traduit, `logoUrl`) → réponse triée par prix.
+2. Recherche : `GET /flights/search` → `FlightQuery.of` valide (codes, dates, devise) → `FlightPriceService` (cache 30 min, puis Travelpayouts) → `FlightOfferMapper` (nom de compagnie traduit, `logoUrl`, `arrivalAt`/`returnArrivalAt`) → réponse triée par prix, avec `searchPath` (chemin Aviasales du trajet pour « Voir toutes les compagnies »).
 3. Bons plans : corridors de l'utilisateur (recherches puis trajets, demandes et alertes corridor convertis en IATA), un appel de prix par trajet, `FlightDealCalculator` garde les prix ≥ 20 % sous la médiane.
-4. Réservation : l'app renvoie l'`offerPath` à `POST /flights/clicks`, le serveur construit `booking-base-url + offerPath + marker`, enregistre le clic et rend l'URL que l'app ouvre dans le navigateur externe.
+4. Réservation : l'app renvoie l'`offerPath` à `POST /flights/clicks`, le serveur construit `booking-base-url + offerPath + marker`, enregistre le clic et rend l'URL que l'app ouvre dans le navigateur externe. « Voir toutes les compagnies » passe par la même route avec le `searchPath` de la recherche comme `offerPath`.
 5. Alertes : création sur une période ; toutes les 6 h le scheduler groupe les alertes identiques, interroge un mois par mois encore à venir (une combinaison dont le retour finit avant le départ est sautée), filtre les offres hors période, applique `FlightAlertRule` et notifie (`FLIGHT_PRICE_ALERT`). Un échec sur un seul mois écarte le groupe jusqu'au passage suivant : un prix partiel remettrait l'anti-spam à zéro.
 
 ### Points d'entrée API
@@ -62,6 +63,9 @@ Recherche de billets d'avion, bons plans, alertes prix et lien partenaire dans Y
 ### Logique métier critique
 - Aucun appel réseau dans une transaction (recherche, bons plans, scheduler) : aucune connexion JDBC n'est tenue pendant Travelpayouts.
 - `offerPath` validé (chemin `/search/` du partenaire seulement) : pas de redirection ouverte.
+- Couverture des compagnies : Travelpayouts trie par prix, une seule page de 50 ne contenait que des correspondances bon marché et coupait Air France et Corsair (directs plus chers sur PAR → ABJ/DKR/BKO/DLA). `FlightPriceService` lit la page 2 si la page 1 est pleine et fait en parallèle un appel `direct=true` ; seul l'échec de la page 1 fait échouer la recherche. Dédoublonnage par `link`, sinon compagnie + numéro de vol + dates ; troncature à 150 en gardant tous les directs. Les bons plans et les alertes passent par le même service (jusqu'à 3 appels par trajet hors cache).
+- `searchPath` = `/search/{ORIG}{JJMM}{DEST}[{JJMM retour}]1`. Mois entier : 1er du mois s'il n'est pas passé, sinon `null` (mois en cours) ; sans date de départ : `null` (champ omis du JSON).
+- `durationMinutes` garde son sens historique (champ `duration` : aller + retour pour un aller-retour). `outboundDurationMinutes`/`returnDurationMinutes` viennent de `duration_to`/`duration_back`. `arrivalAt` = départ + durée aller, à l'heure de l'aéroport d'arrivée ; `returnArrivalAt` = retour + durée retour, à l'heure de l'aéroport de départ du voyage. Fuseau ou durée inconnus : `null`, jamais d'heure fausse.
 - Période d'alerte limitée à 31 jours (jusqu'à trois mois couverts, par exemple du 31 janvier au 2 mars) ; une borne de début passée est ramenée à aujourd'hui, à la création comme à chaque vérification (`FlightAlertWindow.from`), et le contrôle de doublon compare les périodes vues d'aujourd'hui ; l'alerte se met en pause quand sa période de départ est passée.
 - `TravelpayoutsClient` encode l'URI sans expansion de gabarit : un « {x} » saisi dans l'autocomplétion part tel quel au lieu de provoquer une 500.
 - Visiteur : rendu anonyme dans `FlightUsers` **même s'il a une ligne `users`** (née d'un favori) : rien du package ne la référence, car la purge nocturne des invités supprime ces lignes physiquement (clé étrangère).

@@ -20,24 +20,25 @@ import static org.mockito.Mockito.*;
 class FlightPriceAndAirlineTest {
 
     private final TravelpayoutsClient client = mock(TravelpayoutsClient.class);
-    private final FlightQuery query = new FlightQuery("PAR", "ABJ", null, null, false, "EUR");
+    /** Direct uniquement : un seul appel, la fusion avec l'appel des directs est testée dans FlightPriceServiceTest. */
+    private final FlightQuery query = new FlightQuery("PAR", "ABJ", null, null, true, "EUR");
 
     @Test
     void prices_areCached_andInvalidRowsDropped() {
         TravelpayoutsPrice zero = new TravelpayoutsPrice("PAR", "ABJ", null, null, null, null,
                 java.math.BigDecimal.ZERO, null, null, null, null, null, null, null);
-        when(client.pricesForDates(eq("PAR"), eq("ABJ"), any(), any(), anyBoolean(), eq("EUR"), anyInt()))
+        when(client.pricesForDates(eq("PAR"), eq("ABJ"), any(), any(), anyBoolean(), eq("EUR"), anyInt(), anyInt()))
                 .thenReturn(List.of(price("327"), zero));
         FlightPriceService service = new FlightPriceService(client, Duration.ofMinutes(30));
 
         assertThat(service.prices(query)).hasSize(1);
         assertThat(service.prices(query)).hasSize(1);
-        verify(client, times(1)).pricesForDates(anyString(), anyString(), any(), any(), anyBoolean(), anyString(), anyInt());
+        verify(client, times(1)).pricesForDates(anyString(), anyString(), any(), any(), anyBoolean(), anyString(), anyInt(), anyInt());
     }
 
     @Test
     void prices_failuresAreNotCached() {
-        when(client.pricesForDates(anyString(), anyString(), any(), any(), anyBoolean(), anyString(), anyInt()))
+        when(client.pricesForDates(anyString(), anyString(), any(), any(), anyBoolean(), anyString(), anyInt(), anyInt()))
                 .thenThrow(new FlightProviderException("down"))
                 .thenReturn(List.of(price("327")));
         FlightPriceService service = new FlightPriceService(client);

@@ -18,7 +18,10 @@ import java.util.regex.Pattern;
  *
  * <p>Le domaine du lien est le nôtre (configuration), jamais celui envoyé par l'app :
  * {@code offerPath} n'est accepté que s'il ressemble à un chemin de recherche du
- * partenaire, ce qui ferme toute redirection vers un autre site.
+ * partenaire, ce qui ferme toute redirection vers un autre site. Il accepte le chemin d'une
+ * offre ({@code /search/PAR0412ABJ1?t=...}) comme le chemin de recherche du trajet rendu par
+ * {@code GET /flights/search} ({@code searchPath}, ex. {@code /search/PAR1212ABJ1}) : toujours
+ * relatif, commençant par {@code /search/}, sans {@code //} ni {@code ..}.
  *
  * <p>Sous-identifiant : quand {@code subid-enabled} est vrai, le marker devient
  * {@code <marker>.<subId>} pour retrouver le clic dans les statistiques Travelpayouts.

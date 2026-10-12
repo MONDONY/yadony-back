@@ -33,6 +33,41 @@ public record FlightQuery(String origin, String destination, FlightDate departur
         return origin + "-" + destination + "|" + departure + "|" + returnDate + "|" + directOnly + "|" + currency;
     }
 
+    /**
+     * Chemin de recherche Aviasales du trajet, pour le lien « Voir toutes les compagnies » :
+     * {@code /search/{ORIG}{JJMM}{DEST}[{JJMM retour}]1} (1 = un adulte), ex.
+     * {@code /search/PAR1212ABJ1} ou {@code /search/PAR1212ABJ08011}. À envoyer tel quel comme
+     * {@code offerPath} à {@code POST /flights/clicks} pour obtenir le lien affilié.
+     *
+     * <p>Aviasales demande un jour précis. Pour un mois entier, on prend le 1er du mois s'il
+     * n'est pas passé ; sinon (mois en cours) aucun jour n'est un choix honnête : {@code null},
+     * comme sans date de départ. Si le retour ne peut pas être converti, {@code null} aussi
+     * (un aller simple à la place d'un aller-retour tromperait l'utilisateur).
+     *
+     * @return le chemin, ou {@code null} si aucun jour de départ (ou de retour) n'est utilisable
+     */
+    String searchPath(LocalDate today) {
+        LocalDate out = searchDay(departure, today);
+        if (out == null) return null;
+        StringBuilder path = new StringBuilder("/search/").append(origin).append(ddmm(out)).append(destination);
+        if (returnDate != null) {
+            LocalDate back = searchDay(returnDate, today);
+            if (back == null || back.isBefore(out)) return null;
+            path.append(ddmm(back));
+        }
+        return path.append('1').toString();
+    }
+
+    private static LocalDate searchDay(FlightDate date, LocalDate today) {
+        if (date == null) return null;
+        LocalDate day = date.first();
+        return day.isBefore(today) ? null : day;
+    }
+
+    private static String ddmm(LocalDate day) {
+        return String.format(Locale.ROOT, "%02d%02d", day.getDayOfMonth(), day.getMonthValue());
+    }
+
     static FlightQuery of(String origin, String destination, String departure, String returnDate,
                           boolean directOnly, String currency, Clock clock) {
         String from = iata(origin, "origin");

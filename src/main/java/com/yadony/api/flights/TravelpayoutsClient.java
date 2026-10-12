@@ -1,6 +1,7 @@
 package com.yadony.api.flights;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,8 +21,8 @@ import java.util.Map;
 /**
  * Accès à l'API partenaire Travelpayouts (programme d'affiliation Aviasales).
  *
- * <p>Trois lectures seulement : les prix en cache d'Aviasales, l'autocomplétion des
- * villes et la liste des compagnies. Aucune vente ne passe par ici : l'utilisateur
+ * <p>Lectures seulement : les prix en cache d'Aviasales, l'autocomplétion des
+ * villes, la liste des compagnies et les fuseaux des aéroports et des villes. Aucune vente ne passe par ici : l'utilisateur
  * réserve sur le site partenaire, Yadony touche une commission (pas d'agrément de vente).
  *
  * <p>Le token ne quitte jamais le back : l'app n'appelle que nos endpoints {@code /flights}.
@@ -73,11 +74,14 @@ public class TravelpayoutsClient {
      *
      * @param departure  jour ou mois de départ, {@code null} pour toutes les dates à venir
      * @param returnDate jour ou mois de retour : présent = aller-retour, {@code null} = aller simple
+     * @param limit      taille de page (Travelpayouts plafonne à 1000)
+     * @param page       numéro de page, à partir de 1 : la page 2 reprend après les {@code limit}
+     *                   offres les moins chères de la page 1
      * @throws FlightProviderException si l'API est injoignable ou répond une erreur
      */
     public List<TravelpayoutsPrice> pricesForDates(String origin, String destination,
                                                    FlightDate departure, FlightDate returnDate,
-                                                   boolean directOnly, String currency, int limit) {
+                                                   boolean directOnly, String currency, int limit, int page) {
         boolean oneWay = returnDate == null;
         URI uri = uri(apiBaseUrl, b -> {
             b.path("/aviasales/v3/prices_for_dates")
@@ -89,7 +93,7 @@ public class TravelpayoutsClient {
                     .queryParam("one_way", oneWay)
                     .queryParam("unique", false)
                     .queryParam("limit", limit)
-                    .queryParam("page", 1)
+                    .queryParam("page", page)
                     .queryParam("token", token);
             if (departure != null) b.queryParam("departure_at", departure.providerValue());
             if (returnDate != null) b.queryParam("return_at", returnDate.providerValue());
@@ -128,6 +132,28 @@ public class TravelpayoutsClient {
         return names;
     }
 
+    /**
+     * Code IATA → fuseau horaire IANA ({@code ABJ} → {@code Africa/Abidjan}), depuis la liste
+     * des aéroports ({@code kind = "airports"}) ou des villes ({@code kind = "cities"}).
+     * Les lignes sans fuseau sont ignorées.
+     */
+    public Map<String, String> timeZones(String kind) {
+        if (!"airports".equals(kind) && !"cities".equals(kind)) {
+            throw new IllegalArgumentException("Liste inconnue : " + kind);
+        }
+        URI uri = uri(apiBaseUrl, b -> b.path("/data/en/" + kind + ".json"));
+        List<Place> body = get(uri, new ParameterizedTypeReference<List<Place>>() {}, "fuseaux " + kind);
+        Map<String, String> zones = new HashMap<>();
+        if (body != null) {
+            for (Place p : body) {
+                if (p.code() != null && p.timeZone() != null && !p.timeZone().isBlank()) {
+                    zones.put(p.code().toUpperCase(Locale.ROOT), p.timeZone().trim());
+                }
+            }
+        }
+        return zones;
+    }
+
     private interface UriCustomizer {
         UriComponentsBuilder apply(UriComponentsBuilder builder);
     }
@@ -162,6 +188,10 @@ public class TravelpayoutsClient {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record PricesResponse(boolean success, List<TravelpayoutsPrice> data, String currency) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Place(String code, @JsonProperty("time_zone") String timeZone) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
