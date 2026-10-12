@@ -244,7 +244,13 @@ public class AnnouncementService {
                         .orElse(null);
         String viewerCurrency = activeCurrencyResolver.resolveDisplay(viewerId);
 
-        Specification<AnnouncementEntity> spec = AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE)
+        // FLUTTER-JH : les trajets complets à venir s'affichent après les réservables,
+        // seulement quand l'app le demande (includeFull). Les filtres qui suivent
+        // s'appliquent aux deux statuts ; le statut seul les distingue au comptage.
+        Specification<AnnouncementEntity> statusSpec = filters.includeFull()
+                ? AnnouncementSpecification.bookableOrUpcomingFull(LocalDate.now(java.time.ZoneOffset.UTC))
+                : AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE);
+        Specification<AnnouncementEntity> spec = statusSpec
                 .and(AnnouncementSpecification.publicOrOpenSurplus())
                 .and(AnnouncementSpecification.handoverDeadlineNotPassed(
                         java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)));
@@ -332,6 +338,17 @@ public class AnnouncementService {
         // (facteur strictement positif), donc trier sur le pivot équivaut à trier
         // sur le prix converti dans sa devise — sans charger tout le fil en mémoire.
         Sort sort = buildSort(sortBy, sortDir);
+        if (filters.includeFull()) {
+            // Tri porté par la spécification (réservables d'abord) : Pageable non trié.
+            Specification<AnnouncementEntity> filtered = spec;
+            Page<AnnouncementEntity> page = announcementRepository.findAll(
+                    filtered.and(AnnouncementSpecification.bookableFirstThen(sort)),
+                    PageRequest.of(pageable.getPageNumber(), pageable.getPageSize()));
+            long bookable = announcementRepository.count(
+                    filtered.and(AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE)));
+            List<AnnouncementSearchResponse> content = mapAnnouncements(page.getContent(), favIds, viewerCurrency, viewerId);
+            return new TripSearchPage<>(content, pageable, page.getTotalElements(), bookable);
+        }
         Pageable sortedPageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), sort);
         Page<AnnouncementEntity> page = announcementRepository.findAll(spec, sortedPageable);
         List<AnnouncementSearchResponse> content = mapAnnouncements(page.getContent(), favIds, viewerCurrency, viewerId);

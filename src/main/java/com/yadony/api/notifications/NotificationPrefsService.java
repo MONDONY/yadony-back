@@ -123,6 +123,10 @@ public class NotificationPrefsService {
             // Alerte prix d'un billet d'avion (package flights) : une alerte posée par
             // l'utilisateur, même interrupteur que ses autres alertes.
             Map.entry("FLIGHT_PRICE_ALERT",           "pushCorridorAlerts"),
+            // FLUTTER-JH : « de la place s'est libérée » sur un trajet suivi. Même famille
+            // (on me signale un trajet) ; l'entrée du centre de notifications reste si le
+            // push est coupé, c'est le repli dans l'app.
+            Map.entry("TRIP_SPACE_FREED",             "pushCorridorAlerts"),
             // PackageMatchTravelerNotifyListener coupe déjà en amont via
             // isPackageMatchEnabled ; cette entrée aligne isAllowed sur le même
             // interrupteur pour que tout futur émetteur du type soit filtré sans

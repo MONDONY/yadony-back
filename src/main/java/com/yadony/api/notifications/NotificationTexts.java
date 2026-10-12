@@ -571,6 +571,12 @@ public final class NotificationTexts {
                 m.get("notification.corridor-alert-trip.body", corridor(m, departure, arrival)));
     }
 
+    /** FLUTTER-JH : un trajet complet auquel on s'était abonné a de nouveau de la place. */
+    public static NotificationText tripSpaceFreed(Messages m, String departure, String arrival) {
+        return new NotificationText(m.get("notification.trip-space-freed.title"),
+                m.get("notification.trip-space-freed.body", corridor(m, departure, arrival)));
+    }
+
     /** Récapitulatif d'alerte ; au-delà de 99 le titre renonce au nombre pour rester sur une ligne. */
     public static NotificationText corridorAlertDigest(Messages m, boolean trips, int count, String departure, String arrival) {
         String kind = trips ? "trips" : "parcels";

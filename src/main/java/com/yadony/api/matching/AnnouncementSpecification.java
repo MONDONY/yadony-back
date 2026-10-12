@@ -31,6 +31,42 @@ public class AnnouncementSpecification {
         return (root, query, cb) -> cb.equal(root.get("status"), status);
     }
 
+    /**
+     * FLUTTER-JH : trajets réservables ({@code ACTIVE}) plus trajets complets
+     * ({@code FULL}) dont le départ n'est pas passé. Un trajet annulé, retiré, en
+     * cours ou terminé n'y entre jamais ; un trajet complet déjà parti non plus, il
+     * n'aurait plus de place à libérer.
+     */
+    public static Specification<AnnouncementEntity> bookableOrUpcomingFull(LocalDate today) {
+        return (root, query, cb) -> cb.or(
+                cb.equal(root.get("status"), AnnouncementStatus.ACTIVE),
+                cb.and(
+                        cb.equal(root.get("status"), AnnouncementStatus.FULL),
+                        cb.greaterThanOrEqualTo(root.get("departureDate"), today)));
+    }
+
+    /**
+     * FLUTTER-JH : ordonne les trajets réservables AVANT les complets, puis selon
+     * {@code sort}. Porté par la spécification et non par le {@code Pageable} : Spring
+     * Data ne sait pas trier sur une expression ({@code CASE}). L'appelant passe donc
+     * un {@code Pageable} non trié, sinon son tri écraserait celui-ci. Sans effet sur
+     * la requête de comptage.
+     */
+    public static Specification<AnnouncementEntity> bookableFirstThen(org.springframework.data.domain.Sort sort) {
+        return (root, query, cb) -> {
+            Class<?> resultType = query.getResultType();
+            if (resultType != Long.class && resultType != long.class) {
+                List<jakarta.persistence.criteria.Order> orders = new ArrayList<>();
+                orders.add(cb.asc(cb.selectCase()
+                        .when(cb.equal(root.get("status"), AnnouncementStatus.FULL), 1)
+                        .otherwise(0)));
+                orders.addAll(org.springframework.data.jpa.repository.query.QueryUtils.toOrders(sort, root, cb));
+                query.orderBy(orders);
+            }
+            return null;
+        };
+    }
+
     public static Specification<AnnouncementEntity> hasDepartureCity(String city) {
         return (root, query, cb) -> cb.equal(cb.lower(root.get("departureCity")), city.toLowerCase());
     }
