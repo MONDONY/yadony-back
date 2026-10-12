@@ -38,27 +38,31 @@ public class FlightPriceAlertScheduler {
     private final FlightPriceService prices;
     private final NotificationDispatcher notifications;
     private final boolean enabled;
+    private final FlightFeature feature;
     private final Clock clock;
 
     @Autowired
     public FlightPriceAlertScheduler(FlightPriceAlertRepository alerts, FlightPriceService prices,
                                      NotificationDispatcher notifications,
-                                     @Value("${yadony.flights.alerts.enabled:true}") boolean enabled) {
-        this(alerts, prices, notifications, enabled, Clock.systemUTC());
+                                     @Value("${yadony.flights.alerts.enabled:true}") boolean enabled,
+                                     FlightFeature feature) {
+        this(alerts, prices, notifications, enabled, feature, Clock.systemUTC());
     }
 
     FlightPriceAlertScheduler(FlightPriceAlertRepository alerts, FlightPriceService prices,
-                              NotificationDispatcher notifications, boolean enabled, Clock clock) {
+                              NotificationDispatcher notifications, boolean enabled, FlightFeature feature,
+                              Clock clock) {
         this.alerts = alerts;
         this.prices = prices;
         this.notifications = notifications;
         this.enabled = enabled;
+        this.feature = feature;
         this.clock = clock;
     }
 
     @Scheduled(cron = "${yadony.flights.alerts.cron:0 7 */6 * * *}", zone = "UTC")
     public void run() {
-        if (!enabled || !prices.isAvailable()) return;
+        if (!enabled || !feature.isEnabled() || !prices.isAvailable()) return;
         LocalDateTime now = LocalDateTime.now(clock);
         LocalDate today = LocalDate.now(clock);
 

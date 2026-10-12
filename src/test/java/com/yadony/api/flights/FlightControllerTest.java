@@ -45,6 +45,7 @@ class FlightControllerTest {
     @MockBean FlightAlertService alertService;
     @MockBean FlightClickService clickService;
     @MockBean FlightDefaultsService defaultsService;
+    @MockBean FlightFeature feature;
     @MockBean FlightUsers users;
 
     private static final String UID = "uid-flights";
@@ -232,5 +233,23 @@ class FlightControllerTest {
     void anonymous_isRejected() throws Exception {
         mockMvc.perform(get("/flights/deals"))
                 .andExpect(status().is4xxClientError());
+    }
+
+    /** Flag éteint : toutes les routes répondent 503, aucun service n'est appelé. */
+    @Test
+    void featureFlagOff_everyRouteIs503() throws Exception {
+        doThrow(new YadonyBusinessException(HttpStatus.SERVICE_UNAVAILABLE, "flights-unavailable",
+                "Flights Unavailable", "off")).when(feature).requireEnabled();
+
+        mockMvc.perform(get("/flights/search").with(authentication(member()))
+                        .param("origin", "PAR").param("destination", "ABJ"))
+                .andExpect(status().isServiceUnavailable());
+        mockMvc.perform(get("/flights/deals").with(authentication(member())))
+                .andExpect(status().isServiceUnavailable());
+        mockMvc.perform(get("/me/flight-alerts").with(authentication(member())))
+                .andExpect(status().isServiceUnavailable());
+        mockMvc.perform(get("/flights/defaults").with(authentication(guest())))
+                .andExpect(status().isServiceUnavailable());
+        verifyNoInteractions(searchService, dealService, alertService, defaultsService);
     }
 }

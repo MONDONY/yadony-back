@@ -30,15 +30,17 @@ class FlightPriceAlertSchedulerTest {
     @Mock FlightPriceAlertRepository alerts;
     @Mock FlightPriceService prices;
     @Mock NotificationDispatcher notifications;
+    @Mock FlightFeature feature;
 
     FlightPriceAlertScheduler scheduler;
     final UUID owner = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
-        scheduler = new FlightPriceAlertScheduler(alerts, prices, notifications, true, CLOCK);
+        scheduler = new FlightPriceAlertScheduler(alerts, prices, notifications, true, feature, CLOCK);
         lenient().when(prices.isAvailable()).thenReturn(true);
         lenient().when(notifications.messagesFor(any())).thenReturn(TestMessages.fr());
+        lenient().when(feature.isEnabled()).thenReturn(true);
     }
 
     @Test
@@ -143,7 +145,7 @@ class FlightPriceAlertSchedulerTest {
 
     @Test
     void disabledOrUnconfigured_doesNothing() {
-        new FlightPriceAlertScheduler(alerts, prices, notifications, false, CLOCK).run();
+        new FlightPriceAlertScheduler(alerts, prices, notifications, false, feature, CLOCK).run();
         when(prices.isAvailable()).thenReturn(false);
         scheduler.run();
 
@@ -193,5 +195,15 @@ class FlightPriceAlertSchedulerTest {
         scheduler.run();
 
         assertThat(a.getLastSeenPrice()).isEqualByComparingTo("327");
+    }
+
+    @Test
+    void featureFlagOff_checksNothing() {
+        when(feature.isEnabled()).thenReturn(false);
+
+        scheduler.run();
+
+        verifyNoInteractions(alerts);
+        verify(prices, never()).prices(any());
     }
 }

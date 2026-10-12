@@ -43,10 +43,12 @@ public class FlightController {
     private final FlightClickService clickService;
     private final FlightDefaultsService defaultsService;
     private final FlightUsers users;
+    private final FlightFeature feature;
 
     public FlightController(FlightSearchService searchService, FlightPlaceService placeService,
                             FlightDealService dealService, FlightAlertService alertService,
-                            FlightClickService clickService, FlightDefaultsService defaultsService, FlightUsers users) {
+                            FlightClickService clickService, FlightDefaultsService defaultsService,
+                            FlightFeature feature, FlightUsers users) {
         this.searchService = searchService;
         this.placeService = placeService;
         this.dealService = dealService;
@@ -54,6 +56,7 @@ public class FlightController {
         this.clickService = clickService;
         this.defaultsService = defaultsService;
         this.users = users;
+        this.feature = feature;
     }
 
     @GetMapping("/flights/search")
@@ -64,34 +67,40 @@ public class FlightController {
                                        @RequestParam(required = false) String returnDate,
                                        @RequestParam(defaultValue = "false") boolean direct,
                                        @RequestParam(required = false) String currency) {
+        feature.requireEnabled();
         return searchService.search(firebaseUid, origin, destination, departureDate, returnDate, direct, currency);
     }
 
     @GetMapping("/flights/places")
     public List<FlightPlaceDto> places(@AuthenticationPrincipal String firebaseUid,
                                        @RequestParam String term) {
+        feature.requireEnabled();
         return placeService.suggest(term, users.resolve(firebaseUid).language());
     }
 
     @GetMapping("/flights/deals")
     public FlightDealsResponse deals(@AuthenticationPrincipal String firebaseUid,
                                      @RequestParam(required = false) String currency) {
+        feature.requireEnabled();
         return dealService.deals(firebaseUid, currency);
     }
 
     @GetMapping("/flights/defaults")
     public FlightDefaultsDto defaults(@AuthenticationPrincipal String firebaseUid) {
+        feature.requireEnabled();
         return defaultsService.defaults(firebaseUid);
     }
 
     @PostMapping("/flights/clicks")
     public FlightClickResponse click(@AuthenticationPrincipal String firebaseUid,
                                      @Valid @RequestBody FlightClickRequest request) {
+        feature.requireEnabled();
         return clickService.click(firebaseUid, request);
     }
 
     @GetMapping("/me/flight-alerts")
     public List<FlightAlertResponse> listAlerts(@AuthenticationPrincipal String firebaseUid) {
+        feature.requireEnabled();
         return alertService.list(firebaseUid);
     }
 
@@ -99,6 +108,7 @@ public class FlightController {
     @ResponseStatus(HttpStatus.CREATED)
     public FlightAlertResponse createAlert(@AuthenticationPrincipal String firebaseUid,
                                            @Valid @RequestBody FlightAlertRequest request) {
+        feature.requireEnabled();
         return alertService.create(firebaseUid, request);
     }
 
@@ -106,12 +116,14 @@ public class FlightController {
     public FlightAlertResponse updateAlert(@AuthenticationPrincipal String firebaseUid,
                                            @PathVariable UUID id,
                                            @Valid @RequestBody FlightAlertUpdateRequest request) {
+        feature.requireEnabled();
         return alertService.update(firebaseUid, id, request);
     }
 
     @DeleteMapping("/me/flight-alerts/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteAlert(@AuthenticationPrincipal String firebaseUid, @PathVariable UUID id) {
+        feature.requireEnabled();
         alertService.delete(firebaseUid, id);
     }
 }

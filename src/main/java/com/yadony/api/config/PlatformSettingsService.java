@@ -106,6 +106,11 @@ public class PlatformSettingsService {
         return raw == null ? smsEnabledProperty : Boolean.parseBoolean(raw);
     }
 
+    /** Feature flag des billets d'avion — voir {@link PlatformSettingKey#FLIGHTS_ENABLED}. */
+    public boolean flightsEnabled() {
+        return Boolean.parseBoolean(cache.all().get(PlatformSettingKey.FLIGHTS_ENABLED.key()));
+    }
+
     /** Feature flag de l'offre PRO — voir {@link PlatformSettingKey#PRO_ENABLED}. */
     public boolean proEnabled() {
         String raw = cache.all().get(PlatformSettingKey.PRO_ENABLED.key());
@@ -234,6 +239,7 @@ public class PlatformSettingsService {
             case PHOTO_UPLOAD_DAILY_QUOTA -> String.valueOf(photoUploadDailyQuota());
             case TRACKING_PHOTOS_MAX_PER_BID -> String.valueOf(trackingPhotosMaxPerBid());
             case PHOTO_PURGE_ENABLED -> String.valueOf(photoPurgeEnabled());
+            case FLIGHTS_ENABLED -> String.valueOf(flightsEnabled());
         };
     }
 
@@ -341,6 +347,12 @@ public class PlatformSettingsService {
             case PRO_ENABLED -> {
                 if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
                     throw invalid("L'activation de l'offre PRO attend true ou false");
+                }
+                yield String.valueOf(Boolean.parseBoolean(value));
+            }
+            case FLIGHTS_ENABLED -> {
+                if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
+                    throw invalid("L'activation des billets d'avion attend true ou false");
                 }
                 yield String.valueOf(Boolean.parseBoolean(value));
             }
