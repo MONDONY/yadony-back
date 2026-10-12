@@ -1447,10 +1447,11 @@ public class BidService {
             CancellationReason.SENDER_CANCEL_AFTER_HANDOVER.name(),
             CancellationReason.TRAVELER_CANCEL_AFTER_HANDOVER.name());
 
-    /** Numéro révélé en clair seulement si l'offre est acceptée ou au-delà, sinon null. */
-    static String phoneForStatus(String phone, BidStatus status) {
+    /** Numéro du destinataire servi au voyageur : seulement une fois le colis retiré
+     *  ({@link BidStatus#RECIPIENT_PHONE_VISIBLE_TO_TRAVELER_STATUSES}), sinon null. */
+    static String recipientPhoneForTraveler(String phone, BidStatus status) {
         if (phone == null) return null;
-        return BidStatus.PHONE_VISIBLE_STATUSES.contains(status) ? phone : null;
+        return BidStatus.RECIPIENT_PHONE_VISIBLE_TO_TRAVELER_STATUSES.contains(status) ? phone : null;
     }
 
     /**
@@ -1735,17 +1736,15 @@ public class BidService {
                 bid.getDescription(),
                 bid.getContentCategory(),
                 recipientDeclined ? null : bid.getRecipientName(),
-                // Même masquage que sender/traveler : le téléphone du destinataire
-                // (tiers non consentant) n'est révélé qu'à partir de l'acceptation,
-                // sinon un voyageur pourrait moissonner des numéros via des offres
-                // PENDING qu'il refuse ensuite.
-                // Téléphone du destinataire : l'expéditeur l'a saisi, il le voit
-                // toujours. Le voyageur ne le reçoit qu'une fois la demande acceptée.
+                // Téléphone du destinataire (tiers non consentant) : l'expéditeur l'a
+                // saisi, il le voit toujours. Le voyageur ne le reçoit qu'après le
+                // retrait du colis (HANDED_OVER et au-delà), jamais à ACCEPTED : avant
+                // la remise il n'a aucune raison de le joindre (FLUTTER-JT).
                 callerIsSender
                         ? bid.getRecipientPhone()
                         : recipientPhoneHidden || recipientDeclined
                                 ? null
-                                : phoneForStatus(bid.getRecipientPhone(), bid.getStatus()),
+                                : recipientPhoneForTraveler(bid.getRecipientPhone(), bid.getStatus()),
                 bid.getStatus().name(),
                 bid.getRejectionReason(),
                 bid.getHandoverLocation(),
@@ -1848,7 +1847,7 @@ public class BidService {
     private boolean recipientPhoneHiddenFromTraveler(BidEntity bid,
                                                      com.yadony.api.matching.reception.BidRecipientLinkEntity link) {
         if (link == null || bid.getRecipientPhone() == null
-                || !BidStatus.PHONE_VISIBLE_STATUSES.contains(bid.getStatus())
+                || !BidStatus.RECIPIENT_PHONE_VISIBLE_TO_TRAVELER_STATUSES.contains(bid.getStatus())
                 || link.getStatus() != com.yadony.api.matching.reception.ReceptionLinkStatus.CONFIRMED) {
             return false;
         }
