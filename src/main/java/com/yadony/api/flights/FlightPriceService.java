@@ -2,6 +2,7 @@ package com.yadony.api.flights;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -20,6 +21,7 @@ public class FlightPriceService {
     private final TravelpayoutsClient client;
     private final Cache<String, List<TravelpayoutsPrice>> cache;
 
+    @Autowired
     public FlightPriceService(TravelpayoutsClient client) {
         this(client, Duration.ofMinutes(30));
     }
