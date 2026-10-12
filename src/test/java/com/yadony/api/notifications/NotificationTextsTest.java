@@ -216,6 +216,7 @@ class NotificationTextsTest {
         map.put("recipientParcelAnnounced sans prénom", NotificationTexts.recipientParcelAnnounced(m, null));
         map.put("callMissed", NotificationTexts.callMissed(m, NOM));
         map.put("callMissed sans prénom", NotificationTexts.callMissed(m, null));
+        map.put("tripSpaceFreed", NotificationTexts.tripSpaceFreed(m, DEPART, ARRIVEE));
         map.put("recipientInvitation", NotificationTexts.recipientInvitation(m, NOM));
         map.put("recipientInvitation sans prénom", NotificationTexts.recipientInvitation(m, " "));
         map.put("recipientInvitationAccepted", NotificationTexts.recipientInvitationAccepted(m, NOM));
