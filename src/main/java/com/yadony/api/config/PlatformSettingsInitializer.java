@@ -84,6 +84,7 @@ public class PlatformSettingsInitializer {
         defaults.put(PlatformSettingKey.TRACKING_PHOTOS_MAX_PER_BID,
                 String.valueOf(PlatformSettingKey.DEFAULT_TRACKING_PHOTOS_MAX_PER_BID));
         defaults.put(PlatformSettingKey.PHOTO_PURGE_ENABLED, "false");
+        defaults.put(PlatformSettingKey.FLIGHTS_ENABLED, "false");
 
         int inserted = 0;
         for (Map.Entry<PlatformSettingKey, String> entry : defaults.entrySet()) {

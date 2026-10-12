@@ -33,6 +33,8 @@ public final class NotificationGroupKey {
             case "CORRIDOR_ALERT" ->
                     uuid(data, "alertId").map(id -> "alert:" + id)
                             .or(() -> text(data, "corridor").map(c -> "alert:corridor:" + c));
+            case "FLIGHT_PRICE_ALERT" ->
+                    uuid(data, "alertId").map(id -> "flight-alert:" + id);
             case "PACKAGE_MATCH" ->
                     uuid(data, "announcementId").map(id -> "match:announcement:" + id);
             case "TRAVELER_NEW_ANNOUNCEMENT" ->

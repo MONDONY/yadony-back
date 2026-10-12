@@ -142,4 +142,22 @@ class ConfigControllerPlatformSettingsIT {
 
         assertThat(settings.proEnabled()).isEqualTo(before);
     }
+
+    /** Billets d'avion : éteints par défaut, allumés depuis le back-office sans redéploiement. */
+    @Test
+    void flightsEnabled_isOffByDefault_andFollowsTheBackOffice() throws Exception {
+        mockMvc.perform(get("/config/flights-enabled"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(false));
+
+        settings.update(Map.of(PlatformSettingKey.FLIGHTS_ENABLED, "true"), UUID.randomUUID());
+        try {
+            mockMvc.perform(get("/config/flights-enabled"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.enabled").value(true));
+        } finally {
+            settings.update(Map.of(PlatformSettingKey.FLIGHTS_ENABLED, "false"), UUID.randomUUID());
+        }
+        assertThat(settings.flightsEnabled()).isFalse();
+    }
 }

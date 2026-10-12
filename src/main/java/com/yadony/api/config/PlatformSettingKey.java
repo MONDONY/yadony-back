@@ -33,6 +33,13 @@ import java.util.Arrays;
  * <p>{@code PHOTO_PURGE_ENABLED} : faux, la purge des photos (après livraison, orphelins,
  * historique) tourne à blanc et ne supprime rien de R2. Le premier passage réel est
  * irréversible : on l'allume après avoir lu le décompte à blanc dans le panel.
+ *
+ * <p>{@code FLIGHTS_ENABLED} est le feature flag des billets d'avion en affiliation
+ * (package {@code flights}) : faux, toutes les routes {@code /flights/**} et
+ * {@code /me/flight-alerts} répondent 503 {@code flights-unavailable}, le scheduler des
+ * alertes ne fait rien et l'application garde sa barre de navigation d'avant (sans
+ * l'onglet Billets). Faux par défaut : on l'allume depuis le back-office, sans
+ * redéploiement, une fois le compte Travelpayouts prêt.
  */
 public enum PlatformSettingKey {
 
@@ -46,7 +53,8 @@ public enum PlatformSettingKey {
     PHOTO_RETENTION_DAYS_AFTER_DELIVERY("photo_retention_days_after_delivery", PlatformSettingType.INTEGER),
     PHOTO_UPLOAD_DAILY_QUOTA("photo_upload_daily_quota", PlatformSettingType.INTEGER),
     TRACKING_PHOTOS_MAX_PER_BID("tracking_photos_max_per_bid", PlatformSettingType.INTEGER),
-    PHOTO_PURGE_ENABLED("photo_purge_enabled", PlatformSettingType.BOOLEAN);
+    PHOTO_PURGE_ENABLED("photo_purge_enabled", PlatformSettingType.BOOLEAN),
+    FLIGHTS_ENABLED("flights_enabled", PlatformSettingType.BOOLEAN);
 
     /** Défauts des réglages photos : aucune property, le panel admin est le seul levier. */
     public static final int DEFAULT_PHOTO_RETENTION_DAYS = 7;

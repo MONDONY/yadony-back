@@ -239,6 +239,17 @@ public class SecurityConfig {
                 // ni l'un ni l'autre, aucune direction ne lui convient. Les favoris
                 // restent ouverts : leur contrôle de rôle ne signifiait que « sois un
                 // vrai compte », l'action elle-même ne dépend d'aucun rôle.
+                // Billets d'avion : un visiteur peut chercher, voir les bons plans et réserver
+                // chez le partenaire sans compte (décision produit). Rien n'est enregistré à
+                // son nom (voir FlightUsers). Les alertes prix (/me/flight-alerts) restent
+                // réservées aux vrais comptes : elles supposent une identité et un push.
+                .requestMatchers(HttpMethod.GET,
+                    "/flights/search",
+                    "/flights/places",
+                    "/flights/deals",
+                    "/flights/defaults"
+                ).authenticated()
+                .requestMatchers(HttpMethod.POST, "/flights/clicks").authenticated()
                 .requestMatchers(HttpMethod.GET,
                     "/announcements",
                     "/package-requests",

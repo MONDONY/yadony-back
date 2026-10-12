@@ -1,0 +1,88 @@
+package com.yadony.api.flights;
+
+import org.junit.jupiter.api.Test;
+
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+
+import static com.yadony.api.flights.FlightTestData.price;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
+
+/** Cache des prix et annuaire des compagnies. */
+class FlightPriceAndAirlineTest {
+
+    private final TravelpayoutsClient client = mock(TravelpayoutsClient.class);
+    private final FlightQuery query = new FlightQuery("PAR", "ABJ", null, null, false, "EUR");
+
+    @Test
+    void prices_areCached_andInvalidRowsDropped() {
+        TravelpayoutsPrice zero = new TravelpayoutsPrice("PAR", "ABJ", null, null, null, null,
+                java.math.BigDecimal.ZERO, null, null, null, null, null, null, null);
+        when(client.pricesForDates(eq("PAR"), eq("ABJ"), any(), any(), anyBoolean(), eq("EUR"), anyInt()))
+                .thenReturn(List.of(price("327"), zero));
+        FlightPriceService service = new FlightPriceService(client, Duration.ofMinutes(30));
+
+        assertThat(service.prices(query)).hasSize(1);
+        assertThat(service.prices(query)).hasSize(1);
+        verify(client, times(1)).pricesForDates(anyString(), anyString(), any(), any(), anyBoolean(), anyString(), anyInt());
+    }
+
+    @Test
+    void prices_failuresAreNotCached() {
+        when(client.pricesForDates(anyString(), anyString(), any(), any(), anyBoolean(), anyString(), anyInt()))
+                .thenThrow(new FlightProviderException("down"))
+                .thenReturn(List.of(price("327")));
+        FlightPriceService service = new FlightPriceService(client);
+
+        assertThatThrownBy(() -> service.prices(query)).isInstanceOf(FlightProviderException.class);
+        assertThat(service.prices(query)).hasSize(1);
+    }
+
+    @Test
+    void isAvailable_followsClientConfiguration() {
+        when(client.isConfigured()).thenReturn(true);
+        assertThat(new FlightPriceService(client).isAvailable()).isTrue();
+    }
+
+    @Test
+    void airlineNames_loadedOncePerLanguage_withCodeFallback() {
+        when(client.isConfigured()).thenReturn(true);
+        when(client.airlineNames("fr")).thenReturn(Map.of("AT", "Royal Air Maroc"));
+        AirlineDirectory directory = new AirlineDirectory(client);
+
+        assertThat(directory.nameOf("at", "fr")).isEqualTo("Royal Air Maroc");
+        assertThat(directory.nameOf("KQ", "fr")).isEqualTo("KQ");
+        assertThat(directory.nameOf(null, "fr")).isNull();
+        verify(client, times(1)).airlineNames("fr");
+    }
+
+    @Test
+    void airlineNames_failureFallsBackToCodes_andIsNotRetriedImmediately() {
+        when(client.isConfigured()).thenReturn(true);
+        when(client.airlineNames("en")).thenThrow(new FlightProviderException("down"));
+        AirlineDirectory directory = new AirlineDirectory(client);
+
+        assertThat(directory.nameOf("AT", "en")).isEqualTo("AT");
+        assertThat(directory.nameOf("AT", "en")).isEqualTo("AT");
+        verify(client, times(1)).airlineNames("en");
+    }
+
+    @Test
+    void airlineNames_emptyListOrUnconfigured_fallsBackToCodes() {
+        when(client.isConfigured()).thenReturn(true);
+        when(client.airlineNames("fr")).thenReturn(Map.of());
+        assertThat(new AirlineDirectory(client).nameOf("AT", "fr")).isEqualTo("AT");
+
+        TravelpayoutsClient off = mock(TravelpayoutsClient.class);
+        assertThat(new AirlineDirectory(off).nameOf("AT", "fr")).isEqualTo("AT");
+        verify(off, never()).airlineNames(anyString());
+    }
+}

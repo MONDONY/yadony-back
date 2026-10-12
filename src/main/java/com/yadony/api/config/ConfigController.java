@@ -2,6 +2,7 @@ package com.yadony.api.config;
 
 import com.yadony.api.config.dto.CommissionRateResponse;
 import com.yadony.api.config.dto.ContentCategoryResponse;
+import com.yadony.api.config.dto.FlightsEnabledResponse;
 import com.yadony.api.config.dto.ProEnabledResponse;
 import com.yadony.api.config.dto.ReimbursementCapResponse;
 import com.yadony.api.config.dto.SmsEnabledResponse;
@@ -66,5 +67,14 @@ public class ConfigController {
     @GetMapping("/pro-enabled")
     public ResponseEntity<ProEnabledResponse> getProEnabled() {
         return ResponseEntity.ok(new ProEnabledResponse(settings.proEnabled()));
+    }
+
+    /**
+     * Feature flag des billets d'avion : faux, l'application garde sa barre de navigation
+     * d'avant, sans l'onglet Billets. Public comme ses voisins.
+     */
+    @GetMapping("/flights-enabled")
+    public ResponseEntity<FlightsEnabledResponse> getFlightsEnabled() {
+        return ResponseEntity.ok(new FlightsEnabledResponse(settings.flightsEnabled()));
     }
 }

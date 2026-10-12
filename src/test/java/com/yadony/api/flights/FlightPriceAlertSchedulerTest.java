@@ -1,0 +1,227 @@
+package com.yadony.api.flights;
+
+import com.yadony.api.common.i18n.TestMessages;
+import com.yadony.api.notifications.NotificationDispatcher;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+import static com.yadony.api.flights.FlightTestData.CLOCK;
+import static com.yadony.api.flights.FlightTestData.alert;
+import static com.yadony.api.flights.FlightTestData.price;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+class FlightPriceAlertSchedulerTest {
+
+    @Mock FlightPriceAlertRepository alerts;
+    @Mock FlightPriceService prices;
+    @Mock NotificationDispatcher notifications;
+    @Mock FlightFeature feature;
+
+    FlightPriceAlertScheduler scheduler;
+    final UUID owner = UUID.randomUUID();
+
+    @BeforeEach
+    void setUp() {
+        scheduler = new FlightPriceAlertScheduler(alerts, prices, notifications, true, feature, CLOCK);
+        lenient().when(prices.isAvailable()).thenReturn(true);
+        lenient().when(notifications.messagesFor(any())).thenReturn(TestMessages.fr());
+        lenient().when(feature.isEnabled()).thenReturn(true);
+    }
+
+    @Test
+    void priceUnderThreshold_notifiesWithRouteAndPrice() {
+        FlightPriceAlertEntity a = alert(owner, "400");
+        when(alerts.findAllByActiveTrue()).thenReturn(List.of(a));
+        when(prices.prices(any())).thenReturn(List.of(price("520"), price("327")));
+
+        scheduler.run();
+
+        ArgumentCaptor<String> title = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, String>> data = ArgumentCaptor.forClass(Map.class);
+        verify(notifications).notifyUser(eq(owner), title.capture(), body.capture(), data.capture());
+        assertThat(title.getValue()).contains("Paris → Abidjan");
+        assertThat(body.getValue()).contains("327 €").contains("400 €");
+        assertThat(data.getValue()).containsEntry("type", "FLIGHT_PRICE_ALERT")
+                .containsEntry("alertId", a.getId().toString());
+        assertThat(a.getLastNotifiedPrice()).isEqualByComparingTo("327");
+        verify(alerts).save(a);
+    }
+
+    @Test
+    void priceAboveThreshold_updatesWithoutNotifying() {
+        FlightPriceAlertEntity a = alert(owner, "300");
+        when(alerts.findAllByActiveTrue()).thenReturn(List.of(a));
+        when(prices.prices(any())).thenReturn(List.of(price("327")));
+
+        scheduler.run();
+
+        verify(notifications, never()).notifyUser(any(), anyString(), anyString(), anyMap());
+        assertThat(a.getLastSeenPrice()).isEqualByComparingTo("327");
+        verify(alerts).save(a);
+    }
+
+    @Test
+    void identicalAlerts_shareOnePriceCall() {
+        FlightPriceAlertEntity a = alert(owner, "400");
+        FlightPriceAlertEntity b = alert(UUID.randomUUID(), "350");
+        when(alerts.findAllByActiveTrue()).thenReturn(List.of(a, b));
+        when(prices.prices(any())).thenReturn(List.of(price("327")));
+
+        scheduler.run();
+
+        verify(prices, times(1)).prices(any());
+        verify(notifications, times(2)).notifyUser(any(), anyString(), anyString(), anyMap());
+    }
+
+    @Test
+    void unexpectedFailureOnOneGroup_doesNotStopTheOthers() {
+        FlightPriceAlertEntity broken = alert(owner, "400");
+        broken.setDestinationCode("DKR");
+        FlightPriceAlertEntity ok = alert(owner, "400");
+        when(alerts.findAllByActiveTrue()).thenReturn(List.of(broken, ok));
+        when(prices.prices(any())).thenAnswer(inv -> {
+            FlightQuery q = inv.getArgument(0);
+            if ("DKR".equals(q.destination())) throw new IllegalStateException("boom");
+            return List.of(price("327"));
+        });
+
+        scheduler.run();
+
+        assertThat(broken.getLastCheckedAt()).isNull();
+        verify(notifications, times(1)).notifyUser(any(), anyString(), anyString(), anyMap());
+    }
+
+    @Test
+    void providerFailure_leavesAlertsUntouched() {
+        FlightPriceAlertEntity a = alert(owner, "400");
+        when(alerts.findAllByActiveTrue()).thenReturn(List.of(a));
+        when(prices.prices(any())).thenThrow(new FlightProviderException("down"));
+
+        scheduler.run();
+
+        verify(alerts, never()).save(any());
+        assertThat(a.getLastCheckedAt()).isNull();
+    }
+
+    @Test
+    void expiredAlert_isPausedAndNotChecked() {
+        FlightPriceAlertEntity a = alert(owner, "400");
+        a.setDepartureFrom(java.time.LocalDate.of(2026, 9, 1));
+        a.setDepartureTo(java.time.LocalDate.of(2026, 9, 30));
+        when(alerts.findAllByActiveTrue()).thenReturn(List.of(a));
+
+        scheduler.run();
+
+        assertThat(a.isActive()).isFalse();
+        verify(alerts).save(a);
+        verify(prices, never()).prices(any());
+    }
+
+    @Test
+    void secondRunWithSamePrice_sendsNothingMore() {
+        FlightPriceAlertEntity a = alert(owner, "400");
+        when(alerts.findAllByActiveTrue()).thenReturn(List.of(a));
+        when(prices.prices(any())).thenReturn(List.of(price("327")));
+
+        scheduler.run();
+        scheduler.run();
+
+        verify(notifications, times(1)).notifyUser(any(), anyString(), anyString(), anyMap());
+    }
+
+    @Test
+    void notificationFailure_doesNotStopOtherAlerts() {
+        FlightPriceAlertEntity a = alert(owner, "400");
+        FlightPriceAlertEntity b = alert(UUID.randomUUID(), "400");
+        b.setDestinationCode("DKR");
+        when(alerts.findAllByActiveTrue()).thenReturn(List.of(a, b));
+        when(prices.prices(any())).thenReturn(List.of(price("327")));
+        doThrow(new RuntimeException("fcm down")).doNothing()
+                .when(notifications).notifyUser(any(), anyString(), anyString(), anyMap());
+
+        scheduler.run();
+
+        verify(notifications, times(2)).notifyUser(any(), anyString(), anyString(), anyMap());
+    }
+
+    @Test
+    void disabledOrUnconfigured_doesNothing() {
+        new FlightPriceAlertScheduler(alerts, prices, notifications, false, feature, CLOCK).run();
+        when(prices.isAvailable()).thenReturn(false);
+        scheduler.run();
+
+        verifyNoInteractions(alerts);
+    }
+
+    @Test
+    void isExpired_onlyOnceTheDeparturePeriodIsOver() {
+        FlightPriceAlertEntity a = alert(owner, "400");
+        java.time.LocalDate today = java.time.LocalDate.of(2026, 10, 15);
+        assertThat(FlightPriceAlertScheduler.isExpired(a, today)).isFalse();
+        a.setDepartureFrom(java.time.LocalDate.of(2026, 10, 1));
+        a.setDepartureTo(java.time.LocalDate.of(2026, 10, 15));
+        assertThat(FlightPriceAlertScheduler.isExpired(a, today)).isFalse();
+        a.setDepartureTo(java.time.LocalDate.of(2026, 10, 14));
+        assertThat(FlightPriceAlertScheduler.isExpired(a, today)).isTrue();
+    }
+
+    @Test
+    void formatPrice_euroSymbolOtherwiseCode() {
+        assertThat(FlightPriceAlertScheduler.formatPrice(new BigDecimal("327.40"), "EUR")).isEqualTo("327 €");
+        assertThat(FlightPriceAlertScheduler.formatPrice(new BigDecimal("215000"), "XOF")).isEqualTo("215000 XOF");
+    }
+
+    @Test
+    void offersOutsideThePeriod_areIgnored() {
+        FlightPriceAlertEntity a = alert(owner, "400");
+        a.setDepartureFrom(java.time.LocalDate.of(2026, 12, 10));
+        a.setDepartureTo(java.time.LocalDate.of(2026, 12, 20));
+        when(alerts.findAllByActiveTrue()).thenReturn(List.of(a));
+        when(prices.prices(any())).thenReturn(List.of(price("327")));
+
+        scheduler.run();
+
+        assertThat(a.getLastSeenPrice()).isNull();
+        verify(notifications, never()).notifyUser(any(), any(), any(), any());
+    }
+
+    @Test
+    void offerInsideThePeriod_isReported() {
+        FlightPriceAlertEntity a = alert(owner, "400");
+        a.setDepartureFrom(java.time.LocalDate.of(2026, 12, 1));
+        a.setDepartureTo(java.time.LocalDate.of(2026, 12, 31));
+        when(alerts.findAllByActiveTrue()).thenReturn(List.of(a));
+        when(prices.prices(any())).thenReturn(List.of(price("327")));
+
+        scheduler.run();
+
+        assertThat(a.getLastSeenPrice()).isEqualByComparingTo("327");
+    }
+
+    @Test
+    void featureFlagOff_checksNothing() {
+        when(feature.isEnabled()).thenReturn(false);
+
+        scheduler.run();
+
+        verifyNoInteractions(alerts);
+        verify(prices, never()).prices(any());
+    }
+}
