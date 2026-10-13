@@ -6,11 +6,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
@@ -27,6 +29,13 @@ import java.util.regex.Pattern;
  * {@code <marker>.<subId>} pour retrouver le clic dans les statistiques Travelpayouts.
  * Désactivé par défaut tant que le format n'est pas validé sur le compte partenaire :
  * un marker mal formé ferait perdre la commission.
+ *
+ * <p>Devise : sans paramètre, aviasales.com s'ouvre en dollars US même quand l'app affichait des
+ * euros. Le lien porte donc {@code currency} (en minuscules), celle de l'offre si le site la gère
+ * ({@link #SITE_CURRENCIES}, constaté le 13/10/2026 : {@code xof}, {@code xaf}, {@code mad} et
+ * {@code chf} y retombent en USD), sinon l'euro (XOF et XAF y sont arrimés à taux fixe). Pas de
+ * paramètre de langue : {@code locale}, {@code language} et {@code lang} n'ont aucun effet sur
+ * aviasales.com, dont la langue suit le domaine.
  */
 @Service
 public class FlightClickService {
@@ -35,6 +44,10 @@ public class FlightClickService {
     private static final Pattern SAFE_PATH = Pattern.compile("^/search/[A-Za-z0-9/?&=%._~+\\-|]*$");
     private static final char[] ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789".toCharArray();
     private static final int SUB_ID_LENGTH = 12;
+
+    /** Devises que le site aviasales.com applique réellement via {@code ?currency=}. */
+    static final Set<String> SITE_CURRENCIES = Set.of("eur", "usd", "gbp", "cad");
+    private static final String SITE_DEFAULT_CURRENCY = "eur";
 
     private final FlightClickRepository clicks;
     private final FlightUsers users;
@@ -81,13 +94,28 @@ public class FlightClickService {
             // Le clic est une statistique : l'utilisateur doit pouvoir réserver même si elle se perd.
             log.warn("Clic vol non enregistré : {}", e.getMessage());
         }
-        return new FlightClickResponse(affiliateUrl(path, subId));
+        return new FlightClickResponse(affiliateUrl(path, subId, request.currency()));
     }
 
-    String affiliateUrl(String path, String subId) {
+    /**
+     * Lien affilié : notre domaine + le chemin, avec notre {@code marker} et la {@code currency} du
+     * site. Un {@code marker} ou une {@code currency} déjà présents dans le chemin sont remplacés,
+     * jamais dupliqués (un marker étranger détournerait la commission). Le reste de la requête est
+     * gardé tel quel, déjà encodé par le partenaire : le lien est construit sans réencodage.
+     */
+    String affiliateUrl(String path, String subId, String currency) {
         String markerValue = subIdEnabled ? marker + "." + subId : marker;
-        String separator = path.contains("?") ? "&" : "?";
-        return bookingBaseUrl + path + separator + "marker=" + URLEncoder.encode(markerValue, StandardCharsets.UTF_8);
+        return UriComponentsBuilder.fromUriString(bookingBaseUrl + path)
+                .replaceQueryParam("marker", URLEncoder.encode(markerValue, StandardCharsets.UTF_8))
+                .replaceQueryParam("currency", siteCurrency(currency))
+                .build()
+                .toUriString();
+    }
+
+    /** Devise de l'offre si le site la gère, sinon l'euro (devise par défaut de la recherche). */
+    static String siteCurrency(String currency) {
+        String c = currency == null ? "" : currency.trim().toLowerCase(Locale.ROOT);
+        return SITE_CURRENCIES.contains(c) ? c : SITE_DEFAULT_CURRENCY;
     }
 
     private String newSubId() {

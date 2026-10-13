@@ -117,16 +117,23 @@ public class TravelpayoutsClient {
         return body == null ? List.of() : body;
     }
 
-    /** Code IATA → nom de compagnie, dans la langue demandée ({@code fr} ou {@code en}). */
+    /**
+     * Code IATA → nom de compagnie, dans la langue demandée ({@code fr} ou {@code en}).
+     *
+     * <p>Dans la liste française, {@code name} vaut {@code null} pour la plupart des compagnies
+     * (909 sur 1159 en octobre 2026, dont Corsair {@code SS} et Mauritania Airlines {@code L6}) :
+     * le nom n'existe alors que dans {@code name_translations.en}. On prend donc {@code name},
+     * puis la traduction dans la langue demandée, puis l'anglais, puis n'importe quelle traduction.
+     */
     public Map<String, String> airlineNames(String locale) {
         URI uri = uri(apiBaseUrl, b -> b.path("/data/" + locale + "/airlines.json"));
         List<Airline> body = get(uri, new ParameterizedTypeReference<List<Airline>>() {}, "compagnies");
         Map<String, String> names = new HashMap<>();
         if (body != null) {
             for (Airline a : body) {
-                if (a.code() != null && a.name() != null && !a.name().isBlank()) {
-                    names.put(a.code().toUpperCase(Locale.ROOT), a.name());
-                }
+                if (a == null || a.code() == null || a.code().isBlank()) continue;
+                String name = a.displayName(locale);
+                if (name != null) names.put(a.code().trim().toUpperCase(Locale.ROOT), name);
             }
         }
         return names;
@@ -195,6 +202,23 @@ public class TravelpayoutsClient {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record Airline(String code, String name) {
+    public record Airline(String code, String name,
+                          @JsonProperty("name_translations") Map<String, String> nameTranslations) {
+
+        /** {@code name}, sinon la traduction {@code locale}, sinon l'anglais, sinon la première non vide. */
+        String displayName(String locale) {
+            if (!blank(name)) return name.trim();
+            if (nameTranslations == null || nameTranslations.isEmpty()) return null;
+            for (String lang : new String[]{locale, "en"}) {
+                String t = lang == null ? null : nameTranslations.get(lang);
+                if (!blank(t)) return t.trim();
+            }
+            return nameTranslations.values().stream().filter(t -> !blank(t)).map(String::trim)
+                    .sorted().findFirst().orElse(null);
+        }
+
+        private static boolean blank(String s) {
+            return s == null || s.isBlank();
+        }
     }
 }

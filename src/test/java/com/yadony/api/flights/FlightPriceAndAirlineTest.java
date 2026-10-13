@@ -71,8 +71,8 @@ class FlightPriceAndAirlineTest {
         when(client.airlineNames("en")).thenThrow(new FlightProviderException("down"));
         AirlineDirectory directory = new AirlineDirectory(client);
 
-        assertThat(directory.nameOf("AT", "en")).isEqualTo("AT");
-        assertThat(directory.nameOf("AT", "en")).isEqualTo("AT");
+        assertThat(directory.nameOf("KQ", "en")).isEqualTo("KQ");
+        assertThat(directory.nameOf("KQ", "en")).isEqualTo("KQ");
         verify(client, times(1)).airlineNames("en");
     }
 
@@ -80,10 +80,42 @@ class FlightPriceAndAirlineTest {
     void airlineNames_emptyListOrUnconfigured_fallsBackToCodes() {
         when(client.isConfigured()).thenReturn(true);
         when(client.airlineNames("fr")).thenReturn(Map.of());
-        assertThat(new AirlineDirectory(client).nameOf("AT", "fr")).isEqualTo("AT");
+        assertThat(new AirlineDirectory(client).nameOf("KQ", "fr")).isEqualTo("KQ");
 
         TravelpayoutsClient off = mock(TravelpayoutsClient.class);
-        assertThat(new AirlineDirectory(off).nameOf("AT", "fr")).isEqualTo("AT");
+        assertThat(new AirlineDirectory(off).nameOf("KQ", "fr")).isEqualTo("KQ");
         verify(off, never()).airlineNames(anyString());
+    }
+
+    /** Régression : Corsair s'affichait « SS » et Mauritania Airlines « L6 » faute de nom dans la liste. */
+    @Test
+    void airlineNames_corridorAirlinesMissingFromList_useStaticFallback() {
+        when(client.isConfigured()).thenReturn(true);
+        when(client.airlineNames("fr")).thenReturn(Map.of("AF", "Air France"));
+        AirlineDirectory directory = new AirlineDirectory(client);
+
+        assertThat(directory.nameOf("ss", "fr")).isEqualTo("Corsair");
+        assertThat(directory.nameOf("L6", "fr")).isEqualTo("Mauritania Airlines");
+        assertThat(directory.nameOf("HC", "fr")).isEqualTo("Air Sénégal");
+        assertThat(directory.nameOf("AF", "fr")).isEqualTo("Air France");
+        assertThat(directory.nameOf("KQ", "fr")).isEqualTo("KQ");
+    }
+
+    @Test
+    void airlineNames_listNameWinsOverStaticFallback_andFallbackServesWhenListIsDown() {
+        when(client.isConfigured()).thenReturn(true);
+        when(client.airlineNames("en")).thenReturn(Map.of("SS", "Corsair International"));
+        assertThat(new AirlineDirectory(client).nameOf("SS", "en")).isEqualTo("Corsair International");
+
+        TravelpayoutsClient down = mock(TravelpayoutsClient.class);
+        when(down.isConfigured()).thenReturn(true);
+        when(down.airlineNames("fr")).thenThrow(new FlightProviderException("down"));
+        assertThat(new AirlineDirectory(down).nameOf("KP", "fr")).isEqualTo("ASKY Airlines");
+    }
+
+    @Test
+    void corridorFallback_neverMapsDnToAirSenegal() {
+        // Dans airlines.json, DN est Dan Air : Air Sénégal est HC.
+        assertThat(AirlineDirectory.CORRIDOR_AIRLINES).doesNotContainKey("DN").containsKey("HC");
     }
 }

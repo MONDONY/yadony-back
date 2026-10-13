@@ -44,7 +44,7 @@ class FlightClickServiceTest {
     void click_buildsAffiliateUrlOnOurDomain_andRecordsTheClick() {
         var response = service("12345", false).click(UID, request(PATH));
 
-        assertThat(response.url()).isEqualTo("https://www.aviasales.com" + PATH + "&marker=12345");
+        assertThat(response.url()).isEqualTo("https://www.aviasales.com" + PATH + "&marker=12345&currency=eur");
         ArgumentCaptor<FlightClickEntity> saved = ArgumentCaptor.forClass(FlightClickEntity.class);
         verify(clicks).save(saved.capture());
         FlightClickEntity click = saved.getValue();
@@ -63,7 +63,7 @@ class FlightClickServiceTest {
         ArgumentCaptor<FlightClickEntity> saved = ArgumentCaptor.forClass(FlightClickEntity.class);
         verify(clicks).save(saved.capture());
         assertThat(response.url()).isEqualTo("https://www.aviasales.com/search/PAR0412ABJ1?marker=12345."
-                + saved.getValue().getSubId());
+                + saved.getValue().getSubId() + "&currency=eur");
     }
 
     @Test
@@ -84,7 +84,7 @@ class FlightClickServiceTest {
         var response = service("12345", false).click(UID,
                 new FlightClickRequest("/search/PAR0112ABJ01011", "PAR", "ABJ", null, "EUR", null, null, "search"));
 
-        assertThat(response.url()).isEqualTo("https://www.aviasales.com/search/PAR0112ABJ01011?marker=12345");
+        assertThat(response.url()).isEqualTo("https://www.aviasales.com/search/PAR0112ABJ01011?marker=12345&currency=eur");
         verify(clicks).save(any());
     }
 
@@ -101,5 +101,54 @@ class FlightClickServiceTest {
         when(clicks.save(any())).thenThrow(new RuntimeException("db down"));
 
         assertThat(service("12345", false).click(UID, request(PATH)).url()).contains("marker=12345");
+    }
+
+    private static FlightClickRequest request(String path, String currency) {
+        return new FlightClickRequest(path, "PAR", "ABJ", new BigDecimal("327"), currency, "AF", null, "search");
+    }
+
+    /** Régression : sans devise, aviasales.com s'ouvrait en dollars US alors que l'app affichait des euros. */
+    @Test
+    void click_carriesTheOfferCurrency_inLowerCase() {
+        FlightClickService service = service("12345", false);
+
+        assertThat(service.click(UID, request("/search/PAR2312ABJ1", "EUR")).url())
+                .isEqualTo("https://www.aviasales.com/search/PAR2312ABJ1?marker=12345&currency=eur");
+        assertThat(service.click(UID, request("/search/PAR2312ABJ1", "gbp")).url()).endsWith("&currency=gbp");
+        assertThat(service.click(UID, request("/search/PAR2312ABJ1", "USD")).url()).endsWith("&currency=usd");
+        assertThat(service.click(UID, request("/search/PAR2312ABJ1", "CAD")).url()).endsWith("&currency=cad");
+    }
+
+    @Test
+    void click_withoutCurrency_orOneTheSiteIgnores_usesEuro() {
+        FlightClickService service = service("12345", false);
+
+        assertThat(service.click(UID, request("/search/PAR2312ABJ1", null)).url()).endsWith("?marker=12345&currency=eur");
+        for (String c : new String[]{"XOF", "XAF", "MAD", "CHF", "  "}) {
+            assertThat(service.click(UID, request("/search/PAR2312ABJ1", c)).url()).as(c).endsWith("&currency=eur");
+        }
+    }
+
+    @Test
+    void click_pathWithParameters_keepsThem_andNeverDuplicatesCurrencyOrMarker() {
+        String url = service("12345", false).click(UID,
+                request("/search/PAR0412ABJ1?t=AT1793_5c55&currency=usd&marker=99999&static_fare_key=TY%7CP0", "EUR")).url();
+
+        assertThat(url).isEqualTo("https://www.aviasales.com/search/PAR0412ABJ1?t=AT1793_5c55"
+                + "&static_fare_key=TY%7CP0&marker=12345&currency=eur");
+    }
+
+    @Test
+    void click_keepsRawPartnerCharacters_withoutReencoding() {
+        String url = service("12345", false).click(UID, request("/search/PAR0412ABJ1?t=A|B+C~D", "EUR")).url();
+
+        assertThat(url).isEqualTo("https://www.aviasales.com/search/PAR0412ABJ1?t=A|B+C~D&marker=12345&currency=eur");
+    }
+
+    @Test
+    void click_subIdMarker_isEncoded() {
+        FlightClickService service = new FlightClickService(clicks, users, "https://www.aviasales.com", "12 3", false);
+        assertThat(service.click(UID, request("/search/PAR2312ABJ1", "EUR")).url())
+                .isEqualTo("https://www.aviasales.com/search/PAR2312ABJ1?marker=12+3&currency=eur");
     }
 }
