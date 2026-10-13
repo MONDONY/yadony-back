@@ -45,6 +45,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -1938,6 +1939,199 @@ class AnnouncementServiceTest {
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
                             .isEqualTo(HttpStatus.FORBIDDEN));
+        }
+    }
+
+    // ─── FLUTTER-KV : devise d'un trajet modifiable ─────────────────────────────
+
+    @Nested
+    @DisplayName("updateAnnouncement() — devise (FLUTTER-KV)")
+    class CurrencyUpdateTests {
+
+        private AnnouncementRequest withCurrency(String currency, BigDecimal pricePerKg,
+                                                 java.util.Set<PaymentMethod> methods) {
+            LocalDate departure = LocalDate.now().plusDays(15);
+            return new AnnouncementRequest(
+                    "Paris", "Dakar", departure,
+                    null, null,
+                    new AddressDto("CDG", 49.009, 2.547),
+                    new AddressDto("DSS", 14.693, -17.447),
+                    BigDecimal.valueOf(10), pricePerKg,
+                    TransportMode.PLANE,
+                    null, null, null, methods, null, null,
+                    null, null,
+                    departure.atTime(18, 0),
+                    null, null, currency, null);
+        }
+
+        private AnnouncementEntity stubOwnerUpdate() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            a.setCurrency("EUR");
+            a.setAcceptedPaymentMethods(EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            lenient().when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            return a;
+        }
+
+        private void lockedBy(boolean bids, boolean threads) {
+            lenient().when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANNOUNCEMENT_ID),
+                    argThat(st -> st != null && st.contains(BidStatus.PENDING))))
+                    .thenReturn(bids);
+            lenient().when(negotiationThreadRepository.existsActiveByTravelerAnnouncementId(ANNOUNCEMENT_ID))
+                    .thenReturn(threads);
+        }
+
+        @Test
+        @DisplayName("EUR → XOF sans demande : devise, pivot EUR, rails et audit mis à jour")
+        void currencyChange_withoutBids_updatesCurrencyRailsAndAudits() {
+            AnnouncementEntity a = stubOwnerUpdate();
+            lockedBy(false, false);
+            when(exchangeRateService.toEurPivot(BigDecimal.valueOf(5000), "XOF")).thenReturn(new BigDecimal("7.62"));
+
+            announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID,
+                    withCurrency("xof", BigDecimal.valueOf(5000), null));
+
+            assertThat(a.getCurrency()).isEqualTo("XOF");
+            assertThat(a.getPricePerKg()).isEqualByComparingTo("5000");
+            assertThat(a.getPricePerKgEur()).isEqualByComparingTo("7.62");
+            // Pas de carte en zone CFA : retirée des moyens acceptés.
+            assertThat(a.getAcceptedPaymentMethods()).containsExactly(PaymentMethod.CASH);
+            assertThat(a.isCardDeclined()).isFalse();
+            verify(auditService).log(eq("ANNOUNCEMENT"), eq(ANNOUNCEMENT_ID), eq("ANNOUNCEMENT_CURRENCY_CHANGED"),
+                    eq(USER_ID), argThat(payload -> "EUR".equals(payload.get("currency_old"))
+                            && "XOF".equals(payload.get("currency_new"))));
+            verify(priceGridService, never()).convertAnnouncementGridCurrency(any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("moyens renvoyés avec la nouvelle devise → filtrés par les rails de cette devise")
+        void currencyChange_withMethods_restrictsToNewCurrencyRails() {
+            AnnouncementEntity a = stubOwnerUpdate();
+            lockedBy(false, false);
+
+            announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID,
+                    withCurrency("XOF", BigDecimal.valueOf(5000),
+                            EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH, PaymentMethod.MOBILE_MONEY)));
+
+            assertThat(a.getAcceptedPaymentMethods())
+                    .containsExactlyInAnyOrder(PaymentMethod.CASH, PaymentMethod.MOBILE_MONEY);
+        }
+
+        @Test
+        @DisplayName("prix au kilo valide en EUR mais sous le plancher XOF → 422 price-out-of-bounds")
+        void currencyChange_priceOutOfNewCurrencyBounds_isRefused() {
+            stubOwnerUpdate();
+            lockedBy(false, false);
+
+            assertYadonyError(() -> announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID,
+                    withCurrency("XOF", BigDecimal.valueOf(6), null)), "price-out-of-bounds");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("demande ou offre vivante sur le trajet → 409 currency-locked")
+        void currencyChange_withLiveBid_isLocked() {
+            stubOwnerUpdate();
+            lockedBy(true, false);
+
+            Throwable thrown = catchThrowable(() -> announcementService.updateAnnouncement(ANNOUNCEMENT_ID,
+                    FIREBASE_UID, withCurrency("XOF", BigDecimal.valueOf(5000), null)));
+
+            assertThat(thrown).isInstanceOf(YadonyBusinessException.class);
+            assertThat(((YadonyBusinessException) thrown).getStatus()).isEqualTo(HttpStatus.CONFLICT);
+            assertThat(((YadonyBusinessException) thrown).getErrorCode()).isEqualTo("currency-locked");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("négociation d'une demande d'envoi liée au trajet → 409 currency-locked")
+        void currencyChange_withActivePackageRequestThread_isLocked() {
+            stubOwnerUpdate();
+            lockedBy(false, true);
+
+            assertYadonyError(() -> announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID,
+                    withCurrency("XOF", BigDecimal.valueOf(5000), null)), "currency-locked");
+        }
+
+        @Test
+        @DisplayName("devise absente → inchangée, aucun contrôle de verrou")
+        void absentCurrency_keepsCurrency_withoutLockQuery() {
+            AnnouncementEntity a = stubOwnerUpdate();
+
+            announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID,
+                    withCurrency(null, BigDecimal.valueOf(8), null));
+
+            assertThat(a.getCurrency()).isEqualTo("EUR");
+            verify(negotiationThreadRepository, never()).existsActiveByTravelerAnnouncementId(any());
+            verify(auditService, never()).log(any(), any(), eq("ANNOUNCEMENT_CURRENCY_CHANGED"), any(), any());
+        }
+
+        @Test
+        @DisplayName("même devise renvoyée → inchangée, aucun contrôle de verrou")
+        void sameCurrency_isNoChange() {
+            AnnouncementEntity a = stubOwnerUpdate();
+
+            announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID,
+                    withCurrency("eur", BigDecimal.valueOf(8), null));
+
+            assertThat(a.getCurrency()).isEqualTo("EUR");
+            verify(negotiationThreadRepository, never()).existsActiveByTravelerAnnouncementId(any());
+        }
+
+        @Test
+        @DisplayName("devise inconnue → 422 currency-unsupported")
+        void unsupportedCurrency_isRefused() {
+            stubOwnerUpdate();
+
+            assertYadonyError(() -> announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID,
+                    withCurrency("JPY", BigDecimal.valueOf(8), null)), "currency-unsupported");
+        }
+
+        @Test
+        @DisplayName("tarification par grille → grille figée de l'annonce reconvertie")
+        void currencyChange_mixedPricing_convertsAnnouncementGrid() {
+            AnnouncementEntity a = stubOwnerUpdate();
+            a.setPricingMode(PricingMode.MIXED);
+            lockedBy(false, false);
+
+            announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID,
+                    withCurrency("XOF", BigDecimal.valueOf(5000), null));
+
+            verify(priceGridService).convertAnnouncementGridCurrency(ANNOUNCEMENT_ID, USER_ID, "EUR", "XOF");
+        }
+
+        @Test
+        @DisplayName("détail : currencyEditable servi au propriétaire (vrai sans demande, faux sinon)")
+        void detail_currencyEditable_forOwnerOnly() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            lenient().when(userRepository.findById(USER_ID)).thenReturn(Optional.of(traveler));
+            lockedBy(false, false);
+
+            assertThat(announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, FIREBASE_UID).currencyEditable())
+                    .isTrue();
+
+            lenient().when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANNOUNCEMENT_ID),
+                    argThat(st -> st != null && st.contains(BidStatus.PENDING))))
+                    .thenReturn(true);
+            assertThat(announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, FIREBASE_UID).currencyEditable())
+                    .isFalse();
+        }
+
+        @Test
+        @DisplayName("détail : currencyEditable absent pour un autre lecteur")
+        void detail_currencyEditable_nullForOtherReader() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+
+            assertThat(announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, FIREBASE_UID).currencyEditable())
+                    .isNull();
+            verify(negotiationThreadRepository, never()).existsActiveByTravelerAnnouncementId(any());
         }
     }
 

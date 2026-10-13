@@ -305,4 +305,43 @@ class PriceGridServiceTest {
 
         verify(mocked).convertGridCurrency(travelerId, "EUR", "CAD");
     }
+
+    // ── FLUTTER-KV : grille figée d'une annonce dont la devise change ─────────
+
+    private static AnnouncementPriceGridItemEntity annItem(String net) {
+        AnnouncementPriceGridItemEntity item = new AnnouncementPriceGridItemEntity();
+        item.setLabel("Valise");
+        item.setUnitPriceNet(new BigDecimal(net));
+        item.setPosition(0);
+        return item;
+    }
+
+    @Test
+    void convertAnnouncementGridCurrency_convertsEachNetAndAudits() {
+        UUID announcementId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        AnnouncementPriceGridItemEntity valise = annItem("10.00");
+        AnnouncementPriceGridItemEntity infime = annItem("0.0001");
+        when(annGridRepo.findByAnnouncementIdOrderByPositionAsc(announcementId)).thenReturn(List.of(valise, infime));
+
+        service.convertAnnouncementGridCurrency(announcementId, actorId, "EUR", "XOF");
+
+        assertThat(valise.getUnitPriceNet()).isEqualByComparingTo("6560");
+        assertThat(infime.getUnitPriceNet()).isEqualByComparingTo("1");
+        verify(annGridRepo).saveAll(List.of(valise, infime));
+        verify(auditService).log(eq("ANNOUNCEMENT"), eq(announcementId),
+                eq("ANNOUNCEMENT_PRICE_GRID_CURRENCY_CONVERTED"), eq(actorId), any());
+    }
+
+    @Test
+    void convertAnnouncementGridCurrency_sameCurrencyOrEmpty_doesNothing() {
+        UUID announcementId = UUID.randomUUID();
+        service.convertAnnouncementGridCurrency(announcementId, null, "EUR", "eur");
+        verifyNoInteractions(annGridRepo, auditService);
+
+        when(annGridRepo.findByAnnouncementIdOrderByPositionAsc(announcementId)).thenReturn(List.of());
+        service.convertAnnouncementGridCurrency(announcementId, null, "EUR", "XOF");
+        verify(annGridRepo, never()).saveAll(any());
+        verifyNoInteractions(auditService);
+    }
 }

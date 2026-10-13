@@ -78,8 +78,55 @@ public record AnnouncementDetailResponse(
          *  (FLUTTER-EH : sans lui, chaque modification effaçait le pays en base). */
         String departureCountryCode,
         /** Code pays ISO-2 de l'arrivée, même usage que {@link #departureCountryCode}. */
-        String arrivalCountryCode
+        String arrivalCountryCode,
+        /**
+         * La devise du trajet peut encore être changée par {@code PUT /announcements/{id}}
+         * (champ {@code currency}) : aucune demande, offre ni négociation vivante dessus
+         * (FLUTTER-KV). Servi au seul voyageur propriétaire ; null (donc absent du JSON) pour
+         * tout autre lecteur.
+         */
+        Boolean currencyEditable
 ) {
+    /** Ancienne arité, sans {@code currencyEditable} (null) : appelants qui ne le calculent pas. */
+    public AnnouncementDetailResponse(
+            UUID id, UUID travelerId, String departureCity, String arrivalCity, LocalDate departureDate,
+            LocalTime departureTime, LocalTime arrivalTime, LocalDate arrivalDate,
+            AddressDto pickupAddress, AddressDto deliveryAddress, BigDecimal availableKg, BigDecimal totalKg,
+            BigDecimal pricePerKg, BigDecimal pricePerKgDisplay,
+            com.yadony.api.matching.TransportMode transportMode, Integer stopsCount, String status,
+            long bidsCount, long confirmedParcelCount, TravelerProfileDto traveler, String description,
+            List<String> acceptedContentTypes, List<String> refusedTypes, List<String> acceptedPaymentMethods,
+            com.yadony.api.matching.CapacityUnit capacityUnit, boolean cashAccepted,
+            LocalDateTime createdAt, LocalDateTime updatedAt, com.yadony.api.matching.PricingMode pricingMode,
+            List<AnnouncementPriceGridItemResponse> priceGridItems, BigDecimal reservedKg,
+            boolean surplusEligible, boolean surplusPublished, LocalDateTime handoverDeadline,
+            String currency, String arrivalInstructions, boolean negotiable,
+            Set<PaymentMethod> availablePaymentMethods, BigDecimal convertedPricePerKg,
+            BigDecimal pricePerKgDisplayConverted, String convertedCurrency, Integer remainingReschedules,
+            String departureCountryCode, String arrivalCountryCode) {
+        this(id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime, arrivalDate,
+                pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay,
+                transportMode, stopsCount, status, bidsCount, confirmedParcelCount, traveler, description,
+                acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, cashAccepted,
+                createdAt, updatedAt, pricingMode, priceGridItems, reservedKg, surplusEligible,
+                surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
+                availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
+                remainingReschedules, departureCountryCode, arrivalCountryCode, null);
+    }
+
+    /** Copie portant {@code currencyEditable}, posé pour le seul voyageur propriétaire. */
+    public AnnouncementDetailResponse withCurrencyEditable(Boolean currencyEditable) {
+        return new AnnouncementDetailResponse(
+                id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime, arrivalDate,
+                pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay,
+                transportMode, stopsCount, status, bidsCount, confirmedParcelCount, traveler, description,
+                acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, cashAccepted,
+                createdAt, updatedAt, pricingMode, priceGridItems, reservedKg, surplusEligible,
+                surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
+                availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
+                remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable);
+    }
+
     /** Copie enrichie des équivalents convertis — même pattern que le fil de recherche. */
     public AnnouncementDetailResponse withConvertedPrices(BigDecimal convertedPricePerKg,
                                                           BigDecimal pricePerKgDisplayConverted,
@@ -93,6 +140,6 @@ public record AnnouncementDetailResponse(
                 createdAt, updatedAt, pricingMode, convertedGridItems, reservedKg, surplusEligible,
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
-                remainingReschedules, departureCountryCode, arrivalCountryCode);
+                remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable);
     }
 }
