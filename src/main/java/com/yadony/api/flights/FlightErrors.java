@@ -20,6 +20,12 @@ final class FlightErrors {
                 "Flights Provider Error", "Le service de prix des vols ne répond pas. Réessayez dans un instant.");
     }
 
+    /** Alerte absente ou à un autre utilisateur : même réponse, on ne révèle pas son existence. */
+    static YadonyBusinessException alertNotFound() {
+        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "flight-alert-not-found",
+                "Flight Alert Not Found", "Cette alerte prix n'existe pas.");
+    }
+
     static YadonyBusinessException invalid(String code, String detail) {
         return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, code, "Invalid Flight Query", detail);
     }

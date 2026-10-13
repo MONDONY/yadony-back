@@ -79,9 +79,9 @@ public class FlightPriceAlertScheduler {
 
         int notified = 0;
         for (List<FlightPriceAlertEntity> group : byQuery.values()) {
-            BigDecimal cheapest;
+            List<TravelpayoutsPrice> found;
             try {
-                cheapest = cheapest(group.get(0), today);
+                found = FlightAlertMatches.inWindow(group.get(0), prices, today);
             } catch (RuntimeException e) {
                 // Un seul mois en échec suffit à écarter le groupe : un prix partiel, plus haut
                 // que le vrai, remettrait l'anti-spam à zéro. On réessaiera à la prochaine
@@ -91,8 +91,11 @@ public class FlightPriceAlertScheduler {
                 }
                 continue;
             }
+            BigDecimal cheapest = FlightAlertMatches.cheapest(found);
             for (FlightPriceAlertEntity alert : group) {
+                // Même offres pour tout le groupe, mais seuil propre à chaque alerte.
                 boolean notify = FlightAlertRule.apply(alert, cheapest, now);
+                FlightAlertMatches.record(alert, found);
                 if (!saveQuietly(alert)) continue;
                 if (notify) {
                     send(alert, cheapest);
@@ -101,21 +104,6 @@ public class FlightPriceAlertScheduler {
             }
         }
         if (notified > 0) log.info("[FlightPriceAlert] {} alerte(s) envoyée(s)", notified);
-    }
-
-    /** Prix le plus bas dans la période de l'alerte, {@code null} si aucune offre n'y correspond. */
-    private BigDecimal cheapest(FlightPriceAlertEntity alert, LocalDate today) {
-        FlightAlertWindow window = alert.window();
-        BigDecimal cheapest = null;
-        for (FlightQuery query : window.queries(alert.getOriginCode(), alert.getDestinationCode(),
-                alert.isDirectOnly(), alert.getCurrency(), today)) {
-            for (TravelpayoutsPrice price : prices.prices(query)) {
-                if (window.accepts(price) && (cheapest == null || price.price().compareTo(cheapest) < 0)) {
-                    cheapest = price.price();
-                }
-            }
-        }
-        return cheapest;
     }
 
     /** Deux alertes de même trajet, période, filtre et devise partagent un seul passage. */
@@ -147,11 +135,15 @@ public class FlightPriceAlertScheduler {
             String threshold = formatPrice(alert.getMaxPrice(), alert.getCurrency());
             String title = m.get("notification.flight-price-alert.title", route);
             String body = m.get("notification.flight-price-alert.body", route, price, threshold);
-            Map<String, String> data = Map.of(
-                    "type", "FLIGHT_PRICE_ALERT",
-                    "alertId", alert.getId().toString(),
-                    "origin", alert.getOriginCode(),
-                    "destination", alert.getDestinationCode());
+            Map<String, String> data = new LinkedHashMap<>();
+            data.put("type", "FLIGHT_PRICE_ALERT");
+            data.put("alertId", alert.getId().toString());
+            data.put("origin", alert.getOriginCode());
+            data.put("destination", alert.getDestinationCode());
+            if (alert.getLastMatchCount() != null) {
+                // Nombre de vols sous le seuil, pour le titre de l'écran « Vols trouvés ».
+                data.put("matchCount", alert.getLastMatchCount().toString());
+            }
             notifications.notifyUser(alert.getOwnerId(), title, body, data);
         } catch (RuntimeException e) {
             log.error("[FlightPriceAlert] notification non envoyée pour l'alerte {} : {}",

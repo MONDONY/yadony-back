@@ -1,5 +1,6 @@
 package com.yadony.api.flights;
 
+import com.yadony.api.flights.dto.FlightAlertOffersResponse;
 import com.yadony.api.flights.dto.FlightAlertRequest;
 import com.yadony.api.flights.dto.FlightAlertResponse;
 import com.yadony.api.flights.dto.FlightAlertUpdateRequest;
@@ -42,6 +43,7 @@ public class FlightController {
     private final FlightPlaceService placeService;
     private final FlightDealService dealService;
     private final FlightAlertService alertService;
+    private final FlightAlertOffersService alertOffersService;
     private final FlightClickService clickService;
     private final FlightDefaultsService defaultsService;
     private final FlightUsers users;
@@ -49,12 +51,13 @@ public class FlightController {
 
     public FlightController(FlightSearchService searchService, FlightPlaceService placeService,
                             FlightDealService dealService, FlightAlertService alertService,
-                            FlightClickService clickService, FlightDefaultsService defaultsService,
+                            FlightAlertOffersService alertOffersService, FlightClickService clickService, FlightDefaultsService defaultsService,
                             FlightFeature feature, FlightUsers users) {
         this.searchService = searchService;
         this.placeService = placeService;
         this.dealService = dealService;
         this.alertService = alertService;
+        this.alertOffersService = alertOffersService;
         this.clickService = clickService;
         this.defaultsService = defaultsService;
         this.users = users;
@@ -111,7 +114,16 @@ public class FlightController {
     public FlightAlertResponse createAlert(@AuthenticationPrincipal String firebaseUid,
                                            @Valid @RequestBody FlightAlertRequest request) {
         feature.requireEnabled();
-        return alertService.create(firebaseUid, request);
+        // Création validée et enregistrée d'abord (sa transaction est close), puis première
+        // vérification silencieuse, bornée dans le temps et sans effet si elle échoue.
+        return alertOffersService.firstCheck(alertService.create(firebaseUid, request));
+    }
+
+    @GetMapping("/me/flight-alerts/{id}/offers")
+    public FlightAlertOffersResponse alertOffers(@AuthenticationPrincipal String firebaseUid,
+                                                 @PathVariable UUID id) {
+        feature.requireEnabled();
+        return alertOffersService.offers(firebaseUid, id);
     }
 
     @PatchMapping("/me/flight-alerts/{id}")

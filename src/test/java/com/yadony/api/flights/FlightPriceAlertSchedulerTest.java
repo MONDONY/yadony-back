@@ -59,7 +59,8 @@ class FlightPriceAlertSchedulerTest {
         assertThat(title.getValue()).contains("Paris → Abidjan");
         assertThat(body.getValue()).contains("327 €").contains("400 €");
         assertThat(data.getValue()).containsEntry("type", "FLIGHT_PRICE_ALERT")
-                .containsEntry("alertId", a.getId().toString());
+                .containsEntry("alertId", a.getId().toString())
+                .containsEntry("matchCount", "1");
         assertThat(a.getLastNotifiedPrice()).isEqualByComparingTo("327");
         verify(alerts).save(a);
     }
@@ -223,5 +224,82 @@ class FlightPriceAlertSchedulerTest {
 
         verifyNoInteractions(alerts);
         verify(prices, never()).prices(any());
+    }
+
+    private static TravelpayoutsPrice offer(String airline, String amount) {
+        return new TravelpayoutsPrice("PAR", "ABJ", "CDG", "ABJ", "2026-12-04T11:30:00+01:00", null,
+                new BigDecimal(amount), airline, "1", 0, null, 400, "Partner", "/search/X?t=" + airline + amount);
+    }
+
+    @Test
+    void matches_countOffersUnderThreshold_andKeepThreeDistinctAirlinesByPrice() {
+        FlightPriceAlertEntity a = alert(owner, "400");
+        when(alerts.findAllByActiveTrue()).thenReturn(List.of(a));
+        when(prices.prices(any())).thenReturn(List.of(offer("ss", "390"), offer("AF", "310"), offer("AF", "320"),
+                offer("TU", "350"), offer("ET", "380"), offer("KL", "520")));
+
+        scheduler.run();
+
+        assertThat(a.getLastMatchCount()).isEqualTo(5);
+        assertThat(a.getLastMatchAirlines()).isEqualTo("AF,TU,ET");
+        // Meilleur prix vu, sous le seuil.
+        assertThat(a.getLastSeenPrice()).isEqualByComparingTo("310");
+    }
+
+    @Test
+    void matches_nothingUnderThreshold_isZero_andBestPriceStillRecorded() {
+        FlightPriceAlertEntity a = alert(owner, "300");
+        when(alerts.findAllByActiveTrue()).thenReturn(List.of(a));
+        when(prices.prices(any())).thenReturn(List.of(offer("AF", "327"), offer("SS", "450")));
+
+        scheduler.run();
+
+        assertThat(a.getLastMatchCount()).isZero();
+        assertThat(a.getLastMatchAirlines()).isEmpty();
+        assertThat(a.getLastSeenPrice()).isEqualByComparingTo("327");
+    }
+
+    @Test
+    void matches_areResetToZero_whenPricesGoBackUp() {
+        FlightPriceAlertEntity a = alert(owner, "400");
+        a.setLastMatchCount(3);
+        a.setLastMatchAirlines("AF,SS");
+        when(alerts.findAllByActiveTrue()).thenReturn(List.of(a));
+        when(prices.prices(any())).thenReturn(List.of());
+
+        scheduler.run();
+
+        assertThat(a.getLastMatchCount()).isZero();
+        assertThat(a.getLastMatchAirlines()).isEmpty();
+        assertThat(a.getLastCheckedAt()).isNotNull();
+        verify(alerts).save(a);
+    }
+
+    @Test
+    void matches_sharedOffers_butThresholdPerAlert() {
+        FlightPriceAlertEntity high = alert(owner, "400");
+        FlightPriceAlertEntity low = alert(UUID.randomUUID(), "320");
+        when(alerts.findAllByActiveTrue()).thenReturn(List.of(high, low));
+        when(prices.prices(any())).thenReturn(List.of(offer("AF", "310"), offer("SS", "350")));
+
+        scheduler.run();
+
+        verify(prices, times(1)).prices(any());
+        assertThat(high.getLastMatchCount()).isEqualTo(2);
+        assertThat(high.getLastMatchAirlines()).isEqualTo("AF,SS");
+        assertThat(low.getLastMatchCount()).isEqualTo(1);
+        assertThat(low.getLastMatchAirlines()).isEqualTo("AF");
+    }
+
+    @Test
+    void providerFailure_leavesMatchesUntouched() {
+        FlightPriceAlertEntity a = alert(owner, "400");
+        a.setLastMatchCount(2);
+        when(alerts.findAllByActiveTrue()).thenReturn(List.of(a));
+        when(prices.prices(any())).thenThrow(new FlightProviderException("down"));
+
+        scheduler.run();
+
+        assertThat(a.getLastMatchCount()).isEqualTo(2);
     }
 }

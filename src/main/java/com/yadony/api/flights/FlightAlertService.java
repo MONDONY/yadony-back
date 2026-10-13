@@ -1,7 +1,6 @@
 package com.yadony.api.flights;
 
 import com.yadony.api.common.YadonyBusinessException;
-import com.yadony.api.common.YadonyNotFoundException;
 import com.yadony.api.flights.dto.FlightAlertRequest;
 import com.yadony.api.flights.dto.FlightAlertResponse;
 import com.yadony.api.flights.dto.FlightAlertUpdateRequest;
@@ -114,7 +113,7 @@ public class FlightAlertService {
     private FlightPriceAlertEntity owned(String firebaseUid, UUID id) {
         UUID owner = users.resolveAccount(firebaseUid).id();
         return alerts.findByIdAndOwnerId(id, owner)
-                .orElseThrow(() -> new YadonyNotFoundException("Flight alert not found"));
+                .orElseThrow(FlightErrors::alertNotFound);
     }
 
     /**
@@ -159,6 +158,7 @@ public class FlightAlertService {
                 a.getDestinationLabel(), a.getDepartureFrom(), a.getDepartureTo(), a.getReturnFrom(),
                 a.getReturnTo(), a.isDirectOnly(),
                 a.getMaxPrice(), a.getCurrency(), a.isActive(), a.getLastSeenPrice(), a.getLastCheckedAt(),
-                a.getCreatedAt());
+                a.getCreatedAt(), a.getLastMatchCount(),
+                a.getLastMatchCount() == null ? null : FlightAlertMatches.split(a.getLastMatchAirlines()));
     }
 }
