@@ -40,4 +40,13 @@ class FlightDateTest {
         assertThatThrownBy(() -> new FlightDate(LocalDate.of(2026, 1, 1), YearMonth.of(2026, 1)))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void monthOf_widensDaysOnly() {
+        assertThat(FlightDate.monthOf(null)).isNull();
+        assertThat(FlightDate.monthOf(FlightDate.ofDay(LocalDate.of(2027, 1, 2))))
+                .isEqualTo(FlightDate.ofMonth(YearMonth.of(2027, 1)));
+        FlightDate month = FlightDate.ofMonth(YearMonth.of(2026, 12));
+        assertThat(FlightDate.monthOf(month)).isSameAs(month);
+    }
 }

@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Clock;
 import java.time.LocalDate;
+import java.util.List;
 
 /**
  * Recherche de vols de l'utilisateur. Volontairement sans {@code @Transactional} : aucune
@@ -47,14 +48,40 @@ public class FlightSearchService {
                 directOnly, currency, clock);
         FlightUsers.Caller caller = users.resolve(firebaseUid);
 
-        var found = fetch(query);
+        List<TravelpayoutsPrice> found = fetch(query);
+        boolean nearby = false;
+        if (found.isEmpty() && query.hasExactDay()) {
+            List<TravelpayoutsPrice> close = nearbyDates(query);
+            if (!close.isEmpty()) {
+                found = close;
+                nearby = true;
+            }
+        }
         if (!caller.anonymous()) remember(caller, query);
         return new FlightSearchResponse(query.origin(), query.destination(), query.roundTrip(), query.currency(),
                 found.stream().map(p -> mapper.toDto(p, query.currency(), caller.language())).toList(),
-                query.searchPath(LocalDate.now(clock)));
+                query.searchPath(LocalDate.now(clock)),
+                nearby ? Boolean.TRUE : null,
+                nearby ? FlightNearbyDates.WINDOW_DAYS : null);
     }
 
-    private java.util.List<TravelpayoutsPrice> fetch(FlightQuery query) {
+    /**
+     * Aucune offre aux jours exacts : même trajet sur les mois de ces jours, filtré à
+     * {@link FlightNearbyDates#WINDOW_DAYS} jours près. Les deux recherches passent par le cache des
+     * prix : une même requête répétée ne rappelle pas Travelpayouts. Un échec du repli n'est pas une
+     * erreur : la recherche exacte a répondu, elle rend simplement sa liste vide.
+     */
+    private List<TravelpayoutsPrice> nearbyDates(FlightQuery query) {
+        try {
+            return FlightNearbyDates.filter(query, prices.prices(query.widenedToMonths()),
+                    FlightPriceService.MAX_RESULTS);
+        } catch (FlightProviderException e) {
+            log.info("Vols {} : repli sur les dates proches indisponible ({})", query.key(), e.getMessage());
+            return List.of();
+        }
+    }
+
+    private List<TravelpayoutsPrice> fetch(FlightQuery query) {
         try {
             return prices.prices(query);
         } catch (FlightProviderException e) {

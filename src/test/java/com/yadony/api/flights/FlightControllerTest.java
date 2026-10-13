@@ -89,7 +89,24 @@ class FlightControllerTest {
                 .andExpect(jsonPath("$.offers[0].durationMinutes").value(375))
                 .andExpect(jsonPath("$.offers[0].outboundDurationMinutes").value(375))
                 .andExpect(jsonPath("$.offers[0].arrivalAt").value("2026-12-01T16:45:00Z"))
-                .andExpect(jsonPath("$.offers[0].returnArrivalAt").doesNotExist());
+                .andExpect(jsonPath("$.offers[0].returnArrivalAt").doesNotExist())
+                .andExpect(jsonPath("$.nearbyDates").doesNotExist())
+                .andExpect(jsonPath("$.nearbyDaysWindow").doesNotExist());
+    }
+
+    @Test
+    void search_nearbyDatesFallback_isExposed() throws Exception {
+        when(searchService.search(UID, "ABJ", "PAR", "2026-12-23", "2027-01-02", false, null))
+                .thenReturn(new FlightSearchResponse("ABJ", "PAR", true, "EUR", List.of(),
+                        "/search/ABJ2312PAR02011", true, 3));
+
+        mockMvc.perform(get("/flights/search").with(authentication(member()))
+                        .param("origin", "ABJ").param("destination", "PAR")
+                        .param("departureDate", "2026-12-23").param("returnDate", "2027-01-02"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.nearbyDates").value(true))
+                .andExpect(jsonPath("$.nearbyDaysWindow").value(3))
+                .andExpect(jsonPath("$.searchPath").value("/search/ABJ2312PAR02011"));
     }
 
     @Test

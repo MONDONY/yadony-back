@@ -40,6 +40,12 @@ public record FlightDate(LocalDate day, YearMonth month) {
         return ofMonth(YearMonth.parse(value));
     }
 
+    /** Le mois qui contient cette date ; {@code null} reste {@code null}. */
+    public static FlightDate monthOf(FlightDate date) {
+        if (date == null || !date.isDay()) return date;
+        return ofMonth(YearMonth.from(date.day()));
+    }
+
     public boolean isDay() {
         return day != null;
     }

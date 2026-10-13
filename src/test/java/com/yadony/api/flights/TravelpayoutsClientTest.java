@@ -144,6 +144,40 @@ class TravelpayoutsClientTest {
         assertThat(names).containsOnly(Map.entry("U2", "easyJet"), Map.entry("AT", "Royal Air Maroc"));
     }
 
+    /**
+     * Régression : dans {@code data/fr/airlines.json}, {@code name} vaut {@code null} pour Corsair (SS),
+     * Mauritania Airlines (L6) et 907 autres, le nom n'étant que dans {@code name_translations.en}.
+     */
+    @Test
+    void airlineNames_nullName_fallsBackToTranslations() {
+        server.expect(requestTo("https://api.test/data/fr/airlines.json"))
+                .andRespond(withSuccess("""
+                        [{"name_translations":{"en":"Corsair International"},"code":"SS","name":null,"is_lowcost":false},
+                         {"name_translations":{"en":"Mauritania Airlines"},"code":"L6","name":null},
+                         {"name_translations":{"en":"Royal Air Maroc","fr":"Royal Air Maroc (FR)"},"code":"AT","name":"  "},
+                         {"name_translations":{"de":"Nur Deutsch","it":""},"code":"XX","name":null},
+                         {"name_translations":{},"code":"YY","name":null},
+                         {"name_translations":{"en":"   "},"code":"WW"},
+                         {"code":"ZZ"},{"code":"  ","name":"Vide"},null,
+                         {"name_translations":{"en":"Air France"},"code":"af ","name":"Air France"}]
+                        """, MediaType.APPLICATION_JSON));
+
+        Map<String, String> names = client.airlineNames("fr");
+
+        assertThat(names).containsOnly(
+                Map.entry("SS", "Corsair International"),
+                Map.entry("L6", "Mauritania Airlines"),
+                Map.entry("AT", "Royal Air Maroc (FR)"),
+                Map.entry("XX", "Nur Deutsch"),
+                Map.entry("AF", "Air France"));
+    }
+
+    @Test
+    void airlineDisplayName_nullLocale_usesEnglish() {
+        var a = new TravelpayoutsClient.Airline("SS", null, Map.of("en", "Corsair International"));
+        assertThat(a.displayName(null)).isEqualTo("Corsair International");
+    }
+
     @Test
     void timeZones_mapsAirportCodesToZones_ignoringIncompleteRows() {
         server.expect(requestTo("https://api.test/data/en/airports.json"))
