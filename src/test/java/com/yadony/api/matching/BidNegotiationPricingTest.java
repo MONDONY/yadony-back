@@ -64,4 +64,47 @@ class BidNegotiationPricingTest {
         assertThatThrownBy(() -> BidNegotiationPricing.split(new BigDecimal("10"), new BigDecimal("-0.01")))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    // ── grossForNet (FLUTTER-NS) ──────────────────────────────────────────────
+
+    @ParameterizedTest(name = "net {0} à {1} en euros : le brut rend exactement ce net")
+    @CsvSource({
+            "35.00, 0.12", "10.01, 0.12", "10.05, 0.12", "0.01, 0.12", "42.86, 0.05",
+            "999.99, 0.033", "12.34, 0.0", "100.00, 0.15",
+    })
+    void grossForNet_eur_roundTripsExactly(String net, String rate) {
+        BigDecimal gross = BidNegotiationPricing.grossForNet(new BigDecimal(net), new BigDecimal(rate), 2);
+        assertThat(BidNegotiationPricing.split(gross, new BigDecimal(rate)).netEur()).isEqualByComparingTo(net);
+        // Le plus petit : un centime de moins ne rend plus ce net.
+        BigDecimal below = gross.subtract(new BigDecimal("0.01"));
+        if (below.signum() > 0) {
+            assertThat(BidNegotiationPricing.split(below, new BigDecimal(rate)).netEur())
+                    .isLessThan(new BigDecimal(net));
+        }
+    }
+
+    @Test
+    @DisplayName("10,01 € net à 12 % : 11,21 € brut, et non 11,22 (arrondi supérieur brut)")
+    void grossForNet_stepsDownWhenRoundingAlreadyReachesTheNet() {
+        assertThat(BidNegotiationPricing.grossForNet(new BigDecimal("10.01"), new BigDecimal("0.12"), 2))
+                .isEqualByComparingTo("11.21");
+    }
+
+    @ParameterizedTest(name = "net {0} F CFA à 12 % : brut entier {1}")
+    @CsvSource({ "25000, 28000", "25001, 28002", "1, 2", "5000, 5600" })
+    void grossForNet_xof_wholeFrancs_netAtLeastRequested(String net, String expectedGross) {
+        BigDecimal gross = BidNegotiationPricing.grossForNet(new BigDecimal(net), new BigDecimal("0.12"), 0);
+        assertThat(gross).isEqualByComparingTo(expectedGross);
+        assertThat(gross.scale()).isZero();
+        assertThat(BidNegotiationPricing.split(gross, new BigDecimal("0.12")).netEur())
+                .isGreaterThanOrEqualTo(new BigDecimal(net));
+    }
+
+    @Test
+    void grossForNet_rejectsInvalidInput() {
+        assertThatThrownBy(() -> BidNegotiationPricing.grossForNet(BigDecimal.ZERO, new BigDecimal("0.12"), 2))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> BidNegotiationPricing.grossForNet(BigDecimal.TEN, new BigDecimal("-0.1"), 2))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }

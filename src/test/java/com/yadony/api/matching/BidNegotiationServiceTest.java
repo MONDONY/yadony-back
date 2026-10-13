@@ -43,11 +43,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -643,6 +645,153 @@ class BidNegotiationServiceTest {
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
                             .isEqualTo(HttpStatus.FORBIDDEN));
+        }
+    }
+
+    // ─── FLUTTER-NS : le voyageur voit et saisit son net ─────────────────────────
+
+    @Nested
+    @DisplayName("counter / lecture — net du voyageur (FLUTTER-NS)")
+    class TravelerNet {
+
+        private BidEntity stubThread(String callerUid, UserEntity caller, UUID lastAuthor, String lastGross) {
+            BidEntity bid = buildNegotiatingBid();
+            bid.setCommissionRate(new BigDecimal("0.12"));
+            when(userRepository.findByFirebaseUid(callerUid)).thenReturn(Optional.of(caller));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(buildAnnouncement()));
+            when(messageRepository.findFirstByBidIdOrderByCreatedAtDesc(BID_ID))
+                    .thenReturn(Optional.of(lastMessageFrom(lastAuthor, lastGross)));
+            return bid;
+        }
+
+        @Test
+        @DisplayName("contre-offre du voyageur en net → brut déduit au taux figé, net retrouvé à l'identique")
+        void travelerCounterInNet_isConvertedToGross() {
+            stubThread(TRAVELER_UID, buildTraveler(), SENDER_ID, "45.00");
+            lenient().when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(buildSender()));
+            stubSavedBid();
+
+            BidNegotiationResponse response = service.counter(BID_ID, TRAVELER_UID,
+                    new BidNegotiationCounterRequest(null, "Je veux 35 net", new BigDecimal("35.00")));
+
+            ArgumentCaptor<BidNegotiationMessageEntity> msg = ArgumentCaptor.forClass(BidNegotiationMessageEntity.class);
+            verify(messageRepository).save(msg.capture());
+            // 35 × 1,12 = 39,20 ; 39,20 / 1,12 = 35,00.
+            assertThat(msg.getValue().getProposedGrossEur()).isEqualByComparingTo("39.20");
+            assertThat(response.proposedGrossEur()).isEqualByComparingTo("39.20");
+            assertThat(response.netEur()).isEqualByComparingTo("35.00");
+            assertThat(response.commissionRate()).isEqualByComparingTo("0.12");
+            verify(auditService).log(eq("BID"), eq(BID_ID), eq("BID_NEGOTIATION_COUNTERED"), eq(TRAVELER_ID),
+                    argThat(m -> "35.00".equals(m.get("proposedNetEur")) && "39.20".equals(m.get("proposedGrossEur"))));
+        }
+
+        @Test
+        @DisplayName("l'expéditeur ne peut pas proposer en net → 422 counter-net-traveler-only")
+        void senderCounterInNet_isRefused() {
+            stubThread(SENDER_UID, buildSender(), TRAVELER_ID, "45.00");
+
+            assertThatThrownBy(() -> service.counter(BID_ID, SENDER_UID,
+                    new BidNegotiationCounterRequest(null, null, new BigDecimal("35.00"))))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(ex.getErrorCode()).isEqualTo("counter-net-traveler-only");
+                    });
+            verify(messageRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("brut et net ensemble → 422 counter-amount-ambiguous")
+        void bothAmounts_areRefused() {
+            stubThread(TRAVELER_UID, buildTraveler(), SENDER_ID, "45.00");
+
+            assertThatThrownBy(() -> service.counter(BID_ID, TRAVELER_UID,
+                    new BidNegotiationCounterRequest(new BigDecimal("40.00"), null, new BigDecimal("35.00"))))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("counter-amount-ambiguous"));
+        }
+
+        @Test
+        @DisplayName("aucun montant → 422 counter-amount-required")
+        void noAmount_isRefused() {
+            stubThread(TRAVELER_UID, buildTraveler(), SENDER_ID, "45.00");
+
+            assertThatThrownBy(() -> service.counter(BID_ID, TRAVELER_UID,
+                    new BidNegotiationCounterRequest(null, null, null)))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("counter-amount-required"));
+        }
+
+        @Test
+        @DisplayName("contre-offre en brut égale à la dernière proposition → 422 counter-same-amount")
+        void sameGrossAsLast_isRefused() {
+            stubThread(SENDER_UID, buildSender(), TRAVELER_ID, "45.00");
+
+            assertThatThrownBy(() -> service.counter(BID_ID, SENDER_UID,
+                    new BidNegotiationCounterRequest(new BigDecimal("45"), null)))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(ex.getErrorCode()).isEqualTo("counter-same-amount");
+                    });
+            verify(bidRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("contre-offre en net retombant sur le brut de la dernière proposition → 422 counter-same-amount")
+        void netMatchingLastGross_isRefused() {
+            stubThread(TRAVELER_UID, buildTraveler(), SENDER_ID, "39.20");
+
+            assertThatThrownBy(() -> service.counter(BID_ID, TRAVELER_UID,
+                    new BidNegotiationCounterRequest(null, null, new BigDecimal("35.00"))))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("counter-same-amount"));
+        }
+
+        @Test
+        @DisplayName("fil en franc CFA : brut entier, net ≥ net demandé")
+        void travelerCounterInNet_xof_roundsGrossToWholeFrancs() {
+            BidEntity bid = stubThread(TRAVELER_UID, buildTraveler(), SENDER_ID, "30000");
+            bid.setCurrency("XOF");
+            stubSavedBid();
+
+            service.counter(BID_ID, TRAVELER_UID,
+                    new BidNegotiationCounterRequest(null, null, new BigDecimal("25001")));
+
+            ArgumentCaptor<BidNegotiationMessageEntity> msg = ArgumentCaptor.forClass(BidNegotiationMessageEntity.class);
+            verify(messageRepository).save(msg.capture());
+            // 25 001 × 1,12 = 28 001,12 → 28 002 F CFA (plus petit entier dont le net ≥ 25 001).
+            assertThat(msg.getValue().getProposedGrossEur()).isEqualByComparingTo("28002");
+            assertThat(msg.getValue().getProposedGrossEur().scale()).isZero();
+        }
+
+        @Test
+        @DisplayName("lecture : chaque message porte son net pour le voyageur, jamais pour l'expéditeur")
+        void messagesCarryNet_forTravelerOnly() {
+            BidEntity bid = buildNegotiatingBid();
+            bid.setCommissionRate(new BigDecimal("0.12"));
+            BidNegotiationMessageEntity proposal = lastMessageFrom(SENDER_ID, "44.80");
+            BidNegotiationMessageEntity text = BidNegotiationMessageEntity.create(
+                    BID_ID, TRAVELER_ID, BidNegotiationMessageKind.REJECT, null, null);
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(buildSender()));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(buildAnnouncement()));
+            when(messageRepository.findByBidIdOrderByCreatedAtAsc(BID_ID)).thenReturn(List.of(proposal, text));
+
+            BidNegotiationResponse traveler = service.thread(BID_ID, TRAVELER_UID);
+            BidNegotiationResponse sender = service.thread(BID_ID, SENDER_UID);
+
+            assertThat(traveler.messages().get(0).proposedNetEur()).isEqualByComparingTo("40.00");
+            assertThat(traveler.messages().get(1).proposedNetEur()).isNull();
+            assertThat(sender.messages().get(0).proposedNetEur()).isNull();
+            assertThat(sender.commissionRate()).isNull();
         }
     }
 
