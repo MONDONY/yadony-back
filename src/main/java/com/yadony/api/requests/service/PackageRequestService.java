@@ -79,6 +79,7 @@ public class PackageRequestService {
     private final BlockVisibility blockVisibility;
     private final MessagesResolver messagesResolver;
     private final PackageRequestInsightService insightService;
+    private final TravelerNegotiationLookup negotiationLookup;
 
     public PackageRequestService(PackageRequestRepository repository,
                                   UserRepository userRepository,
@@ -101,7 +102,8 @@ public class PackageRequestService {
                                   PlatformSettingsService platformSettings,
                                   BlockVisibility blockVisibility,
                                   MessagesResolver messagesResolver,
-                                  PackageRequestInsightService insightService) {
+                                  PackageRequestInsightService insightService,
+                                  TravelerNegotiationLookup negotiationLookup) {
         this.repository = repository;
         this.userRepository = userRepository;
         this.eventPublisher = eventPublisher;
@@ -124,6 +126,7 @@ public class PackageRequestService {
         this.blockVisibility = blockVisibility;
         this.messagesResolver = messagesResolver;
         this.insightService = insightService;
+        this.negotiationLookup = negotiationLookup;
     }
 
     /**
@@ -830,9 +833,11 @@ public class PackageRequestService {
         String viewerCurrency = activeCurrencyResolver.resolveDisplay(callerId);
         // Audience : seulement les demandes de l'appelant, les autres restent à null.
         Map<UUID, Long> ownViews = insightService.ownerViewCounts(callerId, page.getContent());
+        Map<UUID, PackageRequestSearchResponse.MyNegotiation> mine = myNegotiations(callerId, page.getContent());
         return page.map(e -> withViewerConversion(packageRequestSearchMapper.toSearchResponse(
                 e, favIds.contains(e.getId()), viewer, batch.userMap, batch.cityMap, batch.photoMap),
-                viewerCurrency).withUniqueViewerCount(ownViews.get(e.getId())));
+                viewerCurrency).withUniqueViewerCount(ownViews.get(e.getId()))
+                .withMyNegotiation(mine.get(e.getId())));
     }
 
     /**
@@ -901,12 +906,14 @@ public class PackageRequestService {
         BatchMaps batch = buildBatchMaps(pageEntities);
         String viewerCurrency = activeCurrencyResolver.resolveDisplay(callerId);
         Map<UUID, Long> ownViews = insightService.ownerViewCounts(callerId, pageEntities);
+        Map<UUID, PackageRequestSearchResponse.MyNegotiation> mine = myNegotiations(callerId, pageEntities);
         List<PackageRequestSearchResponse> content = pageEntities.stream()
                 .map(e -> packageRequestSearchMapper.toSearchResponse(
                         e, favIds.contains(e.getId()), viewer, batch.userMap, batch.cityMap, batch.photoMap))
                 .map(r -> r.withMatch(matches.get(r.id())))
                 .map(r -> withViewerConversion(r, viewerCurrency))
                 .map(r -> r.withUniqueViewerCount(ownViews.get(r.id())))
+                .map(r -> r.withMyNegotiation(mine.get(r.id())))
                 .toList();
 
         return new org.springframework.data.domain.PageImpl<>(content, pageable, sorted.size());
@@ -959,10 +966,12 @@ public class PackageRequestService {
         BatchMaps batch = buildBatchMaps(rawPage.getContent());
         String viewerCurrency = activeCurrencyResolver.resolveDisplay(callerId);
         Map<UUID, Long> ownViews = insightService.ownerViewCounts(callerId, rawPage.getContent());
+        Map<UUID, PackageRequestSearchResponse.MyNegotiation> mine = myNegotiations(callerId, rawPage.getContent());
         Page<PackageRequestSearchResponse> mapped = rawPage.map(e -> withViewerConversion(
                 packageRequestSearchMapper.toSearchResponse(
                         e, favIds.contains(e.getId()), viewer, batch.userMap, batch.cityMap, batch.photoMap),
-                viewerCurrency).withUniqueViewerCount(ownViews.get(e.getId())));
+                viewerCurrency).withUniqueViewerCount(ownViews.get(e.getId()))
+                .withMyNegotiation(mine.get(e.getId())));
         double latD = lat.doubleValue();
         double lngD = lng.doubleValue();
         List<PackageRequestSearchResponse> filtered = mapped.getContent().stream()
@@ -995,6 +1004,16 @@ public class PackageRequestService {
         return r.withConvertedPrice(
                 exchangeRateService.convert(displayed, r.currency(), viewerCurrency),
                 viewerCurrency);
+    }
+
+    /**
+     * Négociations actives de l'appelant sur les demandes de la page (FLUTTER-NZ), en deux
+     * requêtes. Visiteur anonyme : carte vide, le champ reste {@code null}.
+     */
+    private Map<UUID, PackageRequestSearchResponse.MyNegotiation> myNegotiations(
+            UUID callerId, List<PackageRequestEntity> entities) {
+        return negotiationLookup.activeFor(callerId,
+                entities.stream().map(PackageRequestEntity::getId).toList());
     }
 
     /** Immutable value object carrying the three batch-loaded maps for search mapping. */

@@ -44,6 +44,28 @@ public interface NegotiationThreadRepository extends JpaRepository<NegotiationTh
 
     List<NegotiationThreadEntity> findByPackageRequestId(UUID packageRequestId);
 
+    /**
+     * Fils ACTIFS d'un voyageur sur un lot de demandes (statuts de
+     * {@link com.yadony.api.requests.entity.NegotiationThreadStatus#isActive()}), en une requête.
+     * Sert à marquer, dans la recherche des demandes, celles où il négocie déjà (FLUTTER-NZ).
+     */
+    @Query("""
+        SELECT t FROM NegotiationThreadEntity t
+        WHERE t.travelerId = :travelerId
+          AND t.packageRequestId IN :requestIds
+          AND t.status IN (
+              com.yadony.api.requests.entity.NegotiationThreadStatus.OPEN,
+              com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_TRIP,
+              com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_PAYMENT,
+              com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_DEPOSIT,
+              com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_COMMISSION
+          )
+    """)
+    List<NegotiationThreadEntity> findActiveByTravelerIdAndPackageRequestIdIn(
+        @Param("travelerId") UUID travelerId,
+        @Param("requestIds") java.util.Collection<UUID> requestIds
+    );
+
     /** Fils de plusieurs demandes en une requête (liste admin : compte des négociations ouvertes). */
     List<NegotiationThreadEntity> findByPackageRequestIdIn(java.util.Collection<UUID> packageRequestIds);
 

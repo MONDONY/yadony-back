@@ -66,8 +66,87 @@ public record PackageRequestSearchResponse(
     /** Personnes qui ont vu cette demande. Renseigné pour son seul expéditeur : {@code null}
      *  pour tout autre lecteur, qui ne doit jamais connaître l'audience d'une demande tierce.
      *  Voir {@link #withUniqueViewerCount}. */
-    Long uniqueViewerCount
+    Long uniqueViewerCount,
+    /**
+     * Négociation EN COURS de l'appelant (voyageur) sur cette demande, pour la marquer sur la
+     * carte et la liste du mode « Je voyage ». {@code null} quand l'appelant n'a aucun fil actif
+     * sur la demande (aucun fil, ou fil terminé : accepté, refusé, annulé, expiré), pour un
+     * visiteur anonyme et pour l'expéditeur lui-même. Champ additif (FLUTTER-NZ).
+     */
+    MyNegotiation myNegotiation
 ) {
+    /**
+     * Ancienne arité, sans {@code myNegotiation} : garde compilables les appelants qui ne
+     * connaissent pas le champ (favoris, tests). Le champ y vaut {@code null}.
+     */
+    public PackageRequestSearchResponse(
+            UUID id,
+            String departureCity, String arrivalCity,
+            BigDecimal departureLat, BigDecimal departureLng,
+            BigDecimal arrivalLat, BigDecimal arrivalLng,
+            LocalDate desiredDate, int dateToleranceDays,
+            BigDecimal weightKg, ParcelSize parcelSize,
+            TransportMode transportMode,
+            String contentCategory,
+            BigDecimal targetPriceEur, boolean negotiable, String photoUrl,
+            String pickupNeighborhood, String deliveryNeighborhood,
+            SenderPublicProfile sender,
+            Set<PaymentMethod> acceptedPaymentMethods,
+            List<PackageRequestPhotoResponse> photos,
+            boolean isFavorite,
+            boolean urgent,
+            Integer matchScore,
+            UUID matchedTripId,
+            LocalDate matchedTripDepartureDate,
+            String currency,
+            Set<PaymentMethod> availablePaymentMethods,
+            BigDecimal grossPriceEur,
+            BigDecimal convertedDisplayPrice,
+            String convertedCurrency,
+            Long uniqueViewerCount) {
+        this(id, departureCity, arrivalCity,
+                departureLat, departureLng, arrivalLat, arrivalLng,
+                desiredDate, dateToleranceDays,
+                weightKg, parcelSize, transportMode, contentCategory,
+                targetPriceEur, negotiable, photoUrl,
+                pickupNeighborhood, deliveryNeighborhood,
+                sender, acceptedPaymentMethods, photos, isFavorite, urgent,
+                matchScore, matchedTripId, matchedTripDepartureDate, currency,
+                availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency,
+                uniqueViewerCount, null);
+    }
+
+    /**
+     * Fil de négociation actif du voyageur appelant sur la demande.
+     *
+     * @param threadId identifiant du fil, pour ouvrir directement la négociation
+     * @param status   statut du fil, toujours actif : {@code OPEN}, {@code AWAITING_TRIP},
+     *                 {@code AWAITING_PAYMENT}, {@code AWAITING_COMMISSION} ou {@code AWAITING_DEPOSIT}
+     * @param myTurn   {@code true} quand l'action attendue revient au voyageur : répondre à une
+     *                 proposition de l'expéditeur ({@code OPEN}, dernier message de l'expéditeur),
+     *                 lier un trajet ({@code AWAITING_TRIP}) ou régler la commission
+     *                 ({@code AWAITING_COMMISSION}). {@code false} quand il attend l'expéditeur
+     *                 (sa propre proposition sans réponse, paiement ou dépôt mobile money en cours)
+     */
+    public record MyNegotiation(UUID threadId,
+                                com.yadony.api.requests.entity.NegotiationThreadStatus status,
+                                boolean myTurn) {}
+
+    /** Copie portant la négociation de l'appelant, posée par {@code PackageRequestService}. */
+    public PackageRequestSearchResponse withMyNegotiation(MyNegotiation myNegotiation) {
+        return new PackageRequestSearchResponse(
+                id, departureCity, arrivalCity,
+                departureLat, departureLng, arrivalLat, arrivalLng,
+                desiredDate, dateToleranceDays,
+                weightKg, parcelSize, transportMode, contentCategory,
+                targetPriceEur, negotiable, photoUrl,
+                pickupNeighborhood, deliveryNeighborhood,
+                sender, acceptedPaymentMethods, photos, isFavorite, urgent,
+                matchScore, matchedTripId, matchedTripDepartureDate, currency,
+                availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency,
+                uniqueViewerCount, myNegotiation);
+    }
+
     /**
      * @param incidentCount fiabilité de l'expéditeur (FLUTTER-E0/E6) : annulations après
      *                      acceptation et absences au rendez-vous de remise confirmées
@@ -93,7 +172,7 @@ public record PackageRequestSearchResponse(
                 sender, acceptedPaymentMethods, photos, isFavorite, urgent,
                 matchScore, matchedTripId, matchedTripDepartureDate, currency,
                 availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency,
-                uniqueViewerCount);
+                uniqueViewerCount, myNegotiation);
     }
 
     /** Copie enrichie des informations de match. Utilisé uniquement quand matchingMyTrips est actif. */
@@ -108,7 +187,7 @@ public record PackageRequestSearchResponse(
                 sender, acceptedPaymentMethods, photos, isFavorite, urgent,
                 info.matchScore(), info.tripId(), info.tripDepartureDate(), currency,
                 availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency,
-                uniqueViewerCount);
+                uniqueViewerCount, myNegotiation);
     }
 
     /** Copie portant l'audience, posée par {@code PackageRequestService} sur les seules demandes du lecteur. */
@@ -123,6 +202,6 @@ public record PackageRequestSearchResponse(
                 sender, acceptedPaymentMethods, photos, isFavorite, urgent,
                 matchScore, matchedTripId, matchedTripDepartureDate, currency,
                 availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency,
-                uniqueViewerCount);
+                uniqueViewerCount, myNegotiation);
     }
 }
