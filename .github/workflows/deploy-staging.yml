@@ -353,6 +353,15 @@ jobs:
             echo "🔐 Connexion à GHCR..."
             echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin
 
+            echo "🧹 Purge des anciennes images de l'API (garde les 2 plus récentes)..."
+            # Chaque déploiement laisse une image sha-xxx (~950 Mo) que `docker image prune -f`
+            # ne supprime pas (elle est étiquetée) : le disque de 40 Go s'est rempli le 13/10/2026
+            # et l'API ne démarrait plus (« No space left on device »). Une image encore utilisée
+            # par un conteneur est refusée par docker rmi, d'où le `|| true`.
+            docker images --format '{{.CreatedAt}}\t{{.Repository}}:{{.Tag}}' \
+              | grep 'ghcr.io/mondony/yadony-back:sha-' | sort -r | tail -n +3 | cut -f2 \
+              | xargs -r docker rmi || true
+
             echo "📥 Pull de l'image API..."
             docker compose --env-file .env.staging -f docker-compose.staging.yml pull api
 
