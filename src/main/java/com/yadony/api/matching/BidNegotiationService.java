@@ -239,6 +239,14 @@ public class BidNegotiationService {
                     "Le nombre maximum de propositions échangées est atteint");
         }
 
+        BigDecimal proposedGross = counterGross(ctx, request);
+        if (last != null && last.getProposedGrossEur() != null
+                && last.getProposedGrossEur().compareTo(proposedGross) == 0) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "counter-same-amount", "Counter Same Amount",
+                    "Ta contre-proposition est identique à la dernière proposition : accepte-la ou change le montant.");
+        }
+
         // Côté expéditeur seulement : le voyageur fixe lui-même ses contre-offres, son
         // minimum et son exigence de profil vérifié ne s'appliquent qu'aux propositions
         // qu'on lui adresse. Rejoués à chaque tour, pour qu'un réglage activé en cours de
@@ -246,7 +254,7 @@ public class BidNegotiationService {
         if (!ctx.viewerIsTraveler()) {
             UserEntity sender = userRepository.findById(ctx.userId()).orElse(null);
             bidService.assertTravelerAcceptsSender(sender, ctx.announcement().getTravelerId());
-            assertAtLeastTravelerMinimum(ctx.announcement(), request.proposedTotalEur(),
+            assertAtLeastTravelerMinimum(ctx.announcement(), proposedGross,
                     ctx.bid().getWeightKg(), ctx.bid().getCommissionRate());
         }
 
@@ -254,16 +262,53 @@ public class BidNegotiationService {
         BidEntity saved = bidRepository.save(ctx.bid());
 
         BidNegotiationMessageEntity message = postMessage(ctx.bid(), ctx.userId(),
-                BidNegotiationMessageKind.COUNTER, request.proposedTotalEur(), request.body());
+                BidNegotiationMessageKind.COUNTER, proposedGross, request.body());
 
-        auditService.log("BID", bidId, "BID_NEGOTIATION_COUNTERED", ctx.userId(),
-                Map.of("proposedGrossEur", request.proposedTotalEur().toPlainString(),
-                        "round", String.valueOf(ctx.bid().getNegotiationRound())));
+        Map<String, Object> audit = new HashMap<>();
+        audit.put("proposedGrossEur", proposedGross.toPlainString());
+        audit.put("round", String.valueOf(ctx.bid().getNegotiationRound()));
+        if (request.proposedNetEur() != null) {
+            audit.put("proposedNetEur", request.proposedNetEur().toPlainString());
+        }
+        auditService.log("BID", bidId, "BID_NEGOTIATION_COUNTERED", ctx.userId(), audit);
 
         publishPosted(ctx.bid(), ctx.announcement(), ctx.userId(),
-                BidNegotiationMessageKind.COUNTER, request.proposedTotalEur());
+                BidNegotiationMessageKind.COUNTER, proposedGross);
 
         return buildResponse(saved != null ? saved : ctx.bid(), ctx.announcement(), ctx.userId(), message);
+    }
+
+    /**
+     * Brut de la contre-offre (FLUTTER-NS). Le brut ({@code proposedTotalEur}) est pris tel
+     * quel ; le net ({@code proposedNetEur}), réservé au voyageur, est converti par
+     * {@link BidNegotiationPricing#grossForNet} au taux figé du fil, à l'unité mineure de sa
+     * devise. Un seul des deux montants.
+     */
+    private BigDecimal counterGross(Participant ctx, BidNegotiationCounterRequest request) {
+        BigDecimal gross = request.proposedTotalEur();
+        BigDecimal net = request.proposedNetEur();
+        if (gross != null && net != null) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "counter-amount-ambiguous", "Counter Amount Ambiguous",
+                    "Indique soit le montant payé par l'expéditeur, soit ton net, pas les deux.");
+        }
+        if (net == null) {
+            if (gross == null) {
+                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "counter-amount-required", "Counter Amount Required",
+                        "Indique le montant de ta contre-proposition.");
+            }
+            return gross;
+        }
+        if (!ctx.viewerIsTraveler()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "counter-net-traveler-only", "Counter Net Traveler Only",
+                    "Seul le voyageur propose un montant net.");
+        }
+        BigDecimal rate = ctx.bid().getCommissionRate() != null ? ctx.bid().getCommissionRate() : BigDecimal.ZERO;
+        int minorUnit = com.yadony.api.payments.currency.SupportedCurrency
+                .fromCodeOrDefault(ctx.bid().getCurrency()).minorUnit();
+        return BidNegotiationPricing.grossForNet(net, rate, minorUnit);
     }
 
     @Transactional
@@ -507,7 +552,11 @@ public class BidNegotiationService {
                     announcement.getDepartureDate(),
                     bid.getUpdatedAt(),
                     viewerIsTraveler ? "TRAVELER" : "SENDER",
-                    bid.isNegotiationArchivedBy(viewerIsTraveler)));
+                    bid.isNegotiationArchivedBy(viewerIsTraveler),
+                    viewerIsTraveler
+                            ? travelerNet(currentGross(bid, last),
+                                    bid.getCommissionRate() != null ? bid.getCommissionRate() : BigDecimal.ZERO)
+                            : null));
         }
         return rows;
     }
@@ -818,10 +867,13 @@ public class BidNegotiationService {
                                 e.getQuantity(), e.getAmountEur()))
                         .toList();
 
+        // Net de chaque proposition pour le voyageur seul (FLUTTER-NS), même calcul que
+        // netEur ci-dessus : l'expéditeur ne voit jamais le net.
         List<BidNegotiationMessageResponse> messages =
                 messageRepository.findByBidIdOrderByCreatedAtAsc(bid.getId()).stream()
                         .map(m -> new BidNegotiationMessageResponse(m.getId(), m.getKind().name(),
-                                m.getAuthorId(), m.getProposedGrossEur(), m.getBody(), m.getCreatedAt()))
+                                m.getAuthorId(), m.getProposedGrossEur(), m.getBody(), m.getCreatedAt(),
+                                viewerIsTraveler ? travelerNet(m.getProposedGrossEur(), rate) : null))
                         .toList();
 
         List<String> photoUrls = bidPhotoService.activePhotos(bid.getId()).stream()
@@ -858,7 +910,13 @@ public class BidNegotiationService {
                 messages,
                 bid.getPaymentMethod() != null ? bid.getPaymentMethod().name() : null,
                 viewerIsTraveler ? bid.getSenderId() : announcement.getTravelerId(),
-                commissionDueBy(bid, announcement));
+                commissionDueBy(bid, announcement),
+                viewerIsTraveler ? rate : null);
+    }
+
+    /** Net voyageur d'un brut proposé ({@link BidNegotiationPricing#split}), null sans montant. */
+    private static BigDecimal travelerNet(BigDecimal gross, BigDecimal rate) {
+        return gross == null || gross.signum() <= 0 ? null : BidNegotiationPricing.split(gross, rate).netEur();
     }
 
     /**

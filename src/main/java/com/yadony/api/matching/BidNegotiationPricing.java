@@ -34,4 +34,32 @@ public final class BidNegotiationPricing {
 
         return new Split(gross, net, commission);
     }
+
+    /**
+     * Brut à demander à l'expéditeur pour que le voyageur touche AU MOINS {@code netEur}
+     * (FLUTTER-NS, contre-offre saisie en net) : le plus petit montant, à l'unité mineure de
+     * la devise ({@code minorUnit} décimales : 2 pour l'euro, 0 pour le franc CFA), dont
+     * {@link #split} rend un net supérieur ou égal à {@code netEur}.
+     *
+     * <p>Calcul : {@code brut = arrondi_supérieur(net × (1 + taux), minorUnit)}, puis une unité
+     * mineure de moins tant que le net reste atteint (au plus un pas, l'arrondi au centime de
+     * {@link #split} pouvant déjà l'atteindre). En euros, le net retrouvé par {@link #split}
+     * est exactement {@code netEur} ; en franc CFA, il peut le dépasser de moins d'une unité.
+     */
+    public static BigDecimal grossForNet(BigDecimal netEur, BigDecimal rate, int minorUnit) {
+        if (netEur == null || netEur.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("Le net demandé doit être strictement positif");
+        }
+        if (rate == null || rate.compareTo(BigDecimal.ZERO) < 0) {
+            throw new IllegalArgumentException("Le taux de commission ne peut pas être négatif");
+        }
+        BigDecimal target = netEur.setScale(2, RoundingMode.HALF_UP);
+        BigDecimal step = BigDecimal.ONE.movePointLeft(minorUnit);
+        BigDecimal gross = target.multiply(BigDecimal.ONE.add(rate)).setScale(minorUnit, RoundingMode.CEILING);
+        while (gross.subtract(step).signum() > 0
+                && split(gross.subtract(step), rate).netEur().compareTo(target) >= 0) {
+            gross = gross.subtract(step);
+        }
+        return gross;
+    }
 }

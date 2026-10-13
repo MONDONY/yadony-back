@@ -127,6 +127,61 @@ class BidNegotiationControllerIntegrationTest {
     }
 
     @Test
+    @DisplayName("FLUTTER-NS — contre-offre en net du voyageur : champ transmis, net par message et taux servis")
+    void counter_inNet_isForwarded_andTravelerViewExposesNet() throws Exception {
+        UUID msgId = UUID.randomUUID();
+        BidNegotiationResponse travelerView = new BidNegotiationResponse(
+                BID_ID, ANNOUNCEMENT_ID, "NEGOTIATING", "TRAVELER", 2, 3, false, false, "EUR",
+                new BigDecimal("39.20"), new BigDecimal("35.00"), null, null,
+                new BigDecimal("5.0"), "Vêtements", "CLOTHING",
+                List.of(), List.of(), List.of(), "Aminata", "Paris", "Dakar",
+                LocalDate.now().plusDays(10), LocalDateTime.now().plusHours(72),
+                List.of(new com.yadony.api.matching.dto.BidNegotiationMessageResponse(msgId, "COUNTER",
+                        UUID.randomUUID(), new BigDecimal("39.20"), null, LocalDateTime.now(),
+                        new BigDecimal("35.00"))),
+                "CASH", COUNTERPARTY_ID, null, new BigDecimal("0.12"));
+        when(negotiationService.counter(eq(BID_ID), anyString(),
+                org.mockito.ArgumentMatchers.argThat(r -> r != null && r.proposedTotalEur() == null
+                        && r.proposedNetEur() != null && r.proposedNetEur().compareTo(new BigDecimal("35")) == 0)))
+                .thenReturn(travelerView);
+
+        mockMvc.perform(post("/bids/" + BID_ID + "/negotiation/counter")
+                        .with(authentication(authenticatedAs("uid-traveler", "ROLE_TRAVELER")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"proposedNetEur\": 35.00}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.commissionRate").value(0.12))
+                .andExpect(jsonPath("$.messages[0].proposedGrossEur").value(39.20))
+                .andExpect(jsonPath("$.messages[0].proposedNetEur").value(35.00));
+    }
+
+    @Test
+    @DisplayName("FLUTTER-NS — contre-offre sans aucun montant → 4xx de validation")
+    void counter_withoutAnyAmount_isRejected() throws Exception {
+        mockMvc.perform(post("/bids/" + BID_ID + "/negotiation/counter")
+                        .with(authentication(authenticatedAs("uid-traveler", "ROLE_TRAVELER")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"body\": \"ok\"}"))
+                .andExpect(status().is4xxClientError());
+    }
+
+    @Test
+    @DisplayName("FLUTTER-NS — contre-offre identique à la dernière → 422 problem+json counter-same-amount")
+    void counter_sameAmount_is422() throws Exception {
+        when(negotiationService.counter(eq(BID_ID), anyString(), any()))
+                .thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "counter-same-amount",
+                        "Counter Same Amount", "identique"));
+
+        mockMvc.perform(post("/bids/" + BID_ID + "/negotiation/counter")
+                        .with(authentication(authenticatedAs("uid-sender", "ROLE_SENDER")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new BidNegotiationCounterRequest(new BigDecimal("45.00"), null))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("counter-same-amount"));
+    }
+
+    @Test
     @DisplayName("POST accept → 200")
     void accept_returns200() throws Exception {
         when(negotiationService.accept(eq(BID_ID), anyString()))

@@ -55,5 +55,28 @@ public record BidNegotiationResponse(
         // UTC à laquelle BidTimeoutScheduler l'annulera si la commission n'est pas réglée.
         // Nulle dans tout autre état. Champ de fin de contrat : un client qui l'ignore ne
         // change pas.
-        LocalDateTime commissionDueBy
-) {}
+        LocalDateTime commissionDueBy,
+        // FLUTTER-NS : taux de commission figé du fil, servi au seul voyageur (null pour
+        // l'expéditeur) pour l'aperçu « je touche N → l'expéditeur paie G » de sa
+        // contre-offre en net. N'apprend rien de neuf : netEur et proposedGrossEur, déjà
+        // servis au voyageur, le donnent par division.
+        BigDecimal commissionRate
+) {
+    /** Ancienne arité, sans {@code commissionRate}. */
+    public BidNegotiationResponse(UUID bidId, UUID announcementId, String status, String role, int round,
+                                  int maxRounds, boolean myTurn, boolean canCounter, String currency,
+                                  BigDecimal proposedGrossEur, BigDecimal netEur, BigDecimal commissionEur,
+                                  BigDecimal suggestedGrossEur, BigDecimal weightKg, String description,
+                                  String contentCategory, List<BidGridItemLine> gridItems,
+                                  List<BidCustomItemResponse> customItems, List<String> photoUrls,
+                                  String counterpartyName, String departureCity, String arrivalCity,
+                                  LocalDate departureDate, LocalDateTime expiresAt,
+                                  List<BidNegotiationMessageResponse> messages, String paymentMethod,
+                                  UUID counterpartyId, LocalDateTime commissionDueBy) {
+        this(bidId, announcementId, status, role, round, maxRounds, myTurn, canCounter, currency,
+                proposedGrossEur, netEur, commissionEur, suggestedGrossEur, weightKg, description,
+                contentCategory, gridItems, customItems, photoUrls, counterpartyName, departureCity,
+                arrivalCity, departureDate, expiresAt, messages, paymentMethod, counterpartyId,
+                commissionDueBy, null);
+    }
+}
