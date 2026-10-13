@@ -38,6 +38,7 @@ public class ProfilePublicService {
     private final BlockVisibility blockVisibility;
     private final MessagesResolver messagesResolver;
     private final FirebaseContactService firebaseContact;
+    private final ReliabilityService reliabilityService;
 
     public ProfilePublicService(UserRepository userRepository,
                                 RatingService ratingService,
@@ -45,7 +46,8 @@ public class ProfilePublicService {
                                 StorageService storageService,
                                 BlockVisibility blockVisibility,
                                 MessagesResolver messagesResolver,
-                                FirebaseContactService firebaseContact) {
+                                FirebaseContactService firebaseContact,
+                                ReliabilityService reliabilityService) {
         this.userRepository = userRepository;
         this.ratingService = ratingService;
         this.userBusinessPrefsRepository = userBusinessPrefsRepository;
@@ -53,6 +55,7 @@ public class ProfilePublicService {
         this.blockVisibility = blockVisibility;
         this.messagesResolver = messagesResolver;
         this.firebaseContact = firebaseContact;
+        this.reliabilityService = reliabilityService;
     }
 
     /**
@@ -113,7 +116,8 @@ public class ProfilePublicService {
                 residenceCountry,
                 measuredResponseMinutes,
                 lastSeenDaysAgo,
-                user.senderReliabilityIncidentCount()
+                user.senderReliabilityIncidentCount(),
+                reliabilityService.reliabilityPercent(user)
         );
     }
 
