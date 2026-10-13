@@ -116,6 +116,20 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
     @Query("SELECT a FROM AnnouncementEntity a WHERE a.id = :id AND a.deletedAt IS NULL")
     Optional<AnnouncementEntity> findByIdForUpdate(@Param("id") UUID id);
 
+    /**
+     * Verrou de ligne du trajet, tenu jusqu'à la fin de la transaction, par un UPDATE neutre
+     * (exécutable aussi sous H2, contrairement au {@code SELECT … FOR NO KEY UPDATE} de
+     * {@link #findByIdForUpdate}, avec lequel il entre en conflit sous PostgreSQL). À appeler
+     * AVANT de charger le trajet : la lecture qui suit voit le dernier état commité. Sérialise
+     * le changement de devise (FLUTTER-KV) avec la création d'un bid, d'une proposition de
+     * négociation ou la liaison du trajet à une demande d'envoi.
+     *
+     * @return 1 si le trajet existe, 0 sinon
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE AnnouncementEntity a SET a.currency = a.currency WHERE a.id = :id")
+    int lockForUpdate(@Param("id") UUID id);
+
     long countByTravelerIdAndCreatedAtBetween(UUID travelerId, LocalDateTime from, LocalDateTime to);
 
     long countByTravelerIdAndCreatedAtBetweenAndStatusNot(

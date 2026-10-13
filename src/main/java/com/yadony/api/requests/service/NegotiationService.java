@@ -836,6 +836,11 @@ public class NegotiationService {
      */
     com.yadony.api.matching.AnnouncementEntity validateAndFetchExistingTrip(
             UUID travelerAnnouncementId, UUID callerId, PackageRequestEntity request) {
+        // Verrou pessimiste pris AVANT la lecture (FLUTTER-KV) : la devise du trajet, comparée
+        // plus bas à celle de la demande, ne peut pas changer pendant la liaison
+        // (AnnouncementService.updateAnnouncement prend le même verrou avant de vérifier
+        // qu'aucun fil n'est lié). La lecture qui suit voit le dernier état commité.
+        announcementRepo.lockForUpdate(travelerAnnouncementId);
         com.yadony.api.matching.AnnouncementEntity ann = announcementRepo.findById(travelerAnnouncementId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "announcement/not-found"));
         if (!ann.getTravelerId().equals(callerId)) {

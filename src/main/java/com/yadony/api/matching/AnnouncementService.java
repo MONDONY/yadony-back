@@ -112,6 +112,50 @@ public class AnnouncementService {
                 pricePerKg, SupportedCurrency.fromCodeOrDefault(currency), "price-out-of-bounds");
     }
 
+    /**
+     * Statuts de bid qui figent la devise d'un trajet (FLUTTER-KV) : une demande en attente
+     * (y compris celle dont l'expéditeur n'a pas encore payé), une négociation de prix en cours
+     * ou un colis engagé. Plus large que {@code countVisibleByAnnouncementId} (PENDING et
+     * PAYMENT_ESCROWED non masqués) : chacun de ces bids porte un montant dans la devise
+     * actuelle, qu'un changement rendrait faux.
+     */
+    static final Set<BidStatus> CURRENCY_LOCKING_BID_STATUSES = java.util.Collections.unmodifiableSet(EnumSet.of(
+            BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.AWAITING_PAYMENT, BidStatus.NEGOTIATING,
+            BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED));
+
+    /**
+     * La devise du trajet est figée dès qu'une demande, une offre ou une négociation vivante
+     * existe : bid d'un statut de {@link #CURRENCY_LOCKING_BID_STATUSES}, ou fil de négociation
+     * d'une demande d'envoi lié à ce trajet (statut actif).
+     */
+    private boolean isCurrencyLocked(java.util.UUID announcementId) {
+        return bidRepository.existsByAnnouncementIdAndStatusIn(announcementId, List.copyOf(CURRENCY_LOCKING_BID_STATUSES))
+                || negotiationThreadRepository.existsActiveByTravelerAnnouncementId(announcementId);
+    }
+
+    /**
+     * Devise du trajet après une modification (FLUTTER-KV). Champ absent ou vide : inchangée
+     * (compatibilité des clients qui ne l'envoient pas). Devise inconnue : 422
+     * {@code currency-unsupported}. Devise différente alors que le trajet a déjà une demande,
+     * une offre ou une négociation vivante : 409 {@code currency-locked}.
+     */
+    private String resolveCurrencyOnUpdate(AnnouncementEntity announcement, String requestedCurrency,
+                                           java.util.UUID travelerId) {
+        String current = announcement.getCurrency();
+        if (requestedCurrency == null || requestedCurrency.isBlank()) {
+            return current;
+        }
+        String requested = resolveAnnouncementCurrency(requestedCurrency, travelerId);
+        if (requested.equalsIgnoreCase(current)) {
+            return current;
+        }
+        if (isCurrencyLocked(announcement.getId())) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "currency-locked", "Currency Locked",
+                    "La devise ne peut plus changer : ce trajet a déjà reçu une demande ou une offre.");
+        }
+        return requested;
+    }
+
     private String resolveAnnouncementCurrency(String requestedCurrency, java.util.UUID travelerId) {
         if (requestedCurrency == null || requestedCurrency.isBlank()) {
             return activeCurrencyResolver.resolve(travelerId);
@@ -1019,6 +1063,9 @@ public class AnnouncementService {
                 announcement.getDepartureCountryCode(),
                 announcement.getArrivalCountryCode()
         );
+        if (viewerId != null && viewerId.equals(announcement.getTravelerId())) {
+            detail = detail.withCurrencyEditable(!isCurrencyLocked(id));
+        }
 
         // Même repère de lecture que le fil (Tâche 10) : équivalents « environ » dans
         // la devise active du lecteur quand elle diffère de celle de l'annonce. Le net
@@ -1084,6 +1131,13 @@ public class AnnouncementService {
     @Transactional
     @CacheEvict(value = "announcements-search", allEntries = true)
     public AnnouncementDetailResponse updateAnnouncement(UUID id, String firebaseUid, AnnouncementRequest request) {
+        // Verrou de ligne AVANT tout contrôle et toute lecture (FLUTTER-KV) : le changement de
+        // devise vérifie qu'aucun bid ni fil n'existe, et la création d'un bid (BidService.createBid,
+        // BidCheckoutService, BidNegotiationService.propose : findByIdForUpdate) ou la liaison d'un
+        // trajet à un fil (NegotiationService : lockForUpdate) prennent un verrou en conflit puis
+        // relisent la devise. Sans lui, un bid créé entre le contrôle et l'écriture garderait
+        // l'ancienne devise.
+        announcementRepository.lockForUpdate(id);
         AnnouncementEntity announcement = announcementRepository.findById(id)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
         
@@ -1108,6 +1162,9 @@ public class AnnouncementService {
         }
 
         final com.yadony.api.matching.TransportMode oldTransportMode = announcement.getTransportMode();
+        final String oldCurrency = announcement.getCurrency();
+        final String newCurrency = resolveCurrencyOnUpdate(announcement, request.currency(), user.getId());
+        final boolean currencyChanged = !newCurrency.equalsIgnoreCase(oldCurrency);
 
         PricingMode updatePricingMode = request.pricingMode() != null ? request.pricingMode() : announcement.getPricingMode();
         if (updatePricingMode == PricingMode.KG &&
@@ -1163,7 +1220,9 @@ public class AnnouncementService {
         announcement.setAvailableKg(request.availableKg());
         // Update is blocked if any bid is ACCEPTED, so no booked weight to preserve → keep total in sync.
         announcement.setTotalKg(request.availableKg());
-        assertPricePerKgWithinBounds(request.pricePerKg(), announcement.getCurrency());
+        // Bornes et pivot dans la devise FINALE du trajet : la nouvelle si elle change (FLUTTER-KV).
+        assertPricePerKgWithinBounds(request.pricePerKg(), newCurrency);
+        announcement.setCurrency(newCurrency);
         announcement.setPricePerKg(request.pricePerKg());
         announcement.setPricePerKgEur(
                 exchangeRateService.toEurPivot(request.pricePerKg(), announcement.getCurrency()));
@@ -1185,12 +1244,41 @@ public class AnnouncementService {
             announcement.setAcceptedPaymentMethods(updatedMethods);
             announcement.setCardDeclined(declinesCard(
                     request.acceptedPaymentMethods(), user, announcement.getCurrency()));
+        } else if (currencyChanged) {
+            // Moyens non renvoyés mais devise changée : les rails de la nouvelle devise
+            // s'imposent (pas de carte en zone CFA, pas de mobile money ailleurs).
+            announcement.setAcceptedPaymentMethods(
+                    com.yadony.api.payments.currency.AnnouncementPaymentRails.restrictToCurrency(
+                            announcement.getAcceptedPaymentMethods(), newCurrency));
+            if (!com.yadony.api.payments.currency.CurrencyPaymentRails.allowsCode(newCurrency, PaymentMethod.STRIPE)) {
+                announcement.setCardDeclined(false);
+            }
+        }
+        if (currencyChanged && announcement.getPricingMode() == PricingMode.MIXED) {
+            // Grille figée de l'annonce : ses nets étaient dans l'ancienne devise.
+            priceGridService.convertAnnouncementGridCurrency(id, user.getId(), oldCurrency, newCurrency);
         }
         if (request.capacityUnit() != null) {
             announcement.setCapacityUnit(request.capacityUnit());
         }
 
         AnnouncementEntity saved = announcementRepository.save(announcement);
+
+        if (currencyChanged) {
+            auditService.log(
+                    "ANNOUNCEMENT",
+                    saved.getId(),
+                    "ANNOUNCEMENT_CURRENCY_CHANGED",
+                    user.getId(),
+                    Map.of(
+                            "currency_old", oldCurrency,
+                            "currency_new", newCurrency,
+                            "pricePerKg", String.valueOf(saved.getPricePerKg()),
+                            "acceptedPaymentMethods", saved.getAcceptedPaymentMethods().stream()
+                                    .map(Enum::name).sorted().toList().toString()
+                    )
+            );
+        }
 
         auditService.log(
                 "USER",

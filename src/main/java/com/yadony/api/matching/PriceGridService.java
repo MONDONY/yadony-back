@@ -192,6 +192,38 @@ public class PriceGridService {
         );
     }
 
+    /**
+     * Reconvertit la grille figée d'une annonce quand le voyageur change la devise du trajet
+     * (FLUTTER-KV, seulement tant qu'aucune demande ne porte de montant). Même règle que
+     * {@link #snapshotToAnnouncement} : taux administrable, arrondi aux décimales de la cible,
+     * jamais à zéro. Un taux manquant lève un 422 qui annule toute la modification.
+     */
+    @Transactional
+    public void convertAnnouncementGridCurrency(UUID announcementId, UUID actorId,
+                                                String fromCurrency, String toCurrency) {
+        if (fromCurrency == null || toCurrency == null || fromCurrency.equalsIgnoreCase(toCurrency)) {
+            return;
+        }
+        List<AnnouncementPriceGridItemEntity> items = annGridRepo.findByAnnouncementIdOrderByPositionAsc(announcementId);
+        if (items.isEmpty()) {
+            return;
+        }
+        for (AnnouncementPriceGridItemEntity item : items) {
+            item.setUnitPriceNet(convertNet(item.getUnitPriceNet(), fromCurrency, toCurrency));
+        }
+        annGridRepo.saveAll(items);
+        auditService.log(
+            "ANNOUNCEMENT",
+            announcementId,
+            "ANNOUNCEMENT_PRICE_GRID_CURRENCY_CONVERTED",
+            actorId,
+            Map.<String, Object>of(
+                "itemCount", String.valueOf(items.size()),
+                "previousCurrency", fromCurrency,
+                "newCurrency", toCurrency)
+        );
+    }
+
     private BigDecimal convertNet(BigDecimal net, String from, String to) {
         if (from.equalsIgnoreCase(to)) {
             return net;
