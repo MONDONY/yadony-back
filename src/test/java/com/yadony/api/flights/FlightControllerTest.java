@@ -1,6 +1,7 @@
 package com.yadony.api.flights;
 
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.flights.dto.FlightAlertOffersResponse;
 import com.yadony.api.flights.dto.FlightAlertResponse;
 import com.yadony.api.flights.dto.FlightClickResponse;
 import com.yadony.api.flights.dto.FlightDealsResponse;
@@ -43,6 +44,7 @@ class FlightControllerTest {
     @MockBean FlightPlaceService placeService;
     @MockBean FlightDealService dealService;
     @MockBean FlightAlertService alertService;
+    @MockBean FlightAlertOffersService alertOffersService;
     @MockBean FlightClickService clickService;
     @MockBean FlightDefaultsService defaultsService;
     @MockBean FlightFeature feature;
@@ -67,7 +69,7 @@ class FlightControllerTest {
     private static FlightAlertResponse alertResponse() {
         return new FlightAlertResponse(UUID.randomUUID(), "PAR", "ABJ", "Paris", "Abidjan", java.time.LocalDate.of(2026, 12, 1),
                 java.time.LocalDate.of(2026, 12, 31), null, null, false,
-                new BigDecimal("400.00"), "EUR", true, null, null, LocalDateTime.now());
+                new BigDecimal("400.00"), "EUR", true, null, null, LocalDateTime.now(), null, null);
     }
 
     @Test
@@ -167,15 +169,23 @@ class FlightControllerTest {
         when(alertService.list(UID)).thenReturn(List.of(alert));
         when(alertService.create(eq(UID), any())).thenReturn(alert);
         when(alertService.update(eq(UID), eq(alert.id()), any())).thenReturn(alert);
+        FlightAlertResponse checked = checkedAlertResponse(alert.id());
+        when(alertOffersService.firstCheck(alert)).thenReturn(checked);
 
         mockMvc.perform(get("/me/flight-alerts").with(authentication(member())))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].destinationCode").value("ABJ"));
+                .andExpect(jsonPath("$[0].destinationCode").value("ABJ"))
+                .andExpect(jsonPath("$[0].matchCount").doesNotExist())
+                .andExpect(jsonPath("$[0].matchAirlineCodes").doesNotExist());
 
+        // La création rend l'alerte après sa première vérification silencieuse.
         mockMvc.perform(post("/me/flight-alerts").with(authentication(member()))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"originCode\":\"PAR\",\"destinationCode\":\"ABJ\",\"maxPrice\":400}"))
-                .andExpect(status().isCreated());
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.matchCount").value(4))
+                .andExpect(jsonPath("$.matchAirlineCodes[0]").value("AF"))
+                .andExpect(jsonPath("$.lastSeenPrice").value(327));
 
         mockMvc.perform(patch("/me/flight-alerts/" + alert.id()).with(authentication(member()))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -185,6 +195,99 @@ class FlightControllerTest {
         mockMvc.perform(delete("/me/flight-alerts/" + alert.id()).with(authentication(member())))
                 .andExpect(status().isNoContent());
         verify(alertService).delete(UID, alert.id());
+    }
+
+    private static FlightAlertResponse checkedAlertResponse(UUID id) {
+        return new FlightAlertResponse(id, "PAR", "ABJ", "Paris", "Abidjan", java.time.LocalDate.of(2026, 12, 1),
+                java.time.LocalDate.of(2026, 12, 31), null, null, false, new BigDecimal("400.00"), "EUR", true,
+                new BigDecimal("327"), LocalDateTime.now(), LocalDateTime.now(), 4, List.of("AF", "SS"));
+    }
+
+    @Test
+    void listAlerts_exposesMatchFields_onceChecked() throws Exception {
+        FlightAlertResponse checked = checkedAlertResponse(UUID.randomUUID());
+        FlightAlertResponse none = new FlightAlertResponse(UUID.randomUUID(), "PAR", "DKR", null, null, null, null,
+                null, null, true, new BigDecimal("200.00"), "EUR", false, new BigDecimal("327"),
+                LocalDateTime.now(), LocalDateTime.now(), 0, List.of());
+        when(alertService.list(UID)).thenReturn(List.of(checked, none));
+
+        mockMvc.perform(get("/me/flight-alerts").with(authentication(member())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].matchCount").value(4))
+                .andExpect(jsonPath("$[0].matchAirlineCodes.length()").value(2))
+                .andExpect(jsonPath("$[0].matchAirlineCodes[1]").value("SS"))
+                .andExpect(jsonPath("$[1].matchCount").value(0))
+                .andExpect(jsonPath("$[1].matchAirlineCodes").isEmpty());
+    }
+
+    @Test
+    void alertOffers_owner_returnsOffersUnderThreshold() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(alertOffersService.offers(UID, id)).thenReturn(new FlightAlertOffersResponse(id, "PAR", "ABJ",
+                "Paris", "Abidjan", true, "EUR", new BigDecimal("400.00"), List.of(
+                        new com.yadony.api.flights.dto.FlightOfferDto("PAR", "ABJ", "CDG", "ABJ",
+                                "2026-12-04T11:30:00+01:00", "2026-12-20T23:00:00Z", new BigDecimal("327"), "EUR",
+                                "AF", "Air France", "702", 0, 0, 750, "Air France", "/search/X?t=1", null,
+                                375, 375, null, null)),
+                "/search/PAR0412ABJ20121", java.time.Instant.parse("2026-10-15T10:00:00Z")));
+
+        mockMvc.perform(get("/me/flight-alerts/" + id + "/offers").with(authentication(member())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.alertId").value(id.toString()))
+                .andExpect(jsonPath("$.originCode").value("PAR"))
+                .andExpect(jsonPath("$.destinationLabel").value("Abidjan"))
+                .andExpect(jsonPath("$.roundTrip").value(true))
+                .andExpect(jsonPath("$.currency").value("EUR"))
+                .andExpect(jsonPath("$.maxPrice").value(400.00))
+                .andExpect(jsonPath("$.offers[0].price").value(327))
+                .andExpect(jsonPath("$.offers[0].airlineCode").value("AF"))
+                .andExpect(jsonPath("$.searchPath").value("/search/PAR0412ABJ20121"))
+                .andExpect(jsonPath("$.checkedAt").value("2026-10-15T10:00:00Z"));
+    }
+
+    @Test
+    void alertOffers_withoutSearchPath_omitsIt() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(alertOffersService.offers(UID, id)).thenReturn(new FlightAlertOffersResponse(id, "PAR", "ABJ",
+                null, null, false, "EUR", new BigDecimal("400.00"), List.of(), null,
+                java.time.Instant.parse("2026-10-15T10:00:00Z")));
+
+        mockMvc.perform(get("/me/flight-alerts/" + id + "/offers").with(authentication(member())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.offers").isEmpty())
+                .andExpect(jsonPath("$.searchPath").doesNotExist())
+                .andExpect(jsonPath("$.originLabel").doesNotExist());
+    }
+
+    @Test
+    void alertOffers_otherUsersAlert_is404() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(alertOffersService.offers(UID, id)).thenThrow(FlightErrors.alertNotFound());
+
+        mockMvc.perform(get("/me/flight-alerts/" + id + "/offers").with(authentication(member())))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.code").value("flight-alert-not-found"));
+    }
+
+    @Test
+    void alertOffers_providerDown_isProblemDetail() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(alertOffersService.offers(UID, id)).thenThrow(FlightErrors.providerError());
+
+        mockMvc.perform(get("/me/flight-alerts/" + id + "/offers").with(authentication(member())))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.code").value("flights-provider-error"));
+    }
+
+    @Test
+    void alertOffers_withoutToken_is401_andGuest_is403() throws Exception {
+        UUID id = UUID.randomUUID();
+        mockMvc.perform(get("/me/flight-alerts/" + id + "/offers"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/me/flight-alerts/" + id + "/offers").with(authentication(guest())))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(alertOffersService);
     }
 
     @Test

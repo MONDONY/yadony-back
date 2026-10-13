@@ -1,7 +1,6 @@
 package com.yadony.api.flights;
 
 import com.yadony.api.common.YadonyBusinessException;
-import com.yadony.api.common.YadonyNotFoundException;
 import com.yadony.api.flights.dto.FlightAlertRequest;
 import com.yadony.api.flights.dto.FlightAlertUpdateRequest;
 import org.junit.jupiter.api.BeforeEach;
@@ -151,7 +150,45 @@ class FlightAlertServiceTest {
         when(alerts.findByIdAndOwnerId(id, owner)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.update(UID, id, new FlightAlertUpdateRequest(true, null)))
-                .isInstanceOf(YadonyNotFoundException.class);
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    YadonyBusinessException b = (YadonyBusinessException) e;
+                    assertThat(b.getErrorCode()).isEqualTo("flight-alert-not-found");
+                    assertThat(b.getStatus().value()).isEqualTo(404);
+                });
+    }
+
+    @Test
+    void list_neverChecked_hasNoMatchFields() {
+        FlightPriceAlertEntity a = alert(owner, "400");
+        when(alerts.findAllByOwnerIdOrderByCreatedAtDesc(owner)).thenReturn(List.of(a));
+
+        var response = service.list(UID).get(0);
+
+        assertThat(response.matchCount()).isNull();
+        assertThat(response.matchAirlineCodes()).isNull();
+        assertThat(response.lastSeenPrice()).isNull();
+    }
+
+    @Test
+    void list_checked_exposesMatchCountAndAirlines() {
+        FlightPriceAlertEntity found = alert(owner, "400");
+        found.setLastSeenPrice(new BigDecimal("327"));
+        found.setLastMatchCount(5);
+        found.setLastMatchAirlines("AF,SS,TU");
+        FlightPriceAlertEntity none = alert(owner, "200");
+        none.setLastSeenPrice(new BigDecimal("327"));
+        none.setLastMatchCount(0);
+        none.setLastMatchAirlines("");
+        when(alerts.findAllByOwnerIdOrderByCreatedAtDesc(owner)).thenReturn(List.of(found, none));
+
+        var responses = service.list(UID);
+
+        assertThat(responses.get(0).matchCount()).isEqualTo(5);
+        assertThat(responses.get(0).matchAirlineCodes()).containsExactly("AF", "SS", "TU");
+        assertThat(responses.get(0).lastSeenPrice()).isEqualByComparingTo("327");
+        assertThat(responses.get(1).matchCount()).isZero();
+        assertThat(responses.get(1).matchAirlineCodes()).isEmpty();
     }
 
     @Test

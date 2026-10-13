@@ -78,6 +78,17 @@ public class FlightPriceAlertEntity extends BaseEntity {
     @Column(name = "last_notified_at")
     private LocalDateTime lastNotifiedAt;
 
+    /**
+     * Offres sous le seuil à la dernière vérification, {@code null} tant que l'alerte n'a jamais
+     * été vérifiée, {@code 0} quand plus rien n'est sous le seuil.
+     */
+    @Column(name = "last_match_count")
+    private Integer lastMatchCount;
+
+    /** Jusqu'à trois codes IATA de ces offres, par prix croissant, séparés par des virgules. */
+    @Column(name = "last_match_airlines", length = 32)
+    private String lastMatchAirlines;
+
     /** Période surveillée (clé de regroupement et filtre du scheduler). */
     FlightAlertWindow window() {
         return new FlightAlertWindow(departureFrom, departureTo, returnFrom, returnTo);
@@ -117,4 +128,8 @@ public class FlightPriceAlertEntity extends BaseEntity {
     public void setLastNotifiedPrice(BigDecimal lastNotifiedPrice) { this.lastNotifiedPrice = lastNotifiedPrice; }
     public LocalDateTime getLastNotifiedAt() { return lastNotifiedAt; }
     public void setLastNotifiedAt(LocalDateTime lastNotifiedAt) { this.lastNotifiedAt = lastNotifiedAt; }
+    public Integer getLastMatchCount() { return lastMatchCount; }
+    public void setLastMatchCount(Integer lastMatchCount) { this.lastMatchCount = lastMatchCount; }
+    public String getLastMatchAirlines() { return lastMatchAirlines; }
+    public void setLastMatchAirlines(String lastMatchAirlines) { this.lastMatchAirlines = lastMatchAirlines; }
 }
