@@ -15,6 +15,7 @@ import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.requests.RequestsConfig;
 import com.yadony.api.requests.dto.PackageRequestCompleteDetailsRequest;
 import com.yadony.api.requests.dto.PackageRequestCreateRequest;
+import com.yadony.api.requests.dto.PackageRequestSearchResponse;
 import com.yadony.api.requests.entity.*;
 import com.yadony.api.requests.event.NegotiationCancelledEvent;
 import com.yadony.api.requests.event.PackageRequestCreatedEvent;
@@ -77,6 +78,7 @@ class PackageRequestServiceTest {
     /** Masquage mutuel : par défaut le mock ne masque rien (assertVisible ne lève pas). */
     @Mock private com.yadony.api.common.BlockVisibility blockVisibility;
     @Mock private PackageRequestInsightService insightService;
+    @Mock private TravelerNegotiationLookup negotiationLookup;
     /** Real record (not mocked) — threshold-days=3 mirrors application-test.yml (yadony.urgency.threshold-days). */
     private final YadonyConfigProperties yadonyConfig =
             new YadonyConfigProperties(null, null, new YadonyConfigProperties.Urgency(3), null);
@@ -145,7 +147,7 @@ class PackageRequestServiceTest {
                 exchangeRateService, mapper, matchingService,
                 yadonyConfig, announcementRepository, commissionRateResolver,
                 com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(proEnabled),
-                blockVisibility, TestMessages.resolver(), insightService);
+                blockVisibility, TestMessages.resolver(), insightService, negotiationLookup);
     }
 
     // ========== Task 12: create() tests ==========
@@ -1703,6 +1705,27 @@ class PackageRequestServiceTest {
 
             verify(photoService, times(1)).activePhotosBatch(anyCollection());
             verify(photoService, never()).activePhotos(any());
+        }
+
+        @Test @DisplayName("FLUTTER-NZ : négociation de l'appelant jointe à sa demande, un seul lot par page")
+        void search_joinsCallerNegotiation_inOneBatch() {
+            UUID travelerId = UUID.randomUUID();
+            PackageRequestEntity e1 = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            PackageRequestEntity e2 = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            when(repository.findAll(any(org.springframework.data.jpa.domain.Specification.class),
+                                    any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(e1, e2)));
+            UUID threadId = UUID.randomUUID();
+            var mine = new PackageRequestSearchResponse.MyNegotiation(threadId, NegotiationThreadStatus.OPEN, true);
+            when(negotiationLookup.activeFor(eq(travelerId), anyCollection()))
+                .thenReturn(java.util.Map.of(e1.getId(), mine));
+
+            var result = service.search(org.springframework.data.jpa.domain.Specification.where(null),
+                org.springframework.data.domain.PageRequest.of(0, 20), travelerId);
+
+            assertThat(result.getContent().get(0).myNegotiation()).isEqualTo(mine);
+            assertThat(result.getContent().get(1).myNegotiation()).isNull();
+            verify(negotiationLookup, times(1)).activeFor(eq(travelerId), anyCollection());
         }
 
         // ─── urgent field (Task 3) ──────────────────────────────────────────────

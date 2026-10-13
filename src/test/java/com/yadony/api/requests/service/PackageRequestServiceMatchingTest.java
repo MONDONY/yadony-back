@@ -174,7 +174,8 @@ class PackageRequestServiceMatchingTest {
                 exchangeRateService, realMapper, matchingService,
                 yadonyConfig, announcementRepository, commissionRateResolver,
                 com.yadony.api.config.PlatformSettingsTestFactory.defaults(),
-                blockVisibility, null, org.mockito.Mockito.mock(PackageRequestInsightService.class));
+                blockVisibility, null, org.mockito.Mockito.mock(PackageRequestInsightService.class),
+                org.mockito.Mockito.mock(TravelerNegotiationLookup.class));
     }
 
     @Test

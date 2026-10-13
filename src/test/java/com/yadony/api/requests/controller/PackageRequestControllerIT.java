@@ -230,6 +230,39 @@ class PackageRequestControllerIT {
     }
 
     @Test
+    void get_search_exposesCallerNegotiation_andOmitsItWhenAbsent() throws Exception {
+        var base = new PackageRequestSearchResponse(
+            UUID.randomUUID(), "Paris", "Dakar",
+            new BigDecimal("48.85"), new BigDecimal("2.35"),
+            new BigDecimal("14.69"), new BigDecimal("-17.44"),
+            LocalDate.now().plusDays(5), 2,
+            new BigDecimal("5"), ParcelSize.SMALL,
+            com.yadony.api.matching.TransportMode.PLANE,
+            "vetements",
+            new BigDecimal("25"), true, null, "10e", "Plateau",
+            new PackageRequestSearchResponse.SenderPublicProfile(
+                UUID.randomUUID(), "Sender", 4.5, 12, true, null),
+            java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE)
+        , List.of(), false, false, null, null, null, "EUR",
+            java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.CASH),
+            new BigDecimal("28.00"), null, null, null);
+        UUID threadId = UUID.randomUUID();
+        var withNegotiation = base.withMyNegotiation(new PackageRequestSearchResponse.MyNegotiation(
+            threadId, com.yadony.api.requests.entity.NegotiationThreadStatus.OPEN, true));
+        var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
+        when(service.search(any(), any(), any()))
+            .thenReturn(new PageImpl<>(List.of(withNegotiation, base), pageable, 2));
+
+        mockMvc.perform(get("/package-requests")
+                .with(authentication(authAs("uid-traveler", "TRAVELER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.content[0].myNegotiation.threadId").value(threadId.toString()))
+            .andExpect(jsonPath("$.content[0].myNegotiation.status").value("OPEN"))
+            .andExpect(jsonPath("$.content[0].myNegotiation.myTurn").value(true))
+            .andExpect(jsonPath("$.content[1].myNegotiation").doesNotExist());
+    }
+
+    @Test
     void delete_cancel_returns204() throws Exception {
         UUID id = UUID.randomUUID();
         mockMvc.perform(delete("/package-requests/" + id)
