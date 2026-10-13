@@ -407,6 +407,21 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     @Query(value = "UPDATE users SET last_seen_at = :now WHERE id = :id", nativeQuery = true)
     int touchLastSeen(@Param("id") UUID id, @Param("now") java.time.LocalDateTime now);
 
+    /**
+     * Envois menés à bien par un utilisateur (FLUTTER-NV) : colis livrés ({@code COMPLETED})
+     * dont il était l'expéditeur ou le voyageur. Une seule requête agrégée ; un colis compte
+     * une fois, l'expéditeur ne pouvant pas transporter son propre colis.
+     */
+    @Query(value = """
+            SELECT COUNT(*)
+            FROM bids b
+            JOIN announcements a ON a.id = b.announcement_id
+            WHERE b.status = 'COMPLETED'
+              AND b.deleted_at IS NULL
+              AND (b.sender_id = :userId OR a.traveler_id = :userId)
+            """, nativeQuery = true)
+    long countCompletedShipments(@Param("userId") UUID userId);
+
     /** Requête de {@link #travelerDecisionDelay}, exposée pour son test sur PostgreSQL réel. */
     String TRAVELER_DECISION_DELAY_SQL = """
             SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY

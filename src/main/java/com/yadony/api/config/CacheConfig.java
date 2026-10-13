@@ -107,6 +107,16 @@ public class CacheConfig {
                         .recordStats()
                         .build());
 
+        // profile-reliability : taux de fiabilité du profil public (FLUTTER-NV, ReliabilityService).
+        // Une requête agrégée par profil ouvert ; TTL d'une minute, sans éviction : un taux en
+        // retard d'une minute après une livraison ou une annulation est invisible.
+        manager.registerCustomCache("profile-reliability",
+                Caffeine.newBuilder()
+                        .maximumSize(5000)
+                        .expireAfterWrite(1, TimeUnit.MINUTES)
+                        .recordStats()
+                        .build());
+
         // Standard caches that use the default spec
         manager.setCacheNames(java.util.List.of(
                 "announcements-search",

@@ -31,8 +31,31 @@ public record ProfilePublicResponse(
         Integer lastSeenDaysAgo,
         /** Fiabilité en tant qu'expéditeur (FLUTTER-E0/E6) : annulations après acceptation
          *  d'un voyageur et absences au rendez-vous de remise confirmées. */
-        int senderIncidentCount
+        int senderIncidentCount,
+        /**
+         * Taux de fiabilité, en % entier (FLUTTER-NV) : envois menés à bien sur envois engagés
+         * tranchés, en tant qu'expéditeur et voyageur. {@code null} (absent du JSON) sous
+         * {@link com.yadony.api.auth.ReliabilityScore#MIN_ENGAGED_SHIPMENTS} envois engagés.
+         * Définition complète : {@link com.yadony.api.auth.ReliabilityScore}. Remplace, à
+         * l'affichage, {@code senderIncidentCount}, gardé pour les anciens clients.
+         */
+        Integer reliabilityPercent
 ) {
+    /** Arité précédente, sans {@code reliabilityPercent}. */
+    public ProfilePublicResponse(String userId, String displayName, String avatarUrl,
+                                 boolean kycVerified, boolean isProAccount, boolean isKiloPro,
+                                 int completedBidsCount, BigDecimal averageRating, int ratingCount,
+                                 String memberSince, List<String> badges, String contactMode,
+                                 Integer responseDelayHours, String bio, List<String> languages,
+                                 boolean phoneVerified, boolean emailVerified, String residenceCountry,
+                                 Integer measuredResponseMinutes, Integer lastSeenDaysAgo,
+                                 int senderIncidentCount) {
+        this(userId, displayName, avatarUrl, kycVerified, isProAccount, isKiloPro,
+                completedBidsCount, averageRating, ratingCount, memberSince, badges, contactMode,
+                responseDelayHours, bio, languages, phoneVerified, emailVerified, residenceCountry,
+                measuredResponseMinutes, lastSeenDaysAgo, senderIncidentCount, null);
+    }
+
     public ProfilePublicResponse(String userId, String displayName, String avatarUrl,
                                  boolean kycVerified, boolean isProAccount, boolean isKiloPro,
                                  int completedBidsCount, BigDecimal averageRating, int ratingCount,
@@ -40,6 +63,6 @@ public record ProfilePublicResponse(
                                  Integer responseDelayHours, String bio, List<String> languages) {
         this(userId, displayName, avatarUrl, kycVerified, isProAccount, isKiloPro,
                 completedBidsCount, averageRating, ratingCount, memberSince, badges, contactMode,
-                responseDelayHours, bio, languages, false, false, null, null, null, 0);
+                responseDelayHours, bio, languages, false, false, null, null, null, 0, null);
     }
 }

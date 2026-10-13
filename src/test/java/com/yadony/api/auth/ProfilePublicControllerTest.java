@@ -113,6 +113,29 @@ class ProfilePublicControllerTest {
     }
 
     @Test
+    void getProfilePublic_exposesReliabilityPercent_andOmitsItUnderThreshold() throws Exception {
+        ProfilePublicResponse base = stubProfile();
+        ProfilePublicResponse withScore = new ProfilePublicResponse(
+                base.userId(), base.displayName(), base.avatarUrl(), base.kycVerified(), base.isProAccount(),
+                base.isKiloPro(), base.completedBidsCount(), base.averageRating(), base.ratingCount(),
+                base.memberSince(), base.badges(), base.contactMode(), base.responseDelayHours(), base.bio(),
+                base.languages(), false, false, null, null, null, 1, 92);
+        when(profilePublicService.getProfilePublic(eq(TARGET_USER_ID), any())).thenReturn(withScore);
+
+        mockMvc.perform(get("/users/{userId}/profile-public", TARGET_USER_ID)
+                        .with(authentication(asRole(SENDER_UID, "SENDER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reliabilityPercent").value(92))
+                .andExpect(jsonPath("$.senderIncidentCount").value(1));
+
+        when(profilePublicService.getProfilePublic(eq(TARGET_USER_ID), any())).thenReturn(base);
+        mockMvc.perform(get("/users/{userId}/profile-public", TARGET_USER_ID)
+                        .with(authentication(asRole(SENDER_UID, "SENDER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reliabilityPercent").doesNotExist());
+    }
+
+    @Test
     void getProfilePublic_neverExposesPhone() throws Exception {
         when(profilePublicService.getProfilePublic(eq(TARGET_USER_ID), any())).thenReturn(stubProfile());
 
