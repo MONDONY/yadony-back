@@ -1131,6 +1131,13 @@ public class AnnouncementService {
     @Transactional
     @CacheEvict(value = "announcements-search", allEntries = true)
     public AnnouncementDetailResponse updateAnnouncement(UUID id, String firebaseUid, AnnouncementRequest request) {
+        // Verrou de ligne AVANT tout contrôle et toute lecture (FLUTTER-KV) : le changement de
+        // devise vérifie qu'aucun bid ni fil n'existe, et la création d'un bid (BidService.createBid,
+        // BidCheckoutService, BidNegotiationService.propose : findByIdForUpdate) ou la liaison d'un
+        // trajet à un fil (NegotiationService : lockForUpdate) prennent un verrou en conflit puis
+        // relisent la devise. Sans lui, un bid créé entre le contrôle et l'écriture garderait
+        // l'ancienne devise.
+        announcementRepository.lockForUpdate(id);
         AnnouncementEntity announcement = announcementRepository.findById(id)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
         

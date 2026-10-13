@@ -2822,6 +2822,32 @@ class NegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("FLUTTER-KV : le trajet est verrouillé AVANT d'être lu, devise comparée sous verrou")
+        void submitTrip_locksAnnouncementBeforeReadingIt() {
+            UUID annId = UUID.randomUUID();
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setTravelerId(TRAVELER_ID);
+            ann.setDepartureCity("Paris");
+            ann.setArrivalCity("Dakar");
+            ann.setDepartureDate(request.getDesiredDate());
+            ann.setAvailableKg(new BigDecimal("5"));
+
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
+
+            service.submitTrip(TRAVELER_ID, THREAD_ID,
+                    new com.yadony.api.requests.dto.NegotiationSubmitTripRequest(annId, null));
+
+            org.mockito.InOrder order = org.mockito.Mockito.inOrder(announcementRepo);
+            order.verify(announcementRepo).lockForUpdate(annId);
+            order.verify(announcementRepo).findById(annId);
+        }
+
+        @Test
         @DisplayName("sans paymentMethod (charge utile du portail PRO) → liaison OK, SET calculé, moyen laissé au checkout")
         void submitTrip_withoutPaymentMethod_linksTrip() {
             UUID annId = UUID.randomUUID();

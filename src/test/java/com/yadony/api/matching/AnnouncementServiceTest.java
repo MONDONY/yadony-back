@@ -28,6 +28,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -2003,6 +2004,24 @@ class AnnouncementServiceTest {
                     eq(USER_ID), argThat(payload -> "EUR".equals(payload.get("currency_old"))
                             && "XOF".equals(payload.get("currency_new"))));
             verify(priceGridService, never()).convertAnnouncementGridCurrency(any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("TOCTOU : ligne du trajet verrouillée AVANT sa lecture et le contrôle des bids et des fils")
+        void currencyChange_locksAnnouncementBeforeCheckingBidsAndThreads() {
+            stubOwnerUpdate();
+            lockedBy(false, false);
+
+            announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID,
+                    withCurrency("XOF", BigDecimal.valueOf(5000), null));
+
+            InOrder order = inOrder(announcementRepository, bidRepository, negotiationThreadRepository);
+            order.verify(announcementRepository).lockForUpdate(ANNOUNCEMENT_ID);
+            order.verify(announcementRepository).findById(ANNOUNCEMENT_ID);
+            order.verify(bidRepository).existsByAnnouncementIdAndStatusIn(eq(ANNOUNCEMENT_ID),
+                    argThat(st -> st != null && st.contains(BidStatus.PENDING)));
+            order.verify(negotiationThreadRepository).existsActiveByTravelerAnnouncementId(ANNOUNCEMENT_ID);
+            order.verify(announcementRepository).save(any());
         }
 
         @Test
