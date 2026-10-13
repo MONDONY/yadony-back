@@ -112,6 +112,39 @@ class FlightControllerTest {
     }
 
     @Test
+    void search_similarStays_areExposed_andAbsentOtherwise() throws Exception {
+        var similar = new com.yadony.api.flights.dto.FlightOfferDto("PAR", "ABJ", "CDG", "ABJ",
+                "2026-11-15T11:30:00+01:00", "2026-12-10T09:00:00+00:00", new BigDecimal("400"), "EUR", "AF",
+                "Air France", "702", 0, 0, 900, "Gate", "/search/PAR1511ABJ10121?t=AF702", null, 380, 400, null, null);
+        when(searchService.search(UID, "PAR", "ABJ", "2026-11-29", "2026-12-27", false, null))
+                .thenReturn(new FlightSearchResponse("PAR", "ABJ", true, "EUR", List.of(),
+                        "/search/PAR2911ABJ27121", true, 7, List.of(similar), 21, 35));
+
+        mockMvc.perform(get("/flights/search").with(authentication(member()))
+                        .param("origin", "PAR").param("destination", "ABJ")
+                        .param("departureDate", "2026-11-29").param("returnDate", "2026-12-27"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.nearbyDaysWindow").value(7))
+                .andExpect(jsonPath("$.similarOffers[0].price").value(400))
+                .andExpect(jsonPath("$.similarOffers[0].departureAt").value("2026-11-15T11:30:00+01:00"))
+                .andExpect(jsonPath("$.similarOffers[0].returnAt").value("2026-12-10T09:00:00+00:00"))
+                .andExpect(jsonPath("$.similarOffers[0].offerPath").value("/search/PAR1511ABJ10121?t=AF702"))
+                .andExpect(jsonPath("$.similarStayMinDays").value(21))
+                .andExpect(jsonPath("$.similarStayMaxDays").value(35));
+
+        when(searchService.search(UID, "PAR", "ABJ", "2026-11-28", "2026-12-27", false, null))
+                .thenReturn(new FlightSearchResponse("PAR", "ABJ", true, "EUR", List.of(), null));
+
+        mockMvc.perform(get("/flights/search").with(authentication(member()))
+                        .param("origin", "PAR").param("destination", "ABJ")
+                        .param("departureDate", "2026-11-28").param("returnDate", "2026-12-27"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.similarOffers").doesNotExist())
+                .andExpect(jsonPath("$.similarStayMinDays").doesNotExist())
+                .andExpect(jsonPath("$.similarStayMaxDays").doesNotExist());
+    }
+
+    @Test
     void search_businessError_isProblemDetail() throws Exception {
         when(searchService.search(eq(UID), any(), any(), isNull(), isNull(), eq(false), isNull()))
                 .thenThrow(FlightErrors.unavailable());

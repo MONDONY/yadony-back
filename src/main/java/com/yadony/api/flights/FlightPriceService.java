@@ -117,13 +117,26 @@ public class FlightPriceService {
      * @return les offres brutes, non dédoublonnées ni triées
      */
     public List<TravelpayoutsPrice> pricesInMonths(List<FlightQuery> monthQueries) {
+        List<TravelpayoutsPrice> all = new ArrayList<>();
+        pricesByMonth(monthQueries).values().forEach(all::addAll);
+        return all;
+    }
+
+    /**
+     * Comme {@link #pricesInMonths}, mais offres rangées par recherche au mois, dans l'ordre demandé :
+     * le diagnostic de la recherche compte ce que chaque couple de mois a rendu. Une recherche qui
+     * échoue est absente de la table (à distinguer d'un mois vide).
+     */
+    public Map<FlightQuery, List<TravelpayoutsPrice>> pricesByMonth(List<FlightQuery> monthQueries) {
         List<CompletableFuture<List<TravelpayoutsPrice>>> calls = monthQueries.stream()
                 .map(q -> CompletableFuture.supplyAsync(() -> monthPrices(q), executor)).toList();
-        List<TravelpayoutsPrice> all = new ArrayList<>();
+        Map<FlightQuery, List<TravelpayoutsPrice>> byMonth = new LinkedHashMap<>();
         for (int i = 0; i < calls.size(); i++) {
-            all.addAll(await(calls.get(i), monthQueries.get(i), "recherche au mois des dates proches"));
+            List<TravelpayoutsPrice> rows = attempt(calls.get(i), monthQueries.get(i),
+                    "recherche au mois des dates proches");
+            if (rows != null) byMonth.put(monthQueries.get(i), rows);
         }
-        return all;
+        return byMonth;
     }
 
     private List<TravelpayoutsPrice> monthPrices(FlightQuery query) {
@@ -155,17 +168,24 @@ public class FlightPriceService {
 
     private static List<TravelpayoutsPrice> await(CompletableFuture<List<TravelpayoutsPrice>> directs,
                                                   FlightQuery query, String what) {
+        List<TravelpayoutsPrice> rows = attempt(directs, query, what);
+        return rows == null ? List.of() : rows;
+    }
+
+    /** Résultat de l'appel, ou {@code null} s'il a échoué (échec journalisé). */
+    private static List<TravelpayoutsPrice> attempt(CompletableFuture<List<TravelpayoutsPrice>> directs,
+                                                    FlightQuery query, String what) {
         try {
             return directs.get(DIRECT_WAIT_SECONDS, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return List.of();
+            return null;
         } catch (ExecutionException | TimeoutException | RuntimeException e) {
             directs.cancel(true);
             Throwable cause = e instanceof ExecutionException && e.getCause() != null ? e.getCause() : e;
             log.warn("Vols {} : {} indisponible, résultats sans lui ({})",
                     query.key(), what, cause.getClass().getSimpleName());
-            return List.of();
+            return null;
         }
     }
 

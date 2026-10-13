@@ -57,6 +57,12 @@ firebase:
   web-api-key: ${FIREBASE_API_KEY:}
 
 yadony:
+  # Diagnostic de la recherche de vols : une ligne WARN [FlightSearchDiag] par recherche aller-retour
+  # à jours précis qui rend moins de 5 offres (Sentry Logs ne garde que warn/error).
+  flights:
+    search:
+      diagnostic:
+        enabled: ${FLIGHTS_SEARCH_DIAGNOSTIC_ENABLED:true}
   email:
     resend-api-key: ${RESEND_API_KEY:}
     from-address: ${YADONY_EMAIL_FROM_ADDRESS:noreply@yadony.com}

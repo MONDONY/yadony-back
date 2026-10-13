@@ -47,6 +47,12 @@ spring:
 # Ces endpoints backend (StripeOnboardingRedirectController) redirigent en 302
 # vers le deep link yadony:// pour revenir dans l'app.
 yadony:
+  # Diagnostic de la recherche de vols : une ligne WARN [FlightSearchDiag] par recherche aller-retour
+  # à jours précis qui rend moins de 5 offres (Sentry Logs ne garde que warn/error).
+  flights:
+    search:
+      diagnostic:
+        enabled: ${FLIGHTS_SEARCH_DIAGNOSTIC_ENABLED:true}
   # Mode recette (FLUTTER-FA/FB) : les comptes désignés testeurs par un administrateur
   # (PUT /admin/users/{id}/recette-tester) valident une livraison avant le départ du trajet
   # et peuvent être leur propre destinataire. Chaque contournement est tracé dans audit_log.

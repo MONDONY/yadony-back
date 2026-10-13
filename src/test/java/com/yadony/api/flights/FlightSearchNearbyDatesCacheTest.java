@@ -124,7 +124,25 @@ class FlightSearchNearbyDatesCacheTest {
 
         assertThat(response.nearbyDates()).isNull();
         assertThat(response.offers()).extracting(o -> o.price().toPlainString()).containsExactly("900");
-        assertThat(calls).allMatch(c -> c.startsWith("2026-11-29/2026-12-27/"));
+        // Pas de repli « dates proches » : seules les recherches au mois des séjours proches lisent d'autres dates.
+        assertThat(calls).filteredOn(c -> !c.contains("/limit=" + FlightPriceService.MONTH_LIMIT + "/"))
+                .isNotEmpty().allMatch(c -> c.startsWith("2026-11-29/2026-12-27/"));
+        // Les dix allers-retours bon marché de novembre (16 à 40 jours) : séjours proches de 28 jours.
+        assertThat(response.similarOffers()).isNotEmpty().hasSizeLessThanOrEqualTo(10);
+        assertThat(response.similarStayMinDays()).isEqualTo(21);
+        assertThat(response.similarStayMaxDays()).isEqualTo(35);
+    }
+
+    @Test
+    void holidayRoundTrip_monthPairsAreReadOnce_andAtMostSixTimes() {
+        cheapEarlyNovemberTrips(120);
+        cache.add(trip("2026-11-23", "2026-12-21", 690, 1, "week2"));
+
+        service.search("uid", "PAR", "ABJ", "2026-11-29", "2026-12-27", false, "EUR");
+
+        List<String> monthCalls = calls.stream()
+                .filter(c -> c.contains("/limit=" + FlightPriceService.MONTH_LIMIT + "/")).toList();
+        assertThat(monthCalls).doesNotHaveDuplicates().hasSizeLessThanOrEqualTo(FlightSearchService.MAX_MONTH_QUERIES);
     }
 
     @Test
