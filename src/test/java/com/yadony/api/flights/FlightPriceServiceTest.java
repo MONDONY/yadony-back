@@ -149,6 +149,56 @@ class FlightPriceServiceTest {
                 anyInt(), anyInt());
     }
 
+    private static FlightQuery months(String out, String back) {
+        return new FlightQuery("PAR", "ABJ", FlightDate.parse(out), FlightDate.parse(back), false, "EUR");
+    }
+
+    @Test
+    void pricesInMonths_readsOneLargePagePerMonth_withoutDirectCall_andCachesApartFromPrices() {
+        FlightQuery novDec = months("2026-11", "2026-12");
+        FlightQuery decDec = months("2026-12", "2026-12");
+        when(client.pricesForDates(eq("PAR"), eq("ABJ"), eq(novDec.departure()), eq(novDec.returnDate()), eq(false),
+                eq("EUR"), eq(FlightPriceService.MONTH_LIMIT), eq(1)))
+                .thenReturn(new ArrayList<>(java.util.Arrays.asList(offer("a", "780", 1), null)));
+        when(client.pricesForDates(eq("PAR"), eq("ABJ"), eq(decDec.departure()), eq(decDec.returnDate()), eq(false),
+                eq("EUR"), eq(FlightPriceService.MONTH_LIMIT), eq(1)))
+                .thenReturn(List.of(offer("b", "760", 1)));
+        stubPage(false, 1, List.of(offer("p", "300", 1)));
+        stubPage(true, 1, List.of());
+        FlightPriceService service = service();
+
+        assertThat(service.pricesInMonths(List.of(novDec, decDec))).extracting(TravelpayoutsPrice::flightNumber)
+                .containsExactly("a", "b");
+        assertThat(service.pricesInMonths(List.of(novDec, decDec))).hasSize(2);
+        assertThat(service.prices(novDec)).extracting(TravelpayoutsPrice::flightNumber).containsExactly("p");
+
+        verify(client, times(2)).pricesForDates(anyString(), anyString(), any(), any(), anyBoolean(), anyString(),
+                eq(FlightPriceService.MONTH_LIMIT), anyInt());
+        verify(client, never()).pricesForDates(anyString(), anyString(), any(), any(), eq(true), anyString(),
+                eq(FlightPriceService.MONTH_LIMIT), anyInt());
+    }
+
+    @Test
+    void pricesInMonths_failedMonth_isSkipped_andNotCached() {
+        FlightQuery novDec = months("2026-11", "2026-12");
+        FlightQuery decDec = months("2026-12", "2026-12");
+        when(client.pricesForDates(anyString(), anyString(), eq(novDec.departure()), any(), anyBoolean(), anyString(),
+                anyInt(), anyInt()))
+                .thenThrow(new FlightProviderException("down"))
+                .thenReturn(List.of(offer("a", "780", 1)));
+        when(client.pricesForDates(anyString(), anyString(), eq(decDec.departure()), any(), anyBoolean(), anyString(),
+                anyInt(), anyInt()))
+                .thenReturn(List.of(offer("b", "760", 1)));
+        FlightPriceService parallel = new FlightPriceService(client, Duration.ofMinutes(30),
+                Executors.newVirtualThreadPerTaskExecutor());
+
+        assertThat(parallel.pricesInMonths(List.of(novDec, decDec))).extracting(TravelpayoutsPrice::flightNumber)
+                .containsExactly("b");
+        assertThat(parallel.pricesInMonths(List.of(novDec, decDec))).extracting(TravelpayoutsPrice::flightNumber)
+                .containsExactly("a", "b");
+        assertThat(service().pricesInMonths(List.of())).isEmpty();
+    }
+
     @Test
     void merge_truncation_neverEvictsDirects() {
         List<TravelpayoutsPrice> rows = new ArrayList<>(connections("a", 100, 200));
