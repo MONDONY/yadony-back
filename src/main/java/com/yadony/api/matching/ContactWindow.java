@@ -1,5 +1,6 @@
 package com.yadony.api.matching;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.EnumSet;
 import java.util.Set;
@@ -10,7 +11,8 @@ import java.util.Set;
  * <p>Source unique de la règle : ouverte de l'acceptation jusqu'à l'arrivée, puis après la
  * livraison confirmée tant que {@code deliveredAt + graceDays} n'est pas atteint, pour un
  * éventuel litige (FLUTTER-DK), et pendant le retour d'un colis annulé après sa remise
- * (FLUTTER-FM). Un colis livré sans date de livraison connue est hors fenêtre.
+ * (FLUTTER-FM), et {@link #AFTER_CANCELLATION} après l'annulation d'une commande en cours
+ * (FLUTTER-P1). Un colis livré sans date de livraison connue est hors fenêtre.
  * Lue par {@code calls.CallEligibilityService} et par {@link BidService} ({@code contactWindowOpen}).
  */
 public final class ContactWindow {
@@ -18,6 +20,13 @@ public final class ContactWindow {
     /** Statuts où le contact est ouvert sans condition de date. */
     public static final Set<BidStatus> OPEN_STATUSES = EnumSet.of(
             BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED);
+
+    /**
+     * Durée pendant laquelle expéditeur et voyageur peuvent encore s'appeler et voir le numéro
+     * de l'autre après l'annulation d'une commande en cours (FLUTTER-P1) : régler la suite
+     * (remboursement, malentendu, nouveau rendez-vous) sans repasser par le support.
+     */
+    public static final Duration AFTER_CANCELLATION = Duration.ofHours(48);
 
     private ContactWindow() {}
 
@@ -39,7 +48,25 @@ public final class ContactWindow {
      */
     public static boolean isOpen(BidEntity bid, int graceDays, LocalDateTime nowUtc) {
         if (bid == null) return false;
-        return isOpen(bid.getStatus(), bid.getDeliveredAt(), graceDays, nowUtc) || isReturnInProgress(bid, nowUtc);
+        return isOpen(bid.getStatus(), bid.getDeliveredAt(), graceDays, nowUtc)
+                || isReturnInProgress(bid, nowUtc)
+                || isRecentlyCancelled(bid, nowUtc);
+    }
+
+    /**
+     * Commande annulée il y a moins de {@link #AFTER_CANCELLATION} (FLUTTER-P1), alors qu'elle
+     * était en cours ({@link #OPEN_STATUSES} : le contact était déjà ouvert). Une demande annulée
+     * avant son acceptation n'ouvre rien : les parties n'avaient jamais eu le contact. Borne
+     * exclusive : à {@code cancelledAt + 48 h} pile, le contact est fermé. Les annulations
+     * antérieures à V316 (sans horodatage) restent fermées.
+     */
+    public static boolean isRecentlyCancelled(BidEntity bid, LocalDateTime nowUtc) {
+        return bid != null
+                && bid.getStatus() == BidStatus.CANCELLED
+                && bid.getCancelledAt() != null
+                && bid.getCancelledFromStatus() != null
+                && OPEN_STATUSES.contains(bid.getCancelledFromStatus())
+                && nowUtc.isBefore(bid.getCancelledAt().plus(AFTER_CANCELLATION));
     }
 
     /**
@@ -59,10 +86,12 @@ public final class ContactWindow {
 
     /**
      * Numéro de la contrepartie communicable : statuts {@link BidStatus#PHONE_VISIBLE_STATUSES},
-     * ou retour du colis en cours.
+     * retour du colis en cours, ou annulation d'une commande en cours depuis moins de 48 h.
      */
     public static boolean phoneVisible(BidEntity bid, LocalDateTime now) {
         return bid != null
-                && (BidStatus.PHONE_VISIBLE_STATUSES.contains(bid.getStatus()) || isReturnInProgress(bid, now));
+                && (BidStatus.PHONE_VISIBLE_STATUSES.contains(bid.getStatus())
+                    || isReturnInProgress(bid, now)
+                    || isRecentlyCancelled(bid, now));
     }
 }

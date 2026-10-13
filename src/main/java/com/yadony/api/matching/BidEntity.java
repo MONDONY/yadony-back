@@ -219,6 +219,20 @@ public class BidEntity extends BaseEntity {
     @Column(name = "pending_since")
     private LocalDateTime pendingSince;
 
+    /**
+     * Passage à {@code CANCELLED} (UTC, V316), posé par {@link #setStatus}. Avec
+     * {@link #cancelledFromStatus}, garde le contact ouvert 48 h après l'annulation d'une
+     * commande en cours ({@link ContactWindow#isRecentlyCancelled}, FLUTTER-P1). Nul pour les
+     * annulations antérieures à V316.
+     */
+    @Column(name = "cancelled_at")
+    private LocalDateTime cancelledAt;
+
+    /** Statut quitté au passage à {@code CANCELLED} (V316). Nul pour les annulations antérieures. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "cancelled_from_status", length = 30)
+    private BidStatus cancelledFromStatus;
+
     /** Confirmation de livraison (V285). Borne la fenêtre d'appel audio : J+3. */
     @Column(name = "delivered_at")
     private LocalDateTime deliveredAt;
@@ -338,7 +352,24 @@ public class BidEntity extends BaseEntity {
     public void setDisclaimerSignedIp(String disclaimerSignedIp) { this.disclaimerSignedIp = disclaimerSignedIp; }
 
     public BidStatus getStatus() { return status; }
-    public void setStatus(BidStatus status) { this.status = status; }
+    /**
+     * Change le statut. Le premier passage à {@code CANCELLED} horodate l'annulation et retient
+     * le statut quitté (V316) : tous les chemins d'annulation passent par ici, aucun par une
+     * mise à jour JPQL en masse.
+     */
+    public void setStatus(BidStatus status) {
+        if (status == BidStatus.CANCELLED && this.status != BidStatus.CANCELLED) {
+            this.cancelledAt = LocalDateTime.now(java.time.ZoneOffset.UTC);
+            this.cancelledFromStatus = this.status;
+        }
+        this.status = status;
+    }
+
+    public LocalDateTime getCancelledAt() { return cancelledAt; }
+    public void setCancelledAt(LocalDateTime cancelledAt) { this.cancelledAt = cancelledAt; }
+
+    public BidStatus getCancelledFromStatus() { return cancelledFromStatus; }
+    public void setCancelledFromStatus(BidStatus cancelledFromStatus) { this.cancelledFromStatus = cancelledFromStatus; }
 
     public String getCurrency() { return currency; }
     public void setCurrency(String currency) { this.currency = currency; }

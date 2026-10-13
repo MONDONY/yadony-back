@@ -77,6 +77,7 @@ class CallEligibilityServiceTest {
     @EnumSource(value = BidStatus.class, names = {"NEGOTIATING", "PENDING", "PAYMENT_ESCROWED", "CANCELLED", "REJECTED", "EXPIRED", "NO_SHOW", "PARCEL_REFUSED", "AWAITING_PAYMENT", "NEGOTIATION_CLOSED"})
     void refuseHorsFenetre(BidStatus status) {
         bid.setStatus(status);
+        cancelledLongAgo();
         assertThat(service.check(sender, conv.getId()).reason()).isEqualTo(OUT_OF_WINDOW);
     }
 
@@ -220,6 +221,7 @@ class CallEligibilityServiceTest {
     @Test
     void colisRestitue_appelRefuse() {
         cancelledAwaitingReturn();
+        cancelledLongAgo();
         bid.setReturnedAt(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC).minusHours(1));
         assertThat(service.check(sender, conv.getId()).reason()).isEqualTo(OUT_OF_WINDOW);
     }
@@ -227,6 +229,7 @@ class CallEligibilityServiceTest {
     @Test
     void delaiDeRetourEcoule_appelRefuse() {
         bid.setStatus(BidStatus.CANCELLED);
+        cancelledLongAgo();
         bid.setReturnDeadline(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC).minusMinutes(1));
         assertThat(service.check(sender, conv.getId()).reason()).isEqualTo(OUT_OF_WINDOW);
     }
@@ -238,5 +241,65 @@ class CallEligibilityServiceTest {
         ReflectionTestUtils.setField(recipientConv, "id", UUID.randomUUID());
         lenient().when(conversations.findById(recipientConv.getId())).thenReturn(Optional.of(recipientConv));
         assertThat(service.check(sender, recipientConv.getId()).reason()).isEqualTo(OUT_OF_WINDOW);
+    }
+
+    /** Annulation d'une commande en cours (le setUp part d'ACCEPTED) vieille de plus de 48 h. */
+    private void cancelledLongAgo() {
+        if (bid.getStatus() == BidStatus.CANCELLED) {
+            bid.setCancelledAt(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC).minusHours(48));
+        }
+    }
+
+    // ── 48 h après l'annulation d'une commande en cours (FLUTTER-P1) ─────────
+
+    @Test
+    void commandeAnnuleeDepuisMoinsDe48h_appelAutorise() {
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setCancelledAt(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC).minusHours(47).minusMinutes(59));
+        var e = service.check(sender, conv.getId());
+        assertThat(e.allowed()).isTrue();
+        assertThat(e.calleeId()).isEqualTo(traveler);
+    }
+
+    @Test
+    void commandeAnnuleeIlYA48hPile_appelRefuse() {
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setCancelledAt(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC).minusHours(48));
+        assertThat(service.check(sender, conv.getId()).reason()).isEqualTo(OUT_OF_WINDOW);
+    }
+
+    @Test
+    void demandeAnnuleeAvantAcceptation_appelRefuse() {
+        bid = new BidEntity();
+        ReflectionTestUtils.setField(bid, "id", bidId);
+        bid.setStatus(BidStatus.PENDING);
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setCancelledAt(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC).minusHours(1));
+        lenient().when(bids.findById(bidId)).thenReturn(Optional.of(bid));
+        assertThat(service.check(sender, conv.getId()).reason()).isEqualTo(OUT_OF_WINDOW);
+    }
+
+    @Test
+    void commandeAnnuleeRecemment_neRouvrePasLaConversationDestinataire() {
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setCancelledAt(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC).minusHours(1));
+        ConversationEntity recipientConv = ConversationEntity.forRecipient(bidId, sender, traveler, "fs-r");
+        ReflectionTestUtils.setField(recipientConv, "id", UUID.randomUUID());
+        lenient().when(conversations.findById(recipientConv.getId())).thenReturn(Optional.of(recipientConv));
+        assertThat(service.check(sender, recipientConv.getId()).reason()).isEqualTo(OUT_OF_WINDOW);
+    }
+
+    @Test
+    void commandeAnnuleeIlYA48hEtUneMinute_appelRefuse() {
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setCancelledAt(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC).minusHours(48).minusMinutes(1));
+        assertThat(service.check(sender, conv.getId()).reason()).isEqualTo(OUT_OF_WINDOW);
+    }
+
+    @Test
+    void commandeAnnuleeRecemment_unTiersNePeutPasAppeler() {
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setCancelledAt(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC).minusHours(1));
+        assertThat(service.check(UUID.randomUUID(), conv.getId()).reason()).isEqualTo(NOT_PARTICIPANT);
     }
 }
