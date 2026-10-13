@@ -223,13 +223,13 @@ class FlightControllerTest {
     @Test
     void alertOffers_owner_returnsOffersUnderThreshold() throws Exception {
         UUID id = UUID.randomUUID();
-        when(alertOffersService.offers(UID, id)).thenReturn(new FlightAlertOffersResponse(id, "PAR", "ABJ",
+        when(alertOffersService.offers(UID, id, FlightAlertOffersScope.BELOW)).thenReturn(new FlightAlertOffersResponse(id, "PAR", "ABJ",
                 "Paris", "Abidjan", true, "EUR", new BigDecimal("400.00"), List.of(
                         new com.yadony.api.flights.dto.FlightOfferDto("PAR", "ABJ", "CDG", "ABJ",
                                 "2026-12-04T11:30:00+01:00", "2026-12-20T23:00:00Z", new BigDecimal("327"), "EUR",
                                 "AF", "Air France", "702", 0, 0, 750, "Air France", "/search/X?t=1", null,
                                 375, 375, null, null)),
-                "/search/PAR0412ABJ20121", java.time.Instant.parse("2026-10-15T10:00:00Z")));
+                "/search/PAR0412ABJ20121", java.time.Instant.parse("2026-10-15T10:00:00Z"), 1));
 
         mockMvc.perform(get("/me/flight-alerts/" + id + "/offers").with(authentication(member())))
                 .andExpect(status().isOk())
@@ -242,15 +242,60 @@ class FlightControllerTest {
                 .andExpect(jsonPath("$.offers[0].price").value(327))
                 .andExpect(jsonPath("$.offers[0].airlineCode").value("AF"))
                 .andExpect(jsonPath("$.searchPath").value("/search/PAR0412ABJ20121"))
-                .andExpect(jsonPath("$.checkedAt").value("2026-10-15T10:00:00Z"));
+                .andExpect(jsonPath("$.checkedAt").value("2026-10-15T10:00:00Z"))
+                .andExpect(jsonPath("$.belowCount").value(1));
+    }
+
+    @Test
+    void alertOffers_scopeAll_passesAllToService() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(alertOffersService.offers(UID, id, FlightAlertOffersScope.ALL)).thenReturn(new FlightAlertOffersResponse(
+                id, "PAR", "ABJ", null, null, false, "EUR", new BigDecimal("200.00"), List.of(
+                        new com.yadony.api.flights.dto.FlightOfferDto("PAR", "ABJ", "CDG", "ABJ",
+                                "2026-12-04T11:30:00+01:00", null, new BigDecimal("327"), "EUR",
+                                "AF", "Air France", "702", 0, 0, 750, "Air France", "/search/X?t=1", null,
+                                375, 375, null, null)),
+                null, java.time.Instant.parse("2026-10-15T10:00:00Z"), 0));
+
+        mockMvc.perform(get("/me/flight-alerts/" + id + "/offers").param("scope", "all")
+                        .with(authentication(member())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.offers[0].price").value(327))
+                .andExpect(jsonPath("$.belowCount").value(0));
+        verify(alertOffersService).offers(UID, id, FlightAlertOffersScope.ALL);
+    }
+
+    @Test
+    void alertOffers_scopeBelowExplicit_passesBelowToService() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(alertOffersService.offers(UID, id, FlightAlertOffersScope.BELOW)).thenReturn(new FlightAlertOffersResponse(
+                id, "PAR", "ABJ", null, null, false, "EUR", new BigDecimal("400.00"), List.of(), null,
+                java.time.Instant.parse("2026-10-15T10:00:00Z"), 0));
+
+        mockMvc.perform(get("/me/flight-alerts/" + id + "/offers").param("scope", "below")
+                        .with(authentication(member())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.belowCount").value(0));
+    }
+
+    @Test
+    void alertOffers_unknownScope_is400ProblemDetail() throws Exception {
+        UUID id = UUID.randomUUID();
+
+        mockMvc.perform(get("/me/flight-alerts/" + id + "/offers").param("scope", "cheap")
+                        .with(authentication(member())))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.code").value("flights-invalid-scope"));
+        verifyNoInteractions(alertOffersService);
     }
 
     @Test
     void alertOffers_withoutSearchPath_omitsIt() throws Exception {
         UUID id = UUID.randomUUID();
-        when(alertOffersService.offers(UID, id)).thenReturn(new FlightAlertOffersResponse(id, "PAR", "ABJ",
+        when(alertOffersService.offers(UID, id, FlightAlertOffersScope.BELOW)).thenReturn(new FlightAlertOffersResponse(id, "PAR", "ABJ",
                 null, null, false, "EUR", new BigDecimal("400.00"), List.of(), null,
-                java.time.Instant.parse("2026-10-15T10:00:00Z")));
+                java.time.Instant.parse("2026-10-15T10:00:00Z"), 0));
 
         mockMvc.perform(get("/me/flight-alerts/" + id + "/offers").with(authentication(member())))
                 .andExpect(status().isOk())
@@ -262,7 +307,7 @@ class FlightControllerTest {
     @Test
     void alertOffers_otherUsersAlert_is404() throws Exception {
         UUID id = UUID.randomUUID();
-        when(alertOffersService.offers(UID, id)).thenThrow(FlightErrors.alertNotFound());
+        when(alertOffersService.offers(UID, id, FlightAlertOffersScope.BELOW)).thenThrow(FlightErrors.alertNotFound());
 
         mockMvc.perform(get("/me/flight-alerts/" + id + "/offers").with(authentication(member())))
                 .andExpect(status().isNotFound())
@@ -273,7 +318,7 @@ class FlightControllerTest {
     @Test
     void alertOffers_providerDown_isProblemDetail() throws Exception {
         UUID id = UUID.randomUUID();
-        when(alertOffersService.offers(UID, id)).thenThrow(FlightErrors.providerError());
+        when(alertOffersService.offers(UID, id, FlightAlertOffersScope.BELOW)).thenThrow(FlightErrors.providerError());
 
         mockMvc.perform(get("/me/flight-alerts/" + id + "/offers").with(authentication(member())))
                 .andExpect(status().isBadGateway())

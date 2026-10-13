@@ -65,15 +65,17 @@ public class FlightAlertOffersService {
     }
 
     /**
-     * Vols de la période de l'alerte au prix inférieur ou égal au seuil, du moins cher au plus cher,
-     * {@link #MAX_OFFERS} au plus. Une alerte en pause rend quand même ses vols ; une alerte dont la
+     * Vols de la période de l'alerte, du moins cher au plus cher, {@link #MAX_OFFERS} au plus :
+     * seulement ceux au prix inférieur ou égal au seuil avec {@link FlightAlertOffersScope#BELOW},
+     * tous avec {@link FlightAlertOffersScope#ALL} (mêmes règles de période, direct et devise).
+     * {@code belowCount} compte les vols sous le seuil dans la liste rendue. Une alerte en pause rend quand même ses vols ; une alerte dont la
      * période de départ est passée rend une liste vide sans appeler le partenaire.
      *
      * @throws com.yadony.api.common.YadonyBusinessException 404 {@code flight-alert-not-found} si
      *         l'alerte n'existe pas ou n'est pas à l'appelant, 503 {@code flights-unavailable} si le
      *         partenaire n'est pas configuré, 502 {@code flights-provider-error} s'il ne répond pas
      */
-    public FlightAlertOffersResponse offers(String firebaseUid, UUID id) {
+    public FlightAlertOffersResponse offers(String firebaseUid, UUID id, FlightAlertOffersScope scope) {
         FlightUsers.Caller caller = users.resolveAccount(firebaseUid);
         FlightPriceAlertEntity alert = alerts.findByIdAndOwnerId(id, caller.id())
                 .orElseThrow(FlightErrors::alertNotFound);
@@ -90,12 +92,15 @@ public class FlightAlertOffersService {
                 throw FlightErrors.providerError();
             }
         }
+        List<TravelpayoutsPrice> shown = (scope == FlightAlertOffersScope.ALL
+                ? found : FlightAlertMatches.underThreshold(found, alert.getMaxPrice()))
+                .stream().limit(MAX_OFFERS).toList();
+        int belowCount = FlightAlertMatches.underThreshold(shown, alert.getMaxPrice()).size();
         return new FlightAlertOffersResponse(alert.getId(), alert.getOriginCode(), alert.getDestinationCode(),
                 alert.getOriginLabel(), alert.getDestinationLabel(), alert.getReturnFrom() != null,
                 alert.getCurrency(), alert.getMaxPrice(),
-                FlightAlertMatches.underThreshold(found, alert.getMaxPrice()).stream().limit(MAX_OFFERS)
-                        .map(p -> mapper.toDto(p, alert.getCurrency(), caller.language())).toList(),
-                searchPath(alert, today), Instant.now(clock));
+                shown.stream().map(p -> mapper.toDto(p, alert.getCurrency(), caller.language())).toList(),
+                searchPath(alert, today), Instant.now(clock), belowCount);
     }
 
     /**
