@@ -7,13 +7,16 @@ import java.util.UUID;
 
 /**
  * Vols trouvés pour une alerte prix ({@code GET /me/flight-alerts/{id}/offers}) : offres de la
- * période de l'alerte, avec son filtre direct et sa devise, au prix inférieur ou égal à
- * {@code maxPrice}, triées par prix croissant. Prix indicatifs (cache du partenaire, 30 min).
+ * période de l'alerte, avec son filtre direct et sa devise, triées par prix croissant : au prix
+ * inférieur ou égal à {@code maxPrice} par défaut ({@code scope=below}), sans filtre de prix avec
+ * {@code scope=all}. Prix indicatifs (cache du partenaire, 30 min).
  *
  * @param searchPath chemin de recherche Aviasales du trajet, même format que
  *                   {@link FlightSearchResponse#searchPath()}, construit sur le premier jour de la
  *                   période ; {@code null} (absent) sans période de départ
  * @param checkedAt  instant de la lecture des prix
+ * @param belowCount nombre d'offres de {@code offers} au prix inférieur ou égal à {@code maxPrice}
+ *                   (égal à la taille de la liste avec {@code scope=below})
  */
 public record FlightAlertOffersResponse(
         UUID alertId,
@@ -26,5 +29,6 @@ public record FlightAlertOffersResponse(
         BigDecimal maxPrice,
         List<FlightOfferDto> offers,
         String searchPath,
-        Instant checkedAt) {
+        Instant checkedAt,
+        Integer belowCount) {
 }

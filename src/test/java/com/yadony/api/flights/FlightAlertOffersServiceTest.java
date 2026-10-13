@@ -81,7 +81,7 @@ class FlightAlertOffersServiceTest {
         when(prices.prices(any())).thenReturn(List.of(offer("SS", "390"), offer("AF", "310"), offer("KL", "520"),
                 offer("TU", "400")));
 
-        var response = service.offers(UID, a.getId());
+        var response = service.offers(UID, a.getId(), FlightAlertOffersScope.BELOW);
 
         assertThat(response.alertId()).isEqualTo(a.getId());
         assertThat(response.originCode()).isEqualTo("PAR");
@@ -92,6 +92,7 @@ class FlightAlertOffersServiceTest {
         assertThat(response.currency()).isEqualTo("EUR");
         assertThat(response.maxPrice()).isEqualByComparingTo("400");
         assertThat(response.offers()).extracting(FlightOfferDto::airlineCode).containsExactly("AF", "SS", "TU");
+        assertThat(response.belowCount()).isEqualTo(3);
         assertThat(response.offers()).allSatisfy(o -> assertThat(o.currency()).isEqualTo("EUR"));
         assertThat(response.searchPath()).isEqualTo("/search/PAR0112ABJ1");
         assertThat(response.checkedAt()).isEqualTo(Instant.parse("2026-10-15T10:00:00Z"));
@@ -104,7 +105,7 @@ class FlightAlertOffersServiceTest {
         for (int i = 0; i < 30; i++) many.add(offer("A" + (char) ('A' + i % 26), String.valueOf(500 - i)));
         when(prices.prices(any())).thenReturn(many);
 
-        var response = service.offers(UID, a.getId());
+        var response = service.offers(UID, a.getId(), FlightAlertOffersScope.BELOW);
 
         assertThat(response.offers()).hasSize(FlightAlertOffersService.MAX_OFFERS);
         assertThat(response.offers().get(0).price()).isEqualByComparingTo("471");
@@ -125,7 +126,7 @@ class FlightAlertOffersServiceTest {
                     "2026-12-22T10:00:00Z", new BigDecimal("300"), "AF", "1", 0, 0, 800, "P", "/s/" + day));
         });
 
-        var response = service.offers(UID, a.getId());
+        var response = service.offers(UID, a.getId(), FlightAlertOffersScope.BELOW);
 
         verify(prices, times(2)).prices(any());
         assertThat(response.roundTrip()).isTrue();
@@ -140,7 +141,7 @@ class FlightAlertOffersServiceTest {
         a.setActive(false);
         when(prices.prices(any())).thenReturn(List.of(offer("AF", "310")));
 
-        assertThat(service.offers(UID, a.getId()).offers()).hasSize(1);
+        assertThat(service.offers(UID, a.getId(), FlightAlertOffersScope.BELOW).offers()).hasSize(1);
     }
 
     @Test
@@ -148,7 +149,7 @@ class FlightAlertOffersServiceTest {
         FlightPriceAlertEntity a = owned("400");
         when(prices.prices(any())).thenReturn(List.of());
 
-        var response = service.offers(UID, a.getId());
+        var response = service.offers(UID, a.getId(), FlightAlertOffersScope.BELOW);
 
         assertThat(response.offers()).isEmpty();
         assertThat(response.searchPath()).isNull();
@@ -160,7 +161,7 @@ class FlightAlertOffersServiceTest {
         a.setDepartureFrom(LocalDate.of(2026, 9, 1));
         a.setDepartureTo(LocalDate.of(2026, 9, 30));
 
-        assertThat(service.offers(UID, a.getId()).offers()).isEmpty();
+        assertThat(service.offers(UID, a.getId(), FlightAlertOffersScope.BELOW).offers()).isEmpty();
         verify(prices, never()).prices(any());
     }
 
@@ -169,7 +170,7 @@ class FlightAlertOffersServiceTest {
         UUID id = UUID.randomUUID();
         when(alerts.findByIdAndOwnerId(id, owner)).thenReturn(Optional.empty());
 
-        assertCode(() -> service.offers(UID, id), "flight-alert-not-found", 404);
+        assertCode(() -> service.offers(UID, id, FlightAlertOffersScope.BELOW), "flight-alert-not-found", 404);
         verifyNoInteractions(prices);
     }
 
@@ -178,7 +179,7 @@ class FlightAlertOffersServiceTest {
         FlightPriceAlertEntity a = owned("400");
         when(prices.prices(any())).thenThrow(new FlightProviderException("down"));
 
-        assertCode(() -> service.offers(UID, a.getId()), "flights-provider-error", 502);
+        assertCode(() -> service.offers(UID, a.getId(), FlightAlertOffersScope.BELOW), "flights-provider-error", 502);
     }
 
     @Test
@@ -186,7 +187,76 @@ class FlightAlertOffersServiceTest {
         FlightPriceAlertEntity a = owned("400");
         when(prices.isAvailable()).thenReturn(false);
 
-        assertCode(() -> service.offers(UID, a.getId()), "flights-unavailable", 503);
+        assertCode(() -> service.offers(UID, a.getId(), FlightAlertOffersScope.BELOW), "flights-unavailable", 503);
+    }
+
+    @Test
+    void offers_scopeAll_includesOffersAboveThreshold_sortedByPrice_withBelowCount() {
+        FlightPriceAlertEntity a = owned("400");
+        a.setDepartureFrom(LocalDate.of(2026, 12, 1));
+        a.setDepartureTo(LocalDate.of(2026, 12, 20));
+        when(prices.prices(any())).thenReturn(List.of(offer("SS", "390"), offer("AF", "310"), offer("KL", "520"),
+                offer("TU", "400"), offer("ET", "455")));
+
+        var response = service.offers(UID, a.getId(), FlightAlertOffersScope.ALL);
+
+        assertThat(response.offers()).extracting(FlightOfferDto::airlineCode)
+                .containsExactly("AF", "SS", "TU", "ET", "KL");
+        assertThat(response.belowCount()).isEqualTo(3);
+        assertThat(response.maxPrice()).isEqualByComparingTo("400");
+        assertThat(response.searchPath()).isEqualTo("/search/PAR0112ABJ1");
+    }
+
+    @Test
+    void offers_scopeAll_noneUnderThreshold_stillReturnsOffers() {
+        FlightPriceAlertEntity a = owned("200");
+        when(prices.prices(any())).thenReturn(List.of(offer("KL", "520"), offer("AF", "310")));
+
+        var below = service.offers(UID, a.getId(), FlightAlertOffersScope.BELOW);
+        var all = service.offers(UID, a.getId(), FlightAlertOffersScope.ALL);
+
+        assertThat(below.offers()).isEmpty();
+        assertThat(below.belowCount()).isZero();
+        assertThat(all.offers()).extracting(FlightOfferDto::airlineCode).containsExactly("AF", "KL");
+        assertThat(all.belowCount()).isZero();
+    }
+
+    @Test
+    void offers_scopeAll_limitedToTwentyCheapest_belowCountCountsShownOnly() {
+        FlightPriceAlertEntity a = owned("480");
+        List<TravelpayoutsPrice> many = new ArrayList<>();
+        for (int i = 0; i < 30; i++) many.add(offer("A" + (char) ('A' + i % 26), String.valueOf(500 - i)));
+        when(prices.prices(any())).thenReturn(many);
+
+        var response = service.offers(UID, a.getId(), FlightAlertOffersScope.ALL);
+
+        assertThat(response.offers()).hasSize(FlightAlertOffersService.MAX_OFFERS);
+        assertThat(response.offers().get(0).price()).isEqualByComparingTo("471");
+        assertThat(response.offers().get(19).price()).isEqualByComparingTo("490");
+        // 471..480 : dix vols sous le seuil dans la liste rendue
+        assertThat(response.belowCount()).isEqualTo(10);
+    }
+
+    @Test
+    void offers_scopeAll_expiredAlert_isEmptyWithoutCallingThePartner() {
+        FlightPriceAlertEntity a = owned("400");
+        a.setDepartureFrom(LocalDate.of(2026, 9, 1));
+        a.setDepartureTo(LocalDate.of(2026, 9, 30));
+
+        var response = service.offers(UID, a.getId(), FlightAlertOffersScope.ALL);
+
+        assertThat(response.offers()).isEmpty();
+        assertThat(response.belowCount()).isZero();
+        verify(prices, never()).prices(any());
+    }
+
+    @Test
+    void scope_parse_defaultsToBelow_caseInsensitive_andRejectsUnknown() {
+        assertThat(FlightAlertOffersScope.parse(null)).isEqualTo(FlightAlertOffersScope.BELOW);
+        assertThat(FlightAlertOffersScope.parse("  ")).isEqualTo(FlightAlertOffersScope.BELOW);
+        assertThat(FlightAlertOffersScope.parse("below")).isEqualTo(FlightAlertOffersScope.BELOW);
+        assertThat(FlightAlertOffersScope.parse(" ALL ")).isEqualTo(FlightAlertOffersScope.ALL);
+        assertCode(() -> FlightAlertOffersScope.parse("cheap"), "flights-invalid-scope", 400);
     }
 
     private static void assertCode(Runnable call, String code, int status) {

@@ -121,9 +121,10 @@ public class FlightController {
 
     @GetMapping("/me/flight-alerts/{id}/offers")
     public FlightAlertOffersResponse alertOffers(@AuthenticationPrincipal String firebaseUid,
-                                                 @PathVariable UUID id) {
+                                                 @PathVariable UUID id,
+                                                 @RequestParam(required = false) String scope) {
         feature.requireEnabled();
-        return alertOffersService.offers(firebaseUid, id);
+        return alertOffersService.offers(firebaseUid, id, FlightAlertOffersScope.parse(scope));
     }
 
     @PatchMapping("/me/flight-alerts/{id}")
