@@ -15,7 +15,7 @@ import java.util.List;
  *                         les offres rendues partent (et reviennent) à {@code nearbyDaysWindow} jours
  *                         près ; {@code null} (absent du JSON) sinon. Jamais {@code false}.
  * @param nearbyDaysWindow écart maximal en jours, de part et d'autre de chaque date demandée, des
- *                         offres rendues ; présent seulement avec {@code nearbyDates}
+ *                         offres rendues (3, ou 7 si rien à 3 jours) ; présent seulement avec {@code nearbyDates}
  */
 public record FlightSearchResponse(
         String originCode,

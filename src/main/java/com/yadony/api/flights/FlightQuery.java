@@ -33,15 +33,6 @@ public record FlightQuery(String origin, String destination, FlightDate departur
         return (departure != null && departure.isDay()) || (returnDate != null && returnDate.isDay());
     }
 
-    /**
-     * La même recherche avec chaque jour précis remplacé par son mois ({@code 2026-12-23} →
-     * {@code 2026-12}), pour le repli « dates proches ». Les mois et l'absence de date restent tels quels.
-     */
-    FlightQuery widenedToMonths() {
-        return new FlightQuery(origin, destination, FlightDate.monthOf(departure), FlightDate.monthOf(returnDate),
-                directOnly, currency);
-    }
-
     /** Clé de cache et de regroupement : deux requêtes identiques partagent un seul appel. */
     String key() {
         return origin + "-" + destination + "|" + departure + "|" + returnDate + "|" + directOnly + "|" + currency;

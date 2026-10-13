@@ -114,49 +114,50 @@ class FlightSearchServiceTest {
 
     /** Régression : ABJ ⇄ PAR du 23/12 au 02/01 en jours précis rendait 0 offre (couple absent du cache Aviasales). */
     @Test
-    void exactDays_withoutOffers_fallBackToNearbyDatesInTheMonths() {
-        when(prices.prices(any())).thenAnswer(inv -> {
-            FlightQuery q = inv.getArgument(0);
-            if (q.departure().isDay()) return List.of();
-            return List.of(
-                    FlightNearbyDatesTest.offer("2026-12-24T23:55:00+00:00", "2027-01-02T09:00:00+01:00", "650"),
-                    FlightNearbyDatesTest.offer("2026-12-10T10:00:00+00:00", "2027-01-02T09:00:00+01:00", "300"),
-                    FlightNearbyDatesTest.offer("2026-12-23T10:00:00+00:00", "2027-01-04T09:00:00+01:00", "700"));
-        });
+    @SuppressWarnings("unchecked")
+    void exactDays_withoutOffers_fallBackToNearbyDatesInTheMonths_sortedByPrice() {
+        when(prices.prices(any())).thenReturn(List.of());
+        when(prices.pricesInMonths(any())).thenReturn(List.of(
+                FlightNearbyDatesTest.offer("2026-12-24T23:55:00+00:00", "2027-01-02T09:00:00+01:00", "650"),
+                FlightNearbyDatesTest.offer("2026-12-10T10:00:00+00:00", "2027-01-02T09:00:00+01:00", "300"),
+                FlightNearbyDatesTest.offer("2026-12-23T10:00:00+00:00", "2027-01-04T09:00:00+01:00", "600")));
 
         var response = service.search(UID, "ABJ", "PAR", "2026-12-23", "2027-01-02", false, "EUR");
 
         assertThat(response.nearbyDates()).isTrue();
         assertThat(response.nearbyDaysWindow()).isEqualTo(3);
-        assertThat(response.offers()).extracting(o -> o.price().toPlainString()).containsExactly("650", "700");
+        assertThat(response.offers()).extracting(o -> o.price().toPlainString()).containsExactly("600", "650");
         assertThat(response.offers().get(0).airlineCode()).isEqualTo("SS");
         assertThat(response.searchPath()).isEqualTo("/search/ABJ2312PAR02011");
 
-        ArgumentCaptor<FlightQuery> asked = ArgumentCaptor.forClass(FlightQuery.class);
-        verify(prices, times(2)).prices(asked.capture());
-        assertThat(asked.getAllValues().get(0).departure().providerValue()).isEqualTo("2026-12-23");
-        assertThat(asked.getAllValues().get(0).returnDate().providerValue()).isEqualTo("2027-01-02");
-        assertThat(asked.getAllValues().get(1).departure().providerValue()).isEqualTo("2026-12");
-        assertThat(asked.getAllValues().get(1).returnDate().providerValue()).isEqualTo("2027-01");
+        ArgumentCaptor<FlightQuery> exact = ArgumentCaptor.forClass(FlightQuery.class);
+        verify(prices).prices(exact.capture());
+        assertThat(exact.getValue().departure().providerValue()).isEqualTo("2026-12-23");
+        assertThat(exact.getValue().returnDate().providerValue()).isEqualTo("2027-01-02");
+        ArgumentCaptor<List<FlightQuery>> months = ArgumentCaptor.forClass(List.class);
+        verify(prices).pricesInMonths(months.capture());
+        assertThat(months.getValue()).extracting(q -> q.departure() + "/" + q.returnDate())
+                .containsExactly("2026-12/2026-12", "2026-12/2027-01");
         verify(searches).save(any());
     }
 
     @Test
-    void exactDay_oneWay_widensOnlyTheDepartureMonth() {
-        when(prices.prices(any())).thenAnswer(inv -> {
-            FlightQuery q = inv.getArgument(0);
-            if (q.departure().isDay()) return List.of();
-            return List.of(FlightNearbyDatesTest.offer("2026-12-21T10:00:00+00:00", null, "420"));
-        });
+    @SuppressWarnings("unchecked")
+    void exactDay_oneWay_widensOnlyTheDeparture() {
+        when(prices.prices(any())).thenReturn(List.of());
+        when(prices.pricesInMonths(any()))
+                .thenReturn(List.of(FlightNearbyDatesTest.offer("2026-12-21T10:00:00+00:00", null, "420")));
 
         var response = service.search(UID, "ABJ", "PAR", "2026-12-23", null, false, "EUR");
 
         assertThat(response.nearbyDates()).isTrue();
         assertThat(response.offers()).hasSize(1);
-        ArgumentCaptor<FlightQuery> asked = ArgumentCaptor.forClass(FlightQuery.class);
-        verify(prices, times(2)).prices(asked.capture());
-        assertThat(asked.getAllValues().get(1).departure().providerValue()).isEqualTo("2026-12");
-        assertThat(asked.getAllValues().get(1).returnDate()).isNull();
+        ArgumentCaptor<List<FlightQuery>> months = ArgumentCaptor.forClass(List.class);
+        verify(prices).pricesInMonths(months.capture());
+        assertThat(months.getValue()).singleElement().satisfies(q -> {
+            assertThat(q.departure().providerValue()).isEqualTo("2026-12");
+            assertThat(q.returnDate()).isNull();
+        });
     }
 
     @Test
@@ -169,6 +170,7 @@ class FlightSearchServiceTest {
         assertThat(response.nearbyDates()).isNull();
         assertThat(response.nearbyDaysWindow()).isNull();
         verify(prices, times(1)).prices(any());
+        verify(prices, never()).pricesInMonths(any());
     }
 
     @Test
@@ -180,30 +182,27 @@ class FlightSearchServiceTest {
         assertThat(response.offers()).isEmpty();
         assertThat(response.nearbyDates()).isNull();
         verify(prices, times(1)).prices(any());
+        verify(prices, never()).pricesInMonths(any());
     }
 
     @Test
-    void nearbyDates_nothingCloseEnough_staysEmptyWithoutFlag() {
-        when(prices.prices(any())).thenAnswer(inv -> {
-            FlightQuery q = inv.getArgument(0);
-            if (q.departure().isDay()) return List.of();
-            return List.of(FlightNearbyDatesTest.offer("2026-12-01T10:00:00+00:00", "2027-01-02T09:00:00+01:00", "300"));
-        });
+    void nearbyDates_nothingWithinAWeek_staysEmptyWithoutFlag() {
+        when(prices.prices(any())).thenReturn(List.of());
+        when(prices.pricesInMonths(any())).thenReturn(List.of(
+                FlightNearbyDatesTest.offer("2026-12-01T10:00:00+00:00", "2027-01-02T09:00:00+01:00", "300")));
 
         var response = service.search(UID, "ABJ", "PAR", "2026-12-23", "2027-01-02", false, "EUR");
 
         assertThat(response.offers()).isEmpty();
         assertThat(response.nearbyDates()).isNull();
         assertThat(response.nearbyDaysWindow()).isNull();
+        verify(prices, times(2)).pricesInMonths(any());
     }
 
     @Test
-    void nearbyDates_providerFailure_isNotAnError() {
-        when(prices.prices(any())).thenAnswer(inv -> {
-            FlightQuery q = inv.getArgument(0);
-            if (q.departure().isDay()) return List.of();
-            throw new FlightProviderException("down");
-        });
+    void nearbyDates_nothingInTheMonths_isNotAnError() {
+        when(prices.prices(any())).thenReturn(List.of());
+        when(prices.pricesInMonths(any())).thenReturn(List.of());
 
         var response = service.search(UID, "ABJ", "PAR", "2026-12-23", "2027-01-02", false, "EUR");
 

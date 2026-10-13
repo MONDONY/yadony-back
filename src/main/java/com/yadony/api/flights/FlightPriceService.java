@@ -13,6 +13,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
@@ -49,6 +50,13 @@ public class FlightPriceService {
     static final int MAX_PAGES = 2;
     /** Offres rendues après fusion. */
     static final int MAX_RESULTS = 150;
+    /**
+     * Taille de page des recherches au mois du repli « dates proches » : le plafond de
+     * Travelpayouts. Avec 50 offres × 2 pages triées par prix, un mois × mois ne rendait que les
+     * allers-retours les moins chers (souvent loin des dates demandées, hors fêtes) et le filtre
+     * à quelques jours ne trouvait plus rien.
+     */
+    static final int MONTH_LIMIT = 1000;
     /** Garde-fou au-delà des timeouts HTTP du client (connexion 5 s + lecture 10 s). */
     private static final long DIRECT_WAIT_SECONDS = 20;
 
@@ -93,11 +101,40 @@ public class FlightPriceService {
             last = optional(query, page);
             all.addAll(last);
         }
-        all.addAll(await(directs, query));
+        all.addAll(await(directs, query, "appel des vols directs"));
 
         List<TravelpayoutsPrice> merged = merge(all);
         cache.put(query.key(), merged);
         return merged;
+    }
+
+    /**
+     * Repli « dates proches » : chaque recherche au mois lue en une page de {@link #MONTH_LIMIT}
+     * offres (directs compris, sans appel dédié), en parallèle. Chaque mois a son entrée de cache,
+     * distincte de celle de {@link #prices} pour la même clé : le contenu n'est pas le même. Une
+     * recherche qui échoue est journalisée et ignorée, jamais mise en cache.
+     *
+     * @return les offres brutes, non dédoublonnées ni triées
+     */
+    public List<TravelpayoutsPrice> pricesInMonths(List<FlightQuery> monthQueries) {
+        List<CompletableFuture<List<TravelpayoutsPrice>>> calls = monthQueries.stream()
+                .map(q -> CompletableFuture.supplyAsync(() -> monthPrices(q), executor)).toList();
+        List<TravelpayoutsPrice> all = new ArrayList<>();
+        for (int i = 0; i < calls.size(); i++) {
+            all.addAll(await(calls.get(i), monthQueries.get(i), "recherche au mois des dates proches"));
+        }
+        return all;
+    }
+
+    private List<TravelpayoutsPrice> monthPrices(FlightQuery query) {
+        String key = "months|" + query.key();
+        List<TravelpayoutsPrice> cached = cache.getIfPresent(key);
+        if (cached != null) return cached;
+        List<TravelpayoutsPrice> rows = client.pricesForDates(query.origin(), query.destination(), query.departure(),
+                query.returnDate(), query.directOnly(), query.currency(), MONTH_LIMIT, 1);
+        List<TravelpayoutsPrice> kept = rows.stream().filter(Objects::nonNull).toList();
+        cache.put(key, kept);
+        return kept;
     }
 
     private List<TravelpayoutsPrice> page(FlightQuery query, boolean direct, int page) {
@@ -117,7 +154,7 @@ public class FlightPriceService {
     }
 
     private static List<TravelpayoutsPrice> await(CompletableFuture<List<TravelpayoutsPrice>> directs,
-                                                  FlightQuery query) {
+                                                  FlightQuery query, String what) {
         try {
             return directs.get(DIRECT_WAIT_SECONDS, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
@@ -126,8 +163,8 @@ public class FlightPriceService {
         } catch (ExecutionException | TimeoutException | RuntimeException e) {
             directs.cancel(true);
             Throwable cause = e instanceof ExecutionException && e.getCause() != null ? e.getCause() : e;
-            log.warn("Vols {} : appel des vols directs indisponible, résultats sans lui ({})",
-                    query.key(), cause.getClass().getSimpleName());
+            log.warn("Vols {} : {} indisponible, résultats sans lui ({})",
+                    query.key(), what, cause.getClass().getSimpleName());
             return List.of();
         }
     }

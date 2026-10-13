@@ -114,25 +114,11 @@ class FlightQueryTest {
     }
 
     @Test
-    void hasExactDay_andWidenedToMonths() {
-        FlightQuery days = FlightQuery.of("ABJ", "PAR", "2026-12-23", "2027-01-02", false, "EUR", CLOCK);
-        assertThat(days.hasExactDay()).isTrue();
-        FlightQuery wide = days.widenedToMonths();
-        assertThat(wide.departure()).isEqualTo(FlightDate.ofMonth(YearMonth.of(2026, 12)));
-        assertThat(wide.returnDate()).isEqualTo(FlightDate.ofMonth(YearMonth.of(2027, 1)));
-        assertThat(wide.origin()).isEqualTo("ABJ");
-        assertThat(wide.currency()).isEqualTo("EUR");
-        assertThat(wide.hasExactDay()).isFalse();
-
-        FlightQuery mixed = FlightQuery.of("PAR", "DKR", "2026-12", "2027-01-05", true, "XOF", CLOCK);
-        assertThat(mixed.hasExactDay()).isTrue();
-        assertThat(mixed.widenedToMonths().departure()).isEqualTo(FlightDate.ofMonth(YearMonth.of(2026, 12)));
-        assertThat(mixed.widenedToMonths().directOnly()).isTrue();
-
+    void hasExactDay() {
+        assertThat(FlightQuery.of("ABJ", "PAR", "2026-12-23", "2027-01-02", false, "EUR", CLOCK).hasExactDay()).isTrue();
+        assertThat(FlightQuery.of("PAR", "DKR", "2026-12", "2027-01-05", true, "XOF", CLOCK).hasExactDay()).isTrue();
         assertThat(FlightQuery.of("PAR", "ABJ", "2026-12", "2027-01", false, null, CLOCK).hasExactDay()).isFalse();
         assertThat(FlightQuery.of("PAR", "ABJ", null, null, false, null, CLOCK).hasExactDay()).isFalse();
-        FlightQuery oneWay = FlightQuery.of("PAR", "ABJ", "2026-12-23", null, false, null, CLOCK);
-        assertThat(oneWay.hasExactDay()).isTrue();
-        assertThat(oneWay.widenedToMonths().returnDate()).isNull();
+        assertThat(FlightQuery.of("PAR", "ABJ", "2026-12-23", null, false, null, CLOCK).hasExactDay()).isTrue();
     }
 }
