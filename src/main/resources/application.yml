@@ -190,6 +190,11 @@ yadony:
     alerts:
       enabled: ${FLIGHT_ALERTS_ENABLED:true}
       cron: "0 7 */6 * * *"
+    # Ligne de diagnostic [FlightSearchDiag] (WARN) des recherches aller-retour à jours précis qui
+    # rendent moins de 5 offres. Fermée par défaut, ouverte en dev et staging (application-<profil>.yml).
+    search:
+      diagnostic:
+        enabled: ${FLIGHTS_SEARCH_DIAGNOSTIC_ENABLED:false}
   # Mode recette des comptes testeurs (FLUTTER-FA/FB) : fermé partout sauf en staging
   # (application-staging.yml). Toujours fermé sous le profil prod, quelle que soit la valeur.
   recette:

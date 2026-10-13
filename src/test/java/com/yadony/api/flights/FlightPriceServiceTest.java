@@ -200,6 +200,29 @@ class FlightPriceServiceTest {
     }
 
     @Test
+    void pricesByMonth_keepsEachMonthApart_inOrder_andLeavesFailedMonthsOut() {
+        FlightQuery novDec = months("2026-11", "2026-12");
+        FlightQuery decDec = months("2026-12", "2026-12");
+        FlightQuery decJan = months("2026-12", "2027-01");
+        when(client.pricesForDates(anyString(), anyString(), eq(novDec.departure()), eq(novDec.returnDate()),
+                anyBoolean(), anyString(), anyInt(), anyInt()))
+                .thenThrow(new FlightProviderException("down"));
+        when(client.pricesForDates(anyString(), anyString(), eq(decDec.departure()), eq(decDec.returnDate()),
+                anyBoolean(), anyString(), anyInt(), anyInt()))
+                .thenReturn(List.of(offer("b", "760", 1), offer("c", "700", 0)));
+        when(client.pricesForDates(anyString(), anyString(), eq(decJan.departure()), eq(decJan.returnDate()),
+                anyBoolean(), anyString(), anyInt(), anyInt()))
+                .thenReturn(List.of());
+
+        var byMonth = service().pricesByMonth(List.of(novDec, decDec, decJan));
+
+        assertThat(byMonth).containsOnlyKeys(decDec, decJan);
+        assertThat(byMonth.keySet()).containsExactly(decDec, decJan);
+        assertThat(byMonth.get(decDec)).extracting(TravelpayoutsPrice::flightNumber).containsExactly("b", "c");
+        assertThat(byMonth.get(decJan)).isEmpty();
+    }
+
+    @Test
     void merge_truncation_neverEvictsDirects() {
         List<TravelpayoutsPrice> rows = new ArrayList<>(connections("a", 100, 200));
         TravelpayoutsPrice expensiveDirect = offer("af", "2000", 0);
