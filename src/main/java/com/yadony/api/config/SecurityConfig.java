@@ -133,6 +133,9 @@ public class SecurityConfig {
                 // sinon écrire sur sa propre ligne invitée, promise à la purge.
                 .requestMatchers("/auth/me/residence-address").access(authenticatedNonGuest())
                 .requestMatchers("/auth/me/onboarding-seen").access(authenticatedNonGuest())
+                // Acceptation des engagements de publication : écrit sur la ligne `users`
+                // et dans audit_log (preuve légale). Un invité ne publie pas.
+                .requestMatchers("/auth/me/publish-commitments").access(authenticatedNonGuest())
                 // Réclamation des données d'une session anonyme : mute deux comptes (les
                 // favoris changent de propriétaire, la ligne invitée est supprimée). Même
                 // motif que les règles ci-dessus, et même emplacement obligatoire, AVANT
