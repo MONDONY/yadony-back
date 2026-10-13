@@ -243,7 +243,14 @@ class CancellationReliabilityIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.contactWindowOpen").value(true))
                 .andExpect(jsonPath("$.senderPhoneAvailable").value(true));
-        // Colis annulé avant remise : rien à récupérer, pas de contact.
+        // Colis annulé avant remise : rien à récupérer, mais la commande était en cours, le
+        // contact reste ouvert 48 h après l'annulation (FLUTTER-P1)…
+        mockMvc.perform(get("/bids/{id}", accepted).with(authentication(as(traveler))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.contactWindowOpen").value(true));
+        // … puis se ferme. La suite vérifie la fenêtre du retour seule, hors de ces 48 h.
+        jdbc.update("UPDATE bids SET cancelled_at = ? WHERE id IN (?, ?)",
+                java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusDays(3), accepted, handedOver);
         mockMvc.perform(get("/bids/{id}", accepted).with(authentication(as(traveler))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.contactWindowOpen").value(false));

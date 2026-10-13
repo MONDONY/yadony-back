@@ -141,4 +141,38 @@ class ConversationServiceCallAvailableTest {
         assertThat(service.toResponse(conv, senderId, Map.of()).callAvailable()).isFalse();
         verify(callAvailability, never()).canCall(any(), any());
     }
+
+    // ── 48 h après l'annulation d'une commande en cours (FLUTTER-P1) ─────────
+
+    private void withRecentlyCancelledBid(BidStatus from, java.time.LocalDateTime cancelledAt) {
+        BidEntity bid = new BidEntity();
+        bid.setStatus(from);
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setCancelledAt(cancelledAt);
+        lenient().when(bidRepository.findById(conv.getBidId())).thenReturn(Optional.of(bid));
+    }
+
+    @Test
+    void commandeAnnuleeDepuisMoinsDe48hInterrogeLaRegle() {
+        withRecentlyCancelledBid(BidStatus.IN_TRANSIT,
+                java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(47));
+        when(callAvailability.canCall(senderId, conv.getId())).thenReturn(true);
+        assertThat(service.toResponse(conv, senderId, Map.of()).callAvailable()).isTrue();
+    }
+
+    @Test
+    void commandeAnnuleeDepuisPlusDe48hSansInterrogerLaRegle() {
+        withRecentlyCancelledBid(BidStatus.IN_TRANSIT,
+                java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(48).minusMinutes(1));
+        assertThat(service.toResponse(conv, senderId, Map.of()).callAvailable()).isFalse();
+        verify(callAvailability, never()).canCall(any(), any());
+    }
+
+    @Test
+    void demandeAnnuleeAvantAcceptationSansInterrogerLaRegle() {
+        withRecentlyCancelledBid(BidStatus.AWAITING_PAYMENT,
+                java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
+        assertThat(service.toResponse(conv, senderId, Map.of()).callAvailable()).isFalse();
+        verify(callAvailability, never()).canCall(any(), any());
+    }
 }

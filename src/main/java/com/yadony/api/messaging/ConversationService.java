@@ -576,16 +576,20 @@ public class ConversationService {
     }
 
     /**
-     * Pré-filtre sans requête de l'appel et des photos : commande en cours, ou retour d'un colis
-     * annulé après sa remise (FLUTTER-FM, expéditeur et voyageur seulement). La règle complète
+     * Pré-filtre sans requête de l'appel et des photos : commande en cours, retour d'un colis
+     * annulé après sa remise (FLUTTER-FM) ou commande annulée depuis moins de 48 h (FLUTTER-P1),
+     * ces deux derniers pour l'expéditeur et le voyageur seulement. La règle complète
      * reste à {@code calls/} et à {@link ConversationMediaPolicy}.
      */
     private static boolean isContactCandidate(ConversationEntity conv, BidEntity bid) {
         if (bid == null || bid.getStatus() == null) return false;
         if (CALL_CANDIDATE_STATUSES.contains(bid.getStatus())) return true;
-        return !conv.isRecipientConversation()
-                && com.yadony.api.matching.ContactWindow.isReturnInProgress(bid,
-                        java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+        if (conv.isRecipientConversation()) return false;
+        java.time.LocalDateTime now = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC);
+        // Retour d'un colis annulé après remise (FLUTTER-FM), ou commande en cours annulée
+        // depuis moins de 48 h (FLUTTER-P1).
+        return com.yadony.api.matching.ContactWindow.isReturnInProgress(bid, now)
+                || com.yadony.api.matching.ContactWindow.isRecentlyCancelled(bid, now);
     }
 
     /**

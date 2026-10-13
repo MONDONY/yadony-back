@@ -19,8 +19,9 @@ import java.time.ZoneOffset;
 import java.util.UUID;
 
 /**
- * Règle unique : qui peut appeler qui, et quand (de l'acceptation jusqu'à J+3 après livraison, et
- * pendant le retour d'un colis annulé après sa remise).
+ * Règle unique : qui peut appeler qui, et quand (de l'acceptation jusqu'à J+3 après livraison,
+ * pendant le retour d'un colis annulé après sa remise, et 48 h après l'annulation d'une commande
+ * en cours, voir {@link ContactWindow#isRecentlyCancelled}).
  */
 @Service
 public class CallEligibilityService implements CallAvailability {

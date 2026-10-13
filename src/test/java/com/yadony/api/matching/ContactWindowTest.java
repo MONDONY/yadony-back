@@ -108,4 +108,82 @@ class ContactWindowTest {
         assertThat(ContactWindow.isOpen(accepted, 3, NOW)).isTrue();
         assertThat(ContactWindow.phoneVisible(accepted, NOW)).isTrue();
     }
+
+    // ── 48 h après l'annulation d'une commande en cours (FLUTTER-P1) ─────────
+
+    private static BidEntity cancelledFrom(BidStatus from, LocalDateTime cancelledAt) {
+        BidEntity bid = new BidEntity();
+        bid.setStatus(from);
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setCancelledAt(cancelledAt);
+        return bid;
+    }
+
+    @Test
+    void aLAnnulation_leStatutQuitteEtLInstantSontRetenus() {
+        BidEntity bid = new BidEntity();
+        bid.setStatus(BidStatus.IN_TRANSIT);
+        LocalDateTime before = LocalDateTime.now(java.time.ZoneOffset.UTC);
+
+        bid.setStatus(BidStatus.CANCELLED);
+
+        assertThat(bid.getCancelledFromStatus()).isEqualTo(BidStatus.IN_TRANSIT);
+        assertThat(bid.getCancelledAt()).isAfterOrEqualTo(before);
+    }
+
+    @Test
+    void uneSecondeAnnulation_neDeplacePasLHorodatage() {
+        BidEntity bid = cancelledFrom(BidStatus.ACCEPTED, NOW.minusHours(10));
+
+        bid.setStatus(BidStatus.CANCELLED);
+
+        assertThat(bid.getCancelledAt()).isEqualTo(NOW.minusHours(10));
+        assertThat(bid.getCancelledFromStatus()).isEqualTo(BidStatus.ACCEPTED);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = BidStatus.class, names = {"ACCEPTED", "HANDED_OVER", "IN_TRANSIT", "ARRIVED"})
+    void commandeEnCoursAnnulee_resteJoignable48h(BidStatus from) {
+        BidEntity bid = cancelledFrom(from, NOW.minusHours(47).minusMinutes(59).minusSeconds(59));
+        assertThat(ContactWindow.isRecentlyCancelled(bid, NOW)).isTrue();
+        assertThat(ContactWindow.isOpen(bid, 3, NOW)).isTrue();
+        assertThat(ContactWindow.phoneVisible(bid, NOW)).isTrue();
+    }
+
+    @Test
+    void a48hPile_laFenetreEstFermee() {
+        BidEntity bid = cancelledFrom(BidStatus.ACCEPTED, NOW.minus(ContactWindow.AFTER_CANCELLATION));
+        assertThat(ContactWindow.isRecentlyCancelled(bid, NOW)).isFalse();
+        assertThat(ContactWindow.isOpen(bid, 3, NOW)).isFalse();
+        assertThat(ContactWindow.phoneVisible(bid, NOW)).isFalse();
+    }
+
+    @Test
+    void auDelaDe48h_fermee() {
+        BidEntity bid = cancelledFrom(BidStatus.ARRIVED, NOW.minusHours(49));
+        assertThat(ContactWindow.isOpen(bid, 3, NOW)).isFalse();
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = BidStatus.class, names = {"PENDING", "AWAITING_PAYMENT", "PAYMENT_ESCROWED", "NEGOTIATING"})
+    void demandeAnnuleeAvantAcceptation_nOuvreRien(BidStatus from) {
+        BidEntity bid = cancelledFrom(from, NOW.minusHours(1));
+        assertThat(ContactWindow.isRecentlyCancelled(bid, NOW)).isFalse();
+        assertThat(ContactWindow.isOpen(bid, 3, NOW)).isFalse();
+        assertThat(ContactWindow.phoneVisible(bid, NOW)).isFalse();
+    }
+
+    @Test
+    void annulationAnterieureAV316_sansHorodatage_fermee() {
+        BidEntity bid = cancelledFrom(BidStatus.ACCEPTED, null);
+        bid.setCancelledFromStatus(null);
+        assertThat(ContactWindow.isRecentlyCancelled(bid, NOW)).isFalse();
+    }
+
+    @Test
+    void bidSorti_deLAnnulation_nEstPlusConcerne() {
+        BidEntity bid = cancelledFrom(BidStatus.ACCEPTED, NOW.minusHours(1));
+        bid.setStatus(BidStatus.EXPIRED);
+        assertThat(ContactWindow.isRecentlyCancelled(bid, NOW)).isFalse();
+    }
 }

@@ -93,6 +93,8 @@ class ConversationServiceMediaTest {
     @Test
     void mediaAllowed_falseWithoutAskingThePolicy_cancelledWithoutReturn() {
         bid.setStatus(BidStatus.CANCELLED);
+        // Hors des 48 h qui suivent l'annulation d'une commande en cours (FLUTTER-P1).
+        bid.setCancelledAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(49));
         assertThat(service.toResponse(conv, senderId, Map.of()).mediaAllowed()).isFalse();
         verify(mediaPolicy, never()).check(any(), any(), any(BidEntity.class), any(), anyBoolean());
     }
