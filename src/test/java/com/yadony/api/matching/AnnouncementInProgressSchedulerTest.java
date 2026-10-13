@@ -352,22 +352,30 @@ class AnnouncementInProgressSchedulerDraftLeakTest {
     @Test
     @DisplayName("scheduler_neverTransitionsDrafts : DRAFT avec départ passé jamais renvoyé")
     void draftDepartingInThePast_neverReturnedForInProgressTransition() {
-        repository.saveAndFlush(newAnnouncement(AnnouncementStatus.DRAFT, LocalDate.now().minusDays(5)));
+        AnnouncementEntity draft = repository.saveAndFlush(
+                newAnnouncement(AnnouncementStatus.DRAFT, LocalDate.now().minusDays(5)));
 
         List<AnnouncementEntity> result = repository.findActiveOrFullDepartingOnOrBefore(LocalDate.now());
 
-        assertThat(result).isEmpty();
+        // La base de test est partagée : d'autres classes y laissent des annonces
+        // ACTIVE. On vérifie donc les annonces créées ici, pas la taille du résultat.
+        assertThat(result).extracting(AnnouncementEntity::getId).doesNotContain(draft.getId());
+        assertThat(result).allSatisfy(a -> assertThat(a.getStatus()).isNotEqualTo(AnnouncementStatus.DRAFT));
     }
 
     @Test
     @DisplayName("ACTIVE avec départ passé est renvoyé, le DRAFT voisin ne l'est pas")
     void activeDepartingInThePast_isReturned_draftIsNot() {
-        repository.saveAndFlush(newAnnouncement(AnnouncementStatus.ACTIVE, LocalDate.now().minusDays(5)));
-        repository.saveAndFlush(newAnnouncement(AnnouncementStatus.DRAFT, LocalDate.now().minusDays(5)));
+        AnnouncementEntity active = repository.saveAndFlush(
+                newAnnouncement(AnnouncementStatus.ACTIVE, LocalDate.now().minusDays(5)));
+        AnnouncementEntity draft = repository.saveAndFlush(
+                newAnnouncement(AnnouncementStatus.DRAFT, LocalDate.now().minusDays(5)));
 
         List<AnnouncementEntity> result = repository.findActiveOrFullDepartingOnOrBefore(LocalDate.now());
 
-        assertThat(result).hasSize(1);
-        assertThat(result.get(0).getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
+        assertThat(result).extracting(AnnouncementEntity::getId)
+                .contains(active.getId())
+                .doesNotContain(draft.getId());
+        assertThat(result).allSatisfy(a -> assertThat(a.getStatus()).isNotEqualTo(AnnouncementStatus.DRAFT));
     }
 }
