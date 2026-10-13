@@ -175,4 +175,15 @@ class ConversationServiceCallAvailableTest {
         assertThat(service.toResponse(conv, senderId, Map.of()).callAvailable()).isFalse();
         verify(callAvailability, never()).canCall(any(), any());
     }
+
+    @Test
+    void commandeAnnuleeRecemment_neRouvrePasLaConversationDestinataire() {
+        conv = ConversationEntity.forRecipient(UUID.randomUUID(), senderId, UUID.randomUUID(), "fs-r2");
+        ReflectionTestUtils.setField(conv, "id", UUID.randomUUID());
+        withRecentlyCancelledBid(BidStatus.IN_TRANSIT,
+                java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
+        var response = service.toResponse(conv, senderId, Map.of());
+        assertThat(response.callAvailable()).isFalse();
+        verify(callAvailability, never()).canCall(any(), any());
+    }
 }

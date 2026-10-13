@@ -288,4 +288,18 @@ class CallEligibilityServiceTest {
         lenient().when(conversations.findById(recipientConv.getId())).thenReturn(Optional.of(recipientConv));
         assertThat(service.check(sender, recipientConv.getId()).reason()).isEqualTo(OUT_OF_WINDOW);
     }
+
+    @Test
+    void commandeAnnuleeIlYA48hEtUneMinute_appelRefuse() {
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setCancelledAt(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC).minusHours(48).minusMinutes(1));
+        assertThat(service.check(sender, conv.getId()).reason()).isEqualTo(OUT_OF_WINDOW);
+    }
+
+    @Test
+    void commandeAnnuleeRecemment_unTiersNePeutPasAppeler() {
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setCancelledAt(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC).minusHours(1));
+        assertThat(service.check(UUID.randomUUID(), conv.getId()).reason()).isEqualTo(NOT_PARTICIPANT);
+    }
 }

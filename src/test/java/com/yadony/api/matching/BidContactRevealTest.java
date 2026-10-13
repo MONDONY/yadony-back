@@ -219,6 +219,72 @@ class BidContactRevealTest {
         verifyNoInteractions(firebaseContact);
     }
 
+    // ── FLUTTER-P1 : 48 h après l'annulation d'une commande en cours ─────────
+
+    private BidEntity cancelledFrom(BidStatus from, java.time.LocalDateTime cancelledAt) {
+        BidEntity cancelled = bid(from);
+        cancelled.setStatus(BidStatus.CANCELLED);
+        cancelled.setCancelledAt(cancelledAt);
+        when(bidRepository.findById(cancelled.getId())).thenReturn(Optional.of(cancelled));
+        when(announcementRepository.findById(announcement.getId())).thenReturn(Optional.of(announcement));
+        return cancelled;
+    }
+
+    @Test
+    @DisplayName("FLUTTER-P1 : commande annulée il y a 47 h → l'expéditeur obtient encore le numéro")
+    void getCounterpartyPhone_recentlyCancelled_revealed() {
+        BidEntity cancelled = cancelledFrom(BidStatus.ACCEPTED,
+                java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(47));
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+        when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+        when(firebaseContact.getContact("uid-traveler"))
+                .thenReturn(new FirebaseContactService.Contact("+221701234567", null));
+
+        assertThat(bidService.getCounterpartyPhone(cancelled.getId(), "uid-sender").phoneNumber())
+                .isEqualTo("+221701234567");
+    }
+
+    @Test
+    @DisplayName("FLUTTER-P1 : annulée il y a 48 h + 1 min → 403 phone-not-revealable, Firebase jamais lu")
+    void getCounterpartyPhone_cancelledMoreThan48hAgo_forbidden() {
+        BidEntity cancelled = cancelledFrom(BidStatus.ACCEPTED,
+                java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(48).minusMinutes(1));
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+
+        assertThatThrownBy(() -> bidService.getCounterpartyPhone(cancelled.getId(), "uid-sender"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("phone-not-revealable"));
+        verifyNoInteractions(firebaseContact);
+    }
+
+    @Test
+    @DisplayName("FLUTTER-P1 : demande annulée avant acceptation, même il y a 1 h → 403 phone-not-revealable")
+    void getCounterpartyPhone_cancelledBeforeAcceptance_forbidden() {
+        BidEntity cancelled = cancelledFrom(BidStatus.PENDING,
+                java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+
+        assertThatThrownBy(() -> bidService.getCounterpartyPhone(cancelled.getId(), "uid-sender"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("phone-not-revealable"));
+        verifyNoInteractions(firebaseContact);
+    }
+
+    @Test
+    @DisplayName("FLUTTER-P1 : un tiers sur une commande annulée il y a 1 h → 403 forbidden, rien journalisé")
+    void getCounterpartyPhone_recentlyCancelled_thirdParty_forbidden() {
+        BidEntity cancelled = cancelledFrom(BidStatus.ACCEPTED,
+                java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
+        when(userRepository.findByFirebaseUid("uid-intruder")).thenReturn(Optional.of(user("uid-intruder")));
+
+        assertThatThrownBy(() -> bidService.getCounterpartyPhone(cancelled.getId(), "uid-intruder"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("forbidden"));
+        verifyNoInteractions(firebaseContact, auditService);
+    }
+
     @Test
     @DisplayName("un tiers au colis → 403, et rien n'est journalisé")
     void getCounterpartyPhone_thirdParty_forbidden() {
