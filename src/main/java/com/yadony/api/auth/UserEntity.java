@@ -354,6 +354,20 @@ public class UserEntity extends BaseEntity {
     @Column(name = "analytics_consent_source", length = 32)
     private String analyticsConsentSource;
 
+    /** Engagements du voyageur acceptés avant de publier un trajet (version, date). */
+    @Column(name = "traveler_commitment_version", length = 32)
+    private String travelerCommitmentVersion;
+
+    @Column(name = "traveler_commitment_at")
+    private Instant travelerCommitmentAt;
+
+    /** Engagements de l'expéditeur acceptés avant de publier une demande (version, date). */
+    @Column(name = "sender_commitment_version", length = 32)
+    private String senderCommitmentVersion;
+
+    @Column(name = "sender_commitment_at")
+    private Instant senderCommitmentAt;
+
     @Column(name = "stripe_customer_id", length = 255)
     private String stripeCustomerId;
 
@@ -666,6 +680,18 @@ public class UserEntity extends BaseEntity {
 
     public String getAnalyticsConsentSource() { return analyticsConsentSource; }
     public void setAnalyticsConsentSource(String analyticsConsentSource) { this.analyticsConsentSource = analyticsConsentSource; }
+
+    public String getTravelerCommitmentVersion() { return travelerCommitmentVersion; }
+    public void setTravelerCommitmentVersion(String travelerCommitmentVersion) { this.travelerCommitmentVersion = travelerCommitmentVersion; }
+
+    public Instant getTravelerCommitmentAt() { return travelerCommitmentAt; }
+    public void setTravelerCommitmentAt(Instant travelerCommitmentAt) { this.travelerCommitmentAt = travelerCommitmentAt; }
+
+    public String getSenderCommitmentVersion() { return senderCommitmentVersion; }
+    public void setSenderCommitmentVersion(String senderCommitmentVersion) { this.senderCommitmentVersion = senderCommitmentVersion; }
+
+    public Instant getSenderCommitmentAt() { return senderCommitmentAt; }
+    public void setSenderCommitmentAt(Instant senderCommitmentAt) { this.senderCommitmentAt = senderCommitmentAt; }
 
     public String getStripeCustomerId() { return stripeCustomerId; }
     public void setStripeCustomerId(String stripeCustomerId) { this.stripeCustomerId = stripeCustomerId; }
