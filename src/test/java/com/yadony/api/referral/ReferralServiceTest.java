@@ -12,6 +12,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import com.yadony.api.promo.PromoService;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 
 import java.lang.reflect.Field;
@@ -33,6 +35,8 @@ class ReferralServiceTest {
     @Mock private UserRepository userRepository;
     @Mock private AuditService auditService;
     @Mock private com.yadony.api.voucher.CommissionVoucherService voucherService;
+    @Mock private PromoService promoService;
+    @Mock private ApplicationEventPublisher eventPublisher;
 
     private ReferralConfig config;
 
@@ -51,10 +55,10 @@ class ReferralServiceTest {
         config.setCodeRegenerationCooldownDays(30);
         com.yadony.api.voucher.VoucherConfig voucherConfig = new com.yadony.api.voucher.VoucherConfig();
         voucherConfig.setFactor(new java.math.BigDecimal("0.50"));
-        voucherConfig.setValidityMonths(6);
         referralService = new ReferralService(
                 referralCodeRepository, referralInvitationRepository,
-                userRepository, auditService, config, voucherService, voucherConfig);
+                userRepository, auditService, config, voucherService, voucherConfig,
+                promoService, eventPublisher);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -146,19 +150,27 @@ class ReferralServiceTest {
         ReferralCodeEntity generated = codeEntity(USER_ID, "JEAN9999");
         when(referralCodeRepository.save(any())).thenReturn(generated);
         when(referralInvitationRepository.countByReferrerUserId(USER_ID)).thenReturn(3L);
-        when(referralInvitationRepository.countByReferrerUserIdAndStatus(USER_ID, "SIGNED_UP")).thenReturn(2L);
-        when(referralInvitationRepository.countByReferrerUserIdAndStatus(USER_ID, "REWARDED")).thenReturn(1L);
+        when(referralInvitationRepository.countByReferrerUserIdAndRefereeUserIdIsNotNull(USER_ID)).thenReturn(3L);
+        when(referralInvitationRepository.countByReferrerUserIdAndStatusIn(eq(USER_ID), any())).thenReturn(2L);
+        when(referralInvitationRepository.countByReferrerUserIdAndRewardStatus(USER_ID, ReferralRewardStatus.CHOSEN)).thenReturn(1L);
+        when(referralInvitationRepository.countByReferrerUserIdAndRewardStatus(USER_ID, ReferralRewardStatus.AVAILABLE)).thenReturn(1L);
         when(voucherService.listActive(USER_ID)).thenReturn(java.util.List.of());
-        when(referralInvitationRepository.findByRefereeUserIdAndStatus(USER_ID, "SIGNED_UP")).thenReturn(Optional.empty());
-        when(referralInvitationRepository.findByRefereeUserIdAndStatus(USER_ID, "REWARDED")).thenReturn(Optional.empty());
+        when(referralInvitationRepository.existsByRefereeUserId(USER_ID)).thenReturn(false);
 
         MyReferralResponse response = referralService.getMyReferral(FIREBASE_UID);
 
         assertThat(response.code()).isEqualTo("JEAN9999");
         assertThat(response.shareUrl()).isEqualTo("https://yadony.com/r/JEAN9999");
+        // Compteurs cumulatifs : les 3 invités sont inscrits, 2 ont envoyé un premier
+        // colis, dont 1 récompense choisie et 1 en attente de choix.
         assertThat(response.totalInvited()).isEqualTo(3);
-        assertThat(response.signedUp()).isEqualTo(2);
+        assertThat(response.signedUp()).isEqualTo(3);
+        assertThat(response.firstDelivery()).isEqualTo(2);
         assertThat(response.rewarded()).isEqualTo(1);
+        assertThat(response.pendingRewardCount()).isEqualTo(1);
+        assertThat(response.rewardWalletAmount()).isEqualByComparingTo("5.00");
+        assertThat(response.rewardWalletCurrency()).isEqualTo("EUR");
+        assertThat(response.rewardDiscountPercent()).isEqualTo(5);
         assertThat(response.activeVoucherCount()).isZero();
         // Le facteur reste annoncé même sans bon actif : c'est le barème courant.
         assertThat(response.voucherFactor()).isEqualByComparingTo("0.50");
@@ -173,10 +185,11 @@ class ReferralServiceTest {
         ReferralCodeEntity code = codeEntity(USER_ID, "JEAN9999");
         when(referralCodeRepository.findByUserId(USER_ID)).thenReturn(Optional.of(code));
         when(referralInvitationRepository.countByReferrerUserId(USER_ID)).thenReturn(1L);
-        when(referralInvitationRepository.countByReferrerUserIdAndStatus(USER_ID, "SIGNED_UP")).thenReturn(0L);
-        when(referralInvitationRepository.countByReferrerUserIdAndStatus(USER_ID, "REWARDED")).thenReturn(1L);
-        when(referralInvitationRepository.findByRefereeUserIdAndStatus(USER_ID, "SIGNED_UP")).thenReturn(Optional.empty());
-        when(referralInvitationRepository.findByRefereeUserIdAndStatus(USER_ID, "REWARDED")).thenReturn(Optional.empty());
+        when(referralInvitationRepository.countByReferrerUserIdAndRefereeUserIdIsNotNull(USER_ID)).thenReturn(1L);
+        when(referralInvitationRepository.countByReferrerUserIdAndStatusIn(eq(USER_ID), any())).thenReturn(1L);
+        when(referralInvitationRepository.countByReferrerUserIdAndRewardStatus(USER_ID, ReferralRewardStatus.CHOSEN)).thenReturn(1L);
+        when(referralInvitationRepository.countByReferrerUserIdAndRewardStatus(USER_ID, ReferralRewardStatus.AVAILABLE)).thenReturn(0L);
+        when(referralInvitationRepository.existsByRefereeUserId(USER_ID)).thenReturn(false);
         // Le bon a été octroyé sous un ancien barème (0.30) : la réponse doit annoncer
         // le barème COURANT (0.50, celui de VoucherConfig dans setUp), pas celui figé
         // sur ce bon précis — c'est la promesse pour le PROCHAIN parrainage.
@@ -195,20 +208,19 @@ class ReferralServiceTest {
     }
 
     @Test
-    @DisplayName("getMyReferral_hasBeenReferred_true — hasBeenReferred is true when user has SIGNED_UP invitation as referee")
+    @DisplayName("getMyReferral_hasBeenReferred_true — hasBeenReferred is true when user has any invitation as referee")
     void getMyReferral_hasBeenReferred_true() {
         UserEntity user = userWithName(USER_ID, FIREBASE_UID, "Ali", "Diallo");
         ReferralCodeEntity code = codeEntity(USER_ID, "ALID1234");
         when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
         when(referralCodeRepository.findByUserId(USER_ID)).thenReturn(Optional.of(code));
         when(referralInvitationRepository.countByReferrerUserId(USER_ID)).thenReturn(0L);
-        when(referralInvitationRepository.countByReferrerUserIdAndStatus(USER_ID, "SIGNED_UP")).thenReturn(0L);
-        when(referralInvitationRepository.countByReferrerUserIdAndStatus(USER_ID, "REWARDED")).thenReturn(0L);
+        when(referralInvitationRepository.countByReferrerUserIdAndRefereeUserIdIsNotNull(USER_ID)).thenReturn(0L);
+        when(referralInvitationRepository.countByReferrerUserIdAndStatusIn(eq(USER_ID), any())).thenReturn(0L);
+        when(referralInvitationRepository.countByReferrerUserIdAndRewardStatus(USER_ID, ReferralRewardStatus.CHOSEN)).thenReturn(0L);
+        when(referralInvitationRepository.countByReferrerUserIdAndRewardStatus(USER_ID, ReferralRewardStatus.AVAILABLE)).thenReturn(0L);
         when(voucherService.listActive(USER_ID)).thenReturn(java.util.List.of());
-        ReferralInvitationEntity invitation = new ReferralInvitationEntity();
-        when(referralInvitationRepository.findByRefereeUserIdAndStatus(USER_ID, "SIGNED_UP"))
-                .thenReturn(Optional.of(invitation));
-        // REWARDED not stubbed: short-circuit OR means it is never called when SIGNED_UP is present
+        when(referralInvitationRepository.existsByRefereeUserId(USER_ID)).thenReturn(true);
 
         MyReferralResponse response = referralService.getMyReferral(FIREBASE_UID);
 
@@ -225,10 +237,7 @@ class ReferralServiceTest {
 
         when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(referee));
         when(referralCodeRepository.findByCode(CODE)).thenReturn(Optional.of(codeEntity));
-        when(referralInvitationRepository.findByRefereeUserIdAndStatus(USER_ID, "SIGNED_UP"))
-                .thenReturn(Optional.empty());
-        when(referralInvitationRepository.findByRefereeUserIdAndStatus(USER_ID, "REWARDED"))
-                .thenReturn(Optional.empty());
+        when(referralInvitationRepository.existsByRefereeUserId(USER_ID)).thenReturn(false);
         when(referralInvitationRepository.save(any())).thenAnswer(inv -> {
             ReferralInvitationEntity e = inv.getArgument(0);
             setId(e, UUID.randomUUID());
@@ -272,17 +281,14 @@ class ReferralServiceTest {
     // ── 6. redeemCode_alreadyReferred_throws409 ───────────────────────────────
 
     @Test
-    @DisplayName("redeemCode_alreadyReferred_throws409 — user already has REWARDED invitation")
+    @DisplayName("redeemCode_alreadyReferred_throws409 — user already referred (invitation past SIGNED_UP)")
     void redeemCode_alreadyReferred_throws409() {
         UserEntity referee = userWithName(USER_ID, FIREBASE_UID, "Ali", "Diallo");
         ReferralCodeEntity codeEntity = codeEntity(REFERRER_ID, CODE);
 
         when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(referee));
         when(referralCodeRepository.findByCode(CODE)).thenReturn(Optional.of(codeEntity));
-        when(referralInvitationRepository.findByRefereeUserIdAndStatus(USER_ID, "SIGNED_UP"))
-                .thenReturn(Optional.empty());
-        when(referralInvitationRepository.findByRefereeUserIdAndStatus(USER_ID, "REWARDED"))
-                .thenReturn(Optional.of(new ReferralInvitationEntity()));
+        when(referralInvitationRepository.existsByRefereeUserId(USER_ID)).thenReturn(true);
 
         assertThatThrownBy(() -> referralService.redeemCode(FIREBASE_UID, CODE))
                 .isInstanceOf(YadonyBusinessException.class)
@@ -303,8 +309,7 @@ class ReferralServiceTest {
 
         when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(referee));
         when(referralCodeRepository.findByCode(CODE)).thenReturn(Optional.of(codeEntity));
-        when(referralInvitationRepository.findByRefereeUserIdAndStatus(USER_ID, "SIGNED_UP"))
-                .thenReturn(Optional.of(new ReferralInvitationEntity()));
+        when(referralInvitationRepository.existsByRefereeUserId(USER_ID)).thenReturn(true);
 
         assertThatThrownBy(() -> referralService.redeemCode(FIREBASE_UID, CODE))
                 .isInstanceOf(YadonyBusinessException.class)

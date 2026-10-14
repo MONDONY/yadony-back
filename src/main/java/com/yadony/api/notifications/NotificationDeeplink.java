@@ -118,6 +118,7 @@ public final class NotificationDeeplink {
             case "STRIPE_ONBOARDING_INCOMPLETE" -> Optional.of("connect/onboarding/intro");
             case "FIRST_ACTION_REMINDER" -> Optional.of("first-steps");
             case "CARD_EXPIRING" -> Optional.of("payments/commission-method");
+            case "REFERRAL_REWARD_AVAILABLE" -> Optional.of("profile/referral");
 
             default -> Optional.empty();
         };

@@ -137,6 +137,6 @@ public class AdminPromoController {
                 p.getId(), p.getCode(), p.getRate(), p.getTarget(),
                 p.getValidFrom(), p.getValidTo(), p.getMaxRedemptions(),
                 p.getPerUserLimit(), p.getRedeemedCount(), p.getStatus(),
-                p.getCreatedAt());
+                p.getCreatedAt(), p.getOwnerUserId(), p.getDiscountKind());
     }
 }

@@ -24,6 +24,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -55,7 +56,7 @@ class PromoServiceTest {
     }
 
     @Nested
-    @DisplayName("validateAndGetRate()")
+    @DisplayName("validateAndGetDiscount()")
     class ValidateTests {
 
         @Test
@@ -63,16 +64,17 @@ class PromoServiceTest {
             when(promoCodeRepository.findByCode("WELCOME10")).thenReturn(Optional.of(activePromo(new BigDecimal("0.06"))));
             when(redemptionRepository.countByPromoCodeIdAndUserIdAndReleasedAtIsNull(any(), any())).thenReturn(0L);
 
-            BigDecimal rate = service.validateAndGetRate("WELCOME10", userId, PromoCodeTarget.SENDER);
+            PromoDiscount discount = service.validateAndGetDiscount("WELCOME10", userId, PromoCodeTarget.SENDER);
 
-            assertThat(rate).isEqualByComparingTo("0.06");
+            assertThat(discount.kind()).isEqualTo(PromoDiscountKind.COMMISSION_POINTS);
+            assertThat(discount.value()).isEqualByComparingTo("0.06");
         }
 
         @Test
         void unknown_code_throws_promo_not_found() {
             when(promoCodeRepository.findByCode("UNKNOWN")).thenReturn(Optional.empty());
 
-            assertThatThrownBy(() -> service.validateAndGetRate("UNKNOWN", userId, PromoCodeTarget.SENDER))
+            assertThatThrownBy(() -> service.validateAndGetDiscount("UNKNOWN", userId, PromoCodeTarget.SENDER))
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("promo-not-found"));
         }
@@ -83,7 +85,7 @@ class PromoServiceTest {
             p.setStatus(PromoCodeStatus.DISABLED);
             when(promoCodeRepository.findByCode("WELCOME10")).thenReturn(Optional.of(p));
 
-            assertThatThrownBy(() -> service.validateAndGetRate("WELCOME10", userId, PromoCodeTarget.SENDER))
+            assertThatThrownBy(() -> service.validateAndGetDiscount("WELCOME10", userId, PromoCodeTarget.SENDER))
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("promo-expired"));
         }
@@ -94,7 +96,7 @@ class PromoServiceTest {
             p.setValidTo(LocalDateTime.now().minusDays(1));
             when(promoCodeRepository.findByCode("WELCOME10")).thenReturn(Optional.of(p));
 
-            assertThatThrownBy(() -> service.validateAndGetRate("WELCOME10", userId, PromoCodeTarget.SENDER))
+            assertThatThrownBy(() -> service.validateAndGetDiscount("WELCOME10", userId, PromoCodeTarget.SENDER))
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("promo-expired"));
         }
@@ -105,7 +107,7 @@ class PromoServiceTest {
             p.setValidFrom(LocalDateTime.now().plusDays(1));
             when(promoCodeRepository.findByCode("WELCOME10")).thenReturn(Optional.of(p));
 
-            assertThatThrownBy(() -> service.validateAndGetRate("WELCOME10", userId, PromoCodeTarget.SENDER))
+            assertThatThrownBy(() -> service.validateAndGetDiscount("WELCOME10", userId, PromoCodeTarget.SENDER))
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("promo-expired"));
         }
@@ -117,7 +119,7 @@ class PromoServiceTest {
             p.setRedeemedCount(100);
             when(promoCodeRepository.findByCode("WELCOME10")).thenReturn(Optional.of(p));
 
-            assertThatThrownBy(() -> service.validateAndGetRate("WELCOME10", userId, PromoCodeTarget.SENDER))
+            assertThatThrownBy(() -> service.validateAndGetDiscount("WELCOME10", userId, PromoCodeTarget.SENDER))
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("promo-limit-reached"));
         }
@@ -128,7 +130,7 @@ class PromoServiceTest {
             when(promoCodeRepository.findByCode("WELCOME10")).thenReturn(Optional.of(p));
             when(redemptionRepository.countByPromoCodeIdAndUserIdAndReleasedAtIsNull(any(), eq(userId))).thenReturn(1L); // already used once, limit = 1
 
-            assertThatThrownBy(() -> service.validateAndGetRate("WELCOME10", userId, PromoCodeTarget.SENDER))
+            assertThatThrownBy(() -> service.validateAndGetDiscount("WELCOME10", userId, PromoCodeTarget.SENDER))
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("promo-limit-reached"));
         }
@@ -139,7 +141,7 @@ class PromoServiceTest {
             p.setTarget(PromoCodeTarget.TRAVELER);
             when(promoCodeRepository.findByCode("WELCOME10")).thenReturn(Optional.of(p));
 
-            assertThatThrownBy(() -> service.validateAndGetRate("WELCOME10", userId, PromoCodeTarget.SENDER))
+            assertThatThrownBy(() -> service.validateAndGetDiscount("WELCOME10", userId, PromoCodeTarget.SENDER))
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> {
                         assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("promo-not-eligible");
@@ -154,8 +156,8 @@ class PromoServiceTest {
             when(promoCodeRepository.findByCode("WELCOME10")).thenReturn(Optional.of(p));
             when(redemptionRepository.countByPromoCodeIdAndUserIdAndReleasedAtIsNull(any(), any())).thenReturn(0L);
 
-            assertThat(service.validateAndGetRate("WELCOME10", userId, PromoCodeTarget.SENDER)).isEqualByComparingTo("0.06");
-            assertThat(service.validateAndGetRate("WELCOME10", userId, PromoCodeTarget.TRAVELER)).isEqualByComparingTo("0.06");
+            assertThat(service.validateAndGetDiscount("WELCOME10", userId, PromoCodeTarget.SENDER).value()).isEqualByComparingTo("0.06");
+            assertThat(service.validateAndGetDiscount("WELCOME10", userId, PromoCodeTarget.TRAVELER).value()).isEqualByComparingTo("0.06");
         }
     }
 
@@ -302,6 +304,145 @@ class PromoServiceTest {
 
             assertThat(service.recordGrantedRedemption("gone", userId, bidId, new BigDecimal("0.07"))).isNull();
             verify(redemptionRepository, never()).save(any());
+        }
+    }
+
+    @Nested
+    @DisplayName("codes personnels (parrainage)")
+    class PersonalCodeTests {
+
+        private PromoCodeEntity personalPromo(UUID owner) {
+            PromoCodeEntity p = activePromo(new BigDecimal("0.050"));
+            p.setCode("MERCI-ABOU-7K2F");
+            p.setOwnerUserId(owner);
+            p.setDiscountKind(PromoDiscountKind.PRICE_PERCENT);
+            p.setTarget(PromoCodeTarget.SENDER);
+            p.setMaxRedemptions(1);
+            return p;
+        }
+
+        @Test
+        void owner_gets_a_price_percent_discount() {
+            when(promoCodeRepository.findByCode("MERCI-ABOU-7K2F")).thenReturn(Optional.of(personalPromo(userId)));
+            when(redemptionRepository.countByPromoCodeIdAndUserIdAndReleasedAtIsNull(any(), any())).thenReturn(0L);
+
+            PromoDiscount discount = service.validateAndGetDiscount("merci-abou-7k2f", userId, PromoCodeTarget.SENDER);
+
+            assertThat(discount.kind()).isEqualTo(PromoDiscountKind.PRICE_PERCENT);
+            assertThat(discount.value()).isEqualByComparingTo("0.05");
+        }
+
+        @Test
+        void another_user_is_refused_with_promo_not_owner() {
+            when(promoCodeRepository.findByCode("MERCI-ABOU-7K2F"))
+                    .thenReturn(Optional.of(personalPromo(UUID.randomUUID())));
+
+            assertThatThrownBy(() -> service.validateAndGetDiscount("MERCI-ABOU-7K2F", userId, PromoCodeTarget.SENDER))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getErrorCode()).isEqualTo("promo-not-owner");
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    });
+        }
+
+        @Test
+        void single_use_once_redeemed() {
+            PromoCodeEntity p = personalPromo(userId);
+            p.setRedeemedCount(1);
+            when(promoCodeRepository.findByCode("MERCI-ABOU-7K2F")).thenReturn(Optional.of(p));
+
+            assertThatThrownBy(() -> service.validateAndGetDiscount("MERCI-ABOU-7K2F", userId, PromoCodeTarget.SENDER))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("promo-limit-reached"));
+        }
+
+        @Test
+        void lock_and_redeem_refuse_another_user() {
+            when(promoCodeRepository.findByCode("MERCI-ABOU-7K2F"))
+                    .thenReturn(Optional.of(personalPromo(UUID.randomUUID())));
+
+            assertThatThrownBy(() -> service.lockForRedemption("MERCI-ABOU-7K2F", userId, bidId))
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("promo-not-owner"));
+            assertThatThrownBy(() -> service.redeem("MERCI-ABOU-7K2F", userId, bidId, new BigDecimal("0.064")))
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("promo-not-owner"));
+            verify(promoCodeRepository, never()).findByIdForUpdate(any());
+        }
+
+        @Test
+        void createPersonalCode_builds_a_single_use_owned_sender_code() {
+            when(promoCodeRepository.existsByCodeIncludingDeleted(any())).thenReturn(true, false);
+            when(promoCodeRepository.save(any())).thenAnswer(inv -> {
+                PromoCodeEntity e = inv.getArgument(0);
+                ReflectionTestUtils.setField(e, "id", UUID.randomUUID());
+                return e;
+            });
+            LocalDateTime validTo = LocalDateTime.now(ZoneOffset.UTC).plusMonths(6);
+
+            PromoCodeEntity created = service.createPersonalCode(userId, "MERCI-ABOU", new BigDecimal("0.05"), validTo);
+
+            assertThat(created.getCode()).matches("MERCI-ABOU-[A-HJ-NP-Z2-9]{4}");
+            assertThat(created.getOwnerUserId()).isEqualTo(userId);
+            assertThat(created.getDiscountKind()).isEqualTo(PromoDiscountKind.PRICE_PERCENT);
+            assertThat(created.getRate()).isEqualByComparingTo("0.05");
+            assertThat(created.getTarget()).isEqualTo(PromoCodeTarget.SENDER);
+            assertThat(created.getMaxRedemptions()).isEqualTo(1);
+            assertThat(created.getPerUserLimit()).isEqualTo(1);
+            assertThat(created.getValidTo()).isEqualTo(validTo);
+            assertThat(created.getStatus()).isEqualTo(PromoCodeStatus.ACTIVE);
+            verify(promoCodeRepository, times(2)).existsByCodeIncludingDeleted(any());
+            verify(auditService).log(eq("PROMO"), eq(created.getId()), eq("PROMO_PERSONAL_CODE_CREATED"),
+                    eq(userId), any());
+        }
+
+        @Test
+        void createPersonalCode_gives_up_after_repeated_collisions() {
+            when(promoCodeRepository.existsByCodeIncludingDeleted(any())).thenReturn(true);
+
+            assertThatThrownBy(() -> service.createPersonalCode(userId, "MERCI-ABOU", new BigDecimal("0.05"),
+                    LocalDateTime.now(ZoneOffset.UTC).plusMonths(6)))
+                    .isInstanceOf(IllegalStateException.class);
+            verify(promoCodeRepository, never()).save(any());
+        }
+
+        @Test
+        void findAllByIds_skips_the_query_when_empty() {
+            assertThat(service.findAllByIds(List.of())).isEmpty();
+            verifyNoInteractions(promoCodeRepository);
+        }
+    }
+
+    @Nested
+    @DisplayName("PromoDiscount.applyTo()")
+    class DiscountTests {
+
+        @Test
+        void commission_points_subtract_with_floor() {
+            assertThat(PromoDiscount.points(new BigDecimal("0.02")).applyTo(new BigDecimal("0.05")))
+                    .isEqualByComparingTo("0.03");
+            assertThat(PromoDiscount.points(new BigDecimal("0.08")).applyTo(new BigDecimal("0.05")))
+                    .isEqualByComparingTo("0");
+        }
+
+        @Test
+        void price_percent_keeps_paid_price_at_95_percent_when_commission_allows() {
+            BigDecimal base = new BigDecimal("0.120");
+            BigDecimal rate = PromoDiscount.pricePercent(new BigDecimal("0.050")).applyTo(base);
+            BigDecimal net = new BigDecimal("100.00");
+            // prix sans code 112,00 ; avec code 106,40 = 112 × 0,95 ; net voyageur inchangé.
+            assertThat(net.multiply(BigDecimal.ONE.add(rate))).isEqualByComparingTo("106.40");
+            assertThat(rate.scale()).isLessThanOrEqualTo(3);
+        }
+
+        @Test
+        void price_percent_never_makes_commission_negative() {
+            assertThat(PromoDiscount.pricePercent(new BigDecimal("0.050")).applyTo(new BigDecimal("0.050")))
+                    .isEqualByComparingTo("0");
+            assertThat(PromoDiscount.pricePercent(new BigDecimal("0.050")).applyTo(BigDecimal.ZERO))
+                    .isEqualByComparingTo("0");
         }
     }
 
@@ -479,9 +620,9 @@ class PromoServiceTest {
             when(redemptionRepository.countByPromoCodeIdAndUserIdAndReleasedAtIsNull(p.getId(), userId))
                     .thenReturn(1L, 0L);
 
-            assertThatThrownBy(() -> service.validateAndGetRate("WELCOME10", userId, PromoCodeTarget.SENDER))
+            assertThatThrownBy(() -> service.validateAndGetDiscount("WELCOME10", userId, PromoCodeTarget.SENDER))
                     .isInstanceOf(YadonyBusinessException.class);
-            assertThat(service.validateAndGetRate("WELCOME10", userId, PromoCodeTarget.SENDER))
+            assertThat(service.validateAndGetDiscount("WELCOME10", userId, PromoCodeTarget.SENDER).value())
                     .isEqualByComparingTo("0.06");
         }
 

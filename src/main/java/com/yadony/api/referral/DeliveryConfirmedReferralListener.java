@@ -1,13 +1,14 @@
 package com.yadony.api.referral;
 
+import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
+import com.yadony.api.referral.events.ReferralRewardAvailableEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
-import com.yadony.api.voucher.CommissionVoucherEntity;
-import com.yadony.api.voucher.CommissionVoucherService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,23 +17,24 @@ import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 /**
  * Listens for {@link DeliveryConfirmedEvent} after the tracking transaction commits,
- * then rewards the referrer if this is the referee's first completed delivery.
+ * then makes the referrer's reward available if this is the referee's first completed
+ * delivery.
  *
  * <p>Uses {@code @TransactionalEventListener(phase = AFTER_COMMIT)} + a new transaction
  * so we read data that is guaranteed to be committed (CLAUDE.md rule #18).
  *
- * <p>Lot 3 (2026-08-19/20) : la récompense n'est plus un crédit portefeuille — c'est un
- * bon de réduction de commission (50 % par défaut, 6 mois de validité, voir
- * {@link CommissionVoucherService}). Injection directe plutôt qu'un event : ce n'est pas
- * un domaine métier propre (comme {@code payments/wallet} l'était), c'est une règle de
- * tarification partagée, exactement comme {@code common/CommissionRateResolver} injecte
- * directement {@code promo/PromoService}.
+ * <p>Depuis V321, rien n'est octroyé d'office : l'invitation passe en
+ * {@code FIRST_DELIVERY} / {@link ReferralRewardStatus#AVAILABLE} et le parrain choisit
+ * ensuite sa récompense ({@link ReferralService#chooseReward}). Les bons -50 % déjà
+ * octroyés avant restent consommables. Un {@link ReferralRewardAvailableEvent} prévient
+ * le parrain (paquet {@code notifications}).
  */
 @Component
 public class DeliveryConfirmedReferralListener {
@@ -41,24 +43,27 @@ public class DeliveryConfirmedReferralListener {
 
     private final ReferralInvitationRepository referralInvitationRepository;
     private final BidRepository bidRepository;
+    private final UserRepository userRepository;
     private final AuditService auditService;
-    private final CommissionVoucherService voucherService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public DeliveryConfirmedReferralListener(ReferralInvitationRepository referralInvitationRepository,
                                               BidRepository bidRepository,
+                                              UserRepository userRepository,
                                               AuditService auditService,
-                                              CommissionVoucherService voucherService) {
+                                              ApplicationEventPublisher eventPublisher) {
         this.referralInvitationRepository = referralInvitationRepository;
         this.bidRepository = bidRepository;
+        this.userRepository = userRepository;
         this.auditService = auditService;
-        this.voucherService = voucherService;
+        this.eventPublisher = eventPublisher;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onDeliveryConfirmed(DeliveryConfirmedEvent event) {
         try {
-            doReward(event);
+            makeRewardAvailable(event);
         } catch (Exception ex) {
             // REQUIRES_NEW rolls back silently; log explicitly so ops can investigate
             log.error("Referral reward failed for bid={} sender={}: {}",
@@ -67,7 +72,7 @@ public class DeliveryConfirmedReferralListener {
         }
     }
 
-    private void doReward(DeliveryConfirmedEvent event) {
+    private void makeRewardAvailable(DeliveryConfirmedEvent event) {
         UUID senderId = event.getSenderId();
 
         Optional<ReferralInvitationEntity> invOpt =
@@ -96,28 +101,27 @@ public class DeliveryConfirmedReferralListener {
         }
 
         // completedCount == 1 → this IS the first completed delivery
+        // Mise à jour conditionnelle : deux confirmations concurrentes (ou un événement
+        // rejoué) ne rendent la récompense disponible, et ne notifient, qu'une fois.
         ReferralInvitationEntity inv = invOpt.get();
-        inv.setStatus("REWARDED");
-        inv.setRewardedAt(LocalDateTime.now(ZoneOffset.UTC));
-        referralInvitationRepository.save(inv);
+        if (referralInvitationRepository.markRewardAvailableIfSignedUp(
+                inv.getId(), LocalDateTime.now(ZoneOffset.UTC)) == 0) {
+            log.info("Referral reward already made available for invitation {} (idempotent skip)", inv.getId());
+            return;
+        }
 
-        CommissionVoucherEntity voucher = voucherService.grant(inv.getReferrerUserId(), inv.getId());
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("referrerId", inv.getReferrerUserId().toString());
+        details.put("refereeId", senderId.toString());
+        details.put("bidId", event.getBidId().toString());
+        auditService.log("REFERRAL_INVITATION", inv.getId(), "REFERRAL_REWARD_AVAILABLE",
+                inv.getReferrerUserId(), details);
 
-        auditService.log(
-                "REFERRAL_INVITATION",
-                inv.getId(),
-                "REFERRAL_REWARDED",
-                inv.getReferrerUserId(),
-                Map.of(
-                        "referrerId", inv.getReferrerUserId().toString(),
-                        "refereeId", senderId.toString(),
-                        "voucherId", voucher.getId().toString(),
-                        "factor", voucher.getFactor().toPlainString(),
-                        "bidId", event.getBidId().toString()
-                )
-        );
+        String refereeName = userRepository.findById(senderId).map(RefereeNames::displayName).orElse(null);
+        eventPublisher.publishEvent(
+                new ReferralRewardAvailableEvent(inv.getId(), inv.getReferrerUserId(), refereeName));
 
-        log.info("Referral voucher granted: referrer={} referee={} voucher={} factor={}",
-                inv.getReferrerUserId(), senderId, voucher.getId(), voucher.getFactor());
+        log.info("Referral reward available: referrer={} referee={} invitation={}",
+                inv.getReferrerUserId(), senderId, inv.getId());
     }
 }

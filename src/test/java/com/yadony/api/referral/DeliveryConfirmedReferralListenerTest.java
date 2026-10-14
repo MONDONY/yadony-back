@@ -4,8 +4,10 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
-import com.yadony.api.voucher.CommissionVoucherEntity;
-import com.yadony.api.voucher.CommissionVoucherService;
+import com.yadony.api.auth.UserEntity;
+import com.yadony.api.auth.UserRepository;
+import com.yadony.api.referral.events.ReferralRewardAvailableEvent;
+import org.springframework.context.ApplicationEventPublisher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -30,7 +32,8 @@ class DeliveryConfirmedReferralListenerTest {
     @Mock private ReferralInvitationRepository referralInvitationRepository;
     @Mock private BidRepository bidRepository;
     @Mock private AuditService auditService;
-    @Mock private CommissionVoucherService voucherService;
+    @Mock private UserRepository userRepository;
+    @Mock private ApplicationEventPublisher eventPublisher;
 
     private DeliveryConfirmedReferralListener listener;
 
@@ -43,7 +46,7 @@ class DeliveryConfirmedReferralListenerTest {
     @BeforeEach
     void setUp() {
         listener = new DeliveryConfirmedReferralListener(
-                referralInvitationRepository, bidRepository, auditService, voucherService);
+                referralInvitationRepository, bidRepository, userRepository, auditService, eventPublisher);
     }
 
     private static void setId(Object entity, UUID id) {
@@ -78,13 +81,6 @@ class DeliveryConfirmedReferralListenerTest {
         return new DeliveryConfirmedEvent(BID_ID, SENDER_ID, TRAVELER_ID);
     }
 
-    private CommissionVoucherEntity grantedVoucher() {
-        CommissionVoucherEntity v = mock(CommissionVoucherEntity.class);
-        lenient().when(v.getId()).thenReturn(UUID.randomUUID());
-        lenient().when(v.getFactor()).thenReturn(new BigDecimal("0.50"));
-        return v;
-    }
-
     // ── 1. noInvitation_doesNothing ───────────────────────────────────────────
 
     @Test
@@ -95,35 +91,49 @@ class DeliveryConfirmedReferralListenerTest {
 
         listener.onDeliveryConfirmed(event());
 
-        verifyNoInteractions(bidRepository, voucherService);
+        verifyNoInteractions(bidRepository, eventPublisher, auditService);
         verify(referralInvitationRepository, never()).save(any());
     }
 
-    // ── 2. firstDelivery_rewards ──────────────────────────────────────────────
+    // ── 2. firstDelivery_makesRewardAvailable ─────────────────────────────────
 
     @Test
-    @DisplayName("firstDelivery_rewards — first COMPLETED bid triggers a voucher grant")
-    void firstDelivery_rewards() {
+    @DisplayName("firstDelivery — reward becomes AVAILABLE, no voucher granted, referrer notified")
+    void firstDelivery_makesRewardAvailable() {
         ReferralInvitationEntity inv = buildSignedUpInvitation();
         when(referralInvitationRepository.findByRefereeUserIdAndStatus(SENDER_ID, "SIGNED_UP"))
                 .thenReturn(Optional.of(inv));
         when(bidRepository.countByStatusAndSenderId(BidStatus.COMPLETED, SENDER_ID)).thenReturn(1L);
-        when(referralInvitationRepository.save(any())).thenAnswer(i -> i.getArgument(0));
-        CommissionVoucherEntity voucher = grantedVoucher();
-        when(voucherService.grant(REFERRER_ID, INV_ID)).thenReturn(voucher);
+        when(referralInvitationRepository.markRewardAvailableIfSignedUp(eq(INV_ID), any())).thenReturn(1);
+        UserEntity referee = new UserEntity();
+        referee.setFirstName("Awa");
+        referee.setLastName("Diop");
+        when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(referee));
 
         listener.onDeliveryConfirmed(event());
 
-        // Invitation must be updated to REWARDED
-        ArgumentCaptor<ReferralInvitationEntity> invCaptor =
-                ArgumentCaptor.forClass(ReferralInvitationEntity.class);
-        verify(referralInvitationRepository).save(invCaptor.capture());
-        ReferralInvitationEntity saved = invCaptor.getValue();
-        assertThat(saved.getStatus()).isEqualTo("REWARDED");
-        assertThat(saved.getRewardedAt()).isNotNull();
+        verify(referralInvitationRepository).markRewardAvailableIfSignedUp(eq(INV_ID), any());
+        verify(referralInvitationRepository, never()).save(any());
 
-        // A voucher must be granted to the referrer, tied to this invitation
-        verify(voucherService).grant(REFERRER_ID, INV_ID);
+        verify(auditService).log(eq("REFERRAL_INVITATION"), eq(INV_ID), eq("REFERRAL_REWARD_AVAILABLE"),
+                eq(REFERRER_ID), anyMap());
+        verify(eventPublisher).publishEvent(new ReferralRewardAvailableEvent(INV_ID, REFERRER_ID, "Awa D."));
+    }
+
+    // ── 2b. concurrentOrReplayed_isIdempotent ─────────────────────────────────
+
+    @Test
+    @DisplayName("concurrent or replayed event — conditional update returns 0 → no audit, no notification")
+    void concurrentOrReplayed_isIdempotent() {
+        ReferralInvitationEntity inv = buildSignedUpInvitation();
+        when(referralInvitationRepository.findByRefereeUserIdAndStatus(SENDER_ID, "SIGNED_UP"))
+                .thenReturn(Optional.of(inv));
+        when(bidRepository.countByStatusAndSenderId(BidStatus.COMPLETED, SENDER_ID)).thenReturn(1L);
+        when(referralInvitationRepository.markRewardAvailableIfSignedUp(eq(INV_ID), any())).thenReturn(0);
+
+        listener.onDeliveryConfirmed(event());
+
+        verifyNoInteractions(auditService, eventPublisher, userRepository);
     }
 
     // ── 3. secondDelivery_doesNotReward ───────────────────────────────────────
@@ -138,8 +148,8 @@ class DeliveryConfirmedReferralListenerTest {
 
         listener.onDeliveryConfirmed(event());
 
-        verify(referralInvitationRepository, never()).save(any());
-        verifyNoInteractions(voucherService);
+        verify(referralInvitationRepository, never()).markRewardAvailableIfSignedUp(any(), any());
+        verifyNoInteractions(eventPublisher);
     }
 
     // ── 4. zeroBidCount_doesNotReward ─────────────────────────────────────────
@@ -155,24 +165,25 @@ class DeliveryConfirmedReferralListenerTest {
 
         listener.onDeliveryConfirmed(event());
 
-        verify(referralInvitationRepository, never()).save(any());
-        verifyNoInteractions(voucherService);
+        verify(referralInvitationRepository, never()).markRewardAvailableIfSignedUp(any(), any());
+        verifyNoInteractions(eventPublisher);
     }
 
-    // ── 5. exceptionInGrant_propagates ────────────────────────────────────────
+    // ── 5. exceptionInUpdate_propagates ─────────────────────────────────────────
 
     @Test
-    @DisplayName("exceptionInGrant_propagates — voucher grant failure is visible (not swallowed)")
-    void exceptionInGrant_propagates() {
+    @DisplayName("exceptionInUpdate_propagates — persistence failure is visible (not swallowed)")
+    void exceptionInUpdate_propagates() {
         ReferralInvitationEntity inv = buildSignedUpInvitation();
         when(referralInvitationRepository.findByRefereeUserIdAndStatus(SENDER_ID, "SIGNED_UP"))
                 .thenReturn(Optional.of(inv));
         when(bidRepository.countByStatusAndSenderId(BidStatus.COMPLETED, SENDER_ID)).thenReturn(1L);
-        when(referralInvitationRepository.save(any())).thenReturn(inv);
-        when(voucherService.grant(any(), any())).thenThrow(new RuntimeException("DB constraint violation"));
+        when(referralInvitationRepository.markRewardAvailableIfSignedUp(eq(INV_ID), any()))
+                .thenThrow(new RuntimeException("DB constraint violation"));
 
         assertThatThrownBy(() -> listener.onDeliveryConfirmed(event()))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("DB constraint violation");
+        verifyNoInteractions(eventPublisher);
     }
 }

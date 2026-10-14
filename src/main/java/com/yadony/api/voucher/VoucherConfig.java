@@ -6,8 +6,10 @@ import org.springframework.context.annotation.Configuration;
 import java.math.BigDecimal;
 
 /**
- * Configuration du bon de réduction de commission (lot 3, remplace le crédit
- * portefeuille du parrainage). Externalisé sous {@code yadony.voucher}.
+ * Configuration du bon de réduction de commission (lot 3). Externalisé sous
+ * {@code yadony.voucher}. Depuis V321 le parrainage n'octroie plus de bon : les bons
+ * déjà octroyés gardent leur facteur et leur expiration propres, seul le facteur
+ * courant reste affiché sur l'écran Parrainage ({@code MyReferralResponse.voucherFactor}).
  */
 @ConfigurationProperties(prefix = "yadony.voucher")
 @Configuration
@@ -16,12 +18,6 @@ public class VoucherConfig {
     /** Facteur multiplicatif appliqué au taux/prélèvement (0.50 = moitié prix). */
     private BigDecimal factor = new BigDecimal("0.50");
 
-    /** Durée de validité du bon, en mois, à compter de son octroi. */
-    private int validityMonths = 6;
-
     public BigDecimal getFactor() { return factor; }
     public void setFactor(BigDecimal factor) { this.factor = factor; }
-
-    public int getValidityMonths() { return validityMonths; }
-    public void setValidityMonths(int validityMonths) { this.validityMonths = validityMonths; }
 }

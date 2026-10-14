@@ -24,12 +24,10 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Lot 3 (2026-08-19/20) : le parrainage ne crédite plus le wallet — il octroie un bon
- * de réduction de commission (voir {@code com.yadony.api.voucher}). REFERRAL_REWARD
- * reste une valeur valide de {@link WalletTransactionType} et de la contrainte CHECK
- * V121 (lignes historiques déjà écrites), mais plus rien ne l'émet. Ce test garde
- * uniquement la preuve que la contrainte CHECK accepte toujours ce type — le reste
- * (listener, event) a été retiré avec son test dédié.
+ * V321 : le parrain qui choisit la récompense « solde » est crédité en
+ * {@link WalletTransactionType#REFERRAL_REWARD} ({@link ReferralRewardWalletListener}).
+ * Ce test garde la preuve que la contrainte CHECK V121 accepte ce type ; le parcours
+ * complet (choix, crédit unique) est couvert par {@code ReferralRewardChoiceIT}.
  *
  * <p>Sur Postgres embarqué avec les migrations Flyway : c'est la vraie contrainte V121
  * qui est éprouvée (le schéma H2 généré n'en a pas), et le crédit verrouille la ligne
@@ -74,7 +72,7 @@ class ReferralRewardWalletIT {
 
         // Would throw a constraint-violation if V121 hadn't extended wallet_transactions_type_check
         walletService.credit(userId, "EUR", new BigDecimal("5.00"),
-                WalletTransactionType.REFERRAL_REWARD, "ref-1", "referral-reward-it-1");
+                WalletTransactionType.REFERRAL_REWARD, "ref-1", "referral-reward:it-1");
 
         assertThat(walletService.getBalance(userId, "EUR")).isEqualByComparingTo(new BigDecimal("5.00"));
     }

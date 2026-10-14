@@ -148,6 +148,8 @@ public class NotificationPrefsService {
             // Paiements et portefeuille
             "CARD_EXPIRING", "wallet_topup_confirmed", "WALLET_ADJUSTED",
             "STRIPE_ONBOARDING_INCOMPLETE",
+            // Récompense de parrainage à choisir (crédit de solde ou code personnel)
+            "REFERRAL_REWARD_AVAILABLE",
             // Vérification d'identité
             "KYC_VERIFIED", "KYC_ACTION_REQUIRED", "KYC_RESET",
             // Litiges et absences

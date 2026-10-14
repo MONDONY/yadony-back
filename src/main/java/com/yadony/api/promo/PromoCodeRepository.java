@@ -3,6 +3,7 @@ package com.yadony.api.promo;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import jakarta.persistence.LockModeType;
 import java.util.Optional;
@@ -11,6 +12,13 @@ import java.util.UUID;
 public interface PromoCodeRepository extends JpaRepository<PromoCodeEntity, UUID> {
 
     Optional<PromoCodeEntity> findByCode(String code);
+
+    /**
+     * Code déjà pris, y compris par un code supprimé : l'unicité de {@code promo_codes.code}
+     * porte sur toutes les lignes, alors que les requêtes JPA filtrent {@code deleted_at}.
+     */
+    @Query(value = "SELECT EXISTS (SELECT 1 FROM promo_codes WHERE code = :code)", nativeQuery = true)
+    boolean existsByCodeIncludingDeleted(@Param("code") String code);
 
     /** Verrou pessimiste pour incrémenter redeemedCount sans race. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)

@@ -37,39 +37,7 @@ class CommissionVoucherServiceTest {
 
     @BeforeEach
     void setUp() {
-        VoucherConfig config = new VoucherConfig();
-        config.setFactor(new BigDecimal("0.50"));
-        config.setValidityMonths(6);
-        service = new CommissionVoucherService(repository, auditService, config);
-    }
-
-    // ── grant ────────────────────────────────────────────────────────────────
-
-    @Test
-    void grant_newInvitation_createsVoucherWithConfiguredFactorAndExpiry() {
-        when(repository.findBySourceInvitationId(invitationId)).thenReturn(Optional.empty());
-        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-
-        CommissionVoucherEntity result = service.grant(userId, invitationId);
-
-        assertThat(result.getUserId()).isEqualTo(userId);
-        assertThat(result.getFactor()).isEqualByComparingTo("0.50");
-        assertThat(result.getSourceInvitationId()).isEqualTo(invitationId);
-        assertThat(result.getConsumedAt()).isNull();
-        assertThat(result.getGrantedAt()).isNotNull();
-        assertThat(result.getExpiresAt()).isAfter(result.getGrantedAt().plusMonths(5));
-        assertThat(result.getExpiresAt()).isBefore(result.getGrantedAt().plusMonths(7));
-    }
-
-    @Test
-    void grant_sameInvitationTwice_isIdempotent() {
-        CommissionVoucherEntity existing = voucher(userId, invitationId, false, false);
-        when(repository.findBySourceInvitationId(invitationId)).thenReturn(Optional.of(existing));
-
-        CommissionVoucherEntity result = service.grant(userId, invitationId);
-
-        assertThat(result).isSameAs(existing);
-        verify(repository, never()).save(any());
+        service = new CommissionVoucherService(repository, auditService);
     }
 
     // ── peekActive ───────────────────────────────────────────────────────────
