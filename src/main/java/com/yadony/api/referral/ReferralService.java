@@ -377,7 +377,7 @@ public class ReferralService {
         }
         return new ReferralRefereeResponse(
                 inv.getId(),
-                RefereeNames.displayName(referee),
+                referee == null ? null : referee.publicDisplayName(),
                 inv.getCreatedAt(),
                 inv.getStatus(),
                 inv.getRewardStatus(),

@@ -236,7 +236,7 @@ class ReferralRewardChoiceServiceTest {
         Pageable pageable = PageRequest.of(0, 50);
         when(invitationRepository.findByReferrerUserIdOrderByCreatedAtDesc(referrerId, pageable))
                 .thenReturn(new PageImpl<>(List.of(inv), pageable, 1));
-        when(userRepository.findAllById(any())).thenReturn(List.of(user(refereeId, "Awa", "diop")));
+        when(userRepository.findAllById(any())).thenReturn(List.of(user(refereeId, "Awa", "Diop")));
         when(promoService.findAllByIds(any())).thenReturn(List.of(promo));
 
         // size au-delà du plafond : ramené à 50.
@@ -265,14 +265,14 @@ class ReferralRewardChoiceServiceTest {
         assertThat(service.getReferees(UID, -1, 20).content()).isEmpty();
     }
 
-    // ── RefereeNames ─────────────────────────────────────────────────────────
+    // ── Nom affiché : UserEntity.publicDisplayName() ──────────────────────
 
     @Test
-    void refereeNames_variants() {
-        assertThat(RefereeNames.displayName(null)).isNull();
-        assertThat(RefereeNames.displayName(user(refereeId, null, "Diop"))).isNull();
-        assertThat(RefereeNames.displayName(user(refereeId, " Awa ", null))).isEqualTo("Awa");
-        assertThat(RefereeNames.displayName(user(refereeId, "Awa", "élodie"))).isEqualTo("Awa É.");
+    void refereeDisplayName_followsPublicDisplayName() {
+        assertThat(user(refereeId, "Awa", null).publicDisplayName()).isEqualTo("Awa");
+        UserEntity noFirstName = user(refereeId, null, "Diop");
+        noFirstName.setUsername("awa_d42");
+        assertThat(noFirstName.publicDisplayName()).isEqualTo("awa_d42");
     }
 
     @Test

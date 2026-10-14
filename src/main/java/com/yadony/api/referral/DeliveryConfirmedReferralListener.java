@@ -1,5 +1,6 @@
 package com.yadony.api.referral;
 
+import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.matching.BidRepository;
@@ -117,7 +118,7 @@ public class DeliveryConfirmedReferralListener {
         auditService.log("REFERRAL_INVITATION", inv.getId(), "REFERRAL_REWARD_AVAILABLE",
                 inv.getReferrerUserId(), details);
 
-        String refereeName = userRepository.findById(senderId).map(RefereeNames::displayName).orElse(null);
+        String refereeName = userRepository.findById(senderId).map(UserEntity::publicDisplayName).orElse(null);
         eventPublisher.publishEvent(
                 new ReferralRewardAvailableEvent(inv.getId(), inv.getReferrerUserId(), refereeName));
 
