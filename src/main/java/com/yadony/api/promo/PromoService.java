@@ -10,9 +10,12 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -24,6 +27,12 @@ import java.util.UUID;
 public class PromoService {
 
     private static final Logger log = LoggerFactory.getLogger(PromoService.class);
+    /** Sans 0/O ni 1/I : le code se recopie à la main. */
+    private static final String CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    private static final int PERSONAL_SUFFIX_LENGTH = 4;
+    private static final int MAX_CODE_ATTEMPTS = 10;
+
+    private final SecureRandom random = new SecureRandom();
 
     private final PromoCodeRepository promoCodeRepository;
     private final PromoRedemptionRepository redemptionRepository;
@@ -38,14 +47,16 @@ public class PromoService {
     }
 
     /**
-     * Valide un code promo et retourne le taux associé.
+     * Valide un code promo et retourne la remise qu'il porte.
      * Lève une {@link YadonyBusinessException} si le code est invalide pour l'utilisateur donné.
+     * Un code personnel ({@code owner_user_id} renseigné) n'est valable que pour son
+     * propriétaire : {@code promo-not-owner} (422) pour tout autre compte.
      *
      * @param code   Code promo brut (insensible à la casse).
      * @param userId ID de l'utilisateur qui soumet le code (expéditeur au checkout).
      * @param target Rôle de l'utilisateur (SENDER ou TRAVELER) pour vérifier la cible du promo.
      */
-    public BigDecimal validateAndGetRate(String code, UUID userId, PromoCodeTarget target) {
+    public PromoDiscount validateAndGetDiscount(String code, UUID userId, PromoCodeTarget target) {
         if (code == null || code.isBlank()) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "promo-not-found", "Promo Not Found", "Code promo introuvable");
@@ -54,6 +65,8 @@ public class PromoService {
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "promo-not-found", "Promo Not Found",
                         "Code promo introuvable : " + code.toUpperCase()));
+
+        assertOwner(promo, userId);
 
         if (promo.getStatus() != PromoCodeStatus.ACTIVE) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
@@ -90,7 +103,7 @@ public class PromoService {
                     "Vous avez déjà utilisé ce code promo le nombre maximum de fois autorisé");
         }
 
-        return promo.getRate();
+        return promo.toDiscount();
     }
 
     /**
@@ -98,7 +111,7 @@ public class PromoService {
      * Idempotent : si la rédemption (promoCodeId, bidId) existe déjà, retourne sans double-décompte.
      *
      * <p>Les limites {@code per_user_limit} et {@code max_redemptions} sont REVÉRIFIÉES sous le
-     * verrou pessimiste de la ligne {@code promo_codes} : {@link #validateAndGetRate} les lit
+     * verrou pessimiste de la ligne {@code promo_codes} : {@link #validateAndGetDiscount} les lit
      * sans verrou, si bien que deux paiements concurrents du même code pouvaient tous deux
      * passer la validation puis tous deux racheter. Si la limite est atteinte à ce moment,
      * lève {@code promo-limit-reached} (422) — à appeler AVANT que l'argent ne bouge (carte :
@@ -139,6 +152,7 @@ public class PromoService {
     @Transactional
     public UUID lockForRedemption(String code, UUID userId, UUID bidId) {
         PromoCodeEntity promo = findOrThrow(code);
+        assertOwner(promo, userId);
         PromoCodeEntity locked = promoCodeRepository.findByIdForUpdate(promo.getId()).orElseThrow();
         if (!redemptionRepository.existsByPromoCodeIdAndBidIdAndReleasedAtIsNull(locked.getId(), bidId)) {
             String exceeded = exceededLimit(locked, userId);
@@ -154,6 +168,7 @@ public class PromoService {
         PromoCodeEntity promo;
         if (enforceLimits) {
             promo = promoCodeRepository.findByCode(code.toUpperCase()).orElseThrow();
+            assertOwner(promo, userId);
         } else {
             promo = promoCodeRepository.findByCode(code.toUpperCase()).orElse(null);
             if (promo == null) {
@@ -188,7 +203,7 @@ public class PromoService {
         }
 
         // Compteur relu en base sous verrou : l'entité gérée peut être celle chargée AVANT
-        // le verrou (findByCode, validateAndGetRate) et porter un compteur périmé.
+        // le verrou (findByCode, validateAndGetDiscount) et porter un compteur périmé.
         int freshCount = promoCodeRepository.findRedeemedCountById(locked.getId());
         locked.setRedeemedCount(freshCount + 1);
         promoCodeRepository.save(locked);
@@ -290,6 +305,68 @@ public class PromoService {
             return "per_user_limit";
         }
         return null;
+    }
+
+    /**
+     * Crée un code promo personnel, réservé à {@code ownerUserId} : usage unique, côté
+     * expéditeur, remise en pourcentage du prix payé ({@link PromoDiscountKind#PRICE_PERCENT}).
+     *
+     * @param codePrefix préfixe lisible (ex. {@code MERCI-ABOU}) ; un suffixe aléatoire de
+     *                   4 caractères garantit l'unicité ({@code MERCI-ABOU-7K2F}).
+     * @param percent    remise, en fraction du prix payé (0.05 = 5 %).
+     * @param validTo    fin de validité (UTC).
+     */
+    @Transactional
+    public PromoCodeEntity createPersonalCode(UUID ownerUserId, String codePrefix, BigDecimal percent,
+                                              LocalDateTime validTo) {
+        PromoCodeEntity promo = new PromoCodeEntity();
+        promo.setCode(uniquePersonalCode(codePrefix));
+        promo.setRate(percent);
+        promo.setDiscountKind(PromoDiscountKind.PRICE_PERCENT);
+        promo.setOwnerUserId(ownerUserId);
+        promo.setTarget(PromoCodeTarget.SENDER);
+        promo.setValidFrom(LocalDateTime.now(ZoneOffset.UTC));
+        promo.setValidTo(validTo);
+        promo.setMaxRedemptions(1);
+        promo.setPerUserLimit(1);
+        promo.setStatus(PromoCodeStatus.ACTIVE);
+        PromoCodeEntity saved = promoCodeRepository.save(promo);
+
+        Map<String, Object> details = new java.util.LinkedHashMap<>();
+        details.put("code", saved.getCode());
+        details.put("percent", percent.toPlainString());
+        details.put("validTo", validTo.toString());
+        auditService.log("PROMO", saved.getId(), "PROMO_PERSONAL_CODE_CREATED", ownerUserId, details);
+        return saved;
+    }
+
+    /** Codes promo par identifiant (codes supprimés exclus). */
+    @Transactional(readOnly = true)
+    public List<PromoCodeEntity> findAllByIds(Collection<UUID> ids) {
+        return ids.isEmpty() ? List.of() : promoCodeRepository.findAllById(ids);
+    }
+
+    private String uniquePersonalCode(String codePrefix) {
+        for (int attempt = 0; attempt < MAX_CODE_ATTEMPTS; attempt++) {
+            StringBuilder candidate = new StringBuilder(codePrefix).append('-');
+            for (int i = 0; i < PERSONAL_SUFFIX_LENGTH; i++) {
+                candidate.append(CODE_ALPHABET.charAt(random.nextInt(CODE_ALPHABET.length())));
+            }
+            String code = candidate.toString();
+            if (!promoCodeRepository.existsByCodeIncludingDeleted(code)) {
+                return code;
+            }
+        }
+        throw new IllegalStateException("Impossible de générer un code promo personnel unique pour " + codePrefix);
+    }
+
+    /** Un code personnel ne sert qu'à son propriétaire. */
+    private static void assertOwner(PromoCodeEntity promo, UUID userId) {
+        if (promo.getOwnerUserId() != null && !promo.getOwnerUserId().equals(userId)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "promo-not-owner", "Promo Not Owner",
+                    "Ce code promo est personnel et réservé à un autre compte");
+        }
     }
 
     private PromoCodeEntity findOrThrow(String code) {

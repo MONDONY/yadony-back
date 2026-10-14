@@ -781,6 +781,19 @@ public final class NotificationTexts {
         return new NotificationText(m.get(key + ".title"), m.get(key + ".body", amountText));
     }
 
+    // ── Parrainage ───────────────────────────────────────────────────────────
+
+    /**
+     * Premier envoi du filleul livré : le parrain choisit sa récompense. Sans prénom connu,
+     * le texte ne nomme pas le filleul.
+     */
+    public static NotificationText referralRewardAvailable(Messages m, String refereeName) {
+        String body = refereeName == null || refereeName.isBlank()
+                ? m.get("notification.referral-reward-available.body-anonymous")
+                : m.get("notification.referral-reward-available.body", NotificationCaps.shortDisplayName(refereeName));
+        return new NotificationText(m.get("notification.referral-reward-available.title"), body);
+    }
+
     // ── Support ──────────────────────────────────────────────────────────────
 
     /** Réponse du support dans un fil que l'utilisateur connaît déjà. */

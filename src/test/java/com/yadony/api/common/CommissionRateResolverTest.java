@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.config.PlatformSettingsTestFactory;
 import com.yadony.api.promo.PromoCodeTarget;
+import com.yadony.api.promo.PromoDiscount;
 import com.yadony.api.promo.PromoService;
 import com.yadony.api.voucher.CommissionVoucherEntity;
 import com.yadony.api.voucher.CommissionVoucherService;
@@ -104,7 +105,7 @@ class CommissionRateResolverTest {
         // Base = min(global 0.12, override voyageur 0.10) = 0.10 ; promo 0.06 retranché → 0.04.
         lenient().when(userRepository.findById(t)).thenReturn(Optional.of(withOverride(new BigDecimal("0.10"))));
         lenient().when(userRepository.findById(s)).thenReturn(Optional.of(withOverride(null)));
-        when(promoService.validateAndGetRate(eq("PROMO6"), eq(s), any())).thenReturn(new BigDecimal("0.06"));
+        when(promoService.validateAndGetDiscount(eq("PROMO6"), eq(s), any())).thenReturn(PromoDiscount.points(new BigDecimal("0.06")));
 
         assertThat(resolver().resolve(t, s, "PROMO6")).isEqualByComparingTo("0.04");
     }
@@ -117,7 +118,7 @@ class CommissionRateResolverTest {
         // pas un taux inchangé (l'ancien comportement écrasait par la même valeur : 0 remise).
         lenient().when(userRepository.findById(t)).thenReturn(Optional.of(withOverride(null)));
         lenient().when(userRepository.findById(s)).thenReturn(Optional.of(withOverride(null)));
-        when(promoService.validateAndGetRate(eq("WELCOME12"), eq(s), any())).thenReturn(new BigDecimal("0.12"));
+        when(promoService.validateAndGetDiscount(eq("WELCOME12"), eq(s), any())).thenReturn(PromoDiscount.points(new BigDecimal("0.12")));
 
         assertThat(resolver().resolve(t, s, "WELCOME12")).isEqualByComparingTo("0.00");
     }
@@ -129,9 +130,36 @@ class CommissionRateResolverTest {
         // Promo 0.20 > taux global 0.12 → plancher 0, jamais de commission négative.
         lenient().when(userRepository.findById(t)).thenReturn(Optional.of(withOverride(null)));
         lenient().when(userRepository.findById(s)).thenReturn(Optional.of(withOverride(null)));
-        when(promoService.validateAndGetRate(eq("BIGPROMO"), eq(s), any())).thenReturn(new BigDecimal("0.20"));
+        when(promoService.validateAndGetDiscount(eq("BIGPROMO"), eq(s), any())).thenReturn(PromoDiscount.points(new BigDecimal("0.20")));
 
         assertThat(resolver().resolve(t, s, "BIGPROMO")).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    void pricePercent_promo_converts_to_rate_points_on_paid_price() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        // Base 0.12 : prix = net × 1.12. 5 % du prix = 0.05 × 1.12 = 0.056 point de taux
+        // → taux 0.064, prix = net × 1.064 = net × 1.12 × 0.95.
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        when(promoService.validateAndGetDiscount(eq("MERCI-ABOU-7K2F"), eq(s), any()))
+                .thenReturn(PromoDiscount.pricePercent(new BigDecimal("0.050")));
+
+        assertThat(resolver().resolve(t, s, "MERCI-ABOU-7K2F")).isEqualByComparingTo("0.064");
+    }
+
+    @Test
+    void pricePercent_promo_is_capped_at_commission() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        // Base 0.05 (override) : 5 % du prix = 0.0525 > 0.05 → commission nulle, jamais négative,
+        // le net du voyageur n'est pas entamé.
+        lenient().when(userRepository.findById(t)).thenReturn(Optional.of(withOverride(new BigDecimal("0.05"))));
+        lenient().when(userRepository.findById(s)).thenReturn(Optional.of(withOverride(null)));
+        when(promoService.validateAndGetDiscount(eq("MERCI-ABOU-7K2F"), eq(s), any()))
+                .thenReturn(PromoDiscount.pricePercent(new BigDecimal("0.050")));
+
+        assertThat(resolver().resolve(t, s, "MERCI-ABOU-7K2F")).isEqualByComparingTo("0");
     }
 
     @Test
@@ -139,7 +167,7 @@ class CommissionRateResolverTest {
         UUID t = UUID.randomUUID();
         UUID s = UUID.randomUUID();
         lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
-        when(promoService.validateAndGetRate(any(), any(), any()))
+        when(promoService.validateAndGetDiscount(any(), any(), any()))
                 .thenThrow(new com.yadony.api.common.YadonyBusinessException(
                         org.springframework.http.HttpStatus.NOT_FOUND,
                         "promo-not-found", "Promo Not Found", "Code introuvable"));
@@ -186,7 +214,7 @@ class CommissionRateResolverTest {
         UUID s = UUID.randomUUID();
         // Base 0.12 - promo 0.02 = 0.10 ; bon × 0.5 → 0.05 (pas 0.12×0.5 - 0.02).
         lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
-        when(promoService.validateAndGetRate(eq("SMALL2"), eq(s), any())).thenReturn(new BigDecimal("0.02"));
+        when(promoService.validateAndGetDiscount(eq("SMALL2"), eq(s), any())).thenReturn(PromoDiscount.points(new BigDecimal("0.02")));
         CommissionVoucherEntity voucher = activeVoucher(new BigDecimal("0.50"));
         when(voucherService.peekActive(s)).thenReturn(Optional.of(voucher));
 

@@ -11,8 +11,6 @@ import java.util.UUID;
 
 public interface CommissionVoucherRepository extends JpaRepository<CommissionVoucherEntity, UUID> {
 
-    Optional<CommissionVoucherEntity> findBySourceInvitationId(UUID sourceInvitationId);
-
     // Scopé par userId : un même bid peut porter DEUX consommations distinctes (le bon
     // de l'expéditeur ET celui du voyageur), (bidId) seul les confondrait.
     Optional<CommissionVoucherEntity> findByConsumedOnBidIdAndUserId(UUID bidId, UUID userId);

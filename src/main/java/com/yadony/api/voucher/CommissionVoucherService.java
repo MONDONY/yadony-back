@@ -14,8 +14,10 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Bons de réduction de commission (lot 3) : octroi à l'invitation, consommation
- * atomique unique à la charge effective d'une commission.
+ * Bons de réduction de commission (lot 3) : consommation atomique unique à la charge
+ * effective d'une commission. Le parrainage n'en octroie plus depuis V321 (le parrain
+ * choisit entre un crédit de solde et un code promo personnel) ; les bons déjà octroyés
+ * restent consommables jusqu'à leur expiration.
  *
  * <p>Miroir volontaire de {@link com.yadony.api.promo.PromoService} : {@link #peekActive}
  * valide/lit sans effet de bord (devis, résolution de taux), {@link #consume} est le
@@ -28,37 +30,11 @@ public class CommissionVoucherService {
 
     private final CommissionVoucherRepository repository;
     private final AuditService auditService;
-    private final VoucherConfig config;
 
     public CommissionVoucherService(CommissionVoucherRepository repository,
-                                     AuditService auditService,
-                                     VoucherConfig config) {
+                                     AuditService auditService) {
         this.repository = repository;
         this.auditService = auditService;
-        this.config = config;
-    }
-
-    /**
-     * Octroie un bon au détenteur. Idempotent par {@code sourceInvitationId} — une
-     * invitation ne peut jamais générer deux bons, même rejouée.
-     */
-    @Transactional
-    public CommissionVoucherEntity grant(UUID userId, UUID sourceInvitationId) {
-        Optional<CommissionVoucherEntity> existing =
-                repository.findBySourceInvitationId(sourceInvitationId);
-        if (existing.isPresent()) {
-            log.info("Voucher already granted for invitation {} (idempotent skip)", sourceInvitationId);
-            return existing.get();
-        }
-
-        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
-        CommissionVoucherEntity voucher = new CommissionVoucherEntity();
-        voucher.setUserId(userId);
-        voucher.setFactor(config.getFactor());
-        voucher.setGrantedAt(now);
-        voucher.setExpiresAt(now.plusMonths(config.getValidityMonths()));
-        voucher.setSourceInvitationId(sourceInvitationId);
-        return repository.save(voucher);
     }
 
     /**

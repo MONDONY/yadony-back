@@ -16,7 +16,6 @@ import com.yadony.api.requests.repository.NegotiationThreadRepository;
 import com.yadony.api.voucher.CommissionVoucherEntity;
 import com.yadony.api.voucher.CommissionVoucherRepository;
 import com.yadony.api.voucher.CommissionVoucherService;
-import com.yadony.api.voucher.VoucherConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -109,7 +108,7 @@ class CashSenderVoucherConsumptionTest {
         lenient().when(voucherRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CommissionVoucherService voucherService = new CommissionVoucherService(
-                voucherRepository, auditService, new VoucherConfig());
+                voucherRepository, auditService);
 
         lenient().when(settings.commissionRate()).thenReturn(new BigDecimal("0.10"));
         lenient().when(userRepo.findById(any())).thenReturn(Optional.empty());

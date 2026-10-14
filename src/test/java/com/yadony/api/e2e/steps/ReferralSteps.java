@@ -27,6 +27,11 @@ public class ReferralSteps extends AbstractSteps {
         }
     }
 
+    @Quand("je consulte mes filleuls")
+    public void whenGetReferees() {
+        store(asCurrentUser().get("/me/referral/referees"));
+    }
+
     @Quand("j'utilise le code de parrainage sauvegardé")
     public void whenRedeemReferral() {
         store(asCurrentUser().body(Map.of("code", ctx.getString("referral-code")))

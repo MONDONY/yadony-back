@@ -10,6 +10,7 @@ import org.hibernate.annotations.Where;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Entity
 @Table(name = "promo_codes")
@@ -19,7 +20,10 @@ public class PromoCodeEntity extends BaseEntity {
     @Column(name = "code", nullable = false, unique = true, length = 40)
     private String code;
 
-    /** Taux de commission appliqué quand le promo est utilisé (ex. 0.060 = 6 %). */
+    /**
+     * Valeur de la remise : points de commission retranchés (ex. 0.060 = 6 points) ou
+     * pourcentage du prix payé (ex. 0.050 = 5 %), selon {@link #discountKind}.
+     */
     @Column(name = "rate", nullable = false, precision = 4, scale = 3)
     private BigDecimal rate;
 
@@ -46,6 +50,15 @@ public class PromoCodeEntity extends BaseEntity {
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 10)
     private PromoCodeStatus status = PromoCodeStatus.ACTIVE;
+
+    /** {@code null} = code global ; sinon seul ce compte peut l'utiliser (V321). */
+    @Column(name = "owner_user_id")
+    private UUID ownerUserId;
+
+    /** Sens de {@link #rate} (V321). */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "discount_kind", nullable = false, length = 20)
+    private PromoDiscountKind discountKind = PromoDiscountKind.COMMISSION_POINTS;
 
     // ── getters/setters ──────────────────────────────────────────────────────
 
@@ -75,4 +88,15 @@ public class PromoCodeEntity extends BaseEntity {
 
     public PromoCodeStatus getStatus() { return status; }
     public void setStatus(PromoCodeStatus status) { this.status = status; }
+
+    public UUID getOwnerUserId() { return ownerUserId; }
+    public void setOwnerUserId(UUID ownerUserId) { this.ownerUserId = ownerUserId; }
+
+    public PromoDiscountKind getDiscountKind() { return discountKind; }
+    public void setDiscountKind(PromoDiscountKind discountKind) { this.discountKind = discountKind; }
+
+    /** Remise portée par ce code, telle que l'applique le résolveur de taux. */
+    public PromoDiscount toDiscount() {
+        return new PromoDiscount(discountKind, rate);
+    }
 }

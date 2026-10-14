@@ -1208,7 +1208,7 @@ public class CashCommissionService {
      * portefeuille insuffisant ou 3DS en attente n'en enregistrent aucun.
      *
      * <p>Le contrôle des limites se fait ICI, sous le verrou de {@code promo_codes} gardé
-     * jusqu'à la fin de la transaction : {@code validateAndGetRate} les a lues sans verrou, un
+     * jusqu'à la fin de la transaction : {@code validateAndGetDiscount} les a lues sans verrou, un
      * rachat concurrent du même code a pu passer entre-temps. Un dépassement fait échouer
      * l'acceptation en {@code promo-limit-reached} (422) tant qu'aucun argent n'a bougé, plutôt
      * que d'accorder une remise qu'on ne pourrait pas enregistrer. Un nouvel essai retombe
