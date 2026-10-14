@@ -14,5 +14,9 @@ public record TravelerAnnouncementResponse(
     String status,
     String currency,
     /** Le voyageur accepte les propositions de prix. */
-    boolean negotiable
+    boolean negotiable,
+    /** {@code KG} ou {@code MIXED} (grille) : un trajet à la grille seule a un prix au kilo à 0. */
+    String pricingMode,
+    /** Prix affiché expéditeur le plus bas de la grille (« dès X »), {@code null} hors grille. */
+    BigDecimal minGridUnitPriceDisplay
 ) {}

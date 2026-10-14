@@ -344,4 +344,85 @@ class PriceGridServiceTest {
         verify(annGridRepo, never()).saveAll(any());
         verifyNoInteractions(auditService);
     }
+
+    // ── Plancher d'un article de grille : 5 € convertis dans la devise active ──
+
+    private static void assertGridRefusal(Throwable e, String reason) {
+        assertThat(e).isInstanceOf(com.yadony.api.common.YadonyBusinessException.class);
+        var ex = (com.yadony.api.common.YadonyBusinessException) e;
+        assertThat(ex.getErrorCode()).isEqualTo("price-grid/price-out-of-bounds");
+        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(ex.getProperties()).containsEntry("reason", reason);
+    }
+
+    @Test
+    void addItem_refuse_un_article_sous_5_euros() {
+        UUID travelerId = UUID.randomUUID();
+        Throwable e = org.assertj.core.api.Assertions.catchThrowable(() ->
+                service.addItem(travelerId, new PriceGridItemRequest("Clé", new BigDecimal("4.99")), travelerId));
+        assertGridRefusal(e, "too-low");
+        verify(gridRepo, never()).save(any());
+    }
+
+    @Test
+    void addItem_en_fcfa_refuse_8_et_3279_accepte_3280() {
+        UUID travelerId = UUID.randomUUID();
+        when(activeCurrencyResolver.resolve(travelerId)).thenReturn("XOF");
+        assertGridRefusal(org.assertj.core.api.Assertions.catchThrowable(() ->
+                service.addItem(travelerId, new PriceGridItemRequest("Sac", new BigDecimal("8")), travelerId)),
+                "too-low");
+        assertGridRefusal(org.assertj.core.api.Assertions.catchThrowable(() ->
+                service.addItem(travelerId, new PriceGridItemRequest("Sac", new BigDecimal("3279")), travelerId)),
+                "too-low");
+
+        when(gridRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(commissionRateResolver.resolve(any())).thenReturn(new BigDecimal("0.12"));
+        assertThat(service.addItem(travelerId, new PriceGridItemRequest("Sac", new BigDecimal("3280")), travelerId)
+                .unitPriceNet()).isEqualByComparingTo("3280");
+    }
+
+    @Test
+    void addItem_refuse_un_article_au_dessus_de_500_euros() {
+        UUID travelerId = UUID.randomUUID();
+        assertGridRefusal(org.assertj.core.api.Assertions.catchThrowable(() ->
+                service.addItem(travelerId, new PriceGridItemRequest("Moto", new BigDecimal("500.01")), travelerId)),
+                "too-high");
+    }
+
+    @Test
+    void updateItem_refuse_aussi_un_prix_sous_le_plancher() {
+        UUID travelerId = UUID.randomUUID();
+        UUID itemId = UUID.randomUUID();
+        PriceGridItemEntity existing = new PriceGridItemEntity();
+        existing.setTravelerId(travelerId);
+        existing.setLabel("Valise");
+        existing.setUnitPriceNet(new BigDecimal("20"));
+        when(gridRepo.findById(itemId)).thenReturn(java.util.Optional.of(existing));
+
+        assertGridRefusal(org.assertj.core.api.Assertions.catchThrowable(() ->
+                service.updateItem(travelerId, itemId, new PriceGridItemRequest("Valise", new BigDecimal("2")),
+                        travelerId)), "too-low");
+        assertThat(existing.getUnitPriceNet()).isEqualByComparingTo("20");
+    }
+
+    // ── « dès X » : prix expéditeur le plus bas de la grille d'une annonce ──
+
+    @Test
+    void minAnnouncementGridDisplay_prend_le_net_le_plus_bas_commission_comprise() {
+        UUID announcementId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        when(commissionRateResolver.resolve(travelerId)).thenReturn(new BigDecimal("0.12"));
+        when(annGridRepo.findByAnnouncementIdOrderByPositionAsc(announcementId))
+                .thenReturn(List.of(annItem("20.00"), annItem("10.00")));
+
+        assertThat(service.minAnnouncementGridDisplay(announcementId, travelerId)).isEqualByComparingTo("11.20");
+    }
+
+    @Test
+    void minAnnouncementGridDisplay_sans_article_rend_null() {
+        UUID announcementId = UUID.randomUUID();
+        when(annGridRepo.findByAnnouncementIdOrderByPositionAsc(announcementId)).thenReturn(List.of());
+
+        assertThat(service.minAnnouncementGridDisplay(announcementId, UUID.randomUUID())).isNull();
+    }
 }

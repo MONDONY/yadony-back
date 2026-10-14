@@ -28,6 +28,13 @@ public final class CurrencyBounds {
      */
     private static final BigDecimal MIN_PRICE_PER_KG_EUR = BigDecimal.ONE;
 
+    /**
+     * Prix minimum d'un article de grille tarifaire, en euros, avant mise à l'échelle :
+     * 5 €, soit 3 280 F CFA. Un article à 8 F CFA trahit une saisie dans la mauvaise
+     * devise ou un prix d'appel, jamais un vrai tarif.
+     */
+    private static final BigDecimal MIN_GRID_ITEM_PRICE_EUR = new BigDecimal("5");
+
     /** Budget maximum d'une demande de colis, en euros. */
     private static final BigDecimal MAX_PACKAGE_BUDGET_EUR = new BigDecimal("560");
 
@@ -56,6 +63,16 @@ public final class CurrencyBounds {
     /** Plancher du prix au kilo, arrondi vers le haut : 1 € vaut 655,957 XOF, donc 656. */
     public static BigDecimal minPricePerKg(SupportedCurrency currency) {
         return scale(MIN_PRICE_PER_KG_EUR, currency, RoundingMode.UP);
+    }
+
+    /** Plancher d'un article de grille, arrondi vers le haut : 5 € valent 3 279,785 XOF, donc 3 280. */
+    public static BigDecimal minGridItemPrice(SupportedCurrency currency) {
+        return scale(MIN_GRID_ITEM_PRICE_EUR, currency, RoundingMode.UP);
+    }
+
+    /** Plafond d'un article de grille : le même que le prix au kilo, 500 €. */
+    public static BigDecimal maxGridItemPrice(SupportedCurrency currency) {
+        return scale(MAX_PRICE_PER_KG_EUR, currency, RoundingMode.DOWN);
     }
 
     public static BigDecimal maxPackageBudget(SupportedCurrency currency) {

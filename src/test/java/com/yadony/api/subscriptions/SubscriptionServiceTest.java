@@ -27,6 +27,7 @@ class SubscriptionServiceTest {
     @Mock UserRepository userRepository;
     @Mock com.yadony.api.common.StorageService storageService;
     @Mock com.yadony.api.common.BlockVisibility blockVisibility;
+    @Mock com.yadony.api.matching.PriceGridService priceGridService;
     @InjectMocks SubscriptionService service;
 
     final String uid = "firebase-uid";
@@ -163,6 +164,28 @@ class SubscriptionServiceTest {
         // carte l'affiche à la place de la date de publication.
         assertThat(list.get(0).lastAnnouncement().departureDate())
             .isEqualTo(java.time.LocalDate.of(2026, 9, 27));
+    }
+
+    @Test
+    void getMySubscriptions_dernierTrajetALaGrille_exposeLeModeEtLePrixDes() {
+        when(userRepository.findByFirebaseUid(uid)).thenReturn(Optional.of(sender));
+        UUID annId = UUID.randomUUID();
+        Object[] row = new Object[]{
+            travelerId, "Ibrahima D", null, false, null, 1L,
+            false, false, annId, "Paris", "Dakar",
+            java.math.BigDecimal.ZERO, "EUR",
+            java.sql.Date.valueOf(java.time.LocalDate.of(2026, 11, 2)),
+            java.sql.Timestamp.valueOf(java.time.LocalDateTime.now()),
+            "MIXED"
+        };
+        when(repo.findEnrichedBySenderId(senderId)).thenReturn(List.<Object[]>of(row));
+        when(priceGridService.minAnnouncementGridDisplay(annId, travelerId))
+            .thenReturn(new java.math.BigDecimal("16.80"));
+
+        var last = service.getMySubscriptions(uid).get(0).lastAnnouncement();
+
+        assertThat(last.pricingMode()).isEqualTo("MIXED");
+        assertThat(last.minGridUnitPriceDisplay()).isEqualByComparingTo("16.80");
     }
 
     @Test

@@ -61,6 +61,21 @@ class CurrencyBoundsTest {
     }
 
     @Test
+    @DisplayName("Plancher d'un article de grille : 5 € arrondis vers le haut, plafond 500 €")
+    void gridItemPriceBounds() {
+        assertThat(CurrencyBounds.minGridItemPrice(SupportedCurrency.EUR)).isEqualByComparingTo("5.00");
+        // 5 € valent 3 279,785 F CFA : arrondi vers le haut à 3 280.
+        assertThat(CurrencyBounds.minGridItemPrice(SupportedCurrency.XOF)).isEqualByComparingTo("3280");
+        assertThat(CurrencyBounds.minGridItemPrice(SupportedCurrency.XAF)).isEqualByComparingTo("3280");
+        assertThat(CurrencyBounds.minGridItemPrice(SupportedCurrency.USD)).isEqualByComparingTo("5.40");
+        for (SupportedCurrency currency : SupportedCurrency.values()) {
+            assertThat(CurrencyBounds.minGridItemPrice(currency).scale()).isEqualTo(currency.minorUnit());
+            assertThat(CurrencyBounds.maxGridItemPrice(currency))
+                    .isEqualByComparingTo(CurrencyBounds.maxPricePerKg(currency));
+        }
+    }
+
+    @Test
     @DisplayName("FLUTTER-GK — plancher du prix au kilo : 1 €/kg arrondi vers le haut")
     void minPricePerKgIsOneEuroRoundedUp() {
         assertThat(CurrencyBounds.minPricePerKg(SupportedCurrency.EUR)).isEqualByComparingTo("1.00");

@@ -3796,6 +3796,32 @@ class AnnouncementServiceTest {
             var result = announcementService.getTravelerAnnouncements(null, travelerId);
 
             assertThat(result.get(0).currency()).isEqualTo("CAD");
+            assertThat(result.get(0).pricingMode()).isEqualTo("KG");
+            assertThat(result.get(0).minGridUnitPriceDisplay()).isNull();
+        }
+
+        @Test
+        @DisplayName("trajet à la grille : mode MIXED et prix « dès X » de la grille")
+        void getTravelerAnnouncements_gridTrip_exposesMinGridPrice() {
+            UUID travelerId = UUID.randomUUID();
+            UserEntity traveler = buildTraveler();
+            setId(traveler, travelerId);
+            AnnouncementEntity grid = buildAnnouncement(traveler);
+            grid.setStatus(AnnouncementStatus.ACTIVE);
+            grid.setPricingMode(PricingMode.MIXED);
+            grid.setPricePerKg(BigDecimal.ZERO);
+
+            when(announcementRepository.findByTravelerIdAndStatus(eq(travelerId), eq(AnnouncementStatus.ACTIVE), any()))
+                    .thenReturn(new PageImpl<>(List.of(grid)));
+            when(announcementRepository.findByTravelerIdAndStatus(eq(travelerId), eq(AnnouncementStatus.FULL), any()))
+                    .thenReturn(new PageImpl<>(List.of()));
+            when(priceGridService.minAnnouncementGridDisplay(grid.getId(), grid.getTravelerId()))
+                    .thenReturn(new BigDecimal("16.80"));
+
+            var result = announcementService.getTravelerAnnouncements(null, travelerId);
+
+            assertThat(result.get(0).pricingMode()).isEqualTo("MIXED");
+            assertThat(result.get(0).minGridUnitPriceDisplay()).isEqualByComparingTo("16.80");
         }
 
         @Test

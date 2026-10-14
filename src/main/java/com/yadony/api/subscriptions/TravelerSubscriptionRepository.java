@@ -83,7 +83,10 @@ public interface TravelerSubscriptionRepository extends JpaRepository<TravelerSu
                   ORDER BY a.created_at DESC LIMIT 1)            AS last_departure,
                (SELECT a.created_at FROM announcements a WHERE a.traveler_id = ts.traveler_id
                   AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL')
-                  ORDER BY a.created_at DESC LIMIT 1)            AS last_published
+                  ORDER BY a.created_at DESC LIMIT 1)            AS last_published,
+               (SELECT a.pricing_mode FROM announcements a WHERE a.traveler_id = ts.traveler_id
+                  AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL')
+                  ORDER BY a.created_at DESC LIMIT 1)            AS last_pricing_mode
         FROM traveler_subscriptions ts
         JOIN users u ON u.id = ts.traveler_id AND u.deleted_at IS NULL
         WHERE ts.sender_id = :senderId
