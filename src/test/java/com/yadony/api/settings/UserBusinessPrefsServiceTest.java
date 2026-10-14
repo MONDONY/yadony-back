@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
+import com.yadony.api.settings.events.ResidenceCountryChangedEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -512,6 +513,67 @@ class UserBusinessPrefsServiceTest {
 
         verifyNoInteractions(auditService);
         assertThat(user.getCountry()).isEqualTo("CI");
+    }
+
+    @Test
+    @DisplayName("Changer de pays avec un compte Stripe en attente : evenement avec le compte, pays change, audit")
+    void upsert_countryChange_withPendingStripeAccount_publishesDetachEvent() {
+        existingUserHasCountry("FR");
+        when(countryLockService.detachablePendingStripeAccountId(USER_ID))
+                .thenReturn(Optional.of("acct_pending_fr"));
+
+        UserBusinessPrefsDto result = service.upsert(FIREBASE_UID,
+                UserBusinessPrefsDto.defaults().withCountry("sn"));
+
+        assertThat(result.country()).isEqualTo("SN");
+        assertThat(user.getCountry()).isEqualTo("SN");
+        verify(auditService).log(eq("USER"), eq(USER_ID), eq("RESIDENCE_COUNTRY_CHANGED"),
+                eq(USER_ID), any());
+        verify(eventPublisher).publishEvent(new ResidenceCountryChangedEvent(
+                USER_ID, "FR", "SN", "acct_pending_fr"));
+    }
+
+    @Test
+    @DisplayName("Changer de pays sans compte Stripe : evenement sans compte a detacher")
+    void upsert_countryChange_withoutStripeAccount_publishesEventWithoutAccount() {
+        existingUserHasCountry("CI");
+
+        service.upsert(FIREBASE_UID, UserBusinessPrefsDto.defaults().withCountry("US"));
+
+        verify(eventPublisher).publishEvent(new ResidenceCountryChangedEvent(
+                USER_ID, "CI", "US", null));
+    }
+
+    @Test
+    @DisplayName("Pays verrouille : 422 et aucun evenement de changement de pays")
+    void upsert_countryLocked_noEvent() {
+        existingUserHasCountry("CI");
+        when(countryLockService.isLocked(USER_ID)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.upsert(FIREBASE_UID,
+                    UserBusinessPrefsDto.defaults().withCountry("US")))
+                .isInstanceOf(YadonyBusinessException.class);
+
+        verify(eventPublisher, never()).publishEvent(any(ResidenceCountryChangedEvent.class));
+        verify(countryLockService, never()).detachablePendingStripeAccountId(any());
+    }
+
+    @Test
+    @DisplayName("countryChangeResetsPayoutSetup : vrai seulement avec un compte en attente detachable")
+    void getPrefs_reportsPayoutSetupReset() {
+        when(repository.findById(USER_ID)).thenReturn(Optional.empty());
+        when(countryLockService.detachablePendingStripeAccountId(USER_ID))
+                .thenReturn(Optional.of("acct_pending"));
+
+        assertThat(service.getPrefs(FIREBASE_UID).countryChangeResetsPayoutSetup()).isTrue();
+
+        when(countryLockService.detachablePendingStripeAccountId(USER_ID)).thenReturn(Optional.empty());
+        assertThat(service.getPrefs(FIREBASE_UID).countryChangeResetsPayoutSetup()).isFalse();
+
+        when(countryLockService.isLocked(USER_ID)).thenReturn(true);
+        UserBusinessPrefsDto locked = service.getPrefs(FIREBASE_UID);
+        assertThat(locked.countryLocked()).isTrue();
+        assertThat(locked.countryChangeResetsPayoutSetup()).isFalse();
     }
 
     @Test

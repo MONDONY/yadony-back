@@ -660,4 +660,20 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
             + "AND p.stripePaymentIntentId IS NOT NULL AND (p.status IN :open OR p.createdAt >= :since)")
     List<PaymentEntity> findForStripeReconciliation(@Param("open") java.util.Collection<PaymentStatus> open,
                                                     @Param("since") java.time.LocalDateTime since);
+
+    /**
+     * Vrai si au moins un paiement carte (rail STRIPE, tout statut) a pour bénéficiaire ce
+     * voyageur, par l'annonce d'un colis ou par un fil de négociation. Sert au verrou du pays
+     * de résidence ({@code CountryLockService}) : un compte Connect sur lequel de l'argent a
+     * pu être dirigé ne se détache jamais, même s'il est revenu en onboarding incomplet.
+     */
+    @Query("""
+        SELECT COUNT(p) > 0 FROM PaymentEntity p
+        LEFT JOIN com.yadony.api.matching.BidEntity b ON p.bidId = b.id
+        LEFT JOIN com.yadony.api.matching.AnnouncementEntity a ON b.announcementId = a.id
+        LEFT JOIN com.yadony.api.requests.entity.NegotiationThreadEntity t ON p.negotiationThreadId = t.id
+        WHERE (a.travelerId = :travelerId OR t.travelerId = :travelerId)
+          AND p.rail = com.yadony.api.payments.PaymentRail.STRIPE
+    """)
+    boolean existsCardPaymentForTraveler(@Param("travelerId") UUID travelerId);
 }

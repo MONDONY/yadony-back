@@ -36,6 +36,13 @@ public interface StripeGateway {
             com.stripe.param.v2.core.AccountTokenCreateParams params) throws StripeException;
 
     /**
+     * Ferme un compte connecté via l'API Accounts v2 ({@code POST /v2/core/accounts/{id}/close}),
+     * toutes configurations comprises. Réservé aux comptes détachés sans aucun mouvement
+     * d'argent (voir {@link ResidenceCountryChangedListener}).
+     */
+    com.stripe.model.v2.core.Account closeAccountV2(String accountId) throws StripeException;
+
+    /**
      * Lecture v1, volontairement conservée : elle rend la même structure sur un compte
      * créé en v2 que sur un compte v1, ce dont dépendent le rafraîchissement du statut
      * et les webhooks {@code account.updated} / {@code capability.updated}.
