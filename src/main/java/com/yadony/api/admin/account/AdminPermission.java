@@ -2,7 +2,7 @@ package com.yadony.api.admin.account;
 
 /**
  * Admin permissions enum (Task 2).
- * 36 granular permissions for role-based access control.
+ * 37 granular permissions for role-based access control.
  */
 public enum AdminPermission {
     // Account management
@@ -98,6 +98,11 @@ public enum AdminPermission {
 
     // Content & operations
     PROMO_MANAGE,
+    /**
+     * Créer et révoquer des codes de recharge du solde (crédit non remboursable, plafonné à
+     * 500 EUR d'équivalent par code). Jamais accordée au support : c'est créer de l'argent.
+     */
+    TOPUP_CODE_MANAGE,
     AUDIT_VIEW,
     EXPORT_RUN
 }
