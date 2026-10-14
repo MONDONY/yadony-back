@@ -61,8 +61,11 @@ public class WalletTopupCodeRedemptionService {
 
     @Transactional
     public TopupCodeRedeemResponse redeem(UUID userId, String rawCode) {
-        AtomicInteger counter = failures.getIfPresent(userId);
-        if (counter != null && counter.get() >= MAX_FAILURES_PER_HOUR) {
+        // Réservation atomique d'une tentative AVANT la recherche : des requêtes parallèles ne peuvent
+        // pas passer toutes la garde (pas de lecture puis incrément séparés).
+        AtomicInteger counter = failures.get(userId, k -> new AtomicInteger(0));
+        if (counter.incrementAndGet() > MAX_FAILURES_PER_HOUR) {
+            counter.decrementAndGet();
             throw new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS, "topup-code-too-many-attempts",
                     "Too Many Requests", "Trop d'essais de code. Réessaie dans une heure.");
         }
@@ -72,9 +75,11 @@ public class WalletTopupCodeRedemptionService {
                 ? codes.findByCodeForUpdate(code).orElse(null)
                 : null;
         if (topupCode == null) {
-            failures.get(userId, k -> new AtomicInteger(0)).incrementAndGet();
+            // L'unité réservée reste comptée : c'est un échec.
             throw unprocessable("topup-code-not-found", "Ce code de recharge n'existe pas");
         }
+        // Code trouvé : l'unité réservée est libérée, les autres issues ne comptent pas comme échec.
+        counter.decrementAndGet();
 
         switch (topupCode.displayStatus(LocalDateTime.now(ZoneOffset.UTC))) {
             case REVOKED -> throw unprocessable("topup-code-revoked", "Ce code de recharge a été désactivé");

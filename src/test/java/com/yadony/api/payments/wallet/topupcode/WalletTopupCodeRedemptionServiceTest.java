@@ -167,7 +167,7 @@ class WalletTopupCodeRedemptionServiceTest {
         when(redemptions.existsByCodeIdAndUserId(codeId, userId)).thenReturn(true);
         assertThatThrownBy(() -> service.redeem(userId, "DAKAR2000"))
                 .satisfies(t -> assertCode(t, HttpStatus.UNPROCESSABLE_ENTITY, "topup-code-already-redeemed"));
-        assertThat(failures.getIfPresent(userId)).isNull();
+        assertThat(failures.getIfPresent(userId).get()).isZero();
     }
 
     @Test
@@ -189,5 +189,47 @@ class WalletTopupCodeRedemptionServiceTest {
         when(redemptions.saveAndFlush(any())).thenThrow(new org.springframework.dao.DataIntegrityViolationException("uq"));
         assertThatThrownBy(() -> service.redeem(userId, "DAKAR2000"))
                 .satisfies(t -> assertCode(t, HttpStatus.UNPROCESSABLE_ENTITY, "topup-code-already-redeemed"));
+    }
+
+    @Test
+    void redeem_codeTrouve_laisseLeCompteurInchange() {
+        failures.put(userId, new AtomicInteger(4));
+        when(codes.findByCodeForUpdate("DAKAR2000")).thenReturn(Optional.of(activeCode(2, 2)));
+        assertThatThrownBy(() -> service.redeem(userId, "DAKAR2000"))
+                .satisfies(t -> assertCode(t, HttpStatus.UNPROCESSABLE_ENTITY, "topup-code-exhausted"));
+        assertThat(failures.getIfPresent(userId)).hasValue(4);
+    }
+
+    @Test
+    void redeem_parallele_uneSeuleTentativeAtteintLaBase() throws Exception {
+        failures.put(userId, new AtomicInteger(4));
+        java.util.concurrent.atomic.AtomicInteger lookups = new java.util.concurrent.atomic.AtomicInteger();
+        when(codes.findByCodeForUpdate("NOPE")).thenAnswer(inv -> {
+            lookups.incrementAndGet();
+            return Optional.empty();
+        });
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(3);
+        java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+        java.util.List<java.util.concurrent.Future<String>> res = new java.util.ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            res.add(pool.submit(() -> {
+                start.await();
+                try {
+                    service.redeem(userId, "NOPE");
+                    return "ok";
+                } catch (YadonyBusinessException e) {
+                    return e.getErrorCode();
+                }
+            }));
+        }
+        start.countDown();
+        int tooMany = 0;
+        for (java.util.concurrent.Future<String> f : res) {
+            if ("topup-code-too-many-attempts".equals(f.get(10, java.util.concurrent.TimeUnit.SECONDS))) tooMany++;
+        }
+        pool.shutdown();
+        assertThat(lookups.get()).isEqualTo(1);
+        assertThat(tooMany).isEqualTo(2);
+        assertThat(failures.getIfPresent(userId)).hasValue(5);
     }
 }
