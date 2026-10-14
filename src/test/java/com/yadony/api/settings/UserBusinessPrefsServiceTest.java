@@ -24,6 +24,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -454,6 +455,63 @@ class UserBusinessPrefsServiceTest {
         assertThat(result.country()).isEqualTo("CA");
         assertThat(user.getCountry()).isEqualTo("CA");
         verify(userRepository, times(1)).save(user);
+    }
+
+    @Test
+    @DisplayName("Changer de pays de residence est trace dans audit_log (previous/new)")
+    void upsert_countryChange_isAudited() {
+        existingUserHasCountry("CI");
+
+        service.upsert(FIREBASE_UID, UserBusinessPrefsDto.defaults().withCountry("us"));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).log(eq("USER"), eq(USER_ID), eq("RESIDENCE_COUNTRY_CHANGED"),
+                eq(USER_ID), payload.capture());
+        assertThat(payload.getValue())
+                .containsEntry("previousCountry", "CI")
+                .containsEntry("newCountry", "US");
+    }
+
+    @Test
+    @DisplayName("Premier choix de pays (NULL) : trace avec previousCountry null")
+    void upsert_firstCountryChoice_isAuditedWithNullPrevious() {
+        user.setCountry(null);
+
+        service.upsert(FIREBASE_UID, UserBusinessPrefsDto.defaults().withCountry("SN"));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).log(eq("USER"), eq(USER_ID), eq("RESIDENCE_COUNTRY_CHANGED"),
+                eq(USER_ID), payload.capture());
+        assertThat(payload.getValue())
+                .containsEntry("previousCountry", null)
+                .containsEntry("newCountry", "SN");
+    }
+
+    @Test
+    @DisplayName("Renvoyer le meme pays (casse differente) n'ecrit aucun audit de pays")
+    void upsert_sameCountry_noCountryAudit() {
+        existingUserHasCountry("FR");
+
+        service.upsert(FIREBASE_UID, UserBusinessPrefsDto.defaults().withCountry("fr"));
+
+        verify(auditService, never()).log(any(), any(), eq("RESIDENCE_COUNTRY_CHANGED"), any(), any());
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Pays verrouille (422 country-locked) : aucun audit de pays")
+    void upsert_countryLocked_noCountryAudit() {
+        existingUserHasCountry("CI");
+        when(countryLockService.isLocked(USER_ID)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.upsert(FIREBASE_UID,
+                    UserBusinessPrefsDto.defaults().withCountry("US")))
+                .isInstanceOf(YadonyBusinessException.class);
+
+        verifyNoInteractions(auditService);
+        assertThat(user.getCountry()).isEqualTo("CI");
     }
 
     @Test

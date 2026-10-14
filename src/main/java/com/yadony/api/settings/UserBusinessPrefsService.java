@@ -13,6 +13,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -69,10 +70,10 @@ public class UserBusinessPrefsService {
             return x;
         });
 
-        // Gel au premier mouvement d'argent (lot 2, désormais porté par le pays) :
-        // changer de pays n'est plus permis une fois un envoi engagé ou un
-        // portefeuille entamé, sinon la devise dérivée d'un bid déjà en cours
-        // divergerait silencieusement de ce compte.
+        // Verrou du pays (CountryLockService) : changer de pays n'est plus permis dès
+        // qu'un compte Stripe Connect existe pour l'utilisateur, car le pays d'un compte
+        // Connect est immuable chez Stripe. Ni un envoi engagé ni un portefeuille entamé
+        // ne verrouillent le pays : seule l'existence du compte Connect compte.
         //
         // Aucune exemption « premier choix » sur `user.getCountry() == null` : V225 a
         // remis TOUS les pays à NULL, y compris ceux de comptes déjà porteurs d'un
@@ -96,8 +97,11 @@ public class UserBusinessPrefsService {
                             + "est déjà créé dans ce pays et ne peut plus en changer.");
         }
         if (countryChanges) {
-            user.setCountry(requestedCountry.toUpperCase(Locale.ROOT));
+            String previousCountry = user.getCountry();
+            String newCountry = requestedCountry.toUpperCase(Locale.ROOT);
+            user.setCountry(newCountry);
             userRepository.save(user);
+            recordResidenceCountryChange(userId, previousCountry, newCountry);
         }
 
         e.setWeightUnit(dto.weightUnit());
@@ -187,6 +191,21 @@ public class UserBusinessPrefsService {
                 Map.of("previousCurrency", previousCurrency, "newCurrency", newCurrency));
         eventPublisher.publishEvent(
                 new ActiveCurrencyChangedEvent(userId, previousCurrency, newCurrency));
+    }
+
+    /**
+     * Trace le changement de pays de résidence dans audit_log. Le pays pilote
+     * l'éligibilité Stripe Connect, le pays du compte Connect créé et la déclaration
+     * fiscale DAC7 (FiscalExportService) : c'est une action significative. Un premier
+     * choix (pays encore NULL, cas des comptes remis à NULL par V225) est tracé aussi,
+     * avec un previousCountry null.
+     */
+    private void recordResidenceCountryChange(UUID userId, String previousCountry, String newCountry) {
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("previousCountry",
+                previousCountry == null ? null : previousCountry.toUpperCase(Locale.ROOT));
+        payload.put("newCountry", newCountry);
+        auditService.log("USER", userId, "RESIDENCE_COUNTRY_CHANGED", userId, payload);
     }
 
     private UUID resolveUserId(String firebaseUid) {

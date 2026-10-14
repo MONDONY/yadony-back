@@ -152,6 +152,45 @@ class ActiveCurrencySwitchIntegrationTest {
         assertThat(userActions()).doesNotContain("ACTIVE_CURRENCY_CHANGED");
     }
 
+    @Test
+    @DisplayName("Changer de pays de residence : 200 et RESIDENCE_COUNTRY_CHANGED dans audit_log")
+    void countryChange_isAudited() throws Exception {
+        user.setCountry("CI");
+        user = userRepository.save(user);
+
+        mockMvc.perform(put("/users/me/business-preferences")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(countryBody("US"))
+                        .with(authentication(asUser())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.country").value("US"));
+
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getCountry()).isEqualTo("US");
+        assertThat(userActions()).containsOnlyOnce("RESIDENCE_COUNTRY_CHANGED");
+    }
+
+    @Test
+    @DisplayName("Pays verrouille par un compte Connect : 422 et aucun audit de pays")
+    void countryChange_locked_isNotAudited() throws Exception {
+        user.setCountry("CI");
+        user.setStripeAccountId("acct_locked_ci");
+        user = userRepository.save(user);
+
+        mockMvc.perform(put("/users/me/business-preferences")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(countryBody("US"))
+                        .with(authentication(asUser())))
+                .andExpect(status().isUnprocessableEntity());
+
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getCountry()).isEqualTo("CI");
+        assertThat(userActions()).doesNotContain("RESIDENCE_COUNTRY_CHANGED");
+    }
+
+    private static String countryBody(String country) {
+        return "{\"weightUnit\":\"kg\",\"country\":\"" + country + "\",\"pickupRadiusKm\":10,"
+                + "\"defaultPackageWeightKg\":23,\"minBidPriceEur\":0}";
+    }
+
     private void wallet(String currency, String amount) {
         WalletAccountEntity w = new WalletAccountEntity();
         w.setUserId(user.getId());
