@@ -58,6 +58,10 @@ public class AnnouncementEntity extends BaseEntity {
     @Column(name = "trip_leg_index")
     private Integer tripLegIndex;
 
+    /** Trajet récurrent par dates précises (V319) : commun au trajet d'origine et à ses copies. */
+    @Column(name = "series_id")
+    private UUID seriesId;
+
     @Column(name = "departure_city", nullable = false, length = 100)
     private String departureCity;
 
@@ -396,6 +400,8 @@ public class AnnouncementEntity extends BaseEntity {
     public UUID getSourceRecurrenceId() { return sourceRecurrenceId; }
     public void setSourceRecurrenceId(UUID sourceRecurrenceId) { this.sourceRecurrenceId = sourceRecurrenceId; }
 
+    public UUID getSeriesId() { return seriesId; }
+    public void setSeriesId(UUID seriesId) { this.seriesId = seriesId; }
     public UUID getTripGroupId() { return tripGroupId; }
     public void setTripGroupId(UUID tripGroupId) { this.tripGroupId = tripGroupId; }
 

@@ -43,11 +43,14 @@ public class AnnouncementController {
 
     private final AnnouncementService announcementService;
     private final TripGroupService tripGroupService;
+    private final TripSeriesService tripSeriesService;
 
     public AnnouncementController(AnnouncementService announcementService,
-                                  TripGroupService tripGroupService) {
+                                  TripGroupService tripGroupService,
+                                  TripSeriesService tripSeriesService) {
         this.announcementService = announcementService;
         this.tripGroupService = tripGroupService;
+        this.tripSeriesService = tripSeriesService;
     }
 
     @GetMapping
@@ -107,6 +110,18 @@ public class AnnouncementController {
         String firebaseUid = requireFirebaseUid();
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(tripGroupService.createTrip(firebaseUid, request));
+    }
+
+    /**
+     * Trajet récurrent par dates précises : répète ce trajet direct à d'autres dates, en
+     * brouillons ou publiés. Une date refusée n'empêche pas les autres (détail par date).
+     */
+    @PostMapping("/{id}/series")
+    public ResponseEntity<com.yadony.api.matching.dto.TripSeriesResponse> createSeries(
+            @PathVariable UUID id,
+            @Valid @RequestBody com.yadony.api.matching.dto.TripSeriesRequest request) {
+        String firebaseUid = requireFirebaseUid();
+        return ResponseEntity.ok(tripSeriesService.createSeries(firebaseUid, id, request));
     }
 
     /** Étapes du voyage d'une annonce ; liste vide pour un trajet isolé (FLUTTER-4D). */

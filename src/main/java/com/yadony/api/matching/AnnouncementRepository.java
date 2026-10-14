@@ -26,6 +26,10 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
 
     boolean existsBySourceRecurrenceIdAndDepartureDate(UUID sourceRecurrenceId, LocalDate departureDate);
 
+    /** Une série a-t-elle déjà un trajet vivant à cette date (trajet récurrent par dates). */
+    boolean existsBySeriesIdAndDepartureDateAndStatusNotIn(
+            UUID seriesId, LocalDate departureDate, java.util.Collection<AnnouncementStatus> statuses);
+
     @Query("""
             SELECT a FROM AnnouncementEntity a
             WHERE a.travelerId = :travelerId
