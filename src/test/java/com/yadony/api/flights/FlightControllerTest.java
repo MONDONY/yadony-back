@@ -184,6 +184,39 @@ class FlightControllerTest {
         verify(clickService, never()).click(any(), any());
     }
 
+    private static String clickBody(String passengers) {
+        return "{\"offerPath\":\"/search/PAR1212ABJ1\",\"originCode\":\"PAR\",\"destinationCode\":\"ABJ\","
+                + "\"source\":\"search\",\"passengers\":" + passengers + "}";
+    }
+
+    @Test
+    void click_rejectsInvalidPassengers_with422() throws Exception {
+        for (String bad : new String[]{
+                "{\"adults\":1,\"children\":0,\"infants\":2}",
+                "{\"adults\":5,\"children\":4,\"infants\":1}",
+                "{\"adults\":0,\"children\":1,\"infants\":0}",
+                "{\"adults\":10,\"children\":0,\"infants\":0}",
+                "{\"adults\":1,\"children\":-1,\"infants\":0}",
+                "{\"adults\":2}"}) {
+            mockMvc.perform(post("/flights/clicks").with(authentication(member()))
+                            .contentType(MediaType.APPLICATION_JSON).content(clickBody(bad)))
+                    .andExpect(status().isUnprocessableEntity())
+                    .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON));
+        }
+        verify(clickService, never()).click(any(), any());
+    }
+
+    @Test
+    void click_acceptsValidPassengers() throws Exception {
+        when(clickService.click(eq(UID), any())).thenReturn(new FlightClickResponse("https://www.aviasales.com/search/X?marker=1"));
+
+        mockMvc.perform(post("/flights/clicks").with(authentication(member()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(clickBody("{\"adults\":2,\"children\":6,\"infants\":1}")))
+                .andExpect(status().isOk());
+        verify(clickService).click(eq(UID), argThat(r -> r.passengers() != null && r.passengers().total() == 9));
+    }
+
     @Test
     void click_returnsAffiliateUrl() throws Exception {
         when(clickService.click(eq(UID), any())).thenReturn(new FlightClickResponse("https://www.aviasales.com/search/X?marker=1"));
