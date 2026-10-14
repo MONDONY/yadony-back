@@ -41,6 +41,11 @@ public class StripeGatewayImpl implements StripeGateway {
     }
 
     @Override
+    public com.stripe.model.v2.core.Account closeAccountV2(String accountId) throws StripeException {
+        return stripeClient.v2().core().accounts().close(accountId);
+    }
+
+    @Override
     public Account retrieveAccount(String accountId) throws StripeException {
         return Account.retrieve(accountId);
     }

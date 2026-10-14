@@ -327,6 +327,48 @@ public class PaymentService {
     }
 
     /**
+     * Détache le compte Connect encore en attente d'onboarding d'un utilisateur qui change
+     * de pays de résidence ({@code ResidenceCountryChangedEvent}, voir
+     * {@link ResidenceCountryChangedListener}). Tourne dans la transaction du changement de
+     * pays : le détachement et le nouveau pays sont validés ou annulés ensemble.
+     *
+     * <p>La ligne utilisateur est verrouillée comme pour la création de compte, puis le compte
+     * est relu : s'il n'est plus celui annoncé en attente (onboarding terminé ou compte
+     * remplacé entre-temps), le pays redevient verrouillé et le changement est refusé (422
+     * {@code country-locked}, rollback). Un compte déjà détaché ne demande rien.
+     */
+    void detachPendingConnectAccountForCountryChange(UUID userId, String pendingAccountId,
+                                                     String previousCountry, String newCountry) {
+        UserEntity user = userRepository.findByIdForUpdate(userId)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "user-not-found", "User Not Found", "Utilisateur introuvable"));
+        String currentAccountId = user.getStripeAccountId();
+        if (currentAccountId == null || currentAccountId.isBlank()) {
+            return;
+        }
+        boolean stillPending = currentAccountId.equals(pendingAccountId)
+                && user.getStripeAccountStatus() == StripeAccountStatus.PENDING_ONBOARDING
+                && user.getStripeOnboardingCompletedAt() == null;
+        if (!stillPending) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "country-locked", "Country Locked",
+                    "Impossible de changer de pays : votre compte de paiement "
+                            + "est déjà activé dans ce pays et ne peut plus en changer.");
+        }
+        resetStripeAccountState(user);
+        userRepository.save(user);
+
+        Map<String, Object> payload = new java.util.HashMap<>();
+        payload.put("stripeAccountId", currentAccountId);
+        payload.put("reason", "RESIDENCE_COUNTRY_CHANGED");
+        payload.put("previousCountry", previousCountry);
+        payload.put("newCountry", newCountry);
+        auditService.log("USER", userId, "STRIPE_ACCOUNT_DETACHED", userId, payload);
+        log.info("Pending Stripe account {} detached from user {} after residence country change {} -> {}",
+                currentAccountId, userId, previousCountry, newCountry);
+    }
+
+    /**
      * Pulls the latest state of the user's Stripe Connect account from Stripe and syncs the
      * local {@code stripe_onboarded} flag. Useful when the {@code account.updated} webhook
      * was missed (e.g. local dev without Stripe CLI, or transient network issue in prod).

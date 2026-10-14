@@ -7,6 +7,7 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.currency.CountryCatalog;
 import com.yadony.api.payments.currency.SupportedCurrency;
+import com.yadony.api.settings.events.ResidenceCountryChangedEvent;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -71,9 +72,11 @@ public class UserBusinessPrefsService {
         });
 
         // Verrou du pays (CountryLockService) : changer de pays n'est plus permis dès
-        // qu'un compte Stripe Connect existe pour l'utilisateur, car le pays d'un compte
-        // Connect est immuable chez Stripe. Ni un envoi engagé ni un portefeuille entamé
-        // ne verrouillent le pays : seule l'existence du compte Connect compte.
+        // qu'un compte Stripe Connect est engagé (onboarding terminé, compte examiné ou
+        // coupé par Stripe, argent dirigé dessus), car le pays d'un compte Connect est
+        // immuable chez Stripe. Ni un envoi engagé ni un portefeuille entamé ne
+        // verrouillent le pays. Un compte encore en attente d'onboarding ne verrouille
+        // pas : il est détaché avec le changement (ResidenceCountryChangedEvent).
         //
         // Aucune exemption « premier choix » sur `user.getCountry() == null` : V225 a
         // remis TOUS les pays à NULL, y compris ceux de comptes déjà porteurs d'un
@@ -94,14 +97,16 @@ public class UserBusinessPrefsService {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "country-locked", "Country Locked",
                     "Impossible de changer de pays : votre compte de paiement "
-                            + "est déjà créé dans ce pays et ne peut plus en changer.");
+                            + "est déjà activé dans ce pays et ne peut plus en changer.");
         }
         if (countryChanges) {
             String previousCountry = user.getCountry();
             String newCountry = requestedCountry.toUpperCase(Locale.ROOT);
+            String pendingStripeAccountId = countryLockService
+                    .detachablePendingStripeAccountId(userId).orElse(null);
             user.setCountry(newCountry);
             userRepository.save(user);
-            recordResidenceCountryChange(userId, previousCountry, newCountry);
+            recordResidenceCountryChange(userId, previousCountry, newCountry, pendingStripeAccountId);
         }
 
         e.setWeightUnit(dto.weightUnit());
@@ -194,18 +199,26 @@ public class UserBusinessPrefsService {
     }
 
     /**
-     * Trace le changement de pays de résidence dans audit_log. Le pays pilote
-     * l'éligibilité Stripe Connect, le pays du compte Connect créé et la déclaration
-     * fiscale DAC7 (FiscalExportService) : c'est une action significative. Un premier
-     * choix (pays encore NULL, cas des comptes remis à NULL par V225) est tracé aussi,
-     * avec un previousCountry null.
+     * Trace le changement de pays de résidence dans audit_log puis le diffuse. Le pays
+     * pilote l'éligibilité Stripe Connect, le pays du compte Connect créé et la
+     * déclaration fiscale DAC7 (FiscalExportService) : c'est une action significative. Un
+     * premier choix (pays encore NULL, cas des comptes remis à NULL par V225) est tracé
+     * aussi, avec un previousCountry null.
+     *
+     * <p>L'événement porte le compte Connect en attente à détacher, s'il y en a un :
+     * {@code payments/} le détache dans cette transaction, et un refus de sa part (compte
+     * devenu verrouillant entre-temps, 422 country-locked) annule le changement de pays.
      */
-    private void recordResidenceCountryChange(UUID userId, String previousCountry, String newCountry) {
+    private void recordResidenceCountryChange(UUID userId, String previousCountry, String newCountry,
+                                              String pendingStripeAccountId) {
+        String normalizedPrevious =
+                previousCountry == null ? null : previousCountry.toUpperCase(Locale.ROOT);
         Map<String, Object> payload = new HashMap<>();
-        payload.put("previousCountry",
-                previousCountry == null ? null : previousCountry.toUpperCase(Locale.ROOT));
+        payload.put("previousCountry", normalizedPrevious);
         payload.put("newCountry", newCountry);
         auditService.log("USER", userId, "RESIDENCE_COUNTRY_CHANGED", userId, payload);
+        eventPublisher.publishEvent(new ResidenceCountryChangedEvent(
+                userId, normalizedPrevious, newCountry, pendingStripeAccountId));
     }
 
     private UUID resolveUserId(String firebaseUid) {
@@ -240,6 +253,8 @@ public class UserBusinessPrefsService {
 
     private UserBusinessPrefsDto withLockStatus(UserBusinessPrefsDto dto, UserEntity user) {
         boolean countryLocked = countryLockService.isLocked(user.getId());
+        boolean countryChangeResetsPayoutSetup = !countryLocked
+                && countryLockService.detachablePendingStripeAccountId(user.getId()).isPresent();
         // Toujours false depuis FLUTTER-8F : le champ reste servi pour les apps deja
         // installees, qui grisaient la devise quand il valait true.
         boolean currencyLocked = false;
@@ -254,7 +269,8 @@ public class UserBusinessPrefsService {
                 currencyLocked,
                 user.getCountry(),
                 countryLocked,
-                dto.displayCurrencyCode() == null ? "AUTO" : dto.displayCurrencyCode()
+                dto.displayCurrencyCode() == null ? "AUTO" : dto.displayCurrencyCode(),
+                countryChangeResetsPayoutSetup
         );
     }
 }

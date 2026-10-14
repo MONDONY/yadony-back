@@ -32,8 +32,27 @@ public record UserBusinessPrefsDto(
     // (comportement historique), sinon une des 7 devises. Jamais verrouillee par le
     // solde. Omise dans la requete (null), la valeur existante est conservee ; le
     // serveur repond toujours une valeur concrete ("AUTO" quand rien n'est fige).
-    @Pattern(regexp = "AUTO|EUR|USD|CAD|GBP|CHF|XOF|XAF") String displayCurrencyCode
+    @Pattern(regexp = "AUTO|EUR|USD|CAD|GBP|CHF|XOF|XAF") String displayCurrencyCode,
+    // Lecture seule, ignore en requete : vrai quand un compte de paiement carte est en
+    // attente d'onboarding et qu'un changement de pays le detacherait (l'activation des
+    // paiements par carte serait a refaire dans le nouveau pays). L'app previent avant de
+    // confirmer. Les apps qui ne le connaissent pas l'ignorent.
+    Boolean countryChangeResetsPayoutSetup
 ) {
+    /**
+     * Forme sans {@code countryChangeResetsPayoutSetup}, champ de reponse seulement : sert
+     * aux lignes stockees, que {@code UserBusinessPrefsService} complete avant de repondre.
+     */
+    public UserBusinessPrefsDto(String weightUnit, String currencyCode, Integer pickupRadiusKm,
+                                Integer defaultPackageWeightKg, Integer minBidPriceEur,
+                                String contactMode, Integer responseDelayHours,
+                                Boolean currencyLocked, String country, Boolean countryLocked,
+                                String displayCurrencyCode) {
+        this(weightUnit, currencyCode, pickupRadiusKm, defaultPackageWeightKg, minBidPriceEur,
+                contactMode, responseDelayHours, currencyLocked, country, countryLocked,
+                displayCurrencyCode, null);
+    }
+
     public static UserBusinessPrefsDto defaults() {
         return new UserBusinessPrefsDto(
                 "kg", "EUR", 10, 23, 0, null, null, false, null, false, "AUTO");

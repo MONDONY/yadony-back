@@ -117,4 +117,10 @@ public interface StripeReleaseIntentRepository extends JpaRepository<StripeRelea
              ORDER BY i.leaseUntil ASC
             """)
     List<UUID> findDueIds(@Param("now") LocalDateTime now, Pageable page);
+
+    /**
+     * Vrai si un versement carte (transfert, tout statut) a déjà visé ce compte Connect. Sert au
+     * verrou du pays de résidence ({@code CountryLockService}).
+     */
+    boolean existsByDestination(String destination);
 }
