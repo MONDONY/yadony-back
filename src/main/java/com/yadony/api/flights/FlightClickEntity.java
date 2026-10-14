@@ -46,6 +46,10 @@ public class FlightClickEntity extends BaseEntity {
     @Column(name = "sub_id", nullable = false, length = 32, unique = true)
     private String subId;
 
+    /** Voyageurs au total, bébés compris. Nul pour les anciennes versions de l'app. */
+    @Column(name = "passengers")
+    private Short passengers;
+
     public UUID getOwnerId() { return ownerId; }
     public void setOwnerId(UUID ownerId) { this.ownerId = ownerId; }
     public String getOriginCode() { return originCode; }
@@ -64,4 +68,6 @@ public class FlightClickEntity extends BaseEntity {
     public void setSource(String source) { this.source = source; }
     public String getSubId() { return subId; }
     public void setSubId(String subId) { this.subId = subId; }
+    public Short getPassengers() { return passengers; }
+    public void setPassengers(Short passengers) { this.passengers = passengers; }
 }
