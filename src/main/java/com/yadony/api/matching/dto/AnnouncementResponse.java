@@ -65,5 +65,7 @@ public record AnnouncementResponse(
         /** Rang de cette étape dans son voyage, à partir de 1 ; null hors voyage. */
         Integer tripLegIndex,
         /** Nombre d'étapes encore présentes dans le voyage ; null hors voyage. */
-        Integer tripLegCount
+        Integer tripLegCount,
+        /** Trajet récurrent par dates précises (V319) : série commune, null hors série. */
+        UUID seriesId
 ) {}

@@ -19,6 +19,7 @@ import com.yadony.api.config.YadonyConfigProperties;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.currency.ExchangeRateService;
+import com.yadony.api.matching.dto.AddressDto;
 import com.yadony.api.matching.dto.AnnouncementDetailResponse;
 import com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse;
 import com.yadony.api.matching.dto.AnnouncementRequest;
@@ -579,7 +580,74 @@ public class AnnouncementService {
             UUID tripGroupId,
             int legIndex
     ) {
-        return createAnnouncement(firebaseUid, request, null, tripGroupId, legIndex);
+        return createAnnouncement(firebaseUid, request, null, tripGroupId, legIndex, null);
+    }
+
+    /**
+     * Trajet récurrent par dates précises : prépare la série depuis le trajet d'origine
+     * (direct, du voyageur courant). Le trajet d'origine reçoit l'identifiant de série,
+     * qui vaut son propre identifiant à la première copie.
+     */
+    @Transactional
+    public TripSeriesStart startSeries(String firebaseUid, UUID sourceId) {
+        UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found",
+                        "User Not Found", "Utilisateur introuvable"));
+        AnnouncementEntity source = announcementRepository.findById(sourceId)
+                .filter(a -> user.getId().equals(a.getTravelerId()))
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "announcement-not-found",
+                        "Announcement Not Found", "Annonce introuvable"));
+        if (source.getTripGroupId() != null) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "series-multi-leg-trip",
+                    "Trajet à étapes",
+                    "Seul un trajet direct peut être répété à d'autres dates.");
+        }
+        if (source.getStatus() == AnnouncementStatus.REMOVED_BY_ADMIN) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "series-source-removed",
+                    "Trajet retiré", "Ce trajet a été retiré par la modération.");
+        }
+        UUID seriesId = source.getSeriesId() != null ? source.getSeriesId() : source.getId();
+        if (source.getSeriesId() == null) {
+            source.setSeriesId(seriesId);
+            announcementRepository.save(source);
+        }
+        BigDecimal capacity = source.getTotalKg() != null ? source.getTotalKg() : source.getAvailableKg();
+        AnnouncementRequest base = new AnnouncementRequest(
+                source.getDepartureCity(),
+                source.getArrivalCity(),
+                source.getDepartureDate(),
+                source.getDepartureTime(),
+                source.getArrivalTime(),
+                new AddressDto(source.getPickupAddressLabel(),
+                        source.getPickupLat().doubleValue(), source.getPickupLng().doubleValue()),
+                new AddressDto(source.getDeliveryAddressLabel(),
+                        source.getDeliveryLat().doubleValue(), source.getDeliveryLng().doubleValue()),
+                capacity,
+                source.getPricePerKg(),
+                source.getTransportMode(),
+                source.getDescription(),
+                source.getAcceptedContentTypes() == null ? null : List.copyOf(source.getAcceptedContentTypes()),
+                source.getRefusedTypes() == null ? null : List.copyOf(source.getRefusedTypes()),
+                source.getAcceptedPaymentMethods() == null ? null : Set.copyOf(source.getAcceptedPaymentMethods()),
+                source.getCapacityUnit(),
+                source.getPricingMode(),
+                source.getDepartureCountryCode(),
+                source.getArrivalCountryCode(),
+                source.getHandoverDeadline(),
+                Boolean.FALSE,
+                source.isNegotiable(),
+                source.getCurrency(),
+                source.getArrivalDate(),
+                source.getStopsCount());
+        return new TripSeriesStart(seriesId, source.getDepartureDate(),
+                TripTimezones.zoneOf(source.getTimezone()), base);
+    }
+
+    /** Une copie de la série : création ordinaire (quotas, KYC, audit, événements), marquée de la série. */
+    @Transactional
+    @CacheEvict(value = "announcements-search", allEntries = true)
+    public AnnouncementResponse createSeriesCopy(String firebaseUid, AnnouncementRequest request, UUID seriesId) {
+        return createAnnouncement(firebaseUid, request, null, null, null, seriesId);
     }
 
     private AnnouncementResponse createAnnouncement(
@@ -587,7 +655,7 @@ public class AnnouncementService {
             AnnouncementRequest request,
             UUID recurrenceId
     ) {
-        return createAnnouncement(firebaseUid, request, recurrenceId, null, null);
+        return createAnnouncement(firebaseUid, request, recurrenceId, null, null, null);
     }
 
     private AnnouncementResponse createAnnouncement(
@@ -595,7 +663,8 @@ public class AnnouncementService {
             AnnouncementRequest request,
             UUID recurrenceId,
             UUID tripGroupId,
-            Integer tripLegIndex
+            Integer tripLegIndex,
+            UUID seriesId
     ) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> new YadonyBusinessException(
@@ -732,6 +801,7 @@ public class AnnouncementService {
         // Voyage à plusieurs étapes (FLUTTER-4D) : lien purement informatif entre étapes.
         announcement.setTripGroupId(tripGroupId);
         announcement.setTripLegIndex(tripGroupId != null ? tripLegIndex : null);
+        announcement.setSeriesId(seriesId);
 
         AnnouncementEntity saved = announcementRepository.save(announcement);
 
@@ -2146,7 +2216,8 @@ public class AnnouncementService {
                 entity.getTripGroupId() == null ? null
                         : counts != null
                         ? counts.tripLegs().getOrDefault(entity.getTripGroupId(), 0L).intValue()
-                        : (int) announcementRepository.countByTripGroupId(entity.getTripGroupId())
+                        : (int) announcementRepository.countByTripGroupId(entity.getTripGroupId()),
+                entity.getSeriesId()
         );
     }
 
