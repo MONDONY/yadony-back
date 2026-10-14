@@ -133,7 +133,7 @@ public class FlightPriceAlertScheduler {
                     + label(alert.getDestinationLabel(), alert.getDestinationCode());
             String price = formatPrice(cheapest, alert.getCurrency());
             String threshold = formatPrice(alert.getMaxPrice(), alert.getCurrency());
-            String title = m.get("notification.flight-price-alert.title", route);
+            String title = m.get("notification.flight-price-alert.title");
             String body = m.get("notification.flight-price-alert.body", route, price, threshold);
             Map<String, String> data = new LinkedHashMap<>();
             data.put("type", "FLIGHT_PRICE_ALERT");

@@ -1,6 +1,8 @@
 package com.yadony.api.flights;
 
+import com.yadony.api.common.i18n.Messages;
 import com.yadony.api.common.i18n.TestMessages;
+import com.yadony.api.notifications.NotificationCaps;
 import com.yadony.api.notifications.NotificationDispatcher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -56,13 +58,36 @@ class FlightPriceAlertSchedulerTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, String>> data = ArgumentCaptor.forClass(Map.class);
         verify(notifications).notifyUser(eq(owner), title.capture(), body.capture(), data.capture());
-        assertThat(title.getValue()).contains("Paris → Abidjan");
-        assertThat(body.getValue()).contains("327 €").contains("400 €");
+        assertThat(title.getValue()).isEqualTo("Prix en baisse");
+        assertThat(body.getValue()).contains("Paris → Abidjan").contains("327 €").contains("400 €");
         assertThat(data.getValue()).containsEntry("type", "FLIGHT_PRICE_ALERT")
                 .containsEntry("alertId", a.getId().toString())
                 .containsEntry("matchCount", "1");
         assertThat(a.getLastNotifiedPrice()).isEqualByComparingTo("327");
         verify(alerts).save(a);
+    }
+
+    @Test
+    void longRouteInXof_staysWithinNotificationCaps_inFrenchAndEnglish() {
+        for (Messages messages : List.of(TestMessages.fr(), TestMessages.en())) {
+            reset(notifications, alerts);
+            when(notifications.messagesFor(any())).thenReturn(messages);
+            FlightPriceAlertEntity a = alert(owner, "300000");
+            a.setOriginLabel("Marseille");
+            a.setDestinationLabel("Ouagadougou");
+            a.setCurrency("XOF");
+            when(alerts.findAllByActiveTrue()).thenReturn(List.of(a));
+            when(prices.prices(any())).thenReturn(List.of(price("250000")));
+
+            scheduler.run();
+
+            ArgumentCaptor<String> title = ArgumentCaptor.forClass(String.class);
+            ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+            verify(notifications).notifyUser(eq(owner), title.capture(), body.capture(), anyMap());
+            assertThat(title.getValue()).hasSizeLessThanOrEqualTo(NotificationCaps.TITLE_MAX);
+            assertThat(body.getValue()).hasSizeLessThanOrEqualTo(NotificationCaps.BODY_MAX)
+                    .contains("Marseille → Ouagadougou");
+        }
     }
 
     @Test
