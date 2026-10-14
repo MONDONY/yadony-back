@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.YadonyNotFoundException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.matching.PriceGridService;
 import com.yadony.api.subscriptions.dto.SubscriberResponse;
 import com.yadony.api.subscriptions.dto.SubscriptionItemResponse;
 import com.yadony.api.subscriptions.dto.SubscriptionStatusResponse;
@@ -25,11 +26,14 @@ public class SubscriptionService {
     private final UserRepository userRepository;
     private final StorageService storageService;
     private final BlockVisibility blockVisibility;
+    private final PriceGridService priceGridService;
 
     public SubscriptionService(TravelerSubscriptionRepository subscriptionRepository,
                                UserRepository userRepository,
                                StorageService storageService,
-                               BlockVisibility blockVisibility) {
+                               BlockVisibility blockVisibility,
+                               PriceGridService priceGridService) {
+        this.priceGridService = priceGridService;
         this.subscriptionRepository = subscriptionRepository;
         this.userRepository = userRepository;
         this.storageService = storageService;
@@ -168,12 +172,18 @@ public class SubscriptionService {
             // Repli sur EUR : la colonne est NOT NULL en base, mais une annonce
             // antérieure au multidevise pourrait remonter nulle d'un jeu de test.
             String currency = r[12] != null ? (String) r[12] : "EUR";
+            String pricingMode = r.length > 15 && r[15] != null ? (String) r[15] : "KG";
+            BigDecimal minGrid = "MIXED".equals(pricingMode)
+                ? priceGridService.minAnnouncementGridDisplay((UUID) r[8], (UUID) r[0])
+                : null;
             last = new SubscriptionItemResponse.LastAnnouncement(
                 (UUID) r[8], (String) r[9], (String) r[10],
                 (BigDecimal) r[11],
                 currency,
                 departure,
-                published
+                published,
+                pricingMode,
+                minGrid
             );
         }
         return new SubscriptionItemResponse(

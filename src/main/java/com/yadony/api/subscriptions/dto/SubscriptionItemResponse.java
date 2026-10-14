@@ -23,6 +23,10 @@ public record SubscriptionItemResponse(
         BigDecimal pricePerKg,
         String currency,
         LocalDate departureDate,
-        LocalDateTime publishedAt
+        LocalDateTime publishedAt,
+        /** {@code KG} ou {@code MIXED} (grille) : prix au kilo à 0 pour une grille seule. */
+        String pricingMode,
+        /** Prix affiché expéditeur le plus bas de la grille (« dès X »), {@code null} hors grille. */
+        BigDecimal minGridUnitPriceDisplay
     ) {}
 }

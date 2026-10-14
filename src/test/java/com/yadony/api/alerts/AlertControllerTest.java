@@ -274,7 +274,7 @@ class AlertControllerTest {
                 UUID.randomUUID(), "Paris", "Dakar", LocalDate.of(2026, 8, 10),
                 UUID.randomUUID(), "Mamadou D", "MD", 4.8,
                 BigDecimal.valueOf(15), BigDecimal.valueOf(8), TransportMode.PLANE, null, "EUR",
-                java.time.LocalDateTime.of(2026, 8, 1, 10, 0), "FULL");
+                java.time.LocalDateTime.of(2026, 8, 1, 10, 0), "FULL", "KG", null);
         doReturn(List.of(tripDto)).when(alertService).getMatchesForDirection(FIREBASE_UID, id);
 
         mockMvc.perform(get("/me/corridor-alerts/{id}/matches", id)

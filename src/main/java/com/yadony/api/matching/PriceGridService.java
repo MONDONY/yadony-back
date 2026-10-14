@@ -58,6 +58,7 @@ public class PriceGridService {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                 "price-grid-limit: maximum 20 articles autorisés");
         }
+        assertItemPrice(travelerId, req);
         int position = (int) currentCount;
         PriceGridItemEntity entity = new PriceGridItemEntity();
         entity.setTravelerId(travelerId);
@@ -82,6 +83,7 @@ public class PriceGridService {
                 .filter(e -> e.getTravelerId().equals(travelerId))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "price-grid-item-not-found"));
+        assertItemPrice(travelerId, req);
         entity.setLabel(req.label());
         entity.setUnitPriceNet(req.unitPriceNet());
         PriceGridItemEntity saved = gridRepo.save(entity);
@@ -271,6 +273,28 @@ public class PriceGridService {
                         com.yadony.api.common.GuestSession.travelerNetOrNull(e.getUnitPriceNet()),
                         displayPrice(e.getUnitPriceNet(), travelerId)
                 )).toList();
+    }
+
+    /** Le net saisi est dans la devise active du voyageur : 5 € au moins, 500 € au plus. */
+    private void assertItemPrice(UUID travelerId, PriceGridItemRequest req) {
+        com.yadony.api.payments.currency.GridItemPriceBounds.assertWithinBounds(
+                req.unitPriceNet(),
+                SupportedCurrency.fromCodeOrDefault(activeCurrencyResolver.resolve(travelerId)));
+    }
+
+    /**
+     * Prix affiché expéditeur (net + commission) le plus bas de la grille snapshotée d'une
+     * annonce : l'accroche « dès X » des cartes compactes d'un trajet tarifé à la grille
+     * (fiche voyageur, abonnements, alertes corridor). {@code null} sans article.
+     */
+    @Transactional(readOnly = true)
+    public BigDecimal minAnnouncementGridDisplay(UUID announcementId, UUID travelerId) {
+        return annGridRepo.findByAnnouncementIdOrderByPositionAsc(announcementId).stream()
+                .map(AnnouncementPriceGridItemEntity::getUnitPriceNet)
+                .filter(java.util.Objects::nonNull)
+                .min(java.util.Comparator.naturalOrder())
+                .map(net -> displayPrice(net, travelerId))
+                .orElse(null);
     }
 
     private PriceGridItemResponse toResponse(PriceGridItemEntity e) {

@@ -28,5 +28,9 @@ public record AlertTripMatchDto(
          * correspondances, l'app l'affiche « Complet ». Ajouté en dernier, lu en
          * optionnel côté app.
          */
-        String status
+        String status,
+        /** {@code KG} ou {@code MIXED} (grille) : prix au kilo à 0 pour une grille seule. */
+        String pricingMode,
+        /** Prix affiché expéditeur le plus bas de la grille (« dès X »), {@code null} hors grille. */
+        BigDecimal minGridUnitPriceDisplay
 ) {}

@@ -15,6 +15,8 @@ import com.yadony.api.config.ContentCategoryNormalizer;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.AnnouncementStatus;
+import com.yadony.api.matching.PriceGridService;
+import com.yadony.api.matching.PricingMode;
 import com.yadony.api.matching.dto.MatchingRequestDto;
 import com.yadony.api.requests.entity.PackageRequestEntity;
 import com.yadony.api.requests.entity.PackageRequestStatus;
@@ -53,13 +55,16 @@ public class AlertService {
     private final PackageRequestRepository packageRequestRepository;
     private final AnnouncementRepository announcementRepository;
     private final BlockVisibility blockVisibility;
+    private final PriceGridService priceGridService;
 
     public AlertService(CorridorAlertRepository alertRepository,
                         UserRepository userRepository,
                         PackageRequestRepository packageRequestRepository,
                         AnnouncementRepository announcementRepository,
-                        BlockVisibility blockVisibility) {
+                        BlockVisibility blockVisibility,
+                        PriceGridService priceGridService) {
         this.alertRepository = alertRepository;
+        this.priceGridService = priceGridService;
         this.userRepository = userRepository;
         this.packageRequestRepository = packageRequestRepository;
         this.announcementRepository = announcementRepository;
@@ -507,7 +512,11 @@ public class AlertService {
                     MatchingTextUtil.buildInitials(traveler), rating,
                     a.getAvailableKg(), a.getPricePerKg(), a.getTransportMode(), null, a.getCurrency(),
                     a.getCreatedAt(),
-                    a.getStatus() != null ? a.getStatus().name() : null));
+                    a.getStatus() != null ? a.getStatus().name() : null,
+                    a.getPricingMode() != null ? a.getPricingMode().name() : PricingMode.KG.name(),
+                    a.getPricingMode() == PricingMode.MIXED
+                            ? priceGridService.minAnnouncementGridDisplay(a.getId(), a.getTravelerId())
+                            : null));
         }
         return result;
     }
