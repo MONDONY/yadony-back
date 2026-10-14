@@ -150,6 +150,17 @@ class WalletRefundAllocatorTest {
     }
 
     @Test
+    void topUpCode_estNonCash_jamaisRemboursable() {
+        topup("40.00");
+        tx(WalletTransactionType.TOP_UP_CODE, "5.00", null);
+
+        WalletRefundAllocation r = allocate("45.00");
+
+        assertThat(r.refundableTotal()).isEqualByComparingTo("40.00");
+        assertThat(r.nonRefundable()).isEqualByComparingTo("5.00");
+    }
+
+    @Test
     void bonusRestant_nonRemboursable() {
         topup("40.00");
         tx(WalletTransactionType.REFUND, "5.00", null);
