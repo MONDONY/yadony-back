@@ -32,7 +32,7 @@ class AdminSentryWebhookControllerTest {
     @BeforeEach
     void setUp() {
         adminAlert = mock(AdminAlertService.class);
-        controller = new AdminSentryWebhookController(SECRET, objectMapper, adminAlert);
+        controller = new AdminSentryWebhookController(SECRET, "", objectMapper, adminAlert);
     }
 
     private String sign(String body) throws Exception {
@@ -141,6 +141,54 @@ class AdminSentryWebhookControllerTest {
     void handle_issueQuiCiteAdminAlertSansLeCommencer_releveToujours() throws Exception {
         String body = "{\"action\":\"created\",\"data\":{\"issue\":{"
                 + "\"title\":\"NPE near [ADMIN ALERT] parsing\"}}}";
+
+        controller.handle(body, sign(body));
+
+        verify(adminAlert).raise(eq("SENTRY_ISSUE_CREATED"), anyString(), anyMap());
+    }
+
+    @Test
+    void handle_projetHorsListe_neReleveRien() throws Exception {
+        // L'intégration staging reçoit aussi les issues de prod : on les ignore.
+        controller = new AdminSentryWebhookController(
+                SECRET, "yadony-back-staging, flutter", objectMapper, adminAlert);
+        String body = "{\"action\":\"created\",\"data\":{\"issue\":{"
+                + "\"title\":\"Boom\",\"project\":{\"slug\":\"yadony-back-prod\"}}}}";
+
+        ResponseEntity<Void> response = controller.handle(body, sign(body));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        verifyNoInteractions(adminAlert);
+    }
+
+    @Test
+    void handle_projetDansLaListe_releve() throws Exception {
+        controller = new AdminSentryWebhookController(
+                SECRET, "yadony-back-staging, flutter", objectMapper, adminAlert);
+        String body = "{\"action\":\"created\",\"data\":{\"issue\":{"
+                + "\"title\":\"Boom\",\"project\":{\"slug\":\"flutter\"}}}}";
+
+        controller.handle(body, sign(body));
+
+        verify(adminAlert).raise(eq("SENTRY_ISSUE_CREATED"), anyString(), anyMap());
+    }
+
+    @Test
+    void handle_listeDefinie_issueSansProjet_neReleveRien() throws Exception {
+        controller = new AdminSentryWebhookController(
+                SECRET, "yadony-back-prod", objectMapper, adminAlert);
+        String body = "{\"action\":\"created\",\"data\":{\"issue\":{\"title\":\"Boom\"}}}";
+
+        controller.handle(body, sign(body));
+
+        verifyNoInteractions(adminAlert);
+    }
+
+    @Test
+    void handle_listeDeVirgulesSeules_relaieTout() throws Exception {
+        controller = new AdminSentryWebhookController(SECRET, " , ", objectMapper, adminAlert);
+        String body = "{\"action\":\"created\",\"data\":{\"issue\":{"
+                + "\"title\":\"Boom\",\"project\":{\"slug\":\"autre\"}}}}";
 
         controller.handle(body, sign(body));
 

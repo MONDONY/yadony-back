@@ -252,6 +252,8 @@ yadony:
       password: ${ADMIN_BOOTSTRAP_PASSWORD:}
     sentry-webhook:
       secret: ${SENTRY_WEBHOOK_SECRET:}
+      # Slugs des projets Sentry relayés, séparés par des virgules (vide = tous).
+      projects: ${SENTRY_WEBHOOK_PROJECTS:}
   notifications:
     caps:
       # Que faire d'un libellé qui dépasse NotificationCaps (titre 28, corps 72) :

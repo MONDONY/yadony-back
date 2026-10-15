@@ -156,6 +156,8 @@ jobs:
           STRIPE_BILLING_PRICE_YEARLY=${{ secrets.STRIPE_BILLING_PRICE_YEARLY }}
           SENTRY_DSN=${{ secrets.SENTRY_DSN }}
           SENTRY_WEBHOOK_SECRET=${{ secrets.SENTRY_WEBHOOK_SECRET }}
+          # L'intégration reçoit les issues de toute l'organisation : ne relayer que le staging.
+          SENTRY_WEBHOOK_PROJECTS=yadony-back-staging,flutter
           TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
           GOOGLE_PLACES_API_KEY=${{ secrets.GOOGLE_PLACES_API_KEY }}

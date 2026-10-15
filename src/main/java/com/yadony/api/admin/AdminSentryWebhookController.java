@@ -18,10 +18,13 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/admin")
@@ -33,14 +36,30 @@ public class AdminSentryWebhookController {
     private final String webhookSecret;
     private final ObjectMapper objectMapper;
     private final AdminAlertService adminAlert;
+    /**
+     * Projets Sentry relayés. Une intégration interne envoie les issues de toute
+     * l'organisation : sans ce filtre, le back de staging relaierait aussi les issues
+     * de prod (et inversement). Vide = tout relayer.
+     */
+    private final Set<String> allowedProjects;
 
     public AdminSentryWebhookController(
             @Value("${yadony.admin.sentry-webhook.secret:}") String webhookSecret,
+            @Value("${yadony.admin.sentry-webhook.projects:}") String allowedProjects,
             ObjectMapper objectMapper,
             AdminAlertService adminAlert) {
         this.webhookSecret = webhookSecret;
+        this.allowedProjects = parseProjects(allowedProjects);
         this.objectMapper = objectMapper;
         this.adminAlert = adminAlert;
+    }
+
+    private static Set<String> parseProjects(String raw) {
+        if (raw == null || raw.isBlank()) return Set.of();
+        return Arrays.stream(raw.split(","))
+                .map(String::strip)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toUnmodifiableSet());
     }
 
     @PostMapping("/sentry-webhook")
@@ -66,6 +85,12 @@ public class AdminSentryWebhookController {
             String shortId = issue.path("shortId").asText("");
             String permalink = issue.path("permalink").asText("");
             String project = issue.path("project").path("slug").asText("");
+
+            if (!allowedProjects.isEmpty() && !allowedProjects.contains(project)) {
+                log.info("Sentry webhook ignored: issue {} from project '{}' not relayed here",
+                        shortId, project);
+                return ResponseEntity.ok().build();
+            }
 
             // Issue née d'une alerte admin (captureMessage de AdminAlertService.raise) :
             // l'alerte d'origine est déjà partie sur Telegram, l'écho SENTRY_ISSUE_*
