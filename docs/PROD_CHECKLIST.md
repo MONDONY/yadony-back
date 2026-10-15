@@ -1644,3 +1644,74 @@ Chaque demande est auditée au nom de l'admin, avec son motif : `ESCROW_RELEASE_
 - [ ] Ordre : déployer ce back **avant** de publier l'app jumelle (l'app garde son filtre local en repli).
 - [ ] Contrôle prod (lecture seule) : voyageurs concernés par le nouveau refus, `SELECT currency_code, count(*) FROM user_business_preferences WHERE min_bid_price_eur > 0 GROUP BY currency_code;`
 - [ ] Recette staging : voyageur avec minimum 6 €/kg ; un expéditeur propose 20 € pour 5 kg → refus « Ce voyageur n'accepte pas moins de 6,72 €/kg » ; 50 € → offre envoyée. Voyageur non vérifié qui fait une offre sur une demande d'un expéditeur en « profils vérifiés uniquement » → « Profil vérifié requis ».
+
+## 10. Configuration prod vérifiée le 15/10/2026 : ce qui reste à faire
+
+> État des variables et secrets de l'environnement GitHub `production` relu le 15/10 au soir. Tout ce qui est listé en 10.1 est posé : rien à ajouter côté GitHub. Les réglages ne prennent effet qu'au prochain `deploy-prod.yml`.
+
+### 10.1 Posé et vérifié le 15/10 (aucune action)
+
+- **Page publique du QR colis** (#533/#534) : `SUPPORT_WHATSAPP_NUMBER`, `SUPPORT_EMAIL`.
+- **SMS / OTP** : `TWILIO_VERIFY_SERVICE_SID`, `ANDROID_SMS_APP_HASHES`.
+- **Billets** : `TRAVELPAYOUTS_MARKER` (variable), `TRAVELPAYOUTS_TOKEN` (secret, 15/10 20:42).
+- **Appels Stream** (#537) : `STREAM_API_KEY`, `STREAM_API_SECRET`, `CALLS_ENABLED=true` ; app Stream `yadony-prod` configurée (push APNs + Firebase, `audio_call` durée max 600 s, webhook `https://api.yadony.com/api/v1/calls/webhook`).
+- **Webhook Sentry → Telegram** (#539/#540) : intégration interne `yadony-telegram-relay-prod` créée, `SENTRY_WEBHOOK_SECRET` reposé le 15/10 (Client Secret de cette intégration) ; `deploy-prod.yml` écrit `SENTRY_WEBHOOK_PROJECTS=yadony-back-prod,yadony-flutter-prod`.
+- **CORS** : `CORS_ALLOWED_ORIGINS=https://yadony.com,https://www.yadony.com,https://admin.yadony.com,https://pro.yadony.com`. Avant correction, le préflight `OPTIONS` depuis `admin.yadony.com` et `pro.yadony.com` répondait **403** : l'admin et le Pro de prod ne pouvaient pas appeler l'API.
+- **Didit** : `DIDIT_API_KEY`, `DIDIT_WORKFLOW_ID`, `DIDIT_WEBHOOK_SECRET`, `DIDIT_ENVIRONMENT`, `KYC_DIDIT_ENABLED` (05/09). Webhook Didit prod actif sur `https://api.yadony.com/api/v1/kyc/webhook/didit` ; « Tester le Webhook » → **200** (signature vérifiée avant tout traitement, donc secret correct).
+- **pawaPay** : `PAWAPAY_API_TOKEN` (secret, 19/09), variables `PAWAPAY_ENABLED=true` (15/10, **rail ouvert au prochain déploiement**), `PAWAPAY_BASE_URL=https://api.pawapay.io`, `PAWAPAY_CALLBACK_SIGNATURES=true`. `deploy-prod.yml` lit les **variables** : les secrets du même nom (`PAWAPAY_ENABLED`, `PAWAPAY_BASE_URL`, `PAWAPAY_CALLBACK_SIGNATURES`) sont ignorés. `PAWAPAY_BALANCE_MIN_XOF/XAF` vides = 0, voulu.
+- **Stripe live** (relu par l'API le 15/10) : secrets `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_{PAYMENTS,KYC,BILLING}_SECRET`, `STRIPE_BILLING_PRICE_{MONTHLY,YEARLY}` posés ; `yadony.kyc.enforce` et `yadony.stripe.enforce` à `true` (`application-prod.yml`). Trois endpoints live actifs : `/api/v1/payments/webhook` (22 événements, tous ceux que gère `PaymentStripeWebhookHandler`), `/api/v1/billing/webhook` (5 événements de `ProBillingStripeWebhookHandler`), `/api/v1/kyc/webhook` (Stripe Identity, gardé pour les anciens dossiers). Prix Pro live : 4,99 €/mois et 47,90 €/an. Connect actif (comptes Express créés, transferts actifs sur un compte vérifié).
+- **Commission** : `YADONY_COMMISSION_RATE=0.05` gardé (décision du propriétaire). Ce n'est qu'une valeur d'amorçage de `platform_settings`, réglée ensuite dans l'admin.
+
+Laissés vides ou factices exprès : `STORE_URL_IOS`, `STORE_URL_ANDROID`, `TWILIO_FROM` (factice, sans effet tant que les SMS sont coupés), `AT_*` (Africa's Talking jamais configuré), `ADMIN_BOOTSTRAP_*` (inutiles si le compte admin prod existe), `STORAGE_PUBLIC_BASE_URL` (aucun lecteur dans le code), `KYC_CONSOLE_URL_DIDIT` (lien admin facultatif, non câblé dans les workflows).
+
+### 10.2 À faire AVANT le déploiement
+
+- [ ] **pawaPay, dashboard prod** (`dashboard.pawapay.io` → Developers → Callback URLs) : remplir **Payouts** avec `https://api.yadony.com/api/v1/pawapay/callbacks/payouts` (vide au 15/10). Deposits, Refunds et Checkouts sont déjà corrects.
+- [ ] **pawaPay, onglet API Security** : signature des callbacks **activée**. Avec `PAWAPAY_CALLBACK_SIGNATURES=true`, le back rejette tout callback non signé : aucun paiement ne serait confirmé.
+- [ ] **pawaPay, Wallets** : préfinancer XOF et XAF (sinon les versements aux voyageurs échouent) ; regarder l'alerte sur « Settlements ».
+- [ ] Si l'un des trois points pawaPay n'est pas prêt : refermer le rail avant de déployer (`gh variable set PAWAPAY_ENABLED -R MONDONY/yadony-back --env production --body false`).
+- [ ] **Sauvegarde de la base prod** juste avant (gros saut de migrations, jusqu'à **V323**) :
+      ```bash
+      ssh <utilisateur>@<hôte-prod> 'docker exec yadony_db_prod sh -lc "pg_dump -U \$POSTGRES_USER -d \$POSTGRES_DB -Fc" > ~/yadony/backups/avant-deploy-1510.dump'
+      ```
+- [ ] Relever la version Flyway actuelle de la prod (requête de 8.C).
+- [ ] **Stripe, à confirmer dans le Dashboard** (Développeurs → Webhooks) : l'endpoint unique `/payments/webhook` reçoit à la fois des événements de la plateforme (`payment_intent.*`, `charge.*`) et des événements de comptes connectés (`account.updated`, `capability.updated`, `payout.*`). Chez Stripe, un endpoint écoute soit le compte, soit les comptes connectés. Vérifier lequel ; s'il n'écoute que le compte, ajouter un endpoint « comptes connectés » (même URL, autre secret de signature) ou accepter que l'état Connect ne se mette à jour que par relecture (`StripeGateway.retrieveAccount`).
+- [ ] Règles Firestore prod déployées avant le back si elles ne le sont pas encore (voir 8.A et la purge des messages, functions #9).
+
+### 10.3 Déploiement
+
+- [ ] Image testée en staging le 15/10 (run 38800430895) : **`sha-82dcca1`** (`main` après #540).
+      ```bash
+      gh workflow run deploy-prod.yml -R MONDONY/yadony-back -f image_tag=sha-82dcca1
+      ```
+- [ ] Après le back seulement : builds app prod (règle des PR jumelles, back avant app).
+
+### 10.4 Contrôles après le déploiement
+
+- [ ] Run vert, `https://api.yadony.com/api/v1/actuator/health` → 200, Flyway à V323.
+- [ ] CORS : `OPTIONS /api/v1/auth/me` avec `Origin: https://admin.yadony.com` puis `https://pro.yadony.com` → **200** (403 avant).
+- [ ] Callbacks pawaPay `POST /api/v1/pawapay/callbacks/{deposits,payouts,refunds}` sans signature → 401.
+- [ ] Page QR colis `/api/v1/tracking/{bidId}/scan` sur un vrai colis : 200, noms raccourcis, bouton WhatsApp, aucun numéro.
+- [ ] Sentry : la prochaine issue nouvelle d'un projet prod arrive sur Telegram ; une issue staging n'y arrive qu'une fois (par le back staging).
+- [ ] Stream : un vrai appel audio entre deux comptes prod.
+- [ ] Didit : premier KYC réel → livraison du webhook en 200 dans la console Didit, compte passé vérifié.
+- [ ] **pawaPay, preuve de bout en bout** : un expéditeur paie une petite somme (Orange Money ou Wave) sur un colis XOF → dépôt COMPLETED (jeton + callbacks signés OK) ; après livraison, versement au voyageur COMPLETED (callback Payouts + solde du wallet OK). Il faut deux comptes vérifiés en prod. Le jeton du 19/09 n'a pas pu être vérifié avant.
+
+### 10.5 Webhooks entrants : inventaire vérifié le 15/10
+
+Chaque route est publique dans `SecurityConfig` et authentifiée par le contrôleur ; chaque secret est écrit dans `.env` par `deploy-prod.yml` et présent dans l'environnement GitHub `production`. Sonde sans signature sur la prod actuelle (avant déploiement) : aucune route n'accepte une requête non signée.
+
+| Route (`/api/v1/...`) | Émetteur | Contrôle | Secret / réglage | Côté fournisseur | Sonde |
+|---|---|---|---|---|---|
+| `payments/webhook` | Stripe | `Stripe-Signature` | `STRIPE_WEBHOOK_PAYMENTS_SECRET` | endpoint live actif, 22 événements | 400 |
+| `billing/webhook` | Stripe | `Stripe-Signature` | `STRIPE_WEBHOOK_BILLING_SECRET` | endpoint live actif, 5 événements | 400 |
+| `kyc/webhook` | Stripe Identity | `Stripe-Signature` | `STRIPE_WEBHOOK_KYC_SECRET` | endpoint live actif (anciens dossiers) | 400 |
+| `kyc/webhook/didit` | Didit | `X-Signature` + `X-Timestamp`, `environment` = `live` | `DIDIT_WEBHOOK_SECRET`, `DIDIT_ENVIRONMENT` | destination prod active, « Tester » → 200 | 401 |
+| `pawapay/callbacks/{deposits,payouts,refunds}` | pawaPay | signature RFC 9421 | `PAWAPAY_CALLBACK_SIGNATURES=true` | **Payouts vide** (10.2), signature à confirmer | 401 |
+| `admin/sentry-webhook` | Sentry | `sentry-hook-signature` (HMAC) | `SENTRY_WEBHOOK_SECRET`, `SENTRY_WEBHOOK_PROJECTS` | intégration `yadony-telegram-relay-prod` | 401 |
+| `calls/webhook` | Stream | `X-Signature` (HMAC) + `X-Api-Key` | `STREAM_API_SECRET`, `STREAM_API_KEY` | app `yadony-prod`, 5 événements `call.*` | 401 |
+| `internal/messaging/notify` | Cloud Functions | `X-Internal-Secret` | `INTERNAL_SHARED_SECRET` | `INTERNAL_SECRET` (Secret Manager `yadony-prod`, v1 active) | 422 (validation avant le secret ; corps valide sans secret → 401) |
+
+- [ ] Non vérifiable sans lire les valeurs : `INTERNAL_SHARED_SECRET` (GitHub) doit être **identique** à `INTERNAL_SECRET` (Secret Manager du projet Firebase `yadony-prod`). Contrôle après déploiement : envoyer un message entre deux comptes prod → la push arrive, et aucun 401 sur `/internal/messaging/notify` dans les logs.
+- `deploy-prod.yml` écrit toutes les variables que `application.yml` / `application-prod.yml` lisent sans valeur par défaut (vérifié le 15/10).
+- `SecurityConfig` ouvre encore `/payments/stripe/webhook`, qu'aucun contrôleur ne sert (404) : ouverture morte, sans risque.
