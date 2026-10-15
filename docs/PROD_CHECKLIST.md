@@ -1675,7 +1675,7 @@ Laissés vides ou factices exprès : `STORE_URL_IOS`, `STORE_URL_ANDROID`, `TWIL
       ssh <utilisateur>@<hôte-prod> 'docker exec yadony_db_prod sh -lc "pg_dump -U \$POSTGRES_USER -d \$POSTGRES_DB -Fc" > ~/yadony/backups/avant-deploy-1510.dump'
       ```
 - [ ] Relever la version Flyway actuelle de la prod (requête de 8.C).
-- [ ] **Stripe, à confirmer dans le Dashboard** (Développeurs → Webhooks) : l'endpoint unique `/payments/webhook` reçoit à la fois des événements de la plateforme (`payment_intent.*`, `charge.*`) et des événements de comptes connectés (`account.updated`, `capability.updated`, `payout.*`). Chez Stripe, un endpoint écoute soit le compte, soit les comptes connectés. Vérifier lequel ; s'il n'écoute que le compte, ajouter un endpoint « comptes connectés » (même URL, autre secret de signature) ou accepter que l'état Connect ne se mette à jour que par relecture (`StripeGateway.retrieveAccount`).
+- [x] **Stripe, comptes connectés** (15/10) : les 3 endpoints historiques écoutent « Votre compte » ; les événements v1 des comptes voyageurs (Accounts v2 : `account.updated`, `capability.updated`, `account.application.deauthorized`, `payout.*`) n'arrivent qu'à une destination « Comptes connectés ». Créée le 15/10 : `Yadony Production Connect Webhook` (`we_1UQwUk3LeHyrKJsFk8QtGkal`, même URL `/payments/webhook`, charge utile instantanée, 5 événements) ; secret `STRIPE_WEBHOOK_CONNECT_SECRET` posé en production. Le back ne l'accepte qu'à partir de la PR #543 : tant que la prod n'est pas déployée, Stripe reçoit des 400 et relance pendant 3 jours.
 - [ ] Règles Firestore prod déployées avant le back si elles ne le sont pas encore (voir 8.A et la purge des messages, functions #9).
 
 ### 10.3 Déploiement
