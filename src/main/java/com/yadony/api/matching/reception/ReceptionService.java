@@ -10,6 +10,7 @@ import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
+import com.yadony.api.matching.reception.dto.ParcelRoleResponse;
 import com.yadony.api.matching.reception.dto.ReceptionResponse;
 import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.notifications.NotificationTexts;
@@ -32,6 +33,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
@@ -94,6 +96,40 @@ public class ReceptionService {
         this.storageService = storageService;
         this.ratingRepository = ratingRepository;
         this.clock = clock;
+    }
+
+    /**
+     * Rôle de l'utilisateur sur un colis, pour le lien yadony://colis/{id} de la page
+     * publique du QR. Jamais d'erreur sur un colis inconnu : NONE, sans dire s'il existe.
+     * Rattrape d'abord par numéro, pour qu'un destinataire qui n'a jamais ouvert
+     * Réceptions soit reconnu dès son premier scan.
+     */
+    public ParcelRoleResponse role(UUID bidId, String firebaseUid) {
+        UserEntity user = currentUser(firebaseUid);
+        Optional<BidEntity> bidOpt = bidRepository.findById(bidId);
+        if (bidOpt.isEmpty()) {
+            return new ParcelRoleResponse(ParcelRoleResponse.Role.NONE);
+        }
+        BidEntity bid = bidOpt.get();
+        if (user.getId().equals(bid.getSenderId())) {
+            return new ParcelRoleResponse(ParcelRoleResponse.Role.SENDER);
+        }
+        boolean traveler = announcementRepository.findById(bid.getAnnouncementId())
+                .map(a -> user.getId().equals(a.getTravelerId()))
+                .orElse(false);
+        if (traveler) {
+            return new ParcelRoleResponse(ParcelRoleResponse.Role.TRAVELER);
+        }
+        try {
+            linker.catchUp(user);
+        } catch (Exception e) {
+            // Le rattrapage est un plus : le rôle reste servi sans lui.
+            log.warn("Rattrapage des réceptions impossible pour {} : {}", user.getId(), e.toString());
+        }
+        boolean recipient = linkRepository.findByBidIdAndRecipientUserId(bidId, user.getId())
+                .filter(l -> l.getStatus() != ReceptionLinkStatus.DECLINED)
+                .isPresent();
+        return new ParcelRoleResponse(recipient ? ParcelRoleResponse.Role.RECIPIENT : ParcelRoleResponse.Role.NONE);
     }
 
     /**

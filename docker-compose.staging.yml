@@ -11,6 +11,9 @@ services:
       SPRING_PROFILES_ACTIVE: staging
       GOOGLE_APPLICATION_CREDENTIALS: /app/firebase-service-account.json
       APP_BASE_URL: https://api-staging.yadony.com
+      # Contact support de la page publique du QR colis (numéro posé dans l'env du serveur).
+      SUPPORT_WHATSAPP_NUMBER: ${SUPPORT_WHATSAPP_NUMBER:-}
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-support@yadony.com}
       # Base HTTPS de la page de rebond Wave (pawaPay) : le domaine staging, jamais le
       # défaut de production ni un schéma applicatif (refusé par les PSP).
       PAWAPAY_RETURN_BASE_URL: https://api-staging.yadony.com

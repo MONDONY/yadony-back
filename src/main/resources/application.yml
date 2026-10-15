@@ -171,6 +171,11 @@ sentry:
 # Toutes les valeurs métier sont surchargeables par variable d'environnement
 # (${VAR:défaut}) — provisioning prod sans rebuild.
 yadony:
+  # Contact du support affiché sur la page publique du QR colis (/tracking/{id}/scan).
+  # Numéro WhatsApp en format libre (les non-chiffres sont retirés). Vide = bouton masqué.
+  support:
+    whatsapp-number: ${SUPPORT_WHATSAPP_NUMBER:}
+    email: ${SUPPORT_EMAIL:support@yadony.com}
   # Billets d'avion en affiliation (Travelpayouts / Aviasales, package flights). Sans token,
   # les endpoints /flights répondent 503 flights-unavailable et le scheduler ne fait rien.
   flights:

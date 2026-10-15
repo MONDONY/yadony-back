@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="fr" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <!-- L'URL donne accès à la page : WhatsApp et les stores ne la reçoivent pas. -->
+  <meta name="referrer" content="no-referrer">
+  <title th:text="${inactive} ? 'Colis Yadony' : 'Colis ' + ${parcel.trackingNumber} + ' - Yadony'">Colis Yadony</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html { -webkit-font-smoothing: antialiased; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+           background: #f7f9fc; color: #10243b; line-height: 1.45; }
+    .page { width: min(100%, 560px); margin: 0 auto; padding: 20px 16px 36px; display: grid; gap: 12px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .brand { font-size: 20px; font-weight: 850; color: #1769ff; }
+    .tn { color: #6b7788; font-size: 13px; font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+    .panel { background: #fff; border-radius: 16px; box-shadow: inset 0 0 0 1px #e4eaf2; padding: 16px; display: grid; gap: 10px; }
+    .label { margin: 0; font-size: 11px; text-transform: uppercase; font-weight: 800; letter-spacing: .08em; color: #6b7788; }
+    .status { background: #e7efff; box-shadow: none; }
+    .status.done { background: #e3f4ec; }
+    .status strong { font-size: 17px; }
+    .route { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; }
+    .route .end { text-align: right; }
+    .city { font-size: 20px; font-weight: 750; display: block; }
+    .muted { color: #6b7788; font-size: 13px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip { font-size: 13px; padding: 3px 10px; border-radius: 999px; background: #f7f9fc; box-shadow: inset 0 0 0 1px #dfe6ef; }
+    .desc { margin: 0; white-space: pre-line; overflow-wrap: anywhere; }
+    .row { display: flex; justify-content: space-between; gap: 8px; }
+    .person { display: grid; }
+    .event { display: grid; gap: 4px; padding-left: 14px; border-left: 2px solid #dfe6ef; }
+    .event img { width: 100%; max-height: 220px; object-fit: cover; border-radius: 10px; }
+    .btn { display: block; text-align: center; text-decoration: none; font-weight: 700; border-radius: 12px; padding: 13px 14px; font-size: 15px; }
+    .btn.wa { background: #128c4a; color: #fff; }
+    .btn.mail { background: #fff; color: #10243b; box-shadow: inset 0 0 0 1px #dfe6ef; }
+    .btn.primary { background: #1769ff; color: #fff; }
+    .stores { text-align: center; font-size: 13px; color: #6b7788; margin: 0; }
+    .stores a { color: #1769ff; font-weight: 700; text-decoration: none; }
+    .empty { text-align: center; padding: 24px 8px; display: grid; gap: 8px; }
+    .empty h1 { margin: 0; font-size: 20px; }
+    .empty p { margin: 0; }
+    .intro { margin: 0; }
+    .foot { text-align: center; font-size: 12px; color: #6b7788; margin: 0; }
+  </style>
+</head>
+<body>
+<main class="page">
+  <div class="topbar">
+    <span class="brand">Yadony</span>
+    <span class="tn" th:if="${!inactive}" th:text="${parcel.trackingNumber}">YD7K4M2Q</span>
+  </div>
+
+  <th:block th:if="${inactive}">
+    <section class="panel empty">
+      <h1>Ce colis n'est plus actif</h1>
+      <p class="muted">L'envoi a été annulé ou ce QR code n'est pas reconnu. Si vous avez ce colis entre les mains, contactez Yadony.</p>
+    </section>
+  </th:block>
+
+  <th:block th:unless="${inactive}">
+    <section class="panel status" th:classappend="${parcel.delivered} ? 'done'">
+      <strong th:text="${parcel.statusLabel}">En transit</strong>
+    </section>
+
+    <section class="panel">
+      <p class="label">Trajet</p>
+      <div class="route">
+        <div><span class="city" th:text="${parcel.departureCity}">Paris</span>
+          <span class="muted" th:if="${!#strings.isEmpty(parcel.departureDate)}" th:text="'Départ ' + ${parcel.departureDate}">Départ</span></div>
+        <span aria-hidden="true">✈</span>
+        <div class="end"><span class="city" th:text="${parcel.arrivalCity}">Dakar</span>
+          <span class="muted" th:if="${!#strings.isEmpty(parcel.arrivalDate)}" th:text="'Arrivée ' + ${parcel.arrivalDate}">Arrivée</span></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <p class="label">Contenu</p>
+      <div class="chips" th:if="${!parcel.categories.isEmpty()}">
+        <span class="chip" th:each="c : ${parcel.categories}" th:text="${c}">Vêtements</span>
+      </div>
+      <p class="desc" th:if="${!#strings.isEmpty(parcel.description)}" th:text="${parcel.description}">Description</p>
+      <div class="row" th:if="${!#strings.isEmpty(parcel.weight)}"><span class="muted">Poids</span><strong th:text="${parcel.weight}">4,5 kg</strong></div>
+    </section>
+
+    <section class="panel">
+      <p class="label">Personnes</p>
+      <div class="person"><span class="muted">Envoyé par</span><strong th:text="${parcel.senderName}">Awa D.</strong></div>
+      <div class="person"><span class="muted">À récupérer par</span><strong th:text="${parcel.recipientName}">Moussa K.</strong></div>
+      <div class="person"><span class="muted">Transporté par</span><strong th:text="${parcel.travelerName}">Ibrahima S.</strong></div>
+    </section>
+
+    <section class="panel" th:if="${!parcel.events.isEmpty()}">
+      <p class="label">Étapes</p>
+      <div class="event" th:each="event : ${parcel.events}">
+        <strong th:text="${event.label}">Colis remis au voyageur</strong>
+        <span class="muted" th:text="${event.scannedAt}">18/10/2026 09:12</span>
+        <img th:if="${event.photoUrl != null and !#strings.isEmpty(event.photoUrl)}" th:src="${event.photoUrl}" alt="Photo du colis à cette étape" loading="lazy">
+      </div>
+    </section>
+  </th:block>
+
+  <section class="panel">
+    <p class="label">Une question sur ce colis ?</p>
+    <p class="muted intro">Contactez Yadony. Nous faisons le lien avec l'expéditeur et le voyageur.</p>
+    <a class="btn wa" th:if="${whatsappUrl != null}" th:href="${whatsappUrl}" rel="noopener noreferrer">Écrire à Yadony sur WhatsApp</a>
+    <a class="btn mail" th:href="${mailtoUrl}" th:text="${supportEmail}">support@yadony.com</a>
+  </section>
+
+  <th:block th:unless="${inactive}">
+    <a class="btn primary" th:href="${appLink}">Ouvrir dans Yadony</a>
+    <p class="stores" th:if="${storeIos != null or storeAndroid != null}">Pas encore l'application ?
+      <a th:if="${storeIos != null}" th:href="${storeIos}" rel="noopener noreferrer">App Store</a>
+      <th:block th:if="${storeIos != null and storeAndroid != null}"> · </th:block>
+      <a th:if="${storeAndroid != null}" th:href="${storeAndroid}" rel="noopener noreferrer">Google Play</a>
+    </p>
+  </th:block>
+  <p class="foot">Les numéros de téléphone ne sont jamais affichés sur cette page.</p>
+</main>
+</body>
+</html>
