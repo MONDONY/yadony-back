@@ -1,5 +1,6 @@
 package com.yadony.api.matching.reception;
 
+import com.yadony.api.matching.reception.dto.ParcelRoleResponse;
 import com.yadony.api.matching.reception.dto.ReceptionResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -28,6 +29,13 @@ public class ReceptionController {
     @GetMapping
     public ResponseEntity<List<ReceptionResponse>> list(@AuthenticationPrincipal String firebaseUid) {
         return ResponseEntity.ok(service.list(firebaseUid));
+    }
+
+    /** Rôle de l'utilisateur sur un colis : lien yadony://colis/{id} de la page publique du QR. */
+    @GetMapping("/role/{bidId}")
+    public ResponseEntity<ParcelRoleResponse> role(@AuthenticationPrincipal String firebaseUid,
+                                                   @PathVariable UUID bidId) {
+        return ResponseEntity.ok(service.role(bidId, firebaseUid));
     }
 
     @GetMapping("/{bidId}")

@@ -465,6 +465,60 @@ class ReceptionControllerIntegrationTest {
                 List.of(new SimpleGrantedAuthority("ROLE_SENDER"), new SimpleGrantedAuthority("ROLE_TRAVELER")));
     }
 
+    // ── Rôle sur un colis (lien yadony://colis/{id} de la page publique du QR) ──
+
+    @Test
+    void role_expediteur() throws Exception {
+        BidEntity bid = persistBid(BidStatus.IN_TRANSIT, "+221770000001");
+        mockMvc.perform(get("/receptions/role/{id}", bid.getId()).with(authentication(as(sender))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.role").value("SENDER"));
+    }
+
+    @Test
+    void role_voyageur() throws Exception {
+        BidEntity bid = persistBid(BidStatus.IN_TRANSIT, "+221770000002");
+        mockMvc.perform(get("/receptions/role/{id}", bid.getId()).with(authentication(as(traveler))))
+                .andExpect(jsonPath("$.role").value("TRAVELER"));
+    }
+
+    @Test
+    void role_destinataireLie() throws Exception {
+        BidEntity bid = persistBid(BidStatus.IN_TRANSIT, "+221770000003");
+        link(bid, ReceptionLinkStatus.PENDING);
+        mockMvc.perform(get("/receptions/role/{id}", bid.getId()).with(authentication(as(recipient))))
+                .andExpect(jsonPath("$.role").value("RECIPIENT"));
+    }
+
+    @Test
+    void role_destinataireConfirme() throws Exception {
+        BidEntity bid = persistBid(BidStatus.IN_TRANSIT, "+221770000005");
+        link(bid, ReceptionLinkStatus.CONFIRMED);
+        mockMvc.perform(get("/receptions/role/{id}", bid.getId()).with(authentication(as(recipient))))
+                .andExpect(jsonPath("$.role").value("RECIPIENT"));
+    }
+
+    @Test
+    void role_destinataireAyantRefuse_none() throws Exception {
+        BidEntity bid = persistBid(BidStatus.IN_TRANSIT, "+221770000004");
+        link(bid, ReceptionLinkStatus.DECLINED);
+        mockMvc.perform(get("/receptions/role/{id}", bid.getId()).with(authentication(as(recipient))))
+                .andExpect(jsonPath("$.role").value("NONE"));
+    }
+
+    @Test
+    void role_colisInconnu_none() throws Exception {
+        mockMvc.perform(get("/receptions/role/{id}", UUID.randomUUID()).with(authentication(as(recipient))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.role").value("NONE"));
+    }
+
+    @Test
+    void role_sansJeton_401() throws Exception {
+        mockMvc.perform(get("/receptions/role/{id}", UUID.randomUUID()))
+                .andExpect(status().isUnauthorized());
+    }
+
     private UserEntity persistUser(String firstName, Role role) {
         UserEntity u = new UserEntity();
         u.setFirebaseUid("uid-reception-" + UUID.randomUUID());
