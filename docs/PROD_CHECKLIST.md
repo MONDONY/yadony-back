@@ -1676,13 +1676,15 @@ Laissés vides ou factices exprès : `STORE_URL_IOS`, `STORE_URL_ANDROID`, `TWIL
       ```
 - [ ] Relever la version Flyway actuelle de la prod (requête de 8.C).
 - [x] **Stripe, comptes connectés** (15/10) : les 3 endpoints historiques écoutent « Votre compte » ; les événements v1 des comptes voyageurs (Accounts v2 : `account.updated`, `capability.updated`, `account.application.deauthorized`, `payout.*`) n'arrivent qu'à une destination « Comptes connectés ». Créée le 15/10 : `Yadony Production Connect Webhook` (`we_1UQwUk3LeHyrKJsFk8QtGkal`, même URL `/payments/webhook`, charge utile instantanée, 5 événements) ; secret `STRIPE_WEBHOOK_CONNECT_SECRET` posé en production. Le back ne l'accepte qu'à partir de la PR #543 : tant que la prod n'est pas déployée, Stripe reçoit des 400 et relance pendant 3 jours.
+- [ ] **Firebase** : le compte de service n'est PAS déployé par `deploy-prod.yml`, il vit à la main sur le VPS (`~/yadony/firebase-service-account.json`, monté par `docker-compose.prod.yml`). Absent ou illisible : le back refuse de démarrer (le health check du déploiement échoue). Mais un fichier d'un AUTRE projet démarre et rejette ensuite toutes les connexions. Contrôle (lecture seule) : `grep -o '"project_id": *"[^"]*"' ~/yadony/firebase-service-account.json` doit afficher `yadony-prod`. Vérifié le 15/10 en local : compte de service, app Android, app iOS et Cloud Functions prod pointent tous sur `yadony-prod`.
+- [ ] **R2** : aucun contrôle au démarrage, une clé ou un bucket faux ne se voit qu'au premier envoi de photo. Contrôle (lecture seule, sans les clés) : `grep -E '^AWS_S3_(ENDPOINT|BUCKET|REGION)=' ~/yadony/.env` (bucket de prod attendu, pas celui du staging).
 - [ ] Règles Firestore prod déployées avant le back si elles ne le sont pas encore (voir 8.A et la purge des messages, functions #9).
 
 ### 10.3 Déploiement
 
-- [ ] Image testée en staging le 15/10 (run 38800430895) : **`sha-82dcca1`** (`main` après #540).
+- [ ] Image à promouvoir : celle de `main` après #543 (`b154669a`), une fois construite et testée par un `deploy-staging.yml` (le tag `sha-<7 caractères>` n'existe sur ghcr.io qu'après ce déploiement staging). `sha-82dcca1` (après #540) ne contient pas #543.
       ```bash
-      gh workflow run deploy-prod.yml -R MONDONY/yadony-back -f image_tag=sha-82dcca1
+      gh workflow run deploy-prod.yml -R MONDONY/yadony-back -f image_tag=sha-b154669
       ```
 - [ ] Après le back seulement : builds app prod (règle des PR jumelles, back avant app).
 
@@ -1690,6 +1692,8 @@ Laissés vides ou factices exprès : `STORE_URL_IOS`, `STORE_URL_ANDROID`, `TWIL
 
 - [ ] Run vert, `https://api.yadony.com/api/v1/actuator/health` → 200, Flyway à V323.
 - [ ] CORS : `OPTIONS /api/v1/auth/me` avec `Origin: https://admin.yadony.com` puis `https://pro.yadony.com` → **200** (403 avant).
+- [ ] Firebase : connexion à l'app prod (OTP ou Google) → `/auth/me` en 200. R2 : envoi d'une photo de colis → affichée (URL signée).
+- [ ] Stripe : dans la destination « Yadony Production Connect Webhook », les livraisons passent à 200 (avant le déploiement : 400, relancées 3 jours).
 - [ ] Callbacks pawaPay `POST /api/v1/pawapay/callbacks/{deposits,payouts,refunds}` sans signature → 401.
 - [ ] Page QR colis `/api/v1/tracking/{bidId}/scan` sur un vrai colis : 200, noms raccourcis, bouton WhatsApp, aucun numéro.
 - [ ] Sentry : la prochaine issue nouvelle d'un projet prod arrive sur Telegram ; une issue staging n'y arrive qu'une fois (par le back staging).
