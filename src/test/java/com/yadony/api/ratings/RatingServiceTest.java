@@ -468,6 +468,8 @@ class RatingServiceTest {
             setField(user, "averageRating", new BigDecimal("4.33"));
 
             RatingEntity r1 = buildRating(5); r1.setComment("Top !");
+            UUID r1Id = UUID.randomUUID();
+            setId(r1, r1Id);
             RatingEntity r2 = buildRating(4); r2.setComment(null);
             RatingEntity r3 = buildRating(4); r3.setComment("Bien");
 
@@ -485,6 +487,8 @@ class RatingServiceTest {
             assertThat(response.distribution().get(4)).isEqualTo(2L);
             assertThat(response.distribution().get(1)).isEqualTo(0L);
             assertThat(response.ratings()).hasSize(3);
+            // L'id de chaque avis permet de le signaler depuis l'app (cible RATING).
+            assertThat(response.ratings().get(0).id()).isEqualTo(r1Id);
         }
 
         @Test

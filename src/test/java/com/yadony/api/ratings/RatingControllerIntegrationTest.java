@@ -77,7 +77,7 @@ class RatingControllerIntegrationTest {
         var summary = new UserRatingsSummaryResponse(
                 new BigDecimal("4.50"), 2,
                 Map.of(1, 0L, 2, 0L, 3, 0L, 4, 1L, 5, 1L),
-                List.of(new RatingItemResponse(5, "Super", LocalDateTime.now(), false, null, null, null, null)),
+                List.of(new RatingItemResponse(UUID.randomUUID(), 5, "Super", LocalDateTime.now(), false, null, null, null, null)),
                 0, 1);
         // Appel anonyme : le contrôleur transmet un viewer nul, aucun masquage possible.
         when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(20), isNull())).thenReturn(summary);

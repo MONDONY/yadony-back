@@ -16,6 +16,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -48,7 +49,7 @@ class MyReceivedRatingsControllerTest {
                 new BigDecimal("4.75"),
                 4,
                 Map.of(1, 0L, 2, 0L, 3, 0L, 4, 1L, 5, 3L),
-                List.of(new RatingItemResponse(5, "Parfait", LocalDateTime.now(), false, null, null, null, null)),
+                List.of(new RatingItemResponse(UUID.randomUUID(), 5, "Parfait", LocalDateTime.now(), false, null, null, null, null)),
                 0,
                 1);
     }
