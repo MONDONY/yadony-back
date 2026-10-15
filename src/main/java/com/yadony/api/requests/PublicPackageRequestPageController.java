@@ -1,7 +1,7 @@
 package com.yadony.api.requests;
 
 import com.yadony.api.payments.PriceBreakdown;
-import com.yadony.api.payments.cash.CommissionProperties;
+import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.requests.entity.PackageRequestEntity;
 import com.yadony.api.requests.entity.PackageRequestStatus;
@@ -55,7 +55,7 @@ public class PublicPackageRequestPageController {
 
     private final PackageRequestRepository packageRequestRepository;
     private final PackageRequestPhotoService photoService;
-    private final CommissionProperties commissionProperties;
+    private final PlatformSettingsService settings;
 
     /** Cf. {@code PublicAnnouncementPageController#publicBaseUrl} pour la raison du repli. */
     @Value("${app.public-base-url}")
@@ -76,10 +76,10 @@ public class PublicPackageRequestPageController {
 
     public PublicPackageRequestPageController(PackageRequestRepository packageRequestRepository,
                                               PackageRequestPhotoService photoService,
-                                              CommissionProperties commissionProperties) {
+                                              PlatformSettingsService settings) {
         this.packageRequestRepository = packageRequestRepository;
         this.photoService = photoService;
-        this.commissionProperties = commissionProperties;
+        this.settings = settings;
     }
 
     private boolean isStoreOsRedirectEnabled() {
@@ -224,7 +224,7 @@ public class PublicPackageRequestPageController {
         BigDecimal net = packageRequest.getTargetPriceEur();
         return net == null
                 ? null
-                : PriceBreakdown.fromNet(net, commissionProperties.rate()).gross();
+                : PriceBreakdown.fromNet(net, settings.commissionRate()).gross();
     }
 
     /** Français court, aligné sur le catalogue Flutter (search_composer_screen.dart). */

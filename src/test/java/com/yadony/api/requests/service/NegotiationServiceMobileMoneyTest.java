@@ -5,7 +5,6 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.StorageService;
-import com.yadony.api.payments.cash.CommissionProperties;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.requests.CashGatePort;
 import com.yadony.api.requests.NegotiationMobileMoneyPort;
@@ -59,7 +58,6 @@ class NegotiationServiceMobileMoneyTest {
     @Mock private AuditService auditService;
     @Mock private RequestsConfig config;
     @Mock private com.yadony.api.requests.NegotiationProperties negotiationProperties;
-    @Mock private CommissionProperties commissionProperties;
     @Mock private CashGatePort cashGatePort;
     @Mock private com.yadony.api.requests.NegotiationEscrowPort escrowPort;
     @Mock private StorageService storageService;
@@ -96,7 +94,7 @@ class NegotiationServiceMobileMoneyTest {
     @BeforeEach
     void setUp() {
         service = new NegotiationService(requestRepo, threadRepo, messageRepo, userRepository, announcementRepo,
-            eventPublisher, auditService, config, negotiationProperties, commissionProperties, cashGatePort,
+            eventPublisher, auditService, config, negotiationProperties, cashGatePort,
             escrowPort, storageService, photoService, commissionRateResolver, exchangeRateService, mobileMoneyPort,
             null);
 

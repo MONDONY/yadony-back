@@ -61,7 +61,6 @@ class PackageRequestServiceMatchingTest {
     @Mock private RequestsConfig config;
     @Mock private NegotiationThreadRepository threadRepository;
     @Mock private com.yadony.api.city.CityRepository cityRepository;
-    @Mock private com.yadony.api.payments.cash.CommissionProperties commissionProperties;
     @Mock private StorageService storageService;
     @Mock private PackageRequestPhotoService photoService;
     @Mock private FavoriteRepository favoriteRepository;
@@ -165,12 +164,10 @@ class PackageRequestServiceMatchingTest {
 
         PackageRequestSearchMapper realMapper = new PackageRequestSearchMapper(
                 userRepository, cityRepository, storageService, photoService,
-                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
-                commissionProperties);
+                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3));
         service = new PackageRequestService(
                 repository, userRepository, eventPublisher, auditService, config,
-                threadRepository, cityRepository, commissionProperties,
-                storageService, photoService, favoriteRepository, activeCurrencyResolver,
+                threadRepository, cityRepository, storageService, photoService, favoriteRepository, activeCurrencyResolver,
                 exchangeRateService, realMapper, matchingService,
                 yadonyConfig, announcementRepository, commissionRateResolver,
                 com.yadony.api.config.PlatformSettingsTestFactory.defaults(),

@@ -8,7 +8,6 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.dto.AddressDto;
-import com.yadony.api.payments.cash.CommissionProperties;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.requests.CashGatePort;
 import com.yadony.api.requests.RequestsConfig;
@@ -79,7 +78,6 @@ class NegotiationServicePublishingSuspensionTest {
     @Mock private AuditService auditService;
     @Mock private RequestsConfig config;
     @Mock private com.yadony.api.requests.NegotiationProperties negotiationProperties;
-    @Mock private CommissionProperties commissionProperties;
     @Mock private CashGatePort cashGatePort;
     @Mock private com.yadony.api.requests.NegotiationEscrowPort escrowPort;
     @Mock private StorageService storageService;
@@ -129,7 +127,7 @@ class NegotiationServicePublishingSuspensionTest {
         request.setStatus(PackageRequestStatus.OPEN);
         setId(request, REQUEST_ID);
 
-        lenient().when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
+        lenient().when(commissionRateResolver.globalRate()).thenReturn(new BigDecimal("0.12"));
         lenient().when(negotiationProperties.commissionWindowMinutes()).thenReturn(120);
         lenient().when(storageService.avatarUrl(any())).thenAnswer(inv -> inv.getArgument(0));
     }

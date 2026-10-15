@@ -17,7 +17,6 @@ import com.yadony.api.favorites.FavoriteTargetType;
 import com.yadony.api.matching.MatchingService;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.AnnouncementStatus;
-import com.yadony.api.payments.cash.CommissionProperties;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.requests.RequestsConfig;
 import com.yadony.api.requests.dto.*;
@@ -64,7 +63,6 @@ public class PackageRequestService {
     private final RequestsConfig config;
     private final NegotiationThreadRepository threadRepository;
     private final com.yadony.api.city.CityRepository cityRepository;
-    private final CommissionProperties commissionProperties;
     private final StorageService storageService;
     private final PackageRequestPhotoService photoService;
     private final FavoriteRepository favoriteRepository;
@@ -88,7 +86,6 @@ public class PackageRequestService {
                                   RequestsConfig config,
                                   NegotiationThreadRepository threadRepository,
                                   com.yadony.api.city.CityRepository cityRepository,
-                                  CommissionProperties commissionProperties,
                                   StorageService storageService,
                                   PackageRequestPhotoService photoService,
                                   FavoriteRepository favoriteRepository,
@@ -111,7 +108,6 @@ public class PackageRequestService {
         this.config = config;
         this.threadRepository = threadRepository;
         this.cityRepository = cityRepository;
-        this.commissionProperties = commissionProperties;
         this.storageService = storageService;
         this.photoService = photoService;
         this.favoriteRepository = favoriteRepository;
@@ -289,7 +285,7 @@ public class PackageRequestService {
         // gross → net conversion: net = gross / (1 + commissionRate)
         BigDecimal netTarget = null;
         if (req.totalBudgetEur() != null) {
-            BigDecimal divisor = BigDecimal.ONE.add(commissionProperties.rate());
+            BigDecimal divisor = BigDecimal.ONE.add(commissionRateResolver.globalRate());
             netTarget = req.totalBudgetEur().divide(divisor, 2, RoundingMode.HALF_UP);
         }
 
@@ -406,7 +402,7 @@ public class PackageRequestService {
 
         BigDecimal netTarget = null;
         if (req.totalBudgetEur() != null) {
-            BigDecimal divisor = BigDecimal.ONE.add(commissionProperties.rate());
+            BigDecimal divisor = BigDecimal.ONE.add(commissionRateResolver.globalRate());
             netTarget = req.totalBudgetEur().divide(divisor, 2, RoundingMode.HALF_UP);
         }
 
@@ -1116,7 +1112,7 @@ public class PackageRequestService {
                                       String viewerThreadStatus, ViewerPaymentCapabilities viewer,
                                       boolean isOwner) {
         BigDecimal grossPriceEur = e.getTargetPriceEur() != null
-            ? PriceBreakdown.fromNet(e.getTargetPriceEur(), commissionProperties.rate()).gross()
+            ? PriceBreakdown.fromNet(e.getTargetPriceEur(), commissionRateResolver.globalRate()).gross()
             : null;
         List<PackageRequestPhotoResponse> photos = photoService.activePhotos(e.getId());
         String photoUrl = photos.isEmpty() ? e.getPhotoUrl() : photos.get(0).url();
