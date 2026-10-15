@@ -36,27 +36,25 @@ public class PackageRequestSearchMapper {
     private final StorageService storageService;
     private final PackageRequestPhotoService photoService;
     private final PlatformSettingsService settings;
-    private final com.yadony.api.payments.cash.CommissionProperties commissionProperties;
 
     public PackageRequestSearchMapper(UserRepository userRepository,
                                       com.yadony.api.city.CityRepository cityRepository,
                                       StorageService storageService,
                                       PackageRequestPhotoService photoService,
-                                      PlatformSettingsService settings,
-                                      com.yadony.api.payments.cash.CommissionProperties commissionProperties) {
+                                      PlatformSettingsService settings) {
         this.userRepository = userRepository;
         this.cityRepository = cityRepository;
         this.storageService = storageService;
         this.photoService = photoService;
         this.settings = settings;
-        this.commissionProperties = commissionProperties;
     }
 
     /**
      * Prix brut, commission incluse, à partir du net stocké.
      *
-     * <p>Le taux employé est {@code yadony.commission.rate}, le taux <b>global</b> de la
-     * plateforme, exactement comme {@code PackageRequestService.toResponse} pour le détail de
+     * <p>Le taux employé est le taux <b>global</b> de la plateforme
+     * ({@link PlatformSettingsService#commissionRate()}, réglé dans l'admin, celui que sert
+     * {@code /config/commission-rate} et que débite le paiement), exactement comme {@code PackageRequestService.toResponse} pour le détail de
      * la même demande : les deux surfaces annoncent donc le même prix.
      *
      * <p>Ce choix n'est pas qu'une question de cohérence, il est ce qui rend sûr de servir le
@@ -69,7 +67,7 @@ public class PackageRequestSearchMapper {
     private java.math.BigDecimal grossPriceEur(java.math.BigDecimal net) {
         return net == null
                 ? null
-                : com.yadony.api.payments.PriceBreakdown.fromNet(net, commissionProperties.rate()).gross();
+                : com.yadony.api.payments.PriceBreakdown.fromNet(net, settings.commissionRate()).gross();
     }
 
     /**

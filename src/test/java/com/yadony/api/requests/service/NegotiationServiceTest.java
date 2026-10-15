@@ -8,7 +8,6 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.i18n.TestMessages;
-import com.yadony.api.payments.cash.CommissionProperties;
 import com.yadony.api.payments.cash.CommissionSource;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.cash.dto.AcceptBidResponse;
@@ -59,7 +58,6 @@ class NegotiationServiceTest {
     @Mock private AuditService auditService;
     @Mock private RequestsConfig config;
     @Mock private com.yadony.api.requests.NegotiationProperties negotiationProperties;
-    @Mock private CommissionProperties commissionProperties;
     @Mock private CashGatePort cashGatePort;
     @Mock private com.yadony.api.requests.NegotiationEscrowPort escrowPort;
     @Mock private StorageService storageService;
@@ -118,7 +116,7 @@ class NegotiationServiceTest {
 
         // Default commission rate used whenever toResponse() is called.
         // Lenient to avoid UnnecessaryStubbingException in error-path tests that never reach toResponse().
-        lenient().when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
+        lenient().when(commissionRateResolver.globalRate()).thenReturn(new BigDecimal("0.12"));
         // Délai par défaut (miroir de application.yml) — lenient car seuls les tests CASH
         // du chemin AWAITING_COMMISSION l'exercent réellement.
         lenient().when(negotiationProperties.commissionWindowMinutes()).thenReturn(120);
@@ -127,7 +125,7 @@ class NegotiationServiceTest {
 
         service = new NegotiationService(requestRepo, threadRepo, messageRepo, userRepository,
                 announcementRepo, eventPublisher, auditService, config, negotiationProperties,
-                commissionProperties, cashGatePort, escrowPort, storageService, photoService,
+                cashGatePort, escrowPort, storageService, photoService,
                 commissionRateResolver, exchangeRateService, mobileMoneyPort, TestMessages.resolver());
     }
 
@@ -2333,7 +2331,7 @@ class NegotiationServiceTest {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
-            when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
+            when(commissionRateResolver.globalRate()).thenReturn(new BigDecimal("0.12"));
             UUID newAnnId = UUID.randomUUID();
             when(announcementRepo.save(any())).thenAnswer(inv -> {
                 com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
@@ -2403,7 +2401,7 @@ class NegotiationServiceTest {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
-            when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
+            when(commissionRateResolver.globalRate()).thenReturn(new BigDecimal("0.12"));
             when(announcementRepo.save(any())).thenAnswer(inv -> {
                 com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
                 try {
@@ -2432,7 +2430,7 @@ class NegotiationServiceTest {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
-            when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
+            when(commissionRateResolver.globalRate()).thenReturn(new BigDecimal("0.12"));
             when(announcementRepo.save(any())).thenAnswer(inv -> {
                 com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
                 try {
@@ -2538,7 +2536,7 @@ class NegotiationServiceTest {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
-            when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
+            when(commissionRateResolver.globalRate()).thenReturn(new BigDecimal("0.12"));
             when(announcementRepo.save(any())).thenAnswer(inv -> {
                 com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
                 try {
@@ -2566,7 +2564,7 @@ class NegotiationServiceTest {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
-            when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
+            when(commissionRateResolver.globalRate()).thenReturn(new BigDecimal("0.12"));
             UUID newAnnId = UUID.randomUUID();
             when(announcementRepo.save(any())).thenAnswer(inv -> {
                 com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
@@ -4675,6 +4673,37 @@ class NegotiationServiceTest {
             // paymentMethod is null (not set on entity)
             assertThat(response.paymentMethod()).isNull();
             assertThat(response.currency()).isEqualTo("CAD");
+        }
+
+        @Test
+        @DisplayName("FLUTTER-Q4 : le brut suit le taux de la plateforme, puis le taux figé sur le fil")
+        void toResponse_grossFollowsPlatformRateThenFrozenRate() {
+            NegotiationThreadEntity thread = new NegotiationThreadEntity();
+            thread.setPackageRequestId(REQUEST_ID);
+            thread.setTravelerId(TRAVELER_ID);
+            thread.setStatus(NegotiationThreadStatus.OPEN);
+            thread.setCurrency("USD");
+            thread.setCurrentPriceEur(new BigDecimal("70.00"));
+            thread.setRoundsCount((short) 3);
+            thread.setLastActivityAt(java.time.LocalDateTime.now());
+            try {
+                var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(thread, UUID.randomUUID());
+            } catch (Exception e) { throw new RuntimeException(e); }
+            request.setDepartureCity("New York City");
+            request.setArrivalCity("Paris");
+            request.setWeightKg(new BigDecimal("5"));
+
+            // Réglage admin 4,99 % : l'app calcule les bulles avec ce taux, le débit aussi.
+            when(commissionRateResolver.globalRate()).thenReturn(new BigDecimal("0.0499"));
+            assertThat(service.toResponse(thread, List.of(), null, traveler, request, SENDER_ID, "Expéditeur", null)
+                .grossPriceEur()).isEqualByComparingTo("73.49");
+
+            // Une fois le taux figé (dépôt, promo), c'est lui qui prime.
+            thread.setCommissionRate(new BigDecimal("0.025"));
+            assertThat(service.toResponse(thread, List.of(), null, traveler, request, SENDER_ID, "Expéditeur", null)
+                .grossPriceEur()).isEqualByComparingTo("71.75");
         }
 
         @Test

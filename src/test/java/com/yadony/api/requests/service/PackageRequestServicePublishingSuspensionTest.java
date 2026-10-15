@@ -8,7 +8,6 @@ import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.config.YadonyConfigProperties;
 import com.yadony.api.favorites.FavoriteRepository;
-import com.yadony.api.payments.cash.CommissionProperties;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.requests.RequestsConfig;
@@ -62,7 +61,6 @@ class PackageRequestServicePublishingSuspensionTest {
     @Mock private RequestsConfig config;
     @Mock private NegotiationThreadRepository threadRepository;
     @Mock private com.yadony.api.city.CityRepository cityRepository;
-    @Mock private CommissionProperties commissionProperties;
     @Mock private StorageService storageService;
     @Mock private PackageRequestPhotoService photoService;
     @Mock private FavoriteRepository favoriteRepository;
@@ -106,7 +104,7 @@ class PackageRequestServicePublishingSuspensionTest {
         setId(sender, SENDER_ID);
         sender.setKycStatus(KycStatus.VERIFIED);
         // Default commission rate = 12% — lenient because only create-related tests use it
-        lenient().when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
+        lenient().when(commissionRateResolver.globalRate()).thenReturn(new BigDecimal("0.12"));
         // Pass-through for presigned avatar URLs
         lenient().when(storageService.avatarUrl(any())).thenAnswer(inv -> inv.getArgument(0));
         // Aucune photo par défaut (les mappers appellent activePhotos ou activePhotosBatch)
@@ -118,12 +116,10 @@ class PackageRequestServicePublishingSuspensionTest {
         // Real mapper wired to the same mocks so SearchTests assertions remain valid
         PackageRequestSearchMapper realMapper = new PackageRequestSearchMapper(
                 userRepository, cityRepository, storageService, photoService,
-                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
-                commissionProperties);
+                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3));
         service = new PackageRequestService(
                 repository, userRepository, eventPublisher, auditService, config,
-                threadRepository, cityRepository, commissionProperties,
-                storageService, photoService, favoriteRepository, activeCurrencyResolver,
+                threadRepository, cityRepository, storageService, photoService, favoriteRepository, activeCurrencyResolver,
                 exchangeRateService, realMapper, matchingService,
                 yadonyConfig, announcementRepository, commissionRateResolver,
                 com.yadony.api.config.PlatformSettingsTestFactory.defaults(),

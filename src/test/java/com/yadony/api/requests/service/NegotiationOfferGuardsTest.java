@@ -8,7 +8,6 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.i18n.TestMessages;
-import com.yadony.api.payments.cash.CommissionProperties;
 import com.yadony.api.payments.currency.ExchangeRateService;
 import com.yadony.api.requests.CashGatePort;
 import com.yadony.api.requests.RequestsConfig;
@@ -73,7 +72,6 @@ class NegotiationOfferGuardsTest {
     @Mock private AuditService auditService;
     @Mock private RequestsConfig config;
     @Mock private com.yadony.api.requests.NegotiationProperties negotiationProperties;
-    @Mock private CommissionProperties commissionProperties;
     @Mock private CashGatePort cashGatePort;
     @Mock private com.yadony.api.requests.NegotiationEscrowPort escrowPort;
     @Mock private StorageService storageService;
@@ -130,14 +128,14 @@ class NegotiationOfferGuardsTest {
         thread.setLastActivityAt(LocalDateTime.now());
         setId(thread, threadId);
 
-        lenient().when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
+        lenient().when(commissionRateResolver.globalRate()).thenReturn(new BigDecimal("0.12"));
         lenient().when(storageService.avatarUrl(any())).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(exchangeRateService.convert(any(), any(), any()))
                 .thenAnswer(inv -> inv.getArgument(0));
 
         service = new NegotiationService(requestRepo, threadRepo, messageRepo, userRepository,
                 announcementRepo, eventPublisher, auditService, config, negotiationProperties,
-                commissionProperties, cashGatePort, escrowPort, storageService, photoService,
+                cashGatePort, escrowPort, storageService, photoService,
                 commissionRateResolver, exchangeRateService, mobileMoneyPort, TestMessages.resolver());
         service.setMinPriceGuard(new MinPricePerKgGuard(prefsRepository, exchangeRateService));
     }

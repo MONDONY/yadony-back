@@ -10,7 +10,6 @@ import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.payments.PriceBreakdown;
-import com.yadony.api.payments.cash.CommissionProperties;
 import com.yadony.api.payments.cash.CommissionSource;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.cash.dto.AcceptBidResponse;
@@ -63,7 +62,6 @@ public class NegotiationService {
     private final AuditService auditService;
     private final RequestsConfig config;
     private final NegotiationProperties negotiationProperties;
-    private final CommissionProperties commissionProperties;
     private final CashGatePort cashGatePort;
     private final NegotiationEscrowPort escrowPort;
     private final StorageService storageService;
@@ -82,7 +80,6 @@ public class NegotiationService {
                                AuditService auditService,
                                RequestsConfig config,
                                NegotiationProperties negotiationProperties,
-                               CommissionProperties commissionProperties,
                                CashGatePort cashGatePort,
                                NegotiationEscrowPort escrowPort,
                                StorageService storageService,
@@ -100,7 +97,6 @@ public class NegotiationService {
         this.auditService = auditService;
         this.config = config;
         this.negotiationProperties = negotiationProperties;
-        this.commissionProperties = commissionProperties;
         this.cashGatePort = cashGatePort;
         this.escrowPort = escrowPort;
         this.storageService = storageService;
@@ -161,8 +157,7 @@ public class NegotiationService {
         if (minPriceGuard == null) {
             return;
         }
-        BigDecimal rate = thread.getCommissionRate() != null
-            ? thread.getCommissionRate() : commissionProperties.rate();
+        BigDecimal rate = displayRate(thread);
         minPriceGuard.assertAtLeastMinimum(thread.getTravelerId(), netPrice, request.getWeightKg(),
             thread.getCurrency(), rate);
     }
@@ -1250,6 +1245,18 @@ public class NegotiationService {
     }
 
     /**
+     * Taux de l'écran du fil : celui figé sur le fil s'il existe, sinon le taux global de la
+     * plateforme ({@code platform_settings}, celui que sert {@code /config/commission-rate} et que
+     * débite {@link CommissionRateResolver}). Jamais {@code yadony.commission.rate} seul : dès que
+     * l'admin règle un autre taux, l'en-tête et le bouton annonçaient un brut que personne ne paie,
+     * à un centime des bulles calculées par l'app (FLUTTER-Q4).
+     */
+    private BigDecimal displayRate(NegotiationThreadEntity thread) {
+        return thread.getCommissionRate() != null
+            ? thread.getCommissionRate() : commissionRateResolver.globalRate();
+    }
+
+    /**
      * Brut vu (et payé) par l'expéditeur pour un net du fil : taux figé sur le fil s'il
      * existe, sinon le taux de base, celui de l'écran du fil ({@code gross} de la réponse).
      * Les notifications à l'expéditeur annoncent ce montant, pas le net du voyageur.
@@ -1258,8 +1265,7 @@ public class NegotiationService {
         if (net == null) {
             return null;
         }
-        BigDecimal rate = thread.getCommissionRate() != null
-            ? thread.getCommissionRate() : commissionProperties.rate();
+        BigDecimal rate = displayRate(thread);
         return PriceBreakdown.fromNet(net, rate).gross();
     }
 
@@ -1548,7 +1554,7 @@ public class NegotiationService {
             thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
             threadRepo.save(thread);
             BigDecimal commission = PriceBreakdown
-                .fromNet(thread.getCurrentPriceEur(), commissionProperties.rate()).commission();
+                .fromNet(thread.getCurrentPriceEur(), displayRate(thread)).commission();
             LocalDateTime expiresAt = LocalDateTime.now(ZoneOffset.UTC)
                 .plusMinutes(negotiationProperties.commissionWindowMinutes());
             eventPublisher.publishEvent(new NegotiationCommissionPendingEvent(
@@ -2443,7 +2449,7 @@ public class NegotiationService {
         }
 
         BigDecimal gross = t.getCurrentPriceEur() != null
-            ? PriceBreakdown.fromNet(t.getCurrentPriceEur(), commissionProperties.rate()).gross()
+            ? PriceBreakdown.fromNet(t.getCurrentPriceEur(), displayRate(t)).gross()
             : null;
 
         String senderPhotoUrl = storageService.avatarUrl(
@@ -2457,7 +2463,7 @@ public class NegotiationService {
         boolean cashCommissionAvailable = true;
         if (checkCashAvailability && t.getCurrentPriceEur() != null) {
             BigDecimal commission = PriceBreakdown.fromNet(
-                t.getCurrentPriceEur(), commissionProperties.rate()).commission();
+                t.getCurrentPriceEur(), displayRate(t)).commission();
             cashCommissionAvailable = cashGatePort.hasSufficientFunds(t.getTravelerId(), commission, t.getCurrency())
                 || cashGatePort.hasCommissionCard(t.getTravelerId());
         }

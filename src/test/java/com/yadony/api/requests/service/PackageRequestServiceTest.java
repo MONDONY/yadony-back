@@ -57,7 +57,6 @@ class PackageRequestServiceTest {
     @Mock private RequestsConfig config;
     @Mock private NegotiationThreadRepository threadRepository;
     @Mock private com.yadony.api.city.CityRepository cityRepository;
-    @Mock private com.yadony.api.payments.cash.CommissionProperties commissionProperties;
     @Mock private StorageService storageService;
     @Mock private PackageRequestPhotoService photoService;
     @Mock private FavoriteRepository favoriteRepository;
@@ -113,7 +112,7 @@ class PackageRequestServiceTest {
         setId(sender, SENDER_ID);
         sender.setKycStatus(KycStatus.VERIFIED);
         // Default commission rate = 12% — lenient because only create-related tests use it
-        lenient().when(commissionProperties.rate()).thenReturn(new BigDecimal("0.12"));
+        lenient().when(commissionRateResolver.globalRate()).thenReturn(new BigDecimal("0.12"));
         // Pass-through for presigned avatar URLs
         lenient().when(storageService.avatarUrl(any())).thenAnswer(inv -> inv.getArgument(0));
         // Aucune photo par défaut (les mappers appellent activePhotos ou activePhotosBatch)
@@ -125,8 +124,7 @@ class PackageRequestServiceTest {
         // Real mapper wired to the same mocks so SearchTests assertions remain valid
         PackageRequestSearchMapper realMapper = new PackageRequestSearchMapper(
                 userRepository, cityRepository, storageService, photoService,
-                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
-                commissionProperties);
+                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3));
         service = serviceWithProEnabled(realMapper, true);
     }
 
@@ -142,8 +140,7 @@ class PackageRequestServiceTest {
     private PackageRequestService serviceWithProEnabled(PackageRequestSearchMapper mapper, boolean proEnabled) {
         return new PackageRequestService(
                 repository, userRepository, eventPublisher, auditService, config,
-                threadRepository, cityRepository, commissionProperties,
-                storageService, photoService, favoriteRepository, activeCurrencyResolver,
+                threadRepository, cityRepository, storageService, photoService, favoriteRepository, activeCurrencyResolver,
                 exchangeRateService, mapper, matchingService,
                 yadonyConfig, announcementRepository, commissionRateResolver,
                 com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(proEnabled),
@@ -2245,8 +2242,7 @@ class PackageRequestServiceTest {
             // l'offre PRO est fermee, le plafond PRO (10) s'applique a tout le monde.
             PackageRequestService proClosed = serviceWithProEnabled(
                     new PackageRequestSearchMapper(userRepository, cityRepository, storageService, photoService,
-                            com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(false),
-                            commissionProperties),
+                            com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(false)),
                     false);
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
             when(repository.countBySenderIdAndStatus(SENDER_ID, PackageRequestStatus.DRAFT))
