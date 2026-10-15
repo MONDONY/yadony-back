@@ -216,6 +216,10 @@ jobs:
           # bascule sans les deux URL laisse le bouton retomber sur dony://.
           STORE_URL_ANDROID=${{ vars.STORE_URL_ANDROID }}
           STORE_URL_IOS=${{ vars.STORE_URL_IOS }}
+          # Contact support de la page publique du QR colis (/tracking/{id}/scan) :
+          # numéro WhatsApp affiché à tous (pas un secret), vide = bouton masqué.
+          SUPPORT_WHATSAPP_NUMBER=${{ vars.SUPPORT_WHATSAPP_NUMBER }}
+          SUPPORT_EMAIL=${{ vars.SUPPORT_EMAIL || 'support@yadony.com' }}
           STORE_OS_REDIRECT_ENABLED=${{ vars.STORE_OS_REDIRECT_ENABLED }}
           STORAGE_PUBLIC_BASE_URL=${{ vars.STORAGE_PUBLIC_BASE_URL }}
           SWAGGER_ENABLED=${{ vars.SWAGGER_ENABLED }}
