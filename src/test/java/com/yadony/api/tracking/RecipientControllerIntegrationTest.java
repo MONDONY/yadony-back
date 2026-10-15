@@ -205,7 +205,7 @@ class RecipientControllerIntegrationTest {
 
         mockMvc.perform(get("/tracking/public/{token}/status", trackingToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.currentStep").value("Colis remis au voyageur — en route"))
+                .andExpect(jsonPath("$.currentStep").value("Remis au voyageur, en route"))
                 .andExpect(jsonPath("$.events[0].label").value("Colis remis au voyageur"));
     }
 

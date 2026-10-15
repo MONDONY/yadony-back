@@ -86,7 +86,7 @@ public class RecipientController {
 
         List<Map<String, Object>> events = rawEvents.stream()
                 .map(e -> Map.<String, Object>of(
-                        "label", labelFor(e.getEventType()),
+                        "label", ParcelSteps.label(e.getEventType()),
                         "scannedAt", e.getScannedAt().format(FMT),
                         "offline", e.getOfflineTimestamp() != null,
                         "gpsLabel", e.getGpsLabel() != null ? e.getGpsLabel() : "",
@@ -94,7 +94,7 @@ public class RecipientController {
                 ))
                 .toList();
 
-        String currentStep = resolveCurrentStep(bid, rawEvents);
+        String currentStep = ParcelSteps.currentStep(rawEvents);
         return ResponseEntity.ok(Map.of(
                 "currentStep", currentStep,
                 "events", events,
@@ -144,7 +144,7 @@ public class RecipientController {
 
         List<RecipientEventDto> events = rawEvents.stream()
                 .map(e -> new RecipientEventDto(
-                        labelFor(e.getEventType()),
+                        ParcelSteps.label(e.getEventType()),
                         e.getScannedAt().format(FMT),
                         e.getGpsLabel(),
                         resolvePhoto(e.getPhotoUrl()),
@@ -152,7 +152,7 @@ public class RecipientController {
                 ))
                 .toList();
 
-        String currentStepLabel = resolveCurrentStep(bid, rawEvents);
+        String currentStepLabel = ParcelSteps.currentStep(rawEvents);
 
         model.addAttribute("trackingNumber", bid.getTrackingNumber());
         model.addAttribute("corridor", corridor);
@@ -168,28 +168,9 @@ public class RecipientController {
         return "recipient/tracking";
     }
 
-    private String labelFor(TrackingEventType type) {
-        return switch (type) {
-            case DEPART -> "Colis remis au voyageur";
-            case TRANSIT -> "En transit";
-            case ARRIVEE -> "Arrivée confirmée";
-        };
-    }
-
     private String resolvePhoto(String key) {
         if (key == null || key.startsWith("http")) return key;
         return storageService.generatePresignedUrl(key, Duration.ofHours(1));
-    }
-
-    private String resolveCurrentStep(BidEntity bid, List<TrackingEventEntity> events) {
-        boolean hasArrivee = events.stream().anyMatch(e -> e.getEventType() == TrackingEventType.ARRIVEE);
-        boolean hasTransit = events.stream().anyMatch(e -> e.getEventType() == TrackingEventType.TRANSIT);
-        boolean hasDepart = events.stream().anyMatch(e -> e.getEventType() == TrackingEventType.DEPART);
-
-        if (hasArrivee) return "Livraison confirmée";
-        if (hasTransit) return "En transit";
-        if (hasDepart) return "Colis remis au voyageur — en route";
-        return "En attente du scan de départ";
     }
 
     private String publicConfirmationCode(BidEntity bid) {
