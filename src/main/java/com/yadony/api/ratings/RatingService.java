@@ -305,7 +305,7 @@ public class RatingService {
                 if (ann != null) { dep = ann.getDepartureCity(); arr = ann.getArrivalCity(); }
             }
             return new RatingItemResponse(
-                    r.getStars(), r.getComment(), r.getCreatedAt(), r.isExcludedFromAverage(),
+                    r.getId(), r.getStars(), r.getComment(), r.getCreatedAt(), r.isExcludedFromAverage(),
                     authorShortName(author),
                     author != null ? author.getAvatarUrl() : null,
                     dep, arr);
