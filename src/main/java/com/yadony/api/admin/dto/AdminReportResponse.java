@@ -39,7 +39,19 @@ public record AdminReportResponse(
          * cible APP, signalant encore présent, non supprimé, permissions REPORT_VIEW et
          * SUPPORT_TICKET_MANAGE. Indépendant du statut : répondre ne traite pas le signalement.
          */
-        boolean canReply
+        boolean canReply,
+        /**
+         * Avis signalé (cible RATING retrouvée) : ce que l'admin doit lire pour décider,
+         * sinon {@code null}. L'auteur de l'avis est {@link #targetAuthor}.
+         */
+        RatingPreview ratingPreview
 ) {
     public record TargetAuthor(UUID userId, String name) {}
+
+    /**
+     * @param ratedUserId   compte noté, pour ouvrir sa fiche ; {@code null} s'il est supprimé
+     * @param ratedUserName « Prénom N. » du compte noté, {@code null} s'il est supprimé
+     */
+    public record RatingPreview(int stars, String comment, LocalDateTime createdAt,
+                                boolean excludedFromAverage, UUID ratedUserId, String ratedUserName) {}
 }

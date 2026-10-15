@@ -108,6 +108,11 @@ public class ReportTargetResolver {
         // des expéditeurs de messages).
         Set<UUID> authorIds = partials.values().stream()
                 .map(Partial::authorId).filter(Objects::nonNull).collect(Collectors.toSet());
+        // Comptes notés par les avis signalés, chargés avec les auteurs (aperçu de l'admin).
+        partials.values().stream()
+                .map(Partial::rating).filter(Objects::nonNull)
+                .map(RatingEntity::getRatedUserId).filter(Objects::nonNull)
+                .forEach(authorIds::add);
         Map<UUID, UserEntity> users = load(userRepo, authorIds, UserEntity::getId);
         Set<String> authorUids = partials.values().stream()
                 .map(Partial::authorUid).filter(Objects::nonNull).collect(Collectors.toSet());
@@ -119,8 +124,11 @@ public class ReportTargetResolver {
             UserEntity author = p.authorId() != null ? users.get(p.authorId())
                     : p.authorUid() != null ? usersByUid.get(p.authorUid()) : null;
             boolean found = r.getTargetType() == ReportTargetType.USER ? author != null : p.found();
+            UserEntity ratedUser = p.rating() != null && p.rating().getRatedUserId() != null
+                    ? users.get(p.rating().getRatedUserId()) : null;
             result.put(r, found || author != null
-                    ? new ResolvedReportTarget(found, p.alreadyModerated(), author, p.conversation(), p.messageId())
+                    ? new ResolvedReportTarget(found, p.alreadyModerated(), author, p.conversation(), p.messageId(),
+                            p.rating(), ratedUser)
                     : ResolvedReportTarget.none());
         });
         return result;
@@ -131,12 +139,12 @@ public class ReportTargetResolver {
      * l'identifiant du compte ({@code senderId} = UID Firebase, cf. {@link MessageSenders}).
      */
     private record Partial(boolean found, boolean alreadyModerated, UUID authorId, String authorUid,
-                           ConversationEntity conversation, String messageId) {
+                           ConversationEntity conversation, String messageId, RatingEntity rating) {
         static final Partial NONE = new Partial(false, false, null, null, null);
 
         Partial(boolean found, boolean alreadyModerated, UUID authorId,
                 ConversationEntity conversation, String messageId) {
-            this(found, alreadyModerated, authorId, null, conversation, messageId);
+            this(found, alreadyModerated, authorId, null, conversation, messageId, null);
         }
     }
 
@@ -163,7 +171,7 @@ public class ReportTargetResolver {
             case RATING -> {
                 RatingEntity rating = ratings.get(targetId);
                 yield rating == null ? Partial.NONE
-                        : new Partial(true, rating.isExcludedFromAverage(), rating.getRaterId(), null, null);
+                        : new Partial(true, rating.isExcludedFromAverage(), rating.getRaterId(), null, null, null, rating);
             }
             case BID -> {
                 BidEntity bid = bids.get(targetId);
@@ -192,7 +200,7 @@ public class ReportTargetResolver {
         return firestoreService.findMessage(conversation.getFirestoreConversationId(), r.getTargetMessageId())
                 // senderId = UID Firebase (app et back) ; UUID accepté ; SYSTEM : pas d'auteur.
                 .map(m -> new Partial(true, m.deleted(), MessageSenders.asUserId(m.senderId()),
-                        MessageSenders.asFirebaseUid(m.senderId()), conversation, r.getTargetMessageId()))
+                        MessageSenders.asFirebaseUid(m.senderId()), conversation, r.getTargetMessageId(), null))
                 .orElse(Partial.NONE);
     }
 

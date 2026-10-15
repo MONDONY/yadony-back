@@ -155,6 +155,55 @@ class AdminReportsControllerTest {
     }
 
     @Test
+    void listReports_signalementDAvis_exposeLApercuDeLAvis() {
+        UUID rater = UUID.randomUUID(), rated = UUID.randomUUID(), ratingId = UUID.randomUUID();
+        com.yadony.api.ratings.RatingEntity rating = new com.yadony.api.ratings.RatingEntity();
+        ReflectionTestUtils.setField(rating, "id", ratingId);
+        rating.setRaterId(rater);
+        rating.setRatedUserId(rated);
+        rating.setStars(1);
+        rating.setComment("Insultes dans l'avis");
+        rating.setExcludedFromAverage(true);
+        UserEntity raterUser = new UserEntity();
+        ReflectionTestUtils.setField(raterUser, "id", rater);
+        raterUser.setFirstName("Awa");
+        raterUser.setLastName("Diop");
+        UserEntity ratedUser = new UserEntity();
+        ReflectionTestUtils.setField(ratedUser, "id", rated);
+        ratedUser.setFirstName("Moussa");
+        ratedUser.setLastName("Traoré");
+
+        ReportEntity report = new ReportEntity();
+        ReflectionTestUtils.setField(report, "id", UUID.randomUUID());
+        report.setTargetType(ReportTargetType.RATING);
+        report.setTargetId(ratingId);
+        report.setReason(com.yadony.api.signalements.ReportReason.INAPPROPRIATE_CONTENT);
+        report.setStatus(ReportStatus.OPEN);
+        when(reportRepo.findFiltered(isNull(), isNull(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(report)));
+        when(ratingRepo.findAllById(anyCollection())).thenReturn(List.of(rating));
+        when(userRepo.findAllById(anyCollection())).thenReturn(List.of(raterUser, ratedUser));
+
+        AdminReportResponse resp = controller().listReports(null, null, null, false, 0, 20, null)
+                .getBody().getContent().get(0);
+
+        AdminReportResponse.RatingPreview preview = resp.ratingPreview();
+        assertThat(preview).isNotNull();
+        assertThat(preview.stars()).isEqualTo(1);
+        assertThat(preview.comment()).isEqualTo("Insultes dans l'avis");
+        assertThat(preview.excludedFromAverage()).isTrue();
+        assertThat(preview.ratedUserId()).isEqualTo(rated);
+        assertThat(preview.ratedUserName()).isEqualTo(ratedUser.publicDisplayName());
+        assertThat(resp.targetAuthor().userId()).isEqualTo(rater);
+    }
+
+    @Test
+    void ratingPreview_absentHorsAvis() {
+        assertThat(AdminReportsController.ratingPreview(null)).isNull();
+        assertThat(AdminReportsController.ratingPreview(ResolvedReportTarget.none())).isNull();
+    }
+
+    @Test
     void listReports_exposeLaRouteDeLEcran_pourUnRapportScarabee() {
         ReportEntity report = new ReportEntity();
         report.setTargetType(ReportTargetType.APP);

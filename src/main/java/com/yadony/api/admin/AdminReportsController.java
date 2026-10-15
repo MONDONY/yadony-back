@@ -7,6 +7,7 @@ import com.yadony.api.admin.dto.ResolveReportRequest;
 import com.yadony.api.admin.dto.RestoreRequest;
 import jakarta.validation.Valid;
 import com.yadony.api.auth.UserEntity;
+import com.yadony.api.ratings.RatingEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
@@ -464,8 +465,23 @@ public class AdminReportsController {
                 availableActions,
                 author != null ? new AdminReportResponse.TargetAuthor(author.getId(), author.publicDisplayName()) : null,
                 r.getSupportTicketId(),
-                canReply(r, r.getReporterId() != null && users.containsKey(r.getReporterId()), authorities)
+                canReply(r, r.getReporterId() != null && users.containsKey(r.getReporterId()), authorities),
+                ratingPreview(target)
         );
+    }
+
+    /** Aperçu de l'avis signalé, ou {@code null} hors cible RATING ou avis introuvable. */
+    static AdminReportResponse.RatingPreview ratingPreview(ResolvedReportTarget target) {
+        if (target == null || target.rating() == null) return null;
+        RatingEntity rating = target.rating();
+        UserEntity rated = target.ratedUser();
+        return new AdminReportResponse.RatingPreview(
+                rating.getStars(),
+                rating.getComment(),
+                rating.getCreatedAt(),
+                rating.isExcludedFromAverage(),
+                rated != null ? rated.getId() : null,
+                rated != null ? rated.publicDisplayName() : null);
     }
 
     /**

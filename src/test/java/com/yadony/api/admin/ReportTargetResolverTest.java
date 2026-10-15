@@ -164,6 +164,35 @@ class ReportTargetResolverTest {
     }
 
     @Test
+    void avis_porteLAvisEtLeCompteNotePourLApercuAdmin() {
+        UUID rater = UUID.randomUUID(), rated = UUID.randomUUID(), ratingId = UUID.randomUUID();
+        RatingEntity rating = withId(new RatingEntity(), ratingId);
+        rating.setRaterId(rater);
+        rating.setRatedUserId(rated);
+        rating.setStars(1);
+        rating.setComment("Voyageur malhonnête");
+        when(ratingRepo.findAllById(anyCollection())).thenReturn(List.of(rating));
+        when(userRepo.findAllById(anyCollection())).thenReturn(List.of(user(rater), user(rated)));
+
+        ResolvedReportTarget t = resolver().resolve(report(ReportTargetType.RATING, ratingId, UUID.randomUUID()));
+
+        assertThat(t.rating()).isSameAs(rating);
+        assertThat(t.ratedUser().getId()).isEqualTo(rated);
+        assertThat(t.author().getId()).isEqualTo(rater);
+    }
+
+    @Test
+    void cibleHorsAvis_sansApercu() {
+        UUID target = UUID.randomUUID();
+        when(userRepo.findAllById(anyCollection())).thenReturn(List.of(user(target)));
+
+        ResolvedReportTarget t = resolver().resolve(report(ReportTargetType.USER, target, UUID.randomUUID()));
+
+        assertThat(t.rating()).isNull();
+        assertThat(t.ratedUser()).isNull();
+    }
+
+    @Test
     void avisAnonymeDuDestinataire_pasDAuteur() {
         UUID ratingId = UUID.randomUUID();
         RatingEntity rating = withId(new RatingEntity(), ratingId);
