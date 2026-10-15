@@ -47,7 +47,10 @@ Yadony. Un endpoint authentifié donne aussi à l'app le rôle de l'utilisateur 
 ### Logique métier critique
 - La clé est le `bidId`, pas le `trackingToken` : ce dernier change quand le destinataire change, le QR collé sur le colis mourrait en route.
 - Expéditeur et voyageur : `UserEntity.publicDisplayName()` (prénom + initiale ; repli sur un `username` généré, jamais saisi). Destinataire : `PublicNameFormatter.shortName`.
-- Jamais affichés : téléphones, noms complets, valeur déclarée, prix, code de remise (même public), adresse de retrait.
+- Jamais affichés : téléphones, noms complets, valeur déclarée, prix, code de remise (même public), adresse de retrait, lieu de scan (`gpsLabel` commence par la rue, souvent celle de l'expéditeur).
+- La description passe par `PublicTextSanitizer.maskContacts` : numéros (≥ 6 chiffres) et e-mails remplacés par « ••• ».
+- Un colis livré redevient « plus actif » 14 jours après la livraison (dernier scan ARRIVEE, sinon `updatedAt`).
+- `<meta name="referrer" content="no-referrer">` : WhatsApp et les stores ne reçoivent pas l'URL de la page.
 - Bouton WhatsApp masqué tant que `SUPPORT_WHATSAPP_NUMBER` est vide ; liens stores masqués si `STORE_URL_IOS` / `STORE_URL_ANDROID` sont vides.
 - `role` déclenche `ReceptionLinker.catchUp` avant de chercher le lien destinataire : un destinataire qui n'a jamais ouvert Réceptions est reconnu dès son premier scan.
 

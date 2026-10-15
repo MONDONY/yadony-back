@@ -145,7 +145,76 @@ class ParcelScanControllerIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("Remis au voyageur, en route")))
                 .andExpect(content().string(containsString("Colis remis au voyageur")))
-                .andExpect(content().string(containsString("18/10/2026 09:12")));
+                .andExpect(content().string(containsString("18/10/2026 09:12")))
+                .andExpect(content().string(not(containsString("Paris CDG"))));
+    }
+
+    // Revue finale : le lieu de scan contient la rue (souvent l'adresse de l'expéditeur
+    // pour la remise), il ne sort pas sur la page publique.
+    @Test
+    void lieuDeScan_jamaisAffiche() throws Exception {
+        TrackingEventEntity depart = new TrackingEventEntity();
+        depart.setBidId(bid.getId());
+        depart.setEventType(TrackingEventType.DEPART);
+        depart.setScannedAt(LocalDateTime.of(2026, 10, 18, 9, 12));
+        depart.setGpsLabel("12 rue des Lilas, Saint-Denis, Île-de-France");
+        trackingEventRepository.save(depart);
+
+        mockMvc.perform(get("/tracking/{id}/scan", bid.getId()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("Colis remis au voyageur")))
+                .andExpect(content().string(not(containsString("rue des Lilas"))))
+                .andExpect(content().string(not(containsString("Saint-Denis"))));
+    }
+
+    @Test
+    void numeroEtEmailDansLaDescription_masques() throws Exception {
+        bid.setDescription("Pagne + savon, pour Moussa 77 123 45 67 ou +33 6 12 34 56 78, moussa@mail.com. Lot 2024");
+        bidRepository.save(bid);
+        mockMvc.perform(get("/tracking/{id}/scan", bid.getId()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("Pagne + savon")))
+                .andExpect(content().string(not(containsString("123 45 67"))))
+                .andExpect(content().string(not(containsString("12 34 56 78"))))
+                .andExpect(content().string(not(containsString("moussa@mail.com"))))
+                .andExpect(content().string(containsString("Lot 2024")));
+    }
+
+    @Test
+    void urlDeLaPage_jamaisTransmiseEnReferer() throws Exception {
+        mockMvc.perform(get("/tracking/{id}/scan", bid.getId()))
+                .andExpect(content().string(containsString("<meta name=\"referrer\" content=\"no-referrer\">")));
+    }
+
+    @Test
+    void colisLivreDepuisPlusDe14Jours_inactif() throws Exception {
+        bid.setStatus(BidStatus.COMPLETED);
+        bidRepository.save(bid);
+        TrackingEventEntity arrivee = new TrackingEventEntity();
+        arrivee.setBidId(bid.getId());
+        arrivee.setEventType(TrackingEventType.ARRIVEE);
+        arrivee.setScannedAt(LocalDateTime.now().minusDays(20));
+        trackingEventRepository.save(arrivee);
+
+        mockMvc.perform(get("/tracking/{id}/scan", bid.getId()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("plus actif")))
+                .andExpect(content().string(not(containsString("Awa D."))));
+    }
+
+    @Test
+    void colisLivreRecemment_toujoursVisible() throws Exception {
+        bid.setStatus(BidStatus.COMPLETED);
+        bidRepository.save(bid);
+        TrackingEventEntity arrivee = new TrackingEventEntity();
+        arrivee.setBidId(bid.getId());
+        arrivee.setEventType(TrackingEventType.ARRIVEE);
+        arrivee.setScannedAt(LocalDateTime.now().minusDays(3));
+        trackingEventRepository.save(arrivee);
+
+        mockMvc.perform(get("/tracking/{id}/scan", bid.getId()))
+                .andExpect(content().string(containsString("Livré")))
+                .andExpect(content().string(containsString("Awa D.")));
     }
 
     @Test

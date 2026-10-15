@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
+  <!-- L'URL donne accès à la page : WhatsApp et les stores ne la reçoivent pas. -->
+  <meta name="referrer" content="no-referrer">
   <title th:text="${inactive} ? 'Colis Yadony' : 'Colis ' + ${parcel.trackingNumber} + ' - Yadony'">Colis Yadony</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
@@ -93,10 +95,7 @@
       <p class="label">Étapes</p>
       <div class="event" th:each="event : ${parcel.events}">
         <strong th:text="${event.label}">Colis remis au voyageur</strong>
-        <span class="muted">
-          <span th:text="${event.scannedAt}">18/10/2026 09:12</span>
-          <span th:if="${event.gpsLabel != null and !#strings.isEmpty(event.gpsLabel)}" th:text="' · ' + ${event.gpsLabel}"></span>
-        </span>
+        <span class="muted" th:text="${event.scannedAt}">18/10/2026 09:12</span>
         <img th:if="${event.photoUrl != null and !#strings.isEmpty(event.photoUrl)}" th:src="${event.photoUrl}" alt="Photo du colis à cette étape" loading="lazy">
       </div>
     </section>
@@ -105,16 +104,16 @@
   <section class="panel">
     <p class="label">Une question sur ce colis ?</p>
     <p class="muted intro">Contactez Yadony. Nous faisons le lien avec l'expéditeur et le voyageur.</p>
-    <a class="btn wa" th:if="${whatsappUrl != null}" th:href="${whatsappUrl}" rel="noopener">Écrire à Yadony sur WhatsApp</a>
+    <a class="btn wa" th:if="${whatsappUrl != null}" th:href="${whatsappUrl}" rel="noopener noreferrer">Écrire à Yadony sur WhatsApp</a>
     <a class="btn mail" th:href="${mailtoUrl}" th:text="${supportEmail}">support@yadony.com</a>
   </section>
 
   <th:block th:unless="${inactive}">
     <a class="btn primary" th:href="${appLink}">Ouvrir dans Yadony</a>
     <p class="stores" th:if="${storeIos != null or storeAndroid != null}">Pas encore l'application ?
-      <a th:if="${storeIos != null}" th:href="${storeIos}" rel="noopener">App Store</a>
+      <a th:if="${storeIos != null}" th:href="${storeIos}" rel="noopener noreferrer">App Store</a>
       <th:block th:if="${storeIos != null and storeAndroid != null}"> · </th:block>
-      <a th:if="${storeAndroid != null}" th:href="${storeAndroid}" rel="noopener">Google Play</a>
+      <a th:if="${storeAndroid != null}" th:href="${storeAndroid}" rel="noopener noreferrer">Google Play</a>
     </p>
   </th:block>
   <p class="foot">Les numéros de téléphone ne sont jamais affichés sur cette page.</p>

@@ -3,6 +3,7 @@ package com.yadony.api.tracking;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.PublicNameFormatter;
+import com.yadony.api.common.PublicTextSanitizer;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
@@ -23,8 +24,11 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
@@ -44,6 +48,9 @@ public class ParcelScanController {
     static final Set<BidStatus> VISIBLE = EnumSet.of(
             BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT,
             BidStatus.ARRIVED, BidStatus.COMPLETED);
+
+    /** Un colis livré reste lisible 14 jours, comme dans Réceptions, puis la page se tait. */
+    static final int DELIVERED_VISIBLE_DAYS = 14;
 
     private static final DateTimeFormatter EVENT_FMT =
             DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm", Locale.FRENCH);
@@ -99,6 +106,9 @@ public class ParcelScanController {
         AnnouncementEntity announcement = announcementOpt.get();
         List<TrackingEventEntity> rawEvents = trackingEventRepository.findByBidIdOrderByScannedAtAsc(bid.getId());
         boolean delivered = bid.getStatus() == BidStatus.COMPLETED;
+        if (delivered && deliveredLongAgo(bid, rawEvents)) {
+            return inactive(model, bid.getTrackingNumber(), "inactive");
+        }
 
         ParcelScanView parcel = new ParcelScanView(
                 bid.getTrackingNumber(),
@@ -109,7 +119,7 @@ public class ParcelScanController {
                 formatDate(announcement.getDepartureDate()),
                 formatDate(announcement.getArrivalDate()),
                 splitCategories(bid.getContentCategory()),
-                bid.getDescription() == null ? "" : bid.getDescription(),
+                PublicTextSanitizer.maskContacts(bid.getDescription()),
                 formatWeight(bid.getWeightKg()),
                 publicUserName(bid.getSenderId()),
                 PublicNameFormatter.shortName(bid.getRecipientName()),
@@ -117,7 +127,8 @@ public class ParcelScanController {
                 rawEvents.stream().map(e -> new RecipientController.RecipientEventDto(
                         ParcelSteps.label(e.getEventType()),
                         e.getScannedAt().format(EVENT_FMT),
-                        e.getGpsLabel(),
+                        // Jamais le lieu : il commence par la rue, souvent celle de l'expéditeur.
+                        null,
                         resolvePhoto(e.getPhotoUrl()),
                         e.getOfflineTimestamp() != null)).toList());
 
@@ -148,6 +159,16 @@ public class ParcelScanController {
         model.addAttribute("mailtoUrl", "mailto:" + supportEmail + "?subject=" + encode(subject));
         model.addAttribute("storeIos", blankToNull(storeIos));
         model.addAttribute("storeAndroid", blankToNull(storeAndroid));
+    }
+
+    private static boolean deliveredLongAgo(BidEntity bid, List<TrackingEventEntity> events) {
+        LocalDateTime deliveredAt = events.stream()
+                .filter(e -> e.getEventType() == TrackingEventType.ARRIVEE)
+                .map(TrackingEventEntity::getScannedAt)
+                .max(Comparator.naturalOrder())
+                .orElse(bid.getUpdatedAt());
+        return deliveredAt != null
+                && deliveredAt.isBefore(LocalDateTime.now(ZoneOffset.UTC).minusDays(DELIVERED_VISIBLE_DAYS));
     }
 
     private String publicUserName(UUID userId) {
