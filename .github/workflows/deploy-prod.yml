@@ -148,6 +148,12 @@ jobs:
           # numéro WhatsApp affiché à tous (pas un secret), vide = bouton masqué.
           SUPPORT_WHATSAPP_NUMBER=${{ vars.SUPPORT_WHATSAPP_NUMBER }}
           SUPPORT_EMAIL=${{ vars.SUPPORT_EMAIL || 'support@yadony.com' }}
+          # Stream Video — appels audio in-app (app Stream de PRODUCTION, distincte de
+          # yadony-staging). Clé publique en variable, secret en secret ;
+          # CALLS_ENABLED=true active les appels (vide = coupés, valeur par défaut du back).
+          STREAM_API_KEY=${{ vars.STREAM_API_KEY }}
+          STREAM_API_SECRET=${{ secrets.STREAM_API_SECRET }}
+          CALLS_ENABLED=${{ vars.CALLS_ENABLED || 'false' }}
           STORE_OS_REDIRECT_ENABLED=${{ vars.STORE_OS_REDIRECT_ENABLED }}
           STORAGE_PUBLIC_BASE_URL=${{ vars.STORAGE_PUBLIC_BASE_URL }}
           SWAGGER_ENABLED=${{ vars.SWAGGER_ENABLED }}
