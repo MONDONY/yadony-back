@@ -56,7 +56,7 @@ class WalletTopupCodeAdminServiceTest {
     void create_codeLibre_normalise_expirationParDefaut90Jours_etTrace() {
         when(codes.existsByCode("DAKAR2000")).thenReturn(false);
         when(exchangeRateService.toEurPivot(new BigDecimal("2000"), "XOF")).thenReturn(new BigDecimal("3.05"));
-        when(codes.save(any())).thenAnswer(i -> {
+        when(codes.saveAndFlush(any())).thenAnswer(i -> {
             WalletTopupCodeEntity e = i.getArgument(0);
             ReflectionTestUtils.setField(e, "id", UUID.randomUUID());
             return e;
@@ -76,7 +76,7 @@ class WalletTopupCodeAdminServiceTest {
     @Test
     void create_sansCode_genereUnCodeYD() {
         when(codes.existsByCode(anyString())).thenReturn(false);
-        when(codes.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(codes.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
         WalletTopupCodeEntity c = service.create(cmd(null, "10", "EUR", 1, null));
         assertThat(c.getCode()).matches("YD-[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}-[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}");
     }
@@ -86,6 +86,16 @@ class WalletTopupCodeAdminServiceTest {
         when(codes.existsByCode("DAKAR2000")).thenReturn(true);
         assertThatThrownBy(() -> service.create(cmd("DAKAR2000", "10", "EUR", 1, null)))
                 .satisfies(t -> assertCode(t, HttpStatus.CONFLICT, "topup-code-duplicate"));
+    }
+
+    @Test
+    void create_doublonSimultane_contrainteUnique_409() {
+        when(codes.existsByCode("DAKAR2000")).thenReturn(false);
+        when(codes.saveAndFlush(any())).thenThrow(
+                new org.springframework.dao.DataIntegrityViolationException("uq_wallet_topup_codes_code"));
+        assertThatThrownBy(() -> service.create(cmd("DAKAR2000", "10", "EUR", 1, null)))
+                .satisfies(t -> assertCode(t, HttpStatus.CONFLICT, "topup-code-duplicate"));
+        verify(auditService, org.mockito.Mockito.never()).log(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -99,7 +109,7 @@ class WalletTopupCodeAdminServiceTest {
     @Test
     void create_500EurosPile_accepte() {
         when(codes.existsByCode("PILE")).thenReturn(false);
-        when(codes.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(codes.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
         assertThat(service.create(cmd("PILE", "500", "EUR", 1, null)).getAmount()).isEqualByComparingTo("500");
     }
 

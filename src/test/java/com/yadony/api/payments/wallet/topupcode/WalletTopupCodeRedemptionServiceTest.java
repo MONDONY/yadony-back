@@ -186,9 +186,38 @@ class WalletTopupCodeRedemptionServiceTest {
         when(redemptions.existsByCodeIdAndUserId(codeId, userId)).thenReturn(false);
         when(walletService.isFrozen(userId, "XOF")).thenReturn(false);
         stubLedger();
-        when(redemptions.saveAndFlush(any())).thenThrow(new org.springframework.dao.DataIntegrityViolationException("uq"));
+        when(redemptions.saveAndFlush(any())).thenThrow(new org.springframework.dao.DataIntegrityViolationException("uq",
+                new org.hibernate.exception.ConstraintViolationException("dup", new java.sql.SQLException("dup"),
+                        "uq_topup_code_redemption_user")));
         assertThatThrownBy(() -> service.redeem(userId, "DAKAR2000"))
                 .satisfies(t -> assertCode(t, HttpStatus.UNPROCESSABLE_ENTITY, "topup-code-already-redeemed"));
+    }
+
+    @Test
+    void redeem_contrainteUniqueDansLeMessageDuPilote_traduiteEnDejaUtilise() {
+        when(codes.findByCodeForUpdate("DAKAR2000")).thenReturn(Optional.of(activeCode(100, 3)));
+        when(redemptions.existsByCodeIdAndUserId(codeId, userId)).thenReturn(false);
+        when(walletService.isFrozen(userId, "XOF")).thenReturn(false);
+        stubLedger();
+        when(redemptions.saveAndFlush(any())).thenThrow(new org.springframework.dao.DataIntegrityViolationException("x",
+                new java.sql.SQLException("ERROR: duplicate key value violates unique constraint "
+                        + "\"uq_topup_code_redemption_user\"", "23505")));
+        assertThatThrownBy(() -> service.redeem(userId, "DAKAR2000"))
+                .satisfies(t -> assertCode(t, HttpStatus.UNPROCESSABLE_ENTITY, "topup-code-already-redeemed"));
+    }
+
+    @Test
+    void redeem_autreViolationDIntegrite_remonteTelleQuelle() {
+        when(codes.findByCodeForUpdate("DAKAR2000")).thenReturn(Optional.of(activeCode(100, 3)));
+        when(redemptions.existsByCodeIdAndUserId(codeId, userId)).thenReturn(false);
+        when(walletService.isFrozen(userId, "XOF")).thenReturn(false);
+        stubLedger();
+        org.springframework.dao.DataIntegrityViolationException fk = new org.springframework.dao.DataIntegrityViolationException("fk",
+                new org.hibernate.exception.ConstraintViolationException("fk", new java.sql.SQLException("fk"),
+                        "wallet_topup_code_redemptions_user_id_fkey"));
+        when(redemptions.saveAndFlush(any())).thenThrow(fk);
+        assertThatThrownBy(() -> service.redeem(userId, "DAKAR2000")).isSameAs(fk);
+        verify(auditService, never()).log(any(), any(), any(), any(), any());
     }
 
     @Test

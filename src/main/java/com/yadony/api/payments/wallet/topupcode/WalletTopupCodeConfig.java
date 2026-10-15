@@ -13,8 +13,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class WalletTopupCodeConfig {
 
     /**
-     * Échecs « code inconnu » par utilisateur. Fenêtre fixe d'une heure à partir du premier
-     * échec : incrémenter l'AtomicInteger ne réécrit pas l'entrée, donc ne prolonge pas l'expiration.
+     * Tentatives « code inconnu » par utilisateur. Chaque essai réserve une unité AVANT la
+     * recherche du code (libérée si le code existe) : l'entrée naît donc à la première tentative
+     * de la fenêtre, pas au premier échec. Fenêtre fixe d'une heure à partir de cette création :
+     * incrémenter ou décrémenter l'AtomicInteger ne réécrit pas l'entrée, donc ne prolonge pas
+     * l'expiration. Au-delà de 5 unités réservées dans la fenêtre : 429.
      */
     @Bean("topupCodeFailureCache")
     public Cache<UUID, AtomicInteger> topupCodeFailureCache() {

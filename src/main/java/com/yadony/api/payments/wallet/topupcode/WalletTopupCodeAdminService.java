@@ -4,6 +4,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.currency.ExchangeRateService;
 import com.yadony.api.payments.currency.SupportedCurrency;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -76,8 +77,7 @@ public class WalletTopupCodeAdminService {
             throw badRequest("topup-code-expiry-invalid", "La date d'expiration doit être dans le futur");
         }
         if (codes.existsByCode(code)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "topup-code-duplicate", "Conflict",
-                    "Un code de recharge existe déjà avec ce code : " + code);
+            throw duplicate(code);
         }
         assertUnderCap(amount, currency.name());
 
@@ -89,7 +89,14 @@ public class WalletTopupCodeAdminService {
         entity.setExpiresAt(expiresAt);
         entity.setNote(command.note() == null || command.note().isBlank() ? null : command.note().trim());
         entity.setCreatedBy(command.adminId());
-        WalletTopupCodeEntity saved = codes.save(entity);
+        WalletTopupCodeEntity saved;
+        try {
+            // Flush immédiat : deux créations simultanées du même code se départagent sur
+            // uq_wallet_topup_codes_code ici, en 409, au lieu d'un 500 au commit.
+            saved = codes.saveAndFlush(entity);
+        } catch (DataIntegrityViolationException e) {
+            throw duplicate(code);
+        }
 
         Map<String, Object> payload = new HashMap<>();
         payload.put("code", saved.getCode());
@@ -154,6 +161,11 @@ public class WalletTopupCodeAdminService {
 
     private static YadonyBusinessException badRequest(String code, String detail) {
         return new YadonyBusinessException(HttpStatus.BAD_REQUEST, code, "Bad Request", detail);
+    }
+
+    private static YadonyBusinessException duplicate(String code) {
+        return new YadonyBusinessException(HttpStatus.CONFLICT, "topup-code-duplicate", "Conflict",
+                "Un code de recharge existe déjà avec ce code : " + code);
     }
 
     private static YadonyBusinessException notFound() {

@@ -32,6 +32,7 @@ public class WalletTopupCodeRedemptionService {
     static final int MAX_FAILURES_PER_HOUR = 5;
     static final Pattern CODE_FORMAT = Pattern.compile("^[A-Z0-9-]{4,32}$");
     private static final String UNPROCESSABLE = "Unprocessable";
+    static final String REDEMPTION_UNIQUE_CONSTRAINT = "uq_topup_code_redemption_user";
 
     private final WalletTopupCodeRepository codes;
     private final WalletTopupCodeRedemptionRepository redemptions;
@@ -111,6 +112,8 @@ public class WalletTopupCodeRedemptionService {
             redemptions.saveAndFlush(redemption);
         } catch (DataIntegrityViolationException e) {
             // Filet de UNIQUE (code_id, user_id) : la transaction entière (crédit compris) est annulée.
+            // Toute autre violation (FK, CHECK) n'est pas un doublon : elle remonte telle quelle.
+            if (!violates(e, REDEMPTION_UNIQUE_CONSTRAINT)) throw e;
             throw unprocessable("topup-code-already-redeemed", "Tu as déjà utilisé ce code");
         }
         topupCode.setRedeemedCount(topupCode.getRedeemedCount() + 1);
@@ -122,6 +125,25 @@ public class WalletTopupCodeRedemptionService {
 
         return new TopupCodeRedeemResponse(topupCode.getAmount(), topupCode.getCurrency(),
                 tx.getBalanceAfter(), tx.getId());
+    }
+
+    /**
+     * La violation porte-t-elle sur la contrainte nommée ? Nom fourni par Hibernate quand il
+     * l'extrait, sinon recherché dans le message du pilote PostgreSQL.
+     */
+    static boolean violates(Throwable ex, String constraint) {
+        for (Throwable current = ex; current != null; current = current.getCause()) {
+            if (current instanceof org.hibernate.exception.ConstraintViolationException hibernate
+                    && constraint.equalsIgnoreCase(hibernate.getConstraintName())) {
+                return true;
+            }
+            if (current instanceof java.sql.SQLException sql && sql.getMessage() != null
+                    && sql.getMessage().contains(constraint)) {
+                return true;
+            }
+            if (current.getCause() == current) break;
+        }
+        return false;
     }
 
     private static YadonyBusinessException unprocessable(String code, String detail) {
