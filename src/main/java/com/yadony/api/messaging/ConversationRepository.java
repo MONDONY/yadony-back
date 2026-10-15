@@ -67,10 +67,12 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
            "AND c.travelerLastMessageAt IS NOT NULL AND c.travelerLastMessageAt >= :since")
     boolean existsTravelerMessageSince(@Param("bidId") UUID bidId, @Param("since") java.time.LocalDateTime since);
 
-    // Active conversations: not deleted AND not archived by the requesting user
+    // Active conversations: not deleted AND not archived by the requesting user. Une conversation
+    // vidée 3 jours après la livraison (messagesPurgedAt) quitte toutes les listes, comme le compteur.
     @Query("SELECT c FROM ConversationEntity c WHERE " +
+           "c.messagesPurgedAt IS NULL AND (" +
            "(c.senderId = :userId AND c.closedAt IS NULL AND c.senderDeletedAt IS NULL AND c.senderArchivedAt IS NULL) OR " +
-           "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL AND c.travelerArchivedAt IS NULL)")
+           "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL AND c.travelerArchivedAt IS NULL))")
     Page<ConversationEntity> findByParticipant(@Param("userId") UUID userId, Pageable pageable);
 
     /**
@@ -86,6 +88,7 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
      * de sens en JPQL. Sinon, {@link #findByParticipant}.
      */
     @Query("SELECT c FROM ConversationEntity c WHERE " +
+           "c.messagesPurgedAt IS NULL AND " +
            "((c.senderId = :userId AND c.closedAt IS NULL AND c.senderDeletedAt IS NULL AND c.senderArchivedAt IS NULL) OR " +
            "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL AND c.travelerArchivedAt IS NULL)) " +
            "AND c.senderId NOT IN :hiddenIds AND c.travelerId NOT IN :hiddenIds")
@@ -95,8 +98,9 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
 
     // Archived conversations: archived but not deleted
     @Query("SELECT c FROM ConversationEntity c WHERE " +
+           "c.messagesPurgedAt IS NULL AND (" +
            "(c.senderId = :userId AND c.closedAt IS NULL AND c.senderArchivedAt IS NOT NULL AND c.senderDeletedAt IS NULL) OR " +
-           "(c.travelerId = :userId AND c.travelerArchivedAt IS NOT NULL AND c.travelerDeletedAt IS NULL)")
+           "(c.travelerId = :userId AND c.travelerArchivedAt IS NOT NULL AND c.travelerDeletedAt IS NULL))")
     Page<ConversationEntity> findArchivedByParticipant(@Param("userId") UUID userId, Pageable pageable);
 
     @Query("SELECT c FROM ConversationEntity c WHERE c.id = :id AND (" +
@@ -131,8 +135,9 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
      * Pendant compté de {@link #findByParticipant} — même clause, sans pagination.
      */
     @Query("SELECT COUNT(c) FROM ConversationEntity c WHERE " +
+           "c.messagesPurgedAt IS NULL AND (" +
            "(c.senderId = :userId AND c.closedAt IS NULL AND c.senderDeletedAt IS NULL AND c.senderArchivedAt IS NULL) OR " +
-           "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL AND c.travelerArchivedAt IS NULL)")
+           "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL AND c.travelerArchivedAt IS NULL))")
     long countActiveByParticipant(@Param("userId") UUID userId);
 
     /**
