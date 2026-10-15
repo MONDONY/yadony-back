@@ -38,4 +38,11 @@ public enum WalletTransactionType {
      * {@code WalletRefundAllocator} : consomme le non-cash, puis les recharges LIFO.
      */
     ADMIN_DEBIT
+    ,
+    /**
+     * Crédit obtenu en saisissant un code de recharge créé par un admin
+     * (cf. {@code WalletTopupCodeRedemptionService}). Sans paymentRef, donc rangé dans le
+     * non-cash par {@code WalletRefundAllocator} : jamais remboursable, perdu à la suppression.
+     */
+    TOP_UP_CODE
 }

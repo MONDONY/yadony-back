@@ -53,7 +53,7 @@ public final class MoneyInvariants {
                     UNION ALL
                     SELECT 'SIGNE_INCOHERENT_AVEC_TYPE', t.id, t.user_id, t.currency, t.amount
                     FROM wallet_transactions t
-                    WHERE (t.type IN ('TOP_UP','REFUND','REFERRAL_REWARD','ADMIN_CREDIT') AND t.amount <= 0)
+                    WHERE (t.type IN ('TOP_UP','REFUND','REFERRAL_REWARD','ADMIN_CREDIT','TOP_UP_CODE') AND t.amount <= 0)
                        OR (t.type IN ('BID_PAYMENT','COMMISSION_DEDUCTED','ADMIN_REFUND_OUT','SELF_REFUND_OUT','FORFEITED_ON_DELETION','ADMIN_DEBIT') AND t.amount > 0)
                        OR (t.type IN ('BID_PAYMENT','ADMIN_REFUND_OUT','SELF_REFUND_OUT','FORFEITED_ON_DELETION','ADMIN_DEBIT') AND t.amount = 0)
                     UNION ALL

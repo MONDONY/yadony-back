@@ -45,8 +45,8 @@ class AdminPermissionsLotBTest {
     // avec la tache 2 du lot billing (feature/pro-saas-abonnement), qui ajoute
     // USER_PRO_GRANT. Passe a 33 avec la messagerie support, qui ajoute
     // SUPPORT_TICKET_VIEW et SUPPORT_TICKET_MANAGE. Passe a 34 avec REPORT_DELETE, puis a 35
-    // avec WALLET_ADJUST (correction de solde wallet), puis a 36 avec KYC_DECIDE.
-    void enumHasExactlyThirtySixValues() {
-        assertThat(AdminPermission.values()).hasSize(36);
+    // avec WALLET_ADJUST (correction de solde wallet), puis a 36 avec KYC_DECIDE, puis a 37 avec TOPUP_CODE_MANAGE.
+    void enumHasExactlyThirtySevenValues() {
+        assertThat(AdminPermission.values()).hasSize(37);
     }
 }
