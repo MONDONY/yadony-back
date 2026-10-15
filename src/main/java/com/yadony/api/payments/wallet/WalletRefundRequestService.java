@@ -22,12 +22,14 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Ouvre le ticket de remboursement wallet — automatiquement à chaque suppression de compte
- * en solde positif (cf. {@code UserService#settleWalletsForDeletion}, jamais bloquant :
- * Apple 5.1.1(v)), ou explicitement via {@code POST /auth/me/wallet-refund-request} pour qui
- * veut être remboursé sans supprimer son compte. Aucun flow de remboursement automatique
- * n'existe côté Stripe pour le wallet : un admin rembourse manuellement hors-app puis résout
- * le ticket, ce qui débite le wallet à zéro.
+ * Tickets MANUAL_ADMIN de remboursement wallet, et file admin de toutes les demandes.
+ *
+ * <p>Le cas nominal (suppression de compte ou demande depuis le wallet) est un remboursement
+ * AUTOMATIQUE Stripe ou pawaPay ({@code WalletSelfRefundService}) : la demande passe en
+ * PROCESSING dans la même transaction, puis REFUNDED, sans geste de l'équipe. Un ticket manuel
+ * n'est ouvert ici que si l'automatique est impossible (rejeu du ledger incohérent, rails
+ * mixtes sur la devise) ou a échoué (ticket enfant des items FAILED) : l'admin rembourse alors
+ * hors-app puis résout le ticket, ce qui débite le wallet.
  */
 @Service
 public class WalletRefundRequestService {
@@ -173,6 +175,21 @@ public class WalletRefundRequestService {
                         "amount", wallet.getBalance(), "requestId", saved.getId()));
 
         return saved;
+    }
+
+    /**
+     * File admin, tous canaux, filtrée par statut (suivi des remboursements automatiques
+     * lancés à la suppression de compte, échecs, historique). Plus récentes d'abord ; la
+     * file « à traiter » seule reste servie par {@link #listPending}, plus anciennes d'abord.
+     */
+    @Transactional(readOnly = true)
+    public Page<WalletRefundRequestEntity> listByStatuses(
+            java.util.Collection<WalletRefundRequestStatus> statuses, Pageable pageable) {
+        Pageable sorted = org.springframework.data.domain.PageRequest.of(
+                pageable.getPageNumber(), pageable.getPageSize(),
+                org.springframework.data.domain.Sort.by(
+                        org.springframework.data.domain.Sort.Direction.DESC, "requestedAt"));
+        return refundRequestRepository.findAllByStatusIn(statuses, sorted);
     }
 
     @Transactional(readOnly = true)

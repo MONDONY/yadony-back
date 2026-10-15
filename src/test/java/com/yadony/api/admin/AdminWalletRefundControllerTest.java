@@ -52,6 +52,7 @@ class AdminWalletRefundControllerTest {
     @MockitoBean WalletService walletService;
     @MockitoBean AuditService auditService;
     @MockitoBean AdminAlertService adminAlertService;
+    @Autowired com.yadony.api.auth.UserRepository userRepository;
 
     private static final UUID ADMIN_ID = UUID.randomUUID();
     private static final UUID USER_ID = UUID.randomUUID();
@@ -128,6 +129,61 @@ class AdminWalletRefundControllerTest {
                 .andExpect(jsonPath("$.content[0].currency").value("CAD"))
                 .andExpect(jsonPath("$.content[0].amount").value(45.00))
                 .andExpect(jsonPath("$.content[0].status").value("PENDING"));
+    }
+
+    @Test
+    @DisplayName("GET ?status — suivi : remboursements automatiques d'un compte supprimé, avec nom et origine")
+    void get_withStatuses_returnsAutomaticRefundsOfDeletedAccount() throws Exception {
+        com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
+        user.setFirebaseUid("uid-refund-" + UUID.randomUUID());
+        user.setFirstName("Awa");
+        user.setLastName("Diop");
+        user.setStatus(com.yadony.api.auth.UserStatus.ACTIVE);
+        user.setKycStatus(com.yadony.api.auth.KycStatus.PENDING);
+        user.setRoles(new java.util.HashSet<>(java.util.Set.of(com.yadony.api.auth.Role.SENDER)));
+        user.setTotalTrips(0);
+        LocalDateTime deletedAt = LocalDateTime.now(java.time.ZoneOffset.UTC).minusDays(1);
+        user.setDeletedAt(deletedAt);
+        user = userRepository.saveAndFlush(user);
+
+        WalletRefundRequestEntity automatic = pendingRequest(UUID.randomUUID());
+        automatic.setUserId(user.getId());
+        automatic.setChannel(com.yadony.api.payments.wallet.WalletRefundChannel.AUTOMATIC_STRIPE);
+        automatic.setStatus(WalletRefundRequestStatus.REFUNDED);
+        automatic.setRequestedAt(deletedAt.minusSeconds(3));
+        when(refundRequestRepository.findAllByStatusIn(any(), any()))
+                .thenReturn(new PageImpl<>(List.of(automatic),
+                        org.springframework.data.domain.PageRequest.of(0, 20), 1));
+
+        mockMvc.perform(get("/admin/wallet-refund-requests")
+                        .param("status", "PROCESSING,REFUNDED")
+                        .param("status", "failed")
+                        .with(authentication(adminAuth(AdminRole.ADMIN))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].status").value("REFUNDED"))
+                .andExpect(jsonPath("$.content[0].channel").value("AUTOMATIC_STRIPE"))
+                .andExpect(jsonPath("$.content[0].userName").value("Awa Diop"))
+                .andExpect(jsonPath("$.content[0].origin").value("ACCOUNT_DELETION"));
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.Collection<WalletRefundRequestStatus>> statuses =
+                org.mockito.ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(refundRequestRepository).findAllByStatusIn(statuses.capture(), any());
+        org.assertj.core.api.Assertions.assertThat(statuses.getValue()).containsExactlyInAnyOrder(
+                WalletRefundRequestStatus.PROCESSING, WalletRefundRequestStatus.REFUNDED,
+                WalletRefundRequestStatus.FAILED);
+    }
+
+    @Test
+    @DisplayName("GET ?status inconnu → 400, aucune lecture")
+    void get_withUnknownStatus_returns400() throws Exception {
+        mockMvc.perform(get("/admin/wallet-refund-requests").param("status", "DONE")
+                        .with(authentication(adminAuth(AdminRole.ADMIN))))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/admin/wallet-refund-requests").param("status", " , ")
+                        .with(authentication(adminAuth(AdminRole.ADMIN))))
+                .andExpect(status().isBadRequest());
+        verify(refundRequestRepository, never()).findAllByStatusIn(any(), any());
     }
 
     // ── resolve ──────────────────────────────────────────────────────────────
