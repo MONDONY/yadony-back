@@ -75,6 +75,13 @@ public class ConversationEntity extends BaseEntity {
     private LocalDateTime closedAt;
 
     /**
+     * Purge des messages et photos, 3 jours après la livraison du colis (V323). La conversation
+     * reste listée, vide et fermée à l'écriture.
+     */
+    @Column(name = "messages_purged_at")
+    private LocalDateTime messagesPurgedAt;
+
+    /**
      * Dernier message envoyé par le voyageur (V301) : preuve de tentative de contact pour le
      * signalement « destinataire absent ». Écrite uniquement par
      * {@link ConversationRepository#markTravelerMessaged}, jamais par un flush d'entité.
@@ -220,6 +227,16 @@ public class ConversationEntity extends BaseEntity {
     public LocalDateTime getTravelerNotificationsMutedAt() { return travelerNotificationsMutedAt; }
     public ConversationKind getKind() { return kind; }
     public LocalDateTime getClosedAt() { return closedAt; }
+
+    public LocalDateTime getMessagesPurgedAt() { return messagesPurgedAt; }
+
+    public boolean isMessagesPurged() { return messagesPurgedAt != null; }
+
+    public void markMessagesPurged(LocalDateTime at) {
+        if (messagesPurgedAt == null) {
+            messagesPurgedAt = at;
+        }
+    }
 
     public LocalDateTime getTravelerLastMessageAt() { return travelerLastMessageAt; }
 }
