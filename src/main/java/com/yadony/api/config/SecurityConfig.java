@@ -170,6 +170,9 @@ public class SecurityConfig {
                     // l'expéditeur ou le voyageur du colis. Le destinataire, lui, passe par
                     // /tracking/public/** qui s'authentifie par le token de suivi.
                     "/tracking/public/**",
+                    // Page publique du QR collé sur le colis (scan hors app). Un seul segment
+                    // `*` : /tracking/{id}/qr-code et le reste de /tracking restent authentifiés.
+                    "/tracking/*/scan",
                     "/v3/api-docs/**",
                     "/swagger-ui/**",
                     "/swagger-ui.html",
