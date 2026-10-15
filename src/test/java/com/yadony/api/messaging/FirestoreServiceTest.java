@@ -349,4 +349,82 @@ class FirestoreServiceTest {
 
         verify(message, org.mockito.Mockito.times(2)).update("imageExpired", true);
     }
+
+    // ── Purge des messages 3 jours après la livraison ───────────────────────────
+
+    @Test
+    void purgeMessages_isANoOpSuccess_whenFirestoreIsNull() {
+        assertThat(new FirestoreService(null).purgeMessages("conv_test")).isTrue();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void purgeMessages_deletesMessagesRecursively_keepsTheDocument_andClearsUnread() throws Exception {
+        Firestore firestore = mock(Firestore.class);
+        CollectionReference conversations = mock(CollectionReference.class);
+        DocumentReference convRef = mock(DocumentReference.class);
+        CollectionReference messages = mock(CollectionReference.class);
+        when(firestore.collection("conversations")).thenReturn(conversations);
+        when(conversations.document("conv_x")).thenReturn(convRef);
+        when(convRef.collection("messages")).thenReturn(messages);
+        when(firestore.recursiveDelete(messages)).thenReturn(ApiFutures.immediateFuture(null));
+        com.google.cloud.firestore.DocumentSnapshot snap = mock(com.google.cloud.firestore.DocumentSnapshot.class);
+        when(snap.exists()).thenReturn(true);
+        when(snap.get("senderId")).thenReturn("uid-sender");
+        when(snap.get("travelerId")).thenReturn("uid-traveler");
+        when(snap.get("revokedRecipientId")).thenReturn(null);
+        when(convRef.get()).thenReturn(ApiFutures.immediateFuture(snap));
+        when(convRef.update(anyMap())).thenReturn(ApiFutures.immediateFuture(mock(WriteResult.class)));
+        CollectionReference userMeta = mock(CollectionReference.class);
+        when(firestore.collection("userMeta")).thenReturn(userMeta);
+        when(userMeta.document(org.mockito.ArgumentMatchers.anyString())).thenReturn(mock(DocumentReference.class));
+        when(firestore.runTransaction(org.mockito.ArgumentMatchers.any(com.google.cloud.firestore.Transaction.Function.class)))
+                .thenReturn(ApiFutures.immediateFuture(null));
+
+        assertThat(new FirestoreService(firestore).purgeMessages("conv_x")).isTrue();
+
+        verify(firestore).recursiveDelete(messages);
+        verify(convRef, org.mockito.Mockito.never()).delete();
+        ArgumentCaptor<Map<String, Object>> update = ArgumentCaptor.forClass(Map.class);
+        verify(convRef).update(update.capture());
+        assertThat(update.getValue()).containsKey("messagesPurgedAt").containsEntry("lastMessagePreview", null);
+        verify(userMeta).document("uid-sender");
+        verify(userMeta).document("uid-traveler");
+        verify(firestore, org.mockito.Mockito.times(2))
+                .runTransaction(org.mockito.ArgumentMatchers.any(com.google.cloud.firestore.Transaction.Function.class));
+    }
+
+    @Test
+    void purgeMessages_returnsFalse_whenTheDeletionFails() {
+        Firestore firestore = mock(Firestore.class);
+        CollectionReference conversations = mock(CollectionReference.class);
+        DocumentReference convRef = mock(DocumentReference.class);
+        CollectionReference messages = mock(CollectionReference.class);
+        when(firestore.collection("conversations")).thenReturn(conversations);
+        when(conversations.document("conv_x")).thenReturn(convRef);
+        when(convRef.collection("messages")).thenReturn(messages);
+        when(firestore.recursiveDelete(messages))
+                .thenReturn(ApiFutures.immediateFailedFuture(new IllegalStateException("unavailable")));
+
+        assertThat(new FirestoreService(firestore).purgeMessages("conv_x")).isFalse();
+        verify(convRef, org.mockito.Mockito.never()).update(anyMap());
+    }
+
+    @Test
+    void purgeMessages_skipsTheUpdate_whenTheDocumentIsMissing() {
+        Firestore firestore = mock(Firestore.class);
+        CollectionReference conversations = mock(CollectionReference.class);
+        DocumentReference convRef = mock(DocumentReference.class);
+        CollectionReference messages = mock(CollectionReference.class);
+        when(firestore.collection("conversations")).thenReturn(conversations);
+        when(conversations.document("conv_x")).thenReturn(convRef);
+        when(convRef.collection("messages")).thenReturn(messages);
+        when(firestore.recursiveDelete(messages)).thenReturn(ApiFutures.immediateFuture(null));
+        com.google.cloud.firestore.DocumentSnapshot snap = mock(com.google.cloud.firestore.DocumentSnapshot.class);
+        when(snap.exists()).thenReturn(false);
+        when(convRef.get()).thenReturn(ApiFutures.immediateFuture(snap));
+
+        assertThat(new FirestoreService(firestore).purgeMessages("conv_x")).isTrue();
+        verify(convRef, org.mockito.Mockito.never()).update(anyMap());
+    }
 }

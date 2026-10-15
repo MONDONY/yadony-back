@@ -134,4 +134,15 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
            "(c.senderId = :userId AND c.closedAt IS NULL AND c.senderDeletedAt IS NULL AND c.senderArchivedAt IS NULL) OR " +
            "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL AND c.travelerArchivedAt IS NULL)")
     long countActiveByParticipant(@Param("userId") UUID userId);
+
+    /**
+     * Conversations dont les messages sont à purger : colis livré (bid COMPLETED) depuis la date
+     * limite, livraison approchée par la dernière mise à jour du bid quand elle manque.
+     */
+    @Query("SELECT c FROM ConversationEntity c, com.yadony.api.matching.BidEntity b " +
+           "WHERE b.id = c.bidId AND c.messagesPurgedAt IS NULL " +
+           "AND b.status = com.yadony.api.matching.BidStatus.COMPLETED " +
+           "AND COALESCE(b.deliveredAt, b.updatedAt) <= :deliveredBefore")
+    java.util.List<ConversationEntity> findMessagesToPurge(
+            @Param("deliveredBefore") java.time.LocalDateTime deliveredBefore);
 }

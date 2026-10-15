@@ -330,6 +330,68 @@ public class FirestoreService {
     }
 
     /**
+     * Efface tous les messages d'une conversation, 3 jours après la livraison du colis, avec
+     * leurs sous-collections ({@code history} des messages modifiés). Le document conversation
+     * reste en place : le supprimer ferait tomber les règles sur leur repli « document absent ».
+     * Il reçoit {@code messagesPurgedAt} (les règles refusent alors tout nouveau message) et perd
+     * son aperçu. Les non-lus de la conversation sont retirés des compteurs des participants.
+     *
+     * @return vrai si la purge a abouti (ou Firestore désactivé : rien à purger) ; faux sur
+     *         échec, la prochaine passe réessaiera
+     */
+    public boolean purgeMessages(String conversationId) {
+        if (firestore == null) {
+            log.warn("Firestore disabled — skipping purgeMessages");
+            return true;
+        }
+        try {
+            Firestore db = firestore;
+            var convRef = db.collection("conversations").document(conversationId);
+            db.recursiveDelete(convRef.collection("messages")).get();
+            var snap = convRef.get().get();
+            if (snap.exists()) {
+                Map<String, Object> update = new HashMap<>();
+                update.put("messagesPurgedAt", Instant.now().toString());
+                update.put("lastMessagePreview", null);
+                convRef.update(update).get();
+                for (String field : new String[] {"senderId", "travelerId", "revokedRecipientId"}) {
+                    Object uid = snap.get(field);
+                    if (uid instanceof String s && !s.isBlank()) {
+                        clearUnread(db, s, conversationId);
+                    }
+                }
+            }
+            return true;
+        } catch (Exception e) {
+            log.warn("Firestore purgeMessages failed for {}: {}", conversationId, e.getMessage());
+            return false;
+        }
+    }
+
+    /** Retire le non-lu d'une conversation du compteur {@code userMeta/{uid}}. Meilleur effort. */
+    private static void clearUnread(Firestore firestore, String uid, String conversationId) {
+        String key = "unread_" + conversationId;
+        var metaRef = firestore.collection("userMeta").document(uid);
+        try {
+            firestore.runTransaction(tx -> {
+                var meta = tx.get(metaRef).get();
+                if (!meta.exists() || !meta.contains(key)) {
+                    return null;
+                }
+                Number unread = meta.get(key) instanceof Number n ? n : 0;
+                Number total = meta.get("totalUnreadMessages") instanceof Number n ? n : 0;
+                Map<String, Object> update = new HashMap<>();
+                update.put(key, com.google.cloud.firestore.FieldValue.delete());
+                update.put("totalUnreadMessages", Math.max(0L, total.longValue() - unread.longValue()));
+                tx.update(metaRef, update);
+                return null;
+            }).get();
+        } catch (Exception e) {
+            log.warn("Firestore clearUnread failed for {}/{}: {}", uid, conversationId, e.getMessage());
+        }
+    }
+
+    /**
      * Publie l'état de coupure de messagerie dans Firestore.
      *
      * <p>La règle de sécurité Firestore lit le document {@code moderation/{firebaseUid}}

@@ -22,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -43,6 +44,9 @@ public class ConversationService {
     private final CallAvailability callAvailability;
     private final ConversationMediaPolicy mediaPolicy;
     private final MessagingImageRetentionService imageRetention;
+
+    /** Délai d'effacement des messages après livraison, exposé à l'app (cf. ConversationMessagePurgeService). */
+    private int messagePurgeAfterDays = 3;
 
     /** Statuts où un appel peut être permis ; la fenêtre exacte (J+3 après livraison) reste à calls/. */
     private static final java.util.Set<BidStatus> CALL_CANDIDATE_STATUSES = java.util.EnumSet.of(
@@ -70,6 +74,11 @@ public class ConversationService {
         this.callAvailability = callAvailability;
         this.mediaPolicy = mediaPolicy;
         this.imageRetention = imageRetention;
+    }
+
+    @org.springframework.beans.factory.annotation.Value("${yadony.messaging.purge-after-delivery-days:3}")
+    void setMessagePurgeAfterDays(int days) {
+        this.messagePurgeAfterDays = days;
     }
 
     @Transactional
@@ -526,9 +535,16 @@ public class ConversationService {
         );
         // État du colis pour le badge de la liste (FLUTTER-EZ) : lu sur le bid déjà chargé
         // ci-dessus, aucune requête de plus par conversation.
+        LocalDateTime deliveredAt = bidOpt.filter(b -> b.getStatus() == BidStatus.COMPLETED)
+            .map(b -> b.getDeliveredAt() != null ? b.getDeliveredAt() : b.getUpdatedAt())
+            .orElse(null);
         return response.withParcelState(
             bidOpt.map(BidEntity::getStatus).map(BidStatus::name).orElse(null),
-            bidOpt.map(ConversationService::isReturnPending).orElse(false));
+            bidOpt.map(ConversationService::isReturnPending).orElse(false))
+            .withMessageRetention(
+                deliveredAt,
+                deliveredAt == null ? null : deliveredAt.plusDays(messagePurgeAfterDays),
+                conv.isMessagesPurged());
     }
 
     /**

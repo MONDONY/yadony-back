@@ -47,8 +47,42 @@ public record ConversationResponse(
         // Retour du colis à l'expéditeur en cours : annulation après remise, délai de retour
         // posé et colis pas encore rendu (même règle que BidModel.isAwaitingReturn côté app).
         // Absent chez un ancien back : l'app retombe sur false.
-        boolean returnPending
+        boolean returnPending,
+        // Livraison du colis (UTC), null tant qu'il n'est pas livré. Absent chez un ancien back.
+        LocalDateTime deliveredAt,
+        // Date prévue d'effacement des messages et photos (livraison + 3 jours, UTC), null tant
+        // que le colis n'est pas livré. Absent chez un ancien back : l'app affiche l'avertissement
+        // sans date.
+        LocalDateTime messagesPurgeAt,
+        // Messages et photos déjà effacés : la conversation est vide et fermée à l'écriture.
+        // Absent chez un ancien back : l'app retombe sur false.
+        boolean messagesPurged
 ) {
+    /** Forme d'avant la purge des messages après livraison. */
+    public ConversationResponse(UUID id, UUID bidId, String firestoreConversationId,
+                                ParticipantDTO otherParticipant, String lastMessagePreview,
+                                LocalDateTime lastMessageAt, boolean hasUnread, String tripOrigin,
+                                String tripDestination, String tripDate, Double tripWeightKg,
+                                String bidStatus, boolean readOnly, boolean deletedBySelf,
+                                String kind, String viewerRole, boolean callAvailable,
+                                boolean notificationsMuted, boolean mediaAllowed,
+                                String parcelStatus, boolean returnPending) {
+        this(id, bidId, firestoreConversationId, otherParticipant, lastMessagePreview, lastMessageAt,
+                hasUnread, tripOrigin, tripDestination, tripDate, tripWeightKg, bidStatus, readOnly,
+                deletedBySelf, kind, viewerRole, callAvailable, notificationsMuted, mediaAllowed,
+                parcelStatus, returnPending, null, null, false);
+    }
+
+    /** Copie portant l'échéance de purge des messages (3 jours après la livraison). */
+    public ConversationResponse withMessageRetention(LocalDateTime deliveredAt, LocalDateTime messagesPurgeAt,
+                                                     boolean messagesPurged) {
+        return new ConversationResponse(id, bidId, firestoreConversationId, otherParticipant,
+                lastMessagePreview, lastMessageAt, hasUnread, tripOrigin, tripDestination, tripDate,
+                tripWeightKg, bidStatus, readOnly, deletedBySelf, kind, viewerRole, callAvailable,
+                notificationsMuted, mediaAllowed, parcelStatus, returnPending, deliveredAt,
+                messagesPurgeAt, messagesPurged);
+    }
+
     /** Forme d'avant le statut du colis (FLUTTER-EZ) : pas de statut, pas de retour. */
     public ConversationResponse(UUID id, UUID bidId, String firestoreConversationId,
                                 ParticipantDTO otherParticipant, String lastMessagePreview,
@@ -68,7 +102,8 @@ public record ConversationResponse(
         return new ConversationResponse(id, bidId, firestoreConversationId, otherParticipant,
                 lastMessagePreview, lastMessageAt, hasUnread, tripOrigin, tripDestination, tripDate,
                 tripWeightKg, bidStatus, readOnly, deletedBySelf, kind, viewerRole, callAvailable,
-                notificationsMuted, mediaAllowed, parcelStatus, returnPending);
+                notificationsMuted, mediaAllowed, parcelStatus, returnPending, deliveredAt,
+                messagesPurgeAt, messagesPurged);
     }
 
     /** Forme d'avant les photos (FLUTTER-B4) : photos non permises. */
