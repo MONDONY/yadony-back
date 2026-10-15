@@ -87,6 +87,9 @@ jobs:
           STRIPE_BILLING_PRICE_MONTHLY=${{ secrets.STRIPE_BILLING_PRICE_MONTHLY }}
           STRIPE_BILLING_PRICE_YEARLY=${{ secrets.STRIPE_BILLING_PRICE_YEARLY }}
           SENTRY_DSN=${{ secrets.SENTRY_DSN }}
+          # Webhook Sentry → alertes admin (/admin/sentry-webhook) : signature HMAC de
+          # l'intégration interne Sentry. Sans secret, la route refuse tout (401).
+          SENTRY_WEBHOOK_SECRET=${{ secrets.SENTRY_WEBHOOK_SECRET }}
           GOOGLE_PLACES_API_KEY=${{ secrets.GOOGLE_PLACES_API_KEY }}
           AWS_S3_ENDPOINT=${{ secrets.AWS_S3_ENDPOINT }}
           AWS_S3_REGION=${{ secrets.AWS_S3_REGION }}
