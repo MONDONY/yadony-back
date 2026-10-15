@@ -20,16 +20,26 @@ public class StripeWebhookIngestService {
     private final String paymentsSecret;
     private final String kycSecret;
     private final String billingSecret;
+    /**
+     * Secret de l'endpoint « comptes connectés ». Un endpoint Stripe écoute soit le compte
+     * plateforme, soit les comptes connectés, jamais les deux : les événements des comptes
+     * voyageurs (account.updated, capability.updated, account.application.deauthorized,
+     * payout.*) arrivent donc par un second endpoint, sur la même URL que les paiements,
+     * signé avec son propre secret. Vide = second endpoint non déclaré.
+     */
+    private final String connectSecret;
 
     public StripeWebhookIngestService(
             StripeEventInboxRepository repo,
             @Qualifier("stripePaymentsWebhookSecret") String paymentsSecret,
             @Qualifier("stripeKycWebhookSecret") String kycSecret,
-            @Qualifier("stripeBillingWebhookSecret") String billingSecret) {
+            @Qualifier("stripeBillingWebhookSecret") String billingSecret,
+            @Qualifier("stripeConnectWebhookSecret") String connectSecret) {
         this.repo = repo;
         this.paymentsSecret = paymentsSecret;
         this.kycSecret = kycSecret;
         this.billingSecret = billingSecret;
+        this.connectSecret = connectSecret;
     }
 
     @Transactional
@@ -46,9 +56,12 @@ public class StripeWebhookIngestService {
         try {
             event = Webhook.constructEvent(payload, sigHeader, secret);
         } catch (SignatureVerificationException e) {
-            log.warn("Invalid Stripe webhook signature for source={}: {}", source, e.getMessage());
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST,
-                    "invalid-webhook-signature", "Webhook Error", "Signature webhook invalide");
+            event = source == StripeWebhookSource.PAYMENTS ? constructWithConnectSecret(payload, sigHeader) : null;
+            if (event == null) {
+                log.warn("Invalid Stripe webhook signature for source={}: {}", source, e.getMessage());
+                throw new YadonyBusinessException(HttpStatus.BAD_REQUEST,
+                        "invalid-webhook-signature", "Webhook Error", "Signature webhook invalide");
+            }
         }
 
         if (repo.existsById(event.getId())) {
@@ -59,5 +72,17 @@ public class StripeWebhookIngestService {
         var inbox = new StripeEventInbox(event.getId(), source, event.getType(), payload);
         repo.save(inbox);
         log.info("Stripe event {} ({}) ingested from {}", event.getId(), event.getType(), source);
+    }
+
+    /** Seconde chance pour la source PAYMENTS : l'endpoint des comptes connectés. */
+    private Event constructWithConnectSecret(String payload, String sigHeader) {
+        if (connectSecret == null || connectSecret.isBlank()) {
+            return null;
+        }
+        try {
+            return Webhook.constructEvent(payload, sigHeader, connectSecret);
+        } catch (SignatureVerificationException e) {
+            return null;
+        }
     }
 }

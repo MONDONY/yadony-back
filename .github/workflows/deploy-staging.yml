@@ -152,6 +152,7 @@ jobs:
           # Attendu ici : des valeurs Stripe en mode TEST, distinctes de celles de production.
           # Ce sont des secrets d environnement `staging`, donc jamais les memes objets.
           STRIPE_WEBHOOK_BILLING_SECRET=${{ secrets.STRIPE_WEBHOOK_BILLING_SECRET }}
+          STRIPE_WEBHOOK_CONNECT_SECRET=${{ secrets.STRIPE_WEBHOOK_CONNECT_SECRET }}
           STRIPE_BILLING_PRICE_MONTHLY=${{ secrets.STRIPE_BILLING_PRICE_MONTHLY }}
           STRIPE_BILLING_PRICE_YEARLY=${{ secrets.STRIPE_BILLING_PRICE_YEARLY }}
           SENTRY_DSN=${{ secrets.SENTRY_DSN }}

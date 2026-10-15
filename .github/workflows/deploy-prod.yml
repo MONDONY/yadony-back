@@ -78,6 +78,9 @@ jobs:
           STRIPE_WEBHOOK_PAYMENTS_SECRET=${{ secrets.STRIPE_WEBHOOK_PAYMENTS_SECRET }}
           STRIPE_WEBHOOK_KYC_SECRET=${{ secrets.STRIPE_WEBHOOK_KYC_SECRET }}
           STRIPE_WEBHOOK_BILLING_SECRET=${{ secrets.STRIPE_WEBHOOK_BILLING_SECRET }}
+          # Endpoint Stripe « comptes connectés » (account.updated, capability.updated,
+          # payout.*) : même URL que les paiements, secret de signature distinct.
+          STRIPE_WEBHOOK_CONNECT_SECRET=${{ secrets.STRIPE_WEBHOOK_CONNECT_SECRET }}
           # Identifiants de Price Stripe de l'abonnement PRO. Ils manquaient : le workflow
           # reconstruit ce .env a zero puis le scp, donc une variable posee a la main sur le
           # VPS y etait detruite au deploiement suivant. Tant que les secrets n'existent pas,
