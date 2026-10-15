@@ -1696,3 +1696,22 @@ Laissés vides ou factices exprès : `STORE_URL_IOS`, `STORE_URL_ANDROID`, `TWIL
 - [ ] Stream : un vrai appel audio entre deux comptes prod.
 - [ ] Didit : premier KYC réel → livraison du webhook en 200 dans la console Didit, compte passé vérifié.
 - [ ] **pawaPay, preuve de bout en bout** : un expéditeur paie une petite somme (Orange Money ou Wave) sur un colis XOF → dépôt COMPLETED (jeton + callbacks signés OK) ; après livraison, versement au voyageur COMPLETED (callback Payouts + solde du wallet OK). Il faut deux comptes vérifiés en prod. Le jeton du 19/09 n'a pas pu être vérifié avant.
+
+### 10.5 Webhooks entrants : inventaire vérifié le 15/10
+
+Chaque route est publique dans `SecurityConfig` et authentifiée par le contrôleur ; chaque secret est écrit dans `.env` par `deploy-prod.yml` et présent dans l'environnement GitHub `production`. Sonde sans signature sur la prod actuelle (avant déploiement) : aucune route n'accepte une requête non signée.
+
+| Route (`/api/v1/...`) | Émetteur | Contrôle | Secret / réglage | Côté fournisseur | Sonde |
+|---|---|---|---|---|---|
+| `payments/webhook` | Stripe | `Stripe-Signature` | `STRIPE_WEBHOOK_PAYMENTS_SECRET` | endpoint live actif, 22 événements | 400 |
+| `billing/webhook` | Stripe | `Stripe-Signature` | `STRIPE_WEBHOOK_BILLING_SECRET` | endpoint live actif, 5 événements | 400 |
+| `kyc/webhook` | Stripe Identity | `Stripe-Signature` | `STRIPE_WEBHOOK_KYC_SECRET` | endpoint live actif (anciens dossiers) | 400 |
+| `kyc/webhook/didit` | Didit | `X-Signature` + `X-Timestamp`, `environment` = `live` | `DIDIT_WEBHOOK_SECRET`, `DIDIT_ENVIRONMENT` | destination prod active, « Tester » → 200 | 401 |
+| `pawapay/callbacks/{deposits,payouts,refunds}` | pawaPay | signature RFC 9421 | `PAWAPAY_CALLBACK_SIGNATURES=true` | **Payouts vide** (10.2), signature à confirmer | 401 |
+| `admin/sentry-webhook` | Sentry | `sentry-hook-signature` (HMAC) | `SENTRY_WEBHOOK_SECRET`, `SENTRY_WEBHOOK_PROJECTS` | intégration `yadony-telegram-relay-prod` | 401 |
+| `calls/webhook` | Stream | `X-Signature` (HMAC) + `X-Api-Key` | `STREAM_API_SECRET`, `STREAM_API_KEY` | app `yadony-prod`, 5 événements `call.*` | 401 |
+| `internal/messaging/notify` | Cloud Functions | `X-Internal-Secret` | `INTERNAL_SHARED_SECRET` | `INTERNAL_SECRET` (Secret Manager `yadony-prod`, v1 active) | 422 (validation avant le secret ; corps valide sans secret → 401) |
+
+- [ ] Non vérifiable sans lire les valeurs : `INTERNAL_SHARED_SECRET` (GitHub) doit être **identique** à `INTERNAL_SECRET` (Secret Manager du projet Firebase `yadony-prod`). Contrôle après déploiement : envoyer un message entre deux comptes prod → la push arrive, et aucun 401 sur `/internal/messaging/notify` dans les logs.
+- `deploy-prod.yml` écrit toutes les variables que `application.yml` / `application-prod.yml` lisent sans valeur par défaut (vérifié le 15/10).
+- `SecurityConfig` ouvre encore `/payments/stripe/webhook`, qu'aucun contrôleur ne sert (404) : ouverture morte, sans risque.
