@@ -18,6 +18,22 @@ class PublicTextSanitizerTest {
                 .doesNotContain("123");
     }
 
+    // Revue sécu : séparateurs et chiffres non ASCII ne doivent pas faire passer un numéro.
+    @Test
+    void separateursVariesEtChiffresNonAscii_masques() {
+        assertThat(PublicTextSanitizer.maskContacts("77/123/45/67")).isEqualTo(PublicTextSanitizer.MASK);
+        assertThat(PublicTextSanitizer.maskContacts("77,123,45,67")).isEqualTo(PublicTextSanitizer.MASK);
+        assertThat(PublicTextSanitizer.maskContacts("77_123_45_67")).isEqualTo(PublicTextSanitizer.MASK);
+        assertThat(PublicTextSanitizer.maskContacts("７７１２３４５６７")).isEqualTo(PublicTextSanitizer.MASK);
+        assertThat(PublicTextSanitizer.maskContacts("٧٧١٢٣٤٥٦٧")).isEqualTo(PublicTextSanitizer.MASK);
+    }
+
+    @Test
+    void emailAvecEspacesAutourDeLArobase_masque() {
+        assertThat(PublicTextSanitizer.maskContacts("moussa @ mail.com"))
+                .doesNotContain("moussa").doesNotContain("mail.com");
+    }
+
     @Test
     void emailMasque() {
         assertThat(PublicTextSanitizer.maskContacts("écrire à moussa.k+1@mail.sn svp"))
