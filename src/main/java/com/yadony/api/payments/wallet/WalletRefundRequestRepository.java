@@ -30,6 +30,10 @@ public interface WalletRefundRequestRepository extends JpaRepository<WalletRefun
     Page<WalletRefundRequestEntity> findAllByStatusOrderByRequestedAtAsc(
             WalletRefundRequestStatus status, Pageable pageable);
 
+    /** File admin filtrée par statut ; l'ordre vient du {@link Pageable}. */
+    Page<WalletRefundRequestEntity> findAllByStatusIn(
+            java.util.Collection<WalletRefundRequestStatus> statuses, Pageable pageable);
+
     boolean existsByParentRequestId(UUID parentRequestId);
 
     /** Verrou de la demande : sérialise l'écouteur après commit et la reprise planifiée. */

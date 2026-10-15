@@ -77,6 +77,10 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     @Query(value = "SELECT * FROM users WHERE id = :id LIMIT 1", nativeQuery = true)
     Optional<UserEntity> findByIdIncludingDeleted(@Param("id") UUID id);
 
+    /** Variante groupée de {@link #findByIdIncludingDeleted} (listes admin, sans N+1). */
+    @Query(value = "SELECT * FROM users WHERE id IN (:ids)", nativeQuery = true)
+    java.util.List<UserEntity> findAllByIdIncludingDeleted(@Param("ids") java.util.Collection<UUID> ids);
+
     /**
      * Reactivates a soft-deleted account via native UPDATE, bypassing the @Where filter.
      * Required because em.merge() on a soft-deleted entity would trigger an internal

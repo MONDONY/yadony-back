@@ -17,13 +17,19 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.yadony.api.payments.wallet.WalletRefundRequestEntity;
+import com.yadony.api.payments.wallet.WalletRefundRequestStatus;
+
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 /**
- * File des demandes de remboursement wallet ouvertes par un utilisateur bloqué en
- * suppression de compte par un solde non nul (cf. {@code WalletRefundRequestService}).
- * L'admin rembourse manuellement hors-app via le dashboard Stripe, puis résout ici :
- * la résolution débite le wallet à zéro et débloque la suppression côté utilisateur.
+ * Remboursements wallet vus par l'admin. Sans filtre : la file « à traiter » (PENDING, tickets
+ * manuels). Avec {@code status} : suivi des remboursements automatiques (PROCESSING), des échecs
+ * (FAILED) et historique (REFUNDED, RESOLVED). Un ticket manuel se résout après remboursement
+ * hors-app ; un remboursement automatique ne demande aucun geste.
  */
 @RestController
 @RequestMapping("/admin/wallet-refund-requests")
@@ -31,19 +37,48 @@ import java.util.UUID;
 public class AdminWalletRefundController {
 
     private final WalletRefundRequestService walletRefundRequestService;
+    private final AdminWalletRefundListing listing;
 
-    public AdminWalletRefundController(WalletRefundRequestService walletRefundRequestService) {
+    public AdminWalletRefundController(WalletRefundRequestService walletRefundRequestService,
+                                       AdminWalletRefundListing listing) {
         this.walletRefundRequestService = walletRefundRequestService;
+        this.listing = listing;
     }
 
     @PreAuthorize("hasAuthority('PAYMENT_VIEW')")
     @GetMapping
     public ResponseEntity<Page<AdminWalletRefundRequestResponse>> list(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
-        return ResponseEntity.ok(
-                walletRefundRequestService.listPending(PageRequest.of(page, size))
-                        .map(AdminWalletRefundRequestResponse::from));
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(name = "status", required = false) List<String> statuses) {
+        PageRequest pageable = PageRequest.of(page, size);
+        Page<WalletRefundRequestEntity> requests = statuses == null || statuses.isEmpty()
+                ? walletRefundRequestService.listPending(pageable)
+                : walletRefundRequestService.listByStatuses(parseStatuses(statuses), pageable);
+        return ResponseEntity.ok(listing.describe(requests));
+    }
+
+    private static EnumSet<WalletRefundRequestStatus> parseStatuses(List<String> raw) {
+        EnumSet<WalletRefundRequestStatus> statuses = EnumSet.noneOf(WalletRefundRequestStatus.class);
+        for (String value : raw) {
+            for (String part : value.split(",")) {
+                if (part.isBlank()) {
+                    continue;
+                }
+                try {
+                    statuses.add(WalletRefundRequestStatus.valueOf(part.trim().toUpperCase(Locale.ROOT)));
+                } catch (IllegalArgumentException e) {
+                    throw new YadonyBusinessException(HttpStatus.BAD_REQUEST,
+                            "wallet-refund-status-invalid", "Invalid Status",
+                            "Statut de remboursement inconnu : " + part.trim());
+                }
+            }
+        }
+        if (statuses.isEmpty()) {
+            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST,
+                    "wallet-refund-status-invalid", "Invalid Status", "Aucun statut demandé");
+        }
+        return statuses;
     }
 
     @PreAuthorize("hasAuthority('PAYMENT_REFUND')")
