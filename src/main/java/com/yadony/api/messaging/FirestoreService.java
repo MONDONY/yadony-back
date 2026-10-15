@@ -345,8 +345,9 @@ public class FirestoreService {
             return true;
         }
         try {
-            var convRef = firestore.collection("conversations").document(conversationId);
-            firestore.recursiveDelete(convRef.collection("messages")).get();
+            Firestore db = firestore;
+            var convRef = db.collection("conversations").document(conversationId);
+            db.recursiveDelete(convRef.collection("messages")).get();
             var snap = convRef.get().get();
             if (snap.exists()) {
                 Map<String, Object> update = new HashMap<>();
@@ -356,7 +357,7 @@ public class FirestoreService {
                 for (String field : new String[] {"senderId", "travelerId", "revokedRecipientId"}) {
                     Object uid = snap.get(field);
                     if (uid instanceof String s && !s.isBlank()) {
-                        clearUnread(s, conversationId);
+                        clearUnread(db, s, conversationId);
                     }
                 }
             }
@@ -368,7 +369,7 @@ public class FirestoreService {
     }
 
     /** Retire le non-lu d'une conversation du compteur {@code userMeta/{uid}}. Meilleur effort. */
-    private void clearUnread(String uid, String conversationId) {
+    private static void clearUnread(Firestore firestore, String uid, String conversationId) {
         String key = "unread_" + conversationId;
         var metaRef = firestore.collection("userMeta").document(uid);
         try {
