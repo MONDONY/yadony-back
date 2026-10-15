@@ -27,11 +27,12 @@ class StripeWebhookIngestServiceTest {
     private static final String PAYMENTS_SECRET = "whsec_payments_aaaaaaaaaaaaaaaa";
     private static final String KYC_SECRET = "whsec_kyc_bbbbbbbbbbbbbbbbbbbb";
     private static final String BILLING_SECRET = "whsec_billing_cccccccccccccccc";
+    private static final String CONNECT_SECRET = "whsec_connect_dddddddddddddddd";
 
     @Mock StripeEventInboxRepository repo;
 
     private StripeWebhookIngestService service() {
-        return new StripeWebhookIngestService(repo, PAYMENTS_SECRET, KYC_SECRET, BILLING_SECRET);
+        return new StripeWebhookIngestService(repo, PAYMENTS_SECRET, KYC_SECRET, BILLING_SECRET, CONNECT_SECRET);
     }
 
     /** Reproduit l'en-tête Stripe-Signature : t=<ts>,v1=<HMAC-SHA256(ts + "." + payload, secret)>. */
@@ -114,6 +115,46 @@ class StripeWebhookIngestServiceTest {
         when(repo.existsById("evt_dup")).thenReturn(true);
 
         service().ingest(body, signature(body, BILLING_SECRET), StripeWebhookSource.BILLING);
+
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("un événement de compte connecté signé avec le secret connect est accepté sous PAYMENTS")
+    void connectEventAcceptedOnPaymentsWithConnectSecret() {
+        String body = payload("evt_connect_1", "account.updated");
+        when(repo.existsById("evt_connect_1")).thenReturn(false);
+
+        service().ingest(body, signature(body, CONNECT_SECRET), StripeWebhookSource.PAYMENTS);
+
+        ArgumentCaptor<StripeEventInbox> captor = ArgumentCaptor.forClass(StripeEventInbox.class);
+        verify(repo).save(captor.capture());
+        assertThat(captor.getValue().getSource()).isEqualTo(StripeWebhookSource.PAYMENTS);
+        assertThat(captor.getValue().getEventType()).isEqualTo("account.updated");
+    }
+
+    @Test
+    @DisplayName("le secret connect ne vaut que pour PAYMENTS : refusé sur BILLING")
+    void connectSecretRejectedOnBilling() {
+        String body = payload("evt_connect_2", "invoice.paid");
+
+        assertThatThrownBy(() ->
+                service().ingest(body, signature(body, CONNECT_SECRET), StripeWebhookSource.BILLING))
+                .isInstanceOf(YadonyBusinessException.class);
+
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("secret connect vide : une signature inconnue reste refusée sur PAYMENTS")
+    void blankConnectSecretKeepsRejecting() {
+        StripeWebhookIngestService sansConnect =
+                new StripeWebhookIngestService(repo, PAYMENTS_SECRET, KYC_SECRET, BILLING_SECRET, "");
+        String body = payload("evt_connect_3", "account.updated");
+
+        assertThatThrownBy(() ->
+                sansConnect.ingest(body, signature(body, CONNECT_SECRET), StripeWebhookSource.PAYMENTS))
+                .isInstanceOf(YadonyBusinessException.class);
 
         verify(repo, never()).save(any());
     }
