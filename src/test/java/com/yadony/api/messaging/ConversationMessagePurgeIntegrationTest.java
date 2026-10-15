@@ -102,6 +102,20 @@ class ConversationMessagePurgeIntegrationTest {
                 .andExpect(jsonPath("$.messagesPurged").value(false))
                 .andExpect(jsonPath("$.messagesPurgeAt").exists());
 
+        // Vidée : elle quitte la liste Messages (et les archives), les autres restent.
+        mockMvc.perform(get("/conversations").with(authentication(as(sender))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[?(@.id == '%s')]", due.getId()).isEmpty())
+                .andExpect(jsonPath("$.content[?(@.id == '%s')]", recent.getId()).isNotEmpty())
+                .andExpect(jsonPath("$.content[?(@.id == '%s')]", running.getId()).isNotEmpty());
+        assertThat(conversationRepository.countActiveByParticipant(sender.getId())).isEqualTo(2);
+
+        ConversationEntity archived = conversationRepository.findById(due.getId()).orElseThrow();
+        archived.archiveForUser(sender.getId());
+        conversationRepository.saveAndFlush(archived);
+        assertThat(conversationRepository.findArchivedByParticipant(sender.getId(),
+                org.springframework.data.domain.Pageable.unpaged()).getContent()).isEmpty();
+
         mockMvc.perform(get("/conversations/{id}", running.getId()).with(authentication(as(sender))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.messagesPurged").value(false))
