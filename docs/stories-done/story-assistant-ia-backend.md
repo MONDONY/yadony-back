@@ -88,6 +88,9 @@ Aucun. Le paquet `assistant` n'injecte aucun service d'un autre paquet métier (
 - **Seuil de pertinence `min-score` = 6,5** : score BM25 brut, calibré sur les vraies fiches par `KnowledgeBaseFichesTest` (questions réelles 16 à 30, mots seuls 8,7 à 13). Quelques hors-sujet passent encore (6,9 à 11,6) et des mots isolés très courts (« kyc », « password », « mon colis ») tombent en « non trouvé ». Le seuil dépend de la taille du corpus : recalibrer et mettre à jour le test quand le nombre de fiches change beaucoup.
 - **Tests admin** : certains tests valident de vraies transactions et nettoient en SQL dans `@AfterEach`.
 
+## Route de statut
+`GET /assistant/status` répond `200 {"enabled": true|false}` (reflet de `yadony.assistant.enabled`), pour que l'app cache sa bulle au démarrage quand l'assistant est éteint. Contrairement à `/assistant/ask`, elle répond 200 `{"enabled": false}` et jamais 404 : l'app lit un 404 comme « back ancien » (route absente) et garde alors la bulle cachée. Accès identique à `/ask` via la règle `anyRequest` de `SecurityConfig` (`authenticatedNonGuest()`) : 401 sans jeton, 403 pour un invité. Aucun appel au fournisseur, aucun décompte de quota, aucune écriture. Tests : `AssistantStatusIntegrationTest`, `AssistantControllerDisabledIntegrationTest`.
+
 ## Mise en route
 1. Déployer le back (prod), `ASSISTANT_ENABLED` encore à `false`.
 2. Créer les comptes gratuits Groq et Gemini (sans carte bancaire), puis les ajouter dans l'admin et cliquer « Tester ».

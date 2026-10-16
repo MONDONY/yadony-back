@@ -2,10 +2,12 @@ package com.yadony.api.assistant;
 
 import com.yadony.api.assistant.dto.AssistantAskRequest;
 import com.yadony.api.assistant.dto.AssistantAskResponse;
+import com.yadony.api.assistant.dto.AssistantStatusResponse;
 import com.yadony.api.common.YadonyBusinessException;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -21,6 +23,17 @@ public class AssistantController {
     public AssistantController(AssistantService service, AssistantProperties properties) {
         this.service = service;
         this.properties = properties;
+    }
+
+    /**
+     * Interrupteur lu par l'app au démarrage pour n'afficher la bulle que si l'assistant est allumé.
+     * Répond toujours 200 (jamais 404 quand il est éteint : l'app lit un 404 comme « back ancien »).
+     * Même règle d'accès que {@code /ask} (anyRequest : authentifié et non invité), sans fournisseur,
+     * sans quota, sans écriture.
+     */
+    @GetMapping("/status")
+    public AssistantStatusResponse status() {
+        return new AssistantStatusResponse(properties.enabled());
     }
 
     @PostMapping("/ask")

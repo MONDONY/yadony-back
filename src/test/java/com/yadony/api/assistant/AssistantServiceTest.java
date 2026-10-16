@@ -83,6 +83,17 @@ class AssistantServiceTest {
     }
 
     @Test
+    void routeSuivieDUnLibelleEntreParenthesesEstNormalisee() {
+        // Gemini Flash Lite renvoie parfois « /payments/money (My money) » : on garde le chemin seul.
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(phone, trip));
+        llmAnswers(new ParsedAnswer("ok", true,
+                List.of(" /profile/edit/phone (Mon numéro) ", "/trips/create\t(Proposer un trajet)")));
+        assertThat(service.ask("uid", ask("q")).actions()).extracting("route", "label").containsExactly(
+                org.assertj.core.groups.Tuple.tuple("/profile/edit/phone", "Changer mon numéro"),
+                org.assertj.core.groups.Tuple.tuple("/trips/create", "Proposer un trajet"));
+    }
+
+    @Test
     void deuxActionsAuPlusSansDoublon() {
         when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(phone, trip, other));
         llmAnswers(new ParsedAnswer("ok", true, List.of("/trips/create", "/trips/create", "/profile/edit/phone", "/profile/referral")));
