@@ -8,4 +8,4 @@ routes:
 ---
 If the Yadony team gave you a top-up code, open My wallet › Top up, then tap "I have a top-up code".
 Enter the code and confirm: the amount is added to your balance.
-This credit can only pay Yadony commissions: it cannot be refunded or withdrawn.
+This credit can only pay Yadony commissions, when the sender pays the traveler in cash: it cannot be refunded or withdrawn.

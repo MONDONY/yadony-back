@@ -6,7 +6,7 @@ routes:
   - path: /messages
     label: Open my messages
 ---
-Messages and photos of a conversation are deleted 3 days after the parcel is delivered.
+Messages and photos of a conversation are deleted a few days after the parcel is delivered, according to the delay set by Yadony.
 A banner says so in the conversation, with the deletion date once the parcel is delivered; afterwards, the conversation shows "Messages deleted".
 You can also delete one of your own messages within 15 minutes of sending it: the other person sees "Message deleted".
 Deleting a whole conversation is permanent, for you and the other person.

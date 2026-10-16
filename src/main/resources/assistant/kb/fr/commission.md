@@ -7,6 +7,6 @@ routes:
     label: Carte commission
 ---
 La commission Yadony contribue aux frais de paiement, au support, à la prévention de la fraude et au développement de la plateforme.
-Le pourcentage s'affiche dans l'app quand vous publiez un trajet, fixez un prix ou payez.
+Son taux est un pourcentage fixé par Yadony : il s'affiche dans l'app avant que vous confirmiez, quand vous publiez un trajet, fixez un prix ou payez.
 Elle s'ajoute au prix saisi par le voyageur : il encaisse exactement son montant, et l'expéditeur paie le total commission comprise.
 Pour un colis payé en espèces, la commission est prélevée sur le portefeuille du voyageur, ou sur sa carte commission, quand il accepte le colis.

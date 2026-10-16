@@ -6,7 +6,7 @@ routes:
   - path: /kyc/status
     label: See my verification
 ---
-Validation is often done within a few minutes, and the verification screen usually says less than a minute, sometimes a few minutes.
-If a manual check is needed, it can take longer.
-You can close the screen: you are notified of the result, and the ✓ badge appears automatically once the verification is done.
+If everything goes well, validation is immediate at the end of the verification process.
+Otherwise, the app invites you to start the verification again.
+While it is processed, the screen shows "Verification in progress": you can close it, you are notified of the result, and the ✓ badge appears automatically once the verification is done.
 The "In progress" status is shown on the "ID documents" row of Profile › My account.

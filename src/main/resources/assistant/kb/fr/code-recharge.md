@@ -8,4 +8,4 @@ routes:
 ---
 Si l'équipe Yadony vous a remis un code de recharge, ouvrez Mon portefeuille › Recharger, puis touchez « J'ai un code de recharge ».
 Saisissez le code et validez : le montant s'ajoute à votre solde.
-Ce crédit sert uniquement à payer les commissions Yadony : il n'est ni remboursable ni retirable.
+Ce crédit sert uniquement à payer les commissions Yadony, lorsque l'expéditeur paie le voyageur en espèces : il n'est ni remboursable ni retirable.

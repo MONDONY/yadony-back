@@ -8,5 +8,5 @@ routes:
 ---
 En espèces, l'expéditeur remet la somme au voyageur en main propre à la remise du colis.
 Il n'y a pas de séquestre : Yadony ne garde pas les fonds et ne peut pas rembourser automatiquement en cas de litige.
-Le voyageur règle la commission Yadony à l'acceptation, en priorité sur son portefeuille ; à défaut, il recharge ou enregistre une carte valide dans Moi › Argent › Carte commission espèces.
+Le voyageur règle la commission Yadony à l'acceptation, en priorité avec le solde de son portefeuille (c'est à cela que sert le solde) ; à défaut, il recharge ou enregistre une carte valide dans Moi › Argent › Carte commission espèces.
 Si la carte a expiré, il doit la remplacer pour réactiver le paiement en espèces.

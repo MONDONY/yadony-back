@@ -9,6 +9,6 @@ routes:
     label: Contacter le support
 ---
 Suivez vos litiges dans Moi › Suivi › Mes litiges. Un litige s'ouvre automatiquement quand une absence est contestée lors d'une remise.
-Pour un autre problème, par exemple un colis qui n'arrive pas, contactez le support avec les photos, messages et informations de suivi disponibles (Mes litiges propose « Un problème avec un envoi ? » quand elle est vide).
+Pour un autre problème, par exemple un colis qui n'arrive pas, vous n'ouvrez pas le litige vous-même : dans Mes litiges, touchez « Un problème avec un envoi ? » (affiché quand la liste est vide) pour joindre le support, qui ouvre le litige. Le détail d'un litige a aussi un bouton « Contacter le support ».
+Donnez au support les photos, messages et informations de suivi disponibles, et signalez le problème dès que vous le constatez : le délai de 15 jours après la date prévue s'applique pour un colis qui n'arrive pas.
 Pendant l'examen, le remboursement est gelé et l'équipe Yadony tranche sous 72 h ouvrées ; la décision s'affiche dans le litige.
-Signalez le problème dès que vous le constatez : les délais applicables sont rappelés dans le parcours de signalement.
