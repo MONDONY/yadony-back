@@ -205,7 +205,7 @@ public class AdminBidsController {
                 b.getId(), b.getStatus().name(), b.getAnnouncementId(),
                 senderName, travelerName, corridor,
                 b.getWeightKg(), netOf(b, ann, gridNet),
-                paymentMethod, b.getCreatedAt(), commissionStatus, currency);
+                paymentMethod, b.getCreatedAt(), commissionStatus, currency, b.getTrackingNumber());
     }
 
     private AdminBidDetailResponse toBidDetail(BidEntity b, AnnouncementEntity ann,

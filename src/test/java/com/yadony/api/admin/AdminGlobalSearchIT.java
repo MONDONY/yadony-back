@@ -86,7 +86,8 @@ class AdminGlobalSearchIT {
 
         mockMvc.perform(get("/admin/bids").param("query", "don-" + tag.substring(1)).with(authentication(admin())))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[*].id", hasItem(bid.getId().toString())));
+                .andExpect(jsonPath("$.content[*].id", hasItem(bid.getId().toString())))
+                .andExpect(jsonPath("$.content[*].trackingNumber", hasItem(bid.getTrackingNumber())));
         mockMvc.perform(get("/admin/bids").param("query", bid.getId().toString()).with(authentication(admin())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content.length()").value(1))
