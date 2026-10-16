@@ -2,6 +2,7 @@ package com.yadony.api.config;
 
 import com.yadony.api.auth.FirebaseTokenFilter;
 import com.yadony.api.common.RequestCorrelationFilter;
+import com.yadony.api.maintenance.MaintenanceFilter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
@@ -36,13 +37,16 @@ import java.util.List;
 public class SecurityConfig {
 
     private final FirebaseTokenFilter firebaseTokenFilter;
+    private final MaintenanceFilter maintenanceFilter;
     private final ObjectMapper objectMapper;
 
     @Value("${app.cors.allowed-origins:http://localhost:3000,http://localhost:3001}")
     private List<String> allowedOrigins;
 
-    public SecurityConfig(FirebaseTokenFilter firebaseTokenFilter, ObjectMapper objectMapper) {
+    public SecurityConfig(FirebaseTokenFilter firebaseTokenFilter, MaintenanceFilter maintenanceFilter,
+                          ObjectMapper objectMapper) {
         this.firebaseTokenFilter = firebaseTokenFilter;
+        this.maintenanceFilter = maintenanceFilter;
         this.objectMapper = objectMapper;
     }
 
@@ -279,6 +283,13 @@ public class SecurityConfig {
                 .anyRequest().access(authenticatedNonGuest())
             )
             .addFilterBefore(firebaseTokenFilter, UsernamePasswordAuthenticationFilter.class)
+            // Mode maintenance : après l'authentification, pour laisser passer les
+            // administrateurs et les comptes exemptés (voir MaintenanceFilter). Même
+            // ancre que FirebaseTokenFilter, déclaré juste avant : à ordre égal, la
+            // chaîne garde l'ordre d'ajout. Pas addFilterAfter(…, FirebaseTokenFilter.class) :
+            // un FirebaseTokenFilter remplacé par un mock (contexte E2E) n'a pas d'ordre
+            // enregistré et la chaîne refuse de démarrer.
+            .addFilterBefore(maintenanceFilter, UsernamePasswordAuthenticationFilter.class)
             .exceptionHandling(ex -> ex
                 // 401 — missing or invalid token
                 .authenticationEntryPoint((request, response, authException) -> {
