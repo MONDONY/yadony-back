@@ -156,4 +156,77 @@ class AssistantServiceTest {
         avecNull.add(new AssistantHistoryTurn("user", null));
         assertThat(service.ask("uid", new AssistantAskRequest("q", "fr", avecNull)).answered()).isFalse();
     }
+
+    @Test
+    void modeDegradeNeRepetePasUneRouteDejaProposee() {
+        KbHit envois1 = new KbHit(new KbArticle("fr", "envois-1", "Envoyer un colis", List.of(),
+                List.of(new KbRoute("/envois", "Mes envois")), "corps"), 3f);
+        KbHit envois2 = new KbHit(new KbArticle("fr", "envois-2", "Suivre un envoi", List.of(),
+                List.of(new KbRoute("/envois", "Mes envois"), new KbRoute("/envois/suivi", "Suivi")), "corps"), 2f);
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(envois1, envois2, trip));
+        when(router.complete(anyString(), anyString(), any())).thenReturn(Optional.empty());
+        AssistantAskResponse r = service.ask("uid", ask("q"));
+        assertThat(r.actions()).extracting("route").containsExactly("/envois", "/trips/create");
+    }
+
+    @Test
+    void reponseTronqueeSansCouperUnEmoji() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(phone));
+        llmAnswers(new ParsedAnswer("x".repeat(599) + "😀" + "fin", true, List.of()));
+        assertThat(service.ask("uid", ask("q")).answer()).isEqualTo("x".repeat(599));
+    }
+
+    @Test
+    void historiqueTronqueSansCouperUnEmoji() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(phone));
+        llmAnswers(new ParsedAnswer("ok", true, List.of()));
+        service.ask("uid", new AssistantAskRequest("q", "fr", List.of(
+                new AssistantHistoryTurn("user", "y".repeat(999) + "😀"))));
+        ArgumentCaptor<String> user = ArgumentCaptor.forClass(String.class);
+        verify(router).complete(anyString(), user.capture(), any());
+        assertThat(user.getValue()).contains("y".repeat(999) + "</turn>").doesNotContain("\uD83D");
+    }
+
+    @Test
+    void historiqueFiltreAvantLesDouzeDerniersTours() {
+        List<AssistantHistoryTurn> history = new ArrayList<>();
+        for (int i = 0; i < 12; i++) history.add(new AssistantHistoryTurn(i % 2 == 0 ? "user" : "assistant", "tour" + i));
+        history.add(null);
+        history.add(new AssistantHistoryTurn("system", "intrus"));
+        history.add(new AssistantHistoryTurn("user", null));
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(phone));
+        llmAnswers(new ParsedAnswer("ok", true, List.of()));
+        service.ask("uid", new AssistantAskRequest("q", "fr", history));
+        ArgumentCaptor<String> user = ArgumentCaptor.forClass(String.class);
+        verify(router).complete(anyString(), user.capture(), any());
+        for (int i = 0; i < 12; i++) {
+            assertThat(user.getValue()).contains(">tour" + i + "</turn>");
+        }
+        assertThat(user.getValue()).doesNotContain("intrus");
+    }
+
+    @Test
+    void localeToleranteEnMajusculesEtRegionale() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of());
+        service.ask("uid", new AssistantAskRequest("q", "EN", List.of()));
+        service.ask("uid", new AssistantAskRequest("q", "en-US", List.of()));
+        verify(kb, org.mockito.Mockito.times(2)).search(eq("en"), anyString(), any(), anyInt());
+    }
+
+    @Test
+    void routeAbsenteDeLaListeBlancheEstRetiree() {
+        when(kb.routeWhitelist()).thenReturn(Set.of("/profile/edit/phone"));
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(phone, trip));
+        llmAnswers(new ParsedAnswer("ok", true, List.of("/trips/create", "/profile/edit/phone")));
+        assertThat(service.ask("uid", ask("q")).actions()).extracting("route").containsExactly("/profile/edit/phone");
+    }
+
+    @Test
+    void modeDegradeSaisitLaRouteDeLaFicheSuivanteSiLaPremiereNEnAPas() {
+        KbHit sansRoute = new KbHit(new KbArticle("fr", "sans-route", "Sans route", List.of(),
+                List.of(), "corps"), 3f);
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(sansRoute, trip));
+        when(router.complete(anyString(), anyString(), any())).thenReturn(Optional.empty());
+        assertThat(service.ask("uid", ask("q")).actions()).extracting("route").containsExactly("/trips/create");
+    }
 }

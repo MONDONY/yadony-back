@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -55,7 +56,7 @@ public class AssistantService {
 
     public AssistantAskResponse ask(String uid, AssistantAskRequest request) {
         int remaining = quota.consume(uid);
-        String locale = "en".equals(request.locale()) ? "en" : "fr";
+        String locale = normalizeLocale(request.locale());
         String question = request.question().strip();
         List<AssistantHistoryTurn> history = trimHistory(request.history());
         String previous = history.stream().filter(t -> "user".equals(t.role()))
@@ -73,14 +74,15 @@ public class AssistantService {
             List<AssistantAction> fallback = new ArrayList<>();
             for (KbHit hit : hits) {
                 if (fallback.size() >= MAX_ACTIONS) break;
-                hit.article().routes().stream().findFirst()
-                        .ifPresent(r -> fallback.add(new AssistantAction(r.path(), r.label())));
+                Optional<KbRoute> first = hit.article().routes().stream().findFirst();
+                if (first.isEmpty() || fallback.stream().anyMatch(a -> a.route().equals(first.get().path()))) continue;
+                fallback.add(new AssistantAction(first.get().path(), first.get().label()));
             }
             return new AssistantAskResponse(DEGRADED.get(locale), false, fallback, sources, NO_PROVIDER, remaining);
         }
 
         ParsedAnswer parsed = result.get().value();
-        String answer = parsed.answer().length() > MAX_ANSWER ? parsed.answer().substring(0, MAX_ANSWER) : parsed.answer();
+        String answer = truncate(parsed.answer(), MAX_ANSWER);
         return new AssistantAskResponse(answer, parsed.answered(), filterActions(parsed.routes(), hits), sources,
                 result.get().slug(), remaining);
     }
@@ -102,15 +104,28 @@ public class AssistantService {
         return actions;
     }
 
-    /** Historique absent, nul ou partiel : on garde les 12 derniers tours valides, tronqués à 1000 caractères. */
+    /** Langue : « en », « EN » ou « en-US » donnent anglais ; tout le reste français. */
+    private static String normalizeLocale(String locale) {
+        return locale != null && locale.strip().toLowerCase(Locale.ROOT).startsWith("en") ? "en" : "fr";
+    }
+
+    /** Historique absent ou nul : vide. Sinon on filtre les tours valides, on garde les 12 derniers, puis on tronque. */
     private static List<AssistantHistoryTurn> trimHistory(List<AssistantHistoryTurn> history) {
         if (history == null || history.isEmpty()) return List.of();
-        List<AssistantHistoryTurn> last = history.subList(Math.max(0, history.size() - MAX_HISTORY), history.size());
-        return last.stream()
+        List<AssistantHistoryTurn> valid = history.stream()
                 .filter(Objects::nonNull)
                 .filter(t -> t.text() != null && ("user".equals(t.role()) || "assistant".equals(t.role())))
-                .map(t -> new AssistantHistoryTurn(t.role(),
-                        t.text().length() > MAX_TURN_LENGTH ? t.text().substring(0, MAX_TURN_LENGTH) : t.text()))
                 .toList();
+        return valid.subList(Math.max(0, valid.size() - MAX_HISTORY), valid.size()).stream()
+                .map(t -> new AssistantHistoryTurn(t.role(), truncate(t.text(), MAX_TURN_LENGTH)))
+                .toList();
+    }
+
+    /** Tronque à max unités UTF-16 sans couper une paire de substitution (emoji). */
+    private static String truncate(String text, int max) {
+        if (text.length() <= max) return text;
+        int end = max;
+        if (Character.isHighSurrogate(text.charAt(end - 1))) end--;
+        return text.substring(0, end);
     }
 }
