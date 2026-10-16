@@ -79,6 +79,25 @@ class ProviderHealthRegistryTest {
     }
 
     @Test
+    void miseDeCoteDixMinutesApres403() {
+        registry.recordFailure(id, 403, "interdit");
+        now.set(now.get().plusSeconds(9 * 60));
+        assertThat(registry.tryAcquire(provider(null))).isFalse();
+        now.set(now.get().plusSeconds(2 * 60));
+        assertThat(registry.tryAcquire(provider(null))).isTrue();
+    }
+
+    @Test
+    void messageNulOuTropLongEstBorne() {
+        registry.recordFailure(id, 500, null);
+        assertThat(registry.stats(id).lastError()).isNull();
+        registry.recordFailure(id, 500, "x".repeat(500));
+        assertThat(registry.stats(id).lastError()).hasSize(200);
+        registry.recordFailure(id, 500, "y".repeat(200));
+        assertThat(registry.stats(id).lastError()).hasSize(200);
+    }
+
+    @Test
     void erreur500NeMetPasDeCote() {
         registry.recordFailure(id, 500, "panne");
         assertThat(registry.tryAcquire(provider(null))).isTrue();
