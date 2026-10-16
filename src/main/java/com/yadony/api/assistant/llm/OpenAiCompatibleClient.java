@@ -23,9 +23,11 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ScheduledFuture;
@@ -107,19 +109,9 @@ public class OpenAiCompatibleClient {
         if (remainingMillis <= 0) {
             throw new LlmCallException(LlmCallException.NETWORK, "Délai dépassé");
         }
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("model", provider.model());
-        body.put("messages", List.of(
-                Map.of("role", "system", "content", system),
-                Map.of("role", "user", "content", user)));
-        body.put("temperature", 0.2);
-        body.put("max_tokens", 400);
-        if (provider.supportsJsonMode()) {
-            body.put("response_format", Map.of("type", "json_object"));
-        }
         byte[] payload;
         try {
-            payload = MAPPER.writeValueAsBytes(body);
+            payload = MAPPER.writeValueAsBytes(requestBody(provider, system, user));
         } catch (JsonProcessingException e) {
             throw new LlmCallException(LlmCallException.INVALID_OUTPUT, "Requête illisible");
         }
@@ -160,11 +152,56 @@ public class OpenAiCompatibleClient {
                 timer.cancel(false);
             }
         }
-        JsonNode content = response == null ? null : response.path("choices").path(0).path("message").path("content");
+        JsonNode choice = response == null ? null : response.path("choices").path(0);
+        JsonNode content = choice == null ? null : choice.path("message").path("content");
         if (content == null || !content.isTextual() || content.asText().isBlank()) {
-            throw new LlmCallException(LlmCallException.INVALID_OUTPUT, "Réponse sans contenu");
+            // finish_reason "length" sans contenu : le modèle a épuisé max_tokens, souvent en réflexion.
+            boolean truncated = choice != null && "length".equals(choice.path("finish_reason").asText());
+            throw new LlmCallException(LlmCallException.INVALID_OUTPUT,
+                    truncated ? "Réponse coupée par la limite de tokens" : "Réponse sans contenu");
         }
         return content.asText();
+    }
+
+    /**
+     * Corps de la requête chat/completions. Les modèles « à réflexion » d'OpenRouter (Nemotron, Gemma…)
+     * réfléchissent par défaut, et cette réflexion est décomptée de {@code max_tokens} : avec 400 tokens,
+     * la réponse revenait vide ({@code finish_reason: length}) ou dépassait le délai. On la coupe pour
+     * OpenRouter seulement ; ce paramètre n'est pas standard et d'autres fournisseurs pourraient le
+     * refuser. Un modèle à réflexion obligatoire répond alors en erreur et le routeur bascule.
+     */
+    static Map<String, Object> requestBody(LlmProviderConfig provider, String system, String user) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", provider.model());
+        body.put("messages", List.of(
+                Map.of("role", "system", "content", system),
+                Map.of("role", "user", "content", user)));
+        body.put("temperature", 0.2);
+        body.put("max_tokens", 400);
+        if (provider.supportsJsonMode()) {
+            body.put("response_format", Map.of("type", "json_object"));
+        }
+        if (isOpenRouter(provider.baseUrl())) {
+            body.put("reasoning", Map.of("effort", "none"));
+        }
+        return body;
+    }
+
+    /** Hôte openrouter.ai ou l'un de ses sous-domaines, jamais un nom qui le contient seulement. */
+    static boolean isOpenRouter(String baseUrl) {
+        if (baseUrl == null) {
+            return false;
+        }
+        try {
+            String host = URI.create(baseUrl).getHost();
+            if (host == null) {
+                return false;
+            }
+            host = host.toLowerCase(Locale.ROOT);
+            return host.equals("openrouter.ai") || host.endsWith(".openrouter.ai");
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     /**
