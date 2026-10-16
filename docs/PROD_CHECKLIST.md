@@ -1719,3 +1719,66 @@ Chaque route est publique dans `SecurityConfig` et authentifiée par le contrôl
 - [ ] Non vérifiable sans lire les valeurs : `INTERNAL_SHARED_SECRET` (GitHub) doit être **identique** à `INTERNAL_SECRET` (Secret Manager du projet Firebase `yadony-prod`). Contrôle après déploiement : envoyer un message entre deux comptes prod → la push arrive, et aucun 401 sur `/internal/messaging/notify` dans les logs.
 - `deploy-prod.yml` écrit toutes les variables que `application.yml` / `application-prod.yml` lisent sans valeur par défaut (vérifié le 15/10).
 - `SecurityConfig` ouvre encore `/payments/stripe/webhook`, qu'aucun contrôleur ne sert (404) : ouverture morte, sans risque.
+
+### 10.6 Assistant IA in-app (back #547 et #551, admin #70, app jumelle, yadony-web #86)
+
+> L'app répond aux questions sur son fonctionnement à partir de 84 fiches d'aide (FR et EN) embarquées dans le jar, via un fournisseur d'IA gratuit compatible OpenAI choisi dans l'admin. **Éteint par défaut** : le code part en prod sans effet tant que `ASSISTANT_ENABLED` reste à `false`. Coût nul : offres gratuites uniquement, relais automatique quand un fournisseur est en panne ou à court de quota.
+
+#### Ce qui part en production
+
+- **Back #547** : migration **V324** `assistant_llm_providers` (clé d'API chiffrée par `EncryptedStringConverter`, suppression douce), `POST /api/v1/assistant/ask` (connecté et non invité ; 403 `assistant-user-required` sinon), `/api/v1/admin/assistant/providers` (permission `ASSISTANT_MANAGE`), quota de 20 questions par jour et par utilisateur (429 `assistant-quota-exceeded`), budget de 25 s par question.
+- **Back #551** : `deploy-prod.yml` et `deploy-staging.yml` écrivent `ASSISTANT_ENABLED` et `ASSISTANT_DAILY_QUOTA` dans le `.env`. Sans cette PR, la variable GitHub n'atteint jamais le conteneur.
+- **Admin #70** : page **Assistant IA** (`/assistant`, menu et recherche ⌘K) pour ajouter, ordonner, tester, activer et supprimer les fournisseurs.
+- **App** (PR jumelle, citée dans sa description) : écran `/assistant`, bulle flottante déplaçable et masquable dans les Réglages, icône dans l'en-tête de Messages. Une app publiée avant le back voit un 404 : la bulle reste cachée, sans erreur.
+- **yadony-web #86** : article 3.12 de la politique de confidentialité. Fusionner sur `main` **publie le site en production** : à fusionner au moment de l'activation, pas avant.
+
+#### Vérifié le 16/10 (aucune action)
+
+- Migrations : V324 (assistant) puis V325 (mode maintenance, autre chantier), sans collision sur `origin/main`.
+- `ENCRYPTION_KEY` présent dans l'environnement GitHub `production` (19/08) : c'est lui qui chiffre les clés des fournisseurs. **Ne jamais le changer** : les clés enregistrées deviendraient illisibles.
+- Variable GitHub `production` : `ASSISTANT_ENABLED=false` (posée le 16/10). Staging : `ASSISTANT_ENABLED=true`.
+- Nginx prod (`api.yadony.com`, `location /api/v1/`) : `proxy_read_timeout 30s`, au-dessus du budget de 25 s par question. Limitation `api_general` (120 req/min, rafale 60) : un 429 de nginx n'est pas pris pour le quota par l'app (elle ne lit que le code `assistant-quota-exceeded`).
+- `CORS_ALLOWED_ORIGINS` contient `https://admin.yadony.com` : la page de l'admin peut appeler l'API.
+- Les fiches d'aide ne contiennent aucun taux de commission en dur (il est réglé dans l'admin, 5 % au 16/10).
+
+#### À faire avant l'activation
+
+- [ ] Back déployé en prod avec #547 et #551 (même image que le reste du lot, voir 10.3) ; Flyway à **V325**.
+- [ ] Créer les clés gratuites, sans carte bancaire, sous un compte Yadony (pas un compte personnel) :
+      - Groq : `console.groq.com` → API Keys. Adresse `https://api.groq.com/openai/v1`.
+      - Gemini : `aistudio.google.com` → Get API key. Adresse `https://generativelanguage.googleapis.com/v1beta/openai`.
+      Ne coller la clé que dans l'admin. Jamais dans GitHub, un message ou un ticket. Modèles préremplis dans l'admin : `llama-3.3-70b-versatile` (Groq) et `gemini-2.5-flash` (Gemini).
+- [ ] Admin prod → **Assistant IA** → ajouter Groq (priorité 1) puis Gemini (priorité 2) depuis les modèles préremplis. Reporter dans « Limite par jour » la limite affichée sur la console de chaque fournisseur (elle change selon le modèle et dans le temps).
+- [ ] Bouton **Tester** sur chaque ligne : « OK en … ms ». En échec, le message indique la cause (clé refusée, modèle inconnu, quota). Le back refuse une adresse qui n'est pas en https sur le port 443 ou qui pointe vers un réseau privé.
+- [ ] Juridique, avant de fusionner yadony-web #86 :
+      - Groq : aucune certification Data Privacy Framework trouvée le 16/10. Groq publie un avenant de traitement des données (`console.groq.com/docs/legal/customer-data-processing-addendum`, en vigueur le 15/10/2025) qui s'appuie sur des protections contractuelles. Vérifier la liste officielle (`dataprivacyframework.gov`) et `trust.groq.com`.
+      - Gemini : d'après les conditions de l'API Gemini, pour une entreprise établie dans l'EEE, les règles de l'offre payante (pas de réutilisation des questions pour entraîner les modèles) s'appliquent aussi au quota gratuit. À confirmer sur les conditions en vigueur ; si c'est confirmé, le texte de #86 (« les offres gratuites peuvent réutiliser les données ») peut être nuancé pour Gemini.
+      - Décider d'une base légale pour l'assistant dans l'article 6 de la politique (absente de #86).
+
+#### Activation
+
+- [ ] `gh variable set ASSISTANT_ENABLED -R MONDONY/yadony-back --env production --body true`, puis redéployer le back (`deploy-prod.yml` avec la même image) : la variable n'est lue qu'au démarrage du conteneur.
+- [ ] Fusionner yadony-web #86 (en ligne environ 1 minute après, Cloudflare Pages).
+- [ ] Publier le build de l'app qui contient l'assistant.
+
+#### Contrôles après l'activation
+
+- [ ] Dans l'app prod (compte connecté, non invité) : la bulle apparaît ; « Comment envoyer un colis ? » → réponse en quelques secondes avec un bouton « Y aller » qui ouvre le bon écran.
+- [ ] Question hors sujet (« quelle est la capitale du Japon ») → « Je n'ai pas trouvé cette information dans l'aide de Yadony. L'équipe peut vous répondre. », sans bouton. Aucun appel fournisseur n'est fait quand aucune fiche ne correspond.
+- [ ] Mode invité : ni bulle ni icône (le back répond 403, l'app le traite comme éteint).
+- [ ] « Parler à un humain » → un ticket support catégorie OTHER apparaît dans l'admin avec la question et l'échange.
+- [ ] Admin → Assistant IA : le compteur « requêtes / succès du jour » de Groq augmente.
+- [ ] Sentry : aucune nouvelle issue `assistant` côté back ni app. Logs : jamais le texte des questions, jamais la clé.
+- [ ] Bascule : désactiver Groq dans l'admin → une question passe par Gemini. Réactiver ensuite.
+
+#### Couper en urgence
+
+- Coupure immédiate, sans redéploiement : désactiver tous les fournisseurs dans l'admin. L'assistant passe en mode dégradé : « Je n'arrive pas à répondre pour l'instant. Voici ce qui peut vous aider : » avec les boutons des fiches trouvées. Le compteur du quota décompte quand même chaque question.
+- Coupure complète : `ASSISTANT_ENABLED=false` puis redéploiement. L'app cache la bulle (404).
+
+#### Points connus (non bloquants)
+
+- Quota et compteurs en mémoire, par instance : remis à zéro à chaque redémarrage du back.
+- Seuil de pertinence `min-score` 6,5 (score BM25 brut) : « kyc », « password » ou « mon colis » seuls ne trouvent pas de fiche. À recalibrer sur les questions réelles (événement PostHog `assistant_answer_received`, propriété `answered`).
+- Ne jamais passer `org.apache.hc` en DEBUG : les en-têtes, dont la clé, partiraient dans les logs.
+- Ajouter un fournisseur dans l'admin oblige à mettre à jour la liste de l'article 3.12 de la politique de confidentialité (yadony-web).
