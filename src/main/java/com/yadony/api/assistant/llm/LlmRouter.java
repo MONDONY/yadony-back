@@ -30,18 +30,18 @@ public class LlmRouter {
     static final Duration ERROR_LOG_INTERVAL = Duration.ofMinutes(1);
 
     private final ProviderCatalog catalog;
-    private final OpenAiCompatibleClient client;
+    private final LlmClients client;
     private final ProviderHealthRegistry health;
     private final Clock clock;
     private final AtomicReference<Instant> lastErrorLog = new AtomicReference<>();
 
     /** Seul constructeur annoté : Spring en voit un second (tests) et ne saurait pas lequel choisir. */
     @Autowired
-    public LlmRouter(ProviderCatalog catalog, OpenAiCompatibleClient client, ProviderHealthRegistry health) {
+    public LlmRouter(ProviderCatalog catalog, LlmClients client, ProviderHealthRegistry health) {
         this(catalog, client, health, Clock.systemUTC());
     }
 
-    LlmRouter(ProviderCatalog catalog, OpenAiCompatibleClient client, ProviderHealthRegistry health, Clock clock) {
+    LlmRouter(ProviderCatalog catalog, LlmClients client, ProviderHealthRegistry health, Clock clock) {
         this.catalog = catalog;
         this.client = client;
         this.health = health;
@@ -62,8 +62,8 @@ public class LlmRouter {
             attempts++;
             String content;
             try {
-                content = client.complete(provider, system, user, remaining.compareTo(OpenAiCompatibleClient.TOTAL_TIMEOUT) < 0
-                        ? remaining : OpenAiCompatibleClient.TOTAL_TIMEOUT);
+                content = client.complete(provider, system, user, remaining.compareTo(LlmClients.MAX_CALL_TIMEOUT) < 0
+                        ? remaining : LlmClients.MAX_CALL_TIMEOUT);
             } catch (LlmCallException e) {
                 health.recordFailure(provider.id(), e.status(), e.getMessage());
                 log.warn("Assistant : fournisseur {} en échec (statut {}), bascule", provider.slug(), e.status());

@@ -1,7 +1,7 @@
 package com.yadony.api.assistant.provider;
 
 import com.yadony.api.assistant.llm.LlmCallException;
-import com.yadony.api.assistant.llm.OpenAiCompatibleClient;
+import com.yadony.api.assistant.llm.LlmClients;
 import com.yadony.api.assistant.llm.ProviderHealthRegistry;
 import com.yadony.api.assistant.provider.dto.AdminProviderResponse;
 import com.yadony.api.assistant.provider.dto.CreateProviderRequest;
@@ -46,7 +46,7 @@ class AssistantProviderAdminServiceTest {
     @Autowired ProviderHealthRegistry health;
     @Autowired JdbcTemplate jdbcTemplate;
     @MockitoBean AuditService auditService;
-    @MockitoBean OpenAiCompatibleClient client;
+    @MockitoBean LlmClients client;
 
     /**
      * Le service ne vide le catalogue et la santé qu'après le commit : le test (rollback par défaut)

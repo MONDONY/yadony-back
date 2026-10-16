@@ -3,7 +3,7 @@ package com.yadony.api.assistant.provider;
 import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.account.AdminRole;
 import com.yadony.api.assistant.llm.LlmCallException;
-import com.yadony.api.assistant.llm.OpenAiCompatibleClient;
+import com.yadony.api.assistant.llm.LlmClients;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,7 +47,7 @@ class AdminAssistantProviderControllerIT {
 
     @Autowired MockMvc mockMvc;
     @Autowired JdbcTemplate jdbcTemplate;
-    @MockitoBean OpenAiCompatibleClient client;
+    @MockitoBean LlmClients client;
 
     @BeforeEach
     @AfterEach
