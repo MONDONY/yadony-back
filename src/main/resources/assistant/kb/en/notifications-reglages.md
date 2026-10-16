@@ -1,0 +1,12 @@
+---
+id: notifications-reglages
+title: Set my notifications
+keywords: notifications, notification, push, alerts, turn off, turn on, mute, SMS, messages, reminders
+routes:
+  - path: /settings/notifications
+    label: Set my notifications
+---
+Notifications are set in Profile › ☰ › Settings › Notifications.
+You turn each type of alert on or off: messages, price discussions, new trips, new matching parcels, reminders and tips.
+Critical protections (delivery confirmed, payment received, dispute opened, trip rescheduled) are always on to protect your transactions.
+To silence a single conversation, use mute inside that conversation.
