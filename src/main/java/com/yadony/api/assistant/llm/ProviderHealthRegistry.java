@@ -34,11 +34,24 @@ public class ProviderHealthRegistry {
         this.clock = clock;
     }
 
+    /** Lecture seule : ne compte rien. Le routeur passe par {@link #tryAcquire}, qui réserve l'essai. */
     public boolean isAvailable(LlmProviderConfig provider) {
         Health h = current(provider.id());
         synchronized (h) {
-            if (h.cooldownUntil != null && clock.instant().isBefore(h.cooldownUntil)) return false;
-            return provider.dailyRequestLimit() == null || h.requests < provider.dailyRequestLimit();
+            return !isSetAside(h) && !isAtDailyLimit(provider, h);
+        }
+    }
+
+    /**
+     * Réserve un essai si le fournisseur est disponible, dans la même section critique que le contrôle :
+     * deux questions simultanées ne peuvent pas dépasser la limite du jour.
+     */
+    public boolean tryAcquire(LlmProviderConfig provider) {
+        Health h = current(provider.id());
+        synchronized (h) {
+            if (isSetAside(h) || isAtDailyLimit(provider, h)) return false;
+            h.requests++;
+            return true;
         }
     }
 
@@ -72,9 +85,17 @@ public class ProviderHealthRegistry {
     public ProviderStats stats(UUID id) {
         Health h = current(id);
         synchronized (h) {
-            Instant cooldown = h.cooldownUntil != null && clock.instant().isBefore(h.cooldownUntil) ? h.cooldownUntil : null;
+            Instant cooldown = isSetAside(h) ? h.cooldownUntil : null;
             return new ProviderStats(h.requests, h.successes, h.lastStatus, h.lastError, cooldown);
         }
+    }
+
+    private boolean isSetAside(Health h) {
+        return h.cooldownUntil != null && clock.instant().isBefore(h.cooldownUntil);
+    }
+
+    private static boolean isAtDailyLimit(LlmProviderConfig provider, Health h) {
+        return provider.dailyRequestLimit() != null && h.requests >= provider.dailyRequestLimit();
     }
 
     private Health current(UUID id) {

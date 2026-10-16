@@ -5,7 +5,13 @@ import org.junit.jupiter.api.Test;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -84,5 +90,40 @@ class ProviderHealthRegistryTest {
     @Test
     void fournisseurInconnuADesChiffresVides() {
         assertThat(registry.stats(UUID.randomUUID()).requestsToday()).isZero();
+    }
+
+    @Test
+    void tryAcquireRefuseLaLimiteDuJourSansCompterAuDela() {
+        assertThat(registry.tryAcquire(provider(1))).isTrue();
+        assertThat(registry.tryAcquire(provider(1))).isFalse();
+        assertThat(registry.stats(id).requestsToday()).isEqualTo(1);
+    }
+
+    @Test
+    void tryAcquireRefuseUnFournisseurMisDeCote() {
+        registry.recordFailure(id, 429, "quota");
+        assertThat(registry.tryAcquire(provider(null))).isFalse();
+        assertThat(registry.stats(id).requestsToday()).isZero();
+    }
+
+    @Test
+    void tryAcquireNeDepasseJamaisLaLimiteEnConcurrence() throws Exception {
+        CountDownLatch depart = new CountDownLatch(1);
+        List<Future<Boolean>> resultats = new ArrayList<>();
+        try (ExecutorService pool = Executors.newFixedThreadPool(20)) {
+            for (int i = 0; i < 20; i++) {
+                resultats.add(pool.submit(() -> {
+                    depart.await();
+                    return registry.tryAcquire(provider(5));
+                }));
+            }
+            depart.countDown();
+            long accordes = 0;
+            for (Future<Boolean> resultat : resultats) {
+                if (resultat.get()) accordes++;
+            }
+            assertThat(accordes).isEqualTo(5);
+        }
+        assertThat(registry.stats(id).requestsToday()).isEqualTo(5);
     }
 }

@@ -16,6 +16,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -80,7 +81,46 @@ class LlmRouterTest {
     void troisEssaisAuPlus() {
         when(client.complete(any(), anyString(), anyString())).thenThrow(new LlmCallException(500, "panne"));
         assertThat(router.complete("s", "u", identity)).isEmpty();
+        verify(client, times(1)).complete(eq(a), anyString(), anyString());
+        verify(client, times(1)).complete(eq(b), anyString(), anyString());
+        verify(client, times(1)).complete(eq(c), anyString(), anyString());
         verify(client, never()).complete(eq(d), anyString(), anyString());
+    }
+
+    @Test
+    void fournisseurALaLimiteDuJourEstSaute() {
+        LlmProviderConfig limite = new LlmProviderConfig(a.id(), "a", "https://a.com", "m", "k", true, 1);
+        when(catalog.activeProviders()).thenReturn(List.of(limite, b));
+        health.tryAcquire(limite);
+        when(client.complete(eq(b), anyString(), anyString())).thenReturn("ok");
+        assertThat(router.complete("s", "u", identity)).contains(new LlmResult<>("b", "ok"));
+        verify(client, never()).complete(eq(limite), anyString(), anyString());
+    }
+
+    @Test
+    void sortieInexploitableDuParserNeFuitPasLeMessage() {
+        when(client.complete(eq(a), anyString(), anyString())).thenReturn("bavard");
+        when(client.complete(eq(b), anyString(), anyString())).thenReturn("ok");
+        Function<String, String> parser = s -> {
+            if (s.equals("bavard")) throw new IllegalStateException("sortie du modèle : bavard");
+            return s;
+        };
+        assertThat(router.complete("s", "u", parser)).contains(new LlmResult<>("b", "ok"));
+        assertThat(health.stats(a.id()).lastError()).isEqualTo("Réponse inexploitable");
+        assertThat(health.stats(a.id()).lastStatus()).isEqualTo(LlmCallException.INVALID_OUTPUT);
+    }
+
+    @Test
+    void llmCallExceptionDuParserEstAussiConvertie() {
+        when(client.complete(eq(a), anyString(), anyString())).thenReturn("texte");
+        when(client.complete(eq(b), anyString(), anyString())).thenReturn("ok");
+        Function<String, String> parser = s -> {
+            if (s.equals("texte")) throw new LlmCallException(LlmCallException.INVALID_OUTPUT, "texte du modèle");
+            return s;
+        };
+        assertThat(router.complete("s", "u", parser)).contains(new LlmResult<>("b", "ok"));
+        assertThat(health.stats(a.id()).lastStatus()).isEqualTo(LlmCallException.INVALID_OUTPUT);
+        assertThat(health.stats(a.id()).lastError()).isEqualTo("Réponse inexploitable");
     }
 
     @Test

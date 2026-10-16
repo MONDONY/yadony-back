@@ -14,6 +14,7 @@ public class LlmRouter {
 
     private static final Logger log = LoggerFactory.getLogger(LlmRouter.class);
     static final int MAX_ATTEMPTS = 3;
+    static final String INVALID_OUTPUT_MESSAGE = "Réponse inexploitable";
 
     private final ProviderCatalog catalog;
     private final OpenAiCompatibleClient client;
@@ -29,19 +30,31 @@ public class LlmRouter {
         int attempts = 0;
         for (LlmProviderConfig provider : catalog.activeProviders()) {
             if (attempts >= MAX_ATTEMPTS) break;
-            if (!health.isAvailable(provider)) continue;
+            if (!health.tryAcquire(provider)) continue;
             attempts++;
-            health.recordAttempt(provider.id());
+            String content;
             try {
-                T value = parser.apply(client.complete(provider, system, user));
-                health.recordSuccess(provider.id());
-                return Optional.of(new LlmResult<>(provider.slug(), value));
+                content = client.complete(provider, system, user);
             } catch (LlmCallException e) {
                 health.recordFailure(provider.id(), e.status(), e.getMessage());
                 log.warn("Assistant : fournisseur {} en échec (statut {}), bascule", provider.slug(), e.status());
+                continue;
             }
+            T value;
+            try {
+                value = parser.apply(content);
+            } catch (RuntimeException e) {
+                // Le message du parser peut contenir la sortie du modèle : ni stocké, ni journalisé.
+                health.recordFailure(provider.id(), LlmCallException.INVALID_OUTPUT, INVALID_OUTPUT_MESSAGE);
+                log.warn("Assistant : fournisseur {} a renvoyé une réponse inexploitable, bascule", provider.slug());
+                continue;
+            }
+            health.recordSuccess(provider.id());
+            return Optional.of(new LlmResult<>(provider.slug(), value));
         }
-        if (attempts > 0) {
+        if (attempts == 0) {
+            log.warn("Assistant : aucun fournisseur disponible (mis de côté ou limite du jour)");
+        } else {
             log.error("Assistant : aucun fournisseur n'a répondu après {} essai(s)", attempts);
         }
         return Optional.empty();
