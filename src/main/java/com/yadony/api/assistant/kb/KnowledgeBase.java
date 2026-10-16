@@ -39,6 +39,8 @@ public class KnowledgeBase {
     private static final String[] FIELDS = {"title", "keywords", "body"};
     private static final float[] BOOSTS = {3f, 2f, 1f};
     private static final float PREVIOUS_QUESTION_WEIGHT = 0.5f;
+    /** Au-delà, la question est complète : la précédente ramènerait les fiches d'un ancien sujet. */
+    private static final int MAX_FOLLOW_UP_TERMS = 4;
 
     private final KbCorpus corpus;
     private final double minScore;
@@ -69,7 +71,7 @@ public class KnowledgeBase {
         Index index = indexes.getOrDefault(locale, indexes.get("fr"));
         BooleanQuery.Builder query = new BooleanQuery.Builder();
         int clauses = addTerms(query, index.analyzer(), question, 1f);
-        if (previousQuestion != null && !previousQuestion.isBlank()) {
+        if (clauses <= MAX_FOLLOW_UP_TERMS && previousQuestion != null && !previousQuestion.isBlank()) {
             clauses += addTerms(query, index.analyzer(), previousQuestion, PREVIOUS_QUESTION_WEIGHT);
         }
         if (clauses == 0 || index.articles().isEmpty()) {

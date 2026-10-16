@@ -68,7 +68,10 @@ public final class KnowledgeBaseLoader {
         String yaml = end > 3 ? text.substring(4, end) : "";
         Object parsed;
         try {
-            parsed = new Yaml(new SafeConstructor(new LoaderOptions())).load(yaml);
+            LoaderOptions options = new LoaderOptions();
+            // Deux « routes: » dans un en-tête : SnakeYAML garderait la dernière sans rien dire.
+            options.setAllowDuplicateKeys(false);
+            parsed = new Yaml(new SafeConstructor(options)).load(yaml);
         } catch (RuntimeException e) {
             throw invalid(where, "en-tête illisible");
         }

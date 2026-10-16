@@ -73,6 +73,13 @@ class KnowledgeBaseLoaderTest {
     }
 
     @Test
+    void parse_refuseUneCleDEnTeteEnDouble() {
+        // Sans cette garde SnakeYAML garde silencieusement la dernière occurrence : des routes perdues sans erreur.
+        assertParseFails(VALID.replace("routes:\n", "routes:\n  - path: /profile\n    label: Profil\nroutes:\n"),
+                "Fiche assistant invalide (fr/a.md) : en-tête illisible");
+    }
+
+    @Test
     void parse_refuseUneCleDEnTeteInconnue() {
         assertParseFails(VALID.replace("keywords:", "auteur: Moi\nkeywords:"),
                 "Fiche assistant invalide (fr/a.md) : clé d'en-tête inconnue : auteur");

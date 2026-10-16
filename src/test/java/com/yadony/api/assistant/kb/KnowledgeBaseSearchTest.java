@@ -78,6 +78,29 @@ class KnowledgeBaseSearchTest {
     }
 
     @Test
+    void relanceCourteEnAnglaisProfiteDeLaQuestionPrecedente() {
+        // « and in French ? » n'a aucun terme utile : seule la question précédente fait remonter la fiche.
+        assertThat(ids(kb.search("en", "and in French?", "how do I change my phone number", 4)))
+                .first().isEqualTo("changer-numero");
+    }
+
+    @Test
+    void questionCompleteSurUnAutreSujetNeRamenePasLesFichesDeLAncienSujet() {
+        // Plus de 4 mots : ce n'est plus une relance, la question précédente ne doit pas polluer les fiches.
+        List<String> found = ids(kb.search("fr", "je voudrais annuler définitivement mon trajet prévu demain matin",
+                "numéro portable", 4));
+        assertThat(found).contains("annuler-trajet").doesNotContain("changer-numero");
+    }
+
+    @Test
+    void quatreMotsRestentUneRelanceEtCinqNeLeSontPlus() {
+        assertThat(ids(kb.search("fr", "annuler trajet prévu demain", "numéro portable", 4)))
+                .contains("changer-numero");
+        assertThat(ids(kb.search("fr", "annuler trajet prévu demain matin", "numéro portable", 4)))
+                .doesNotContain("changer-numero");
+    }
+
+    @Test
     void questionCourantePrimeSurLaQuestionPrecedente() {
         // « annuler » (question courante, poids 1) doit battre « numéro portable » (précédente, poids 0.5).
         List<String> found = ids(kb.search("fr", "annuler", "numéro portable", 4));
