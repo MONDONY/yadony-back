@@ -1,6 +1,7 @@
 package com.yadony.api.assistant.provider;
 
 import com.yadony.api.assistant.llm.LlmCallException;
+import com.yadony.api.assistant.llm.LlmProviderConfig;
 import com.yadony.api.assistant.llm.OpenAiCompatibleClient;
 import com.yadony.api.assistant.llm.ProviderHealthRegistry;
 import com.yadony.api.assistant.provider.dto.AdminProviderResponse;
@@ -13,6 +14,8 @@ import com.yadony.api.common.YadonyBusinessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -75,7 +78,7 @@ public class AssistantProviderAdminService {
         payload.put("dailyRequestLimit", saved.getDailyRequestLimit());
         payload.put("enabled", saved.isEnabled());
         auditService.log(ENTITY, saved.getId(), "ASSISTANT_PROVIDER_CREATED", adminId, payload);
-        catalog.evict();
+        afterCommit(catalog::evict);
         return toResponse(saved);
     }
 
@@ -112,9 +115,11 @@ public class AssistantProviderAdminService {
         payload.put("changed", changed);
         payload.put("apiKeyChanged", keyChanged);
         auditService.log(ENTITY, e.getId(), "ASSISTANT_PROVIDER_UPDATED", adminId, payload);
-        if (keyChanged || baseUrlChanged || modelChanged) health.reset(e.getId());
-        catalog.evict();
-        return toResponse(e);
+        boolean resetHealth = keyChanged || baseUrlChanged || modelChanged;
+        UUID providerId = e.getId();
+        if (resetHealth) afterCommit(() -> health.reset(providerId));
+        afterCommit(catalog::evict);
+        return toResponse(e, resetHealth);
     }
 
     @Transactional
@@ -134,7 +139,7 @@ public class AssistantProviderAdminService {
             order.add(p.getSlug());
         }
         auditService.log(ENTITY, null, "ASSISTANT_PROVIDER_REORDERED", adminId, Map.of("order", order));
-        catalog.evict();
+        afterCommit(catalog::evict);
         return ids.stream().map(byId::get).map(this::toResponse).toList();
     }
 
@@ -143,16 +148,21 @@ public class AssistantProviderAdminService {
         AssistantLlmProviderEntity e = require(id);
         e.softDelete();
         auditService.log(ENTITY, e.getId(), "ASSISTANT_PROVIDER_DELETED", adminId, Map.of("slug", e.getSlug()));
-        health.reset(e.getId());
-        catalog.evict();
+        UUID providerId = e.getId();
+        afterCommit(() -> health.reset(providerId));
+        afterCommit(catalog::evict);
     }
 
-    @Transactional(readOnly = true)
+    /**
+     * Volontairement sans transaction : la lecture du dépôt a la sienne, courte, et la connexion à la base
+     * n'est pas gardée pendant l'appel externe (jusqu'à 20 s).
+     */
     public ProviderTestResponse test(UUID id) {
         AssistantLlmProviderEntity e = require(id);
+        LlmProviderConfig config = ProviderCatalog.toConfig(e);
         long start = System.nanoTime();
         try {
-            String content = client.complete(ProviderCatalog.toConfig(e), TEST_SYSTEM, "Test Yadony");
+            String content = client.complete(config, TEST_SYSTEM, "Test Yadony");
             long ms = (System.nanoTime() - start) / 1_000_000;
             return new ProviderTestResponse(true, 200, ms, cap(content), null);
         } catch (LlmCallException ex) {
@@ -186,8 +196,34 @@ public class AssistantProviderAdminService {
         }
     }
 
+    /**
+     * Le cache du catalogue et la santé du fournisseur ne sont vidés qu'après le commit : vidés avant,
+     * un appel concurrent pourrait les repeupler avec l'ancien état (fournisseur supprimé ou désactivé
+     * encore utilisé jusqu'à 60 s). Sans transaction active, l'action part tout de suite.
+     */
+    private static void afterCommit(Runnable action) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    action.run();
+                }
+            });
+        } else {
+            action.run();
+        }
+    }
+
     private AdminProviderResponse toResponse(AssistantLlmProviderEntity e) {
+        return toResponse(e, false);
+    }
+
+    /** {@code healthCleared} : la remise à zéro de la santé est différée après le commit, la réponse la montre déjà. */
+    private AdminProviderResponse toResponse(AssistantLlmProviderEntity e, boolean healthCleared) {
         ProviderHealthRegistry.ProviderStats s = health.stats(e.getId());
+        if (healthCleared) {
+            s = new ProviderHealthRegistry.ProviderStats(s.requestsToday(), s.successesToday(), null, null, null);
+        }
         return new AdminProviderResponse(e.getId(), e.getName(), e.getSlug(), e.getBaseUrl(), e.getModel(),
                 e.getApiKeyLast4(), e.isSupportsJsonMode(), e.getDailyRequestLimit(), e.getPriority(), e.isEnabled(),
                 new AdminProviderStats(s.requestsToday(), s.successesToday(), s.lastStatus(), s.lastError(), s.cooldownUntil()));

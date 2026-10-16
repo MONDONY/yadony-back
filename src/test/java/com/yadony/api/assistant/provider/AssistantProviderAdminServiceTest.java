@@ -9,6 +9,7 @@ import com.yadony.api.assistant.provider.dto.ProviderTestResponse;
 import com.yadony.api.assistant.provider.dto.UpdateProviderRequest;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,6 +17,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.transaction.TestTransaction;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
@@ -45,6 +47,24 @@ class AssistantProviderAdminServiceTest {
     @Autowired JdbcTemplate jdbcTemplate;
     @MockitoBean AuditService auditService;
     @MockitoBean OpenAiCompatibleClient client;
+
+    /**
+     * Le service ne vide le catalogue et la santé qu'après le commit : le test (rollback par défaut)
+     * valide donc la transaction, puis en rouvre une. {@link #clean()} supprime ce qui a été validé.
+     */
+    private void commit() {
+        TestTransaction.flagForCommit();
+        TestTransaction.end();
+        TestTransaction.start();
+    }
+
+    @AfterEach
+    void clean() {
+        // Hors transaction de test (sinon la suppression serait annulée avec elle) : ce qu'un test a validé part ici.
+        if (TestTransaction.isActive()) TestTransaction.end();
+        jdbcTemplate.update("DELETE FROM assistant_llm_providers");
+        catalog.evict();
+    }
 
     private CreateProviderRequest create(String name) {
         return new CreateProviderRequest(name, "https://api.groq.com/openai/v1/", "llama", "gsk_secret_1234", true, 1000, true);
@@ -144,15 +164,18 @@ class AssistantProviderAdminServiceTest {
         health.recordFailure(a.id(), 401, "HTTP 401");
         assertThat(health.stats(a.id()).cooldownUntil()).isNotNull();
         service.update(a.id(), sameAs("llama", "nouvelle_cle_9876"), ADMIN);
+        commit();
         assertThat(health.stats(a.id()).cooldownUntil()).isNull();
 
         health.recordFailure(a.id(), 401, "HTTP 401");
         service.update(a.id(), sameAs("llama-2", null), ADMIN);
+        commit();
         assertThat(health.stats(a.id()).cooldownUntil()).isNull();
 
         health.recordFailure(a.id(), 401, "HTTP 401");
         service.update(a.id(), new UpdateProviderRequest("Groq", "https://autre-serveur.com/v1", "llama-2",
                 "autre_cle_5555", true, 1000, true), ADMIN);
+        commit();
         assertThat(health.stats(a.id()).cooldownUntil()).isNull();
     }
 
@@ -162,6 +185,7 @@ class AssistantProviderAdminServiceTest {
         health.recordFailure(a.id(), 429, "quota");
         service.update(a.id(), new UpdateProviderRequest("Groq", "https://api.groq.com/openai/v1", "llama", null,
                 true, 500, true), ADMIN);
+        commit();
         assertThat(health.stats(a.id()).cooldownUntil()).isNotNull();
     }
 
@@ -172,6 +196,10 @@ class AssistantProviderAdminServiceTest {
         List<AdminProviderResponse> list = service.reorder(List.of(b.id(), a.id()), ADMIN);
         assertThat(list).extracting(AdminProviderResponse::slug).containsExactly("b", "a");
         assertThat(list).extracting(AdminProviderResponse::priority).containsExactly(1, 2);
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).log(eq("assistant_llm_provider"), eq(null), eq("ASSISTANT_PROVIDER_REORDERED"), eq(ADMIN), payload.capture());
+        assertThat(payload.getValue()).containsEntry("order", List.of("b", "a")).hasSize(1);
+        assertThat(payload.getValue().toString()).doesNotContain("gsk_secret_1234");
     }
 
     @Test
@@ -191,8 +219,12 @@ class AssistantProviderAdminServiceTest {
         health.recordFailure(a.id(), 401, "HTTP 401");
         service.delete(a.id(), ADMIN);
         assertThat(service.list()).isEmpty();
-        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM assistant_llm_providers WHERE deleted_at IS NOT NULL", Integer.class)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM assistant_llm_providers WHERE id = ? AND deleted_at IS NOT NULL",
+                Integer.class, a.id())).isEqualTo(1);
+        commit();
         assertThat(health.stats(a.id()).cooldownUntil()).isNull();
+        Map<String, Object> payload = auditPayload(a.id(), "ASSISTANT_PROVIDER_DELETED");
+        assertThat(payload).containsEntry("slug", "groq").hasSize(1);
         assertThatThrownBy(() -> service.delete(a.id(), ADMIN)).isInstanceOfSatisfying(YadonyBusinessException.class,
                 e -> assertThat(e.getStatus().value()).isEqualTo(404));
     }
@@ -202,7 +234,53 @@ class AssistantProviderAdminServiceTest {
         AdminProviderResponse a = service.create(create("Groq"), ADMIN);
         assertThat(catalog.activeProviders()).hasSize(1);
         service.update(a.id(), new UpdateProviderRequest("Groq", "https://api.groq.com/openai/v1", "llama", null, true, null, false), ADMIN);
+        commit();
         assertThat(catalog.activeProviders()).isEmpty();
+    }
+
+    @Test
+    void leCatalogueEtLaSanteNeSontVidesQuApresLeCommit() {
+        AdminProviderResponse a = service.create(create("Groq"), ADMIN);
+        assertThat(catalog.activeProviders()).hasSize(1);
+        health.recordFailure(a.id(), 401, "HTTP 401");
+
+        AdminProviderResponse u = service.update(a.id(),
+                new UpdateProviderRequest("Groq", "https://api.groq.com/openai/v1", "llama", "nouvelle_cle_9876", true, 1000, false), ADMIN);
+
+        // Avant le commit : rien n'est vidé, un appel concurrent verrait encore l'ancien état.
+        assertThat(catalog.activeProviders()).hasSize(1);
+        assertThat(health.stats(a.id()).cooldownUntil()).isNotNull();
+        // La réponse montre déjà la santé remise à zéro.
+        assertThat(u.stats().cooldownUntil()).isNull();
+        assertThat(u.stats().lastError()).isNull();
+
+        commit();
+
+        assertThat(catalog.activeProviders()).isEmpty();
+        assertThat(health.stats(a.id()).cooldownUntil()).isNull();
+    }
+
+    @Test
+    void ecritureSansTransactionVideTouDeSuite() {
+        // Sans transaction active, l'éviction part immédiatement. Le test sort de la transaction de test.
+        AdminProviderResponse a = service.create(create("Groq"), ADMIN);
+        commit();
+        TestTransaction.end();
+        try {
+            assertThat(catalog.activeProviders()).hasSize(1);
+            service.update(a.id(), new UpdateProviderRequest("Groq", "https://api.groq.com/openai/v1", "llama", null, true, 1000, false), ADMIN);
+            assertThat(catalog.activeProviders()).isEmpty();
+        } finally {
+            TestTransaction.start();
+        }
+    }
+
+    @Test
+    void lesRequetesMasquentLaCleDansToString() {
+        CreateProviderRequest c = create("Groq");
+        UpdateProviderRequest u = sameAs("llama", "gsk_secret_1234");
+        assertThat(c.toString()).doesNotContain("gsk_secret_1234").contains("apiKey=****").contains("name=Groq");
+        assertThat(u.toString()).doesNotContain("gsk_secret_1234").contains("apiKey=****").contains("model=llama");
     }
 
     @Test

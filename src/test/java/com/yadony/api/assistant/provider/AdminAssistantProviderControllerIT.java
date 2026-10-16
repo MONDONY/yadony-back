@@ -15,6 +15,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.ArrayList;
@@ -45,13 +46,13 @@ class AdminAssistantProviderControllerIT {
     private static final String URL = "/admin/assistant/providers";
 
     @Autowired MockMvc mockMvc;
-    @Autowired AssistantLlmProviderRepository repository;
+    @Autowired JdbcTemplate jdbcTemplate;
     @MockitoBean OpenAiCompatibleClient client;
 
     @BeforeEach
     @AfterEach
     void clean() {
-        repository.deleteAll();
+        jdbcTemplate.update("DELETE FROM assistant_llm_providers");
     }
 
     private UsernamePasswordAuthenticationToken adminAuth(AdminRole role) {
@@ -170,5 +171,54 @@ class AdminAssistantProviderControllerIT {
                 .andExpect(status().isNoContent());
         mockMvc.perform(get(URL).with(authentication(adminAuth(AdminRole.ADMIN))))
                 .andExpect(jsonPath("$.length()").value(1));
+    }
+
+    @Test
+    void sansAuthentificationRefuse401() throws Exception {
+        mockMvc.perform(get(URL)).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void cleVideDansLeFormulaireDEditionGardeLaCle() throws Exception {
+        String id = createdId("Groq");
+        mockMvc.perform(patch(URL + "/" + id).with(authentication(adminAuth(AdminRole.ADMIN)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Groq","baseUrl":"https://api.groq.com/openai/v1","model":"llama-3",
+                                 "apiKey":"","supportsJsonMode":true,"dailyRequestLimit":1000,"enabled":true}"""))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.apiKeyLast4").value("1234"))
+                .andExpect(jsonPath("$.model").value("llama-3"));
+        mockMvc.perform(patch(URL + "/" + id).with(authentication(adminAuth(AdminRole.ADMIN)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Groq","baseUrl":"https://api.groq.com/openai/v1","model":"llama-3",
+                                 "apiKey":"   ","supportsJsonMode":true,"dailyRequestLimit":1000,"enabled":true}"""))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.apiKeyLast4").value("1234"));
+    }
+
+    @Test
+    void cleInvalideRefusee422() throws Exception {
+        String id = createdId("Groq");
+        String patchBody = """
+                {"name":"Groq","baseUrl":"https://api.groq.com/openai/v1","model":"llama",
+                 "apiKey":"%s","supportsJsonMode":true,"dailyRequestLimit":1000,"enabled":true}""";
+        for (String bad : new String[]{"abc def ghi", "court", "cle-avec-\\u00e9-accent", "abcdefgh\\r\\nijklmnop"}) {
+            mockMvc.perform(patch(URL + "/" + id).with(authentication(adminAuth(AdminRole.ADMIN)))
+                            .contentType(MediaType.APPLICATION_JSON).content(patchBody.formatted(bad)))
+                    .andExpect(status().isUnprocessableEntity())
+                    .andExpect(jsonPath("$.violations.apiKey").exists());
+        }
+        mockMvc.perform(post(URL).with(authentication(adminAuth(AdminRole.ADMIN)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"X\",\"baseUrl\":\"https://a.com\",\"model\":\"m\",\"apiKey\":\"abcdefgh\\r\\nijklmnop\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.violations.apiKey").exists());
+        mockMvc.perform(post(URL).with(authentication(adminAuth(AdminRole.ADMIN)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"X\",\"baseUrl\":\"https://a.com\",\"model\":\"m\",\"apiKey\":\"  \"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.violations.apiKey").exists());
     }
 }
