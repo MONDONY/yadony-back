@@ -42,4 +42,20 @@ public interface SupportTicketRepository extends JpaRepository<SupportTicketEnti
     long countByAssignedAdminIdIsNull();
 
     List<SupportTicketEntity> findByUserId(UUID userId);
+
+    /**
+     * Recherche admin : identifiant du ticket ou de l'utilisateur, sujet, ou nom de l'utilisateur
+     * ({@code like} en minuscules, encadré de %). Plus récemment actifs d'abord.
+     */
+    @org.springframework.data.jpa.repository.Query("""
+            SELECT t FROM SupportTicketEntity t
+            WHERE (:id IS NOT NULL AND (t.id = :id OR t.userId = :id))
+               OR (:like IS NOT NULL AND (LOWER(t.subject) LIKE :like
+                    OR t.userId IN (SELECT u.id FROM com.yadony.api.auth.UserEntity u
+                        WHERE LOWER(CONCAT(COALESCE(u.firstName, ''), ' ', COALESCE(u.lastName, ''))) LIKE :like)))
+            ORDER BY t.lastMessageAt DESC
+            """)
+    Page<SupportTicketEntity> searchAdmin(@org.springframework.data.repository.query.Param("id") UUID id,
+                                          @org.springframework.data.repository.query.Param("like") String like,
+                                          Pageable pageable);
 }

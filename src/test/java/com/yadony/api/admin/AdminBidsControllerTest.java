@@ -187,7 +187,7 @@ class AdminBidsControllerTest {
         ann.setStatus(AnnouncementStatus.ACTIVE);
         when(announcementRepo.findById(id)).thenReturn(Optional.of(ann));
 
-        Page<AdminAnnouncementListItemResponse> page = controller().listAnnouncements(id, 0, 20).getBody();
+        Page<AdminAnnouncementListItemResponse> page = controller().listAnnouncements(id, null, 0, 20).getBody();
 
         assertThat(page.getContent()).hasSize(1);
         assertThat(page.getTotalElements()).isEqualTo(1);
@@ -198,7 +198,7 @@ class AdminBidsControllerTest {
         UUID id = UUID.randomUUID();
         when(announcementRepo.findById(id)).thenReturn(Optional.empty());
 
-        Page<AdminAnnouncementListItemResponse> page = controller().listAnnouncements(id, 0, 20).getBody();
+        Page<AdminAnnouncementListItemResponse> page = controller().listAnnouncements(id, null, 0, 20).getBody();
 
         assertThat(page.getContent()).isEmpty();
         assertThat(page.getTotalElements()).isZero();
@@ -214,7 +214,7 @@ class AdminBidsControllerTest {
         when(announcementRepo.findAll(any(Pageable.class))).thenReturn(page);
         // Annonce sans voyageur : aucun nom à charger, loadUserNames court-circuite.
 
-        ResponseEntity<Page<AdminAnnouncementListItemResponse>> resp = controller().listAnnouncements(null, 0, 20);
+        ResponseEntity<Page<AdminAnnouncementListItemResponse>> resp = controller().listAnnouncements(null, null, 0, 20);
 
         assertThat(resp.getBody().getContent().get(0).currency()).isEqualTo("XOF");
     }
@@ -224,7 +224,7 @@ class AdminBidsControllerTest {
         Page<AnnouncementEntity> page = new PageImpl<>(List.of());
         when(announcementRepo.findAll(any(Pageable.class))).thenReturn(page);
         // empty page → travelerIds empty → loadUserNames short-circuits, no repo call needed
-        ResponseEntity<?> resp = controller().listAnnouncements(null, 0, 20);
+        ResponseEntity<?> resp = controller().listAnnouncements(null, null, 0, 20);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody()).isNotNull();
     }
@@ -245,7 +245,7 @@ class AdminBidsControllerTest {
         when(announcementRepo.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(leg1, single)));
         when(announcementRepo.findByTripGroupIdIn(java.util.Set.of(group))).thenReturn(List.of(leg1, leg2));
 
-        var content = controller().listAnnouncements(null, 0, 20).getBody().getContent();
+        var content = controller().listAnnouncements(null, null, 0, 20).getBody().getContent();
 
         assertThat(content.get(0).tripGroupId()).isEqualTo(group);
         assertThat(content.get(0).tripLegIndex()).isEqualTo(1);

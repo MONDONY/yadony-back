@@ -50,8 +50,17 @@ public class AdminWalletRefundController {
     public ResponseEntity<Page<AdminWalletRefundRequestResponse>> list(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
-            @RequestParam(name = "status", required = false) List<String> statuses) {
+            @RequestParam(name = "status", required = false) List<String> statuses,
+            @RequestParam(required = false) String query) {
         PageRequest pageable = PageRequest.of(page, size);
+        UUID queryId = AdminSearchTerms.uuid(query);
+        String like = queryId == null ? AdminSearchTerms.like(query) : null;
+        if (queryId != null || like != null) {
+            EnumSet<WalletRefundRequestStatus> scope = statuses == null || statuses.isEmpty()
+                    ? EnumSet.allOf(WalletRefundRequestStatus.class) : parseStatuses(statuses);
+            return ResponseEntity.ok(listing.describe(
+                    walletRefundRequestService.search(scope, queryId, like, pageable)));
+        }
         Page<WalletRefundRequestEntity> requests = statuses == null || statuses.isEmpty()
                 ? walletRefundRequestService.listPending(pageable)
                 : walletRefundRequestService.listByStatuses(parseStatuses(statuses), pageable);

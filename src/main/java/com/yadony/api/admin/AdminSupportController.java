@@ -77,10 +77,17 @@ public class AdminSupportController {
                                                  @RequestParam(defaultValue = "all") String scope,
                                                  @RequestParam(required = false) String status,
                                                  @RequestParam(required = false) UUID userId,
+                                                 @RequestParam(required = false) String query,
                                                  @RequestParam(defaultValue = "0") int page,
                                                  @RequestParam(defaultValue = "20") int size) {
         UUID adminId = adminId(auth);
         PageRequest pageRequest = PageRequest.of(Math.max(page, 0), clampSize(size));
+        // query (recherche globale de la barre du haut) : prime sur les autres filtres.
+        UUID queryId = AdminSearchTerms.uuid(query);
+        String like = queryId == null ? AdminSearchTerms.like(query) : null;
+        if (queryId != null || like != null) {
+            return views.summaries(supportTicketService.searchAdminTickets(queryId, like, pageRequest));
+        }
         // userId (fiche utilisateur) : combinable avec status, le scope est ignore.
         Page<SupportTicketEntity> tickets = userId != null
                 ? supportTicketService.listAdminTicketsOfUser(userId, parseStatus(status), pageRequest)

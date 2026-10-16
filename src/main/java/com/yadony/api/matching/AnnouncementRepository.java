@@ -353,4 +353,19 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
             LIMIT 1
             """, nativeQuery = true)
     Optional<String> findMainTimezoneByCountryCode(@Param("countryCode") String countryCode);
+
+    /**
+     * Recherche admin des trajets : ville de départ ou d'arrivée, ou nom du voyageur
+     * ({@code like} déjà en minuscules et encadré de %). Plus récents d'abord.
+     */
+    @org.springframework.data.jpa.repository.Query("""
+            SELECT a FROM AnnouncementEntity a
+            WHERE LOWER(a.departureCity) LIKE :like OR LOWER(a.arrivalCity) LIKE :like
+               OR a.travelerId IN (SELECT u.id FROM com.yadony.api.auth.UserEntity u
+                    WHERE LOWER(CONCAT(COALESCE(u.firstName, ''), ' ', COALESCE(u.lastName, ''))) LIKE :like)
+            ORDER BY a.createdAt DESC
+            """)
+    org.springframework.data.domain.Page<AnnouncementEntity> searchAdmin(
+            @org.springframework.data.repository.query.Param("like") String like,
+            org.springframework.data.domain.Pageable pageable);
 }

@@ -702,7 +702,7 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
         WHERE b.deleted_at IS NULL
           AND (CAST(:status AS VARCHAR) IS NULL OR b.status = :status)
           AND (CAST(:announcementId AS VARCHAR) IS NULL OR b.announcement_id = CAST(:announcementId AS UUID))
-          AND (CAST(:q AS VARCHAR) IS NULL OR b.tracking_number ILIKE '%' || :q || '%')
+          AND (CAST(:q AS VARCHAR) IS NULL OR b.tracking_number ILIKE '%' || :q || '%' OR CAST(b.id AS VARCHAR) = LOWER(:q))
           AND (CAST(:from AS TIMESTAMP) IS NULL OR b.created_at >= CAST(:from AS TIMESTAMP))
           AND (CAST(:to AS TIMESTAMP) IS NULL OR b.created_at <= CAST(:to AS TIMESTAMP))
         ORDER BY b.created_at DESC
@@ -712,7 +712,7 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
         WHERE b.deleted_at IS NULL
           AND (CAST(:status AS VARCHAR) IS NULL OR b.status = :status)
           AND (CAST(:announcementId AS VARCHAR) IS NULL OR b.announcement_id = CAST(:announcementId AS UUID))
-          AND (CAST(:q AS VARCHAR) IS NULL OR b.tracking_number ILIKE '%' || :q || '%')
+          AND (CAST(:q AS VARCHAR) IS NULL OR b.tracking_number ILIKE '%' || :q || '%' OR CAST(b.id AS VARCHAR) = LOWER(:q))
           AND (CAST(:from AS TIMESTAMP) IS NULL OR b.created_at >= CAST(:from AS TIMESTAMP))
           AND (CAST(:to AS TIMESTAMP) IS NULL OR b.created_at <= CAST(:to AS TIMESTAMP))
         """,
