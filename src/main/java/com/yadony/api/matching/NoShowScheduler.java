@@ -1,5 +1,6 @@
 package com.yadony.api.matching;
 
+import com.yadony.api.payments.cash.PaymentMethod;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -16,7 +17,16 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-// Story 9.6 — Détection et sanction des no-shows voyageur
+/**
+ * Story 9.6 — remise non effectuée à l'échéance (date limite + 1 h de grâce), sans scan ni
+ * signalement en cours.
+ * <ul>
+ *   <li>carte, mobile money : le voyageur est déclaré absent ({@link NoShowService#recordTravelerNoShow}) ;</li>
+ *   <li>espèces : le colis est annulé sans fautif, commission rendue au voyageur
+ *       ({@link NoShowService#expireUnconfirmedCashHandover}, FLUTTER-QR). Rien n'est encaissé
+ *       par Yadony côté expéditeur, et sans signalement rien n'indique qui n'est pas venu.</li>
+ * </ul>
+ */
 @Component
 public class NoShowScheduler {
 
@@ -66,6 +76,12 @@ public class NoShowScheduler {
 
         for (BidEntity bid : noShowBids) {
             try {
+                if (bid.getPaymentMethod() == PaymentMethod.CASH) {
+                    // Espèces : aucune trace de qui n'est pas venu, pas de fautif automatique
+                    // (FLUTTER-QR). Annulé, commission rendue, personne de sanctionné.
+                    noShowService.expireUnconfirmedCashHandover(bid.getId());
+                    continue;
+                }
                 noShowService.recordTravelerNoShow(bid.getId(), "scheduler");
             } catch (Exception e) {
                 log.error("Error processing no-show for bid {}: {}", bid.getId(), e.getMessage(), e);

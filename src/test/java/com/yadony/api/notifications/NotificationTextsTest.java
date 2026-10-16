@@ -57,6 +57,8 @@ class NotificationTextsTest {
         map.put("bidRejected", NotificationTexts.bidRejected(m));
         map.put("handoverDeadlinePassed", NotificationTexts.handoverDeadlinePassed(m));
         map.put("handoverDeadlinePassedRefunded", NotificationTexts.handoverDeadlinePassedRefunded(m));
+        map.put("handoverExpired", NotificationTexts.handoverExpired(m, false));
+        map.put("handoverExpired commission rendue", NotificationTexts.handoverExpired(m, true));
         map.put("bidRejectedTripWithdrawn", NotificationTexts.bidRejectedTripWithdrawn(m));
         map.put("bidCancelledByAdminForSender remboursé", NotificationTexts.bidCancelledByAdminForSender(m, true));
         map.put("bidCancelledByAdminForSender", NotificationTexts.bidCancelledByAdminForSender(m, false));
@@ -505,6 +507,18 @@ class NotificationTextsTest {
                 "Parcel to be returned", "Once you get your parcel back, 1 trip matches your shipment."));
         assertThat(NotificationTexts.parcelReturnRequiredWithRematch(TestMessages.en(), 4).body())
                 .isEqualTo("Once you get your parcel back, 4 trips match your shipment.");
+    }
+
+    @Test
+    void handoverExpired_bothLanguages() {
+        assertThat(NotificationTexts.handoverExpired(TestMessages.fr(), false)).isEqualTo(new NotificationText(
+                "Remise non effectuée", "Aucune remise confirmée : envoi annulé, sans pénalité."));
+        assertThat(NotificationTexts.handoverExpired(TestMessages.fr(), true).body())
+                .isEqualTo("Aucune remise confirmée : envoi annulé, commission rendue.");
+        assertThat(NotificationTexts.handoverExpired(TestMessages.en(), false)).isEqualTo(new NotificationText(
+                "Drop-off not completed", "No drop-off was confirmed: shipment cancelled, no penalty."));
+        assertThat(NotificationTexts.handoverExpired(TestMessages.en(), true).body())
+                .isEqualTo("No drop-off was confirmed: shipment cancelled, fee refunded.");
     }
 
     @Test

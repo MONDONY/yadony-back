@@ -132,7 +132,7 @@ class CancellationServiceNoShowTest {
     @Test
     void handoverDeadlineInFuture_throws() {
         BidEntity future = bid(BidStatus.ACCEPTED, PaymentMethod.STRIPE,
-                LocalDateTime.now().plusHours(1));
+                LocalDateTime.now().plusHours(6));
         when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(future));
 
         assertThatThrownBy(() -> service.reportSenderNoShow(BID_ID, TRAVELER_ID))
@@ -219,12 +219,70 @@ class CancellationServiceNoShowTest {
     @Test
     void reportTravelerNoShow_handoverDeadlineInFuture_throws() {
         BidEntity future = bid(BidStatus.ACCEPTED, PaymentMethod.STRIPE,
-                LocalDateTime.now().plusHours(1));
+                LocalDateTime.now().plusHours(6));
         when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(future));
 
         assertThatThrownBy(() -> service.reportTravelerNoShow(BID_ID, SENDER_ID))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("remise");
         verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    // ─── FLUTTER-QR : échéance lue dans le fuseau du trajet ──────────────────────
+
+    private void tripIn(String timezone) {
+        com.yadony.api.matching.AnnouncementEntity announcement = new com.yadony.api.matching.AnnouncementEntity();
+        ReflectionTestUtils.setField(announcement, "id", ANNOUNCEMENT_ID);
+        announcement.setTravelerId(TRAVELER_ID);
+        announcement.setTimezone(timezone);
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+    }
+
+    /**
+     * Échéance 12:00 à Tokyo, il est 12:30 à Tokyo : passée. L'ancienne comparaison avec
+     * l'heure de la JVM (UTC sur le serveur, 03:30) refusait le signalement jusqu'à 21:00 UTC,
+     * bien après le passage du job no-show.
+     */
+    @Test
+    void reportSenderNoShow_deadlineReadInTripTimezone_acceptedOncePassedLocally() {
+        tripIn("Asia/Tokyo");
+        LocalDateTime deadline = LocalDateTime.now(java.time.ZoneId.of("Asia/Tokyo")).minusMinutes(30);
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid(BidStatus.ACCEPTED, PaymentMethod.CASH, deadline)));
+        when(cancellationRepository.existsByBidIdAndNoShowStatusIn(any(), any())).thenReturn(false);
+        when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.reportSenderNoShow(BID_ID, TRAVELER_ID);
+
+        verify(cancellationRepository).save(any());
+    }
+
+    @Test
+    void reportTravelerNoShow_deadlineReadInTripTimezone_acceptedOncePassedLocally() {
+        tripIn("Asia/Tokyo");
+        LocalDateTime deadline = LocalDateTime.now(java.time.ZoneId.of("Asia/Tokyo")).minusMinutes(30);
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid(BidStatus.ACCEPTED, PaymentMethod.CASH, deadline)));
+
+        service.reportTravelerNoShow(BID_ID, SENDER_ID);
+
+        verify(eventPublisher).publishEvent(any(TravelerNoShowReportedEvent.class));
+    }
+
+    /** Échéance dans 30 min à l'heure de New York : pas encore signalable, où que tourne la JVM. */
+    @Test
+    void reportTravelerNoShow_deadlineNotYetPassedInTripTimezone_throws() {
+        tripIn("America/New_York");
+        LocalDateTime deadline = LocalDateTime.now(java.time.ZoneId.of("America/New_York")).plusMinutes(30);
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid(BidStatus.ACCEPTED, PaymentMethod.CASH, deadline)));
+
+        assertThatThrownBy(() -> service.reportTravelerNoShow(BID_ID, SENDER_ID))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("remise");
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void handoverDeadlinePassed_withoutDeadline_isFalse() {
+        assertThat(CancellationService.handoverDeadlinePassed(
+                bid(BidStatus.ACCEPTED, PaymentMethod.CASH, null), null)).isFalse();
     }
 }

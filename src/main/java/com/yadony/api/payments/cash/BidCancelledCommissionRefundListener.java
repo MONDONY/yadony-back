@@ -5,6 +5,7 @@ import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.events.BidRejectedEvent;
+import com.yadony.api.matching.events.HandoverExpiredEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -12,6 +13,8 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
+
+import java.util.UUID;
 
 /**
  * Rembourse la commission Yadony lorsqu'un bid CASH est annulé individuellement
@@ -29,7 +32,13 @@ import org.springframework.transaction.event.TransactionalEventListener;
  *   <li>WALLET → crédit wallet (clé idempotente {@code wallet-refund-cancel-{bidId}}) ;</li>
  *   <li>CARD   → refund Stripe.</li>
  * </ul>
- * Gardes : ne traite que les bids CASH dont {@code commissionStatus == CHARGED}
+ * Remise espèces jamais confirmée ni signalée ({@link HandoverExpiredEvent}, FLUTTER-QR,
+ * « pas de fautif automatique ») : même remboursement, clé {@code wallet-refund-expired-{bidId}}.
+ * Bid issu d'une négociation : la ligne COMMISSION_DEDUCTED porte l'id du fil (bid_id NULL),
+ * {@link CashCommissionService#refundCommissionToWallet} la retrouve par
+ * {@code linkedNegotiationThreadId}.
+ *
+ * <p>Gardes : ne traite que les bids CASH dont {@code commissionStatus == CHARGED}
  * (refundCommissionToWallet/refundCommission verrouillent en plus la transition
  * → REFUNDED, prévenant tout double remboursement avec les autres flux).
  */
@@ -53,7 +62,17 @@ public class BidCancelledCommissionRefundListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onBidRejected(BidRejectedEvent event) {
-        BidEntity bid = bidRepository.findById(event.getBidId()).orElse(null);
+        refund(event.getBidId(), "wallet-refund-cancel-", "bid-cancel");
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void onHandoverExpired(HandoverExpiredEvent event) {
+        refund(event.bidId(), "wallet-refund-expired-", "handover-expired");
+    }
+
+    private void refund(UUID bidId, String walletKeyPrefix, String trigger) {
+        BidEntity bid = bidRepository.findById(bidId).orElse(null);
         if (bid == null) return;
         if (bid.getPaymentMethod() != PaymentMethod.CASH) return;
         if (bid.getCommissionStatus() != CommissionStatus.CHARGED) return;
@@ -75,14 +94,14 @@ public class BidCancelledCommissionRefundListener {
                     return;
                 }
                 cashCommissionService.refundCommissionToWallet(
-                        bid, announcement.getTravelerId(), "wallet-refund-cancel-" + bid.getId());
-                log.info("BidCancelledCommissionRefundListener: commission wallet recréditée pour bid {} (bid-cancel)",
-                        bid.getId());
+                        bid, announcement.getTravelerId(), walletKeyPrefix + bid.getId());
+                log.info("BidCancelledCommissionRefundListener: commission wallet recréditée pour bid {} ({})",
+                        bid.getId(), trigger);
             }
             case CARD -> {
                 cashCommissionService.refundCommission(bid);
-                log.info("BidCancelledCommissionRefundListener: commission carte remboursée pour bid {} (bid-cancel)",
-                        bid.getId());
+                log.info("BidCancelledCommissionRefundListener: commission carte remboursée pour bid {} ({})",
+                        bid.getId(), trigger);
             }
         }
     }
