@@ -45,6 +45,23 @@ class AssistantAnswerParserTest {
         assertInvalid("[]");
     }
 
+    @Test
+    void routesAbsentesOuNonTableauDonnentListeVide() {
+        assertThat(parser.parse("{\"answer\":\"ok\",\"answered\":true}").routes()).isEmpty();
+        assertThat(parser.parse("{\"answer\":\"ok\",\"answered\":true,\"routes\":\"x\"}").routes()).isEmpty();
+    }
+
+    @Test
+    void listeDeRoutesEstImmuable() {
+        ParsedAnswer a = parser.parse("{\"answer\":\"ok\",\"answered\":true,\"routes\":[\"/a\"]}");
+        assertThatThrownBy(() -> a.routes().add("/b")).isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void answeredEnChaineEstRefuse() {
+        assertInvalid("{\"answer\":\"ok\",\"answered\":\"true\"}");
+    }
+
     private void assertInvalid(String content) {
         assertThatThrownBy(() -> parser.parse(content)).isInstanceOfSatisfying(LlmCallException.class,
                 e -> assertThat(e.status()).isEqualTo(LlmCallException.INVALID_OUTPUT));
