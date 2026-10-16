@@ -9,11 +9,15 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import com.yadony.api.assistant.llm.LlmRouter;
 
 import java.util.List;
 
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -25,6 +29,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class AssistantControllerDisabledIntegrationTest {
 
     @Autowired MockMvc mockMvc;
+    @MockitoBean AssistantService service;
+    @MockitoBean LlmRouter router;
 
     @Test
     void eteint404() throws Exception {
@@ -34,5 +40,15 @@ class AssistantControllerDisabledIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON).content("{\"question\":\"q\",\"locale\":\"fr\"}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("assistant-disabled"));
+    }
+
+    @Test
+    void statusEteintRepond200EnabledFalseEtJamais404() throws Exception {
+        mockMvc.perform(get("/assistant/status")
+                        .with(authentication(new UsernamePasswordAuthenticationToken("uid", null,
+                                List.of(new SimpleGrantedAuthority("ROLE_SENDER"))))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(false));
+        verifyNoInteractions(service, router);
     }
 }
