@@ -117,12 +117,13 @@ public class OpenAiCompatibleClient {
 
         // Le délai couvre l'appel entier, de l'envoi à la fin de la lecture bornée : cancel() coupe la connexion.
         AtomicBoolean timedOut = new AtomicBoolean();
-        ScheduledFuture<?> timer = timeouts.schedule(() -> {
-            timedOut.set(true);
-            request.cancel();
-        }, totalTimeout.toMillis(), TimeUnit.MILLISECONDS);
+        ScheduledFuture<?> timer = null;
         JsonNode response;
         try {
+            timer = timeouts.schedule(() -> {
+                timedOut.set(true);
+                request.cancel();
+            }, totalTimeout.toMillis(), TimeUnit.MILLISECONDS);
             response = execute(request);
         } catch (IOException e) {
             if (timedOut.get()) {
@@ -132,8 +133,15 @@ public class OpenAiCompatibleClient {
                 throw new LlmCallException(LlmCallException.BLOCKED_ADDRESS, "Adresse du fournisseur refusée");
             }
             throw new LlmCallException(LlmCallException.NETWORK, "Réseau indisponible ou délai dépassé");
+        } catch (LlmCallException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            // Exécuteur fermé, course d'annulation côté Apache… : jamais d'exception brute hors de complete().
+            throw new LlmCallException(LlmCallException.NETWORK, timedOut.get() ? "Délai dépassé" : "Appel impossible");
         } finally {
-            timer.cancel(false);
+            if (timer != null) {
+                timer.cancel(false);
+            }
         }
         JsonNode content = response == null ? null : response.path("choices").path(0).path("message").path("content");
         if (content == null || !content.isTextual() || content.asText().isBlank()) {
@@ -213,6 +221,11 @@ public class OpenAiCompatibleClient {
                 .setConnectionManager(connections)
                 .disableRedirectHandling()
                 .disableCookieManagement()
+                // Les relances automatiques (429/503) drainent le corps et dorment Retry-After sans pouvoir
+                // être annulées : le routeur de l'assistant bascule lui-même de fournisseur.
+                .disableAutomaticRetries()
+                // Un flux gzip suivi d'octets sans fin échapperait au plafond et ferait drainer jusqu'au délai.
+                .disableContentCompression()
                 .build();
     }
 }

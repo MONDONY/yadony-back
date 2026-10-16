@@ -418,4 +418,62 @@ class OpenAiCompatibleClientTest {
         HttpServer s = server(reply(600, "application/json", ok("x")));
         assertStatus(() -> client().complete(provider(true, baseUrl(s)), "s", "u"), 600);
     }
+
+    @Test
+    @Timeout(15)
+    void erreur503AvecCorpsSansFinNEstPasRelanceeNiDrainee() throws Exception {
+        AtomicInteger requetes = new AtomicInteger();
+        HttpServer s = server(ex -> {
+            requetes.incrementAndGet();
+            endlessBody(503, 8192, 0, new AtomicInteger()).handle(ex);
+        });
+        OpenAiCompatibleClient c = client(Duration.ofSeconds(10));
+        Outcome o = timed(() -> c.complete(provider(true, baseUrl(s)), "s", "u"));
+        assertThat(o.error()).isNotNull();
+        assertThat(o.error().status()).isEqualTo(503);
+        assertThat(o.millis()).isLessThan(3000);
+        assertThat(requetes).hasValue(1);
+    }
+
+    @Test
+    @Timeout(15)
+    void erreur429AvecRetryAfterNEstPasRelancee() throws Exception {
+        AtomicInteger requetes = new AtomicInteger();
+        HttpServer s = server(ex -> {
+            requetes.incrementAndGet();
+            ex.getResponseHeaders().add("Retry-After", "30");
+            ex.sendResponseHeaders(429, -1);
+            ex.close();
+        });
+        OpenAiCompatibleClient c = client(Duration.ofSeconds(10));
+        Outcome o = timed(() -> c.complete(provider(true, baseUrl(s)), "s", "u"));
+        assertThat(o.error()).isNotNull();
+        assertThat(o.error().status()).isEqualTo(429);
+        assertThat(o.millis()).isLessThan(3000);
+        assertThat(requetes).hasValue(1);
+    }
+
+    @Test
+    void laRequeteNeDemandePasDeCompression() throws Exception {
+        AtomicReference<String> acceptEncoding = new AtomicReference<>("absent");
+        HttpServer s = server(ex -> {
+            acceptEncoding.set(String.valueOf(ex.getRequestHeaders().getFirst("Accept-Encoding")));
+            respond(ex, 200, "application/json", ok("x"));
+        });
+        assertThat(client().complete(provider(true, baseUrl(s)), "s", "u")).isEqualTo("x");
+        assertThat(acceptEncoding.get()).isEqualTo("null");
+    }
+
+    @Test
+    void clientFermeDonneUneLlmCallExceptionEtPasUneExceptionBrute() throws Exception {
+        HttpServer s = server(reply(200, "application/json", ok("x")));
+        OpenAiCompatibleClient c = client();
+        c.close();
+        assertThatThrownBy(() -> c.complete(provider(true, baseUrl(s)), "s", "u"))
+                .isInstanceOfSatisfying(LlmCallException.class, e -> {
+                    assertThat(e.status()).isEqualTo(LlmCallException.NETWORK);
+                    assertThat(e.getMessage()).isEqualTo("Appel impossible");
+                    assertThat(e.getCause()).isNull();
+                });
+    }
 }
