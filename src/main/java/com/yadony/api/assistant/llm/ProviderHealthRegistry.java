@@ -82,6 +82,20 @@ public class ProviderHealthRegistry {
         }
     }
 
+    /**
+     * Lève la mise de côté et efface la dernière erreur, sans toucher aux compteurs du jour. Appelé quand
+     * l'admin corrige la clé, l'adresse ou le modèle, ou supprime le fournisseur : après un 401, il ne
+     * doit pas attendre les 10 minutes de mise de côté.
+     */
+    public void reset(UUID id) {
+        Health h = current(id);
+        synchronized (h) {
+            h.cooldownUntil = null;
+            h.lastStatus = null;
+            h.lastError = null;
+        }
+    }
+
     public ProviderStats stats(UUID id) {
         Health h = current(id);
         synchronized (h) {

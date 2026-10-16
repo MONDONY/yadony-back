@@ -40,6 +40,28 @@ class ProviderHealthRegistryTest {
     }
 
     @Test
+    void reinitialiserLeveLaMiseDeCoteEtLaDerniereErreurMaisGardeLesCompteurs() {
+        registry.tryAcquire(provider(null));
+        registry.recordSuccess(id);
+        registry.recordFailure(id, 401, "clé");
+        assertThat(registry.isAvailable(provider(null))).isFalse();
+
+        registry.reset(id);
+
+        assertThat(registry.isAvailable(provider(null))).isTrue();
+        ProviderHealthRegistry.ProviderStats stats = registry.stats(id);
+        assertThat(stats.cooldownUntil()).isNull();
+        assertThat(stats.lastError()).isNull();
+        assertThat(stats.requestsToday()).isEqualTo(1);
+        assertThat(stats.successesToday()).isEqualTo(1);
+    }
+
+    @Test
+    void reinitialiserUnFournisseurInconnuNeLeveRien() {
+        registry.reset(UUID.randomUUID());
+    }
+
+    @Test
     void miseDeCoteDixMinutesApres401() {
         registry.recordFailure(id, 401, "clé");
         now.set(now.get().plusSeconds(9 * 60));
