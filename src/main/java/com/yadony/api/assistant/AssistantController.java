@@ -30,6 +30,11 @@ public class AssistantController {
             throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "assistant-disabled", "Not Found",
                     "L'assistant n'est pas disponible.");
         }
+        // Un principal admin n'est pas un String : sans uid Firebase, le quota ne pourrait pas être tenu.
+        if (firebaseUid == null || firebaseUid.isBlank()) {
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "assistant-user-required", "Forbidden",
+                    "L'assistant est réservé aux comptes utilisateur.");
+        }
         return service.ask(firebaseUid, request);
     }
 }

@@ -34,14 +34,6 @@ public class ProviderHealthRegistry {
         this.clock = clock;
     }
 
-    /** Lecture seule : ne compte rien. Le routeur passe par {@link #tryAcquire}, qui réserve l'essai. */
-    public boolean isAvailable(LlmProviderConfig provider) {
-        Health h = current(provider.id());
-        synchronized (h) {
-            return !isSetAside(h) && !isAtDailyLimit(provider, h);
-        }
-    }
-
     /**
      * Réserve un essai si le fournisseur est disponible, dans la même section critique que le contrôle :
      * deux questions simultanées ne peuvent pas dépasser la limite du jour.
@@ -53,11 +45,6 @@ public class ProviderHealthRegistry {
             h.requests++;
             return true;
         }
-    }
-
-    public void recordAttempt(UUID id) {
-        Health h = current(id);
-        synchronized (h) { h.requests++; }
     }
 
     public void recordSuccess(UUID id) {

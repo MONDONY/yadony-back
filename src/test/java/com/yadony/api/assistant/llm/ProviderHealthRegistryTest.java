@@ -34,9 +34,9 @@ class ProviderHealthRegistryTest {
     @Test
     void miseDeCoteSoixanteSecondesApres429() {
         registry.recordFailure(id, 429, "quota");
-        assertThat(registry.isAvailable(provider(null))).isFalse();
+        assertThat(registry.tryAcquire(provider(null))).isFalse();
         now.set(now.get().plusSeconds(61));
-        assertThat(registry.isAvailable(provider(null))).isTrue();
+        assertThat(registry.tryAcquire(provider(null))).isTrue();
     }
 
     @Test
@@ -44,11 +44,10 @@ class ProviderHealthRegistryTest {
         registry.tryAcquire(provider(null));
         registry.recordSuccess(id);
         registry.recordFailure(id, 401, "clé");
-        assertThat(registry.isAvailable(provider(null))).isFalse();
+        assertThat(registry.stats(id).cooldownUntil()).isNotNull();
 
         registry.reset(id);
 
-        assertThat(registry.isAvailable(provider(null))).isTrue();
         ProviderHealthRegistry.ProviderStats stats = registry.stats(id);
         assertThat(stats.cooldownUntil()).isNull();
         assertThat(stats.lastError()).isNull();
@@ -65,42 +64,43 @@ class ProviderHealthRegistryTest {
     void miseDeCoteDixMinutesApres401() {
         registry.recordFailure(id, 401, "clé");
         now.set(now.get().plusSeconds(9 * 60));
-        assertThat(registry.isAvailable(provider(null))).isFalse();
+        assertThat(registry.tryAcquire(provider(null))).isFalse();
         now.set(now.get().plusSeconds(2 * 60));
-        assertThat(registry.isAvailable(provider(null))).isTrue();
+        assertThat(registry.tryAcquire(provider(null))).isTrue();
     }
 
     @Test
     void miseDeCoteDixMinutesApresAdresseBloquee() {
         registry.recordFailure(id, LlmCallException.BLOCKED_ADDRESS, "adresse non publique");
         now.set(now.get().plusSeconds(9 * 60));
-        assertThat(registry.isAvailable(provider(null))).isFalse();
+        assertThat(registry.tryAcquire(provider(null))).isFalse();
         now.set(now.get().plusSeconds(2 * 60));
-        assertThat(registry.isAvailable(provider(null))).isTrue();
+        assertThat(registry.tryAcquire(provider(null))).isTrue();
     }
 
     @Test
     void erreur500NeMetPasDeCote() {
         registry.recordFailure(id, 500, "panne");
-        assertThat(registry.isAvailable(provider(null))).isTrue();
+        assertThat(registry.tryAcquire(provider(null))).isTrue();
         assertThat(registry.stats(id).lastStatus()).isEqualTo(500);
     }
 
     @Test
     void limiteDuJourPuisRemiseAZeroLeLendemain() {
-        registry.recordAttempt(id);
-        registry.recordAttempt(id);
-        assertThat(registry.isAvailable(provider(2))).isFalse();
+        assertThat(registry.tryAcquire(provider(2))).isTrue();
+        assertThat(registry.tryAcquire(provider(2))).isTrue();
+        assertThat(registry.tryAcquire(provider(2))).isFalse();
         now.set(Instant.parse("2026-10-17T00:00:01Z"));
-        assertThat(registry.isAvailable(provider(2))).isTrue();
         assertThat(registry.stats(id).requestsToday()).isZero();
+        assertThat(registry.tryAcquire(provider(2))).isTrue();
+        assertThat(registry.stats(id).requestsToday()).isEqualTo(1);
     }
 
     @Test
     void succesEffaceLaDerniereErreur() {
-        registry.recordAttempt(id);
+        registry.tryAcquire(provider(null));
         registry.recordFailure(id, 500, "panne");
-        registry.recordAttempt(id);
+        registry.tryAcquire(provider(null));
         registry.recordSuccess(id);
         ProviderHealthRegistry.ProviderStats s = registry.stats(id);
         assertThat(s.requestsToday()).isEqualTo(2);
