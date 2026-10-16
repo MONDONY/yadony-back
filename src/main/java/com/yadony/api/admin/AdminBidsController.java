@@ -119,12 +119,21 @@ public class AdminBidsController {
     @GetMapping("/admin/announcements")
     public ResponseEntity<Page<AdminAnnouncementListItemResponse>> listAnnouncements(
             @RequestParam(required = false) UUID id,
+            @RequestParam(required = false) String query,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
 
         // ?id= : l'annonce d'un colis (lien « Voir l'annonce » de la fiche colis), seule.
+        // ?query= : recherche globale de l'admin (ville ou nom du voyageur, ou identifiant).
         Page<AnnouncementEntity> annPage;
-        if (id != null) {
+        UUID queryId = AdminSearchTerms.uuid(query);
+        if (queryId != null && id == null) {
+            id = queryId;
+        }
+        String like = AdminSearchTerms.like(query);
+        if (id == null && like != null) {
+            annPage = announcementRepo.searchAdmin(like, PageRequest.of(page, size));
+        } else if (id != null) {
             List<AnnouncementEntity> one = announcementRepo.findById(id).map(List::of).orElse(List.of());
             annPage = new org.springframework.data.domain.PageImpl<>(one, PageRequest.of(0, Math.max(1, size)), one.size());
         } else {

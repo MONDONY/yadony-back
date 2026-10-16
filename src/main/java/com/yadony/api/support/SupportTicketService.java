@@ -123,6 +123,12 @@ public class SupportTicketService {
                 : ticketRepository.findByUserIdAndStatusOrderByLastMessageAtDesc(userId, status, pageable);
     }
 
+    /** Recherche globale de l'admin (identifiant, sujet ou nom de l'utilisateur). */
+    @Transactional(readOnly = true)
+    public Page<SupportTicketEntity> searchAdminTickets(UUID id, String like, Pageable pageable) {
+        return ticketRepository.searchAdmin(id, like, pageable);
+    }
+
     @Transactional(readOnly = true)
     public Optional<SupportMessageEntity> lastMessage(UUID ticketId) {
         return messageRepository.findFirstByTicketIdOrderByCreatedAtDesc(ticketId);

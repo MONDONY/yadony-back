@@ -34,6 +34,31 @@ public interface WalletRefundRequestRepository extends JpaRepository<WalletRefun
     Page<WalletRefundRequestEntity> findAllByStatusIn(
             java.util.Collection<WalletRefundRequestStatus> statuses, Pageable pageable);
 
+    /**
+     * File admin cherchée : identifiant de la demande ou de l'utilisateur, ou nom de
+     * l'utilisateur, comptes supprimés compris (requête native, hors {@code @Where}).
+     */
+    @Query(value = """
+            SELECT r.* FROM wallet_refund_requests r JOIN users u ON u.id = r.user_id
+            WHERE r.deleted_at IS NULL AND r.status IN (:statuses)
+              AND ((CAST(:id AS VARCHAR) IS NOT NULL AND (r.id = CAST(:id AS UUID) OR r.user_id = CAST(:id AS UUID)))
+                   OR (CAST(:like AS VARCHAR) IS NOT NULL
+                       AND LOWER(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))) LIKE :like))
+            ORDER BY r.requested_at DESC
+            """,
+            countQuery = """
+            SELECT COUNT(*) FROM wallet_refund_requests r JOIN users u ON u.id = r.user_id
+            WHERE r.deleted_at IS NULL AND r.status IN (:statuses)
+              AND ((CAST(:id AS VARCHAR) IS NOT NULL AND (r.id = CAST(:id AS UUID) OR r.user_id = CAST(:id AS UUID)))
+                   OR (CAST(:like AS VARCHAR) IS NOT NULL
+                       AND LOWER(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))) LIKE :like))
+            """,
+            nativeQuery = true)
+    Page<WalletRefundRequestEntity> searchAdmin(@Param("statuses") java.util.Collection<String> statuses,
+                                                @Param("id") String id,
+                                                @Param("like") String like,
+                                                Pageable pageable);
+
     boolean existsByParentRequestId(UUID parentRequestId);
 
     /** Verrou de la demande : sérialise l'écouteur après commit et la reprise planifiée. */

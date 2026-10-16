@@ -137,6 +137,25 @@ class AdminPaymentInsightsIT {
     }
 
     @Test
+    void recherche_parNumeroDeSuivi_colisDirectEtColisLieALaNegociation() {
+        AnnouncementEntity ann = persistAnnouncement(traveler.getId());
+        BidEntity direct = persistBid(ann.getId(), sender.getId(), null);
+        direct.setTrackingNumber("DON-" + tag.substring(1, 8).toUpperCase() + "A");
+        bidRepository.save(direct);
+        PaymentEntity classic = persistPayment(direct.getId(), null, "EUR", "10.00", "1.00", PaymentStatus.ESCROW);
+        NegotiationThreadEntity thread = persistThread(sender.getId(), traveler.getId());
+        BidEntity linked = persistBid(ann.getId(), sender.getId(), thread.getId());
+        linked.setTrackingNumber("DON-" + tag.substring(1, 8).toUpperCase() + "B");
+        bidRepository.save(linked);
+        PaymentEntity nego = persistPayment(null, thread.getId(), "EUR", "20.00", "0.95", PaymentStatus.ESCROW);
+
+        String number = tag.substring(1, 8);
+        assertThat(search("don-" + number + "a", false)).containsExactly(classic.getId());
+        assertThat(search("DON-" + number.toUpperCase() + "B", false)).containsExactly(nego.getId());
+        assertThat(search("DON-" + number, false)).containsExactlyInAnyOrder(classic.getId(), nego.getId());
+    }
+
+    @Test
     void checkoutAbandonne_marqueEtMasquable() {
         NegotiationThreadEntity thread = persistThread(sender.getId(), traveler.getId());
         PaymentEntity old = persistPayment(null, thread.getId(), "EUR", "20.00", "0.95", PaymentStatus.PENDING);

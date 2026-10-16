@@ -174,7 +174,8 @@ public class AdminPaymentInsights {
 
     /**
      * Identifiant → paiement, colis (direct ou lié à la négociation) ou fil ; {@code pi_}/{@code ch_}
-     * → référence Stripe ; sinon nom, prénom ou pseudo de l'expéditeur ou du voyageur.
+     * → référence Stripe ; {@code DON-} → numéro de suivi du colis ; sinon nom, prénom ou pseudo de
+     * l'expéditeur ou du voyageur.
      */
     private static void appendSearch(StringBuilder sql, MapSqlParameterSource params, String query) {
         UUID uuid = parseUuid(query);
@@ -189,6 +190,15 @@ public class AdminPaymentInsights {
         if (query.startsWith("pi_") || query.startsWith("ch_") || query.startsWith("mm_")) {
             sql.append(" AND (p.stripe_payment_intent_id = :qRef OR p.stripe_charge_id = :qRef)");
             params.addValue("qRef", query);
+            return;
+        }
+        if (query.regionMatches(true, 0, "DON-", 0, 4)) {
+            // Numéro de suivi : paiement direct du colis, ou fil de négociation qui l'a produit.
+            sql.append(" ").append("""
+                    AND EXISTS (SELECT 1 FROM bids tb WHERE UPPER(tb.tracking_number) LIKE :qTrack
+                                AND (tb.id = p.bid_id OR (p.negotiation_thread_id IS NOT NULL
+                                     AND tb.linked_negotiation_thread_id = p.negotiation_thread_id)))""");
+            params.addValue("qTrack", "%" + query.toUpperCase(Locale.ROOT).replace("%", "").replace("_", "") + "%");
             return;
         }
         // % et _ retirés : la saisie est un nom, pas un motif LIKE.

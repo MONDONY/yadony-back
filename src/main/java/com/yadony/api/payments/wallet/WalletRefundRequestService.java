@@ -192,6 +192,16 @@ public class WalletRefundRequestService {
         return refundRequestRepository.findAllByStatusIn(statuses, sorted);
     }
 
+    /** File admin cherchée (identifiant ou nom de l'utilisateur), plus récentes d'abord. */
+    @Transactional(readOnly = true)
+    public Page<WalletRefundRequestEntity> search(java.util.Collection<WalletRefundRequestStatus> statuses,
+                                                  UUID id, String like, Pageable pageable) {
+        return refundRequestRepository.searchAdmin(
+                statuses.stream().map(Enum::name).toList(),
+                id == null ? null : id.toString(), like,
+                org.springframework.data.domain.PageRequest.of(pageable.getPageNumber(), pageable.getPageSize()));
+    }
+
     @Transactional(readOnly = true)
     public Page<WalletRefundRequestEntity> listPending(Pageable pageable) {
         return refundRequestRepository.findAllByStatusOrderByRequestedAtAsc(
