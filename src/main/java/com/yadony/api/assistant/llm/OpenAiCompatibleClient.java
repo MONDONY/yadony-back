@@ -89,7 +89,21 @@ public class OpenAiCompatibleClient {
     }
 
     public String complete(LlmProviderConfig provider, String system, String user) {
+        return complete(provider, system, user, totalTimeout);
+    }
+
+    /**
+     * Comme {@link #complete(LlmProviderConfig, String, String)} avec un délai total propre à l'appel. Le
+     * délai court dès l'entrée : la résolution DNS de la garde est comptée dedans, le routeur de l'assistant
+     * s'en sert pour tenir son budget de question sous le délai de nginx.
+     */
+    public String complete(LlmProviderConfig provider, String system, String user, Duration timeout) {
+        long startedAt = System.nanoTime();
         guard.check(provider.baseUrl());
+        long remainingMillis = timeout.toMillis() - TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+        if (remainingMillis <= 0) {
+            throw new LlmCallException(LlmCallException.NETWORK, "Délai dépassé");
+        }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", provider.model());
         body.put("messages", List.of(
@@ -123,7 +137,7 @@ public class OpenAiCompatibleClient {
             timer = timeouts.schedule(() -> {
                 timedOut.set(true);
                 request.cancel();
-            }, totalTimeout.toMillis(), TimeUnit.MILLISECONDS);
+            }, remainingMillis, TimeUnit.MILLISECONDS);
             response = execute(request);
         } catch (IOException e) {
             if (timedOut.get()) {
@@ -212,6 +226,10 @@ public class OpenAiCompatibleClient {
     private static CloseableHttpClient buildHttpClient(DnsResolver dnsResolver) {
         PoolingHttpClientConnectionManager connections = PoolingHttpClientConnectionManagerBuilder.create()
                 .setDnsResolver(dnsResolver)
+                // Pool explicite (valeurs par défaut Apache : 5 par route, 25 au total) : 20 questions
+                // simultanées vers un même fournisseur ne doivent pas attendre une connexion libre.
+                .setMaxConnPerRoute(20)
+                .setMaxConnTotal(50)
                 .setDefaultConnectionConfig(ConnectionConfig.custom()
                         .setConnectTimeout(Timeout.ofSeconds(5))
                         .setSocketTimeout(Timeout.ofSeconds(15))

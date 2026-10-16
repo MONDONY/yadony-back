@@ -357,6 +357,39 @@ class OpenAiCompatibleClientTest {
 
     @Test
     @Timeout(15)
+    void surchargeAvecDelaiExplicitEstCoupeeAvantLeDelaiParDefaut() throws Exception {
+        HttpServer s = server(endlessBody(200, 1, 200, new AtomicInteger()));
+        // Délai par défaut long : seul le délai passé à la surcharge peut expliquer l'arrêt rapide.
+        OpenAiCompatibleClient c = client(Duration.ofSeconds(20));
+        Outcome o = timed(() -> c.complete(provider(true, baseUrl(s)), "s", "u", Duration.ofSeconds(1)));
+        assertThat(o.error()).isNotNull();
+        assertThat(o.error().status()).isEqualTo(LlmCallException.NETWORK);
+        assertThat(o.error().getMessage()).isEqualTo("Délai dépassé");
+        assertThat(o.error().getCause()).isNull();
+        assertThat(o.millis()).isLessThan(3000);
+    }
+
+    @Test
+    void delaiDejaEcouleApresLaGardeNeLanceAucunAppel() {
+        ProviderAddressGuard lent = new ProviderAddressGuard(host -> {
+            try {
+                Thread.sleep(150);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return new InetAddress[] {InetAddress.getByAddress(new byte[] {8, 8, 8, 8})};
+        });
+        OpenAiCompatibleClient c = new OpenAiCompatibleClient(lent, PERMISSIVE, Duration.ofSeconds(20));
+        clients.add(c);
+        Outcome o = timed(() -> c.complete(provider(true, "http://127.0.0.1:9/v1"), "s", "u", Duration.ofMillis(100)));
+        assertThat(o.error()).isNotNull();
+        assertThat(o.error().status()).isEqualTo(LlmCallException.NETWORK);
+        assertThat(o.error().getMessage()).isEqualTo("Délai dépassé");
+        assertThat(o.error().getCause()).isNull();
+    }
+
+    @Test
+    @Timeout(15)
     void serveurQuiNeRepondJamaisEstCoupeParLeDelaiTotal() throws Exception {
         HttpServer s = server(ex -> {
             try {
