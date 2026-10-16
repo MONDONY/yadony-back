@@ -11,7 +11,7 @@ import org.springframework.test.context.DynamicPropertySource;
 
 /**
  * Les mêmes scénarios que {@link MaintenanceModeIT}, sur Postgres embarqué avec toutes les
- * migrations Flyway : valide V324 (ligne unique amorcée, index partiel d'exemption).
+ * migrations Flyway : valide V325 (ligne unique amorcée, index partiel d'exemption).
  */
 @SpringBootTest
 @ActiveProfiles("e2e")
