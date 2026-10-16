@@ -20,6 +20,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -146,6 +147,45 @@ class OpenAiCompatibleClientTest {
         assertThat(body.path("temperature").asDouble()).isEqualTo(0.2);
         assertThat(body.path("max_tokens").asInt()).isEqualTo(400);
         assertThat(body.path("response_format").path("type").asText()).isEqualTo("json_object");
+    }
+
+    @Test
+    void openRouterRecoitLaConsigneDeNePasReflechir() {
+        LlmProviderConfig openRouter = new LlmProviderConfig(UUID.randomUUID(), "openrouter",
+                "https://openrouter.ai/api/v1", "nvidia/nemotron-3-super-120b-a12b:free", "sk-or-key", true, null);
+        Map<String, Object> body = OpenAiCompatibleClient.requestBody(openRouter, "s", "u");
+        assertThat(body).containsEntry("reasoning", Map.of("effort", "none"));
+        assertThat(body).containsEntry("max_tokens", 400);
+    }
+
+    @Test
+    void lesAutresFournisseursNeRecoiventPasDeConsigneDeReflexion() {
+        Map<String, Object> body = OpenAiCompatibleClient.requestBody(
+                provider(true, "https://api.groq.com/openai/v1"), "s", "u");
+        assertThat(body).doesNotContainKey("reasoning");
+    }
+
+    @Test
+    void reconnaitOpenRouterParSonHoteExactSeulement() {
+        assertThat(OpenAiCompatibleClient.isOpenRouter("https://openrouter.ai/api/v1")).isTrue();
+        assertThat(OpenAiCompatibleClient.isOpenRouter("https://OpenRouter.AI/api/v1")).isTrue();
+        assertThat(OpenAiCompatibleClient.isOpenRouter("https://eu.openrouter.ai/api/v1")).isTrue();
+        assertThat(OpenAiCompatibleClient.isOpenRouter("https://openrouter.ai.attaquant.com/v1")).isFalse();
+        assertThat(OpenAiCompatibleClient.isOpenRouter("https://faux-openrouter.ai/v1")).isFalse();
+        assertThat(OpenAiCompatibleClient.isOpenRouter("https://api.groq.com/openai/v1")).isFalse();
+        assertThat(OpenAiCompatibleClient.isOpenRouter("pas une url")).isFalse();
+        assertThat(OpenAiCompatibleClient.isOpenRouter(null)).isFalse();
+    }
+
+    @Test
+    void reponseCoupeeParLaLimiteDeTokensEstSignalee() throws Exception {
+        HttpServer s = server(reply(200, "application/json",
+                "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"\"}}]}"));
+        assertThatThrownBy(() -> client().complete(provider(true, baseUrl(s)), "s", "u"))
+                .isInstanceOfSatisfying(LlmCallException.class, e -> {
+                    assertThat(e.status()).isEqualTo(LlmCallException.INVALID_OUTPUT);
+                    assertThat(e.getMessage()).contains("limite de tokens");
+                });
     }
 
     @Test
