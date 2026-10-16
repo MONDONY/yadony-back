@@ -356,6 +356,10 @@ yadony:
     api-secret: ${STREAM_API_SECRET:}
     call-type: audio_call
     delivery-grace-days: 3
+  assistant:
+    enabled: ${ASSISTANT_ENABLED:false}
+    daily-quota: ${ASSISTANT_DAILY_QUOTA:20}
+    min-score: 0.5
   didit:
     base-url: ${DIDIT_BASE_URL:https://verification.didit.me}
     api-key: ${DIDIT_API_KEY:}
