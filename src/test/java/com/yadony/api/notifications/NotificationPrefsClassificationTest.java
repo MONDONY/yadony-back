@@ -32,7 +32,8 @@ class NotificationPrefsClassificationTest {
     private static final Set<String> NOT_NOTIFICATIONS = Set.of(
             "IMAGE",    // type d'un message Firestore (FirestoreService)
             "MMO",      // type de partie pawaPay (PawapayClient)
-            "payments"  // type de ressource d'une réponse admin (AdminPaymentController)
+            "payments", // type de ressource d'une réponse admin (AdminPaymentController)
+            "json_object" // format de réponse JSON d'un fournisseur LLM (OpenAiCompatibleClient)
     );
 
     @Test
