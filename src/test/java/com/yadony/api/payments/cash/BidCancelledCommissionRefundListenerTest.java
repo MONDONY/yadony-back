@@ -5,6 +5,7 @@ import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.events.BidRejectedEvent;
+import com.yadony.api.matching.events.HandoverExpiredEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -112,6 +113,61 @@ class BidCancelledCommissionRefundListenerTest {
         when(bidRepository.findById(bidId)).thenReturn(Optional.empty());
 
         listener.onBidRejected(event());
+
+        verifyNoInteractions(cashCommissionService);
+    }
+
+    // --- FLUTTER-QR : remise espèces jamais confirmée, sans fautif ---
+
+    private HandoverExpiredEvent expired() {
+        return new HandoverExpiredEvent(bidId, announcementId, senderId, travelerId, true);
+    }
+
+    @Test
+    void handoverExpired_walletCommission_recreditedWithDedicatedKey() {
+        BidEntity bid = cashBid(CommissionChargedVia.WALLET);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(announcement()));
+
+        listener.onHandoverExpired(expired());
+
+        verify(cashCommissionService).refundCommissionToWallet(eq(bid), eq(travelerId),
+                eq("wallet-refund-expired-" + bidId));
+        verify(cashCommissionService, never()).refundCommission(any());
+    }
+
+    @Test
+    void handoverExpired_negotiatedBid_walletRefundGoesThroughTheBid() {
+        // Bid matérialisé depuis un fil : la ligne COMMISSION_DEDUCTED porte l'id du fil,
+        // refundCommissionToWallet la retrouve par linkedNegotiationThreadId.
+        BidEntity bid = cashBid(CommissionChargedVia.WALLET);
+        bid.setLinkedNegotiationThreadId(UUID.randomUUID());
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(announcement()));
+
+        listener.onHandoverExpired(expired());
+
+        verify(cashCommissionService).refundCommissionToWallet(bid, travelerId, "wallet-refund-expired-" + bidId);
+    }
+
+    @Test
+    void handoverExpired_cardCommission_refundedOnStripe() {
+        BidEntity bid = cashBid(CommissionChargedVia.CARD);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+
+        listener.onHandoverExpired(expired());
+
+        verify(cashCommissionService).refundCommission(bid);
+        verify(cashCommissionService, never()).refundCommissionToWallet(any(), any(), any());
+    }
+
+    @Test
+    void handoverExpired_walletCommission_missingAnnouncement_noRefund() {
+        BidEntity bid = cashBid(CommissionChargedVia.WALLET);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.empty());
+
+        listener.onHandoverExpired(expired());
 
         verifyNoInteractions(cashCommissionService);
     }

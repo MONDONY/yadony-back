@@ -1,6 +1,7 @@
 package com.yadony.api.matching;
 
 import com.yadony.api.common.AuditService;
+import com.yadony.api.matching.events.HandoverExpiredEvent;
 import com.yadony.api.matching.events.ParcelRefusedEvent;
 import com.yadony.api.matching.events.TripActivityChangedEvent;
 import com.yadony.api.matching.events.VoyageurNoShowEvent;
@@ -26,6 +27,7 @@ import java.util.UUID;
  *   <li>{@link DeliveryConfirmedEvent} — last ACCEPTED bid delivered via QR scan</li>
  *   <li>{@link VoyageurNoShowEvent} — traveler no-showed, bid → NO_SHOW</li>
  *   <li>{@link ParcelRefusedEvent} — traveler refused parcel, bid → PARCEL_REFUSED</li>
+ *   <li>{@link HandoverExpiredEvent} — cash handover never confirmed nor reported, bid → CANCELLED</li>
  * </ul>
  *
  * <p>Rule: a trip is done when no bid on the announcement remains in ACCEPTED status.
@@ -85,6 +87,15 @@ public class AnnouncementCompletionListener {
             return;
         }
         checkAndCompleteIfDone(bidOpt.get().getAnnouncementId(), event.getBidId());
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void onHandoverExpired(HandoverExpiredEvent event) {
+        if (event.announcementId() == null) {
+            return;
+        }
+        checkAndCompleteIfDone(event.announcementId(), event.bidId());
     }
 
     private void checkAndCompleteIfDone(UUID announcementId, UUID triggeringBidId) {

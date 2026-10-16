@@ -7,6 +7,7 @@ import com.yadony.api.cancellation.events.TripCancelledEvent;
 import com.yadony.api.matching.events.BidAwaitingPaymentAbandonedEvent;
 import com.yadony.api.matching.events.BidExpiredOnDepartureEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
+import com.yadony.api.matching.events.HandoverExpiredEvent;
 import com.yadony.api.matching.events.ParcelRefusedEvent;
 import com.yadony.api.matching.events.VoyageurNoShowEvent;
 import com.yadony.api.payments.events.AdminPaymentRefundedEvent;
@@ -39,6 +40,9 @@ import java.util.UUID;
  *   <tr><td>{@link MobileMoneyPaymentExpiredEvent}</td><td>dépôt jamais reçu</td><td>oui</td></tr>
  *   <tr><td>{@link VoyageurNoShowEvent}</td><td>carte/mobile money remboursés ; espèces :
  *       commission du voyageur conservée</td><td>oui hors espèces</td></tr>
+ *   <tr><td>{@link HandoverExpiredEvent} (remise espèces ni confirmée ni signalée, FLUTTER-QR)</td>
+ *       <td>commission du voyageur recréditée ({@code BidCancelledCommissionRefundListener})</td>
+ *       <td>oui</td></tr>
  *   <tr><td>{@link CancellationConfirmedEvent} SENDER_NO_SHOW (confirmation, délai de
  *       contestation, arbitrage admin)</td><td>remboursement intégral sur tous les rails</td>
  *       <td>oui (décision du propriétaire)</td></tr>
@@ -79,6 +83,7 @@ public class PromoReleaseListener {
     static final String REASON_MM_PAYMENT_EXPIRED = "MM_PAYMENT_EXPIRED";
     static final String REASON_TRAVELER_NO_SHOW = "TRAVELER_NO_SHOW";
     static final String REASON_SENDER_NO_SHOW = "SENDER_NO_SHOW";
+    static final String REASON_HANDOVER_EXPIRED = "HANDOVER_EXPIRED";
     static final String REASON_PARCEL_REFUSED = "PARCEL_REFUSED";
     static final String REASON_ADMIN_REFUND = "ADMIN_REFUND";
     static final String REASON_PAYMENT_ABANDONED = "PAYMENT_ABANDONED";
@@ -121,6 +126,12 @@ public class PromoReleaseListener {
             return;
         }
         releaseNow(bidId, REASON_TRAVELER_NO_SHOW);
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onHandoverExpired(HandoverExpiredEvent event) {
+        // Remise espèces jamais confirmée, sans fautif : la commission est rendue au voyageur.
+        release(event.bidId(), REASON_HANDOVER_EXPIRED);
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)

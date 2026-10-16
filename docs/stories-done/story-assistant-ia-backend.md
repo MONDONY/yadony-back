@@ -22,7 +22,9 @@ Paquet `assistant.kb` :
 - `KnowledgeBase`, `AssistantAnalyzers`, `KbCorpus`, `KbArticle`, `KbRoute`, `KbHit` — index Lucene en mémoire FR/EN (accents pliés), recherche avec relance courte, seuil `min-score`, liste blanche des routes.
 
 Paquet `assistant.llm` :
-- `OpenAiCompatibleClient` — seul chemin sortant vers un fournisseur (frontière anti-SSRF, voir Pièges).
+- `OpenAiCompatibleClient` — chemin sortant vers les fournisseurs compatibles OpenAI (frontière anti-SSRF, voir Pièges).
+- `AnthropicMessagesClient` — appel natif de Claude par le SDK officiel `com.anthropic:anthropic-java`, adresse figée sur `https://api.anthropic.com` (voir « Fournisseur Claude »).
+- `LlmClients` — aiguillage : hôte exactement `api.anthropic.com` (https) → `AnthropicMessagesClient`, sinon `OpenAiCompatibleClient`. Utilisé par `LlmRouter` et le bouton « Tester » de l'admin.
 - `ProviderAddressGuard` — refuse toute adresse non publique, branché comme résolveur DNS de la connexion.
 - `LlmRouter` — essaie les fournisseurs par priorité, 3 essais au plus, budget de 25 s par question.
 - `ProviderHealthRegistry` — compteurs du jour, limite atomique (`tryAcquire`), mises de côté, `reset`.
@@ -79,7 +81,7 @@ Ressources :
 Aucun. Le paquet `assistant` n'injecte aucun service d'un autre paquet métier (il utilise `common` : audit, exceptions, chiffrement).
 
 ### Pièges et points d'attention
-- **Frontière anti-SSRF** : tout appel sortant passe par `OpenAiCompatibleClient`. Il ne faut ni ajouter un second client, ni réactiver redirections, relances automatiques, compression ou proxy système, ni sortir du résolveur DNS gardé (il ferme le rebinding DNS). Corps lu borné à 64 Kio, délai total par appel (20 s au plus), connexion jetée sans vider le corps.
+- **Frontière anti-SSRF** : tout appel vers une adresse saisie dans l'admin passe par `OpenAiCompatibleClient` (le client Claude n'appelle que `https://api.anthropic.com`, adresse codée en dur). Il ne faut ni ajouter un second client, ni réactiver redirections, relances automatiques, compression ou proxy système, ni sortir du résolveur DNS gardé (il ferme le rebinding DNS). Corps lu borné à 64 Kio, délai total par appel (20 s au plus), connexion jetée sans vider le corps.
 - **Budget de 25 s par question** : nginx coupe `/api/v1/` à 30 s. Ne pas allonger les délais sans relire `nginx/nginx.conf`.
 - **Ne jamais passer `org.apache.hc` en DEBUG** : ses journaux afficheraient l'en-tête `Authorization` (clé du fournisseur).
 - **Quota et santé en mémoire, par instance** : remis à zéro à chaque redémarrage ; en multi-instances la limite réelle est multipliée.
@@ -87,6 +89,18 @@ Aucun. Le paquet `assistant` n'injecte aucun service d'un autre paquet métier (
 - **Chargement depuis le jar** : les tests lisent les fiches depuis un dossier ; vérifier au premier déploiement staging que le back démarre et que l'index contient 84 fiches par langue.
 - **Seuil de pertinence `min-score` = 6,5** : score BM25 brut, calibré sur les vraies fiches par `KnowledgeBaseFichesTest` (questions réelles 16 à 30, mots seuls 8,7 à 13). Quelques hors-sujet passent encore (6,9 à 11,6) et des mots isolés très courts (« kyc », « password », « mon colis ») tombent en « non trouvé ». Le seuil dépend de la taille du corpus : recalibrer et mettre à jour le test quand le nombre de fiches change beaucoup.
 - **Tests admin** : certains tests valident de vraies transactions et nettoient en SQL dans `@AfterEach`.
+
+## Fournisseur Claude (Anthropic natif)
+
+- **Reconnaissance** : un fournisseur est « Anthropic » si et seulement si l'hôte de son adresse est exactement `api.anthropic.com` en https (port absent ou 443). Pas de colonne ni de migration. `https://api.anthropic.com` et `https://api.anthropic.com/v1` sont acceptés par `BaseUrlValidator` et désignent le même fournisseur.
+- **Anti-SSRF** : le SDK appelle toujours `https://api.anthropic.com`, jamais l'adresse saisie (qui sert seulement à reconnaître le fournisseur). Aucune adresse choisie par un admin n'est appelée sur ce chemin : `ProviderAddressGuard` y est sans objet. Une adresse comme `https://api.anthropic.com.evil.com` n'est pas reconnue et part par le client OpenAI, donc par la garde.
+- **Requête** (configuration rapide, Claude Haiku 5.5) : `model` = modèle saisi, `system` = prompt système, un message `user`, `max_tokens` 1024, `thinking: {type: "disabled"}`, `output_config.effort: "low"`, pas de `temperature` (refusée par les modèles Claude récents en dehors de la valeur par défaut). Relances du SDK à 0 (le routeur bascule lui-même), délai borné par le budget restant du routeur et 20 s au plus.
+- **Modèle libre** : aucune liste blanche. Sur un 400 dont le message porte sur `thinking`, `effort`/`output_config` ou `temperature`, l'appel est refait UNE fois dans le délai restant : sans `thinking` (réflexion par défaut du modèle) avec effort `low` si seul `thinking` est en cause (Claude Opus 5.5, Claude Sonnet 5.5), sans `thinking` ni effort sinon (Claude Haiku 4.5) ; `max_tokens` 2048 pour laisser la place à la réflexion. La variante acceptée est retenue en mémoire par nom de modèle (64 au plus, vidée au redémarrage). Tout autre 400 (requête, clé) est un échec normal, sans second essai ; un modèle inconnu revient en 404.
+- **Erreurs** : statut HTTP réel (429 et 401/403 mettent le fournisseur de côté comme pour les autres), `NETWORK` pour réseau et délai, `INVALID_OUTPUT` pour une réponse sans texte (dont `max_tokens` atteint pendant la réflexion) ou `stop_reason: refusal`. Ni la clé ni le corps de la réponse dans les messages d'exception ou les journaux. Clé vide : 401 sans appel (jamais de repli sur une variable d'environnement).
+- **Une instance du SDK par fournisseur**, réutilisée tant que la clé ne change pas (empreinte SHA-256), fermée à l'arrêt.
+- **Ne jamais passer `com.anthropic` ni `okhttp3` en DEBUG, ni définir `ANTHROPIC_LOG`** : les journaux du SDK pourraient afficher les en-têtes (clé `x-api-key`).
+- **Admin** : Nom `Claude`, Adresse `https://api.anthropic.com`, Modèle `claude-haiku-5-5`, Clé `sk-ant-…`. Payant : 0,10 $/M jetons en entrée, 0,50 $/M en sortie. Pour passer à un modèle moins cher : Modifier → Modèle → Tester.
+- Tests : `AnthropicMessagesClientTest` (serveur HTTP local via le constructeur de test), `LlmClientsTest`, `BaseUrlValidatorTest`.
 
 ## Route de statut
 `GET /assistant/status` répond `200 {"enabled": true|false}` (reflet de `yadony.assistant.enabled`), pour que l'app cache sa bulle au démarrage quand l'assistant est éteint. Contrairement à `/assistant/ask`, elle répond 200 `{"enabled": false}` et jamais 404 : l'app lit un 404 comme « back ancien » (route absente) et garde alors la bulle cachée. Accès identique à `/ask` via la règle `anyRequest` de `SecurityConfig` (`authenticatedNonGuest()`) : 401 sans jeton, 403 pour un invité. Aucun appel au fournisseur, aucun décompte de quota, aucune écriture. Tests : `AssistantStatusIntegrationTest`, `AssistantControllerDisabledIntegrationTest`.

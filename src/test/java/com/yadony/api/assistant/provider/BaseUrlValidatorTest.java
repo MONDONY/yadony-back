@@ -30,6 +30,14 @@ class BaseUrlValidatorTest {
         assertThatThrownBy(() -> BaseUrlValidator.normalize(url)).isInstanceOf(IllegalArgumentException.class);
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"https://api.anthropic.com", "https://api.anthropic.com/", "https://api.anthropic.com/v1"})
+    void accepteLAdresseDAnthropic(String url) {
+        String normalized = BaseUrlValidator.normalize(url);
+        assertThat(normalized).startsWith("https://api.anthropic.com").doesNotEndWith("/");
+        assertThat(com.yadony.api.assistant.llm.LlmClients.isAnthropic(normalized)).isTrue();
+    }
+
     @Test
     void accepteLePort443() {
         assertThat(BaseUrlValidator.normalize("https://api.groq.com:443/openai/v1"))

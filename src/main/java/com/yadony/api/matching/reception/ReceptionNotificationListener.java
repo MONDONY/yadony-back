@@ -7,6 +7,7 @@ import com.yadony.api.matching.events.ArrivalInstructionsUpdatedEvent;
 import com.yadony.api.matching.events.BidRecipientChangedEvent;
 import com.yadony.api.matching.events.RecipientReplacementRequestedEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
+import com.yadony.api.matching.events.HandoverExpiredEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.matching.events.TripRescheduledEvent;
 import com.yadony.api.notifications.NotificationDispatcher;
@@ -123,6 +124,16 @@ public class ReceptionNotificationListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onBidRejected(BidRejectedEvent event) {
         notifyCancelled(event.getBidId());
+    }
+
+    /**
+     * Remise espèces ni confirmée ni signalée à l'échéance (FLUTTER-QR) : le colis est
+     * annulé sans fautif, il ne partira pas.
+     */
+    @Async
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onHandoverExpired(HandoverExpiredEvent event) {
+        notifyCancelled(event.bidId());
     }
 
     /** Absence de l'expéditeur à la remise confirmée : le colis ne partira pas. */

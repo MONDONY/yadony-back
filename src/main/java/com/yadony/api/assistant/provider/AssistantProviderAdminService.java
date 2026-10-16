@@ -1,8 +1,8 @@
 package com.yadony.api.assistant.provider;
 
 import com.yadony.api.assistant.llm.LlmCallException;
+import com.yadony.api.assistant.llm.LlmClients;
 import com.yadony.api.assistant.llm.LlmProviderConfig;
-import com.yadony.api.assistant.llm.OpenAiCompatibleClient;
 import com.yadony.api.assistant.llm.ProviderHealthRegistry;
 import com.yadony.api.assistant.provider.dto.AdminProviderResponse;
 import com.yadony.api.assistant.provider.dto.AdminProviderStats;
@@ -39,11 +39,11 @@ public class AssistantProviderAdminService {
     private final AssistantLlmProviderRepository repository;
     private final ProviderCatalog catalog;
     private final ProviderHealthRegistry health;
-    private final OpenAiCompatibleClient client;
+    private final LlmClients client;
     private final AuditService auditService;
 
     public AssistantProviderAdminService(AssistantLlmProviderRepository repository, ProviderCatalog catalog,
-                                         ProviderHealthRegistry health, OpenAiCompatibleClient client,
+                                         ProviderHealthRegistry health, LlmClients client,
                                          AuditService auditService) {
         this.repository = repository;
         this.catalog = catalog;

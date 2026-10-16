@@ -288,6 +288,14 @@ class ReceptionNotificationListenerTest {
     }
 
     @Test
+    void handoverExpired_notifiesConfirmedRecipient() {
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.CONFIRMED)));
+        listener.onHandoverExpired(new com.yadony.api.matching.events.HandoverExpiredEvent(
+                bidId, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), true));
+        verifyCancelledPush();
+    }
+
+    @Test
     void senderNoShowConfirmed_declinedRecipient_getsNothing() {
         when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.DECLINED)));
         listener.onCancellationConfirmed(new CancellationConfirmedEvent(bidId, UUID.randomUUID(),
