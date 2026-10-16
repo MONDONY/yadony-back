@@ -69,9 +69,34 @@ class KnowledgeBaseSearchTest {
     }
 
     @Test
-    void relanceCourteUtiliseLaQuestionPrecedente() {
-        List<String> found = ids(kb.search("fr", "et pour l'annuler ?", "comment proposer un trajet", 4));
-        assertThat(found).contains("annuler-trajet", "proposer-trajet");
+    void relanceCourteTrouveLeTermeSeulementDansLaQuestionPrecedente() {
+        // « portable » n'existe que dans la question précédente : sans elle, rien ne doit remonter.
+        List<KbHit> hits = kb.search("fr", "et pour ça ?", "mon portable", 4);
+        assertThat(ids(hits)).first().isEqualTo("changer-numero");
+        assertThat(hits.get(0).score()).isPositive();
+        assertThat(kb.search("fr", "et pour ça ?", null, 4)).isEmpty();
+    }
+
+    @Test
+    void questionCourantePrimeSurLaQuestionPrecedente() {
+        // « annuler » (question courante, poids 1) doit battre « numéro portable » (précédente, poids 0.5).
+        List<String> found = ids(kb.search("fr", "annuler", "numéro portable", 4));
+        assertThat(found).contains("annuler-trajet", "changer-numero");
+        assertThat(found.indexOf("annuler-trajet")).isLessThan(found.indexOf("changer-numero"));
+    }
+
+    @Test
+    void limiteNulleOuNegativeRetourneVide() {
+        assertThat(kb.search("fr", "trajet", null, 0)).isEmpty();
+        assertThat(kb.search("fr", "trajet", null, -1)).isEmpty();
+    }
+
+    @Test
+    void anglaisIgnoreLesAccents() {
+        KnowledgeBase cafe = new KnowledgeBase(new KbCorpus(Map.of("en", List.of(
+                new KbArticle("en", "cafe-ouvert", "Café opening hours", List.of("café"), List.of(),
+                        "The café is open every day.")))), 0.0);
+        assertThat(ids(cafe.search("en", "cafe", null, 4))).first().isEqualTo("cafe-ouvert");
     }
 
     @Test

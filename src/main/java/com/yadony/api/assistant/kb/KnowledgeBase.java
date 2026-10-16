@@ -63,6 +63,9 @@ public class KnowledgeBase {
     }
 
     public List<KbHit> search(String locale, String question, String previousQuestion, int limit) {
+        if (limit <= 0) {
+            return List.of();
+        }
         Index index = indexes.getOrDefault(locale, indexes.get("fr"));
         BooleanQuery.Builder query = new BooleanQuery.Builder();
         int clauses = addTerms(query, index.analyzer(), question, 1f);
@@ -77,7 +80,8 @@ public class KnowledgeBase {
             List<KbHit> hits = new ArrayList<>();
             for (ScoreDoc d : docs) {
                 if (d.score < minScore) continue;
-                hits.add(new KbHit(index.articles().get(d.doc), d.score));
+                String id = index.searcher().storedFields().document(d.doc).get("id");
+                hits.add(new KbHit(index.byId().get(id), d.score));
             }
             return hits;
         } catch (IOException e) {
@@ -123,12 +127,17 @@ public class KnowledgeBase {
                     writer.addDocument(doc);
                 }
             }
-            return new Index(analyzer, new IndexSearcher(DirectoryReader.open(dir)), List.copyOf(articles));
+            Map<String, KbArticle> byId = new HashMap<>();
+            for (KbArticle a : articles) {
+                byId.put(a.id(), a);
+            }
+            return new Index(analyzer, new IndexSearcher(DirectoryReader.open(dir)), List.copyOf(articles), Map.copyOf(byId));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
     }
 
-    private record Index(Analyzer analyzer, IndexSearcher searcher, List<KbArticle> articles) {
+    /** Le champ stocké « id » relie chaque document Lucene à sa fiche : pas d'hypothèse sur l'ordre interne. */
+    private record Index(Analyzer analyzer, IndexSearcher searcher, List<KbArticle> articles, Map<String, KbArticle> byId) {
     }
 }
