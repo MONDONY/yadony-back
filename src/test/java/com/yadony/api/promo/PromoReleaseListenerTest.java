@@ -6,6 +6,7 @@ import com.yadony.api.cancellation.events.TripCancelledEvent;
 import com.yadony.api.matching.events.BidAwaitingPaymentAbandonedEvent;
 import com.yadony.api.matching.events.BidExpiredOnDepartureEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
+import com.yadony.api.matching.events.HandoverExpiredEvent;
 import com.yadony.api.matching.events.ParcelRefusedEvent;
 import com.yadony.api.matching.events.VoyageurNoShowEvent;
 import com.yadony.api.payments.events.AdminPaymentRefundedEvent;
@@ -249,6 +250,29 @@ class PromoReleaseListenerTest {
             listener.onTripCancelled(new TripCancelledEvent(UUID.randomUUID(), travelerId, List.of(), "x", null));
 
             verifyNoInteractions(promoService, redemptionRepository);
+        }
+    }
+
+    @Nested
+    @DisplayName("HandoverExpiredEvent — remise espèces jamais confirmée (FLUTTER-QR)")
+    class HandoverExpired {
+
+        @Test
+        void releases_since_commission_is_refunded() {
+            withActiveRedemption(bidId);
+
+            listener.onHandoverExpired(new HandoverExpiredEvent(bidId, UUID.randomUUID(), senderId, travelerId, true));
+
+            verify(promoService).releaseForBid(bidId, PromoReleaseListener.REASON_HANDOVER_EXPIRED);
+        }
+
+        @Test
+        void no_redemption_releases_nothing() {
+            withoutRedemption(bidId);
+
+            listener.onHandoverExpired(new HandoverExpiredEvent(bidId, UUID.randomUUID(), senderId, travelerId, true));
+
+            verifyNoInteractions(promoService);
         }
     }
 

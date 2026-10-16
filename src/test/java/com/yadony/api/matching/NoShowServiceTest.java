@@ -3,7 +3,11 @@ package com.yadony.api.matching;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.matching.events.HandoverExpiredEvent;
 import com.yadony.api.matching.events.VoyageurNoShowEvent;
+import com.yadony.api.payments.cash.CommissionChargedVia;
+import com.yadony.api.payments.cash.CommissionStatus;
+import com.yadony.api.payments.cash.PaymentMethod;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -145,6 +149,113 @@ class NoShowServiceTest {
 
         assertThat(bid.getStatus()).isEqualTo(BidStatus.NO_SHOW);
         verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    // ─── FLUTTER-QR : remise espèces ni confirmée ni signalée ────────────────────
+
+    private void cashBid(CommissionStatus commissionStatus) {
+        bid.setPaymentMethod(PaymentMethod.CASH);
+        bid.setCommissionStatus(commissionStatus);
+        bid.setCommissionChargedVia(CommissionChargedVia.WALLET);
+    }
+
+    @Test
+    @DisplayName("espèces ACCEPTED → CANCELLED sans fautif, aucun compteur, événement dédié, audit")
+    void expireUnconfirmedCashHandover_cancelsWithoutBlame() {
+        cashBid(CommissionStatus.CHARGED);
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+        boolean expired = service.expireUnconfirmedCashHandover(BID_ID);
+
+        assertThat(expired).isTrue();
+        verify(bidRepository).lockForUpdate(BID_ID);
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
+        assertThat(bid.getCancelledFromStatus()).isEqualTo(BidStatus.ACCEPTED);
+        assertThat(bid.getCancelledAt()).isNotNull();
+        assertThat(bid.getNoShowAt()).isNull();
+        assertThat(bid.getRejectionReason()).isEqualTo(NoShowService.HANDOVER_NOT_CONFIRMED_REASON);
+        verify(bidRepository).save(bid);
+        verify(userRepository, never()).save(any());
+        verify(userRepository, never()).findById(any());
+
+        ArgumentCaptor<Object> events = ArgumentCaptor.forClass(Object.class);
+        verify(eventPublisher).publishEvent(events.capture());
+        assertThat(events.getAllValues()).noneMatch(e -> e instanceof VoyageurNoShowEvent);
+        assertThat(events.getValue()).isEqualTo(new HandoverExpiredEvent(
+                BID_ID, ANNOUNCEMENT_ID, SENDER_ID, TRAVELER_ID, true));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).log(eq("BID"), eq(BID_ID), eq("BID_HANDOVER_EXPIRED"), isNull(), payload.capture());
+        assertThat(payload.getValue())
+                .containsEntry("source", "scheduler")
+                .containsEntry("reason", "HANDOVER_NOT_CONFIRMED")
+                .containsEntry("commissionStatus", "CHARGED")
+                .containsEntry("commissionChargedVia", "WALLET");
+    }
+
+    @Test
+    @DisplayName("espèces sans commission prélevée → annulé, événement sans remboursement attendu")
+    void expireUnconfirmedCashHandover_commissionNotCharged() {
+        cashBid(CommissionStatus.PENDING);
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+        service.expireUnconfirmedCashHandover(BID_ID);
+
+        verify(eventPublisher).publishEvent(new HandoverExpiredEvent(
+                BID_ID, ANNOUNCEMENT_ID, SENDER_ID, TRAVELER_ID, false));
+    }
+
+    @Test
+    @DisplayName("trajet introuvable → annulé quand même, voyageur inconnu dans l'événement")
+    void expireUnconfirmedCashHandover_announcementMissing() {
+        cashBid(CommissionStatus.CHARGED);
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.empty());
+
+        assertThat(service.expireUnconfirmedCashHandover(BID_ID)).isTrue();
+
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
+        verify(eventPublisher).publishEvent(new HandoverExpiredEvent(
+                BID_ID, ANNOUNCEMENT_ID, SENDER_ID, null, true));
+    }
+
+    @Test
+    @DisplayName("colis non espèces → aucun effet (le no-show voyageur reste le chemin)")
+    void expireUnconfirmedCashHandover_nonCash_noOp() {
+        bid.setPaymentMethod(PaymentMethod.STRIPE);
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+
+        assertThat(service.expireUnconfirmedCashHandover(BID_ID)).isFalse();
+
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
+        verify(bidRepository, never()).save(any());
+        verifyNoInteractions(eventPublisher, auditService);
+    }
+
+    @Test
+    @DisplayName("colis plus ACCEPTED (signalement ou scan concurrent) → aucun effet")
+    void expireUnconfirmedCashHandover_notAccepted_noOp() throws Exception {
+        cashBid(CommissionStatus.CHARGED);
+        setField(bid, "status", BidStatus.HANDED_OVER);
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+
+        assertThat(service.expireUnconfirmedCashHandover(BID_ID)).isFalse();
+
+        verify(bidRepository, never()).save(any());
+        verifyNoInteractions(eventPublisher, auditService);
+    }
+
+    @Test
+    @DisplayName("colis introuvable → aucun effet")
+    void expireUnconfirmedCashHandover_bidNotFound_noOp() {
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.empty());
+
+        assertThat(service.expireUnconfirmedCashHandover(BID_ID)).isFalse();
+
+        verifyNoInteractions(eventPublisher, auditService);
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────────────

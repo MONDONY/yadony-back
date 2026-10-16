@@ -1,6 +1,7 @@
 package com.yadony.api.matching;
 
 import com.yadony.api.common.AuditService;
+import com.yadony.api.matching.events.HandoverExpiredEvent;
 import com.yadony.api.matching.events.ParcelRefusedEvent;
 import com.yadony.api.matching.events.TripActivityChangedEvent;
 import com.yadony.api.matching.events.VoyageurNoShowEvent;
@@ -258,6 +259,31 @@ class AnnouncementCompletionListenerTest {
 
         verify(announcementRepository, never()).save(any());
         verify(auditService, never()).log(any(), any(), any(), any(), any());
+    }
+
+    // ── HandoverExpiredEvent (FLUTTER-QR) ────────────────────────────────────
+
+    @Test
+    @DisplayName("remise espèces expirée sur le dernier colis en cours → annonce COMPLETED")
+    void handoverExpired_lastBid_completesAnnouncement() {
+        AnnouncementEntity ann = announcement(AnnouncementStatus.IN_PROGRESS);
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(ann));
+        when(bidRepository.existsByAnnouncementIdAndStatusIn(announcementId,
+                List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED)))
+                .thenReturn(false);
+
+        listener.onHandoverExpired(new HandoverExpiredEvent(bidId, announcementId, UUID.randomUUID(), null, true));
+
+        assertThat(ann.getStatus()).isEqualTo(AnnouncementStatus.COMPLETED);
+        verify(announcementRepository).save(ann);
+    }
+
+    @Test
+    @DisplayName("remise espèces expirée sans trajet connu → rien")
+    void handoverExpired_withoutAnnouncement_noOp() {
+        listener.onHandoverExpired(new HandoverExpiredEvent(bidId, null, UUID.randomUUID(), null, true));
+
+        verify(announcementRepository, never()).findById(any());
     }
 
     // ── VoyageurNoShowEvent ──────────────────────────────────────────────────

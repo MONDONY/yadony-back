@@ -216,7 +216,7 @@ class CancellationNoShowTest {
 
         @Test
         void failsBeforeHandoverDeadline() {
-            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now().plusHours(2));
+            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now().plusHours(6));
             when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
 
             assertThatThrownBy(() -> service.reportSenderNoShow(BID_ID, TRAVELER_ID))

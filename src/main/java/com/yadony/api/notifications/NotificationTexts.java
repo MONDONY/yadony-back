@@ -197,6 +197,19 @@ public final class NotificationTexts {
                 m.get("notification.handover-deadline-passed.refunded-body"));
     }
 
+    /**
+     * Remise d'un colis espèces ni scannée ni signalée à l'échéance (FLUTTER-QR) : colis
+     * annulé sans fautif. Texte neutre, n'accuse aucune des deux parties.
+     *
+     * @param commissionRefunded variante voyageur dont la commission prélevée est rendue
+     */
+    public static NotificationText handoverExpired(Messages m, boolean commissionRefunded) {
+        return new NotificationText(m.get("notification.handover-expired.title"),
+                m.get(commissionRefunded
+                        ? "notification.handover-expired.commission-refunded-body"
+                        : "notification.handover-expired.body"));
+    }
+
     public static NotificationText parcelRefused(Messages m, String reason) {
         String motif = reason == null || reason.isBlank()
                 ? m.get("notification.parcel-refused.default-reason")

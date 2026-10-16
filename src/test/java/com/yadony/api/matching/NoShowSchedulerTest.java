@@ -1,5 +1,6 @@
 package com.yadony.api.matching;
 
+import com.yadony.api.payments.cash.PaymentMethod;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -158,6 +159,40 @@ class NoShowSchedulerTest {
             scheduler.detectNoShows();
 
             verify(noShowService, never()).recordTravelerNoShow(any(), any());
+        }
+
+        @Test
+        @DisplayName("FLUTTER-QR : colis espèces → annulé sans fautif, jamais de no-show voyageur")
+        void detectNoShows_cashBid_expiresWithoutBlame() throws Exception {
+            bid.setPaymentMethod(PaymentMethod.CASH);
+            BidEntity card = new BidEntity();
+            UUID cardId = UUID.randomUUID();
+            setId(card, cardId);
+            setField(card, "status", BidStatus.ACCEPTED);
+            when(bidRepository.findNoShowBids(any())).thenReturn(List.of(bid, card));
+
+            scheduler.detectNoShows();
+
+            verify(noShowService).expireUnconfirmedCashHandover(BID_ID);
+            verify(noShowService, never()).recordTravelerNoShow(eq(BID_ID), any());
+            verify(noShowService).recordTravelerNoShow(cardId, "scheduler");
+            verify(noShowService, never()).expireUnconfirmedCashHandover(cardId);
+        }
+
+        @Test
+        @DisplayName("FLUTTER-QR : échec sur un colis espèces → les suivants sont traités")
+        void detectNoShows_cashBidFailure_doesNotAbort() throws Exception {
+            bid.setPaymentMethod(PaymentMethod.CASH);
+            BidEntity bid2 = new BidEntity();
+            UUID bid2Id = UUID.randomUUID();
+            setId(bid2, bid2Id);
+            setField(bid2, "status", BidStatus.ACCEPTED);
+            when(bidRepository.findNoShowBids(any())).thenReturn(List.of(bid, bid2));
+            doThrow(new RuntimeException("db error")).when(noShowService).expireUnconfirmedCashHandover(BID_ID);
+
+            scheduler.detectNoShows();
+
+            verify(noShowService).recordTravelerNoShow(bid2Id, "scheduler");
         }
 
         @Test

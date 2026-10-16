@@ -9,7 +9,11 @@ import com.yadony.api.cancellation.CancellationRepository;
 import com.yadony.api.cancellation.CancellationScope;
 import com.yadony.api.cancellation.CancellationStatus;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.matching.events.HandoverExpiredEvent;
 import com.yadony.api.matching.events.VoyageurNoShowEvent;
+import com.yadony.api.payments.cash.CommissionChargedVia;
+import com.yadony.api.payments.cash.CommissionStatus;
+import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.tracking.TrackingEventEntity;
 import com.yadony.api.tracking.TrackingEventType;
 import org.junit.jupiter.api.DisplayName;
@@ -151,6 +155,64 @@ class NoShowSchedulerSenderNoShowConflictTest {
         assertTravelerNotPenalized(f);
     }
 
+    // ─── FLUTTER-QR : espèces, pas de fautif automatique ─────────────────────────
+
+    @Test
+    void especesSansSignalement_colisAnnuleSansFautif() {
+        Fixture f = acceptedBidPastDeadline(PaymentMethod.CASH);
+
+        scheduler.detectNoShows();
+        em.flush();
+        em.clear();
+
+        BidEntity reloaded = bidRepository.findById(f.bid.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(BidStatus.CANCELLED);
+        assertThat(reloaded.getCancelledFromStatus()).isEqualTo(BidStatus.ACCEPTED);
+        assertThat(reloaded.getNoShowAt()).isNull();
+        assertThat(reloaded.getRejectionReason()).isEqualTo(NoShowService.HANDOVER_NOT_CONFIRMED_REASON);
+        assertThat(userRepository.findById(f.traveler.getId()).orElseThrow().getNoShowCount()).isZero();
+        assertThat(events.stream(VoyageurNoShowEvent.class)).isEmpty();
+        assertThat(events.stream(HandoverExpiredEvent.class)).containsExactly(new HandoverExpiredEvent(
+                f.bid.getId(), f.bid.getAnnouncementId(), f.bid.getSenderId(), f.traveler.getId(), true));
+    }
+
+    @Test
+    void especesAvecDeclarationEnAttente_leCronNeTouchePasAuColis() {
+        Fixture f = acceptedBidPastDeadline(PaymentMethod.CASH);
+        reportSenderNoShow(f.bid, CancellationStatus.PENDING_CONFIRMATION);
+
+        scheduler.detectNoShows();
+
+        assertTravelerNotPenalized(f);
+        assertThat(events.stream(HandoverExpiredEvent.class)).isEmpty();
+    }
+
+    @Test
+    void especesAvecDeclarationContestee_leCronNeTouchePasAuColis() {
+        Fixture f = acceptedBidPastDeadline(PaymentMethod.CASH);
+        reportSenderNoShow(f.bid, CancellationStatus.CONTESTED);
+
+        scheduler.detectNoShows();
+
+        assertTravelerNotPenalized(f);
+        assertThat(events.stream(HandoverExpiredEvent.class)).isEmpty();
+    }
+
+    @Test
+    void especesDejaRemis_leCronNeFaitRien() {
+        Fixture f = acceptedBidPastDeadline(PaymentMethod.CASH);
+        TrackingEventEntity depart = new TrackingEventEntity();
+        depart.setBidId(f.bid.getId());
+        depart.setEventType(TrackingEventType.DEPART);
+        depart.setScannedAt(LocalDateTime.now(ZoneOffset.UTC).minusHours(4));
+        em.persistAndFlush(depart);
+
+        scheduler.detectNoShows();
+
+        assertTravelerNotPenalized(f);
+        assertThat(events.stream(HandoverExpiredEvent.class)).isEmpty();
+    }
+
     private void assertTravelerNotPenalized(Fixture f) {
         em.flush();
         em.clear();
@@ -175,6 +237,10 @@ class NoShowSchedulerSenderNoShowConflictTest {
     }
 
     private Fixture acceptedBidPastDeadline() {
+        return acceptedBidPastDeadline(PaymentMethod.STRIPE);
+    }
+
+    private Fixture acceptedBidPastDeadline(PaymentMethod paymentMethod) {
         UserEntity traveler = new UserEntity();
         traveler.setFirebaseUid("uid-" + UUID.randomUUID());
         traveler.setUsername("trav-" + UUID.randomUUID().toString().substring(0, 12));
@@ -205,6 +271,11 @@ class NoShowSchedulerSenderNoShowConflictTest {
         bid.setSenderId(UUID.randomUUID());
         bid.setWeightKg(new BigDecimal("5.0"));
         bid.setStatus(BidStatus.ACCEPTED);
+        bid.setPaymentMethod(paymentMethod);
+        if (paymentMethod == PaymentMethod.CASH) {
+            bid.setCommissionStatus(CommissionStatus.CHARGED);
+            bid.setCommissionChargedVia(CommissionChargedVia.WALLET);
+        }
         // Échéance de remise dépassée de 3 h (> 1 h de grâce du cron).
         bid.setHandoverDeadline(LocalDateTime.now(ZoneOffset.UTC).minusHours(3));
         bid = bidRepository.saveAndFlush(bid);
