@@ -4,6 +4,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.MessagingMediaRetentionHold;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.media.PhotoPurgeOutcome;
+import com.yadony.api.common.media.RecordingTransactionManager;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
@@ -15,6 +16,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -34,11 +36,12 @@ class TrackingPhotoPurgeParticipantTest {
 
     static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 10, 10, 0);
     final UUID bidId = UUID.randomUUID();
+    final RecordingTransactionManager txm = new RecordingTransactionManager();
     TrackingPhotoPurgeParticipant participant;
 
     @BeforeEach
     void setUp() {
-        participant = new TrackingPhotoPurgeParticipant(events, bids, storage, audit, List.of(hold));
+        participant = new TrackingPhotoPurgeParticipant(events, bids, storage, audit, List.of(hold), txm);
         lenient().when(events.findBidIdsWithLivePhotos()).thenReturn(List.of(bidId));
     }
 
@@ -139,5 +142,65 @@ class TrackingPhotoPurgeParticipantTest {
 
         verifyNoInteractions(storage);
         assertThat(e.getPhotoUrl()).isNull();
+    }
+
+    @Test
+    void appelsR2_horsTransaction_marquageEtAuditEnTransactionCourte() {
+        when(bids.findById(bidId)).thenReturn(Optional.of(completedDaysAgo(8)));
+        TrackingEventEntity a = photo("tracking/" + bidId + "/a.jpg");
+        TrackingEventEntity b = photo("tracking/" + bidId + "/b.jpg");
+        when(events.findLivePhotosByBidId(bidId)).thenReturn(List.of(a, b));
+        List<Boolean> txPendantR2 = new ArrayList<>();
+        List<Boolean> txPendantEcriture = new ArrayList<>();
+        doAnswer(inv -> txPendantR2.add(RecordingTransactionManager.active())).when(storage).deleteFile(any());
+        when(events.save(any())).thenAnswer(inv -> {
+            txPendantEcriture.add(RecordingTransactionManager.active());
+            return inv.getArgument(0);
+        });
+        doAnswer(inv -> txPendantEcriture.add(RecordingTransactionManager.active()))
+                .when(audit).log(any(), any(), any(), any(), anyMap());
+
+        assertThat(participant.purgeDue(7, false, 500, NOW)).isEqualTo(new PhotoPurgeOutcome(2, 2, 0));
+
+        assertThat(txPendantR2).containsExactly(false, false);
+        assertThat(txPendantEcriture).containsExactly(true, true, true);
+        assertThat(txm.begun()).isEqualTo(1);
+    }
+
+    @Test
+    void echecPartielR2_marqueSeulementLesPhotosSupprimees() {
+        when(bids.findById(bidId)).thenReturn(Optional.of(completedDaysAgo(8)));
+        TrackingEventEntity bad = photo("tracking/" + bidId + "/bad.jpg");
+        TrackingEventEntity ok = photo("tracking/" + bidId + "/ok.jpg");
+        when(events.findLivePhotosByBidId(bidId)).thenReturn(List.of(bad, ok));
+        doThrow(new RuntimeException("503")).when(storage).deleteFile("tracking/" + bidId + "/bad.jpg");
+
+        assertThat(participant.purgeDue(7, false, 500, NOW)).isEqualTo(new PhotoPurgeOutcome(2, 1, 1));
+        assertThat(bad.getPhotoUrl()).isNotNull();
+        assertThat(ok.getPhotoUrl()).isNull();
+        verify(events, never()).save(bad);
+        verify(audit).log("bid", bidId, "TRACKING_PHOTOS_PURGED", null,
+                java.util.Map.of("count", 1, "reason", "RETENTION_EXPIRED"));
+    }
+
+    @Test
+    void toutEnEchec_aucuneTransactionOuverte() {
+        when(bids.findById(bidId)).thenReturn(Optional.of(completedDaysAgo(8)));
+        when(events.findLivePhotosByBidId(bidId)).thenReturn(List.of(photo("tracking/" + bidId + "/1.jpg")));
+        doThrow(new RuntimeException("503")).when(storage).deleteFile(any());
+
+        participant.purgeDue(7, false, 500, NOW);
+
+        assertThat(txm.begun()).isZero();
+        verifyNoInteractions(audit);
+    }
+
+    @Test
+    void purgeDue_nEstPasTransactionnel() throws Exception {
+        assertThat(TrackingPhotoPurgeParticipant.class.isAnnotationPresent(
+                org.springframework.transaction.annotation.Transactional.class)).isFalse();
+        assertThat(TrackingPhotoPurgeParticipant.class.getMethod("purgeDue", int.class, boolean.class, int.class,
+                LocalDateTime.class).isAnnotationPresent(
+                org.springframework.transaction.annotation.Transactional.class)).isFalse();
     }
 }

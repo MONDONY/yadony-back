@@ -5,6 +5,7 @@ import com.yadony.api.common.MessagingMediaRetentionHold;
 import com.yadony.api.common.PackageRequestMediaRetentionHold;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.media.PhotoPurgeOutcome;
+import com.yadony.api.common.media.RecordingTransactionManager;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
@@ -23,6 +24,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -46,11 +48,12 @@ class PackageRequestPhotoPurgeParticipantTest {
 
     static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 10, 10, 0);
     final UUID requestId = UUID.randomUUID();
+    final RecordingTransactionManager txm = new RecordingTransactionManager();
     PackageRequestPhotoPurgeParticipant participant;
 
     @BeforeEach
     void setUp() {
-        participant = new PackageRequestPhotoPurgeParticipant(photos, requests, threads, bids, storage, audit, List.of(hold), List.of(requestHold));
+        participant = new PackageRequestPhotoPurgeParticipant(photos, requests, threads, bids, storage, audit, List.of(hold), List.of(requestHold), txm);
         lenient().when(photos.findRequestIdsWithLivePhotos()).thenReturn(List.of(requestId));
     }
 
@@ -224,5 +227,50 @@ class PackageRequestPhotoPurgeParticipantTest {
         assertThat(o.eligible()).isEqualTo(1);
         verify(requests, never()).findById(other);
         verify(photos, never()).findByPackageRequestIdOrderByPositionAsc(other);
+    }
+
+    @Test
+    void appelsR2_horsTransaction_marquageEtAuditEnTransactionCourte() throws Exception {
+        when(requests.findById(requestId)).thenReturn(Optional.of(request(PackageRequestStatus.COMPLETED, 8)));
+        when(threads.findByPackageRequestId(requestId)).thenReturn(List.of());
+        PackageRequestPhotoEntity a = new PackageRequestPhotoEntity(requestId, "package_requests/u/a.jpg", 0);
+        PackageRequestPhotoEntity b = new PackageRequestPhotoEntity(requestId, "package_requests/u/b.jpg", 1);
+        when(photos.findByPackageRequestIdOrderByPositionAsc(requestId)).thenReturn(List.of(a, b));
+        List<Boolean> txPendantR2 = new ArrayList<>();
+        List<Boolean> txPendantEcriture = new ArrayList<>();
+        doAnswer(inv -> txPendantR2.add(RecordingTransactionManager.active())).when(storage).deleteFile(any());
+        when(photos.save(any())).thenAnswer(inv -> {
+            txPendantEcriture.add(RecordingTransactionManager.active());
+            return inv.getArgument(0);
+        });
+        doAnswer(inv -> txPendantEcriture.add(RecordingTransactionManager.active()))
+                .when(audit).log(any(), any(), any(), any(), any());
+
+        assertThat(participant.purgeDue(7, false, 500, NOW)).isEqualTo(new PhotoPurgeOutcome(2, 2, 0));
+
+        assertThat(txPendantR2).containsExactly(false, false);
+        assertThat(txPendantEcriture).containsExactly(true, true, true);
+        assertThat(txm.begun()).isEqualTo(1);
+    }
+
+    @Test
+    void dryRun_aucuneTransactionOuverte() throws Exception {
+        when(requests.findById(requestId)).thenReturn(Optional.of(request(PackageRequestStatus.COMPLETED, 8)));
+        when(threads.findByPackageRequestId(requestId)).thenReturn(List.of());
+        when(photos.findByPackageRequestIdOrderByPositionAsc(requestId))
+                .thenReturn(List.of(new PackageRequestPhotoEntity(requestId, "package_requests/u/1.jpg", 0)));
+
+        participant.purgeDue(7, true, 500, NOW);
+
+        assertThat(txm.begun()).isZero();
+    }
+
+    @Test
+    void purgeDue_nEstPasTransactionnel() throws Exception {
+        assertThat(PackageRequestPhotoPurgeParticipant.class.isAnnotationPresent(
+                org.springframework.transaction.annotation.Transactional.class)).isFalse();
+        assertThat(PackageRequestPhotoPurgeParticipant.class.getMethod("purgeDue", int.class, boolean.class,
+                int.class, LocalDateTime.class).isAnnotationPresent(
+                org.springframework.transaction.annotation.Transactional.class)).isFalse();
     }
 }

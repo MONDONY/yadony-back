@@ -11,16 +11,22 @@ import com.yadony.api.matching.BidRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
-/** Photos de scan (départ, transit, livraison) : purgées N jours après la livraison du bid. */
+/**
+ * Photos de scan (départ, transit, livraison) : purgées N jours après la livraison du bid.
+ * Aucune transaction autour des appels R2 (connexion Hikari tenue pendant le réseau) :
+ * lectures en autocommit, R2 hors transaction, marquage et audit du bid en transaction courte.
+ */
 @Component
 public class TrackingPhotoPurgeParticipant implements PhotoPurgeParticipant {
 
@@ -31,15 +37,18 @@ public class TrackingPhotoPurgeParticipant implements PhotoPurgeParticipant {
     private final StorageService storage;
     private final AuditService audit;
     private final List<MessagingMediaRetentionHold> holds;
+    private final TransactionTemplate tx;
 
     public TrackingPhotoPurgeParticipant(TrackingEventRepository events, BidRepository bids,
                                          StorageService storage, AuditService audit,
-                                         List<MessagingMediaRetentionHold> holds) {
+                                         List<MessagingMediaRetentionHold> holds,
+                                         PlatformTransactionManager transactionManager) {
         this.events = events;
         this.bids = bids;
         this.storage = storage;
         this.audit = audit;
         this.holds = holds;
+        this.tx = new TransactionTemplate(transactionManager);
     }
 
     @Override
@@ -48,30 +57,34 @@ public class TrackingPhotoPurgeParticipant implements PhotoPurgeParticipant {
     }
 
     @Override
-    @Transactional
     public PhotoPurgeOutcome purgeDue(int retentionDays, boolean dryRun, int limit, LocalDateTime now) {
         PhotoPurgeOutcome total = PhotoPurgeOutcome.NONE;
         for (UUID bidId : events.findBidIdsWithLivePhotos()) {
             if (total.eligible() >= limit) break;
             if (!isDue(bidId, retentionDays, now)) continue;
             List<TrackingEventEntity> photos = events.findLivePhotosByBidId(bidId);
-            int deleted = 0;
+            List<TrackingEventEntity> gone = new ArrayList<>();
             int failed = 0;
             for (TrackingEventEntity e : photos) {
                 if (dryRun) continue;
                 if (deleteObject(e.getPhotoUrl())) {
-                    e.markPhotoPurged(now);
-                    events.save(e);
-                    deleted++;
+                    gone.add(e);
                 } else {
                     failed++;
                 }
             }
-            if (deleted > 0) {
-                audit.log("bid", bidId, "TRACKING_PHOTOS_PURGED", null,
-                        Map.of("count", deleted, "reason", "RETENTION_EXPIRED"));
+            if (!gone.isEmpty()) {
+                // Marquage échoué = lignes reprises au passage suivant (objet absent = supprimé).
+                tx.executeWithoutResult(status -> {
+                    for (TrackingEventEntity e : gone) {
+                        e.markPhotoPurged(now);
+                        events.save(e);
+                    }
+                    audit.log("bid", bidId, "TRACKING_PHOTOS_PURGED", null,
+                            Map.of("count", gone.size(), "reason", "RETENTION_EXPIRED"));
+                });
             }
-            total = total.plus(new PhotoPurgeOutcome(photos.size(), deleted, failed));
+            total = total.plus(new PhotoPurgeOutcome(photos.size(), gone.size(), failed));
         }
         return total;
     }
