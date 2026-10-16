@@ -1,7 +1,7 @@
 ---
 id: douane
-title: Que se passe-t-il en cas de contrôle douanier ?
-keywords: douane, contrôle douanier, droits et taxes, taxes, déclaration en douane, fouille, colis bloqué à la douane, description du colis, photos du colis
+title: Déclarer un colis à la douane et contrôle douanier
+keywords: douane, déclarer à la douane, contrôle douanier, droits et taxes, taxes, déclaration en douane, fouille, colis bloqué à la douane, description du colis, photos du colis
 ---
 Le voyageur déclare lui-même ce qu'il transporte.
 Dans l'app, chaque colis est associé à une description et aux photos prises au dépôt, que le voyageur peut présenter en cas de contrôle.

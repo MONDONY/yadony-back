@@ -1,7 +1,7 @@
 ---
 id: kyc-delai
 title: Combien de temps prend la vérification d'identité ?
-keywords: délai, temps, combien de temps, durée, vérification en cours, en attente, validation, minutes, attente, pending
+keywords: délai, temps, combien de temps, durée, vérification en cours, en attente, validation, attente, pending
 routes:
   - path: /kyc/status
     label: Voir ma vérification

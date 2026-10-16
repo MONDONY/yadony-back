@@ -1,6 +1,6 @@
 ---
 id: douane
-title: What happens in a customs check?
+title: Declaring a parcel to customs and customs checks
 keywords: customs, customs check, duties and taxes, taxes, customs declaration, search, parcel held at customs, parcel description, parcel photos
 ---
 The traveler declares what they are carrying.

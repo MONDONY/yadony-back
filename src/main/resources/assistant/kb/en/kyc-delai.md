@@ -1,7 +1,7 @@
 ---
 id: kyc-delai
 title: How long does identity verification take?
-keywords: delay, time, how long, duration, verification in progress, pending, validation, minutes, waiting
+keywords: delay, time, how long, duration, verification in progress, pending, validation, waiting
 routes:
   - path: /kyc/status
     label: See my verification
