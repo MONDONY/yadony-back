@@ -32,7 +32,7 @@ import static org.mockito.Mockito.when;
 
 class LlmRouterTest {
 
-    private final OpenAiCompatibleClient client = mock(OpenAiCompatibleClient.class);
+    private final LlmClients client = mock(LlmClients.class);
     private final ProviderCatalog catalog = mock(ProviderCatalog.class);
     private final AtomicReference<Instant> now = new AtomicReference<>(Instant.parse("2026-10-16T10:00:00Z"));
     private final Clock clock = new Clock() {
