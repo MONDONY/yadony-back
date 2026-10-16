@@ -24,6 +24,7 @@ import java.util.regex.Pattern;
 public final class KnowledgeBaseLoader {
 
     public static final List<String> LOCALES = List.of("fr", "en");
+    private static final Set<String> HEADER_KEYS = Set.of("id", "title", "keywords", "routes");
     private static final Pattern ID = Pattern.compile("[a-z0-9-]{3,64}");
     private static final String EM_DASH = "—";
 
@@ -44,46 +45,47 @@ public final class KnowledgeBaseLoader {
             } catch (IOException e) {
                 throw new IllegalStateException("Fiches assistant illisibles (" + locale + ")", e);
             }
+            if (articles.isEmpty()) {
+                throw new IllegalStateException("Fiches assistant introuvables (" + locale + ") dans " + root);
+            }
             byLocale.put(locale, List.copyOf(articles));
         }
         validate(byLocale);
         return new KbCorpus(Map.copyOf(byLocale));
     }
 
-    @SuppressWarnings("unchecked")
     public static KbArticle parse(String locale, String filename, String raw) {
         String where = locale + "/" + filename;
         String text = raw.replace("\r\n", "\n");
         if (!text.startsWith("---\n")) {
             throw invalid(where, "en-tête --- manquant");
         }
-        int end = text.indexOf("\n---\n", 4);
+        // La recherche démarre à 3 : un en-tête vide (---\n---\n) a sa fin à l'index 3.
+        int end = text.indexOf("\n---\n", 3);
         if (end < 0) {
             throw invalid(where, "fin d'en-tête --- manquante");
         }
-        Object parsed = new Yaml(new SafeConstructor(new LoaderOptions())).load(text.substring(4, end));
+        String yaml = end > 3 ? text.substring(4, end) : "";
+        Object parsed;
+        try {
+            parsed = new Yaml(new SafeConstructor(new LoaderOptions())).load(yaml);
+        } catch (RuntimeException e) {
+            throw invalid(where, "en-tête illisible");
+        }
         if (!(parsed instanceof Map<?, ?> header)) {
             throw invalid(where, "en-tête illisible");
         }
+        for (Object key : header.keySet()) {
+            if (!HEADER_KEYS.contains(String.valueOf(key))) {
+                throw invalid(where, "clé d'en-tête inconnue : " + key);
+            }
+        }
         String id = string(header.get("id"));
         String title = string(header.get("title"));
-        List<String> keywords = new ArrayList<>();
-        Object kw = header.get("keywords");
-        if (kw instanceof String s) {
-            for (String k : s.split(",")) {
-                if (!k.isBlank()) keywords.add(k.trim());
-            }
-        }
-        List<KbRoute> routes = new ArrayList<>();
-        Object rs = header.get("routes");
-        if (rs instanceof List<?> list) {
-            for (Object o : list) {
-                if (!(o instanceof Map<?, ?> m)) throw invalid(where, "route illisible");
-                routes.add(new KbRoute(string(m.get("path")), string(m.get("label"))));
-            }
-        }
+        List<String> keywords = parseKeywords(where, header.get("keywords"));
+        List<KbRoute> routes = parseRoutes(where, header.get("routes"));
         String body = text.substring(end + 5).strip();
-        return new KbArticle(locale, id, title, List.copyOf(keywords), List.copyOf(routes), body);
+        return new KbArticle(locale, id, title, keywords, routes, body);
     }
 
     public static void validate(Map<String, List<KbArticle>> byLocale) {
@@ -109,6 +111,9 @@ public final class KnowledgeBaseLoader {
                     }
                     if (r.label().contains(EM_DASH)) throw invalid(where, "tiret cadratin dans un label");
                 }
+                for (String k : a.keywords()) {
+                    if (k.contains(EM_DASH)) throw invalid(where, "tiret cadratin dans les mots-clés");
+                }
                 if (a.title().contains(EM_DASH) || a.body().contains(EM_DASH)) {
                     throw invalid(where, "tiret cadratin dans le texte");
                 }
@@ -119,6 +124,40 @@ public final class KnowledgeBaseLoader {
         Set<String> en = idsByLocale.get("en");
         for (String id : fr) if (!en.contains(id)) throw invalid("en/" + id, "traduction manquante de " + id);
         for (String id : en) if (!fr.contains(id)) throw invalid("fr/" + id, "traduction manquante de " + id);
+    }
+
+    /** Mots-clés : chaîne séparée par des virgules, ou liste YAML de chaînes. */
+    private static List<String> parseKeywords(String where, Object raw) {
+        List<String> out = new ArrayList<>();
+        if (raw == null) {
+            return out;
+        }
+        if (raw instanceof String s) {
+            for (String k : s.split(",")) {
+                if (!k.isBlank()) out.add(k.trim());
+            }
+        } else if (raw instanceof List<?> list) {
+            for (Object o : list) {
+                if (!(o instanceof String k)) throw invalid(where, "mots-clés illisibles");
+                if (!k.isBlank()) out.add(k.trim());
+            }
+        } else {
+            throw invalid(where, "mots-clés illisibles");
+        }
+        return List.copyOf(out);
+    }
+
+    private static List<KbRoute> parseRoutes(String where, Object raw) {
+        List<KbRoute> out = new ArrayList<>();
+        if (raw == null) {
+            return out;
+        }
+        if (!(raw instanceof List<?> list)) throw invalid(where, "routes doit être une liste");
+        for (Object o : list) {
+            if (!(o instanceof Map<?, ?> m)) throw invalid(where, "route illisible");
+            out.add(new KbRoute(string(m.get("path")), string(m.get("label"))));
+        }
+        return List.copyOf(out);
     }
 
     private static String string(Object o) {
