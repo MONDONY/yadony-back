@@ -8,11 +8,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -20,6 +22,10 @@ import java.util.Map;
  * Photos d'un signalement clos (RESOLVED/DISMISSED) depuis N jours : supprimées de R2, ligne
  * soft-deleted. Un signalement clos ne se rouvre pas (l'admin répond 409 « déjà traité »), la
  * purge est donc sans retour en arrière possible. Les tickets support en gardent une copie.
+ *
+ * <p>Aucune transaction autour des appels R2 : un lot de 500 suppressions réseau tenait une
+ * connexion Hikari ~20 s (leak detection, staging 16/10). Lecture en autocommit, R2 hors
+ * transaction, puis marquage et audit dans une transaction courte.
  */
 @Component
 public class ReportPhotoPurgeParticipant implements PhotoPurgeParticipant {
@@ -28,11 +34,14 @@ public class ReportPhotoPurgeParticipant implements PhotoPurgeParticipant {
     private final ReportPhotoRepository photos;
     private final StorageService storage;
     private final AuditService audit;
+    private final TransactionTemplate tx;
 
-    public ReportPhotoPurgeParticipant(ReportPhotoRepository photos, StorageService storage, AuditService audit) {
+    public ReportPhotoPurgeParticipant(ReportPhotoRepository photos, StorageService storage, AuditService audit,
+                                       PlatformTransactionManager transactionManager) {
         this.photos = photos;
         this.storage = storage;
         this.audit = audit;
+        this.tx = new TransactionTemplate(transactionManager);
     }
 
     @Override
@@ -41,12 +50,11 @@ public class ReportPhotoPurgeParticipant implements PhotoPurgeParticipant {
     }
 
     @Override
-    @Transactional
     public PhotoPurgeOutcome purgeDue(int retentionDays, boolean dryRun, int limit, LocalDateTime now) {
         List<ReportPhotoEntity> due = photos.findLiveOfClosedReportsBefore(
                 now.minusDays(retentionDays).atOffset(ZoneOffset.UTC), PageRequest.of(0, limit));
         if (dryRun) return new PhotoPurgeOutcome(due.size(), 0, 0);
-        int deleted = 0;
+        List<ReportPhotoEntity> gone = new ArrayList<>();
         int failed = 0;
         for (ReportPhotoEntity p : due) {
             try {
@@ -58,15 +66,21 @@ public class ReportPhotoPurgeParticipant implements PhotoPurgeParticipant {
                 failed++;
                 continue;
             }
-            p.softDelete();
-            photos.save(p);
-            deleted++;
+            gone.add(p);
         }
-        if (deleted > 0) {
-            // audit_log.entity_id est nullable (V7) : une entrée de lot suffit.
-            audit.log("report_photo", null, "REPORT_PHOTOS_PURGED", null,
-                    Map.of("count", deleted, "reason", "RETENTION_EXPIRED"));
+        if (!gone.isEmpty()) {
+            // Si ce marquage échoue, le passage suivant retrouve les lignes : l'objet déjà
+            // absent de R2 (NoSuchKey) est alors marqué sans autre effet.
+            tx.executeWithoutResult(status -> {
+                for (ReportPhotoEntity p : gone) {
+                    p.softDelete();
+                    photos.save(p);
+                }
+                // audit_log.entity_id est nullable (V7) : une entrée de lot suffit.
+                audit.log("report_photo", null, "REPORT_PHOTOS_PURGED", null,
+                        Map.of("count", gone.size(), "reason", "RETENTION_EXPIRED"));
+            });
         }
-        return new PhotoPurgeOutcome(due.size(), deleted, failed);
+        return new PhotoPurgeOutcome(due.size(), gone.size(), failed);
     }
 }

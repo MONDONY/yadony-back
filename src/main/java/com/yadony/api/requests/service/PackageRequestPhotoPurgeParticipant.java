@@ -19,10 +19,12 @@ import com.yadony.api.requests.repository.PackageRequestRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
@@ -30,7 +32,11 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
-/** Photos d'une demande d'envoi : purgées quand la demande est close et tous ses bids échus. */
+/**
+ * Photos d'une demande d'envoi : purgées quand la demande est close et tous ses bids échus.
+ * Aucune transaction autour des appels R2 (connexion Hikari tenue pendant le réseau) :
+ * lectures en autocommit, R2 hors transaction, marquage et audit de la demande en transaction courte.
+ */
 @Component
 public class PackageRequestPhotoPurgeParticipant implements PhotoPurgeParticipant {
 
@@ -52,12 +58,14 @@ public class PackageRequestPhotoPurgeParticipant implements PhotoPurgeParticipan
     private final AuditService audit;
     private final List<MessagingMediaRetentionHold> holds;
     private final List<PackageRequestMediaRetentionHold> requestHolds;
+    private final TransactionTemplate tx;
 
     public PackageRequestPhotoPurgeParticipant(PackageRequestPhotoRepository photos, PackageRequestRepository requests,
                                                NegotiationThreadRepository threads, BidRepository bids,
                                                StorageService storage, AuditService audit,
                                                List<MessagingMediaRetentionHold> holds,
-                                               List<PackageRequestMediaRetentionHold> requestHolds) {
+                                               List<PackageRequestMediaRetentionHold> requestHolds,
+                                               PlatformTransactionManager transactionManager) {
         this.photos = photos;
         this.requests = requests;
         this.threads = threads;
@@ -66,6 +74,7 @@ public class PackageRequestPhotoPurgeParticipant implements PhotoPurgeParticipan
         this.audit = audit;
         this.holds = holds;
         this.requestHolds = requestHolds;
+        this.tx = new TransactionTemplate(transactionManager);
     }
 
     @Override
@@ -74,30 +83,34 @@ public class PackageRequestPhotoPurgeParticipant implements PhotoPurgeParticipan
     }
 
     @Override
-    @Transactional
     public PhotoPurgeOutcome purgeDue(int retentionDays, boolean dryRun, int limit, LocalDateTime now) {
         PhotoPurgeOutcome total = PhotoPurgeOutcome.NONE;
         for (UUID requestId : photos.findRequestIdsWithLivePhotos()) {
             if (total.eligible() >= limit) break;
             if (!isDue(requestId, retentionDays, now)) continue;
             List<PackageRequestPhotoEntity> rows = photos.findByPackageRequestIdOrderByPositionAsc(requestId);
-            int deleted = 0;
+            List<PackageRequestPhotoEntity> gone = new ArrayList<>();
             int failed = 0;
             for (PackageRequestPhotoEntity p : rows) {
                 if (dryRun) continue;
                 if (deleteObject(p.getObjectKey())) {
-                    p.markPurged(now);
-                    photos.save(p);
-                    deleted++;
+                    gone.add(p);
                 } else {
                     failed++;
                 }
             }
-            if (deleted > 0) {
-                audit.log("package_request", requestId, "PACKAGE_REQUEST_PHOTOS_PURGED", null,
-                        Map.of("count", deleted, "reason", "RETENTION_EXPIRED"));
+            if (!gone.isEmpty()) {
+                // Marquage échoué = lignes reprises au passage suivant (objet absent = supprimé).
+                tx.executeWithoutResult(status -> {
+                    for (PackageRequestPhotoEntity p : gone) {
+                        p.markPurged(now);
+                        photos.save(p);
+                    }
+                    audit.log("package_request", requestId, "PACKAGE_REQUEST_PHOTOS_PURGED", null,
+                            Map.of("count", gone.size(), "reason", "RETENTION_EXPIRED"));
+                });
             }
-            total = total.plus(new PhotoPurgeOutcome(rows.size(), deleted, failed));
+            total = total.plus(new PhotoPurgeOutcome(rows.size(), gone.size(), failed));
         }
         return total;
     }

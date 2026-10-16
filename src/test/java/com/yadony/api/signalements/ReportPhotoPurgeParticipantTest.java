@@ -3,6 +3,7 @@ package com.yadony.api.signalements;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.media.PhotoPurgeOutcome;
+import com.yadony.api.common.media.RecordingTransactionManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -12,6 +13,7 @@ import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -19,6 +21,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -31,11 +34,12 @@ class ReportPhotoPurgeParticipantTest {
     @Mock ReportPhotoRepository photos;
     @Mock StorageService storage;
     @Mock AuditService audit;
+    final RecordingTransactionManager txm = new RecordingTransactionManager();
     ReportPhotoPurgeParticipant participant;
     static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 10, 10, 0);
 
     @BeforeEach
-    void setUp() { participant = new ReportPhotoPurgeParticipant(photos, storage, audit); }
+    void setUp() { participant = new ReportPhotoPurgeParticipant(photos, storage, audit, txm); }
 
     private ReportPhotoEntity photo(String key) {
         ReportPhotoEntity p = new ReportPhotoEntity();
@@ -117,5 +121,36 @@ class ReportPhotoPurgeParticipantTest {
         assertThat(o).isEqualTo(new PhotoPurgeOutcome(2, 1, 1));
         assertThat(ok.getDeletedAt()).isNotNull();
         assertThat(bad.getDeletedAt()).isNull();
+    }
+
+    @Test
+    void appelsR2_horsTransaction_marquageEnTransactionCourte() {
+        ReportPhotoEntity a = photo("reports/u/a.jpg");
+        ReportPhotoEntity b = photo("reports/u/b.jpg");
+        due(a, b);
+        List<Boolean> txPendantR2 = new ArrayList<>();
+        List<Boolean> txPendantSave = new ArrayList<>();
+        doAnswer(inv -> txPendantR2.add(RecordingTransactionManager.active())).when(storage).deleteFile(any());
+        when(photos.save(any())).thenAnswer(inv -> {
+            txPendantSave.add(RecordingTransactionManager.active());
+            return inv.getArgument(0);
+        });
+
+        PhotoPurgeOutcome o = participant.purgeDue(7, false, 500, NOW);
+
+        assertThat(o).isEqualTo(new PhotoPurgeOutcome(2, 2, 0));
+        assertThat(txPendantR2).containsExactly(false, false);
+        assertThat(txPendantSave).containsExactly(true, true);
+        assertThat(txm.begun()).isEqualTo(1);
+    }
+
+    @Test
+    void purgeDue_nEstPasTransactionnel() throws Exception {
+        // Une annotation remettrait les appels R2 sous une connexion tenue (leak detection 16/10).
+        assertThat(ReportPhotoPurgeParticipant.class.isAnnotationPresent(
+                org.springframework.transaction.annotation.Transactional.class)).isFalse();
+        assertThat(ReportPhotoPurgeParticipant.class.getMethod("purgeDue", int.class, boolean.class, int.class,
+                LocalDateTime.class).isAnnotationPresent(
+                org.springframework.transaction.annotation.Transactional.class)).isFalse();
     }
 }
