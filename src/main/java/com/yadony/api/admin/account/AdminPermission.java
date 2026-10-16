@@ -103,6 +103,11 @@ public enum AdminPermission {
      * 500 EUR d'équivalent par code). Jamais accordée au support : c'est créer de l'argent.
      */
     TOPUP_CODE_MANAGE,
+    /**
+     * Gérer les fournisseurs d'IA de l'assistant (clés d'API, ordre, test). Accordée à ADMIN,
+     * jamais au support : une clé d'API est un secret.
+     */
+    ASSISTANT_MANAGE,
     AUDIT_VIEW,
     EXPORT_RUN
 }

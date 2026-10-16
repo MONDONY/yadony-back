@@ -356,6 +356,12 @@ yadony:
     api-secret: ${STREAM_API_SECRET:}
     call-type: audio_call
     delivery-grace-days: 3
+  assistant:
+    enabled: ${ASSISTANT_ENABLED:false}
+    daily-quota: ${ASSISTANT_DAILY_QUOTA:20}
+    # Score BM25 brut de Lucene (pas normalisé). Mesuré sur les vraies fiches : questions complètes 16 à 30,
+    # mots seuls 8,7 à 13, hors-sujet 0 à 6,1 pour la plupart (KnowledgeBaseFichesTest).
+    min-score: 6.5
   didit:
     base-url: ${DIDIT_BASE_URL:https://verification.didit.me}
     api-key: ${DIDIT_API_KEY:}
