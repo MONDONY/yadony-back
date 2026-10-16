@@ -74,6 +74,16 @@ public class CacheConfig {
                         .recordStats()
                         .build());
 
+        // maintenance : etat du mode maintenance, lu par MaintenanceFilter a CHAQUE requete
+        // de l'API. Une entree, eviction apres chaque ecriture validee (MaintenanceChangedListener) ;
+        // la TTL de 10 s n'est qu'un filet si plusieurs instances tournent.
+        manager.registerCustomCache("maintenance",
+                Caffeine.newBuilder()
+                        .maximumSize(1)
+                        .expireAfterWrite(10, TimeUnit.SECONDS)
+                        .recordStats()
+                        .build());
+
         // admin-notifications : cloche du panel admin (AdminNotificationCache). Files a traiter
         // et dernieres entrees de chaque source, PARTAGEES par tous les administrateurs (le
         // filtrage par permission se fait apres). Chaque panel ouvert tire les compteurs toutes
