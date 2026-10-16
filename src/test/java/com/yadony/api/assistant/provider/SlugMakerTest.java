@@ -18,6 +18,14 @@ class SlugMakerTest {
     }
 
     @Test
+    void uniqueNeLaissePasDeTiretAvantLeSuffixe() {
+        String name = "x".repeat(37) + " yyyy";
+        String base = SlugMaker.slugify(name);
+        String unique = SlugMaker.unique(name, base::equals);
+        assertThat(unique).isEqualTo("x".repeat(37) + "-2").doesNotContain("--");
+    }
+
+    @Test
     void uniqueAjouteUnSuffixe() {
         Set<String> taken = Set.of("groq", "groq-2");
         assertThat(SlugMaker.unique("Groq", taken::contains)).isEqualTo("groq-3");

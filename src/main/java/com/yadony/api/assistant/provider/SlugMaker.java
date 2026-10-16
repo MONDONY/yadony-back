@@ -27,7 +27,10 @@ public final class SlugMaker {
         if (!taken.test(base)) return base;
         for (int i = 2; ; i++) {
             String suffix = "-" + i;
-            String candidate = (base.length() + suffix.length() > MAX ? base.substring(0, MAX - suffix.length()) : base) + suffix;
+            String head = base.length() + suffix.length() > MAX
+                    ? base.substring(0, MAX - suffix.length()).replaceAll("-+$", "")
+                    : base;
+            String candidate = head + suffix;
             if (!taken.test(candidate)) return candidate;
         }
     }
