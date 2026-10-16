@@ -3,6 +3,7 @@ package com.yadony.api.payments.wallet.dto;
 import com.yadony.api.payments.wallet.WalletTransactionEntity;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.UUID;
 
 public class WalletTransactionDto {
 
@@ -21,17 +22,15 @@ public class WalletTransactionDto {
      */
     private BigDecimal feeAmount;
     private BigDecimal netAmount;
-
-    public static WalletTransactionDto from(WalletTransactionEntity tx) {
-        return from(tx, null);
-    }
-
-    public static WalletTransactionDto from(WalletTransactionEntity tx, String refundStatus) {
-        return from(tx, refundStatus, null, null);
-    }
+    /**
+     * Colis lié à la ligne (FLUTTER-QP), nom JSON {@code bidId} figé (contrat app) : commission
+     * prélevée ou remboursée, y compris la commission d'un fil de négociation résolue vers le
+     * colis qui en est issu ({@code WalletTransactionBidLinks}). {@code null} sans colis.
+     */
+    private UUID bidId;
 
     public static WalletTransactionDto from(WalletTransactionEntity tx, String refundStatus,
-                                            BigDecimal feeAmount, BigDecimal netAmount) {
+                                            BigDecimal feeAmount, BigDecimal netAmount, UUID bidId) {
         WalletTransactionDto dto = new WalletTransactionDto();
         dto.type = tx.getType().name();
         dto.amount = tx.getAmount();
@@ -42,6 +41,7 @@ public class WalletTransactionDto {
         dto.refundStatus = refundStatus;
         dto.feeAmount = feeAmount;
         dto.netAmount = netAmount;
+        dto.bidId = bidId;
         return dto;
     }
 
@@ -54,4 +54,5 @@ public class WalletTransactionDto {
     public String getRefundStatus() { return refundStatus; }
     public BigDecimal getFeeAmount() { return feeAmount; }
     public BigDecimal getNetAmount() { return netAmount; }
+    public UUID getBidId() { return bidId; }
 }

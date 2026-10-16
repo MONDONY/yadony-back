@@ -49,6 +49,7 @@ public class WalletController {
     private final UserRepository userRepository;
     private final UserBusinessPrefsService businessPrefsService;
     private final WalletEstimateService walletEstimateService;
+    private final WalletTransactionBidLinks transactionBidLinks;
 
     public WalletController(WalletService walletService,
                             WalletSelfRefundService walletSelfRefundService,
@@ -56,7 +57,8 @@ public class WalletController {
                             WalletMobileMoneyTopupService mobileMoneyTopupService,
                             UserRepository userRepository,
                             UserBusinessPrefsService businessPrefsService,
-                            WalletEstimateService walletEstimateService) {
+                            WalletEstimateService walletEstimateService,
+                            WalletTransactionBidLinks transactionBidLinks) {
         this.walletService = walletService;
         this.walletSelfRefundService = walletSelfRefundService;
         this.topupOrchestrator = topupOrchestrator;
@@ -64,6 +66,7 @@ public class WalletController {
         this.userRepository = userRepository;
         this.businessPrefsService = businessPrefsService;
         this.walletEstimateService = walletEstimateService;
+        this.transactionBidLinks = transactionBidLinks;
     }
 
     @GetMapping("/balance")
@@ -75,12 +78,15 @@ public class WalletController {
         // Lu après getOrCreate : le portefeuille de la devise active, créé à l'instant, figure
         // dans la liste des devises.
         WalletSelfRefundService.BalanceView view = walletSelfRefundService.balanceView(userId, page);
+        // Colis lié à chaque ligne (FLUTTER-QP), résolu en une requête pour toute la page.
+        Map<UUID, UUID> bidIdByTx = transactionBidLinks.resolve(view.transactions());
         List<WalletTransactionDto> txs = view.transactions()
             .stream()
             .map(tx -> {
                 WalletSelfRefundService.RefundFeeBreakdown fees = view.feesByTxId().get(tx.getId());
                 return WalletTransactionDto.from(tx, view.refundStatusByTxId().get(tx.getId()),
-                        fees == null ? null : fees.feeAmount(), fees == null ? null : fees.netAmount());
+                        fees == null ? null : fees.feeAmount(), fees == null ? null : fees.netAmount(),
+                        bidIdByTx.get(tx.getId()));
             })
             .collect(Collectors.toList());
         WalletEstimate estimate = walletEstimateService.estimate(

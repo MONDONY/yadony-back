@@ -1139,9 +1139,10 @@ public class CashCommissionService {
             BigDecimal refundAmount = line.getAmount().abs();
             if (refundAmount.signum() == 0) continue;
             String key = lines.size() == 1 ? idempotencyKey : idempotencyKey + "-" + line.getCurrency();
+            // bid_id sur la ligne (FLUTTER-QP) : l'historique du solde mène au colis remboursé.
             walletService.credit(travelerId, line.getCurrency(), refundAmount,
                     com.yadony.api.payments.wallet.WalletTransactionType.REFUND,
-                    "refund-" + bid.getId(), key);
+                    "refund-" + bid.getId(), key, bid.getId());
             audit.put("amount-" + line.getCurrency(), refundAmount.toPlainString());
         }
         bid.setCommissionStatus(CommissionStatus.REFUNDED);

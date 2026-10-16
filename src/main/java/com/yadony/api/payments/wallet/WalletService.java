@@ -147,6 +147,15 @@ public class WalletService {
 
     public void credit(UUID userId, String currency, BigDecimal amount, WalletTransactionType type,
                        String paymentRef, String idempotencyKey) {
+        credit(userId, currency, amount, type, paymentRef, idempotencyKey, null);
+    }
+
+    /**
+     * Crédit rattaché à un colis : {@code bidId} est écrit sur la ligne du grand livre
+     * (FLUTTER-QP, lien « voir le colis » de l'historique du solde). {@code null} = pas de colis.
+     */
+    public void credit(UUID userId, String currency, BigDecimal amount, WalletTransactionType type,
+                       String paymentRef, String idempotencyKey, UUID bidId) {
         if (idempotencyKey != null) {
             Optional<WalletTransactionEntity> existing =
                     walletTransactionRepository.findByIdempotencyKey(idempotencyKey);
@@ -174,6 +183,7 @@ public class WalletService {
         tx.setBalanceAfter(newBalance);
         tx.setPaymentRef(paymentRef);
         tx.setIdempotencyKey(idempotencyKey);
+        tx.setBidId(bidId);
         walletTransactionRepository.save(tx);
 
         auditService.log("wallet", wallet.getId(), "WALLET_" + type.name(),

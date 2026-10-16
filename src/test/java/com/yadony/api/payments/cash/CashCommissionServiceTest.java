@@ -1958,7 +1958,7 @@ class CashCommissionServiceTest {
 
             verify(walletService).credit(eq(travelerId), eq("EUR"), eq(new BigDecimal("12.00")),
                     eq(com.yadony.api.payments.wallet.WalletTransactionType.REFUND),
-                    eq("refund-" + bid.getId()), eq(key));
+                    eq("refund-" + bid.getId()), eq(key), eq(bid.getId()));
             assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
             verify(bidRepo).save(bid);
             verify(auditService).log(eq("payment"), eq(bid.getId()), eq("COMMISSION_REFUNDED_TO_WALLET"),
@@ -1976,7 +1976,7 @@ class CashCommissionServiceTest {
 
             service.refundCommissionToWallet(bid, travelerId, key);
 
-            verify(walletService, never()).credit(any(), any(), any(), any(), any(), any());
+            verify(walletService, never()).credit(any(), any(), any(), any(), any(), any(), any());
             assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
             verify(bidRepo).save(bid);
         }
@@ -1994,8 +1994,8 @@ class CashCommissionServiceTest {
 
             verify(walletService).credit(eq(travelerId), eq("CAD"), eq(new BigDecimal("12.00")),
                     eq(com.yadony.api.payments.wallet.WalletTransactionType.REFUND),
-                    eq("refund-" + bid.getId()), eq(key));
-            verify(walletService, never()).credit(eq(travelerId), eq("EUR"), any(), any(), any(), any());
+                    eq("refund-" + bid.getId()), eq(key), eq(bid.getId()));
+            verify(walletService, never()).credit(eq(travelerId), eq("EUR"), any(), any(), any(), any(), any());
         }
 
         @Test
@@ -2014,10 +2014,10 @@ class CashCommissionServiceTest {
 
             verify(walletService).credit(travelerId, "XOF", new BigDecimal("600"),
                     com.yadony.api.payments.wallet.WalletTransactionType.REFUND,
-                    "refund-" + bid.getId(), key + "-XOF");
+                    "refund-" + bid.getId(), key + "-XOF", bid.getId());
             verify(walletService).credit(travelerId, "EUR", new BigDecimal("0.69"),
                     com.yadony.api.payments.wallet.WalletTransactionType.REFUND,
-                    "refund-" + bid.getId(), key + "-EUR");
+                    "refund-" + bid.getId(), key + "-EUR", bid.getId());
             assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
             verify(bidRepo).save(bid);
         }
@@ -2035,7 +2035,7 @@ class CashCommissionServiceTest {
 
             verify(walletService).credit(travelerId, "EUR", new BigDecimal("12.00"),
                     com.yadony.api.payments.wallet.WalletTransactionType.REFUND,
-                    "refund-" + bid.getId(), key);
+                    "refund-" + bid.getId(), key, bid.getId());
         }
 
         @Test
@@ -2044,7 +2044,7 @@ class CashCommissionServiceTest {
 
             service.refundCommissionToWallet(bid, travelerId, "k");
 
-            verify(walletService, never()).credit(any(), anyString(), any(), any(), any(), any());
+            verify(walletService, never()).credit(any(), anyString(), any(), any(), any(), any(), any());
             verify(bidRepo, never()).save(any());
         }
 
@@ -2054,7 +2054,7 @@ class CashCommissionServiceTest {
 
             service.refundCommissionToWallet(bid, travelerId, "k");
 
-            verify(walletService, never()).credit(any(), anyString(), any(), any(), any(), any());
+            verify(walletService, never()).credit(any(), anyString(), any(), any(), any(), any(), any());
             verify(bidRepo, never()).save(any());
         }
 
@@ -2067,7 +2067,7 @@ class CashCommissionServiceTest {
 
             service.refundCommissionToWallet(bid, travelerId, "k");
 
-            verify(walletService, never()).credit(any(), anyString(), any(), any(), any(), any());
+            verify(walletService, never()).credit(any(), anyString(), any(), any(), any(), any(), any());
             assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED); // inchangé
             // Bid classique : jamais de repli sur un fil de négociation.
             verify(walletTransactionRepository, never()).findAllByUserIdAndPaymentRefAndType(any(), any(), any());
@@ -2096,7 +2096,7 @@ class CashCommissionServiceTest {
 
             verify(walletService).credit(travelerId, "XOF", new BigDecimal("2945"),
                     com.yadony.api.payments.wallet.WalletTransactionType.REFUND,
-                    "refund-" + bid.getId(), key);
+                    "refund-" + bid.getId(), key, bid.getId());
             assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
             assertThat(thread.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED.name());
             verify(negotiationThreadRepository).save(thread);
@@ -2109,7 +2109,7 @@ class CashCommissionServiceTest {
 
             service.refundCommissionToWallet(bid, travelerId, "k");
 
-            verify(walletService, never()).credit(any(), anyString(), any(), any(), any(), any());
+            verify(walletService, never()).credit(any(), anyString(), any(), any(), any(), any(), any());
             verifyNoInteractions(walletTransactionRepository, negotiationThreadRepository);
         }
     }
