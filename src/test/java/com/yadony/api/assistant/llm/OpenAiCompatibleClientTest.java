@@ -370,6 +370,18 @@ class OpenAiCompatibleClientTest {
     }
 
     @Test
+    @Timeout(15)
+    void surchargeNeDepassePasLeDelaiTotalDuClient() throws Exception {
+        HttpServer s = server(endlessBody(200, 1, 200, new AtomicInteger()));
+        // Un appelant qui demande 60 s reste borné par le délai total du client (1 s ici).
+        OpenAiCompatibleClient c = client(Duration.ofSeconds(1));
+        Outcome o = timed(() -> c.complete(provider(true, baseUrl(s)), "s", "u", Duration.ofSeconds(60)));
+        assertThat(o.error()).isNotNull();
+        assertThat(o.error().status()).isEqualTo(LlmCallException.NETWORK);
+        assertThat(o.millis()).isLessThan(3000);
+    }
+
+    @Test
     void delaiDejaEcouleApresLaGardeNeLanceAucunAppel() {
         ProviderAddressGuard lent = new ProviderAddressGuard(host -> {
             try {

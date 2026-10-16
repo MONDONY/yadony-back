@@ -27,6 +27,7 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -97,10 +98,12 @@ public class OpenAiCompatibleClient {
      * délai court dès l'entrée : la résolution DNS de la garde est comptée dedans, le routeur de l'assistant
      * s'en sert pour tenir son budget de question sous le délai de nginx.
      */
-    public String complete(LlmProviderConfig provider, String system, String user, Duration timeout) {
+    String complete(LlmProviderConfig provider, String system, String user, Duration timeout) {
         long startedAt = System.nanoTime();
+        // Jamais plus que le délai total du client : un appelant ne peut pas désarmer la borne.
+        long budgetMillis = Math.min(Objects.requireNonNull(timeout, "timeout").toMillis(), totalTimeout.toMillis());
         guard.check(provider.baseUrl());
-        long remainingMillis = timeout.toMillis() - TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+        long remainingMillis = budgetMillis - TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
         if (remainingMillis <= 0) {
             throw new LlmCallException(LlmCallException.NETWORK, "Délai dépassé");
         }
