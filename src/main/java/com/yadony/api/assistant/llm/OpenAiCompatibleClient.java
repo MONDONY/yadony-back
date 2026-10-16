@@ -1,19 +1,27 @@
 package com.yadony.api.assistant.llm;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.hc.client5.http.DnsResolver;
+import org.apache.hc.client5.http.config.ConnectionConfig;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
+import org.apache.hc.client5.http.impl.classic.HttpClients;
+import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManager;
+import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
+import org.apache.hc.core5.util.Timeout;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
-import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.BufferingClientHttpRequestFactory;
+import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestClientResponseException;
+import org.springframework.web.client.RestClientException;
 
-import java.time.Duration;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,11 +30,22 @@ import java.util.Map;
  * Client unique pour tous les fournisseurs compatibles OpenAI (Groq, Gemini, Mistral, OpenRouter…).
  *
  * <p>Les URL de base sont saisies par un administrateur : ce client est la frontière anti-SSRF.
- * Avant tout appel, {@link ProviderAddressGuard} refuse les hôtes non publics, et les redirections ne
- * sont jamais suivies (une redirection vers 169.254.169.254 contournerait la vérification).
+ * <ul>
+ *   <li>{@link ProviderAddressGuard#check} refuse tôt les hôtes non publics (erreur claire).</li>
+ *   <li>La connexion elle-même passe par le résolveur gardé : elle n'utilise que des adresses vérifiées,
+ *       ce qui ferme le rebinding DNS (réponse publique pour la vérification, 127.0.0.1 pour la connexion).</li>
+ *   <li>Les redirections ne sont jamais suivies.</li>
+ *   <li>La réponse est lue au plus {@value #MAX_RESPONSE_BYTES} octets.</li>
+ * </ul>
+ * Aucun texte venant du fournisseur n'entre dans un message d'exception : il pourrait contenir un extrait
+ * de la requête ou une clé partiellement masquée.
  */
 @Component
 public class OpenAiCompatibleClient {
+
+    static final int MAX_RESPONSE_BYTES = 64 * 1024;
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final RestClient restClient;
     private final ProviderAddressGuard guard;
@@ -34,7 +53,7 @@ public class OpenAiCompatibleClient {
     /** Seul constructeur annoté : Spring en voit un second (tests) et ne saurait pas lequel choisir. */
     @Autowired
     public OpenAiCompatibleClient(ProviderAddressGuard guard) {
-        this(withTimeouts(), guard);
+        this(buildRestClient(guard.asDnsResolver()), guard);
     }
 
     OpenAiCompatibleClient(RestClient restClient, ProviderAddressGuard guard) {
@@ -54,22 +73,25 @@ public class OpenAiCompatibleClient {
         if (provider.supportsJsonMode()) {
             body.put("response_format", Map.of("type", "json_object"));
         }
+        byte[] payload;
+        try {
+            payload = MAPPER.writeValueAsBytes(body);
+        } catch (JsonProcessingException e) {
+            throw new LlmCallException(LlmCallException.INVALID_OUTPUT, "Requête illisible");
+        }
         JsonNode response;
         try {
             response = restClient.post()
                     .uri(provider.baseUrl() + "/chat/completions")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer " + provider.apiKey())
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(body)
-                    .retrieve()
-                    .onStatus(HttpStatusCode::is3xxRedirection, (request, res) -> {
-                        throw new LlmCallException(res.getStatusCode().value(), "Redirection refusée");
-                    })
-                    .body(JsonNode.class);
-        } catch (RestClientResponseException e) {
-            throw new LlmCallException(e.getStatusCode().value(), shortMessage(e, provider.apiKey()));
+                    .body(payload)
+                    .exchange((request, res) -> readBounded(res.getStatusCode(), res.getBody()));
         } catch (ResourceAccessException e) {
-            throw new LlmCallException(LlmCallException.NETWORK, "Réseau indisponible ou délai dépassé");
+            throw new LlmCallException(isBlocked(e) ? LlmCallException.BLOCKED_ADDRESS : LlmCallException.NETWORK,
+                    isBlocked(e) ? "Adresse du fournisseur refusée" : "Réseau indisponible ou délai dépassé");
+        } catch (RestClientException e) {
+            throw new LlmCallException(LlmCallException.INVALID_OUTPUT, "Réponse illisible");
         }
         JsonNode content = response == null ? null : response.path("choices").path(0).path("message").path("content");
         if (content == null || !content.isTextual() || content.asText().isBlank()) {
@@ -78,20 +100,53 @@ public class OpenAiCompatibleClient {
         return content.asText();
     }
 
-    private static String shortMessage(RestClientResponseException e, String apiKey) {
-        String text = "HTTP " + e.getStatusCode().value() + " " + e.getResponseBodyAsString();
-        if (apiKey != null && !apiKey.isEmpty()) text = text.replace(apiKey, "****");
-        return text.length() > 200 ? text.substring(0, 200) : text;
+    /** Statut traité ici (jamais de texte du fournisseur), puis corps lu au plus MAX_RESPONSE_BYTES. */
+    private static JsonNode readBounded(HttpStatusCode status, InputStream in) throws IOException {
+        int code = status.value();
+        if (status.is3xxRedirection()) {
+            throw new LlmCallException(code, "Redirection refusée");
+        }
+        if (status.is4xxClientError() || status.is5xxServerError()) {
+            throw new LlmCallException(code, "HTTP " + code);
+        }
+        byte[] bytes = in.readNBytes(MAX_RESPONSE_BYTES + 1);
+        if (bytes.length > MAX_RESPONSE_BYTES) {
+            throw new LlmCallException(LlmCallException.INVALID_OUTPUT, "Réponse trop volumineuse");
+        }
+        try {
+            return MAPPER.readTree(bytes);
+        } catch (IOException e) {
+            throw new LlmCallException(LlmCallException.INVALID_OUTPUT, "Réponse illisible");
+        }
     }
 
-    private static RestClient withTimeouts() {
-        return RestClient.builder()
-                .requestFactory(new BufferingClientHttpRequestFactory(
-                        ClientHttpRequestFactoryBuilder.detect()
-                                .build(ClientHttpRequestFactorySettings.defaults()
-                                        .withRedirects(ClientHttpRequestFactorySettings.Redirects.DONT_FOLLOW)
-                                        .withConnectTimeout(Duration.ofSeconds(5))
-                                        .withReadTimeout(Duration.ofSeconds(15)))))
+    private static boolean isBlocked(Throwable error) {
+        for (Throwable t = error; t != null; t = t.getCause()) {
+            if (t instanceof ProviderAddressGuard.BlockedAddressException) {
+                return true;
+            }
+            if (t.getCause() == t) break;
+        }
+        return false;
+    }
+
+    /**
+     * Apache HttpClient 5 explicite : seul moyen de lui imposer le résolveur DNS gardé. Pas de redirections,
+     * pas de cookies. Délais durs : connexion 5 s, lecture 15 s. Corps non mis en tampon, la lecture est bornée.
+     */
+    static RestClient buildRestClient(DnsResolver dnsResolver) {
+        PoolingHttpClientConnectionManager connections = PoolingHttpClientConnectionManagerBuilder.create()
+                .setDnsResolver(dnsResolver)
+                .setDefaultConnectionConfig(ConnectionConfig.custom()
+                        .setConnectTimeout(Timeout.ofSeconds(5))
+                        .setSocketTimeout(Timeout.ofSeconds(15))
+                        .build())
                 .build();
+        CloseableHttpClient http = HttpClients.custom()
+                .setConnectionManager(connections)
+                .disableRedirectHandling()
+                .disableCookieManagement()
+                .build();
+        return RestClient.builder().requestFactory(new HttpComponentsClientHttpRequestFactory(http)).build();
     }
 }

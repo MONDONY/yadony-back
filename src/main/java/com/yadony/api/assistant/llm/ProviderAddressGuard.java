@@ -1,5 +1,6 @@
 package com.yadony.api.assistant.llm;
 
+import org.apache.hc.client5.http.DnsResolver;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -12,8 +13,10 @@ import java.net.UnknownHostException;
  * de contacter tout hôte dont UNE adresse résolue n'est pas publique (boucle locale, réseaux privés,
  * lien local, métadonnées cloud 169.254.169.254, CGNAT, multicast, unique-local IPv6, IPv4 mappée en IPv6).
  *
- * <p>Limite connue : la vérification résout le nom, puis le client HTTP le résout de nouveau. Un DNS
- * hostile qui répond autre chose à la seconde requête (DNS rebinding) n'est pas couvert ici.
+ * <p>Rebinding DNS : {@link #check} échoue vite avec une erreur claire, mais la garantie vient de
+ * {@link #asDnsResolver()}, que le client HTTP utilise pour sa propre connexion. Il n'y a ainsi qu'une
+ * seule résolution qui compte, et la connexion s'établit sur les adresses qui viennent d'être vérifiées.
+ * Une seule règle ({@code isNonPublic}) sert aux deux chemins.
  */
 @Component
 public class ProviderAddressGuard {
@@ -36,22 +39,54 @@ public class ProviderAddressGuard {
         this.resolver = resolver;
     }
 
+    /** Levée par le résolveur gardé ; reconnue par le client pour répondre BLOCKED_ADDRESS. */
+    static final class BlockedAddressException extends UnknownHostException {
+        BlockedAddressException() {
+            super("Adresse du fournisseur refusée");
+        }
+    }
+
     public void check(String baseUrl) {
         String host = hostOf(baseUrl);
-        InetAddress[] addresses;
         try {
-            addresses = resolver.resolve(host);
+            verifiedAddresses(host);
+        } catch (BlockedAddressException e) {
+            throw new LlmCallException(LlmCallException.BLOCKED_ADDRESS, "Adresse du fournisseur refusée");
         } catch (UnknownHostException e) {
             throw new LlmCallException(LlmCallException.NETWORK, "Hôte du fournisseur introuvable");
         }
+    }
+
+    /**
+     * Résolveur pour le client HTTP : mêmes règles que {@link #check}, appliquées à la résolution qui sert
+     * réellement à se connecter. Rend exactement les adresses vérifiées, ou lève
+     * {@link BlockedAddressException} si l'une d'elles n'est pas publique.
+     */
+    public DnsResolver asDnsResolver() {
+        return new DnsResolver() {
+            @Override
+            public InetAddress[] resolve(String host) throws UnknownHostException {
+                return verifiedAddresses(host);
+            }
+
+            @Override
+            public String resolveCanonicalHostname(String host) {
+                return host;
+            }
+        };
+    }
+
+    private InetAddress[] verifiedAddresses(String host) throws UnknownHostException {
+        InetAddress[] addresses = resolver.resolve(host);
         if (addresses == null || addresses.length == 0) {
-            throw new LlmCallException(LlmCallException.NETWORK, "Hôte du fournisseur introuvable");
+            throw new UnknownHostException(host);
         }
         for (InetAddress address : addresses) {
             if (isNonPublic(address)) {
-                throw new LlmCallException(LlmCallException.BLOCKED_ADDRESS, "Adresse du fournisseur refusée");
+                throw new BlockedAddressException();
             }
         }
+        return addresses;
     }
 
     private static String hostOf(String baseUrl) {
