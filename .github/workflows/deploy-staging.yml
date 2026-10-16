@@ -183,6 +183,10 @@ jobs:
           STREAM_API_KEY=${{ vars.STREAM_API_KEY }}
           STREAM_API_SECRET=${{ secrets.STREAM_API_SECRET }}
           CALLS_ENABLED=${{ vars.CALLS_ENABLED || 'false' }}
+          # Assistant IA in-app : éteint tant que la variable d'environnement GitHub n'est pas à true.
+          # Les clés des fournisseurs ne passent pas par ici : elles se saisissent dans l'admin (chiffrées en base).
+          ASSISTANT_ENABLED=${{ vars.ASSISTANT_ENABLED || 'false' }}
+          ASSISTANT_DAILY_QUOTA=${{ vars.ASSISTANT_DAILY_QUOTA || '20' }}
           # Rail mobile money pawaPay : token API du dashboard SANDBOX (staging ne parle
           # jamais à la production pawaPay, PAWAPAY_BASE_URL garde son défaut sandbox).
           # Secret d environnement staging. Le rail reste fermé tant que PAWAPAY_ENABLED
