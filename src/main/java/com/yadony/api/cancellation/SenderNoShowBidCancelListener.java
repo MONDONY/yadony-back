@@ -1,6 +1,7 @@
 package com.yadony.api.cancellation;
 
 import com.yadony.api.cancellation.events.CancellationConfirmedEvent;
+import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
 import org.springframework.context.event.EventListener;
@@ -37,6 +38,10 @@ public class SenderNoShowBidCancelListener {
         bidRepository.findById(event.bidId()).ifPresent(bid -> {
             if (bid.getStatus() == BidStatus.ACCEPTED) {
                 bid.setStatus(BidStatus.CANCELLED);
+                // FLUTTER-QQ : marque l'issue sur le bid. Le contact se ferme sans la fenêtre de
+                // 48 h des autres annulations et la conversation passe en lecture seule
+                // (ContactWindow, messaging/), sans que ces paquets lisent l'annulation.
+                bid.setRejectionReason(BidEntity.REJECTION_SENDER_NO_SHOW);
                 bidRepository.save(bid);
             }
         });

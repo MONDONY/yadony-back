@@ -58,15 +58,28 @@ public final class ContactWindow {
      * était en cours ({@link #OPEN_STATUSES} : le contact était déjà ouvert). Une demande annulée
      * avant son acceptation n'ouvre rien : les parties n'avaient jamais eu le contact. Borne
      * exclusive : à {@code cancelledAt + 48 h} pile, le contact est fermé. Les annulations
-     * antérieures à V316 (sans horodatage) restent fermées.
+     * antérieures à V316 (sans horodatage) restent fermées. L'absence confirmée de l'expéditeur
+     * ({@link #isClosedBySenderNoShow}) n'ouvre rien non plus (FLUTTER-QQ).
      */
     public static boolean isRecentlyCancelled(BidEntity bid, LocalDateTime nowUtc) {
         return bid != null
                 && bid.getStatus() == BidStatus.CANCELLED
+                && !isClosedBySenderNoShow(bid)
                 && bid.getCancelledAt() != null
                 && bid.getCancelledFromStatus() != null
                 && OPEN_STATUSES.contains(bid.getCancelledFromStatus())
                 && nowUtc.isBefore(bid.getCancelledAt().plus(AFTER_CANCELLATION));
+    }
+
+    /**
+     * Colis annulé parce que l'absence de l'expéditeur à la remise a été confirmée (FLUTTER-QQ) :
+     * appels et numéro coupés tout de suite, conversation en lecture seule pour les deux parties.
+     * Pendant les 24 h de contestation, le colis reste ACCEPTED et tout reste ouvert.
+     */
+    public static boolean isClosedBySenderNoShow(BidEntity bid) {
+        return bid != null
+                && bid.getStatus() == BidStatus.CANCELLED
+                && BidEntity.REJECTION_SENDER_NO_SHOW.equals(bid.getRejectionReason());
     }
 
     /**

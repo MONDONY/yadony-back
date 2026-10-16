@@ -524,7 +524,7 @@ public class ConversationService {
             tripDate,
             tripWeightKg,
             bidStatus,
-            conv.isReadOnlyFor(currentUserId),
+            conv.isReadOnlyFor(currentUserId) || isClosedBySenderNoShow(conv, bidOpt.orElse(null)),
             conv.isDeletedByUser(currentUserId),
             conv.getKind() != null ? conv.getKind().name() : ConversationKind.SENDER_TRAVELER.name(),
             !conv.isRecipientConversation() ? null
@@ -589,6 +589,17 @@ public class ConversationService {
             log.warn("callAvailable indisponible pour {} : {}", conv.getId(), e.toString());
             return false;
         }
+    }
+
+    /**
+     * Absence de l'expéditeur confirmée (FLUTTER-QQ) : la conversation expéditeur ↔ voyageur du
+     * colis passe en lecture seule pour les deux. Lu sur le bid, source de vérité ; le miroir
+     * Firestore ({@code readOnlyAt}) est posé par {@link SenderNoShowConversationListener}.
+     * La conversation destinataire n'est pas concernée.
+     */
+    static boolean isClosedBySenderNoShow(ConversationEntity conv, BidEntity bid) {
+        return !conv.isRecipientConversation()
+                && com.yadony.api.matching.ContactWindow.isClosedBySenderNoShow(bid);
     }
 
     /**

@@ -49,6 +49,8 @@ class SenderNoShowBidCancelListenerTest {
         listener.onCancellationConfirmed(event(CancellationReason.SENDER_NO_SHOW));
 
         assertThat(b.getStatus()).isEqualTo(BidStatus.CANCELLED);
+        // FLUTTER-QQ : le motif ferme le contact et la conversation sans lire l'annulation.
+        assertThat(b.getRejectionReason()).isEqualTo(BidEntity.REJECTION_SENDER_NO_SHOW);
         verify(bidRepository).save(b);
     }
 
