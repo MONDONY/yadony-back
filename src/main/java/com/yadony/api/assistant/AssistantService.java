@@ -95,13 +95,32 @@ public class AssistantService {
         }
         Set<String> whitelist = knowledgeBase.routeWhitelist();
         List<AssistantAction> actions = new ArrayList<>();
-        for (String route : routes) {
+        for (String raw : routes) {
             if (actions.size() >= MAX_ACTIONS) break;
+            String route = normalizeRoute(raw);
             if (!whitelist.contains(route) || !allowed.containsKey(route)) continue;
             if (actions.stream().anyMatch(a -> a.route().equals(route))) continue;
             actions.add(new AssistantAction(route, allowed.get(route)));
         }
         return actions;
+    }
+
+    /**
+     * Certains modèles recopient le libellé de la fiche après le chemin (« /payments/money (My money) ») :
+     * on ne garde que le chemin, avant tout blanc ou parenthèse. Le filtre de liste blanche reste juge.
+     */
+    private static String normalizeRoute(String raw) {
+        if (raw == null) return "";
+        String route = raw.strip();
+        int cut = route.length();
+        for (int i = 0; i < route.length(); i++) {
+            char c = route.charAt(i);
+            if (c == '(' || Character.isWhitespace(c)) {
+                cut = i;
+                break;
+            }
+        }
+        return route.substring(0, cut);
     }
 
     /** Langue : « en », « EN » ou « en-US » donnent anglais ; tout le reste français. */
