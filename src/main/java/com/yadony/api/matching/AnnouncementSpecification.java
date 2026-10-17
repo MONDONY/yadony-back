@@ -146,15 +146,15 @@ public class AnnouncementSpecification {
     }
 
     /**
-     * Filters announcements to Kilo Pro travelers only.
+     * Filters announcements to GP Pro travelers only.
      * Uses a subquery on users table to avoid cross-package service injection.
      */
-    public static Specification<AnnouncementEntity> kiloProOnly() {
+    public static Specification<AnnouncementEntity> gpProOnly() {
         return (root, query, cb) -> {
             Subquery<UUID> sq = query.subquery(UUID.class);
             Root<UserEntity> user = sq.from(UserEntity.class);
             sq.select(user.<UUID>get("id"))
-              .where(cb.isTrue(user.get("kiloPro")));
+              .where(cb.isTrue(user.get("gpPro")));
             return root.get("travelerId").in(sq);
         };
     }

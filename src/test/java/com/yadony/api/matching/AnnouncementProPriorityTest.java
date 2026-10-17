@@ -186,7 +186,7 @@ class AnnouncementProPriorityTest {
 
         List<Sort.Order> orders = pageableCaptor.getValue().getSort().stream().toList();
         assertThat(orders).extracting(Sort.Order::getProperty)
-                .containsExactly("travelerIsPro", "pricePerKgEur", "id");
+                .containsExactly("travelerIsPro", "pricePerKgEur", "travelerIsGpPro", "id");
         assertThat(orders.get(0).getDirection()).isEqualTo(Sort.Direction.DESC);
         assertThat(orders.get(1).isAscending()).isTrue();
     }
@@ -221,10 +221,11 @@ class AnnouncementProPriorityTest {
 
         List<Sort.Order> orders = pageableCaptor.getValue().getSort().stream().toList();
 
-        assertThat(orders).hasSize(2);
-        assertThat(orders.get(0).getProperty()).isEqualTo("travelerIsPro");
+        assertThat(orders).extracting(Sort.Order::getProperty)
+                .containsExactly("travelerIsPro", "departureDate", "travelerIsGpPro", "id");
         assertThat(orders.get(0).getDirection()).isEqualTo(Sort.Direction.DESC);
-        assertThat(orders.get(1).getProperty()).isEqualTo("departureDate");
         assertThat(orders.get(1).getDirection()).isEqualTo(Sort.Direction.ASC);
+        assertThat(orders.get(2).getDirection()).isEqualTo(Sort.Direction.DESC);
+        assertThat(orders.get(3).getDirection()).isEqualTo(Sort.Direction.ASC);
     }
 }

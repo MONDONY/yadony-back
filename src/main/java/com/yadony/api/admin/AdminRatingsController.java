@@ -125,8 +125,8 @@ public class AdminRatingsController {
 
     /**
      * Annule une suppression d'avis. Recalcule la moyenne et le nombre d'avis du compte noté
-     * (inverse exact de {@link #deleteRating}). Le badge Kilo Pro n'est ni retiré à la
-     * suppression ni réévalué ici : il ne s'accorde qu'à la confirmation d'une livraison.
+     * (inverse exact de {@link #deleteRating}). Le badge GP Pro n'est ni retiré à la
+     * suppression ni réévalué ici : il est attribué par l'admin.
      *
      * <p>409 {@code rating-superseded} si l'auteur a noté à nouveau la même livraison entre
      * temps : l'index unique partiel ({@code bid_id, rater_id} / {@code tracking_token}, hors

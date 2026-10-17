@@ -234,7 +234,7 @@ class AdminNotificationServiceTest {
     // -------------------------------------------------------------- compteurs
 
     private static AdminQueueSnapshot snapshot() {
-        return new AdminQueueSnapshot(4, 2, Map.of(ADMIN, 3L, OTHER_ADMIN, 7L), 5, 1, 6, 2, 3, 8, 9);
+        return new AdminQueueSnapshot(4, 2, Map.of(ADMIN, 3L, OTHER_ADMIN, 7L), 5, 1, 6, 2, 3, 8, 9, 10, 11);
     }
 
     @Test
@@ -251,7 +251,9 @@ class AdminNotificationServiceTest {
                 Map.entry("heldPayouts", 2L),
                 Map.entry("walletRefunds", 3L),
                 Map.entry("gdpr", 8L),
-                Map.entry("alerts", 9L));
+                Map.entry("alerts", 9L),
+                Map.entry("gpPro", 10L),
+                Map.entry("gpProReview", 11L));
     }
 
     @Test

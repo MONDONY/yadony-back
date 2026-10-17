@@ -44,12 +44,15 @@ class FlagParserTest {
     }
 
     @Test
-    void kiloProSetsTheProFlag() {
-        ParseState s = state("kilo pro");
+    void flagParserMapsGpAndProAndKiloProToGpProOnly() {
+        for (String phrase : new String[] {"pro", "gp", "kilo pro", "gp pro"}) {
+            ParseState s = state(phrase);
 
-        FlagParser.apply(s);
+            FlagParser.apply(s);
 
-        assertThat(s.values()).containsEntry("kiloProOnly", Boolean.TRUE);
+            assertThat(s.values()).as(phrase).containsEntry("gpProOnly", Boolean.TRUE)
+                    .doesNotContainKey("kiloProOnly");
+        }
     }
 
     @Test

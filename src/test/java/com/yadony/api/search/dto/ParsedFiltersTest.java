@@ -24,7 +24,7 @@ class ParsedFiltersTest {
         assertThat(filters.maxPricePerKg()).isEqualByComparingTo("8");
         assertThat(filters.weekendOnly()).isTrue();
         assertThat(filters.urgent()).isFalse();
-        assertThat(filters.kiloProOnly()).isNull();
+        assertThat(filters.gpProOnly()).isNull();
     }
 
     @Test
@@ -41,5 +41,24 @@ class ParsedFiltersTest {
         assertThat(json).doesNotContain("departureCity")
                 .doesNotContain("departureDateFrom")
                 .doesNotContain("minAvailableKg");
+    }
+
+    @Test
+    void serialization_emitsBothGpProAndLegacyKiloProKeys() throws Exception {
+        ParsedFilters filters = new ParsedFilters(
+                null, null, null, null, null, null, null, null, null, null, true, null, null, null);
+
+        com.fasterxml.jackson.databind.JsonNode json = new ObjectMapper().valueToTree(filters);
+
+        assertThat(json.get("gpProOnly").asBoolean()).isTrue();
+        assertThat(json.get("kiloProOnly").asBoolean()).isTrue();
+    }
+
+    @Test
+    void serialization_omitsLegacyKeyWhenGpProUnset() throws Exception {
+        ParsedFilters filters = new ParsedFilters(
+                null, "Bamako", null, null, null, null, null, null, null, null, null, null, null, null);
+
+        assertThat(new ObjectMapper().writeValueAsString(filters)).doesNotContain("kiloProOnly");
     }
 }

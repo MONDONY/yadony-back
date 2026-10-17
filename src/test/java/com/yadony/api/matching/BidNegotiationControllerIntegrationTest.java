@@ -67,7 +67,7 @@ class BidNegotiationControllerIntegrationTest {
                 new BigDecimal("5.0"), "Vêtements", "CLOTHING",
                 List.of(), List.of(), List.of(), "Moussa D.", "Paris", "Dakar",
                 LocalDate.now().plusDays(10), LocalDateTime.now().plusHours(72), List.of(), "CASH",
-                COUNTERPARTY_ID, null);
+                COUNTERPARTY_ID, null, null, true);
     }
 
     private static BidNegotiationStartRequest startRequest(BigDecimal proposed) {
@@ -236,7 +236,8 @@ class BidNegotiationControllerIntegrationTest {
                         .with(authentication(authenticatedAs("uid-sender", "ROLE_SENDER"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.announcementId").value(ANNOUNCEMENT_ID.toString()))
-                .andExpect(jsonPath("$.counterpartyId").value(COUNTERPARTY_ID.toString()));
+                .andExpect(jsonPath("$.counterpartyId").value(COUNTERPARTY_ID.toString()))
+                .andExpect(jsonPath("$.counterpartyGpPro").value(true));
     }
 
     @Test

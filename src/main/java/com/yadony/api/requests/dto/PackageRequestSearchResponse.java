@@ -152,11 +152,7 @@ public record PackageRequestSearchResponse(
      *                      acceptation et absences au rendez-vous de remise confirmées
      */
     public record SenderPublicProfile(UUID id, String displayName, double averageRating, int totalRatings,
-                                      boolean kycVerified, String avatarUrl, int incidentCount) {
-        public SenderPublicProfile(UUID id, String displayName, double averageRating, int totalRatings,
-                                   boolean kycVerified, String avatarUrl) {
-            this(id, displayName, averageRating, totalRatings, kycVerified, avatarUrl, 0);
-        }
+                                      boolean kycVerified, boolean gpPro, String avatarUrl, int incidentCount) {
     }
 
     /** Copie enrichie de l'équivalent converti — même pattern que {@code AnnouncementSearchResponse}. */

@@ -108,6 +108,11 @@ public enum AdminPermission {
      * jamais au support : une clé d'API est un secret.
      */
     ASSISTANT_MANAGE,
+    /**
+     * Examiner les demandes du badge GP Pro, l'attribuer et le retirer. Jamais accordée au
+     * support : le badge est un signal de confiance affiché aux expéditeurs.
+     */
+    GP_PRO_REVIEW,
     AUDIT_VIEW,
     EXPORT_RUN
 }

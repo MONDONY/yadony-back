@@ -5,12 +5,14 @@ import com.yadony.api.activation.dto.ActivationResponse.Opportunities;
 import com.yadony.api.activation.dto.ActivationResponse.PackageItem;
 import com.yadony.api.activation.dto.ActivationResponse.TripItem;
 import com.yadony.api.activation.dto.DeclareIntentRequest;
+import com.yadony.api.activation.events.UserIntentDeclaredEvent;
 import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.currency.CountryCatalog;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,12 +36,14 @@ public class ActivationService {
     private final UserRepository userRepository;
     private final ActivationRepository activationRepository;
     private final AuditService auditService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public ActivationService(UserRepository userRepository, ActivationRepository activationRepository,
-                             AuditService auditService) {
+                             AuditService auditService, ApplicationEventPublisher eventPublisher) {
         this.userRepository = userRepository;
         this.activationRepository = activationRepository;
         this.auditService = auditService;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional(readOnly = true)
@@ -71,6 +75,7 @@ public class ActivationService {
         payload.put("source", request.source().name());
         payload.put("destinationCountry", destination);
         auditService.log("USER", user.getId(), "INTENT_DECLARED", user.getId(), payload);
+        eventPublisher.publishEvent(new UserIntentDeclaredEvent(user.getId(), request.intent()));
         return toResponse(user);
     }
 

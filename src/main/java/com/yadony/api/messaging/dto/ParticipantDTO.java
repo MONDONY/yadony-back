@@ -12,5 +12,6 @@ public record ParticipantDTO(
         boolean phoneAvailable,
         /** Rôle relatif à la conversation : "Voyageur" | "Expéditeur" | "Destinataire". */
         String role,
-        boolean kycVerified
+        boolean kycVerified,
+        boolean gpPro
 ) {}

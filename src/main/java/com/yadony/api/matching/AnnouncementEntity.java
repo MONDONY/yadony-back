@@ -199,6 +199,10 @@ public class AnnouncementEntity extends BaseEntity {
     @Column(name = "traveler_is_pro", nullable = false)
     private boolean travelerIsPro = false;
 
+    @org.hibernate.annotations.ColumnDefault("false")
+    @Column(name = "traveler_is_gp_pro", nullable = false)
+    private boolean travelerIsGpPro = false;
+
     /**
      * If non-null, this announcement is a "dedicated trip" — created by the
      * traveler in response to a sender's package_request via
@@ -276,6 +280,9 @@ public class AnnouncementEntity extends BaseEntity {
 
     public boolean isTravelerIsPro() { return travelerIsPro; }
     public void setTravelerIsPro(boolean travelerIsPro) { this.travelerIsPro = travelerIsPro; }
+
+    public boolean isTravelerIsGpPro() { return travelerIsGpPro; }
+    public void setTravelerIsGpPro(boolean travelerIsGpPro) { this.travelerIsGpPro = travelerIsGpPro; }
 
     public UUID getLinkedPackageRequestId() { return linkedPackageRequestId; }
     public void setLinkedPackageRequestId(UUID linkedPackageRequestId) { this.linkedPackageRequestId = linkedPackageRequestId; }

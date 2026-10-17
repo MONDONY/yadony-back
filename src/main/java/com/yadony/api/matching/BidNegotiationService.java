@@ -34,6 +34,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -881,6 +882,8 @@ public class BidNegotiationService {
 
         boolean open = bid.getStatus() == BidStatus.NEGOTIATING;
         boolean myTurn = open && isMyTurn(last, viewerId);
+        UUID counterpartyId = viewerIsTraveler ? bid.getSenderId() : announcement.getTravelerId();
+        Optional<UserEntity> counterparty = userRepository.findById(counterpartyId);
 
         return new BidNegotiationResponse(
                 bid.getId(),
@@ -902,16 +905,17 @@ public class BidNegotiationService {
                 gridLines,
                 customLines,
                 photoUrls,
-                displayName(viewerIsTraveler ? bid.getSenderId() : announcement.getTravelerId()),
+                counterparty.map(UserEntity::publicDisplayName).orElse(UserEntity.UNKNOWN_DISPLAY_NAME),
                 announcement.getDepartureCity(),
                 announcement.getArrivalCity(),
                 announcement.getDepartureDate(),
                 expiresAt(bid, last, open),
                 messages,
                 bid.getPaymentMethod() != null ? bid.getPaymentMethod().name() : null,
-                viewerIsTraveler ? bid.getSenderId() : announcement.getTravelerId(),
+                counterpartyId,
                 commissionDueBy(bid, announcement),
-                viewerIsTraveler ? rate : null);
+                viewerIsTraveler ? rate : null,
+                counterparty.map(UserEntity::isGpPro).orElse(false));
     }
 
     /** Net voyageur d'un brut proposé ({@link BidNegotiationPricing#split}), null sans montant. */

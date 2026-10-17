@@ -30,6 +30,7 @@ class ActivationServiceTest {
     @Mock UserRepository userRepository;
     @Mock ActivationRepository activationRepository;
     @Mock AuditService auditService;
+    @Mock org.springframework.context.ApplicationEventPublisher eventPublisher;
     @InjectMocks ActivationService service;
 
     private UserEntity user(String intent, String destination) {
@@ -154,6 +155,14 @@ class ActivationServiceTest {
         verify(auditService).log(eq("USER"), eq(u.getId()), eq("INTENT_DECLARED"), eq(u.getId()), payload.capture());
         assertThat(payload.getValue()).containsEntry("intent", "TRAVELER").containsEntry("source", "SIGNUP")
                 .containsEntry("destinationCountry", "SN");
+    }
+
+    @Test
+    void declareIntentPublishesUserIntentDeclaredEvent() {
+        UserEntity u = user(null, null);
+        service.declareIntent("uid", new DeclareIntentRequest(UserIntent.SENDER, null, IntentSource.PROMPT));
+        verify(eventPublisher).publishEvent(
+                new com.yadony.api.activation.events.UserIntentDeclaredEvent(u.getId(), UserIntent.SENDER));
     }
 
     @Test

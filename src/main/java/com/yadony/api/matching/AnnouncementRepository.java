@@ -144,6 +144,11 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
 
     long countByTravelerIdAndStatus(UUID travelerId, AnnouncementStatus status);
 
+    /** Date de création de la dernière annonce publiée (hors brouillon) du voyageur, ou null. */
+    @Query("SELECT max(a.createdAt) FROM AnnouncementEntity a WHERE a.travelerId = :travelerId "
+            + "AND a.status <> com.yadony.api.matching.AnnouncementStatus.DRAFT")
+    LocalDateTime findLastNonDraftCreatedAt(@Param("travelerId") UUID travelerId);
+
     /** Étapes d'un voyage (FLUTTER-4D), dans l'ordre du voyage ; hors soft-delete. */
     List<AnnouncementEntity> findByTripGroupIdOrderByTripLegIndexAsc(UUID tripGroupId);
 
@@ -177,6 +182,12 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
            "WHERE a.travelerId = :travelerId AND a.status IN " +
            "(com.yadony.api.matching.AnnouncementStatus.ACTIVE, com.yadony.api.matching.AnnouncementStatus.FULL)")
     int updateTravelerProStatus(@Param("travelerId") UUID travelerId, @Param("isPro") boolean isPro);
+
+    @Modifying
+    @Query("UPDATE AnnouncementEntity a SET a.travelerIsGpPro = :gpPro " +
+           "WHERE a.travelerId = :travelerId AND a.status IN " +
+           "(com.yadony.api.matching.AnnouncementStatus.ACTIVE, com.yadony.api.matching.AnnouncementStatus.FULL)")
+    int updateTravelerGpProStatus(@Param("travelerId") UUID travelerId, @Param("gpPro") boolean gpPro);
 
     @Query("SELECT a FROM AnnouncementEntity a WHERE a.travelerId = :travelerId " +
            "AND a.status IN (com.yadony.api.matching.AnnouncementStatus.ACTIVE, com.yadony.api.matching.AnnouncementStatus.FULL)")

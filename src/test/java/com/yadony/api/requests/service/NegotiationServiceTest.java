@@ -691,6 +691,59 @@ class NegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("trajet dédié d'un voyageur GP Pro → annonce créée avec travelerIsGpPro=true")
+        void start_dedicatedTrip_copiesGpProOntoAnnouncement() {
+            stubDedicatedTripRequestFields();
+            traveler.setGpPro(true);
+            when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
+            when(config.threadsPerMinuteRateLimit()).thenReturn(1);
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findActiveByPackageRequestIdAndTravelerId(REQUEST_ID, TRAVELER_ID))
+                .thenReturn(Optional.empty());
+            when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
+                .thenReturn(0L);
+            when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
+            UUID newAnnId = UUID.randomUUID();
+            when(announcementRepo.save(any())).thenAnswer(inv -> {
+                com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
+                try {
+                    var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                    idField.setAccessible(true);
+                    idField.set(a, newAnnId);
+                } catch (Exception e) { throw new RuntimeException(e); }
+                return a;
+            });
+            when(threadRepo.save(any())).thenAnswer(inv -> {
+                NegotiationThreadEntity t = inv.getArgument(0);
+                try {
+                    var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                    idField.setAccessible(true);
+                    idField.set(t, UUID.randomUUID());
+                } catch (Exception e) { throw new RuntimeException(e); }
+                return t;
+            });
+
+            NegotiationStartRequest req = new NegotiationStartRequest(
+                REQUEST_ID, new BigDecimal("80"), request.getDesiredDate(),
+                new BigDecimal("5"), null, null, true, dedicatedTripPayload(request.getDesiredDate())
+            );
+
+            when(announcementRepo.findCountryCodeByCityName("Paris")).thenReturn(Optional.of("FR"));
+            when(announcementRepo.findCountryCodeByCityName("Dakar")).thenReturn(Optional.of("SN"));
+
+            NegotiationThreadResponse response = service.start(TRAVELER_ID, req);
+
+            assertThat(response.status()).isEqualTo(NegotiationThreadStatus.OPEN);
+            ArgumentCaptor<com.yadony.api.matching.AnnouncementEntity> annCaptor =
+                ArgumentCaptor.forClass(com.yadony.api.matching.AnnouncementEntity.class);
+            verify(announcementRepo).save(annCaptor.capture());
+            assertThat(annCaptor.getValue().isTravelerIsGpPro()).isTrue();
+        }
+
+
+        @Test
         @DisplayName("trajet dédié depuis Abidjan → fuseau Africa/Abidjan et departureAt posé (il restait nul)")
         void start_dedicatedTrip_usesDepartureCityTimezone() {
             stubDedicatedTripRequestFields();
@@ -4673,6 +4726,40 @@ class NegotiationServiceTest {
             // paymentMethod is null (not set on entity)
             assertThat(response.paymentMethod()).isNull();
             assertThat(response.currency()).isEqualTo("CAD");
+        }
+
+        @Test
+        @DisplayName("GP Pro : travelerGpPro et senderGpPro suivent les badges des comptes")
+        void toResponse_exposesGpProBadges() {
+            NegotiationThreadEntity thread = new NegotiationThreadEntity();
+            thread.setPackageRequestId(REQUEST_ID);
+            thread.setTravelerId(TRAVELER_ID);
+            thread.setStatus(NegotiationThreadStatus.OPEN);
+            thread.setCurrency("EUR");
+            thread.setCurrentPriceEur(new BigDecimal("35"));
+            thread.setRoundsCount((short) 1);
+            thread.setLastActivityAt(java.time.LocalDateTime.now());
+            request.setDepartureCity("Paris");
+            request.setArrivalCity("Dakar");
+            request.setWeightKg(new BigDecimal("5"));
+            UserEntity sender = new UserEntity();
+            sender.setGpPro(true);
+            when(userRepository.findById(request.getSenderId())).thenReturn(Optional.of(sender));
+            traveler.setGpPro(false);
+
+            NegotiationThreadResponse json = service.toResponse(
+                thread, List.of(), null, traveler, request, TRAVELER_ID, "Expéditeur", null);
+            assertThat(json.travelerGpPro()).isFalse();
+            assertThat(json.senderGpPro()).isTrue();
+
+            traveler.setGpPro(true);
+            NegotiationThreadResponse json2 = service.toResponse(
+                thread, List.of(), null, traveler, request, TRAVELER_ID, "Expéditeur", null);
+            assertThat(json2.travelerGpPro()).isTrue();
+            com.fasterxml.jackson.databind.JsonNode node = new com.fasterxml.jackson.databind.ObjectMapper()
+                .findAndRegisterModules().valueToTree(json2);
+            assertThat(node.get("travelerGpPro").asBoolean()).isTrue();
+            assertThat(node.get("senderGpPro").asBoolean()).isTrue();
         }
 
         @Test

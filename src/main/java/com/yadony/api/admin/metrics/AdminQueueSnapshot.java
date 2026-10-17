@@ -10,6 +10,8 @@ import java.util.UUID;
  * seule fois pour tous.
  *
  * @param supportUnassigned tickets non résolus sans administrateur assigné
+ * @param gpProPending      demandes GP Pro en attente de décision
+ * @param gpProReview       titulaires GP Pro à réexaminer
  * @param supportByAdmin    tickets non résolus par administrateur assigné
  */
 public record AdminQueueSnapshot(
@@ -22,7 +24,9 @@ public record AdminQueueSnapshot(
         long heldPayouts,
         long pendingWalletRefunds,
         long pendingGdpr,
-        long unresolvedAlerts
+        long unresolvedAlerts,
+        long gpProPending,
+        long gpProReview
 ) {
     public AdminQueueSnapshot {
         supportByAdmin = supportByAdmin == null ? Map.of() : Map.copyOf(supportByAdmin);

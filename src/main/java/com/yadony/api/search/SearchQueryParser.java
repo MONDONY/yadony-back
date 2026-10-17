@@ -53,7 +53,7 @@ public class SearchQueryParser {
                 num(v, "minRating"),
                 bool(v, "weekendOnly"),
                 bool(v, "urgent"),
-                bool(v, "kiloProOnly"),
+                bool(v, "gpProOnly"),
                 bool(v, "kycVerifiedOnly"),
                 str(v, "transportMode"),
                 str(v, "contentType"));

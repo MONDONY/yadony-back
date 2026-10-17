@@ -78,8 +78,36 @@ public record NegotiationThreadResponse(
     UUID senderId,
     // Le fil est rangé dans les « Archivées » du demandeur (FLUTTER-EJ). Propre à
     // chaque participant : l'autre partie peut le voir non archivé.
-    boolean archived
+    boolean archived,
+    // Badge GP Pro attribué par l'admin (voyageur du fil / expéditeur présenté au voyageur).
+    boolean travelerGpPro,
+    boolean senderGpPro
 ) {
+    /** Constructeur de compatibilité (sans travelerGpPro/senderGpPro). */
+    public NegotiationThreadResponse(
+            UUID id, UUID packageRequestId, UUID travelerId, UUID travelerAnnouncementId,
+            LocalDate travelerTravelDate, BigDecimal travelerAvailableKg, String travelerCapacityUnit,
+            NegotiationThreadStatus status, BigDecimal currentPriceEur, int roundsCount,
+            LocalDateTime lastActivityAt, LocalDateTime createdAt, List<NegotiationMessageResponse> messages,
+            String paymentIntentClientSecret, String travelerName, BigDecimal travelerRating,
+            Integer travelerTripsCount, String travelerPhotoUrl, String departureCity, String arrivalCity,
+            BigDecimal weightKg, String senderName, String senderPhotoUrl, boolean isMyTurn,
+            boolean canAccept, boolean canCounter, int roundsRemaining, LinkedTripSummary linkedTrip,
+            BigDecimal grossPriceEur, PaymentMethod paymentMethod, UUID materializedBidId,
+            boolean cashCommissionAvailable, Set<PaymentMethod> availablePaymentMethods, boolean canNudge,
+            boolean hasUnread, String promoCode, BigDecimal commissionRate, String currency,
+            String commissionStatus, LocalDateTime commissionDeadline, LocalDateTime depositExpiresAt,
+            UUID senderId, boolean archived) {
+        this(id, packageRequestId, travelerId, travelerAnnouncementId, travelerTravelDate,
+                travelerAvailableKg, travelerCapacityUnit, status, currentPriceEur, roundsCount,
+                lastActivityAt, createdAt, messages, paymentIntentClientSecret, travelerName, travelerRating,
+                travelerTripsCount, travelerPhotoUrl, departureCity, arrivalCity, weightKg, senderName,
+                senderPhotoUrl, isMyTurn, canAccept, canCounter, roundsRemaining, linkedTrip, grossPriceEur,
+                paymentMethod, materializedBidId, cashCommissionAvailable, availablePaymentMethods, canNudge,
+                hasUnread, promoCode, commissionRate, currency, commissionStatus, commissionDeadline,
+                depositExpiresAt, senderId, archived, false, false);
+    }
+
     /** Constructeur de compatibilité (sans archived). */
     public NegotiationThreadResponse(
             UUID id, UUID packageRequestId, UUID travelerId, UUID travelerAnnouncementId,

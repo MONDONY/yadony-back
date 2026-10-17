@@ -936,6 +936,7 @@ public class NegotiationService {
         com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
         ann.setTravelerId(traveler.getId());
         ann.setTravelerIsPro(traveler.isProAccount());
+        ann.setTravelerIsGpPro(traveler.isGpPro());
         ann.setDepartureCity(request.getDepartureCity());
         ann.setArrivalCity(request.getArrivalCity());
         // La demande de colis ne porte pas de code pays : déduit du référentiel des villes,
@@ -2452,10 +2453,9 @@ public class NegotiationService {
             ? PriceBreakdown.fromNet(t.getCurrentPriceEur(), displayRate(t)).gross()
             : null;
 
+        UserEntity senderUser = userRepository.findById(request.getSenderId()).orElse(null);
         String senderPhotoUrl = storageService.avatarUrl(
-            userRepository.findById(request.getSenderId())
-                .map(com.yadony.api.auth.UserEntity::getAvatarUrl)
-                .orElse(null));
+            senderUser != null ? senderUser.getAvatarUrl() : null);
 
         // Default true (non-blocking) when unchecked: action responses aren't used to
         // render the payment-method picker, so we don't want a stale "false" here to
@@ -2547,7 +2547,9 @@ public class NegotiationService {
             commissionDeadline,
             depositExpiresAt,
             request.getSenderId(),
-            archived
+            archived,
+            traveler.isGpPro(),
+            senderUser != null && senderUser.isGpPro()
         );
     }
 

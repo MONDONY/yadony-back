@@ -182,7 +182,7 @@ class PackageRequestControllerIT {
             "vetements",
             new BigDecimal("25"), true, null, "10e", "Plateau",
             new PackageRequestSearchResponse.SenderPublicProfile(
-                UUID.randomUUID(), "Sender", 4.5, 12, true, null),
+                UUID.randomUUID(), "Sender", 4.5, 12, true, false, null, 0),
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE)
         , List.of(), false, false, null, null, null, "EUR",
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.CASH),
@@ -212,7 +212,7 @@ class PackageRequestControllerIT {
             "vetements",
             new BigDecimal("25"), false, null, "10e", "Plateau",
             new PackageRequestSearchResponse.SenderPublicProfile(
-                UUID.randomUUID(), "Sender", 4.5, 12, true, null),
+                UUID.randomUUID(), "Sender", 4.5, 12, true, false, null, 0),
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE)
         , List.of(), false, false, null, null, null, "EUR",
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.CASH),
@@ -241,7 +241,7 @@ class PackageRequestControllerIT {
             "vetements",
             new BigDecimal("25"), true, null, "10e", "Plateau",
             new PackageRequestSearchResponse.SenderPublicProfile(
-                UUID.randomUUID(), "Sender", 4.5, 12, true, null),
+                UUID.randomUUID(), "Sender", 4.5, 12, true, false, null, 0),
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE)
         , List.of(), false, false, null, null, null, "EUR",
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.CASH),
@@ -548,7 +548,7 @@ class PackageRequestControllerIT {
             "vetements",
             new BigDecimal("25"), true, null, "10e", "Plateau",
             new PackageRequestSearchResponse.SenderPublicProfile(
-                UUID.randomUUID(), "Sender", 4.5, 12, true, null),
+                UUID.randomUUID(), "Sender", 4.5, 12, true, false, null, 0),
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE)
         , List.of(), false, true, null, null, null, "EUR",
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.CASH),

@@ -302,6 +302,11 @@ yadony:
     # presente dans platform_settings, c'est le back-office (Parametres) qui decide.
     enabled: ${YADONY_PRO_ENABLED:false}
   escrow-timeout-hours: ${YADONY_ESCROW_TIMEOUT_HOURS:48}
+  gp-pro:
+    # Revue quotidienne des titulaires du badge GP Pro et purge de secours des justificatifs.
+    scheduler-enabled: ${YADONY_GP_PRO_SCHEDULER_ENABLED:true}
+    review-cron: ${YADONY_GP_PRO_REVIEW_CRON:0 15 4 * * *}
+    cleanup-cron: ${YADONY_GP_PRO_CLEANUP_CRON:0 45 4 * * *}
   billing:
     # Faux tant que le lot 2 (Stripe Checkout) n'est pas en production :
     # sans lui, les comptes en grâce n'ont aucun moyen de s'abonner.

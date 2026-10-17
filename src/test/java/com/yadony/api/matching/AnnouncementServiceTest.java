@@ -352,6 +352,29 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("newAnnouncementCopiesGpPro : le badge GP Pro du voyageur est copié sur l'annonce")
+        void newAnnouncementCopiesGpPro() {
+            UserEntity traveler = buildTraveler();
+            traveler.setGpPro(true);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(activeCurrencyResolver.resolve(traveler.getId())).thenReturn("EUR");
+            when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+            when(bidRepository.sumReservedNetByAnnouncementId(any(), any())).thenReturn(java.math.BigDecimal.ZERO);
+
+            announcementService.createAnnouncement(FIREBASE_UID, buildRequest());
+
+            ArgumentCaptor<AnnouncementEntity> saved = ArgumentCaptor.forClass(AnnouncementEntity.class);
+            verify(announcementRepository).save(saved.capture());
+            assertThat(saved.getValue().isTravelerIsGpPro()).isTrue();
+        }
+
+        @Test
         @DisplayName("création récurrente → identifiant de programmation persisté")
         void createRecurringAnnouncement_linksSourceRecurrence() {
             UserEntity traveler = buildTraveler();
@@ -2853,7 +2876,7 @@ class AnnouncementServiceTest {
             java.util.List<org.springframework.data.domain.Sort.Order> orders =
                     sort.stream().toList();
             assertThat(orders).extracting(org.springframework.data.domain.Sort.Order::getProperty)
-                    .containsExactly("travelerIsPro", "pricePerKgEur", "id");
+                    .containsExactly("travelerIsPro", "pricePerKgEur", "travelerIsGpPro", "id");
             org.springframework.data.domain.Sort.Order pivot = orders.get(1);
             assertThat(pivot.isAscending()).isTrue();
             // Pas de NullHandling : refusé par Spring Data sur une requête Criteria,
@@ -3329,6 +3352,38 @@ class AnnouncementServiceTest {
             // que les events de matching/notifications doivent partir.
             verify(eventPublisher).publishEvent(any(com.yadony.api.matching.events.AnnouncementCreatedEvent.class));
             verify(eventPublisher).publishEvent(any(AnnouncementPublishedEvent.class));
+        }
+
+        @Test
+        @DisplayName("GP Pro retiré pendant le brouillon → travelerIsGpPro rafraîchi à false à la publication")
+        void publishAnnouncement_refreshesGpProFlagDown() {
+            UserEntity user = verifiedProUser();
+            user.setGpPro(false);
+            AnnouncementEntity draft = draftEntityOwnedBy(user);
+            draft.setTravelerIsGpPro(true);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.findById(draft.getId())).thenReturn(Optional.of(draft));
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID);
+
+            assertThat(draft.isTravelerIsGpPro()).isFalse();
+        }
+
+        @Test
+        @DisplayName("GP Pro attribué pendant le brouillon → travelerIsGpPro rafraîchi à true à la publication")
+        void publishAnnouncement_refreshesGpProFlagUp() {
+            UserEntity user = verifiedProUser();
+            user.setGpPro(true);
+            AnnouncementEntity draft = draftEntityOwnedBy(user);
+            draft.setTravelerIsGpPro(false);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.findById(draft.getId())).thenReturn(Optional.of(draft));
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID);
+
+            assertThat(draft.isTravelerIsGpPro()).isTrue();
         }
 
         @Test

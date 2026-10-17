@@ -84,7 +84,9 @@ public class AnnouncementSearchMapper {
                         buildDisplayName(traveler),
                         traveler.getAverageRating() != null ? traveler.getAverageRating().doubleValue() : null,
                         traveler.getTotalTrips(),
-                        traveler.isKiloPro(),
+                        // déprécié : apps antérieures à GP Pro, à retirer
+                        false,
+                        traveler.isGpPro(),
                         traveler.isProAccount(),
                         kycVerified,
                         storageService.avatarUrl(traveler.getAvatarUrl()),
@@ -152,7 +154,9 @@ public class AnnouncementSearchMapper {
                         buildDisplayName(traveler),
                         traveler.getAverageRating() != null ? traveler.getAverageRating().doubleValue() : null,
                         traveler.getTotalTrips(),
-                        traveler.isKiloPro(),
+                        // déprécié : apps antérieures à GP Pro, à retirer
+                        false,
+                        traveler.isGpPro(),
                         traveler.isProAccount(),
                         kycVerified,
                         storageService.avatarUrl(traveler.getAvatarUrl()),

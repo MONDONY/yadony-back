@@ -22,7 +22,7 @@ class PackageRequestSearchResponseMatchTest {
                 new BigDecimal("40"), true, null,
                 null, null,
                 new PackageRequestSearchResponse.SenderPublicProfile(
-                        UUID.randomUUID(), "Fatou S.", 4.9, 12, true, null),
+                        UUID.randomUUID(), "Fatou S.", 4.9, 12, true, false, null, 0),
                 Set.of(), List.of(), false, false,
                 null, null, null, "EUR", Set.of(), new BigDecimal("44.80"), null, null, null);
     }

@@ -1534,7 +1534,7 @@ public class BidService {
         boolean senderKycVerified = sender != null
                 && sender.getKycStatus() == com.yadony.api.auth.KycStatus.VERIFIED;
         boolean senderIsProAccount = sender != null && sender.isProAccount();
-        boolean senderKiloPro = sender != null && sender.isKiloPro();
+        boolean senderGpPro = sender != null && sender.isGpPro();
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId()).orElse(null);
         String departureCity = announcement != null ? announcement.getDepartureCity() : "Inconnu";
         // Le point de retrait n'est servi qu'aux colis encore dans la course : un bid
@@ -1592,7 +1592,7 @@ public class BidService {
         boolean travelerKycVerified = traveler != null
                 && traveler.getKycStatus() == com.yadony.api.auth.KycStatus.VERIFIED;
         boolean travelerIsProAccount = traveler != null && traveler.isProAccount();
-        boolean travelerKiloPro = traveler != null && traveler.isKiloPro();
+        boolean travelerGpPro = traveler != null && traveler.isGpPro();
         Integer travelerTotalTrips = traveler != null ? traveler.getTotalTrips() : null;
         java.math.BigDecimal travelerAverageRating = traveler != null ? traveler.getAverageRating() : null;
 
@@ -1744,7 +1744,9 @@ public class BidService {
                 senderTotalShipments,
                 senderKycVerified,
                 senderIsProAccount,
-                senderKiloPro,
+                // déprécié : apps antérieures à GP Pro, à retirer
+                false,
+                senderGpPro,
                 bid.getWeightKg(),
                 bid.getDescription(),
                 bid.getContentCategory(),
@@ -1784,7 +1786,9 @@ public class BidService {
                 travelerPhoneAvailable,
                 travelerKycVerified,
                 travelerIsProAccount,
-                travelerKiloPro,
+                // déprécié : apps antérieures à GP Pro, à retirer
+                false,
+                travelerGpPro,
                 travelerTotalTrips,
                 travelerAverageRating,
                 senderHasRated,

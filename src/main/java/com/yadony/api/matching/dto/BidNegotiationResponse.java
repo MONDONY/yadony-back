@@ -60,9 +60,12 @@ public record BidNegotiationResponse(
         // l'expéditeur) pour l'aperçu « je touche N → l'expéditeur paie G » de sa
         // contre-offre en net. N'apprend rien de neuf : netEur et proposedGrossEur, déjà
         // servis au voyageur, le donnent par division.
-        BigDecimal commissionRate
+        BigDecimal commissionRate,
+        // Badge GP Pro de la contrepartie (voyageur pour l'expéditeur, et inversement).
+        // Champ de fin de contrat : un client qui l'ignore ne change pas.
+        boolean counterpartyGpPro
 ) {
-    /** Ancienne arité, sans {@code commissionRate}. */
+    /** Ancienne arité, sans {@code commissionRate} ni {@code counterpartyGpPro}. */
     public BidNegotiationResponse(UUID bidId, UUID announcementId, String status, String role, int round,
                                   int maxRounds, boolean myTurn, boolean canCounter, String currency,
                                   BigDecimal proposedGrossEur, BigDecimal netEur, BigDecimal commissionEur,
@@ -77,6 +80,25 @@ public record BidNegotiationResponse(
                 proposedGrossEur, netEur, commissionEur, suggestedGrossEur, weightKg, description,
                 contentCategory, gridItems, customItems, photoUrls, counterpartyName, departureCity,
                 arrivalCity, departureDate, expiresAt, messages, paymentMethod, counterpartyId,
-                commissionDueBy, null);
+                commissionDueBy, null, false);
+    }
+
+    /** Arité d'avant {@code counterpartyGpPro}. */
+    public BidNegotiationResponse(UUID bidId, UUID announcementId, String status, String role, int round,
+                                  int maxRounds, boolean myTurn, boolean canCounter, String currency,
+                                  BigDecimal proposedGrossEur, BigDecimal netEur, BigDecimal commissionEur,
+                                  BigDecimal suggestedGrossEur, BigDecimal weightKg, String description,
+                                  String contentCategory, List<BidGridItemLine> gridItems,
+                                  List<BidCustomItemResponse> customItems, List<String> photoUrls,
+                                  String counterpartyName, String departureCity, String arrivalCity,
+                                  LocalDate departureDate, LocalDateTime expiresAt,
+                                  List<BidNegotiationMessageResponse> messages, String paymentMethod,
+                                  UUID counterpartyId, LocalDateTime commissionDueBy,
+                                  BigDecimal commissionRate) {
+        this(bidId, announcementId, status, role, round, maxRounds, myTurn, canCounter, currency,
+                proposedGrossEur, netEur, commissionEur, suggestedGrossEur, weightKg, description,
+                contentCategory, gridItems, customItems, photoUrls, counterpartyName, departureCity,
+                arrivalCity, departureDate, expiresAt, messages, paymentMethod, counterpartyId,
+                commissionDueBy, commissionRate, false);
     }
 }

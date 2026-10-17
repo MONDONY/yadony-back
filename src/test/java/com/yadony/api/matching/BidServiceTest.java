@@ -3582,6 +3582,29 @@ class BidServiceTest {
         }
 
         @Test
+        @DisplayName("bidResponseExposesSenderAndTravelerGpPro : GP Pro suit les comptes, Kilo Pro figé à false")
+        void bidResponseExposesSenderAndTravelerGpPro() throws Exception {
+            UserEntity sender = buildSender();
+            sender.setGpPro(true);
+            sender.setKiloPro(true);
+            UserEntity traveler = buildTraveler();
+            traveler.setGpPro(true);
+            traveler.setKiloPro(true);
+            BidEntity bid = buildBid();
+            when(announcementRepository.findById(bid.getAnnouncementId()))
+                    .thenReturn(Optional.of(buildAnnouncement()));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+
+            BidResponse resp = bidService.toResponse(bid, sender);
+
+            var json = new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules().valueToTree(resp);
+            assertThat(json.get("senderGpPro").asBoolean()).isTrue();
+            assertThat(json.get("travelerGpPro").asBoolean()).isTrue();
+            assertThat(json.get("senderKiloPro").asBoolean()).isFalse();
+            assertThat(json.get("travelerKiloPro").asBoolean()).isFalse();
+        }
+
+        @Test
         @DisplayName("expéditeur avec prénom ET nom → nom complet dans la réponse")
         void toResponse_senderWithBothNames_abbreviatesLastName() {
             UserEntity sender = buildSender();

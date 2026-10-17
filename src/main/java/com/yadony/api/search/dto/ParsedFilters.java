@@ -1,6 +1,7 @@
 package com.yadony.api.search.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -23,8 +24,19 @@ public record ParsedFilters(
         BigDecimal minRating,
         Boolean weekendOnly,
         Boolean urgent,
-        Boolean kiloProOnly,
+        Boolean gpProOnly,
         Boolean kycVerifiedOnly,
         String transportMode,
         String contentType
-) {}
+) {
+
+    /**
+     * Déprécié : apps antérieures à GP Pro, qui lisent encore {@code filters['kiloProOnly']}.
+     * Même valeur que {@link #gpProOnly()}, émise sous l'ancienne clé JSON.
+     */
+    @Deprecated
+    @JsonProperty(value = "kiloProOnly", access = JsonProperty.Access.READ_ONLY)
+    public Boolean getKiloProOnly() {
+        return gpProOnly;
+    }
+}

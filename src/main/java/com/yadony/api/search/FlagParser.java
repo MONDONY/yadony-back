@@ -51,9 +51,9 @@ public final class FlagParser {
                 continue;
             }
 
-            // « kilo pro » : deux tokens, et « pro » seul suffit
-            if (n.equals("pro")) {
-                state.put("kiloProOnly", Boolean.TRUE, t, 1.0);
+            // « gp pro » / « kilo pro » : deux tokens, « pro » ou « gp » seuls suffisent
+            if (n.equals("pro") || n.equals("gp")) {
+                state.put("gpProOnly", Boolean.TRUE, t, 1.0);
                 state.consume(i, i + 1);
                 if (i > 0 && tokens.get(i - 1).normalized().startsWith("kilo")) {
                     state.consume(i - 1, i);

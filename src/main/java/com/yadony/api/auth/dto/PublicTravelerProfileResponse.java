@@ -10,7 +10,9 @@ import java.util.List;
 public record PublicTravelerProfileResponse(
         String displayName,
         boolean kycVerified,
+        /** Déprécié : apps antérieures à GP Pro, à retirer. Toujours {@code false}. */
         boolean isKiloPro,
+        boolean gpPro,
         int completedBidsCount,
         BigDecimal averageRating,
         int ratingCount,

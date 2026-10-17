@@ -100,6 +100,27 @@ class AnnouncementSearchMapperTest {
      * négociable » n'est affichable et la fonctionnalité n'est jamais découverte.
      */
     @Test
+    @DisplayName("searchResultTravelerExposesGpPro : gpPro suit le voyageur, kiloPro figé à false (JSON réel)")
+    void searchResultTravelerExposesGpPro() throws Exception {
+        UserEntity traveler = new UserEntity();
+        traveler.setGpPro(true);
+        traveler.setKiloPro(true);
+        when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
+        when(bidRepository.countVisibleByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(0L);
+
+        var unit = mapper.toSearchResponse(buildAnnouncement(), false);
+        var batch = mapper.toSearchResponse(buildAnnouncement(), false,
+                java.util.Map.of(TRAVELER_ID, traveler), java.util.Map.of(), java.util.Map.of());
+
+        var mapperJson = new com.fasterxml.jackson.databind.ObjectMapper();
+        for (var r : java.util.List.of(unit, batch)) {
+            var node = mapperJson.valueToTree(r.traveler());
+            assertThat(node.get("gpPro").asBoolean()).isTrue();
+            assertThat(node.get("kiloPro").asBoolean()).isFalse();
+        }
+    }
+
+    @Test
     @DisplayName("toSearchResponse expose le drapeau negotiable (variante unitaire)")
     void toSearchResponse_exposesNegotiable() {
         when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.empty());

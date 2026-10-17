@@ -4,6 +4,7 @@ import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.Role;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserProStatusChangedEvent;
+import com.yadony.api.gppro.events.GpProStatusChangedEvent;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.favorites.FavoriteRepository;
 import com.yadony.api.favorites.FavoriteTargetType;
@@ -247,32 +248,32 @@ public class AnnouncementService {
     // liste avec page=0&size=20 et les mêmes filtres. Sans la taille, la liste
     // relisait pendant 5 min la page à un seul élément mise en cache par le compteur.
     @Transactional(readOnly = true)
-    @Cacheable(value = "announcements-search", key = "#departureCity + '_' + #arrivalCity + '_' + #departureDateFrom + '_' + #departureDateTo + '_' + #minAvailableKg + '_' + #maxAvailableKg + '_' + #maxPricePerKg + '_' + #minRating + '_' + #kiloProOnly + '_' + #weekendOnly + '_' + #transportMode + '_' + #kycVerifiedOnly + '_' + #contentType + '_' + #userLat + '_' + #userLng + '_' + #radiusKm + '_' + #sortBy + '_' + #sortDir + '_' + #pageable.pageNumber + '_' + #pageable.pageSize + '_' + #viewerFirebaseUid + '_' + #urgent")
+    @Cacheable(value = "announcements-search", key = "#departureCity + '_' + #arrivalCity + '_' + #departureDateFrom + '_' + #departureDateTo + '_' + #minAvailableKg + '_' + #maxAvailableKg + '_' + #maxPricePerKg + '_' + #minRating + '_' + #gpProOnly + '_' + #weekendOnly + '_' + #transportMode + '_' + #kycVerifiedOnly + '_' + #contentType + '_' + #userLat + '_' + #userLng + '_' + #radiusKm + '_' + #sortBy + '_' + #sortDir + '_' + #pageable.pageNumber + '_' + #pageable.pageSize + '_' + #viewerFirebaseUid + '_' + #urgent")
     public Page<AnnouncementSearchResponse> searchAnnouncements(
             String departureCity, String arrivalCity,
             LocalDate departureDateFrom, LocalDate departureDateTo,
             BigDecimal minAvailableKg, BigDecimal maxAvailableKg,
             BigDecimal maxPricePerKg, BigDecimal minRating,
-            Boolean kiloProOnly, Boolean weekendOnly,
+            Boolean gpProOnly, Boolean weekendOnly,
             String transportMode, Boolean kycVerifiedOnly, String contentType,
             Double userLat, Double userLng, Double radiusKm,
             String sortBy, String sortDir, Pageable pageable,
             String viewerFirebaseUid, Boolean urgent) {
         return searchAnnouncements(departureCity, arrivalCity, departureDateFrom, departureDateTo,
-                minAvailableKg, maxAvailableKg, maxPricePerKg, minRating, kiloProOnly, weekendOnly,
+                minAvailableKg, maxAvailableKg, maxPricePerKg, minRating, gpProOnly, weekendOnly,
                 transportMode, kycVerifiedOnly, contentType, userLat, userLng, radiusKm,
                 sortBy, sortDir, pageable, viewerFirebaseUid, urgent, AnnouncementSearchExtras.NONE);
     }
 
     /** Recherche avec les filtres ajoutés depuis (escales FLUTTER-GD, moyens de paiement FLUTTER-G0). */
     @Transactional(readOnly = true)
-    @Cacheable(value = "announcements-search", key = "#departureCity + '_' + #arrivalCity + '_' + #departureDateFrom + '_' + #departureDateTo + '_' + #minAvailableKg + '_' + #maxAvailableKg + '_' + #maxPricePerKg + '_' + #minRating + '_' + #kiloProOnly + '_' + #weekendOnly + '_' + #transportMode + '_' + #kycVerifiedOnly + '_' + #contentType + '_' + #userLat + '_' + #userLng + '_' + #radiusKm + '_' + #sortBy + '_' + #sortDir + '_' + #pageable.pageNumber + '_' + #pageable.pageSize + '_' + #viewerFirebaseUid + '_' + #urgent + '_' + #extras?.cacheKey()")
+    @Cacheable(value = "announcements-search", key = "#departureCity + '_' + #arrivalCity + '_' + #departureDateFrom + '_' + #departureDateTo + '_' + #minAvailableKg + '_' + #maxAvailableKg + '_' + #maxPricePerKg + '_' + #minRating + '_' + #gpProOnly + '_' + #weekendOnly + '_' + #transportMode + '_' + #kycVerifiedOnly + '_' + #contentType + '_' + #userLat + '_' + #userLng + '_' + #radiusKm + '_' + #sortBy + '_' + #sortDir + '_' + #pageable.pageNumber + '_' + #pageable.pageSize + '_' + #viewerFirebaseUid + '_' + #urgent + '_' + #extras?.cacheKey()")
     public Page<AnnouncementSearchResponse> searchAnnouncements(
             String departureCity, String arrivalCity,
             LocalDate departureDateFrom, LocalDate departureDateTo,
             BigDecimal minAvailableKg, BigDecimal maxAvailableKg,
             BigDecimal maxPricePerKg, BigDecimal minRating,
-            Boolean kiloProOnly, Boolean weekendOnly,
+            Boolean gpProOnly, Boolean weekendOnly,
             String transportMode, Boolean kycVerifiedOnly, String contentType,
             Double userLat, Double userLng, Double radiusKm,
             String sortBy, String sortDir, Pageable pageable,
@@ -337,8 +338,8 @@ public class AnnouncementService {
             spec = spec.and(AnnouncementSpecification.weekendOnly());
         if (minRating != null)
             spec = spec.and(AnnouncementSpecification.minRating(minRating));
-        if (Boolean.TRUE.equals(kiloProOnly))
-            spec = spec.and(AnnouncementSpecification.kiloProOnly());
+        if (Boolean.TRUE.equals(gpProOnly))
+            spec = spec.and(AnnouncementSpecification.gpProOnly());
         if (transportMode != null && !transportMode.isBlank()) {
             try {
                 TransportMode mode = TransportMode.valueOf(transportMode.toUpperCase());
@@ -505,6 +506,7 @@ public class AnnouncementService {
     private Sort buildSort(String sortBy, String sortDir) {
         Sort.Direction direction = "desc".equalsIgnoreCase(sortDir) ? Sort.Direction.DESC : Sort.Direction.ASC;
         Sort proFirst = Sort.by(Sort.Direction.DESC, "travelerIsPro");
+        Sort gpTie = Sort.by(Sort.Direction.DESC, "travelerIsGpPro");
         Sort secondary = switch (sortBy != null ? sortBy : "date") {
             // Pivot EUR, jamais le brut : seul lui ordonne un fil multidevise.
             // Pas de NullHandling : Spring Data JPA le refuse sur une requête
@@ -513,9 +515,12 @@ public class AnnouncementService {
             // price_per_kg étant NOT NULL + CHECK > 0 depuis V3, backfillé par
             // V235 et posé à chaque écriture. Id en départage : ordre total
             // stable sous pagination.
-            case "price" -> Sort.by(direction, "pricePerKgEur")
+            // Départage GP Pro : à date (ou prix) égale, le voyageur GP Pro passe avant,
+            // quelle que soit la direction du tri principal.
+            case "price" -> Sort.by(direction, "pricePerKgEur").and(gpTie)
                     .and(Sort.by(Sort.Direction.ASC, "id"));
-            default -> Sort.by(direction, "departureDate");
+            default -> Sort.by(direction, "departureDate").and(gpTie)
+                    .and(Sort.by(Sort.Direction.ASC, "id"));
         };
         return proFirst.and(secondary);
     }
@@ -719,6 +724,7 @@ public class AnnouncementService {
         announcement.setSourceRecurrenceId(recurrenceId);
         announcement.setCurrency(currency);
         announcement.setTravelerIsPro(user.isProAccount());
+        announcement.setTravelerIsGpPro(user.isGpPro());
         announcement.setDepartureCity(request.departureCity());
         announcement.setArrivalCity(request.arrivalCity());
         // Code absent (modèle de trajet appliqué, trajet récurrent, ancien client) : déduit
@@ -1072,7 +1078,9 @@ public class AnnouncementService {
                         buildDisplayName(traveler),
                         traveler.getAverageRating() != null ? traveler.getAverageRating().doubleValue() : null,
                         null,
-                        traveler.isKiloPro(),
+                        // déprécié : apps antérieures à GP Pro, à retirer
+                        false,
+                        traveler.isGpPro(),
                         traveler.isProAccount(),
                         kycVerified,
                         storageService.avatarUrl(traveler.getAvatarUrl()),
@@ -1376,7 +1384,7 @@ public class AnnouncementService {
         TravelerProfileDto updatedTravelerDto = new TravelerProfileDto(
                 user.getId(),
                 buildDisplayName(user),
-                null, null, false, user.isProAccount(), kycVerified,
+                null, null, false, user.isGpPro(), user.isProAccount(), kycVerified,
                 user.getAvatarUrl(),
                 !user.isContactKycOnly());
 
@@ -1474,6 +1482,10 @@ public class AnnouncementService {
                     "La date de départ est passée. Modifiez le trajet avant de le publier.");
         }
 
+        // Les mises à jour de badge ne touchent que les trajets ACTIVE/FULL : un brouillon garde
+        // les drapeaux de sa création. On les rafraîchit donc à la publication (Pro et GP Pro).
+        announcement.setTravelerIsPro(user.isProAccount());
+        announcement.setTravelerIsGpPro(user.isGpPro());
         announcement.setStatus(AnnouncementStatus.ACTIVE);
         AnnouncementEntity saved = announcementRepository.save(announcement);
 
@@ -2302,6 +2314,21 @@ public class AnnouncementService {
         int updated = announcementRepository.updateTravelerProStatus(event.userId(), event.isPro());
         log.info("PRO status change for user {} (isPro={}) — {} open announcements updated",
                 event.userId(), event.isPro(), updated);
+    }
+
+    /**
+     * Répercute le badge GP Pro d'un voyageur sur ses annonces ouvertes. Écouteur synchrone
+     * (comme {@link #onUserProStatusChanged}) : la mise à jour rejoint la transaction de
+     * l'émetteur (admin, suppression de compte) et le cache de recherche est vidé juste après.
+     * Idempotent : l'événement peut arriver deux fois, la seconde mise à jour ne change rien.
+     */
+    @EventListener
+    @Transactional
+    @CacheEvict(value = "announcements-search", allEntries = true)
+    public void onGpProStatusChanged(GpProStatusChangedEvent event) {
+        int updated = announcementRepository.updateTravelerGpProStatus(event.userId(), event.gpPro());
+        log.info("GP Pro status change for user {} (gpPro={}) — {} open announcements updated",
+                event.userId(), event.gpPro(), updated);
     }
 
     private Set<PaymentMethod> resolvePaymentMethods(Set<PaymentMethod> requested, UserEntity traveler,
