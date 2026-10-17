@@ -150,6 +150,8 @@ public class NotificationPrefsService {
             "STRIPE_ONBOARDING_INCOMPLETE",
             // Récompense de parrainage à choisir (crédit de solde ou code personnel)
             "REFERRAL_REWARD_AVAILABLE",
+            // Décision de l'admin sur le badge GP Pro
+            "GP_PRO_APPROVED", "GP_PRO_REJECTED", "GP_PRO_REVOKED",
             // Vérification d'identité
             "KYC_VERIFIED", "KYC_ACTION_REQUIRED", "KYC_RESET",
             // Litiges et absences

@@ -178,6 +178,13 @@ class NotificationDeeplinkTest {
     }
 
     @Test
+    void deeplinkForGpProTypes() {
+        for (String type : new String[]{"GP_PRO_APPROVED", "GP_PRO_REJECTED", "GP_PRO_REVOKED"}) {
+            assertThat(NotificationDeeplink.of(type, Map.of())).contains("yadony://profile/gp-pro");
+        }
+    }
+
+    @Test
     void fixedDestinations() {
         assertThat(NotificationDeeplink.of("KYC_VERIFIED", Map.of())).contains("yadony://kyc/status");
         assertThat(NotificationDeeplink.of("KYC_ACTION_REQUIRED", Map.of())).contains("yadony://kyc/verify");

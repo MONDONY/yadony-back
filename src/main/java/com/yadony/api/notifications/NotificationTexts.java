@@ -709,6 +709,18 @@ public final class NotificationTexts {
                         : "notification.bid-cancelled-before-payment.traveler.body"));
     }
 
+    public static NotificationText gpProApproved(Messages m) {
+        return new NotificationText(m.get("notification.gp-pro-approved.title"), m.get("notification.gp-pro-approved.body"));
+    }
+
+    public static NotificationText gpProRejected(Messages m) {
+        return new NotificationText(m.get("notification.gp-pro-rejected.title"), m.get("notification.gp-pro-rejected.body"));
+    }
+
+    public static NotificationText gpProRevoked(Messages m) {
+        return new NotificationText(m.get("notification.gp-pro-revoked.title"), m.get("notification.gp-pro-revoked.body"));
+    }
+
     public static NotificationText kycVerified(Messages m) {
         return new NotificationText(m.get("notification.kyc-verified.title"), m.get("notification.kyc-verified.body"));
     }

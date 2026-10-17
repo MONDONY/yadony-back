@@ -2,6 +2,7 @@ package com.yadony.api.emailotp;
 
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.i18n.TestMessages;
+import com.yadony.api.gppro.events.GpProDecisionEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -144,6 +145,55 @@ class ResendEmailServiceTest {
                 .contains("Account verification")
                 .contains("Thank you for choosing Yadony")
                 .contains("123456");
+    }
+
+    @Test
+    @DisplayName("sendGpProDecision — refus : le motif figure dans le texte et le HTML")
+    void rejectedEmailContainsReason() {
+        ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
+
+        service.sendGpProDecision("user@example.com", GpProDecisionEvent.Kind.REJECTED,
+                "Pièce illisible.", TestMessages.fr());
+
+        verify(requestBodySpec).body(payloadCaptor.capture());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) payloadCaptor.getValue();
+        assertThat(payload).containsEntry("subject", "Votre demande GP Pro a été refusée");
+        assertThat((String) payload.get("text")).contains("Pièce illisible.");
+        assertThat((String) payload.get("html")).contains("Pièce illisible.").contains("https://yadony.com/logo.png");
+    }
+
+    @Test
+    @DisplayName("sendGpProDecision — acceptation en anglais, sans motif")
+    void approvedEmailEnglish() {
+        ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
+
+        service.sendGpProDecision("user@example.com", GpProDecisionEvent.Kind.APPROVED, null, TestMessages.en());
+
+        verify(requestBodySpec).body(payloadCaptor.capture());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) payloadCaptor.getValue();
+        assertThat(payload).containsEntry("subject", "You're a GP Pro on Yadony");
+    }
+
+    @Test
+    @DisplayName("sendGpProDecision — un échec Resend est journalisé, jamais levé, même en prod")
+    void gpProDecisionFailureDoesNotThrow() {
+        when(requestBodySpec.retrieve()).thenThrow(new org.springframework.web.client.RestClientException("boom"));
+        service = new ResendEmailService("noreply@yadony.app", mockRestClient, templateEngine(), true, false, true);
+
+        org.assertj.core.api.Assertions.assertThatCode(() -> service.sendGpProDecision(
+                "user@example.com", GpProDecisionEvent.Kind.REVOKED, "x", TestMessages.fr())).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("sendGpProDecision — sans clé Resend, rien n'est envoyé ni levé")
+    void gpProDecisionNotConfigured() {
+        service = new ResendEmailService("noreply@yadony.app", mockRestClient, templateEngine(), false, false, true);
+
+        service.sendGpProDecision("user@example.com", GpProDecisionEvent.Kind.APPROVED, null, TestMessages.fr());
+
+        verify(mockRestClient, never()).post();
     }
 
     private static TemplateEngine templateEngine() {

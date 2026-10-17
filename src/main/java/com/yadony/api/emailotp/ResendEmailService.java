@@ -2,6 +2,7 @@ package com.yadony.api.emailotp;
 
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.i18n.Messages;
+import com.yadony.api.gppro.events.GpProDecisionEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -109,6 +110,47 @@ public class ResendEmailService {
                     HttpStatus.SERVICE_UNAVAILABLE, "email-service-error",
                     "Email Service Error", "L'envoi de l'email a échoué, veuillez réessayer");
         }
+    }
+
+    /**
+     * E-mail de décision GP Pro (acceptée, refusée, badge retiré). Contrairement à
+     * {@link #sendOtp}, ne lève jamais : l'e-mail double un push déjà parti, un échec
+     * d'envoi est seulement journalisé (adresse masquée).
+     */
+    public void sendGpProDecision(String to, GpProDecisionEvent.Kind kind, String reason, Messages m) {
+        try {
+            if (!emailSendingConfigured) {
+                return;
+            }
+            String key = "email.gp-pro." + kind.name().toLowerCase(java.util.Locale.ROOT);
+            String subject = m.get(key + ".subject");
+            String text = kind == GpProDecisionEvent.Kind.APPROVED
+                    ? m.get(key + ".text")
+                    : m.get(key + ".text", reason == null ? "" : reason);
+            Map<String, Object> payload = Map.of(
+                    "from", fromAddress,
+                    "to", List.of(to),
+                    "subject", subject,
+                    "html", renderGpProDecisionHtml(subject, text, m),
+                    "text", text
+            );
+            restClient.post()
+                    .uri("/emails")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(payload)
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (RuntimeException e) {
+            log.error("Resend: échec de l'e-mail de décision GP Pro vers {}: {}", maskEmail(to), e.getMessage());
+        }
+    }
+
+    private String renderGpProDecisionHtml(String heading, String body, Messages m) {
+        Context context = new Context(m.locale());
+        context.setVariable("heading", heading);
+        context.setVariable("body", body);
+        context.setVariable("lang", m.language().code());
+        return templateEngine.process("email-gp-pro-decision", context);
     }
 
     private String renderOtpHtml(String code, Messages m) {

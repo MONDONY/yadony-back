@@ -87,6 +87,7 @@ public final class NotificationDeeplink {
             case "RECIPIENT_INVITATION", "RECIPIENT_INVITATION_REMOVED" -> Optional.of("recipient-invitations");
             case "RECIPIENT_INVITATION_ACCEPTED" -> Optional.of("profile/recipients");
 
+            case "GP_PRO_APPROVED", "GP_PRO_REJECTED", "GP_PRO_REVOKED" -> Optional.of("profile/gp-pro");
             case "KYC_VERIFIED" -> Optional.of("kyc/status");
             case "KYC_ACTION_REQUIRED" -> Optional.of("kyc/verify");
             case "DISPUTE_UPDATED", "DISPUTE_RESOLVED" -> Optional.of("disputes");
