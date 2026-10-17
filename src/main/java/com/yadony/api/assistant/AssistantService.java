@@ -10,6 +10,10 @@ import com.yadony.api.assistant.kb.KbRoute;
 import com.yadony.api.assistant.kb.KnowledgeBase;
 import com.yadony.api.assistant.llm.LlmResult;
 import com.yadony.api.assistant.llm.LlmRouter;
+import com.yadony.api.assistant.parcel.AssistantParcelFlow;
+import com.yadony.api.assistant.parcel.TrackingNumbers;
+import com.yadony.api.common.assistant.ParcelFacts;
+import com.yadony.api.common.assistant.ParcelRef;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -21,7 +25,11 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-/** Une question : quota, fiches, fournisseur, filtrage des routes (spec §3.3 à §3.5). */
+/**
+ * Une question : quota, fiches, fournisseur, filtrage des routes (spec §3.3 à §3.5). Quand la question
+ * porte sur un colis de l'utilisateur, ses faits sont ajoutés, mais ce qui dépend de ses données
+ * (numéro incorrect, aucun colis, choix du colis, étape) est écrit par le back, jamais par le modèle.
+ */
 @Service
 public class AssistantService {
 
@@ -48,14 +56,16 @@ public class AssistantService {
     private final AssistantPromptBuilder promptBuilder;
     private final AssistantAnswerParser parser;
     private final LlmRouter router;
+    private final AssistantParcelFlow parcels;
 
     public AssistantService(AssistantQuotaGuard quota, KnowledgeBase knowledgeBase, AssistantPromptBuilder promptBuilder,
-                            AssistantAnswerParser parser, LlmRouter router) {
+                            AssistantAnswerParser parser, LlmRouter router, AssistantParcelFlow parcels) {
         this.quota = quota;
         this.knowledgeBase = knowledgeBase;
         this.promptBuilder = promptBuilder;
         this.parser = parser;
         this.router = router;
+        this.parcels = parcels;
     }
 
     public AssistantAskResponse ask(String uid, AssistantAskRequest request) {
@@ -66,21 +76,59 @@ public class AssistantService {
         String previous = history.stream().filter(t -> "user".equals(t.role()))
                 .reduce((first, second) -> second).map(AssistantHistoryTurn::text).orElse(null);
 
-        List<KbHit> hits = searchWithContext(locale, question, previous, history);
-        // Téléphone en anglais mais question écrite en français (FLUTTER-QV, appareil en-FR), ou l'inverse :
-        // rien dans l'index de la langue de l'interface, on refait les mêmes recherches dans l'autre langue.
+
+        // Le numéro écrit, sinon le colis choisi plus tôt : l'accès est revérifié à chaque question.
+        AssistantParcelFlow.Lookup lookup = parcels.lookup(uid, question, request.parcelId());
+        if (lookup.incorrect()) {
+            return new AssistantAskResponse(AssistantParcelFlow.incorrect(locale), false, List.of(), List.of(),
+                    NO_PROVIDER, remaining);
+        }
+        ParcelRef parcel = lookup.parcel();
+
+        // Le numéro ne figure dans aucune fiche, ni dans ce qui part vers le fournisseur.
+        String searched = TrackingNumbers.strip(question);
+        String searchedPrevious = previous == null ? null : TrackingNumbers.strip(previous);
+        List<AssistantHistoryTurn> searchedHistory = history.stream()
+                .map(t -> new AssistantHistoryTurn(t.role(), TrackingNumbers.strip(t.text()))).toList();
+        List<KbHit> hits = List.of();
         boolean otherLanguage = false;
-        if (hits.isEmpty()) {
-            hits = searchWithContext(otherLocale(locale), question, previous, history);
-            otherLanguage = !hits.isEmpty();
+        if (!searched.isEmpty()) {
+            hits = searchWithContext(locale, searched, searchedPrevious, searchedHistory);
+            // Téléphone en anglais mais question écrite en français (FLUTTER-QV, appareil en-FR), ou l'inverse :
+            // rien dans l'index de la langue de l'interface, on refait les mêmes recherches dans l'autre langue.
+            if (hits.isEmpty()) {
+                hits = searchWithContext(otherLocale(locale), searched, searchedPrevious, searchedHistory);
+                otherLanguage = !hits.isEmpty();
+            }
         }
         List<String> sources = hits.stream().map(h -> h.article().id()).toList();
+        if (parcel != null && hits.isEmpty()) {
+            return parcelStatus(parcel, locale, sources, remaining);
+        }
         if (hits.isEmpty()) {
             return new AssistantAskResponse(NOT_FOUND.get(locale), false, List.of(), List.of(), NO_PROVIDER, remaining);
         }
 
-        Optional<LlmResult<ParsedAnswer>> result = router.complete(
-                promptBuilder.system(), promptBuilder.user(locale, hits, history, question, otherLanguage), parser::parse);
+        Map<String, AssistantAction> parcelActions = Map.of();
+        AssistantPromptBuilder.ParcelPrompt parcelPrompt = null;
+        if (parcel != null) {
+            ParcelFacts facts = parcels.facts(parcel);
+            parcelActions = parcels.actions(parcel, facts, locale);
+            Map<String, String> routes = new LinkedHashMap<>();
+            parcelActions.forEach((token, action) -> routes.put(token, action.label()));
+            parcelPrompt = new AssistantPromptBuilder.ParcelPrompt(facts.lines(), routes);
+        }
+        List<AssistantHistoryTurn> maskedHistory = history.stream()
+                .map(t -> new AssistantHistoryTurn(t.role(), TrackingNumbers.mask(t.text()))).toList();
+
+        Optional<LlmResult<ParsedAnswer>> result = router.complete(promptBuilder.system(),
+                promptBuilder.user(locale, hits, maskedHistory, TrackingNumbers.mask(question), otherLanguage,
+                        parcelPrompt),
+                parser::parse);
+        if (result.isEmpty() && parcel != null) {
+            // Sans fournisseur, l'étape du colis reste une vraie réponse.
+            return parcelStatus(parcel, locale, sources, remaining);
+        }
         if (result.isEmpty()) {
             List<AssistantAction> fallback = new ArrayList<>();
             for (KbHit hit : hits) {
@@ -93,9 +141,13 @@ public class AssistantService {
         }
 
         ParsedAnswer parsed = result.get().value();
+        String slug = result.get().slug();
+        if (parcel == null && parsed.aboutMyParcel()) {
+            return chooseParcel(uid, locale, sources, slug, remaining);
+        }
         String answer = truncate(parsed.answer(), MAX_ANSWER);
-        return new AssistantAskResponse(answer, parsed.answered(), filterActions(parsed.routes(), hits), sources,
-                result.get().slug(), remaining);
+        return new AssistantAskResponse(answer, parsed.answered(), filterActions(parsed.routes(), hits, parcelActions),
+                sources, slug, remaining, parcel == null ? null : parcel.bidId(), List.of());
     }
 
     /**
@@ -140,8 +192,29 @@ public class AssistantService {
         return questions;
     }
 
-    /** Garde une route seulement si elle est dans la liste autorisée ET dans une fiche transmise ; label de la fiche. */
-    private List<AssistantAction> filterActions(List<String> routes, List<KbHit> hits) {
+    /** La question vise l'un de ses colis sans dire lequel : aucun colis, ou les siens à choisir. */
+    private AssistantAskResponse chooseParcel(String uid, String locale, List<String> sources, String slug, int remaining) {
+        List<ParcelRef> choices = parcels.choices(uid);
+        if (choices.isEmpty()) {
+            return new AssistantAskResponse(AssistantParcelFlow.noParcel(locale), true, List.of(), sources, slug,
+                    remaining);
+        }
+        return new AssistantAskResponse(AssistantParcelFlow.choose(choices, locale), true, List.of(), sources, slug,
+                remaining, null, choices.stream().map(AssistantParcelFlow::choice).toList());
+    }
+
+    /** Étape du colis, écrite par le back, et sa fiche. */
+    private AssistantAskResponse parcelStatus(ParcelRef parcel, String locale, List<String> sources, int remaining) {
+        return new AssistantAskResponse(AssistantParcelFlow.status(parcel, locale), true,
+                List.of(parcels.open(parcel, locale)), sources, NO_PROVIDER, remaining, parcel.bidId(), List.of());
+    }
+
+    /**
+     * Garde une route seulement si elle est dans la liste autorisée ET dans une fiche transmise ; label de la fiche.
+     * Les repères du colis ({@code parcel:open}…) deviennent ses vrais chemins, construits par le back.
+     */
+    private List<AssistantAction> filterActions(List<String> routes, List<KbHit> hits,
+                                                Map<String, AssistantAction> parcelActions) {
         Map<String, String> allowed = new LinkedHashMap<>();
         for (KbHit hit : hits) {
             for (KbRoute r : hit.article().routes()) allowed.putIfAbsent(r.path(), r.label());
@@ -151,9 +224,14 @@ public class AssistantService {
         for (String raw : routes) {
             if (actions.size() >= MAX_ACTIONS) break;
             String route = normalizeRoute(raw);
-            if (!whitelist.contains(route) || !allowed.containsKey(route)) continue;
-            if (actions.stream().anyMatch(a -> a.route().equals(route))) continue;
-            actions.add(new AssistantAction(route, allowed.get(route)));
+            AssistantAction action = parcelActions.get(route);
+            if (action == null) {
+                if (!whitelist.contains(route) || !allowed.containsKey(route)) continue;
+                action = new AssistantAction(route, allowed.get(route));
+            }
+            String path = action.route();
+            if (actions.stream().anyMatch(a -> a.route().equals(path))) continue;
+            actions.add(action);
         }
         return actions;
     }

@@ -234,4 +234,29 @@ class AssistantControllerIntegrationTest {
                 .andExpect(jsonPath("$.code").value("assistant-quota-exceeded"))
                 .andExpect(jsonPath("$.retryAfter").exists());
     }
+
+    @Test
+    void numeroDeSuiviInconnuRepondIncorrectSansFournisseur() throws Exception {
+        mockMvc.perform(post("/assistant/ask").with(authentication(asUser("uid-colis")))
+                        .contentType(MediaType.APPLICATION_JSON).content(body("où est DON-7K3M9QXA ?")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.answer").value(org.hamcrest.Matchers.startsWith("Ce numéro de suivi est incorrect")))
+                .andExpect(jsonPath("$.answered").value(false))
+                .andExpect(jsonPath("$.parcels").isEmpty())
+                .andExpect(jsonPath("$.parcelId").doesNotExist());
+        verifyNoInteractions(router);
+    }
+
+    @Test
+    void colisChoisiInaccessibleEstIgnore() throws Exception {
+        when(router.complete(anyString(), anyString(), any())).thenReturn(Optional.of(new LlmResult<>("groq",
+                new ParsedAnswer("Allez dans Moi.", true, List.of()))));
+        String json = objectMapper.writeValueAsString(new AssistantAskRequest("Où je change mon numéro ?", "fr",
+                List.of(), UUID.randomUUID()));
+        mockMvc.perform(post("/assistant/ask").with(authentication(asUser("uid-colis-choisi")))
+                        .contentType(MediaType.APPLICATION_JSON).content(json))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.answer").value("Allez dans Moi."))
+                .andExpect(jsonPath("$.parcelId").doesNotExist());
+    }
 }

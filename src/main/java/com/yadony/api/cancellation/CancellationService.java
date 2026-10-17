@@ -65,7 +65,7 @@ public class CancellationService {
     /** Même code que le retrait d'offre et la suppression du trajet (FLUTTER-F9, PR #445). */
     static final String OFFER_ACCEPTED_AWAITING_PAYMENT = "offer-accepted-awaiting-payment";
 
-    private static final int MAX_RETURN_CODE_ATTEMPTS = 3;
+    static final int MAX_RETURN_CODE_ATTEMPTS = 3;
 
     public CancellationService(CancellationRepository cancellationRepository,
                                 RematchSuggestionRepository rematchSuggestionRepository,

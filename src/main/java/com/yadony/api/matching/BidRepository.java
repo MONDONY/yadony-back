@@ -386,6 +386,36 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     // For H-2 alert scheduler: ACCEPTED bids with handover starting in ≤ 2h, not yet alerted, not confirmed
     Optional<BidEntity> findByTrackingNumber(String trackingNumber);
 
+    /**
+     * Colis de l'expéditeur que l'assistant peut lui proposer : en cours ({@code active}), ou
+     * clos ({@code ended}) depuis {@code since}. Les envois qu'il a retirés de sa liste n'y
+     * sont pas : il ne les voit plus nulle part ailleurs.
+     */
+    @Query("""
+        SELECT b FROM BidEntity b
+        WHERE b.senderId = :userId AND b.deletedBySender = false
+          AND (b.status IN :active OR (b.status IN :ended AND b.updatedAt >= :since))
+        ORDER BY b.updatedAt DESC
+        """)
+    List<BidEntity> findAssistantParcelsOfSender(@Param("userId") UUID userId,
+                                                 @Param("active") Collection<BidStatus> active,
+                                                 @Param("ended") Collection<BidStatus> ended,
+                                                 @Param("since") LocalDateTime since,
+                                                 Pageable pageable);
+
+    /** Pendant voyageur de {@link #findAssistantParcelsOfSender}, par la jointure sur le trajet. */
+    @Query("""
+        SELECT b FROM BidEntity b JOIN AnnouncementEntity a ON b.announcementId = a.id
+        WHERE a.travelerId = :userId AND b.deletedByTraveler = false
+          AND (b.status IN :active OR (b.status IN :ended AND b.updatedAt >= :since))
+        ORDER BY b.updatedAt DESC
+        """)
+    List<BidEntity> findAssistantParcelsOfTraveler(@Param("userId") UUID userId,
+                                                   @Param("active") Collection<BidStatus> active,
+                                                   @Param("ended") Collection<BidStatus> ended,
+                                                   @Param("since") LocalDateTime since,
+                                                   Pageable pageable);
+
     Optional<BidEntity> findByTrackingToken(String trackingToken);
 
     Optional<BidEntity> findByPaymentIntentId(String paymentIntentId);

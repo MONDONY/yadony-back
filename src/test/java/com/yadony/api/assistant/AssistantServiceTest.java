@@ -11,14 +11,23 @@ import com.yadony.api.assistant.kb.KbRoute;
 import com.yadony.api.assistant.kb.KnowledgeBase;
 import com.yadony.api.assistant.llm.LlmResult;
 import com.yadony.api.assistant.llm.LlmRouter;
+import com.yadony.api.assistant.parcel.AssistantLookupGuard;
+import com.yadony.api.assistant.parcel.AssistantParcelFlow;
+import com.yadony.api.common.assistant.ParcelDirectory;
+import com.yadony.api.common.assistant.ParcelFacts;
+import com.yadony.api.common.assistant.ParcelLink;
+import com.yadony.api.common.assistant.ParcelRef;
+import com.yadony.api.common.assistant.ParcelRole;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -37,8 +46,17 @@ class AssistantServiceTest {
     private final AssistantQuotaGuard quota = mock(AssistantQuotaGuard.class);
     private final KnowledgeBase kb = mock(KnowledgeBase.class);
     private final LlmRouter router = mock(LlmRouter.class);
+    private final ParcelDirectory directory = mock(ParcelDirectory.class);
+    private ParcelFacts parcelFacts = ParcelFacts.of(List.of("Current step: in transit with the traveler."));
     private final AssistantService service = new AssistantService(quota, kb, new AssistantPromptBuilder(),
-            new AssistantAnswerParser(new ObjectMapper()), router);
+            new AssistantAnswerParser(new ObjectMapper()), router,
+            new AssistantParcelFlow(directory, List.of(p -> parcelFacts), new AssistantLookupGuard()));
+
+    private static final UUID BID = UUID.fromString("11111111-2222-3333-4444-555555555555");
+    private static final ParcelRef PARCEL = new ParcelRef(BID, UUID.randomUUID(), ParcelRole.SENDER, "IN_TRANSIT",
+            "DON-7K3M9QXA", "Paris", "Dakar", LocalDate.of(2026, 10, 20), true);
+    private final KbHit tracking = new KbHit(new KbArticle("fr", "suivi-colis", "Suivre mon colis", List.of(),
+            List.of(new KbRoute("/tracking", "Ouvrir le suivi")), "corps"), 3f);
 
     private final KbHit phone = new KbHit(new KbArticle("fr", "changer-numero", "Changer mon numéro", List.of(),
             List.of(new KbRoute("/profile/edit/phone", "Changer mon numéro")), "corps"), 3f);
@@ -50,7 +68,7 @@ class AssistantServiceTest {
     @BeforeEach
     void setUp() {
         when(quota.consume("uid")).thenReturn(17);
-        when(kb.routeWhitelist()).thenReturn(Set.of("/profile/edit/phone", "/trips/create", "/profile/referral", "/admin"));
+        when(kb.routeWhitelist()).thenReturn(Set.of("/profile/edit/phone", "/trips/create", "/profile/referral", "/admin", "/tracking"));
     }
 
     private void llmAnswers(ParsedAnswer answer) {
@@ -476,5 +494,126 @@ class AssistantServiceTest {
 
         assertThat(r.answer()).startsWith("I can't answer right now");
         assertThat(r.actions()).extracting("route").containsExactly("/profile/edit/phone", "/trips/create");
+    }
+
+    // ── Colis de l'utilisateur ──────────────────────────────────────────────
+
+    @Test
+    void numeroInconnuOuDUnAutreRepondIncorrectSansFournisseur() {
+        AssistantAskResponse r = service.ask("uid", ask("où est le colis DON-ZZZZ9999 ?"));
+        assertThat(r.answer()).startsWith("Ce numéro de suivi est incorrect");
+        assertThat(r.answered()).isFalse();
+        assertThat(r.parcelId()).isNull();
+        assertThat(r.parcels()).isEmpty();
+        verify(directory).byTrackingNumber("uid", "DON-ZZZZ9999");
+        verify(router, never()).complete(anyString(), anyString(), any());
+    }
+
+    @Test
+    void numeroSeulDonneLEtapeEtLaFicheSansFournisseur() {
+        when(directory.byTrackingNumber("uid", "DON-7K3M9QXA")).thenReturn(Optional.of(PARCEL));
+        AssistantAskResponse r = service.ask("uid", ask("don-7k3m9qxa"));
+        assertThat(r.answer()).isEqualTo(
+                "Colis DON-7K3M9QXA (Paris → Dakar) : en route avec le voyageur. Ouvrez sa fiche pour le détail.");
+        assertThat(r.answered()).isTrue();
+        assertThat(r.parcelId()).isEqualTo(BID);
+        assertThat(r.actions()).extracting("route", "label").containsExactly(
+                org.assertj.core.groups.Tuple.tuple("/bids/" + BID, "Voir le colis"));
+        verify(router, never()).complete(anyString(), anyString(), any());
+    }
+
+    @Test
+    void colisChoisiEnvoieSesFaitsMaisJamaisLeNumero() {
+        when(directory.byId("uid", BID)).thenReturn(Optional.of(PARCEL));
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(tracking));
+        llmAnswers(new ParsedAnswer("Il est en route.", true, List.of("parcel:open", "/tracking")));
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest("où est mon colis ?", "fr", List.of(
+                new AssistantHistoryTurn("user", "DON-7K3M9QXA")), BID));
+        ArgumentCaptor<String> user = ArgumentCaptor.forClass(String.class);
+        verify(router).complete(anyString(), user.capture(), any());
+        assertThat(user.getValue()).contains("<parcel>", "- Current step: in transit with the traveler.",
+                "parcel:open (Voir le colis)").doesNotContain("7K3M9QXA", BID.toString());
+        assertThat(r.parcelId()).isEqualTo(BID);
+        assertThat(r.actions()).extracting("route").containsExactly("/bids/" + BID, "/tracking");
+    }
+
+    @Test
+    void reperesDuColisDeviennentDesCheminsEtUnRepereAbsentEstRetire() {
+        parcelFacts = new ParcelFacts(List.of("The pickup code is no longer usable."), Set.of(ParcelLink.RENEW_PICKUP_CODE));
+        when(directory.byId("uid", BID)).thenReturn(Optional.of(PARCEL));
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(tracking));
+        llmAnswers(new ParsedAnswer("Régénérez-le.", true, List.of("parcel:new-code", "/support", "parcel:open")));
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest("le code ne marche pas", "fr", List.of(), BID));
+        assertThat(r.actions()).extracting("route", "label").containsExactly(
+                org.assertj.core.groups.Tuple.tuple("/bids/" + BID + "?action=new-code", "Régénérer le code"),
+                org.assertj.core.groups.Tuple.tuple("/bids/" + BID, "Voir le colis"));
+    }
+
+    @Test
+    void colisChoisiPlusAccessibleRepartSansColis() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(phone));
+        llmAnswers(new ParsedAnswer("ok", true, List.of()));
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest("q", "fr", List.of(), BID));
+        assertThat(r.parcelId()).isNull();
+        ArgumentCaptor<String> user = ArgumentCaptor.forClass(String.class);
+        verify(router).complete(anyString(), user.capture(), any());
+        assertThat(user.getValue()).doesNotContain("<parcel>");
+    }
+
+    @Test
+    void questionSurSonColisProposeSesColis() {
+        ParcelRef ancien = new ParcelRef(UUID.randomUUID(), UUID.randomUUID(), ParcelRole.TRAVELER, "COMPLETED",
+                null, "Lyon", "Bamako", LocalDate.of(2026, 10, 1), false);
+        when(directory.recentParcels("uid", 5)).thenReturn(List.of(PARCEL, ancien));
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(tracking));
+        llmAnswers(new ParsedAnswer("texte ignoré", false, List.of("/tracking"), true));
+        AssistantAskResponse r = service.ask("uid", ask("où est mon colis ?"));
+        assertThat(r.answer()).isEqualTo("Choisissez le colis concerné, ou écrivez son numéro de suivi (DON-…).");
+        assertThat(r.answered()).isTrue();
+        assertThat(r.actions()).isEmpty();
+        assertThat(r.parcels()).extracting("parcelId", "trackingNumber", "role", "status", "active").containsExactly(
+                org.assertj.core.groups.Tuple.tuple(BID, "DON-7K3M9QXA", "SENDER", "IN_TRANSIT", true),
+                org.assertj.core.groups.Tuple.tuple(ancien.bidId(), null, "TRAVELER", "COMPLETED", false));
+    }
+
+    @Test
+    void seulementDesColisClosLeDitAvantDeLesProposer() {
+        ParcelRef ancien = new ParcelRef(UUID.randomUUID(), UUID.randomUUID(), ParcelRole.SENDER, "CANCELLED",
+                "DON-AAAA2222", "Lyon", "Bamako", null, false);
+        when(directory.recentParcels("uid", 5)).thenReturn(List.of(ancien));
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(tracking));
+        llmAnswers(new ParsedAnswer("x", true, List.of(), true));
+        assertThat(service.ask("uid", ask("je veux être remboursé de mon colis")).answer())
+                .startsWith("Vous n'avez aucun colis en cours. Voici vos colis récents");
+    }
+
+    @Test
+    void aucunColisLeDitDesLeDebut() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(tracking));
+        llmAnswers(new ParsedAnswer("x", true, List.of("/tracking"), true));
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest("where is my parcel?", "en", List.of()));
+        assertThat(r.answer()).isEqualTo("You have no parcel in progress.");
+        assertThat(r.parcels()).isEmpty();
+        assertThat(r.actions()).isEmpty();
+    }
+
+    @Test
+    void sansFournisseurLeColisChoisiDonneSonEtape() {
+        when(directory.byId("uid", BID)).thenReturn(Optional.of(PARCEL));
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(tracking));
+        when(router.complete(anyString(), anyString(), any())).thenReturn(Optional.empty());
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest("what about it?", "en", List.of(), BID));
+        assertThat(r.answer()).isEqualTo(
+                "Parcel DON-7K3M9QXA (Paris → Dakar): on its way with the traveler. Open it for the details.");
+        assertThat(r.parcelId()).isEqualTo(BID);
+    }
+
+    @Test
+    void numeroSuiviDUneQuestionChercheSansLeNumero() {
+        when(directory.byTrackingNumber("uid", "DON-7K3M9QXA")).thenReturn(Optional.of(PARCEL));
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(tracking));
+        llmAnswers(new ParsedAnswer("ok", true, List.of()));
+        service.ask("uid", ask("DON-7K3M9QXA je veux être remboursé"));
+        verify(kb).search("fr", "je veux être remboursé", null, 4);
     }
 }

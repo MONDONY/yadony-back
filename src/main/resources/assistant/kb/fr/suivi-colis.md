@@ -11,3 +11,4 @@ En mode « Suivre un colis », scannez un QR ou saisissez le numéro de suivi DO
 La chronologie suit les étapes : remis au voyageur, en route, arrivé à destination, remis au destinataire.
 Seuls l'expéditeur et le voyageur peuvent suivre un colis depuis leur compte ; le destinataire utilise le lien de suivi, ou l'onglet Réceptions s'il a Yadony.
 Le délai de livraison dépend du trajet et de la date annoncée par le voyageur : vérifiez-la avant d'accepter une offre.
+Vous pouvez aussi demander à l'assistant « où est mon colis ? » : il vous propose vos colis en cours, ou retrouve celui dont vous écrivez le numéro DON-…, et ouvre sa fiche.
