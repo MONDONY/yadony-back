@@ -269,6 +269,12 @@ public class GuestClaimService {
             favoriteRepository.save(favorite);
             transferred++;
         }
+        // Un favori posé en invité sur un trajet de ce compte ne doit pas le suivre : il
+        // ouvrait la réservation sur son propre trajet (FLUTTER-R9). flush : la suppression
+        // native doit voir les favoris réattribués ci-dessus.
+        favoriteRepository.flush();
+        int owned = favoriteRepository.deleteOwnedByUser(callerId);
+        transferred = Math.max(0, transferred - owned);
         return new TransferResult(transferred, guestFavorites.size() - transferred);
     }
 

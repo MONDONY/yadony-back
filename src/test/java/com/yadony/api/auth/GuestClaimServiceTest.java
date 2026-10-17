@@ -279,6 +279,34 @@ class GuestClaimServiceTest {
                 .containsEntry("favoritesDiscarded", 1);
     }
 
+    @Test
+    @DisplayName("favori d'invité sur un trajet de l'appelant → supprimé, jamais transféré (FLUTTER-R9)")
+    void favoriteOnCallerOwnTripIsDiscarded() {
+        stubFirebaseUser(GUEST_UID);
+        UserEntity guest = userWithId(GUEST_UID);
+        UserEntity caller = userWithId(CALLER_UID);
+        when(userRepository.findByFirebaseUid(GUEST_UID)).thenReturn(Optional.of(guest));
+        when(userRepository.findByFirebaseUid(CALLER_UID)).thenReturn(Optional.of(caller));
+
+        FavoriteEntity favPropreTrajet = new FavoriteEntity(guest.getId(), FavoriteTargetType.TRIP, UUID.randomUUID());
+        FavoriteEntity favAutre = new FavoriteEntity(guest.getId(), FavoriteTargetType.TRIP, UUID.randomUUID());
+        when(favoriteRepository.findByUserIdOrderByCreatedAtDesc(guest.getId()))
+                .thenReturn(List.of(favPropreTrajet, favAutre));
+        when(favoriteRepository.existsByUserIdAndTargetTypeAndTargetId(
+                eq(caller.getId()), any(), any())).thenReturn(false);
+        when(favoriteRepository.deleteOwnedByUser(caller.getId())).thenReturn(1);
+
+        serviceWithGuestToken("anonymous", GUEST_UID).claim(CALLER_UID, PRESENTED_TOKEN);
+
+        // La suppression voit les favoris réattribués : flush avant la requête native.
+        var inOrder = org.mockito.Mockito.inOrder(favoriteRepository);
+        inOrder.verify(favoriteRepository).flush();
+        inOrder.verify(favoriteRepository).deleteOwnedByUser(caller.getId());
+        assertThat(auditPayload(caller.getId()))
+                .containsEntry("favoritesTransferred", 1)
+                .containsEntry("favoritesDiscarded", 1);
+    }
+
     // ── Etapes 6 a 8 : nominal ────────────────────────────────────────────────
 
     @Test

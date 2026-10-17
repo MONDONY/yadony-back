@@ -300,6 +300,38 @@ class FavoriteServiceTest {
     }
 
     @Test
+    void getFavoriteIds_excludesCallerOwnTripAndRequest() {
+        // FLUTTER-R9 : un favori d'invité transféré sur son propre trajet ouvrait la réservation.
+        UUID ownTrip = UUID.randomUUID();
+        UUID otherTrip = UUID.randomUUID();
+        UUID ownRequest = UUID.randomUUID();
+        when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.TRIP))
+                .thenReturn(List.of(ownTrip, otherTrip));
+        when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.PACKAGE_REQUEST))
+                .thenReturn(List.of(ownRequest));
+
+        AnnouncementEntity a1 = mock(AnnouncementEntity.class);
+        when(a1.getId()).thenReturn(ownTrip);
+        when(a1.getStatus()).thenReturn(AnnouncementStatus.ACTIVE);
+        when(a1.getTravelerId()).thenReturn(userId);
+        AnnouncementEntity a2 = mock(AnnouncementEntity.class);
+        when(a2.getId()).thenReturn(otherTrip);
+        when(a2.getStatus()).thenReturn(AnnouncementStatus.ACTIVE);
+        when(a2.getTravelerId()).thenReturn(UUID.randomUUID());
+        when(announcementRepository.findAllById(anyCollection())).thenReturn(List.of(a1, a2));
+        PackageRequestEntity pr = mock(PackageRequestEntity.class);
+        when(pr.getId()).thenReturn(ownRequest);
+        when(pr.getStatus()).thenReturn(PackageRequestStatus.OPEN);
+        when(pr.getSenderId()).thenReturn(userId);
+        when(packageRequestRepository.findAllById(anyCollection())).thenReturn(List.of(pr));
+
+        FavoriteIdsResponse res = service.getFavoriteIds(userId);
+
+        assertThat(res.trips()).containsExactly(otherTrip);
+        assertThat(res.packageRequests()).isEmpty();
+    }
+
+    @Test
     void getFavoriteIds_excludesRequestsThatTheListWouldHide() {
         UUID open = UUID.randomUUID();            // OPEN — compté
         UUID expired = UUID.randomUUID();         // EXPIRED — masqué par la liste
