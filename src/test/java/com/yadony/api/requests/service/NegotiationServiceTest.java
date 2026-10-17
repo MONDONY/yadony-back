@@ -4729,6 +4729,40 @@ class NegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("GP Pro : travelerGpPro et senderGpPro suivent les badges des comptes")
+        void toResponse_exposesGpProBadges() {
+            NegotiationThreadEntity thread = new NegotiationThreadEntity();
+            thread.setPackageRequestId(REQUEST_ID);
+            thread.setTravelerId(TRAVELER_ID);
+            thread.setStatus(NegotiationThreadStatus.OPEN);
+            thread.setCurrency("EUR");
+            thread.setCurrentPriceEur(new BigDecimal("35"));
+            thread.setRoundsCount((short) 1);
+            thread.setLastActivityAt(java.time.LocalDateTime.now());
+            request.setDepartureCity("Paris");
+            request.setArrivalCity("Dakar");
+            request.setWeightKg(new BigDecimal("5"));
+            UserEntity sender = new UserEntity();
+            sender.setGpPro(true);
+            when(userRepository.findById(request.getSenderId())).thenReturn(Optional.of(sender));
+            traveler.setGpPro(false);
+
+            NegotiationThreadResponse json = service.toResponse(
+                thread, List.of(), null, traveler, request, TRAVELER_ID, "Expéditeur", null);
+            assertThat(json.travelerGpPro()).isFalse();
+            assertThat(json.senderGpPro()).isTrue();
+
+            traveler.setGpPro(true);
+            NegotiationThreadResponse json2 = service.toResponse(
+                thread, List.of(), null, traveler, request, TRAVELER_ID, "Expéditeur", null);
+            assertThat(json2.travelerGpPro()).isTrue();
+            com.fasterxml.jackson.databind.JsonNode node = new com.fasterxml.jackson.databind.ObjectMapper()
+                .findAndRegisterModules().valueToTree(json2);
+            assertThat(node.get("travelerGpPro").asBoolean()).isTrue();
+            assertThat(node.get("senderGpPro").asBoolean()).isTrue();
+        }
+
+        @Test
         @DisplayName("FLUTTER-Q4 : le brut suit le taux de la plateforme, puis le taux figé sur le fil")
         void toResponse_grossFollowsPlatformRateThenFrozenRate() {
             NegotiationThreadEntity thread = new NegotiationThreadEntity();
