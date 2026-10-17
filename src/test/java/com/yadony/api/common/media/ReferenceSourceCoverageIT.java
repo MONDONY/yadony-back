@@ -27,7 +27,8 @@ class ReferenceSourceCoverageIT {
             "bids/", Set.of("BidPhotoReferenceSource"),
             "users/", Set.of("AvatarReferenceSource"),
             "reports/", Set.of("ReportPhotoReferenceSource"),
-            "support/", Set.of("SupportAttachmentReferenceSource"));
+            "support/", Set.of("SupportAttachmentReferenceSource"),
+            "gp_pro/", Set.of("GpProDocumentReferenceSource"));
 
     @Autowired List<MediaKeyReferenceSource> sources;
 

@@ -40,7 +40,7 @@ public class PhotoReconciliationService {
      * suppression de la conversation). {@code kyc/} n'est plus un préfixe de StorageService.
      */
     public static final List<String> RECONCILED_PREFIXES = List.of(
-            "package_requests/", "bids/", "tracking/", "users/", "reports/", "support/", "requests/");
+            "package_requests/", "bids/", "tracking/", "users/", "reports/", "support/", "requests/", "gp_pro/");
     /** Préfixes morts : plus rien ne les référence, tout ce qui y traîne est à supprimer. */
     public static final Set<String> PREFIXES_WITHOUT_SOURCE = Set.of("requests/");
     /**

@@ -25,6 +25,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -45,7 +46,12 @@ class GpProDocumentControllerIT {
     @Autowired GpProDocumentRepository documentRepository;
     @Autowired GpProDocumentService documentService;
 
+    @Autowired GpProAccountFinalizedListener finalizedListener;
+    @Autowired GpProDocumentReferenceSource referenceSource;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
+
     @MockBean StorageService storageService;
+    @org.springframework.boot.test.mock.mockito.SpyBean UserRepository spyUsers;
 
     private UUID userId;
 
@@ -61,6 +67,8 @@ class GpProDocumentControllerIT {
         user.setStatus(UserStatus.ACTIVE);
         user.setRoles(Set.of(Role.TRAVELER));
         userId = userRepository.save(user).getId();
+        // H2 ne connaît pas « FOR NO KEY UPDATE » : on neutralise le SQL du verrou (l'appel reste vérifié).
+        doReturn(java.util.Optional.empty()).when(spyUsers).findByIdForUpdate(any());
     }
 
     private org.springframework.test.web.servlet.ResultActions post(boolean auth) throws Exception {
@@ -92,7 +100,8 @@ class GpProDocumentControllerIT {
         doThrow(new YadonyBusinessException(
                 HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_FILE_TYPE", "Invalid File Type", "Type refusé"))
                 .when(storageService).storeImage(any(), any());
-        post(true).andExpect(status().isUnprocessableEntity());
+        post(true).andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("INVALID_FILE_TYPE"));
         assertThat(documentRepository.count()).isZero();
     }
 
@@ -136,6 +145,48 @@ class GpProDocumentControllerIT {
         documentRepository.saveAll(List.of(a, b));
         doThrow(new RuntimeException("r2 down")).when(storageService).deleteFile("gp_pro/b.jpg");
         assertThat(documentService.purgeAll(appId)).isEqualTo(1);
+    }
+
+    @Test
+    void uploadTakesOwnerRowLockBeforeCounting() throws Exception {
+        post(true).andExpect(status().isCreated());
+        verify(spyUsers).findByIdForUpdate(userId);
+    }
+
+    @Test
+    void purgedAndAttachedDocumentsDoNotCountInLimit() throws Exception {
+        GpProDocumentEntity purged = save("gp_pro/p.jpg");
+        purged.setStorageKey(null);
+        purged.setPurgedAt(java.time.LocalDateTime.now());
+        GpProDocumentEntity attached = save("gp_pro/at.jpg");
+        attached.setApplicationId(UUID.randomUUID());
+        documentRepository.saveAll(List.of(purged, attached));
+        for (int i = 0; i < 4; i++) {
+            post(true).andExpect(status().isCreated());
+        }
+        post(true).andExpect(status().isUnprocessableEntity());
+    }
+
+    @Test
+    void accountFinalizationPurgesAllUnpurgedDocuments() {
+        GpProDocumentEntity a = save("gp_pro/a.jpg");
+        GpProDocumentEntity b = save("gp_pro/b.jpg");
+        finalizedListener.onUserFinalized(new com.yadony.api.auth.events.UserFinalizedEvent(
+                userId, com.yadony.api.auth.FinalizationReason.values()[0]));
+        // listener @Async : on attend la fin du traitement
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(documentRepository.findByOwnerIdAndPurgedAtIsNull(userId)).isEmpty());
+        verify(storageService).deleteFile("gp_pro/a.jpg");
+        verify(storageService).deleteFile("gp_pro/b.jpg");
+    }
+
+    @Test
+    void referenceSourceReturnsUnattachedAndSoftDeletedKeys() {
+        save("gp_pro/live.jpg");
+        GpProDocumentEntity gone = save("gp_pro/gone.jpg");
+        jdbc.update("UPDATE gp_pro_documents SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?", gone.getId());
+        assertThat(referenceSource.referencedKeys("gp_pro/"))
+                .containsExactlyInAnyOrder("gp_pro/live.jpg", "gp_pro/gone.jpg");
     }
 
     private GpProDocumentEntity save(String key) {

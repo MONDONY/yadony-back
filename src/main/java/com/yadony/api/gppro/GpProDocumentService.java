@@ -45,6 +45,8 @@ public class GpProDocumentService {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "user-not-found", "User Not Found", "Utilisateur introuvable"));
+        // Verrou par propriétaire : sérialise comptage et insertion (limite de 4 non contournable en parallèle).
+        userRepository.findByIdForUpdate(user.getId());
         if (documentRepository.countByOwnerIdAndApplicationIdIsNullAndPurgedAtIsNull(user.getId())
                 >= MAX_UNATTACHED_DOCUMENTS) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,

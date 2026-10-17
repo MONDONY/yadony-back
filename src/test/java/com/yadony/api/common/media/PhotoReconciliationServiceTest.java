@@ -309,7 +309,7 @@ class PhotoReconciliationServiceTest {
     void messagingIsNotReconciled() {
         assertThat(PhotoReconciliationService.RECONCILED_PREFIXES).doesNotContain("messaging/");
         assertThat(PhotoReconciliationService.RECONCILED_PREFIXES).containsExactlyInAnyOrder(
-                "package_requests/", "bids/", "tracking/", "users/", "reports/", "support/", "requests/");
+                "package_requests/", "bids/", "tracking/", "users/", "reports/", "support/", "requests/", "gp_pro/");
     }
 
     @Test

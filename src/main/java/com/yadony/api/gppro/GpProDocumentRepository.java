@@ -16,6 +16,14 @@ public interface GpProDocumentRepository extends JpaRepository<GpProDocumentEnti
     /** Documents téléversés par l'utilisateur et pas encore rattachés à une demande. */
     long countByOwnerIdAndApplicationIdIsNullAndPurgedAtIsNull(UUID ownerId);
 
+    List<GpProDocumentEntity> findByOwnerIdAndPurgedAtIsNull(UUID ownerId);
+
+    /** Rapprochement R2 : toutes les clés, lignes supprimées logiquement et non rattachées comprises. */
+    @Query(value = "SELECT storage_key FROM gp_pro_documents WHERE storage_key IS NOT NULL "
+            + "AND (storage_key LIKE CONCAT(:prefix, '%') OR storage_key LIKE CONCAT('%/', :prefix, '%'))",
+            nativeQuery = true)
+    List<String> findStorageKeysMatchingIncludingDeleted(@Param("prefix") String prefix);
+
     List<GpProDocumentEntity> findByIdInAndOwnerIdAndApplicationIdIsNull(Collection<UUID> ids, UUID ownerId);
 
     /** Documents jamais rattachés à une demande et non purgés, créés avant {@code cutoff}. */
