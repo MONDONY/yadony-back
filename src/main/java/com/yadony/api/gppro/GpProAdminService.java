@@ -9,6 +9,7 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.disputes.DisputeRepository;
 import com.yadony.api.gppro.dto.AdminGpProApplicationDetail;
 import com.yadony.api.gppro.dto.AdminGpProApplicationRow;
+import com.yadony.api.gppro.dto.AdminGpProReviewRow;
 import com.yadony.api.gppro.events.GpProDecisionEvent;
 import com.yadony.api.gppro.events.GpProStatusChangedEvent;
 import com.yadony.api.matching.AnnouncementRepository;
@@ -139,6 +140,49 @@ public class GpProAdminService {
                 reports.countByStatusAndTargetTypeAndTargetId(ReportStatus.OPEN, ReportTargetType.USER, userId),
                 user == null ? null : user.getCreatedAt(),
                 docs);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<AdminGpProReviewRow> reviewQueue(int page, int size) {
+        Page<UUID> userIds = flags.findReviewUserIds(
+                PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), 100)));
+        if (userIds.isEmpty()) {
+            return new org.springframework.data.domain.PageImpl<>(List.of(), userIds.getPageable(), 0);
+        }
+        Map<UUID, UserEntity> byId = users.findAllById(userIds.getContent())
+                .stream().collect(Collectors.toMap(UserEntity::getId, Function.identity()));
+        Map<UUID, List<GpProReviewFlagEntity>> byUser = flags
+                .findByUserIdInAndResolvedAtIsNullAndDismissedAtIsNull(userIds.getContent())
+                .stream().collect(Collectors.groupingBy(GpProReviewFlagEntity::getUserId));
+        return userIds.map(id -> {
+            List<GpProReviewFlagEntity> mine = byUser.getOrDefault(id, List.of()).stream()
+                    .sorted(java.util.Comparator.comparing(GpProReviewFlagEntity::getReason)).toList();
+            LocalDateTime detectedAt = mine.stream().map(GpProReviewFlagEntity::getDetectedAt)
+                    .min(java.util.Comparator.naturalOrder()).orElse(null);
+            return new AdminGpProReviewRow(id, displayName(byId.get(id)),
+                    mine.stream().map(GpProReviewFlagEntity::getReason).toList(), detectedAt,
+                    mine.stream().map(f -> new AdminGpProReviewRow.Flag(f.getId(), f.getReason())).toList());
+        });
+    }
+
+    /** Écarte un signalement de revue ; sans effet s'il l'est déjà. Un signalement clos ne s'écarte plus. */
+    @Transactional
+    public void dismissFlag(UUID flagId, UUID adminId) {
+        GpProReviewFlagEntity flag = flags.findById(flagId)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "gp-pro-flag-not-found", "Flag Not Found", "Signalement de revue introuvable"));
+        if (flag.getResolvedAt() != null) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                    "gp-pro-flag-resolved", "Flag Resolved", "Ce signalement de revue est déjà clos");
+        }
+        if (flag.getDismissedAt() != null) {
+            return;
+        }
+        flag.setDismissedAt(LocalDateTime.now(ZoneOffset.UTC));
+        flag.setDismissedBy(adminId);
+        flags.save(flag);
+        audit.log("GP_PRO_REVIEW_FLAG", flagId, "GP_PRO_REVIEW_DISMISSED", adminId,
+                Map.of("userId", flag.getUserId().toString(), "reason", flag.getReason().name()));
     }
 
     @Transactional

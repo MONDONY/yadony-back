@@ -315,4 +315,78 @@ class GpProAdminServiceTest {
 
         assertThat(service.detail(appId).completedDeliveries()).isEqualTo(7L);
     }
+
+    @Test
+    void dismissFlagMarksDismissedAndAudits() {
+        UUID flagId = UUID.randomUUID();
+        GpProReviewFlagEntity flag = new GpProReviewFlagEntity();
+        flag.setUserId(userId);
+        flag.setReason(GpProReviewReason.LOW_RATING);
+        when(flags.findById(flagId)).thenReturn(Optional.of(flag));
+
+        service.dismissFlag(flagId, adminId);
+
+        assertThat(flag.getDismissedAt()).isNotNull();
+        assertThat(flag.getDismissedBy()).isEqualTo(adminId);
+        verify(flags).save(flag);
+        verify(audit).log(eq("GP_PRO_REVIEW_FLAG"), eq(flagId), eq("GP_PRO_REVIEW_DISMISSED"), eq(adminId), any());
+    }
+
+    @Test
+    void dismissFlagIsIdempotentWhenAlreadyDismissed() {
+        UUID flagId = UUID.randomUUID();
+        GpProReviewFlagEntity flag = new GpProReviewFlagEntity();
+        flag.setDismissedAt(LocalDateTime.now());
+        when(flags.findById(flagId)).thenReturn(Optional.of(flag));
+
+        service.dismissFlag(flagId, adminId);
+
+        verify(flags, never()).save(any());
+        verify(audit, never()).log(anyString(), any(), anyString(), any(), any());
+    }
+
+    @Test
+    void dismissFlagRejectsResolvedAndUnknownFlags() {
+        UUID flagId = UUID.randomUUID();
+        GpProReviewFlagEntity resolved = new GpProReviewFlagEntity();
+        resolved.setResolvedAt(LocalDateTime.now());
+        when(flags.findById(flagId)).thenReturn(Optional.of(resolved));
+
+        assertCode(() -> service.dismissFlag(flagId, adminId), HttpStatus.CONFLICT, "gp-pro-flag-resolved");
+        assertCode(() -> service.dismissFlag(UUID.randomUUID(), adminId),
+                HttpStatus.NOT_FOUND, "gp-pro-flag-not-found");
+    }
+
+    @Test
+    void reviewQueueGroupsReasonsPerUser() {
+        GpProReviewFlagEntity a = new GpProReviewFlagEntity();
+        a.setUserId(userId);
+        a.setReason(GpProReviewReason.OPEN_REPORT);
+        a.setDetectedAt(LocalDateTime.of(2026, 10, 2, 4, 0));
+        GpProReviewFlagEntity b = new GpProReviewFlagEntity();
+        b.setUserId(userId);
+        b.setReason(GpProReviewReason.LOW_RATING);
+        b.setDetectedAt(LocalDateTime.of(2026, 10, 1, 4, 0));
+        user.setFirstName("Awa");
+        user.setLastName("Diallo");
+        when(flags.findReviewUserIds(any())).thenReturn(
+                new org.springframework.data.domain.PageImpl<>(List.of(userId)));
+        when(users.findAllById(any())).thenReturn(List.of(user));
+        when(flags.findByUserIdInAndResolvedAtIsNullAndDismissedAtIsNull(any())).thenReturn(List.of(a, b));
+
+        var page = service.reviewQueue(0, 20);
+
+        assertThat(page.getContent()).hasSize(1);
+        var row = page.getContent().get(0);
+        assertThat(row.userId()).isEqualTo(userId);
+        assertThat(row.displayName()).isEqualTo("Awa Diallo");
+        assertThat(row.reasons()).containsExactly(GpProReviewReason.LOW_RATING, GpProReviewReason.OPEN_REPORT);
+        assertThat(row.detectedAt()).isEqualTo(LocalDateTime.of(2026, 10, 1, 4, 0));
+    }
+
+    @Test
+    void reviewQueueEmpty() {
+        when(flags.findReviewUserIds(any())).thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
+        assertThat(service.reviewQueue(0, 20).getContent()).isEmpty();
+    }
 }

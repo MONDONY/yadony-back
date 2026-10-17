@@ -98,6 +98,8 @@ public interface ReportRepository extends JpaRepository<ReportEntity, UUID> {
     boolean existsByStatusAndTargetTypeAndTargetIdIn(ReportStatus status, ReportTargetType targetType,
                                                      java.util.Collection<UUID> targetIds);
 
+    boolean existsByTargetTypeAndTargetIdAndStatus(ReportTargetType targetType, UUID targetId, ReportStatus status);
+
     /** Nombre de signalements d'un statut donné sur une cible. */
     long countByStatusAndTargetTypeAndTargetId(ReportStatus status, ReportTargetType targetType, UUID targetId);
 

@@ -120,6 +120,58 @@ class GpProSchemaPostgresIT {
         assertThat(userRepository.findById(user.getId()).orElseThrow().isGpPro()).isFalse();
     }
 
+    @Test
+    @DisplayName("les requêtes de purge et de comptage distinguent bien les lignes avec données")
+    void cleanupAndCountQueriesWithData() {
+        UserEntity owner = persistUser(false);
+        GpProApplicationEntity approved = applicationRepository.saveAndFlush(
+                application(owner.getId(), GpProApplicationStatus.APPROVED));
+        UserEntity other = persistUser(false);
+        GpProApplicationEntity pending = applicationRepository.saveAndFlush(
+                application(other.getId(), GpProApplicationStatus.PENDING));
+
+        GpProDocumentEntity oldOrphan = document(owner.getId(), null);
+        GpProDocumentEntity recentOrphan = document(owner.getId(), null);
+        GpProDocumentEntity ofApproved = document(owner.getId(), approved.getId());
+        GpProDocumentEntity ofPending = document(other.getId(), pending.getId());
+        jdbcTemplate.update("UPDATE gp_pro_documents SET created_at = ? WHERE id = ?",
+                java.sql.Timestamp.valueOf(java.time.LocalDateTime.now().minusHours(30)), oldOrphan.getId());
+
+        java.time.LocalDateTime cutoff = java.time.LocalDateTime.now().minusHours(24);
+        assertThat(documentRepository.findOrphansCreatedBefore(cutoff))
+                .extracting(GpProDocumentEntity::getId)
+                .contains(oldOrphan.getId())
+                .doesNotContain(recentOrphan.getId(), ofApproved.getId(), ofPending.getId());
+        assertThat(documentRepository.findUnpurgedOfDecidedApplications())
+                .extracting(GpProDocumentEntity::getId)
+                .contains(ofApproved.getId())
+                .doesNotContain(ofPending.getId(), oldOrphan.getId(), recentOrphan.getId());
+
+        long before = flagRepository.countDistinctUserIdByResolvedAtIsNullAndDismissedAtIsNull();
+        flagRepository.saveAndFlush(flag(owner.getId(), GpProReviewReason.LOW_RATING));
+        flagRepository.saveAndFlush(flag(owner.getId(), GpProReviewReason.OPEN_REPORT));
+        assertThat(flagRepository.countDistinctUserIdByResolvedAtIsNullAndDismissedAtIsNull()).isEqualTo(before + 1);
+        assertThat(flagRepository.findReviewUserIds(org.springframework.data.domain.PageRequest.of(0, 50))
+                .getContent()).contains(owner.getId());
+    }
+
+    private GpProDocumentEntity document(UUID ownerId, UUID applicationId) {
+        GpProDocumentEntity d = new GpProDocumentEntity();
+        d.setOwnerId(ownerId);
+        d.setApplicationId(applicationId);
+        d.setDocType(GpProDocumentType.TRAVEL_PROOF);
+        d.setStorageKey("gp_pro/" + ownerId + "/" + UUID.randomUUID() + ".jpg");
+        return documentRepository.saveAndFlush(d);
+    }
+
+    private GpProReviewFlagEntity flag(UUID userId, GpProReviewReason reason) {
+        GpProReviewFlagEntity f = new GpProReviewFlagEntity();
+        f.setUserId(userId);
+        f.setReason(reason);
+        f.setDetectedAt(java.time.LocalDateTime.now());
+        return f;
+    }
+
     private GpProApplicationEntity application(UUID userId, GpProApplicationStatus status) {
         GpProApplicationEntity a = new GpProApplicationEntity();
         a.setUserId(userId);

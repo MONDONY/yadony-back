@@ -28,6 +28,8 @@ public interface DisputeRepository extends JpaRepository<DisputeEntity, UUID> {
     /** Litiges d'un statut donné où ce compte est le voyageur (fiche GP Pro de l'admin). */
     long countByTravelerIdAndStatus(UUID travelerId, String status);
 
+    boolean existsByTravelerIdAndStatus(UUID travelerId, String status);
+
     // Nouveau — idempotence par type pour les litiges d'arrivée.
     Optional<DisputeEntity> findByBidIdAndType(UUID bidId, String type);
 

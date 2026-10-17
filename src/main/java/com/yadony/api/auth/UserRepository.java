@@ -34,6 +34,9 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
 
     /** Comptes dont la colonne héritée {@code fcm_token} porte encore ce jeton (au plus un attendu). */
     List<UserEntity> findAllByFcmToken(String fcmToken);
+
+    /** Titulaires du badge GP Pro (revue quotidienne). */
+    List<UserEntity> findByGpProTrue();
     Optional<UserEntity> findByStripeAccountId(String stripeAccountId);
     Optional<UserEntity> findByStripeCustomerId(String stripeCustomerId);
     Optional<UserEntity> findByCommissionPaymentMethodId(String commissionPaymentMethodId);

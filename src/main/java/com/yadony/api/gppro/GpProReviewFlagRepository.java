@@ -20,4 +20,17 @@ public interface GpProReviewFlagRepository extends JpaRepository<GpProReviewFlag
         WHERE f.resolvedAt IS NULL AND f.dismissedAt IS NULL
     """)
     long countDistinctUserIdByResolvedAtIsNullAndDismissedAtIsNull();
+
+    /** Personnes à réexaminer, la plus anciennement signalée d'abord (une ligne par personne). */
+    @Query(value = """
+        SELECT f.userId FROM GpProReviewFlagEntity f
+        WHERE f.resolvedAt IS NULL AND f.dismissedAt IS NULL
+        GROUP BY f.userId ORDER BY min(f.detectedAt), f.userId
+    """, countQuery = """
+        SELECT count(distinct f.userId) FROM GpProReviewFlagEntity f
+        WHERE f.resolvedAt IS NULL AND f.dismissedAt IS NULL
+    """)
+    Page<UUID> findReviewUserIds(Pageable p);
+
+    List<GpProReviewFlagEntity> findByUserIdInAndResolvedAtIsNullAndDismissedAtIsNull(java.util.Collection<UUID> userIds);
 }

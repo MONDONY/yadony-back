@@ -3,6 +3,7 @@ package com.yadony.api.gppro;
 import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.gppro.dto.AdminGpProApplicationDetail;
 import com.yadony.api.gppro.dto.AdminGpProApplicationRow;
+import com.yadony.api.gppro.dto.AdminGpProReviewRow;
 import com.yadony.api.gppro.dto.GpProDecisionRequest;
 import com.yadony.api.gppro.dto.GpProGrantRequest;
 import jakarta.validation.Valid;
@@ -80,5 +81,20 @@ public class AdminGpProController {
     public void revoke(@PathVariable UUID userId, @RequestBody @Valid GpProDecisionRequest request,
                        Authentication authentication) {
         service.revoke(userId, AdminPrincipal.requireAdminId(authentication), request.reason());
+    }
+
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('GP_PRO_REVIEW')")
+    @GetMapping("/gp-pro/review")
+    public Page<AdminGpProReviewRow> reviewQueue(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return service.reviewQueue(page, size);
+    }
+
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('GP_PRO_REVIEW')")
+    @PostMapping("/gp-pro/review-flags/{flagId}/dismiss")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void dismiss(@PathVariable UUID flagId, Authentication authentication) {
+        service.dismissFlag(flagId, AdminPrincipal.requireAdminId(authentication));
     }
 }
