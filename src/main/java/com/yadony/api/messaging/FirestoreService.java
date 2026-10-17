@@ -296,6 +296,32 @@ public class FirestoreService {
         }
     }
 
+    /** Champ Firestore posé quand la conversation passe en lecture seule pour les deux participants. */
+    public static final String READ_ONLY_AT_FIELD = "readOnlyAt";
+    /** Motif de la lecture seule, à côté de {@link #READ_ONLY_AT_FIELD}. */
+    public static final String READ_ONLY_REASON_FIELD = "readOnlyReason";
+
+    /**
+     * Passe une conversation en lecture seule pour ses deux participants (FLUTTER-QQ) : pose
+     * {@code readOnlyAt} (instant ISO-8601) et {@code readOnlyReason} sur
+     * {@code conversations/{conversationId}}. Les règles Firestore refusent la création d'un
+     * message quand {@code readOnlyAt} est posé ; la lecture et la liste ne changent pas. Les
+     * messages système, écrits par le serveur (Admin SDK), ne passent pas par les règles.
+     */
+    public void markReadOnly(String conversationId, String reason) {
+        if (firestore == null) {
+            log.warn("Firestore disabled — skipping markReadOnly");
+            return;
+        }
+        try {
+            firestore.collection("conversations").document(conversationId)
+                     .update(READ_ONLY_AT_FIELD, Instant.now().toString(),
+                             READ_ONLY_REASON_FIELD, reason).get();
+        } catch (Exception e) {
+            throw new RuntimeException("Firestore markReadOnly failed", e);
+        }
+    }
+
     public void markConversationDeleted(String conversationId) {
         if (firestore == null) {
             log.warn("Firestore disabled — skipping markConversationDeleted");
