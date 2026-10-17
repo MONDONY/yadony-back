@@ -35,6 +35,19 @@ public class SmsOtpProperties {
     /** Durée de validité d'un code, en minutes. */
     private int otpValidMinutes = 10;
 
+    /** Codes sur 24 h glissantes avant de passer à un SMS par heure (voir le canal email). */
+    private int maxSendsPerDay = 10;
+
+    /**
+     * Connexions réussies tolérées par numéro sur {@link #loginWindowMinutes}, même avec
+     * un code valide. Au-delà, ni envoi ni vérification : un numéro qui se reconnecte en
+     * boucle signale un script ou un appareil compromis, pas un usage normal.
+     */
+    private int maxLoginsPerWindow = 3;
+
+    /** Fenêtre glissante, en minutes, de {@link #maxLoginsPerWindow}. */
+    private int loginWindowMinutes = 10;
+
     /**
      * Indicatifs pays (sans « + ») vers lesquels un code peut partir. Parade au SMS
      * pumping : des robots demandent des codes vers des numéros surtaxés d'autres pays,
@@ -79,6 +92,12 @@ public class SmsOtpProperties {
     public void setMaxAttempts(int maxAttempts) { this.maxAttempts = maxAttempts; }
     public int getOtpValidMinutes() { return otpValidMinutes; }
     public void setOtpValidMinutes(int otpValidMinutes) { this.otpValidMinutes = otpValidMinutes; }
+    public int getMaxSendsPerDay() { return maxSendsPerDay; }
+    public void setMaxSendsPerDay(int maxSendsPerDay) { this.maxSendsPerDay = maxSendsPerDay; }
+    public int getMaxLoginsPerWindow() { return maxLoginsPerWindow; }
+    public void setMaxLoginsPerWindow(int maxLoginsPerWindow) { this.maxLoginsPerWindow = maxLoginsPerWindow; }
+    public int getLoginWindowMinutes() { return loginWindowMinutes; }
+    public void setLoginWindowMinutes(int loginWindowMinutes) { this.loginWindowMinutes = loginWindowMinutes; }
     public int getMaxSendsPerHourGlobal() { return maxSendsPerHourGlobal; }
     public void setMaxSendsPerHourGlobal(int maxSendsPerHourGlobal) { this.maxSendsPerHourGlobal = maxSendsPerHourGlobal; }
     public int getMaxSendsPerDayGlobal() { return maxSendsPerDayGlobal; }

@@ -46,8 +46,11 @@ public interface EmailOtpRepository extends JpaRepository<EmailOtpEntity, UUID> 
      * Invalide les codes encore actifs : à l'envoi d'un nouveau code (seul le dernier
      * reste valable) et après une vérification réussie (sinon le code précédent,
      * toujours dans sa validité, redevenait le « dernier non utilisé »).
+     *
+     * <p>Par expiration et non par {@code usedAt} : {@code usedAt} ne marque ainsi
+     * qu'une connexion réussie, ce que compte la limite de connexions.
      */
     @Modifying
-    @Query("UPDATE EmailOtpEntity e SET e.usedAt = :now WHERE e.email = :email AND e.usedAt IS NULL")
+    @Query("UPDATE EmailOtpEntity e SET e.expiresAt = :now WHERE e.email = :email AND e.usedAt IS NULL AND e.expiresAt > :now")
     int invalidateActive(@Param("email") String email, @Param("now") LocalDateTime now);
 }

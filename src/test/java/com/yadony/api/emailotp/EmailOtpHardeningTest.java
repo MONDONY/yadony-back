@@ -83,7 +83,8 @@ class EmailOtpHardeningTest {
         service.sendOtp(" Test@Example.COM");
 
         InOrder order = inOrder(repository);
-        order.verify(repository).countByEmailSince(eq("test@example.com"), any());
+        // Deux comptages sur l'adresse canonique : fenêtre courte puis 24 h.
+        order.verify(repository, org.mockito.Mockito.times(2)).countByEmailSince(eq("test@example.com"), any());
         order.verify(repository).invalidateActive(eq("test@example.com"), any());
         order.verify(repository).save(org.mockito.ArgumentMatchers.argThat(
                 e -> "test@example.com".equals(e.getEmail())));
@@ -164,5 +165,43 @@ class EmailOtpHardeningTest {
         assertThatThrownBy(() -> service.verifyOtp("test@example.com", "999999"))
                 .isInstanceOf(YadonyBusinessException.class);
         verify(repository, never()).invalidateActive(anyString(), any());
+    }
+
+    @Test
+    @DisplayName("envoi : 10 codes sur 24 h dont un dans l'heure → 429 otp-daily-limit, Retry-After 1 h")
+    void send_dailyLimitPerAddress() {
+        // Comptages : fenêtre de 5 min (0), 24 h (10), dernière heure (1).
+        when(repository.countByEmailSince(eq("a@b.com"), any())).thenReturn(0L, 10L, 1L);
+
+        assertThatThrownBy(() -> service.sendOtp("A@B.com"))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS);
+                    assertThat(e.getErrorCode()).isEqualTo("otp-daily-limit");
+                    assertThat(e.getProperties()).containsEntry("retryAfterSeconds", 3600L);
+                });
+        verify(repository, never()).save(any());
+        verify(resendEmailService, never()).sendOtp(anyString(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("envoi : quota du jour atteint mais aucun code depuis 1 h → un code part (pas de blocage 24 h)")
+    void send_dailyLimitStillOnePerHour() {
+        when(repository.countByEmailSince(eq("a@b.com"), any())).thenReturn(0L, 15L, 0L);
+        when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hash");
+
+        service.sendOtp("a@b.com");
+
+        verify(resendEmailService).sendOtp(eq("a@b.com"), anyString(), any(Messages.class));
+    }
+
+    @Test
+    @DisplayName("envoi : 9 codes sur 24 h → le 10e part encore")
+    void send_underDailyLimit() {
+        when(repository.countByEmailSince(eq("a@b.com"), any())).thenReturn(0L, 9L);
+        when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hash");
+
+        service.sendOtp("a@b.com");
+
+        verify(resendEmailService).sendOtp(eq("a@b.com"), anyString(), any(Messages.class));
     }
 }

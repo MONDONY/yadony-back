@@ -119,6 +119,18 @@ public class SmsOtpService {
                     "Trop de codes demandés, réessaie dans " + windowMinutes + " min");
         }
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        // Au-delà du quota du jour, un SMS par heure seulement (voir le canal email) : un
+        // refus de 24 h laissait n'importe qui bloquer le propriétaire du numéro.
+        if (smsOtpRepository.countByPhoneSince(phoneNumber, now.minusDays(1)) >= properties.getMaxSendsPerDay()
+                && smsOtpRepository.countByPhoneSince(phoneNumber, now.minusHours(1)) > 0) {
+            throw new YadonyBusinessException(
+                    HttpStatus.TOO_MANY_REQUESTS, "phone-otp-daily-limit",
+                    "Too Many Requests",
+                    "Trop de codes demandés aujourd'hui, réessaie dans une heure",
+                    Map.of("retryAfterSeconds", 3600L));
+        }
+        // Inutile de facturer un SMS dont le code serait refusé à la vérification.
+        ensureLoginBudget(phoneNumber, now);
         if (smsOtpRepository.countAllSince(now.minusHours(1)) >= properties.getMaxSendsPerHourGlobal()
                 || smsOtpRepository.countAllSince(now.minusDays(1)) >= properties.getMaxSendsPerDayGlobal()) {
             // ERROR → Sentry : chaque SMS est facturé. Pic légitime (relever le budget) ou
@@ -288,6 +300,9 @@ public class SmsOtpService {
      */
     void consumeOtp(String phoneNumber, String code) {
 
+        // Avant tout contrôle du code : même un code juste est refusé au-delà du budget.
+        ensureLoginBudget(phoneNumber, LocalDateTime.now(ZoneOffset.UTC));
+
         // Budget global par numéro : sans lui, chaque renvoi de code offrirait
         // 5 essais frais (le compteur vit sur le token, et la vérification lit
         // toujours le token le plus récent).
@@ -346,6 +361,22 @@ public class SmsOtpService {
         smsOtpRepository.save(token);
         // Les codes plus anciens encore valides ne doivent pas survivre à une connexion.
         smsOtpRepository.invalidateActive(phoneNumber, now);
+    }
+
+    /**
+     * Refuse (429 {@code phone-otp-login-limit}) quand ce numéro a déjà réussi
+     * {@code maxLoginsPerWindow} connexions sur la fenêtre, même si le code est bon.
+     */
+    private void ensureLoginBudget(String phoneNumber, LocalDateTime now) {
+        int windowMinutes = properties.getLoginWindowMinutes();
+        if (smsOtpRepository.countSuccessfulSince(phoneNumber, now.minusMinutes(windowMinutes))
+                >= properties.getMaxLoginsPerWindow()) {
+            throw new YadonyBusinessException(
+                    HttpStatus.TOO_MANY_REQUESTS, "phone-otp-login-limit",
+                    "Too Many Requests",
+                    "Trop de connexions avec ce numéro, réessaie dans " + windowMinutes + " min",
+                    Map.of("retryAfterSeconds", windowMinutes * 60L));
+        }
     }
 
     /** Hash BCrypt jetable, calculé une fois, pour égaliser le temps de réponse. */
