@@ -320,6 +320,19 @@ public class UserEntity extends BaseEntity {
     @Column(name = "kilo_pro_granted_at")
     private LocalDateTime kiloProGrantedAt;
 
+    @org.hibernate.annotations.ColumnDefault("false")
+    @Column(name = "gp_pro", nullable = false)
+    private boolean gpPro = false;
+
+    @Column(name = "gp_pro_granted_at")
+    private LocalDateTime gpProGrantedAt;
+
+    @Column(name = "gp_pro_revoked_at")
+    private LocalDateTime gpProRevokedAt;
+
+    @Column(name = "gp_pro_revoked_reason", length = 1000)
+    private String gpProRevokedReason;
+
     @Column(name = "total_trips", nullable = false)
     private int totalTrips = 0;
 
@@ -644,6 +657,18 @@ public class UserEntity extends BaseEntity {
 
     public boolean isKiloPro() { return kiloPro; }
     public void setKiloPro(boolean kiloPro) { this.kiloPro = kiloPro; }
+
+    public boolean isGpPro() { return gpPro; }
+    public void setGpPro(boolean gpPro) { this.gpPro = gpPro; }
+
+    public LocalDateTime getGpProGrantedAt() { return gpProGrantedAt; }
+    public void setGpProGrantedAt(LocalDateTime gpProGrantedAt) { this.gpProGrantedAt = gpProGrantedAt; }
+
+    public LocalDateTime getGpProRevokedAt() { return gpProRevokedAt; }
+    public void setGpProRevokedAt(LocalDateTime gpProRevokedAt) { this.gpProRevokedAt = gpProRevokedAt; }
+
+    public String getGpProRevokedReason() { return gpProRevokedReason; }
+    public void setGpProRevokedReason(String gpProRevokedReason) { this.gpProRevokedReason = gpProRevokedReason; }
 
     public LocalDateTime getKiloProGrantedAt() { return kiloProGrantedAt; }
     public void setKiloProGrantedAt(LocalDateTime kiloProGrantedAt) { this.kiloProGrantedAt = kiloProGrantedAt; }
