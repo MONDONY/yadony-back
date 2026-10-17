@@ -182,6 +182,28 @@ class WalletServiceTest {
     }
 
     @Test
+    void credit_withBidId_writesBidOnLedgerLine_andWithoutLeavesItNull() {
+        // FLUTTER-QP : le remboursement de commission porte son colis sur la ligne.
+        UUID userId = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        WalletAccountEntity wallet = wallet(userId, "EUR", new BigDecimal("10.00"));
+        when(walletAccountRepository.findByUserIdAndCurrency(userId, "EUR")).thenReturn(Optional.of(wallet));
+        when(walletAccountRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(walletTransactionRepository.findByIdempotencyKey(anyString())).thenReturn(Optional.empty());
+        when(walletTransactionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        walletService.credit(userId, "EUR", new BigDecimal("2.40"),
+                WalletTransactionType.REFUND, "refund-" + bidId, "k-refund", bidId);
+        walletService.credit(userId, "EUR", new BigDecimal("5.00"),
+                WalletTransactionType.TOP_UP, "pi_1", "k-topup");
+
+        ArgumentCaptor<WalletTransactionEntity> transaction = ArgumentCaptor.forClass(WalletTransactionEntity.class);
+        verify(walletTransactionRepository, org.mockito.Mockito.times(2)).save(transaction.capture());
+        assertThat(transaction.getAllValues().get(0).getBidId()).isEqualTo(bidId);
+        assertThat(transaction.getAllValues().get(1).getBidId()).isNull();
+    }
+
+    @Test
     void credit_idempotent_doesNothingIfKeyAlreadyProcessed() {
         UUID userId = UUID.randomUUID();
         when(walletTransactionRepository.findByIdempotencyKey("idem-001"))

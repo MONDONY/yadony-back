@@ -497,6 +497,22 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     @Query("SELECT b FROM BidEntity b WHERE b.id = :id AND b.deletedAt IS NULL")
     Optional<BidEntity> findByIdForUpdate(@Param("id") UUID id);
 
+    /** Identifiant d'un colis et fil de négociation dont il est issu (nul pour un colis classique). */
+    interface BidThreadLink {
+        UUID getId();
+        UUID getLinkedNegotiationThreadId();
+    }
+
+    /**
+     * Colis (non supprimés) dont l'id est dans {@code ids} ou issus d'un fil de {@code threadIds},
+     * en une requête : lien « voir le colis » d'une page d'historique du solde (FLUTTER-QP).
+     * Les deux listes doivent être non vides (l'appelant passe un id sentinelle sinon).
+     */
+    @Query("SELECT b.id AS id, b.linkedNegotiationThreadId AS linkedNegotiationThreadId FROM BidEntity b "
+            + "WHERE b.deletedAt IS NULL AND (b.id IN :ids OR b.linkedNegotiationThreadId IN :threadIds)")
+    List<BidThreadLink> findBidThreadLinks(@Param("ids") java.util.Collection<UUID> ids,
+                                           @Param("threadIds") java.util.Collection<UUID> threadIds);
+
     /**
      * Verrou de ligne du colis, tenu jusqu'à la fin de la transaction, par un UPDATE neutre
      * (exécutable aussi sous H2, contrairement à {@code SELECT … FOR NO KEY UPDATE}). À appeler

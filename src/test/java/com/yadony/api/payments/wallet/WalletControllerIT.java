@@ -161,6 +161,26 @@ class WalletControllerIT {
             .andExpect(jsonPath("$.transactions").isArray());
     }
 
+    /** FLUTTER-QP : chaque ligne expose le colis lié sous {@code bidId} (contrat figé), absent sinon. */
+    @Test
+    void getBalance_exposesBidIdPerTransaction() throws Exception {
+        UUID bidId = UUID.randomUUID();
+        seedCredit(USER_UUID, "EUR", new BigDecimal("20.00"), WalletTransactionType.TOP_UP, "pi_topup_bidlink", "k-topup-bidlink");
+        debitDirect(USER_UUID, "EUR", new BigDecimal("2.40"), WalletTransactionType.COMMISSION_DEDUCTED, bidId);
+        // Remboursement antérieur sans bid_id dont le colis n'existe pas : pas de lien inventé.
+        seedCredit(USER_UUID, "EUR", new BigDecimal("1.00"), WalletTransactionType.REFUND,
+                "refund-" + UUID.randomUUID(), "k-refund-orphan");
+
+        mockMvc.perform(get("/wallet/balance")
+                .with(authentication(authAs(FIREBASE_UID, "TRAVELER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.transactions[?(@.type == 'COMMISSION_DEDUCTED')].bidId")
+                .value(org.hamcrest.Matchers.contains(bidId.toString())))
+            // Sans colis : champ omis (NON_NULL, comme refundStatus), lu nul par l'app.
+            .andExpect(jsonPath("$.transactions[?(@.type == 'TOP_UP')].bidId").doesNotExist())
+            .andExpect(jsonPath("$.transactions[?(@.type == 'REFUND')].bidId").doesNotExist());
+    }
+
     @Test
     void getBalance_withPageParam_returnsOk() throws Exception {
         mockMvc.perform(get("/wallet/balance")
