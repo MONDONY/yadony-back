@@ -13,6 +13,9 @@ public interface GpProDocumentRepository extends JpaRepository<GpProDocumentEnti
 
     List<GpProDocumentEntity> findByApplicationIdAndPurgedAtIsNull(UUID applicationId);
 
+    /** Documents téléversés par l'utilisateur et pas encore rattachés à une demande. */
+    long countByOwnerIdAndApplicationIdIsNullAndPurgedAtIsNull(UUID ownerId);
+
     List<GpProDocumentEntity> findByIdInAndOwnerIdAndApplicationIdIsNull(Collection<UUID> ids, UUID ownerId);
 
     /** Documents jamais rattachés à une demande et non purgés, créés avant {@code cutoff}. */
