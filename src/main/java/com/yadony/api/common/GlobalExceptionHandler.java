@@ -138,7 +138,13 @@ public class GlobalExceptionHandler {
         problem.setTitle(ex.getTitle());
         problem.setProperty("code", ex.getErrorCode());
         ex.getProperties().forEach(problem::setProperty);
-        return ResponseEntity.status(ex.getStatus()).body(problem);
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(ex.getStatus());
+        // Un refus de débit dit au client quand réessayer : l'en-tête standard pour les
+        // clients HTTP, la propriété pour l'app qui l'affiche.
+        if (ex.getProperties().get("retryAfterSeconds") instanceof Number seconds) {
+            response.header(HttpHeaders.RETRY_AFTER, String.valueOf(seconds.longValue()));
+        }
+        return response.body(problem);
     }
 
     @ExceptionHandler(ResponseStatusException.class)
