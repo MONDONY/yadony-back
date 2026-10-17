@@ -70,7 +70,8 @@ class KnowledgeBaseFichesTest {
         KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
         for (String locale : List.of("fr", "en")) {
             assertThat(corpus.articles(locale)).extracting(KbArticle::id)
-                    .contains("securite-paiements", "donnees-personnelles", "douane", "villes-desservies");
+                    .contains("securite-paiements", "donnees-personnelles", "douane", "villes-desservies",
+                            "creer-trajet-ia", "creer-demande-envoi-ia");
         }
     }
 
@@ -109,6 +110,10 @@ class KnowledgeBaseFichesTest {
         assertThat(firstHit(kb, "en", "Do I need to declare the parcel to customs?")).isEqualTo("douane");
         assertThat(firstHit(kb, "en", "Is my data sold?")).isEqualTo("donnees-personnelles");
         assertThat(firstHit(kb, "en", "Is card payment secure?")).isEqualTo("securite-paiements");
+        assertThat(firstHit(kb, "fr", "Comment créer un trajet avec l'IA ?")).isEqualTo("creer-trajet-ia");
+        assertThat(firstHit(kb, "fr", "Je peux dicter ma demande d'envoi au micro ?")).isEqualTo("creer-demande-envoi-ia");
+        assertThat(firstHit(kb, "en", "How do I create a trip with AI?")).isEqualTo("creer-trajet-ia");
+        assertThat(firstHit(kb, "en", "Can I dictate my parcel request with the microphone?")).isEqualTo("creer-demande-envoi-ia");
     }
 
     @Test
