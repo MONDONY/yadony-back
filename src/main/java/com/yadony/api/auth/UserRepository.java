@@ -105,6 +105,12 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     @Query("SELECT u FROM UserEntity u WHERE u.id = :id")
     Optional<UserEntity> findByIdForUpdate(@Param("id") UUID id);
 
+    /** RGPD : efface le motif de retrait du badge GP Pro (texte libre saisi par l'admin). */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = "UPDATE users SET gp_pro_revoked_reason = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = :id",
+            nativeQuery = true)
+    int clearGpProRevokedReason(@Param("id") UUID id);
+
     /** Valeur à jour du badge GP Pro (lecture scalaire : jamais l'entité déjà chargée, éventuellement périmée). */
     @Query("SELECT u.gpPro FROM UserEntity u WHERE u.id = :id")
     Optional<Boolean> findGpProById(@Param("id") UUID id);

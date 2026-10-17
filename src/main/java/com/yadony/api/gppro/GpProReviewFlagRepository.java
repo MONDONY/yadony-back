@@ -3,7 +3,9 @@ package com.yadony.api.gppro;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.UUID;
@@ -33,4 +35,10 @@ public interface GpProReviewFlagRepository extends JpaRepository<GpProReviewFlag
     Page<UUID> findReviewUserIds(Pageable p);
 
     List<GpProReviewFlagEntity> findByUserIdInAndResolvedAtIsNullAndDismissedAtIsNull(java.util.Collection<UUID> userIds);
+
+    /** RGPD : clôt les signalements de revue encore ouverts d'un compte finalisé. */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = "UPDATE gp_pro_review_flags SET resolved_at = :now WHERE user_id = :userId "
+            + "AND resolved_at IS NULL", nativeQuery = true)
+    int resolveOpenByUserId(@Param("userId") java.util.UUID userId, @Param("now") java.time.LocalDateTime now);
 }

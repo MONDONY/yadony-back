@@ -47,6 +47,8 @@ class GpProDocumentControllerIT {
     @Autowired GpProDocumentService documentService;
 
     @Autowired GpProAccountFinalizedListener finalizedListener;
+    @Autowired GpProApplicationRepository applications;
+    @Autowired GpProReviewFlagRepository flags;
     @Autowired GpProDocumentReferenceSource referenceSource;
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
 
@@ -58,6 +60,8 @@ class GpProDocumentControllerIT {
     @BeforeEach
     void setUp() {
         documentRepository.deleteAll();
+        flags.deleteAll();
+        applications.deleteAll();
         userRepository.deleteAll();
         when(storageService.storeImage(any(), any()))
                 .thenAnswer(inv -> inv.getArgument(1, StorageService.MediaUpload.class).prefix() + "k.jpg");
@@ -178,6 +182,37 @@ class GpProDocumentControllerIT {
                 assertThat(documentRepository.findByOwnerIdAndPurgedAtIsNull(userId)).isEmpty());
         verify(storageService).deleteFile("gp_pro/a.jpg");
         verify(storageService).deleteFile("gp_pro/b.jpg");
+    }
+
+    @Test
+    void accountFinalizationClearsFreeTextAndResolvesOpenFlags() {
+        UserEntity u = userRepository.findById(userId).orElseThrow();
+        u.setGpProRevokedReason("motif de retrait");
+        userRepository.save(u);
+        GpProApplicationEntity app = new GpProApplicationEntity();
+        app.setUserId(userId);
+        app.setStatus(GpProApplicationStatus.REJECTED);
+        app.setSource(GpProApplicationSource.PROFILE);
+        app.setTravelFrequency(GpProTravelFrequency.MONTHLY);
+        app.setCommercialName("Mon enseigne");
+        app.setDecisionReason("motif de refus");
+        applications.save(app);
+        GpProReviewFlagEntity flag = new GpProReviewFlagEntity();
+        flag.setUserId(userId);
+        flag.setReason(GpProReviewReason.values()[0]);
+        flag.setDetectedAt(java.time.LocalDateTime.now());
+        flags.save(flag);
+
+        finalizedListener.onUserFinalized(new com.yadony.api.auth.events.UserFinalizedEvent(
+                userId, com.yadony.api.auth.FinalizationReason.values()[0]));
+
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted(() -> {
+            GpProApplicationEntity a = applications.findById(app.getId()).orElseThrow();
+            assertThat(a.getCommercialName()).isNull();
+            assertThat(a.getDecisionReason()).isNull();
+            assertThat(userRepository.findById(userId).orElseThrow().getGpProRevokedReason()).isNull();
+            assertThat(flags.findById(flag.getId()).orElseThrow().getResolvedAt()).isNotNull();
+        });
     }
 
     @Test
