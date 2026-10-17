@@ -123,6 +123,13 @@ class BusinessMetricsListenerTest {
     }
 
     @Test
+    void onHandoverExpired_incrementsCounter() {
+        listener.onHandoverExpired(new com.yadony.api.matching.events.HandoverExpiredEvent(
+                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), true));
+        assertThat(registry.counter("yadony.bids.handover_expired").count()).isEqualTo(1.0);
+    }
+
+    @Test
     void onTravelerNoShow_incrementsCounter() {
         listener.onTravelerNoShow(new VoyageurNoShowEvent(
                 UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), 1));

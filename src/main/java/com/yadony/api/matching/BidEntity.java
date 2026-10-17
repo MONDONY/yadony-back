@@ -124,6 +124,15 @@ public class BidEntity extends BaseEntity {
      */
     public static final String REJECTION_ANNOUNCEMENT_DELETED = "ANNOUNCEMENT_DELETED";
 
+    /**
+     * Marqueur posé dans {@code rejectionReason} quand l'absence de l'expéditeur à la remise
+     * est confirmée (confirmation, délai de contestation écoulé ou arbitrage admin) et que le
+     * bid passe en CANCELLED (FLUTTER-QQ). Ferme le contact sans la fenêtre de 48 h des autres
+     * annulations ({@link ContactWindow#isRecentlyCancelled}) et met la conversation du colis en
+     * lecture seule pour les deux parties.
+     */
+    public static final String REJECTION_SENDER_NO_SHOW = "SENDER_NO_SHOW";
+
     @Column(name = "rejection_reason", columnDefinition = "TEXT")
     private String rejectionReason;
 

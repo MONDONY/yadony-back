@@ -60,6 +60,44 @@ class FirestoreServiceTest {
         service.clearMessagingMute("fb-uid-123");
     }
 
+    // ── FLUTTER-QQ : lecture seule après absence confirmée de l'expéditeur ──────
+
+    @Test
+    void markReadOnly_doesNotThrow_whenFirestoreIsNull() {
+        new FirestoreService(null).markReadOnly("conv_test", "SENDER_NO_SHOW");
+    }
+
+    @Test
+    void markReadOnly_writesReadOnlyAtAndReason_onConversationDocument() {
+        Firestore firestore = mock(Firestore.class);
+        CollectionReference collection = mock(CollectionReference.class);
+        DocumentReference document = mock(DocumentReference.class);
+        when(firestore.collection("conversations")).thenReturn(collection);
+        when(collection.document("conv_ro")).thenReturn(document);
+        ApiFuture<WriteResult> future = ApiFutures.immediateFuture(mock(WriteResult.class));
+        when(document.update(org.mockito.ArgumentMatchers.eq("readOnlyAt"), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq("readOnlyReason"), org.mockito.ArgumentMatchers.eq("SENDER_NO_SHOW")))
+                .thenReturn(future);
+
+        new FirestoreService(firestore).markReadOnly("conv_ro", "SENDER_NO_SHOW");
+
+        ArgumentCaptor<Object> at = ArgumentCaptor.forClass(Object.class);
+        verify(document).update(org.mockito.ArgumentMatchers.eq("readOnlyAt"), at.capture(),
+                org.mockito.ArgumentMatchers.eq("readOnlyReason"), org.mockito.ArgumentMatchers.eq("SENDER_NO_SHOW"));
+        assertThat(Instant.parse((String) at.getValue())).isBeforeOrEqualTo(Instant.now());
+    }
+
+    @Test
+    void markReadOnly_failure_isRaised() {
+        Firestore firestore = mock(Firestore.class);
+        when(firestore.collection("conversations")).thenThrow(new IllegalStateException("down"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                () -> new FirestoreService(firestore).markReadOnly("conv_ro", "SENDER_NO_SHOW"))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("markReadOnly");
+    }
+
     // ── Lot B : coupure de messagerie — moderation/{firebaseUid} ────────────────
 
     @Test

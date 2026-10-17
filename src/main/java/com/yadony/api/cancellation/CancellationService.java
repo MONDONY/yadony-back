@@ -25,6 +25,7 @@ import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
 import com.yadony.api.matching.CapacityUnit;
+import com.yadony.api.matching.HandoverDeadlineRules;
 import com.yadony.api.payments.cash.CommissionProperties;
 import com.yadony.api.requests.entity.NegotiationThreadStatus;
 import com.yadony.api.requests.repository.NegotiationThreadRepository;
@@ -33,6 +34,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -444,8 +446,7 @@ public class CancellationService {
         if (bid.getStatus() != BidStatus.ACCEPTED) {
             throw new IllegalStateException("Le bid doit être en statut ACCEPTED.");
         }
-        LocalDateTime handoverEnd = bid.getHandoverDeadline();
-        if (handoverEnd == null || LocalDateTime.now().isBefore(handoverEnd)) {
+        if (!handoverDeadlinePassed(bid, announcement)) {
             throw new IllegalStateException("Vous ne pouvez signaler qu'après l'heure de remise prévue.");
         }
         if (cancellationRepository.existsByBidIdAndNoShowStatusIn(bidId,
@@ -476,6 +477,23 @@ public class CancellationService {
     }
 
     /**
+     * La date limite de remise du colis est-elle passée ? {@code handoverDeadline} est une heure
+     * murale du fuseau du trajet : la comparer à {@code LocalDateTime.now()} (UTC sur le
+     * serveur) ouvrait le signalement deux heures trop tard pour un trajet parti de Paris en
+     * été, soit une heure APRÈS le passage du job no-show (échéance + 1 h) : ni le voyageur ni
+     * l'expéditeur ne pouvaient signaler avant que le job ne tranche (FLUTTER-QR). Même règle
+     * que {@code NoShowScheduler} ({@link HandoverDeadlineRules#deadlineInstant}).
+     */
+    static boolean handoverDeadlinePassed(BidEntity bid, AnnouncementEntity announcement) {
+        LocalDateTime deadline = bid.getHandoverDeadline();
+        if (deadline == null) {
+            return false;
+        }
+        String timezone = announcement != null ? announcement.getTimezone() : null;
+        return !Instant.now().isBefore(HandoverDeadlineRules.deadlineInstant(deadline, timezone));
+    }
+
+    /**
      * L'expéditeur signale un voyageur absent (no-show manuel). Vérifie l'ownership, le statut
      * ACCEPTED et que la date limite de dépôt est passée, puis publie
      * {@link TravelerNoShowReportedEvent} — écouté côté matching/ par {@code NoShowService}.
@@ -492,8 +510,8 @@ public class CancellationService {
         if (bid.getStatus() != BidStatus.ACCEPTED) {
             throw new IllegalStateException("Le bid doit être en statut ACCEPTED.");
         }
-        LocalDateTime handoverEnd = bid.getHandoverDeadline();
-        if (handoverEnd == null || LocalDateTime.now().isBefore(handoverEnd)) {
+        AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId()).orElse(null);
+        if (!handoverDeadlinePassed(bid, announcement)) {
             throw new IllegalStateException("Vous ne pouvez signaler qu'après l'heure de remise prévue.");
         }
         auditService.log("BID", bidId, "TRAVELER_NO_SHOW_REPORTED", senderId,

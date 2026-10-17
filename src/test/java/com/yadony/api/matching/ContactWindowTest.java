@@ -186,4 +186,37 @@ class ContactWindowTest {
         bid.setStatus(BidStatus.EXPIRED);
         assertThat(ContactWindow.isRecentlyCancelled(bid, NOW)).isFalse();
     }
+
+    // ── Absence de l'expéditeur confirmée (FLUTTER-QQ) : pas de fenêtre de 48 h ─────
+
+    @Test
+    void absenceExpediteurConfirmee_fermeAppelsEtNumeroToutDeSuite() {
+        BidEntity bid = cancelledFrom(BidStatus.ACCEPTED, NOW.minusMinutes(5));
+        bid.setRejectionReason(BidEntity.REJECTION_SENDER_NO_SHOW);
+
+        assertThat(ContactWindow.isClosedBySenderNoShow(bid)).isTrue();
+        assertThat(ContactWindow.isRecentlyCancelled(bid, NOW)).isFalse();
+        assertThat(ContactWindow.isOpen(bid, 3, NOW)).isFalse();
+        assertThat(ContactWindow.phoneVisible(bid, NOW)).isFalse();
+    }
+
+    @Test
+    void autreAnnulationRecente_garde48h() {
+        BidEntity bid = cancelledFrom(BidStatus.ACCEPTED, NOW.minusMinutes(5));
+        bid.setRejectionReason("CANCELLED_BY_SENDER");
+
+        assertThat(ContactWindow.isClosedBySenderNoShow(bid)).isFalse();
+        assertThat(ContactWindow.isRecentlyCancelled(bid, NOW)).isTrue();
+    }
+
+    @Test
+    void motifAbsenceSurUnBidNonAnnule_neFermeRien() {
+        BidEntity accepted = new BidEntity();
+        accepted.setStatus(BidStatus.ACCEPTED);
+        accepted.setRejectionReason(BidEntity.REJECTION_SENDER_NO_SHOW);
+
+        assertThat(ContactWindow.isClosedBySenderNoShow(accepted)).isFalse();
+        assertThat(ContactWindow.isClosedBySenderNoShow(null)).isFalse();
+        assertThat(ContactWindow.isOpen(accepted, 3, NOW)).isTrue();
+    }
 }

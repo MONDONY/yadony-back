@@ -41,6 +41,8 @@
 		     -> override explicite ci-dessous. -->
 		<commons-lang3.version>3.20.0</commons-lang3.version>
 		<lucene.version>10.5.2</lucene.version>
+		<!-- SDK officiel Claude (assistant IA in-app, fournisseur Anthropic natif) -->
+		<anthropic-java.version>2.34.0</anthropic-java.version>
 	</properties>
 
 	<dependencyManagement>
@@ -132,6 +134,14 @@
 			<groupId>com.google.auth</groupId>
 			<artifactId>google-auth-library-credentials</artifactId>
 			<version>1.29.0</version>
+		</dependency>
+
+		<!-- Claude (Anthropic) : SDK officiel, appelé par AnthropicMessagesClient pour les fournisseurs
+		     dont l'adresse est https://api.anthropic.com. -->
+		<dependency>
+			<groupId>com.anthropic</groupId>
+			<artifactId>anthropic-java</artifactId>
+			<version>${anthropic-java.version}</version>
 		</dependency>
 
 		<!-- Stripe -->

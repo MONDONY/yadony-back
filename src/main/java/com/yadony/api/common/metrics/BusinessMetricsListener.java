@@ -8,6 +8,7 @@ import com.yadony.api.matching.events.AnnouncementCreatedEvent;
 import com.yadony.api.matching.events.BidAcceptedEvent;
 import com.yadony.api.matching.events.BidCreatedEvent;
 import com.yadony.api.matching.events.BidRejectedEvent;
+import com.yadony.api.matching.events.HandoverExpiredEvent;
 import com.yadony.api.matching.events.VoyageurNoShowEvent;
 import com.yadony.api.payments.events.PaymentEscrowReadyEvent;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
@@ -94,6 +95,11 @@ public class BusinessMetricsListener {
     @EventListener
     public void onTravelerNoShow(VoyageurNoShowEvent event) {
         registry.counter("yadony.travelers.no_show").increment();
+    }
+
+    @EventListener
+    public void onHandoverExpired(HandoverExpiredEvent event) {
+        registry.counter("yadony.bids.handover_expired").increment();
     }
 
     private static String safe(String value) {
