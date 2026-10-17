@@ -74,12 +74,17 @@ public class EmailOtpService {
                     "Too Many Requests",
                     "Trop de codes demandés, réessaie dans " + windowMinutes + " min");
         }
-        if (emailOtpRepository.countByEmailSince(email, LocalDateTime.now(ZoneOffset.UTC).minusDays(1))
-                >= properties.getMaxSendsPerDay()) {
+        LocalDateTime nowUtc = LocalDateTime.now(ZoneOffset.UTC);
+        // Au-delà du quota du jour, un code par heure seulement, et non plus aucun : un
+        // refus de 24 h permettait à quiconque connaît l'adresse d'en bloquer la
+        // propriétaire (10 demandes suffisaient). Le harcèlement reste borné (~34/jour).
+        if (emailOtpRepository.countByEmailSince(email, nowUtc.minusDays(1)) >= properties.getMaxSendsPerDay()
+                && emailOtpRepository.countByEmailSince(email, nowUtc.minusHours(1)) > 0) {
             throw new YadonyBusinessException(
                     HttpStatus.TOO_MANY_REQUESTS, "otp-daily-limit",
                     "Too Many Requests",
-                    "Limite de codes atteinte pour aujourd'hui, réessaie demain");
+                    "Trop de codes demandés aujourd'hui, réessaie dans une heure",
+                    java.util.Map.of("retryAfterSeconds", 3600L));
         }
         LocalDateTime hourAgo = LocalDateTime.now(ZoneOffset.UTC).minusHours(1);
         long sentLastHour = emailOtpRepository.countAllSince(hourAgo);

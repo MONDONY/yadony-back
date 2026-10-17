@@ -498,7 +498,8 @@ yadony:
     rate-window-minutes: ${YADONY_EMAIL_OTP_WINDOW_MINUTES:5}
     max-attempts: ${YADONY_EMAIL_OTP_MAX_ATTEMPTS:5}
     otp-valid-minutes: ${YADONY_EMAIL_OTP_VALID_MINUTES:10}
-    # Codes par adresse sur 24 h : borne le harcèlement d'une boîte (1 code/min sinon).
+    # Codes par adresse sur 24 h, puis 1 par heure : borne le harcèlement d'une boîte sans
+    # permettre de bloquer sa propriétaire 24 h.
     max-sends-per-day: ${YADONY_EMAIL_OTP_MAX_SENDS_PER_DAY:10}
     # Seuil d'ALERTE (Sentry) sur les envois par heure, toutes adresses confondues. Il ne
     # bloque pas : un arrosage depuis un botnet couperait sinon la connexion de tout le monde.

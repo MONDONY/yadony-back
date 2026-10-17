@@ -168,18 +168,30 @@ class EmailOtpHardeningTest {
     }
 
     @Test
-    @DisplayName("envoi : 10 codes déjà envoyés à l'adresse sur 24 h → 429 otp-daily-limit, rien n'est envoyé")
+    @DisplayName("envoi : 10 codes sur 24 h dont un dans l'heure → 429 otp-daily-limit, Retry-After 1 h")
     void send_dailyLimitPerAddress() {
-        // 1er comptage : fenêtre de 5 min (0) ; 2e : dernières 24 h (10).
-        when(repository.countByEmailSince(eq("a@b.com"), any())).thenReturn(0L, 10L);
+        // Comptages : fenêtre de 5 min (0), 24 h (10), dernière heure (1).
+        when(repository.countByEmailSince(eq("a@b.com"), any())).thenReturn(0L, 10L, 1L);
 
         assertThatThrownBy(() -> service.sendOtp("A@B.com"))
                 .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
                     assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS);
                     assertThat(e.getErrorCode()).isEqualTo("otp-daily-limit");
+                    assertThat(e.getProperties()).containsEntry("retryAfterSeconds", 3600L);
                 });
         verify(repository, never()).save(any());
         verify(resendEmailService, never()).sendOtp(anyString(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("envoi : quota du jour atteint mais aucun code depuis 1 h → un code part (pas de blocage 24 h)")
+    void send_dailyLimitStillOnePerHour() {
+        when(repository.countByEmailSince(eq("a@b.com"), any())).thenReturn(0L, 15L, 0L);
+        when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hash");
+
+        service.sendOtp("a@b.com");
+
+        verify(resendEmailService).sendOtp(eq("a@b.com"), anyString(), any(Messages.class));
     }
 
     @Test

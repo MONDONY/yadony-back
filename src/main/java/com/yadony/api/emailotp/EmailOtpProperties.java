@@ -35,10 +35,10 @@ public class EmailOtpProperties {
     private int otpValidMinutes = 10;
 
     /**
-     * Codes envoyables à une même adresse sur 24 h glissantes. La fenêtre courte autorise
-     * un code par minute en continu : sans ce plafond, quiconque connaît une adresse
-     * pouvait lui faire envoyer plus de 1 400 emails par jour. Une vraie personne en
-     * demande un à trois.
+     * Codes envoyables à une même adresse sur 24 h glissantes avant de passer à un code
+     * par heure. La fenêtre courte autorise un code par minute en continu : sans ce
+     * plafond, quiconque connaît une adresse pouvait lui faire envoyer plus de 1 400
+     * emails par jour. Pas de refus total : il bloquerait la propriétaire 24 h.
      */
     private int maxSendsPerDay = 10;
 

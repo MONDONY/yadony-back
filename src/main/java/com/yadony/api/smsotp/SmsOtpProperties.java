@@ -35,7 +35,7 @@ public class SmsOtpProperties {
     /** Durée de validité d'un code, en minutes. */
     private int otpValidMinutes = 10;
 
-    /** Codes envoyables à un même numéro sur 24 h glissantes (voir le canal email). */
+    /** Codes sur 24 h glissantes avant de passer à un SMS par heure (voir le canal email). */
     private int maxSendsPerDay = 10;
 
     /**

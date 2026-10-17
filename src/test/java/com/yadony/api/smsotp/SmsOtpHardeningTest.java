@@ -193,9 +193,9 @@ class SmsOtpHardeningTest {
     }
 
     @Test
-    @DisplayName("envoi : 10 SMS déjà envoyés au numéro sur 24 h → 429 phone-otp-daily-limit")
+    @DisplayName("envoi : 10 SMS sur 24 h dont un dans l'heure → 429 phone-otp-daily-limit")
     void send_dailyLimitPerPhone() {
-        when(repository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L, 10L);
+        when(repository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L, 10L, 1L);
 
         assertThatThrownBy(() -> service.sendOtp(PHONE))
                 .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
@@ -203,6 +203,17 @@ class SmsOtpHardeningTest {
                     assertThat(e.getErrorCode()).isEqualTo("phone-otp-daily-limit");
                 });
         verify(smsService, never()).send(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("envoi : quota du jour atteint mais aucun SMS depuis 1 h → un SMS part")
+    void send_dailyLimitStillOnePerHour() {
+        when(repository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L, 12L, 0L);
+        when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hash");
+
+        service.sendOtp(PHONE);
+
+        verify(smsService).send(eq(PHONE), anyString());
     }
 
     @Test

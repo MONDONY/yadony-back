@@ -119,11 +119,15 @@ public class SmsOtpService {
                     "Trop de codes demandés, réessaie dans " + windowMinutes + " min");
         }
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
-        if (smsOtpRepository.countByPhoneSince(phoneNumber, now.minusDays(1)) >= properties.getMaxSendsPerDay()) {
+        // Au-delà du quota du jour, un SMS par heure seulement (voir le canal email) : un
+        // refus de 24 h laissait n'importe qui bloquer le propriétaire du numéro.
+        if (smsOtpRepository.countByPhoneSince(phoneNumber, now.minusDays(1)) >= properties.getMaxSendsPerDay()
+                && smsOtpRepository.countByPhoneSince(phoneNumber, now.minusHours(1)) > 0) {
             throw new YadonyBusinessException(
                     HttpStatus.TOO_MANY_REQUESTS, "phone-otp-daily-limit",
                     "Too Many Requests",
-                    "Limite de codes atteinte pour aujourd'hui, réessaie demain");
+                    "Trop de codes demandés aujourd'hui, réessaie dans une heure",
+                    Map.of("retryAfterSeconds", 3600L));
         }
         // Inutile de facturer un SMS dont le code serait refusé à la vérification.
         ensureLoginBudget(phoneNumber, now);
