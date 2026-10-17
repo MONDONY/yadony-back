@@ -259,7 +259,8 @@ public class NotificationDispatcher {
                 Map.of("type", "CONFIRMATION_CODE_REQUESTED", "bidId", event.bidId().toString()));
     }
 
-    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    // fallbackExecution : le webhook Didit publie l'événement hors transaction (FLUTTER-RC).
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     @Async
     public void onUserKycVerified(UserKycVerifiedEvent event) {
         var text = NotificationTexts.kycVerified(messagesFor(event.getUserId()));

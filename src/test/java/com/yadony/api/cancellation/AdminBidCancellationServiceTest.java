@@ -105,6 +105,8 @@ class AdminBidCancellationServiceTest {
         AdminBidCancelResponse r = service.cancel(bidId, adminId, REQUEST);
 
         assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
+        // Motif interne : l'expéditeur ne voit que « annulé par l'équipe ».
+        assertThat(bid.getRejectionReason()).isEqualTo(BidEntity.REJECTION_TEAM_CANCELLED);
         assertThat(r.alreadyCancelled()).isFalse();
         assertThat(r.refundRequested()).isTrue();
         assertThat(r.refundAmount()).isEqualByComparingTo("42.00");
@@ -131,6 +133,16 @@ class AdminBidCancellationServiceTest {
         assertThat(cancelled.travelerId()).isEqualTo(travelerId);
         assertThat(cancelled.adminId()).isEqualTo(adminId);
         assertThat(cancelled.refundRequested()).isTrue();
+    }
+
+    @Test
+    void voyageurInjoignable_motifPublicPoseSurLeColis() {
+        // FLUTTER-R4 : l'expéditeur doit savoir pourquoi l'équipe a annulé son colis.
+        service.cancel(bidId, adminId,
+                new AdminBidCancelRequest(AdminBidCancelReason.TRAVELER_UNAVAILABLE, null));
+
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
+        assertThat(bid.getRejectionReason()).isEqualTo(BidEntity.REJECTION_TEAM_TRAVELER_UNAVAILABLE);
     }
 
     @Test

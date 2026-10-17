@@ -697,7 +697,7 @@ public class AnnouncementService {
 12. ❌ Skip `@PreAuthorize` on admin endpoints
 13. ❌ Grant access when DB is unavailable in `FirebaseTokenFilter` — toujours retourner 503 et vider le `SecurityContext` si le chargement de l'utilisateur échoue
 14. ❌ Exposer `phoneNumber` dans `TravelerProfileDto` ou tout DTO public — le numéro de téléphone ne doit jamais quitter le backend
-15. ❌ Utiliser le premier élément de `X-Forwarded-For` pour résoudre l'IP client — toujours prendre le **dernier** élément (ajouté par le proxy de confiance), sinon le client peut spoofer son IP
+15. ❌ Lire `X-Forwarded-For` à la main pour résoudre l'IP client — utiliser `request.getRemoteAddr()` : nginx écrase l'en-tête avec `$remote_addr` et `ForwardedHeaderFilter` (forward-headers-strategy: framework) le reporte. Ne jamais remettre `$proxy_add_x_forwarded_for` dans nginx : Spring prend la **première** valeur, que le client choisirait
 16. ❌ Traiter un webhook Stripe sans vérifier d'abord dans `processed_stripe_events` — double traitement possible (Stripe rejoue les webhooks)
 17. ❌ Créer un compte Stripe Connect sans verrou pessimiste (`findByIdForUpdate`) — race condition possible si deux requêtes simultanées
 18. ❌ Utiliser `@EventListener` seul sur les listeners de paiement — toujours utiliser `@TransactionalEventListener(phase = AFTER_COMMIT)` + `@Transactional(propagation = REQUIRES_NEW)` pour éviter de lire des données non encore commitées
@@ -839,7 +839,7 @@ Before deploying:
 - [ ] All user-owned resources check ownership before modification
 - [ ] All Stripe webhooks validate signature
 - [ ] All KYC files use presigned URLs (never direct public URLs)
-- [ ] Rate limiting configured in Nginx (120 req/min general burst 60, 30 req/min auth/kyc burst 15 — voir `nginx/nginx.conf`, jamais les valeurs d'un vieux document)
+- [ ] Rate limiting : nginx = plafond anti-flood par IP (600 req/min burst 200, 60 req/min auth/kyc burst 30 — voir `nginx/nginx.conf`) ; limites réelles dans l'application (`ratelimit/RateLimitRule` : par compte, paiements, KYC, codes promo/parrainage, OTP par IP) et dans les services OTP (par adresse/numéro, budgets globaux, pays SMS autorisés)
 - [ ] Max declared value enforced (500€ limit)
 - [ ] Offline timestamps validated (reject future timestamps)
 - [ ] CORS configured properly for production frontend domain

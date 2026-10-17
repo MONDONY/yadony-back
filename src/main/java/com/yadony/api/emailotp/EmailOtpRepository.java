@@ -37,4 +37,17 @@ public interface EmailOtpRepository extends JpaRepository<EmailOtpEntity, UUID> 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     @Query("UPDATE EmailOtpEntity e SET e.attempts = e.attempts + 1 WHERE e.id = :id")
     int incrementAttempts(@Param("id") UUID id);
+
+    /** Envois toutes adresses confondues : budget global du canal (coût, réputation d'envoi). */
+    @Query("SELECT COUNT(e) FROM EmailOtpEntity e WHERE e.createdAt > :since")
+    long countAllSince(@Param("since") LocalDateTime since);
+
+    /**
+     * Invalide les codes encore actifs : à l'envoi d'un nouveau code (seul le dernier
+     * reste valable) et après une vérification réussie (sinon le code précédent,
+     * toujours dans sa validité, redevenait le « dernier non utilisé »).
+     */
+    @Modifying
+    @Query("UPDATE EmailOtpEntity e SET e.usedAt = :now WHERE e.email = :email AND e.usedAt IS NULL")
+    int invalidateActive(@Param("email") String email, @Param("now") LocalDateTime now);
 }

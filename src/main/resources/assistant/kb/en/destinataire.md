@@ -6,6 +6,6 @@ routes:
   - path: /profile/recipients
     label: My recipients
 ---
-Save your loved ones in Activity › My recipients: a first and last name, which the traveler will see, and a number with the country code, for example +221.
-You can set one as default or import from your contacts, then pick it in one tap when creating a request.
+A new recipient is added when you choose the recipient of a shipment: a first and last name, which the traveler will see, and a number with the country code, for example +221, or tap "Choose from my contacts".
+They are then kept in Activity › My recipients, where you can edit them, set one as default or add a Yadony recipient by phone number or email, then pick them in one tap when creating a request.
 A parcel's recipient can be changed (name or number) until handover: the pickup code and tracking link are then renewed, and the former recipient no longer has access.

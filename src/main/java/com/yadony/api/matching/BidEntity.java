@@ -133,6 +133,15 @@ public class BidEntity extends BaseEntity {
      */
     public static final String REJECTION_SENDER_NO_SHOW = "SENDER_NO_SHOW";
 
+    /**
+     * Marqueurs posés dans {@code rejectionReason} quand l'équipe Yadony annule le colis
+     * (FLUTTER-R4) : l'app affiche « Annulé par l'équipe Yadony », avec le motif public
+     * « voyageur injoignable » pour {@code TRAVELER_UNAVAILABLE}, et propose de contacter le
+     * support. Les autres motifs (fraude, contenu interdit…) restent internes : marqueur générique.
+     */
+    public static final String REJECTION_TEAM_TRAVELER_UNAVAILABLE = "TEAM_TRAVELER_UNAVAILABLE";
+    public static final String REJECTION_TEAM_CANCELLED = "TEAM_CANCELLED";
+
     @Column(name = "rejection_reason", columnDefinition = "TEXT")
     private String rejectionReason;
 

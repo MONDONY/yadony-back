@@ -34,6 +34,20 @@ public class EmailOtpProperties {
     /** Durée de validité d'un code, en minutes. */
     private int otpValidMinutes = 10;
 
+    /**
+     * Seuil d'alerte sur les codes envoyés par heure, toutes adresses confondues. Au-delà,
+     * une alerte part (Sentry) mais l'envoi continue : un arrosage d'adresses depuis des
+     * milliers d'IP passe sous les limites par adresse et par IP et menace la réputation
+     * du domaine d'envoi, mais le bloquer couperait la connexion de tout le monde.
+     */
+    private int maxSendsPerHourGlobal = 1000;
+
+    /**
+     * Plafond dur par heure, plusieurs fois le seuil d'alerte : au-delà, envoi refusé
+     * (503). Un pic d'inscriptions reste servi ; un arrosage massif ne vide pas le quota.
+     */
+    private int hardMaxSendsPerHourGlobal = 5000;
+
     public String getResendApiKey() { return resendApiKey; }
     public void setResendApiKey(String resendApiKey) { this.resendApiKey = resendApiKey; }
     public String getFromAddress() { return fromAddress; }
@@ -46,4 +60,8 @@ public class EmailOtpProperties {
     public void setMaxAttempts(int maxAttempts) { this.maxAttempts = maxAttempts; }
     public int getOtpValidMinutes() { return otpValidMinutes; }
     public void setOtpValidMinutes(int otpValidMinutes) { this.otpValidMinutes = otpValidMinutes; }
+    public int getMaxSendsPerHourGlobal() { return maxSendsPerHourGlobal; }
+    public void setMaxSendsPerHourGlobal(int maxSendsPerHourGlobal) { this.maxSendsPerHourGlobal = maxSendsPerHourGlobal; }
+    public int getHardMaxSendsPerHourGlobal() { return hardMaxSendsPerHourGlobal; }
+    public void setHardMaxSendsPerHourGlobal(int hardMaxSendsPerHourGlobal) { this.hardMaxSendsPerHourGlobal = hardMaxSendsPerHourGlobal; }
 }
