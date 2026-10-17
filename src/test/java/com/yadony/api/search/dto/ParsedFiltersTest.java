@@ -24,7 +24,7 @@ class ParsedFiltersTest {
         assertThat(filters.maxPricePerKg()).isEqualByComparingTo("8");
         assertThat(filters.weekendOnly()).isTrue();
         assertThat(filters.urgent()).isFalse();
-        assertThat(filters.kiloProOnly()).isNull();
+        assertThat(filters.gpProOnly()).isNull();
     }
 
     @Test

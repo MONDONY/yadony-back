@@ -183,6 +183,12 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
            "(com.yadony.api.matching.AnnouncementStatus.ACTIVE, com.yadony.api.matching.AnnouncementStatus.FULL)")
     int updateTravelerProStatus(@Param("travelerId") UUID travelerId, @Param("isPro") boolean isPro);
 
+    @Modifying
+    @Query("UPDATE AnnouncementEntity a SET a.travelerIsGpPro = :gpPro " +
+           "WHERE a.travelerId = :travelerId AND a.status IN " +
+           "(com.yadony.api.matching.AnnouncementStatus.ACTIVE, com.yadony.api.matching.AnnouncementStatus.FULL)")
+    int updateTravelerGpProStatus(@Param("travelerId") UUID travelerId, @Param("gpPro") boolean gpPro);
+
     @Query("SELECT a FROM AnnouncementEntity a WHERE a.travelerId = :travelerId " +
            "AND a.status IN (com.yadony.api.matching.AnnouncementStatus.ACTIVE, com.yadony.api.matching.AnnouncementStatus.FULL)")
     List<AnnouncementEntity> findActiveByTravelerId(@Param("travelerId") UUID travelerId);

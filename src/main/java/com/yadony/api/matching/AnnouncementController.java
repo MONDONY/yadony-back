@@ -63,7 +63,9 @@ public class AnnouncementController {
             @RequestParam(required = false) BigDecimal maxAvailableKg,
             @RequestParam(required = false) BigDecimal maxPricePerKg,
             @RequestParam(required = false) BigDecimal minRating,
-            @RequestParam(required = false) Boolean kiloProOnly,
+            @RequestParam(required = false) Boolean gpProOnly,
+            // Alias déprécié de gpProOnly (anciennes versions de l'app).
+            @Deprecated @RequestParam(required = false) Boolean kiloProOnly,
             @RequestParam(required = false) Boolean weekendOnly,
             @RequestParam(required = false) Boolean urgent,
             @RequestParam(required = false) String transportMode,
@@ -84,9 +86,10 @@ public class AnnouncementController {
             @RequestParam(defaultValue = "asc") String sortDir,
             Pageable pageable
     ) {
+        boolean gp = Boolean.TRUE.equals(gpProOnly) || Boolean.TRUE.equals(kiloProOnly);
         Page<AnnouncementSearchResponse> page = announcementService.searchAnnouncements(
                 departureCity, arrivalCity, departureDateFrom, departureDateTo,
-                minAvailableKg, maxAvailableKg, maxPricePerKg, minRating, kiloProOnly, weekendOnly,
+                minAvailableKg, maxAvailableKg, maxPricePerKg, minRating, gp, weekendOnly,
                 transportMode, kycVerifiedOnly, contentType,
                 userLat, userLng, radiusKm,
                 sortBy, sortDir, pageable, currentFirebaseUidOrNull(), urgent,

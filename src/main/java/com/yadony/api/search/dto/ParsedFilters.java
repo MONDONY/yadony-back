@@ -23,7 +23,7 @@ public record ParsedFilters(
         BigDecimal minRating,
         Boolean weekendOnly,
         Boolean urgent,
-        Boolean kiloProOnly,
+        Boolean gpProOnly,
         Boolean kycVerifiedOnly,
         String transportMode,
         String contentType

@@ -936,6 +936,7 @@ public class NegotiationService {
         com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
         ann.setTravelerId(traveler.getId());
         ann.setTravelerIsPro(traveler.isProAccount());
+        ann.setTravelerIsGpPro(traveler.isGpPro());
         ann.setDepartureCity(request.getDepartureCity());
         ann.setArrivalCity(request.getArrivalCity());
         // La demande de colis ne porte pas de code pays : déduit du référentiel des villes,
