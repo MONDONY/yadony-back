@@ -33,7 +33,8 @@ public interface ActivationRepository extends Repository<UserEntity, UUID> {
 
     String PACKAGE_TOWARDS = " FROM package_requests p"
             + " WHERE p.deleted_at IS NULL AND p.status IN ('OPEN', 'NEGOTIATING')"
-            + " AND p.desired_date BETWEEN :from AND :to"
+            // « Date flexible » (V328) : une demande sans date convient à toute fenêtre.
+            + " AND (p.desired_date IS NULL OR p.desired_date BETWEEN :from AND :to)"
             + " AND p.sender_id <> :excluded"
             + " AND NOT EXISTS (SELECT 1 FROM user_blocks ub WHERE (ub.blocker_id = :excluded AND ub.blocked_id = p.sender_id)"
             + "      OR (ub.blocker_id = p.sender_id AND ub.blocked_id = :excluded))"
@@ -58,7 +59,7 @@ public interface ActivationRepository extends Repository<UserEntity, UUID> {
 
     @Query(value = "SELECT CAST(p.id AS VARCHAR) AS id, p.departure_city AS departureCity, p.arrival_city AS arrivalCity,"
             + " p.desired_date AS desiredDate, p.weight_kg AS weightKg" + PACKAGE_TOWARDS
-            + " ORDER BY p.desired_date ASC LIMIT :limit",
+            + " ORDER BY p.desired_date ASC NULLS LAST, p.created_at DESC LIMIT :limit",
            nativeQuery = true)
     List<PackageRow> findPackagesTowards(@Param("destination") String destination, @Param("from") LocalDate from,
                                          @Param("to") LocalDate to, @Param("excluded") UUID excludedUserId,

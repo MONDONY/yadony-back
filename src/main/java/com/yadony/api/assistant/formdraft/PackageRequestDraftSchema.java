@@ -22,13 +22,12 @@ public class PackageRequestDraftSchema implements FormDraftSchema {
             "dateToleranceDays", "transportMode", "weightKg", "parcelSize", "categories", "description",
             "pickupNeighborhood", "deliveryNeighborhood", "negotiable", "acceptedPaymentMethods", "totalBudget",
             "currency", "budgetDeclined");
-    private static final List<String> REQUIRED = List.of("departureCity", "arrivalCity", "desiredDate", "weightKg",
-            "categories");
+    /** desiredDate n'y figure plus : la date est facultative (« Date flexible », V328). */
+    private static final List<String> REQUIRED = List.of("departureCity", "arrivalCity", "weightKg", "categories");
     private static final Map<String, Map<String, String>> FALLBACK = Map.of(
             "fr", Map.of(
                     "departureCity", "D'où part votre colis ?",
                     "arrivalCity", "Où va votre colis ?",
-                    "desiredDate", "Vers quelle date voulez-vous envoyer votre colis ?",
                     "weightKg", "Combien pèse votre colis ? (entre 0,5 et 32 kg)",
                     "categories", "Qu'y a-t-il dans votre colis ?",
                     "paymentMethod", "Comment voulez-vous payer : carte, espèces ou mobile money ?",
@@ -36,7 +35,6 @@ public class PackageRequestDraftSchema implements FormDraftSchema {
             "en", Map.of(
                     "departureCity", "Where does your parcel leave from?",
                     "arrivalCity", "Where is your parcel going?",
-                    "desiredDate", "Around what date do you want to send your parcel?",
                     "weightKg", "How much does your parcel weigh? (between 0.5 and 32 kg)",
                     "categories", "What is in your parcel?",
                     "paymentMethod", "How do you want to pay: card, cash or mobile money?",
@@ -48,7 +46,9 @@ public class PackageRequestDraftSchema implements FormDraftSchema {
             travellers with spare luggage kilos. The user is the sender.
             Draft fields (all may be null):
             - departureCity, arrivalCity: city names as said.
-            - desiredDate: yyyy-MM-dd. dateToleranceDays: 0 to 7 days of flexibility around it; "vers le 20" or \
+            - desiredDate: yyyy-MM-dd, OPTIONAL: fill it only if the user gives a date; never ask for it nor insist. \
+            Without a date the request is "flexible date": every traveller on the route can offer. \
+            dateToleranceDays: 0 to 7 days of flexibility around desiredDate, null without a date; "vers le 20" or \
             "around the 20th" without a number -> 3, and confirm it in "question"; "exactement" -> 0.
             - transportMode: PLANE, CAR, TRAIN, BUS, BOAT or OTHER, only if the user says it; never ask for it.
             - weightKg: 0.5 to 32. categories: 1 to 5 short content labels ("Vêtements", "Médicaments").
@@ -82,7 +82,10 @@ public class PackageRequestDraftSchema implements FormDraftSchema {
         put(d, "departureCity", DraftFields.text(raw.get("departureCity"), 2, 100));
         put(d, "arrivalCity", DraftFields.text(raw.get("arrivalCity"), 2, 100));
         put(d, "desiredDate", DraftFields.date(raw.get("desiredDate"), ctx.today(), 365));
-        put(d, "dateToleranceDays", DraftFields.integer(raw.get("dateToleranceDays"), 0, 7));
+        // Une tolérance sans date n'a pas de sens : ignorée.
+        if (d.containsKey("desiredDate")) {
+            put(d, "dateToleranceDays", DraftFields.integer(raw.get("dateToleranceDays"), 0, 7));
+        }
         put(d, "transportMode", DraftFields.enumName(raw.get("transportMode"), TransportMode.class));
         BigDecimal kg = DraftFields.decimal(raw.get("weightKg"), new BigDecimal("0.5"), BigDecimal.valueOf(32));
         put(d, "weightKg", kg);

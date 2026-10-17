@@ -388,6 +388,10 @@ public class AlertService {
     }
 
     private boolean fitsAlertDate(LocalDate date, CorridorAlertEntity alert) {
+        // Demande sans date (« Date flexible ») : compatible avec toute fenêtre d'alerte.
+        if (date == null) {
+            return true;
+        }
         if (alert.getDateFrom() != null && date.isBefore(alert.getDateFrom())) {
             return false;
         }
@@ -587,7 +591,8 @@ public class AlertService {
                 p.getId().toString(),
                 null,
                 corridor,
-                p.getDesiredDate().toString(),
+                // « Date flexible » : null, que l'app sait afficher (elle parse ce champ en DateTime).
+                p.getDesiredDate() != null ? p.getDesiredDate().toString() : null,
                 0.0,
                 sender.getId() != null ? sender.getId().toString() : null,
                 senderName,

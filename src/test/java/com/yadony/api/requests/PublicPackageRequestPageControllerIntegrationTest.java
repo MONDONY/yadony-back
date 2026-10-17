@@ -76,6 +76,20 @@ class PublicPackageRequestPageControllerIntegrationTest {
     }
 
     @Test
+    void flexibleDateRequest_showsDateFlexible_withoutTolerance() throws Exception {
+        PackageRequestEntity r = persistRequest(PackageRequestStatus.OPEN);
+        r.setDesiredDate(null);
+        r.setDateToleranceDays(null);
+        packageRequestRepository.saveAndFlush(r);
+
+        mockMvc.perform(get("/public/demande/" + r.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("Date flexible")))
+                .andExpect(content().string(containsString("Date de départ flexible")))
+                .andExpect(content().string(not(containsString("Tolérance"))));
+    }
+
+    @Test
     void negotiatingRequest_isAlsoServed() throws Exception {
         PackageRequestEntity r = persistRequest(PackageRequestStatus.NEGOTIATING);
 

@@ -33,9 +33,12 @@ public final class PackageRequestSpecifications {
     public static Specification<PackageRequestEntity> dateRange(LocalDate from, LocalDate to) {
         return (root, query, cb) -> {
             if (from == null && to == null) return cb.conjunction();
-            if (from != null && to != null) return cb.between(root.get("desiredDate"), from, to);
-            if (from != null) return cb.greaterThanOrEqualTo(root.get("desiredDate"), from);
-            return cb.lessThanOrEqualTo(root.get("desiredDate"), to);
+            // « Date flexible » (V328) : une demande sans date est compatible avec
+            // toute fenêtre, elle reste donc dans les résultats filtrés par date.
+            var flexible = cb.isNull(root.get("desiredDate"));
+            if (from != null && to != null) return cb.or(flexible, cb.between(root.get("desiredDate"), from, to));
+            if (from != null) return cb.or(flexible, cb.greaterThanOrEqualTo(root.get("desiredDate"), from));
+            return cb.or(flexible, cb.lessThanOrEqualTo(root.get("desiredDate"), to));
         };
     }
 
@@ -56,7 +59,9 @@ public final class PackageRequestSpecifications {
     public static Specification<PackageRequestEntity> urgent(int thresholdDays) {
         return (root, query, cb) -> {
             LocalDate today = LocalDate.now(ZoneOffset.UTC);
-            return cb.between(root.get("desiredDate"), today, today.plusDays(thresholdDays));
+            // Une demande sans date n'est jamais urgente : explicite plutôt que de
+            // compter sur le NULL du BETWEEN.
+            return cb.and(cb.isNotNull(root.get("desiredDate")), cb.between(root.get("desiredDate"), today, today.plusDays(thresholdDays)));
         };
     }
 

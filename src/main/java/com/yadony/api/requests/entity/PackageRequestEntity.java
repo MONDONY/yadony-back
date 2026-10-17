@@ -31,10 +31,10 @@ public class PackageRequestEntity extends BaseEntity {
     @Column(name = "arrival_city", nullable = false, length = 100)
     private String arrivalCity;
 
-    @Column(name = "desired_date", nullable = false)
+    @Column(name = "desired_date")
     private LocalDate desiredDate;
 
-    @Column(name = "date_tolerance_days", nullable = false)
+    @Column(name = "date_tolerance_days")
     private Short dateToleranceDays;
 
     @Column(name = "weight_kg", nullable = false, precision = 5, scale = 2)

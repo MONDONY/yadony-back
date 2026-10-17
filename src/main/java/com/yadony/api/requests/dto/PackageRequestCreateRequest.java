@@ -10,8 +10,11 @@ import java.util.Set;
 public record PackageRequestCreateRequest(
     @NotBlank @Size(max = 100) String departureCity,
     @NotBlank @Size(max = 100) String arrivalCity,
-    @NotNull @FutureOrPresent LocalDate desiredDate,
-    @Min(0) @Max(7) int dateToleranceDays,
+    // Facultative depuis V328 : null = « Date flexible » (toutes dates compatibles,
+    // jamais urgente, expiration 60 jours après la création).
+    @FutureOrPresent LocalDate desiredDate,
+    // Ignorée (stockée null) sans date ; avec une date, null retombe sur 2 jours.
+    @Min(0) @Max(7) Integer dateToleranceDays,
     @NotNull @DecimalMin("0.5") @DecimalMax("32.0") BigDecimal weightKg,
     // Multi-sélection jointe par virgule côté front — alignée sur BidCheckoutRequest
     // (500, cf. V171__unify_content_categories.sql pour le pourquoi).

@@ -2518,6 +2518,53 @@ class NegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("demande « Date flexible » → trajet dédié accepté à n'importe quelle date future")
+        void createDedicatedTrip_flexibleRequest_acceptsAnyFutureDate() {
+            request.setDesiredDate(null);
+            request.setDateToleranceDays(null);
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(commissionRateResolver.globalRate()).thenReturn(new BigDecimal("0.12"));
+            when(announcementRepo.save(any())).thenAnswer(inv -> {
+                com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
+                try {
+                    var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                    idField.setAccessible(true);
+                    idField.set(a, UUID.randomUUID());
+                } catch (Exception e) { throw new RuntimeException(e); }
+                return a;
+            });
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(java.util.List.of());
+            LocalDate farDate = LocalDate.now().plusDays(75);
+
+            var resp = service.createDedicatedTrip(TRAVELER_ID, THREAD_ID, buildRequest(farDate));
+
+            assertThat(resp.status()).isEqualTo(NegotiationThreadStatus.AWAITING_PAYMENT);
+            ArgumentCaptor<com.yadony.api.matching.AnnouncementEntity> annCaptor =
+                ArgumentCaptor.forClass(com.yadony.api.matching.AnnouncementEntity.class);
+            verify(announcementRepo).save(annCaptor.capture());
+            // La date du trajet dédié est celle choisie par le voyageur.
+            assertThat(annCaptor.getValue().getDepartureDate()).isEqualTo(farDate);
+        }
+
+        @Test
+        @DisplayName("demande « Date flexible » → trajet dédié dans le passé refusé (422 date-mismatch)")
+        void createDedicatedTrip_flexibleRequest_pastDate_throws422() {
+            request.setDesiredDate(null);
+            request.setDateToleranceDays(null);
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+
+            var req = buildRequest(LocalDate.now().minusDays(1));
+            assertThatThrownBy(() -> service.createDedicatedTrip(TRAVELER_ID, THREAD_ID, req))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("date-mismatch");
+            verifyNoInteractions(announcementRepo);
+        }
+
+        @Test
         @DisplayName("date avant la fenêtre de tolérance → 422 date-mismatch")
         void createDedicatedTrip_dateBeforeWindow_throws422() {
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
@@ -2714,6 +2761,55 @@ class NegotiationServiceTest {
                 any(com.yadony.api.requests.event.NegotiationTripChangedEvent.class));
             verify(auditService).log(eq("NEGOTIATION_THREAD"), eq(THREAD_ID), eq("TRIP_CHANGED"),
                 eq(TRAVELER_ID), any());
+        }
+
+        @Test
+        @DisplayName("demande « Date flexible » → n'importe quel trajet futur du corridor peut être lié")
+        void changeTrip_flexibleRequest_acceptsTripWithoutDateWindow() {
+            com.yadony.api.matching.AnnouncementEntity newAnn = matchingAnnouncementFor(request, TRAVELER_ID);
+            newAnn.setDepartureDate(LocalDate.now().plusDays(45));
+            request.setDesiredDate(null);
+            request.setDateToleranceDays(null);
+            UUID newAnnId = UUID.randomUUID();
+            try {
+                var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(newAnn, newAnnId);
+            } catch (Exception e) { throw new RuntimeException(e); }
+
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(announcementRepo.findById(newAnnId)).thenReturn(Optional.of(newAnn));
+            when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
+
+            var response = service.changeTrip(
+                TRAVELER_ID, THREAD_ID, new com.yadony.api.requests.dto.NegotiationChangeTripRequest(newAnnId));
+
+            assertThat(response.travelerAnnouncementId()).isEqualTo(newAnnId);
+        }
+
+        @Test
+        @DisplayName("fitsRequestDateWindow : datée = date ± tolérance ; flexible = toute date non passée")
+        void fitsRequestDateWindow_datedAndFlexible() {
+            LocalDate today = LocalDate.now();
+            request.setDesiredDate(today.plusDays(10));
+            request.setDateToleranceDays((short) 2);
+            assertThat(NegotiationService.fitsRequestDateWindow(request, today.plusDays(12))).isTrue();
+            assertThat(NegotiationService.fitsRequestDateWindow(request, today.plusDays(13))).isFalse();
+            assertThat(NegotiationService.fitsRequestDateWindow(request, today.plusDays(7))).isFalse();
+            assertThat(NegotiationService.fitsRequestDateWindow(request, null)).isFalse();
+
+            request.setDateToleranceDays(null);
+            assertThat(NegotiationService.fitsRequestDateWindow(request, today.plusDays(10))).isTrue();
+            assertThat(NegotiationService.fitsRequestDateWindow(request, today.plusDays(11))).isFalse();
+
+            request.setDesiredDate(null);
+            assertThat(NegotiationService.fitsRequestDateWindow(request, today)).isTrue();
+            assertThat(NegotiationService.fitsRequestDateWindow(request, today.plusDays(200))).isTrue();
+            assertThat(NegotiationService.fitsRequestDateWindow(request, today.minusDays(1))).isFalse();
         }
 
         @Test

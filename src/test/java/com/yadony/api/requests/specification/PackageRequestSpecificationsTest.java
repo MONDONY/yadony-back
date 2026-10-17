@@ -137,10 +137,16 @@ class PackageRequestSpecificationsTest {
         LocalDate from = LocalDate.now();
         when(cb.greaterThanOrEqualTo(any(), eq(from))).thenReturn(pred);
 
+        Predicate flexible = mock(Predicate.class);
+        Predicate orPred = mock(Predicate.class);
+        when(cb.isNull(datePath)).thenReturn(flexible);
+        when(cb.or(flexible, pred)).thenReturn(orPred);
+
         Specification<PackageRequestEntity> spec = PackageRequestSpecifications.dateRange(from, null);
         Predicate result = spec.toPredicate(root, query, cb);
 
-        assertThat(result).isEqualTo(pred);
+        // « Date flexible » : les demandes sans date restent dans la fenêtre.
+        assertThat(result).isEqualTo(orPred);
         verify(cb).greaterThanOrEqualTo(any(), eq(from));
     }
 
@@ -151,10 +157,16 @@ class PackageRequestSpecificationsTest {
         LocalDate to = LocalDate.now().plusDays(7);
         when(cb.lessThanOrEqualTo(any(), eq(to))).thenReturn(pred);
 
+        Predicate flexible = mock(Predicate.class);
+        Predicate orPred = mock(Predicate.class);
+        when(cb.isNull(datePath)).thenReturn(flexible);
+        when(cb.or(flexible, pred)).thenReturn(orPred);
+
         Specification<PackageRequestEntity> spec = PackageRequestSpecifications.dateRange(null, to);
         Predicate result = spec.toPredicate(root, query, cb);
 
-        assertThat(result).isEqualTo(pred);
+        // « Date flexible » : les demandes sans date restent dans la fenêtre.
+        assertThat(result).isEqualTo(orPred);
         verify(cb).lessThanOrEqualTo(any(), eq(to));
     }
 
@@ -166,10 +178,16 @@ class PackageRequestSpecificationsTest {
         LocalDate to = from.plusDays(7);
         when(cb.between(any(), eq(from), eq(to))).thenReturn(pred);
 
+        Predicate flexible = mock(Predicate.class);
+        Predicate orPred = mock(Predicate.class);
+        when(cb.isNull(datePath)).thenReturn(flexible);
+        when(cb.or(flexible, pred)).thenReturn(orPred);
+
         Specification<PackageRequestEntity> spec = PackageRequestSpecifications.dateRange(from, to);
         Predicate result = spec.toPredicate(root, query, cb);
 
-        assertThat(result).isEqualTo(pred);
+        // « Date flexible » : les demandes sans date restent dans la fenêtre.
+        assertThat(result).isEqualTo(orPred);
         verify(cb).between(any(), eq(from), eq(to));
     }
 
@@ -231,10 +249,17 @@ class PackageRequestSpecificationsTest {
         int thresholdDays = 3;
         when(cb.between(any(), eq(today), eq(today.plusDays(thresholdDays)))).thenReturn(pred);
 
+        Predicate notNull = mock(Predicate.class);
+        Predicate andPred = mock(Predicate.class);
+        when(cb.isNotNull(datePath)).thenReturn(notNull);
+        when(cb.and(notNull, pred)).thenReturn(andPred);
+
         Specification<PackageRequestEntity> spec = PackageRequestSpecifications.urgent(thresholdDays);
         Predicate result = spec.toPredicate(root, query, cb);
 
-        assertThat(result).isEqualTo(pred);
+        // Une demande sans date n'est jamais urgente.
+        assertThat(result).isEqualTo(andPred);
+        verify(cb).isNotNull(datePath);
         verify(cb).between(any(), eq(today), eq(today.plusDays(thresholdDays)));
     }
 

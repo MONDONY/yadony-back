@@ -409,6 +409,42 @@ class PackageRequestInsightServiceTest {
     }
 
     @Test
+    void invite_flexibleDateRequest_acceptsAnyFutureTrip() {
+        PackageRequestEntity req = request(PackageRequestStatus.OPEN);
+        when(req.getDesiredDate()).thenReturn(null);
+        when(req.getDateToleranceDays()).thenReturn(null);
+        when(requestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(req));
+        when(invitationRepository.findByPackageRequestIdAndAnnouncementId(requestId, announcementId))
+                .thenReturn(Optional.empty());
+        AnnouncementEntity farTrip = trip(travelerId, AnnouncementStatus.ACTIVE, "Divo", "Annemasse",
+                java.time.LocalDate.now().plusDays(80));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(farTrip));
+        when(invitationRepository.countByPackageRequestId(requestId)).thenReturn(0L);
+        when(invitationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        UserEntity sender = mock(UserEntity.class);
+        when(sender.publicDisplayName()).thenReturn("Awa Koné");
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
+
+        assertThat(service.invite(senderId, requestId, announcementId).created()).isTrue();
+    }
+
+    @Test
+    void invite_flexibleDateRequest_pastTrip_offCorridor() {
+        PackageRequestEntity req = request(PackageRequestStatus.OPEN);
+        when(req.getDesiredDate()).thenReturn(null);
+        when(requestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(req));
+        when(invitationRepository.findByPackageRequestIdAndAnnouncementId(requestId, announcementId))
+                .thenReturn(Optional.empty());
+        AnnouncementEntity pastTrip = trip(travelerId, AnnouncementStatus.ACTIVE, "Divo", "Annemasse",
+                java.time.LocalDate.now().minusDays(1));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(pastTrip));
+
+        assertThatThrownBy(() -> service.invite(senderId, requestId, announcementId))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("invitation/off-corridor");
+    }
+
+    @Test
     void invite_limitReached_unprocessable() {
         PackageRequestEntity req = request(PackageRequestStatus.OPEN);
         when(requestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(req));
