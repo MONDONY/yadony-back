@@ -42,4 +42,23 @@ class ParsedFiltersTest {
                 .doesNotContain("departureDateFrom")
                 .doesNotContain("minAvailableKg");
     }
+
+    @Test
+    void serialization_emitsBothGpProAndLegacyKiloProKeys() throws Exception {
+        ParsedFilters filters = new ParsedFilters(
+                null, null, null, null, null, null, null, null, null, null, true, null, null, null);
+
+        com.fasterxml.jackson.databind.JsonNode json = new ObjectMapper().valueToTree(filters);
+
+        assertThat(json.get("gpProOnly").asBoolean()).isTrue();
+        assertThat(json.get("kiloProOnly").asBoolean()).isTrue();
+    }
+
+    @Test
+    void serialization_omitsLegacyKeyWhenGpProUnset() throws Exception {
+        ParsedFilters filters = new ParsedFilters(
+                null, "Bamako", null, null, null, null, null, null, null, null, null, null, null, null);
+
+        assertThat(new ObjectMapper().writeValueAsString(filters)).doesNotContain("kiloProOnly");
+    }
 }
