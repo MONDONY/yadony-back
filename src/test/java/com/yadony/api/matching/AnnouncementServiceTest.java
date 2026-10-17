@@ -3355,6 +3355,38 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("GP Pro retiré pendant le brouillon → travelerIsGpPro rafraîchi à false à la publication")
+        void publishAnnouncement_refreshesGpProFlagDown() {
+            UserEntity user = verifiedProUser();
+            user.setGpPro(false);
+            AnnouncementEntity draft = draftEntityOwnedBy(user);
+            draft.setTravelerIsGpPro(true);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.findById(draft.getId())).thenReturn(Optional.of(draft));
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID);
+
+            assertThat(draft.isTravelerIsGpPro()).isFalse();
+        }
+
+        @Test
+        @DisplayName("GP Pro attribué pendant le brouillon → travelerIsGpPro rafraîchi à true à la publication")
+        void publishAnnouncement_refreshesGpProFlagUp() {
+            UserEntity user = verifiedProUser();
+            user.setGpPro(true);
+            AnnouncementEntity draft = draftEntityOwnedBy(user);
+            draft.setTravelerIsGpPro(false);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.findById(draft.getId())).thenReturn(Optional.of(draft));
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID);
+
+            assertThat(draft.isTravelerIsGpPro()).isTrue();
+        }
+
+        @Test
         @DisplayName("annonce déjà active → 422 not-a-draft")
         void publishAnnouncement_notADraft_throws422() {
             UserEntity user = verifiedProUser();

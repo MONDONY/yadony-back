@@ -1482,6 +1482,10 @@ public class AnnouncementService {
                     "La date de départ est passée. Modifiez le trajet avant de le publier.");
         }
 
+        // Les mises à jour de badge ne touchent que les trajets ACTIVE/FULL : un brouillon garde
+        // les drapeaux de sa création. On les rafraîchit donc à la publication (Pro et GP Pro).
+        announcement.setTravelerIsPro(user.isProAccount());
+        announcement.setTravelerIsGpPro(user.isGpPro());
         announcement.setStatus(AnnouncementStatus.ACTIVE);
         AnnouncementEntity saved = announcementRepository.save(announcement);
 
