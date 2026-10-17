@@ -54,13 +54,22 @@ public enum PlatformSettingKey {
     PHOTO_UPLOAD_DAILY_QUOTA("photo_upload_daily_quota", PlatformSettingType.INTEGER),
     TRACKING_PHOTOS_MAX_PER_BID("tracking_photos_max_per_bid", PlatformSettingType.INTEGER),
     PHOTO_PURGE_ENABLED("photo_purge_enabled", PlatformSettingType.BOOLEAN),
-    FLIGHTS_ENABLED("flights_enabled", PlatformSettingType.BOOLEAN);
+    FLIGHTS_ENABLED("flights_enabled", PlatformSettingType.BOOLEAN),
+    ASSISTANT_DAILY_QUOTA("assistant_daily_quota", PlatformSettingType.INTEGER),
+    ASSISTANT_FORM_DRAFT_DAILY_QUOTA("assistant_form_draft_daily_quota", PlatformSettingType.INTEGER);
 
     /** Défauts des réglages photos : aucune property, le panel admin est le seul levier. */
     public static final int DEFAULT_PHOTO_RETENTION_DAYS = 7;
     public static final int DEFAULT_PHOTO_UPLOAD_DAILY_QUOTA = 60;
     /** Photos de suivi par bid sur 24 h glissantes (bornes admin 1 à 20). */
     public static final int DEFAULT_TRACKING_PHOTOS_MAX_PER_BID = 12;
+    /**
+     * Quotas de l'assistant IA, par utilisateur et par jour UTC : questions d'aide, et tours de
+     * remplissage des formulaires trajet et demande d'envoi. Amorcés depuis ASSISTANT_DAILY_QUOTA et
+     * ASSISTANT_FORM_DRAFT_DAILY_QUOTA, puis réglés depuis le panel admin (bornes 1 à 1000).
+     */
+    public static final int DEFAULT_ASSISTANT_DAILY_QUOTA = 20;
+    public static final int DEFAULT_ASSISTANT_FORM_DRAFT_DAILY_QUOTA = 30;
 
     private final String key;
     private final PlatformSettingType type;

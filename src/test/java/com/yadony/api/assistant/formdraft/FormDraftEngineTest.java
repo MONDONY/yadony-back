@@ -7,6 +7,7 @@ import com.yadony.api.assistant.formdraft.dto.FormDraftTurn;
 import com.yadony.api.assistant.llm.LlmResult;
 import com.yadony.api.assistant.llm.LlmRouter;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.config.PlatformSettingsService;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -38,9 +39,16 @@ class FormDraftEngineTest {
     private final FormDraftProperties props = new FormDraftProperties(true, 30, 8);
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-17T10:00:00Z"), ZoneOffset.UTC);
     private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
-    private final FormDraftEngine engine = new FormDraftEngine(new FormDraftQuotaGuard(props, clock), props,
+    private final PlatformSettingsService settings = quota30();
+    private final FormDraftEngine engine = new FormDraftEngine(new FormDraftQuotaGuard(settings, clock), props,
             new FormDraftParser(new ObjectMapper()), router, registry, clock);
     private final TripDraftSchema trip = new TripDraftSchema();
+
+    private static PlatformSettingsService quota30() {
+        PlatformSettingsService s = mock(PlatformSettingsService.class);
+        when(s.assistantFormDraftDailyQuota()).thenReturn(30);
+        return s;
+    }
 
     private static FormDraftRequest request(Map<String, Object> draft, String today, String... texts) {
         List<FormDraftTurn> turns = new ArrayList<>();

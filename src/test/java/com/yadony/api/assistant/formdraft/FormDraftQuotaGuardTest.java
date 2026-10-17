@@ -1,8 +1,8 @@
 package com.yadony.api.assistant.formdraft;
 
-import com.yadony.api.assistant.AssistantProperties;
 import com.yadony.api.assistant.AssistantQuotaGuard;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.config.PlatformSettingsService;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
@@ -12,6 +12,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class FormDraftQuotaGuardTest {
 
@@ -21,7 +23,13 @@ class FormDraftQuotaGuardTest {
         public Clock withZone(java.time.ZoneId z) { return this; }
         public Instant instant() { return now.get(); }
     };
-    private final FormDraftQuotaGuard guard = new FormDraftQuotaGuard(new FormDraftProperties(true, 2, 8), clock);
+    private final PlatformSettingsService settings = mock(PlatformSettingsService.class);
+    private final FormDraftQuotaGuard guard = new FormDraftQuotaGuard(settings, clock);
+
+    {
+        when(settings.assistantFormDraftDailyQuota()).thenReturn(2);
+        when(settings.assistantDailyQuota()).thenReturn(1);
+    }
 
     @Test
     void decompteEtRefuseAuDela() {
@@ -44,8 +52,18 @@ class FormDraftQuotaGuardTest {
 
     @Test
     void separeDuQuotaDeLAssistant() {
-        AssistantQuotaGuard assistant = new AssistantQuotaGuard(new AssistantProperties(true, 1, 6.5), clock);
+        AssistantQuotaGuard assistant = new AssistantQuotaGuard(settings, clock);
         assistant.consume("u1");
+        assertThat(guard.consume("u1")).isEqualTo(1);
+    }
+
+    /** Réglage admin changé en cours de journée : effet immédiat, le compteur du jour est gardé. */
+    @Test
+    void quotaModifieDepuisLAdminSansRedemarrage() {
+        guard.consume("u1");
+        guard.consume("u1");
+        assertThatThrownBy(() -> guard.consume("u1")).isInstanceOf(YadonyBusinessException.class);
+        when(settings.assistantFormDraftDailyQuota()).thenReturn(5);
         assertThat(guard.consume("u1")).isEqualTo(1);
     }
 }

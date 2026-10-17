@@ -39,6 +39,8 @@ public class PlatformSettingsService {
     private static final int MAX_DAILY_QUOTA = 1000;
     private static final int MIN_TRACKING_PHOTOS = 1;
     private static final int MAX_TRACKING_PHOTOS = 20;
+    private static final int MIN_ASSISTANT_QUOTA = 1;
+    private static final int MAX_ASSISTANT_QUOTA = 1000;
 
     private final PlatformSettingRepository repository;
     private final PlatformSettingsCache cache;
@@ -162,6 +164,17 @@ public class PlatformSettingsService {
         return raw != null && Boolean.parseBoolean(raw);
     }
 
+    /** Questions à l'assistant d'aide par utilisateur et par jour UTC. */
+    public int assistantDailyQuota() {
+        return intOr(PlatformSettingKey.ASSISTANT_DAILY_QUOTA, PlatformSettingKey.DEFAULT_ASSISTANT_DAILY_QUOTA);
+    }
+
+    /** Tours de remplissage IA (trajet et demande d'envoi confondus) par utilisateur et par jour UTC. */
+    public int assistantFormDraftDailyQuota() {
+        return intOr(PlatformSettingKey.ASSISTANT_FORM_DRAFT_DAILY_QUOTA,
+                PlatformSettingKey.DEFAULT_ASSISTANT_FORM_DRAFT_DAILY_QUOTA);
+    }
+
     private int intOr(PlatformSettingKey key, int fallback) {
         String raw = cache.all().get(key.key());
         if (raw == null) return fallback;
@@ -240,6 +253,8 @@ public class PlatformSettingsService {
             case TRACKING_PHOTOS_MAX_PER_BID -> String.valueOf(trackingPhotosMaxPerBid());
             case PHOTO_PURGE_ENABLED -> String.valueOf(photoPurgeEnabled());
             case FLIGHTS_ENABLED -> String.valueOf(flightsEnabled());
+            case ASSISTANT_DAILY_QUOTA -> String.valueOf(assistantDailyQuota());
+            case ASSISTANT_FORM_DRAFT_DAILY_QUOTA -> String.valueOf(assistantFormDraftDailyQuota());
         };
     }
 
@@ -380,6 +395,10 @@ public class PlatformSettingsService {
                 }
                 yield String.valueOf(Boolean.parseBoolean(value));
             }
+            case ASSISTANT_DAILY_QUOTA -> boundedInt(value, MIN_ASSISTANT_QUOTA, MAX_ASSISTANT_QUOTA,
+                    "Le quota de questions à l'assistant doit être un entier entre 1 et 1000");
+            case ASSISTANT_FORM_DRAFT_DAILY_QUOTA -> boundedInt(value, MIN_ASSISTANT_QUOTA, MAX_ASSISTANT_QUOTA,
+                    "Le quota de remplissage par l'IA doit être un entier entre 1 et 1000");
         };
     }
 
