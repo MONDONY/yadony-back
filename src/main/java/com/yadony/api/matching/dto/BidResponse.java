@@ -20,7 +20,9 @@ public record BidResponse(
         Integer senderTotalShipments,
         boolean senderKycVerified,
         boolean senderIsProAccount,
+        /** Déprécié : apps antérieures à GP Pro, à retirer. Toujours {@code false}. */
         boolean senderKiloPro,
+        boolean senderGpPro,
         BigDecimal weightKg,
         String description,
         String contentCategory,
@@ -56,7 +58,9 @@ public record BidResponse(
         boolean travelerPhoneAvailable,
         boolean travelerKycVerified,
         boolean travelerIsProAccount,
+        /** Déprécié : apps antérieures à GP Pro, à retirer. Toujours {@code false}. */
         boolean travelerKiloPro,
+        boolean travelerGpPro,
         Integer travelerTotalTrips,
         java.math.BigDecimal travelerAverageRating,
         boolean senderHasRated,

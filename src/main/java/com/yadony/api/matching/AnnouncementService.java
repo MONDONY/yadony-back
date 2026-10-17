@@ -1078,7 +1078,9 @@ public class AnnouncementService {
                         buildDisplayName(traveler),
                         traveler.getAverageRating() != null ? traveler.getAverageRating().doubleValue() : null,
                         null,
-                        traveler.isKiloPro(),
+                        // déprécié : apps antérieures à GP Pro, à retirer
+                        false,
+                        traveler.isGpPro(),
                         traveler.isProAccount(),
                         kycVerified,
                         storageService.avatarUrl(traveler.getAvatarUrl()),
@@ -1382,7 +1384,7 @@ public class AnnouncementService {
         TravelerProfileDto updatedTravelerDto = new TravelerProfileDto(
                 user.getId(),
                 buildDisplayName(user),
-                null, null, false, user.isProAccount(), kycVerified,
+                null, null, false, user.isGpPro(), user.isProAccount(), kycVerified,
                 user.getAvatarUrl(),
                 !user.isContactKycOnly());
 

@@ -14,7 +14,9 @@ public record TravelerProfileDto(
         String displayName,
         Double averageRating,
         Integer totalTrips,
+        /** Déprécié : apps antérieures à GP Pro, à retirer. Toujours {@code false}. */
         boolean kiloPro,
+        boolean gpPro,
         boolean isProAccount,
         boolean kycVerified,
         String avatarUrl,

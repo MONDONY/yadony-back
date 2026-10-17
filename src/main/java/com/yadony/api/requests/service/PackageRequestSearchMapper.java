@@ -108,6 +108,7 @@ public class PackageRequestSearchMapper {
         boolean kycVerified = sender != null && sender.getKycStatus() == KycStatus.VERIFIED;
         var senderProfile = new PackageRequestSearchResponse.SenderPublicProfile(
                 entity.getSenderId(), displayName, averageRating, totalRatings, kycVerified,
+                sender != null && sender.isGpPro(),
                 storageService.avatarUrl(sender != null ? sender.getAvatarUrl() : null),
                 sender != null ? sender.senderReliabilityIncidentCount() : 0
         );

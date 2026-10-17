@@ -209,7 +209,7 @@ class GuestDataExposureIT {
             // l'adresse exacte d'un COLIS, qui n'est renseignee qu'apres acceptation.
             "label", "lat", "lng",
             // TravelerProfileDto
-            "displayName", "averageRating", "totalTrips", "kiloPro", "isProAccount",
+            "displayName", "averageRating", "totalTrips", "kiloPro", "gpPro", "isProAccount",
             "kycVerified", "avatarUrl", "acceptsUnverified",
             // AnnouncementPriceGridItemResponse : seul le brut survit, comme pour pricePerKg.
             "unitPriceDisplay",

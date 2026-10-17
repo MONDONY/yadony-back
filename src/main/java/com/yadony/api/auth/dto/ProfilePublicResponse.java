@@ -9,7 +9,9 @@ public record ProfilePublicResponse(
         String avatarUrl,
         boolean kycVerified,
         boolean isProAccount,
+        /** Déprécié : apps antérieures à GP Pro, à retirer. Toujours {@code false}. */
         boolean isKiloPro,
+        boolean gpPro,
         int completedBidsCount,
         BigDecimal averageRating,
         int ratingCount,
@@ -43,25 +45,25 @@ public record ProfilePublicResponse(
 ) {
     /** Arité précédente, sans {@code reliabilityPercent}. */
     public ProfilePublicResponse(String userId, String displayName, String avatarUrl,
-                                 boolean kycVerified, boolean isProAccount, boolean isKiloPro,
+                                 boolean kycVerified, boolean isProAccount, boolean isKiloPro, boolean gpPro,
                                  int completedBidsCount, BigDecimal averageRating, int ratingCount,
                                  String memberSince, List<String> badges, String contactMode,
                                  Integer responseDelayHours, String bio, List<String> languages,
                                  boolean phoneVerified, boolean emailVerified, String residenceCountry,
                                  Integer measuredResponseMinutes, Integer lastSeenDaysAgo,
                                  int senderIncidentCount) {
-        this(userId, displayName, avatarUrl, kycVerified, isProAccount, isKiloPro,
+        this(userId, displayName, avatarUrl, kycVerified, isProAccount, isKiloPro, gpPro,
                 completedBidsCount, averageRating, ratingCount, memberSince, badges, contactMode,
                 responseDelayHours, bio, languages, phoneVerified, emailVerified, residenceCountry,
                 measuredResponseMinutes, lastSeenDaysAgo, senderIncidentCount, null);
     }
 
     public ProfilePublicResponse(String userId, String displayName, String avatarUrl,
-                                 boolean kycVerified, boolean isProAccount, boolean isKiloPro,
+                                 boolean kycVerified, boolean isProAccount, boolean isKiloPro, boolean gpPro,
                                  int completedBidsCount, BigDecimal averageRating, int ratingCount,
                                  String memberSince, List<String> badges, String contactMode,
                                  Integer responseDelayHours, String bio, List<String> languages) {
-        this(userId, displayName, avatarUrl, kycVerified, isProAccount, isKiloPro,
+        this(userId, displayName, avatarUrl, kycVerified, isProAccount, isKiloPro, gpPro,
                 completedBidsCount, averageRating, ratingCount, memberSince, badges, contactMode,
                 responseDelayHours, bio, languages, false, false, null, null, null, 0, null);
     }

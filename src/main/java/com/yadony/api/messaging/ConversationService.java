@@ -663,7 +663,7 @@ public class ConversationService {
 
     private ParticipantDTO buildParticipant(UUID userId, UserEntity user, boolean revealPhone, String role) {
         if (user == null) {
-            return new ParticipantDTO(userId.toString(), "Utilisateur inconnu", null, false, role, false);
+            return new ParticipantDTO(userId.toString(), "Utilisateur inconnu", null, false, role, false, false);
         }
         // publicDisplayName() : la concaténation rendait « Utilisateur » pour tout compte
         // sans prénom, si bien que deux interlocuteurs distincts portaient le même nom.
@@ -672,7 +672,7 @@ public class ConversationService {
         // (GET /bids/{bidId}/contact). Aucune lecture Firebase au rendu d'une liste.
         boolean kyc = user.getKycStatus() == com.yadony.api.auth.KycStatus.VERIFIED;
         return new ParticipantDTO(userId.toString(), name,
-                storageService.avatarUrl(user.getAvatarUrl()), revealPhone, role, kyc);
+                storageService.avatarUrl(user.getAvatarUrl()), revealPhone, role, kyc, user.isGpPro());
     }
 
     private String mapBidStatus(BidStatus status) {

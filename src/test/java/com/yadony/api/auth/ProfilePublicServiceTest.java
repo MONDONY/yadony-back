@@ -167,6 +167,36 @@ class ProfilePublicServiceTest {
         assertThat(profilePublicService.getProfilePublic(USER_ID, VIEWER_ID).residenceCountry()).isEqualTo("FR");
     }
 
+    @Test
+    @DisplayName("profil public : gpPro suit le compte, kiloPro figé à false")
+    void getProfilePublic_exposesGpProAndFreezesKiloPro() {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID)))
+                .thenReturn(stubRatingSummary());
+        user.setGpPro(true);
+        user.setKiloPro(true);
+
+        var response = profilePublicService.getProfilePublic(USER_ID, VIEWER_ID);
+
+        assertThat(response.gpPro()).isTrue();
+        assertThat(response.isKiloPro()).isFalse();
+    }
+
+    @Test
+    @DisplayName("profil voyageur public : gpPro suit le compte, kiloPro figé à false")
+    void getPublicTravelerProfile_exposesGpProAndFreezesKiloPro() {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID)))
+                .thenReturn(stubRatingSummary());
+        user.setGpPro(true);
+        user.setKiloPro(true);
+
+        var response = profilePublicService.getPublicTravelerProfile(USER_ID, VIEWER_ID);
+
+        assertThat(response.gpPro()).isTrue();
+        assertThat(response.isKiloPro()).isFalse();
+    }
+
     private static UserRepository.DecisionDelayStats delay(Double median, Long decisions) {
         return new UserRepository.DecisionDelayStats() {
             @Override public Double getMedianMinutes() { return median; }

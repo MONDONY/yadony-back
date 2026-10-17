@@ -101,7 +101,9 @@ public class ProfilePublicService {
                 storageService.avatarUrl(user.getAvatarUrl()),
                 kycVerified,
                 user.isProAccount(),
-                user.isKiloPro(),
+                // déprécié : apps antérieures à GP Pro, à retirer
+                false,
+                user.isGpPro(),
                 completedBidsCount,
                 ratingSummary.averageRating(),
                 ratingSummary.ratingCount(),
@@ -176,7 +178,9 @@ public class ProfilePublicService {
         return new PublicTravelerProfileResponse(
                 buildDisplayName(user),
                 user.getKycStatus() == KycStatus.VERIFIED,
-                user.isKiloPro(),
+                // déprécié : apps antérieures à GP Pro, à retirer
+                false,
+                user.isGpPro(),
                 user.getTotalTrips() + user.getTotalShipments(),
                 ratingSummary.averageRating(),
                 ratingSummary.ratingCount(),

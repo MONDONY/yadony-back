@@ -106,7 +106,7 @@ class ConversationControllerTest {
         ConversationResponse archived = new ConversationResponse(
                 conversationId, conversation.getBidId(),
                 conversation.getFirestoreConversationId(),
-                new ParticipantDTO(UUID.randomUUID().toString(), "Other User", null, false, null, false),
+                new ParticipantDTO(UUID.randomUUID().toString(), "Other User", null, false, null, false, false),
                 null, LocalDateTime.now(), false,
                 null, null, null, null, null, false, false);
         when(conversationService.getArchivedConversations(currentUserId)).thenReturn(List.of(archived));
@@ -146,7 +146,7 @@ class ConversationControllerTest {
         ConversationResponse fakeResponse = new ConversationResponse(
                 conversationId, conversation.getBidId(),
                 conversation.getFirestoreConversationId(),
-                new ParticipantDTO(UUID.randomUUID().toString(), "Other User", null, false, null, false),
+                new ParticipantDTO(UUID.randomUUID().toString(), "Other User", null, false, null, false, false),
                 null, LocalDateTime.now(), false,
                 null, null, null, null, null, false, false);
 
@@ -170,7 +170,7 @@ class ConversationControllerTest {
         ConversationResponse fakeResponse = new ConversationResponse(
                 conversationId, conversation.getBidId(),
                 conversation.getFirestoreConversationId(),
-                new ParticipantDTO(UUID.randomUUID().toString(), "Other User", null, false, null, false),
+                new ParticipantDTO(UUID.randomUUID().toString(), "Other User", null, false, null, false, false),
                 null, LocalDateTime.now(), false,
                 null, null, null, null, null, false, false);
 
@@ -249,7 +249,7 @@ class ConversationControllerTest {
     private static ConversationResponse responseFor(ConversationEntity c) {
         return new ConversationResponse(
                 c.getId(), c.getBidId(), c.getFirestoreConversationId(),
-                new ParticipantDTO(UUID.randomUUID().toString(), "Other User", null, false, null, false),
+                new ParticipantDTO(UUID.randomUUID().toString(), "Other User", null, false, null, false, false),
                 null, LocalDateTime.now(), false,
                 null, null, null, null, null, false, false);
     }
@@ -318,7 +318,7 @@ class ConversationControllerTest {
         ConversationResponse fakeResponse = new ConversationResponse(
                 conversationId, conversation.getBidId(),
                 conversation.getFirestoreConversationId(),
-                new ParticipantDTO(UUID.randomUUID().toString(), "Other User", null, false, null, false),
+                new ParticipantDTO(UUID.randomUUID().toString(), "Other User", null, false, null, false, false),
                 null, LocalDateTime.now(), false,
                 null, null, null, null, null, false, false);
 
@@ -384,7 +384,7 @@ class ConversationControllerTest {
         ConversationResponse fakeResponse = new ConversationResponse(
                 conversationId, bidId,
                 conversation.getFirestoreConversationId(),
-                new ParticipantDTO(UUID.randomUUID().toString(), "Other User", null, false, null, false),
+                new ParticipantDTO(UUID.randomUUID().toString(), "Other User", null, false, null, false, false),
                 null, LocalDateTime.now(), false,
                 null, null, null, null, null, false, false);
 

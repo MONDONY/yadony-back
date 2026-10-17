@@ -35,13 +35,14 @@ class PublicTravelerControllerTest {
     @Test
     void publicProfile_isAccessibleWithoutAuth() throws Exception {
         when(profilePublicService.getPublicTravelerProfile(eq(TARGET), any())).thenReturn(
-                new PublicTravelerProfileResponse("Moussa D.", true, true, 12,
+                new PublicTravelerProfileResponse("Moussa D.", true, false, true, 12,
                         new BigDecimal("4.80"), 10, "Membre depuis mars 2025", List.of()));
 
         mockMvc.perform(get("/public/travelers/{id}", TARGET))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.displayName").value("Moussa D."))
-                .andExpect(jsonPath("$.isKiloPro").value(true))
+                .andExpect(jsonPath("$.isKiloPro").value(false))
+                .andExpect(jsonPath("$.gpPro").value(true))
                 .andExpect(jsonPath("$.averageRating").value(4.80));
     }
 
