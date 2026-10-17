@@ -23,7 +23,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @ActiveProfiles("test")
 @AutoConfigureMockMvc
-@TestPropertySource(properties = "yadony.assistant.enabled=true")
+@TestPropertySource(properties = {"yadony.assistant.enabled=true", "yadony.assistant.form-draft.enabled=true"})
 class AssistantStatusIntegrationTest {
 
     @Autowired MockMvc mockMvc;
@@ -38,7 +38,8 @@ class AssistantStatusIntegrationTest {
     void allume200EnabledTrue() throws Exception {
         mockMvc.perform(get("/assistant/status").with(authentication(withRole("ROLE_SENDER"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.enabled").value(true));
+                .andExpect(jsonPath("$.enabled").value(true))
+                .andExpect(jsonPath("$.formDraftEnabled").value(true));
         verifyNoInteractions(service, router);
     }
 

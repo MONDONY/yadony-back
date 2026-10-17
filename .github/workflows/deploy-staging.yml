@@ -187,6 +187,8 @@ jobs:
           # Les clés des fournisseurs ne passent pas par ici : elles se saisissent dans l'admin (chiffrées en base).
           ASSISTANT_ENABLED=${{ vars.ASSISTANT_ENABLED || 'false' }}
           ASSISTANT_DAILY_QUOTA=${{ vars.ASSISTANT_DAILY_QUOTA || '20' }}
+          ASSISTANT_FORM_DRAFT_ENABLED=${{ vars.ASSISTANT_FORM_DRAFT_ENABLED || 'false' }}
+          ASSISTANT_FORM_DRAFT_DAILY_QUOTA=${{ vars.ASSISTANT_FORM_DRAFT_DAILY_QUOTA || '30' }}
           # Rail mobile money pawaPay : token API du dashboard SANDBOX (staging ne parle
           # jamais à la production pawaPay, PAWAPAY_BASE_URL garde son défaut sandbox).
           # Secret d environnement staging. Le rail reste fermé tant que PAWAPAY_ENABLED

@@ -362,6 +362,11 @@ yadony:
     # Score BM25 brut de Lucene (pas normalisé). Mesuré sur les vraies fiches : questions complètes 16 à 30,
     # mots seuls 8,7 à 13, hors-sujet 0 à 6,1 pour la plupart (KnowledgeBaseFichesTest).
     min-score: 6.5
+    # Formulaires remplis par l'IA (spec 2026-10-17-formulaires-ia) : exige aussi enabled ci-dessus.
+    form-draft:
+      enabled: ${ASSISTANT_FORM_DRAFT_ENABLED:false}
+      daily-quota: ${ASSISTANT_FORM_DRAFT_DAILY_QUOTA:30}
+      max-turns: 8
   didit:
     base-url: ${DIDIT_BASE_URL:https://verification.didit.me}
     api-key: ${DIDIT_API_KEY:}
