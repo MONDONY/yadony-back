@@ -12,4 +12,4 @@ routes:
   - path: /announcements/trips
     label: My trips
 ---
-You are on the trip form, in three steps: "Trip" (cities, date, time, means of transport, drop-off deadline), "Locations & capacity", then "Price & conditions". Tap "Continue" at each step, then "Preview" to check the listing and "Post the listing". The "Save as draft" icon keeps what you entered for later, and "My templates" pre-fills the trip if you have any. The same screen is used to "Edit trip".
+You are on the trip form, in three steps: "Trip" (cities, date, time, means of transport, drop-off deadline), "Locations & capacity", then "Price & conditions", where you also choose the trip currency, at the top of the step. Tap "Continue" at each step, then "Preview" to check the listing and "Post the listing". The "Save as draft" icon keeps what you entered for later, and "My templates" pre-fills the trip if you have any. The same screen is used to "Edit trip".
