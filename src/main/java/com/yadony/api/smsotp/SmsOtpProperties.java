@@ -5,6 +5,8 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Component
@@ -84,6 +86,20 @@ public class SmsOtpProperties {
      */
     private List<String> androidAppHashes = new ArrayList<>();
 
+    /** Entrée « +E164:code » d'un compte de revue ; le code fait 6 chiffres. */
+    private static final Pattern REVIEW_ACCOUNT = Pattern.compile("(\\+\\d{6,15}):(\\d{6})");
+
+    /**
+     * Comptes de démonstration pour la review App Store / Play, au format « +E164:code ».
+     *
+     * <p>Le code passe par Twilio Verify, qui ignore les numéros de test de la console
+     * Firebase : sans cette liste, aucun relecteur ne peut se connecter. Pour ces numéros,
+     * aucun SMS ne part et le code fixe est accepté ; les autres limites (tentatives,
+     * connexions, envois) restent appliquées. Vide par défaut, à vider après la review :
+     * c'est une connexion sans possession du téléphone.
+     */
+    private List<String> reviewAccounts = new ArrayList<>();
+
     public int getMaxSendsPerWindow() { return maxSendsPerWindow; }
     public void setMaxSendsPerWindow(int maxSendsPerWindow) { this.maxSendsPerWindow = maxSendsPerWindow; }
     public int getRateWindowMinutes() { return rateWindowMinutes; }
@@ -159,5 +175,19 @@ public class SmsOtpProperties {
 
     public void setAndroidAppHashes(List<String> androidAppHashes) {
         this.androidAppHashes = androidAppHashes == null ? new ArrayList<>() : androidAppHashes;
+    }
+
+    /** Code fixe du compte de revue pour ce numéro ; vide si ce n'en est pas un. */
+    public Optional<String> reviewCodeFor(String e164) {
+        return reviewAccounts.stream()
+                .map(entry -> REVIEW_ACCOUNT.matcher(entry.trim()))
+                .filter(Matcher::matches)
+                .filter(matcher -> matcher.group(1).equals(e164))
+                .map(matcher -> matcher.group(2))
+                .findFirst();
+    }
+
+    public void setReviewAccounts(List<String> reviewAccounts) {
+        this.reviewAccounts = reviewAccounts == null ? new ArrayList<>() : reviewAccounts;
     }
 }

@@ -526,6 +526,9 @@ yadony:
     # Bloquant exprès : chaque SMS est facturé, et l'email reste disponible.
     max-sends-per-hour-global: ${YADONY_SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL:200}
     max-sends-per-day-global: ${YADONY_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL:1000}
+    # Comptes de démo pour la review des stores, « +E164:code » séparés par des virgules :
+    # aucun SMS, code fixe accepté. Vide par défaut, à vider après la review.
+    review-accounts: ${YADONY_SMS_OTP_REVIEW_ACCOUNTS:}
     # Empreintes SMS Retriever de l'app Android, séparées par des virgules (debug, clé de
     # signature Play). Ajoutées à la fin du SMS de code : Android remet alors le SMS à
     # l'app, qui remplit le code toute seule. Vide = SMS inchangé.

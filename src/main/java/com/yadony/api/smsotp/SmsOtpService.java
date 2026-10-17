@@ -33,6 +33,7 @@ import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 @Transactional
@@ -96,7 +97,9 @@ public class SmsOtpService {
         // plus bas) : on ne bloque qu'en prod, où un flag resté à false alors que
         // l'écran est accessible (build client périgé, deep link) enverrait
         // sinon un "code envoyé" silencieux qui n'arrive jamais.
-        if (!smsService.isEnabled() && !devProfile) {
+        // Un compte de revue n'envoie aucun SMS : il reste utilisable SMS coupés.
+        Optional<String> reviewCode = properties.reviewCodeFor(phoneNumber);
+        if (reviewCode.isEmpty() && !smsService.isEnabled() && !devProfile) {
             throw new YadonyBusinessException(
                     HttpStatus.SERVICE_UNAVAILABLE, "sms-otp-disabled",
                     "SMS OTP Disabled", "L'authentification par SMS n'est pas encore disponible");
@@ -149,9 +152,9 @@ public class SmsOtpService {
         // Par Verify, Twilio génère le code et yadony ne le voit jamais : la ligne ne porte
         // qu'un hash aléatoire, elle sert au budget d'envois et de tentatives, pas au contrôle.
         boolean viaVerify = usesVerify(phoneNumber);
-        String code = viaVerify
+        String code = reviewCode.orElseGet(() -> viaVerify
                 ? Long.toHexString(SECURE_RANDOM.nextLong()) + Long.toHexString(SECURE_RANDOM.nextLong())
-                : String.format("%06d", SECURE_RANDOM.nextInt(1_000_000));
+                : String.format("%06d", SECURE_RANDOM.nextInt(1_000_000)));
         LocalDateTime expiresAt = LocalDateTime.now(ZoneOffset.UTC)
                 .plusMinutes(properties.getOtpValidMinutes());
 
@@ -160,6 +163,12 @@ public class SmsOtpService {
         entity.setCodeHash(passwordEncoder.encode(code));
         entity.setExpiresAt(expiresAt);
         smsOtpRepository.save(entity);
+
+        if (reviewCode.isPresent()) {
+            // WARN → Sentry : une connexion sans SMS doit rester visible en prod.
+            log.warn("Compte de revue {} : code fixe, aucun SMS envoyé", maskPhone(phoneNumber));
+            return expiresAt.toInstant(ZoneOffset.UTC);
+        }
 
         try {
             List<String> appHashes = properties.getAndroidAppHashes();
@@ -405,7 +414,9 @@ public class SmsOtpService {
      * changement de configuration entre les deux invalide seulement le code en cours.
      */
     private boolean usesVerify(String phoneNumber) {
-        return smsService.isEnabled() && twilioVerify.handles(phoneNumber);
+        // Le code d'un compte de revue est contrôlé ici, Twilio ne l'a jamais émis.
+        return properties.reviewCodeFor(phoneNumber).isEmpty()
+                && smsService.isEnabled() && twilioVerify.handles(phoneNumber);
     }
 
     private static YadonyBusinessException verifyUnavailable() {
