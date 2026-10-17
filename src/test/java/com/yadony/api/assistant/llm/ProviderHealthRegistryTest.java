@@ -1,12 +1,16 @@
 package com.yadony.api.assistant.llm;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.transaction.CannotCreateTransactionException;
 
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -15,6 +19,12 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class ProviderHealthRegistryTest {
 
@@ -24,7 +34,8 @@ class ProviderHealthRegistryTest {
         public Clock withZone(java.time.ZoneId z) { return this; }
         public Instant instant() { return now.get(); }
     };
-    private final ProviderHealthRegistry registry = new ProviderHealthRegistry(clock);
+    private final InMemoryProviderDailyUsageStore store = new InMemoryProviderDailyUsageStore();
+    private final ProviderHealthRegistry registry = new ProviderHealthRegistry(store, clock);
     private final UUID id = UUID.randomUUID();
 
     private LlmProviderConfig provider(Integer limit) {
@@ -166,5 +177,76 @@ class ProviderHealthRegistryTest {
             assertThat(accordes).isEqualTo(5);
         }
         assertThat(registry.stats(id).requestsToday()).isEqualTo(5);
+    }
+
+    @Test
+    void lesCompteursSurviventAUnRedemarrageMaisPasLaMiseDeCote() {
+        assertThat(registry.tryAcquire(provider(3))).isTrue();
+        registry.recordSuccess(id);
+        assertThat(registry.tryAcquire(provider(3))).isTrue();
+        registry.recordFailure(id, 429, "quota");
+
+        // Redémarrage : nouvelle instance du registre, même base.
+        ProviderHealthRegistry apres = new ProviderHealthRegistry(store, clock);
+        ProviderHealthRegistry.ProviderStats s = apres.stats(id);
+        assertThat(s.requestsToday()).isEqualTo(2);
+        assertThat(s.successesToday()).isEqualTo(1);
+        assertThat(s.cooldownUntil()).isNull();
+        assertThat(s.lastStatus()).isNull();
+        assertThat(apres.tryAcquire(provider(3))).isTrue();
+        assertThat(apres.tryAcquire(provider(3))).isFalse();
+    }
+
+    @Test
+    void statsDePlusieursFournisseursEnUneLecture() {
+        UUID autre = UUID.randomUUID();
+        registry.tryAcquire(provider(null));
+        registry.recordSuccess(id);
+        store.reads = 0;
+
+        Map<UUID, ProviderHealthRegistry.ProviderStats> stats = registry.stats(List.of(id, autre));
+
+        assertThat(store.reads).isEqualTo(1);
+        assertThat(stats.get(id).requestsToday()).isEqualTo(1);
+        assertThat(stats.get(id).successesToday()).isEqualTo(1);
+        assertThat(stats.get(autre).requestsToday()).isZero();
+    }
+
+    @Test
+    void baseInjoignableLaissePasserDansLaLimiteDuJourEnMemoire() {
+        ProviderDailyUsageStore enPanne = mock(ProviderDailyUsageStore.class);
+        when(enPanne.tryReserve(any(), any(), anyInt())).thenThrow(new DataAccessResourceFailureException("down"));
+        doThrow(new CannotCreateTransactionException("down")).when(enPanne).addSuccess(any(), any());
+        when(enPanne.read(anyCollection(), any())).thenReturn(Map.of());
+        ProviderHealthRegistry r = new ProviderHealthRegistry(enPanne, clock);
+
+        assertThat(r.tryAcquire(provider(2))).isTrue();
+        r.recordSuccess(id);
+        assertThat(r.tryAcquire(provider(2))).isTrue();
+        assertThat(r.tryAcquire(provider(2))).isFalse();
+        assertThat(r.stats(id).requestsToday()).isEqualTo(2);
+        assertThat(r.stats(id).lastStatus()).isEqualTo(200);
+
+        now.set(Instant.parse("2026-10-17T00:00:01Z"));
+        assertThat(r.stats(id).requestsToday()).isZero();
+        assertThat(r.tryAcquire(provider(2))).isTrue();
+    }
+
+    @Test
+    void baseInjoignableSansLimiteLaissePasser() {
+        ProviderDailyUsageStore enPanne = mock(ProviderDailyUsageStore.class);
+        when(enPanne.tryReserve(any(), any(), anyInt())).thenThrow(new DataAccessResourceFailureException("down"));
+        ProviderHealthRegistry r = new ProviderHealthRegistry(enPanne, clock);
+        for (int i = 0; i < 5; i++) assertThat(r.tryAcquire(provider(null))).isTrue();
+    }
+
+    @Test
+    void laReservationUtiliseLeJourUtc() {
+        now.set(Instant.parse("2026-10-16T23:59:59Z"));
+        registry.tryAcquire(provider(null));
+        now.set(Instant.parse("2026-10-17T00:00:00Z"));
+        registry.tryAcquire(provider(null));
+        assertThat(store.read(List.of(id), LocalDate.of(2026, 10, 16)).get(id).requests()).isEqualTo(1);
+        assertThat(store.read(List.of(id), LocalDate.of(2026, 10, 17)).get(id).requests()).isEqualTo(1);
     }
 }

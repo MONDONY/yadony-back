@@ -54,7 +54,7 @@ public class AssistantProviderAdminService {
 
     @Transactional(readOnly = true)
     public List<AdminProviderResponse> list() {
-        return repository.findAllByOrderByPriorityAsc().stream().map(this::toResponse).toList();
+        return toResponses(repository.findAllByOrderByPriorityAsc());
     }
 
     @Transactional
@@ -140,7 +140,7 @@ public class AssistantProviderAdminService {
         }
         auditService.log(ENTITY, null, "ASSISTANT_PROVIDER_REORDERED", adminId, Map.of("order", order));
         afterCommit(catalog::evict);
-        return ids.stream().map(byId::get).map(this::toResponse).toList();
+        return toResponses(ids.stream().map(byId::get).toList());
     }
 
     @Transactional
@@ -214,13 +214,25 @@ public class AssistantProviderAdminService {
         }
     }
 
+    /** Les compteurs du jour de tous les fournisseurs sont lus en une seule requête. */
+    private List<AdminProviderResponse> toResponses(List<AssistantLlmProviderEntity> providers) {
+        Map<UUID, ProviderHealthRegistry.ProviderStats> stats =
+                health.stats(providers.stream().map(AssistantLlmProviderEntity::getId).toList());
+        return providers.stream().map(e -> toResponse(e, stats.get(e.getId()), false)).toList();
+    }
+
     private AdminProviderResponse toResponse(AssistantLlmProviderEntity e) {
         return toResponse(e, false);
     }
 
     /** {@code healthCleared} : la remise à zéro de la santé est différée après le commit, la réponse la montre déjà. */
     private AdminProviderResponse toResponse(AssistantLlmProviderEntity e, boolean healthCleared) {
-        ProviderHealthRegistry.ProviderStats s = health.stats(e.getId());
+        return toResponse(e, health.stats(e.getId()), healthCleared);
+    }
+
+    private AdminProviderResponse toResponse(AssistantLlmProviderEntity e, ProviderHealthRegistry.ProviderStats stats,
+                                             boolean healthCleared) {
+        ProviderHealthRegistry.ProviderStats s = stats;
         if (healthCleared) {
             s = new ProviderHealthRegistry.ProviderStats(s.requestsToday(), s.successesToday(), null, null, null);
         }

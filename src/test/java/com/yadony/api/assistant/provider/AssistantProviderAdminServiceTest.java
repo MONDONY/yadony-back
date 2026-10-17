@@ -2,6 +2,8 @@ package com.yadony.api.assistant.provider;
 
 import com.yadony.api.assistant.llm.LlmCallException;
 import com.yadony.api.assistant.llm.LlmClients;
+import com.yadony.api.assistant.llm.LlmProviderConfig;
+import com.yadony.api.assistant.llm.ProviderDailyUsageStore;
 import com.yadony.api.assistant.llm.ProviderHealthRegistry;
 import com.yadony.api.assistant.provider.dto.AdminProviderResponse;
 import com.yadony.api.assistant.provider.dto.CreateProviderRequest;
@@ -45,6 +47,7 @@ class AssistantProviderAdminServiceTest {
     @Autowired ProviderCatalog catalog;
     @Autowired ProviderHealthRegistry health;
     @Autowired JdbcTemplate jdbcTemplate;
+    @Autowired ProviderDailyUsageStore usageStore;
     @MockitoBean AuditService auditService;
     @MockitoBean LlmClients client;
 
@@ -315,5 +318,39 @@ class AssistantProviderAdminServiceTest {
         assertThat(ok.sample()).hasSize(199).doesNotContain("\uD83D");
         doReturn("c".repeat(500)).when(client).complete(any(), anyString(), anyString());
         assertThat(service.test(a.id()).sample()).hasSize(200);
+    }
+
+    private LlmProviderConfig config(AdminProviderResponse p) {
+        return new LlmProviderConfig(p.id(), p.slug(), p.baseUrl(), p.model(), "k", true, p.dailyRequestLimit());
+    }
+
+    @Test
+    void laListeMontreLesCompteursPersistesMemeApresUnRedemarrage() {
+        AdminProviderResponse a = service.create(create("A"), ADMIN);
+        AdminProviderResponse b = service.create(create("B"), ADMIN);
+        health.tryAcquire(config(a));
+        health.recordSuccess(a.id());
+        health.tryAcquire(config(a));
+        health.tryAcquire(config(b));
+
+        // Redémarrage : un registre neuf relit la base, la liste admin garde ses chiffres.
+        ProviderHealthRegistry apres = new ProviderHealthRegistry(usageStore);
+        assertThat(apres.stats(a.id()).requestsToday()).isEqualTo(2);
+
+        List<AdminProviderResponse> list = service.list();
+        assertThat(list).extracting(p -> p.stats().requestsToday()).containsExactly(2, 1);
+        assertThat(list).extracting(p -> p.stats().successesToday()).containsExactly(1, 0);
+    }
+
+    @Test
+    void changerLaCleNeRouvrePasLaLimiteDuJour() {
+        AdminProviderResponse a = service.create(create("Groq"), ADMIN);
+        health.tryAcquire(config(a));
+        health.recordFailure(a.id(), 401, "HTTP 401");
+        AdminProviderResponse u = service.update(a.id(), sameAs("llama", "nouvelle_cle_9876"), ADMIN);
+        commit();
+        assertThat(u.stats().requestsToday()).isEqualTo(1);
+        assertThat(health.stats(a.id()).requestsToday()).isEqualTo(1);
+        assertThat(health.stats(a.id()).cooldownUntil()).isNull();
     }
 }
