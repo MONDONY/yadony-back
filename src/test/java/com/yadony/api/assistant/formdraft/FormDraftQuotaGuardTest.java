@@ -1,6 +1,7 @@
 package com.yadony.api.assistant.formdraft;
 
 import com.yadony.api.assistant.AssistantQuotaGuard;
+import com.yadony.api.assistant.quota.InMemoryAssistantUserDailyUsageStore;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.config.PlatformSettingsService;
 import org.junit.jupiter.api.Test;
@@ -52,7 +53,7 @@ class FormDraftQuotaGuardTest {
 
     @Test
     void separeDuQuotaDeLAssistant() {
-        AssistantQuotaGuard assistant = new AssistantQuotaGuard(settings, clock);
+        AssistantQuotaGuard assistant = new AssistantQuotaGuard(new InMemoryAssistantUserDailyUsageStore(), settings, clock);
         assistant.consume("u1");
         assertThat(guard.consume("u1")).isEqualTo(1);
     }
