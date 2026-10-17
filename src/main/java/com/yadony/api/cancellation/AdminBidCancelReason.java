@@ -1,6 +1,10 @@
 package com.yadony.api.cancellation;
 
-/** Motif d'une annulation de colis décidée par l'administration (trace d'audit, jamais montrée aux parties). */
+/**
+ * Motif d'une annulation de colis décidée par l'administration (trace d'audit). Seul
+ * {@link #TRAVELER_UNAVAILABLE} est montré aux parties, via le marqueur public posé dans
+ * {@code bids.rejection_reason} ; les autres motifs restent internes.
+ */
 public enum AdminBidCancelReason {
     /** L'expéditeur l'a demandé au support. */
     SENDER_REQUEST,
