@@ -105,6 +105,10 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     @Query("SELECT u FROM UserEntity u WHERE u.id = :id")
     Optional<UserEntity> findByIdForUpdate(@Param("id") UUID id);
 
+    /** Valeur à jour du badge GP Pro (lecture scalaire : jamais l'entité déjà chargée, éventuellement périmée). */
+    @Query("SELECT u.gpPro FROM UserEntity u WHERE u.id = :id")
+    Optional<Boolean> findGpProById(@Param("id") UUID id);
+
     /**
      * Loads a UserEntity by Firebase UID with a pessimistic write lock.
      * Used in traveler role activation to guard against concurrent upgrades.

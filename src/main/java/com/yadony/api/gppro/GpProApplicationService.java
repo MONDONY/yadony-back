@@ -6,6 +6,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.gppro.dto.GpProApplyRequest;
+import com.yadony.api.gppro.dto.GpProAttachDocumentsRequest;
 import com.yadony.api.gppro.dto.GpProStatusResponse;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -54,7 +55,8 @@ public class GpProApplicationService {
         UserEntity user = findUser(firebaseUid);
         // Verrou par utilisateur : sérialise les demandes concurrentes avec l'index unique des demandes ouvertes.
         userRepository.findByIdForUpdate(user.getId());
-        if (user.isGpPro()) {
+        // L'entité chargée avant le verrou peut être périmée : on relit le drapeau en base, une fois le verrou pris.
+        if (userRepository.findGpProById(user.getId()).orElse(user.isGpPro())) {
             throw conflict("gp-pro-already-active", "Already Active", "Le badge GP Pro est déjà actif");
         }
         if (applicationRepository.findFirstByUserIdAndStatusIn(user.getId(), OPEN).isPresent()) {
@@ -95,6 +97,71 @@ public class GpProApplicationService {
                 app.getCommercialName(), docs.size(), null, null);
     }
 
+    /** Ajoute des justificatifs à la demande encore ouverte (4 au plus au total, purgés exclus). */
+    @Transactional
+    public GpProStatusResponse attachDocuments(String firebaseUid, GpProAttachDocumentsRequest r) {
+        UserEntity user = findUser(firebaseUid);
+        userRepository.findByIdForUpdate(user.getId());
+        GpProApplicationEntity app = applicationRepository.findFirstByUserIdAndStatusIn(user.getId(), OPEN)
+                .orElseThrow(GpProApplicationService::applicationNotFound);
+        List<UUID> ids = List.copyOf(new LinkedHashSet<>(r.documentIds()));
+        List<GpProDocumentEntity> docs = documentRepository
+                .findByIdInAndOwnerIdAndApplicationIdIsNull(ids, user.getId()).stream()
+                .filter(d -> d.getPurgedAt() == null)
+                .toList();
+        if (docs.size() != ids.size()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "gp-pro-document-invalid", "Invalid Document", "Justificatif invalide");
+        }
+        int existing = documentRepository.findByApplicationIdAndPurgedAtIsNull(app.getId()).size();
+        if (existing + docs.size() > GpProDocumentService.MAX_UNATTACHED_DOCUMENTS) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "gp-pro-too-many-documents", "Too Many Documents",
+                    "Au plus " + GpProDocumentService.MAX_UNATTACHED_DOCUMENTS + " justificatifs par demande");
+        }
+        for (GpProDocumentEntity d : docs) {
+            d.setApplicationId(app.getId());
+        }
+        documentRepository.saveAll(docs);
+        for (GpProDocumentEntity d : docs) {
+            auditService.log("GP_PRO_APPLICATION", app.getId(), "GP_PRO_DOCUMENT_ADDED", user.getId(),
+                    Map.of("docType", d.getDocType().name()));
+        }
+        return new GpProStatusResponse(app.getStatus().name(), app.getTravelFrequency(),
+                app.getCommercialName(), existing + docs.size(), null, null);
+    }
+
+    /**
+     * Supprime un justificatif non rattaché ou rattaché à la demande encore ouverte. Tout autre cas
+     * (inconnu, d'un autre utilisateur, déjà purgé, demande décidée) rend le même 404.
+     */
+    @Transactional
+    public void removeDocument(String firebaseUid, UUID documentId) {
+        UserEntity user = findUser(firebaseUid);
+        userRepository.findByIdForUpdate(user.getId());
+        GpProDocumentEntity doc = documentRepository.findById(documentId)
+                .filter(d -> user.getId().equals(d.getOwnerId()) && d.getPurgedAt() == null)
+                .orElseThrow(GpProApplicationService::documentNotFound);
+        UUID applicationId = doc.getApplicationId();
+        if (applicationId != null) {
+            boolean open = applicationRepository.findById(applicationId)
+                    .map(a -> OPEN.contains(a.getStatus()))
+                    .orElse(false);
+            if (!open) {
+                throw documentNotFound();
+            }
+        }
+        if (!documentService.purge(doc)) {
+            throw new YadonyBusinessException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "gp-pro-document-storage-unavailable", "Storage Unavailable",
+                    "Le justificatif n'a pas pu être supprimé, réessayez plus tard");
+        }
+        boolean attached = applicationId != null;
+        auditService.log(attached ? "GP_PRO_APPLICATION" : "GP_PRO_DOCUMENT",
+                attached ? applicationId : doc.getId(), "GP_PRO_DOCUMENT_REMOVED", user.getId(),
+                Map.of("docType", doc.getDocType().name()));
+    }
+
     @Transactional(readOnly = true)
     public GpProStatusResponse status(String firebaseUid) {
         UserEntity user = findUser(firebaseUid);
@@ -129,8 +196,7 @@ public class GpProApplicationService {
         UserEntity user = findUser(firebaseUid);
         userRepository.findByIdForUpdate(user.getId());
         GpProApplicationEntity app = applicationRepository.findFirstByUserIdAndStatusIn(user.getId(), OPEN)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "gp-pro-application-not-found", "Application Not Found", "Aucune demande en cours"));
+                .orElseThrow(GpProApplicationService::applicationNotFound);
         app.setStatus(GpProApplicationStatus.CANCELLED);
         applicationRepository.saveAndFlush(app);
         int purged = documentService.purgeAll(app.getId());
@@ -142,6 +208,16 @@ public class GpProApplicationService {
         return userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "user-not-found", "User Not Found", "Utilisateur introuvable"));
+    }
+
+    private static YadonyBusinessException applicationNotFound() {
+        return new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                "gp-pro-application-not-found", "Application Not Found", "Aucune demande en cours");
+    }
+
+    private static YadonyBusinessException documentNotFound() {
+        return new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                "gp-pro-document-not-found", "Document Not Found", "Justificatif introuvable");
     }
 
     private static YadonyBusinessException conflict(String code, String title, String detail) {

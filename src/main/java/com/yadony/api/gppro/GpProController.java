@@ -2,6 +2,7 @@ package com.yadony.api.gppro;
 
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.gppro.dto.GpProApplyRequest;
+import com.yadony.api.gppro.dto.GpProAttachDocumentsRequest;
 import com.yadony.api.gppro.dto.GpProStatusResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -34,6 +35,12 @@ public class GpProController {
     public GpProStatusResponse apply(@AuthenticationPrincipal String firebaseUid,
                                      @Valid @RequestBody GpProApplyRequest request) {
         return service.apply(requireUid(firebaseUid), request);
+    }
+
+    @PostMapping("/applications/current/documents")
+    public GpProStatusResponse attachDocuments(@AuthenticationPrincipal String firebaseUid,
+                                               @Valid @RequestBody GpProAttachDocumentsRequest request) {
+        return service.attachDocuments(requireUid(firebaseUid), request);
     }
 
     @DeleteMapping("/applications/current")

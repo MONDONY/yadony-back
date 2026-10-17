@@ -6,6 +6,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.gppro.dto.GpProApplyRequest;
+import com.yadony.api.gppro.dto.GpProAttachDocumentsRequest;
 import com.yadony.api.gppro.dto.GpProStatusResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -228,5 +229,160 @@ class GpProApplicationServiceTest {
         verify(audit).log(eq("GP_PRO_APPLICATION"), any(), eq("GP_PRO_APPLIED"), eq(userId), cap.capture());
         assertThat(cap.getValue()).containsOnlyKeys("source", "frequency", "documentCount");
         assertThat(cap.getValue().values().toString()).doesNotContain("Mon Nom");
+    }
+
+    @Test
+    void applyUsesFreshGpProFlagReadAfterTheLock() {
+        // L'entité chargée avant le verrou dit « non », la base (relue après le verrou) dit « oui ».
+        user.setGpPro(false);
+        when(users.findGpProById(userId)).thenReturn(Optional.of(true));
+        assertCode(() -> service.apply(UID, req(GpProApplicationSource.PROFILE, List.of())),
+                HttpStatus.CONFLICT, "gp-pro-already-active");
+        verify(applications, never()).saveAndFlush(any());
+    }
+
+    // ── Ajout / retrait de justificatifs sur la demande ouverte ──
+
+    private GpProDocumentEntity doc(UUID id, UUID owner, UUID applicationId) {
+        GpProDocumentEntity d = new GpProDocumentEntity();
+        setId(d, id);
+        d.setOwnerId(owner);
+        d.setApplicationId(applicationId);
+        d.setDocType(GpProDocumentType.TRAVEL_PROOF);
+        return d;
+    }
+
+    @Test
+    void attachDocumentsLinksOwnDocumentsAndAudits() {
+        GpProApplicationEntity a = app(GpProApplicationStatus.PENDING);
+        when(applications.findFirstByUserIdAndStatusIn(eq(userId), anyCollection())).thenReturn(Optional.of(a));
+        UUID id = UUID.randomUUID();
+        GpProDocumentEntity d = doc(id, userId, null);
+        when(documents.findByIdInAndOwnerIdAndApplicationIdIsNull(any(Collection.class), eq(userId)))
+                .thenReturn(List.of(d));
+        when(documents.findByApplicationIdAndPurgedAtIsNull(a.getId())).thenReturn(List.of(doc(UUID.randomUUID(), userId, a.getId())));
+
+        GpProStatusResponse r = service.attachDocuments(UID, new GpProAttachDocumentsRequest(List.of(id, id)));
+
+        assertThat(r.documentCount()).isEqualTo(2);
+        assertThat(d.getApplicationId()).isEqualTo(a.getId());
+        verify(users).findByIdForUpdate(userId);
+        verify(audit).log(eq("GP_PRO_APPLICATION"), eq(a.getId()), eq("GP_PRO_DOCUMENT_ADDED"), eq(userId),
+                eq(Map.of("docType", "TRAVEL_PROOF")));
+    }
+
+    @Test
+    void attachDocumentsWithoutOpenApplicationThrows404() {
+        assertCode(() -> service.attachDocuments(UID, new GpProAttachDocumentsRequest(List.of(UUID.randomUUID()))),
+                HttpStatus.NOT_FOUND, "gp-pro-application-not-found");
+    }
+
+    @Test
+    void attachForeignOrAlreadyAttachedDocumentThrows422AndAttachesNothing() {
+        GpProApplicationEntity a = app(GpProApplicationStatus.AWAITING_KYC);
+        when(applications.findFirstByUserIdAndStatusIn(eq(userId), anyCollection())).thenReturn(Optional.of(a));
+        UUID mine = UUID.randomUUID();
+        GpProDocumentEntity d = doc(mine, userId, null);
+        when(documents.findByIdInAndOwnerIdAndApplicationIdIsNull(any(Collection.class), eq(userId)))
+                .thenReturn(List.of(d));
+        assertCode(() -> service.attachDocuments(UID,
+                        new GpProAttachDocumentsRequest(List.of(mine, UUID.randomUUID()))),
+                HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-document-invalid");
+        assertThat(d.getApplicationId()).isNull();
+        verify(documents, never()).saveAll(any());
+    }
+
+    @Test
+    void attachPurgedDocumentIsInvalid() {
+        GpProApplicationEntity a = app(GpProApplicationStatus.PENDING);
+        when(applications.findFirstByUserIdAndStatusIn(eq(userId), anyCollection())).thenReturn(Optional.of(a));
+        UUID id = UUID.randomUUID();
+        GpProDocumentEntity d = doc(id, userId, null);
+        d.setPurgedAt(LocalDateTime.now());
+        when(documents.findByIdInAndOwnerIdAndApplicationIdIsNull(any(Collection.class), eq(userId)))
+                .thenReturn(List.of(d));
+        assertCode(() -> service.attachDocuments(UID, new GpProAttachDocumentsRequest(List.of(id))),
+                HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-document-invalid");
+    }
+
+    @Test
+    void attachBeyondFourDocumentsThrows422() {
+        GpProApplicationEntity a = app(GpProApplicationStatus.PENDING);
+        when(applications.findFirstByUserIdAndStatusIn(eq(userId), anyCollection())).thenReturn(Optional.of(a));
+        UUID id = UUID.randomUUID();
+        when(documents.findByIdInAndOwnerIdAndApplicationIdIsNull(any(Collection.class), eq(userId)))
+                .thenReturn(List.of(doc(id, userId, null)));
+        when(documents.findByApplicationIdAndPurgedAtIsNull(a.getId())).thenReturn(List.of(
+                doc(UUID.randomUUID(), userId, a.getId()), doc(UUID.randomUUID(), userId, a.getId()),
+                doc(UUID.randomUUID(), userId, a.getId()), doc(UUID.randomUUID(), userId, a.getId())));
+        assertCode(() -> service.attachDocuments(UID, new GpProAttachDocumentsRequest(List.of(id))),
+                HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-too-many-documents");
+        verify(documents, never()).saveAll(any());
+    }
+
+    @Test
+    void removeUnattachedOwnDocumentPurgesIt() {
+        UUID id = UUID.randomUUID();
+        GpProDocumentEntity d = doc(id, userId, null);
+        when(documents.findById(id)).thenReturn(Optional.of(d));
+        when(documentService.purge(d)).thenReturn(true);
+        service.removeDocument(UID, id);
+        verify(documentService).purge(d);
+        verify(audit).log(eq("GP_PRO_DOCUMENT"), eq(id), eq("GP_PRO_DOCUMENT_REMOVED"), eq(userId),
+                eq(Map.of("docType", "TRAVEL_PROOF")));
+    }
+
+    @Test
+    void removeDocumentOfOpenApplicationPurgesIt() {
+        GpProApplicationEntity a = app(GpProApplicationStatus.PENDING);
+        UUID id = UUID.randomUUID();
+        GpProDocumentEntity d = doc(id, userId, a.getId());
+        when(documents.findById(id)).thenReturn(Optional.of(d));
+        when(applications.findById(a.getId())).thenReturn(Optional.of(a));
+        when(documentService.purge(d)).thenReturn(true);
+        service.removeDocument(UID, id);
+        verify(documentService).purge(d);
+        verify(audit).log(eq("GP_PRO_APPLICATION"), eq(a.getId()), eq("GP_PRO_DOCUMENT_REMOVED"), eq(userId), any());
+    }
+
+    @Test
+    void removeDocumentOfDecidedApplicationThrows404() {
+        GpProApplicationEntity a = app(GpProApplicationStatus.APPROVED);
+        UUID id = UUID.randomUUID();
+        GpProDocumentEntity d = doc(id, userId, a.getId());
+        when(documents.findById(id)).thenReturn(Optional.of(d));
+        when(applications.findById(a.getId())).thenReturn(Optional.of(a));
+        assertCode(() -> service.removeDocument(UID, id), HttpStatus.NOT_FOUND, "gp-pro-document-not-found");
+        verify(documentService, never()).purge(any());
+    }
+
+    @Test
+    void removeForeignDocumentThrows404WithoutRevealingIt() {
+        UUID id = UUID.randomUUID();
+        when(documents.findById(id)).thenReturn(Optional.of(doc(id, UUID.randomUUID(), null)));
+        assertCode(() -> service.removeDocument(UID, id), HttpStatus.NOT_FOUND, "gp-pro-document-not-found");
+        verify(documentService, never()).purge(any());
+    }
+
+    @Test
+    void removeUnknownOrPurgedDocumentThrows404() {
+        UUID unknown = UUID.randomUUID();
+        assertCode(() -> service.removeDocument(UID, unknown), HttpStatus.NOT_FOUND, "gp-pro-document-not-found");
+        UUID id = UUID.randomUUID();
+        GpProDocumentEntity d = doc(id, userId, null);
+        d.setPurgedAt(LocalDateTime.now());
+        when(documents.findById(id)).thenReturn(Optional.of(d));
+        assertCode(() -> service.removeDocument(UID, id), HttpStatus.NOT_FOUND, "gp-pro-document-not-found");
+    }
+
+    @Test
+    void removeWhenStorageFailsThrows503() {
+        UUID id = UUID.randomUUID();
+        GpProDocumentEntity d = doc(id, userId, null);
+        when(documents.findById(id)).thenReturn(Optional.of(d));
+        when(documentService.purge(d)).thenReturn(false);
+        assertCode(() -> service.removeDocument(UID, id), HttpStatus.SERVICE_UNAVAILABLE,
+                "gp-pro-document-storage-unavailable");
+        verify(audit, never()).log(eq("GP_PRO_DOCUMENT"), any(), eq("GP_PRO_DOCUMENT_REMOVED"), any(), any());
     }
 }
