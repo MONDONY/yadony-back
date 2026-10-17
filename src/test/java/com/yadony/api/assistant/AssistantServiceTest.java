@@ -341,8 +341,10 @@ class AssistantServiceTest {
         when(kb.isShortFollowUp(anyString(), anyString())).thenReturn(true);
         service.ask("uid", new AssistantAskRequest(RELANCE, "fr", List.of()));
         service.ask("uid", new AssistantAskRequest(RELANCE, "fr", null));
+        // Une seule recherche par langue (français puis repli anglais), aucune recherche de relance.
         verify(kb, times(2)).search("fr", RELANCE, null, 4);
-        verify(kb, times(2)).search(anyString(), anyString(), any(), anyInt());
+        verify(kb, times(2)).search("en", RELANCE, null, 4);
+        verify(kb, times(4)).search(anyString(), anyString(), any(), anyInt());
     }
 
     @Test
@@ -352,7 +354,8 @@ class AssistantServiceTest {
                 new AssistantHistoryTurn("assistant", "Bonjour, je suis l'assistant de Yadony."),
                 new AssistantHistoryTurn("assistant", "Envoyer un colis : publiez une demande."))));
         verify(kb, times(1)).search("fr", RELANCE, null, 4);
-        verify(kb, times(1)).search(anyString(), anyString(), any(), anyInt());
+        verify(kb, times(1)).search("en", RELANCE, null, 4);
+        verify(kb, times(2)).search(anyString(), anyString(), any(), anyInt());
         assertThat(r.answered()).isFalse();
         verify(router, never()).complete(anyString(), anyString(), any());
     }
@@ -377,5 +380,101 @@ class AssistantServiceTest {
         // de 800 caractères ramené à 500 ; la plus vieille question n'entre pas.
         assertThat(query.getAllValues().get(1))
                 .isEqualTo("et pour 10 kg ?\nQUELLE COMMISSION ?\n" + "z".repeat(500));
+    }
+
+    // --- Repli sur l'autre langue (FLUTTER-QV : téléphone en anglais, questions écrites en français) ---
+
+    private final KbHit phoneEn = new KbHit(new KbArticle("en", "changer-numero", "Change my number", List.of(),
+            List.of(new KbRoute("/profile/edit/phone", "Change my number")), "body"), 3f);
+
+    private String promptSent() {
+        ArgumentCaptor<String> user = ArgumentCaptor.forClass(String.class);
+        verify(router).complete(anyString(), user.capture(), any());
+        return user.getValue();
+    }
+
+    @Test
+    void questionFrancaiseAvecLocaleAnglaiseTrouveLesFichesFrancaisesEtAppelleLIA() {
+        String question = "Où je change mon numéro ?";
+        when(kb.search(eq("en"), anyString(), any(), anyInt())).thenReturn(List.of());
+        when(kb.search("fr", question, null, 4)).thenReturn(List.of(phone));
+        llmAnswers(new ParsedAnswer("Allez dans Moi.", true, List.of("/profile/edit/phone")));
+
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest(question, "en-FR", List.of()));
+
+        assertThat(r.answered()).isTrue();
+        assertThat(r.provider()).isEqualTo("groq");
+        assertThat(r.sources()).containsExactly("changer-numero");
+        // Mêmes routes dans les deux langues : l'action de la fiche française reste valable.
+        assertThat(r.actions()).extracting("route", "label").containsExactly(
+                org.assertj.core.groups.Tuple.tuple("/profile/edit/phone", "Changer mon numéro"));
+        assertThat(promptSent()).startsWith("<locale>en</locale>\n<reply_language>question</reply_language>")
+                .contains("id=\"changer-numero\"", "<question>" + question + "</question>");
+    }
+
+    @Test
+    void questionAnglaiseAvecLocaleFrancaiseTrouveLesFichesAnglaises() {
+        String question = "How do I change my phone number?";
+        when(kb.search(eq("fr"), anyString(), any(), anyInt())).thenReturn(List.of());
+        when(kb.search("en", question, null, 4)).thenReturn(List.of(phoneEn));
+        llmAnswers(new ParsedAnswer("Go to Me.", true, List.of("/profile/edit/phone")));
+
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest(question, "fr", List.of()));
+
+        assertThat(r.provider()).isEqualTo("groq");
+        assertThat(r.actions()).extracting("route").containsExactly("/profile/edit/phone");
+        assertThat(promptSent()).startsWith("<locale>fr</locale>\n<reply_language>question</reply_language>");
+    }
+
+    @Test
+    void leRepliDeLangueReprendAussiLaRechercheDeRelance() {
+        List<AssistantHistoryTurn> history = List.of(new AssistantHistoryTurn("user", "Comment recharger mon solde ?"));
+        when(kb.search(eq("en"), anyString(), any(), anyInt())).thenReturn(List.of());
+        when(kb.search("fr", Q2, "Comment recharger mon solde ?", 4)).thenReturn(List.of());
+        when(kb.search("fr", Q2 + "\nComment recharger mon solde ?", null, 4)).thenReturn(List.of(other));
+        llmAnswers(new ParsedAnswer("ok", true, List.of()));
+
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest(Q2, "en", history));
+
+        assertThat(r.sources()).containsExactly("parrainage");
+        verify(kb).search("en", Q2 + "\nComment recharger mon solde ?", null, 4);
+        assertThat(promptSent()).contains("<reply_language>question</reply_language>");
+    }
+
+    @Test
+    void questionIntrouvableDansLesDeuxLanguesNAppellePasLIA() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of());
+
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest("Recette du thiéboudienne", "en", List.of()));
+
+        // Message dans la langue de l'interface.
+        assertThat(r.answer()).startsWith("I could not find");
+        assertThat(r.provider()).isEqualTo("none");
+        verify(kb).search("en", "Recette du thiéboudienne", null, 4);
+        verify(kb).search("fr", "Recette du thiéboudienne", null, 4);
+        verify(router, never()).complete(anyString(), anyString(), any());
+    }
+
+    @Test
+    void langueDemandeeQuiTrouveDejaNeCherchePasDansLAutre() {
+        when(kb.search(eq("en"), anyString(), any(), anyInt())).thenReturn(List.of(phoneEn));
+        llmAnswers(new ParsedAnswer("ok", true, List.of()));
+
+        service.ask("uid", new AssistantAskRequest("How do I change my number?", "en", List.of()));
+
+        verify(kb, never()).search(eq("fr"), anyString(), any(), anyInt());
+        assertThat(promptSent()).startsWith("<locale>en</locale>\n<articles>").doesNotContain("reply_language");
+    }
+
+    @Test
+    void repliDeLangueEnModeDegradeGardeLesRoutesDesFiches() {
+        when(kb.search(eq("en"), anyString(), any(), anyInt())).thenReturn(List.of());
+        when(kb.search(eq("fr"), anyString(), any(), anyInt())).thenReturn(List.of(phone, trip));
+        when(router.complete(anyString(), anyString(), any())).thenReturn(Optional.empty());
+
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest("Où je change mon numéro ?", "en", List.of()));
+
+        assertThat(r.answer()).startsWith("I can't answer right now");
+        assertThat(r.actions()).extracting("route").containsExactly("/profile/edit/phone", "/trips/create");
     }
 }

@@ -67,13 +67,20 @@ public class AssistantService {
                 .reduce((first, second) -> second).map(AssistantHistoryTurn::text).orElse(null);
 
         List<KbHit> hits = searchWithContext(locale, question, previous, history);
+        // Téléphone en anglais mais question écrite en français (FLUTTER-QV, appareil en-FR), ou l'inverse :
+        // rien dans l'index de la langue de l'interface, on refait les mêmes recherches dans l'autre langue.
+        boolean otherLanguage = false;
+        if (hits.isEmpty()) {
+            hits = searchWithContext(otherLocale(locale), question, previous, history);
+            otherLanguage = !hits.isEmpty();
+        }
         List<String> sources = hits.stream().map(h -> h.article().id()).toList();
         if (hits.isEmpty()) {
             return new AssistantAskResponse(NOT_FOUND.get(locale), false, List.of(), List.of(), NO_PROVIDER, remaining);
         }
 
         Optional<LlmResult<ParsedAnswer>> result = router.complete(
-                promptBuilder.system(), promptBuilder.user(locale, hits, history, question), parser::parse);
+                promptBuilder.system(), promptBuilder.user(locale, hits, history, question, otherLanguage), parser::parse);
         if (result.isEmpty()) {
             List<AssistantAction> fallback = new ArrayList<>();
             for (KbHit hit : hits) {
@@ -167,6 +174,11 @@ public class AssistantService {
             }
         }
         return route.substring(0, cut);
+    }
+
+    /** Les fiches existent en français et en anglais, avec les mêmes identifiants et les mêmes routes. */
+    private static String otherLocale(String locale) {
+        return "en".equals(locale) ? "fr" : "en";
     }
 
     /** Langue : « en », « EN » ou « en-US » donnent anglais ; tout le reste français. */
