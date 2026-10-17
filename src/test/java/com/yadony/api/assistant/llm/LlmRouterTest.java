@@ -40,7 +40,7 @@ class LlmRouterTest {
         public Clock withZone(ZoneId z) { return this; }
         public Instant instant() { return now.get(); }
     };
-    private final ProviderHealthRegistry health = new ProviderHealthRegistry(clock);
+    private final ProviderHealthRegistry health = new ProviderHealthRegistry(new InMemoryProviderDailyUsageStore(), clock);
     private final LlmRouter router = new LlmRouter(catalog, client, health, clock);
     private final Function<String, String> identity = s -> s;
 
