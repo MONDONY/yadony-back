@@ -54,7 +54,9 @@ public class AdminQueueCounter {
                 countHeldPayouts(),
                 countPendingWalletRefunds(),
                 countPendingGdpr(),
-                countUnresolvedAlerts());
+                countUnresolvedAlerts(),
+                countGpProPending(),
+                countGpProReview());
     }
 
     /** Onglet « Ouverts » de {@code /signalements}. */
@@ -107,6 +109,20 @@ public class AdminQueueCounter {
     public long countUnresolvedAlerts() {
         return em.createQuery(
                         "SELECT COUNT(a) FROM AdminAlertEntity a WHERE a.resolved = false", Long.class)
+                .getSingleResult();
+    }
+
+    /** Meme definition que la file {@code GET /admin/gp-pro/applications?status=PENDING}. */
+    long countGpProPending() {
+        return em.createQuery("SELECT COUNT(a) FROM GpProApplicationEntity a WHERE a.status = :pending", Long.class)
+                .setParameter("pending", com.yadony.api.gppro.GpProApplicationStatus.PENDING)
+                .getSingleResult();
+    }
+
+    /** Personnes distinctes ayant un signalement de revue actif (ni résolu ni écarté). */
+    long countGpProReview() {
+        return em.createQuery("SELECT COUNT(DISTINCT f.userId) FROM GpProReviewFlagEntity f "
+                        + "WHERE f.resolvedAt IS NULL AND f.dismissedAt IS NULL", Long.class)
                 .getSingleResult();
     }
 

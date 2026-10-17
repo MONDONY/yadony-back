@@ -94,7 +94,8 @@ public class AdminNotificationService {
                 || permissions.contains(AdminPermission.USER_KYC)
                 || permissions.contains(AdminPermission.PAYMENT_VIEW)
                 || permissions.contains(AdminPermission.USER_GDPR_DELETE)
-                || permissions.contains(AdminPermission.ALERT_VIEW);
+                || permissions.contains(AdminPermission.ALERT_VIEW)
+                || permissions.contains(AdminPermission.GP_PRO_REVIEW);
         if (anyQueue) {
             AdminQueueSnapshot q = cache.queues();
             putIf(counts, permissions, AdminPermission.REPORT_VIEW, "reports", q.openReports());
@@ -106,6 +107,8 @@ public class AdminNotificationService {
             putIf(counts, permissions, AdminPermission.PAYMENT_VIEW, "walletRefunds", q.pendingWalletRefunds());
             putIf(counts, permissions, AdminPermission.USER_GDPR_DELETE, "gdpr", q.pendingGdpr());
             putIf(counts, permissions, AdminPermission.ALERT_VIEW, "alerts", q.unresolvedAlerts());
+            putIf(counts, permissions, AdminPermission.GP_PRO_REVIEW, "gpPro", q.gpProPending());
+            putIf(counts, permissions, AdminPermission.GP_PRO_REVIEW, "gpProReview", q.gpProReview());
         }
         Instant now = clock.instant();
         Unread unread = unread(AdminNotificationType.visibleTo(permissions), lastSeen(adminId, now),
