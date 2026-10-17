@@ -130,6 +130,9 @@ public class AdminBidCancellationService {
 
         releaseCapacityIfReserved(bid, announcement);
         bid.setStatus(BidStatus.CANCELLED);
+        bid.setRejectionReason(request.reason() == AdminBidCancelReason.TRAVELER_UNAVAILABLE
+                ? BidEntity.REJECTION_TEAM_TRAVELER_UNAVAILABLE
+                : BidEntity.REJECTION_TEAM_CANCELLED);
         bidRepository.save(bid);
 
         boolean refundRequested = refundable;
