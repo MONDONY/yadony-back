@@ -46,8 +46,15 @@ public interface SmsOtpRepository extends JpaRepository<SmsOtpEntity, UUID> {
      * Invalide les codes encore actifs : à l'envoi d'un nouveau code (seul le dernier
      * reste valable) et après une vérification réussie (sinon le code précédent,
      * toujours dans sa validité, redevenait le « dernier non utilisé »).
+     *
+     * <p>Par expiration et non par {@code usedAt} : {@code usedAt} ne marque ainsi
+     * qu'une connexion réussie, ce que compte la limite de connexions.
      */
     @Modifying
-    @Query("UPDATE SmsOtpEntity s SET s.usedAt = :now WHERE s.phoneNumber = :phone AND s.usedAt IS NULL")
+    @Query("UPDATE SmsOtpEntity s SET s.expiresAt = :now WHERE s.phoneNumber = :phone AND s.usedAt IS NULL AND s.expiresAt > :now")
     int invalidateActive(@Param("phone") String phone, @Param("now") LocalDateTime now);
+
+    /** Connexions réussies par ce numéro depuis {@code since} (codes consommés). */
+    @Query("SELECT COUNT(s) FROM SmsOtpEntity s WHERE s.phoneNumber = :phone AND s.usedAt > :since")
+    long countSuccessfulSince(@Param("phone") String phone, @Param("since") LocalDateTime since);
 }
