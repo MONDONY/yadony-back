@@ -296,6 +296,31 @@ class BidNegotiationServiceTest {
             assertThat(response.round()).isEqualTo(1);
             assertThat(response.maxRounds()).isEqualTo(3);
             assertThat(response.proposedGrossEur()).isEqualByComparingTo("45.00");
+            assertThat(response.counterpartyGpPro()).isFalse();
+        }
+
+        @Test
+        @DisplayName("la contrepartie GP Pro est signalée à l'expéditeur")
+        void propose_exposesTravelerGpProBadge() {
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+            UserEntity traveler = buildTraveler();
+            traveler.setGpPro(true);
+
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID))
+                    .thenReturn(Optional.of(announcement));
+            when(bidService.assertCanBidOn(sender, announcement, "CLOTHING")).thenReturn("CLOTHING");
+            when(bidService.resolvePaymentMethodFor(announcement, "CASH"))
+                    .thenReturn(com.yadony.api.payments.cash.PaymentMethod.CASH);
+            when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID)).thenReturn(new BigDecimal("0.05"));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            stubSavedBid();
+
+            BidNegotiationResponse response = service.propose(
+                    ANNOUNCEMENT_ID, SENDER_UID, buildStartRequest(new BigDecimal("45.00")), httpRequest);
+
+            assertThat(response.counterpartyGpPro()).isTrue();
         }
 
         @Test
