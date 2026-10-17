@@ -266,9 +266,7 @@ public class NegotiationService {
             if (req.dedicatedTrip() == null) {
                 throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "dedicated-trip-invalid");
             }
-            java.time.LocalDate from = request.getDesiredDate().minusDays(request.getDateToleranceDays());
-            java.time.LocalDate to = request.getDesiredDate().plusDays(request.getDateToleranceDays());
-            if (req.dedicatedTrip().departureDate().isBefore(from) || req.dedicatedTrip().departureDate().isAfter(to)) {
+            if (!fitsRequestDateWindow(request, req.dedicatedTrip().departureDate())) {
                 throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "announcement/date-mismatch");
             }
             availableMethods = computeAvailableMethods(request, traveler);
@@ -823,6 +821,24 @@ public class NegotiationService {
      */
 
     /**
+     * Fenêtre de dates acceptée pour le trajet d'une demande. Datée : date ± tolérance.
+     * Sans date (« Date flexible », V328) : toute date à partir d'aujourd'hui, le trajet
+     * proposé, lié ou créé n'a qu'à ne pas être déjà passé.
+     */
+    static boolean fitsRequestDateWindow(PackageRequestEntity request, java.time.LocalDate tripDate) {
+        if (tripDate == null) {
+            return false;
+        }
+        if (request.getDesiredDate() == null) {
+            return !tripDate.isBefore(java.time.LocalDate.now());
+        }
+        int tolerance = request.getDateToleranceDays() != null ? request.getDateToleranceDays() : 0;
+        java.time.LocalDate from = request.getDesiredDate().minusDays(tolerance);
+        java.time.LocalDate to = request.getDesiredDate().plusDays(tolerance);
+        return !tripDate.isBefore(from) && !tripDate.isAfter(to);
+    }
+
+    /**
      * Valide qu'une announcement existante peut porter ce package_request :
      * appartient à l'appelant, ACTIVE, capacité suffisante, corridor et fenêtre
      * de dates compatibles. Partagée par {@link #submitTrip} (thread
@@ -862,10 +878,7 @@ public class NegotiationService {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                 "announcement/currency-mismatch");
         }
-        java.time.LocalDate annDate = ann.getDepartureDate();
-        java.time.LocalDate from = request.getDesiredDate().minusDays(request.getDateToleranceDays());
-        java.time.LocalDate to = request.getDesiredDate().plusDays(request.getDateToleranceDays());
-        if (annDate.isBefore(from) || annDate.isAfter(to)) {
+        if (!fitsRequestDateWindow(request, ann.getDepartureDate())) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                 "announcement/date-mismatch");
         }
@@ -1026,10 +1039,9 @@ public class NegotiationService {
         java.util.Set<PaymentMethod> available = computeAvailableMethods(request, traveler);
         assertNonEmptyOrThrow(available, request.getAcceptedPaymentMethods());
 
-        // Validate the chosen date falls within the sender's tolerance window.
-        java.time.LocalDate from = request.getDesiredDate().minusDays(request.getDateToleranceDays());
-        java.time.LocalDate to = request.getDesiredDate().plusDays(request.getDateToleranceDays());
-        if (req.departureDate().isBefore(from) || req.departureDate().isAfter(to)) {
+        // Validate the chosen date falls within the sender's tolerance window
+        // (any non-past date when the request has no date, « Date flexible »).
+        if (!fitsRequestDateWindow(request, req.departureDate())) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                 "announcement/date-mismatch");
         }

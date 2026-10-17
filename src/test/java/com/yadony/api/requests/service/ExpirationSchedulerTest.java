@@ -68,6 +68,24 @@ class ExpirationSchedulerTest {
     }
 
     @Test
+    @DisplayName("expireRequests() expire aussi les demandes sans date créées il y a plus de 60 jours")
+    void expireRequests_flexibleDate_sixtyDaysAfterCreation() {
+        PackageRequestEntity flexible = request(PackageRequestStatus.OPEN);
+        when(requestRepo.findExpired(any(LocalDate.class))).thenReturn(List.of());
+        ArgumentCaptor<LocalDateTime> cutoff = ArgumentCaptor.forClass(LocalDateTime.class);
+        when(requestRepo.findFlexibleExpired(cutoff.capture())).thenReturn(List.of(flexible));
+
+        LocalDateTime before = LocalDateTime.now(java.time.ZoneOffset.UTC);
+        scheduler.expireRequests();
+        LocalDateTime after = LocalDateTime.now(java.time.ZoneOffset.UTC);
+
+        verify(runner).expireRequest(flexible.getId());
+        Assertions.assertEquals(60, ExpirationScheduler.FLEXIBLE_REQUEST_LIFETIME_DAYS);
+        Assertions.assertFalse(cutoff.getValue().isBefore(before.minusDays(60)));
+        Assertions.assertFalse(cutoff.getValue().isAfter(after.minusDays(60)));
+    }
+
+    @Test
     @DisplayName("expireRequests() délègue chaque request expirée au runner (par id)")
     void expireRequests_delegatesPerItem() {
         PackageRequestEntity r = request(PackageRequestStatus.OPEN);

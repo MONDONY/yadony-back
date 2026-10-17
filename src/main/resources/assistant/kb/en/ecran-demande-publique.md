@@ -1,7 +1,7 @@
 ---
 id: ecran-demande-publique
 title: The Shipping request screen
-keywords: shipping request screen, what is this screen for, sender request, propose my trip, take this parcel, fixed price, traveler
+keywords: shipping request screen, flexible date, what is this screen for, sender request, propose my trip, take this parcel, fixed price, traveler
 screens:
   - /package-requests/:id/public
 questions:
@@ -12,4 +12,4 @@ routes:
   - path: /negotiations
     label: Price discussions
 ---
-You are viewing a sender's shipping request: trip, desired date, weight, content, budget and "Accepted payment methods". If the price is negotiable, tap "Propose my trip"; if it is a fixed price, "Take this parcel". If you already have an offer in progress, the button becomes "View my negotiation" or "View my proposal". A request that only accepts card requires you to have activated card payments. The "Report" icon lets you report a suspicious request.
+You are viewing a sender's shipping request: trip, desired date ("Flexible date" when the sender set none: any upcoming departure suits them), weight, content, budget and "Accepted payment methods". Negotiable price: tap "Propose my trip"; fixed price: "Take this parcel". With an offer in progress, the button becomes "View my negotiation" or "View my proposal". A request that only accepts card requires you to have activated card payments. The "Report" icon lets you report a suspicious request.

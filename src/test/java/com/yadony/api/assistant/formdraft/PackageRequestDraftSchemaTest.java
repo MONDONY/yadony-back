@@ -39,6 +39,19 @@ class PackageRequestDraftSchemaTest {
     }
 
     @Test
+    void dateFacultative_brouillonCompletSansDate_toleranceIgnoree() {
+        Map<String, Object> raw = exemple();
+        raw.remove("desiredDate");
+        Map<String, Object> d = schema.sanitize(raw, ctx);
+        // « Date flexible » : pas de relance sur la date, et une tolérance seule n'a pas de sens.
+        assertThat(schema.missing(d)).isEmpty();
+        assertThat(d).doesNotContainKeys("desiredDate", "dateToleranceDays");
+        assertThat(schema.understood(d)).doesNotContain("date", "flexibility");
+        assertThat(schema.systemPrompt(ctx)).contains("OPTIONAL");
+        assertThat(schema.fallbackQuestion("desiredDate", "fr")).isEqualTo("Est-ce bien cela ?");
+    }
+
+    @Test
     void tailleCalculeeParLeServeurJamaisPriseDuModele() {
         Map<String, Object> raw = exemple();
         raw.put("weightKg", 20);

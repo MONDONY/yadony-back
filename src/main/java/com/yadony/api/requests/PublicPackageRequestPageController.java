@@ -51,6 +51,9 @@ public class PublicPackageRequestPageController {
     private static final DateTimeFormatter DATE_FMT =
             DateTimeFormatter.ofPattern("EEEE d MMMM yyyy", Locale.FRENCH);
 
+    /** Libellé d'une demande sans date de départ. */
+    static final String FLEXIBLE_DATE_LABEL = "Date flexible";
+
     private static final String VIEW = "public/demande";
 
     private final PackageRequestRepository packageRequestRepository;
@@ -106,20 +109,24 @@ public class PublicPackageRequestPageController {
         UUID packageRequestId = packageRequest.getId();
 
         String corridor = packageRequest.getDepartureCity() + " vers " + packageRequest.getArrivalCity();
-        String desiredDate = packageRequest.getDesiredDate().format(DATE_FMT);
+        // « Date flexible » (V328) : demande sans date, compatible avec tous les trajets.
+        boolean flexibleDate = packageRequest.getDesiredDate() == null;
+        String desiredDate = flexibleDate ? FLEXIBLE_DATE_LABEL : packageRequest.getDesiredDate().format(DATE_FMT);
 
         model.addAttribute("unavailable", false);
         model.addAttribute("departureCity", packageRequest.getDepartureCity());
         model.addAttribute("arrivalCity", packageRequest.getArrivalCity());
         model.addAttribute("desiredDate", desiredDate);
-        model.addAttribute("dateTolerance", toleranceLabel(packageRequest));
+        model.addAttribute("dateTolerance", flexibleDate ? null : toleranceLabel(packageRequest));
         // Libellés Open Graph assemblés ici plutôt que dans le gabarit, même raison que
         // pour la page trajet : une expression conditionnelle multiligne portant une
         // apostrophe française n'est pas analysable par Thymeleaf dans un attribut meta.
         model.addAttribute("pageTitle", "Demande " + corridor + " | Yadony");
         model.addAttribute("ogTitle", corridor);
         model.addAttribute("ogDescription",
-                "Colis souhaité le " + desiredDate + ". Proposez votre trajet sur Yadony.");
+                flexibleDate
+                        ? "Date de départ flexible. Proposez votre trajet sur Yadony."
+                        : "Colis souhaité le " + desiredDate + ". Proposez votre trajet sur Yadony.");
         model.addAttribute("weight", formatDecimal(packageRequest.getWeightKg()));
         model.addAttribute("sizeLabel", sizeLabel(packageRequest.getParcelSize()));
         model.addAttribute("categories", packageRequest.getContentCategory());

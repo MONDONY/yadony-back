@@ -221,8 +221,12 @@ public class PackageRequestInsightService {
     }
 
     private static boolean isWithinDateTolerance(LocalDate tripDate, LocalDate desiredDate, Short toleranceDays) {
-        if (tripDate == null || desiredDate == null) {
+        if (tripDate == null) {
             return false;
+        }
+        if (desiredDate == null) {
+            // « Date flexible » (V328) : tout trajet qui n'est pas déjà parti convient.
+            return !tripDate.isBefore(LocalDate.now());
         }
         int tolerance = toleranceDays == null ? 0 : toleranceDays;
         LocalDate earliest = desiredDate.minusDays(tolerance);

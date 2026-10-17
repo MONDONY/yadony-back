@@ -53,9 +53,17 @@ public class ExpirationScheduler {
         expireThreads();
     }
 
+    /** Durée de vie d'une demande sans date (« Date flexible ») : 60 jours après sa publication. */
+    static final int FLEXIBLE_REQUEST_LIFETIME_DAYS = 60;
+
     void expireRequests() {
         LocalDate cutoff = LocalDate.now(ZoneOffset.UTC);
         for (PackageRequestEntity req : requestRepo.findExpired(cutoff)) {
+            UUID id = req.getId();
+            safely(() -> runner.expireRequest(id), "request", id);
+        }
+        LocalDateTime flexibleCutoff = LocalDateTime.now(ZoneOffset.UTC).minusDays(FLEXIBLE_REQUEST_LIFETIME_DAYS);
+        for (PackageRequestEntity req : requestRepo.findFlexibleExpired(flexibleCutoff)) {
             UUID id = req.getId();
             safely(() -> runner.expireRequest(id), "request", id);
         }

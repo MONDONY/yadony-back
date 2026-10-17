@@ -37,6 +37,21 @@ public interface PackageRequestRepository
     """)
     List<PackageRequestEntity> findExpired(@Param("cutoffDate") LocalDate cutoffDate);
 
+    /**
+     * Demandes « Date flexible » (sans date, V328) ouvertes depuis trop longtemps :
+     * publiées avant {@code publishedBefore}. La publication est {@code disclaimerSignedAt}
+     * (posée à la création directe comme à la publication d'un brouillon), repli sur
+     * {@code createdAt} : un vieux brouillon publié aujourd'hui ne doit pas expirer demain.
+     * Sans date, {@link #findExpired} ne les voit jamais.
+     */
+    @Query("""
+        SELECT p FROM PackageRequestEntity p
+        WHERE p.status IN ('OPEN', 'NEGOTIATING')
+          AND p.desiredDate IS NULL
+          AND COALESCE(p.disclaimerSignedAt, p.createdAt) < :publishedBefore
+    """)
+    List<PackageRequestEntity> findFlexibleExpired(@Param("publishedBefore") java.time.LocalDateTime publishedBefore);
+
     @Query("""
         SELECT p FROM PackageRequestEntity p
         WHERE LOWER(p.departureCity) = LOWER(:departureCity)

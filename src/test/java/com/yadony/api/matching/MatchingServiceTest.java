@@ -180,6 +180,29 @@ class MatchingServiceTest {
         }
 
         @Test
+        void flexibleDateRequest_matchesAnyTripDate_withFlexibleDateScore() throws Exception {
+            PackageRequestEntity dated = buildRequest(5, activeAnnouncement.getDepartureDate(), 3);
+            when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
+                    .thenReturn(List.of(activeAnnouncement));
+            when(packageRequestRepository.findOpenByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(dated));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            int exactScore = matchingService.findMatchingRequests(TRAVELER_ID).get(0).matchScore();
+
+            // « Date flexible » : aucune date, la demande colle à tous les trajets du corridor.
+            PackageRequestEntity flexible = buildRequest(5, null, 0);
+            flexible.setDateToleranceDays(null);
+            when(packageRequestRepository.findOpenByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(flexible));
+
+            List<MatchingRequestDto> results = matchingService.findMatchingRequests(TRAVELER_ID);
+
+            assertThat(results).hasSize(1);
+            assertThat(results.get(0).matchScore())
+                    .isEqualTo(exactScore - 25 + MatchingService.FLEXIBLE_DATE_SCORE);
+        }
+
+        @Test
         void excludesRequest_whenWeightExceedsAvailableKg() throws Exception {
             PackageRequestEntity request = buildRequest(25, LocalDate.now().plusDays(10), 3);
             when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
@@ -289,6 +312,17 @@ class MatchingServiceTest {
             List<UUID> travelers = matchingService.findTravelersMatchingPackage(REQUEST_ID);
 
             assertThat(travelers).containsExactly(TRAVELER_ID);
+        }
+
+        @Test
+        void flexibleDateRequest_notifiesTravelerWhateverTheTripDate() throws Exception {
+            PackageRequestEntity request = buildRequest(5, null, 0);
+            request.setDateToleranceDays(null);
+            when(packageRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(announcementRepository.findActiveByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(activeAnnouncement));
+
+            assertThat(matchingService.findTravelersMatchingPackage(REQUEST_ID)).containsExactly(TRAVELER_ID);
         }
 
         @Test

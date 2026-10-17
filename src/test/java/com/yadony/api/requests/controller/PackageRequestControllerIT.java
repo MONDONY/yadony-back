@@ -142,6 +142,56 @@ class PackageRequestControllerIT {
     }
 
     @Test
+    void post_create_withoutDesiredDate_returns201_flexibleDate() throws Exception {
+        UUID newId = UUID.randomUUID();
+        PackageRequestResponse base = fakeResponse(newId);
+        PackageRequestResponse flexible = new PackageRequestResponse(
+            newId, SENDER_UUID, "Paris", "Dakar",
+            null, 0,
+            new BigDecimal("5"), ParcelSize.SMALL,
+            com.yadony.api.matching.TransportMode.PLANE,
+            "vetements", "Cadeau", new BigDecimal("25"), null, "10e", "Plateau",
+            PackageRequestStatus.OPEN, base.createdAt(), true,
+            java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE),
+            new BigDecimal("28.00"), List.of(), null, null);
+        org.mockito.ArgumentCaptor<PackageRequestCreateRequest> captor =
+            org.mockito.ArgumentCaptor.forClass(PackageRequestCreateRequest.class);
+        when(service.create(eq(SENDER_UUID), captor.capture())).thenReturn(flexible);
+
+        // Corps sans desiredDate ni dateToleranceDays : « Date flexible ».
+        String body = """
+            {"departureCity":"Paris","arrivalCity":"Dakar","weightKg":5,
+             "contentCategory":"vetements","totalBudgetEur":28.00,"negotiable":true,
+             "acceptedPaymentMethods":["STRIPE"]}
+            """;
+        mockMvc.perform(post("/package-requests")
+                .with(authentication(authAs("uid-sender", "SENDER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.id").value(newId.toString()))
+            // NON_NULL global : une date nulle est omise du JSON.
+            .andExpect(jsonPath("$.desiredDate").doesNotExist());
+
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().desiredDate()).isNull();
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().dateToleranceDays()).isNull();
+    }
+
+    @Test
+    void post_create_desiredDateInPast_returns4xx() throws Exception {
+        String body = """
+            {"departureCity":"Paris","arrivalCity":"Dakar","desiredDate":"2020-01-01","dateToleranceDays":2,
+             "weightKg":5,"contentCategory":"vetements","totalBudgetEur":28.00,"negotiable":true,
+             "acceptedPaymentMethods":["STRIPE"]}
+            """;
+        mockMvc.perform(post("/package-requests")
+                .with(authentication(authAs("uid-sender", "SENDER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+            .andExpect(status().is4xxClientError());
+    }
+
+    @Test
     void post_create_withoutSenderRole_returns403() throws Exception {
         mockMvc.perform(post("/package-requests")
                 .with(authentication(authAs("uid-traveler", "TRAVELER")))

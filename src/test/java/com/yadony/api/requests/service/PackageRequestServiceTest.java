@@ -171,6 +171,66 @@ class PackageRequestServiceTest {
             verify(auditService).log(eq("PACKAGE_REQUEST"), any(UUID.class), eq("CREATED"), eq(SENDER_ID), anyMap());
         }
 
+        @Test @DisplayName("création sans date (« Date flexible ») → date et tolérance nulles, event + 0 en sortie")
+        void create_withoutDesiredDate_persistsFlexibleRequest() {
+            when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+            ArgumentCaptor<PackageRequestEntity> captor = ArgumentCaptor.forClass(PackageRequestEntity.class);
+            when(repository.save(captor.capture())).thenAnswer(inv -> {
+                PackageRequestEntity e = inv.getArgument(0);
+                setId(e, UUID.randomUUID());
+                return e;
+            });
+
+            PackageRequestCreateRequest req = new PackageRequestCreateRequest(
+                "Paris", "Dakar", null, null,
+                new BigDecimal("5"), "vetements", null, new BigDecimal("30.00"),
+                null, null, null, true, EnumSet.of(PaymentMethod.STRIPE),
+                List.of(), null, null, null);
+            var response = service.create(SENDER_ID, req);
+
+            assertThat(captor.getValue().getDesiredDate()).isNull();
+            assertThat(captor.getValue().getDateToleranceDays()).isNull();
+            assertThat(response.desiredDate()).isNull();
+            assertThat(response.dateToleranceDays()).isZero();
+            assertThat(response.status()).isEqualTo(PackageRequestStatus.OPEN);
+            ArgumentCaptor<PackageRequestCreatedEvent> event = ArgumentCaptor.forClass(PackageRequestCreatedEvent.class);
+            verify(eventPublisher).publishEvent(event.capture());
+            assertThat(event.getValue().desiredDate()).isNull();
+        }
+
+        @Test @DisplayName("création avec date mais sans tolérance → tolérance par défaut 2 jours")
+        void create_withDateWithoutTolerance_defaultsToTwoDays() {
+            when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+            ArgumentCaptor<PackageRequestEntity> captor = ArgumentCaptor.forClass(PackageRequestEntity.class);
+            when(repository.save(captor.capture())).thenAnswer(inv -> {
+                PackageRequestEntity e = inv.getArgument(0);
+                setId(e, UUID.randomUUID());
+                return e;
+            });
+            LocalDate date = LocalDate.now().plusDays(10);
+
+            PackageRequestCreateRequest req = new PackageRequestCreateRequest(
+                "Paris", "Dakar", date, null,
+                new BigDecimal("5"), "vetements", null, new BigDecimal("30.00"),
+                null, null, null, true, EnumSet.of(PaymentMethod.STRIPE),
+                List.of(), null, null, null);
+            service.create(SENDER_ID, req);
+
+            assertThat(captor.getValue().getDesiredDate()).isEqualTo(date);
+            assertThat(captor.getValue().getDateToleranceDays()).isEqualTo((short) 2);
+        }
+
+        @Test @DisplayName("resolveDateTolerance : sans date → null, quelle que soit la tolérance reçue")
+        void resolveDateTolerance_ignoresToleranceWithoutDate() {
+            assertThat(PackageRequestService.resolveDateTolerance(null, 5)).isNull();
+            assertThat(PackageRequestService.resolveDateTolerance(LocalDate.now(), 5)).isEqualTo((short) 5);
+            assertThat(PackageRequestService.resolveDateTolerance(LocalDate.now(), null)).isEqualTo((short) 2);
+        }
+
         // La devise borne les rails : une demande en francs CFA n'enregistre jamais la carte,
         // sinon le fil de négociation la propose et le paiement échoue au dernier moment.
         @Test @DisplayName("création en XOF déclarant la carte → carte retirée, espèces gardées")
@@ -1028,6 +1088,42 @@ class PackageRequestServiceTest {
             verify(repository).save(entity);
             verify(auditService).log(eq("PACKAGE_REQUEST"), eq(entity.getId()),
                 eq("UPDATED"), eq(SENDER_ID), any());
+        }
+
+        @Test @DisplayName("update() qui retire la date → « Date flexible », tolérance nulle")
+        void update_removesDesiredDate_becomesFlexible() {
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+            when(threadRepository.findByPackageRequestId(entity.getId())).thenReturn(List.of());
+            when(repository.save(any(PackageRequestEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            var req = new PackageRequestCreateRequest(
+                "Paris", "Dakar", null, 3,
+                new BigDecimal("5"), "vetements", "desc",
+                new BigDecimal("56.00"), null, null, null,
+                true, EnumSet.of(PaymentMethod.STRIPE), List.of(), null, null, null);
+
+            var resp = service.update(SENDER_ID, entity.getId(), req);
+
+            assertThat(entity.getDesiredDate()).isNull();
+            assertThat(entity.getDateToleranceDays()).isNull();
+            assertThat(resp.desiredDate()).isNull();
+        }
+
+        @Test @DisplayName("update() avec une date à plus de 90 jours → 422 date-too-far")
+        void update_dateTooFar_throws422() {
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+
+            var req = new PackageRequestCreateRequest(
+                "Paris", "Dakar", LocalDate.now().plusDays(120), 3,
+                new BigDecimal("5"), "vetements", "desc",
+                new BigDecimal("56.00"), null, null, null,
+                true, EnumSet.of(PaymentMethod.STRIPE), List.of(), null, null, null);
+
+            assertThatThrownBy(() -> service.update(SENDER_ID, entity.getId(), req))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("date-too-far");
         }
 
         // C2 : normalisation à l'écriture — s'applique aussi à update().
@@ -2305,6 +2401,25 @@ class PackageRequestServiceTest {
             verify(eventPublisher).publishEvent(any(PackageRequestCreatedEvent.class));
             verify(auditService).log(eq("PACKAGE_REQUEST"), eq(id), eq("PUBLISHED"),
                     eq(SENDER_ID), any());
+        }
+
+        @Test @DisplayName("brouillon sans date → publié tel quel (« Date flexible »)")
+        void publish_draftWithoutDate_becomesOpen() {
+            UUID id = UUID.randomUUID();
+            PackageRequestEntity e = draft(id);
+            e.setDesiredDate(null);
+            e.setDateToleranceDays(null);
+            when(repository.findByIdForUpdate(id)).thenReturn(Optional.of(e));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+            when(repository.save(any(PackageRequestEntity.class))).thenAnswer(i -> i.getArgument(0));
+
+            var resp = service.publish(SENDER_ID, id);
+
+            assertThat(e.getStatus()).isEqualTo(PackageRequestStatus.OPEN);
+            assertThat(resp.desiredDate()).isNull();
+            verify(eventPublisher).publishEvent(any(PackageRequestCreatedEvent.class));
         }
 
         @Test @DisplayName("non-propriétaire → 404 (ne révèle pas l'existence)")

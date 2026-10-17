@@ -266,7 +266,8 @@ public class PackageRequestService {
         if (req.departureCity().equalsIgnoreCase(req.arrivalCity())) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "request/invalid-corridor");
         }
-        if (req.desiredDate().isAfter(LocalDate.now().plusDays(90))) {
+        // Date facultative (V328) : sans date, rien à borner.
+        if (req.desiredDate() != null && req.desiredDate().isAfter(LocalDate.now().plusDays(90))) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "request/date-too-far");
         }
         // Un brouillon peut rester sans budget décidé — le prix ferme n'est exigé
@@ -298,7 +299,7 @@ public class PackageRequestService {
         entity.setDepartureCity(req.departureCity());
         entity.setArrivalCity(req.arrivalCity());
         entity.setDesiredDate(req.desiredDate());
-        entity.setDateToleranceDays((short) req.dateToleranceDays());
+        entity.setDateToleranceDays(resolveDateTolerance(req.desiredDate(), req.dateToleranceDays()));
         entity.setWeightKg(req.weightKg());
         entity.setParcelSize(ParcelSize.fromWeightKg(req.weightKg()));
         entity.setTransportMode(com.yadony.api.matching.TransportMode.PLANE);
@@ -390,7 +391,8 @@ public class PackageRequestService {
         if (req.departureCity().equalsIgnoreCase(req.arrivalCity())) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "request/invalid-corridor");
         }
-        if (req.desiredDate().isAfter(LocalDate.now().plusDays(90))) {
+        // Date facultative (V328) : sans date, rien à borner.
+        if (req.desiredDate() != null && req.desiredDate().isAfter(LocalDate.now().plusDays(90))) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "request/date-too-far");
         }
         // Même règle qu'à la création : un brouillon n'exige pas de budget décidé.
@@ -417,7 +419,7 @@ public class PackageRequestService {
         entity.setDepartureCity(req.departureCity());
         entity.setArrivalCity(req.arrivalCity());
         entity.setDesiredDate(req.desiredDate());
-        entity.setDateToleranceDays((short) req.dateToleranceDays());
+        entity.setDateToleranceDays(resolveDateTolerance(req.desiredDate(), req.dateToleranceDays()));
         entity.setWeightKg(req.weightKg());
         entity.setParcelSize(ParcelSize.fromWeightKg(req.weightKg()));
         // Normalisé à l'écriture (C2) — cf. ContentCategoryNormalizer javadoc.
@@ -483,10 +485,11 @@ public class PackageRequestService {
         if (entity.getDepartureCity().equalsIgnoreCase(entity.getArrivalCity())) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "request/invalid-corridor");
         }
-        if (entity.getDesiredDate().isBefore(LocalDate.now())) {
+        // Brouillon sans date = « Date flexible » : publiable tel quel.
+        if (entity.getDesiredDate() != null && entity.getDesiredDate().isBefore(LocalDate.now())) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "request/desired-date-in-past");
         }
-        if (entity.getDesiredDate().isAfter(LocalDate.now().plusDays(90))) {
+        if (entity.getDesiredDate() != null && entity.getDesiredDate().isAfter(LocalDate.now().plusDays(90))) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "request/date-too-far");
         }
         requireTargetPrice(entity.getTargetPriceEur());
@@ -1210,5 +1213,19 @@ public class PackageRequestService {
         if (promoCode == null) return null;
         String trimmed = promoCode.strip();
         return trimmed.isEmpty() ? null : trimmed.toUpperCase();
+    }
+
+    /** Tolérance par défaut quand une date est donnée sans tolérance (valeur historique de V57). */
+    static final short DEFAULT_DATE_TOLERANCE_DAYS = 2;
+
+    /**
+     * Sans date (« Date flexible »), la tolérance n'a pas de sens : stockée null.
+     * Avec une date mais sans tolérance, retombe sur {@link #DEFAULT_DATE_TOLERANCE_DAYS}.
+     */
+    static Short resolveDateTolerance(LocalDate desiredDate, Integer toleranceDays) {
+        if (desiredDate == null) {
+            return null;
+        }
+        return toleranceDays == null ? DEFAULT_DATE_TOLERANCE_DAYS : toleranceDays.shortValue();
     }
 }

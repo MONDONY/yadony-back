@@ -203,6 +203,9 @@ public class MatchingService {
      * poids et la fenêtre de date. Point d'extension unique — ajouter un critère
      * ici le propage aux deux chemins.
      */
+    /** Score de date d'une demande sans date (« Date flexible ») : exacte = 25, proche = 15. */
+    static final int FLEXIBLE_DATE_SCORE = 20;
+
     private boolean matches(PackageRequestEntity request, AnnouncementEntity announcement) {
         return fitsWeight(request, announcement) && fitsDate(request, announcement);
     }
@@ -212,6 +215,10 @@ public class MatchingService {
     }
 
     private boolean fitsDate(PackageRequestEntity request, AnnouncementEntity announcement) {
+        // « Date flexible » (V328) : une demande sans date accepte toutes les dates.
+        if (request.getDesiredDate() == null) {
+            return true;
+        }
         long daysDiff = Math.abs(ChronoUnit.DAYS.between(
                 request.getDesiredDate(), announcement.getDepartureDate()));
         return daysDiff <= request.getDateToleranceDays();
@@ -287,10 +294,14 @@ public class MatchingService {
             budgetScore = 5;
         }
 
-        long daysDiff = Math.abs(ChronoUnit.DAYS.between(
-                request.getDesiredDate(), announcement.getDepartureDate()));
         int dateScore;
-        if (daysDiff <= request.getDateToleranceDays()) {
+        long daysDiff = request.getDesiredDate() == null ? 0L : Math.abs(ChronoUnit.DAYS.between(
+                request.getDesiredDate(), announcement.getDepartureDate()));
+        if (request.getDesiredDate() == null) {
+            // Compatible avec toutes les dates, mais sans date précise qui colle au trajet :
+            // un cran sous la correspondance exacte, au-dessus du « presque ».
+            dateScore = FLEXIBLE_DATE_SCORE;
+        } else if (daysDiff <= request.getDateToleranceDays()) {
             dateScore = 25;
         } else if (daysDiff <= request.getDateToleranceDays() + 3L) {
             dateScore = 15;

@@ -119,6 +119,35 @@ class AlertServiceMatchesTest {
         assertThat(matches.get(0).weightKg()).isEqualTo(3.0);
     }
 
+    /** « Date flexible » : une demande sans date remonte quelle que soit la fenêtre de l'alerte. */
+    @Test
+    void getMatches_flexibleDatePackage_matchesAnyWindow_withNullDate() {
+        PackageRequestEntity flexible = pkg("Documents", new BigDecimal("3.00"), null);
+        flexible.setDateToleranceDays(null);
+
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(alert(true)));
+        when(packageRequestRepository.findOpenByCorridor("Paris", "Bamako")).thenReturn(List.of(flexible));
+        when(userRepository.findAllById(anyCollection()))
+                .thenReturn(List.of(senderWithId(flexible.getSenderId())));
+
+        List<MatchingRequestDto> matches = service.getMatches(uid, alertId);
+
+        assertThat(matches).hasSize(1);
+        // L'app parse ce champ en DateTime : null plutôt qu'un libellé.
+        assertThat(matches.get(0).tripDepartureDate()).isNull();
+    }
+
+    @Test
+    void findTravelerAlertsMatchingPackage_flexibleDatePackage_matchesDatedAlert() {
+        PackageRequestEntity flexible = pkg("Documents", new BigDecimal("3.00"), null);
+        flexible.setDateToleranceDays(null);
+        CorridorAlertEntity a = alert(true);
+        when(alertRepository.findAllByActiveTrueAndDirection(AlertDirection.TRAVELER_WANTS_PACKAGES))
+                .thenReturn(List.of(a));
+
+        assertThat(service.findTravelerAlertsMatchingPackage(flexible)).containsExactly(a);
+    }
+
     /** Symétrique côté voyageur : le colis d'un expéditeur bloqué ne remonte pas. */
     @Test
     void getMatches_omitsBlockedSenders() {

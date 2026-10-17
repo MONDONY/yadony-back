@@ -142,6 +142,23 @@ class ActivationRepositoryIT {
     }
 
     @Test
+    void packagesTowards_includeFlexibleDateRequests_sortedLast() {
+        UUID me = verifiedUser();
+        UUID other = verifiedUser();
+        data.city("Thies-flex", "SN");
+        UUID flexible = data.packageRequest(other, "Paris", "Thies-flex", null, PackageRequestStatus.OPEN);
+        UUID dated = data.packageRequest(other, "Paris", "Thies-flex", LocalDate.now().plusDays(4), PackageRequestStatus.OPEN);
+
+        LocalDate from = LocalDate.now();
+        LocalDate to = from.plusDays(15);
+        assertThat(repository.countPackagesTowards("SN", from, to, me)).isEqualTo(2);
+        var rows = repository.findPackagesTowards("SN", from, to, me, 3);
+        // « Date flexible » : compte dans la fenêtre, mais passe après les demandes datées.
+        assertThat(rows).extracting(r -> UUID.fromString(r.getId())).containsExactly(dated, flexible);
+        assertThat(rows.get(1).getDesiredDate()).isNull();
+    }
+
+    @Test
     void candidates_firstAndSecondReminders() {
         Instant now = Instant.now();
         UUID due1 = data.user(KycStatus.VERIFIED, now.minus(30, ChronoUnit.HOURS), 0);
