@@ -166,6 +166,8 @@ jobs:
           # Les clés des fournisseurs ne passent pas par ici : elles se saisissent dans l'admin (chiffrées en base).
           ASSISTANT_ENABLED=${{ vars.ASSISTANT_ENABLED || 'false' }}
           ASSISTANT_DAILY_QUOTA=${{ vars.ASSISTANT_DAILY_QUOTA || '20' }}
+          ASSISTANT_FORM_DRAFT_ENABLED=${{ vars.ASSISTANT_FORM_DRAFT_ENABLED || 'false' }}
+          ASSISTANT_FORM_DRAFT_DAILY_QUOTA=${{ vars.ASSISTANT_FORM_DRAFT_DAILY_QUOTA || '30' }}
           STORE_OS_REDIRECT_ENABLED=${{ vars.STORE_OS_REDIRECT_ENABLED }}
           STORAGE_PUBLIC_BASE_URL=${{ vars.STORAGE_PUBLIC_BASE_URL }}
           SWAGGER_ENABLED=${{ vars.SWAGGER_ENABLED }}

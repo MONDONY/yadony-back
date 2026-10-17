@@ -3,6 +3,7 @@ package com.yadony.api.assistant;
 import com.yadony.api.assistant.dto.AssistantAskRequest;
 import com.yadony.api.assistant.dto.AssistantAskResponse;
 import com.yadony.api.assistant.dto.AssistantStatusResponse;
+import com.yadony.api.assistant.formdraft.FormDraftProperties;
 import com.yadony.api.common.YadonyBusinessException;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -19,10 +20,12 @@ public class AssistantController {
 
     private final AssistantService service;
     private final AssistantProperties properties;
+    private final FormDraftProperties formDraft;
 
-    public AssistantController(AssistantService service, AssistantProperties properties) {
+    public AssistantController(AssistantService service, AssistantProperties properties, FormDraftProperties formDraft) {
         this.service = service;
         this.properties = properties;
+        this.formDraft = formDraft;
     }
 
     /**
@@ -33,7 +36,7 @@ public class AssistantController {
      */
     @GetMapping("/status")
     public AssistantStatusResponse status() {
-        return new AssistantStatusResponse(properties.enabled());
+        return new AssistantStatusResponse(properties.enabled(), properties.enabled() && formDraft.enabled());
     }
 
     @PostMapping("/ask")
