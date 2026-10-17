@@ -75,6 +75,17 @@ class AnnouncementGpProIntegrationTest {
     }
 
     @Test
+    void sortByDateDescendingStillPutsGpProFirstOnTies() {
+        UserEntity plain = persistUser(false);
+        UserEntity gp = persistUser(true);
+        AnnouncementEntity a = persistAnnouncement(plain, 10, "5.00", false);
+        AnnouncementEntity b = persistAnnouncement(gp, 10, "5.00", true);
+        AnnouncementEntity c = persistAnnouncement(gp, 12, "5.00", true);
+
+        assertThat(ids(search("date", "desc", null))).containsExactly(c.getId(), b.getId(), a.getId());
+    }
+
+    @Test
     void sortByPriceAscendingStaysAscendingAcrossGpPro() {
         UserEntity plain = persistUser(false);
         UserEntity gp = persistUser(true);

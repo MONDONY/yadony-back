@@ -42,31 +42,36 @@ class AnnouncementGpProSearchControllerIT {
                 .andExpect(status().isOk());
     }
 
-    private void verifyGp(boolean expected) {
-        // 9e paramètre du service : gpProOnly (même valeur, donc même clé de cache, pour les deux noms).
+    private Boolean lastGp() {
         org.mockito.ArgumentCaptor<Boolean> gp = org.mockito.ArgumentCaptor.forClass(Boolean.class);
-        verify(announcementService).searchAnnouncements(
+        verify(announcementService, org.mockito.Mockito.atLeastOnce()).searchAnnouncements(
                 any(), any(), any(), any(), any(), any(), any(), any(), gp.capture(), any(),
                 any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class), any(), any(), any());
-        org.assertj.core.api.Assertions.assertThat(gp.getValue()).isEqualTo(expected);
+        return gp.getValue();
     }
 
     @Test
     void kiloProOnlyAliasFiltersGpPro() throws Exception {
         call("?kiloProOnly=true");
-        verifyGp(true);
+        org.assertj.core.api.Assertions.assertThat(lastGp()).isTrue();
     }
 
     @Test
     void gpProOnlyAndAliasShareCacheKey() throws Exception {
-        // Les deux noms aboutissent au même booléen transmis au service, donc à la même clé.
-        call("?gpProOnly=true");
-        verifyGp(true);
+        java.util.List<Boolean> received = new java.util.ArrayList<>();
+        for (String q : new String[] {"?gpProOnly=true", "?kiloProOnly=true", "?gpProOnly=false&kiloProOnly=true"}) {
+            org.mockito.Mockito.clearInvocations(announcementService);
+            call(q);
+            received.add(lastGp());
+        }
+        // Même valeur transmise au service pour les trois formes, donc même clé de cache.
+        org.assertj.core.api.Assertions.assertThat(received).containsExactly(true, true, true);
     }
 
     @Test
-    void absentParamsMeanNoFilter() throws Exception {
+    void absentParamsPassNullLikeInternalCallers() throws Exception {
         call("");
-        verifyGp(false);
+        // null : identique à l'appel interne sans filtre (une seule entrée de cache).
+        org.assertj.core.api.Assertions.assertThat(lastGp()).isNull();
     }
 }

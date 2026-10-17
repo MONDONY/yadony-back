@@ -86,7 +86,9 @@ public class AnnouncementController {
             @RequestParam(defaultValue = "asc") String sortDir,
             Pageable pageable
     ) {
-        boolean gp = Boolean.TRUE.equals(gpProOnly) || Boolean.TRUE.equals(kiloProOnly);
+        // null (et non false) quand aucun filtre : même valeur, donc même clé de cache,
+        // que les appels internes qui ne passent pas le paramètre.
+        Boolean gp = Boolean.TRUE.equals(gpProOnly) || Boolean.TRUE.equals(kiloProOnly) ? Boolean.TRUE : null;
         Page<AnnouncementSearchResponse> page = announcementService.searchAnnouncements(
                 departureCity, arrivalCity, departureDateFrom, departureDateTo,
                 minAvailableKg, maxAvailableKg, maxPricePerKg, minRating, gp, weekendOnly,
