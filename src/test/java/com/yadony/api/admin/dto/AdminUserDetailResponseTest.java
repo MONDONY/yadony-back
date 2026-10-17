@@ -29,6 +29,19 @@ class AdminUserDetailResponseTest {
     }
 
     @Test
+    @DisplayName("kiloPro est figé à false et gpPro suit le compte")
+    void kiloProIsDeprecatedAndGpProFollowsAccount() {
+        UserEntity user = sampleUser();
+        user.setKiloPro(true);
+        user.setGpPro(true);
+
+        AdminUserDetailResponse response = AdminUserDetailResponse.from(user, sampleContact(), null);
+
+        assertThat(response.kiloPro()).isFalse();
+        assertThat(response.gpPro()).isTrue();
+    }
+
+    @Test
     @DisplayName("sans abonnement, le champ proSubscription est nul")
     void withoutSubscription() {
         AdminUserDetailResponse response =

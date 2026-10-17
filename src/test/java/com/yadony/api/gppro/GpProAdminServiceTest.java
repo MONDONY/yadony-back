@@ -10,6 +10,9 @@ import com.yadony.api.disputes.DisputeRepository;
 import com.yadony.api.gppro.events.GpProDecisionEvent;
 import com.yadony.api.gppro.events.GpProStatusChangedEvent;
 import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.BidRepository;
+import com.yadony.api.matching.BidStatus;
+import com.yadony.api.auth.UserStatus;
 import com.yadony.api.ratings.RatingRepository;
 import com.yadony.api.signalements.ReportRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,6 +51,7 @@ class GpProAdminServiceTest {
     @Mock GpProReviewFlagRepository flags;
     @Mock UserRepository users;
     @Mock AnnouncementRepository announcements;
+    @Mock BidRepository bids;
     @Mock RatingRepository ratings;
     @Mock DisputeRepository disputes;
     @Mock ReportRepository reports;
@@ -65,10 +69,11 @@ class GpProAdminServiceTest {
     void setUp() {
         GpProDocumentService documentService = new GpProDocumentService(documents, users, storage);
         service = new GpProAdminService(applications, documents, documentService, flags, users,
-                announcements, ratings, disputes, reports, storage, audit, events);
+                announcements, bids, ratings, disputes, reports, storage, audit, events);
         user = new UserEntity();
         ReflectionTestUtils.setField(user, "id", userId);
         user.setKycStatus(KycStatus.VERIFIED);
+        user.setStatus(UserStatus.ACTIVE);
         user.setGpProRevokedAt(LocalDateTime.now().minusDays(3));
         user.setGpProRevokedReason("ancien retrait");
         when(users.findByIdForUpdate(userId)).thenReturn(Optional.of(user));
@@ -247,5 +252,67 @@ class GpProAdminServiceTest {
         when(applications.findById(other)).thenReturn(Optional.empty());
 
         assertCode(() -> service.approve(other, adminId), HttpStatus.NOT_FOUND, "gp-pro-application-not-found");
+    }
+
+    @Test
+    void approveWithoutKycThrows422AndLeavesPending() {
+        user.setKycStatus(KycStatus.PENDING);
+
+        assertCode(() -> service.approve(appId, adminId),
+                HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-kyc-required");
+
+        verify(applications, never()).decide(any(), any(), any(), any(), any());
+        assertThat(user.isGpPro()).isFalse();
+    }
+
+    @Test
+    void approveSuspendedUserThrows409() {
+        user.setStatus(UserStatus.SUSPENDED);
+
+        assertCode(() -> service.approve(appId, adminId), HttpStatus.CONFLICT, "gp-pro-user-not-eligible");
+
+        verify(applications, never()).decide(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void approveUserWithPendingDeletionThrows409() {
+        user.setDeletionRequestedAt(java.time.Instant.now());
+
+        assertCode(() -> service.approve(appId, adminId), HttpStatus.CONFLICT, "gp-pro-user-not-eligible");
+    }
+
+    @Test
+    void grantBannedUserThrows409() {
+        user.setStatus(UserStatus.BANNED);
+
+        assertCode(() -> service.grant(userId, adminId, null), HttpStatus.CONFLICT, "gp-pro-user-not-eligible");
+    }
+
+    @Test
+    void rejectAndRevokeRejectBlankReason() {
+        user.setGpPro(true);
+
+        assertCode(() -> service.reject(appId, adminId, "   "),
+                HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-reason-required");
+        assertCode(() -> service.revoke(userId, adminId, null),
+                HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-reason-required");
+        verify(applications, never()).decide(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void rejectTrimsReason() {
+        service.reject(appId, adminId, "  Justificatifs illisibles  ");
+
+        verify(applications).decide(eq(appId), eq(GpProApplicationStatus.REJECTED), eq(adminId),
+                eq("Justificatifs illisibles"), any());
+    }
+
+    @Test
+    void detailCountsDeliveredParcelsNotTrips() {
+        when(users.findById(userId)).thenReturn(Optional.of(user));
+        when(bids.countByAnnouncementTravelerIdAndStatus(userId, BidStatus.COMPLETED)).thenReturn(7L);
+        when(announcements.countByTravelerIdAndStatus(any(), any())).thenReturn(99L);
+
+        assertThat(service.detail(appId).completedDeliveries()).isEqualTo(7L);
     }
 }

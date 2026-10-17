@@ -13,6 +13,9 @@ import com.yadony.api.gppro.events.GpProDecisionEvent;
 import com.yadony.api.gppro.events.GpProStatusChangedEvent;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.AnnouncementStatus;
+import com.yadony.api.matching.BidRepository;
+import com.yadony.api.matching.BidStatus;
+import com.yadony.api.auth.UserStatus;
 import com.yadony.api.ratings.RatingEntity;
 import com.yadony.api.ratings.RatingRepository;
 import com.yadony.api.signalements.ReportRepository;
@@ -60,6 +63,7 @@ public class GpProAdminService {
     private final GpProReviewFlagRepository flags;
     private final UserRepository users;
     private final AnnouncementRepository announcements;
+    private final BidRepository bids;
     private final RatingRepository ratings;
     private final DisputeRepository disputes;
     private final ReportRepository reports;
@@ -70,6 +74,7 @@ public class GpProAdminService {
     public GpProAdminService(GpProApplicationRepository applications, GpProDocumentRepository documents,
                              GpProDocumentService documentService, GpProReviewFlagRepository flags,
                              UserRepository users, AnnouncementRepository announcements,
+                             BidRepository bids,
                              RatingRepository ratings, DisputeRepository disputes,
                              ReportRepository reports, StorageService storage, AuditService audit,
                              ApplicationEventPublisher events) {
@@ -79,6 +84,7 @@ public class GpProAdminService {
         this.flags = flags;
         this.users = users;
         this.announcements = announcements;
+        this.bids = bids;
         this.ratings = ratings;
         this.disputes = disputes;
         this.reports = reports;
@@ -94,9 +100,13 @@ public class GpProAdminService {
         Map<UUID, UserEntity> byId = users.findAllById(
                         result.stream().map(GpProApplicationEntity::getUserId).distinct().toList())
                 .stream().collect(Collectors.toMap(UserEntity::getId, Function.identity()));
+        Map<UUID, Integer> docCounts = result.isEmpty() ? Map.of()
+                : documents.countUnpurgedByApplicationIds(
+                                result.stream().map(GpProApplicationEntity::getId).toList())
+                        .stream().collect(Collectors.toMap(r -> (UUID) r[0], r -> ((Number) r[1]).intValue()));
         return result.map(a -> new AdminGpProApplicationRow(a.getId(), a.getUserId(),
                 displayName(byId.get(a.getUserId())), a.getSource(), a.getTravelFrequency(),
-                documents.findByApplicationIdAndPurgedAtIsNull(a.getId()).size(), a.getCreatedAt()));
+                docCounts.getOrDefault(a.getId(), 0), a.getCreatedAt()));
     }
 
     @Transactional(readOnly = true)
@@ -122,7 +132,7 @@ public class GpProAdminService {
                 announcements.countByTravelerIdAndStatusIn(userId, PUBLISHED),
                 announcements.countByTravelerIdAndCreatedAtBetweenAndStatusNot(
                         userId, now.minusDays(56), now, AnnouncementStatus.DRAFT),
-                announcements.countByTravelerIdAndStatus(userId, AnnouncementStatus.COMPLETED),
+                bids.countByAnnouncementTravelerIdAndStatus(userId, BidStatus.COMPLETED),
                 user == null ? null : user.getAverageRating(),
                 lastFive,
                 disputes.countByTravelerIdAndStatus(userId, "OPEN"),
@@ -134,7 +144,7 @@ public class GpProAdminService {
     @Transactional
     public void approve(UUID applicationId, UUID adminId) {
         UUID userId = applicationOf(applicationId).getUserId();
-        users.findByIdForUpdate(userId);
+        assertEligible(lockedUser(userId));
         decideOrConflict(applicationId, GpProApplicationStatus.APPROVED, adminId, null);
         UserEntity user = lockedUser(userId);
         grantBadge(user);
@@ -146,7 +156,8 @@ public class GpProAdminService {
     }
 
     @Transactional
-    public void reject(UUID applicationId, UUID adminId, String reason) {
+    public void reject(UUID applicationId, UUID adminId, String rawReason) {
+        String reason = requireReason(rawReason);
         UUID userId = applicationOf(applicationId).getUserId();
         users.findByIdForUpdate(userId);
         decideOrConflict(applicationId, GpProApplicationStatus.REJECTED, adminId, reason);
@@ -163,10 +174,7 @@ public class GpProAdminService {
             throw new YadonyBusinessException(HttpStatus.CONFLICT,
                     "gp-pro-already-active", "Already Active", "Le badge GP Pro est déjà actif");
         }
-        if (user.getKycStatus() != KycStatus.VERIFIED) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "gp-pro-kyc-required", "KYC Required", "La vérification d'identité est requise");
-        }
+        assertEligible(user);
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         String cleanNote = note == null || note.isBlank() ? null : note.trim();
         GpProApplicationEntity app = applications.findFirstByUserIdAndStatusIn(userId, OPEN).orElse(null);
@@ -189,7 +197,8 @@ public class GpProAdminService {
     }
 
     @Transactional
-    public void revoke(UUID userId, UUID adminId, String reason) {
+    public void revoke(UUID userId, UUID adminId, String rawReason) {
+        String reason = requireReason(rawReason);
         UserEntity user = lockedUser(userId);
         if (!user.isGpPro()) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT,
@@ -206,6 +215,28 @@ public class GpProAdminService {
         audit.log("USER", userId, "GP_PRO_REVOKED", adminId, Map.of("reason", reason));
         events.publishEvent(new GpProDecisionEvent(userId, GpProDecisionEvent.Kind.REVOKED, reason));
         events.publishEvent(new GpProStatusChangedEvent(userId, false));
+    }
+
+    /** Gardes communes à la validation et à l'attribution directe, avant toute écriture. */
+    private static void assertEligible(UserEntity user) {
+        if (user.getKycStatus() != KycStatus.VERIFIED) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "gp-pro-kyc-required", "KYC Required", "La vérification d'identité est requise");
+        }
+        if (user.getStatus() != UserStatus.ACTIVE || user.getDeletionRequestedAt() != null) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                    "gp-pro-user-not-eligible", "User Not Eligible",
+                    "Le compte est suspendu, banni ou en cours de suppression");
+        }
+    }
+
+    private static String requireReason(String reason) {
+        String trimmed = reason == null ? "" : reason.trim();
+        if (trimmed.isEmpty()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "gp-pro-reason-required", "Reason Required", "Un motif est obligatoire");
+        }
+        return trimmed;
     }
 
     private GpProApplicationEntity applicationOf(UUID applicationId) {

@@ -13,6 +13,11 @@ public interface GpProDocumentRepository extends JpaRepository<GpProDocumentEnti
 
     List<GpProDocumentEntity> findByApplicationIdAndPurgedAtIsNull(UUID applicationId);
 
+    /** Justificatifs non purgés par demande : lignes {@code [applicationId, count]}. */
+    @Query("SELECT d.applicationId, COUNT(d) FROM GpProDocumentEntity d "
+            + "WHERE d.applicationId IN :ids AND d.purgedAt IS NULL GROUP BY d.applicationId")
+    List<Object[]> countUnpurgedByApplicationIds(@Param("ids") Collection<UUID> ids);
+
     /** Documents téléversés par l'utilisateur et pas encore rattachés à une demande. */
     long countByOwnerIdAndApplicationIdIsNullAndPurgedAtIsNull(UUID ownerId);
 

@@ -98,7 +98,8 @@ public record AdminUserDetailResponse(
                 u.getStripeAccountStatus() != null ? u.getStripeAccountStatus().name() : null,
                 u.getCommissionRateOverride(),
                 u.isPublishingSuspended(),
-                u.isKiloPro(),
+                // Déprécié : apps et admin antérieurs à GP Pro ; le badge actif est gpPro.
+                false,
                 u.isGpPro(),
                 u.getGpProGrantedAt(),
                 u.getCancellationCount(),
