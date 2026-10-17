@@ -105,6 +105,22 @@ class EmailOtpHardeningTest {
     }
 
     @Test
+    @DisplayName("envoi : plafond dur atteint → 503 email-otp-budget-exceeded, rien n'est envoyé")
+    void send_hardCapBlocks() {
+        properties.setMaxSendsPerHourGlobal(10);
+        properties.setHardMaxSendsPerHourGlobal(50);
+        when(repository.countAllSince(any())).thenReturn(50L);
+
+        assertThatThrownBy(() -> service.sendOtp("a@b.com"))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE);
+                    assertThat(e.getErrorCode()).isEqualTo("email-otp-budget-exceeded");
+                });
+        verify(repository, never()).save(any());
+        verify(resendEmailService, never()).sendOtp(anyString(), anyString(), any());
+    }
+
+    @Test
     @DisplayName("vérification : code accepté → tous les autres codes de l'adresse sont invalidés")
     void verify_success_invalidatesOtherCodes() {
         EmailOtpEntity t = token("test@example.com");

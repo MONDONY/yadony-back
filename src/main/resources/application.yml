@@ -501,6 +501,8 @@ yadony:
     # Seuil d'ALERTE (Sentry) sur les envois par heure, toutes adresses confondues. Il ne
     # bloque pas : un arrosage depuis un botnet couperait sinon la connexion de tout le monde.
     max-sends-per-hour-global: ${YADONY_EMAIL_OTP_MAX_SENDS_PER_HOUR_GLOBAL:1000}
+    # Plafond dur (503) : 5 fois le seuil d'alerte, pour le seul abus massif (quota Resend).
+    hard-max-sends-per-hour-global: ${YADONY_EMAIL_OTP_HARD_MAX_SENDS_PER_HOUR_GLOBAL:5000}
   sms:
     # Mêmes valeurs que le canal email : l'écran de saisie du code est partagé
     # entre les deux, son bouton « Renvoyer » se rouvrant toutes les 60 s.

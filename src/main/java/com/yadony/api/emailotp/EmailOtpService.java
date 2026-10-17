@@ -75,7 +75,18 @@ public class EmailOtpService {
                     "Trop de codes demandés, réessaie dans " + windowMinutes + " min");
         }
         LocalDateTime hourAgo = LocalDateTime.now(ZoneOffset.UTC).minusHours(1);
-        if (emailOtpRepository.countAllSince(hourAgo) >= properties.getMaxSendsPerHourGlobal()) {
+        long sentLastHour = emailOtpRepository.countAllSince(hourAgo);
+        if (sentLastHour >= properties.getHardMaxSendsPerHourGlobal()) {
+            // Plafond dur, loin au-dessus du seuil d'alerte : seul un abus massif l'atteint.
+            // Il protège le quota Resend et la réputation du domaine d'envoi.
+            log.error("Plafond dur d'envoi de codes email atteint ({} / h) : envois suspendus",
+                    properties.getHardMaxSendsPerHourGlobal());
+            throw new YadonyBusinessException(
+                    HttpStatus.SERVICE_UNAVAILABLE, "email-otp-budget-exceeded",
+                    "Service Unavailable",
+                    "L'envoi de codes est momentanément suspendu, réessaie dans quelques minutes");
+        }
+        if (sentLastHour >= properties.getMaxSendsPerHourGlobal()) {
             alertGlobalBudget();
         }
 

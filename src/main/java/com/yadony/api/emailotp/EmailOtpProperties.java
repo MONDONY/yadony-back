@@ -42,6 +42,12 @@ public class EmailOtpProperties {
      */
     private int maxSendsPerHourGlobal = 1000;
 
+    /**
+     * Plafond dur par heure, plusieurs fois le seuil d'alerte : au-delà, envoi refusé
+     * (503). Un pic d'inscriptions reste servi ; un arrosage massif ne vide pas le quota.
+     */
+    private int hardMaxSendsPerHourGlobal = 5000;
+
     public String getResendApiKey() { return resendApiKey; }
     public void setResendApiKey(String resendApiKey) { this.resendApiKey = resendApiKey; }
     public String getFromAddress() { return fromAddress; }
@@ -56,4 +62,6 @@ public class EmailOtpProperties {
     public void setOtpValidMinutes(int otpValidMinutes) { this.otpValidMinutes = otpValidMinutes; }
     public int getMaxSendsPerHourGlobal() { return maxSendsPerHourGlobal; }
     public void setMaxSendsPerHourGlobal(int maxSendsPerHourGlobal) { this.maxSendsPerHourGlobal = maxSendsPerHourGlobal; }
+    public int getHardMaxSendsPerHourGlobal() { return hardMaxSendsPerHourGlobal; }
+    public void setHardMaxSendsPerHourGlobal(int hardMaxSendsPerHourGlobal) { this.hardMaxSendsPerHourGlobal = hardMaxSendsPerHourGlobal; }
 }

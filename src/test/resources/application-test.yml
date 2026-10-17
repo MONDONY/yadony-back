@@ -83,6 +83,7 @@ yadony:
     from-address: "noreply@test.yadony.app"
     # Budget global testé dans EmailOtpServiceTest : ici, jamais atteint par la suite.
     max-sends-per-hour-global: 1000000
+    hard-max-sends-per-hour-global: 1000000
   sms:
     # Liste de pays et budgets testés dans SmsOtpServiceTest : la suite garde ses numéros.
     allowed-country-codes: ""
