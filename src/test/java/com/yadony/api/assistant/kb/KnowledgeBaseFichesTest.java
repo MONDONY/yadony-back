@@ -111,6 +111,30 @@ class KnowledgeBaseFichesTest {
         assertThat(firstHit(kb, "en", "Is card payment secure?")).isEqualTo("securite-paiements");
     }
 
+    /** Une question proposée sous l'explication d'un écran ne doit jamais aboutir à « je n'ai pas trouvé ». */
+    @Test
+    void chaqueQuestionDEcranTrouveUneFiche() {
+        KnowledgeBase kb = productionKb();
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        int screens = 0;
+        java.util.List<String> unanswered = new java.util.ArrayList<>();
+        for (String locale : KnowledgeBaseLoader.LOCALES) {
+            for (KbArticle a : corpus.articles(locale)) {
+                if (a.screens().isEmpty()) continue;
+                screens++;
+                assertThat(a.questions()).as(locale + "/" + a.id()).isNotEmpty();
+                for (String q : a.questions()) {
+                    if (kb.search(locale, q, null, 4).isEmpty()) unanswered.add(locale + "/" + a.id() + " : " + q);
+                }
+                for (String screen : a.screens()) {
+                    assertThat(kb.screen(locale, screen)).as(screen).contains(a);
+                }
+            }
+        }
+        assertThat(unanswered).isEmpty();
+        assertThat(screens).isGreaterThanOrEqualTo(80);
+    }
+
     @Test
     void lesMotsSeulsUsuelsPassentLeSeuil() {
         KnowledgeBase kb = productionKb();

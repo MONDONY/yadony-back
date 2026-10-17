@@ -291,6 +291,97 @@ class KnowledgeBaseLoaderTest {
                 .hasMessage("Fiches assistant introuvables (fr) dans " + root());
     }
 
+    // ---- écrans ----
+
+    private static String screen(String id, String screens, String questions, String body) {
+        return "---\nid: " + id + "\ntitle: L'écran\n" + screens + questions + "---\n" + body + "\n";
+    }
+
+    private static void assertScreenInvalid(String fr, String en, String expectedMessage) {
+        assertThatThrownBy(() -> KnowledgeBaseLoader.validate(Map.of(
+                "fr", List.of(KnowledgeBaseLoader.parse("fr", "a.md", fr)),
+                "en", List.of(KnowledgeBaseLoader.parse("en", "a.md", en)))))
+                .isInstanceOf(IllegalStateException.class).hasMessage(expectedMessage);
+    }
+
+    @Test
+    void parse_litLesEcransEtLesQuestions() {
+        KbArticle a = KnowledgeBaseLoader.parse("fr", "a.md", screen("ecran-colis",
+                "screens:\n  - /bids/:bidId\n", "questions:\n  - Où en est ce colis ?\n  - Puis-je l'annuler ?\n",
+                "Vous êtes sur la fiche du colis."));
+        assertThat(a.screens()).containsExactly("/bids/:bidId");
+        assertThat(a.questions()).containsExactly("Où en est ce colis ?", "Puis-je l'annuler ?");
+        KnowledgeBaseLoader.validate(Map.of("fr", List.of(a), "en", List.of(KnowledgeBaseLoader.parse("en", "a.md",
+                screen("ecran-colis", "screens:\n  - /bids/:bidId\n", "", "The parcel page.")))));
+    }
+
+    @Test
+    void parse_ecransDoiventEtreUneListe() {
+        assertParseFails(screen("ecran-x", "screens: /home\n", "", "Corps."),
+                "Fiche assistant invalide (fr/a.md) : screens doit être une liste");
+        assertParseFails(screen("ecran-x", "screens:\n  - 3\n", "", "Corps."),
+                "Fiche assistant invalide (fr/a.md) : screens illisible");
+    }
+
+    @Test
+    void validate_refuseUnEcranInvalide() {
+        String en = screen("ecran-x", "screens:\n  - /home?x=1\n", "", "Body.");
+        assertScreenInvalid(en, en, "Fiche assistant invalide (fr/ecran-x) : écran invalide : /home?x=1");
+    }
+
+    @Test
+    void validate_refuseDesQuestionsSansEcran() {
+        String raw = screen("ecran-x", "", "questions:\n  - Pourquoi ?\n", "Corps.");
+        assertScreenInvalid(raw, raw, "Fiche assistant invalide (fr/ecran-x) : questions sans écran");
+    }
+
+    @Test
+    void validate_refuseUneExplicationTropLongue() {
+        String raw = screen("ecran-x", "screens:\n  - /home\n", "", "x".repeat(601));
+        assertScreenInvalid(raw, raw, "Fiche assistant invalide (fr/ecran-x) : explication d'écran trop longue");
+    }
+
+    @Test
+    void validate_refuseTropDeQuestionsOuUneQuestionTropLongue() {
+        String four = screen("ecran-x", "screens:\n  - /home\n", "questions:\n  - a\n  - b\n  - c\n  - d\n", "C.");
+        assertScreenInvalid(four, four, "Fiche assistant invalide (fr/ecran-x) : plus de 3 questions");
+        String longQ = screen("ecran-x", "screens:\n  - /home\n", "questions:\n  - " + "q".repeat(81) + "\n", "C.");
+        assertScreenInvalid(longQ, longQ, "Fiche assistant invalide (fr/ecran-x) : question vide ou trop longue");
+        String dash = screen("ecran-x", "screens:\n  - /home\n", "questions:\n  - a \u2014 b\n", "C.");
+        assertScreenInvalid(dash, dash, "Fiche assistant invalide (fr/ecran-x) : tiret cadratin dans une question");
+    }
+
+    @Test
+    void validate_refuseTropDEcrans() {
+        String raw = screen("ecran-x", "screens:\n  - /a\n  - /b\n  - /c\n  - /d\n  - /e\n  - /f\n", "", "C.");
+        assertScreenInvalid(raw, raw, "Fiche assistant invalide (fr/ecran-x) : plus de 5 écrans");
+    }
+
+    @Test
+    void validate_unEcranNEstExpliqueQuUneFois() {
+        KbArticle a = KnowledgeBaseLoader.parse("fr", "a.md", screen("ecran-a", "screens:\n  - /home\n", "", "A."));
+        KbArticle b = KnowledgeBaseLoader.parse("fr", "b.md", screen("ecran-b", "screens:\n  - /home\n", "", "B."));
+        assertThatThrownBy(() -> KnowledgeBaseLoader.validate(Map.of("fr", List.of(a, b), "en", List.of(a, b))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Fiche assistant invalide (fr/ecran-b) : écran déjà expliqué par une autre fiche : /home");
+    }
+
+    @Test
+    void validate_memesEcransDansLesDeuxLangues() {
+        assertScreenInvalid(screen("ecran-x", "screens:\n  - /home\n", "", "A."),
+                screen("ecran-x", "screens:\n  - /profile\n", "", "B."),
+                "Fiche assistant invalide (en/ecran-x) : écrans différents de la version française");
+    }
+
+    @Test
+    void corpus_trouveLaFicheDUnEcran() {
+        KbArticle a = KnowledgeBaseLoader.parse("fr", "a.md", screen("ecran-a", "screens:\n  - /bids/:bidId\n", "", "A."));
+        KbCorpus corpus = new KbCorpus(Map.of("fr", List.of(a), "en", List.of()));
+        assertThat(corpus.screen("fr", "/bids/:bidId")).contains(a);
+        assertThat(corpus.screen("fr", "/bids")).isEmpty();
+        assertThat(corpus.screen("en", "/bids/:bidId")).isEmpty();
+    }
+
     // ---- helpers ----
 
     private String root() {

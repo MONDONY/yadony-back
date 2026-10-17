@@ -30,6 +30,7 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /** Index Lucene en mémoire des fiches, un par langue, construit une fois au démarrage. */
@@ -38,6 +39,12 @@ public class KnowledgeBase {
 
     private static final String[] FIELDS = {"title", "keywords", "body"};
     private static final float[] BOOSTS = {3f, 2f, 1f};
+    /**
+     * Les fiches d'écran (« L'écran Mes litiges ») sont indexées dans leurs propres champs, à demi-poids : elles
+     * répondent aux questions que seules elles couvrent, sans passer devant la fiche d'aide d'un sujet.
+     */
+    private static final String[] SCREEN_FIELDS = {"screen_title", "screen_keywords", "screen_body"};
+    private static final float SCREEN_WEIGHT = 0.5f;
     private static final float PREVIOUS_QUESTION_WEIGHT = 0.5f;
     /** Au-delà, la question est complète : la précédente ramènerait les fiches d'un ancien sujet. */
     private static final int MAX_FOLLOW_UP_TERMS = 4;
@@ -62,6 +69,11 @@ public class KnowledgeBase {
 
     public Set<String> routeWhitelist() {
         return corpus.routePaths();
+    }
+
+    /** Explication de l'écran {@code screen} (motif de route), écrite dans une fiche : jamais générée. */
+    public Optional<KbArticle> screen(String locale, String screen) {
+        return corpus.screen(KnowledgeBaseLoader.LOCALES.contains(locale) ? locale : "fr", screen);
     }
 
     public List<KbHit> search(String locale, String question, String previousQuestion, int limit) {
@@ -124,6 +136,8 @@ public class KnowledgeBase {
             for (int i = 0; i < FIELDS.length; i++) {
                 query.add(new BoostQuery(new TermQuery(new Term(FIELDS[i], term)), BOOSTS[i] * weight),
                         BooleanClause.Occur.SHOULD);
+                query.add(new BoostQuery(new TermQuery(new Term(SCREEN_FIELDS[i], term)),
+                        BOOSTS[i] * SCREEN_WEIGHT * weight), BooleanClause.Occur.SHOULD);
             }
             count++;
         }
@@ -138,9 +152,10 @@ public class KnowledgeBase {
                 for (KbArticle a : articles) {
                     Document doc = new Document();
                     doc.add(new StringField("id", a.id(), Field.Store.YES));
-                    doc.add(new TextField("title", a.title(), Field.Store.NO));
-                    doc.add(new TextField("keywords", String.join(" ", a.keywords()), Field.Store.NO));
-                    doc.add(new TextField("body", a.body(), Field.Store.NO));
+                    String[] fields = a.screens().isEmpty() ? FIELDS : SCREEN_FIELDS;
+                    doc.add(new TextField(fields[0], a.title(), Field.Store.NO));
+                    doc.add(new TextField(fields[1], String.join(" ", a.keywords()), Field.Store.NO));
+                    doc.add(new TextField(fields[2], a.body(), Field.Store.NO));
                     writer.addDocument(doc);
                 }
             }

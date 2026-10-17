@@ -4,6 +4,7 @@ import com.yadony.api.assistant.dto.AssistantAction;
 import com.yadony.api.assistant.dto.AssistantAskRequest;
 import com.yadony.api.assistant.dto.AssistantAskResponse;
 import com.yadony.api.assistant.dto.AssistantHistoryTurn;
+import com.yadony.api.assistant.dto.AssistantScreenResponse;
 import com.yadony.api.assistant.dto.ParsedAnswer;
 import com.yadony.api.assistant.kb.KbHit;
 import com.yadony.api.assistant.kb.KbRoute;
@@ -190,6 +191,19 @@ public class AssistantService {
             questions.add(text);
         }
         return questions;
+    }
+
+    /** Explication d'un écran, écrite dans sa fiche ; ses autres routes, hors l'écran lui-même, en boutons. */
+    public Optional<AssistantScreenResponse> screen(String path, String locale) {
+        // Un motif de route tient en 120 caractères (KnowledgeBaseLoader) : au-delà, aucun écran.
+        if (path == null || path.isBlank() || path.length() > 120) return Optional.empty();
+        String lang = normalizeLocale(locale);
+        Set<String> whitelist = knowledgeBase.routeWhitelist();
+        return knowledgeBase.screen(lang, path.strip()).map(a -> new AssistantScreenResponse(a.id(), a.title(),
+                a.body(), a.questions(), a.routes().stream()
+                .filter(r -> whitelist.contains(r.path()) && !a.screens().contains(r.path()))
+                .limit(MAX_ACTIONS)
+                .map(r -> new AssistantAction(r.path(), r.label())).toList()));
     }
 
     /** La question vise l'un de ses colis sans dire lequel : aucun colis, ou les siens à choisir. */
