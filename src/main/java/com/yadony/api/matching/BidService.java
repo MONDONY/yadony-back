@@ -1424,8 +1424,9 @@ public class BidService {
 
     /** Statuts où le voyageur a physiquement le colis ou l'a déjà livré : le numéro
      *  de suivi lui est alors servi. Avant (ACCEPTED, en attente de remise), c'est
-     *  l'expéditeur qui le lui communique au moment de la remise. */
-    private static final java.util.Set<BidStatus> TRACKING_NUMBER_VISIBLE_TO_TRAVELER_STATUSES;
+     *  l'expéditeur qui le lui communique au moment de la remise. Relu par
+     *  {@code AssistantParcelDirectory} : l'assistant ne doit pas en dire plus que la fiche. */
+    static final java.util.Set<BidStatus> TRACKING_NUMBER_VISIBLE_TO_TRAVELER_STATUSES;
 
     static {
         java.util.EnumSet<BidStatus> numberVisible = java.util.EnumSet.of(BidStatus.COMPLETED);

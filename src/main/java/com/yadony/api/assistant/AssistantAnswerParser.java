@@ -43,7 +43,10 @@ public class AssistantAnswerParser {
         if (rs != null && rs.isArray()) {
             for (JsonNode r : rs) if (r.isTextual()) routes.add(r.asText());
         }
-        return new ParsedAnswer(answer.asText().strip(), answered.asBoolean(), List.copyOf(routes));
+        // Facultatif : un fournisseur qui l'oublie ne fait pas basculer, la question est traitée comme générale.
+        JsonNode aboutMyParcel = node.get("about_my_parcel");
+        return new ParsedAnswer(answer.asText().strip(), answered.asBoolean(), List.copyOf(routes),
+                aboutMyParcel != null && aboutMyParcel.isBoolean() && aboutMyParcel.asBoolean());
     }
 
     private static LlmCallException invalid(String reason) {

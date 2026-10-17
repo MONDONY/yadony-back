@@ -11,3 +11,4 @@ In "Track a parcel" mode, scan a QR or enter the DON-… tracking number to see 
 The timeline follows the steps: handed to the traveler, on its way, arrived at destination, handed to the recipient.
 Only the sender and the traveler can track a parcel from their account; the recipient uses the tracking link, or the Receiving section if they have Yadony.
 Delivery time depends on the trip and the date announced by the traveler: check it before accepting an offer.
+You can also ask the assistant "where is my parcel?": it offers your ongoing parcels, or finds the one whose DON-… number you type, and opens it.

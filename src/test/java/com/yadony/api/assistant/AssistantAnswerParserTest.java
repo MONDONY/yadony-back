@@ -33,6 +33,14 @@ class AssistantAnswerParserTest {
     }
 
     @Test
+    void litLeDrapeauDuColis() {
+        assertThat(parser.parse("{\"answer\":\"ok\",\"answered\":true,\"about_my_parcel\":true}").aboutMyParcel()).isTrue();
+        assertThat(parser.parse("{\"answer\":\"ok\",\"answered\":true}").aboutMyParcel()).isFalse();
+        assertThat(parser.parse("{\"answer\":\"ok\",\"answered\":true,\"about_my_parcel\":\"true\"}").aboutMyParcel())
+                .isFalse();
+    }
+
+    @Test
     void refuseLeTexteLibre() {
         assertInvalid("Bien sûr ! Voici comment faire.");
     }

@@ -75,8 +75,8 @@ public class TrackingService {
     private final MessagesResolver messagesResolver;
     private final BidRecipientLinkRepository recipientLinkRepository;
 
-    private static final int MAX_CODE_ATTEMPTS = 3;
-    private static final int MAX_CODE_REFRESHES_PER_DAY = 5;
+    static final int MAX_CODE_ATTEMPTS = 3;
+    static final int MAX_CODE_REFRESHES_PER_DAY = 5;
 
     @Value("${app.base-url}")
     private String appBaseUrl;
