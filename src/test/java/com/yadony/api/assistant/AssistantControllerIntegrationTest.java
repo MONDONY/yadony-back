@@ -66,6 +66,38 @@ class AssistantControllerIntegrationTest {
                 .andExpect(jsonPath("$.remainingToday").value(1));
     }
 
+    /**
+     * FLUTTER-QV, sur les vraies fiches et le vrai seuil : « comment je fais ? » seule ne passe pas le seuil, et la
+     * question utilisateur précédente (« et après ? ») non plus ; celle d'avant ramène la fiche, l'IA est appelée.
+     */
+    @Test
+    void relanceSansFicheSeuleRepondGraceAuxQuestionsPrecedentes() throws Exception {
+        when(router.complete(anyString(), anyString(), any())).thenReturn(Optional.of(new LlmResult<>("groq",
+                new ParsedAnswer("Activités › Portefeuille › Recharger.", true, List.of()))));
+        String json = objectMapper.writeValueAsString(new AssistantAskRequest("comment je fais ?", "fr", List.of(
+                new AssistantHistoryTurn("user", "Comment recharger mon solde ?"),
+                new AssistantHistoryTurn("assistant", "Depuis votre portefeuille."),
+                new AssistantHistoryTurn("user", "et après ?"),
+                new AssistantHistoryTurn("assistant", "Je n'ai pas trouvé cette information."))));
+        mockMvc.perform(post("/assistant/ask").with(authentication(asUser("uid-relance")))
+                        .contentType(MediaType.APPLICATION_JSON).content(json))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.answered").value(true))
+                .andExpect(jsonPath("$.provider").value("groq"))
+                .andExpect(jsonPath("$.sources[0]").value("recharger-solde"));
+    }
+
+    @Test
+    void laMemeQuestionSansHistoriqueNAppellePasLIA() throws Exception {
+        mockMvc.perform(post("/assistant/ask").with(authentication(asUser("uid-relance-seule")))
+                        .contentType(MediaType.APPLICATION_JSON).content(body("comment je fais ?")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.answered").value(false))
+                .andExpect(jsonPath("$.provider").value("none"))
+                .andExpect(jsonPath("$.sources").isEmpty());
+        verifyNoInteractions(router);
+    }
+
     @Test
     void sansJeton401() throws Exception {
         mockMvc.perform(post("/assistant/ask").contentType(MediaType.APPLICATION_JSON).content(body("q")))

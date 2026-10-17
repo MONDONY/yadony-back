@@ -21,6 +21,7 @@ class AssistantPromptBuilderTest {
     void systemImposeLesRegles() {
         String s = builder.system();
         assertThat(s).contains("ONLY", "answered", "routes", "600", "JSON");
+        assertThat(s).contains("follow-up of the conversation in <history>");
     }
 
     @Test

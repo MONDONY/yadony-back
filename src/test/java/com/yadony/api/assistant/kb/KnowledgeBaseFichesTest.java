@@ -143,6 +143,17 @@ class KnowledgeBaseFichesTest {
     }
 
     @Test
+    void uneRelanceEnChaineNeTrouveRienAvecLaSeuleQuestionPrecedente() {
+        // FLUTTER-QV : « comment je fais ? » après « et après ? » ne passe pas le seuil, même avec la question
+        // précédente à demi-poids ; la question d'avant (« Comment recharger mon solde ? ») ramène la fiche.
+        // AssistantService relance alors avec les deux dernières questions utilisateur.
+        KnowledgeBase kb = productionKb();
+        assertThat(kb.search("fr", "comment je fais ?", "et après ?", 4)).isEmpty();
+        assertThat(kb.search("fr", "comment je fais ?\net après ?\nComment recharger mon solde ?", null, 4))
+                .first().extracting(h -> h.article().id()).isEqualTo("recharger-solde");
+    }
+
+    @Test
     void laDeuxiemeFicheDeLaDouaneNeVoleJamaisLaPremierePlace() {
         // « déclarer » est aussi dans « Valeur déclarée » : la fiche douane doit rester devant.
         List<String> ids = productionKb().search("fr", "Faut-il déclarer le colis à la douane ?", null, 4)
