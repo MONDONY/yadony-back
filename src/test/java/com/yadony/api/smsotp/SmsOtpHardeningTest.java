@@ -191,4 +191,60 @@ class SmsOtpHardeningTest {
         properties.setDeniedPrefixes(null);
         assertThat(properties.getDeniedPrefixes()).isEmpty();
     }
+
+    @Test
+    @DisplayName("envoi : 10 SMS déjà envoyés au numéro sur 24 h → 429 phone-otp-daily-limit")
+    void send_dailyLimitPerPhone() {
+        when(repository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L, 10L);
+
+        assertThatThrownBy(() -> service.sendOtp(PHONE))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+                    assertThat(e.getErrorCode()).isEqualTo("phone-otp-daily-limit");
+                });
+        verify(smsService, never()).send(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("envoi : 3 connexions réussies en 10 min → 429 phone-otp-login-limit, aucun SMS facturé")
+    void send_loginLimitReached() {
+        when(repository.countSuccessfulSince(eq(PHONE), any())).thenReturn(3L);
+
+        assertThatThrownBy(() -> service.sendOtp(PHONE))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo("phone-otp-login-limit");
+                    assertThat(e.getProperties()).containsEntry("retryAfterSeconds", 600L);
+                });
+        verify(repository, never()).save(any());
+        verify(smsService, never()).send(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("vérification : 4e connexion en 10 min refusée même avec le bon code, code non consommé")
+    void verify_loginLimitEvenWithRightCode() {
+        when(repository.countSuccessfulSince(eq(PHONE), any())).thenReturn(3L);
+
+        assertThatThrownBy(() -> service.verifyOtp(PHONE, "123456"))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("phone-otp-login-limit"));
+        verify(repository, never()).findTopByPhoneNumberAndUsedAtIsNullOrderByCreatedAtDesc(anyString());
+        verify(passwordEncoder, never()).matches(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("vérification : 2 connexions en 10 min → la 3e passe")
+    void verify_underLoginLimit() {
+        when(repository.countSuccessfulSince(eq(PHONE), any())).thenReturn(2L);
+        SmsOtpEntity t = new SmsOtpEntity();
+        t.setPhoneNumber(PHONE);
+        t.setCodeHash("$2a$10$hash");
+        t.setExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(5));
+        when(repository.findTopByPhoneNumberAndUsedAtIsNullOrderByCreatedAtDesc(PHONE))
+                .thenReturn(Optional.of(t));
+        when(passwordEncoder.matches("123456", "$2a$10$hash")).thenReturn(true);
+
+        service.verifyOtp(PHONE, "123456");
+
+        assertThat(t.getUsedAt()).isNotNull();
+    }
 }

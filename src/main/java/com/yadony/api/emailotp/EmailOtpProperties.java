@@ -35,6 +35,14 @@ public class EmailOtpProperties {
     private int otpValidMinutes = 10;
 
     /**
+     * Codes envoyables à une même adresse sur 24 h glissantes. La fenêtre courte autorise
+     * un code par minute en continu : sans ce plafond, quiconque connaît une adresse
+     * pouvait lui faire envoyer plus de 1 400 emails par jour. Une vraie personne en
+     * demande un à trois.
+     */
+    private int maxSendsPerDay = 10;
+
+    /**
      * Seuil d'alerte sur les codes envoyés par heure, toutes adresses confondues. Au-delà,
      * une alerte part (Sentry) mais l'envoi continue : un arrosage d'adresses depuis des
      * milliers d'IP passe sous les limites par adresse et par IP et menace la réputation
@@ -60,6 +68,8 @@ public class EmailOtpProperties {
     public void setMaxAttempts(int maxAttempts) { this.maxAttempts = maxAttempts; }
     public int getOtpValidMinutes() { return otpValidMinutes; }
     public void setOtpValidMinutes(int otpValidMinutes) { this.otpValidMinutes = otpValidMinutes; }
+    public int getMaxSendsPerDay() { return maxSendsPerDay; }
+    public void setMaxSendsPerDay(int maxSendsPerDay) { this.maxSendsPerDay = maxSendsPerDay; }
     public int getMaxSendsPerHourGlobal() { return maxSendsPerHourGlobal; }
     public void setMaxSendsPerHourGlobal(int maxSendsPerHourGlobal) { this.maxSendsPerHourGlobal = maxSendsPerHourGlobal; }
     public int getHardMaxSendsPerHourGlobal() { return hardMaxSendsPerHourGlobal; }

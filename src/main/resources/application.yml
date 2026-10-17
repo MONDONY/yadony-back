@@ -498,6 +498,8 @@ yadony:
     rate-window-minutes: ${YADONY_EMAIL_OTP_WINDOW_MINUTES:5}
     max-attempts: ${YADONY_EMAIL_OTP_MAX_ATTEMPTS:5}
     otp-valid-minutes: ${YADONY_EMAIL_OTP_VALID_MINUTES:10}
+    # Codes par adresse sur 24 h : borne le harcèlement d'une boîte (1 code/min sinon).
+    max-sends-per-day: ${YADONY_EMAIL_OTP_MAX_SENDS_PER_DAY:10}
     # Seuil d'ALERTE (Sentry) sur les envois par heure, toutes adresses confondues. Il ne
     # bloque pas : un arrosage depuis un botnet couperait sinon la connexion de tout le monde.
     max-sends-per-hour-global: ${YADONY_EMAIL_OTP_MAX_SENDS_PER_HOUR_GLOBAL:1000}
@@ -510,6 +512,10 @@ yadony:
     rate-window-minutes: ${YADONY_SMS_OTP_WINDOW_MINUTES:5}
     max-attempts: ${YADONY_SMS_OTP_MAX_ATTEMPTS:5}
     otp-valid-minutes: ${YADONY_SMS_OTP_VALID_MINUTES:10}
+    max-sends-per-day: ${YADONY_SMS_OTP_MAX_SENDS_PER_DAY:10}
+    # Connexions réussies par numéro sur la fenêtre, même avec un bon code.
+    max-logins-per-window: ${YADONY_SMS_OTP_MAX_LOGINS_PER_WINDOW:3}
+    login-window-minutes: ${YADONY_SMS_OTP_LOGIN_WINDOW_MINUTES:10}
     # Anti SMS pumping : seuls ces indicatifs reçoivent un code (diaspora Europe/Amérique
     # du Nord, corridors Afrique de l'Ouest et centrale, Maghreb). Vide = tous les pays.
     allowed-country-codes: ${YADONY_SMS_OTP_ALLOWED_COUNTRY_CODES:33,32,41,352,49,39,34,351,44,31,1,221,225,223,237,224,226,227,228,229,241,242,243,222,235,236,212,213,216}

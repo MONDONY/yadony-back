@@ -74,6 +74,13 @@ public class EmailOtpService {
                     "Too Many Requests",
                     "Trop de codes demandés, réessaie dans " + windowMinutes + " min");
         }
+        if (emailOtpRepository.countByEmailSince(email, LocalDateTime.now(ZoneOffset.UTC).minusDays(1))
+                >= properties.getMaxSendsPerDay()) {
+            throw new YadonyBusinessException(
+                    HttpStatus.TOO_MANY_REQUESTS, "otp-daily-limit",
+                    "Too Many Requests",
+                    "Limite de codes atteinte pour aujourd'hui, réessaie demain");
+        }
         LocalDateTime hourAgo = LocalDateTime.now(ZoneOffset.UTC).minusHours(1);
         long sentLastHour = emailOtpRepository.countAllSince(hourAgo);
         if (sentLastHour >= properties.getHardMaxSendsPerHourGlobal()) {
