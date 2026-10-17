@@ -144,7 +144,14 @@ class GpProControllerIT {
                         .contentType(MediaType.APPLICATION_JSON).content(ids(d.getId())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.state").value("PENDING"))
-                .andExpect(jsonPath("$.documentCount").value(1));
+                .andExpect(jsonPath("$.documentCount").value(1))
+                .andExpect(jsonPath("$.documents.length()").value(1))
+                .andExpect(jsonPath("$.documents[0].id").value(d.getId().toString()))
+                .andExpect(jsonPath("$.documents[0].type").exists())
+                .andExpect(jsonPath("$.documents[0].storageKey").doesNotExist())
+                .andExpect(jsonPath("$.documents[0].url").doesNotExist());
+        mockMvc.perform(get("/gp-pro/me").with(auth()))
+                .andExpect(jsonPath("$.documents[0].id").value(d.getId().toString()));
         org.assertj.core.api.Assertions.assertThat(documentRepository.findById(d.getId()).orElseThrow()
                 .getApplicationId()).isNotNull();
     }
@@ -212,7 +219,8 @@ class GpProControllerIT {
         mockMvc.perform(delete("/gp-pro/documents/" + d.getId()).with(auth()))
                 .andExpect(status().isNoContent());
         mockMvc.perform(get("/gp-pro/me").with(auth()))
-                .andExpect(jsonPath("$.documentCount").value(0));
+                .andExpect(jsonPath("$.documentCount").value(0))
+                .andExpect(jsonPath("$.documents.length()").value(0));
     }
 
     @Test

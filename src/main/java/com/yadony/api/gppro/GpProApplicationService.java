@@ -94,7 +94,7 @@ public class GpProApplicationService {
                 Map.of("source", r.source().name(), "frequency", r.travelFrequency().name(),
                         "documentCount", docs.size()));
         return new GpProStatusResponse(app.getStatus().name(), app.getTravelFrequency(),
-                app.getCommercialName(), docs.size(), null, null);
+                app.getCommercialName(), docs.size(), null, null, documentsOf(docs));
     }
 
     /** Ajoute des justificatifs à la demande encore ouverte (4 au plus au total, purgés exclus). */
@@ -113,7 +113,8 @@ public class GpProApplicationService {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "gp-pro-document-invalid", "Invalid Document", "Justificatif invalide");
         }
-        int existing = documentRepository.findByApplicationIdAndPurgedAtIsNull(app.getId()).size();
+        List<GpProDocumentEntity> existingDocs = documentRepository.findByApplicationIdAndPurgedAtIsNull(app.getId());
+        int existing = existingDocs.size();
         if (existing + docs.size() > GpProDocumentService.MAX_UNATTACHED_DOCUMENTS) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "gp-pro-too-many-documents", "Too Many Documents",
@@ -127,8 +128,10 @@ public class GpProApplicationService {
             auditService.log("GP_PRO_APPLICATION", app.getId(), "GP_PRO_DOCUMENT_ADDED", user.getId(),
                     Map.of("docType", d.getDocType().name()));
         }
+        List<GpProDocumentEntity> all = new java.util.ArrayList<>(existingDocs);
+        all.addAll(docs);
         return new GpProStatusResponse(app.getStatus().name(), app.getTravelFrequency(),
-                app.getCommercialName(), existing + docs.size(), null, null);
+                app.getCommercialName(), all.size(), null, null, documentsOf(all));
     }
 
     /**
@@ -162,6 +165,13 @@ public class GpProApplicationService {
                 Map.of("docType", doc.getDocType().name()));
     }
 
+    private static List<GpProStatusResponse.Document> documentsOf(List<GpProDocumentEntity> docs) {
+        return docs.stream()
+                .filter(d -> d.getPurgedAt() == null)
+                .map(d -> new GpProStatusResponse.Document(d.getId(), d.getDocType()))
+                .toList();
+    }
+
     @Transactional(readOnly = true)
     public GpProStatusResponse status(String firebaseUid) {
         UserEntity user = findUser(firebaseUid);
@@ -171,9 +181,9 @@ public class GpProApplicationService {
         Optional<GpProApplicationEntity> open = applicationRepository.findFirstByUserIdAndStatusIn(user.getId(), OPEN);
         if (open.isPresent()) {
             GpProApplicationEntity a = open.get();
-            int count = documentRepository.findByApplicationIdAndPurgedAtIsNull(a.getId()).size();
+            List<GpProDocumentEntity> docs = documentRepository.findByApplicationIdAndPurgedAtIsNull(a.getId());
             return new GpProStatusResponse(a.getStatus().name(), a.getTravelFrequency(),
-                    a.getCommercialName(), count, null, null);
+                    a.getCommercialName(), docs.size(), null, null, documentsOf(docs));
         }
         Optional<GpProApplicationEntity> rejected = applicationRepository
                 .findFirstByUserIdAndStatusOrderByDecidedAtDesc(user.getId(), GpProApplicationStatus.REJECTED);

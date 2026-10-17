@@ -439,6 +439,21 @@ public class UserEntity extends BaseEntity {
         return username;
     }
 
+    /**
+     * Nom complet pour le back-office (file de revue, demandes) : prénom et nom entiers, avec
+     * repli sur le prénom puis sur le pseudo. Réservé à l'admin, jamais à un écran public.
+     */
+    public String adminDisplayName() {
+        boolean hasFirst = firstName != null && !firstName.isBlank();
+        if (hasFirst && lastName != null && !lastName.isBlank()) {
+            return firstName + " " + lastName;
+        }
+        if (hasFirst) {
+            return firstName;
+        }
+        return username == null ? UNKNOWN_DISPLAY_NAME : username;
+    }
+
     public String getFirstName() { return firstName; }
     public void setFirstName(String firstName) { this.firstName = firstName; }
 

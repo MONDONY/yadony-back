@@ -319,18 +319,6 @@ public class GpProAdminService {
     }
 
     private static String displayName(UserEntity user) {
-        if (user == null) {
-            return UserEntity.UNKNOWN_DISPLAY_NAME;
-        }
-        String first = user.getFirstName();
-        String last = user.getLastName();
-        boolean hasFirst = first != null && !first.isBlank();
-        if (hasFirst && last != null && !last.isBlank()) {
-            return first + " " + last;
-        }
-        if (hasFirst) {
-            return first;
-        }
-        return user.getUsername() == null ? UserEntity.UNKNOWN_DISPLAY_NAME : user.getUsername();
+        return user == null ? UserEntity.UNKNOWN_DISPLAY_NAME : user.adminDisplayName();
     }
 }

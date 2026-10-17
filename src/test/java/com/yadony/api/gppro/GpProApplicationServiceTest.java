@@ -169,6 +169,7 @@ class GpProApplicationServiceTest {
                 .thenReturn(List.of(d));
         GpProStatusResponse r = service.apply(UID, req(GpProApplicationSource.PROFILE, List.of(id)));
         assertThat(r.documentCount()).isEqualTo(1);
+        assertThat(r.documents()).extracting(GpProStatusResponse.Document::id).containsExactly(id);
         assertThat(d.getApplicationId()).isNotNull();
         verify(documents).saveAll(List.of(d));
     }
@@ -207,6 +208,27 @@ class GpProApplicationServiceTest {
         r = service.status(UID);
         assertThat(r.state()).isEqualTo("REJECTED");
         assertThat(r.reason()).isEqualTo("refus");
+    }
+
+    @Test
+    void statusListsUnpurgedDocumentsOfOpenApplicationWithoutStorageKey() {
+        GpProApplicationEntity a = app(GpProApplicationStatus.PENDING);
+        when(applications.findFirstByUserIdAndStatusIn(eq(userId), anyCollection())).thenReturn(Optional.of(a));
+        UUID id = UUID.randomUUID();
+        GpProDocumentEntity d = doc(id, userId, a.getId());
+        d.setStorageKey("gp-pro/secret.jpg");
+        when(documents.findByApplicationIdAndPurgedAtIsNull(a.getId())).thenReturn(List.of(d));
+
+        GpProStatusResponse r = service.status(UID);
+
+        assertThat(r.documentCount()).isEqualTo(1);
+        assertThat(r.documents()).containsExactly(
+                new GpProStatusResponse.Document(id, GpProDocumentType.TRAVEL_PROOF));
+    }
+
+    @Test
+    void statusDocumentsEmptyWithoutOpenApplication() {
+        assertThat(service.status(UID).documents()).isEmpty();
     }
 
     @Test
@@ -265,6 +287,7 @@ class GpProApplicationServiceTest {
         GpProStatusResponse r = service.attachDocuments(UID, new GpProAttachDocumentsRequest(List.of(id, id)));
 
         assertThat(r.documentCount()).isEqualTo(2);
+        assertThat(r.documents()).hasSize(2).extracting(GpProStatusResponse.Document::id).contains(id);
         assertThat(d.getApplicationId()).isEqualTo(a.getId());
         verify(users).findByIdForUpdate(userId);
         verify(audit).log(eq("GP_PRO_APPLICATION"), eq(a.getId()), eq("GP_PRO_DOCUMENT_ADDED"), eq(userId),
