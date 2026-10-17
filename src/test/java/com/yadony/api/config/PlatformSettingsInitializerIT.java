@@ -70,6 +70,13 @@ class PlatformSettingsInitializerIT {
         assertThat(repository.findBySettingKey("sms_enabled")).isPresent()
                 .get().extracting(PlatformSettingEntity::getSettingValue)
                 .isEqualTo("false");
+        // Quotas de l'assistant : amorcés depuis les variables d'environnement (20 et 30 par défaut).
+        assertThat(repository.findBySettingKey("assistant_daily_quota")).isPresent()
+                .get().extracting(PlatformSettingEntity::getSettingValue)
+                .isEqualTo("20");
+        assertThat(repository.findBySettingKey("assistant_form_draft_daily_quota")).isPresent()
+                .get().extracting(PlatformSettingEntity::getSettingValue)
+                .isEqualTo("30");
     }
 
     @Test

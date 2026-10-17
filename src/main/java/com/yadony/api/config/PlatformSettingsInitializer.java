@@ -31,6 +31,8 @@ public class PlatformSettingsInitializer {
     private final boolean proEnabledProperty;
     private final boolean kycDiditEnabledProperty;
     private final boolean criticalSmsFallbackEnabledProperty;
+    private final int assistantDailyQuotaProperty;
+    private final int assistantFormDraftDailyQuotaProperty;
 
     public PlatformSettingsInitializer(PlatformSettingRepository repository,
                                        YadonyConfigProperties config,
@@ -38,7 +40,10 @@ public class PlatformSettingsInitializer {
                                        @Value("${yadony.pro.enabled:false}") boolean proEnabledProperty,
                                        @Value("${yadony.kyc.didit.enabled:}") String kycDiditEnabledProperty,
                                        @Value("${app.sms.critical-fallback.enabled:false}")
-                                       boolean criticalSmsFallbackEnabledProperty) {
+                                       boolean criticalSmsFallbackEnabledProperty,
+                                       @Value("${yadony.assistant.daily-quota:20}") String assistantDailyQuotaProperty,
+                                       @Value("${yadony.assistant.form-draft.daily-quota:30}")
+                                       String assistantFormDraftDailyQuotaProperty) {
         this.repository = repository;
         this.config = config;
         this.smsEnabledProperty = smsEnabledProperty;
@@ -49,6 +54,24 @@ public class PlatformSettingsInitializer {
                 && !kycDiditEnabledProperty.isBlank()
                 && Boolean.parseBoolean(kycDiditEnabledProperty.trim());
         this.criticalSmsFallbackEnabledProperty = criticalSmsFallbackEnabledProperty;
+        this.assistantDailyQuotaProperty = quotaOr(assistantDailyQuotaProperty,
+                PlatformSettingKey.DEFAULT_ASSISTANT_DAILY_QUOTA);
+        this.assistantFormDraftDailyQuotaProperty = quotaOr(assistantFormDraftDailyQuotaProperty,
+                PlatformSettingKey.DEFAULT_ASSISTANT_FORM_DRAFT_DAILY_QUOTA);
+    }
+
+    /**
+     * Quota lu de l'environnement sans jamais faire échouer le démarrage : vide, illisible ou hors des
+     * bornes du panel (1 à 1000), on prend le défaut, comme pour les drapeaux booléens.
+     */
+    private static int quotaOr(String raw, int fallback) {
+        if (raw == null || raw.isBlank()) return fallback;
+        try {
+            int value = Integer.parseInt(raw.trim());
+            return value >= 1 && value <= 1000 ? value : fallback;
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -85,6 +108,9 @@ public class PlatformSettingsInitializer {
                 String.valueOf(PlatformSettingKey.DEFAULT_TRACKING_PHOTOS_MAX_PER_BID));
         defaults.put(PlatformSettingKey.PHOTO_PURGE_ENABLED, "false");
         defaults.put(PlatformSettingKey.FLIGHTS_ENABLED, "false");
+        defaults.put(PlatformSettingKey.ASSISTANT_DAILY_QUOTA, String.valueOf(assistantDailyQuotaProperty));
+        defaults.put(PlatformSettingKey.ASSISTANT_FORM_DRAFT_DAILY_QUOTA,
+                String.valueOf(assistantFormDraftDailyQuotaProperty));
 
         int inserted = 0;
         for (Map.Entry<PlatformSettingKey, String> entry : defaults.entrySet()) {
