@@ -153,10 +153,6 @@ public record PackageRequestSearchResponse(
      */
     public record SenderPublicProfile(UUID id, String displayName, double averageRating, int totalRatings,
                                       boolean kycVerified, boolean gpPro, String avatarUrl, int incidentCount) {
-        public SenderPublicProfile(UUID id, String displayName, double averageRating, int totalRatings,
-                                   boolean kycVerified, String avatarUrl) {
-            this(id, displayName, averageRating, totalRatings, kycVerified, false, avatarUrl, 0);
-        }
     }
 
     /** Copie enrichie de l'équivalent converti — même pattern que {@code AnnouncementSearchResponse}. */

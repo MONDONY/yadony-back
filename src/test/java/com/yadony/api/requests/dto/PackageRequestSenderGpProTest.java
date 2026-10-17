@@ -18,6 +18,6 @@ class PackageRequestSenderGpProTest {
 
         assertThat(json.get("gpPro").asBoolean()).isTrue();
         assertThat(new ObjectMapper().valueToTree(new PackageRequestSearchResponse.SenderPublicProfile(
-                UUID.randomUUID(), "X", 0, 0, false, null)).get("gpPro").asBoolean()).isFalse();
+                UUID.randomUUID(), "X", 0, 0, false, false, null, 0)).get("gpPro").asBoolean()).isFalse();
     }
 }
