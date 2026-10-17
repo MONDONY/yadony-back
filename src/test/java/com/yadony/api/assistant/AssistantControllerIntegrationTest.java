@@ -9,6 +9,7 @@ import com.yadony.api.assistant.dto.ParsedAnswer;
 import com.yadony.api.assistant.llm.LlmResult;
 import com.yadony.api.assistant.llm.LlmRouter;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -25,8 +26,10 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
@@ -64,6 +67,78 @@ class AssistantControllerIntegrationTest {
                 .andExpect(jsonPath("$.actions[0].route").value("/profile/edit/phone"))
                 .andExpect(jsonPath("$.provider").value("groq"))
                 .andExpect(jsonPath("$.remainingToday").value(1));
+    }
+
+    /**
+     * FLUTTER-QV, sur les vraies fiches et le vrai seuil : « comment je fais ? » seule ne passe pas le seuil, et la
+     * question utilisateur précédente (« et après ? ») non plus ; celle d'avant ramène la fiche, l'IA est appelée.
+     */
+    @Test
+    void relanceSansFicheSeuleRepondGraceAuxQuestionsPrecedentes() throws Exception {
+        when(router.complete(anyString(), anyString(), any())).thenReturn(Optional.of(new LlmResult<>("groq",
+                new ParsedAnswer("Activités › Portefeuille › Recharger.", true, List.of()))));
+        String json = objectMapper.writeValueAsString(new AssistantAskRequest("comment je fais ?", "fr", List.of(
+                new AssistantHistoryTurn("user", "Comment recharger mon solde ?"),
+                new AssistantHistoryTurn("assistant", "Depuis votre portefeuille."),
+                new AssistantHistoryTurn("user", "et après ?"),
+                new AssistantHistoryTurn("assistant", "Je n'ai pas trouvé cette information."))));
+        mockMvc.perform(post("/assistant/ask").with(authentication(asUser("uid-relance")))
+                        .contentType(MediaType.APPLICATION_JSON).content(json))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.answered").value(true))
+                .andExpect(jsonPath("$.provider").value("groq"))
+                .andExpect(jsonPath("$.sources[0]").value("recharger-solde"));
+    }
+
+    @Test
+    void laMemeQuestionSansHistoriqueNAppellePasLIA() throws Exception {
+        mockMvc.perform(post("/assistant/ask").with(authentication(asUser("uid-relance-seule")))
+                        .contentType(MediaType.APPLICATION_JSON).content(body("comment je fais ?")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.answered").value(false))
+                .andExpect(jsonPath("$.provider").value("none"))
+                .andExpect(jsonPath("$.sources").isEmpty());
+        verifyNoInteractions(router);
+    }
+
+    private String body(String question, String locale) throws Exception {
+        return objectMapper.writeValueAsString(new AssistantAskRequest(question, locale, List.of()));
+    }
+
+    /** Téléphone en anglais (en-FR), question écrite en français : les fiches françaises répondent. */
+    @Test
+    void questionFrancaiseSurUnTelephoneEnAnglaisTrouveLesFichesFrancaises() throws Exception {
+        when(router.complete(anyString(), anyString(), any())).thenReturn(Optional.of(new LlmResult<>("groq",
+                new ParsedAnswer("Depuis votre portefeuille.", true, List.of()))));
+        mockMvc.perform(post("/assistant/ask").with(authentication(asUser("uid-langue-fr")))
+                        .contentType(MediaType.APPLICATION_JSON).content(body("Comment recharger mon solde ?", "en-FR")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.provider").value("groq"))
+                .andExpect(jsonPath("$.sources[0]").value("recharger-solde"));
+        ArgumentCaptor<String> user = ArgumentCaptor.forClass(String.class);
+        verify(router).complete(anyString(), user.capture(), any());
+        assertThat(user.getValue()).contains("<locale>en</locale>", "<reply_language>question</reply_language>");
+    }
+
+    @Test
+    void questionAnglaiseSurUnTelephoneEnFrancaisTrouveLesFichesAnglaises() throws Exception {
+        when(router.complete(anyString(), anyString(), any())).thenReturn(Optional.of(new LlmResult<>("groq",
+                new ParsedAnswer("From the trip page.", true, List.of()))));
+        mockMvc.perform(post("/assistant/ask").with(authentication(asUser("uid-langue-en")))
+                        .contentType(MediaType.APPLICATION_JSON).content(body("How do I cancel my trip?", "fr")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.provider").value("groq"))
+                .andExpect(jsonPath("$.sources[0]").value("annuler-trajet"));
+    }
+
+    @Test
+    void questionHorsSujetDansLesDeuxLanguesNAppellePasLIA() throws Exception {
+        mockMvc.perform(post("/assistant/ask").with(authentication(asUser("uid-langue-aucune")))
+                        .contentType(MediaType.APPLICATION_JSON).content(body("Recette du thiéboudienne", "en")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.answered").value(false))
+                .andExpect(jsonPath("$.provider").value("none"));
+        verifyNoInteractions(router);
     }
 
     @Test

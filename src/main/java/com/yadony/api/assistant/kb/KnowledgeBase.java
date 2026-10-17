@@ -91,7 +91,17 @@ public class KnowledgeBase {
         }
     }
 
-    private static int addTerms(BooleanQuery.Builder query, Analyzer analyzer, String text, float weight) {
+    /**
+     * Vrai si la question, une fois analysée (mots vides retirés), compte au plus 4 termes : c'est une relance
+     * courte (« et si je suis voyageur ? »), la même règle que celle qui ajoute la question précédente à la recherche.
+     */
+    public boolean isShortFollowUp(String locale, String question) {
+        if (question == null) return true;
+        Index index = indexes.getOrDefault(locale, indexes.get("fr"));
+        return terms(index.analyzer(), question).size() <= MAX_FOLLOW_UP_TERMS;
+    }
+
+    private static Set<String> terms(Analyzer analyzer, String text) {
         Set<String> terms = new LinkedHashSet<>();
         try (TokenStream ts = analyzer.tokenStream("body", text)) {
             CharTermAttribute attr = ts.addAttribute(CharTermAttribute.class);
@@ -103,6 +113,11 @@ public class KnowledgeBase {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+        return terms;
+    }
+
+    private static int addTerms(BooleanQuery.Builder query, Analyzer analyzer, String text, float weight) {
+        Set<String> terms = terms(analyzer, text);
         int count = 0;
         for (String term : terms) {
             if (count >= 100) break;

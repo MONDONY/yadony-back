@@ -109,6 +109,18 @@ class KnowledgeBaseSearchTest {
     }
 
     @Test
+    void relanceCourteJusquAQuatreTermesUtiles() {
+        // Mots vides retirés : « et si je suis voyageur ? » ne garde que « voyageur ».
+        assertThat(kb.isShortFollowUp("fr", "et si je suis voyageur ?")).isTrue();
+        assertThat(kb.isShortFollowUp("fr", "annuler trajet prévu demain")).isTrue();
+        assertThat(kb.isShortFollowUp("fr", "annuler trajet prévu demain matin")).isFalse();
+        assertThat(kb.isShortFollowUp("en", "what if I am a traveler?")).isTrue();
+        assertThat(kb.isShortFollowUp("en", "how do I cancel my planned trip tomorrow morning")).isFalse();
+        assertThat(kb.isShortFollowUp("de", "?")).isTrue();
+        assertThat(kb.isShortFollowUp("fr", null)).isTrue();
+    }
+
+    @Test
     void limiteNulleOuNegativeRetourneVide() {
         assertThat(kb.search("fr", "trajet", null, 0)).isEmpty();
         assertThat(kb.search("fr", "trajet", null, -1)).isEmpty();

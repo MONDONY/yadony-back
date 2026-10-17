@@ -28,6 +28,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -239,5 +240,241 @@ class AssistantServiceTest {
         when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(sansRoute, trip));
         when(router.complete(anyString(), anyString(), any())).thenReturn(Optional.empty());
         assertThat(service.ask("uid", ask("q")).actions()).extracting("route").containsExactly("/trips/create");
+    }
+
+    // --- Relances (FLUTTER-QV) : la recherche reprend les questions utilisateur précédentes ---
+
+    private static final String Q1 = "Combien coûte l'envoi d'un colis ?";
+    private static final String Q2 = "comment je fais ?";
+    private static final String RELANCE = "et pour un colis de 10 kg ?";
+
+    private static List<AssistantHistoryTurn> conversation() {
+        return List.of(
+                new AssistantHistoryTurn("user", Q1),
+                new AssistantHistoryTurn("assistant", "Le prix dépend du voyageur, réponse de l'assistant."),
+                new AssistantHistoryTurn("user", Q2),
+                new AssistantHistoryTurn("assistant", "Je n'ai pas trouvé cette information."));
+    }
+
+    @Test
+    void relanceSansFicheSeuleTrouveLesFichesAvecLesQuestionsPrecedentesEtAppelleLIA() {
+        when(kb.search("fr", RELANCE, Q2, 4)).thenReturn(List.of());
+        when(kb.search("fr", RELANCE + "\n" + Q2 + "\n" + Q1, null, 4)).thenReturn(List.of(trip, other));
+        llmAnswers(new ParsedAnswer("Comptez le prix au kilo du voyageur.", true, List.of("/trips/create")));
+
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest(RELANCE, "fr", conversation()));
+
+        assertThat(r.answered()).isTrue();
+        assertThat(r.provider()).isEqualTo("groq");
+        assertThat(r.sources()).containsExactly("proposer-trajet", "parrainage");
+        assertThat(r.actions()).extracting("route").containsExactly("/trips/create");
+        ArgumentCaptor<String> user = ArgumentCaptor.forClass(String.class);
+        verify(router).complete(anyString(), user.capture(), any());
+        // Le modèle reçoit l'historique pour comprendre la relance, et la question telle quelle.
+        assertThat(user.getValue()).contains("<turn role=\"user\">" + Q2 + "</turn>",
+                "<turn role=\"assistant\">Je n'ai pas trouvé cette information.</turn>",
+                "<question>" + RELANCE + "</question>");
+    }
+
+    @Test
+    void laRechercheDeRelanceNIncluePasLesReponsesDeLAssistant() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of());
+        service.ask("uid", new AssistantAskRequest(RELANCE, "fr", conversation()));
+        ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
+        verify(kb, times(2)).search(eq("fr"), query.capture(), any(), eq(4));
+        assertThat(query.getAllValues().get(1)).isEqualTo(RELANCE + "\n" + Q2 + "\n" + Q1)
+                .doesNotContain("réponse de l'assistant", "Je n'ai pas trouvé");
+    }
+
+    @Test
+    void relanceSansFicheMemeAvecLeContexteResteSansAppelIA() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of());
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest(RELANCE, "fr", conversation()));
+        assertThat(r.answer()).startsWith("Je n'ai pas trouvé");
+        assertThat(r.provider()).isEqualTo("none");
+        verify(router, never()).complete(anyString(), anyString(), any());
+    }
+
+    @Test
+    void questionAutonomeAvecFichesNeRelancePas() {
+        String question = "Comment changer mon numéro de téléphone dans le profil ?";
+        when(kb.search("fr", question, Q2, 4)).thenReturn(List.of(phone));
+        when(kb.isShortFollowUp("fr", question)).thenReturn(false);
+        llmAnswers(new ParsedAnswer("ok", true, List.of()));
+
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest(question, "fr", conversation()));
+
+        assertThat(r.sources()).containsExactly("changer-numero");
+        verify(kb, times(1)).search(anyString(), anyString(), any(), anyInt());
+    }
+
+    @Test
+    void relanceCourteQuiTrouveDejaQuatreFichesNeRelancePas() {
+        KbHit quatrieme = new KbHit(new KbArticle("fr", "envoyer-colis", "Envoyer un colis", List.of(), List.of(), "c"), 1f);
+        when(kb.search("fr", RELANCE, Q2, 4)).thenReturn(List.of(phone, trip, other, quatrieme));
+        when(kb.isShortFollowUp("fr", RELANCE)).thenReturn(true);
+        llmAnswers(new ParsedAnswer("ok", true, List.of()));
+
+        service.ask("uid", new AssistantAskRequest(RELANCE, "fr", conversation()));
+
+        verify(kb, times(1)).search(anyString(), anyString(), any(), anyInt());
+    }
+
+    @Test
+    void relanceCourteAvecPeuDeFichesCompleteSansDoublonEtGardeLePlafond() {
+        KbHit envoi = new KbHit(new KbArticle("fr", "envoyer-colis", "Envoyer un colis", List.of(), List.of(), "c"), 9f);
+        KbHit kilos = new KbHit(new KbArticle("fr", "kilos-prix", "Kilos et prix", List.of(), List.of(), "c"), 8f);
+        when(kb.search("fr", RELANCE, Q2, 4)).thenReturn(List.of(phone, trip));
+        when(kb.isShortFollowUp("fr", RELANCE)).thenReturn(true);
+        when(kb.search("fr", RELANCE + "\n" + Q2 + "\n" + Q1, null, 4)).thenReturn(List.of(envoi, phone, kilos, other));
+        llmAnswers(new ParsedAnswer("ok", true, List.of()));
+
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest(RELANCE, "fr", conversation()));
+
+        // Les fiches de la question elle-même restent en tête ; « phone » n'est pas doublée ; 4 fiches au plus.
+        assertThat(r.sources()).containsExactly("changer-numero", "proposer-trajet", "envoyer-colis", "kilos-prix");
+    }
+
+    @Test
+    void historiqueVideNeRelancePas() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of());
+        when(kb.isShortFollowUp(anyString(), anyString())).thenReturn(true);
+        service.ask("uid", new AssistantAskRequest(RELANCE, "fr", List.of()));
+        service.ask("uid", new AssistantAskRequest(RELANCE, "fr", null));
+        // Une seule recherche par langue (français puis repli anglais), aucune recherche de relance.
+        verify(kb, times(2)).search("fr", RELANCE, null, 4);
+        verify(kb, times(2)).search("en", RELANCE, null, 4);
+        verify(kb, times(4)).search(anyString(), anyString(), any(), anyInt());
+    }
+
+    @Test
+    void historiqueAvecSeulementDesToursAssistantNeRelancePas() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of());
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest(RELANCE, "fr", List.of(
+                new AssistantHistoryTurn("assistant", "Bonjour, je suis l'assistant de Yadony."),
+                new AssistantHistoryTurn("assistant", "Envoyer un colis : publiez une demande."))));
+        verify(kb, times(1)).search("fr", RELANCE, null, 4);
+        verify(kb, times(1)).search("en", RELANCE, null, 4);
+        verify(kb, times(2)).search(anyString(), anyString(), any(), anyInt());
+        assertThat(r.answered()).isFalse();
+        verify(router, never()).complete(anyString(), anyString(), any());
+    }
+
+    @Test
+    void laRelanceGardeAuPlusDeuxQuestionsDistinctesEtBorneLeurLongueur() {
+        List<AssistantHistoryTurn> history = new ArrayList<>();
+        history.add(new AssistantHistoryTurn("user", "question ancienne trop vieille"));
+        history.add(new AssistantHistoryTurn("user", "z".repeat(800)));
+        history.add(new AssistantHistoryTurn("user", "Quelle commission ?"));
+        history.add(new AssistantHistoryTurn("assistant", "réponse"));
+        history.add(new AssistantHistoryTurn("user", "QUELLE COMMISSION ?"));
+        history.add(new AssistantHistoryTurn("user", "   "));
+        history.add(new AssistantHistoryTurn("user", " Et Pour 10 KG ? "));
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of());
+
+        service.ask("uid", new AssistantAskRequest("et pour 10 kg ?", "fr", history));
+
+        ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
+        verify(kb, times(2)).search(eq("fr"), query.capture(), any(), eq(4));
+        // Ni la répétition de la question, ni le tour vide, ni le doublon : « QUELLE COMMISSION ? » puis le tour
+        // de 800 caractères ramené à 500 ; la plus vieille question n'entre pas.
+        assertThat(query.getAllValues().get(1))
+                .isEqualTo("et pour 10 kg ?\nQUELLE COMMISSION ?\n" + "z".repeat(500));
+    }
+
+    // --- Repli sur l'autre langue (FLUTTER-QV : téléphone en anglais, questions écrites en français) ---
+
+    private final KbHit phoneEn = new KbHit(new KbArticle("en", "changer-numero", "Change my number", List.of(),
+            List.of(new KbRoute("/profile/edit/phone", "Change my number")), "body"), 3f);
+
+    private String promptSent() {
+        ArgumentCaptor<String> user = ArgumentCaptor.forClass(String.class);
+        verify(router).complete(anyString(), user.capture(), any());
+        return user.getValue();
+    }
+
+    @Test
+    void questionFrancaiseAvecLocaleAnglaiseTrouveLesFichesFrancaisesEtAppelleLIA() {
+        String question = "Où je change mon numéro ?";
+        when(kb.search(eq("en"), anyString(), any(), anyInt())).thenReturn(List.of());
+        when(kb.search("fr", question, null, 4)).thenReturn(List.of(phone));
+        llmAnswers(new ParsedAnswer("Allez dans Moi.", true, List.of("/profile/edit/phone")));
+
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest(question, "en-FR", List.of()));
+
+        assertThat(r.answered()).isTrue();
+        assertThat(r.provider()).isEqualTo("groq");
+        assertThat(r.sources()).containsExactly("changer-numero");
+        // Mêmes routes dans les deux langues : l'action de la fiche française reste valable.
+        assertThat(r.actions()).extracting("route", "label").containsExactly(
+                org.assertj.core.groups.Tuple.tuple("/profile/edit/phone", "Changer mon numéro"));
+        assertThat(promptSent()).startsWith("<locale>en</locale>\n<reply_language>question</reply_language>")
+                .contains("id=\"changer-numero\"", "<question>" + question + "</question>");
+    }
+
+    @Test
+    void questionAnglaiseAvecLocaleFrancaiseTrouveLesFichesAnglaises() {
+        String question = "How do I change my phone number?";
+        when(kb.search(eq("fr"), anyString(), any(), anyInt())).thenReturn(List.of());
+        when(kb.search("en", question, null, 4)).thenReturn(List.of(phoneEn));
+        llmAnswers(new ParsedAnswer("Go to Me.", true, List.of("/profile/edit/phone")));
+
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest(question, "fr", List.of()));
+
+        assertThat(r.provider()).isEqualTo("groq");
+        assertThat(r.actions()).extracting("route").containsExactly("/profile/edit/phone");
+        assertThat(promptSent()).startsWith("<locale>fr</locale>\n<reply_language>question</reply_language>");
+    }
+
+    @Test
+    void leRepliDeLangueReprendAussiLaRechercheDeRelance() {
+        List<AssistantHistoryTurn> history = List.of(new AssistantHistoryTurn("user", "Comment recharger mon solde ?"));
+        when(kb.search(eq("en"), anyString(), any(), anyInt())).thenReturn(List.of());
+        when(kb.search("fr", Q2, "Comment recharger mon solde ?", 4)).thenReturn(List.of());
+        when(kb.search("fr", Q2 + "\nComment recharger mon solde ?", null, 4)).thenReturn(List.of(other));
+        llmAnswers(new ParsedAnswer("ok", true, List.of()));
+
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest(Q2, "en", history));
+
+        assertThat(r.sources()).containsExactly("parrainage");
+        verify(kb).search("en", Q2 + "\nComment recharger mon solde ?", null, 4);
+        assertThat(promptSent()).contains("<reply_language>question</reply_language>");
+    }
+
+    @Test
+    void questionIntrouvableDansLesDeuxLanguesNAppellePasLIA() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of());
+
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest("Recette du thiéboudienne", "en", List.of()));
+
+        // Message dans la langue de l'interface.
+        assertThat(r.answer()).startsWith("I could not find");
+        assertThat(r.provider()).isEqualTo("none");
+        verify(kb).search("en", "Recette du thiéboudienne", null, 4);
+        verify(kb).search("fr", "Recette du thiéboudienne", null, 4);
+        verify(router, never()).complete(anyString(), anyString(), any());
+    }
+
+    @Test
+    void langueDemandeeQuiTrouveDejaNeCherchePasDansLAutre() {
+        when(kb.search(eq("en"), anyString(), any(), anyInt())).thenReturn(List.of(phoneEn));
+        llmAnswers(new ParsedAnswer("ok", true, List.of()));
+
+        service.ask("uid", new AssistantAskRequest("How do I change my number?", "en", List.of()));
+
+        verify(kb, never()).search(eq("fr"), anyString(), any(), anyInt());
+        assertThat(promptSent()).startsWith("<locale>en</locale>\n<articles>").doesNotContain("reply_language");
+    }
+
+    @Test
+    void repliDeLangueEnModeDegradeGardeLesRoutesDesFiches() {
+        when(kb.search(eq("en"), anyString(), any(), anyInt())).thenReturn(List.of());
+        when(kb.search(eq("fr"), anyString(), any(), anyInt())).thenReturn(List.of(phone, trip));
+        when(router.complete(anyString(), anyString(), any())).thenReturn(Optional.empty());
+
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest("Où je change mon numéro ?", "en", List.of()));
+
+        assertThat(r.answer()).startsWith("I can't answer right now");
+        assertThat(r.actions()).extracting("route").containsExactly("/profile/edit/phone", "/trips/create");
     }
 }
