@@ -77,9 +77,10 @@ public class EmailOtpService {
         LocalDateTime hourAgo = LocalDateTime.now(ZoneOffset.UTC).minusHours(1);
         long sentLastHour = emailOtpRepository.countAllSince(hourAgo);
         if (sentLastHour >= properties.getHardMaxSendsPerHourGlobal()) {
-            // Plafond dur, loin au-dessus du seuil d'alerte : seul un abus massif l'atteint.
-            // Il protège le quota Resend et la réputation du domaine d'envoi.
-            log.error("Plafond dur d'envoi de codes email atteint ({} / h) : envois suspendus",
+            // Plafond dur, loin au-dessus du seuil d'alerte : l'atteindre suppose déjà de
+            // contourner la limite par IP depuis des centaines d'adresses. Il protège le
+            // quota Resend et la réputation du domaine d'envoi.
+            alertThrottled("Plafond dur d'envoi de codes email atteint ({} / h) : envois suspendus",
                     properties.getHardMaxSendsPerHourGlobal());
             throw new YadonyBusinessException(
                     HttpStatus.SERVICE_UNAVAILABLE, "email-otp-budget-exceeded",
@@ -87,7 +88,8 @@ public class EmailOtpService {
                     "L'envoi de codes est momentanément suspendu, réessaie dans quelques minutes");
         }
         if (sentLastHour >= properties.getMaxSendsPerHourGlobal()) {
-            alertGlobalBudget();
+            alertThrottled("Seuil d'envoi de codes email dépassé ({} / h) : pic d'inscriptions ou arrosage",
+                    properties.getMaxSendsPerHourGlobal());
         }
 
         // Seul le dernier code envoyé reste valable.
@@ -293,18 +295,14 @@ public class EmailOtpService {
     }
 
     /**
-     * Seuil horaire dépassé : alerte (ERROR → Sentry) au plus une fois par 10 min, sans
-     * refuser l'envoi. Un email ne coûte presque rien ; bloquer ferait d'un arrosage
-     * réparti sur un botnet une coupure de la connexion pour tous les utilisateurs.
-     * Soit un pic d'inscriptions (relever le seuil), soit un arrosage à examiner.
+     * Alerte (ERROR → Sentry) au plus une fois par 10 min : sans cette garde, chaque envoi
+     * au-delà du seuil, ou chaque refus au-delà du plafond, créerait un événement Sentry.
      */
-    private void alertGlobalBudget() {
+    private void alertThrottled(String message, int threshold) {
         long now = System.currentTimeMillis();
-        long last = lastBudgetAlertMs;
-        if (now - last >= 600_000L) {
+        if (now - lastBudgetAlertMs >= 600_000L) {
             lastBudgetAlertMs = now;
-            log.error("Seuil d'envoi de codes email dépassé ({} / h) : pic d'inscriptions ou arrosage",
-                    properties.getMaxSendsPerHourGlobal());
+            log.error(message, threshold);
         }
     }
 
