@@ -398,6 +398,19 @@ yadony:
       max-retries: 8
       retry-backoff-base: 30s
       scheduler-enabled: true
+  # Limites de débit applicatives (ratelimit/RateLimitRule) : par compte pour tout ce qui
+  # est authentifié, par IP pour l'OTP. nginx ne garde qu'un plafond anti-flood large par
+  # IP, à cause du CGNAT des opérateurs mobiles (des centaines d'abonnés derrière une IP).
+  # Une règle se règle par yadony.rate-limit.rules.<nom>.limit|window (ex. payment-minute).
+  rate-limit:
+    enabled: ${YADONY_RATE_LIMIT_ENABLED:true}
+    rules:
+      account:
+        limit: ${YADONY_RATE_LIMIT_ACCOUNT_PER_MINUTE:300}
+      otp-send-ip:
+        limit: ${YADONY_RATE_LIMIT_OTP_SEND_PER_IP:30}
+      otp-verify-ip:
+        limit: ${YADONY_RATE_LIMIT_OTP_VERIFY_PER_IP:60}
   referral:
     max-invitations-per-user: ${YADONY_REFERRAL_MAX_INVITATIONS_PER_USER:50}
     code-regeneration-cooldown-days: ${YADONY_REFERRAL_CODE_REGENERATION_COOLDOWN_DAYS:30}
@@ -485,6 +498,8 @@ yadony:
     rate-window-minutes: ${YADONY_EMAIL_OTP_WINDOW_MINUTES:5}
     max-attempts: ${YADONY_EMAIL_OTP_MAX_ATTEMPTS:5}
     otp-valid-minutes: ${YADONY_EMAIL_OTP_VALID_MINUTES:10}
+    # Envois par heure toutes adresses confondues ; au-delà 503 + alerte Sentry.
+    max-sends-per-hour-global: ${YADONY_EMAIL_OTP_MAX_SENDS_PER_HOUR_GLOBAL:1000}
   sms:
     # Mêmes valeurs que le canal email : l'écran de saisie du code est partagé
     # entre les deux, son bouton « Renvoyer » se rouvrant toutes les 60 s.
@@ -492,6 +507,12 @@ yadony:
     rate-window-minutes: ${YADONY_SMS_OTP_WINDOW_MINUTES:5}
     max-attempts: ${YADONY_SMS_OTP_MAX_ATTEMPTS:5}
     otp-valid-minutes: ${YADONY_SMS_OTP_VALID_MINUTES:10}
+    # Anti SMS pumping : seuls ces indicatifs reçoivent un code (diaspora Europe/Amérique
+    # du Nord, corridors Afrique de l'Ouest et centrale, Maghreb). Vide = tous les pays.
+    allowed-country-codes: ${YADONY_SMS_OTP_ALLOWED_COUNTRY_CODES:33,32,41,352,49,39,34,351,44,31,1,221,225,223,237,224,226,227,228,229,241,242,243,222,235,236,212,213,216}
+    # SMS de code par heure et par 24 h, tous numéros confondus ; au-delà 503 + alerte.
+    max-sends-per-hour-global: ${YADONY_SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL:200}
+    max-sends-per-day-global: ${YADONY_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL:1000}
     # Empreintes SMS Retriever de l'app Android, séparées par des virgules (debug, clé de
     # signature Play). Ajoutées à la fin du SMS de code : Android remet alors le SMS à
     # l'app, qui remplit le code toute seule. Vide = SMS inchangé.

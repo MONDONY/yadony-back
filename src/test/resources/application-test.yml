@@ -52,6 +52,10 @@ stripe:
     billing-secret: whsec_test_billing
 
 yadony:
+  # Les tests enchaînent des dizaines d'appels d'un même compte : le limiteur est testé à
+  # part (ratelimit/*Test), activé explicitement.
+  rate-limit:
+    enabled: false
   # H2 ne connaît ni LATERAL ni FILTER : la sonde ne tourne que sur Postgres (MoneyIntegrityMonitorIT l'appelle directement).
   money-integrity:
     enabled: false
@@ -77,6 +81,13 @@ yadony:
   email:
     resend-api-key: "test-resend-key"
     from-address: "noreply@test.yadony.app"
+    # Budget global testé dans EmailOtpServiceTest : ici, jamais atteint par la suite.
+    max-sends-per-hour-global: 1000000
+  sms:
+    # Liste de pays et budgets testés dans SmsOtpServiceTest : la suite garde ses numéros.
+    allowed-country-codes: ""
+    max-sends-per-hour-global: 1000000
+    max-sends-per-day-global: 1000000
   urgency:
     threshold-days: 3
   matching:

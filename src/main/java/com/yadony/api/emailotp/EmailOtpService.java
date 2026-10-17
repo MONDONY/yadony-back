@@ -40,6 +40,7 @@ public class EmailOtpService {
     private final FirebaseContactService firebaseContact;
     private final AuditService auditService;
     private final MessagesResolver messagesResolver;
+    private volatile String dummyHash;
 
     public EmailOtpService(EmailOtpProperties properties,
                            EmailOtpRepository emailOtpRepository,
@@ -62,7 +63,8 @@ public class EmailOtpService {
     }
 
     @Transactional(isolation = Isolation.SERIALIZABLE)
-    public Instant sendOtp(String email) {
+    public Instant sendOtp(String rawEmail) {
+        String email = normalize(rawEmail);
         int windowMinutes = properties.getRateWindowMinutes();
         LocalDateTime since = LocalDateTime.now(ZoneOffset.UTC).minusMinutes(windowMinutes);
         if (emailOtpRepository.countByEmailSince(email, since) >= properties.getMaxSendsPerWindow()) {
@@ -71,6 +73,20 @@ public class EmailOtpService {
                     "Too Many Requests",
                     "Trop de codes demandés, réessaie dans " + windowMinutes + " min");
         }
+        LocalDateTime hourAgo = LocalDateTime.now(ZoneOffset.UTC).minusHours(1);
+        if (emailOtpRepository.countAllSince(hourAgo) >= properties.getMaxSendsPerHourGlobal()) {
+            // ERROR → Sentry : soit un pic d'inscriptions à absorber (relever le budget),
+            // soit un arrosage d'adresses qui passe sous les limites par adresse et par IP.
+            log.error("Budget global d'envoi de codes email atteint ({} / h) : envois suspendus",
+                    properties.getMaxSendsPerHourGlobal());
+            throw new YadonyBusinessException(
+                    HttpStatus.SERVICE_UNAVAILABLE, "email-otp-budget-exceeded",
+                    "Service Unavailable",
+                    "L'envoi de codes est momentanément suspendu, réessaie dans quelques minutes");
+        }
+
+        // Seul le dernier code envoyé reste valable.
+        emailOtpRepository.invalidateActive(email, LocalDateTime.now(ZoneOffset.UTC));
 
         String code = String.format("%06d", SECURE_RANDOM.nextInt(1_000_000));
         LocalDateTime expiresAt = LocalDateTime.now(ZoneOffset.UTC)
@@ -87,7 +103,8 @@ public class EmailOtpService {
         return expiresAt.toInstant(ZoneOffset.UTC);
     }
 
-    public String verifyOtp(String email, String code) {
+    public String verifyOtp(String rawEmail, String code) {
+        String email = normalize(rawEmail);
         log.info("verifyOtp: email='{}'", maskEmail(email));
         consumeOtp(email, code);
 
@@ -163,7 +180,8 @@ public class EmailOtpService {
      * <p>Ajout seulement, jamais remplacement : l'email identifie le compte Firebase.
      * Un compte qui en porte déjà un est refusé (409).
      */
-    public String attachEmailToAccount(String firebaseUid, String email, String code) {
+    public String attachEmailToAccount(String firebaseUid, String rawEmail, String code) {
+        String email = normalize(rawEmail);
         log.info("attachEmailToAccount: uid={} email='{}'", firebaseUid, maskEmail(email));
 
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
@@ -220,9 +238,15 @@ public class EmailOtpService {
 
         EmailOtpEntity token = emailOtpRepository
                 .findTopByEmailAndUsedAtIsNullOrderByCreatedAtDesc(email)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.BAD_REQUEST, "otp-invalid",
-                        "Invalid OTP", "Code invalide ou expiré"));
+                .orElse(null);
+        if (token == null) {
+            // Même coût qu'un vrai contrôle : une réponse plus rapide révélerait qu'aucun
+            // code n'est en attente pour cette adresse.
+            passwordEncoder.matches(code, dummyHash());
+            throw new YadonyBusinessException(
+                    HttpStatus.BAD_REQUEST, "otp-invalid",
+                    "Invalid OTP", "Code invalide ou expiré");
+        }
 
         if (token.getAttempts() >= properties.getMaxAttempts()) {
             throw new YadonyBusinessException(
@@ -247,8 +271,30 @@ public class EmailOtpService {
                     "Invalid OTP", "Code invalide");
         }
 
-        token.setUsedAt(LocalDateTime.now(ZoneOffset.UTC));
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        token.setUsedAt(now);
         emailOtpRepository.save(token);
+        // Les codes plus anciens encore valides ne doivent pas survivre à une connexion.
+        emailOtpRepository.invalidateActive(email, now);
+    }
+
+    /**
+     * Forme canonique d'une adresse : sans espaces autour, en minuscules. Firebase ignore
+     * la casse ; sans cela, « A@x.com » et « a@x.com » avaient chacune leur budget
+     * d'envois et d'essais pour une même boîte.
+     */
+    static String normalize(String email) {
+        return email == null ? null : email.strip().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /** Hash BCrypt jetable, calculé une fois, pour égaliser le temps de réponse. */
+    private String dummyHash() {
+        String hash = dummyHash;
+        if (hash == null) {
+            hash = passwordEncoder.encode("dummy-otp-" + SECURE_RANDOM.nextInt());
+            dummyHash = hash;
+        }
+        return hash;
     }
 
     /** Les logs partent vers Loki : jamais d'adresse complète en clair. */

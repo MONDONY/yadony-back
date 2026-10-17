@@ -53,6 +53,7 @@ public class SmsOtpService {
     private final MessagesResolver messagesResolver;
     private final TwilioVerifyService twilioVerify;
     private final boolean devProfile;
+    private volatile String dummyHash;
 
     public SmsOtpService(SmsOtpRepository smsOtpRepository,
                           PasswordEncoder passwordEncoder,
@@ -101,6 +102,14 @@ public class SmsOtpService {
                     "SMS OTP Disabled", "L'authentification par SMS n'est pas encore disponible");
         }
 
+        if (!properties.isCountryAllowed(phoneNumber)) {
+            // Hors des marchés servis : refus avant tout envoi facturé (SMS pumping).
+            throw new YadonyBusinessException(
+                    HttpStatus.UNPROCESSABLE_ENTITY, "phone-country-not-supported",
+                    "Country Not Supported",
+                    "La connexion par SMS n'est pas disponible pour ce pays, utilise ton adresse email");
+        }
+
         int windowMinutes = properties.getRateWindowMinutes();
         LocalDateTime since = LocalDateTime.now(ZoneOffset.UTC).minusMinutes(windowMinutes);
         if (smsOtpRepository.countByPhoneSince(phoneNumber, since) >= properties.getMaxSendsPerWindow()) {
@@ -109,6 +118,21 @@ public class SmsOtpService {
                     "Too Many Requests",
                     "Trop de codes demandés, réessaie dans " + windowMinutes + " min");
         }
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        if (smsOtpRepository.countAllSince(now.minusHours(1)) >= properties.getMaxSendsPerHourGlobal()
+                || smsOtpRepository.countAllSince(now.minusDays(1)) >= properties.getMaxSendsPerDayGlobal()) {
+            // ERROR → Sentry : chaque SMS est facturé. Pic légitime (relever le budget) ou
+            // pompage réparti sur des milliers de numéros et d'IP.
+            log.error("Budget global de SMS de code atteint ({} / h, {} / 24 h) : envois suspendus",
+                    properties.getMaxSendsPerHourGlobal(), properties.getMaxSendsPerDayGlobal());
+            throw new YadonyBusinessException(
+                    HttpStatus.SERVICE_UNAVAILABLE, "sms-otp-budget-exceeded",
+                    "Service Unavailable",
+                    "L'envoi de codes par SMS est momentanément suspendu, utilise ton adresse email");
+        }
+
+        // Seul le dernier code envoyé reste valable.
+        smsOtpRepository.invalidateActive(phoneNumber, now);
 
         // Par Verify, Twilio génère le code et yadony ne le voit jamais : la ligne ne porte
         // qu'un hash aléatoire, elle sert au budget d'envois et de tentatives, pas au contrôle.
@@ -277,9 +301,15 @@ public class SmsOtpService {
 
         SmsOtpEntity token = smsOtpRepository
                 .findTopByPhoneNumberAndUsedAtIsNullOrderByCreatedAtDesc(phoneNumber)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.BAD_REQUEST, "phone-otp-invalid",
-                        "Invalid OTP", "Code invalide ou expiré"));
+                .orElse(null);
+        if (token == null) {
+            // Même coût qu'un vrai contrôle : une réponse plus rapide révélerait qu'aucun
+            // code n'est en attente pour ce numéro.
+            passwordEncoder.matches(code, dummyHash());
+            throw new YadonyBusinessException(
+                    HttpStatus.BAD_REQUEST, "phone-otp-invalid",
+                    "Invalid OTP", "Code invalide ou expiré");
+        }
 
         if (token.getAttempts() >= properties.getMaxAttempts()) {
             throw new YadonyBusinessException(
@@ -311,8 +341,21 @@ public class SmsOtpService {
                     "Invalid OTP", "Code invalide");
         }
 
-        token.setUsedAt(LocalDateTime.now(ZoneOffset.UTC));
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        token.setUsedAt(now);
         smsOtpRepository.save(token);
+        // Les codes plus anciens encore valides ne doivent pas survivre à une connexion.
+        smsOtpRepository.invalidateActive(phoneNumber, now);
+    }
+
+    /** Hash BCrypt jetable, calculé une fois, pour égaliser le temps de réponse. */
+    private String dummyHash() {
+        String hash = dummyHash;
+        if (hash == null) {
+            hash = passwordEncoder.encode("dummy-otp-" + SECURE_RANDOM.nextInt());
+            dummyHash = hash;
+        }
+        return hash;
     }
 
     /**

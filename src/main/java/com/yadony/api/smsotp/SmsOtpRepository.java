@@ -37,4 +37,17 @@ public interface SmsOtpRepository extends JpaRepository<SmsOtpEntity, UUID> {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     @Query("UPDATE SmsOtpEntity s SET s.attempts = s.attempts + 1 WHERE s.id = :id")
     int incrementAttempts(@Param("id") UUID id);
+
+    /** Envois toutes adresses confondues : budget global du canal (coût, réputation d'envoi). */
+    @Query("SELECT COUNT(s) FROM SmsOtpEntity s WHERE s.createdAt > :since")
+    long countAllSince(@Param("since") LocalDateTime since);
+
+    /**
+     * Invalide les codes encore actifs : à l'envoi d'un nouveau code (seul le dernier
+     * reste valable) et après une vérification réussie (sinon le code précédent,
+     * toujours dans sa validité, redevenait le « dernier non utilisé »).
+     */
+    @Modifying
+    @Query("UPDATE SmsOtpEntity s SET s.usedAt = :now WHERE s.phoneNumber = :phone AND s.usedAt IS NULL")
+    int invalidateActive(@Param("phone") String phone, @Param("now") LocalDateTime now);
 }

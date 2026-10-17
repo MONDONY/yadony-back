@@ -35,6 +35,20 @@ public class SmsOtpProperties {
     /** Durée de validité d'un code, en minutes. */
     private int otpValidMinutes = 10;
 
+    /**
+     * Indicatifs pays (sans « + ») vers lesquels un code peut partir. Parade au SMS
+     * pumping : des robots demandent des codes vers des numéros surtaxés d'autres pays,
+     * et l'opérateur complice reverse une part de chaque SMS facturé. Vide = tous les
+     * pays (dev, tests) ; la prod fixe la liste des marchés servis.
+     */
+    private List<String> allowedCountryCodes = new ArrayList<>();
+
+    /** SMS de code envoyés par heure, tous numéros confondus. Au-delà : 503 et alerte. */
+    private int maxSendsPerHourGlobal = 200;
+
+    /** Même budget sur 24 h : un pompage lent passerait sous la limite horaire. */
+    private int maxSendsPerDayGlobal = 1000;
+
     /** Empreinte SMS Retriever : 11 caractères de l'alphabet base64. */
     private static final Pattern APP_HASH = Pattern.compile("[A-Za-z0-9+/]{11}");
 
@@ -57,6 +71,29 @@ public class SmsOtpProperties {
     public void setMaxAttempts(int maxAttempts) { this.maxAttempts = maxAttempts; }
     public int getOtpValidMinutes() { return otpValidMinutes; }
     public void setOtpValidMinutes(int otpValidMinutes) { this.otpValidMinutes = otpValidMinutes; }
+    public int getMaxSendsPerHourGlobal() { return maxSendsPerHourGlobal; }
+    public void setMaxSendsPerHourGlobal(int maxSendsPerHourGlobal) { this.maxSendsPerHourGlobal = maxSendsPerHourGlobal; }
+    public int getMaxSendsPerDayGlobal() { return maxSendsPerDayGlobal; }
+    public void setMaxSendsPerDayGlobal(int maxSendsPerDayGlobal) { this.maxSendsPerDayGlobal = maxSendsPerDayGlobal; }
+
+    /** Indicatifs nettoyés (espaces, « + » retirés), sans doublon. */
+    public List<String> getAllowedCountryCodes() {
+        return allowedCountryCodes.stream()
+                .map(code -> code.trim().replace("+", ""))
+                .filter(code -> !code.isEmpty())
+                .distinct()
+                .toList();
+    }
+
+    public void setAllowedCountryCodes(List<String> allowedCountryCodes) {
+        this.allowedCountryCodes = allowedCountryCodes == null ? new ArrayList<>() : allowedCountryCodes;
+    }
+
+    /** Vrai si le numéro E.164 commence par un indicatif autorisé, ou si la liste est vide. */
+    public boolean isCountryAllowed(String e164) {
+        List<String> allowed = getAllowedCountryCodes();
+        return allowed.isEmpty() || allowed.stream().anyMatch(code -> e164.startsWith("+" + code));
+    }
 
     /** Empreintes au bon format seulement ; une valeur mal copiée est écartée. */
     public List<String> getAndroidAppHashes() {
