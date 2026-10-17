@@ -70,9 +70,9 @@ public class AdminGpProController {
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('GP_PRO_REVIEW')")
     @PostMapping("/users/{userId}/gp-pro/grant")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void grant(@PathVariable UUID userId, @RequestBody @Valid GpProGrantRequest request,
+    public void grant(@PathVariable UUID userId, @RequestBody(required = false) @Valid GpProGrantRequest request,
                       Authentication authentication) {
-        service.grant(userId, AdminPrincipal.requireAdminId(authentication), request.note());
+        service.grant(userId, AdminPrincipal.requireAdminId(authentication), request == null ? null : request.note());
     }
 
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('GP_PRO_REVIEW')")

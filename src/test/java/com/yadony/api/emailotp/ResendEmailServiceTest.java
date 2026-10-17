@@ -164,6 +164,25 @@ class ResendEmailServiceTest {
     }
 
     @Test
+    @DisplayName("sendGpProDecision — la coche n'apparaît que pour une acceptation, le motif a sa propre ligne")
+    void tickOnlyForApprovedAndReasonOnItsOwnLine() {
+        ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
+
+        service.sendGpProDecision("user@example.com", GpProDecisionEvent.Kind.REJECTED,
+                "Pièce illisible.", TestMessages.fr());
+        service.sendGpProDecision("user@example.com", GpProDecisionEvent.Kind.APPROVED, null, TestMessages.fr());
+
+        verify(requestBodySpec, times(2)).body(payloadCaptor.capture());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> rejected = (Map<String, Object>) payloadCaptor.getAllValues().get(0);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> approved = (Map<String, Object>) payloadCaptor.getAllValues().get(1);
+        assertThat((String) rejected.get("html")).doesNotContain("&#10003;").doesNotContain("\u2713");
+        assertThat((String) approved.get("html")).containsAnyOf("&#10003;", "\u2713");
+        assertThat((String) rejected.get("text")).contains("\n\nMotif : Pièce illisible.\n\n");
+    }
+
+    @Test
     @DisplayName("sendGpProDecision — acceptation en anglais, sans motif")
     void approvedEmailEnglish() {
         ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);

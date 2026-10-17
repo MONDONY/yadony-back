@@ -120,6 +120,14 @@ class AdminGpProControllerIT {
     }
 
     @Test
+    void grantWithoutBodyReturns204() throws Exception {
+        mockMvc.perform(post("/admin/users/{id}/gp-pro/grant", user.getId())
+                        .with(authentication(adminAuth(AdminRole.ADMIN))))
+                .andExpect(status().isNoContent());
+        assertThat(userRepository.findById(user.getId()).orElseThrow().isGpPro()).isTrue();
+    }
+
+    @Test
     void listShowsPendingApplicationsWithDocumentCount() throws Exception {
         GpProApplicationEntity app = pendingApplication();
         document(app.getId(), "gp_pro/x/a.jpg");

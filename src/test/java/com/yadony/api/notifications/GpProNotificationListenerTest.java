@@ -94,6 +94,27 @@ class GpProNotificationListenerTest {
     }
 
     @Test
+    void emailFailureLogsOnlyTheExceptionClass() {
+        when(contactService.getContact("uid-1")).thenReturn(new Contact(null, "a@b.com"));
+        doThrow(new IllegalStateException("secret-detail a@b.com")).when(emailService)
+                .sendGpProDecision(any(), any(), any(), any());
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(GpProNotificationListener.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            listener.onDecision(new GpProDecisionEvent(userId, Kind.APPROVED, null));
+        } finally {
+            logger.detachAppender(appender);
+        }
+        assertThat(appender.list).hasSize(1);
+        assertThat(appender.list.get(0).getFormattedMessage())
+                .contains("IllegalStateException").doesNotContain("secret-detail").doesNotContain("a@b.com");
+    }
+
+    @Test
     void gpProTypesAreAnnoncesAndAlwaysOn() {
         for (String type : new String[]{"GP_PRO_APPROVED", "GP_PRO_REJECTED", "GP_PRO_REVOKED"}) {
             assertThat(NotificationCategory.fromType(type)).isEqualTo(NotificationCategory.ANNONCE);

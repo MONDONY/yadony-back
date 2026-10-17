@@ -71,7 +71,7 @@ public class GpProNotificationListener {
             }
             emailService.sendGpProDecision(email, event.kind(), event.reason(), m);
         } catch (RuntimeException e) {
-            log.warn("E-mail de décision GP Pro non envoyé pour l'utilisateur {} : {}", event.userId(), e.getMessage());
+            log.warn("E-mail de décision GP Pro non envoyé pour l'utilisateur {} : {}", event.userId(), e.getClass().getSimpleName());
         }
     }
 }

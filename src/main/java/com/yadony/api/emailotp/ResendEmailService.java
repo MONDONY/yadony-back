@@ -131,7 +131,7 @@ public class ResendEmailService {
                     "from", fromAddress,
                     "to", List.of(to),
                     "subject", subject,
-                    "html", renderGpProDecisionHtml(subject, text, m),
+                    "html", renderGpProDecisionHtml(subject, text, kind == GpProDecisionEvent.Kind.APPROVED, m),
                     "text", text
             );
             restClient.post()
@@ -141,15 +141,16 @@ public class ResendEmailService {
                     .retrieve()
                     .toBodilessEntity();
         } catch (RuntimeException e) {
-            log.error("Resend: échec de l'e-mail de décision GP Pro vers {}: {}", maskEmail(to), e.getMessage());
+            log.error("Resend: échec de l'e-mail de décision GP Pro vers {}: {}", maskEmail(to), e.getClass().getSimpleName());
         }
     }
 
-    private String renderGpProDecisionHtml(String heading, String body, Messages m) {
+    private String renderGpProDecisionHtml(String heading, String body, boolean approved, Messages m) {
         Context context = new Context(m.locale());
         context.setVariable("heading", heading);
         context.setVariable("body", body);
         context.setVariable("lang", m.language().code());
+        context.setVariable("approved", approved);
         return templateEngine.process("email-gp-pro-decision", context);
     }
 

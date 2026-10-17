@@ -45,7 +45,7 @@
             <td class="email-content" align="center" style="padding:48px 44px 36px; font-family:Arial, Helvetica, sans-serif; color:#071b3c;">
               <img class="logo" src="https://yadony.com/logo.png" width="220" alt="Yadony" style="display:block; width:220px; max-width:220px; height:auto; margin:0 auto 36px; border:0; outline:none; text-decoration:none;">
 
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 30px;">
+              <table th:if="${approved}" role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 30px;">
                 <tr>
                   <td style="border-top:3px solid #1263d8; font-size:0; line-height:0;">&nbsp;</td>
                   <td width="72" align="center" style="width:72px;">
@@ -54,6 +54,7 @@
                   <td style="border-top:3px solid #1263d8; font-size:0; line-height:0;">&nbsp;</td>
                 </tr>
               </table>
+              <div th:unless="${approved}" style="border-top:3px solid #1263d8; font-size:0; line-height:0; margin:0 0 30px;">&nbsp;</div>
 
               <h1 class="title" style="margin:0 0 28px; color:#071b3c; font-family:Arial, Helvetica, sans-serif; font-size:32px; line-height:40px; font-weight:700; text-align:center;" th:text="${heading}">
                 GP Pro
@@ -63,7 +64,7 @@
                 <tr>
                   <td align="left" style="font-family:Arial, Helvetica, sans-serif; color:#14213d; font-size:18px; line-height:29px; font-weight:400;">
                     <p style="margin:0 0 16px;" th:text="#{email.otp.greeting}">Bonjour,</p>
-                    <p style="margin:0 0 32px;" th:text="${body}">Message</p>
+                    <p style="margin:0 0 32px; white-space:pre-line;" th:text="${body}">Message</p>
                   </td>
                 </tr>
               </table>
