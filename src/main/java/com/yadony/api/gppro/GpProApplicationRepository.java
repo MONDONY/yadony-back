@@ -19,6 +19,9 @@ public interface GpProApplicationRepository extends JpaRepository<GpProApplicati
 
     Optional<GpProApplicationEntity> findFirstByUserIdOrderByCreatedAtDesc(UUID userId);
 
+    Optional<GpProApplicationEntity> findFirstByUserIdAndStatusOrderByDecidedAtDesc(
+            UUID userId, GpProApplicationStatus status);
+
     Page<GpProApplicationEntity> findByStatusOrderByCreatedAtAsc(GpProApplicationStatus status, Pageable p);
 
     long countByStatus(GpProApplicationStatus status);
