@@ -2,6 +2,7 @@ package com.yadony.api.assistant.kb;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -9,6 +10,11 @@ public record KbCorpus(Map<String, List<KbArticle>> byLocale) {
 
     public List<KbArticle> articles(String locale) {
         return byLocale.getOrDefault(locale, List.of());
+    }
+
+    /** Fiche qui explique l'écran {@code screen} (motif de route), s'il y en a une. */
+    public Optional<KbArticle> screen(String locale, String screen) {
+        return articles(locale).stream().filter(a -> a.screens().contains(screen)).findFirst();
     }
 
     /** Union des routes de toutes les fiches, toutes langues : la liste autorisée. */

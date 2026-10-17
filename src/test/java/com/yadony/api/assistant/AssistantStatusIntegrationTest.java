@@ -1,5 +1,6 @@
 package com.yadony.api.assistant;
 
+import com.yadony.api.assistant.dto.AssistantScreenResponse;
 import com.yadony.api.assistant.llm.LlmRouter;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,8 +14,12 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
+import java.util.Optional;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -54,5 +59,32 @@ class AssistantStatusIntegrationTest {
     void sansJeton401() throws Exception {
         mockMvc.perform(get("/assistant/status")).andExpect(status().isUnauthorized());
         verifyNoInteractions(service, router);
+    }
+
+    @Test
+    void ecranConnu200SansQuota() throws Exception {
+        when(service.screen("/envois", "fr")).thenReturn(Optional.of(new AssistantScreenResponse("ecran-mes-colis",
+                "L'écran Mes colis", "Vous êtes sur Mes colis.", List.of("Comment annuler ?"), List.of())));
+        mockMvc.perform(get("/assistant/screen").param("path", "/envois").param("locale", "fr")
+                        .with(authentication(withRole("ROLE_SENDER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.explanation").value("Vous êtes sur Mes colis."))
+                .andExpect(jsonPath("$.questions[0]").value("Comment annuler ?"));
+        verifyNoInteractions(router);
+    }
+
+    @Test
+    void ecranInconnu204() throws Exception {
+        when(service.screen(anyString(), any())).thenReturn(Optional.empty());
+        mockMvc.perform(get("/assistant/screen").param("path", "/inconnu")
+                        .with(authentication(withRole("ROLE_SENDER"))))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void ecranInvite403EtSansJeton401() throws Exception {
+        mockMvc.perform(get("/assistant/screen").param("path", "/envois")
+                .with(authentication(withRole("ROLE_GUEST")))).andExpect(status().isForbidden());
+        mockMvc.perform(get("/assistant/screen").param("path", "/envois")).andExpect(status().isUnauthorized());
     }
 }

@@ -2,16 +2,19 @@ package com.yadony.api.assistant;
 
 import com.yadony.api.assistant.dto.AssistantAskRequest;
 import com.yadony.api.assistant.dto.AssistantAskResponse;
+import com.yadony.api.assistant.dto.AssistantScreenResponse;
 import com.yadony.api.assistant.dto.AssistantStatusResponse;
 import com.yadony.api.assistant.formdraft.FormDraftProperties;
 import com.yadony.api.common.YadonyBusinessException;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -37,6 +40,21 @@ public class AssistantController {
     @GetMapping("/status")
     public AssistantStatusResponse status() {
         return new AssistantStatusResponse(properties.enabled(), properties.enabled() && formDraft.enabled());
+    }
+
+    /**
+     * Explication de l'écran {@code path} (motif de route GoRouter, ex. {@code /bids/:bidId}) : 200 avec la fiche,
+     * 204 si aucun écran ne correspond. Même accès que {@code /ask}, sans quota ni fournisseur.
+     */
+    @GetMapping("/screen")
+    public ResponseEntity<AssistantScreenResponse> screen(
+            @RequestParam String path, @RequestParam(required = false) String locale) {
+        if (!properties.enabled()) {
+            throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "assistant-disabled", "Not Found",
+                    "L'assistant n'est pas disponible.");
+        }
+        return service.screen(path, locale).map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
     }
 
     @PostMapping("/ask")

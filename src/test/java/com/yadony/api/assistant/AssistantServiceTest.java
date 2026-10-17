@@ -616,4 +616,31 @@ class AssistantServiceTest {
         service.ask("uid", ask("DON-7K3M9QXA je veux être remboursé"));
         verify(kb).search("fr", "je veux être remboursé", null, 4);
     }
+
+    // ── Explication de l'écran ─────────────────────────────────────────────
+
+    @Test
+    void ecranConnuDonneSaFicheSansSaPropreRoute() {
+        KbArticle fiche = new KbArticle("fr", "ecran-mes-colis", "L'écran Mes colis", List.of(),
+                List.of(new KbRoute("/envois", "Mes colis"), new KbRoute("/tracking", "Ouvrir le suivi")),
+                "Vous êtes sur Mes colis.", List.of("/envois"), List.of("Comment annuler ?"));
+        when(kb.screen("fr", "/envois")).thenReturn(Optional.of(fiche));
+        when(kb.routeWhitelist()).thenReturn(Set.of("/envois", "/tracking"));
+        var r = service.screen(" /envois ", "fr-FR").orElseThrow();
+        assertThat(r.id()).isEqualTo("ecran-mes-colis");
+        assertThat(r.explanation()).isEqualTo("Vous êtes sur Mes colis.");
+        assertThat(r.questions()).containsExactly("Comment annuler ?");
+        assertThat(r.actions()).extracting("route").containsExactly("/tracking");
+        verify(quota, never()).consume(anyString());
+        verify(router, never()).complete(anyString(), anyString(), any());
+    }
+
+    @Test
+    void ecranInconnuVideOuTropLongRienAExpliquer() {
+        assertThat(service.screen("/inconnu", "en")).isEmpty();
+        verify(kb).screen("en", "/inconnu");
+        assertThat(service.screen(" ", "fr")).isEmpty();
+        assertThat(service.screen(null, "fr")).isEmpty();
+        assertThat(service.screen("/" + "a".repeat(120), "fr")).isEmpty();
+    }
 }

@@ -6,6 +6,6 @@ routes:
   - path: /profile/recipients
     label: Mes destinataires
 ---
-Enregistrez vos proches dans Activités › Mes destinataires : un prénom et nom, que le voyageur verra, et un numéro avec l'indicatif du pays, par exemple +221.
-Vous pouvez en définir un par défaut ou en importer depuis vos contacts, puis le choisir en un geste en créant une demande.
+Un nouveau destinataire s'ajoute au moment de choisir le destinataire d'un envoi : un prénom et nom, que le voyageur verra, et un numéro avec l'indicatif du pays, par exemple +221, ou « Choisir dans mes contacts ».
+Il est alors gardé dans Activités › Mes destinataires, où vous pouvez le modifier, le définir par défaut ou ajouter un destinataire Yadony par son numéro ou son e-mail, puis le choisir en un geste en créant une demande.
 Le destinataire d'un colis peut être changé (nom ou numéro) jusqu'à la remise : le code de retrait et le lien de suivi sont alors renouvelés, et l'ancien destinataire n'y a plus accès.

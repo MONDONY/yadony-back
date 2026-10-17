@@ -51,4 +51,14 @@ class AssistantControllerDisabledIntegrationTest {
                 .andExpect(jsonPath("$.enabled").value(false));
         verifyNoInteractions(service, router);
     }
+
+    @Test
+    void ecranEteint404() throws Exception {
+        mockMvc.perform(get("/assistant/screen").param("path", "/envois")
+                        .with(authentication(new UsernamePasswordAuthenticationToken("uid", null,
+                                List.of(new SimpleGrantedAuthority("ROLE_SENDER"))))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("assistant-disabled"));
+        verifyNoInteractions(service, router);
+    }
 }
