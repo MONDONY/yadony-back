@@ -1737,6 +1737,8 @@ Chaque route est publique dans `SecurityConfig` et authentifiée par le contrôl
 - Migrations : V324 (assistant) puis V325 (mode maintenance, autre chantier), sans collision sur `origin/main`.
 - `ENCRYPTION_KEY` présent dans l'environnement GitHub `production` (19/08) : c'est lui qui chiffre les clés des fournisseurs. **Ne jamais le changer** : les clés enregistrées deviendraient illisibles.
 - Variable GitHub `production` : `ASSISTANT_ENABLED=false` (posée le 16/10). Staging : `ASSISTANT_ENABLED=true`.
+- **Formulaires remplis par l'IA** (spec docs-claude `2026-10-17-formulaires-ia-design.md`) : `POST /assistant/form-draft/trip` et `/package-request`, éteints par défaut. Variables `ASSISTANT_FORM_DRAFT_ENABLED` (false) et `ASSISTANT_FORM_DRAFT_DAILY_QUOTA` (30 tours/jour/utilisateur, les deux formulaires confondus), écrites dans le `.env` par les deux workflows de déploiement. Exigent aussi `ASSISTANT_ENABLED=true`. Rien en base, aucune migration.
+- [ ] Prod formulaires IA : après recette staging et avant la sortie de l'app qui affiche le bouton « Créer avec l'IA », `gh variable set ASSISTANT_FORM_DRAFT_ENABLED -R MONDONY/yadony-back --env production --body true`, puis redéployer le back.
 - Nginx prod (`api.yadony.com`, `location /api/v1/`) : `proxy_read_timeout 30s`, au-dessus du budget de 25 s par question. Limitation `api_general` (120 req/min, rafale 60) : un 429 de nginx n'est pas pris pour le quota par l'app (elle ne lit que le code `assistant-quota-exceeded`).
 - `CORS_ALLOWED_ORIGINS` contient `https://admin.yadony.com` : la page de l'admin peut appeler l'API.
 - Les fiches d'aide ne contiennent aucun taux de commission en dur (il est réglé dans l'admin, 5 % au 16/10).
