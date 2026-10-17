@@ -35,10 +35,10 @@ public class EmailOtpProperties {
     private int otpValidMinutes = 10;
 
     /**
-     * Codes envoyés par heure, toutes adresses confondues. Au-delà, l'envoi est refusé
-     * (503) et une alerte part : un arrosage d'adresses depuis des milliers d'IP passe
-     * sous les limites par adresse et par IP, mais grillerait la réputation du domaine
-     * d'envoi et le quota Resend.
+     * Seuil d'alerte sur les codes envoyés par heure, toutes adresses confondues. Au-delà,
+     * une alerte part (Sentry) mais l'envoi continue : un arrosage d'adresses depuis des
+     * milliers d'IP passe sous les limites par adresse et par IP et menace la réputation
+     * du domaine d'envoi, mais le bloquer couperait la connexion de tout le monde.
      */
     private int maxSendsPerHourGlobal = 1000;
 

@@ -190,6 +190,25 @@ class RateLimitInterceptorTest {
     }
 
     @Test
+    @DisplayName("IPv6 : compté par préfixe /64, une rotation d'adresses dans le bloc ne contourne rien")
+    void ipv6CountedPerSlash64() {
+        limit(properties, RateLimitRule.OTP_SEND_IP, 2);
+        assertThat(pass(request("POST", "/auth/email-otp/send", "2001:db8:1:2::1"))).isTrue();
+        assertThat(pass(request("POST", "/auth/email-otp/send", "2001:db8:1:2::ffff"))).isTrue();
+        assertThatThrownBy(() -> pass(request("POST", "/auth/email-otp/send", "2001:db8:1:2:abcd::9")))
+                .isInstanceOf(RateLimitExceededException.class);
+        // Un autre /64 garde son propre budget.
+        assertThat(pass(request("POST", "/auth/email-otp/send", "2001:db8:1:3::1"))).isTrue();
+
+        assertThat(RateLimitInterceptor.ipKey("2001:db8:1:2::1")).isEqualTo("v6:20010db800010002");
+        assertThat(RateLimitInterceptor.ipKey("203.0.113.7")).isEqualTo("203.0.113.7");
+        assertThat(RateLimitInterceptor.ipKey(null)).isNull();
+        // IPv4 mappée : Java la rend en IPv4 (4 octets), l'adresse brute sert de clé.
+        assertThat(RateLimitInterceptor.ipKey("::ffff:203.0.113.7")).isEqualTo("::ffff:203.0.113.7");
+        assertThat(RateLimitInterceptor.ipKey("not:an:ip:zz")).isEqualTo("not:an:ip:zz");
+    }
+
+    @Test
     @DisplayName("désactivé : rien n'est compté")
     void disabled() {
         properties.setEnabled(false);

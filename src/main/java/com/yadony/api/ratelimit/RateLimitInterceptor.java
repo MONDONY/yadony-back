@@ -99,9 +99,34 @@ class RateLimitInterceptor implements HandlerInterceptor {
      * demandeur. Les administrateurs échappent aux règles par compte : le back-office
      * enchaîne des dizaines d'appels par écran et sa surface est déjà réservée.
      */
+    /**
+     * Clé d'IP : l'adresse IPv4 telle quelle, le préfixe /64 pour IPv6. Un abonné IPv6
+     * reçoit tout un /64 et peut changer d'adresse à chaque requête : compter l'adresse
+     * exacte rendrait la limite inopérante.
+     */
+    static String ipKey(String remoteAddr) {
+        if (remoteAddr == null || remoteAddr.indexOf(':') < 0) {
+            return remoteAddr;
+        }
+        try {
+            // Littéral IPv6 : aucune résolution DNS.
+            byte[] bytes = java.net.InetAddress.getByName(remoteAddr).getAddress();
+            if (bytes.length != 16) {
+                return remoteAddr;
+            }
+            StringBuilder prefix = new StringBuilder("v6:");
+            for (int i = 0; i < 8; i++) {
+                prefix.append(String.format("%02x", bytes[i]));
+            }
+            return prefix.toString();
+        } catch (java.net.UnknownHostException e) {
+            return remoteAddr;
+        }
+    }
+
     private static String subjectFor(RateLimitRule rule, HttpServletRequest request) {
         if (rule.key() == RateLimitRule.Key.IP) {
-            return request.getRemoteAddr();
+            return ipKey(request.getRemoteAddr());
         }
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated() || auth instanceof AnonymousAuthenticationToken) {

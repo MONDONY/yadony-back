@@ -14,7 +14,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.LocalDateTime;
@@ -92,18 +91,17 @@ class EmailOtpHardeningTest {
     }
 
     @Test
-    @DisplayName("envoi : budget global horaire atteint → 503 email-otp-budget-exceeded, rien n'est envoyé")
-    void send_globalBudgetExceeded() {
+    @DisplayName("envoi : seuil global horaire dépassé → alerte seulement, l'envoi continue (pas de coupure pour tous)")
+    void send_globalThresholdOnlyAlerts() {
         properties.setMaxSendsPerHourGlobal(3);
-        when(repository.countAllSince(any())).thenReturn(3L);
+        when(repository.countAllSince(any())).thenReturn(50L);
+        when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hash");
 
-        assertThatThrownBy(() -> service.sendOtp("a@b.com"))
-                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
-                    assertThat(e.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
-                    assertThat(e.getErrorCode()).isEqualTo("email-otp-budget-exceeded");
-                });
-        verify(repository, never()).save(any());
-        verify(resendEmailService, never()).sendOtp(anyString(), anyString(), any());
+        service.sendOtp("a@b.com");
+        service.sendOtp("c@d.com");
+
+        verify(resendEmailService).sendOtp(eq("a@b.com"), anyString(), any(Messages.class));
+        verify(resendEmailService).sendOtp(eq("c@d.com"), anyString(), any(Messages.class));
     }
 
     @Test

@@ -41,6 +41,7 @@ public class EmailOtpService {
     private final AuditService auditService;
     private final MessagesResolver messagesResolver;
     private volatile String dummyHash;
+    private volatile long lastBudgetAlertMs = Long.MIN_VALUE / 2;
 
     public EmailOtpService(EmailOtpProperties properties,
                            EmailOtpRepository emailOtpRepository,
@@ -75,14 +76,7 @@ public class EmailOtpService {
         }
         LocalDateTime hourAgo = LocalDateTime.now(ZoneOffset.UTC).minusHours(1);
         if (emailOtpRepository.countAllSince(hourAgo) >= properties.getMaxSendsPerHourGlobal()) {
-            // ERROR → Sentry : soit un pic d'inscriptions à absorber (relever le budget),
-            // soit un arrosage d'adresses qui passe sous les limites par adresse et par IP.
-            log.error("Budget global d'envoi de codes email atteint ({} / h) : envois suspendus",
-                    properties.getMaxSendsPerHourGlobal());
-            throw new YadonyBusinessException(
-                    HttpStatus.SERVICE_UNAVAILABLE, "email-otp-budget-exceeded",
-                    "Service Unavailable",
-                    "L'envoi de codes est momentanément suspendu, réessaie dans quelques minutes");
+            alertGlobalBudget();
         }
 
         // Seul le dernier code envoyé reste valable.
@@ -285,6 +279,22 @@ public class EmailOtpService {
      */
     static String normalize(String email) {
         return email == null ? null : email.strip().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /**
+     * Seuil horaire dépassé : alerte (ERROR → Sentry) au plus une fois par 10 min, sans
+     * refuser l'envoi. Un email ne coûte presque rien ; bloquer ferait d'un arrosage
+     * réparti sur un botnet une coupure de la connexion pour tous les utilisateurs.
+     * Soit un pic d'inscriptions (relever le seuil), soit un arrosage à examiner.
+     */
+    private void alertGlobalBudget() {
+        long now = System.currentTimeMillis();
+        long last = lastBudgetAlertMs;
+        if (now - last >= 600_000L) {
+            lastBudgetAlertMs = now;
+            log.error("Seuil d'envoi de codes email dépassé ({} / h) : pic d'inscriptions ou arrosage",
+                    properties.getMaxSendsPerHourGlobal());
+        }
     }
 
     /** Hash BCrypt jetable, calculé une fois, pour égaliser le temps de réponse. */

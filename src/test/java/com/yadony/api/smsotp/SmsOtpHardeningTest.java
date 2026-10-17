@@ -171,4 +171,24 @@ class SmsOtpHardeningTest {
         properties.setAllowedCountryCodes(null);
         assertThat(properties.getAllowedCountryCodes()).isEmpty();
     }
+
+    @Test
+    @DisplayName("préfixes refusés : +1 autorisé pour les États-Unis, refusé pour les Caraïbes (pumping)")
+    void properties_deniedPrefixes() {
+        properties.setAllowedCountryCodes(List.of("1", "221"));
+        properties.setDeniedPrefixes(List.of("1876", " +1809 "));
+
+        assertThat(properties.getDeniedPrefixes()).containsExactly("1876", "1809");
+        assertThat(properties.isCountryAllowed("+12125551234")).isTrue();
+        assertThat(properties.isCountryAllowed("+18765551234")).isFalse();
+        assertThat(properties.isCountryAllowed("+18095551234")).isFalse();
+        assertThat(properties.isCountryAllowed("+221701234567")).isTrue();
+
+        // Refus prioritaire même sans liste d'autorisés.
+        properties.setAllowedCountryCodes(List.of());
+        assertThat(properties.isCountryAllowed("+18765551234")).isFalse();
+
+        properties.setDeniedPrefixes(null);
+        assertThat(properties.getDeniedPrefixes()).isEmpty();
+    }
 }

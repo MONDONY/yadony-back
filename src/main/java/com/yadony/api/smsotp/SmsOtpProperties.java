@@ -43,6 +43,14 @@ public class SmsOtpProperties {
      */
     private List<String> allowedCountryCodes = new ArrayList<>();
 
+    /**
+     * Préfixes refusés même si leur indicatif est autorisé, vérifiés en premier.
+     * L'indicatif 1 couvre les États-Unis et le Canada, mais aussi les Caraïbes
+     * (+1 876 Jamaïque, +1 809 République dominicaine…), destinations classiques du
+     * pumping : autoriser « 1 » sans ces exclusions rouvrait la porte.
+     */
+    private List<String> deniedPrefixes = new ArrayList<>();
+
     /** SMS de code envoyés par heure, tous numéros confondus. Au-delà : 503 et alerte. */
     private int maxSendsPerHourGlobal = 200;
 
@@ -78,21 +86,39 @@ public class SmsOtpProperties {
 
     /** Indicatifs nettoyés (espaces, « + » retirés), sans doublon. */
     public List<String> getAllowedCountryCodes() {
-        return allowedCountryCodes.stream()
-                .map(code -> code.trim().replace("+", ""))
-                .filter(code -> !code.isEmpty())
-                .distinct()
-                .toList();
+        return clean(allowedCountryCodes);
     }
 
     public void setAllowedCountryCodes(List<String> allowedCountryCodes) {
         this.allowedCountryCodes = allowedCountryCodes == null ? new ArrayList<>() : allowedCountryCodes;
     }
 
-    /** Vrai si le numéro E.164 commence par un indicatif autorisé, ou si la liste est vide. */
+    public List<String> getDeniedPrefixes() {
+        return clean(deniedPrefixes);
+    }
+
+    public void setDeniedPrefixes(List<String> deniedPrefixes) {
+        this.deniedPrefixes = deniedPrefixes == null ? new ArrayList<>() : deniedPrefixes;
+    }
+
+    /**
+     * Vrai si le numéro E.164 n'a aucun préfixe refusé et commence par un indicatif
+     * autorisé (ou si la liste d'autorisés est vide).
+     */
     public boolean isCountryAllowed(String e164) {
+        if (getDeniedPrefixes().stream().anyMatch(prefix -> e164.startsWith("+" + prefix))) {
+            return false;
+        }
         List<String> allowed = getAllowedCountryCodes();
         return allowed.isEmpty() || allowed.stream().anyMatch(code -> e164.startsWith("+" + code));
+    }
+
+    private static List<String> clean(List<String> codes) {
+        return codes.stream()
+                .map(code -> code.trim().replace("+", ""))
+                .filter(code -> !code.isEmpty())
+                .distinct()
+                .toList();
     }
 
     /** Empreintes au bon format seulement ; une valeur mal copiée est écartée. */
