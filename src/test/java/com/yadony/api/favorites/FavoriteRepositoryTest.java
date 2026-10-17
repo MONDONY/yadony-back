@@ -106,6 +106,34 @@ class FavoriteRepositoryTest {
     }
 
     @Test
+    @DisplayName("deleteOwnedByUser : favoris sur son propre trajet ou sa propre demande supprimés (FLUTTER-R9)")
+    void deleteOwnedByUser_onlyOwnContent() {
+        AnnouncementEntity ownTrip = newAnnouncement(AnnouncementStatus.ACTIVE);
+        UUID userId = ownTrip.getTravelerId();
+        AnnouncementEntity otherTrip = newAnnouncement(AnnouncementStatus.ACTIVE);
+        PackageRequestEntity ownRequest = newPackageRequest(PackageRequestStatus.OPEN);
+        ownRequest.setSenderId(userId);
+        packageRequestRepository.saveAndFlush(ownRequest);
+        PackageRequestEntity otherRequest = newPackageRequest(PackageRequestStatus.OPEN);
+
+        favoriteRepository.saveAndFlush(new FavoriteEntity(userId, FavoriteTargetType.TRIP, ownTrip.getId()));
+        favoriteRepository.saveAndFlush(new FavoriteEntity(userId, FavoriteTargetType.TRIP, otherTrip.getId()));
+        favoriteRepository.saveAndFlush(new FavoriteEntity(userId, FavoriteTargetType.PACKAGE_REQUEST, ownRequest.getId()));
+        favoriteRepository.saveAndFlush(new FavoriteEntity(userId, FavoriteTargetType.PACKAGE_REQUEST, otherRequest.getId()));
+        // Le même trajet en favori chez un autre utilisateur n'est pas touché.
+        favoriteRepository.saveAndFlush(new FavoriteEntity(UUID.randomUUID(), FavoriteTargetType.TRIP, ownTrip.getId()));
+
+        int deleted = favoriteRepository.deleteOwnedByUser(userId);
+
+        assertThat(deleted).isEqualTo(2);
+        assertThat(favoriteRepository.findTargetIds(userId, FavoriteTargetType.TRIP)).containsExactly(otherTrip.getId());
+        assertThat(favoriteRepository.findTargetIds(userId, FavoriteTargetType.PACKAGE_REQUEST))
+                .containsExactly(otherRequest.getId());
+        assertThat(countRowsInTable(ownTrip.getId())).isEqualTo(1);
+        assertThat(favoriteRepository.deleteOwnedByUser(userId)).isZero();
+    }
+
+    @Test
     @DisplayName("deleteTripFavoritesForTerminalAnnouncements : idempotent (rien à nettoyer → 0)")
     void deleteTripFavorites_idempotent() {
         favoriteRepository.deleteTripFavoritesForTerminalAnnouncements();

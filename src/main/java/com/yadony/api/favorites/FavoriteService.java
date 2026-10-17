@@ -148,10 +148,10 @@ public class FavoriteService {
             return new FavoriteIdsResponse(Set.of(), Set.of());
         }
         Set<UUID> hidden = blockVisibility.hiddenUserIdsFor(callerId);
-        Set<UUID> trips = presentableTrips(tripIds, hidden).stream()
+        Set<UUID> trips = presentableTrips(tripIds, hidden, callerId).stream()
                 .map(AnnouncementEntity::getId)
                 .collect(Collectors.toCollection(HashSet::new));
-        Set<UUID> packageRequests = presentablePackageRequests(requestIds, hidden).stream()
+        Set<UUID> packageRequests = presentablePackageRequests(requestIds, hidden, callerId).stream()
                 .map(PackageRequestEntity::getId)
                 .collect(Collectors.toCollection(HashSet::new));
         return new FavoriteIdsResponse(trips, packageRequests);
@@ -173,7 +173,7 @@ public class FavoriteService {
         if (callerId == null) return List.of();
         List<UUID> ids = favoriteRepository.findTargetIds(callerId, FavoriteTargetType.TRIP);
         if (ids.isEmpty()) return List.of();
-        List<AnnouncementEntity> active = presentableTrips(ids, blockVisibility.hiddenUserIdsFor(callerId));
+        List<AnnouncementEntity> active = presentableTrips(ids, blockVisibility.hiddenUserIdsFor(callerId), callerId);
         if (active.isEmpty()) return List.of();
         Set<UUID> favIdSet = new HashSet<>(ids); // all are favorites
         return announcementSearchMapper.toSearchResponseList(active, favIdSet);
@@ -195,7 +195,7 @@ public class FavoriteService {
         List<UUID> ids = favoriteRepository.findTargetIds(callerId, FavoriteTargetType.PACKAGE_REQUEST);
         if (ids.isEmpty()) return List.of();
         List<PackageRequestEntity> active =
-                presentablePackageRequests(ids, blockVisibility.hiddenUserIdsFor(callerId));
+                presentablePackageRequests(ids, blockVisibility.hiddenUserIdsFor(callerId), callerId);
         if (active.isEmpty()) return List.of();
         Set<UUID> favIdSet = new HashSet<>(ids); // all are favorites
         ViewerPaymentCapabilities viewer =
@@ -209,9 +209,11 @@ public class FavoriteService {
      * Trajets favoris encore présentables parmi {@code ids} : le soft-delete est déjà
      * exclu par {@code @Where} sur l'entité, on retire ici les statuts terminaux, le
      * brouillon, le retrait par la modération et les voyageurs bloqués. Seule source du
-     * filtre, partagée par la liste et par {@link #getFavoriteIds}.
+     * filtre, partagée par la liste et par {@link #getFavoriteIds}. Son propre trajet est
+     * aussi retiré : arrivé par le transfert d'un favori d'invité, il ouvrait la réservation
+     * sur son propre trajet (FLUTTER-R9).
      */
-    private List<AnnouncementEntity> presentableTrips(List<UUID> ids, Set<UUID> hidden) {
+    private List<AnnouncementEntity> presentableTrips(List<UUID> ids, Set<UUID> hidden, UUID callerId) {
         if (ids.isEmpty()) return List.of();
         return announcementRepository.findAllById(ids).stream()
                 .filter(a -> a.getStatus() != AnnouncementStatus.CANCELLED
@@ -220,12 +222,13 @@ public class FavoriteService {
                         // Lot B (correction 3) : un trajet retiré par la modération ne doit pas
                         // rester visible dans les favoris de l'utilisateur.
                         && a.getStatus() != AnnouncementStatus.REMOVED_BY_ADMIN
+                        && !callerId.equals(a.getTravelerId())
                         && !ownerHidden(hidden, a.getTravelerId()))
                 .toList();
     }
 
     /** Pendant de {@link #presentableTrips} pour les demandes d'envoi. */
-    private List<PackageRequestEntity> presentablePackageRequests(List<UUID> ids, Set<UUID> hidden) {
+    private List<PackageRequestEntity> presentablePackageRequests(List<UUID> ids, Set<UUID> hidden, UUID callerId) {
         if (ids.isEmpty()) return List.of();
         return packageRequestRepository.findAllById(ids).stream()
                 .filter(pr -> pr.getStatus() != PackageRequestStatus.CANCELLED
@@ -234,6 +237,7 @@ public class FavoriteService {
                         && pr.getStatus() != PackageRequestStatus.DRAFT
                         // Retirée par la modération : invisible hors de son expéditeur.
                         && pr.getStatus() != PackageRequestStatus.REMOVED_BY_ADMIN
+                        && !callerId.equals(pr.getSenderId())
                         && !ownerHidden(hidden, pr.getSenderId()))
                 .toList();
     }

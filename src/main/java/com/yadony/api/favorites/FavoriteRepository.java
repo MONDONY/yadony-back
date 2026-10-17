@@ -57,6 +57,26 @@ public interface FavoriteRepository extends JpaRepository<FavoriteEntity, UUID> 
                      @Param("targetType") String targetType,
                      @Param("targetId") UUID targetId);
 
+    /**
+     * Supprime physiquement les favoris de {@code userId} qui portent sur son propre contenu
+     * (son trajet, sa demande d'envoi). {@code addFavorite} les refuse, mais un favori posé en
+     * invité sur un trajet du compte auquel il se connecte ensuite arrivait par le transfert
+     * (FLUTTER-R9). Idempotent.
+     *
+     * @return le nombre de lignes supprimées
+     */
+    @Transactional
+    @Modifying
+    @Query(value = """
+            DELETE FROM favorites f
+            WHERE f.user_id = :userId
+              AND ((f.target_type = 'TRIP'
+                    AND f.target_id IN (SELECT a.id FROM announcements a WHERE a.traveler_id = :userId))
+                OR (f.target_type = 'PACKAGE_REQUEST'
+                    AND f.target_id IN (SELECT pr.id FROM package_requests pr WHERE pr.sender_id = :userId)))
+            """, nativeQuery = true)
+    int deleteOwnedByUser(@Param("userId") UUID userId);
+
     Optional<FavoriteEntity> findByUserIdAndTargetTypeAndTargetId(UUID userId, FavoriteTargetType targetType, UUID targetId);
 
     List<FavoriteEntity> findByUserIdAndTargetTypeOrderByCreatedAtDesc(UUID userId, FavoriteTargetType targetType);

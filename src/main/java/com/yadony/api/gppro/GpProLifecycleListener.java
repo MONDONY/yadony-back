@@ -43,9 +43,13 @@ public class GpProLifecycleListener {
         this.events = events;
     }
 
-    /** KYC vérifié : la demande qui l'attendait part en file de revue. */
+    /**
+     * KYC vérifié : la demande qui l'attendait part en file de revue. fallbackExecution : le
+     * webhook Didit publie l'événement hors transaction ; sans repli, Spring ignorait l'écouteur
+     * et la demande restait « En attente de votre identité » (FLUTTER-RC).
+     */
     @Async
-    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onKycVerified(UserKycVerifiedEvent event) {
         applications.findFirstByUserIdAndStatusIn(event.getUserId(),
