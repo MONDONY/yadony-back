@@ -68,6 +68,13 @@
     }
     .corridor .arrow { color: var(--muted); font-weight: 400; margin: 0 4px; }
 
+    .badge-line { margin: -12px 0 20px; }
+    .badge {
+      display: inline-block; padding: 3px 10px; border-radius: 8px;
+      background: #E8F0FF; color: var(--blue-press);
+      font-size: 12px; font-weight: 700;
+    }
+
     .rows { margin: 0 0 20px; }
 
     .row {
@@ -143,6 +150,10 @@
     <h1 class="corridor">
       <span th:text="${departureCity}">Paris</span><span class="arrow">→</span><span th:text="${arrivalCity}">Dakar</span>
     </h1>
+
+    <p class="badge-line" th:if="${travelerGpPro}">
+      <span class="badge">GP Pro</span>
+    </p>
 
     <dl class="rows">
       <div class="row">

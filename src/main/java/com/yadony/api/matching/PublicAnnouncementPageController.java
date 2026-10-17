@@ -168,6 +168,7 @@ public class PublicAnnouncementPageController {
         String departureDate = announcement.getDepartureDate().format(DATE_FMT);
 
         model.addAttribute("unavailable", false);
+        model.addAttribute("travelerGpPro", announcement.isTravelerIsGpPro());
         model.addAttribute("departureCity", announcement.getDepartureCity());
         model.addAttribute("arrivalCity", announcement.getArrivalCity());
         model.addAttribute("departureDate", departureDate);

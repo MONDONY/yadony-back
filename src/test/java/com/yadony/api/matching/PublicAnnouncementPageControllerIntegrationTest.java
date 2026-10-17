@@ -106,6 +106,30 @@ class PublicAnnouncementPageControllerIntegrationTest {
     }
 
     @Test
+    void badgeShownWhenTravelerIsGpPro() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+        a.setTravelerIsGpPro(true);
+        announcementRepository.saveAndFlush(a);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(model().attribute("travelerGpPro", true))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("class=\"badge\"")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(">GP Pro<")));
+    }
+
+    @Test
+    void badgeHiddenOtherwise() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(model().attribute("travelerGpPro", false))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString(">GP Pro<"))));
+    }
+
+    @Test
     void eachView_incrementsTheAttributionCounter() throws Exception {
         AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
         assertThat(a.getShareViewCount()).isZero();
