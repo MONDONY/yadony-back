@@ -5,6 +5,11 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.commission.CommissionCalculator;
+import com.yadony.api.common.commission.CommissionGrid;
+import com.yadony.api.common.commission.CommissionGridService;
+import com.yadony.api.common.commission.CommissionReductions;
+import com.yadony.api.common.commission.CommissionResult;
 import com.yadony.api.common.i18n.Messages;
 import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.matching.AnnouncementEntity;
@@ -104,6 +109,12 @@ public class CashCommissionService {
     private final WalletCommissionCollector commissionCollector;
     private final MessagesResolver messagesResolver;
     private final PromoService promoService;
+    /**
+     * Grilles de commission figées sur les bids et les fils ; injectée par champ pour ne pas
+     * toucher aux constructeurs des tests unitaires (comme {@code PaymentService}).
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    private CommissionGridService commissionGridService;
     private Clock clock = Clock.systemUTC();
 
     public CashCommissionService(CommissionProperties props,
@@ -209,16 +220,27 @@ public class CashCommissionService {
     /**
      * Commission d'un bid espèces et code promo réellement pris dans son taux.
      *
-     * @param promoApplied {@code true} seulement si {@code bids.promo_code} a été validé et
-     *                     retranché du taux figé. {@code false} sans code, sur un code invalide
-     *                     (repli au taux plein) et sur un bid négocié (taux figé au fil).
-     *                     Sur le modèle de {@code MobileMoneyBidPricing.Quote}.
+     * @param promoApplied   {@code true} seulement si {@code bids.promo_code} a été validé et
+     *                       retranché du taux figé. {@code false} sans code, sur un code invalide
+     *                       (repli au taux plein) et sur un bid négocié (taux figé au fil).
+     *                       Sur le modèle de {@code MobileMoneyBidPricing.Quote}. Sur un bid à
+     *                       grille, vaut {@code promoEffective} : un code que le minimum rend sans
+     *                       effet n'est ni verrouillé ni racheté (spec §4.2).
+     * @param promoEffective {@code true} si le code baisse réellement la commission : sur un bid
+     *                       à grille, commission avec le code inférieure à celle sans lui
+     *                       ({@link CommissionResult#promoEffective()}) ; sur le chemin hérité,
+     *                       identique à {@code promoApplied}.
      */
-    public record BidCommissionQuote(BigDecimal commission, boolean promoApplied) {}
+    public record BidCommissionQuote(BigDecimal commission, boolean promoApplied, boolean promoEffective) {}
 
     /**
      * Même calcul que {@link #computeBidCommission}, en disant si le code promo du bid a été
      * appliqué : c'est la condition de son rachat ({@code PromoService}) à l'acceptation.
+     *
+     * <p><b>Bid à grille</b> ({@code commission_grid_id} figé à sa création) : commission de la
+     * grille figée, jamais de la grille du jour (spec §4.4), minimum de la devise compris ; voir
+     * {@link #quoteGridBidCommission}. Le plancher {@code yadony.commission.minimum-amount} ne
+     * sert plus qu'aux bids sans grille.
      */
     public BidCommissionQuote quoteBidCommission(BidEntity bid, AnnouncementEntity announcement) {
         // Devise du trajet : celle dans laquelle le brut est remis en main propre et
@@ -226,11 +248,14 @@ public class CashCommissionService {
         SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(announcement.getCurrency());
         if (bid.getNegotiatedNetEur() != null && bid.getNegotiatedGrossEur() != null) {
             return new BidCommissionQuote(bid.getNegotiatedGrossEur().subtract(bid.getNegotiatedNetEur())
-                    .setScale(currency.minorUnit(), RoundingMode.HALF_UP), false);
+                    .setScale(currency.minorUnit(), RoundingMode.HALF_UP), false, false);
+        }
+        if (bid.getCommissionGridId() != null) {
+            return quoteGridBidCommission(bid, announcement, currency);
         }
         if (bid.getNegotiatedNetEur() != null && bid.getCommissionRate() != null) {
             return new BidCommissionQuote(
-                    computeCommission(bid.getNegotiatedNetEur(), bid.getCommissionRate(), currency), false);
+                    computeCommission(bid.getNegotiatedNetEur(), bid.getCommissionRate(), currency), false, false);
         }
         BigDecimal rate;
         boolean promoApplied = false;
@@ -250,17 +275,86 @@ public class CashCommissionService {
                     announcement.getTravelerId(), bid.getSenderId(), null, null, bid.getId());
         }
         bid.setCommissionRate(rate);
-        // Base de commission = part kilo (poids × prix/kg, null en mode GRID pur)
-        // + part grille (somme des articles du bid). Aligné sur le calcul net de
-        // BidService — sans quoi un bid grille (weightKg null) provoquait un NPE.
+        BigDecimal cashAmount = cashBase(bid, announcement);
+        return new BidCommissionQuote(computeCommission(cashAmount, rate, currency), promoApplied, promoApplied);
+    }
+
+    /**
+     * Commission d'un bid à grille figée ({@link CommissionCalculator}).
+     *
+     * <ul>
+     *   <li><b>Net négocié seul</b> : le net convenu, avec les réductions figées sur le bid à
+     *       l'ouverture du fil (taux spécial, bon), sans code promo ni résolveur du jour ; le
+     *       taux figé au fil n'est pas réécrit.</li>
+     *   <li><b>Sinon</b> : la base du barème ({@link #cashBase}) et les réductions du jour pour ce
+     *       bid ; un code promo invalide retombe sur les réductions sans code. Le taux effectif
+     *       est figé sur le bid, borné sous 1 ({@link CommissionResult#storableRate()}) : il n'est
+     *       qu'informatif (rachat du code), les montants font foi.</li>
+     * </ul>
+     *
+     * <p>Le bon de parrainage de l'expéditeur est lu (et pris dans le calcul, après le minimum)
+     * sans être consommé : {@link #consumeSenderVoucher} reste à l'appelant, comme sur le chemin
+     * hérité. Une base nulle est refusée (422 {@code invalid-amount}, comme le rail carte) avant
+     * tout prélèvement : la grille ne tarife pas un net nul.
+     */
+    private BidCommissionQuote quoteGridBidCommission(BidEntity bid, AnnouncementEntity announcement,
+                                                      SupportedCurrency currency) {
+        CommissionGrid grid = commissionGridService.require(bid.getCommissionGridId());
+        if (bid.getNegotiatedNetEur() != null) {
+            BigDecimal net = requirePositive(bid.getNegotiatedNetEur(), currency);
+            CommissionResult result = CommissionCalculator.compute(net, currency, grid,
+                    new CommissionReductions(bid.getCommissionOverrideRate(), null, bid.getCommissionVoucherFactor()));
+            return new BidCommissionQuote(result.commission(), false, false);
+        }
+        BigDecimal base = requirePositive(cashBase(bid, announcement), currency);
+        CommissionResult result = CommissionCalculator.compute(base, currency, grid,
+                reductionsWithPromoFallback(announcement.getTravelerId(), bid.getSenderId(),
+                        bid.getPromoCode(), bid.getId()));
+        bid.setCommissionRate(result.storableRate());
+        return new BidCommissionQuote(result.commission(), result.promoEffective(), result.promoEffective());
+    }
+
+    /**
+     * Base de commission = part kilo (poids × prix/kg, null en mode GRID pur)
+     * + part grille (somme des articles du bid). Aligné sur le calcul net de
+     * BidService — sans quoi un bid grille (weightKg null) provoquait un NPE.
+     */
+    private BigDecimal cashBase(BidEntity bid, AnnouncementEntity announcement) {
         BigDecimal kgNet = (bid.getWeightKg() != null && announcement.getPricePerKg() != null)
                 ? bid.getWeightKg().multiply(announcement.getPricePerKg())
                 : BigDecimal.ZERO;
         BigDecimal gridNet = bidGridItemRepository.findByBidId(bid.getId()).stream()
                 .map(i -> i.getUnitPriceNetSnapshot().multiply(BigDecimal.valueOf(i.getQuantity())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal cashAmount = kgNet.add(gridNet);
-        return new BidCommissionQuote(computeCommission(cashAmount, rate, currency), promoApplied);
+        return kgNet.add(gridNet);
+    }
+
+    /** Net strictement positif à l'unité mineure de la devise, sinon 422 {@code invalid-amount}. */
+    private static BigDecimal requirePositive(BigDecimal net, SupportedCurrency currency) {
+        if (net.setScale(currency.minorUnit(), RoundingMode.HALF_UP).signum() <= 0) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "invalid-amount", "Invalid Amount",
+                    "Le montant calculé est invalide (≤ 0)");
+        }
+        return net;
+    }
+
+    /**
+     * Réductions personnelles d'un bid à grille. Un code promo devenu invalide (expiré, limite
+     * atteinte…) retombe sur les réductions sans code, comme le chemin hérité retombe sur le
+     * taux sans promo. Même règle que le rail carte ({@code PaymentService}).
+     */
+    private CommissionReductions reductionsWithPromoFallback(UUID travelerId, UUID senderId,
+                                                             String promoCode, UUID reference) {
+        if (promoCode == null || promoCode.isBlank()) {
+            return commissionRateResolver.reductions(travelerId, senderId, null, null, reference);
+        }
+        try {
+            return commissionRateResolver.reductions(travelerId, senderId, promoCode, senderId, reference);
+        } catch (YadonyBusinessException e) {
+            log.warn("Promo {} invalid for cash bid {} — fallback", promoCode, reference);
+            return commissionRateResolver.reductions(travelerId, senderId, null, null, reference);
+        }
     }
 
     // --- Card registration ---
@@ -569,6 +663,26 @@ public class CashCommissionService {
     }
 
     /**
+     * Commission d'un fil de demande à grille figée (héritée de sa demande, spec §4.4) : grille
+     * marginale, taux spécial et bon de parrainage du fil, minimum de la devise, un seul arrondi
+     * à l'unité mineure (francs entiers en XOF/XAF). Même calcul que l'annonce faite à
+     * l'expéditeur et au voyageur ({@code NegotiationService}, événement
+     * {@code NegotiationCommissionPendingEvent} et contrôle du solde). Un net nul ne coûte rien,
+     * comme {@code net × taux} sur le chemin hérité.
+     */
+    private BigDecimal gridNegotiationCommission(com.yadony.api.requests.entity.NegotiationThreadEntity thread,
+                                                 UUID travelerId, UUID senderId, BigDecimal net) {
+        SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(thread.getCurrency());
+        if (net.setScale(currency.minorUnit(), RoundingMode.HALF_UP).signum() <= 0) {
+            return BigDecimal.ZERO;
+        }
+        return CommissionCalculator.compute(net, currency,
+                commissionGridService.require(thread.getCommissionGridId()),
+                commissionRateResolver.reductions(travelerId, senderId, null, null, thread.getId()))
+                .commission();
+    }
+
+    /**
      * Variante avec portefeuille de complément choisi par le voyageur
      * ({@code fundingCurrency}, {@code null} = devise active). Voir
      * {@link #acceptCashBid(UUID, UUID, CommissionSource, String)}.
@@ -584,10 +698,15 @@ public class CashCommissionService {
             return AcceptBidResponse.accepted();
         }
 
-        // Taux rattaché au fil : un réessai (solde court puis carte, 3DS complétée plus
-        // tard) doit retrouver le bon déjà consommé et non repartir au plein tarif.
-        BigDecimal rate = commissionRateResolver.resolve(travelerId, senderId, null, null, threadId);
-        BigDecimal commission = net.multiply(rate).setScale(2, RoundingMode.HALF_UP);
+        // Réductions rattachées au fil : un réessai (solde court puis carte, 3DS complétée
+        // plus tard) doit retrouver le bon déjà consommé et non repartir au plein tarif.
+        BigDecimal commission;
+        if (thread.getCommissionGridId() != null) {
+            commission = gridNegotiationCommission(thread, travelerId, senderId, net);
+        } else {
+            BigDecimal rate = commissionRateResolver.resolve(travelerId, senderId, null, null, threadId);
+            commission = net.multiply(rate).setScale(2, RoundingMode.HALF_UP);
+        }
         if (commission.signum() <= 0) {
             markNegotiationCommissionCharged(thread, NEGO_COMMISSION_VIA_WALLET, travelerId, commission);
             return AcceptBidResponse.accepted();

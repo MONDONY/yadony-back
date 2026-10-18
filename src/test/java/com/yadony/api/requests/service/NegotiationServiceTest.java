@@ -78,6 +78,15 @@ class NegotiationServiceTest {
     private final UUID REQUEST_ID = UUID.randomUUID();
     private final UUID THREAD_GRID_ID = UUID.randomUUID();
 
+    /** Grille 7/6/5 de la spec (§4.6), minimums par défaut (1,00 €, 650 F CFA). */
+    private static final com.yadony.api.common.commission.CommissionGrid GRID_7_6_5 =
+        new com.yadony.api.common.commission.CommissionGrid(UUID.randomUUID(),
+            java.time.LocalDateTime.of(2026, 10, 1, 0, 0),
+            List.of(new com.yadony.api.common.commission.CommissionTier(BigDecimal.ZERO, new BigDecimal("0.07")),
+                new com.yadony.api.common.commission.CommissionTier(new BigDecimal("100"), new BigDecimal("0.06")),
+                new com.yadony.api.common.commission.CommissionTier(new BigDecimal("300"), new BigDecimal("0.05"))),
+            com.yadony.api.common.commission.CommissionGridService.defaultMinimums());
+
     private PackageRequestEntity request;
     private UserEntity traveler;
 
@@ -1852,6 +1861,35 @@ class NegotiationServiceTest {
             var resp = service.getById(TRAVELER_ID, THREAD_ID);
 
             assertThat(resp.cashCommissionAvailable()).isTrue();
+        }
+
+        @Test
+        @DisplayName("fil à grille — le solde est comparé à la commission de la grille figée")
+        void getById_cashGrid_checksFundsAgainstGridCommission() {
+            UUID THREAD_ID = UUID.randomUUID();
+            var thread = threadFor(THREAD_ID);
+            thread.setCurrency("XOF");
+            thread.setCurrentPriceEur(new BigDecimal("5000"));
+            thread.setCommissionGridId(GRID_7_6_5.id());
+            com.yadony.api.common.commission.CommissionGridService gridService =
+                mock(com.yadony.api.common.commission.CommissionGridService.class);
+            when(gridService.require(GRID_7_6_5.id())).thenReturn(GRID_7_6_5);
+            org.springframework.test.util.ReflectionTestUtils.setField(service, "commissionGridService", gridService);
+            when(commissionRateResolver.reductions(TRAVELER_ID, SENDER_ID, null, null, THREAD_ID))
+                .thenReturn(com.yadony.api.common.commission.CommissionReductions.NONE);
+
+            when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(java.util.List.of());
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
+
+            service.getById(TRAVELER_ID, THREAD_ID);
+
+            // 5 000 F CFA × 7 % = 350, relevé au minimum XOF (650) : le montant que
+            // CashCommissionService.settleNegotiationCommission prélèvera.
+            verify(cashGatePort).hasSufficientFunds(eq(TRAVELER_ID),
+                argThat(c -> c.compareTo(new BigDecimal("650")) == 0), eq("XOF"));
         }
 
         @Test
@@ -3890,6 +3928,40 @@ class NegotiationServiceTest {
             // Délai réglable (dony.negotiation.commission-window-minutes, stubbé à 120 ici) —
             // jamais en dur : l'échéance doit être strictement future.
             assertThat(published.expiresAt()).isAfter(before);
+        }
+
+        @Test
+        @DisplayName("thread CASH à grille — l'événement et l'audit portent la commission de la grille figée")
+        void finalizeInternal_cashGrid_pendingEventCarriesGridCommission() {
+            thread.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
+            thread.setCommissionGridId(GRID_7_6_5.id());
+            request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.CASH));
+            request.setRecipientName("Fatou Diop");
+            request.setRecipientPhone("+221771234567");
+            com.yadony.api.common.commission.CommissionGridService gridService =
+                mock(com.yadony.api.common.commission.CommissionGridService.class);
+            when(gridService.require(GRID_7_6_5.id())).thenReturn(GRID_7_6_5);
+            org.springframework.test.util.ReflectionTestUtils.setField(service, "commissionGridService", gridService);
+            when(commissionRateResolver.reductions(TRAVELER_ID, SENDER_ID, null, null, THREAD_ID))
+                .thenReturn(com.yadony.api.common.commission.CommissionReductions.NONE);
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(escrowPort.releaseEscrowForMethodSwitch(THREAD_ID)).thenReturn(true);
+            when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+
+            service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_x");
+
+            ArgumentCaptor<com.yadony.api.requests.event.NegotiationCommissionPendingEvent> captor =
+                ArgumentCaptor.forClass(com.yadony.api.requests.event.NegotiationCommissionPendingEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            // Net 35 € sur la grille 7/6/5 : 2,45 €, et non 35 € × 12 % = 4,20 € (taux global) —
+            // c'est ce que le règlement prélèvera au voyageur.
+            assertThat(captor.getValue().commissionAmount()).isEqualByComparingTo("2.45");
+            verify(auditService).log(eq("NEGOTIATION_THREAD"), eq(THREAD_ID), eq("AWAITING_COMMISSION"),
+                eq(SENDER_ID), eq(java.util.Map.of("commission", "2.45")));
         }
 
         // Idempotence : un double tap de l'expéditeur (ou une relance après timeout réseau)

@@ -8,6 +8,8 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.commission.CommissionCalculator;
+import com.yadony.api.common.commission.CommissionGridService;
 import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.payments.PriceBreakdown;
 import com.yadony.api.payments.cash.CommissionSource;
@@ -70,6 +72,13 @@ public class NegotiationService {
     private final com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
     private final NegotiationMobileMoneyPort mobileMoneyPort;
     private final MessagesResolver messagesResolver;
+
+    /**
+     * Grilles de commission figées sur les fils ; injectée par champ, comme dans
+     * {@code PaymentService}, pour ne pas toucher aux constructeurs des tests unitaires.
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    private CommissionGridService commissionGridService;
 
     public NegotiationService(PackageRequestRepository requestRepo,
                                NegotiationThreadRepository threadRepo,
@@ -1272,6 +1281,28 @@ public class NegotiationService {
     }
 
     /**
+     * Commission espèces du fil, prélevée au voyageur au règlement. Fil à grille (figée à sa
+     * création, spec §4.4) : même calcul que {@code CashCommissionService.settleNegotiationCommission}
+     * (grille, taux spécial et bon rattachés au fil, minimum de la devise, francs entiers en
+     * XOF/XAF), pour que le montant annoncé soit celui prélevé. Sans grille : taux de l'écran,
+     * calcul hérité inchangé.
+     */
+    private BigDecimal cashCommission(NegotiationThreadEntity thread, UUID senderId) {
+        if (thread.getCommissionGridId() == null) {
+            return PriceBreakdown.fromNet(thread.getCurrentPriceEur(), displayRate(thread)).commission();
+        }
+        BigDecimal net = thread.getCurrentPriceEur();
+        SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(thread.getCurrency());
+        if (net.setScale(currency.minorUnit(), RoundingMode.HALF_UP).signum() <= 0) {
+            return BigDecimal.ZERO;
+        }
+        return CommissionCalculator.compute(net, currency,
+                commissionGridService.require(thread.getCommissionGridId()),
+                commissionRateResolver.reductions(thread.getTravelerId(), senderId, null, null, thread.getId()))
+            .commission();
+    }
+
+    /**
      * Brut vu (et payé) par l'expéditeur pour un net du fil : taux figé sur le fil s'il
      * existe, sinon le taux de base, celui de l'écran du fil ({@code gross} de la réponse).
      * Les notifications à l'expéditeur annoncent ce montant, pas le net du voyageur.
@@ -1568,8 +1599,7 @@ public class NegotiationService {
             thread.setStatus(NegotiationThreadStatus.AWAITING_COMMISSION);
             thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
             threadRepo.save(thread);
-            BigDecimal commission = PriceBreakdown
-                .fromNet(thread.getCurrentPriceEur(), displayRate(thread)).commission();
+            BigDecimal commission = cashCommission(thread, request.getSenderId());
             LocalDateTime expiresAt = LocalDateTime.now(ZoneOffset.UTC)
                 .plusMinutes(negotiationProperties.commissionWindowMinutes());
             eventPublisher.publishEvent(new NegotiationCommissionPendingEvent(
@@ -2494,8 +2524,7 @@ public class NegotiationService {
         // ever be mistaken for an authoritative "cash unavailable".
         boolean cashCommissionAvailable = true;
         if (checkCashAvailability && t.getCurrentPriceEur() != null) {
-            BigDecimal commission = PriceBreakdown.fromNet(
-                t.getCurrentPriceEur(), displayRate(t)).commission();
+            BigDecimal commission = cashCommission(t, request.getSenderId());
             cashCommissionAvailable = cashGatePort.hasSufficientFunds(t.getTravelerId(), commission, t.getCurrency())
                 || cashGatePort.hasCommissionCard(t.getTravelerId());
         }
