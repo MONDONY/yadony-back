@@ -290,6 +290,8 @@ public class NegotiationService {
         thread.setTravelerTravelDate(resolvedTravelDate);
         thread.setTravelerAvailableKg(req.travelerAvailableKg());
         thread.setStatus(NegotiationThreadStatus.OPEN);
+        // Le fil hérite de la grille de sa demande (même null) : jamais de la grille du jour.
+        thread.setCommissionGridId(request.getCommissionGridId());
         // Le prix payé par l'expéditeur reste toujours dans la devise de
         // l'annonce (trajet), jamais celle de sa demande — cf. spec
         // 2026-08-20-devise-par-annonce §"Le prix payé par l'expéditeur
@@ -1646,7 +1648,8 @@ public class NegotiationService {
             thread.getCommissionChargedVia(),
             thread.getPromoCode(),
             thread.getCommissionRate(),
-            thread.getCurrency()
+            thread.getCurrency(),
+            thread.getCommissionGridId()
         ));
         // paymentIntentId est null pour un accord cash scellé par settleCommission/
         // confirmCommission (aucun escrow Stripe pour ce fil) — Map.of() rejette les

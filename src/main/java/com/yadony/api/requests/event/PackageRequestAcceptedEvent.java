@@ -38,7 +38,9 @@ public record PackageRequestAcceptedEvent(
     String promoCode,
     BigDecimal commissionRate,
     /** Devise du fil : {@code agreedPriceEur} (net) est exprimé dans cette devise, pas en euros. */
-    String currency
+    String currency,
+    /** Grille de commission figée sur le fil ; recopiée sur le bid matérialisé (null : chemin hérité). */
+    UUID commissionGridId
 ) {
     /** Sans devise : euros (anciens appelants de test). */
     public PackageRequestAcceptedEvent(UUID threadId, UUID packageRequestId, UUID senderId,
@@ -56,6 +58,6 @@ public record PackageRequestAcceptedEvent(
                 travelerAnnouncementId, weightKg, description, contentCategory, paymentIntentId,
                 recipientName, recipientPhone, disclaimerSignedAt, disclaimerSignedIp,
                 paymentMethod, photoObjectKeys, commissionChargedVia, promoCode, commissionRate,
-                null);
+                null, null);
     }
 }

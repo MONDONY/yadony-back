@@ -5,6 +5,8 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.commission.CommissionGridService;
+import com.yadony.api.common.commission.CommissionReductions;
 import com.yadony.api.matching.dto.BidCustomItemRequest;
 import com.yadony.api.matching.dto.BidCustomItemResponse;
 import com.yadony.api.matching.dto.BidGridItemLine;
@@ -76,6 +78,7 @@ public class BidNegotiationService {
     private final MatchingNegotiationConfig config;
     private final BidService bidService;
     private final BidNegotiationMobileMoneyPort mobileMoneyPort;
+    private final CommissionGridService commissionGridService;
 
     public BidNegotiationService(BidRepository bidRepository,
                                  AnnouncementRepository announcementRepository,
@@ -90,7 +93,8 @@ public class BidNegotiationService {
                                  ApplicationEventPublisher eventPublisher,
                                  MatchingNegotiationConfig config,
                                  BidService bidService,
-                                 BidNegotiationMobileMoneyPort mobileMoneyPort) {
+                                 BidNegotiationMobileMoneyPort mobileMoneyPort,
+                                 CommissionGridService commissionGridService) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -105,6 +109,7 @@ public class BidNegotiationService {
         this.config = config;
         this.bidService = bidService;
         this.mobileMoneyPort = mobileMoneyPort;
+        this.commissionGridService = commissionGridService;
     }
 
     /**
@@ -197,6 +202,15 @@ public class BidNegotiationService {
         bid.setStatus(BidStatus.NEGOTIATING);
         bid.setCurrency(announcement.getCurrency());
         bid.setCommissionRate(rate);
+        // Grille et réductions personnelles figées avec le taux : les rails de paiement les
+        // relisent à l'acceptation, sans dépendre de la grille ni des taux spéciaux du jour.
+        commissionGridService.current().ifPresent(grid -> {
+            CommissionReductions reductions = commissionRateResolver.reductions(
+                    announcement.getTravelerId(), sender.getId(), null, null, null);
+            bid.setCommissionGridId(grid.id());
+            bid.setCommissionOverrideRate(reductions.overrideRate());
+            bid.setCommissionVoucherFactor(reductions.voucherFactor());
+        });
         bid.setNegotiationRound(1);
 
         BidEntity saved = bidRepository.save(bid);

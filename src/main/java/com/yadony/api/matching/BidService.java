@@ -12,6 +12,7 @@ import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.PageResponse;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.commission.CommissionGridService;
 import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.config.ContentCategoryNormalizer;
 import com.yadony.api.matching.dto.AddressDto;
@@ -100,6 +101,7 @@ public class BidService {
 
     private final TripRescheduleRepository rescheduleRepository;
     private final com.yadony.api.matching.reception.BidRecipientLinkRepository recipientLinkRepository;
+    private final CommissionGridService commissionGridService;
 
     /** Jours de contact après livraison : même clé que la fenêtre d'appel in-app (calls/). */
     @org.springframework.beans.factory.annotation.Value("${yadony.calls.delivery-grace-days:3}")
@@ -122,7 +124,8 @@ public class BidService {
                       PaymentService paymentService,
                       MessagesResolver messagesResolver,
                       TripRescheduleRepository rescheduleRepository,
-                      com.yadony.api.matching.reception.BidRecipientLinkRepository recipientLinkRepository) {
+                      com.yadony.api.matching.reception.BidRecipientLinkRepository recipientLinkRepository,
+                      CommissionGridService commissionGridService) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -144,6 +147,7 @@ public class BidService {
         this.messagesResolver = messagesResolver;
         this.rescheduleRepository = rescheduleRepository;
         this.recipientLinkRepository = recipientLinkRepository;
+        this.commissionGridService = commissionGridService;
     }
 
     /**
@@ -300,6 +304,9 @@ public class BidService {
         }
         bid.setStatus(BidStatus.PENDING);
         bid.setCurrency(announcement.getCurrency());
+        // Grille de commission figée à la création : les rails de paiement la liront
+        // au lieu de la grille courante (une grille programmée ensuite ne touche pas ce bid).
+        commissionGridService.current().ifPresent(g -> bid.setCommissionGridId(g.id()));
 
         // Code promo stocké brut (validation + rachat au moment du paiement).
         if (request.promoCode() != null && !request.promoCode().isBlank()) {

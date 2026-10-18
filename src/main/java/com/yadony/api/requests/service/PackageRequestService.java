@@ -6,6 +6,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.CommissionRateResolver;
+import com.yadony.api.common.commission.CommissionGridService;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.i18n.MessagesResolver;
@@ -78,6 +79,7 @@ public class PackageRequestService {
     private final MessagesResolver messagesResolver;
     private final PackageRequestInsightService insightService;
     private final TravelerNegotiationLookup negotiationLookup;
+    private final CommissionGridService commissionGridService;
 
     public PackageRequestService(PackageRequestRepository repository,
                                   UserRepository userRepository,
@@ -100,7 +102,8 @@ public class PackageRequestService {
                                   BlockVisibility blockVisibility,
                                   MessagesResolver messagesResolver,
                                   PackageRequestInsightService insightService,
-                                  TravelerNegotiationLookup negotiationLookup) {
+                                  TravelerNegotiationLookup negotiationLookup,
+                                  CommissionGridService commissionGridService) {
         this.repository = repository;
         this.userRepository = userRepository;
         this.eventPublisher = eventPublisher;
@@ -123,6 +126,7 @@ public class PackageRequestService {
         this.messagesResolver = messagesResolver;
         this.insightService = insightService;
         this.negotiationLookup = negotiationLookup;
+        this.commissionGridService = commissionGridService;
     }
 
     /**
@@ -307,6 +311,8 @@ public class PackageRequestService {
         entity.setContentCategory(ContentCategoryNormalizer.normalizeJoined(req.contentCategory()));
         entity.setDescription(req.description());
         entity.setTargetPriceEur(netTarget);
+        // Grille figée à la création : les fils ouverts sur cette demande en héritent.
+        commissionGridService.current().ifPresent(g -> entity.setCommissionGridId(g.id()));
         entity.setPhotoUrl(sanitizeLegacyPhotoUrl(req.photoUrl()));
         entity.setPickupNeighborhood(req.pickupNeighborhood());
         entity.setDeliveryNeighborhood(req.deliveryNeighborhood());

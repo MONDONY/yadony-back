@@ -172,7 +172,8 @@ class PackageRequestServiceMatchingTest {
                 yadonyConfig, announcementRepository, commissionRateResolver,
                 com.yadony.api.config.PlatformSettingsTestFactory.defaults(),
                 blockVisibility, null, org.mockito.Mockito.mock(PackageRequestInsightService.class),
-                org.mockito.Mockito.mock(TravelerNegotiationLookup.class));
+                org.mockito.Mockito.mock(TravelerNegotiationLookup.class),
+                org.mockito.Mockito.mock(com.yadony.api.common.commission.CommissionGridService.class));
     }
 
     @Test

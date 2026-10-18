@@ -114,6 +114,34 @@ class ThreadAcceptedBidListenerTest {
         }
 
         @Test
+        @DisplayName("le bid matérialisé hérite de la grille figée sur le fil")
+        void threadAccepted_bidInheritsThreadGrid() {
+            UUID gridId = UUID.randomUUID();
+
+            listener.onPackageRequestAccepted(new PackageRequestAcceptedEvent(
+                    THREAD_ID, PACKAGE_REQUEST_ID, SENDER_ID, TRAVELER_ID,
+                    BigDecimal.valueOf(50), ANNOUNCEMENT_ID, BigDecimal.valueOf(5),
+                    "Vêtements", "CLOTHING", "pi_test", "Fatou Diop", "+221771234567",
+                    DISCLAIMER_AT, "1.2.3.4",
+                    com.yadony.api.payments.cash.PaymentMethod.STRIPE, java.util.List.of(),
+                    null, null, null, "EUR", gridId));
+
+            ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(captor.capture());
+            assertThat(captor.getValue().getCommissionGridId()).isEqualTo(gridId);
+        }
+
+        @Test
+        @DisplayName("fil sans grille (créé avant les grilles) → bid sans grille")
+        void threadAccepted_threadWithoutGrid_bidWithoutGrid() {
+            listener.onPackageRequestAccepted(buildEvent());
+
+            ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(captor.capture());
+            assertThat(captor.getValue().getCommissionGridId()).isNull();
+        }
+
+        @Test
         @DisplayName("promoCode présent → redeem appelé avec le bid_id fraîchement matérialisé, rate stampé sur le bid")
         void promoCodePresent_redeemsAndStampsRate() {
             UUID bidId = UUID.randomUUID();

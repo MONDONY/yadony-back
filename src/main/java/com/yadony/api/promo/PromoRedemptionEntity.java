@@ -42,7 +42,7 @@ public class PromoRedemptionEntity {
     @Column(name = "bid_id", nullable = false)
     private UUID bidId;
 
-    @Column(name = "applied_rate", nullable = false, precision = 4, scale = 3)
+    @Column(name = "applied_rate", nullable = false, precision = 7, scale = 6)
     private BigDecimal appliedRate;
 
     @Column(name = "redeemed_at", nullable = false)

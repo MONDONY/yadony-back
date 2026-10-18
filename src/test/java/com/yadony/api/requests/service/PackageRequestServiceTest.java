@@ -78,6 +78,7 @@ class PackageRequestServiceTest {
     @Mock private com.yadony.api.common.BlockVisibility blockVisibility;
     @Mock private PackageRequestInsightService insightService;
     @Mock private TravelerNegotiationLookup negotiationLookup;
+    @Mock private com.yadony.api.common.commission.CommissionGridService commissionGridService;
     /** Real record (not mocked) — threshold-days=3 mirrors application-test.yml (yadony.urgency.threshold-days). */
     private final YadonyConfigProperties yadonyConfig =
             new YadonyConfigProperties(null, null, new YadonyConfigProperties.Urgency(3), null);
@@ -144,7 +145,8 @@ class PackageRequestServiceTest {
                 exchangeRateService, mapper, matchingService,
                 yadonyConfig, announcementRepository, commissionRateResolver,
                 com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(proEnabled),
-                blockVisibility, TestMessages.resolver(), insightService, negotiationLookup);
+                blockVisibility, TestMessages.resolver(), insightService, negotiationLookup,
+                commissionGridService);
     }
 
     // ========== Task 12: create() tests ==========
@@ -556,6 +558,35 @@ class PackageRequestServiceTest {
             assertThat(saved.getTransportMode()).isEqualTo(TransportMode.PLANE);
             assertThat(saved.getTargetPriceEur()).isEqualByComparingTo("35.00"); // 39.20 / 1.12
             assertThat(saved.isNegotiable()).isTrue();
+        }
+
+        @Test @DisplayName("grille en vigueur → son id est figé sur la demande à la création")
+        void packageRequestCreate_freezesGrid() {
+            UUID gridId = UUID.randomUUID();
+            when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+            when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
+            when(commissionGridService.current()).thenReturn(Optional.of(
+                new com.yadony.api.common.commission.CommissionGrid(
+                    gridId, java.time.LocalDateTime.MIN, List.of(), java.util.Map.of())));
+
+            PackageRequestEntity saved = service.createAndReturnEntity(SENDER_ID, validRequest());
+
+            assertThat(saved.getCommissionGridId()).isEqualTo(gridId);
+        }
+
+        @Test @DisplayName("aucune grille en vigueur → la demande reste sans grille (chemin hérité)")
+        void packageRequestCreate_noGrid_null() {
+            when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+            when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
+            when(commissionGridService.current()).thenReturn(Optional.empty());
+
+            PackageRequestEntity saved = service.createAndReturnEntity(SENDER_ID, validRequest());
+
+            assertThat(saved.getCommissionGridId()).isNull();
         }
 
         @Test @DisplayName("devise business CAD de l'expéditeur → assignée à la demande")

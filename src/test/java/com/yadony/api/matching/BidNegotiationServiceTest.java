@@ -72,6 +72,7 @@ class BidNegotiationServiceTest {
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private BidService bidService;
     @Mock private BidNegotiationMobileMoneyPort mobileMoneyPort;
+    @Mock private com.yadony.api.common.commission.CommissionGridService commissionGridService;
     @Mock private HttpServletRequest httpRequest;
 
     /** Surcharges du profil test : 3 tours, 1 h d'inactivité, 24 h pour payer. */
@@ -94,7 +95,7 @@ class BidNegotiationServiceTest {
                 bidRepository, announcementRepository, userRepository, messageRepository,
                 customItemRepository, bidGridItemRepository, annGridItemRepository,
                 bidPhotoService, commissionRateResolver, auditService, eventPublisher,
-                config, bidService, mobileMoneyPort);
+                config, bidService, mobileMoneyPort, commissionGridService);
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -297,6 +298,68 @@ class BidNegotiationServiceTest {
             assertThat(response.maxRounds()).isEqualTo(3);
             assertThat(response.proposedGrossEur()).isEqualByComparingTo("45.00");
             assertThat(response.counterpartyGpPro()).isFalse();
+        }
+
+        @Test
+        @DisplayName("grille en vigueur → grille, taux spécial et facteur du bon figés sur le bid")
+        void propose_withGrid_freezesGridAndReductions() {
+            UUID gridId = UUID.randomUUID();
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID))
+                    .thenReturn(Optional.of(announcement));
+            when(bidService.assertCanBidOn(sender, announcement, "CLOTHING")).thenReturn("CLOTHING");
+            when(bidService.resolvePaymentMethodFor(announcement, "CASH"))
+                    .thenReturn(com.yadony.api.payments.cash.PaymentMethod.CASH);
+            when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID)).thenReturn(new BigDecimal("0.05"));
+            when(commissionGridService.current()).thenReturn(Optional.of(
+                    new com.yadony.api.common.commission.CommissionGrid(
+                            gridId, LocalDateTime.MIN, List.of(), java.util.Map.of())));
+            when(commissionRateResolver.reductions(TRAVELER_ID, SENDER_ID, null, null, null))
+                    .thenReturn(new com.yadony.api.common.commission.CommissionReductions(
+                            new BigDecimal("0.030000"), null, new BigDecimal("0.500")));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(buildTraveler()));
+            stubSavedBid();
+
+            service.propose(ANNOUNCEMENT_ID, SENDER_UID, buildStartRequest(new BigDecimal("45.00")), httpRequest);
+
+            ArgumentCaptor<BidEntity> bidCaptor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(bidCaptor.capture());
+            BidEntity saved = bidCaptor.getValue();
+            assertThat(saved.getCommissionGridId()).isEqualTo(gridId);
+            assertThat(saved.getCommissionOverrideRate()).isEqualByComparingTo("0.03");
+            assertThat(saved.getCommissionVoucherFactor()).isEqualByComparingTo("0.5");
+            assertThat(saved.getCommissionRate()).isEqualByComparingTo("0.05");
+        }
+
+        @Test
+        @DisplayName("aucune grille → rien de nouveau n'est figé, les réductions ne sont pas lues")
+        void propose_noGrid_freezesNothingNew() {
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID))
+                    .thenReturn(Optional.of(announcement));
+            when(bidService.assertCanBidOn(sender, announcement, "CLOTHING")).thenReturn("CLOTHING");
+            when(bidService.resolvePaymentMethodFor(announcement, "CASH"))
+                    .thenReturn(com.yadony.api.payments.cash.PaymentMethod.CASH);
+            when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID)).thenReturn(new BigDecimal("0.05"));
+            when(commissionGridService.current()).thenReturn(Optional.empty());
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(buildTraveler()));
+            stubSavedBid();
+
+            service.propose(ANNOUNCEMENT_ID, SENDER_UID, buildStartRequest(new BigDecimal("45.00")), httpRequest);
+
+            ArgumentCaptor<BidEntity> bidCaptor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(bidCaptor.capture());
+            BidEntity saved = bidCaptor.getValue();
+            assertThat(saved.getCommissionGridId()).isNull();
+            assertThat(saved.getCommissionOverrideRate()).isNull();
+            assertThat(saved.getCommissionVoucherFactor()).isNull();
+            verify(commissionRateResolver, never()).reductions(any(), any(), any(), any(), any());
         }
 
         @Test

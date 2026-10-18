@@ -72,6 +72,7 @@ class BidServiceTest {
     @Mock private com.yadony.api.payments.pawapay.PawapayProperties pawapayProperties;
     @Mock private com.yadony.api.payments.PaymentService paymentService;
     @Mock private TripRescheduleRepository rescheduleRepository;
+    @Mock private com.yadony.api.common.commission.CommissionGridService commissionGridService;
     @Mock private HttpServletRequest httpRequest;
 
     @InjectMocks private BidService bidService;
@@ -226,6 +227,49 @@ class BidServiceTest {
             // Carte : pas d'événement avant l'autorisation Stripe, sinon le voyageur
             // recevrait une proposition abandonnée ou un doublon après le webhook.
             verify(eventPublisher, never()).publishEvent(any(BidCreatedEvent.class));
+        }
+
+        @Test
+        @DisplayName("grille en vigueur → son id est figé sur le bid à la création")
+        void createBid_freezesCurrentGrid() {
+            UUID gridId = UUID.randomUUID();
+            stubCreateBidHappyPath();
+            when(commissionGridService.current()).thenReturn(Optional.of(
+                    new com.yadony.api.common.commission.CommissionGrid(
+                            gridId, java.time.LocalDateTime.MIN, List.of(), java.util.Map.of())));
+
+            bidService.createBid(ANNOUNCEMENT_ID, SENDER_UID, buildRequest(BigDecimal.valueOf(5)), httpRequest);
+
+            ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(captor.capture());
+            assertThat(captor.getValue().getCommissionGridId()).isEqualTo(gridId);
+        }
+
+        @Test
+        @DisplayName("aucune grille en vigueur → commission_grid_id reste null (chemin hérité)")
+        void createBid_noGrid_null() {
+            stubCreateBidHappyPath();
+            when(commissionGridService.current()).thenReturn(Optional.empty());
+
+            bidService.createBid(ANNOUNCEMENT_ID, SENDER_UID, buildRequest(BigDecimal.valueOf(5)), httpRequest);
+
+            ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(captor.capture());
+            assertThat(captor.getValue().getCommissionGridId()).isNull();
+        }
+
+        private void stubCreateBidHappyPath() {
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(buildSender()));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(buildAnnouncement()));
+            when(bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(
+                    SENDER_ID, ANNOUNCEMENT_ID, List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED,
+                            BidStatus.ACCEPTED, BidStatus.NEGOTIATING)))
+                    .thenReturn(false);
+            when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> {
+                BidEntity b = inv.getArgument(0);
+                setId(b, BID_ID);
+                return b;
+            });
         }
 
         @Test

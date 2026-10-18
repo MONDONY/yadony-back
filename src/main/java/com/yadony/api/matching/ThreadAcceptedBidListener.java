@@ -88,6 +88,8 @@ public class ThreadAcceptedBidListener {
         bid.setStatus(BidStatus.ACCEPTED);
         bid.setPaymentIntentId(e.paymentIntentId());
         bid.setLinkedNegotiationThreadId(e.threadId());
+        // Le bid matérialisé garde la grille du fil : les rails de paiement ne relisent jamais la grille du jour.
+        bid.setCommissionGridId(e.commissionGridId());
         // Fige le net négocié : l'affichage ne doit pas dériver si l'annonce
         // dédiée ouvre son surplus (réécrit price_per_kg) ou si le trajet lié a
         // un tarif catalogue différent du prix d'accord.

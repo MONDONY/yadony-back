@@ -76,6 +76,7 @@ class NegotiationServiceTest {
     private final UUID SENDER_ID = UUID.randomUUID();
     private final UUID TRAVELER_ID = UUID.randomUUID();
     private final UUID REQUEST_ID = UUID.randomUUID();
+    private final UUID THREAD_GRID_ID = UUID.randomUUID();
 
     private PackageRequestEntity request;
     private UserEntity traveler;
@@ -254,6 +255,46 @@ class NegotiationServiceTest {
                 ArgumentCaptor.forClass(NegotiationThreadEntity.class);
             verify(threadRepo).save(captor.capture());
             assertThat(captor.getValue().getPromoCode()).isEqualTo("WELCOME6");
+        }
+
+        @Test
+        @DisplayName("le fil hérite de la grille de sa demande, pas de la grille du jour")
+        void threadStart_inheritsRequestGrid() {
+            UUID gridId = UUID.randomUUID();
+            request.setCommissionGridId(gridId);
+
+            when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
+            when(config.threadsPerMinuteRateLimit()).thenReturn(1);
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findActiveByPackageRequestIdAndTravelerId(REQUEST_ID, TRAVELER_ID))
+                .thenReturn(Optional.empty());
+            when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
+                .thenReturn(0L);
+            when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
+            when(threadRepo.save(any())).thenAnswer(inv -> {
+                NegotiationThreadEntity t = inv.getArgument(0);
+                try {
+                    var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                    idField.setAccessible(true);
+                    idField.set(t, UUID.randomUUID());
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+                return t;
+            });
+            stubMatchingTrip();
+
+            service.start(TRAVELER_ID, new NegotiationStartRequest(
+                REQUEST_ID, new BigDecimal("30"),
+                LocalDate.now().plusDays(5), new BigDecimal("10"),
+                TRIP_ANNOUNCEMENT_ID, "Pas de problème", false, null));
+
+            ArgumentCaptor<NegotiationThreadEntity> captor =
+                ArgumentCaptor.forClass(NegotiationThreadEntity.class);
+            verify(threadRepo).save(captor.capture());
+            assertThat(captor.getValue().getCommissionGridId()).isEqualTo(gridId);
         }
 
         @Test
@@ -3839,6 +3880,7 @@ class NegotiationServiceTest {
             // matérialisé est annulé avant remise — sans elle le remboursement est
             // silencieusement sauté).
             thread.setCommissionChargedVia("CARD");
+            thread.setCommissionGridId(THREAD_GRID_ID);
 
             NegotiationThreadEntity competing = new NegotiationThreadEntity();
             competing.setPackageRequestId(REQUEST_ID);
@@ -3873,6 +3915,8 @@ class NegotiationServiceTest {
             // Sans cette propagation, ThreadAcceptedBidListener ne saurait pas comment
             // rembourser la commission si le bid matérialisé est annulé avant remise.
             assertThat(sealedCaptor.getValue().commissionChargedVia()).isEqualTo("CARD");
+            // La grille du fil voyage dans l'événement : le bid matérialisé la recopie.
+            assertThat(sealedCaptor.getValue().commissionGridId()).isEqualTo(THREAD_GRID_ID);
             verifyNoInteractions(cashGatePort);
         }
 

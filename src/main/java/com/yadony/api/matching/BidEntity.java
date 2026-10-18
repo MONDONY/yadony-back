@@ -285,8 +285,20 @@ public class BidEntity extends BaseEntity {
     private CommissionChargedVia commissionChargedVia;
 
     /** Taux de commission effectif figé à la création du paiement (snapshot). */
-    @Column(name = "commission_rate")
+    @Column(name = "commission_rate", precision = 7, scale = 6)
     private java.math.BigDecimal commissionRate;
+
+    /** Grille de commission figée à la création du bid (null : bid antérieur aux grilles, chemin hérité). */
+    @Column(name = "commission_grid_id")
+    private UUID commissionGridId;
+
+    /** Taux spécial (voyageur/expéditeur) figé à la proposition de négociation ; null si aucun. */
+    @Column(name = "commission_override_rate", precision = 7, scale = 6)
+    private java.math.BigDecimal commissionOverrideRate;
+
+    /** Facteur du bon de parrainage figé à la proposition de négociation ; null si aucun. */
+    @Column(name = "commission_voucher_factor", precision = 4, scale = 3)
+    private java.math.BigDecimal commissionVoucherFactor;
 
     /** Code promo brut entré par l'expéditeur à la création du bid (nullable). */
     @Column(name = "promo_code", length = 40)
@@ -521,6 +533,15 @@ public class BidEntity extends BaseEntity {
 
     public java.math.BigDecimal getCommissionRate() { return commissionRate; }
     public void setCommissionRate(java.math.BigDecimal commissionRate) { this.commissionRate = commissionRate; }
+
+    public UUID getCommissionGridId() { return commissionGridId; }
+    public void setCommissionGridId(UUID commissionGridId) { this.commissionGridId = commissionGridId; }
+
+    public java.math.BigDecimal getCommissionOverrideRate() { return commissionOverrideRate; }
+    public void setCommissionOverrideRate(java.math.BigDecimal commissionOverrideRate) { this.commissionOverrideRate = commissionOverrideRate; }
+
+    public java.math.BigDecimal getCommissionVoucherFactor() { return commissionVoucherFactor; }
+    public void setCommissionVoucherFactor(java.math.BigDecimal commissionVoucherFactor) { this.commissionVoucherFactor = commissionVoucherFactor; }
 
     public String getPromoCode() { return promoCode; }
     public void setPromoCode(String promoCode) { this.promoCode = promoCode != null ? promoCode.toUpperCase() : null; }

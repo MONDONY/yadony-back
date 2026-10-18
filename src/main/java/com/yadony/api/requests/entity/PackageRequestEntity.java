@@ -70,6 +70,10 @@ public class PackageRequestEntity extends BaseEntity {
     @Column(name = "promo_code", length = 50)
     private String promoCode;
 
+    /** Grille de commission figée à la création de la demande ; les fils en héritent (null : chemin hérité). */
+    @Column(name = "commission_grid_id")
+    private UUID commissionGridId;
+
     @Column(name = "photo_url", length = 500)
     private String photoUrl;
 
@@ -286,4 +290,8 @@ public class PackageRequestEntity extends BaseEntity {
     public void setDisclaimerSignedAt(LocalDateTime disclaimerSignedAt) { this.disclaimerSignedAt = disclaimerSignedAt; }
 
     public void setDisclaimerSignedIp(String disclaimerSignedIp) { this.disclaimerSignedIp = disclaimerSignedIp; }
+
+    public UUID getCommissionGridId() { return commissionGridId; }
+
+    public void setCommissionGridId(UUID commissionGridId) { this.commissionGridId = commissionGridId; }
 }
