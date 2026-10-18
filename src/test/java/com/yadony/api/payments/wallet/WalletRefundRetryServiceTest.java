@@ -141,7 +141,7 @@ class WalletRefundRetryServiceTest {
     // ── Aperçu ───────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("Aperçu, cas réel : dû 477, solde 487,50, sûr 473, suggéré 473, manque 4, numéro masqué")
+    @DisplayName("Aperçu, cas réel : dû 477, solde 487,50, sûr 473, manque 4, relance fermée (jamais de partiel)")
     void preview_casReel() {
         WalletRefundRetryService.Preview p = service.preview(request.getId());
 
@@ -149,15 +149,15 @@ class WalletRefundRetryServiceTest {
         assertThat(p.grossAmount()).isEqualByComparingTo("500");
         assertThat(p.walletBalance()).isEqualByComparingTo("487.50");
         assertThat(p.maxSafeAmount()).isEqualByComparingTo("473");
-        assertThat(p.suggestedAmount()).isEqualByComparingTo("473");
+        assertThat(p.suggestedAmount()).isNull();
         assertThat(p.topUpNeeded()).isEqualByComparingTo("4");
         assertThat(p.refundRatePercent()).isEqualByComparingTo("3.0");
         assertThat(p.country()).isEqualTo("CI");
         assertThat(p.currency()).isEqualTo("XOF");
         assertThat(p.provider()).isEqualTo("ORANGE_CIV");
         assertThat(p.msisdnMasked()).isEqualTo(deposit.getMsisdnMasked()).doesNotContain("0734567");
-        assertThat(p.retryAvailable()).isTrue();
-        assertThat(p.unavailableReason()).isNull();
+        assertThat(p.retryAvailable()).isFalse();
+        assertThat(p.unavailableReason()).isEqualTo("pawapay-insufficient-funds");
         verifyNoInteractions(issuer);
     }
 
@@ -168,6 +168,8 @@ class WalletRefundRetryServiceTest {
         WalletRefundRetryService.Preview p = service.preview(request.getId());
         assertThat(p.suggestedAmount()).isEqualByComparingTo("477");
         assertThat(p.topUpNeeded()).isZero();
+        assertThat(p.retryAvailable()).isTrue();
+        assertThat(p.unavailableReason()).isNull();
     }
 
     @Test
@@ -190,7 +192,7 @@ class WalletRefundRetryServiceTest {
         stubBalance("0");
         WalletRefundRetryService.Preview p = service.preview(request.getId());
         assertThat(p.maxSafeAmount()).isZero();
-        assertThat(p.suggestedAmount()).isZero();
+        assertThat(p.suggestedAmount()).isNull();
         assertThat(p.topUpNeeded()).isEqualByComparingTo("492");
         assertThat(p.retryAvailable()).isFalse();
         assertThat(p.unavailableReason()).isEqualTo("pawapay-insufficient-funds");
@@ -327,6 +329,19 @@ class WalletRefundRetryServiceTest {
     }
 
     @Test
+    @DisplayName("Montant inférieur au dû : 422, jamais de versement partiel (l'écart serait perdu)")
+    void montantInferieurAuDu_422() {
+        stubBalance("100000");
+        assertThatThrownBy(() -> service.retry(request.getId(), new BigDecimal("473"), ADMIN_ID))
+                .satisfies(t -> {
+                    assertThat(business(t).getErrorCode()).isEqualTo("wallet-refund-retry-partial-not-allowed");
+                    assertThat((BigDecimal) business(t).getProperties().get("amountDue")).isEqualByComparingTo("477");
+                });
+        assertNothingSent();
+        verify(itemRepository, never()).save(any());
+    }
+
+    @Test
     void montantSuperieurAuDu_422() {
         stubBalance("100000");
         assertThatThrownBy(() -> service.retry(request.getId(), new BigDecimal("478"), ADMIN_ID))
@@ -345,9 +360,9 @@ class WalletRefundRetryServiceTest {
     }
 
     @Test
-    @DisplayName("Montant au-delà du sûr : 422 avec maxSafeAmount et topUpNeeded, aucun envoi à pawaPay")
+    @DisplayName("Cas réel, dû au-delà du sûr : 422 avec maxSafeAmount et topUpNeeded, aucun envoi à pawaPay")
     void montantAuDelaDuSur_422SansEnvoi() {
-        assertThatThrownBy(() -> service.retry(request.getId(), new BigDecimal("477"), ADMIN_ID))
+        assertThatThrownBy(() -> service.retry(request.getId(), null, ADMIN_ID))
                 .satisfies(t -> {
                     YadonyBusinessException e = business(t);
                     assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
@@ -384,22 +399,24 @@ class WalletRefundRetryServiceTest {
     // ── Succès ───────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("Succès, montant suggéré : 473 confiés au rail, demande PROCESSING, audit WALLET_REFUND_RETRIED")
-    void succes_montantSuggere() {
+    @DisplayName("Succès : le dû entier (477) confié au rail, frais du barème (23), PROCESSING, audit")
+    void succes_duEntierAvecFraisDuBareme() {
+        stubBalance("491.50"); // le cas réel après avoir alimenté le wallet des 4 XOF manquants
         WalletRefundRetryService.Retried r = service.retry(request.getId(), null, ADMIN_ID);
 
-        assertThat(r.amount()).isEqualByComparingTo("473");
+        assertThat(r.amount()).isEqualByComparingTo("477");
         assertThat(r.amountDue()).isEqualByComparingTo("477");
-        assertThat(r.maxSafeAmount()).isEqualByComparingTo("473");
-        assertThat(r.walletBalance()).isEqualByComparingTo("487.50");
+        assertThat(r.maxSafeAmount()).isEqualByComparingTo("477");
+        assertThat(r.walletBalance()).isEqualByComparingTo("491.50");
         assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.PROCESSING);
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<WalletRefundRequestItemEntity>> issued = ArgumentCaptor.forClass(List.class);
         verify(issuer).issue(eq(request), issued.capture(), eq(false));
         WalletRefundRequestItemEntity item = issued.getValue().get(0);
-        // Le rail envoie amount - feeAmount : 500 - 27 = 473, vers le dépôt (donc le numéro) d'origine.
-        assertThat(item.getAmount().subtract(item.getFeeAmount())).isEqualByComparingTo("473");
+        // Le rail envoie amount - feeAmount : 500 - 23 (barème 2,5 + 2 %) = 477, vers le dépôt d'origine.
+        assertThat(item.getFeeAmount()).isEqualByComparingTo("23");
+        assertThat(item.getAmount().subtract(item.getFeeAmount())).isEqualByComparingTo("477");
         assertThat(item.getPaymentIntentId()).isEqualTo("pawapay:" + deposit.getId());
         verify(entityManager).refresh(request);
 
@@ -407,42 +424,49 @@ class WalletRefundRetryServiceTest {
         ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
         verify(auditService).log(eq("wallet_refund_request"), eq(request.getId()),
                 eq(WalletRefundRetryService.AUDIT_ACTION), eq(ADMIN_ID), payload.capture());
-        assertThat(payload.getValue()).containsEntry("amount", "473").containsEntry("amountDue", "477")
-                .containsEntry("walletBalance", "487.50").containsEntry("maxSafe", "473")
+        assertThat(payload.getValue()).containsEntry("amount", "477").containsEntry("amountDue", "477")
+                .containsEntry("walletBalance", "491.50").containsEntry("maxSafe", "477")
                 .containsEntry("country", "CI").containsEntry("provider", "ORANGE_CIV");
         assertThat(payload.getValue().toString()).doesNotContain(MSISDN);
     }
 
     @Test
-    @DisplayName("Succès, montant choisi inférieur au sûr")
-    void succes_montantChoisi() {
-        WalletRefundRetryService.Retried r = service.retry(request.getId(), new BigDecimal("400"), ADMIN_ID);
-        assertThat(r.amount()).isEqualTo(new BigDecimal("400"));
-        assertThat(items.get(0).getFeeAmount()).isEqualByComparingTo("100");
+    @DisplayName("Succès, montant confirmé égal au dû")
+    void succes_montantConfirme() {
+        stubBalance("10000");
+        WalletRefundRetryService.Retried r = service.retry(request.getId(), new BigDecimal("477.00"), ADMIN_ID);
+        assertThat(r.amount()).isEqualTo(new BigDecimal("477"));
     }
 
     @Test
-    @DisplayName("Plusieurs recharges du même numéro : le montant remplit les items dans l'ordre, le reste passe FAILED")
-    void plusieursRecharges_repartition() {
+    @DisplayName("Plusieurs recharges du même numéro : chaque item garde le frais du barème, tout est versé")
+    void plusieursRecharges_toutVerse() {
         WalletRefundRequestItemEntity second = item(deposit, "200.00", "4.00", 2);
         items.add(second);
         stubBalance("100000");
 
-        WalletRefundRetryService.Retried r = service.retry(request.getId(), new BigDecimal("477"), ADMIN_ID);
+        WalletRefundRetryService.Retried r = service.retry(request.getId(), null, ADMIN_ID);
 
-        assertThat(r.amountDue()).isEqualByComparingTo("668"); // 477 + (200 - 9)
-        assertThat(items.get(0).getAmount().subtract(items.get(0).getFeeAmount())).isEqualByComparingTo("477");
-        assertThat(second.getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
-        assertThat(second.getFailureReason()).isEqualTo(WalletRefundRetryService.REASON_AMOUNT_SHORT);
+        assertThat(r.amount()).isEqualByComparingTo("668"); // 477 + (200 - 9)
+        assertThat(items.get(0).getFeeAmount()).isEqualByComparingTo("23");
+        assertThat(second.getFeeAmount()).isEqualByComparingTo("9");
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<WalletRefundRequestItemEntity>> issued = ArgumentCaptor.forClass(List.class);
         verify(issuer).issue(eq(request), issued.capture(), eq(false));
-        assertThat(issued.getValue()).containsExactly(items.get(0));
+        assertThat(issued.getValue()).containsExactly(items.get(0), second);
+    }
+
+    @Test
+    void recetteDontLesFraisAbsorbentLeMontant_422() {
+        WalletRefundRequestItemEntity tiny = item(deposit, "0.00", "0.00", 2);
+        items.add(tiny);
+        assertNotEligible(() -> service.preview(request.getId()), "nothing-to-refund");
     }
 
     @Test
     @DisplayName("Réservation impossible chez pawaPay : 502, tout est annulé (transaction)")
     void reservationImpossible_502() {
+        stubBalance("10000");
         doAnswer(inv -> null).when(issuer).issue(any(), any(), anyBoolean());
         assertThatThrownBy(() -> service.retry(request.getId(), null, ADMIN_ID))
                 .satisfies(t -> assertThat(business(t).getErrorCode()).isEqualTo("mobile-money-provider-unavailable"));

@@ -883,7 +883,7 @@ class WalletRefundIT {
     }
 
     @Test
-    void relanceAdmin_casReel_verseLeMontantSurAuDepotPuisSoldeLaDemande() {
+    void relanceAdmin_casReel_refuseeTantQueLeWalletNeCouvrePasLeDu_puisVerseLeDuEntier() {
         UUID userId = persistUser();
         WalletRefundRequestEntity child = manualChildAfterOutOfFunds(userId);
         assertThat(child.getChannel()).isEqualTo(WalletRefundChannel.MANUAL_ADMIN);
@@ -893,19 +893,30 @@ class WalletRefundIT {
         WalletRefundRetryService.Preview preview = walletRefundRetryService.preview(child.getId());
         assertThat(preview.amountDue()).isEqualByComparingTo("477");
         assertThat(preview.maxSafeAmount()).isEqualByComparingTo("473");
-        assertThat(preview.suggestedAmount()).isEqualByComparingTo("473");
+        assertThat(preview.suggestedAmount()).isNull();
+        assertThat(preview.retryAvailable()).isFalse();
         assertThat(preview.topUpNeeded()).isEqualByComparingTo("4");
         assertThat(preview.msisdnMasked()).isEqualTo(PAWAPAY_MSISDN_MASKED);
         assertThat(preview.country()).isEqualTo(PAWAPAY_COUNTRY);
-
-        ArgumentCaptor<PawapayRefundRequest> refunds = ArgumentCaptor.forClass(PawapayRefundRequest.class);
         UUID adminId = UUID.randomUUID();
+        // Jamais de versement partiel : 473 laisserait 4 XOF perdus pour l'utilisateur.
+        assertThatThrownBy(() -> walletRefundRetryService.retry(child.getId(), new BigDecimal("473"), adminId))
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                .isEqualTo("wallet-refund-retry-partial-not-allowed");
+        assertThatThrownBy(() -> walletRefundRetryService.retry(child.getId(), null, adminId))
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                .isEqualTo("wallet-refund-insufficient-pawapay-funds");
+
+        // L'admin alimente le wallet pawaPay des 4 XOF manquants.
+        stubPawapayBalance("491.50");
+        assertThat(walletRefundRetryService.preview(child.getId()).suggestedAmount()).isEqualByComparingTo("477");
+        ArgumentCaptor<PawapayRefundRequest> refunds = ArgumentCaptor.forClass(PawapayRefundRequest.class);
         WalletRefundRetryService.Retried retried = walletRefundRetryService.retry(child.getId(), null, adminId);
 
-        assertThat(retried.amount()).isEqualByComparingTo("473");
+        assertThat(retried.amount()).isEqualByComparingTo("477");
         verify(pawapayClient, org.mockito.Mockito.times(2)).initiateRefund(refunds.capture());
         PawapayRefundRequest sent = refunds.getAllValues().get(1);
-        assertThat(sent.amount()).isEqualByComparingTo("473");
+        assertThat(sent.amount()).isEqualByComparingTo("477");
         WalletRefundRequestItemEntity childItem =
                 walletRefundRequestItemRepository.findByRefundRequestId(child.getId()).get(0);
         PawapayOperationEntity refundOp = pawapayOperationRepository.findById(childItem.getPawapayRefundId()).orElseThrow();
@@ -926,7 +937,7 @@ class WalletRefundIT {
 
         WalletRefundRequestEntity done = walletRefundRequestRepository.findById(child.getId()).orElseThrow();
         assertThat(done.getStatus()).isEqualTo(WalletRefundRequestStatus.REFUNDED);
-        assertThat(done.getPaidAmount()).isEqualByComparingTo("473");
+        assertThat(done.getPaidAmount()).isEqualByComparingTo("477");
         assertThat(walletService.getBalance(userId, "XOF")).isEqualByComparingTo("0");
         assertThat(walletTransactionRepository.findByUserIdAndCurrencyOrderByCreatedAtAsc(userId, "XOF"))
                 .anyMatch(t -> t.getType() == WalletTransactionType.SELF_REFUND_OUT
@@ -940,7 +951,7 @@ class WalletRefundIT {
         stubPawapayBalance("487.50");
         long before = walletRefundOperations(userId);
 
-        assertThatThrownBy(() -> walletRefundRetryService.retry(child.getId(), new BigDecimal("477"), UUID.randomUUID()))
+        assertThatThrownBy(() -> walletRefundRetryService.retry(child.getId(), null, UUID.randomUUID()))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> {
                     YadonyBusinessException b = (YadonyBusinessException) e;
@@ -1015,5 +1026,39 @@ class WalletRefundIT {
         assertThat(child.getChannel()).isEqualTo(WalletRefundChannel.MANUAL_ADMIN);
         assertThat(child.getStatus()).isEqualTo(WalletRefundRequestStatus.PENDING);
         assertThat(walletService.getBalance(userId, "XOF")).isEqualByComparingTo("500");
+    }
+
+    @Test
+    void relanceEnCours_puisResolutionManuelle_refusee_sansDoubleDebit() {
+        UUID userId = persistUser();
+        WalletRefundRequestEntity child = manualChildAfterOutOfFunds(userId);
+        stubPawapayBalance("10000");
+        walletRefundRetryService.retry(child.getId(), null, UUID.randomUUID());
+
+        assertThatThrownBy(() -> walletRefundRequestService.resolve(child.getId(), UUID.randomUUID(),
+                new BigDecimal("477"), "versé par Wave"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                .isEqualTo("wallet-refund-retry-in-progress");
+        assertThat(walletService.getBalance(userId, "XOF")).isEqualByComparingTo("500");
+        assertThat(walletRefundRequestRepository.findById(child.getId()).orElseThrow().getStatus())
+                .isEqualTo(WalletRefundRequestStatus.PROCESSING);
+    }
+
+    @Test
+    void resolutionManuelle_puisRelance_refusee_sansAucuneOperation() {
+        UUID userId = persistUser();
+        WalletRefundRequestEntity child = manualChildAfterOutOfFunds(userId);
+        stubPawapayBalance("10000");
+        walletRefundRequestService.resolve(child.getId(), UUID.randomUUID(), new BigDecimal("477"), null);
+        long before = walletRefundOperations(userId);
+
+        assertThatThrownBy(() -> walletRefundRetryService.retry(child.getId(), null, UUID.randomUUID()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("wallet-refund-retry-not-eligible");
+                    assertThat(((YadonyBusinessException) e).getProperties()).containsEntry("reason", "not-pending");
+                });
+        assertThat(walletRefundOperations(userId)).isEqualTo(before);
     }
 }

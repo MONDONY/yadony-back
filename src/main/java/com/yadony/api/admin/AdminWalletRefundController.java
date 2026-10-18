@@ -129,9 +129,9 @@ public class AdminWalletRefundController {
     }
 
     /**
-     * Relance le remboursement : verse réellement {@code amount} (par défaut le montant suggéré)
-     * sur le numéro de la recharge, par le rail pawaPay du flux automatique. Corps facultatif
-     * {@code {"amount": 473}}.
+     * Relance le remboursement : verse réellement le montant dû entier sur le numéro de la
+     * recharge, par le rail pawaPay du flux automatique. Corps facultatif {@code {"amount": 477}},
+     * qui doit égaler le dû (confirmation du montant affiché).
      */
     @PreAuthorize("hasAuthority('PAYMENT_REFUND')")
     @PostMapping("/{id}/retry")

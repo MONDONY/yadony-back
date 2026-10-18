@@ -46,11 +46,17 @@ import org.springframework.transaction.annotation.Transactional;
  * ({@link PawapayRefundFunds}) : au-delà, 422 {@code wallet-refund-insufficient-pawapay-funds}
  * sans aucune opération créée.
  *
+ * <p><b>Jamais de versement partiel.</b> La relance verse le dû entier ou rien. Un montant
+ * inférieur ferait perdre la différence à l'utilisateur : le wallet est débité du brut à la
+ * réussite, et l'écart n'aurait aucune trace (ni frais du barème, ni reste à verser). Quand le
+ * wallet pawaPay ne couvre pas le dû, la relance répond 422 avec {@code topUpNeeded} : l'admin
+ * alimente le wallet pawaPay puis relance. Les frais retenus restent ceux du barème.
+ *
  * <p><b>Rail.</b> Aucun envoi n'est réécrit ici : les items sont confiés à
  * {@link WalletPawapayRefundIssuer#issue} (REFUND du dépôt, ou PAYOUT au même numéro si
  * l'opérateur ne rembourse pas, puis repli PAYOUT sur un REFUND en échec). Le net envoyé est
- * {@code amount - feeAmount} de l'item : la relance pose donc {@code feeAmount = brut - net
- * choisi}. La demande passe {@code PROCESSING} ; l'issue est traitée par
+ * {@code amount - feeAmount} de l'item : la relance pose {@code feeAmount} au frais du barème
+ * actuel, le net envoyé est donc exactement le dû. La demande passe {@code PROCESSING} ; l'issue est traitée par
  * {@link WalletRefundOutcomeListener} puis {@code WalletSelfRefundService#resolveIfComplete},
  * exactement comme le flux automatique : succès → {@code REFUNDED} (débit du brut,
  * {@code paidAmount} = net versé) ; échec → {@code FAILED}, alerte, et un nouveau ticket
@@ -65,8 +71,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class WalletRefundRetryService {
 
     public static final String AUDIT_ACTION = "WALLET_REFUND_RETRIED";
-    /** Motif d'un item que le montant choisi ne couvre plus (demande à plusieurs recharges). */
-    static final String REASON_AMOUNT_SHORT = "retry-amount-short";
 
     private static final Logger log = LoggerFactory.getLogger(WalletRefundRetryService.class);
 
@@ -105,7 +109,9 @@ public class WalletRefundRetryService {
      * {@code walletBalance}, {@code maxSafeAmount}, {@code suggestedAmount} et
      * {@code topUpNeeded} nuls, {@code retryAvailable = false} et
      * {@code unavailableReason = "pawapay-balance-unavailable"} : l'admin voit le dû et le numéro,
-     * le bouton d'envoi reste fermé.
+     * le bouton d'envoi reste fermé. {@code suggestedAmount} vaut le dû quand le wallet le couvre
+     * en sécurité, {@code null} sinon ({@code unavailableReason = "pawapay-insufficient-funds"},
+     * {@code topUpNeeded} > 0) : jamais de versement partiel.
      */
     public record Preview(UUID requestId, String currency, String country, String provider, String msisdnMasked,
                           BigDecimal grossAmount, BigDecimal amountDue, BigDecimal walletBalance,
@@ -137,17 +143,18 @@ public class WalletRefundRetryService {
                     "pawapay-balance-unavailable");
         }
         BigDecimal maxSafe = funds.maxSafe(balance.get(), deposit.getProvider(), currency);
-        BigDecimal suggested = target.due().min(maxSafe);
         BigDecimal topUp = funds.topUpNeeded(target.due(), balance.get(), deposit.getProvider(), currency);
-        boolean available = suggested.signum() > 0;
+        boolean available = target.due().compareTo(maxSafe) <= 0;
+        BigDecimal suggested = available ? target.due() : null;
         return new Preview(target.request().getId(), currency, deposit.getCountry(), deposit.getProvider(),
                 deposit.getMsisdnMasked(), gross, target.due(), balance.get(), maxSafe, suggested, topUp, rate,
                 available, available ? null : "pawapay-insufficient-funds");
     }
 
     /**
-     * Relance le remboursement pour {@code amount} ({@code null} : le montant suggéré,
-     * {@code min(dû, maxSûr)}). Le solde pawaPay est lu juste avant de verrouiller la demande
+     * Relance le remboursement du dû entier. {@code amount} est facultatif ; s'il est donné, il
+     * doit égaler le dû (confirmation du montant affiché par l'aperçu : un barème modifié entre
+     * l'aperçu et le clic est refusé plutôt que versé en silence). Le solde pawaPay est lu juste avant de verrouiller la demande
      * (aucun appel réseau sous le verrou pour cette lecture) puis le montant est validé contre
      * le montant sûr recalculé.
      *
@@ -173,22 +180,15 @@ public class WalletRefundRetryService {
 
         BigDecimal maxSafe = funds.maxSafe(balance, provider, currency);
         BigDecimal due = target.due();
-        BigDecimal chosen;
-        if (amount == null) {
-            chosen = due.min(maxSafe);
-            if (chosen.signum() <= 0) {
-                throw insufficientFunds(target, balance, maxSafe, due);
-            }
-        } else {
+        if (amount != null) {
             validateAmount(amount, due, currency);
-            chosen = amount;
         }
-        if (chosen.compareTo(maxSafe) > 0) {
-            throw insufficientFunds(target, balance, maxSafe, chosen);
+        if (due.compareTo(maxSafe) > 0) {
+            throw insufficientFunds(target, balance, maxSafe);
         }
-        chosen = chosen.setScale(scale(currency), RoundingMode.UNNECESSARY);
+        BigDecimal chosen = due.setScale(scale(currency), RoundingMode.UNNECESSARY);
 
-        List<WalletRefundRequestItemEntity> covered = distribute(target.lines(), chosen);
+        List<WalletRefundRequestItemEntity> covered = applyScheduleFees(target.lines());
         request.setStatus(WalletRefundRequestStatus.PROCESSING);
         requestRepository.saveAndFlush(request);
 
@@ -225,27 +225,16 @@ public class WalletRefundRetryService {
     }
 
     /**
-     * Répartit {@code amount} sur les lignes dans l'ordre de création : chacune reçoit au plus son
-     * dû. Le net choisi devient {@code amount - feeAmount} de l'item (seul montant que lit
-     * l'émetteur, pour le REFUND comme pour son repli PAYOUT). Une ligne que le montant ne couvre
-     * plus passe FAILED {@value #REASON_AMOUNT_SHORT} : à la résolution, un nouveau ticket manuel
-     * la reprend.
+     * Pose sur chaque item le frais du barème actuel ({@code feeAmount = brut - dû}) : le net que
+     * lit l'émetteur, pour le REFUND comme pour son repli PAYOUT, est exactement le dû.
      */
-    private List<WalletRefundRequestItemEntity> distribute(List<Line> lines, BigDecimal amount) {
+    private List<WalletRefundRequestItemEntity> applyScheduleFees(List<Line> lines) {
         List<WalletRefundRequestItemEntity> covered = new ArrayList<>();
-        BigDecimal left = amount;
         for (Line line : lines) {
             WalletRefundRequestItemEntity item = line.item();
-            BigDecimal net = line.due().signum() > 0 ? left.min(line.due()) : BigDecimal.ZERO;
-            if (net.signum() > 0) {
-                item.setFeeAmount(item.getAmount().subtract(net));
-                covered.add(item);
-                left = left.subtract(net);
-            } else {
-                item.setStatus(WalletRefundItemStatus.FAILED);
-                item.setFailureReason(REASON_AMOUNT_SHORT);
-            }
+            item.setFeeAmount(item.getAmount().subtract(line.due()));
             itemRepository.save(item);
+            covered.add(item);
         }
         return covered;
     }
@@ -301,16 +290,17 @@ public class WalletRefundRetryService {
                         "Les recharges de cette demande viennent de plusieurs numéros : remboursez hors app");
             }
             reference = reference == null ? deposit : reference;
-            lines.add(new Line(item, deposit, due(item, deposit, request.getCurrency())));
+            BigDecimal lineDue = due(item, deposit, request.getCurrency());
+            if (lineDue.signum() <= 0) {
+                throw notEligible("nothing-to-refund",
+                        "Les frais de remboursement absorbent le montant d'une recharge : remboursez hors app");
+            }
+            lines.add(new Line(item, deposit, lineDue));
         }
         if (refundOperationOpen(request)) {
             throw inProgress();
         }
-        BigDecimal due = lines.stream().map(Line::due).filter(d -> d.signum() > 0)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        if (due.signum() <= 0) {
-            throw notEligible("nothing-to-refund", "Les frais de remboursement absorbent tout le montant");
-        }
+        BigDecimal due = lines.stream().map(Line::due).reduce(BigDecimal.ZERO, BigDecimal::add);
         return new Target(request, List.copyOf(lines), reference, due);
     }
 
@@ -374,36 +364,41 @@ public class WalletRefundRetryService {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-retry-amount-invalid",
                     "Unprocessable", "Le montant à verser doit être strictement positif");
         }
-        if (amount.compareTo(due) > 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-retry-amount-too-high",
-                    "Unprocessable", "Le montant dépasse le montant dû (" + due.toPlainString() + " " + currency + ")",
-                    Map.of("amountDue", due));
-        }
         int maxDecimals = scale(currency);
         if (Math.max(amount.stripTrailingZeros().scale(), 0) > maxDecimals) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-retry-amount-scale",
                     "Unprocessable", "Le montant a trop de décimales pour la devise " + currency
                             + " (" + maxDecimals + " au plus)", Map.of("maxDecimals", maxDecimals));
         }
+        if (amount.compareTo(due) > 0) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-retry-amount-too-high",
+                    "Unprocessable", "Le montant dépasse le montant dû (" + due.toPlainString() + " " + currency + ")",
+                    Map.of("amountDue", due));
+        }
+        if (amount.compareTo(due) < 0) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "wallet-refund-retry-partial-not-allowed", "Unprocessable",
+                    "La relance verse le montant dû entier (" + due.toPlainString() + " " + currency
+                            + ") : un versement partiel ferait perdre la différence à l'utilisateur",
+                    Map.of("amountDue", due));
+        }
     }
 
-    private YadonyBusinessException insufficientFunds(Target target, BigDecimal balance, BigDecimal maxSafe,
-                                                      BigDecimal amount) {
+    private YadonyBusinessException insufficientFunds(Target target, BigDecimal balance, BigDecimal maxSafe) {
         PawapayOperationEntity deposit = target.deposit();
         String currency = target.request().getCurrency();
         Map<String, Object> props = new LinkedHashMap<>();
-        props.put("amount", amount);
         props.put("amountDue", target.due());
         props.put("walletBalance", balance);
         props.put("maxSafeAmount", maxSafe);
         props.put("topUpNeeded", funds.topUpNeeded(target.due(), balance, deposit.getProvider(), currency));
-        props.put("topUpNeededForAmount", funds.topUpNeeded(amount, balance, deposit.getProvider(), currency));
         props.put("currency", currency);
         props.put("country", deposit.getCountry());
         return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-insufficient-pawapay-funds",
                 "Unprocessable", "Le wallet pawaPay " + deposit.getCountry() + " " + currency
-                        + " ne permet de verser au plus que " + maxSafe.toPlainString() + " " + currency
-                        + " en sécurité", props);
+                        + " ne couvre pas le montant dû (" + target.due().toPlainString() + " " + currency
+                        + ", au plus " + maxSafe.toPlainString() + " en sécurité) : alimentez-le d'au moins "
+                        + props.get("topUpNeeded") + " " + currency + " puis relancez", props);
     }
 
     private static int scale(String currency) {

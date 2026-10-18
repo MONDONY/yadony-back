@@ -37,6 +37,8 @@ class WalletRefundRequestServiceTest {
     @Mock AuditService auditService;
     @Mock AdminAlertService adminAlertService;
     @Mock WalletRefundRequestItemRepository refundRequestItemRepository;
+    @Mock com.yadony.api.payments.pawapay.PawapayOperationRepository pawapayOperationRepository;
+    @Mock jakarta.persistence.EntityManager entityManager;
 
     private WalletRefundRequestService service;
 
@@ -47,7 +49,7 @@ class WalletRefundRequestServiceTest {
     void setUp() {
         service = new WalletRefundRequestService(
                 walletService, refundRequestRepository, auditService, adminAlertService,
-                refundRequestItemRepository);
+                refundRequestItemRepository, pawapayOperationRepository, entityManager);
     }
 
     private static WalletAccountEntity walletOf(String currency, String balance) {
@@ -300,7 +302,7 @@ class WalletRefundRequestServiceTest {
         @DisplayName("demande introuvable → 404")
         void notFound_throws404() {
             UUID requestId = UUID.randomUUID();
-            when(refundRequestRepository.findById(requestId)).thenReturn(Optional.empty());
+            when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.empty());
 
             assertThatThrownBy(() -> service.resolve(requestId, ADMIN_ID))
                     .isInstanceOf(YadonyBusinessException.class)
@@ -313,7 +315,7 @@ class WalletRefundRequestServiceTest {
             UUID requestId = UUID.randomUUID();
             WalletRefundRequestEntity resolved = pendingRequest();
             resolved.setStatus(WalletRefundRequestStatus.RESOLVED);
-            when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(resolved));
+            when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(resolved));
 
             assertThatThrownBy(() -> service.resolve(requestId, ADMIN_ID))
                     .isInstanceOf(YadonyBusinessException.class)
@@ -323,12 +325,74 @@ class WalletRefundRequestServiceTest {
         }
 
         @Test
+        @DisplayName("relance mobile money en cours (PROCESSING relu sous verrou) → 422, aucun débit")
+        void retryInProgress_relueSousVerrou_throws422() {
+            UUID requestId = UUID.randomUUID();
+            WalletRefundRequestEntity request = pendingRequest();
+            when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(request));
+            when(entityManager.contains(request)).thenReturn(true);
+            // La relance a committé PROCESSING pendant que resolve attendait le verrou.
+            org.mockito.Mockito.doAnswer(inv -> {
+                request.setStatus(WalletRefundRequestStatus.PROCESSING);
+                return null;
+            }).when(entityManager).refresh(request);
+
+            assertThatThrownBy(() -> service.resolve(requestId, ADMIN_ID, new BigDecimal("40"), null))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .hasFieldOrPropertyWithValue("errorCode", "wallet-refund-retry-in-progress");
+            verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("item portant une opération pawaPay encore ouverte → 422, aucun débit ; morte → résolution")
+        void pawapayOperationOpen_throws422_deadOperation_resolves() {
+            UUID requestId = UUID.randomUUID();
+            WalletRefundRequestEntity request = pendingRequest();
+            when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(request));
+            WalletRefundRequestItemEntity item = new WalletRefundRequestItemEntity();
+            item.setPawapayPayoutId(UUID.randomUUID());
+            when(refundRequestItemRepository.findByRefundRequestId(any())).thenReturn(List.of(item));
+            com.yadony.api.payments.pawapay.PawapayOperationEntity payout =
+                    new com.yadony.api.payments.pawapay.PawapayOperationEntity(item.getPawapayPayoutId(),
+                            com.yadony.api.payments.pawapay.PawapayOperationKind.PAYOUT,
+                            com.yadony.api.payments.pawapay.PawapayOperationPurpose.WALLET_REFUND, USER_ID, null, null,
+                            new BigDecimal("477"), "XOF", "ORANGE_CIV", "CI", "2250734567890");
+            payout.setStatus(com.yadony.api.payments.pawapay.PawapayOperationStatus.ACCEPTED);
+            when(pawapayOperationRepository.findById(item.getPawapayPayoutId())).thenReturn(Optional.of(payout));
+
+            assertThatThrownBy(() -> service.resolve(requestId, ADMIN_ID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .hasFieldOrPropertyWithValue("errorCode", "wallet-refund-retry-in-progress");
+            verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
+
+            payout.setStatus(com.yadony.api.payments.pawapay.PawapayOperationStatus.FAILED);
+            when(walletService.getBalance(USER_ID, "CAD")).thenReturn(new BigDecimal("45.00"));
+            when(refundRequestRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            assertThat(service.resolve(requestId, ADMIN_ID).getStatus()).isEqualTo(WalletRefundRequestStatus.RESOLVED);
+        }
+
+        @Test
+        @DisplayName("opération pawaPay introuvable : prudence, traitée comme en cours")
+        void pawapayOperationMissing_throws422() {
+            UUID requestId = UUID.randomUUID();
+            WalletRefundRequestEntity request = pendingRequest();
+            when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(request));
+            WalletRefundRequestItemEntity item = new WalletRefundRequestItemEntity();
+            item.setPawapayRefundId(UUID.randomUUID());
+            when(refundRequestItemRepository.findByRefundRequestId(any())).thenReturn(List.of(item));
+            when(pawapayOperationRepository.findById(item.getPawapayRefundId())).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.resolve(requestId, ADMIN_ID))
+                    .hasFieldOrPropertyWithValue("errorCode", "wallet-refund-retry-in-progress");
+        }
+
+        @Test
         @DisplayName("solde toujours positif au clic → débite le solde RÉEL (pas le montant snapshoté), "
             + "marque résolu avec resolvedBy/resolvedAt")
         void resolves_debitsLiveBalanceNotSnapshot() {
             UUID requestId = UUID.randomUUID();
             WalletRefundRequestEntity request = pendingRequest();
-            when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(request));
+            when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(request));
             // Le solde a bougé depuis la demande (ex. commission cash prélevée entre-temps).
             when(walletService.getBalance(USER_ID, "CAD")).thenReturn(new BigDecimal("40.00"));
             when(refundRequestRepository.save(any())).thenAnswer(inv -> {
@@ -355,7 +419,7 @@ class WalletRefundRequestServiceTest {
         void resolves_skipsDebitWhenBalanceAlreadyZero() {
             UUID requestId = UUID.randomUUID();
             WalletRefundRequestEntity request = pendingRequest();
-            when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(request));
+            when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(request));
             when(walletService.getBalance(USER_ID, "CAD")).thenReturn(BigDecimal.ZERO);
             when(refundRequestRepository.save(any())).thenAnswer(inv -> {
                 WalletRefundRequestEntity e = inv.getArgument(0);
@@ -377,7 +441,7 @@ class WalletRefundRequestServiceTest {
             WalletRefundRequestEntity child = pendingRequest();
             child.setAmount(new BigDecimal("15.00"));
             child.setParentRequestId(UUID.randomUUID());
-            when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(child));
+            when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(child));
             // 15 de cash en échec + 10 de parrainage : seuls les 15 du ticket partent.
             when(walletService.getBalance(USER_ID, "CAD")).thenReturn(new BigDecimal("25.00"));
             when(refundRequestRepository.save(any())).thenAnswer(inv -> {
@@ -400,7 +464,7 @@ class WalletRefundRequestServiceTest {
             WalletRefundRequestEntity child = pendingRequest();
             child.setAmount(new BigDecimal("15.00"));
             child.setParentRequestId(UUID.randomUUID());
-            when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(child));
+            when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(child));
             when(walletService.getBalance(USER_ID, "CAD")).thenReturn(new BigDecimal("9.00"));
             when(refundRequestRepository.save(any())).thenAnswer(inv -> {
                 WalletRefundRequestEntity e = inv.getArgument(0);
@@ -425,7 +489,7 @@ class WalletRefundRequestServiceTest {
             Instant t0 = Instant.parse("2026-09-01T10:00:00Z");
             WalletRefundRequestItemEntity a = itemOf(child.getId(), "pi_a", "10.00", WalletRefundItemStatus.PENDING, t0);
             WalletRefundRequestItemEntity b = itemOf(child.getId(), "pi_b", "5.00", WalletRefundItemStatus.PENDING, t0.plusSeconds(1));
-            when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(child));
+            when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(child));
             when(walletService.getBalance(USER_ID, "CAD")).thenReturn(new BigDecimal("25.00"));
             when(refundRequestRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(refundRequestItemRepository.findByRefundRequestId(child.getId())).thenReturn(List.of(b, a));
@@ -451,7 +515,7 @@ class WalletRefundRequestServiceTest {
             WalletRefundRequestItemEntity first = itemOf(child.getId(), "pi_1", "10.00", WalletRefundItemStatus.PENDING, t0);
             WalletRefundRequestItemEntity second = itemOf(child.getId(), "pi_2", "10.00", WalletRefundItemStatus.PENDING, t0.plusSeconds(1));
             WalletRefundRequestItemEntity third = itemOf(child.getId(), "pi_3", "10.00", WalletRefundItemStatus.PENDING, t0.plusSeconds(2));
-            when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(child));
+            when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(child));
             when(walletService.getBalance(USER_ID, "CAD")).thenReturn(new BigDecimal("14.00"));
             when(refundRequestRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(refundRequestItemRepository.findByRefundRequestId(child.getId()))
@@ -474,7 +538,7 @@ class WalletRefundRequestServiceTest {
             WalletRefundRequestEntity r = pendingRequest();
             r.setCurrency("XOF");
             r.setAmount(new BigDecimal("500.00"));
-            when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(r));
+            when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(r));
             return r;
         }
 
@@ -594,7 +658,7 @@ class WalletRefundRequestServiceTest {
             WalletRefundRequestEntity request = pendingRequest();
             request.setCurrency("EUR");
             request.setAmount(new BigDecimal("45.00"));
-            when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(request));
+            when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(request));
 
             assertThatThrownBy(() -> service.resolve(requestId, ADMIN_ID, new BigDecimal("44.125"), null))
                     .isInstanceOf(YadonyBusinessException.class)
@@ -623,7 +687,7 @@ class WalletRefundRequestServiceTest {
         void resolves_racine_neLitPasLesItems() {
             UUID requestId = UUID.randomUUID();
             WalletRefundRequestEntity root = pendingRequest();
-            when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(root));
+            when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(root));
             when(walletService.getBalance(USER_ID, "CAD")).thenReturn(new BigDecimal("45.00"));
             when(refundRequestRepository.save(any())).thenAnswer(inv -> {
                 WalletRefundRequestEntity e = inv.getArgument(0);
@@ -633,7 +697,9 @@ class WalletRefundRequestServiceTest {
 
             service.resolve(requestId, ADMIN_ID);
 
-            verify(refundRequestItemRepository, never()).findByRefundRequestId(any());
+            // Les items ne sont lus que pour la garde d'opération pawaPay en cours : rien n'est réglé.
+            verify(refundRequestItemRepository, never()).save(any());
+            verify(refundRequestItemRepository, never()).saveAll(any());
         }
     }
 }

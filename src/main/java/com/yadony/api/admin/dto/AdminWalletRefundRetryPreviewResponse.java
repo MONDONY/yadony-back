@@ -12,7 +12,8 @@ import java.util.UUID;
  *       du barème pawaPay actuel) ;</li>
  *   <li>{@code walletBalance} : solde du wallet pawaPay de {@code country} / {@code currency} ;</li>
  *   <li>{@code maxSafeAmount} : {@code floor(walletBalance / (1 + refundRatePercent / 100))} ;</li>
- *   <li>{@code suggestedAmount} : {@code min(amountDue, maxSafeAmount)} ;</li>
+ *   <li>{@code suggestedAmount} : le dû quand le wallet le couvre en sécurité, sinon {@code null}
+ *       (jamais de versement partiel : l'écart serait perdu pour l'utilisateur) ;</li>
  *   <li>{@code topUpNeeded} : ce qu'il manque au wallet pawaPay pour verser le dû, 0 si rien ;</li>
  *   <li>{@code msisdnMasked} : numéro de la recharge, toujours masqué.</li>
  * </ul>

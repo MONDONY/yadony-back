@@ -199,7 +199,7 @@ class AdminWalletRefundControllerTest {
     void resolve_withAdmin_debitsAndStampsResolver() throws Exception {
         UUID requestId = UUID.randomUUID();
         WalletRefundRequestEntity request = pendingRequest(requestId);
-        when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(request));
+        when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(request));
         when(walletService.getBalance(USER_ID, "CAD")).thenReturn(new BigDecimal("45.00"));
         when(refundRequestRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -220,7 +220,7 @@ class AdminWalletRefundControllerTest {
     void resolve_withPaidAmountBody_returnsPaidAmountAndKeepsDebit() throws Exception {
         UUID requestId = UUID.randomUUID();
         WalletRefundRequestEntity request = pendingRequest(requestId);
-        when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(request));
+        when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(request));
         when(walletService.getBalance(USER_ID, "CAD")).thenReturn(new BigDecimal("45.00"));
         when(refundRequestRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -242,7 +242,7 @@ class AdminWalletRefundControllerTest {
     @DisplayName("resolve — Content-Type JSON mais corps vide → 200, comme sans corps")
     void resolve_withEmptyJsonBody_behavesAsBefore() throws Exception {
         UUID requestId = UUID.randomUUID();
-        when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(pendingRequest(requestId)));
+        when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(pendingRequest(requestId)));
         when(walletService.getBalance(USER_ID, "CAD")).thenReturn(new BigDecimal("45.00"));
         when(refundRequestRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -258,7 +258,7 @@ class AdminWalletRefundControllerTest {
     @DisplayName("resolve — montant versé au-dessus de la demande → 422 problem+json, rien n'est débité")
     void resolve_paidAmountAboveRequest_returns422ProblemJson() throws Exception {
         UUID requestId = UUID.randomUUID();
-        when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(pendingRequest(requestId)));
+        when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(pendingRequest(requestId)));
 
         mockMvc.perform(post("/admin/wallet-refund-requests/" + requestId + "/resolve")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -276,7 +276,7 @@ class AdminWalletRefundControllerTest {
     @DisplayName("resolve — trop de décimales ou montant négatif → 422 problem+json")
     void resolve_paidAmountInvalid_returns422ProblemJson() throws Exception {
         UUID requestId = UUID.randomUUID();
-        when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(pendingRequest(requestId)));
+        when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(pendingRequest(requestId)));
 
         mockMvc.perform(post("/admin/wallet-refund-requests/" + requestId + "/resolve")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -314,7 +314,7 @@ class AdminWalletRefundControllerTest {
     @DisplayName("resolve — demande introuvable → 404")
     void resolve_notFound_returns404() throws Exception {
         UUID requestId = UUID.randomUUID();
-        when(refundRequestRepository.findById(requestId)).thenReturn(Optional.empty());
+        when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.empty());
 
         mockMvc.perform(post("/admin/wallet-refund-requests/" + requestId + "/resolve")
                         .with(authentication(adminAuth(AdminRole.ADMIN))))
@@ -327,7 +327,7 @@ class AdminWalletRefundControllerTest {
         UUID requestId = UUID.randomUUID();
         WalletRefundRequestEntity resolved = pendingRequest(requestId);
         resolved.setStatus(WalletRefundRequestStatus.RESOLVED);
-        when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(resolved));
+        when(refundRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(resolved));
 
         mockMvc.perform(post("/admin/wallet-refund-requests/" + requestId + "/resolve")
                         .with(authentication(adminAuth(AdminRole.ADMIN))))
@@ -342,11 +342,11 @@ class AdminWalletRefundControllerTest {
     private static WalletRefundRetryService.Preview preview(UUID id) {
         return new WalletRefundRetryService.Preview(id, "XOF", "CI", "ORANGE_CIV", "+225 •••• 90",
                 new BigDecimal("500"), new BigDecimal("477"), new BigDecimal("487.50"), new BigDecimal("473"),
-                new BigDecimal("473"), new BigDecimal("4"), new BigDecimal("3.0"), true, null);
+                null, new BigDecimal("4"), new BigDecimal("3.0"), false, "pawapay-insufficient-funds");
     }
 
     @Test
-    @DisplayName("retry-preview — ADMIN → 200 avec dû, solde, sûr, suggéré, manque et numéro masqué")
+    @DisplayName("retry-preview — ADMIN → 200 avec dû, solde, sûr, manque et numéro masqué (cas réel : relance fermée)")
     void retryPreview_withAdmin_returnsAmounts() throws Exception {
         UUID requestId = UUID.randomUUID();
         when(walletRefundRetryService.preview(requestId)).thenReturn(preview(requestId));
@@ -357,13 +357,14 @@ class AdminWalletRefundControllerTest {
                 .andExpect(jsonPath("$.amountDue").value(477))
                 .andExpect(jsonPath("$.walletBalance").value(487.50))
                 .andExpect(jsonPath("$.maxSafeAmount").value(473))
-                .andExpect(jsonPath("$.suggestedAmount").value(473))
+                .andExpect(jsonPath("$.suggestedAmount").doesNotExist())
                 .andExpect(jsonPath("$.topUpNeeded").value(4))
+                .andExpect(jsonPath("$.unavailableReason").value("pawapay-insufficient-funds"))
                 .andExpect(jsonPath("$.currency").value("XOF"))
                 .andExpect(jsonPath("$.country").value("CI"))
                 .andExpect(jsonPath("$.provider").value("ORANGE_CIV"))
                 .andExpect(jsonPath("$.msisdnMasked").value("+225 •••• 90"))
-                .andExpect(jsonPath("$.retryAvailable").value(true));
+                .andExpect(jsonPath("$.retryAvailable").value(false));
     }
 
     @Test
@@ -410,37 +411,37 @@ class AdminWalletRefundControllerTest {
         WalletRefundRequestEntity processing = pendingRequest(requestId);
         processing.setStatus(WalletRefundRequestStatus.PROCESSING);
         when(walletRefundRetryService.retry(eq(requestId), any(), eq(ADMIN_ID)))
-                .thenReturn(new WalletRefundRetryService.Retried(processing, new BigDecimal("473"),
-                        new BigDecimal("477"), new BigDecimal("487.50"), new BigDecimal("473")));
+                .thenReturn(new WalletRefundRetryService.Retried(processing, new BigDecimal("477"),
+                        new BigDecimal("477"), new BigDecimal("491.50"), new BigDecimal("477")));
 
         mockMvc.perform(post("/admin/wallet-refund-requests/" + requestId + "/retry")
                         .with(authentication(adminAuth(AdminRole.ADMIN)))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"amount\": 473}"))
+                        .content("{\"amount\": 477}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.request.status").value("PROCESSING"))
-                .andExpect(jsonPath("$.amount").value(473))
-                .andExpect(jsonPath("$.maxSafeAmount").value(473));
+                .andExpect(jsonPath("$.amount").value(477))
+                .andExpect(jsonPath("$.maxSafeAmount").value(477));
 
         verify(walletRefundRetryService).retry(eq(requestId),
-                org.mockito.ArgumentMatchers.argThat(a -> a != null && a.compareTo(new BigDecimal("473")) == 0),
+                org.mockito.ArgumentMatchers.argThat(a -> a != null && a.compareTo(new BigDecimal("477")) == 0),
                 eq(ADMIN_ID));
     }
 
     @Test
-    @DisplayName("retry — sans corps → montant suggéré (null transmis au service)")
+    @DisplayName("retry — sans corps → le dû (null transmis au service)")
     void retry_withoutBody_usesSuggestedAmount() throws Exception {
         UUID requestId = UUID.randomUUID();
         WalletRefundRequestEntity processing = pendingRequest(requestId);
         processing.setStatus(WalletRefundRequestStatus.PROCESSING);
         when(walletRefundRetryService.retry(requestId, null, ADMIN_ID))
-                .thenReturn(new WalletRefundRetryService.Retried(processing, new BigDecimal("473"),
-                        new BigDecimal("477"), new BigDecimal("487.50"), new BigDecimal("473")));
+                .thenReturn(new WalletRefundRetryService.Retried(processing, new BigDecimal("477"),
+                        new BigDecimal("477"), new BigDecimal("491.50"), new BigDecimal("477")));
 
         mockMvc.perform(post("/admin/wallet-refund-requests/" + requestId + "/retry")
                         .with(authentication(adminAuth(AdminRole.ADMIN))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.amount").value(473));
+                .andExpect(jsonPath("$.amount").value(477));
         verify(walletRefundRetryService).retry(requestId, null, ADMIN_ID);
     }
 
