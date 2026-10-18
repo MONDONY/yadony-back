@@ -73,6 +73,40 @@ class AdminAlertServiceTest {
     }
 
     @Test
+    void raise_sansEmpreinte_empreinteSentryParCode() {
+        IScope scope = raiseAndCaptureScope(() -> service.raise("STRIPE_CAPABILITY_LOST", "perte", Map.of()));
+        verify(scope).setFingerprint(List.of("admin-alert", "STRIPE_CAPABILITY_LOST"));
+    }
+
+    @Test
+    void raise_avecEmpreinte_empreinteSentryParCodeEtObjet() {
+        IScope scope = raiseAndCaptureScope(() ->
+                service.raise("STRIPE_CAPABILITY_LOST", "perte", Map.of(), "acct_123"));
+        verify(scope).setFingerprint(List.of("admin-alert", "STRIPE_CAPABILITY_LOST", "acct_123"));
+    }
+
+    @Test
+    void raise_avecEmpreinteVide_retombeSurLeCode() {
+        IScope scope = raiseAndCaptureScope(() ->
+                service.raise("STRIPE_CAPABILITY_LOST", "perte", Map.of(), " "));
+        verify(scope).setFingerprint(List.of("admin-alert", "STRIPE_CAPABILITY_LOST"));
+    }
+
+    private IScope raiseAndCaptureScope(Runnable raise) {
+        IScope mockScope = mock(IScope.class);
+        try (MockedStatic<Sentry> sentryMock = mockStatic(Sentry.class)) {
+            sentryMock.when(() -> Sentry.withScope(any(ScopeCallback.class))).thenAnswer(invocation -> {
+                ScopeCallback callback = invocation.getArgument(0);
+                callback.run(mockScope);
+                return null;
+            });
+            sentryMock.when(() -> Sentry.captureMessage(anyString(), any(SentryLevel.class))).thenReturn(null);
+            raise.run();
+        }
+        return mockScope;
+    }
+
+    @Test
     void raise_withoutTelegramConfig_doesNotCallRestClient() {
         RestClient restClient = mock(RestClient.class);
         AdminAlertService withoutConfig = new AdminAlertService(restClient, "", "", "test");
