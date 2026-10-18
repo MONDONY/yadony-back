@@ -106,7 +106,8 @@ class AdminSecurityIT {
     @DisplayName("SUPPORT token → AdminPrincipal in SecurityContext with USER_VIEW authority")
     void supportToken_adminPrincipalWithUserViewAuthority() throws Exception {
         when(request.getHeader("Authorization")).thenReturn("Bearer fake-token");
-        // request.getRequestURI() not stubbed: admin resolves before the /admin/** path check
+        when(request.getContextPath()).thenReturn("/api/v1");
+        when(request.getRequestURI()).thenReturn("/api/v1/admin/test-user-view");
         when(adminAuthService.resolve(SUPPORT_UID)).thenReturn(Optional.of(supportAuthorities()));
 
         try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class);
@@ -196,7 +197,8 @@ class AdminSecurityIT {
     @DisplayName("SUPPORT token does not have PAYMENT_REFUND authority")
     void supportToken_doesNotHavePaymentRefund() throws Exception {
         when(request.getHeader("Authorization")).thenReturn("Bearer fake-token");
-        // request.getRequestURI() not stubbed: admin resolves before the /admin/** path check
+        when(request.getContextPath()).thenReturn("/api/v1");
+        when(request.getRequestURI()).thenReturn("/api/v1/admin/test-user-view");
         when(adminAuthService.resolve(SUPPORT_UID)).thenReturn(Optional.of(supportAuthorities()));
 
         try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class);
@@ -224,15 +226,21 @@ class AdminSecurityIT {
     }
 
     // -------------------------------------------------------------------------
-    // Test 5: SUPPORT token on non-admin route → passes through normally
+    // Test 5: SUPPORT token on non-admin route → utilisateur normal (YADONY-BACK-PROD-B)
     // -------------------------------------------------------------------------
 
     @Test
-    @DisplayName("SUPPORT token on non-admin route → SecurityContext set, filter chain called")
-    void supportToken_onNonAdminRoute_proceedsNormally() throws Exception {
+    @DisplayName("SUPPORT token sur une route de l'app → principal uid String + rôles utilisateur, aucun droit admin")
+    void supportToken_onNonAdminRoute_isRegularUser() throws Exception {
         when(request.getHeader("Authorization")).thenReturn("Bearer fake-token");
-        // request.getRequestURI() not stubbed: admin resolves before the /admin/** path check
+        when(request.getContextPath()).thenReturn("/api/v1");
+        when(request.getRequestURI()).thenReturn("/api/v1/wallet/balance");
         when(adminAuthService.resolve(SUPPORT_UID)).thenReturn(Optional.of(supportAuthorities()));
+        UserEntity user = new UserEntity();
+        user.setFirebaseUid(SUPPORT_UID);
+        user.setStatus(UserStatus.ACTIVE);
+        user.setRoles(new java.util.HashSet<>(Set.of(Role.SENDER)));
+        when(userLinkerService.resolveAndLink(eq(SUPPORT_UID), any())).thenReturn(Optional.of(user));
 
         try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class);
              MockedStatic<FirebaseApp> staticApp = mockStatic(FirebaseApp.class)) {
@@ -240,9 +248,11 @@ class AdminSecurityIT {
             buildFilter().doFilterInternal(request, response, filterChain);
         }
 
-        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull();
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        assertThat(auth.getPrincipal()).isEqualTo(SUPPORT_UID);
+        assertThat(auth.getAuthorities()).extracting(GrantedAuthority::getAuthority)
+                .containsExactly("ROLE_SENDER");
+        verify(request).setAttribute(AdminPrincipal.ADMIN_ACCOUNT_ATTRIBUTE, Boolean.TRUE);
         verify(filterChain).doFilter(request, response);
-        // userLinkerService never called for admin tokens
-        verify(userLinkerService, never()).resolveAndLink(any(), any());
     }
 }

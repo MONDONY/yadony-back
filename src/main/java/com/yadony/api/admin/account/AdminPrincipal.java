@@ -22,6 +22,25 @@ public record AdminPrincipal(
 ) {
 
     /**
+     * Attribut de requête posé par FirebaseTokenFilter quand l'appelant a un compte admin
+     * actif mais appelle une route de l'application (hors back-office). Il n'y reçoit aucun
+     * droit admin ; la marque ne sert qu'à le laisser passer pendant la maintenance.
+     */
+    public static final String ADMIN_ACCOUNT_ATTRIBUTE = "yadony.adminAccount";
+
+    /**
+     * Vrai si l'appelant est un administrateur : AdminPrincipal sur le back-office, ou
+     * compte admin marqué par le filtre sur une route de l'application.
+     */
+    public static boolean isAdminCaller(Authentication authentication,
+                                        jakarta.servlet.http.HttpServletRequest request) {
+        if (authentication != null && authentication.getPrincipal() instanceof AdminPrincipal) {
+            return true;
+        }
+        return request != null && Boolean.TRUE.equals(request.getAttribute(ADMIN_ACCOUNT_ATTRIBUTE));
+    }
+
+    /**
      * Identifiant de l'administrateur qui agit, pour la trace d'audit.
      *
      * <p>{@code audit_log} est immuable : une trace sans acteur, ou qui désigne la cible à la

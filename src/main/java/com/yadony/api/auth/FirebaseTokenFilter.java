@@ -145,7 +145,14 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
             }
             throw e;
         }
-        if (adminOpt.isPresent()) {
+        // Un compte admin n'est un admin que sur le back-office (/admin/**, et la route
+        // historique de confirmation de no-show qu'il appelle encore). Partout ailleurs,
+        // c'est-à-dire dans l'application mobile et le portail pro, il est un utilisateur
+        // comme les autres : principal = uid String, rôles de sa ligne users. Poser un
+        // AdminPrincipal sur ces routes faisait échouer les `(String) getPrincipal()` des
+        // contrôleurs en 500 (YADONY-BACK-PROD-6 à B, GET /wallet/balance, /bids/me...).
+        boolean adminRoute = isAdminOnlyRoute(request);
+        if (adminOpt.isPresent() && adminRoute) {
             AdminAuthorities admin = adminOpt.get();
             if (admin.mustChangePassword() && !isPasswordChangeAllowed(request)) {
                 writeForbidden(response, "PASSWORD_CHANGE_REQUIRED", "Password change required");
@@ -160,11 +167,13 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
             SecurityContextHolder.getContext().setAuthentication(adminAuth);
             return false; // not blocked
         }
+        if (adminOpt.isPresent()) {
+            // Hors back-office : aucun droit admin, seulement la marque qui garde l'admin
+            // exempté pendant la maintenance (MaintenanceFilter, /config/maintenance).
+            request.setAttribute(AdminPrincipal.ADMIN_ACCOUNT_ATTRIBUTE, Boolean.TRUE);
+        }
         // If request targets admin routes and caller is not an admin → 403.
-        // getRequestURI() includes the servlet context path (/api/v1), which must be
-        // stripped or this guard never matches in production.
-        String contextPath = request.getContextPath() == null ? "" : request.getContextPath();
-        if (request.getRequestURI().startsWith(contextPath + "/admin/")) {
+        if (adminRoute) {
             writeForbidden(response, "Accès réservé aux administrateurs");
             return true;
         }
@@ -244,6 +253,26 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
         UsernamePasswordAuthenticationToken auth =
                 new UsernamePasswordAuthenticationToken(uid, decoded, authorities);
         SecurityContextHolder.getContext().setAuthentication(auth);
+    }
+
+    /** Route historique du back-office, hors /admin/** (dony-admin, incidentsService). */
+    private static final java.util.regex.Pattern LEGACY_ADMIN_ROUTE =
+            java.util.regex.Pattern.compile("^/cancellations/bids/[^/]+/confirm-noshow$");
+
+    /**
+     * Routes réservées au back-office : {@code /admin/**} et l'ancienne confirmation de
+     * no-show. {@code getRequestURI()} inclut le context-path (/api/v1), retiré avant de
+     * comparer, sinon le test ne correspondrait jamais en production.
+     */
+    static boolean isAdminOnlyRoute(HttpServletRequest request) {
+        String contextPath = request.getContextPath() == null ? "" : request.getContextPath();
+        String path = request.getRequestURI();
+        if (path == null) return false;
+        if (path.startsWith(contextPath)) {
+            path = path.substring(contextPath.length());
+        }
+        return path.equals("/admin") || path.startsWith("/admin/")
+                || LEGACY_ADMIN_ROUTE.matcher(path).matches();
     }
 
     /**

@@ -447,6 +447,8 @@ class FirebaseTokenFilterTest {
     @DisplayName("mustChangePassword=false → toutes les routes admin autorisées normalement")
     void passwordChangeNotRequired_normalAccess() throws Exception {
         when(request.getHeader("Authorization")).thenReturn("Bearer fake-token");
+        when(request.getRequestURI()).thenReturn("/api/v1/admin/users");
+        when(request.getContextPath()).thenReturn("/api/v1");
         when(adminAuthService.resolve(FIREBASE_UID)).thenReturn(Optional.of(
                 new AdminAuthorities(AdminRole.ADMIN, Set.of(), false, "admin@yadony.com", UUID.randomUUID())));
 
@@ -462,6 +464,115 @@ class FirebaseTokenFilterTest {
 
         verify(filterChain).doFilter(request, response);
         verify(response, never()).setStatus(SC_FORBIDDEN);
+    }
+
+    // ── Compte admin dans l'application (YADONY-BACK-PROD-6 à B) ────────────
+
+    private void runAdminOn(String uri, AdminAuthorities admin) throws Exception {
+        when(request.getHeader("Authorization")).thenReturn("Bearer fake-token");
+        when(request.getRequestURI()).thenReturn(uri);
+        when(request.getContextPath()).thenReturn("/api/v1");
+        when(adminAuthService.resolve(FIREBASE_UID)).thenReturn(Optional.of(admin));
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class);
+             MockedStatic<FirebaseApp> staticApp = mockStatic(FirebaseApp.class)) {
+            staticApp.when(FirebaseApp::getApps).thenReturn(List.of(mock(FirebaseApp.class)));
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockFirebaseAuth);
+            mockFirebaseToken();
+            new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService, TestMessages.resolver(), false, "", "test")
+                    .doFilterInternal(request, response, filterChain);
+        }
+    }
+
+    private AdminAuthorities activeAdmin() {
+        return new AdminAuthorities(AdminRole.SUPER_ADMIN,
+                Set.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN")),
+                false, "admin@yadony.com", UUID.randomUUID());
+    }
+
+    @Test
+    @DisplayName("admin sur une route de l'app → principal uid String + rôles de sa ligne users, marqué admin")
+    void adminOnAppRoute_isRegularUser() throws Exception {
+        UserEntity user = makeUser(UserStatus.ACTIVE);
+        user.setRoles(new java.util.HashSet<>(Set.of(Role.SENDER, Role.TRAVELER)));
+        when(userLinkerService.resolveAndLink(eq(FIREBASE_UID), any())).thenReturn(Optional.of(user));
+
+        runAdminOn("/api/v1/wallet/balance", activeAdmin());
+
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        assertThat(auth.getPrincipal()).isEqualTo(FIREBASE_UID);
+        assertThat(auth.getAuthorities()).extracting(a -> a.getAuthority())
+                .containsExactlyInAnyOrder("ROLE_SENDER", "ROLE_TRAVELER");
+        verify(request).setAttribute(com.yadony.api.admin.account.AdminPrincipal.ADMIN_ACCOUNT_ATTRIBUTE, Boolean.TRUE);
+        verify(filterChain).doFilter(request, response);
+    }
+
+    @Test
+    @DisplayName("admin sans ligne users sur une route de l'app → authentifié sans rôle, comme tout nouveau compte")
+    void adminWithoutUserRowOnAppRoute_emptyRoles() throws Exception {
+        when(userLinkerService.resolveAndLink(eq(FIREBASE_UID), any())).thenReturn(Optional.empty());
+
+        runAdminOn("/api/v1/bids/me", activeAdmin());
+
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        assertThat(auth.getPrincipal()).isEqualTo(FIREBASE_UID);
+        assertThat(auth.getAuthorities()).isEmpty();
+        verify(filterChain).doFilter(request, response);
+    }
+
+    @Test
+    @DisplayName("mustChangePassword=true n'affecte pas les routes de l'app")
+    void mustChangePassword_doesNotBlockAppRoutes() throws Exception {
+        when(userLinkerService.resolveAndLink(eq(FIREBASE_UID), any()))
+                .thenReturn(Optional.of(makeUser(UserStatus.ACTIVE)));
+
+        runAdminOn("/api/v1/notifications/feed", requiredPasswordAdmin());
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication().getPrincipal()).isEqualTo(FIREBASE_UID);
+        verify(response, never()).setStatus(SC_FORBIDDEN);
+        verify(filterChain).doFilter(request, response);
+    }
+
+    @Test
+    @DisplayName("admin sur /admin/** → AdminPrincipal, aucune lecture de la ligne users")
+    void adminOnAdminRoute_adminPrincipal() throws Exception {
+        runAdminOn("/api/v1/admin/users", activeAdmin());
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication().getPrincipal())
+                .isInstanceOf(com.yadony.api.admin.account.AdminPrincipal.class);
+        verifyNoInteractions(userLinkerService);
+        verify(filterChain).doFilter(request, response);
+    }
+
+    @Test
+    @DisplayName("route historique /cancellations/bids/{id}/confirm-noshow (back-office) → AdminPrincipal")
+    void adminOnLegacyNoShowRoute_adminPrincipal() throws Exception {
+        runAdminOn("/api/v1/cancellations/bids/" + UUID.randomUUID() + "/confirm-noshow", activeAdmin());
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication().getPrincipal())
+                .isInstanceOf(com.yadony.api.admin.account.AdminPrincipal.class);
+    }
+
+    @Test
+    @DisplayName("confirm-noshow-self reste une route de l'app → utilisateur normal")
+    void adminOnSelfNoShowRoute_isRegularUser() throws Exception {
+        when(userLinkerService.resolveAndLink(eq(FIREBASE_UID), any()))
+                .thenReturn(Optional.of(makeUser(UserStatus.ACTIVE)));
+
+        runAdminOn("/api/v1/cancellations/bids/" + UUID.randomUUID() + "/confirm-noshow-self", activeAdmin());
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication().getPrincipal()).isEqualTo(FIREBASE_UID);
+    }
+
+    @Test
+    @DisplayName("isAdminOnlyRoute : context-path retiré, /admin exact, /administration non")
+    void isAdminOnlyRoute_matching() {
+        HttpServletRequest r = mock(HttpServletRequest.class);
+        when(r.getContextPath()).thenReturn("/api/v1");
+        when(r.getRequestURI()).thenReturn("/api/v1/admin", "/api/v1/administration", "/api/v1/wallet/balance", null);
+        assertThat(FirebaseTokenFilter.isAdminOnlyRoute(r)).isTrue();
+        assertThat(FirebaseTokenFilter.isAdminOnlyRoute(r)).isFalse();
+        assertThat(FirebaseTokenFilter.isAdminOnlyRoute(r)).isFalse();
+        assertThat(FirebaseTokenFilter.isAdminOnlyRoute(r)).isFalse();
     }
 
     // ── ROLE_GUEST — sessions Firebase anonymes ─────────────────────────────
