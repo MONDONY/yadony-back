@@ -192,7 +192,8 @@ public class WalletRefundRetryService {
         request.setStatus(WalletRefundRequestStatus.PROCESSING);
         requestRepository.saveAndFlush(request);
 
-        issuer.issue(request, covered);
+        // Garde de solde déjà faite ci-dessus sur un solde relu : le rail ne la refait pas.
+        issuer.issue(request, covered, false);
         List<Map<String, String>> auditItems = new ArrayList<>();
         for (WalletRefundRequestItemEntity item : covered) {
             if (item.getPawapayRefundId() == null && item.getPawapayPayoutId() == null) {

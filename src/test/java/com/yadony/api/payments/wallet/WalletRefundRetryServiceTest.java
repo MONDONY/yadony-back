@@ -3,6 +3,7 @@ package com.yadony.api.payments.wallet;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -99,7 +100,7 @@ class WalletRefundRetryServiceTest {
                 i.setStatus(WalletRefundItemStatus.PROCESSING);
             });
             return null;
-        }).when(issuer).issue(any(), any());
+        }).when(issuer).issue(any(), any(), anyBoolean());
     }
 
     static PawapayOperationEntity deposit(String msisdn, String provider, String country) {
@@ -132,7 +133,7 @@ class WalletRefundRetryServiceTest {
     }
 
     void assertNothingSent() {
-        verify(issuer, never()).issue(any(), any());
+        verify(issuer, never()).issue(any(), any(), anyBoolean());
         verify(auditService, never()).log(anyString(), any(), anyString(), any(), anyMap());
         assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.PENDING);
     }
@@ -285,7 +286,7 @@ class WalletRefundRetryServiceTest {
         request.setStatus(WalletRefundRequestStatus.PROCESSING);
         assertThatThrownBy(() -> service.retry(request.getId(), null, ADMIN_ID))
                 .satisfies(t -> assertThat(business(t).getErrorCode()).isEqualTo("wallet-refund-retry-in-progress"));
-        verify(issuer, never()).issue(any(), any());
+        verify(issuer, never()).issue(any(), any(), anyBoolean());
     }
 
     @Test
@@ -297,7 +298,7 @@ class WalletRefundRetryServiceTest {
         }).when(entityManager).refresh(request);
         assertThatThrownBy(() -> service.retry(request.getId(), null, ADMIN_ID))
                 .satisfies(t -> assertThat(business(t).getErrorCode()).isEqualTo("wallet-refund-retry-in-progress"));
-        verify(issuer, never()).issue(any(), any());
+        verify(issuer, never()).issue(any(), any(), anyBoolean());
     }
 
     @Test
@@ -395,7 +396,7 @@ class WalletRefundRetryServiceTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<WalletRefundRequestItemEntity>> issued = ArgumentCaptor.forClass(List.class);
-        verify(issuer).issue(eq(request), issued.capture());
+        verify(issuer).issue(eq(request), issued.capture(), eq(false));
         WalletRefundRequestItemEntity item = issued.getValue().get(0);
         // Le rail envoie amount - feeAmount : 500 - 27 = 473, vers le dépôt (donc le numéro) d'origine.
         assertThat(item.getAmount().subtract(item.getFeeAmount())).isEqualByComparingTo("473");
@@ -435,14 +436,14 @@ class WalletRefundRetryServiceTest {
         assertThat(second.getFailureReason()).isEqualTo(WalletRefundRetryService.REASON_AMOUNT_SHORT);
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<WalletRefundRequestItemEntity>> issued = ArgumentCaptor.forClass(List.class);
-        verify(issuer).issue(eq(request), issued.capture());
+        verify(issuer).issue(eq(request), issued.capture(), eq(false));
         assertThat(issued.getValue()).containsExactly(items.get(0));
     }
 
     @Test
     @DisplayName("Réservation impossible chez pawaPay : 502, tout est annulé (transaction)")
     void reservationImpossible_502() {
-        doAnswer(inv -> null).when(issuer).issue(any(), any());
+        doAnswer(inv -> null).when(issuer).issue(any(), any(), anyBoolean());
         assertThatThrownBy(() -> service.retry(request.getId(), null, ADMIN_ID))
                 .satisfies(t -> assertThat(business(t).getErrorCode()).isEqualTo("mobile-money-provider-unavailable"));
         verify(auditService, never()).log(anyString(), any(), anyString(), any(), anyMap());

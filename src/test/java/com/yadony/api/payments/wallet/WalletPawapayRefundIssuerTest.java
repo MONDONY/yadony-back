@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
@@ -20,6 +21,7 @@ import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayOperationPurpose;
 import com.yadony.api.payments.pawapay.PawapayOperationRepository;
 import com.yadony.api.payments.pawapay.PawapayOperationStatus;
+import com.yadony.api.payments.pawapay.PawapayOutOfFundsAlerter;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import com.yadony.api.payments.pawapay.dto.PawapayInitiationResult;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
@@ -58,6 +60,8 @@ class WalletPawapayRefundIssuerTest {
     @Mock AuditService auditService;
     @Mock AdminAlertService adminAlertService;
     @Mock ApplicationEventPublisher eventPublisher;
+    @Mock PawapayRefundFunds funds;
+    @Mock PawapayOutOfFundsAlerter outOfFunds;
 
     WalletPawapayRefundIssuer issuer;
     PawapayOperationEntity deposit;
@@ -66,7 +70,7 @@ class WalletPawapayRefundIssuerTest {
     @BeforeEach
     void setUp() {
         issuer = new WalletPawapayRefundIssuer(operationRepository, submission, client, itemRepository, auditService,
-                adminAlertService, eventPublisher);
+                adminAlertService, eventPublisher, funds, outOfFunds);
         deposit = operation(PawapayOperationKind.DEPOSIT, PawapayOperationPurpose.WALLET_TOPUP, new BigDecimal("10000"));
         request = new WalletRefundRequestEntity();
         ReflectionTestUtils.setField(request, "id", UUID.randomUUID());
@@ -125,6 +129,107 @@ class WalletPawapayRefundIssuerTest {
         assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.PROCESSING);
         verify(itemRepository).save(item);
         verify(submission, never()).createWalletPayout(any(), any(), any(), any(), any(), any());
+    }
+
+    // ── garde de solde (flux automatique) ──────────────────────────────────────
+
+    /** Wallet pawaPay CI XOF lu à {@code balance}, taux 3 % : montant sûr = floor(balance / 1,03). */
+    void stubFunds(String balance) {
+        when(funds.balance("CI", "XOF")).thenReturn(Optional.of(new BigDecimal(balance)));
+        when(funds.maxSafe(any(), eq(PROVIDER), eq("XOF"))).thenAnswer(inv -> ((BigDecimal) inv.getArgument(0))
+                .divide(new BigDecimal("1.03"), 0, java.math.RoundingMode.DOWN));
+    }
+
+    @Test
+    void issue_walletPawapayTropBas_neSoumetRien_itemFailedEtAlerteManqueDeFonds() {
+        WalletRefundRequestItemEntity item = item();
+        stubDeposit();
+        stubConfig(OPEN);
+        stubFunds("9000");
+
+        issuer.issue(request, List.of(item));
+
+        verify(submission, never()).createWalletRefund(any(), any(), any());
+        verify(submission, never()).createWalletPayout(any(), any(), any(), any(), any(), any());
+        verifyNoInteractions(eventPublisher);
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
+        assertThat(item.getFailureReason()).isEqualTo(WalletPawapayRefundIssuer.REASON_BALANCE_SHORT);
+        verify(outOfFunds).alertBalanceTooLow(eq("CI"), eq("XOF"), eq(PROVIDER), eq(PawapayOperationKind.REFUND),
+                argThat(a -> a.compareTo(new BigDecimal("9800")) == 0),
+                argThat(b -> b.compareTo(new BigDecimal("9000")) == 0),
+                argThat(m -> m.compareTo(new BigDecimal("8737")) == 0));
+        verify(adminAlertService).raise(eq(WalletPawapayRefundIssuer.ALERT_CODE), anyString(), anyMap());
+    }
+
+    @Test
+    void issue_walletPawapaySuffisant_soumetEtDecompteLeCoutPourLItemSuivant() {
+        WalletRefundRequestItemEntity first = item();
+        WalletRefundRequestItemEntity second = item();
+        stubDeposit();
+        stubConfig(OPEN);
+        stubFunds("15000");
+        when(funds.ratePercent(PROVIDER)).thenReturn(new BigDecimal("3.0"));
+        PawapayOperationEntity refund = operation(PawapayOperationKind.REFUND, PawapayOperationPurpose.WALLET_REFUND,
+                new BigDecimal("9800"));
+        when(submission.createWalletRefund(eq(USER_ID), eq(deposit), any())).thenReturn(refund);
+
+        issuer.issue(request, List.of(first, second));
+
+        // 15000 couvrent 9800 (coût 10094) ; il reste 4906, trop peu pour le second.
+        assertThat(first.getStatus()).isEqualTo(WalletRefundItemStatus.PROCESSING);
+        assertThat(second.getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
+        assertThat(second.getFailureReason()).isEqualTo(WalletPawapayRefundIssuer.REASON_BALANCE_SHORT);
+        verify(submission).createWalletRefund(eq(USER_ID), eq(deposit), any());
+        verify(funds).balance("CI", "XOF");
+    }
+
+    @Test
+    void issue_soldeIllisible_soumetQuandMeme_failOpen() {
+        WalletRefundRequestItemEntity item = item();
+        stubDeposit();
+        stubConfig(OPEN);
+        when(funds.balance("CI", "XOF")).thenReturn(Optional.empty());
+        PawapayOperationEntity refund = operation(PawapayOperationKind.REFUND, PawapayOperationPurpose.WALLET_REFUND,
+                new BigDecimal("9800"));
+        when(submission.createWalletRefund(eq(USER_ID), eq(deposit), any())).thenReturn(refund);
+
+        issuer.issue(request, List.of(item));
+
+        assertThat(item.getPawapayRefundId()).isEqualTo(refund.getId());
+        verifyNoInteractions(outOfFunds);
+    }
+
+    @Test
+    void issue_sansGarde_neLitPasLeSolde() {
+        WalletRefundRequestItemEntity item = item();
+        stubDeposit();
+        stubConfig(OPEN);
+        PawapayOperationEntity refund = operation(PawapayOperationKind.REFUND, PawapayOperationPurpose.WALLET_REFUND,
+                new BigDecimal("9800"));
+        when(submission.createWalletRefund(eq(USER_ID), eq(deposit), any())).thenReturn(refund);
+
+        issuer.issue(request, List.of(item), false);
+
+        assertThat(item.getPawapayRefundId()).isEqualTo(refund.getId());
+        verifyNoInteractions(funds, outOfFunds);
+    }
+
+    @Test
+    void repli_walletPawapayTropBas_neSoumetPasLeVersement() {
+        WalletRefundRequestItemEntity item = item();
+        item.setPawapayRefundId(UUID.randomUUID());
+        item.setStatus(WalletRefundItemStatus.PROCESSING);
+        stubDeposit();
+        stubFunds("100");
+
+        issuer.applyPawapayOutcome(request, item, PawapayOperationKind.REFUND, false, "PAWAPAY_WALLET_OUT_OF_FUNDS");
+
+        verify(submission, never()).createWalletPayout(any(), any(), any(), any(), any(), any());
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
+        assertThat(item.getFailureReason()).isEqualTo(WalletPawapayRefundIssuer.REASON_BALANCE_SHORT);
+        verify(outOfFunds).alertBalanceTooLow(eq("CI"), eq("XOF"), eq(PROVIDER), eq(PawapayOperationKind.PAYOUT),
+                any(), any(), any());
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test

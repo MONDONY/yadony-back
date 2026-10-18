@@ -87,4 +87,24 @@ class PawapayOutOfFundsAlerterTest {
 
         verifyNoInteractions(alerts);
     }
+
+    @Test
+    void soldeTropBasAvantSoumission_memeAlerteParWallet_sansOperation() {
+        alerter.alertBalanceTooLow("CI", "XOF", "ORANGE_CIV", PawapayOperationKind.REFUND, new BigDecimal("477"),
+                new BigDecimal("487.50"), new BigDecimal("473"));
+
+        verify(alerts).raiseOnce(eq("PAWAPAY_OUT_OF_FUNDS_CI_XOF"), argThat((String d) -> d.contains("non envoyé")),
+                argThat((Map<String, Object> m) -> "477".equals(m.get("amount"))
+                        && "487.50".equals(m.get("walletBalance")) && "473".equals(m.get("maxSafe"))
+                        && "REFUND".equals(m.get("kind")) && "false".equals(m.get("submitted"))));
+        verifyNoInteractions(operations);
+    }
+
+    @Test
+    void soldeTropBas_alerteEnEchec_neCassePasLAppelant() {
+        org.mockito.Mockito.doThrow(new IllegalStateException("db")).when(alerts)
+                .raiseOnce(any(), any(), any());
+        alerter.alertBalanceTooLow("CI", "XOF", "ORANGE_CIV", PawapayOperationKind.PAYOUT, null, null, null);
+        verify(alerts).raiseOnce(any(), any(), any());
+    }
 }

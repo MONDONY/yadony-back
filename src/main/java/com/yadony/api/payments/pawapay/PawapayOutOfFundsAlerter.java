@@ -2,6 +2,7 @@ package com.yadony.api.payments.pawapay;
 
 import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.payments.pawapay.events.PawapayOperationFailedEvent;
+import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -45,6 +46,35 @@ public class PawapayOutOfFundsAlerter {
             return;
         }
         operations.findById(event.operationId()).ifPresent(op -> alert(op, event.failureCode()));
+    }
+
+    /**
+     * Même alerte (même type, donc même déduplication par wallet), levée AVANT toute soumission :
+     * le remboursement automatique a lu le solde pawaPay et n'a rien envoyé, le montant dépassant
+     * ce que le wallet peut verser en sécurité ({@code maxSafe}). Aucune opération n'existe.
+     */
+    public void alertBalanceTooLow(String country, String currency, String provider, PawapayOperationKind kind,
+                                   BigDecimal amount, BigDecimal balance, BigDecimal maxSafe) {
+        try {
+            Map<String, Object> context = new LinkedHashMap<>();
+            context.put("country", String.valueOf(country));
+            context.put("currency", String.valueOf(currency));
+            context.put("provider", String.valueOf(provider));
+            context.put("kind", String.valueOf(kind));
+            context.put("amount", amount == null ? "" : amount.toPlainString());
+            context.put("walletBalance", balance == null ? "" : balance.toPlainString());
+            context.put("maxSafe", maxSafe == null ? "" : maxSafe.toPlainString());
+            context.put("submitted", "false");
+            alerts.raiseOnce(ALERT_TYPE_PREFIX + country + "_" + currency,
+                    "Wallet pawaPay " + country + " " + currency + " trop bas : " + kind + " de "
+                            + context.get("amount") + " " + currency + " non envoyé (solde "
+                            + context.get("walletBalance") + ", au plus " + context.get("maxSafe")
+                            + " en sécurité). Alimenter le wallet sur le tableau de bord pawaPay, puis relancer "
+                            + "le remboursement passé en manuel.",
+                    context);
+        } catch (RuntimeException e) {
+            log.error("pawaPay {} {} : alerte solde insuffisant non levée", country, currency, e);
+        }
     }
 
     /** Lève l'alerte si {@code failureCode} est le manque de fonds ; sans effet sinon. */

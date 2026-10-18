@@ -991,4 +991,29 @@ class WalletRefundIT {
         assertThat(reopened.getStatus()).isEqualTo(WalletRefundRequestStatus.PENDING);
         assertThat(walletService.getBalance(userId, "XOF")).isEqualByComparingTo("500");
     }
+
+    @Test
+    void fluxAutomatique_walletPawapayTropBas_rienNEstSoumisEtLeTicketManuelSOuvre() {
+        UUID userId = persistUser();
+        PawapayOperationEntity deposit = pawapayTopup(userId, "XOF", "500");
+        completePawapayOperation(deposit.getId(), "OP-CIV-DEP-GUARD");
+        stubPawapayConfig(true);
+        stubPawapayBalance("487.50");
+
+        WalletRefundRequestEntity auto = walletSelfRefundService.request(userId, "XOF", List.of());
+
+        verify(pawapayClient, never()).initiateRefund(any());
+        verify(pawapayClient, never()).initiatePayout(any());
+        assertThat(walletRefundOperations(userId)).isZero();
+        assertThat(walletRefundRequestRepository.findById(auto.getId()).orElseThrow().getStatus())
+                .isEqualTo(WalletRefundRequestStatus.FAILED);
+        assertThat(walletRefundRequestItemRepository.findByRefundRequestId(auto.getId()))
+                .singleElement()
+                .satisfies(i -> assertThat(i.getFailureReason()).isEqualTo(WalletPawapayRefundIssuer.REASON_BALANCE_SHORT));
+        WalletRefundRequestEntity child = walletRefundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(userId)
+                .stream().filter(r -> auto.getId().equals(r.getParentRequestId())).findFirst().orElseThrow();
+        assertThat(child.getChannel()).isEqualTo(WalletRefundChannel.MANUAL_ADMIN);
+        assertThat(child.getStatus()).isEqualTo(WalletRefundRequestStatus.PENDING);
+        assertThat(walletService.getBalance(userId, "XOF")).isEqualByComparingTo("500");
+    }
 }

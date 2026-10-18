@@ -56,7 +56,8 @@ class WalletRefundOutcomeListenerTest {
     final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
     final WalletSelfRefundService selfRefund = mock(WalletSelfRefundService.class);
     final WalletPawapayRefundIssuer issuer = new WalletPawapayRefundIssuer(operationRepository, submission,
-            mock(PawapayClient.class), itemRepository, auditService, adminAlertService, eventPublisher);
+            mock(PawapayClient.class), itemRepository, auditService, adminAlertService, eventPublisher,
+            mock(PawapayRefundFunds.class), mock(com.yadony.api.payments.pawapay.PawapayOutOfFundsAlerter.class));
     final WalletRefundRequestRepository requestRepository = mock(WalletRefundRequestRepository.class);
     final WalletRefundOutcomeListener listener = new WalletRefundOutcomeListener(issuer, selfRefund,
             requestRepository, itemRepository, adminAlertService);
