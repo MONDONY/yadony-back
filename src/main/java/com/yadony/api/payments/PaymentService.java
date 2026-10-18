@@ -79,9 +79,6 @@ public class PaymentService {
 
     private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
 
-    /** Précision du taux effectif recalculé depuis des montants enregistrés (NUMERIC(7,6)). */
-    private static final int STORED_RATE_SCALE = 6;
-
     /**
      * Comptes Connect vus complets chez Stripe depuis moins d'une heure. L'app appelle
      * {@link #refreshConnectAccount} à chaque retour au premier plan (≈ 400 ms d'appel Stripe,
@@ -622,6 +619,8 @@ public class PaymentService {
         // Montants d'un bid direct à grille figée (devis du premier paiement, ou montants
         // déjà enregistrés sur le paiement existant) ; null sur le chemin hérité.
         PriceBreakdown gridAmounts = null;
+        // Bid à grille déjà payé une fois, re-tarifé car son net a changé : son taux est à réécrire.
+        boolean repricedRetry = false;
         if (negotiated) {
             // Taux figé à l'ouverture du fil : le prix affiché pendant la discussion
             // doit rester exact même si un override ou une promo change entre-temps.
@@ -639,20 +638,28 @@ public class PaymentService {
                 // jour ne sont relus, et rien n'est reconsommé (existing est présent).
                 gridAmounts = committed.get();
                 rate = CommissionResult.storableRate(gridAmounts.commission()
-                        .divide(gridAmounts.net(), STORED_RATE_SCALE, RoundingMode.HALF_UP));
+                        .divide(gridAmounts.net(), CommissionResult.STORED_RATE_SCALE, RoundingMode.HALF_UP));
                 promoApplied = bid.getPromoCodeId() != null;
             } else {
                 // Grille figée à la création du bid, jamais la grille du jour (spec §4.4).
+                // Paiement existant dont le net a changé (prix au kilo modifié avant l'accord) :
+                // nouveau devis, mais sans revalider un code déjà racheté au premier essai.
+                CommissionReductions reductions = existing.isPresent()
+                        ? reductionsOfRetriedBid(bid, announcement.getTravelerId(), sender.getId())
+                        : reductionsWithPromoFallback(announcement.getTravelerId(), sender.getId(),
+                                bid.getPromoCode(), bidId);
                 CommissionResult quote = CommissionCalculator.compute(totalNet, currency,
-                        commissionGridService.require(bid.getCommissionGridId()),
-                        reductionsWithPromoFallback(announcement.getTravelerId(), sender.getId(),
-                                bid.getPromoCode(), bidId));
+                        commissionGridService.require(bid.getCommissionGridId()), reductions);
                 gridAmounts = new PriceBreakdown(quote.net(), quote.commission(), quote.gross());
                 // Taux enregistré sur le bid et le rachat : borné sous 1 (CHECK V118), le
                 // minimum le fait dépasser 100 % sur un petit net. Informatif ici.
                 rate = quote.storableRate();
                 // Un code que le minimum rend sans effet n'est ni appliqué ni consommé (spec §4.2).
-                promoApplied = quote.promoEffective();
+                // En reprise, seul un code déjà racheté peut compter.
+                promoApplied = existing.isPresent()
+                        ? bid.getPromoCodeId() != null && quote.promoEffective()
+                        : quote.promoEffective();
+                repricedRetry = existing.isPresent();
             }
         } else if (existing.isPresent()) {
             // A payment row means pricing was already committed server-side. Never
@@ -766,6 +773,10 @@ public class PaymentService {
             // Consommation du bon de parrainage (lot 3) — même tx, best-effort : sans
             // effet si l'expéditeur n'en détient aucun (déjà pris en compte, ou jamais eu).
             voucherService.consume(sender.getId(), bidId);
+        } else if (repricedRetry) {
+            // Ni rachat ni bon : déjà faits au premier essai. Seul le taux informatif suit.
+            bid.setCommissionRate(rate);
+            bidRepository.save(bid);
         }
 
         try {
@@ -1661,6 +1672,19 @@ public class PaymentService {
     }
 
     /**
+     * Réductions d'un bid à grille re-tarifé lors d'une nouvelle tentative : taux spécial et bon
+     * du jour pour ce bid (le bon déjà consommé pour lui, s'il y en a un), et la remise du code
+     * DÉJÀ racheté lue sans contrôle. Le code n'est jamais revalidé : racheté, il échouerait sur
+     * sa propre utilisation et l'expéditeur perdrait une remise déjà accordée.
+     */
+    private CommissionReductions reductionsOfRetriedBid(BidEntity bid, UUID travelerId, UUID senderId) {
+        CommissionReductions base = commissionRateResolver.reductions(travelerId, senderId, null, null, bid.getId());
+        com.yadony.api.promo.PromoDiscount redeemed = bid.getPromoCodeId() == null ? null
+                : promoService.discountOfRedeemed(bid.getPromoCodeId()).orElse(null);
+        return new CommissionReductions(base.overrideRate(), redeemed, base.voucherFactor());
+    }
+
+    /**
      * Montants déjà enregistrés sur le paiement d'un objet à grille, rejoués tels quels par une
      * nouvelle tentative : brut et commission y sont déjà arrondis, et le taux enregistré est
      * borné sous 1, donc {@code net × taux} ne les redonnerait pas.
@@ -2082,7 +2106,7 @@ public class PaymentService {
                 // Nouvelle tentative : les montants déjà arrondis du paiement existant font
                 // foi ; le taux persisté sur le fil est borné sous 1, il ne les redonnerait pas.
                 gridAmounts = committed.get();
-                rate = gridAmounts.commission().divide(gridAmounts.net(), STORED_RATE_SCALE, RoundingMode.HALF_UP);
+                rate = gridAmounts.commission().divide(gridAmounts.net(), CommissionResult.STORED_RATE_SCALE, RoundingMode.HALF_UP);
                 // Le fil ne garde un taux que si le code a eu un effet (NegotiationController).
                 promoApplied = persistedCommissionRate != null && code != null && !code.isBlank();
             } else {

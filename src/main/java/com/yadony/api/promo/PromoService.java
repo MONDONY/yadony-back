@@ -107,6 +107,17 @@ public class PromoService {
     }
 
     /**
+     * Remise d'un code DÉJÀ racheté (id figé sur le bid), lue sans aucun contrôle de statut, de
+     * dates ni de limites : ce code est consommé, le revalider échouerait sur sa propre
+     * utilisation ({@code promo-limit-reached}) et ferait perdre la remise accordée. Lecture
+     * seule. Vide si le code n'existe plus (supprimé logiquement depuis).
+     */
+    @Transactional(readOnly = true)
+    public java.util.Optional<PromoDiscount> discountOfRedeemed(UUID promoCodeId) {
+        return promoCodeRepository.findById(promoCodeId).map(PromoCodeEntity::toDiscount);
+    }
+
+    /**
      * Enregistre l'utilisation du promo et incrémente le compteur global.
      * Idempotent : si la rédemption (promoCodeId, bidId) existe déjà, retourne sans double-décompte.
      *

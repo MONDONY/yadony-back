@@ -370,17 +370,49 @@ class PaymentServiceCommissionGridTest {
     }
 
     @Test
-    @DisplayName("paiement existant dont les montants ne collent plus au net : nouveau devis sur la grille figée, sans rachat")
-    void createEscrow_grid_retryWithStaleAmounts_repricesOnFrozenGrid() {
-        bid("2", gridId);
+    @DisplayName("net changé depuis l'essai précédent, code déjà racheté : nouveau devis avec sa remise, jamais revalidée")
+    void createEscrow_grid_retryWithChangedNet_keepsRedeemedPromoWithoutRevalidation() {
+        // Premier essai à 100 € (7,00 − 2 points = 5,00) ; le voyageur a passé son prix de
+        // 5 à 6 €/kg : 120 € de net, la remise du code racheté doit suivre.
+        BidEntity bid = bid("20", gridId);
+        bid.setPromoCode("UNIQUE2");
+        UUID promoCodeId = UUID.randomUUID();
+        bid.setPromoCodeId(promoCodeId);
+        bid.setCommissionRate(new BigDecimal("0.050000"));
+        announcementRepository.findById(annId).orElseThrow().setPricePerKg(new BigDecimal("6.00"));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(failedPayment("105.00", "5.00")));
+        when(promoService.discountOfRedeemed(promoCodeId))
+                .thenReturn(Optional.of(PromoDiscount.points(new BigDecimal("0.02"))));
+        reductions(null, bidId, new CommissionReductions(null, null, new BigDecimal("0.5")));
+
+        PaymentIntentCreateParams params = withStripe(() -> service.createEscrow(request(), "uid-sender"));
+
+        // 120 € : grille 7,00 + 1,20 = 8,20 (6,8333 %) − 2 points = 4,8333 % → 5,80 ; bon ×0,5 → 2,90.
+        assertThat(params.getAmount()).isEqualTo(12290L);
+        assertThat(savedPayment().getCommissionAmount()).isEqualByComparingTo("2.90");
+        assertThat(bid.getCommissionRate()).isEqualTo(new BigDecimal("0.024167"));
+        verify(resolver, never()).reductions(any(), any(), anyString(), any(), any());
+        verify(promoService, never()).validateAndGetDiscount(any(), any(), any());
+        verify(promoService, never()).redeem(anyString(), any(), any(), any());
+        verify(voucherService, never()).consume(any(), any());
+    }
+
+    @Test
+    @DisplayName("net changé depuis l'essai précédent, sans code racheté : nouveau devis sans promo, taux du bid mis à jour")
+    void createEscrow_grid_retryWithChangedNet_withoutRedeemedPromo() {
+        BidEntity bid = bid("2", gridId);
+        bid.setPromoCode("JAMAISAPPLIQUE");
+        bid.setCommissionRate(new BigDecimal("0.999999"));
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(failedPayment("6.00", "1.00")));
         reductions(null, bidId, CommissionReductions.NONE);
 
         PaymentIntentCreateParams params = withStripe(() -> service.createEscrow(request(), "uid-sender"));
 
         assertThat(params.getAmount()).isEqualTo(1100L);
+        assertThat(bid.getCommissionRate()).isEqualTo(new BigDecimal("0.100000"));
         verify(gridService).require(gridId);
-        verify(promoService, never()).redeem(anyString(), any(), any(), any());
+        verify(resolver, never()).reductions(any(), any(), anyString(), any(), any());
+        verifyNoInteractions(promoService);
         verify(voucherService, never()).consume(any(), any());
     }
 
@@ -532,6 +564,7 @@ class PaymentServiceCommissionGridTest {
 
         assertThat(thrown).isInstanceOf(YadonyBusinessException.class);
         assertThat(((YadonyBusinessException) thrown).getErrorCode()).isEqualTo("invalid-amount");
+        verifyNoInteractions(gridService);
     }
 
     @Test

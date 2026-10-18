@@ -665,4 +665,35 @@ class PromoServiceTest {
                             .isEqualTo("promo-limit-reached"));
         }
     }
+
+    @Nested
+    @DisplayName("discountOfRedeemed() — remise d'un code déjà racheté, sans contrôle")
+    class DiscountOfRedeemedTests {
+
+        @Test
+        @DisplayName("code désactivé, expiré et à sa limite : la remise est rendue quand même, rien n'est écrit")
+        void discountOfRedeemed_ignoresLimitsAndDates() {
+            PromoCodeEntity p = activePromo(new BigDecimal("0.02"));
+            p.setDiscountKind(PromoDiscountKind.COMMISSION_POINTS);
+            p.setStatus(PromoCodeStatus.DISABLED);
+            p.setValidTo(LocalDateTime.now(ZoneOffset.UTC).minusDays(1));
+            p.setMaxRedemptions(1);
+            p.setRedeemedCount(1);
+            when(promoCodeRepository.findById(p.getId())).thenReturn(Optional.of(p));
+
+            assertThat(service.discountOfRedeemed(p.getId()))
+                    .contains(PromoDiscount.points(new BigDecimal("0.02")));
+            verifyNoInteractions(redemptionRepository, auditService);
+            verify(promoCodeRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("code introuvable : vide")
+        void discountOfRedeemed_unknown_empty() {
+            UUID id = UUID.randomUUID();
+            when(promoCodeRepository.findById(id)).thenReturn(Optional.empty());
+
+            assertThat(service.discountOfRedeemed(id)).isEmpty();
+        }
+    }
 }

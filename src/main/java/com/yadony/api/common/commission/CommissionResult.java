@@ -21,8 +21,8 @@ public record CommissionResult(BigDecimal net, BigDecimal commission, BigDecimal
     /** Plus grand taux enregistrable : {@code bids_commission_rate_range} (V118) impose [0, 1[. */
     private static final BigDecimal MAX_STORABLE_RATE = new BigDecimal("0.999999");
 
-    /** Précision des colonnes de taux (NUMERIC(7,6), V331). */
-    private static final int STORED_RATE_SCALE = 6;
+    /** Précision des colonnes de taux (NUMERIC(7,6), V331) ; source unique pour les rails. */
+    public static final int STORED_RATE_SCALE = 6;
 
     /** {@link #storableRate(BigDecimal)} appliqué au taux effectif de ce devis. */
     public BigDecimal storableRate() {
