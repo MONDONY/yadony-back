@@ -2165,12 +2165,19 @@ public class NegotiationService {
      * d'escrow réussie (initiate-payment) — voir {@link #quote} et le javadoc de
      * {@code NegotiationThreadEntity.promoCode}. Consommé par {@code ThreadAcceptedBidListener}
      * pour déclencher le rachat une fois le bid matérialisé.
+     *
+     * <p>Fil à grille : le taux effectif est borné sous 1 à l'écriture
+     * ({@link com.yadony.api.common.commission.CommissionResult#storableRate(BigDecimal)}), le
+     * minimum le faisant dépasser 100 % sur un petit net. Il passe tel quel au bid matérialisé
+     * et au rachat ; les montants restent ceux du paiement.
      */
     @Transactional
     public void recordAppliedPromo(UUID threadId, String promoCode, BigDecimal rate) {
         threadRepo.findById(threadId).ifPresent(thread -> {
             thread.setPromoCode(promoCode != null ? promoCode.strip().toUpperCase() : null);
-            thread.setCommissionRate(rate);
+            thread.setCommissionRate(rate != null && thread.getCommissionGridId() != null
+                    ? com.yadony.api.common.commission.CommissionResult.storableRate(rate)
+                    : rate);
             threadRepo.save(thread);
         });
     }

@@ -2030,6 +2030,33 @@ class NegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("fil à grille — taux effectif au-delà de 100 % borné à 0,999999 (CHECK [0, 1[)")
+        void recordAppliedPromo_gridThread_capsRate() {
+            UUID threadId = UUID.randomUUID();
+            var thread = new NegotiationThreadEntity();
+            thread.setCommissionGridId(UUID.randomUUID());
+            when(threadRepo.findById(threadId)).thenReturn(Optional.of(thread));
+
+            service.recordAppliedPromo(threadId, "WELCOME6", new BigDecimal("2.000000"));
+
+            assertThat(thread.getCommissionRate()).isEqualByComparingTo("0.999999");
+        }
+
+        @Test
+        @DisplayName("fil à grille, code effacé — taux nul conservé")
+        void recordAppliedPromo_gridThread_nullRateStaysNull() {
+            UUID threadId = UUID.randomUUID();
+            var thread = new NegotiationThreadEntity();
+            thread.setCommissionGridId(UUID.randomUUID());
+            thread.setCommissionRate(new BigDecimal("0.05"));
+            when(threadRepo.findById(threadId)).thenReturn(Optional.of(thread));
+
+            service.recordAppliedPromo(threadId, null, null);
+
+            assertThat(thread.getCommissionRate()).isNull();
+        }
+
+        @Test
         @DisplayName("thread introuvable — no-op silencieux")
         void recordAppliedPromo_threadNotFound_noop() {
             UUID threadId = UUID.randomUUID();

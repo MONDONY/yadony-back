@@ -79,6 +79,9 @@ public class PaymentService {
 
     private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
 
+    /** Précision du taux effectif recalculé depuis des montants enregistrés (NUMERIC(7,6)). */
+    private static final int STORED_RATE_SCALE = 6;
+
     /**
      * Comptes Connect vus complets chez Stripe depuis moins d'une heure. L'app appelle
      * {@link #refreshConnectAccount} à chaque retour au premier plan (≈ 400 ms d'appel Stripe,
@@ -616,8 +619,9 @@ public class PaymentService {
         }
         BigDecimal rate;
         boolean promoApplied = false;
-        // Devis de grille : seulement pour un PREMIER paiement direct d'un bid à grille figée.
-        CommissionResult gridQuote = null;
+        // Montants d'un bid direct à grille figée (devis du premier paiement, ou montants
+        // déjà enregistrés sur le paiement existant) ; null sur le chemin hérité.
+        PriceBreakdown gridAmounts = null;
         if (negotiated) {
             // Taux figé à l'ouverture du fil : le prix affiché pendant la discussion
             // doit rester exact même si un override ou une promo change entre-temps.
@@ -627,27 +631,39 @@ public class PaymentService {
                         "payment-pricing-context-missing", "Payment Pricing Context Missing",
                         "Le taux de commission figé de cette négociation est introuvable");
             }
+        } else if (bid.getCommissionGridId() != null) {
+            Optional<PriceBreakdown> committed = existing.flatMap(p -> committedGridAmounts(p, totalNet, currency));
+            if (committed.isPresent()) {
+                // Nouvelle tentative : les montants déjà arrondis du paiement existant font
+                // foi. Ni grille, ni code promo (peut-être déjà racheté), ni taux spécial du
+                // jour ne sont relus, et rien n'est reconsommé (existing est présent).
+                gridAmounts = committed.get();
+                rate = CommissionResult.storableRate(gridAmounts.commission()
+                        .divide(gridAmounts.net(), STORED_RATE_SCALE, RoundingMode.HALF_UP));
+                promoApplied = bid.getPromoCodeId() != null;
+            } else {
+                // Grille figée à la création du bid, jamais la grille du jour (spec §4.4).
+                CommissionResult quote = CommissionCalculator.compute(totalNet, currency,
+                        commissionGridService.require(bid.getCommissionGridId()),
+                        reductionsWithPromoFallback(announcement.getTravelerId(), sender.getId(),
+                                bid.getPromoCode(), bidId));
+                gridAmounts = new PriceBreakdown(quote.net(), quote.commission(), quote.gross());
+                // Taux enregistré sur le bid et le rachat : borné sous 1 (CHECK V118), le
+                // minimum le fait dépasser 100 % sur un petit net. Informatif ici.
+                rate = quote.storableRate();
+                // Un code que le minimum rend sans effet n'est ni appliqué ni consommé (spec §4.2).
+                promoApplied = quote.promoEffective();
+            }
         } else if (existing.isPresent()) {
             // A payment row means pricing was already committed server-side. Never
             // revalidate a consumed promo or current overrides on retries: both may
             // legitimately have changed since the first PaymentIntent was created.
-            // Bid à grille : le taux figé est le taux effectif C / net du premier essai
-            // (6 décimales) ; net × taux redonne la même commission au centime.
             rate = bid.getCommissionRate();
             if (rate == null) {
                 throw new YadonyBusinessException(HttpStatus.CONFLICT,
                         "payment-pricing-context-missing", "Payment Pricing Context Missing",
                         "Le taux de commission figé de ce paiement est introuvable");
             }
-        } else if (bid.getCommissionGridId() != null) {
-            // Grille figée à la création du bid, jamais la grille du jour (spec §4.4).
-            gridQuote = CommissionCalculator.compute(totalNet, currency,
-                    commissionGridService.require(bid.getCommissionGridId()),
-                    reductionsWithPromoFallback(announcement.getTravelerId(), sender.getId(),
-                            bid.getPromoCode(), bidId));
-            rate = gridQuote.effectiveRate();
-            // Un code que le minimum rend sans effet n'est ni appliqué ni consommé (spec §4.2).
-            promoApplied = gridQuote.promoEffective();
         } else {
             // Truly new payment only: promo > overrides > global.
             if (bid.getPromoCode() != null) {
@@ -671,9 +687,9 @@ public class PaymentService {
         // montant sur lequel il s'est engagé.
         BigDecimal amount;
         BigDecimal commission;
-        if (gridQuote != null) {
-            amount = gridQuote.gross();
-            commission = gridQuote.commission();
+        if (gridAmounts != null) {
+            amount = gridAmounts.gross();
+            commission = gridAmounts.commission();
         } else {
             amount = negotiated
                     ? bid.getNegotiatedGrossEur().setScale(2, RoundingMode.HALF_UP)
@@ -822,7 +838,7 @@ public class PaymentService {
 
             log.info("PaymentIntent {} created for bid {} (sender={})", pi.getId(), bidId, sender.getId());
             PaymentResponse response = toPaymentResponse(payment, pi);
-            if (gridQuote != null) {
+            if (gridAmounts != null) {
                 response.setPromoApplied(promoApplied);
             }
             return response;
@@ -1644,6 +1660,30 @@ public class PaymentService {
         }
     }
 
+    /**
+     * Montants déjà enregistrés sur le paiement d'un objet à grille, rejoués tels quels par une
+     * nouvelle tentative : brut et commission y sont déjà arrondis, et le taux enregistré est
+     * borné sous 1, donc {@code net × taux} ne les redonnerait pas.
+     *
+     * <p>Vide si le paiement ne porte pas ces montants, est dans une autre devise, ou si son
+     * brut moins sa commission n'est plus le net attendu (fil renégocié après un paiement
+     * échoué) : l'appelant tarife alors à nouveau sur la grille figée.
+     */
+    private Optional<PriceBreakdown> committedGridAmounts(PaymentEntity payment, BigDecimal expectedNet,
+                                                          SupportedCurrency currency) {
+        if (payment.getAmount() == null || payment.getCommissionAmount() == null
+                || !sameCurrency(payment.getCurrency(), currency)) {
+            return Optional.empty();
+        }
+        BigDecimal net = expectedNet.setScale(currency.minorUnit(), RoundingMode.HALF_UP);
+        BigDecimal gross = payment.getAmount();
+        BigDecimal commission = payment.getCommissionAmount();
+        if (net.signum() <= 0 || gross.subtract(commission).compareTo(net) != 0) {
+            return Optional.empty();
+        }
+        return Optional.of(new PriceBreakdown(net, commission, gross));
+    }
+
     private PaymentResponse toNegotiationPaymentResponse(
             PaymentEntity payment, PaymentIntent paymentIntent,
             BigDecimal commissionRate, boolean promoApplied) {
@@ -2022,28 +2062,43 @@ public class PaymentService {
         // (ThreadAcceptedBidListener). L'appelant (NegotiationController) persiste le promo
         // sur le thread quand promoApplied=true pour que le rachat puisse s'y raccrocher.
         // Ce calcul et sa normalisation précèdent toute reprise de PaymentIntent.
+        // Idempotency: reuse existing non-failed payment for this thread. Lu avant le tarif :
+        // un fil à grille rejoue les montants déjà enregistrés sur ce paiement.
+        Optional<PaymentEntity> existing = paymentRepository.findByNegotiationThreadId(threadId);
         BigDecimal rate;
         boolean promoApplied = false;
         String code = promoCode != null ? promoCode.strip() : null;
-        // Devis de grille : seulement tant qu'aucun taux n'est figé sur le fil.
-        CommissionResult gridQuote = null;
-        if (persistedCommissionRate != null) {
-            // Fil à grille : taux effectif C / net du premier essai, rejoué tel quel.
-            rate = persistedCommissionRate;
-            promoApplied = code != null && !code.isBlank();
-        } else if (commissionGridId != null) {
+        // Montants d'un fil à grille figée (devis, ou montants déjà enregistrés sur le
+        // paiement existant) ; null sur le chemin hérité.
+        PriceBreakdown gridAmounts = null;
+        if (commissionGridId != null) {
             if (amountEur == null || amountEur.signum() <= 0) {
                 throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                         "invalid-amount", "Invalid Amount",
                         "Le montant calculé est invalide (≤ 0)");
             }
-            // Grille figée sur le fil (héritée de la demande), jamais la grille du jour.
-            gridQuote = CommissionCalculator.compute(amountEur, currency,
-                    commissionGridService.require(commissionGridId),
-                    reductionsWithPromoFallback(traveler.getId(), sender.getId(), code, threadId));
-            rate = gridQuote.effectiveRate();
-            // Faux quand le minimum annule le gain : le contrôleur efface alors le code du fil.
-            promoApplied = gridQuote.promoEffective();
+            Optional<PriceBreakdown> committed = existing.flatMap(p -> committedGridAmounts(p, amountEur, currency));
+            if (committed.isPresent()) {
+                // Nouvelle tentative : les montants déjà arrondis du paiement existant font
+                // foi ; le taux persisté sur le fil est borné sous 1, il ne les redonnerait pas.
+                gridAmounts = committed.get();
+                rate = gridAmounts.commission().divide(gridAmounts.net(), STORED_RATE_SCALE, RoundingMode.HALF_UP);
+                // Le fil ne garde un taux que si le code a eu un effet (NegotiationController).
+                promoApplied = persistedCommissionRate != null && code != null && !code.isBlank();
+            } else {
+                // Grille figée sur le fil (héritée de la demande), jamais la grille du jour.
+                CommissionResult quote = CommissionCalculator.compute(amountEur, currency,
+                        commissionGridService.require(commissionGridId),
+                        reductionsWithPromoFallback(traveler.getId(), sender.getId(), code, threadId));
+                gridAmounts = new PriceBreakdown(quote.net(), quote.commission(), quote.gross());
+                // Taux réel exposé ; NegotiationService.recordAppliedPromo le borne à l'écriture.
+                rate = quote.effectiveRate();
+                // Faux quand le minimum annule le gain : le contrôleur efface alors le code du fil.
+                promoApplied = quote.promoEffective();
+            }
+        } else if (persistedCommissionRate != null) {
+            rate = persistedCommissionRate;
+            promoApplied = code != null && !code.isBlank();
         } else if (code != null && !code.isBlank()) {
             try {
                 rate = commissionRateResolver.resolve(traveler.getId(), sender.getId(), code);
@@ -2057,14 +2112,10 @@ public class PaymentService {
             rate = commissionRateResolver.resolve(traveler.getId(), sender.getId());
         }
         // Modèle B : amountEur = NET voyageur. L'expéditeur paie gross = net*(1+rate).
-        PriceBreakdown b = gridQuote != null
-                ? new PriceBreakdown(gridQuote.net(), gridQuote.commission(), gridQuote.gross())
-                : PriceBreakdown.fromNet(amountEur, rate);
+        PriceBreakdown b = gridAmounts != null ? gridAmounts : PriceBreakdown.fromNet(amountEur, rate);
         CurrencyAmount localGross = CurrencyAmount.of(b.gross(), currency);
         CurrencyAmount localCommission = CurrencyAmount.of(b.commission(), currency);
 
-        // Idempotency: reuse existing non-failed payment for this thread
-        Optional<PaymentEntity> existing = paymentRepository.findByNegotiationThreadId(threadId);
         PaymentEntity recyclable = null; // stale row to recycle (negotiation_thread_id is UNIQUE)
         if (existing.isPresent()) {
             PaymentEntity payment = existing.get();

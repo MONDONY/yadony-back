@@ -321,25 +321,65 @@ class PaymentServiceCommissionGridTest {
         verify(resolver, never()).reductions(any(), any(), any(), any(), any());
     }
 
+    /** Paiement déjà enregistré (essai précédent échoué) avec ses montants arrondis. */
+    private PaymentEntity failedPayment(String amount, String commission) {
+        PaymentEntity p = new PaymentEntity();
+        PaymentServiceTestFactory.setId(p, UUID.randomUUID());
+        p.setStatus(PaymentStatus.FAILED);
+        p.setAmount(new BigDecimal(amount));
+        p.setCommissionAmount(new BigDecimal(commission));
+        p.setCurrency("EUR");
+        return p;
+    }
+
     @Test
-    @DisplayName("nouvelle tentative sur un bid à grille : taux effectif figé rejoué, rien n'est revalidé ni reconsommé")
-    void createEscrow_grid_retry_replaysFrozenEffectiveRate() {
-        BidEntity bid = bid("2", gridId);
-        bid.setPromoCode("MOINS5");
-        bid.setCommissionRate(new BigDecimal("0.100000"));
-        PaymentEntity failed = new PaymentEntity();
-        PaymentServiceTestFactory.setId(failed, UUID.randomUUID());
-        failed.setBidId(bidId);
-        failed.setStatus(PaymentStatus.FAILED);
-        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(failed));
+    @DisplayName("net 0,50 € sous le minimum : commission 1,00, brut 1,50, taux enregistré borné à 0,999999")
+    void createEscrow_grid_netBelowMinimum_storesCappedRate() {
+        BidEntity bid = bid("0.1", gridId);
+        reductions(null, bidId, CommissionReductions.NONE);
 
         PaymentIntentCreateParams params = withStripe(() -> service.createEscrow(request(), "uid-sender"));
 
-        // Même total qu'au premier essai (11,00 €), même si le code a été consommé depuis.
-        assertThat(params.getAmount()).isEqualTo(1100L);
+        assertThat(params.getAmount()).isEqualTo(150L);
+        assertThat(params.getMetadata()).containsEntry("commission_rate", "0.999999");
+        PaymentEntity payment = savedPayment();
+        assertThat(payment.getAmount()).isEqualByComparingTo("1.50");
+        assertThat(payment.getCommissionAmount()).isEqualByComparingTo("1.00");
+        // Le taux réel (200 %) violerait bids_commission_rate_range [0, 1[ (V118).
+        assertThat(bid.getCommissionRate()).isEqualTo(new BigDecimal("0.999999"));
+    }
+
+    @Test
+    @DisplayName("nouvelle tentative sur un bid à grille : montants du paiement existant réutilisés, rien relu ni reconsommé")
+    void createEscrow_grid_retryReusesExistingPaymentAmounts() {
+        BidEntity bid = bid("0.1", gridId);
+        bid.setPromoCode("MOINS5");
+        bid.setCommissionRate(new BigDecimal("0.999999"));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(failedPayment("1.50", "1.00")));
+
+        PaymentIntentCreateParams params = withStripe(() -> service.createEscrow(request(), "uid-sender"));
+
+        // 1,50 € comme au premier essai ; rejouer le taux borné aurait donné 0,50 × 0,999999 = 0,50.
+        assertThat(params.getAmount()).isEqualTo(150L);
         assertThat(savedPayment().getCommissionAmount()).isEqualByComparingTo("1.00");
+        assertThat(bid.getCommissionRate()).isEqualTo(new BigDecimal("0.999999"));
         verify(resolver, never()).reductions(any(), any(), any(), any(), any());
         verifyNoInteractions(gridService);
+        verify(promoService, never()).redeem(anyString(), any(), any(), any());
+        verify(voucherService, never()).consume(any(), any());
+    }
+
+    @Test
+    @DisplayName("paiement existant dont les montants ne collent plus au net : nouveau devis sur la grille figée, sans rachat")
+    void createEscrow_grid_retryWithStaleAmounts_repricesOnFrozenGrid() {
+        bid("2", gridId);
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(failedPayment("6.00", "1.00")));
+        reductions(null, bidId, CommissionReductions.NONE);
+
+        PaymentIntentCreateParams params = withStripe(() -> service.createEscrow(request(), "uid-sender"));
+
+        assertThat(params.getAmount()).isEqualTo(1100L);
+        verify(gridService).require(gridId);
         verify(promoService, never()).redeem(anyString(), any(), any(), any());
         verify(voucherService, never()).consume(any(), any());
     }
@@ -451,17 +491,37 @@ class PaymentServiceCommissionGridTest {
     }
 
     @Test
-    @DisplayName("fil à grille déjà tarifé (taux persisté) : le taux effectif figé est rejoué, rien n'est revalidé")
-    void createNegotiationEscrow_grid_persistedRate_replayed() {
-        PaymentResponse[] response = new PaymentResponse[1];
-        withStripe(() -> response[0] = service.createNegotiationEscrow(
-                threadId, senderId, travelerId, new BigDecimal("100.00"), "MOINS2",
-                new BigDecimal("0.050000"), "EUR", gridId));
+    @DisplayName("nouvelle tentative sur un fil à grille : montants du paiement existant réutilisés, taux réel exposé")
+    void createNegotiationEscrow_grid_retryReusesExistingPaymentAmounts() {
+        when(paymentRepository.findByNegotiationThreadId(threadId))
+                .thenReturn(Optional.of(failedPayment("1.50", "1.00")));
 
-        assertThat(response[0].getCommissionAmount()).isEqualByComparingTo("5.00");
+        PaymentResponse[] response = new PaymentResponse[1];
+        PaymentIntentCreateParams params = withStripe(() -> response[0] = service.createNegotiationEscrow(
+                threadId, senderId, travelerId, new BigDecimal("0.50"), "MOINS2",
+                new BigDecimal("0.999999"), "EUR", gridId));
+
+        assertThat(params.getAmount()).isEqualTo(150L);
+        assertThat(response[0].getCommissionAmount()).isEqualByComparingTo("1.00");
+        assertThat(response[0].getCommissionRate()).isEqualByComparingTo("2");
         assertThat(response[0].isPromoApplied()).isTrue();
         verifyNoInteractions(gridService);
         verify(resolver, never()).reductions(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("fil à grille avec un taux persisté mais sans paiement enregistré : devis sur la grille figée")
+    void createNegotiationEscrow_grid_persistedRateWithoutPayment_repricesOnGrid() {
+        reductions(null, threadId, CommissionReductions.NONE);
+
+        PaymentResponse[] response = new PaymentResponse[1];
+        withStripe(() -> response[0] = service.createNegotiationEscrow(
+                threadId, senderId, travelerId, new BigDecimal("0.50"), null,
+                new BigDecimal("0.999999"), "EUR", gridId));
+
+        // net × 0,999999 aurait donné 0,50 ; le devis redonne le minimum de 1,00.
+        assertThat(response[0].getCommissionAmount()).isEqualByComparingTo("1.00");
+        verify(gridService).require(gridId);
     }
 
     @Test
