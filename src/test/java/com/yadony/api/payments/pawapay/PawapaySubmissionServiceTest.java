@@ -30,6 +30,7 @@ class PawapaySubmissionServiceTest {
 
     @Mock PawapayOperationService operations;
     @Mock PawapayClient client;
+    @Mock PawapayOutOfFundsAlerter outOfFunds;
     @InjectMocks PawapaySubmissionService service;
 
     private PawapayOperationEntity created(PawapayOperationKind kind, UUID paymentId) {
@@ -54,6 +55,29 @@ class PawapaySubmissionServiceTest {
         assertThat(req.getValue().customerMessage()).isEqualTo("yadony envoi");
         assertThat(req.getValue().successfulUrl()).isEqualTo("https://ok");
         verify(operations).markSubmitted(eq(op.getId()), any());
+    }
+
+    @Test
+    void initiate_rejeteFauteDeFonds_alerteAdmin() {
+        PawapayOperationEntity op = created(PawapayOperationKind.PAYOUT, null);
+        PawapayInitiationResult rejected = new PawapayInitiationResult(PawapayInitiationResult.Outcome.REJECTED,
+                "PAWAPAY_WALLET_OUT_OF_FUNDS", "Your pawaPay wallet does not have enough funds");
+        when(client.initiatePayout(any())).thenReturn(rejected);
+
+        service.initiate(op, "wallet-refund");
+
+        verify(operations).markSubmitted(op.getId(), rejected);
+        verify(outOfFunds).alert(op, "PAWAPAY_WALLET_OUT_OF_FUNDS");
+    }
+
+    @Test
+    void initiate_accepte_aucuneAlerte() {
+        PawapayOperationEntity op = created(PawapayOperationKind.PAYOUT, null);
+        when(client.initiatePayout(any())).thenReturn(PawapayInitiationResult.accepted());
+
+        service.initiate(op, "wallet-refund");
+
+        verify(outOfFunds, never()).alert(any(), any());
     }
 
     @Test

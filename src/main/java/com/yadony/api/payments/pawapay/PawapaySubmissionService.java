@@ -28,10 +28,13 @@ public class PawapaySubmissionService {
 
     private final PawapayOperationService operations;
     private final PawapayClient client;
+    private final PawapayOutOfFundsAlerter outOfFunds;
 
-    public PawapaySubmissionService(PawapayOperationService operations, PawapayClient client) {
+    public PawapaySubmissionService(PawapayOperationService operations, PawapayClient client,
+                                    PawapayOutOfFundsAlerter outOfFunds) {
         this.operations = operations;
         this.client = client;
+        this.outOfFunds = outOfFunds;
     }
 
     public PawapayOperationEntity submitDeposit(UUID paymentId, String msisdn, String provider, String country,
@@ -125,6 +128,11 @@ public class PawapaySubmissionService {
             throw PawapayErrors.providerUnavailable();
         }
         operations.markSubmitted(op.getId(), result);
+        // Refus dès la soumission : SUBMIT_REJECTED ne publie pas d'événement d'échec, le
+        // manque de fonds sur le wallet serait sinon invisible pour l'admin.
+        if (result.outcome() == PawapayInitiationResult.Outcome.REJECTED) {
+            outOfFunds.alert(op, result.failureCode());
+        }
         return result;
     }
 }
