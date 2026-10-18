@@ -2,6 +2,7 @@ package com.yadony.api.payments;
 
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.StripeWebhookHandler;
+import com.yadony.api.payments.bankpayout.BankPayoutTrackingService;
 import com.yadony.api.payments.cash.CashCommissionWebhookHandler;
 import com.yadony.api.payments.chargeback.ChargebackService;
 import com.yadony.api.payments.currency.CurrencyCatalog;
@@ -17,6 +18,7 @@ import com.stripe.model.PaymentIntent;
 import com.stripe.model.StripeObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
@@ -46,8 +48,11 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
             "transfer.created",
             "transfer.reversed",
             "transfer.updated",
+            "payout.created",
+            "payout.updated",
             "payout.failed",
             "payout.paid",
+            "payout.canceled",
             "account.application.deauthorized",
             "capability.updated",
             "charge.refund.updated",
@@ -61,6 +66,8 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
     private final WalletSelfRefundService walletSelfRefundService;
     private final ObjectMapper objectMapper;
     private final CurrencyCatalog currencyCatalog;
+    /** Suivi du virement bancaire des voyageurs (payout.* des comptes connectés). */
+    private final BankPayoutTrackingService bankPayoutTracking;
 
     public PaymentStripeWebhookHandler(PaymentService paymentService,
                                         CashCommissionWebhookHandler cashHandler,
@@ -69,6 +76,20 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
                                         WalletSelfRefundService walletSelfRefundService,
                                         ObjectMapper objectMapper,
                                         CurrencyCatalog currencyCatalog) {
+        this(paymentService, cashHandler, chargebackService, walletService, walletSelfRefundService,
+                objectMapper, currencyCatalog, null);
+    }
+
+    @Autowired
+    public PaymentStripeWebhookHandler(PaymentService paymentService,
+                                        CashCommissionWebhookHandler cashHandler,
+                                        ChargebackService chargebackService,
+                                        WalletService walletService,
+                                        WalletSelfRefundService walletSelfRefundService,
+                                        ObjectMapper objectMapper,
+                                        CurrencyCatalog currencyCatalog,
+                                        BankPayoutTrackingService bankPayoutTracking) {
+        this.bankPayoutTracking = bankPayoutTracking;
         this.paymentService = paymentService;
         this.cashHandler = cashHandler;
         this.chargebackService = chargebackService;
@@ -85,6 +106,10 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
 
     @Override
     public void handle(Event event) {
+        if (event.getType() != null && event.getType().startsWith("payout.")) {
+            handlePayout(event);
+            return;
+        }
         switch (event.getType()) {
             case "account.updated"                          -> paymentService.handleAccountUpdated(event);
             case "payment_intent.amount_capturable_updated" -> paymentService.handlePaymentEscrowActive(event);
@@ -115,8 +140,6 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
             case "transfer.created"                    -> paymentService.handleTransferCreated(event);
             case "transfer.reversed"                   -> paymentService.handleTransferReversed(event);
             case "transfer.updated"                    -> paymentService.handleTransferUpdated(event);
-            case "payout.failed"                       -> paymentService.handlePayoutFailed(event);
-            case "payout.paid"                         -> paymentService.handlePayoutPaid(event);
             case "account.application.deauthorized"   -> paymentService.handleAccountDeauthorized(event);
             case "capability.updated"                 -> paymentService.handleCapabilityUpdated(event);
             case "charge.refund.updated" -> {
@@ -124,6 +147,24 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
                 walletSelfRefundService.handleRefundUpdated(event);
             }
             case "radar.early_fraud_warning.created"  -> paymentService.handleEarlyFraudWarning(event);
+        }
+    }
+
+    /**
+     * {@code payout.*} : un payout d'un compte connecté ({@code event.account} renseigné, endpoint
+     * des comptes connectés) est le virement vers la banque d'un voyageur, suivi par
+     * {@link BankPayoutTrackingService} (alerte admin comprise en cas d'échec). Un payout de la
+     * plateforme garde le traitement historique (audit, alerte sur échec).
+     */
+    private void handlePayout(Event event) {
+        if (bankPayoutTracking != null && event.getAccount() != null && !event.getAccount().isBlank()) {
+            bankPayoutTracking.handlePayoutEvent(event);
+            return;
+        }
+        switch (event.getType()) {
+            case "payout.failed" -> paymentService.handlePayoutFailed(event);
+            case "payout.paid"   -> paymentService.handlePayoutPaid(event);
+            default -> log.debug("Payout plateforme {} ({}) : rien à suivre", event.getId(), event.getType());
         }
     }
 

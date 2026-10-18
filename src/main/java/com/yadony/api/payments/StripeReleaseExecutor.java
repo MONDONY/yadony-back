@@ -433,6 +433,9 @@ public class StripeReleaseExecutor {
             }
             if (intent.getKind() == StripeReleaseIntentEntity.Kind.TRANSFER && objectId != null) {
                 paymentRepository.recordStripeTransferId(paymentId, objectId);
+                // Suivi du virement bancaire du voyageur (bankpayout/), ouvert après commit.
+                eventPublisher.publishEvent(new com.yadony.api.payments.events.StripeTransferRecordedEvent(
+                        paymentId, intent.getBidId(), intent.getTravelerId(), objectId, intent.getDestination()));
             }
             if (realigned) {
                 Map<String, Object> audit = new LinkedHashMap<>();

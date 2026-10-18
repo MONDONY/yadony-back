@@ -253,6 +253,46 @@ class MoneyOverviewControllerIT {
     }
 
     @Test
+    void travelerCardRelease_carriesBankPayout_absentForSenderAndOtherRails() throws Exception {
+        UserEntity traveler = persistUser("Mariam", "Diallo");
+        UserEntity sender = persistUser("Sekou", "Kone");
+        UUID trip = persistAnnouncement(traveler.getId(), "EUR", "Paris", "Dakar");
+
+        UUID paidBid = persistBid(trip, sender.getId(), BidStatus.COMPLETED, PaymentMethod.STRIPE, "EUR");
+        UUID paidPayment = persistPayment(paidBid, PaymentStatus.RELEASED, PaymentRail.STRIPE, "30.00", "3.60", "EUR",
+                LocalDateTime.now(ZoneOffset.UTC).minusDays(2));
+        jdbc.update("INSERT INTO bank_payout_tracking (id, created_at, updated_at, payment_id, transfer_id, "
+                        + "connected_account_id, destination_payment_id, available_on, payout_id, payout_status, "
+                        + "arrival_date, paid_at) VALUES (?, now(), now(), ?, 'tr_1', 'acct_1', 'py_1', ?, 'po_1', "
+                        + "'paid', ?, TIMESTAMPTZ '2026-10-24 09:12:00+00')",
+                UUID.randomUUID(), paidPayment, LocalDate.of(2026, 10, 22), LocalDate.of(2026, 10, 24));
+
+        UUID untrackedBid = persistBid(trip, sender.getId(), BidStatus.COMPLETED, PaymentMethod.STRIPE, "EUR");
+        persistPayment(untrackedBid, PaymentStatus.RELEASED, PaymentRail.STRIPE, "20.00", "2.40", "EUR",
+                LocalDateTime.now(ZoneOffset.UTC).minusDays(1));
+
+        mockMvc.perform(get("/payments/me/overview").with(authentication(as(traveler))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.traveler.items", hasSize(2)))
+                .andExpect(jsonPath("$.traveler.items[?(@.bidId == '" + paidBid + "')].bankPayout.status")
+                        .value("PAID"))
+                .andExpect(jsonPath("$.traveler.items[?(@.bidId == '" + paidBid + "')].bankPayout.availableOn")
+                        .value("2026-10-22"))
+                .andExpect(jsonPath("$.traveler.items[?(@.bidId == '" + paidBid + "')].bankPayout.arrivalDate")
+                        .value("2026-10-24"))
+                .andExpect(jsonPath("$.traveler.items[?(@.bidId == '" + paidBid + "')].bankPayout.paidAt")
+                        .value("2026-10-24T09:12:00Z"))
+                .andExpect(jsonPath("$.traveler.items[?(@.bidId == '" + paidBid + "')].state")
+                        .value("RELEASED_RECENTLY"))
+                .andExpect(jsonPath("$.traveler.items[?(@.bidId == '" + untrackedBid + "')].bankPayout")
+                        .doesNotExist());
+
+        mockMvc.perform(get("/payments/me/overview").with(authentication(as(sender))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sender.items[*].bankPayout").doesNotExist());
+    }
+
+    @Test
     void outsider_neverSeesSomeoneElsesMoney() throws Exception {
         UserEntity traveler = persistUser("Fatou", "Ndiaye");
         UserEntity sender = persistUser("Ousmane", "Ba");

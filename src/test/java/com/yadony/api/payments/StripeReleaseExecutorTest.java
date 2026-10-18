@@ -184,6 +184,11 @@ class StripeReleaseExecutorTest {
         verify(payments).recordStripeTransferId(paymentId, "tr_new");
         verify(audit).log(eq("PAYMENT"), eq(paymentId), eq("ESCROW_RELEASED_TRANSFER"), eq(bidId), anyMap());
         verify(events).publishEvent(any(PaymentReleasedEvent.class));
+        // Suivi du virement bancaire du voyageur ouvert sur ce Transfer.
+        verify(events).publishEvent(org.mockito.ArgumentMatchers.<Object>argThat(e ->
+                e instanceof com.yadony.api.payments.events.StripeTransferRecordedEvent r
+                        && "tr_new".equals(r.transferId()) && paymentId.equals(r.paymentId())
+                        && "acct_1".equals(r.connectedAccountId())));
         verify(alerts).resolveOpen("RELEASE_PENDING_" + paymentId);
         verify(alerts).resolveOpen("RELEASE_BLOCKED_" + paymentId);
     }

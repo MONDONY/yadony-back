@@ -222,6 +222,15 @@ yadony:
       enabled: ${PAYMENT_RELEASE_RECOVERY_ENABLED:true}
       interval: PT5M
       batch-size: 20
+    # Suivi du virement bancaire du voyageur (BankPayoutSyncJob) : complète la date de
+    # disponibilité des Transfers récents et relit les payouts des comptes connectés concernés.
+    # Filet du webhook payout.* des comptes connectés, donc fréquence faible.
+    bank-payout-sync:
+      enabled: ${BANK_PAYOUT_SYNC_ENABLED:true}
+      interval: PT6H
+      initial-delay: PT3M
+      lookback-days: 60
+      batch-size: 100
     auto-heal:
       enabled: ${PAYMENT_AUTO_HEAL_ENABLED:true}
       interval: PT15M

@@ -804,6 +804,20 @@ public final class NotificationTexts {
      * ({@code WalletAmountText#format}) ; le motif interne de la correction n'apparaît
      * jamais ici.
      */
+    /** Virement Stripe arrivé sur la banque du voyageur ({@code formattedAmount} déjà formaté, peut être vide). */
+    public static NotificationText bankPayoutPaid(Messages m, String formattedAmount) {
+        boolean noAmount = formattedAmount == null || formattedAmount.isBlank();
+        return new NotificationText(m.get("notification.bank-payout-paid.title"),
+                noAmount ? m.get("notification.bank-payout-paid.body-no-amount")
+                        : m.get("notification.bank-payout-paid.body", formattedAmount));
+    }
+
+    /** Virement Stripe vers la banque du voyageur refusé : il doit mettre à jour son compte bancaire. */
+    public static NotificationText bankPayoutFailed(Messages m) {
+        return new NotificationText(m.get("notification.bank-payout-failed.title"),
+                m.get("notification.bank-payout-failed.body"));
+    }
+
     public static NotificationText walletAdjustedByAdmin(Messages m, boolean credit, String amountText) {
         String key = credit ? "notification.wallet-admin-credit" : "notification.wallet-admin-debit";
         return new NotificationText(m.get(key + ".title"), m.get(key + ".body", amountText));
