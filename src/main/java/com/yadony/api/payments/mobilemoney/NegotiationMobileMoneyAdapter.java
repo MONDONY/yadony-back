@@ -17,8 +17,10 @@ public class NegotiationMobileMoneyAdapter implements NegotiationMobileMoneyPort
 
     @Override
     public PendingDeposit createPendingDeposit(UUID threadId, UUID senderId, UUID travelerId,
-                                               BigDecimal net, BigDecimal commissionRate, String currency) {
-        return service.createPendingPayment(threadId, senderId, travelerId, net, commissionRate, currency);
+                                               BigDecimal net, BigDecimal commissionRate, String currency,
+                                               UUID commissionGridId, BigDecimal gridCommission) {
+        return service.createPendingPayment(threadId, senderId, travelerId, net, commissionRate, currency,
+                commissionGridId, gridCommission);
     }
 
     @Override

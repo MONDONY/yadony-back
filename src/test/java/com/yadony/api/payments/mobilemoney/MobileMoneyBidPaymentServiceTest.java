@@ -658,6 +658,75 @@ class MobileMoneyBidPaymentServiceTest {
         assertThat(bid.getPromoCodeId()).isEqualTo(promoCodeId);
     }
 
+    /**
+     * Service dont la tarification est le VRAI {@link MobileMoneyBidPricing}, sur un bid figé à
+     * une grille 7 % (minimum 650 FCFA) portant le code {@code WELCOME05} (5 points).
+     */
+    private MobileMoneyBidPaymentService gridPricedService(BigDecimal pricePerKg) {
+        com.yadony.api.common.commission.CommissionGrid grid = new com.yadony.api.common.commission.CommissionGrid(
+                UUID.randomUUID(), LocalDateTime.of(2026, 10, 1, 0, 0),
+                List.of(new com.yadony.api.common.commission.CommissionTier(BigDecimal.ZERO, new BigDecimal("0.07"))),
+                com.yadony.api.common.commission.CommissionGridService.defaultMinimums());
+        com.yadony.api.matching.BidGridItemRepository gridItems = mock(com.yadony.api.matching.BidGridItemRepository.class);
+        com.yadony.api.common.CommissionRateResolver rates = mock(com.yadony.api.common.CommissionRateResolver.class);
+        com.yadony.api.common.commission.CommissionGridService gridService =
+                mock(com.yadony.api.common.commission.CommissionGridService.class);
+        announcement.setPricePerKg(pricePerKg);
+        bid.setCommissionGridId(grid.id());
+        bid.setPromoCode("WELCOME05");
+        when(gridService.require(grid.id())).thenReturn(grid);
+        when(rates.reductions(traveler.getId(), sender.getId(), "WELCOME05", sender.getId(), bid.getId()))
+                .thenReturn(new com.yadony.api.common.commission.CommissionReductions(null,
+                        com.yadony.api.promo.PromoDiscount.points(new BigDecimal("0.05")), null));
+        stubLocks();
+        when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.empty());
+        return new MobileMoneyBidPaymentService(bidRepository, announcementRepository,
+                userRepository, paymentRepository, operations, submission, new PawapayProviderResolver(client),
+                new MobileMoneyBidPricing(gridItems, rates, gridService), firebaseContact, audit, events,
+                promoService, voucherService, transactionManager, enabledProps());
+    }
+
+    /**
+     * Sur 5 000 FCFA, le minimum (650) absorbe tout le gain du code : il n'est pas racheté
+     * (spec §4.2) ; le bon de parrainage reste consommé et le paiement porte le minimum.
+     */
+    @Test
+    void acceptBid_promoIneffective_notRedeemed() {
+        MobileMoneyBidPaymentService gridPriced = gridPricedService(new BigDecimal("1000"));
+        ArgumentCaptor<PaymentEntity> saved = ArgumentCaptor.forClass(PaymentEntity.class);
+        when(paymentRepository.save(saved.capture())).thenAnswer(inv -> { PaymentEntity p = inv.getArgument(0); ReflectionTestUtils.setField(p, "id", UUID.randomUUID()); return p; });
+
+        gridPriced.acceptBid(bid.getId(), traveler.getId());
+
+        verify(promoService, never()).redeem(any(), any(), any(), any());
+        assertThat(bid.getPromoCodeId()).isNull();
+        verify(voucherService).consume(sender.getId(), bid.getId());
+        assertThat(saved.getValue().getAmount()).isEqualByComparingTo("5650");
+        assertThat(saved.getValue().getCommissionAmount()).isEqualByComparingTo("650");
+        assertThat(bid.getCommissionRate()).isEqualByComparingTo("0.13");
+    }
+
+    /** Sur 100 000 FCFA, le code baisse la commission (7 000 → 2 000) : racheté au taux effectif figé. */
+    @Test
+    void acceptBid_grid_effectivePromo_redeemedAtFrozenEffectiveRate() {
+        MobileMoneyBidPaymentService gridPriced = gridPricedService(new BigDecimal("20000"));
+        ArgumentCaptor<PaymentEntity> saved = ArgumentCaptor.forClass(PaymentEntity.class);
+        when(paymentRepository.save(saved.capture())).thenAnswer(inv -> { PaymentEntity p = inv.getArgument(0); ReflectionTestUtils.setField(p, "id", UUID.randomUUID()); return p; });
+        PromoRedemptionEntity redemption = mock(PromoRedemptionEntity.class);
+        UUID promoCodeId = UUID.randomUUID();
+        when(redemption.getPromoCodeId()).thenReturn(promoCodeId);
+        when(promoService.redeem(eq("WELCOME05"), eq(sender.getId()), eq(bid.getId()), any())).thenReturn(redemption);
+
+        gridPriced.acceptBid(bid.getId(), traveler.getId());
+
+        ArgumentCaptor<BigDecimal> rate = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(promoService).redeem(eq("WELCOME05"), eq(sender.getId()), eq(bid.getId()), rate.capture());
+        assertThat(rate.getValue()).isEqualByComparingTo("0.02").isEqualByComparingTo(bid.getCommissionRate());
+        assertThat(bid.getPromoCodeId()).isEqualTo(promoCodeId);
+        assertThat(saved.getValue().getAmount()).isEqualByComparingTo("102000");
+        assertThat(saved.getValue().getCommissionAmount()).isEqualByComparingTo("2000");
+    }
+
     /** Même repli silencieux que MobileMoneyBidPricing : un promo devenu invalide entre la
      * création et l'acceptation ne doit ni faire échouer acceptBid, ni être racheté. */
     @Test

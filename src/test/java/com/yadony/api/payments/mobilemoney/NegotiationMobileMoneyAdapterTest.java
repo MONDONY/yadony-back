@@ -34,20 +34,22 @@ class NegotiationMobileMoneyAdapterTest {
     private final UUID travelerId = UUID.randomUUID();
 
     @Test
-    @DisplayName("createPendingDeposit délègue à service.createPendingPayment avec les mêmes arguments")
+    @DisplayName("createPendingDeposit délègue à service.createPendingPayment avec les mêmes arguments, grille comprise")
     void createPendingDeposit_delegates() {
         BigDecimal net = new BigDecimal("35.00");
         BigDecimal rate = new BigDecimal("0.12");
+        UUID gridId = UUID.randomUUID();
+        BigDecimal gridCommission = new BigDecimal("4.20");
         LocalDateTime expiresAt = LocalDateTime.now(ZoneOffset.UTC).plusMinutes(30);
         NegotiationMobileMoneyPort.PendingDeposit expected =
             new NegotiationMobileMoneyPort.PendingDeposit(UUID.randomUUID(), net, new BigDecimal("4.20"), expiresAt);
-        when(service.createPendingPayment(threadId, senderId, travelerId, net, rate, "XOF")).thenReturn(expected);
+        when(service.createPendingPayment(threadId, senderId, travelerId, net, rate, "XOF", gridId, gridCommission)).thenReturn(expected);
 
         NegotiationMobileMoneyPort.PendingDeposit result =
-            adapter.createPendingDeposit(threadId, senderId, travelerId, net, rate, "XOF");
+            adapter.createPendingDeposit(threadId, senderId, travelerId, net, rate, "XOF", gridId, gridCommission);
 
         assertThat(result).isSameAs(expected);
-        verify(service).createPendingPayment(threadId, senderId, travelerId, net, rate, "XOF");
+        verify(service).createPendingPayment(threadId, senderId, travelerId, net, rate, "XOF", gridId, gridCommission);
     }
 
     @Test

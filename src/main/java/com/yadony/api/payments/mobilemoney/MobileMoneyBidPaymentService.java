@@ -226,8 +226,10 @@ public class MobileMoneyBidPaymentService {
         // fait que LIRE le bon/le promo (CommissionRateResolver#resolve, lecture pure) pour
         // calculer le taux et dire si le promo a été pris — sans ce rachat/cette consommation
         // ici, un même code promo à usage unique ou un même bon de parrainage réduirait la
-        // commission d'un nombre illimité d'envois mobile money.
-        if (quote.promoApplied()) {
+        // commission d'un nombre illimité d'envois mobile money. Racheté seulement s'il baisse
+        // réellement la commission : sur un bid à grille, un code que le minimum rend sans effet
+        // n'est pas consommé (spec §4.2) ; le taux racheté est celui figé, borné sous 1.
+        if (quote.promoEffective()) {
             PromoRedemptionEntity redemption = promoService.redeem(bid.getPromoCode(), bid.getSenderId(), bidId,
                     bid.getCommissionRate());
             bid.setPromoCodeId(redemption.getPromoCodeId());

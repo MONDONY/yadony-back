@@ -136,7 +136,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         when(paymentRepository.save(any())).thenAnswer(inv -> { setId(inv.getArgument(0), UUID.randomUUID()); return inv.getArgument(0); });
 
         NegotiationMobileMoneyPort.PendingDeposit pending = service.createPendingPayment(
-                threadId, senderId, travelerId, new BigDecimal("30000"), new BigDecimal("0.10"), "XOF");
+                threadId, senderId, travelerId, new BigDecimal("30000"), new BigDecimal("0.10"), "XOF", null, null);
 
         ArgumentCaptor<PaymentEntity> saved = ArgumentCaptor.forClass(PaymentEntity.class);
         verify(paymentRepository).save(saved.capture());
@@ -157,7 +157,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.of(existing));
 
         var pending = service.createPendingPayment(threadId, senderId, travelerId,
-                new BigDecimal("30000"), new BigDecimal("0.10"), "XOF");
+                new BigDecimal("30000"), new BigDecimal("0.10"), "XOF", null, null);
 
         assertThat(pending.paymentId()).isEqualTo(existing.getId());
         verify(paymentRepository, never()).save(any());
@@ -169,7 +169,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.of(existing));
         when(paymentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        service.createPendingPayment(threadId, senderId, travelerId, new BigDecimal("30000"), new BigDecimal("0.10"), "XOF");
+        service.createPendingPayment(threadId, senderId, travelerId, new BigDecimal("30000"), new BigDecimal("0.10"), "XOF", null, null);
 
         assertThat(existing.getStatus()).isEqualTo(PaymentStatus.PENDING);
         assertThat(existing.getRail()).isEqualTo(PaymentRail.PAWAPAY);
@@ -180,7 +180,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.of(payment(PaymentStatus.ESCROW)));
 
         assertThatThrownBy(() -> service.createPendingPayment(threadId, senderId, travelerId,
-                new BigDecimal("30000"), new BigDecimal("0.10"), "XOF"))
+                new BigDecimal("30000"), new BigDecimal("0.10"), "XOF", null, null))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("negotiation-deposit-already-settled"));
     }
@@ -193,7 +193,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         when(paymentRepository.findByNegotiationThreadId(threadId)).thenReturn(Optional.of(card));
 
         assertThatThrownBy(() -> service.createPendingPayment(threadId, senderId, travelerId,
-                new BigDecimal("30000"), new BigDecimal("0.10"), "XOF"))
+                new BigDecimal("30000"), new BigDecimal("0.10"), "XOF", null, null))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("negotiation-card-escrow-in-flight"));
     }

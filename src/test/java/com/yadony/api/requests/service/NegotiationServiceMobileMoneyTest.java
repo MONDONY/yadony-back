@@ -139,7 +139,7 @@ class NegotiationServiceMobileMoneyTest {
     @Test
     void prepare_awaitingPayment_movesToAwaitingDeposit_createsPayment_publishesPending() {
         LocalDateTime expiresAt = LocalDateTime.now().plusMinutes(30);
-        when(mobileMoneyPort.createPendingDeposit(thread.getId(), senderId, travelerId, new BigDecimal("30000"), new BigDecimal("0.10"), "XOF"))
+        when(mobileMoneyPort.createPendingDeposit(thread.getId(), senderId, travelerId, new BigDecimal("30000"), new BigDecimal("0.10"), "XOF", null, null))
                 .thenReturn(new NegotiationMobileMoneyPort.PendingDeposit(UUID.randomUUID(), new BigDecimal("33000"), new BigDecimal("3000"), expiresAt));
 
         var prepared = service.prepareMobileMoneyDeposit(senderId, thread.getId());
@@ -162,7 +162,7 @@ class NegotiationServiceMobileMoneyTest {
         thread.setCommissionRate(null);
         thread.setPromoCode("WELCOME05");
         when(commissionRateResolver.resolve(travelerId, senderId, "WELCOME05")).thenReturn(new BigDecimal("0.05"));
-        when(mobileMoneyPort.createPendingDeposit(thread.getId(), senderId, travelerId, new BigDecimal("30000"), new BigDecimal("0.05"), "XOF"))
+        when(mobileMoneyPort.createPendingDeposit(thread.getId(), senderId, travelerId, new BigDecimal("30000"), new BigDecimal("0.05"), "XOF", null, null))
                 .thenReturn(new NegotiationMobileMoneyPort.PendingDeposit(UUID.randomUUID(), new BigDecimal("31500"), new BigDecimal("1500"), LocalDateTime.now(ZoneOffset.UTC).plusMinutes(30)));
 
         service.prepareMobileMoneyDeposit(senderId, thread.getId());
@@ -180,7 +180,7 @@ class NegotiationServiceMobileMoneyTest {
                 .thenThrow(new com.yadony.api.common.YadonyBusinessException(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
                         "promo-expired", "Promo Expired", "Ce code est expiré."));
         when(commissionRateResolver.resolve(travelerId, senderId)).thenReturn(new BigDecimal("0.12"));
-        when(mobileMoneyPort.createPendingDeposit(thread.getId(), senderId, travelerId, new BigDecimal("30000"), new BigDecimal("0.12"), "XOF"))
+        when(mobileMoneyPort.createPendingDeposit(thread.getId(), senderId, travelerId, new BigDecimal("30000"), new BigDecimal("0.12"), "XOF", null, null))
                 .thenReturn(new NegotiationMobileMoneyPort.PendingDeposit(UUID.randomUUID(), new BigDecimal("33600"), new BigDecimal("3600"), LocalDateTime.now(ZoneOffset.UTC).plusMinutes(30)));
 
         service.prepareMobileMoneyDeposit(senderId, thread.getId());
@@ -193,7 +193,7 @@ class NegotiationServiceMobileMoneyTest {
     void prepare_withoutPromo_andNoFrozenRate_usesBaseRate() {
         thread.setCommissionRate(null);
         when(commissionRateResolver.resolve(travelerId, senderId)).thenReturn(new BigDecimal("0.12"));
-        when(mobileMoneyPort.createPendingDeposit(thread.getId(), senderId, travelerId, new BigDecimal("30000"), new BigDecimal("0.12"), "XOF"))
+        when(mobileMoneyPort.createPendingDeposit(thread.getId(), senderId, travelerId, new BigDecimal("30000"), new BigDecimal("0.12"), "XOF", null, null))
                 .thenReturn(new NegotiationMobileMoneyPort.PendingDeposit(UUID.randomUUID(), new BigDecimal("33600"), new BigDecimal("3600"), LocalDateTime.now(ZoneOffset.UTC).plusMinutes(30)));
 
         service.prepareMobileMoneyDeposit(senderId, thread.getId());
@@ -207,12 +207,118 @@ class NegotiationServiceMobileMoneyTest {
         thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);
         thread.setPaymentMethod(PaymentMethod.MOBILE_MONEY);
         thread.setDepositExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(10));
-        when(mobileMoneyPort.createPendingDeposit(any(), any(), any(), any(), any(), any()))
+        when(mobileMoneyPort.createPendingDeposit(any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new NegotiationMobileMoneyPort.PendingDeposit(UUID.randomUUID(), new BigDecimal("33000"), new BigDecimal("3000"), LocalDateTime.now(ZoneOffset.UTC).plusMinutes(30)));
 
         var prepared = service.prepareMobileMoneyDeposit(senderId, thread.getId());
 
         assertThat(prepared.expiresAt()).isEqualTo(thread.getDepositExpiresAt()); // l'échéance initiale est conservée
+        verify(eventPublisher, never()).publishEvent(any(NegotiationDepositPendingEvent.class));
+    }
+
+    // ── Fil à grille figée (spec §4.4) ───────────────────────────────────
+
+    private final UUID gridId = UUID.randomUUID();
+
+    private com.yadony.api.common.commission.ThreadCommissionPricing gridThread(String promo,
+            com.yadony.api.common.commission.CommissionResult result) {
+        var pricing = org.mockito.Mockito.mock(com.yadony.api.common.commission.ThreadCommissionPricing.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "threadCommissionPricing", pricing);
+        thread.setCommissionGridId(gridId);
+        thread.setCommissionRate(null);
+        thread.setPromoCode(promo);
+        when(pricing.price(gridId, thread.getCurrentPriceEur(), "XOF", travelerId, senderId, thread.getId(), promo))
+                .thenReturn(result);
+        return pricing;
+    }
+
+    private static com.yadony.api.common.commission.CommissionResult result(String net, String commission,
+                                                                          String rate, boolean promoEffective) {
+        return new com.yadony.api.common.commission.CommissionResult(new BigDecimal(net), new BigDecimal(commission),
+                new BigDecimal(net).add(new BigDecimal(commission)), new BigDecimal(rate), false, promoEffective);
+    }
+
+    private NegotiationMobileMoneyPort.PendingDeposit pending(String gross, String commission) {
+        return new NegotiationMobileMoneyPort.PendingDeposit(UUID.randomUUID(), new BigDecimal(gross),
+                new BigDecimal(commission), LocalDateTime.now(ZoneOffset.UTC).plusMinutes(30));
+    }
+
+    @Test
+    void prepare_gridThread_depositsGridCommission_andFreezesEffectiveRate() {
+        gridThread(null, result("30000", "2100", "0.070000", false));
+        when(mobileMoneyPort.createPendingDeposit(thread.getId(), senderId, travelerId, new BigDecimal("30000"),
+                new BigDecimal("0.070000"), "XOF", gridId, new BigDecimal("2100")))
+                .thenReturn(pending("32100", "2100"));
+
+        var prepared = service.prepareMobileMoneyDeposit(senderId, thread.getId());
+
+        assertThat(prepared.gross()).isEqualByComparingTo("32100");
+        assertThat(thread.getCommissionRate()).isEqualByComparingTo("0.07");
+        assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_DEPOSIT);
+        ArgumentCaptor<NegotiationDepositPendingEvent> ev = ArgumentCaptor.forClass(NegotiationDepositPendingEvent.class);
+        verify(eventPublisher).publishEvent(ev.capture());
+        assertThat(ev.getValue().gross()).isEqualByComparingTo("32100");
+        verifyNoInteractions(commissionRateResolver);
+    }
+
+    /** Minimum au-dessus du net : taux figé borné sous 1 ; le montant déposé reste celui de la grille. */
+    @Test
+    void prepare_gridThread_minimumAboveNet_freezesBoundedRate() {
+        thread.setCurrentPriceEur(new BigDecimal("500"));
+        gridThread(null, result("500", "650", "1.300000", false));
+        when(mobileMoneyPort.createPendingDeposit(thread.getId(), senderId, travelerId, new BigDecimal("500"),
+                new BigDecimal("0.999999"), "XOF", gridId, new BigDecimal("650")))
+                .thenReturn(pending("1150", "650"));
+
+        var prepared = service.prepareMobileMoneyDeposit(senderId, thread.getId());
+
+        assertThat(prepared.gross()).isEqualByComparingTo("1150");
+        assertThat(thread.getCommissionRate()).isEqualByComparingTo("0.999999");
+    }
+
+    @Test
+    void prepare_gridThread_effectivePromo_keepsPromoForRedemptionAtSeal() {
+        gridThread("WELCOME05", result("30000", "650", "0.021667", true));
+        when(mobileMoneyPort.createPendingDeposit(thread.getId(), senderId, travelerId, new BigDecimal("30000"),
+                new BigDecimal("0.021667"), "XOF", gridId, new BigDecimal("650")))
+                .thenReturn(pending("30650", "650"));
+
+        service.prepareMobileMoneyDeposit(senderId, thread.getId());
+
+        assertThat(thread.getPromoCode()).isEqualTo("WELCOME05");
+        assertThat(thread.getCommissionRate()).isEqualByComparingTo("0.021667");
+    }
+
+    /** Code sans effet (minimum) ou invalide : effacé du fil, le scellement ne le rachète jamais. */
+    @Test
+    void prepare_gridThread_ineffectivePromo_isClearedFromThread() {
+        thread.setCurrentPriceEur(new BigDecimal("5000"));
+        gridThread("WELCOME05", result("5000", "650", "0.130000", false));
+        when(mobileMoneyPort.createPendingDeposit(thread.getId(), senderId, travelerId, new BigDecimal("5000"),
+                new BigDecimal("0.130000"), "XOF", gridId, new BigDecimal("650")))
+                .thenReturn(pending("5650", "650"));
+
+        service.prepareMobileMoneyDeposit(senderId, thread.getId());
+
+        assertThat(thread.getPromoCode()).isNull();
+        assertThat(thread.getCommissionRate()).isEqualByComparingTo("0.13");
+    }
+
+    /** Nouvel essai d'un dépôt déjà en cours : ni le code ni le taux du fil ne bougent. */
+    @Test
+    void prepare_gridThread_alreadyAwaitingDeposit_leavesPromoAndRateUntouched() {
+        gridThread("WELCOME05", result("30000", "2100", "0.070000", false));
+        thread.setCommissionRate(new BigDecimal("0.021667"));
+        thread.setStatus(NegotiationThreadStatus.AWAITING_DEPOSIT);
+        thread.setDepositExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(10));
+        when(mobileMoneyPort.createPendingDeposit(any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(pending("30650", "650"));
+
+        var prepared = service.prepareMobileMoneyDeposit(senderId, thread.getId());
+
+        assertThat(prepared.gross()).as("montants du paiement déjà créé").isEqualByComparingTo("30650");
+        assertThat(thread.getPromoCode()).isEqualTo("WELCOME05");
+        assertThat(thread.getCommissionRate()).isEqualByComparingTo("0.021667");
         verify(eventPublisher, never()).publishEvent(any(NegotiationDepositPendingEvent.class));
     }
 
@@ -272,7 +378,7 @@ class NegotiationServiceMobileMoneyTest {
 
         assertThatThrownBy(() -> service.prepareMobileMoneyDeposit(senderId, thread.getId()))
                 .isInstanceOf(ResponseStatusException.class).hasMessageContaining("announcement/not-active");
-        verify(mobileMoneyPort, never()).createPendingDeposit(any(), any(), any(), any(), any(), any());
+        verify(mobileMoneyPort, never()).createPendingDeposit(any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test

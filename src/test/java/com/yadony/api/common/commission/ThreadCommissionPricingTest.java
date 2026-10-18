@@ -1,11 +1,14 @@
 package com.yadony.api.common.commission;
 
 import com.yadony.api.common.CommissionRateResolver;
+import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.promo.PromoDiscount;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -119,5 +122,53 @@ class ThreadCommissionPricingTest {
         assertThat(result.minimumApplied()).isFalse();
         assertThat(result.promoEffective()).isFalse();
         verifyNoInteractions(gridService, rateResolver);
+    }
+
+    // ── Code promo du fil (rail mobile money, comme la carte) ──────────────
+
+    private CommissionResult priceWithPromo(String net, String promoCode) {
+        return pricing.price(GRID_7_6_5.id(), new BigDecimal(net), "XOF", travelerId, senderId, threadId, promoCode);
+    }
+
+    @Test
+    void price_withValidPromo_isAppliedToEffectiveRate() {
+        when(rateResolver.reductions(travelerId, senderId, "WELCOME05", senderId, threadId))
+                .thenReturn(new CommissionReductions(null, PromoDiscount.points(new BigDecimal("0.05")), null));
+
+        CommissionResult result = priceWithPromo("100000", "WELCOME05");
+
+        // Grille 6 656 FCFA (6,656 %) − 5 points = 1,656 % → 1 656.
+        assertThat(result.commission()).isEqualByComparingTo("1656");
+        assertThat(result.promoEffective()).isTrue();
+    }
+
+    @Test
+    void price_withPromoCancelledByMinimum_isNotEffective() {
+        when(rateResolver.reductions(travelerId, senderId, "WELCOME05", senderId, threadId))
+                .thenReturn(new CommissionReductions(null, PromoDiscount.points(new BigDecimal("0.05")), null));
+
+        CommissionResult result = priceWithPromo("5000", "WELCOME05");
+
+        assertThat(result.commission()).isEqualByComparingTo("650");
+        assertThat(result.promoEffective()).isFalse();
+    }
+
+    @Test
+    void price_withInvalidPromo_fallsBackWithoutCode() {
+        when(rateResolver.reductions(travelerId, senderId, "OLD", senderId, threadId))
+                .thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "promo-expired", "x", "x"));
+        reductions(CommissionReductions.NONE);
+
+        CommissionResult result = priceWithPromo("20000", "OLD");
+
+        assertThat(result.commission()).isEqualByComparingTo("1400");
+        assertThat(result.promoEffective()).isFalse();
+    }
+
+    @Test
+    void price_withBlankPromo_readsReductionsWithoutCode() {
+        reductions(CommissionReductions.NONE);
+
+        assertThat(priceWithPromo("20000", "  ").commission()).isEqualByComparingTo("1400");
     }
 }

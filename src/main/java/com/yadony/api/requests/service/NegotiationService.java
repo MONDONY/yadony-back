@@ -8,6 +8,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.commission.CommissionResult;
 import com.yadony.api.common.commission.ThreadCommissionPricing;
 import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.payments.PriceBreakdown;
@@ -1243,15 +1244,27 @@ public class NegotiationService {
         if (request.getRecipientName() == null || request.getRecipientPhone() == null) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "request/details-incomplete");
         }
-        BigDecimal rate = resolveDepositCommissionRate(thread, request.getSenderId());
+        // Fil à grille (figée à sa création, spec §4.4) : commission de la grille, minimum compris,
+        // par la source unique des fils ; le montant déposé est celui-ci, jamais net × taux. Sans
+        // grille : taux figé ou résolu, calcul hérité inchangé.
+        CommissionResult gridQuote = thread.getCommissionGridId() != null
+            ? depositGridQuote(thread, request.getSenderId()) : null;
+        BigDecimal rate = gridQuote != null
+            ? gridQuote.storableRate() : resolveDepositCommissionRate(thread, request.getSenderId());
         // Même garde que initiatePayment (carte) et settleCommission (cash), avant tout
         // engagement d'argent : le trajet dédié du voyageur peut avoir été retiré par la
         // modération entre l'accord de prix et ce dépôt.
         assertTravelerAnnouncementActive(thread.getTravelerAnnouncementId());
         NegotiationMobileMoneyPort.PendingDeposit pending = mobileMoneyPort.createPendingDeposit(
-            threadId, request.getSenderId(), thread.getTravelerId(), thread.getCurrentPriceEur(), rate, thread.getCurrency());
+            threadId, request.getSenderId(), thread.getTravelerId(), thread.getCurrentPriceEur(), rate, thread.getCurrency(),
+            thread.getCommissionGridId(), gridQuote != null ? gridQuote.commission() : null);
         if (alreadyPending) {
             return new PreparedDeposit(threadId, pending.paymentId(), pending.gross(), thread.getCurrency(), thread.getDepositExpiresAt());
+        }
+        if (gridQuote != null && !gridQuote.promoEffective()) {
+            // Code invalide, ou sans effet (le minimum annule le gain) : effacé du fil, sinon
+            // sealAcceptedThread l'émettrait et ThreadAcceptedBidListener le rachèterait pour rien.
+            thread.setPromoCode(null);
         }
         thread.setPaymentMethod(PaymentMethod.MOBILE_MONEY);
         thread.setCommissionRate(rate);
@@ -1304,6 +1317,18 @@ public class NegotiationService {
         }
         BigDecimal rate = displayRate(thread);
         return PriceBreakdown.fromNet(net, rate).gross();
+    }
+
+    /**
+     * Commission du dépôt mobile money d'un fil à grille : {@link ThreadCommissionPricing}, avec le
+     * code promo copié sur le fil comme la carte ({@code PaymentService.createNegotiationEscrow}),
+     * un code invalide retombant sur les réductions sans code. Recalculée à chaque essai sur la
+     * grille figée : le taux enregistré sur le fil, borné sous 1, n'est qu'informatif.
+     */
+    private CommissionResult depositGridQuote(NegotiationThreadEntity thread, UUID senderId) {
+        String code = thread.getPromoCode() != null ? thread.getPromoCode().strip() : null;
+        return threadCommissionPricing.price(thread.getCommissionGridId(), thread.getCurrentPriceEur(),
+            thread.getCurrency(), thread.getTravelerId(), senderId, thread.getId(), code);
     }
 
     /**
