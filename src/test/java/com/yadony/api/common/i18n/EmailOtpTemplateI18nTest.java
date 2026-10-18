@@ -45,7 +45,7 @@ class EmailOtpTemplateI18nTest {
     void rendLeGabaritOtpEnFrancais() {
         String html = render(Locale.FRENCH);
 
-        assertThat(html).contains("Vérification de compte");
+        assertThat(html).contains("Voici votre code de vérification").contains("123456 est votre code Yadony");
         assertThat(html).doesNotContain("??");
     }
 
@@ -53,8 +53,17 @@ class EmailOtpTemplateI18nTest {
     void rendLeGabaritOtpEnAnglais() {
         String html = render(Locale.ENGLISH);
 
-        assertThat(html).contains("Account verification");
+        assertThat(html).contains("Here is your verification code").contains("123456 is your Yadony code");
         assertThat(html).doesNotContain("??");
+    }
+
+    @Test
+    void afficheUnChiffreParCaseDansLOrdre() {
+        String html = render(Locale.FRENCH);
+
+        assertThat(html.split("class=\"digit\"", -1)).hasSize(7);
+        assertThat(html.replaceAll("\\s+", ""))
+                .containsSubsequence(">1</td>", ">2</td>", ">3</td>", ">4</td>", ">5</td>", ">6</td>");
     }
 
     private String render(Locale locale) {
