@@ -36,6 +36,17 @@ class TravelerSubscriptionRepositoryTest {
     }
 
     @Test
+    void markNewIfUnseen_posesTheFlagOnlyOnce() {
+        TravelerSubscriptionEntity sub = new TravelerSubscriptionEntity();
+        sub.setSenderId(UUID.randomUUID());
+        sub.setTravelerId(UUID.randomUUID());
+        sub = repo.saveAndFlush(sub);
+
+        assertThat(repo.markNewIfUnseen(sub.getId())).isEqualTo(1);
+        assertThat(repo.markNewIfUnseen(sub.getId())).isEqualTo(0);
+    }
+
+    @Test
     void findEnrichedBySenderId_fallsBackToPlaceholderName_whenTravelerHasNoFirstOrLastName() {
         UserEntity traveler = new UserEntity();
         traveler.setFirebaseUid("uid-" + UUID.randomUUID());
