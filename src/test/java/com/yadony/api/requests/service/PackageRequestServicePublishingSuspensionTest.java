@@ -116,7 +116,8 @@ class PackageRequestServicePublishingSuspensionTest {
         // Real mapper wired to the same mocks so SearchTests assertions remain valid
         PackageRequestSearchMapper realMapper = new PackageRequestSearchMapper(
                 userRepository, cityRepository, storageService, photoService,
-                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3));
+                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
+                org.mockito.Mockito.mock(com.yadony.api.common.commission.CommissionGridService.class));
         service = new PackageRequestService(
                 repository, userRepository, eventPublisher, auditService, config,
                 threadRepository, cityRepository, storageService, photoService, favoriteRepository, activeCurrencyResolver,

@@ -40,7 +40,15 @@ public record PackageRequestAcceptedEvent(
     /** Devise du fil : {@code agreedPriceEur} (net) est exprimé dans cette devise, pas en euros. */
     String currency,
     /** Grille de commission figée sur le fil ; recopiée sur le bid matérialisé (null : chemin hérité). */
-    UUID commissionGridId
+    UUID commissionGridId,
+    /**
+     * Fil à grille dont l'expéditeur a payé la commission (carte, mobile money) : son total,
+     * frais compris, calculé au scellement comme par les rails, avant que le code promo ne soit
+     * racheté (le revalider ensuite le ferait échouer et annoncerait un total sans la remise).
+     * {@code null} sans grille (brut hérité recalculé depuis {@link #commissionRate}) et en
+     * espèces (la commission est prélevée au voyageur, l'expéditeur paie le net).
+     */
+    BigDecimal senderGross
 ) {
     /** Sans devise : euros (anciens appelants de test). */
     public PackageRequestAcceptedEvent(UUID threadId, UUID packageRequestId, UUID senderId,
@@ -58,6 +66,6 @@ public record PackageRequestAcceptedEvent(
                 travelerAnnouncementId, weightKg, description, contentCategory, paymentIntentId,
                 recipientName, recipientPhone, disclaimerSignedAt, disclaimerSignedIp,
                 paymentMethod, photoObjectKeys, commissionChargedVia, promoCode, commissionRate,
-                null, null);
+                null, null, null);
     }
 }

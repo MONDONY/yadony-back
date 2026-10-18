@@ -884,7 +884,7 @@ class NegotiationControllerIT {
         var quote = new NegotiationQuoteResponse(
             new java.math.BigDecimal("40.00"), new java.math.BigDecimal("0.12"),
             new java.math.BigDecimal("4.80"), new java.math.BigDecimal("42.40"),
-            true, "Code WELCOME6 : 6 % de réduction");
+            true, "Code WELCOME6 : 6 % de réduction", false, null, null, null);
         when(service.quote(eq(SENDER_UUID), eq(threadId), eq("WELCOME6"))).thenReturn(quote);
 
         mockMvc.perform(get("/negotiations/{id}/quote", threadId)

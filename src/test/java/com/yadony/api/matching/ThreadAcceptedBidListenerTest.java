@@ -124,7 +124,7 @@ class ThreadAcceptedBidListenerTest {
                     "Vêtements", "CLOTHING", "pi_test", "Fatou Diop", "+221771234567",
                     DISCLAIMER_AT, "1.2.3.4",
                     com.yadony.api.payments.cash.PaymentMethod.STRIPE, java.util.List.of(),
-                    null, null, null, "EUR", gridId));
+                    null, null, null, "EUR", gridId, null));
 
             ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
             verify(bidRepository).save(captor.capture());

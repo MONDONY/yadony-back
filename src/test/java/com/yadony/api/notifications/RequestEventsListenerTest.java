@@ -136,6 +136,27 @@ class RequestEventsListenerTest {
     }
 
     @Test
+    void onPackageRequestAccepted_gridThread_senderToldTheRailsTotal() {
+        UUID senderId = UUID.randomUUID();
+        // Fil à grille : taux enregistré informatif (1,40 / 20), total réel porté par l'événement
+        // (code promo déduit, calculé au scellement comme par les rails).
+        var event = new PackageRequestAcceptedEvent(
+            UUID.randomUUID(), UUID.randomUUID(), senderId, UUID.randomUUID(), new BigDecimal("20.00"),
+            null, new BigDecimal("5"), "test colis", "vetements", null, "Fatou Diop", "+221771234567",
+            java.time.LocalDateTime.now(), "1.2.3.4", com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY,
+            java.util.List.of(), null, "WELCOME5", new BigDecimal("0.070000"), "EUR", UUID.randomUUID(),
+            new BigDecimal("21.00"));
+
+        listener.onPackageRequestAccepted(event);
+
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(dispatcher).notifyUser(eq(senderId), anyString(), body.capture(), anyMap(), eq(false));
+        assertThat(body.getValue())
+            .contains(NotificationTexts.amount(new BigDecimal("21.00"), "EUR"))
+            .doesNotContain(NotificationTexts.amount(new BigDecimal("21.40"), "EUR"));
+    }
+
+    @Test
     void onNegotiationAwaitingTrip_notifiesTraveler() {
         UUID travelerId = UUID.randomUUID();
         var event = new com.yadony.api.requests.event.NegotiationAwaitingTripEvent(

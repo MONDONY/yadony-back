@@ -175,4 +175,10 @@ class ThreadCommissionPricingTest {
 
         assertThat(priceWithPromo("20000", "  ").commission()).isEqualByComparingTo("1400");
     }
+
+    @Test
+    void minimum_isTheFrozenGridMinimumOfTheThreadCurrency() {
+        assertThat(pricing.minimum(GRID_7_6_5.id(), "XOF")).isEqualByComparingTo("650");
+        assertThat(pricing.minimum(GRID_7_6_5.id(), null)).isEqualByComparingTo("1.00");
+    }
 }

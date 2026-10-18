@@ -331,7 +331,7 @@ public class NegotiationService {
         eventPublisher.publishEvent(new NegotiationStartedEvent(
             saved.getId(), saved.getPackageRequestId(),
             request.getSenderId(), travelerId, req.proposedPriceEur(),
-            saved.getCurrency(), senderGross(saved, req.proposedPriceEur())
+            saved.getCurrency(), senderGross(saved, request.getSenderId(), req.proposedPriceEur())
         ));
 
         auditService.log("NEGOTIATION_THREAD", saved.getId(), "CREATED", travelerId,
@@ -423,7 +423,7 @@ public class NegotiationService {
         eventPublisher.publishEvent(new NegotiationCounterPostedEvent(
             threadId, msg.getId(), callerId, toUser, req.proposedPriceEur(),
             thread.getRoundsCount().intValue(), thread.getCurrency(),
-            toUser.equals(senderId) ? senderGross(thread, req.proposedPriceEur()) : req.proposedPriceEur()
+            toUser.equals(senderId) ? senderGross(thread, senderId, req.proposedPriceEur()) : req.proposedPriceEur()
         ));
         auditService.log("NEGOTIATION_THREAD", threadId, "COUNTER_POSTED", callerId,
             Map.of("price", req.proposedPriceEur().toString(),
@@ -682,7 +682,7 @@ public class NegotiationService {
                 thread.getId(), request.getId(),
                 request.getSenderId(), thread.getTravelerId(),
                 thread.getCurrentPriceEur(), thread.getTravelerAnnouncementId(),
-                thread.getCurrency(), senderGross(thread, thread.getCurrentPriceEur())
+                thread.getCurrency(), senderGross(thread, request.getSenderId(), thread.getCurrentPriceEur())
             ));
         } else {
             eventPublisher.publishEvent(new NegotiationAwaitingTripEvent(
@@ -744,7 +744,7 @@ public class NegotiationService {
             thread.getId(), request.getId(),
             request.getSenderId(), thread.getTravelerId(),
             thread.getCurrentPriceEur(), travelerAnnouncementId,
-            thread.getCurrency(), senderGross(thread, thread.getCurrentPriceEur())
+            thread.getCurrency(), senderGross(thread, request.getSenderId(), thread.getCurrentPriceEur())
         ));
         auditService.log("NEGOTIATION_THREAD", threadId, "TRIP_LINKED", callerId,
             Map.of("announcementId", travelerAnnouncementId.toString(),
@@ -1076,7 +1076,7 @@ public class NegotiationService {
             thread.getId(), request.getId(),
             request.getSenderId(), thread.getTravelerId(),
             thread.getCurrentPriceEur(), savedAnn.getId(),
-            thread.getCurrency(), senderGross(thread, thread.getCurrentPriceEur())
+            thread.getCurrency(), senderGross(thread, request.getSenderId(), thread.getCurrentPriceEur())
         ));
         auditService.log("NEGOTIATION_THREAD", threadId, "DEDICATED_TRIP_CREATED", callerId,
             Map.of("announcementId", savedAnn.getId().toString(),
@@ -1307,13 +1307,19 @@ public class NegotiationService {
     }
 
     /**
-     * Brut vu (et payé) par l'expéditeur pour un net du fil : taux figé sur le fil s'il
-     * existe, sinon le taux de base, celui de l'écran du fil ({@code gross} de la réponse).
-     * Les notifications à l'expéditeur annoncent ce montant, pas le net du voyageur.
+     * Brut vu (et payé) par l'expéditeur pour un net du fil, celui de l'écran du fil
+     * ({@code gross} de la réponse). Les notifications à l'expéditeur annoncent ce montant, pas
+     * le net du voyageur. Fil à grille : {@link ThreadCommissionPricing} avec le code promo du
+     * fil, le calcul des rails carte et mobile money. Sans grille : taux figé sur le fil s'il
+     * existe, sinon le taux de base, calcul hérité inchangé.
      */
-    private BigDecimal senderGross(NegotiationThreadEntity thread, BigDecimal net) {
+    private BigDecimal senderGross(NegotiationThreadEntity thread, UUID senderId, BigDecimal net) {
         if (net == null) {
             return null;
+        }
+        if (thread.getCommissionGridId() != null) {
+            return threadCommissionPricing.price(thread.getCommissionGridId(), net, thread.getCurrency(),
+                thread.getTravelerId(), senderId, thread.getId(), thread.getPromoCode()).gross();
         }
         BigDecimal rate = displayRate(thread);
         return PriceBreakdown.fromNet(net, rate).gross();
@@ -1695,7 +1701,11 @@ public class NegotiationService {
             thread.getPromoCode(),
             thread.getCommissionRate(),
             thread.getCurrency(),
-            thread.getCommissionGridId()
+            thread.getCommissionGridId(),
+            // Calculé ici, avant que ThreadAcceptedBidListener ne rachète le code : revalidé
+            // ensuite (limite d'usage atteinte), il retomberait sur le total sans la remise.
+            thread.getCommissionGridId() != null && thread.getPaymentMethod() != PaymentMethod.CASH
+                ? senderGross(thread, request.getSenderId(), thread.getCurrentPriceEur()) : null
         ));
         // paymentIntentId est null pour un accord cash scellé par settleCommission/
         // confirmCommission (aucun escrow Stripe pour ce fil) — Map.of() rejette les
@@ -2176,6 +2186,9 @@ public class NegotiationService {
         // le thread depuis la publication de la demande (jamais resaisi par défaut).
         String rawCode = promoCode != null ? promoCode : thread.getPromoCode();
         String code = rawCode != null ? rawCode.strip() : null;
+        if (thread.getCommissionGridId() != null) {
+            return quoteWithGrid(thread, callerId, code);
+        }
 
         boolean promoApplied = false;
         String promoLabel = null;
@@ -2203,7 +2216,48 @@ public class NegotiationService {
             totalEur = net.add(commissionEur).setScale(2, RoundingMode.HALF_UP);
         }
 
-        return new NegotiationQuoteResponse(net, rate, commissionEur, totalEur, promoApplied, promoLabel);
+        return new NegotiationQuoteResponse(net, rate, commissionEur, totalEur, promoApplied, promoLabel,
+            false, null, null, null);
+    }
+
+    /**
+     * Devis d'un fil à grille figée (spec §4.4, §5.4) par {@link ThreadCommissionPricing}, la
+     * source des rails : le total affiché est celui que la carte ou le mobile money prélèvera.
+     * Sémantique des champs hérités conservée : {@code commissionEur} et {@code rate} hors code,
+     * {@code totalEur} code déduit.
+     *
+     * <p>Le code est validé strictement d'abord, comme le devis hérité et {@code BidService.quote} :
+     * un code refusé remonte en 422, sinon l'expéditeur ne saurait jamais qu'il l'est (les rails,
+     * eux, retombent sans bruit sur le tarif sans code). Un code valide que le minimum rend sans
+     * effet n'est pas appliqué ({@code promoIneffectiveReason = COMMISSION_MINIMUM}).
+     */
+    private NegotiationQuoteResponse quoteWithGrid(NegotiationThreadEntity thread, UUID senderId, String code) {
+        boolean withCode = code != null && !code.isBlank();
+        if (withCode) {
+            commissionRateResolver.reductions(thread.getTravelerId(), senderId, code, senderId, thread.getId());
+        }
+        BigDecimal net = thread.getCurrentPriceEur();
+        CommissionResult base = threadCommissionPricing.price(thread.getCommissionGridId(), net,
+            thread.getCurrency(), thread.getTravelerId(), senderId, thread.getId());
+        CommissionResult result = withCode
+            ? threadCommissionPricing.price(thread.getCommissionGridId(), net, thread.getCurrency(),
+                thread.getTravelerId(), senderId, thread.getId(), code)
+            : base;
+
+        boolean promoApplied = result.promoEffective();
+        String promoLabel = null;
+        if (promoApplied) {
+            // Même libellé que BidService.quoteWithGrid : l'écart réel de commission, en points du net.
+            long pct = base.commission().subtract(result.commission())
+                .multiply(BigDecimal.valueOf(100))
+                .divide(result.net(), 0, RoundingMode.DOWN).longValue();
+            promoLabel = messagesResolver.forRequest().get("quote.promo-label", code.toUpperCase(), pct);
+        }
+        return new NegotiationQuoteResponse(result.net(), base.effectiveRate(), base.commission(), result.gross(),
+            promoApplied, promoLabel, result.minimumApplied(),
+            threadCommissionPricing.minimum(thread.getCommissionGridId(), thread.getCurrency()),
+            thread.getCommissionGridId(),
+            withCode && !promoApplied && result.minimumApplied() ? "COMMISSION_MINIMUM" : null);
     }
 
     /**
@@ -2527,9 +2581,7 @@ public class NegotiationService {
             );
         }
 
-        BigDecimal gross = t.getCurrentPriceEur() != null
-            ? PriceBreakdown.fromNet(t.getCurrentPriceEur(), displayRate(t)).gross()
-            : null;
+        BigDecimal gross = senderGross(t, request.getSenderId(), t.getCurrentPriceEur());
 
         UserEntity senderUser = userRepository.findById(request.getSenderId()).orElse(null);
         String senderPhotoUrl = storageService.avatarUrl(

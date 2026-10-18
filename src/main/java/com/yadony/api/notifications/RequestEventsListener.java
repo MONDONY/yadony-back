@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
+import java.math.BigDecimal;
 import java.util.Map;
 
 @Component
@@ -288,11 +289,14 @@ public class RequestEventsListener {
         // qu'il vient de confirmer dans l'application — l'écran de succès le lui a déjà dit.
         // Le voyageur, lui, garde son push : c'est une nouvelle pour lui, et elle appelle une
         // action (préparer le retrait du colis).
-        var forSender = NotificationTexts.requestAcceptedForSender(dispatcher.messagesFor(e.senderId()),
-            e.commissionRate() != null
+        // Fil à grille : total calculé au scellement comme par les rails (le taux enregistré n'est
+        // qu'informatif, net × taux ne redonne pas la commission au centime).
+        BigDecimal grossPaid = e.senderGross() != null ? e.senderGross()
+            : e.commissionRate() != null
                 ? PriceBreakdown.fromNet(e.agreedPriceEur(), e.commissionRate()).gross()
-                : e.agreedPriceEur(),
-            e.currency());
+                : e.agreedPriceEur();
+        var forSender = NotificationTexts.requestAcceptedForSender(dispatcher.messagesFor(e.senderId()),
+            grossPaid, e.currency());
         dispatcher.notifyUser(
             e.senderId(),
             forSender.title(),

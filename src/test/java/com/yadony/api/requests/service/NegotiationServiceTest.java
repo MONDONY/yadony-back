@@ -90,10 +90,23 @@ class NegotiationServiceTest {
         var pricing = mock(com.yadony.api.common.commission.ThreadCommissionPricing.class);
         BigDecimal n = new BigDecimal(net);
         BigDecimal c = new BigDecimal(commission);
-        when(pricing.price(gridId, n, currency, TRAVELER_ID, SENDER_ID, threadId))
-            .thenReturn(new com.yadony.api.common.commission.CommissionResult(n, c, n.add(c), BigDecimal.ZERO, false, false));
+        var result = new com.yadony.api.common.commission.CommissionResult(n, c, n.add(c), BigDecimal.ZERO, false, false);
+        when(pricing.price(gridId, n, currency, TRAVELER_ID, SENDER_ID, threadId)).thenReturn(result);
+        // Brut affiché du fil (code du fil compris), même devis dans ces tests.
+        lenient().when(pricing.price(eq(gridId), eq(n), eq(currency), eq(TRAVELER_ID), eq(SENDER_ID), eq(threadId), any()))
+            .thenReturn(result);
         org.springframework.test.util.ReflectionTestUtils.setField(service, "threadCommissionPricing", pricing);
         return pricing;
+    }
+
+    /** Fil à grille dont seul le brut affiché importe : commission nulle pour tout net. */
+    private void anyThreadPricing() {
+        var pricing = mock(com.yadony.api.common.commission.ThreadCommissionPricing.class);
+        lenient().when(pricing.price(any(), any(), any(), any(), any(), any(), any())).thenAnswer(inv -> {
+            BigDecimal n = inv.getArgument(1);
+            return new com.yadony.api.common.commission.CommissionResult(n, BigDecimal.ZERO, n, BigDecimal.ZERO, false, false);
+        });
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "threadCommissionPricing", pricing);
     }
 
     private PackageRequestEntity request;
@@ -280,6 +293,7 @@ class NegotiationServiceTest {
         void threadStart_inheritsRequestGrid() {
             UUID gridId = UUID.randomUUID();
             request.setCommissionGridId(gridId);
+            anyThreadPricing();
 
             when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
             when(config.threadsPerMinuteRateLimit()).thenReturn(1);
@@ -4010,6 +4024,7 @@ class NegotiationServiceTest {
             // silencieusement sauté).
             thread.setCommissionChargedVia("CARD");
             thread.setCommissionGridId(THREAD_GRID_ID);
+            anyThreadPricing();
 
             NegotiationThreadEntity competing = new NegotiationThreadEntity();
             competing.setPackageRequestId(REQUEST_ID);

@@ -1,13 +1,12 @@
 package com.yadony.api.requests;
 
-import com.yadony.api.payments.PriceBreakdown;
-import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.requests.entity.PackageRequestEntity;
 import com.yadony.api.requests.entity.PackageRequestStatus;
 import com.yadony.api.requests.entity.ParcelSize;
 import com.yadony.api.requests.repository.PackageRequestRepository;
 import com.yadony.api.requests.service.PackageRequestPhotoService;
+import com.yadony.api.requests.service.PackageRequestSearchMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Controller;
@@ -58,7 +57,7 @@ public class PublicPackageRequestPageController {
 
     private final PackageRequestRepository packageRequestRepository;
     private final PackageRequestPhotoService photoService;
-    private final PlatformSettingsService settings;
+    private final PackageRequestSearchMapper searchMapper;
 
     /** Cf. {@code PublicAnnouncementPageController#publicBaseUrl} pour la raison du repli. */
     @Value("${app.public-base-url}")
@@ -79,10 +78,10 @@ public class PublicPackageRequestPageController {
 
     public PublicPackageRequestPageController(PackageRequestRepository packageRequestRepository,
                                               PackageRequestPhotoService photoService,
-                                              PlatformSettingsService settings) {
+                                              PackageRequestSearchMapper searchMapper) {
         this.packageRequestRepository = packageRequestRepository;
         this.photoService = photoService;
-        this.settings = settings;
+        this.searchMapper = searchMapper;
     }
 
     private boolean isStoreOsRedirectEnabled() {
@@ -132,7 +131,10 @@ public class PublicPackageRequestPageController {
         model.addAttribute("categories", packageRequest.getContentCategory());
         model.addAttribute("pickupNeighborhood", packageRequest.getPickupNeighborhood());
         model.addAttribute("deliveryNeighborhood", packageRequest.getDeliveryNeighborhood());
-        model.addAttribute("grossPrice", formatDecimal(grossPrice(packageRequest)));
+        // Prix affiché, commission Yadony comprise : targetPriceEur est le net du voyageur,
+        // l'afficher tel quel annoncerait un montant que personne ne paiera. Même brut que la
+        // recherche (grille figée de la demande, aucune réduction personnelle) ; null sans budget.
+        model.addAttribute("grossPrice", formatDecimal(searchMapper.grossPriceEur(packageRequest)));
         model.addAttribute("currency", SupportedCurrency.symbolOf(packageRequest.getCurrency()));
         model.addAttribute("photoUrl", photoService.firstPhotoUrl(packageRequestId));
         model.addAttribute("deepLink", "yadony://demande/" + packageRequestId);
@@ -219,19 +221,6 @@ public class PublicPackageRequestPageController {
 
     private String trimTrailingSlash(String value) {
         return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
-    }
-
-    /**
-     * Prix affiché à l'expéditeur, commission Yadony comprise. {@code targetPriceEur} est le
-     * net que toucherait le voyageur (même contrat que {@code PackageRequestService.toResponse}
-     * et {@code PackageRequestSearchMapper}) : l'afficher tel quel annoncerait un montant que
-     * personne ne paiera. {@code null} si la demande n'a pas de budget chiffré.
-     */
-    private BigDecimal grossPrice(PackageRequestEntity packageRequest) {
-        BigDecimal net = packageRequest.getTargetPriceEur();
-        return net == null
-                ? null
-                : PriceBreakdown.fromNet(net, settings.commissionRate()).gross();
     }
 
     /** Français court, aligné sur le catalogue Flutter (search_composer_screen.dart). */

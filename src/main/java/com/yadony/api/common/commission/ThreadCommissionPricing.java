@@ -66,4 +66,9 @@ public class ThreadCommissionPricing {
         return CommissionCalculator.compute(n, currency, gridService.require(gridId),
                 rateResolver.reductionsWithPromoFallback(travelerId, senderId, promoCode, threadId));
     }
+
+    /** Commission minimum de la devise du fil sur sa grille figée ({@code minimumAmount} des devis). */
+    public BigDecimal minimum(UUID gridId, String currencyCode) {
+        return gridService.require(gridId).minimum(SupportedCurrency.fromCodeOrDefault(currencyCode));
+    }
 }
