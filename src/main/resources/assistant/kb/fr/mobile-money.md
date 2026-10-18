@@ -1,7 +1,7 @@
 ---
 id: mobile-money
 title: Payer et recevoir par mobile money
-keywords: mobile money, Orange Money, Wave, MTN, Moov, versement mobile money, numéro mobile money, réseau, franc CFA, XOF, XAF, payer par mobile money
+keywords: mobile money, Orange Money, MTN, Moov, versement mobile money, numéro mobile money, réseau, franc CFA, XOF, XAF, payer par mobile money
 routes:
   - path: /payments/mobile-money/account
     label: Versement mobile money
