@@ -69,6 +69,19 @@ public class AdminUserKycController {
         return review.detail(userId);
     }
 
+    /**
+     * Validation sans piece d'identite (compte de demonstration des stores). Reservee au super
+     * administrateur : ADMIN et SUPPORT recoivent un 403, meme avec {@code KYC_DECIDE}.
+     */
+    @PreAuthorize("hasRole('ADMIN') and hasRole('SUPER_ADMIN')")
+    @PostMapping("/approve-without-documents")
+    public KycAdminStatusResponse approveWithoutDocuments(@PathVariable UUID userId,
+                                                          @RequestBody @Valid KycApproveRequest request,
+                                                          Authentication authentication) {
+        review.approveWithoutDocuments(userId, AdminPrincipal.requireAdminId(authentication), request.reason());
+        return review.detail(userId);
+    }
+
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('KYC_DECIDE')")
     @PostMapping("/reject")
     public KycAdminStatusResponse reject(@PathVariable UUID userId,
