@@ -5,249 +5,48 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex, nofollow">
   <title>Suivi de colis - Yadony</title>
+  <!-- Polices, couleurs et composants communs : fragments/public-page.html. -->
+  <th:block th:replace="~{fragments/public-page :: head}"></th:block>
   <style>
-    *, *::before, *::after { box-sizing: border-box; }
-    html { -webkit-font-smoothing: antialiased; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-      background: #f7f9fc;
-      color: #10243b;
-    }
-    .page {
-      width: min(100%, 560px);
-      margin: 0 auto;
-      padding: 20px 16px 36px;
-    }
-    .topbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      margin-bottom: 18px;
-    }
-    .brand {
-      font-size: 20px;
-      font-weight: 850;
-      color: #1769ff;
-      letter-spacing: 0;
-    }
-    .topbar span {
-      color: #6b7788;
-      font-size: 13px;
-    }
-    .panel {
-      background: #fff;
-      border-radius: 16px;
-      box-shadow: 0 10px 28px rgba(16, 36, 59, 0.08), inset 0 0 0 1px #e4eaf2;
-      padding: 18px;
-    }
-    .status-panel { margin-bottom: 16px; }
-    .label {
-      display: block;
-      color: #6b7788;
-      font-size: 11px;
-      font-weight: 800;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
-    h1 {
-      margin: 8px 0 8px;
-      font-size: 26px;
-      line-height: 1.12;
-      letter-spacing: 0;
-      text-wrap: balance;
-    }
-    p {
-      margin: 0;
-      color: #6b7788;
-      line-height: 1.45;
-      text-wrap: pretty;
-    }
-    .data-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-top: 16px;
-    }
-    .data-cell {
-      min-width: 0;
-      padding: 13px 14px;
-      border-radius: 12px;
-      background: #f7f9fc;
-      box-shadow: inset 0 0 0 1px #e4eaf2;
-    }
-    .data-cell strong {
-      display: block;
-      margin-top: 5px;
-      font-size: 14px;
-      line-height: 1.35;
-      overflow-wrap: anywhere;
-    }
-    .section {
-      margin-top: 16px;
-    }
-    .section-title {
-      margin: 0 0 10px;
-      font-size: 15px;
-      font-weight: 850;
-    }
-    .qr-row {
-      display: grid;
-      grid-template-columns: 112px 1fr;
-      gap: 14px;
-      align-items: center;
-    }
-    .qr-row img {
-      width: 112px;
-      height: 112px;
-      border-radius: 12px;
-      background: #fff;
-      box-shadow: inset 0 0 0 1px #dfe6ef;
-    }
-    .code-panel {
-      display: none;
-      margin-top: 16px;
-    }
-    .code-panel.is-visible { display: block; }
-    .code-value {
-      margin-top: 10px;
-      padding: 14px;
-      border-radius: 12px;
-      background: #10243b;
-      color: #fff;
-      text-align: center;
-      font-size: 26px;
-      font-weight: 850;
-      letter-spacing: 0.18em;
-      font-variant-numeric: tabular-nums;
-    }
-    .history-list {
-      display: grid;
-      gap: 0;
-    }
-    .history-row {
-      display: grid;
-      grid-template-columns: 84px 1fr;
-      gap: 14px;
-      padding: 15px 0;
-      border-bottom: 1px solid #e4eaf2;
-    }
-    .history-row:last-child { border-bottom: 0; }
-    .history-label {
-      color: #6b7788;
-      font-size: 11px;
-      font-weight: 800;
-      letter-spacing: 0.08em;
-      line-height: 1.35;
-      text-transform: uppercase;
-    }
-    .history-body strong {
-      display: block;
-      margin-bottom: 4px;
-      font-size: 15px;
-    }
-    .history-body time {
-      display: block;
-      color: #6b7788;
-      font-size: 13px;
-      font-variant-numeric: tabular-nums;
-    }
-    .muted {
-      display: block;
-      margin-top: 3px;
-      color: #6b7788;
-      font-size: 13px;
-      line-height: 1.35;
-    }
-    .proof-photo {
-      width: 100%;
-      max-height: 210px;
-      margin-top: 10px;
-      object-fit: cover;
-      border-radius: 10px;
-      display: block;
-      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1);
-    }
-    .empty {
-      padding: 18px;
-      border-radius: 14px;
-      background: #fff;
-      box-shadow: inset 0 0 0 1px #e4eaf2;
-    }
-    .rating {
-      margin-top: 16px;
-    }
-    .stars {
-      display: flex;
-      gap: 8px;
-      margin: 14px 0;
-      font-size: 30px;
-      color: #adb5bd;
-      cursor: pointer;
-      user-select: none;
-    }
+    .status-panel { text-align: center; justify-items: center; }
+    .status-panel h1 { margin: 0; font-family: var(--f-display); font-size: 26px; font-weight: 800; line-height: 1.2; text-wrap: balance; }
+    .data-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; text-align: left; }
+    .data-cell { min-width: 0; padding: 12px 14px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line); }
+    .data-cell strong { display: block; margin-top: 4px; font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
+    .qr-row { display: grid; grid-template-columns: 112px 1fr; gap: 14px; align-items: center; }
+    .qr-row img { width: 112px; height: 112px; border-radius: 12px; background: #FFFFFF; border: 1px solid var(--line); }
+    .code-panel { display: none; text-align: center; justify-items: center; }
+    .code-panel.is-visible { display: grid; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    .history-label { color: var(--subtle); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+    .muted { display: block; }
+    .empty { padding: 14px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line); display: grid; gap: 4px; }
+    .stars { display: flex; justify-content: center; gap: 8px; margin: 4px 0; font-size: 32px; color: var(--line); cursor: pointer; user-select: none; }
+    .stars span { transition: transform 120ms ease; }
+    .stars span:active { transform: scale(0.9); }
+    .stars span.on { color: var(--terra); }
     textarea {
-      width: 100%;
-      min-height: 76px;
-      resize: vertical;
-      border: 1px solid #dfe6ef;
-      border-radius: 10px;
-      padding: 11px 12px;
-      color: #10243b;
-      font: inherit;
+      width: 100%; min-height: 76px; resize: vertical;
+      border: 1px solid var(--line); border-radius: 12px; padding: 11px 12px;
+      color: var(--ink); font: inherit; background: var(--surface);
     }
-    button {
-      width: 100%;
-      min-height: 44px;
-      margin-top: 10px;
-      border: 0;
-      border-radius: 10px;
-      background: #1769ff;
-      color: #fff;
-      font: inherit;
-      font-weight: 800;
-      cursor: pointer;
-      transition: transform 140ms ease, opacity 140ms ease;
-    }
-    button:active { transform: scale(0.96); }
-    button:disabled { opacity: 0.55; cursor: progress; }
-    #rating-feedback {
-      display: none;
-      margin-top: 10px;
-      text-align: center;
-      font-size: 14px;
-      font-weight: 700;
-    }
-    .invalid {
-      margin-top: 24px;
-      text-align: left;
-    }
-    footer {
-      margin-top: 20px;
-      color: #8a96a8;
-      font-size: 12px;
-      text-align: center;
-    }
-    @media (max-width: 420px) {
-      .page { padding-inline: 12px; }
+    textarea:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+    button.btn:disabled { opacity: 0.55; cursor: progress; }
+    #rating-feedback { display: none; text-align: center; font-size: 14px; font-weight: 700; }
+    #rating-feedback.ok { color: var(--success); }
+    #rating-feedback.error { color: var(--danger); }
+    @media (max-width: 380px) {
       .data-grid { grid-template-columns: 1fr; }
       .qr-row { grid-template-columns: 96px 1fr; }
       .qr-row img { width: 96px; height: 96px; }
-      .history-row { grid-template-columns: 72px 1fr; gap: 12px; }
-      h1 { font-size: 24px; }
     }
   </style>
 </head>
 <body>
 <main class="page">
-  <div class="topbar">
-    <div class="brand">Yadony</div>
-    <span>Suivi public</span>
-  </div>
+  <div th:replace="~{fragments/public-page :: brand}"></div>
 
-  <section th:if="${invalid}" class="panel invalid">
+  <section th:if="${invalid}" class="card invalid">
     <span class="label">Lien de suivi</span>
     <th:block th:if="${recipientChanged}">
       <h1>Le destinataire de ce colis a changé.</h1>
@@ -260,7 +59,7 @@
   </section>
 
   <th:block th:unless="${invalid}">
-    <section class="panel status-panel">
+    <section class="card status-panel">
       <span class="label">Statut</span>
       <h1 class="status-text" th:text="${currentStep}">En attente du scan de départ</h1>
       <p>Cette page se met à jour automatiquement quand un nouveau scan est enregistré.</p>
@@ -277,13 +76,29 @@
       </div>
     </section>
 
-    <section class="panel section arrival-instructions"
+    <section id="public-code-panel"
+             th:classappend="${publicConfirmationCode != null and !#strings.isEmpty(publicConfirmationCode)} ? ' is-visible'"
+             class="card code-panel">
+      <span class="label">Code de retrait</span>
+      <p>Code partagé par l'expéditeur pour confirmer la remise au destinataire.</p>
+      <!-- Un chiffre par case, comme dans l'app et le mail du code ; le code entier
+           reste lu d'un bloc par les lecteurs d'écran (et recopié par le script). -->
+      <div id="public-code-value" class="code-value sr-only" th:text="${publicConfirmationCode}">123456</div>
+      <div id="public-code-digits" class="digits" aria-hidden="true">
+        <th:block th:if="${publicConfirmationCode != null and !#strings.isEmpty(publicConfirmationCode)}">
+          <span class="digit" th:each="i : ${#numbers.sequence(0, #strings.length(publicConfirmationCode) - 1)}"
+                th:text="${#strings.substring(publicConfirmationCode, i, i + 1)}">1</span>
+        </th:block>
+      </div>
+    </section>
+
+    <section class="card section arrival-instructions"
              th:if="${arrivalInstructions != null and !#strings.isEmpty(arrivalInstructions)}">
       <h2 class="section-title">Instructions de retrait</h2>
       <p th:text="${arrivalInstructions}"></p>
     </section>
 
-    <section class="panel section" th:if="${qrCodeBase64 != null and !#strings.isEmpty(qrCodeBase64)}">
+    <section class="card section" th:if="${qrCodeBase64 != null and !#strings.isEmpty(qrCodeBase64)}">
       <h2 class="section-title">QR code du colis</h2>
       <div class="qr-row">
         <img th:src="${'data:image/png;base64,' + qrCodeBase64}"
@@ -294,20 +109,13 @@
       </div>
     </section>
 
-    <section id="public-code-panel"
-             th:classappend="${publicConfirmationCode != null and !#strings.isEmpty(publicConfirmationCode)} ? ' is-visible'"
-             class="panel code-panel">
-      <span class="label">Code de retrait</span>
-      <p>Code partagé par l'expéditeur pour confirmer la remise au destinataire.</p>
-      <div id="public-code-value" class="code-value" th:text="${publicConfirmationCode}">123456</div>
-    </section>
-
-    <section class="panel section">
+    <section class="card section">
       <h2 class="section-title">Détails utiles</h2>
-      <div class="history-list" th:if="${not #lists.isEmpty(events)}">
-        <div th:each="event : ${events}" class="history-row">
-          <div class="history-label" th:text="${event.label == 'Colis remis au voyageur' ? 'Remise' : (event.label == 'Arrivée confirmée' ? 'Arrivée' : 'Étape')}">Étape</div>
-          <div class="history-body">
+      <div class="history-list timeline" th:if="${not #lists.isEmpty(events)}">
+        <div th:each="event : ${events}" class="history-row step">
+          <span class="rail" aria-hidden="true"></span>
+          <div class="history-body body">
+            <span class="history-label" th:text="${event.label == 'Colis remis au voyageur' ? 'Remise' : (event.label == 'Arrivée confirmée' ? 'Arrivée' : 'Étape')}">Étape</span>
             <strong th:text="${event.label}">Colis remis au voyageur</strong>
             <time th:text="${event.scannedAt}">15/08/2026 22:46</time>
             <span th:if="${event.gpsLabel != null and !#strings.isEmpty(event.gpsLabel)}"
@@ -327,7 +135,7 @@
       </div>
     </section>
 
-    <section th:if="${isDelivered}" id="rating-section" class="panel rating">
+    <section th:if="${isDelivered}" id="rating-section" class="card rating">
       <h2 class="section-title">Notez le voyageur</h2>
       <p>Votre avis aide la communauté Yadony.</p>
       <div id="stars-row" class="stars" aria-label="Note">
@@ -335,12 +143,12 @@
         <span data-v="4">☆</span><span data-v="5">☆</span>
       </div>
       <textarea id="comment" placeholder="Commentaire optionnel" maxlength="200"></textarea>
-      <button id="submit-rating">Envoyer ma note</button>
+      <button id="submit-rating" class="btn btn-primary">Envoyer ma note</button>
       <div id="rating-feedback"></div>
     </section>
   </th:block>
 
-  <footer>Yadony - Suivi de colis</footer>
+  <footer class="foot">Yadony - Suivi de colis</footer>
 </main>
 
 <script th:if="${!invalid}" th:inline="javascript">
@@ -366,12 +174,19 @@
   function updatePublicCode(code) {
     const panel = document.getElementById('public-code-panel');
     const value = document.getElementById('public-code-value');
+    const digits = document.getElementById('public-code-digits');
     if (!panel || !value) return;
     if (code) {
       value.textContent = code;
+      if (digits) {
+        digits.innerHTML = String(code).split('').map(function (c) {
+          return '<span class="digit">' + esc(c) + '</span>';
+        }).join('');
+      }
       panel.classList.add('is-visible');
     } else {
       value.textContent = '';
+      if (digits) digits.innerHTML = '';
       panel.classList.remove('is-visible');
     }
   }
@@ -393,9 +208,10 @@
       const photo = photoUrl
         ? `<img src="${photoUrl}" class="proof-photo" alt="Photo de preuve du scan" loading="lazy">`
         : '';
-      return `<div class="history-row">
-        <div class="history-label">${esc(railLabel(event.label))}</div>
-        <div class="history-body">
+      return `<div class="history-row step">
+        <span class="rail" aria-hidden="true"></span>
+        <div class="history-body body">
+          <span class="history-label">${esc(railLabel(event.label))}</span>
           <strong>${label}</strong>
           <time>${scannedAt}</time>
           ${place}
@@ -417,25 +233,35 @@
   const ratingToken = [[${trackingToken}]];
   let selectedStars = 0;
   const stars = document.querySelectorAll('#stars-row span');
+  const feedback = document.getElementById('rating-feedback');
+
+  function showFeedback(message, kind) {
+    feedback.textContent = message;
+    feedback.className = kind;
+    feedback.style.display = 'block';
+  }
 
   stars.forEach(function(star) {
     star.addEventListener('click', function() {
       selectedStars = parseInt(star.dataset.v);
       stars.forEach(function(item) {
-        item.textContent = parseInt(item.dataset.v) <= selectedStars ? '★' : '☆';
-        item.style.color = parseInt(item.dataset.v) <= selectedStars ? '#a46413' : '#adb5bd';
+        const on = parseInt(item.dataset.v) <= selectedStars;
+        item.textContent = on ? '★' : '☆';
+        item.classList.toggle('on', on);
       });
+      feedback.style.display = 'none';
     });
   });
 
   document.getElementById('submit-rating').addEventListener('click', function() {
+    // Message dans la page plutôt qu'un alert() : la boîte système bloque la page
+    // et s'affiche mal dans les navigateurs intégrés (WhatsApp, Facebook).
     if (selectedStars === 0) {
-      alert('Veuillez sélectionner une note entre 1 et 5 étoiles.');
+      showFeedback('Veuillez sélectionner une note entre 1 et 5 étoiles.', 'error');
       return;
     }
     const comment = document.getElementById('comment').value.trim();
     const button = document.getElementById('submit-rating');
-    const feedback = document.getElementById('rating-feedback');
     button.disabled = true;
     button.textContent = 'Envoi en cours...';
 
@@ -446,24 +272,24 @@
     }).then(function(response) {
       if (response.ok || response.status === 201) {
         feedback.textContent = 'Merci pour votre note.';
-        feedback.style.color = '#1769ff';
+        feedback.className = 'ok';
         button.style.display = 'none';
         document.getElementById('stars-row').style.pointerEvents = 'none';
         document.getElementById('comment').style.display = 'none';
       } else if (response.status === 409) {
         feedback.textContent = 'Vous avez déjà noté ce voyageur.';
-        feedback.style.color = '#b3261e';
+        feedback.className = 'error';
         button.style.display = 'none';
       } else {
         feedback.textContent = 'Une erreur est survenue. Réessayez plus tard.';
-        feedback.style.color = '#b3261e';
+        feedback.className = 'error';
         button.disabled = false;
         button.textContent = 'Envoyer ma note';
       }
       feedback.style.display = 'block';
     }).catch(function() {
       feedback.textContent = 'Erreur réseau. Réessayez plus tard.';
-      feedback.style.color = '#b3261e';
+      feedback.className = 'error';
       feedback.style.display = 'block';
       button.disabled = false;
       button.textContent = 'Envoyer ma note';

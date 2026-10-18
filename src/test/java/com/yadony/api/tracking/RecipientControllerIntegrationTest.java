@@ -20,6 +20,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+import static org.hamcrest.Matchers.stringContainsInOrder;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -162,7 +163,8 @@ class RecipientControllerIntegrationTest {
         mockMvc.perform(get("/tracking/public/{token}", trackingToken))
                 .andExpect(status().isOk())
                 .andExpect(content().string(not(containsString(">123456<"))))
-                .andExpect(content().string(not(containsString("is-visible\">\n      <span class=\"label\">Code de retrait"))));
+                .andExpect(content().string(not(containsString("is-visible\">\n      <span class=\"label\">Code de retrait"))))
+                .andExpect(content().string(not(containsString("class=\"digit\">1<"))));
     }
 
     @Test
@@ -175,7 +177,20 @@ class RecipientControllerIntegrationTest {
         mockMvc.perform(get("/tracking/public/{token}", trackingToken))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("Code de retrait")))
-                .andExpect(content().string(containsString("123456")));
+                .andExpect(content().string(containsString("123456")))
+                // Un chiffre par case, dans l'ordre, comme dans l'app et le mail du code.
+                .andExpect(content().string(stringContainsInOrder(
+                        "class=\"digit\">1<", "class=\"digit\">2<", "class=\"digit\">3<",
+                        "class=\"digit\">4<", "class=\"digit\">5<", "class=\"digit\">6<")));
+    }
+
+    /** Charpente commune des pages publiques : vrai logo et polices de l'app. */
+    @Test
+    void publicPage_usesTheSharedPublicLayout() throws Exception {
+        mockMvc.perform(get("/tracking/public/{token}", trackingToken))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("src=\"/logo.png\"")))
+                .andExpect(content().string(containsString("family=Hanken+Grotesk")));
     }
 
     // ── Critère 3 : token invalide → message français, jamais de 500 ──────────
