@@ -228,8 +228,11 @@ public class CommissionGridService {
         return isIncrease(candidate, reference) ? List.of(CommissionGridWarning.INCREASE_WITHIN_30_DAYS) : List.of();
     }
 
-    /** Référence sans grille en vigueur : le taux plat actuel de la plateforme, sans minimum. */
-    private CommissionGrid flatPlatformGrid() {
+    /**
+     * Référence tant qu'aucune grille n'est en vigueur : le taux plat actuel de la plateforme sur
+     * toutes les tranches, sans minimum. Sert à l'avertissement de hausse et au simulateur.
+     */
+    public CommissionGrid flatPlatformGrid() {
         Map<SupportedCurrency, BigDecimal> noMinimum = new EnumMap<>(SupportedCurrency.class);
         for (SupportedCurrency currency : SupportedCurrency.values()) {
             noMinimum.put(currency, BigDecimal.ZERO);

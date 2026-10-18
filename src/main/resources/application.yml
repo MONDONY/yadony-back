@@ -171,6 +171,18 @@ sentry:
 # Toutes les valeurs métier sont surchargeables par variable d'environnement
 # (${VAR:défaut}) — provisioning prod sans rebuild.
 yadony:
+  # Coûts des prestataires, pour le simulateur de marge de l'onglet Tarification UNIQUEMENT (jamais
+  # le prix). Tarif public Stripe France vérifié le 18/10/2026 ; les frais pawaPay sont sous
+  # yadony.pawapay.fees. Montants fixes en euros, convertis dans la devise du simulateur.
+  costs:
+    stripe:
+      card-standard-percent: 1.5
+      card-premium-percent: 2.8
+      card-international-percent: 3.15
+      card-fixed-eur: 0.25
+      connect-payout-percent: 0.25
+      connect-payout-fixed-eur: 0.10
+      connect-active-account-monthly-eur: 2.0
   # Contact du support affiché sur la page publique du QR colis (/tracking/{id}/scan).
   # Numéro WhatsApp en format libre (les non-chiffres sont retirés). Vide = bouton masqué.
   support:
