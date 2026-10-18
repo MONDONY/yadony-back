@@ -2042,6 +2042,34 @@ class NegotiationServiceTest {
     }
 
     @Nested
+    @DisplayName("commissionGridIdOf() — grille figée sur le fil")
+    class CommissionGridIdOfTests {
+        @Test
+        @DisplayName("fil à grille — rend la grille héritée de la demande")
+        void commissionGridIdOf_returnsFrozenGrid() {
+            UUID threadId = UUID.randomUUID();
+            UUID gridId = UUID.randomUUID();
+            var thread = new NegotiationThreadEntity();
+            thread.setCommissionGridId(gridId);
+            when(threadRepo.findById(threadId)).thenReturn(Optional.of(thread));
+
+            assertThat(service.commissionGridIdOf(threadId)).isEqualTo(gridId);
+        }
+
+        @Test
+        @DisplayName("fil antérieur aux grilles ou introuvable — null, calcul hérité")
+        void commissionGridIdOf_legacyOrMissing_returnsNull() {
+            UUID legacy = UUID.randomUUID();
+            when(threadRepo.findById(legacy)).thenReturn(Optional.of(new NegotiationThreadEntity()));
+            UUID missing = UUID.randomUUID();
+            when(threadRepo.findById(missing)).thenReturn(Optional.empty());
+
+            assertThat(service.commissionGridIdOf(legacy)).isNull();
+            assertThat(service.commissionGridIdOf(missing)).isNull();
+        }
+    }
+
+    @Nested
     @DisplayName("canNudge — flag calculé sur la réponse du thread")
     class CanNudgeTests {
 

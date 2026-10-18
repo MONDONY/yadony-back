@@ -2175,6 +2175,16 @@ public class NegotiationService {
         });
     }
 
+    /**
+     * Grille de commission figée sur le fil (héritée de sa demande) ; {@code null} pour un fil
+     * antérieur aux grilles, qui garde le calcul hérité. Lecture seule : l'appartenance du
+     * fil est vérifiée par l'appelant.
+     */
+    @Transactional(readOnly = true)
+    public UUID commissionGridIdOf(UUID threadId) {
+        return threadRepo.findById(threadId).map(NegotiationThreadEntity::getCommissionGridId).orElse(null);
+    }
+
     @Transactional
     public NegotiationThreadResponse getById(UUID callerId, UUID threadId) {
         NegotiationThreadEntity thread = threadRepo.findById(threadId)

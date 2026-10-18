@@ -10,6 +10,10 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.commission.CommissionCalculator;
+import com.yadony.api.common.commission.CommissionGridService;
+import com.yadony.api.common.commission.CommissionReductions;
+import com.yadony.api.common.commission.CommissionResult;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.common.stripe.StripeUnavailable;
 import com.yadony.api.promo.PromoService;
@@ -121,6 +125,13 @@ public class PaymentService {
      */
     @jakarta.persistence.PersistenceContext
     private jakarta.persistence.EntityManager entityManager;
+
+    /**
+     * Grilles de commission figées sur les bids et les fils ; injectée par champ, comme
+     * ci-dessus, pour ne pas toucher aux constructeurs des tests unitaires.
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    private CommissionGridService commissionGridService;
 
     public PaymentService(UserRepository userRepository,
                           BidRepository bidRepository,
@@ -605,6 +616,8 @@ public class PaymentService {
         }
         BigDecimal rate;
         boolean promoApplied = false;
+        // Devis de grille : seulement pour un PREMIER paiement direct d'un bid à grille figée.
+        CommissionResult gridQuote = null;
         if (negotiated) {
             // Taux figé à l'ouverture du fil : le prix affiché pendant la discussion
             // doit rester exact même si un override ou une promo change entre-temps.
@@ -618,12 +631,23 @@ public class PaymentService {
             // A payment row means pricing was already committed server-side. Never
             // revalidate a consumed promo or current overrides on retries: both may
             // legitimately have changed since the first PaymentIntent was created.
+            // Bid à grille : le taux figé est le taux effectif C / net du premier essai
+            // (6 décimales) ; net × taux redonne la même commission au centime.
             rate = bid.getCommissionRate();
             if (rate == null) {
                 throw new YadonyBusinessException(HttpStatus.CONFLICT,
                         "payment-pricing-context-missing", "Payment Pricing Context Missing",
                         "Le taux de commission figé de ce paiement est introuvable");
             }
+        } else if (bid.getCommissionGridId() != null) {
+            // Grille figée à la création du bid, jamais la grille du jour (spec §4.4).
+            gridQuote = CommissionCalculator.compute(totalNet, currency,
+                    commissionGridService.require(bid.getCommissionGridId()),
+                    reductionsWithPromoFallback(announcement.getTravelerId(), sender.getId(),
+                            bid.getPromoCode(), bidId));
+            rate = gridQuote.effectiveRate();
+            // Un code que le minimum rend sans effet n'est ni appliqué ni consommé (spec §4.2).
+            promoApplied = gridQuote.promoEffective();
         } else {
             // Truly new payment only: promo > overrides > global.
             if (bid.getPromoCode() != null) {
@@ -645,12 +669,19 @@ public class PaymentService {
         // comme BidNegotiationPricing. Le recalculer en net × (1 + taux) pourrait dériver
         // d'un centime après arrondi, et l'expéditeur serait débité d'autre chose que le
         // montant sur lequel il s'est engagé.
-        BigDecimal amount = negotiated
-                ? bid.getNegotiatedGrossEur().setScale(2, RoundingMode.HALF_UP)
-                : totalNet.multiply(BigDecimal.ONE.add(rate)).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal commission = negotiated
-                ? amount.subtract(totalNet)
-                : totalNet.multiply(rate).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal amount;
+        BigDecimal commission;
+        if (gridQuote != null) {
+            amount = gridQuote.gross();
+            commission = gridQuote.commission();
+        } else {
+            amount = negotiated
+                    ? bid.getNegotiatedGrossEur().setScale(2, RoundingMode.HALF_UP)
+                    : totalNet.multiply(BigDecimal.ONE.add(rate)).setScale(2, RoundingMode.HALF_UP);
+            commission = negotiated
+                    ? amount.subtract(totalNet)
+                    : totalNet.multiply(rate).setScale(2, RoundingMode.HALF_UP);
+        }
         CurrencyAmount localAmount = CurrencyAmount.of(amount, currency);
         CurrencyAmount localCommission = CurrencyAmount.of(commission, currency);
 
@@ -790,7 +821,11 @@ public class PaymentService {
                             "piId", pi.getId()));
 
             log.info("PaymentIntent {} created for bid {} (sender={})", pi.getId(), bidId, sender.getId());
-            return toPaymentResponse(payment, pi);
+            PaymentResponse response = toPaymentResponse(payment, pi);
+            if (gridQuote != null) {
+                response.setPromoApplied(promoApplied);
+            }
+            return response;
 
         } catch (StripeException e) {
             if (isStripeAccountMissing(e)) {
@@ -1587,6 +1622,28 @@ public class PaymentService {
         return response;
     }
 
+    /**
+     * Réductions personnelles d'un premier paiement à grille. Un code promo devenu invalide
+     * (expiré, limite atteinte…) retombe sur les réductions sans code, comme le chemin hérité
+     * retombe sur le taux sans promo.
+     *
+     * @param reference bid ou fil : le bon pris en compte est celui déjà rattaché à cette
+     *                  référence s'il existe (lecture pure, la consommation reste à l'appelant).
+     */
+    private CommissionReductions reductionsWithPromoFallback(UUID travelerId, UUID senderId,
+                                                             String promoCode, UUID reference) {
+        if (promoCode == null || promoCode.isBlank()) {
+            return commissionRateResolver.reductions(travelerId, senderId, null, null, reference);
+        }
+        try {
+            return commissionRateResolver.reductions(travelerId, senderId, promoCode, senderId, reference);
+        } catch (YadonyBusinessException e) {
+            log.warn("Promo {} invalide pour {} ({}) : repli sur les réductions sans promo",
+                    promoCode, reference, e.getErrorCode());
+            return commissionRateResolver.reductions(travelerId, senderId, null, null, reference);
+        }
+    }
+
     private PaymentResponse toNegotiationPaymentResponse(
             PaymentEntity payment, PaymentIntent paymentIntent,
             BigDecimal commissionRate, boolean promoApplied) {
@@ -1922,6 +1979,19 @@ public class PaymentService {
             String promoCode,
             BigDecimal persistedCommissionRate,
             String serverCurrency) {
+        return createNegotiationEscrow(threadId, senderId, travelerId, amountEur, promoCode,
+                persistedCommissionRate, serverCurrency, null);
+    }
+
+    public PaymentResponse createNegotiationEscrow(
+            UUID threadId,
+            UUID senderId,
+            UUID travelerId,
+            BigDecimal amountEur,
+            String promoCode,
+            BigDecimal persistedCommissionRate,
+            String serverCurrency,
+            UUID commissionGridId) {
         log.info("createNegotiationEscrow(threadId={}, senderId={}, travelerId={}, amount={})",
                 threadId, senderId, travelerId, amountEur);
 
@@ -1955,9 +2025,25 @@ public class PaymentService {
         BigDecimal rate;
         boolean promoApplied = false;
         String code = promoCode != null ? promoCode.strip() : null;
+        // Devis de grille : seulement tant qu'aucun taux n'est figé sur le fil.
+        CommissionResult gridQuote = null;
         if (persistedCommissionRate != null) {
+            // Fil à grille : taux effectif C / net du premier essai, rejoué tel quel.
             rate = persistedCommissionRate;
             promoApplied = code != null && !code.isBlank();
+        } else if (commissionGridId != null) {
+            if (amountEur == null || amountEur.signum() <= 0) {
+                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "invalid-amount", "Invalid Amount",
+                        "Le montant calculé est invalide (≤ 0)");
+            }
+            // Grille figée sur le fil (héritée de la demande), jamais la grille du jour.
+            gridQuote = CommissionCalculator.compute(amountEur, currency,
+                    commissionGridService.require(commissionGridId),
+                    reductionsWithPromoFallback(traveler.getId(), sender.getId(), code, threadId));
+            rate = gridQuote.effectiveRate();
+            // Faux quand le minimum annule le gain : le contrôleur efface alors le code du fil.
+            promoApplied = gridQuote.promoEffective();
         } else if (code != null && !code.isBlank()) {
             try {
                 rate = commissionRateResolver.resolve(traveler.getId(), sender.getId(), code);
@@ -1971,7 +2057,9 @@ public class PaymentService {
             rate = commissionRateResolver.resolve(traveler.getId(), sender.getId());
         }
         // Modèle B : amountEur = NET voyageur. L'expéditeur paie gross = net*(1+rate).
-        PriceBreakdown b = PriceBreakdown.fromNet(amountEur, rate);
+        PriceBreakdown b = gridQuote != null
+                ? new PriceBreakdown(gridQuote.net(), gridQuote.commission(), gridQuote.gross())
+                : PriceBreakdown.fromNet(amountEur, rate);
         CurrencyAmount localGross = CurrencyAmount.of(b.gross(), currency);
         CurrencyAmount localCommission = CurrencyAmount.of(b.commission(), currency);
 

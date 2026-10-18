@@ -639,7 +639,7 @@ class NegotiationControllerIT {
         );
         when(service.getById(eq(SENDER_UUID), eq(threadId))).thenReturn(awaitingPaymentThread);
         when(paymentService.createNegotiationEscrow(
-                eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), isNull(), isNull(), eq("CAD")))
+                eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), isNull(), isNull(), eq("CAD"), isNull()))
             .thenReturn(new com.yadony.api.payments.dto.PaymentResponse(
                 UUID.randomUUID(), null, "pi_test_secret",
                 new java.math.BigDecimal("33.60"), new java.math.BigDecimal("3.60"),
@@ -650,7 +650,7 @@ class NegotiationControllerIT {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.currency").value("cad"));
         verify(paymentService).createNegotiationEscrow(
-                threadId, SENDER_UUID, TRAVELER_UUID, new java.math.BigDecimal("30"), null, null, "CAD");
+                threadId, SENDER_UUID, TRAVELER_UUID, new java.math.BigDecimal("30"), null, null, "CAD", null);
         verify(service, org.mockito.Mockito.never()).recordAppliedPromo(any(), any(), any());
     }
 
@@ -684,7 +684,7 @@ class NegotiationControllerIT {
         promoResponse.setCommissionRate(new java.math.BigDecimal("0.06"));
         promoResponse.setPromoApplied(true);
         when(paymentService.createNegotiationEscrow(
-                eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), eq("WELCOME6"), isNull(), eq("EUR")))
+                eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), eq("WELCOME6"), isNull(), eq("EUR"), isNull()))
             .thenReturn(promoResponse);
 
         mockMvc.perform(post("/negotiations/{id}/initiate-payment", threadId)
@@ -729,7 +729,7 @@ class NegotiationControllerIT {
         promoResponse.setCommissionRate(new java.math.BigDecimal("0.06"));
         promoResponse.setPromoApplied(true);
         when(paymentService.createNegotiationEscrow(
-                eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), eq("AUTOCODE"), isNull(), eq("EUR")))
+                eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), eq("AUTOCODE"), isNull(), eq("EUR"), isNull()))
             .thenReturn(promoResponse);
 
         mockMvc.perform(post("/negotiations/{id}/initiate-payment", threadId)
@@ -773,7 +773,7 @@ class NegotiationControllerIT {
                 "PENDING", "pi_test_id");
         // promoApplied reste false par défaut : le fallback tarif de base.
         when(paymentService.createNegotiationEscrow(
-                eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), eq("WELCOME6"), isNull(), eq("EUR")))
+                eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), eq("WELCOME6"), isNull(), eq("EUR"), isNull()))
             .thenReturn(baseRateResponse);
 
         mockMvc.perform(post("/negotiations/{id}/initiate-payment", threadId)
@@ -805,11 +805,11 @@ class NegotiationControllerIT {
 
         when(paymentService.createNegotiationEscrow(
                 threadId, SENDER_UUID, TRAVELER_UUID, new BigDecimal("30"),
-                "WELCOME6", null, "EUR"))
+                "WELCOME6", null, "EUR", null))
                 .thenReturn(created);
         when(paymentService.createNegotiationEscrow(
                 threadId, SENDER_UUID, TRAVELER_UUID, new BigDecimal("30"),
-                "WELCOME6", new BigDecimal("0.06"), "EUR"))
+                "WELCOME6", new BigDecimal("0.06"), "EUR", null))
                 .thenReturn(resumed);
 
         mockMvc.perform(post("/negotiations/{id}/initiate-payment", threadId)
@@ -828,7 +828,7 @@ class NegotiationControllerIT {
                 .recordAppliedPromo(threadId, "WELCOME6", new BigDecimal("0.06"));
         verify(paymentService, org.mockito.Mockito.never()).createNegotiationEscrow(
                 threadId, SENDER_UUID, TRAVELER_UUID, new BigDecimal("30"),
-                "OTHER", new BigDecimal("0.06"), "EUR");
+                "OTHER", new BigDecimal("0.06"), "EUR", null);
         verify(service, org.mockito.Mockito.never())
                 .recordAppliedPromo(threadId, "OTHER", new BigDecimal("0.06"));
         verify(service, org.mockito.Mockito.never()).recordAppliedPromo(threadId, null, null);
@@ -846,6 +846,36 @@ class NegotiationControllerIT {
             case "currency" -> "EUR";
             default -> org.mockito.Answers.RETURNS_DEFAULTS.answer(invocation);
         });
+    }
+
+    @Test
+    void post_initiatePayment_passesTheThreadFrozenCommissionGrid() throws Exception {
+        // La grille figée sur le fil (héritée de sa demande) part vers le rail carte : la
+        // commission ne doit jamais suivre la grille du jour.
+        UUID threadId = UUID.randomUUID();
+        UUID gridId = UUID.randomUUID();
+        when(service.getById(SENDER_UUID, threadId)).thenReturn(paymentThread(threadId, null));
+        when(service.commissionGridIdOf(threadId)).thenReturn(gridId);
+        var created = new com.yadony.api.payments.dto.PaymentResponse(
+                UUID.randomUUID(), null, "pi_grid_secret",
+                new BigDecimal("31.40"), new BigDecimal("1.40"),
+                "PENDING", "pi_grid", "EUR");
+        created.setCommissionRate(new BigDecimal("0.046667"));
+        when(paymentService.createNegotiationEscrow(
+                threadId, SENDER_UUID, TRAVELER_UUID, new BigDecimal("30"),
+                "WELCOME6", null, "EUR", gridId))
+                .thenReturn(created);
+
+        mockMvc.perform(post("/negotiations/{id}/initiate-payment", threadId)
+                .with(authentication(authAs("uid-sender", "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.promoApplied").value(false));
+
+        verify(paymentService).createNegotiationEscrow(
+                threadId, SENDER_UUID, TRAVELER_UUID, new BigDecimal("30"),
+                "WELCOME6", null, "EUR", gridId);
+        // Code sans effet (minimum) : effacé du fil, aucun rachat ne s'y raccrochera.
+        verify(service).recordAppliedPromo(threadId, null, null);
     }
 
     @Test
