@@ -13,6 +13,8 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.commission.CommissionGrid;
 import com.yadony.api.common.commission.CommissionGridService;
 import com.yadony.api.common.commission.CommissionReductions;
+import com.yadony.api.common.commission.CommissionResult;
+import com.yadony.api.common.commission.ThreadCommissionPricing;
 import com.yadony.api.common.commission.CommissionTier;
 import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.AnnouncementEntity;
@@ -99,6 +101,7 @@ class CashCommissionServiceGridTest {
     @Mock private ExchangeRateService exchangeRateService;
     @Mock private PromoService promoService;
     @Mock private CommissionGridService commissionGridService;
+    @Mock private ThreadCommissionPricing threadCommissionPricing;
 
     private final CommissionProperties props =
             new CommissionProperties(new BigDecimal("0.12"), new BigDecimal("1.00"), 24);
@@ -123,6 +126,7 @@ class CashCommissionServiceGridTest {
                 new WalletCommissionCollector(walletService, exchangeRateService), TestMessages.resolver(),
                 promoService);
         ReflectionTestUtils.setField(service, "commissionGridService", commissionGridService);
+        ReflectionTestUtils.setField(service, "threadCommissionPricing", threadCommissionPricing);
     }
 
     @AfterEach
@@ -170,6 +174,14 @@ class CashCommissionServiceGridTest {
         UserEntity traveler = new UserEntity();
         ReflectionTestUtils.setField(traveler, "id", travelerId);
         lenient().when(userRepo.findById(travelerId)).thenReturn(Optional.of(traveler));
+    }
+
+    /** Devis du fil servi par {@link ThreadCommissionPricing} (testé à part). */
+    private void stubThreadPrice(UUID threadId, String net, String currency, String commission) {
+        BigDecimal n = new BigDecimal(net);
+        BigDecimal c = new BigDecimal(commission);
+        when(threadCommissionPricing.price(GRID_7_6_5.id(), n, currency, travelerId, senderId, threadId))
+                .thenReturn(new CommissionResult(n, c, n.add(c), BigDecimal.ZERO, false, false));
     }
 
     private NegotiationThreadEntity thread(UUID threadId, String currency, UUID gridId) {
@@ -409,8 +421,8 @@ class CashCommissionServiceGridTest {
         UUID threadId = UUID.randomUUID();
         NegotiationThreadEntity thread = thread(threadId, "XOF", GRID_7_6_5.id());
         when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
-        when(commissionRateResolver.reductions(travelerId, senderId, null, null, threadId))
-                .thenReturn(CommissionReductions.NONE);
+        // Devis du fil (5 000 × 7 % = 350 relevé au minimum XOF), le même que l'annonce.
+        stubThreadPrice(threadId, "5000", "XOF", "650");
         when(activeCurrencyResolver.resolve(travelerId)).thenReturn("XOF");
         when(walletService.getBalanceForUpdate(travelerId, "XOF")).thenReturn(new BigDecimal("10000"));
 
@@ -422,9 +434,11 @@ class CashCommissionServiceGridTest {
         verify(walletService).debit(eq(travelerId), eq("XOF"), debited.capture(),
                 eq(WalletTransactionType.COMMISSION_DEDUCTED), eq(threadId.toString()),
                 eq("nego_commission_wallet_" + threadId));
-        // 5 000 × 7 % = 350 F CFA, relevé au minimum XOF de la grille : 650, sans centimes.
+        // Le montant du devis partagé est prélevé tel quel : 650 F CFA, sans centimes.
         assertThat(debited.getValue()).isEqualByComparingTo("650");
         assertThat(debited.getValue().scale()).isZero();
+        verify(threadCommissionPricing).price(GRID_7_6_5.id(), new BigDecimal("5000"), "XOF",
+                travelerId, senderId, threadId);
         verify(commissionRateResolver, never()).resolve(any(), any(), any(), any(), any());
     }
 
@@ -433,8 +447,7 @@ class CashCommissionServiceGridTest {
         UUID threadId = UUID.randomUUID();
         NegotiationThreadEntity thread = thread(threadId, "XOF", GRID_7_6_5.id());
         when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
-        when(commissionRateResolver.reductions(travelerId, senderId, null, null, threadId))
-                .thenReturn(CommissionReductions.NONE);
+        stubThreadPrice(threadId, "20000", "XOF", "1400");
         UserEntity traveler = new UserEntity();
         ReflectionTestUtils.setField(traveler, "id", travelerId);
         traveler.setStripeCustomerId("cus_test");
@@ -470,6 +483,6 @@ class CashCommissionServiceGridTest {
         // Calcul hérité : 5,00 € × 5 % = 0,25 €, sans plancher.
         verify(walletService).debit(eq(travelerId), eq("EUR"), argThat(a -> a.compareTo(new BigDecimal("0.25")) == 0),
                 eq(WalletTransactionType.COMMISSION_DEDUCTED), anyString(), anyString());
-        verifyNoInteractions(commissionGridService);
+        verifyNoInteractions(commissionGridService, threadCommissionPricing);
     }
 }

@@ -10,6 +10,7 @@ import com.yadony.api.common.commission.CommissionGrid;
 import com.yadony.api.common.commission.CommissionGridService;
 import com.yadony.api.common.commission.CommissionReductions;
 import com.yadony.api.common.commission.CommissionResult;
+import com.yadony.api.common.commission.ThreadCommissionPricing;
 import com.yadony.api.common.i18n.Messages;
 import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.matching.AnnouncementEntity;
@@ -115,6 +116,9 @@ public class CashCommissionService {
      */
     @org.springframework.beans.factory.annotation.Autowired
     private CommissionGridService commissionGridService;
+    /** Commission des fils à grille, la même que celle annoncée par {@code NegotiationService}. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private ThreadCommissionPricing threadCommissionPricing;
     private Clock clock = Clock.systemUTC();
 
     public CashCommissionService(CommissionProperties props,
@@ -663,26 +667,6 @@ public class CashCommissionService {
     }
 
     /**
-     * Commission d'un fil de demande à grille figée (héritée de sa demande, spec §4.4) : grille
-     * marginale, taux spécial et bon de parrainage du fil, minimum de la devise, un seul arrondi
-     * à l'unité mineure (francs entiers en XOF/XAF). Même calcul que l'annonce faite à
-     * l'expéditeur et au voyageur ({@code NegotiationService}, événement
-     * {@code NegotiationCommissionPendingEvent} et contrôle du solde). Un net nul ne coûte rien,
-     * comme {@code net × taux} sur le chemin hérité.
-     */
-    private BigDecimal gridNegotiationCommission(com.yadony.api.requests.entity.NegotiationThreadEntity thread,
-                                                 UUID travelerId, UUID senderId, BigDecimal net) {
-        SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(thread.getCurrency());
-        if (net.setScale(currency.minorUnit(), RoundingMode.HALF_UP).signum() <= 0) {
-            return BigDecimal.ZERO;
-        }
-        return CommissionCalculator.compute(net, currency,
-                commissionGridService.require(thread.getCommissionGridId()),
-                commissionRateResolver.reductions(travelerId, senderId, null, null, thread.getId()))
-                .commission();
-    }
-
-    /**
      * Variante avec portefeuille de complément choisi par le voyageur
      * ({@code fundingCurrency}, {@code null} = devise active). Voir
      * {@link #acceptCashBid(UUID, UUID, CommissionSource, String)}.
@@ -702,7 +686,9 @@ public class CashCommissionService {
         // plus tard) doit retrouver le bon déjà consommé et non repartir au plein tarif.
         BigDecimal commission;
         if (thread.getCommissionGridId() != null) {
-            commission = gridNegotiationCommission(thread, travelerId, senderId, net);
+            // Grille figée sur le fil : même devis que l'annonce de NegotiationService.
+            commission = threadCommissionPricing.price(thread.getCommissionGridId(), net,
+                    thread.getCurrency(), travelerId, senderId, threadId).commission();
         } else {
             BigDecimal rate = commissionRateResolver.resolve(travelerId, senderId, null, null, threadId);
             commission = net.multiply(rate).setScale(2, RoundingMode.HALF_UP);

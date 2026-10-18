@@ -1,0 +1,54 @@
+package com.yadony.api.common.commission;
+
+import com.yadony.api.common.CommissionRateResolver;
+import com.yadony.api.payments.currency.SupportedCurrency;
+import org.springframework.stereotype.Component;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.UUID;
+
+/**
+ * Commission d'un fil de demande d'envoi à grille figée (héritée de sa demande, spec §4.4) :
+ * source unique du montant ANNONCÉ (événement {@code NegotiationCommissionPendingEvent}, contrôle
+ * du solde du voyageur, devis) et du montant PRÉLEVÉ au règlement espèces
+ * ({@code CashCommissionService.settleNegotiationCommission}). Les deux doivent être égaux.
+ *
+ * <p>Grille marginale, taux spécial et bon de parrainage rattachés au fil (sans code promo, le
+ * rail espèces des fils n'en prend pas), minimum de la devise, un seul arrondi à l'unité mineure
+ * (francs entiers en XOF/XAF). Lecture pure : le bon n'est pas consommé.
+ */
+@Component
+public class ThreadCommissionPricing {
+
+    private final CommissionGridService gridService;
+    private final CommissionRateResolver rateResolver;
+
+    public ThreadCommissionPricing(CommissionGridService gridService, CommissionRateResolver rateResolver) {
+        this.gridService = gridService;
+        this.rateResolver = rateResolver;
+    }
+
+    /**
+     * Devis de la commission du fil.
+     *
+     * @param gridId       grille figée sur le fil (non nulle : un fil sans grille garde le calcul hérité).
+     * @param net          net du voyageur, dans la devise du fil.
+     * @param currencyCode devise du fil ({@code negotiation_threads.currency}), EUR par défaut.
+     * @param threadId     référence du bon de parrainage déjà rattaché au fil.
+     * @return devis complet ; un net nul à l'unité mineure ne coûte rien (commission 0, brut = net),
+     *         comme {@code net × taux} sur le chemin hérité.
+     */
+    public CommissionResult price(UUID gridId, BigDecimal net, String currencyCode,
+                                  UUID travelerId, UUID senderId, UUID threadId) {
+        SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(currencyCode);
+        BigDecimal n = net.setScale(currency.minorUnit(), RoundingMode.HALF_UP);
+        if (n.signum() <= 0) {
+            BigDecimal zero = BigDecimal.ZERO.setScale(currency.minorUnit());
+            return new CommissionResult(n, zero, n,
+                    BigDecimal.ZERO.setScale(CommissionResult.STORED_RATE_SCALE), false, false);
+        }
+        return CommissionCalculator.compute(n, currency, gridService.require(gridId),
+                rateResolver.reductions(travelerId, senderId, null, null, threadId));
+    }
+}
