@@ -109,6 +109,52 @@ class AdminWalletRefundListingTest {
         assertThat(second.resolutionNote()).isNull();
     }
 
+    @Test
+    @DisplayName("rail source et motif d'échec : PAWAPAY / STRIPE / MIXED, motif repris du parent pour un ticket enfant")
+    void describe_exposesSourceRailAndFailureReason() {
+        UserRepository users = mock(UserRepository.class);
+        WalletRefundRequestItemRepository items = mock(WalletRefundRequestItemRepository.class);
+        WalletRefundRequestEntity parent = request(T);
+        withId(parent);
+        parent.setStatus(WalletRefundRequestStatus.FAILED);
+        WalletRefundRequestEntity child = request(T.plusMinutes(1));
+        withId(child);
+        child.setStatus(WalletRefundRequestStatus.PENDING);
+        child.setParentRequestId(parent.getId());
+        WalletRefundRequestEntity mixed = request(T);
+        withId(mixed);
+        WalletRefundRequestEntity orphan = request(T);
+        withId(orphan);
+        orphan.setParentRequestId(UUID.randomUUID());
+
+        WalletRefundRequestItemEntity parentFailed = item(parent.getId(), "23", WalletRefundItemStatus.FAILED);
+        parentFailed.setPaymentIntentId("pawapay:" + UUID.randomUUID());
+        parentFailed.setFailureReason("PAWAPAY_WALLET_OUT_OF_FUNDS");
+        WalletRefundRequestItemEntity childPending = item(child.getId(), "23", WalletRefundItemStatus.PENDING);
+        childPending.setPaymentIntentId(parentFailed.getPaymentIntentId());
+        WalletRefundRequestItemEntity card = item(mixed.getId(), "1", WalletRefundItemStatus.PENDING);
+        card.setPaymentIntentId("pi_123");
+        WalletRefundRequestItemEntity momo = item(mixed.getId(), "1", WalletRefundItemStatus.PENDING);
+        momo.setPaymentIntentId("pawapay:" + UUID.randomUUID());
+        when(users.findAllByIdIncludingDeleted(any())).thenReturn(List.of());
+        when(items.findByRefundRequestIdIn(any())).thenReturn(List.of(parentFailed, childPending, card, momo));
+
+        var page = new AdminWalletRefundListing(users, items)
+                .describe(new PageImpl<>(List.of(child, parent, mixed, orphan)));
+
+        AdminWalletRefundRequestResponse childRow = page.getContent().get(0);
+        assertThat(childRow.sourceRail()).isEqualTo("PAWAPAY");
+        assertThat(childRow.failureReason()).isEqualTo("PAWAPAY_WALLET_OUT_OF_FUNDS");
+        AdminWalletRefundRequestResponse parentRow = page.getContent().get(1);
+        assertThat(parentRow.sourceRail()).isEqualTo("PAWAPAY");
+        assertThat(parentRow.failureReason()).isEqualTo("PAWAPAY_WALLET_OUT_OF_FUNDS");
+        assertThat(parentRow.feeAmount()).isEqualByComparingTo("0");
+        assertThat(page.getContent().get(2).sourceRail()).isEqualTo("MIXED");
+        assertThat(page.getContent().get(2).failureReason()).isNull();
+        assertThat(page.getContent().get(3).sourceRail()).isNull();
+        assertThat(page.getContent().get(3).failureReason()).isNull();
+    }
+
     private static WalletRefundRequestItemEntity item(UUID requestId, String fee, WalletRefundItemStatus status) {
         WalletRefundRequestItemEntity i = new WalletRefundRequestItemEntity();
         i.setRefundRequestId(requestId);

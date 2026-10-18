@@ -507,6 +507,10 @@ yadony:
         MOOV_BFA: { deposit-percent: 3.0, refund-percent: 2.0 }
         # Versement Orange Burkina non proposé par pawaPay : taux de versement par défaut.
         ORANGE_BFA: { deposit-percent: 3.3, refund-percent: 2.0 }
+    # Marge de sécurité (points de pourcentage) ajoutée au refund-percent de l'opérateur pour
+    # calculer le montant qu'un remboursement ou un versement peut envoyer sans vider le wallet
+    # pawaPay : maxSûr = floor(solde / (1 + (refund-percent + marge) / 100)).
+    refund-safety-margin-percent: ${PAWAPAY_REFUND_SAFETY_MARGIN_PERCENT:1.0}
   email:
     resend-api-key: ${RESEND_API_KEY:}
     from-address: ${YADONY_EMAIL_FROM_ADDRESS:noreply@yadony.com}

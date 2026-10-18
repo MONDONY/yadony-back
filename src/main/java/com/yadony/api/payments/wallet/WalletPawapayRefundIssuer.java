@@ -8,13 +8,16 @@ import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayOperationRepository;
 import com.yadony.api.payments.pawapay.PawapayOperationStatus;
+import com.yadony.api.payments.pawapay.PawapayOutOfFundsAlerter;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import com.yadony.api.payments.pawapay.dto.PawapayInitiationResult;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
 import java.math.BigDecimal;
+import java.math.MathContext;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -46,6 +49,14 @@ import org.springframework.stereotype.Component;
  * {@code PawapayOperationService#get} : ce dernier lève dans une méthode {@code @Transactional}
  * participante, ce qui marquerait rollback-only la transaction de {@code issuePendingItems} même
  * si l'exception est rattrapée ici.
+ *
+ * <p><b>Garde de solde.</b> Avant de réserver un REFUND ou un PAYOUT (émission automatique et
+ * repli), le solde du wallet pawaPay du pays et de la devise du dépôt est lu
+ * ({@link PawapayRefundFunds}). Si le net dépasse le montant sûr, rien n'est soumis : l'item
+ * passe FAILED {@value #REASON_BALANCE_SHORT} (ticket manuel à la résolution, comme après un
+ * échec) et l'alerte manque de fonds est levée ({@link PawapayOutOfFundsAlerter#alertBalanceTooLow}).
+ * Solde illisible : on soumet quand même (comportement d'avant, journalisé). La relance admin
+ * ({@link WalletRefundRetryService}) a déjà fait ce contrôle et passe {@code checkFunds = false}.
  */
 @Component
 public class WalletPawapayRefundIssuer implements WalletRefundRailIssuer {
@@ -65,6 +76,9 @@ public class WalletPawapayRefundIssuer implements WalletRefundRailIssuer {
      */
     static final Duration MAX_SEND_AGE = Duration.ofSeconds(60);
 
+    /** Motif d'un item non soumis : le wallet pawaPay ne peut pas verser son net en sécurité. */
+    static final String REASON_BALANCE_SHORT = "pawapay-wallet-balance-short";
+
     private static final Logger log = LoggerFactory.getLogger(WalletPawapayRefundIssuer.class);
 
     private final PawapayOperationRepository operationRepository;
@@ -74,11 +88,14 @@ public class WalletPawapayRefundIssuer implements WalletRefundRailIssuer {
     private final AuditService auditService;
     private final AdminAlertService adminAlertService;
     private final ApplicationEventPublisher eventPublisher;
+    private final PawapayRefundFunds funds;
+    private final PawapayOutOfFundsAlerter outOfFunds;
 
     public WalletPawapayRefundIssuer(PawapayOperationRepository operationRepository,
                                      PawapaySubmissionService submission, PawapayClient client,
                                      WalletRefundRequestItemRepository itemRepository, AuditService auditService,
-                                     AdminAlertService adminAlertService, ApplicationEventPublisher eventPublisher) {
+                                     AdminAlertService adminAlertService, ApplicationEventPublisher eventPublisher,
+                                     PawapayRefundFunds funds, PawapayOutOfFundsAlerter outOfFunds) {
         this.operationRepository = operationRepository;
         this.submission = submission;
         this.client = client;
@@ -86,6 +103,8 @@ public class WalletPawapayRefundIssuer implements WalletRefundRailIssuer {
         this.auditService = auditService;
         this.adminAlertService = adminAlertService;
         this.eventPublisher = eventPublisher;
+        this.funds = funds;
+        this.outOfFunds = outOfFunds;
     }
 
     /**
@@ -95,6 +114,15 @@ public class WalletPawapayRefundIssuer implements WalletRefundRailIssuer {
      */
     @Override
     public void issue(WalletRefundRequestEntity request, List<WalletRefundRequestItemEntity> items) {
+        issue(request, items, true);
+    }
+
+    /**
+     * Comme {@link #issue(WalletRefundRequestEntity, List)} ; {@code checkFunds = false} saute la
+     * garde de solde (relance admin, qui vient de la faire sur un solde relu).
+     */
+    void issue(WalletRefundRequestEntity request, List<WalletRefundRequestItemEntity> items, boolean checkFunds) {
+        FundsBudget budget = checkFunds ? new FundsBudget() : null;
         for (WalletRefundRequestItemEntity item : items) {
             if (item.getPawapayRefundId() != null || item.getPawapayPayoutId() != null) {
                 continue;
@@ -110,8 +138,60 @@ public class WalletPawapayRefundIssuer implements WalletRefundRailIssuer {
                 continue;
             }
             PawapayOperationKind kind = refundable.get() ? PawapayOperationKind.REFUND : PawapayOperationKind.PAYOUT;
+            if (budget != null && budget.refusedForFunds(item, deposit.get(), kind)) {
+                continue;
+            }
             emit(item, request.getUserId(), deposit.get(), kind);
         }
+    }
+
+    /**
+     * Solde pawaPay lu une fois par wallet (pays + devise) pour une émission, diminué de ce que
+     * chaque item émis va coûter ({@code net × (1 + taux / 100)}) : deux items d'une même demande
+     * ne peuvent pas consommer deux fois le même solde.
+     */
+    private final class FundsBudget {
+        private final Map<String, Optional<BigDecimal>> balances = new HashMap<>();
+
+        /** Vrai si l'item n'a pas été soumis faute de fonds (item FAILED et alerte levées). */
+        boolean refusedForFunds(WalletRefundRequestItemEntity item, PawapayOperationEntity deposit, PawapayOperationKind kind) {
+            String key = deposit.getCountry() + "_" + deposit.getCurrency();
+            Optional<BigDecimal> balance = balances.computeIfAbsent(key,
+                    k -> funds.balance(deposit.getCountry(), deposit.getCurrency()));
+            if (balance.isEmpty()) {
+                log.warn("Remboursement wallet pawaPay : solde {} illisible, item {} soumis sans controle (fail-open)",
+                        key, item.getId());
+                return false;
+            }
+            BigDecimal net = item.getAmount().subtract(item.getFeeAmount());
+            if (refuseIfShort(item, deposit, kind, net, balance.get())) {
+                return true;
+            }
+            BigDecimal cost = net.multiply(BigDecimal.ONE.add(funds.ratePercent(deposit.getProvider())
+                    .divide(new BigDecimal("100"), MathContext.DECIMAL64)));
+            balances.put(key, Optional.of(balance.get().subtract(cost)));
+            return false;
+        }
+    }
+
+    /**
+     * Garde de solde d'une émission : si {@code net} dépasse le montant sûr calculé sur
+     * {@code balance}, l'item passe FAILED sans rien soumettre et l'alerte manque de fonds est
+     * levée.
+     */
+    private boolean refuseIfShort(WalletRefundRequestItemEntity item, PawapayOperationEntity deposit,
+                                  PawapayOperationKind kind, BigDecimal net, BigDecimal balance) {
+        BigDecimal maxSafe = funds.maxSafe(balance, deposit.getProvider(), deposit.getCurrency());
+        if (net.compareTo(maxSafe) <= 0) {
+            return false;
+        }
+        log.warn("Remboursement wallet pawaPay : {} de {} {} non soumis pour l'item {}, solde {} (au plus {} sur)",
+                kind, net.toPlainString(), deposit.getCurrency(), item.getId(), balance.toPlainString(),
+                maxSafe.toPlainString());
+        outOfFunds.alertBalanceTooLow(deposit.getCountry(), deposit.getCurrency(), deposit.getProvider(), kind, net,
+                balance, maxSafe);
+        fail(item, REASON_BALANCE_SHORT, "Remboursement wallet pawaPay non soumis : wallet pawaPay trop bas");
+        return true;
     }
 
     /**
@@ -273,6 +353,11 @@ public class WalletPawapayRefundIssuer implements WalletRefundRailIssuer {
     void fallbackToPayout(WalletRefundRequestEntity request, WalletRefundRequestItemEntity item,
                           PawapayOperationEntity deposit, String refundFailureCode) {
         UUID refundOperationId = item.getPawapayRefundId();
+        Optional<BigDecimal> balance = funds.balance(deposit.getCountry(), deposit.getCurrency());
+        if (balance.isPresent() && refuseIfShort(item, deposit, PawapayOperationKind.PAYOUT,
+                item.getAmount().subtract(item.getFeeAmount()), balance.get())) {
+            return;
+        }
         Optional<UUID> payoutId = emit(item, request.getUserId(), deposit, PawapayOperationKind.PAYOUT);
         if (payoutId.isEmpty()) {
             fail(item, "pawapay-fallback-not-created", "Repli par versement pawaPay impossible a reserver");

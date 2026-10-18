@@ -19,6 +19,12 @@ import java.util.UUID;
  * réellement versé hors app et la note de l'admin à la résolution manuelle (nuls sinon) ;
  * {@code feeAmount}, somme des frais des items hors FAILED (nul sans item, et sur la réponse de
  * résolution, qui ne relit pas les items).
+ *
+ * <p>Champs additifs (relance mobile money) : {@code sourceRail}, rail des recharges que la
+ * demande rembourse ({@code PAWAPAY}, {@code STRIPE}, {@code MIXED}, nul sans item) : l'admin ne
+ * propose « Relancer le remboursement » que sur un ticket manuel {@code PAWAPAY} ;
+ * {@code failureReason}, dernier motif d'échec connu (items en échec de la demande, sinon de sa
+ * demande parente), nul sinon.
  */
 public record AdminWalletRefundRequestResponse(
         UUID id,
@@ -34,7 +40,9 @@ public record AdminWalletRefundRequestResponse(
         String origin,
         BigDecimal paidAmount,
         String resolutionNote,
-        BigDecimal feeAmount
+        BigDecimal feeAmount,
+        String sourceRail,
+        String failureReason
 ) {
     public static final String ORIGIN_ACCOUNT_DELETION = "ACCOUNT_DELETION";
     public static final String ORIGIN_WALLET = "WALLET";
@@ -49,11 +57,17 @@ public record AdminWalletRefundRequestResponse(
 
     public static AdminWalletRefundRequestResponse from(WalletRefundRequestEntity e, String userName, String origin,
                                                         BigDecimal feeAmount) {
+        return from(e, userName, origin, feeAmount, null, null);
+    }
+
+    public static AdminWalletRefundRequestResponse from(WalletRefundRequestEntity e, String userName, String origin,
+                                                        BigDecimal feeAmount, String sourceRail,
+                                                        String failureReason) {
         return new AdminWalletRefundRequestResponse(
                 e.getId(), e.getUserId(), e.getCurrency(), e.getAmount(),
                 e.getStatus().name(), e.getRequestedAt(),
                 e.getChannel() != null ? e.getChannel().name() : null,
                 e.getParentRequestId(), e.getResolvedAt(), userName, origin,
-                e.getPaidAmount(), e.getResolutionNote(), feeAmount);
+                e.getPaidAmount(), e.getResolutionNote(), feeAmount, sourceRail, failureReason);
     }
 }

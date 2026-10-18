@@ -4,6 +4,8 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.currency.SupportedCurrency;
+import com.yadony.api.payments.pawapay.PawapayOperationRepository;
+import jakarta.persistence.EntityManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
@@ -46,17 +48,23 @@ public class WalletRefundRequestService {
     private final AuditService auditService;
     private final AdminAlertService adminAlertService;
     private final WalletRefundRequestItemRepository refundRequestItemRepository;
+    private final PawapayOperationRepository pawapayOperationRepository;
+    private final EntityManager entityManager;
 
     public WalletRefundRequestService(WalletService walletService,
                                        WalletRefundRequestRepository refundRequestRepository,
                                        AuditService auditService,
                                        AdminAlertService adminAlertService,
-                                       WalletRefundRequestItemRepository refundRequestItemRepository) {
+                                       WalletRefundRequestItemRepository refundRequestItemRepository,
+                                       PawapayOperationRepository pawapayOperationRepository,
+                                       EntityManager entityManager) {
         this.walletService = walletService;
         this.refundRequestRepository = refundRequestRepository;
         this.auditService = auditService;
         this.adminAlertService = adminAlertService;
         this.refundRequestItemRepository = refundRequestItemRepository;
+        this.pawapayOperationRepository = pawapayOperationRepository;
+        this.entityManager = entityManager;
     }
 
     /** Ticket manuel pour une seule devise (repli quand le rail automatique ne s'applique pas). */
@@ -260,10 +268,24 @@ public class WalletRefundRequestService {
      */
     @Transactional
     public WalletRefundRequestEntity resolve(UUID requestId, UUID adminId, BigDecimal paidAmount, String note) {
-        WalletRefundRequestEntity request = refundRequestRepository.findById(requestId)
+        // Verrou de ligne puis relecture réelle, comme la relance mobile money
+        // (WalletRefundRetryService#retry) : une relance et une résolution manuelle simultanées
+        // sont sérialisées, la seconde voit l'état laissé par la première (sinon : versement
+        // pawaPay ET paiement hors app, l'utilisateur remboursé deux fois).
+        WalletRefundRequestEntity request = refundRequestRepository.findByIdForUpdate(requestId)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "wallet-refund-request-not-found", "Not Found", "Demande introuvable"));
+        // findByIdForUpdate rend toujours une entité gérée ; le garde ne sert qu'aux tests dont le
+        // dépôt est simulé (entité détachée, que refresh refuserait).
+        if (entityManager.contains(request)) {
+            entityManager.refresh(request);
+        }
 
+        if (request.getStatus() == WalletRefundRequestStatus.PROCESSING || pawapayOperationInFlight(request)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-retry-in-progress",
+                    "Unprocessable", "Un remboursement mobile money est en cours pour cette demande : "
+                            + "attendez son issue avant de la résoudre à la main");
+        }
         if (request.getStatus() != WalletRefundRequestStatus.PENDING) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "already-resolved",
                     "Unprocessable", "Cette demande a déjà été traitée");
@@ -309,6 +331,27 @@ public class WalletRefundRequestService {
         auditService.log("wallet_refund_request", saved.getId(), "RESOLVED", adminId, payload);
 
         return saved;
+    }
+
+    /**
+     * Vrai si un item de la demande porte une opération pawaPay (REFUND ou PAYOUT) encore
+     * ouverte, ou illisible : l'argent peut encore partir chez l'opérateur.
+     */
+    private boolean pawapayOperationInFlight(WalletRefundRequestEntity request) {
+        for (WalletRefundRequestItemEntity item : refundRequestItemRepository.findByRefundRequestId(request.getId())) {
+            for (UUID operationId : new UUID[] {item.getPawapayRefundId(), item.getPawapayPayoutId()}) {
+                if (operationId == null) {
+                    continue;
+                }
+                boolean open = pawapayOperationRepository.findById(operationId)
+                        .map(op -> op.getStatus() == null || !op.getStatus().isFinal())
+                        .orElse(true);
+                if (open) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

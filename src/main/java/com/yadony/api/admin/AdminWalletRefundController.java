@@ -3,8 +3,12 @@ package com.yadony.api.admin;
 import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.dto.AdminWalletRefundRequestResponse;
 import com.yadony.api.admin.dto.AdminWalletRefundResolveRequest;
+import com.yadony.api.admin.dto.AdminWalletRefundRetryPreviewResponse;
+import com.yadony.api.admin.dto.AdminWalletRefundRetryRequest;
+import com.yadony.api.admin.dto.AdminWalletRefundRetryResponse;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.wallet.WalletRefundRequestService;
+import com.yadony.api.payments.wallet.WalletRefundRetryService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
@@ -40,11 +44,14 @@ public class AdminWalletRefundController {
 
     private final WalletRefundRequestService walletRefundRequestService;
     private final AdminWalletRefundListing listing;
+    private final WalletRefundRetryService walletRefundRetryService;
 
     public AdminWalletRefundController(WalletRefundRequestService walletRefundRequestService,
-                                       AdminWalletRefundListing listing) {
+                                       AdminWalletRefundListing listing,
+                                       WalletRefundRetryService walletRefundRetryService) {
         this.walletRefundRequestService = walletRefundRequestService;
         this.listing = listing;
+        this.walletRefundRetryService = walletRefundRetryService;
     }
 
     @PreAuthorize("hasAuthority('PAYMENT_VIEW')")
@@ -108,6 +115,34 @@ public class AdminWalletRefundController {
                 ? walletRefundRequestService.resolve(id, adminId)
                 : walletRefundRequestService.resolve(id, adminId, body.paidAmount(), body.note());
         return ResponseEntity.ok(AdminWalletRefundRequestResponse.from(resolved));
+    }
+
+    /**
+     * Aperçu d'une relance du remboursement mobile money d'un ticket manuel : montant dû, solde
+     * du wallet pawaPay, montant sûr, montant suggéré, manque à alimenter et numéro masqué.
+     * Même permission que {@code resolve} : l'aperçu prépare un versement réel.
+     */
+    @PreAuthorize("hasAuthority('PAYMENT_REFUND')")
+    @GetMapping("/{id}/retry-preview")
+    public ResponseEntity<AdminWalletRefundRetryPreviewResponse> retryPreview(@PathVariable UUID id) {
+        return ResponseEntity.ok(AdminWalletRefundRetryPreviewResponse.from(walletRefundRetryService.preview(id)));
+    }
+
+    /**
+     * Relance le remboursement : verse réellement le montant dû entier sur le numéro de la
+     * recharge, par le rail pawaPay du flux automatique. Corps facultatif {@code {"amount": 477}},
+     * qui doit égaler le dû (confirmation du montant affiché).
+     */
+    @PreAuthorize("hasAuthority('PAYMENT_REFUND')")
+    @PostMapping("/{id}/retry")
+    public ResponseEntity<AdminWalletRefundRetryResponse> retry(
+            @PathVariable UUID id,
+            @RequestBody(required = false) AdminWalletRefundRetryRequest body,
+            Authentication authentication) {
+        UUID adminId = adminId(authentication);
+        WalletRefundRetryService.Retried retried =
+                walletRefundRetryService.retry(id, body == null ? null : body.amount(), adminId);
+        return ResponseEntity.ok(AdminWalletRefundRetryResponse.from(retried));
     }
 
     private UUID adminId(Authentication authentication) {
