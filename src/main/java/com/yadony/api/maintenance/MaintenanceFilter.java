@@ -82,7 +82,7 @@ public class MaintenanceFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
         MaintenanceSnapshot snapshot = currentSnapshot();
-        if (!snapshot.enabled() || isAlwaysOpen(request) || isAllowedCaller(snapshot)) {
+        if (!snapshot.enabled() || isAlwaysOpen(request) || isAllowedCaller(snapshot, request)) {
             filterChain.doFilter(request, response);
             return;
         }
@@ -108,11 +108,12 @@ public class MaintenanceFilter extends OncePerRequestFilter {
         return PUBLIC_SCAN.matcher(path).matches();
     }
 
-    private static boolean isAllowedCaller(MaintenanceSnapshot snapshot) {
+    private static boolean isAllowedCaller(MaintenanceSnapshot snapshot, HttpServletRequest request) {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null) return false;
+        // Un admin reste exempté dans l'application, où il est authentifié en utilisateur.
+        if (AdminPrincipal.isAdminCaller(auth, request)) return true;
         Object principal = auth.getPrincipal();
-        if (principal instanceof AdminPrincipal) return true;
         return principal instanceof String uid && snapshot.isExempt(uid);
     }
 

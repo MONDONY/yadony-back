@@ -2,6 +2,7 @@ package com.yadony.api.maintenance;
 
 import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.maintenance.dto.MaintenanceStatusResponse;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -26,9 +27,10 @@ public class MaintenanceController {
     }
 
     @GetMapping
-    public ResponseEntity<MaintenanceStatusResponse> status(Authentication authentication) {
+    public ResponseEntity<MaintenanceStatusResponse> status(Authentication authentication,
+                                                            HttpServletRequest request) {
         MaintenanceSnapshot snapshot = cache.snapshot();
-        boolean exempt = authentication != null && (authentication.getPrincipal() instanceof AdminPrincipal
+        boolean exempt = authentication != null && (AdminPrincipal.isAdminCaller(authentication, request)
                 || authentication.getPrincipal() instanceof String uid && snapshot.isExempt(uid));
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())

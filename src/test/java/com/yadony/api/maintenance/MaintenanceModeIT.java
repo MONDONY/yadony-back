@@ -187,6 +187,22 @@ class MaintenanceModeIT {
     }
 
     @Test
+    @DisplayName("admin connecté dans l'app (uid String + marque du filtre) → exempté, et le sait")
+    void compteAdminDansLApp_resteExempte() throws Exception {
+        enable("Maintenance");
+
+        mockMvc.perform(get("/announcements").with(authentication(userAuth(user)))
+                        .requestAttr(AdminPrincipal.ADMIN_ACCOUNT_ATTRIBUTE, Boolean.TRUE))
+                .andExpect(notMaintenance());
+        mockMvc.perform(get("/config/maintenance").with(authentication(userAuth(user)))
+                        .requestAttr(AdminPrincipal.ADMIN_ACCOUNT_ATTRIBUTE, Boolean.TRUE))
+                .andExpect(jsonPath("$.exempt").value(true));
+        // Sans la marque, le même utilisateur reste bloqué.
+        mockMvc.perform(get("/announcements").with(authentication(userAuth(user))))
+                .andExpect(status().isServiceUnavailable());
+    }
+
+    @Test
     void desactivation_rouvreLApi() throws Exception {
         enable("Maintenance");
         mockMvc.perform(put("/admin/maintenance").with(authentication(adminAuth(AdminRole.ADMIN)))
