@@ -136,6 +136,17 @@ class KnowledgeBaseFichesTest {
     }
 
     @Test
+    void leColisNonConformeMeneAuRefusDuVoyageur() {
+        KnowledgeBase kb = productionKb();
+        assertThat(firstHit(kb, "fr", "Le colis ne correspond pas à ce qui a été déclaré, que faire ?"))
+                .isEqualTo("colis-non-conforme");
+        assertThat(firstHit(kb, "fr", "Comment corriger le prix d'un colis mal déclaré ?"))
+                .isEqualTo("colis-non-conforme");
+        assertThat(firstHit(kb, "en", "The parcel doesn't match what was declared, what can I do?"))
+                .isEqualTo("colis-non-conforme");
+    }
+
+    @Test
     void lesMotsSeulsUsuelsPassentLeSeuil() {
         KnowledgeBase kb = productionKb();
         assertThat(firstHit(kb, "fr", "remboursement")).isEqualTo("remboursement");
