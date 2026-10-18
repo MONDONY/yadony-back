@@ -145,7 +145,7 @@ class OpenAiCompatibleClientTest {
         assertThat(body.path("messages").path(0).path("role").asText()).isEqualTo("system");
         assertThat(body.path("messages").path(1).path("content").asText()).isEqualTo("question");
         assertThat(body.path("temperature").asDouble()).isEqualTo(0.2);
-        assertThat(body.path("max_tokens").asInt()).isEqualTo(400);
+        assertThat(body.path("max_tokens").asInt()).isEqualTo(600);
         assertThat(body.path("response_format").path("type").asText()).isEqualTo("json_object");
     }
 
@@ -155,7 +155,7 @@ class OpenAiCompatibleClientTest {
                 "https://openrouter.ai/api/v1", "nvidia/nemotron-3-super-120b-a12b:free", "sk-or-key", true, null);
         Map<String, Object> body = OpenAiCompatibleClient.requestBody(openRouter, "s", "u");
         assertThat(body).containsEntry("reasoning", Map.of("effort", "none"));
-        assertThat(body).containsEntry("max_tokens", 400);
+        assertThat(body).containsEntry("max_tokens", 600);
     }
 
     @Test

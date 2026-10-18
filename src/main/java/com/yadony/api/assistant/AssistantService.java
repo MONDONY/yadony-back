@@ -5,7 +5,9 @@ import com.yadony.api.assistant.dto.AssistantAskRequest;
 import com.yadony.api.assistant.dto.AssistantAskResponse;
 import com.yadony.api.assistant.dto.AssistantHistoryTurn;
 import com.yadony.api.assistant.dto.AssistantScreenResponse;
+import com.yadony.api.assistant.dto.AssistantSuggestion;
 import com.yadony.api.assistant.dto.ParsedAnswer;
+import com.yadony.api.assistant.kb.KbArticle;
 import com.yadony.api.assistant.kb.KbHit;
 import com.yadony.api.assistant.kb.KbRoute;
 import com.yadony.api.assistant.kb.KnowledgeBase;
@@ -44,6 +46,10 @@ public class AssistantService {
     /** Même plafond que la question posée (AssistantAskRequest) : un tour plus long ne pèse pas plus dans la recherche. */
     static final int MAX_CONTEXT_QUESTION_LENGTH = 500;
     static final String NO_PROVIDER = "none";
+    static final int MAX_FOLLOW_UPS = 2;
+    static final int MAX_SUGGESTION_LENGTH = 80;
+    /** Fiches proposées au modèle pour la suggestion « découverte » : assez pour varier, peu pour le prompt. */
+    static final int DISCOVERY_CANDIDATES = 5;
 
     private static final Map<String, String> DEGRADED = Map.of(
             "fr", "Je n'arrive pas à répondre pour l'instant. Voici ce qui peut vous aider :",
@@ -122,9 +128,13 @@ public class AssistantService {
         List<AssistantHistoryTurn> maskedHistory = history.stream()
                 .map(t -> new AssistantHistoryTurn(t.role(), TrackingNumbers.mask(t.text()))).toList();
 
+        // Fiches de la langue de la réponse : celles des fiches trouvées.
+        String hitsLocale = otherLanguage ? otherLocale(locale) : locale;
+        List<KbArticle> discover = knowledgeBase.discoveryCandidates(hitsLocale, Set.copyOf(sources), searched,
+                DISCOVERY_CANDIDATES);
         Optional<LlmResult<ParsedAnswer>> result = router.complete(promptBuilder.system(),
                 promptBuilder.user(locale, hits, maskedHistory, TrackingNumbers.mask(question), otherLanguage,
-                        parcelPrompt),
+                        parcelPrompt, discover),
                 parser::parse);
         if (result.isEmpty() && parcel != null) {
             // Sans fournisseur, l'étape du colis reste une vraie réponse.
@@ -148,7 +158,47 @@ public class AssistantService {
         }
         String answer = truncate(parsed.answer(), MAX_ANSWER);
         return new AssistantAskResponse(answer, parsed.answered(), filterActions(parsed.routes(), hits, parcelActions),
-                sources, slug, remaining, parcel == null ? null : parcel.bidId(), List.of());
+                sources, slug, remaining, parcel == null ? null : parcel.bidId(), List.of(),
+                parsed.answered() ? suggestions(parsed, discover, question, history) : List.of());
+    }
+
+    /**
+     * Suggestions du modèle, passées au crible : au plus {@value #MAX_FOLLOW_UPS} questions de suite puis une
+     * « découverte » dont la fiche figure parmi celles proposées ({@code discover}). Vides, trop longues,
+     * en double, ou déjà posées dans la conversation : retirées, sans jamais faire échouer la réponse.
+     */
+    static List<AssistantSuggestion> suggestions(ParsedAnswer parsed, List<KbArticle> discover, String question,
+                                                 List<AssistantHistoryTurn> history) {
+        Set<String> seen = new java.util.HashSet<>();
+        seen.add(key(question));
+        for (AssistantHistoryTurn t : history) if ("user".equals(t.role())) seen.add(key(t.text()));
+        List<AssistantSuggestion> out = new ArrayList<>();
+        for (String raw : parsed.followUps()) {
+            if (out.size() >= MAX_FOLLOW_UPS) break;
+            String text = cleanSuggestion(raw);
+            if (text != null && seen.add(key(text))) out.add(new AssistantSuggestion(text, AssistantSuggestion.FOLLOW_UP));
+        }
+        String id = parsed.discoveryId() == null ? null : parsed.discoveryId().strip();
+        boolean known = id != null && discover.stream().anyMatch(a -> a.id().equals(id));
+        String text = known ? cleanSuggestion(parsed.discoveryQuestion()) : null;
+        if (text != null && seen.add(key(text))) out.add(new AssistantSuggestion(text, AssistantSuggestion.DISCOVERY));
+        return List.copyOf(out);
+    }
+
+    /** Une ligne, blancs resserrés, sans tiret cadratin ni chevron ; null si vide ou plus long que 80 caractères. */
+    private static String cleanSuggestion(String raw) {
+        if (raw == null) return null;
+        String text = raw.replace(" — ", ", ").replace(" – ", ", ").replace('—', '-').replace('–', '-')
+                .replace('<', ' ').replace('>', ' ')
+                .replaceAll("\\s+", " ").strip();
+        if (text.isEmpty() || text.length() > MAX_SUGGESTION_LENGTH) return null;
+        return text;
+    }
+
+    /** Clé de comparaison : casse, blancs et ponctuation finale ignorés. */
+    private static String key(String text) {
+        if (text == null) return "";
+        return text.strip().toLowerCase(Locale.ROOT).replaceAll("[\\s?!.¿¡]+$", "").replaceAll("\\s+", " ");
     }
 
     /**

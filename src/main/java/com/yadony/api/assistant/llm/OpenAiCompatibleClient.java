@@ -177,7 +177,7 @@ public class OpenAiCompatibleClient {
                 Map.of("role", "system", "content", system),
                 Map.of("role", "user", "content", user)));
         body.put("temperature", 0.2);
-        body.put("max_tokens", 400);
+        body.put("max_tokens", 600);
         if (provider.supportsJsonMode()) {
             body.put("response_format", Map.of("type", "json_object"));
         }
