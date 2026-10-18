@@ -17,6 +17,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.domain.PageImpl;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
@@ -37,6 +38,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -207,6 +209,101 @@ class AdminWalletRefundControllerTest {
         verify(walletService).debitConfirmedRefund(eq(USER_ID), eq("CAD"), eq(new BigDecimal("45.00")),
                 eq(com.yadony.api.payments.wallet.WalletTransactionType.ADMIN_REFUND_OUT));
         verify(auditService).log(eq("wallet_refund_request"), any(), eq("RESOLVED"), eq(ADMIN_ID), any());
+    }
+
+    @Test
+    @DisplayName("resolve — corps {paidAmount, note} → 200, montant versé et note renvoyés, débit inchangé")
+    void resolve_withPaidAmountBody_returnsPaidAmountAndKeepsDebit() throws Exception {
+        UUID requestId = UUID.randomUUID();
+        WalletRefundRequestEntity request = pendingRequest(requestId);
+        when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(request));
+        when(walletService.getBalance(USER_ID, "CAD")).thenReturn(new BigDecimal("45.00"));
+        when(refundRequestRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mockMvc.perform(post("/admin/wallet-refund-requests/" + requestId + "/resolve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"paidAmount\": 43.50, \"note\": \"Virement Interac, frais 1,50\"}")
+                        .with(authentication(adminAuth(AdminRole.ADMIN))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("RESOLVED"))
+                .andExpect(jsonPath("$.amount").value(45.00))
+                .andExpect(jsonPath("$.paidAmount").value(43.50))
+                .andExpect(jsonPath("$.resolutionNote").value("Virement Interac, frais 1,50"));
+
+        verify(walletService).debitConfirmedRefund(eq(USER_ID), eq("CAD"), eq(new BigDecimal("45.00")),
+                eq(com.yadony.api.payments.wallet.WalletTransactionType.ADMIN_REFUND_OUT));
+    }
+
+    @Test
+    @DisplayName("resolve — Content-Type JSON mais corps vide → 200, comme sans corps")
+    void resolve_withEmptyJsonBody_behavesAsBefore() throws Exception {
+        UUID requestId = UUID.randomUUID();
+        when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(pendingRequest(requestId)));
+        when(walletService.getBalance(USER_ID, "CAD")).thenReturn(new BigDecimal("45.00"));
+        when(refundRequestRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mockMvc.perform(post("/admin/wallet-refund-requests/" + requestId + "/resolve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .with(authentication(adminAuth(AdminRole.ADMIN))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("RESOLVED"))
+                .andExpect(jsonPath("$.paidAmount").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("resolve — montant versé au-dessus de la demande → 422 problem+json, rien n'est débité")
+    void resolve_paidAmountAboveRequest_returns422ProblemJson() throws Exception {
+        UUID requestId = UUID.randomUUID();
+        when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(pendingRequest(requestId)));
+
+        mockMvc.perform(post("/admin/wallet-refund-requests/" + requestId + "/resolve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"paidAmount\": 46}")
+                        .with(authentication(adminAuth(AdminRole.ADMIN))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("wallet-refund-paid-amount-too-high"))
+                .andExpect(jsonPath("$.maxAmount").value(45.00));
+
+        verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("resolve — trop de décimales ou montant négatif → 422 problem+json")
+    void resolve_paidAmountInvalid_returns422ProblemJson() throws Exception {
+        UUID requestId = UUID.randomUUID();
+        when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(pendingRequest(requestId)));
+
+        mockMvc.perform(post("/admin/wallet-refund-requests/" + requestId + "/resolve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"paidAmount\": 44.505}")
+                        .with(authentication(adminAuth(AdminRole.ADMIN))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("wallet-refund-paid-amount-scale"));
+        mockMvc.perform(post("/admin/wallet-refund-requests/" + requestId + "/resolve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"paidAmount\": -1}")
+                        .with(authentication(adminAuth(AdminRole.ADMIN))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("wallet-refund-paid-amount-invalid"));
+
+        verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("resolve avec corps — SUPPORT n'a pas PAYMENT_REFUND → 403, rien n'est lu ni débité")
+    void resolve_withBody_withSupportRole_returns403() throws Exception {
+        UUID requestId = UUID.randomUUID();
+        mockMvc.perform(post("/admin/wallet-refund-requests/" + requestId + "/resolve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"paidAmount\": 40}")
+                        .with(authentication(adminAuth(AdminRole.SUPPORT))))
+                .andExpect(status().isForbidden());
+
+        verify(refundRequestRepository, never()).findById(any());
+        verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
     }
 
     @Test

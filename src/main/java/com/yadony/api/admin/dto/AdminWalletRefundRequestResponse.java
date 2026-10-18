@@ -14,6 +14,11 @@ import java.util.UUID;
  * demande date de la suppression du compte (ou après), sinon WALLET (demande depuis l'écran
  * wallet). {@code userName} et {@code origin} sont nuls sur la réponse de résolution, qui ne
  * relit pas l'utilisateur.
+ *
+ * <p>Champs additifs (V330) : {@code paidAmount} et {@code resolutionNote}, le montant
+ * réellement versé hors app et la note de l'admin à la résolution manuelle (nuls sinon) ;
+ * {@code feeAmount}, somme des frais des items hors FAILED (nul sans item, et sur la réponse de
+ * résolution, qui ne relit pas les items).
  */
 public record AdminWalletRefundRequestResponse(
         UUID id,
@@ -26,20 +31,29 @@ public record AdminWalletRefundRequestResponse(
         UUID parentRequestId,
         LocalDateTime resolvedAt,
         String userName,
-        String origin
+        String origin,
+        BigDecimal paidAmount,
+        String resolutionNote,
+        BigDecimal feeAmount
 ) {
     public static final String ORIGIN_ACCOUNT_DELETION = "ACCOUNT_DELETION";
     public static final String ORIGIN_WALLET = "WALLET";
 
     public static AdminWalletRefundRequestResponse from(WalletRefundRequestEntity e) {
-        return from(e, null, null);
+        return from(e, null, null, null);
     }
 
     public static AdminWalletRefundRequestResponse from(WalletRefundRequestEntity e, String userName, String origin) {
+        return from(e, userName, origin, null);
+    }
+
+    public static AdminWalletRefundRequestResponse from(WalletRefundRequestEntity e, String userName, String origin,
+                                                        BigDecimal feeAmount) {
         return new AdminWalletRefundRequestResponse(
                 e.getId(), e.getUserId(), e.getCurrency(), e.getAmount(),
                 e.getStatus().name(), e.getRequestedAt(),
                 e.getChannel() != null ? e.getChannel().name() : null,
-                e.getParentRequestId(), e.getResolvedAt(), userName, origin);
+                e.getParentRequestId(), e.getResolvedAt(), userName, origin,
+                e.getPaidAmount(), e.getResolutionNote(), feeAmount);
     }
 }
