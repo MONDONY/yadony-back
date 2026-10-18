@@ -27,6 +27,11 @@ import static org.mockito.Mockito.*;
 @DisplayName("ResendEmailService — tests unitaires")
 class ResendEmailServiceTest {
 
+    /** Logo servi par yadony-web (public/logos/). */
+    private static final String LOGO_URL = "https://yadony.com/logos/logo-yadony.png";
+    /** Ancienne adresse du logo : 404 sur yadony.com, l'image arrivait cassée. */
+    private static final String BROKEN_LOGO_URL = "https://yadony.com/logo.png";
+
     private RestClient mockRestClient;
     private RequestBodyUriSpec requestBodyUriSpec;
     private RequestBodySpec requestBodySpec;
@@ -111,15 +116,18 @@ class ResendEmailServiceTest {
         assertThat(payload)
                 .containsEntry("from", "noreply@yadony.app")
                 .containsEntry("subject", "Votre code Yadony")
-                .containsEntry("text", "Votre code Yadony est : 123456. Valable 10 minutes.");
+                .containsEntry("text", "Votre code Yadony est : 123456. Il expire dans 10 minutes. "
+                        + "Si vous n'avez rien demandé, ignorez cet e-mail.");
         assertThat(payload.get("to")).isEqualTo(List.of("user@example.com"));
         assertThat((String) payload.get("html"))
-                .contains("https://yadony.com/logo.png")
-                .contains("Vérification de compte")
+                .contains(LOGO_URL)
+                .doesNotContain(BROKEN_LOGO_URL)
+                .contains("Voici votre code de vérification")
+                // Le préheader porte le code : il se lit dans la notification.
+                .contains("123456 est votre code Yadony")
                 // Thymeleaf échappe l'apostrophe en HTML (th:text) : &#39;, pas '.
-                .contains("Merci d&#39;avoir choisi Yadony")
-                .contains("123456")
-                .contains("Code valable 10 minutes")
+                .contains("Il expire dans 10 minutes et ne sert qu&#39;une fois.")
+                .contains("Vous n&#39;avez rien demandé ?")
                 .contains("https://whatsapp.com/channel/0029VbCfmMzAYlUE5EddiT41")
                 .contains("https://www.youtube.com/@yadony")
                 .contains("https://www.tiktok.com/@yadony_app")
@@ -140,11 +148,13 @@ class ResendEmailServiceTest {
         Map<String, Object> payload = (Map<String, Object>) payloadCaptor.getValue();
         assertThat(payload)
                 .containsEntry("subject", "Your Yadony code")
-                .containsEntry("text", "Your Yadony code is: 123456. Valid for 10 minutes.");
+                .containsEntry("text", "Your Yadony code is: 123456. It expires in 10 minutes. "
+                        + "If you didn't request it, ignore this email.");
         assertThat((String) payload.get("html"))
-                .contains("Account verification")
-                .contains("Thank you for choosing Yadony")
-                .contains("123456");
+                .contains("Here is your verification code")
+                .contains("123456 is your Yadony code")
+                .contains("Didn&#39;t request this?")
+                .doesNotContain("??");
     }
 
     @Test
@@ -160,7 +170,7 @@ class ResendEmailServiceTest {
         Map<String, Object> payload = (Map<String, Object>) payloadCaptor.getValue();
         assertThat(payload).containsEntry("subject", "Votre demande GP Pro a été refusée");
         assertThat((String) payload.get("text")).contains("Pièce illisible.");
-        assertThat((String) payload.get("html")).contains("Pièce illisible.").contains("https://yadony.com/logo.png");
+        assertThat((String) payload.get("html")).contains("Pièce illisible.").contains(LOGO_URL).doesNotContain(BROKEN_LOGO_URL);
     }
 
     @Test
