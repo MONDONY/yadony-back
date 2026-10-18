@@ -181,6 +181,13 @@ class ParcelScanControllerIntegrationTest {
     }
 
     @Test
+    void chartePartagee_vraiLogoEtPolicesDeLApp() throws Exception {
+        mockMvc.perform(get("/tracking/{id}/scan", bid.getId()))
+                .andExpect(content().string(containsString("src=\"/logo.png\"")))
+                .andExpect(content().string(containsString("family=Hanken+Grotesk")));
+    }
+
+    @Test
     void urlDeLaPage_jamaisTransmiseEnReferer() throws Exception {
         mockMvc.perform(get("/tracking/{id}/scan", bid.getId()))
                 .andExpect(content().string(containsString("<meta name=\"referrer\" content=\"no-referrer\">")));
