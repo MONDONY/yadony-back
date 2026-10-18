@@ -640,12 +640,12 @@ class WalletRefundIT {
         WalletRefundRequestItemEntity item =
                 walletRefundRequestItemRepository.findByRefundRequestId(request.getId()).get(0);
         assertThat(item.getAmount()).isEqualByComparingTo("10000");
-        assertThat(item.getFeeAmount()).isEqualByComparingTo("200");
+        assertThat(item.getFeeAmount()).isEqualByComparingTo("450");
         assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.PROCESSING);
         assertThat(item.getPawapayRefundId()).isNotNull();
         assertThat(item.getPawapayPayoutId()).isNull();
-        // submitWalletRefund appelé avec le NET (10000 - 200 = 9800), jamais le brut.
-        assertThat(refundCaptor.getValue().amount()).isEqualByComparingTo("9800");
+        // submitWalletRefund appelé avec le NET (10000 - 450 = 9550, grille Orange CI 2,5 % + 2 %), jamais le brut.
+        assertThat(refundCaptor.getValue().amount()).isEqualByComparingTo("9550");
         assertThat(refundCaptor.getValue().depositId()).isEqualTo(deposit.getId());
         // Rien débité tant que pawaPay n'a pas confirmé.
         assertThat(walletService.getBalance(userId, "XOF")).isEqualByComparingTo("10000");
@@ -690,7 +690,7 @@ class WalletRefundIT {
 
     /**
      * Scénario 3 : opérateur sans {@code operationTypes.REFUND} déclaré : le versement part
-     * directement (jamais de tentative de refund), pour le NET (9800). Le versement échoue au
+     * directement (jamais de tentative de refund), pour le NET (9550). Le versement échoue au
      * callback : l'item passe FAILED (alerte admin, cf. {@code WalletPawapayRefundIssuer#fail}),
      * la demande FAILED, et un ticket enfant MANUAL_ADMIN reprend l'item pour sa résolution
      * manuelle — même mécanisme que le repli Stripe déjà couvert par
@@ -712,7 +712,7 @@ class WalletRefundIT {
                 walletRefundRequestItemRepository.findByRefundRequestId(request.getId()).get(0);
         assertThat(item.getPawapayRefundId()).isNull();
         assertThat(item.getPawapayPayoutId()).isNotNull();
-        assertThat(payoutCaptor.getValue().amount()).isEqualByComparingTo("9800");
+        assertThat(payoutCaptor.getValue().amount()).isEqualByComparingTo("9550");
         assertThat(payoutCaptor.getValue().phoneNumber()).isEqualTo(PAWAPAY_MSISDN);
         verify(pawapayClient, never()).initiateRefund(any());
 
@@ -822,8 +822,8 @@ class WalletRefundIT {
 
         WalletSettlementDto xofPreview = previewByCurrency.get("XOF");
         assertThat(xofPreview.rail()).isEqualTo(WalletSettlementDto.RAIL_PAWAPAY);
-        assertThat(xofPreview.feeAmount()).isEqualByComparingTo("200");
-        assertThat(xofPreview.netAmount()).isEqualByComparingTo("9800");
+        assertThat(xofPreview.feeAmount()).isEqualByComparingTo("450");
+        assertThat(xofPreview.netAmount()).isEqualByComparingTo("9550");
         assertThat(xofPreview.destinationMasked()).isEqualTo(PAWAPAY_MSISDN_MASKED);
 
         List<WalletRefundRequestEntity> opened;
