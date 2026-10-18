@@ -10,6 +10,9 @@ import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.wallet.WalletRefundRequestEntity;
 import com.yadony.api.payments.wallet.WalletRefundRequestRepository;
 import com.yadony.api.payments.wallet.WalletRefundRequestStatus;
+import com.yadony.api.payments.wallet.WalletRefundRetryService;
+import com.yadony.api.common.YadonyBusinessException;
+import org.springframework.http.HttpStatus;
 import com.yadony.api.payments.wallet.WalletService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -54,6 +57,7 @@ class AdminWalletRefundControllerTest {
     @MockitoBean WalletService walletService;
     @MockitoBean AuditService auditService;
     @MockitoBean AdminAlertService adminAlertService;
+    @MockitoBean WalletRefundRetryService walletRefundRetryService;
     @Autowired com.yadony.api.auth.UserRepository userRepository;
 
     private static final UUID ADMIN_ID = UUID.randomUUID();
@@ -331,5 +335,134 @@ class AdminWalletRefundControllerTest {
                 .andExpect(jsonPath("$.code").value("already-resolved"));
 
         verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
+    }
+
+    // ── Relance du remboursement mobile money ─────────────────────────────────
+
+    private static WalletRefundRetryService.Preview preview(UUID id) {
+        return new WalletRefundRetryService.Preview(id, "XOF", "CI", "ORANGE_CIV", "+225 •••• 90",
+                new BigDecimal("500"), new BigDecimal("477"), new BigDecimal("487.50"), new BigDecimal("473"),
+                new BigDecimal("473"), new BigDecimal("4"), new BigDecimal("3.0"), true, null);
+    }
+
+    @Test
+    @DisplayName("retry-preview — ADMIN → 200 avec dû, solde, sûr, suggéré, manque et numéro masqué")
+    void retryPreview_withAdmin_returnsAmounts() throws Exception {
+        UUID requestId = UUID.randomUUID();
+        when(walletRefundRetryService.preview(requestId)).thenReturn(preview(requestId));
+
+        mockMvc.perform(get("/admin/wallet-refund-requests/" + requestId + "/retry-preview")
+                        .with(authentication(adminAuth(AdminRole.ADMIN))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.amountDue").value(477))
+                .andExpect(jsonPath("$.walletBalance").value(487.50))
+                .andExpect(jsonPath("$.maxSafeAmount").value(473))
+                .andExpect(jsonPath("$.suggestedAmount").value(473))
+                .andExpect(jsonPath("$.topUpNeeded").value(4))
+                .andExpect(jsonPath("$.currency").value("XOF"))
+                .andExpect(jsonPath("$.country").value("CI"))
+                .andExpect(jsonPath("$.provider").value("ORANGE_CIV"))
+                .andExpect(jsonPath("$.msisdnMasked").value("+225 •••• 90"))
+                .andExpect(jsonPath("$.retryAvailable").value(true));
+    }
+
+    @Test
+    @DisplayName("retry-preview — demande non éligible → 422 problem+json avec le motif")
+    void retryPreview_notEligible_returns422Problem() throws Exception {
+        UUID requestId = UUID.randomUUID();
+        when(walletRefundRetryService.preview(requestId)).thenThrow(new YadonyBusinessException(
+                HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-retry-not-eligible", "Unprocessable",
+                "Cette demande ne vient pas d'une recharge mobile money", java.util.Map.of("reason",
+                        "not-mobile-money-topup")));
+
+        mockMvc.perform(get("/admin/wallet-refund-requests/" + requestId + "/retry-preview")
+                        .with(authentication(adminAuth(AdminRole.ADMIN))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("wallet-refund-retry-not-eligible"))
+                .andExpect(jsonPath("$.reason").value("not-mobile-money-topup"));
+    }
+
+    @Test
+    @DisplayName("retry-preview et retry — SUPPORT n'a pas PAYMENT_REFUND → 403, rien n'est envoyé")
+    void retry_withSupportRole_returns403() throws Exception {
+        UUID requestId = UUID.randomUUID();
+        mockMvc.perform(get("/admin/wallet-refund-requests/" + requestId + "/retry-preview")
+                        .with(authentication(adminAuth(AdminRole.SUPPORT))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/admin/wallet-refund-requests/" + requestId + "/retry")
+                        .with(authentication(adminAuth(AdminRole.SUPPORT)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\": 473}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/admin/wallet-refund-requests/" + requestId + "/retry")
+                        .with(authentication(nonAdminAuth())))
+                .andExpect(status().isForbidden());
+
+        verify(walletRefundRetryService, never()).preview(any());
+        verify(walletRefundRetryService, never()).retry(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("retry — ADMIN, montant choisi → 200, demande PROCESSING et chiffres retenus")
+    void retry_withAmount_returnsProcessing() throws Exception {
+        UUID requestId = UUID.randomUUID();
+        WalletRefundRequestEntity processing = pendingRequest(requestId);
+        processing.setStatus(WalletRefundRequestStatus.PROCESSING);
+        when(walletRefundRetryService.retry(eq(requestId), any(), eq(ADMIN_ID)))
+                .thenReturn(new WalletRefundRetryService.Retried(processing, new BigDecimal("473"),
+                        new BigDecimal("477"), new BigDecimal("487.50"), new BigDecimal("473")));
+
+        mockMvc.perform(post("/admin/wallet-refund-requests/" + requestId + "/retry")
+                        .with(authentication(adminAuth(AdminRole.ADMIN)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\": 473}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.request.status").value("PROCESSING"))
+                .andExpect(jsonPath("$.amount").value(473))
+                .andExpect(jsonPath("$.maxSafeAmount").value(473));
+
+        verify(walletRefundRetryService).retry(eq(requestId),
+                org.mockito.ArgumentMatchers.argThat(a -> a != null && a.compareTo(new BigDecimal("473")) == 0),
+                eq(ADMIN_ID));
+    }
+
+    @Test
+    @DisplayName("retry — sans corps → montant suggéré (null transmis au service)")
+    void retry_withoutBody_usesSuggestedAmount() throws Exception {
+        UUID requestId = UUID.randomUUID();
+        WalletRefundRequestEntity processing = pendingRequest(requestId);
+        processing.setStatus(WalletRefundRequestStatus.PROCESSING);
+        when(walletRefundRetryService.retry(requestId, null, ADMIN_ID))
+                .thenReturn(new WalletRefundRetryService.Retried(processing, new BigDecimal("473"),
+                        new BigDecimal("477"), new BigDecimal("487.50"), new BigDecimal("473")));
+
+        mockMvc.perform(post("/admin/wallet-refund-requests/" + requestId + "/retry")
+                        .with(authentication(adminAuth(AdminRole.ADMIN))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.amount").value(473));
+        verify(walletRefundRetryService).retry(requestId, null, ADMIN_ID);
+    }
+
+    @Test
+    @DisplayName("retry — fonds pawaPay insuffisants → 422 problem+json avec maxSafeAmount et topUpNeeded")
+    void retry_insufficientFunds_returns422Problem() throws Exception {
+        UUID requestId = UUID.randomUUID();
+        java.util.Map<String, Object> props = new java.util.LinkedHashMap<>();
+        props.put("maxSafeAmount", new BigDecimal("473"));
+        props.put("topUpNeeded", new BigDecimal("4"));
+        when(walletRefundRetryService.retry(eq(requestId), any(), eq(ADMIN_ID))).thenThrow(
+                new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-insufficient-pawapay-funds",
+                        "Unprocessable", "Le wallet pawaPay CI XOF ne permet de verser au plus que 473 XOF", props));
+
+        mockMvc.perform(post("/admin/wallet-refund-requests/" + requestId + "/retry")
+                        .with(authentication(adminAuth(AdminRole.ADMIN)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\": 477}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("wallet-refund-insufficient-pawapay-funds"))
+                .andExpect(jsonPath("$.maxSafeAmount").value(473))
+                .andExpect(jsonPath("$.topUpNeeded").value(4));
     }
 }

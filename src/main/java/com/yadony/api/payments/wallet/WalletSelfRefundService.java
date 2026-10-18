@@ -843,6 +843,18 @@ public class WalletSelfRefundService {
         boolean anyFailed = items.stream().anyMatch(i -> i.getStatus() == WalletRefundItemStatus.FAILED);
         request.setStatus(anyFailed ? WalletRefundRequestStatus.FAILED : WalletRefundRequestStatus.REFUNDED);
         request.setResolvedAt(LocalDateTime.now(ZoneOffset.UTC));
+        // Ticket manuel relancé depuis l'admin (WalletRefundRetryService) : le net réellement
+        // versé par pawaPay, qui peut être inférieur au dû quand le wallet pawaPay manquait de
+        // fonds. Le débit du wallet reste le brut, comme pour le flux automatique.
+        if (request.getChannel() == WalletRefundChannel.MANUAL_ADMIN) {
+            BigDecimal paid = items.stream()
+                    .filter(i -> i.getStatus() == WalletRefundItemStatus.REFUNDED)
+                    .map(i -> i.getAmount().subtract(i.getFeeAmount() == null ? BigDecimal.ZERO : i.getFeeAmount()))
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            if (paid.signum() > 0) {
+                request.setPaidAmount(paid);
+            }
+        }
         // saveAndFlush : openChildForFailedItems insère juste après un PENDING sur le même
         // (user_id, currency), que l'index unique partiel uq_wallet_refund_requests_pending
         // (V229, statuts PENDING et PROCESSING) refuserait tant que cette demande-ci est encore
@@ -915,7 +927,10 @@ public class WalletSelfRefundService {
             if (item.getStatus() != WalletRefundItemStatus.PROCESSING) {
                 continue;
             }
-            if (request.getChannel() == WalletRefundChannel.AUTOMATIC_PAWAPAY) {
+            boolean pawapayItem = request.getChannel() == WalletRefundChannel.AUTOMATIC_PAWAPAY
+                    || (request.getChannel() == WalletRefundChannel.MANUAL_ADMIN
+                        && (item.getPawapayRefundId() != null || item.getPawapayPayoutId() != null));
+            if (pawapayItem) {
                 walletRefundRailIssuer.reconcile(request, item);
             } else if (request.getChannel() == WalletRefundChannel.AUTOMATIC_STRIPE
                     && item.getStripeRefundId() != null) {

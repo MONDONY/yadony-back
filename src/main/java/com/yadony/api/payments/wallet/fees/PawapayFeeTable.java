@@ -40,7 +40,12 @@ public record PawapayFeeTable(@Name("default") Rate defaults, Map<String, Rate> 
                 .divide(new BigDecimal("100"), scale, RoundingMode.HALF_UP);
     }
 
-    private Rate rateFor(String provider) {
+    /**
+     * Taux applicables à l'opérateur {@code provider} : sa surcharge si elle existe, sinon le
+     * défaut configuré, sinon {@link #HARDCODED_DEFAULT}. Public pour le calcul du montant de
+     * remboursement sûr ({@code PawapayRefundSafeAmount}), qui ne lit que {@code refundPercent}.
+     */
+    public Rate rateFor(String provider) {
         Rate base = defaults != null ? defaults : HARDCODED_DEFAULT;
         if (provider == null || providers == null || providers.isEmpty()) {
             return base;

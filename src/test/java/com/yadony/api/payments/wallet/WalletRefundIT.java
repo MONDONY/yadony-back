@@ -25,6 +25,7 @@ import com.yadony.api.payments.pawapay.dto.PawapayInitiationResult;
 import com.yadony.api.payments.pawapay.dto.PawapayPayoutRequest;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
 import com.yadony.api.payments.pawapay.dto.PawapayRefundRequest;
+import com.yadony.api.payments.pawapay.dto.PawapayWalletBalance;
 import com.yadony.api.payments.wallet.fees.StripeFeeSource;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
@@ -115,6 +116,8 @@ class WalletRefundIT {
     @Autowired WalletRefundIssueRecoveryScheduler recoveryScheduler;
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired PawapayOperationService pawapayOperations;
+    @Autowired WalletRefundRetryService walletRefundRetryService;
+    @Autowired com.yadony.api.payments.pawapay.PawapayOperationRepository pawapayOperationRepository;
 
     // Frais Stripe réels lus via PaymentIntent.retrieve (appel réseau) : neutralisés ici pour
     // ne jamais dépendre de Stripe en IT (cf. tâche 3, lot 2). Les assertions de ce fichier
@@ -838,5 +841,154 @@ class WalletRefundIT {
                 opened.stream().collect(Collectors.toMap(WalletRefundRequestEntity::getCurrency, r -> r));
         assertThat(openedByCurrency.get("EUR").getChannel()).isEqualTo(WalletRefundChannel.AUTOMATIC_STRIPE);
         assertThat(openedByCurrency.get("XOF").getChannel()).isEqualTo(WalletRefundChannel.AUTOMATIC_PAWAPAY);
+    }
+
+    // --- Relance admin d'un remboursement mobile money passé en manuel (cas réel du 18/10) ---
+
+    private static final String OUT_OF_FUNDS = "PAWAPAY_WALLET_OUT_OF_FUNDS";
+
+    /**
+     * Reproduit la prod du 18/10 : recharge Orange CI de 500 XOF, remboursement automatique de
+     * 477 (barème actuel 2,5 + 2 %) refusé faute de fonds, repli par versement refusé aussi : la
+     * demande passe FAILED et un ticket enfant MANUAL_ADMIN PENDING reprend l'item.
+     */
+    private WalletRefundRequestEntity manualChildAfterOutOfFunds(UUID userId) {
+        PawapayOperationEntity deposit = pawapayTopup(userId, "XOF", "500");
+        completePawapayOperation(deposit.getId(), "OP-CIV-DEP-RETRY-" + UUID.randomUUID());
+        stubPawapayConfig(true);
+        when(pawapayClient.initiateRefund(any(PawapayRefundRequest.class))).thenReturn(PawapayInitiationResult.accepted());
+        when(pawapayClient.initiatePayout(any(PawapayPayoutRequest.class))).thenReturn(PawapayInitiationResult.accepted());
+
+        WalletRefundRequestEntity auto = walletSelfRefundService.request(userId, "XOF", List.of());
+        WalletRefundRequestItemEntity item = walletRefundRequestItemRepository.findByRefundRequestId(auto.getId()).get(0);
+        failPawapayOperation(item.getPawapayRefundId(), OUT_OF_FUNDS);
+        item = walletRefundRequestItemRepository.findById(item.getId()).orElseThrow();
+        failPawapayOperation(item.getPawapayPayoutId(), OUT_OF_FUNDS);
+        assertThat(walletRefundRequestRepository.findById(auto.getId()).orElseThrow().getStatus())
+                .isEqualTo(WalletRefundRequestStatus.FAILED);
+        return walletRefundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(userId).stream()
+                .filter(r -> auto.getId().equals(r.getParentRequestId())).findFirst().orElseThrow();
+    }
+
+    private void stubPawapayBalance(String balance) {
+        when(pawapayClient.walletBalances()).thenReturn(List.of(
+                new PawapayWalletBalance("CIV", "XOF", new BigDecimal(balance))));
+    }
+
+    private long walletRefundOperations(UUID userId) {
+        return pawapayOperationRepository.findByUserIdAndPurposeAndKind(userId, PawapayOperationPurpose.WALLET_REFUND,
+                PawapayOperationKind.REFUND).size()
+                + pawapayOperationRepository.findByUserIdAndPurposeAndKind(userId,
+                        PawapayOperationPurpose.WALLET_REFUND, PawapayOperationKind.PAYOUT).size();
+    }
+
+    @Test
+    void relanceAdmin_casReel_verseLeMontantSurAuDepotPuisSoldeLaDemande() {
+        UUID userId = persistUser();
+        WalletRefundRequestEntity child = manualChildAfterOutOfFunds(userId);
+        assertThat(child.getChannel()).isEqualTo(WalletRefundChannel.MANUAL_ADMIN);
+        assertThat(child.getStatus()).isEqualTo(WalletRefundRequestStatus.PENDING);
+        stubPawapayBalance("487.50");
+
+        WalletRefundRetryService.Preview preview = walletRefundRetryService.preview(child.getId());
+        assertThat(preview.amountDue()).isEqualByComparingTo("477");
+        assertThat(preview.maxSafeAmount()).isEqualByComparingTo("473");
+        assertThat(preview.suggestedAmount()).isEqualByComparingTo("473");
+        assertThat(preview.topUpNeeded()).isEqualByComparingTo("4");
+        assertThat(preview.msisdnMasked()).isEqualTo(PAWAPAY_MSISDN_MASKED);
+        assertThat(preview.country()).isEqualTo(PAWAPAY_COUNTRY);
+
+        ArgumentCaptor<PawapayRefundRequest> refunds = ArgumentCaptor.forClass(PawapayRefundRequest.class);
+        UUID adminId = UUID.randomUUID();
+        WalletRefundRetryService.Retried retried = walletRefundRetryService.retry(child.getId(), null, adminId);
+
+        assertThat(retried.amount()).isEqualByComparingTo("473");
+        verify(pawapayClient, org.mockito.Mockito.times(2)).initiateRefund(refunds.capture());
+        PawapayRefundRequest sent = refunds.getAllValues().get(1);
+        assertThat(sent.amount()).isEqualByComparingTo("473");
+        WalletRefundRequestItemEntity childItem =
+                walletRefundRequestItemRepository.findByRefundRequestId(child.getId()).get(0);
+        PawapayOperationEntity refundOp = pawapayOperationRepository.findById(childItem.getPawapayRefundId()).orElseThrow();
+        assertThat(sent.depositId()).isEqualTo(refundOp.getRelatedOperationId());
+        assertThat(refundOp.getMsisdn()).isEqualTo(PAWAPAY_MSISDN);
+        assertThat(walletRefundRequestRepository.findById(child.getId()).orElseThrow().getStatus())
+                .isEqualTo(WalletRefundRequestStatus.PROCESSING);
+
+        // Double clic : refusé, aucune nouvelle opération.
+        long before = walletRefundOperations(userId);
+        assertThatThrownBy(() -> walletRefundRetryService.retry(child.getId(), null, adminId))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                .isEqualTo("wallet-refund-retry-in-progress");
+        assertThat(walletRefundOperations(userId)).isEqualTo(before);
+
+        completePawapayOperation(childItem.getPawapayRefundId(), "OP-CIV-REFUND-RETRY");
+
+        WalletRefundRequestEntity done = walletRefundRequestRepository.findById(child.getId()).orElseThrow();
+        assertThat(done.getStatus()).isEqualTo(WalletRefundRequestStatus.REFUNDED);
+        assertThat(done.getPaidAmount()).isEqualByComparingTo("473");
+        assertThat(walletService.getBalance(userId, "XOF")).isEqualByComparingTo("0");
+        assertThat(walletTransactionRepository.findByUserIdAndCurrencyOrderByCreatedAtAsc(userId, "XOF"))
+                .anyMatch(t -> t.getType() == WalletTransactionType.SELF_REFUND_OUT
+                        && t.getAmount().compareTo(new BigDecimal("-500")) == 0);
+    }
+
+    @Test
+    void relanceAdmin_montantAuDelaDuSur_422SansAucuneOperationPawapay() {
+        UUID userId = persistUser();
+        WalletRefundRequestEntity child = manualChildAfterOutOfFunds(userId);
+        stubPawapayBalance("487.50");
+        long before = walletRefundOperations(userId);
+
+        assertThatThrownBy(() -> walletRefundRetryService.retry(child.getId(), new BigDecimal("477"), UUID.randomUUID()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    YadonyBusinessException b = (YadonyBusinessException) e;
+                    assertThat(b.getErrorCode()).isEqualTo("wallet-refund-insufficient-pawapay-funds");
+                    assertThat((BigDecimal) b.getProperties().get("maxSafeAmount")).isEqualByComparingTo("473");
+                    assertThat((BigDecimal) b.getProperties().get("topUpNeeded")).isEqualByComparingTo("4");
+                });
+
+        assertThat(walletRefundOperations(userId)).isEqualTo(before);
+        verify(pawapayClient, org.mockito.Mockito.times(1)).initiateRefund(any());
+        verify(pawapayClient, org.mockito.Mockito.times(1)).initiatePayout(any());
+        WalletRefundRequestEntity unchanged = walletRefundRequestRepository.findById(child.getId()).orElseThrow();
+        assertThat(unchanged.getStatus()).isEqualTo(WalletRefundRequestStatus.PENDING);
+        assertThat(walletRefundRequestItemRepository.findByRefundRequestId(child.getId()))
+                .singleElement()
+                .satisfies(i -> {
+                    assertThat(i.getStatus()).isEqualTo(WalletRefundItemStatus.PENDING);
+                    assertThat(i.getPawapayRefundId()).isNull();
+                });
+    }
+
+    @Test
+    void relanceAdmin_echecDuRefundEtDuVersement_rouvreUnTicketManuelAvecLeMotif() {
+        UUID userId = persistUser();
+        WalletRefundRequestEntity child = manualChildAfterOutOfFunds(userId);
+        stubPawapayBalance("10000");
+        ArgumentCaptor<PawapayPayoutRequest> payouts = ArgumentCaptor.forClass(PawapayPayoutRequest.class);
+
+        walletRefundRetryService.retry(child.getId(), null, UUID.randomUUID());
+        WalletRefundRequestItemEntity childItem =
+                walletRefundRequestItemRepository.findByRefundRequestId(child.getId()).get(0);
+        failPawapayOperation(childItem.getPawapayRefundId(), OUT_OF_FUNDS);
+        childItem = walletRefundRequestItemRepository.findById(childItem.getId()).orElseThrow();
+        assertThat(childItem.getPawapayPayoutId()).isNotNull();
+        verify(pawapayClient, org.mockito.Mockito.times(2)).initiatePayout(payouts.capture());
+        assertThat(payouts.getAllValues().get(1).phoneNumber()).isEqualTo(PAWAPAY_MSISDN);
+        assertThat(payouts.getAllValues().get(1).amount()).isEqualByComparingTo("477");
+        failPawapayOperation(childItem.getPawapayPayoutId(), OUT_OF_FUNDS);
+
+        WalletRefundRequestEntity failed = walletRefundRequestRepository.findById(child.getId()).orElseThrow();
+        assertThat(failed.getStatus()).isEqualTo(WalletRefundRequestStatus.FAILED);
+        assertThat(failed.getPaidAmount()).isNull();
+        assertThat(walletRefundRequestItemRepository.findById(childItem.getId()).orElseThrow().getFailureReason())
+                .isEqualTo(OUT_OF_FUNDS);
+        WalletRefundRequestEntity reopened = walletRefundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(userId)
+                .stream().filter(r -> child.getId().equals(r.getParentRequestId())).findFirst().orElseThrow();
+        assertThat(reopened.getChannel()).isEqualTo(WalletRefundChannel.MANUAL_ADMIN);
+        assertThat(reopened.getStatus()).isEqualTo(WalletRefundRequestStatus.PENDING);
+        assertThat(walletService.getBalance(userId, "XOF")).isEqualByComparingTo("500");
     }
 }

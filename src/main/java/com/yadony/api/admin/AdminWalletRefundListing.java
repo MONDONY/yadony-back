@@ -4,6 +4,7 @@ import com.yadony.api.admin.dto.AdminWalletRefundRequestResponse;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.payments.wallet.WalletRefundItemStatus;
+import com.yadony.api.payments.wallet.WalletRefundRail;
 import com.yadony.api.payments.wallet.WalletRefundRequestEntity;
 import com.yadony.api.payments.wallet.WalletRefundRequestItemEntity;
 import com.yadony.api.payments.wallet.WalletRefundRequestItemRepository;
@@ -14,10 +15,12 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -51,30 +54,63 @@ public class AdminWalletRefundListing {
         Map<UUID, UserEntity> users = userIds.isEmpty() ? Map.of()
                 : userRepository.findAllByIdIncludingDeleted(userIds).stream()
                         .collect(Collectors.toMap(UserEntity::getId, Function.identity(), (a, b) -> a));
-        Map<UUID, BigDecimal> fees = feesByRequest(page.getContent().stream()
-                .map(WalletRefundRequestEntity::getId).filter(Objects::nonNull).toList());
+        List<UUID> requestIds = page.getContent().stream()
+                .map(WalletRefundRequestEntity::getId).filter(Objects::nonNull).toList();
+        List<UUID> parentIds = page.getContent().stream()
+                .map(WalletRefundRequestEntity::getParentRequestId).filter(Objects::nonNull)
+                .filter(id -> !requestIds.contains(id)).distinct().toList();
+        List<UUID> itemOwners = new ArrayList<>(requestIds);
+        itemOwners.addAll(parentIds);
+        Map<UUID, List<WalletRefundRequestItemEntity>> items = itemOwners.isEmpty() ? Map.of()
+                : itemRepository.findByRefundRequestIdIn(itemOwners).stream()
+                        .collect(Collectors.groupingBy(WalletRefundRequestItemEntity::getRefundRequestId));
         return page.map(r -> {
             UserEntity user = users.get(r.getUserId());
-            return AdminWalletRefundRequestResponse.from(r, displayName(user), origin(r, user), fees.get(r.getId()));
+            List<WalletRefundRequestItemEntity> own = items.getOrDefault(r.getId(), List.of());
+            String failure = failureReason(own);
+            if (failure == null && r.getParentRequestId() != null) {
+                failure = failureReason(items.getOrDefault(r.getParentRequestId(), List.of()));
+            }
+            return AdminWalletRefundRequestResponse.from(r, displayName(user), origin(r, user), fee(own),
+                    sourceRail(own), failure);
         });
     }
 
+    /** Rail des recharges remboursées : PAWAPAY, STRIPE, MIXED si les deux, {@code null} sans item. */
+    static String sourceRail(List<WalletRefundRequestItemEntity> items) {
+        Set<WalletRefundRail> rails = items.stream()
+                .map(i -> WalletRefundRail.of(i.getPaymentIntentId()))
+                .collect(Collectors.toSet());
+        if (rails.isEmpty()) {
+            return null;
+        }
+        return rails.size() > 1 ? "MIXED" : rails.iterator().next().name();
+    }
+
+    /** Motif du dernier item en échec (le plus récent), {@code null} si aucun. */
+    static String failureReason(List<WalletRefundRequestItemEntity> items) {
+        return items.stream()
+                .filter(i -> i.getStatus() == WalletRefundItemStatus.FAILED && i.getFailureReason() != null)
+                .max(Comparator.comparing(WalletRefundRequestItemEntity::getCreatedAt,
+                        Comparator.nullsFirst(Comparator.naturalOrder())))
+                .map(WalletRefundRequestItemEntity::getFailureReason)
+                .orElse(null);
+    }
+
     /**
-     * Frais par demande, en une requête : somme des {@code fee_amount} des items hors FAILED (un
-     * item en échec n'a rien retenu), comme le résumé côté utilisateur. Une demande sans item
-     * (ancien ticket manuel) n'a pas d'entrée : frais inconnus, {@code null} dans la réponse.
+     * Frais d'une demande : somme des {@code fee_amount} des items hors FAILED (un item en échec
+     * n'a rien retenu), comme le résumé côté utilisateur. Une demande sans item (ancien ticket
+     * manuel) n'a pas de frais connus : {@code null} dans la réponse. Les items de toute la page
+     * sont lus en une requête par {@link #describe}.
      */
-    private Map<UUID, BigDecimal> feesByRequest(List<UUID> requestIds) {
-        if (requestIds.isEmpty()) {
-            return Map.of();
+    private static BigDecimal fee(List<WalletRefundRequestItemEntity> items) {
+        if (items.isEmpty()) {
+            return null;
         }
-        Map<UUID, BigDecimal> fees = new HashMap<>();
-        for (WalletRefundRequestItemEntity item : itemRepository.findByRefundRequestIdIn(requestIds)) {
-            BigDecimal fee = item.getStatus() == WalletRefundItemStatus.FAILED || item.getFeeAmount() == null
-                    ? BigDecimal.ZERO : item.getFeeAmount();
-            fees.merge(item.getRefundRequestId(), fee, BigDecimal::add);
-        }
-        return fees;
+        return items.stream()
+                .map(i -> i.getStatus() == WalletRefundItemStatus.FAILED || i.getFeeAmount() == null
+                        ? BigDecimal.ZERO : i.getFeeAmount())
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     static String displayName(UserEntity user) {

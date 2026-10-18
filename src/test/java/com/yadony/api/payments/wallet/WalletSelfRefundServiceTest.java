@@ -1266,6 +1266,48 @@ class WalletSelfRefundServiceTest {
     }
 
     @Test
+    void reconcile_ticketManuelRelance_delegueAuRailEtNoteLeNetVerse() {
+        WalletRefundRequestEntity request = processingRequest("500");
+        request.setCurrency("XOF");
+        request.setChannel(WalletRefundChannel.MANUAL_ADMIN);
+        WalletRefundRequestItemEntity item = processingItem(request, "pawapay:" + UUID.randomUUID(), "500", null);
+        item.setFeeAmount(new BigDecimal("27"));
+        item.setPawapayRefundId(UUID.randomUUID());
+        when(refundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(USER_ID)).thenReturn(List.of(request));
+        when(refundRequestRepository.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
+        when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
+        doAnswer(inv -> {
+            item.setStatus(WalletRefundItemStatus.REFUNDED);
+            return null;
+        }).when(walletRefundRailIssuer).reconcile(request, item);
+
+        service.listForUser(USER_ID);
+
+        verify(walletRefundRailIssuer).reconcile(request, item);
+        assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.REFUNDED);
+        assertThat(request.getPaidAmount()).isEqualByComparingTo("473");
+        verify(walletService).debitConfirmedRefund(USER_ID, "XOF", new BigDecimal("500"),
+                WalletTransactionType.SELF_REFUND_OUT);
+    }
+
+    @Test
+    void reconcile_ticketManuelSansOperationPawapay_neDelegueRien() {
+        WalletRefundRequestEntity request = processingRequest("500");
+        request.setCurrency("XOF");
+        request.setChannel(WalletRefundChannel.MANUAL_ADMIN);
+        WalletRefundRequestItemEntity item = processingItem(request, "pawapay:" + UUID.randomUUID(), "500", null);
+        when(refundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(USER_ID)).thenReturn(List.of(request));
+        when(refundRequestRepository.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
+        when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
+
+        service.listForUser(USER_ID);
+
+        verifyNoInteractions(walletRefundRailIssuer);
+        assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.PROCESSING);
+        assertThat(request.getPaidAmount()).isNull();
+    }
+
+    @Test
     void reconcile_demandeStripe_neDelegueJamaisAuRailPawapay() {
         WalletRefundRequestEntity request = processingRequest("35.00");
         WalletRefundRequestItemEntity item = processingItem(request, "pi_1", "35.00", "re_1");
