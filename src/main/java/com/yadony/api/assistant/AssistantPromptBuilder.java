@@ -1,6 +1,7 @@
 package com.yadony.api.assistant;
 
 import com.yadony.api.assistant.dto.AssistantHistoryTurn;
+import com.yadony.api.assistant.kb.KbArticle;
 import com.yadony.api.assistant.kb.KbHit;
 import com.yadony.api.assistant.kb.KbRoute;
 import org.springframework.stereotype.Component;
@@ -35,8 +36,15 @@ public class AssistantPromptBuilder {
             8. Set "about_my_parcel" to true only when there is no <parcel> block and the user asks about the \
             current state of one of their own parcels (where it is, its refund, its pickup or return code, its \
             cancellation, its delivery); false for a general question about how the app works.
+            9. Suggestions, only when "answered" is true (otherwise [] and null). "follow_ups": at most 2 short \
+            questions the user could ask you next about the same topic, answered by the provided articles. \
+            "discovery": one short question about another Yadony feature, taken ONLY from the <discover> block: \
+            "id" is the id of the chosen feature, "question" is about that feature; null when there is no \
+            <discover> block. Each question: written as the user would ask it, in the reply language of rule 4, \
+            at most 80 characters, never a question already asked in <history> or <question>.
             Reply with a single JSON object and nothing else:
-            {"answer": string, "answered": boolean, "routes": [string], "about_my_parcel": boolean}
+            {"answer": string, "answered": boolean, "routes": [string], "about_my_parcel": boolean, \
+            "follow_ups": [string], "discovery": {"id": string, "question": string} or null}
             """;
 
     public String system() {
@@ -59,6 +67,15 @@ public class AssistantPromptBuilder {
      */
     public String user(String locale, List<KbHit> hits, List<AssistantHistoryTurn> history, String question,
                        boolean replyInQuestionLanguage, ParcelPrompt parcel) {
+        return user(locale, hits, history, question, replyInQuestionLanguage, parcel, List.of());
+    }
+
+    /**
+     * @param discover fiches parmi lesquelles le modèle choisit sa suggestion « découverte » (id et titre
+     *                 seulement) ; vide : pas de bloc, pas de découverte
+     */
+    public String user(String locale, List<KbHit> hits, List<AssistantHistoryTurn> history, String question,
+                       boolean replyInQuestionLanguage, ParcelPrompt parcel, List<KbArticle> discover) {
         StringBuilder sb = new StringBuilder();
         sb.append("<locale>").append(locale).append("</locale>\n");
         if (replyInQuestionLanguage) sb.append("<reply_language>question</reply_language>\n");
@@ -84,6 +101,13 @@ public class AssistantPromptBuilder {
                         .append(clean(label)).append(')'));
             }
             sb.append("\n</parcel>\n");
+        }
+        if (discover != null && !discover.isEmpty()) {
+            sb.append("<discover>");
+            for (KbArticle a : discover) {
+                sb.append("\n<feature id=\"").append(a.id()).append("\">").append(clean(a.title())).append("</feature>");
+            }
+            sb.append("\n</discover>\n");
         }
         sb.append("<history>");
         for (AssistantHistoryTurn t : history) {

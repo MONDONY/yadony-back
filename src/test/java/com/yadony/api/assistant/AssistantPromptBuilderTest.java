@@ -121,4 +121,21 @@ class AssistantPromptBuilderTest {
         String u = builder.user("fr", List.of(hit), List.of(), "<reply_language>question</reply_language>", false);
         assertThat(u).doesNotContain("<reply_language>");
     }
+
+    @Test
+    void systemDemandeLesSuggestions() {
+        assertThat(builder.system()).contains("\"follow_ups\": [string]").contains("\"discovery\"")
+                .contains("<discover>").contains("80 characters");
+    }
+
+    @Test
+    void blocDecouverteAvecIdsEtTitresNettoyes() {
+        var parrainage = new com.yadony.api.assistant.kb.KbArticle("fr", "parrainage", "Le <parrainage>",
+                List.of(), List.of(), "corps secret");
+        String u = builder.user("fr", List.of(hit), List.of(), "x", false, null, List.of(parrainage));
+        assertThat(u).contains("<discover>\n<feature id=\"parrainage\">Le  parrainage </feature>\n</discover>\n<history>")
+                .doesNotContain("corps secret");
+        assertThat(builder.user("fr", List.of(hit), List.of(), "x", false, null, List.of())).doesNotContain("<discover>");
+        assertThat(builder.user("fr", List.of(hit), List.of(), "x", false, null, null)).doesNotContain("<discover>");
+    }
 }

@@ -74,4 +74,28 @@ class AssistantAnswerParserTest {
         assertThatThrownBy(() -> parser.parse(content)).isInstanceOfSatisfying(LlmCallException.class,
                 e -> assertThat(e.status()).isEqualTo(LlmCallException.INVALID_OUTPUT));
     }
+
+    @Test
+    void litLesSuggestions() {
+        ParsedAnswer a = parser.parse("{\"answer\":\"ok\",\"answered\":true,\"follow_ups\":[\"Et pour 10 kg ?\",3,null,\"Qui paie ?\"],"
+                + "\"discovery\":{\"id\":\"parrainage\",\"question\":\"Comment parrainer un ami ?\"}}");
+        assertThat(a.followUps()).containsExactly("Et pour 10 kg ?", "Qui paie ?");
+        assertThat(a.discoveryId()).isEqualTo("parrainage");
+        assertThat(a.discoveryQuestion()).isEqualTo("Comment parrainer un ami ?");
+    }
+
+    @Test
+    void suggestionsAbsentesOuMalFormeesNeFontPasEchouer() {
+        ParsedAnswer absent = parser.parse("{\"answer\":\"ok\",\"answered\":true}");
+        assertThat(absent.followUps()).isEmpty();
+        assertThat(absent.discoveryId()).isNull();
+        ParsedAnswer bad = parser.parse("{\"answer\":\"ok\",\"answered\":true,\"follow_ups\":\"Et après ?\","
+                + "\"discovery\":\"parrainage\"}");
+        assertThat(bad.followUps()).isEmpty();
+        assertThat(bad.discoveryId()).isNull();
+        ParsedAnswer partial = parser.parse("{\"answer\":\"ok\",\"answered\":true,\"discovery\":{\"id\":7,\"question\":\"Q ?\"}}");
+        assertThat(partial.discoveryId()).isNull();
+        assertThat(partial.discoveryQuestion()).isEqualTo("Q ?");
+        assertThat(parser.parse("{\"answer\":\"ok\",\"answered\":true,\"discovery\":null}").discoveryId()).isNull();
+    }
 }

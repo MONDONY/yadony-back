@@ -70,6 +70,43 @@ class AssistantControllerIntegrationTest {
     }
 
     /**
+     * FLUTTER-RD : la sortie brute du modèle passe par le vrai parseur ; la découverte cite la première
+     * fiche du bloc {@code <discover>} réellement envoyé, la réponse JSON porte les trois suggestions.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void reponseAvecSuggestions() throws Exception {
+        when(router.complete(anyString(), anyString(), any())).thenAnswer(inv -> {
+            String user = inv.getArgument(1);
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("<feature id=\"([^\"]+)\">").matcher(user);
+            assertThat(m.find()).as("bloc <discover> envoyé au modèle").isTrue();
+            String raw = "{\"answer\":\"Allez dans Moi.\",\"answered\":true,\"routes\":[],\"about_my_parcel\":false,"
+                    + "\"follow_ups\":[\"Faut-il un code de vérification ?\",\"Puis-je garder mon ancien numéro ?\"],"
+                    + "\"discovery\":{\"id\":\"" + m.group(1) + "\",\"question\":\"Comment ça marche ?\"}}";
+            var parser = (java.util.function.Function<String, ParsedAnswer>) inv.getArgument(2);
+            return Optional.of(new LlmResult<>("claude", parser.apply(raw)));
+        });
+        mockMvc.perform(post("/assistant/ask").with(authentication(asUser("uid-suggestions")))
+                        .contentType(MediaType.APPLICATION_JSON).content(body("Où je change mon numéro ?")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.suggestions.length()").value(3))
+                .andExpect(jsonPath("$.suggestions[0].text").value("Faut-il un code de vérification ?"))
+                .andExpect(jsonPath("$.suggestions[0].kind").value("FOLLOW_UP"))
+                .andExpect(jsonPath("$.suggestions[1].kind").value("FOLLOW_UP"))
+                .andExpect(jsonPath("$.suggestions[2].text").value("Comment ça marche ?"))
+                .andExpect(jsonPath("$.suggestions[2].kind").value("DISCOVERY"));
+    }
+
+    @Test
+    void sansFicheLesSuggestionsSontUneListeVide() throws Exception {
+        mockMvc.perform(post("/assistant/ask").with(authentication(asUser("uid-suggestions-vides")))
+                        .contentType(MediaType.APPLICATION_JSON).content(body("comment je fais ?")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.suggestions").isArray())
+                .andExpect(jsonPath("$.suggestions").isEmpty());
+    }
+
+    /**
      * FLUTTER-QV, sur les vraies fiches et le vrai seuil : « comment je fais ? » seule ne passe pas le seuil, et la
      * question utilisateur précédente (« et après ? ») non plus ; celle d'avant ramène la fiche, l'IA est appelée.
      */

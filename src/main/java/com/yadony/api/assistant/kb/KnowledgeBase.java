@@ -76,6 +76,41 @@ public class KnowledgeBase {
         return corpus.screen(KnowledgeBaseLoader.LOCALES.contains(locale) ? locale : "fr", screen);
     }
 
+    /**
+     * Fiches de fonctionnalité qui ne servent pas de « découverte » : l'assistant lui-même, les incidents
+     * (litige, colis perdu, no-show…) et les démarches de compte sensibles. Une suggestion qui pousse à
+     * supprimer son compte ou à ouvrir un litige ne fait rien découvrir.
+     */
+    static final Set<String> NOT_DISCOVERABLE = Set.of(
+            "assistant-ia", "supprimer-compte", "colis-perdu", "kyc-refuse", "paiement-bloque", "ouvrir-litige",
+            "no-show", "destinataire-absent", "messages-effaces", "signaler-utilisateur", "bloquer-utilisateur",
+            "signaler-bug", "contacter-support", "faq-aide", "exporter-donnees", "donnees-personnelles",
+            "objets-interdits", "douane", "remboursement", "rembourser-solde", "annuler-envoi", "annuler-trajet");
+
+    /**
+     * Fiches parmi lesquelles le modèle choisit sa suggestion « découverte » : des fiches de fonctionnalité
+     * (pas d'écran), hors {@link #NOT_DISCOVERABLE} et hors {@code excludedIds} (les fiches de la réponse).
+     * La liste tourne selon {@code seed} (la question), pour ne pas proposer toujours les mêmes, mais reste
+     * la même pour une même question. Le modèle ne peut citer qu'une de ces fiches : jamais une
+     * fonctionnalité inventée.
+     */
+    public List<KbArticle> discoveryCandidates(String locale, Set<String> excludedIds, String seed, int limit) {
+        if (limit <= 0) return List.of();
+        List<KbArticle> features = corpus.articles(KnowledgeBaseLoader.LOCALES.contains(locale) ? locale : "fr")
+                .stream()
+                .filter(a -> a.screens().isEmpty() && !NOT_DISCOVERABLE.contains(a.id())
+                        && !excludedIds.contains(a.id()))
+                .sorted(java.util.Comparator.comparing(KbArticle::id))
+                .toList();
+        if (features.isEmpty()) return List.of();
+        int start = Math.floorMod(seed == null ? 0 : seed.hashCode(), features.size());
+        List<KbArticle> picked = new ArrayList<>();
+        for (int i = 0; i < features.size() && picked.size() < limit; i++) {
+            picked.add(features.get((start + i) % features.size()));
+        }
+        return picked;
+    }
+
     public List<KbHit> search(String locale, String question, String previousQuestion, int limit) {
         if (limit <= 0) {
             return List.of();
