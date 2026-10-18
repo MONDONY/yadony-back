@@ -29,7 +29,8 @@ public record PawapayFeeTable(@Name("default") Rate defaults, Map<String, Rate> 
 
     public record Rate(BigDecimal depositPercent, BigDecimal refundPercent) {}
 
-    private static final Rate HARDCODED_DEFAULT = new Rate(BigDecimal.ONE, BigDecimal.ONE);
+    /** Repli si la configuration manque : grille pawaPay la plus courante (voir application.yml). */
+    private static final Rate HARDCODED_DEFAULT = new Rate(new BigDecimal("2.5"), new BigDecimal("2.0"));
 
     /** Frais pawaPay = {@code amount x (depositPercent + refundPercent) / 100}, arrondi à l'échelle de la devise. */
     public BigDecimal fee(String provider, BigDecimal amount, String currency) {

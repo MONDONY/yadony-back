@@ -2,7 +2,9 @@ package com.yadony.api.payments.wallet.fees;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.bind.PropertySourcesPlaceholdersResolver;
 import org.springframework.boot.context.properties.source.ConfigurationPropertySources;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.env.MutablePropertySources;
@@ -43,10 +45,11 @@ class PawapayFeeTableTest {
     }
 
     @Test
-    void nullDefaults_fallsBackToHardcodedOnePercentOnePercent() {
+    void nullDefaults_fallsBackToHardcodedPawapayGrid() {
         PawapayFeeTable table = new PawapayFeeTable(null, null);
 
-        assertThat(table.fee(null, new BigDecimal("10000"), "XOF")).isEqualByComparingTo("200");
+        // 2,5 % + 2,0 %
+        assertThat(table.fee(null, new BigDecimal("10000"), "XOF")).isEqualByComparingTo("450");
     }
 
     /**
@@ -97,5 +100,44 @@ class PawapayFeeTableTest {
                 """);
 
         assertThat(table.fee("ORANGE_CIV", new BigDecimal("10000"), "XOF")).isEqualByComparingTo("200");
+    }
+
+    /** Le vrai application.yml, placeholders résolus sur leur valeur par défaut. */
+    private static PawapayFeeTable bindFromApplicationYml() throws IOException {
+        List<PropertySource<?>> sources = new YamlPropertySourceLoader().load("application",
+                new ClassPathResource("application.yml"));
+        MutablePropertySources propertySources = new MutablePropertySources();
+        sources.forEach(propertySources::addLast);
+        return new Binder(ConfigurationPropertySources.from(propertySources),
+                new PropertySourcesPlaceholdersResolver(propertySources))
+                .bind("yadony.pawapay.fees", PawapayFeeTable.class)
+                .get();
+    }
+
+    @Test
+    void applicationYml_orangeCiv_remboursementTientDansCeQuePawapayAEncaisse() throws IOException {
+        // Prod 18/10 : recharge Orange CI de 500 XOF, 487 crédités sur le wallet pawaPay
+        // (2,5 %). L'ancien barème (1 % + 1 %) renvoyait 490 : PAWAPAY_WALLET_OUT_OF_FUNDS.
+        PawapayFeeTable table = bindFromApplicationYml();
+        BigDecimal deposit = new BigDecimal("500");
+        BigDecimal net = deposit.subtract(table.fee("ORANGE_CIV", deposit, "XOF"));
+
+        assertThat(net).isEqualByComparingTo("477");
+        BigDecimal credited = new BigDecimal("487");
+        BigDecimal refundFee = net.multiply(new BigDecimal("0.02"));
+        assertThat(net.add(refundFee)).isLessThanOrEqualTo(credited);
+    }
+
+    @Test
+    void applicationYml_chaqueOperateurDeLaGrille_estLuEtDefautPourLesAutres() throws IOException {
+        PawapayFeeTable table = bindFromApplicationYml();
+        BigDecimal amount = new BigDecimal("10000");
+
+        assertThat(table.fee("MTN_MOMO_CIV", amount, "XOF")).isEqualByComparingTo("310");
+        assertThat(table.fee("WAVE_SEN", amount, "XOF")).isEqualByComparingTo("400");
+        assertThat(table.fee("MTN_MOMO_CMR", amount, "XAF")).isEqualByComparingTo("305");
+        assertThat(table.fee("ORANGE_BFA", amount, "XOF")).isEqualByComparingTo("530");
+        // Opérateur absent de la grille (ex. FREE_SEN) : défaut 2,5 % + 2,0 %.
+        assertThat(table.fee("FREE_SEN", amount, "XOF")).isEqualByComparingTo("450");
     }
 }

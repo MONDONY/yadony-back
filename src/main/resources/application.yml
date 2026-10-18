@@ -483,12 +483,30 @@ yadony:
     balance-min:
       xof: ${PAWAPAY_BALANCE_MIN_XOF:0}
       xaf: ${PAWAPAY_BALANCE_MIN_XAF:0}
+    # Grille publique pawaPay (https://www.pawapay.io/fees, relevée le 18/10/2026) : frais
+    # opérateur + 1 % pawaPay, débités du wallet Yadony en lignes séparées du relevé.
+    # deposit-percent = encaissement ; refund-percent = taux de versement (pawaPay facture un
+    # remboursement « 1 % + frais opérateur » sans publier la part opérateur). Vérifié en prod
+    # le 18/10 : dépôt Orange CI de 500 XOF → 487 crédités (2,5 %). L'ancien barème 1 % + 1 %
+    # renvoyait 490, plus que le wallet n'avait reçu : PAWAPAY_WALLET_OUT_OF_FUNDS.
     fees:
       default:
-        deposit-percent: ${PAWAPAY_FEE_DEFAULT_DEPOSIT_PERCENT:1.0}
-        refund-percent: ${PAWAPAY_FEE_DEFAULT_REFUND_PERCENT:1.0}
-      # Surcharges par opérateur, ex. ORANGE_CIV: { deposit-percent: 1.5, refund-percent: 1.0 }
-      providers: {}
+        deposit-percent: ${PAWAPAY_FEE_DEFAULT_DEPOSIT_PERCENT:2.5}
+        refund-percent: ${PAWAPAY_FEE_DEFAULT_REFUND_PERCENT:2.0}
+      providers:
+        ORANGE_CIV: { deposit-percent: 2.5, refund-percent: 2.0 }
+        MTN_MOMO_CIV: { deposit-percent: 1.8, refund-percent: 1.3 }
+        MOOV_CIV: { deposit-percent: 1.8, refund-percent: 1.5 }
+        WAVE_CIV: { deposit-percent: 2.0, refund-percent: 2.0 }
+        ORANGE_SEN: { deposit-percent: 2.0, refund-percent: 1.8 }
+        WAVE_SEN: { deposit-percent: 2.0, refund-percent: 2.0 }
+        MTN_MOMO_CMR: { deposit-percent: 1.75, refund-percent: 1.3 }
+        ORANGE_CMR: { deposit-percent: 1.77, refund-percent: 1.0 }
+        MTN_MOMO_BEN: { deposit-percent: 2.2, refund-percent: 1.5 }
+        MOOV_BEN: { deposit-percent: 2.2, refund-percent: 1.0 }
+        MOOV_BFA: { deposit-percent: 3.0, refund-percent: 2.0 }
+        # Versement Orange Burkina non proposé par pawaPay : taux de versement par défaut.
+        ORANGE_BFA: { deposit-percent: 3.3, refund-percent: 2.0 }
   email:
     resend-api-key: ${RESEND_API_KEY:}
     from-address: ${YADONY_EMAIL_FROM_ADDRESS:noreply@yadony.com}
