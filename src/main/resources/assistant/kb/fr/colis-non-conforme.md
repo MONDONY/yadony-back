@@ -10,4 +10,4 @@ Voyageur, vérifiez le colis à la remise. S'il ne correspond pas à ce que l'ex
 Choisissez le motif, ajoutez des précisions si besoin et prenez le colis en photo : la photo est obligatoire, elle sert de preuve.
 Le refus est possible tant que le colis est accepté, ou déjà scanné mais avant le départ du trajet. Si vous l'avez déjà scanné, rendez-le à l'expéditeur sur place.
 Vous n'êtes pas pénalisé. L'expéditeur est prévenu avec votre motif et remboursé intégralement s'il a payé par carte ou mobile money ; pour un paiement en espèces, la commission Yadony déjà réglée n'est pas rendue. Au deuxième colis refusé, le compte de l'expéditeur est suspendu.
-Le prix ne peut pas être corrigé dans l'app : l'expéditeur refait une demande avec le bon contenu, le bon poids ou le bon article de votre grille de prix.
+Le prix ne peut pas être corrigé dans l'app : l'expéditeur refait une demande avec le bon contenu, le bon poids ou le bon article parmi vos prix par article.

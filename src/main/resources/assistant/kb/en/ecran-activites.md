@@ -1,7 +1,7 @@
 ---
 id: ecran-activites
 title: The Activities screen
-keywords: activities screen, what is this screen for, dashboard, my parcels, requests received, price discussions, tools
+keywords: activities screen, what is this screen for, dashboard, my parcels, requests received, price discussions, tools, my prices per item, my price grid
 screens:
   - /announcements
 questions:
@@ -14,4 +14,4 @@ routes:
   - path: /corridor-alerts
     label: My alerts
 ---
-You are on Activities, your dashboard as a sender and a traveler. Under "Right now": "Active trips", "My parcels", "Requests received" and "Price discussions" (or "Post a trip" and "Send a parcel" if you have none yet). Under "Tools": "My alerts", "Trip templates", "My price grid", "My addresses", "My recipients", "History" and "Help & support". The menu at the top left also opens tracking, scanning and settings.
+You are on Activities, your dashboard as a sender and a traveler. Under "Right now": "Active trips", "My parcels", "Requests received" and "Price discussions" (or "Post a trip" and "Send a parcel" if you have none yet). Under "Tools": "My alerts", "Trip templates", "My prices per item", "My addresses", "My recipients", "History" and "Help & support". The menu at the top left also opens tracking, scanning and settings.
