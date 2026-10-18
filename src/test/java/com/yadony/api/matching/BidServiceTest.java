@@ -234,9 +234,11 @@ class BidServiceTest {
         void createBid_freezesCurrentGrid() {
             UUID gridId = UUID.randomUUID();
             stubCreateBidHappyPath();
-            when(commissionGridService.current()).thenReturn(Optional.of(
-                    new com.yadony.api.common.commission.CommissionGrid(
-                            gridId, java.time.LocalDateTime.MIN, List.of(), java.util.Map.of())));
+            com.yadony.api.common.commission.CommissionGrid grid = new com.yadony.api.common.commission.CommissionGrid(
+                    gridId, java.time.LocalDateTime.MIN, List.of(), java.util.Map.of());
+            when(commissionGridService.current()).thenReturn(Optional.of(grid));
+            // La réponse du bid créé relit sa grille figée (total expéditeur sous grille).
+            when(commissionGridService.require(gridId)).thenReturn(grid);
 
             bidService.createBid(ANNOUNCEMENT_ID, SENDER_UID, buildRequest(BigDecimal.valueOf(5)), httpRequest);
 

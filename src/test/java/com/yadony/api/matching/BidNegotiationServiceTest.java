@@ -314,9 +314,11 @@ class BidNegotiationServiceTest {
             when(bidService.resolvePaymentMethodFor(announcement, "CASH"))
                     .thenReturn(com.yadony.api.payments.cash.PaymentMethod.CASH);
             when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID)).thenReturn(new BigDecimal("0.05"));
-            when(commissionGridService.current()).thenReturn(Optional.of(
-                    new com.yadony.api.common.commission.CommissionGrid(
-                            gridId, LocalDateTime.MIN, List.of(), java.util.Map.of())));
+            com.yadony.api.common.commission.CommissionGrid grid = new com.yadony.api.common.commission.CommissionGrid(
+                    gridId, LocalDateTime.MIN, List.of(), java.util.Map.of());
+            when(commissionGridService.current()).thenReturn(Optional.of(grid));
+            // Le fil créé relit sa grille figée pour convertir le brut proposé (notification, réponse).
+            when(commissionGridService.require(gridId)).thenReturn(grid);
             when(commissionRateResolver.reductions(TRAVELER_ID, SENDER_ID, null, null, null))
                     .thenReturn(new com.yadony.api.common.commission.CommissionReductions(
                             new BigDecimal("0.030000"), null, new BigDecimal("0.500")));

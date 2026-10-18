@@ -5,6 +5,8 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.commission.CommissionCalculator;
+import com.yadony.api.common.commission.CommissionGrid;
 import com.yadony.api.common.commission.CommissionGridService;
 import com.yadony.api.common.commission.CommissionReductions;
 import com.yadony.api.matching.dto.BidCustomItemRequest;
@@ -19,6 +21,7 @@ import com.yadony.api.matching.dto.BidNegotiationSummaryResponse;
 import com.yadony.api.matching.events.BidNegotiationMessagePostedEvent;
 import com.yadony.api.matching.events.CashBidCreatedEvent;
 import com.yadony.api.payments.cash.PaymentMethod;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.settings.MinPricePerKgGuard;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.context.ApplicationEventPublisher;
@@ -178,7 +181,18 @@ public class BidNegotiationService {
 
         // Taux figé ICI et nulle part ailleurs — accept() relira ce snapshot.
         BigDecimal rate = commissionRateResolver.resolve(announcement.getTravelerId(), sender.getId());
-        assertAtLeastTravelerMinimum(announcement, request.proposedTotalEur(), request.weightKg(), rate);
+        // Grille et réductions personnelles figées avec le taux : les rails de paiement les
+        // relisent à l'acceptation, sans dépendre de la grille ni des taux spéciaux du jour.
+        GridPricing grid = commissionGridService.current()
+                .map(g -> {
+                    CommissionReductions reductions = commissionRateResolver.reductions(
+                            announcement.getTravelerId(), sender.getId(), null, null, null);
+                    return new GridPricing(g, SupportedCurrency.fromCodeOrDefault(announcement.getCurrency()),
+                            new CommissionReductions(reductions.overrideRate(), null, reductions.voucherFactor()));
+                })
+                .orElse(null);
+        assertAtLeastTravelerMinimum(announcement, request.proposedTotalEur(), request.weightKg(), rate, grid);
+        assertCoversCommission(grid, request.proposedTotalEur());
 
         BidEntity bid = new BidEntity();
         bid.setAnnouncementId(announcementId);
@@ -202,15 +216,11 @@ public class BidNegotiationService {
         bid.setStatus(BidStatus.NEGOTIATING);
         bid.setCurrency(announcement.getCurrency());
         bid.setCommissionRate(rate);
-        // Grille et réductions personnelles figées avec le taux : les rails de paiement les
-        // relisent à l'acceptation, sans dépendre de la grille ni des taux spéciaux du jour.
-        commissionGridService.current().ifPresent(grid -> {
-            CommissionReductions reductions = commissionRateResolver.reductions(
-                    announcement.getTravelerId(), sender.getId(), null, null, null);
-            bid.setCommissionGridId(grid.id());
-            bid.setCommissionOverrideRate(reductions.overrideRate());
-            bid.setCommissionVoucherFactor(reductions.voucherFactor());
-        });
+        if (grid != null) {
+            bid.setCommissionGridId(grid.grid().id());
+            bid.setCommissionOverrideRate(grid.frozen().overrideRate());
+            bid.setCommissionVoucherFactor(grid.frozen().voucherFactor());
+        }
         bid.setNegotiationRound(1);
 
         BidEntity saved = bidRepository.save(bid);
@@ -254,7 +264,8 @@ public class BidNegotiationService {
                     "Le nombre maximum de propositions échangées est atteint");
         }
 
-        BigDecimal proposedGross = counterGross(ctx, request);
+        GridPricing grid = gridPricing(ctx.bid());
+        BigDecimal proposedGross = counterGross(ctx, request, grid);
         if (last != null && last.getProposedGrossEur() != null
                 && last.getProposedGrossEur().compareTo(proposedGross) == 0) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
@@ -270,8 +281,9 @@ public class BidNegotiationService {
             UserEntity sender = userRepository.findById(ctx.userId()).orElse(null);
             bidService.assertTravelerAcceptsSender(sender, ctx.announcement().getTravelerId());
             assertAtLeastTravelerMinimum(ctx.announcement(), proposedGross,
-                    ctx.bid().getWeightKg(), ctx.bid().getCommissionRate());
+                    ctx.bid().getWeightKg(), ctx.bid().getCommissionRate(), grid);
         }
+        assertCoversCommission(grid, proposedGross);
 
         ctx.bid().setNegotiationRound(ctx.bid().getNegotiationRound() + 1);
         BidEntity saved = bidRepository.save(ctx.bid());
@@ -295,11 +307,12 @@ public class BidNegotiationService {
 
     /**
      * Brut de la contre-offre (FLUTTER-NS). Le brut ({@code proposedTotalEur}) est pris tel
-     * quel ; le net ({@code proposedNetEur}), réservé au voyageur, est converti par
-     * {@link BidNegotiationPricing#grossForNet} au taux figé du fil, à l'unité mineure de sa
-     * devise. Un seul des deux montants.
+     * quel ; le net ({@code proposedNetEur}), réservé au voyageur, est converti au contexte figé
+     * du fil : {@link GridPricing#grossForNet} sur un fil à grille, sinon
+     * {@link BidNegotiationPricing#grossForNet} au taux figé, à l'unité mineure de sa devise.
+     * Un seul des deux montants.
      */
-    private BigDecimal counterGross(Participant ctx, BidNegotiationCounterRequest request) {
+    private BigDecimal counterGross(Participant ctx, BidNegotiationCounterRequest request, GridPricing grid) {
         BigDecimal gross = request.proposedTotalEur();
         BigDecimal net = request.proposedNetEur();
         if (gross != null && net != null) {
@@ -319,6 +332,9 @@ public class BidNegotiationService {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "counter-net-traveler-only", "Counter Net Traveler Only",
                     "Seul le voyageur propose un montant net.");
+        }
+        if (grid != null) {
+            return grid.grossForNet(net);
         }
         BigDecimal rate = ctx.bid().getCommissionRate() != null ? ctx.bid().getCommissionRate() : BigDecimal.ZERO;
         int minorUnit = com.yadony.api.payments.currency.SupportedCurrency
@@ -345,11 +361,11 @@ public class BidNegotiationService {
                     "Aucune proposition de prix à accepter sur ce fil");
         }
 
-        // Le taux vient du bid, jamais d'une nouvelle résolution : le prix accepté
-        // doit être exactement celui affiché au moment de la proposition.
+        // Le taux (ou la grille et ses réductions) vient du bid, jamais d'une nouvelle
+        // résolution : le prix accepté doit être exactement celui affiché à la proposition.
         BigDecimal rate = ctx.bid().getCommissionRate() != null
                 ? ctx.bid().getCommissionRate() : BigDecimal.ZERO;
-        BidNegotiationPricing.Split split = BidNegotiationPricing.split(gross, rate);
+        BidNegotiationPricing.Split split = split(gross, rate, gridPricing(ctx.bid()));
 
         ctx.bid().setNegotiatedGrossEur(split.grossEur());
         ctx.bid().setNegotiatedNetEur(split.netEur());
@@ -570,7 +586,8 @@ public class BidNegotiationService {
                     bid.isNegotiationArchivedBy(viewerIsTraveler),
                     viewerIsTraveler
                             ? travelerNet(currentGross(bid, last),
-                                    bid.getCommissionRate() != null ? bid.getCommissionRate() : BigDecimal.ZERO)
+                                    bid.getCommissionRate() != null ? bid.getCommissionRate() : BigDecimal.ZERO,
+                                    gridPricing(bid))
                             : null));
         }
         return rows;
@@ -687,18 +704,86 @@ public class BidNegotiationService {
     /**
      * Prix minimum par kilo du voyageur ({@link MinPricePerKgGuard}). La négociation porte
      * sur le brut : le net du voyageur en est déduit exactement comme à l'accord
-     * ({@link BidNegotiationPricing#split}), puis ramené au kilo comme sur la demande
-     * affichée au voyageur. Sans garde injectée (tests unitaires), aucun contrôle.
+     * ({@link #split}), puis ramené au kilo comme sur la demande affichée au voyageur. Sans
+     * garde injectée (tests unitaires), aucun contrôle.
+     *
+     * <p>Sur un fil à grille, le taux passé à la garde (pour exprimer le minimum en brut dans le
+     * message d'erreur) est le taux réel de cette proposition, {@code (brut − net) / net} : la
+     * grille n'a pas de taux unique.
      */
     private void assertAtLeastTravelerMinimum(AnnouncementEntity announcement, BigDecimal grossTotal,
-                                              BigDecimal weightKg, BigDecimal rate) {
+                                              BigDecimal weightKg, BigDecimal rate, GridPricing grid) {
         if (minPriceGuard == null || grossTotal == null || grossTotal.signum() <= 0) {
             return;
         }
         BigDecimal effectiveRate = rate != null ? rate : BigDecimal.ZERO;
-        BigDecimal net = BidNegotiationPricing.split(grossTotal, effectiveRate).netEur();
-        minPriceGuard.assertAtLeastMinimum(announcement.getTravelerId(), net, weightKg,
+        BidNegotiationPricing.Split split = split(grossTotal, effectiveRate, grid);
+        if (grid != null) {
+            effectiveRate = split.commissionEur().divide(split.netEur(), 6, RoundingMode.HALF_UP);
+        }
+        minPriceGuard.assertAtLeastMinimum(announcement.getTravelerId(), split.netEur(), weightKg,
                 announcement.getCurrency(), effectiveRate);
+    }
+
+    /**
+     * Fil à grille : un brut qui ne couvre pas la commission minimum est refusé tout de suite
+     * (422 {@code budget-below-commission-minimum}, {@link CommissionCalculator#netForGross}),
+     * avant toute écriture, plutôt qu'au premier affichage du net. Sans grille, aucun contrôle.
+     */
+    private static void assertCoversCommission(GridPricing grid, BigDecimal gross) {
+        if (grid != null && gross != null) {
+            grid.netForGross(gross);
+        }
+    }
+
+    /**
+     * Contexte de prix figé d'un fil à grille (spec §4.3) : la grille du bid et les réductions
+     * personnelles figées à l'ouverture (taux spécial, bon de parrainage), jamais de code promo.
+     * Les deux sens de conversion portent sur toute la chaîne (grille, taux spécial, minimum de
+     * la devise, bon) et passent par {@link CommissionCalculator}, comme les rails de paiement
+     * pour un net négocié. Un fil sans grille garde son taux figé et {@link BidNegotiationPricing}.
+     */
+    private record GridPricing(CommissionGrid grid, SupportedCurrency currency, CommissionReductions frozen) {
+
+        /**
+         * Net du voyageur pour un brut : le plus grand net dont le brut ne dépasse pas {@code gross}.
+         *
+         * @throws YadonyBusinessException 422 {@code budget-below-commission-minimum} quand le brut
+         *         ne couvre pas la commission minimum.
+         */
+        BigDecimal netForGross(BigDecimal gross) {
+            return CommissionCalculator.netForGross(gross, currency, grid, frozen);
+        }
+
+        /** Brut payé par l'expéditeur pour un net du voyageur ; un net nul ne coûte rien. */
+        BigDecimal grossForNet(BigDecimal net) {
+            BigDecimal n = net.setScale(currency.minorUnit(), RoundingMode.HALF_UP);
+            return n.signum() <= 0 ? n : CommissionCalculator.compute(n, currency, grid, frozen).gross();
+        }
+    }
+
+    /** Contexte de prix figé d'un bid à grille ; {@code null} pour un bid sans grille (chemin hérité). */
+    private GridPricing gridPricing(BidEntity bid) {
+        if (bid.getCommissionGridId() == null) {
+            return null;
+        }
+        return new GridPricing(commissionGridService.require(bid.getCommissionGridId()),
+                SupportedCurrency.fromCodeOrDefault(bid.getCurrency()),
+                new CommissionReductions(bid.getCommissionOverrideRate(), null, bid.getCommissionVoucherFactor()));
+    }
+
+    /**
+     * Répartition d'un brut négocié : net par l'inverse du contexte figé sur un fil à grille,
+     * commission par soustraction ({@code net + commission = brut}, comme
+     * {@link BidNegotiationPricing#split}, appliqué tel quel sans grille).
+     */
+    private static BidNegotiationPricing.Split split(BigDecimal gross, BigDecimal rate, GridPricing grid) {
+        if (grid == null) {
+            return BidNegotiationPricing.split(gross, rate);
+        }
+        BigDecimal g = gross.setScale(2, RoundingMode.HALF_UP);
+        BigDecimal net = grid.netForGross(g);
+        return new BidNegotiationPricing.Split(g, net, g.subtract(net));
     }
 
     /** Contexte d'une action : le fil, son trajet, et le rôle de l'appelant. */
@@ -786,7 +871,7 @@ public class BidNegotiationService {
         BigDecimal amountForRecipient = proposedGrossEur;
         if (proposedGrossEur != null && recipientId.equals(announcement.getTravelerId())) {
             BigDecimal rate = bid.getCommissionRate() != null ? bid.getCommissionRate() : BigDecimal.ZERO;
-            amountForRecipient = BidNegotiationPricing.split(proposedGrossEur, rate).netEur();
+            amountForRecipient = split(proposedGrossEur, rate, gridPricing(bid)).netEur();
         }
         eventPublisher.publishEvent(new BidNegotiationMessagePostedEvent(
                 bid.getId(), announcement.getId(), authorId, recipientId,
@@ -858,12 +943,13 @@ public class BidNegotiationService {
                                                  UUID viewerId, BidNegotiationMessageEntity last) {
         boolean viewerIsTraveler = announcement.getTravelerId().equals(viewerId);
         BigDecimal rate = bid.getCommissionRate() != null ? bid.getCommissionRate() : BigDecimal.ZERO;
+        GridPricing grid = gridPricing(bid);
         BigDecimal gross = currentGross(bid, last);
 
         BigDecimal netEur = null;
         BigDecimal commissionEur = null;
         if (gross != null && gross.compareTo(BigDecimal.ZERO) > 0) {
-            BidNegotiationPricing.Split split = BidNegotiationPricing.split(gross, rate);
+            BidNegotiationPricing.Split split = split(gross, rate, grid);
             // Le net du voyageur ne descend jamais vers l'expéditeur, et
             // réciproquement la commission n'intéresse que celui qui la paie.
             netEur = viewerIsTraveler ? split.netEur() : null;
@@ -873,7 +959,7 @@ public class BidNegotiationService {
         List<BidGridItemEntity> gridEntities = bidGridItemRepository.findByBidId(bid.getId());
         List<BidGridItemLine> gridLines = gridEntities.stream()
                 .map(e -> new BidGridItemLine(e.getId(), e.getLabelSnapshot(),
-                        grossUp(e.getUnitPriceNetSnapshot(), rate), e.getQuantity()))
+                        unitPriceDisplay(e.getUnitPriceNetSnapshot(), rate, grid), e.getQuantity()))
                 .toList();
 
         List<BidCustomItemResponse> customLines =
@@ -888,7 +974,7 @@ public class BidNegotiationService {
                 messageRepository.findByBidIdOrderByCreatedAtAsc(bid.getId()).stream()
                         .map(m -> new BidNegotiationMessageResponse(m.getId(), m.getKind().name(),
                                 m.getAuthorId(), m.getProposedGrossEur(), m.getBody(), m.getCreatedAt(),
-                                viewerIsTraveler ? travelerNet(m.getProposedGrossEur(), rate) : null))
+                                viewerIsTraveler ? travelerNet(m.getProposedGrossEur(), rate, grid) : null))
                         .toList();
 
         List<String> photoUrls = bidPhotoService.activePhotos(bid.getId()).stream()
@@ -912,7 +998,7 @@ public class BidNegotiationService {
                 gross,
                 netEur,
                 commissionEur,
-                suggestedGross(bid, announcement, gridEntities, rate),
+                suggestedGross(bid, announcement, gridEntities, rate, grid),
                 bid.getWeightKg(),
                 bid.getDescription(),
                 bid.getContentCategory(),
@@ -929,12 +1015,15 @@ public class BidNegotiationService {
                 counterpartyId,
                 commissionDueBy(bid, announcement),
                 viewerIsTraveler ? rate : null,
-                counterparty.map(UserEntity::isGpPro).orElse(false));
+                counterparty.map(UserEntity::isGpPro).orElse(false),
+                bid.getCommissionGridId(),
+                viewerIsTraveler ? bid.getCommissionOverrideRate() : null,
+                viewerIsTraveler ? bid.getCommissionVoucherFactor() : null);
     }
 
-    /** Net voyageur d'un brut proposé ({@link BidNegotiationPricing#split}), null sans montant. */
-    private static BigDecimal travelerNet(BigDecimal gross, BigDecimal rate) {
-        return gross == null || gross.signum() <= 0 ? null : BidNegotiationPricing.split(gross, rate).netEur();
+    /** Net voyageur d'un brut proposé ({@link #split}), null sans montant. */
+    private static BigDecimal travelerNet(BigDecimal gross, BigDecimal rate, GridPricing grid) {
+        return gross == null || gross.signum() <= 0 ? null : split(gross, rate, grid).netEur();
     }
 
     /**
@@ -970,7 +1059,7 @@ public class BidNegotiationService {
      * le voyageur ne les ayant jamais tarifés.
      */
     private BigDecimal suggestedGross(BidEntity bid, AnnouncementEntity announcement,
-                                      List<BidGridItemEntity> gridEntities, BigDecimal rate) {
+                                      List<BidGridItemEntity> gridEntities, BigDecimal rate, GridPricing grid) {
         BigDecimal net = BigDecimal.ZERO;
         for (BidGridItemEntity item : gridEntities) {
             net = net.add(item.getUnitPriceNetSnapshot().multiply(BigDecimal.valueOf(item.getQuantity())));
@@ -981,10 +1070,24 @@ public class BidNegotiationService {
         if (net.compareTo(BigDecimal.ZERO) <= 0) {
             return null;
         }
-        return grossUp(net, rate);
+        return grossUp(net, rate, grid);
     }
 
-    private BigDecimal grossUp(BigDecimal net, BigDecimal rate) {
+    /**
+     * Prix unitaire d'une ligne de grille, comme {@code PriceGridService#displayPrice} sur le
+     * trajet : sur un fil à grille, le prix du voyageur (décision du propriétaire, spec §5.3) ;
+     * la commission, ni proportionnelle ni divisible par article (tranches, minimum), n'est
+     * comptée que sur le total ({@link #suggestedGross}). Sans grille, brut au taux figé.
+     */
+    private static BigDecimal unitPriceDisplay(BigDecimal net, BigDecimal rate, GridPricing grid) {
+        return grid != null ? net : grossUp(net, rate, null);
+    }
+
+    /** Brut d'un net : {@link GridPricing#grossForNet} sur un fil à grille, sinon net × (1 + taux figé). */
+    private static BigDecimal grossUp(BigDecimal net, BigDecimal rate, GridPricing grid) {
+        if (grid != null) {
+            return grid.grossForNet(net);
+        }
         return net.multiply(BigDecimal.ONE.add(rate)).setScale(2, RoundingMode.HALF_UP);
     }
 

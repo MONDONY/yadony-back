@@ -4,6 +4,9 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.matching.dto.PriceGridItemRequest;
 import com.yadony.api.matching.dto.PriceGridItemResponse;
 import com.yadony.api.common.CommissionRateResolver;
+import com.yadony.api.common.commission.CommissionGrid;
+import com.yadony.api.common.commission.CommissionGridService;
+import com.yadony.api.common.commission.CommissionTier;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.currency.ExchangeRateLookup;
 import com.yadony.api.payments.currency.ExchangeRateService;
@@ -34,6 +37,7 @@ class PriceGridServiceTest {
     @Mock CommissionRateResolver commissionRateResolver;
     @Mock ActiveCurrencyResolver activeCurrencyResolver;
     @Mock ExchangeRateLookup exchangeRateLookup;
+    @Mock CommissionGridService commissionGridService;
 
     PriceGridService service;
 
@@ -42,7 +46,7 @@ class PriceGridServiceTest {
         // Vrai ExchangeRateService sur un lookup simulé : les tests de conversion vérifient
         // l'arrondi réel (décimales de la devise cible, HALF_UP), pas un mock.
         service = new PriceGridService(gridRepo, annGridRepo, auditService, commissionRateResolver,
-                activeCurrencyResolver, new ExchangeRateService(exchangeRateLookup));
+                activeCurrencyResolver, new ExchangeRateService(exchangeRateLookup), commissionGridService);
         lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
         lenient().when(exchangeRateLookup.unitsPerEur("XOF")).thenReturn(new BigDecimal("655.957"));
         lenient().when(exchangeRateLookup.unitsPerEur("XAF")).thenReturn(new BigDecimal("655.957"));
@@ -92,6 +96,27 @@ class PriceGridServiceTest {
         // À 20 % : 10,00 € net → 12,00 € affiché.
         when(commissionRateResolver.resolve(any())).thenReturn(new BigDecimal("0.20"));
         assertThat(service.displayPrice(new BigDecimal("10.00"), null)).isEqualByComparingTo("12.00");
+    }
+
+    @Test
+    void displayPrice_withGrid_returnsNet() {
+        // Décision du propriétaire (spec §5.3) : sous grille, le prix au kilo des listes est le
+        // prix du voyageur ; les frais de service sont affichés à part, le total exact au devis.
+        when(commissionGridService.current()).thenReturn(java.util.Optional.of(new CommissionGrid(UUID.randomUUID(),
+                java.time.LocalDateTime.of(2026, 10, 1, 0, 0),
+                List.of(new CommissionTier(BigDecimal.ZERO, new BigDecimal("0.07"))),
+                CommissionGridService.defaultMinimums())));
+
+        assertThat(service.displayPrice(new BigDecimal("10.00"), UUID.randomUUID())).isEqualByComparingTo("10.00");
+        verify(commissionRateResolver, never()).resolve(any());
+    }
+
+    @Test
+    void displayPrice_noGrid_legacy() {
+        when(commissionGridService.current()).thenReturn(java.util.Optional.empty());
+        when(commissionRateResolver.resolve(any())).thenReturn(new BigDecimal("0.12"));
+
+        assertThat(service.displayPrice(new BigDecimal("10.00"), UUID.randomUUID())).isEqualByComparingTo("11.20");
     }
 
     @Test

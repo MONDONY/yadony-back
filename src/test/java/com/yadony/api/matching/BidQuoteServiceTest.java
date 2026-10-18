@@ -59,7 +59,8 @@ class BidQuoteServiceTest {
                 annGridItemRepository, blockService, null, commissionRateResolver, promoService,
                 null, null, null, null, null, TestMessages.resolver(), null,
                 org.mockito.Mockito.mock(com.yadony.api.matching.reception.BidRecipientLinkRepository.class),
-                null);
+                // Aucune grille en vigueur (Optional vide par défaut) : chemin hérité du devis.
+                org.mockito.Mockito.mock(com.yadony.api.common.commission.CommissionGridService.class));
     }
 
     @AfterEach

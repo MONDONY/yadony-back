@@ -2,6 +2,7 @@ package com.yadony.api.matching;
 
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.CommissionRateResolver;
+import com.yadony.api.common.commission.CommissionGridService;
 import com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse;
 import com.yadony.api.matching.dto.PriceGridItemRequest;
 import com.yadony.api.matching.dto.PriceGridItemResponse;
@@ -31,19 +32,22 @@ public class PriceGridService {
     private final CommissionRateResolver commissionRateResolver;
     private final ActiveCurrencyResolver activeCurrencyResolver;
     private final ExchangeRateService exchangeRateService;
+    private final CommissionGridService commissionGridService;
 
     public PriceGridService(PriceGridItemRepository gridRepo,
                             AnnouncementPriceGridItemRepository annGridRepo,
                             AuditService auditService,
                             CommissionRateResolver commissionRateResolver,
                             ActiveCurrencyResolver activeCurrencyResolver,
-                            ExchangeRateService exchangeRateService) {
+                            ExchangeRateService exchangeRateService,
+                            CommissionGridService commissionGridService) {
         this.gridRepo = gridRepo;
         this.annGridRepo = annGridRepo;
         this.auditService = auditService;
         this.commissionRateResolver = commissionRateResolver;
         this.activeCurrencyResolver = activeCurrencyResolver;
         this.exchangeRateService = exchangeRateService;
+        this.commissionGridService = commissionGridService;
     }
 
     public List<PriceGridItemResponse> getItems(UUID travelerId) {
@@ -283,8 +287,8 @@ public class PriceGridService {
     }
 
     /**
-     * Prix affiché expéditeur (net + commission) le plus bas de la grille snapshotée d'une
-     * annonce : l'accroche « dès X » des cartes compactes d'un trajet tarifé à la grille
+     * Prix affiché ({@link #displayPrice} : net + commission sans grille, net sous grille) le
+     * plus bas de la grille snapshotée d'une annonce : l'accroche « dès X » des cartes compactes d'un trajet tarifé à la grille
      * (fiche voyageur, abonnements, alertes corridor). {@code null} sans article.
      */
     @Transactional(readOnly = true)
@@ -303,11 +307,22 @@ public class PriceGridService {
     }
 
     /**
-     * Prix « affiché expéditeur » = net × (1 + commission Yadony). Le taux est résolu par
-     * {@link CommissionRateResolver} à partir du voyageur (override éventuel) et de la
-     * config {@code yadony.commission.rate} — SOURCE UNIQUE du pourcentage de commission.
+     * Prix unitaire affiché dans les listes (prix au kilo, articles de grille).
+     *
+     * <p><b>Grille de commission en vigueur</b> (décision du propriétaire, spec §5.3) : le prix du
+     * voyageur, {@code netPrice} tel quel. Sous grille, la commission n'est plus proportionnelle
+     * (tranches, minimum par devise) : un prix unitaire « frais compris » serait faux dès que la
+     * quantité change. L'app affiche les frais de service à part, et le total exact, frais
+     * compris, est toujours montré avant validation (devis {@code BidService#quote}).
+     *
+     * <p><b>Sans grille</b> (chemin hérité) : net × (1 + commission Yadony). Le taux est résolu
+     * par {@link CommissionRateResolver} à partir du voyageur (override éventuel) et de la config
+     * {@code yadony.commission.rate} — SOURCE UNIQUE du pourcentage de commission.
      */
     BigDecimal displayPrice(BigDecimal netPrice, UUID travelerId) {
+        if (commissionGridService.current().isPresent()) {
+            return netPrice;
+        }
         BigDecimal multiplier = BigDecimal.ONE.add(commissionRateResolver.resolve(travelerId));
         return netPrice.multiply(multiplier).setScale(2, RoundingMode.HALF_UP);
     }
