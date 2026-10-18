@@ -56,6 +56,11 @@ public class StripeGatewayImpl implements StripeGateway {
     }
 
     @Override
+    public com.stripe.model.LoginLink createLoginLink(String accountId) throws StripeException {
+        return com.stripe.model.LoginLink.createOnAccount(accountId);
+    }
+
+    @Override
     public PaymentIntent createPaymentIntent(PaymentIntentCreateParams params) throws StripeException {
         return PaymentIntent.create(params);
     }
