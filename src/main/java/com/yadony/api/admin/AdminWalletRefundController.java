@@ -2,6 +2,7 @@ package com.yadony.api.admin;
 
 import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.dto.AdminWalletRefundRequestResponse;
+import com.yadony.api.admin.dto.AdminWalletRefundResolveRequest;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.wallet.WalletRefundRequestService;
 import org.springframework.data.domain.Page;
@@ -13,6 +14,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -90,12 +92,22 @@ public class AdminWalletRefundController {
         return statuses;
     }
 
+    /**
+     * Clôt un ticket manuel après remboursement hors app. Corps facultatif
+     * {@code {"paidAmount": 487, "note": "..."}} : le montant réellement versé et une note, gardés
+     * sur la demande et dans l'audit. Sans corps (admin d'avant), comportement inchangé.
+     */
     @PreAuthorize("hasAuthority('PAYMENT_REFUND')")
     @PostMapping("/{id}/resolve")
     public ResponseEntity<AdminWalletRefundRequestResponse> resolve(
-            @PathVariable UUID id, Authentication authentication) {
-        return ResponseEntity.ok(AdminWalletRefundRequestResponse.from(
-                walletRefundRequestService.resolve(id, adminId(authentication))));
+            @PathVariable UUID id,
+            @RequestBody(required = false) AdminWalletRefundResolveRequest body,
+            Authentication authentication) {
+        UUID adminId = adminId(authentication);
+        WalletRefundRequestEntity resolved = body == null
+                ? walletRefundRequestService.resolve(id, adminId)
+                : walletRefundRequestService.resolve(id, adminId, body.paidAmount(), body.note());
+        return ResponseEntity.ok(AdminWalletRefundRequestResponse.from(resolved));
     }
 
     private UUID adminId(Authentication authentication) {

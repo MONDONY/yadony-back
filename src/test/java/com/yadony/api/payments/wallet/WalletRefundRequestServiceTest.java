@@ -470,6 +470,154 @@ class WalletRefundRequestServiceTest {
             assertThat(third.getAmount()).isEqualByComparingTo("10.00");
         }
 
+        private WalletRefundRequestEntity xofRequest(UUID requestId) {
+            WalletRefundRequestEntity r = pendingRequest();
+            r.setCurrency("XOF");
+            r.setAmount(new BigDecimal("500.00"));
+            when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(r));
+            return r;
+        }
+
+        private void stubBalanceAndSave(String currency, String balance) {
+            when(walletService.getBalance(USER_ID, currency)).thenReturn(new BigDecimal(balance));
+            when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+                WalletRefundRequestEntity e = inv.getArgument(0);
+                assignId(e);
+                return e;
+            });
+        }
+
+        @SuppressWarnings("unchecked")
+        private Map<String, Object> auditPayload() {
+            ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+            verify(auditService).log(eq("wallet_refund_request"), any(), eq("RESOLVED"), eq(ADMIN_ID),
+                    payload.capture());
+            return payload.getValue();
+        }
+
+        @Test
+        @DisplayName("montant versé inférieur à la demande → gardé avec la note, le débit reste le solde entier")
+        void resolves_withPaidAmount_keepsItButDebitsWholeBalance() {
+            UUID requestId = UUID.randomUUID();
+            xofRequest(requestId);
+            stubBalanceAndSave("XOF", "500.00");
+
+            WalletRefundRequestEntity result = service.resolve(requestId, ADMIN_ID,
+                    new BigDecimal("487"), "  Versé par Wave, wallet pawaPay à court  ");
+
+            // 500 demandés, 487 versés : l'écart est le frais d'opérateur, à la charge de l'utilisateur.
+            verify(walletService).debitConfirmedRefund(USER_ID, "XOF", new BigDecimal("500.00"),
+                    WalletTransactionType.ADMIN_REFUND_OUT);
+            assertThat(result.getStatus()).isEqualTo(WalletRefundRequestStatus.RESOLVED);
+            assertThat(result.getPaidAmount()).isEqualByComparingTo("487");
+            assertThat(result.getResolutionNote()).isEqualTo("Versé par Wave, wallet pawaPay à court");
+            Map<String, Object> payload = auditPayload();
+            assertThat(payload).containsEntry("refundedAmount", "500.00")
+                    .containsEntry("paidAmount", "487")
+                    .containsEntry("note", "Versé par Wave, wallet pawaPay à court");
+        }
+
+        @Test
+        @DisplayName("sans montant ni note → comportement d'avant, rien de stocké, audit sans ces clés")
+        void resolves_withoutPaidAmount_keepsPreviousBehaviour() {
+            UUID requestId = UUID.randomUUID();
+            xofRequest(requestId);
+            stubBalanceAndSave("XOF", "500.00");
+
+            WalletRefundRequestEntity result = service.resolve(requestId, ADMIN_ID, null, "   ");
+
+            assertThat(result.getPaidAmount()).isNull();
+            assertThat(result.getResolutionNote()).isNull();
+            assertThat(auditPayload()).containsEntry("refundedAmount", "500.00")
+                    .doesNotContainKeys("paidAmount", "note");
+        }
+
+        @Test
+        @DisplayName("montant versé égal à la demande, écrit 500.00 en XOF → accepté (zéros finaux)")
+        void resolves_paidAmountEqualToRequest_withTrailingZeros_accepted() {
+            UUID requestId = UUID.randomUUID();
+            xofRequest(requestId);
+            stubBalanceAndSave("XOF", "500.00");
+
+            WalletRefundRequestEntity result = service.resolve(requestId, ADMIN_ID, new BigDecimal("500.00"), null);
+
+            assertThat(result.getPaidAmount()).isEqualByComparingTo("500");
+        }
+
+        @Test
+        @DisplayName("montant versé supérieur à la demande → 422 wallet-refund-paid-amount-too-high, aucun débit")
+        void resolves_paidAmountAboveRequest_throws422() {
+            UUID requestId = UUID.randomUUID();
+            WalletRefundRequestEntity request = xofRequest(requestId);
+
+            assertThatThrownBy(() -> service.resolve(requestId, ADMIN_ID, new BigDecimal("501"), null))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .hasFieldOrPropertyWithValue("errorCode", "wallet-refund-paid-amount-too-high");
+
+            verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
+            assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.PENDING);
+        }
+
+        @Test
+        @DisplayName("montant versé négatif ou nul → 422 wallet-refund-paid-amount-invalid, aucun débit")
+        void resolves_paidAmountNotPositive_throws422() {
+            UUID requestId = UUID.randomUUID();
+            xofRequest(requestId);
+
+            assertThatThrownBy(() -> service.resolve(requestId, ADMIN_ID, new BigDecimal("-5"), null))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .hasFieldOrPropertyWithValue("errorCode", "wallet-refund-paid-amount-invalid");
+            assertThatThrownBy(() -> service.resolve(requestId, ADMIN_ID, BigDecimal.ZERO, null))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .hasFieldOrPropertyWithValue("errorCode", "wallet-refund-paid-amount-invalid");
+
+            verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("décimales en XOF → 422 wallet-refund-paid-amount-scale, aucun débit")
+        void resolves_paidAmountWithDecimalsInXof_throws422() {
+            UUID requestId = UUID.randomUUID();
+            xofRequest(requestId);
+
+            assertThatThrownBy(() -> service.resolve(requestId, ADMIN_ID, new BigDecimal("487.5"), null))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .hasFieldOrPropertyWithValue("errorCode", "wallet-refund-paid-amount-scale");
+
+            verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("EUR : deux décimales acceptées, trois refusées")
+        void resolves_paidAmountScaleInEur() {
+            UUID requestId = UUID.randomUUID();
+            WalletRefundRequestEntity request = pendingRequest();
+            request.setCurrency("EUR");
+            request.setAmount(new BigDecimal("45.00"));
+            when(refundRequestRepository.findById(requestId)).thenReturn(Optional.of(request));
+
+            assertThatThrownBy(() -> service.resolve(requestId, ADMIN_ID, new BigDecimal("44.125"), null))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .hasFieldOrPropertyWithValue("errorCode", "wallet-refund-paid-amount-scale");
+
+            stubBalanceAndSave("EUR", "45.00");
+            WalletRefundRequestEntity result = service.resolve(requestId, ADMIN_ID, new BigDecimal("44.12"), null);
+            assertThat(result.getPaidAmount()).isEqualByComparingTo("44.12");
+        }
+
+        @Test
+        @DisplayName("note de plus de 500 caractères → 422 wallet-refund-note-too-long, aucun débit")
+        void resolves_noteTooLong_throws422() {
+            UUID requestId = UUID.randomUUID();
+            xofRequest(requestId);
+
+            assertThatThrownBy(() -> service.resolve(requestId, ADMIN_ID, new BigDecimal("487"), "x".repeat(501)))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .hasFieldOrPropertyWithValue("errorCode", "wallet-refund-note-too-long");
+
+            verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
+        }
+
         @Test
         @DisplayName("ticket racine → aucun item touché")
         void resolves_racine_neLitPasLesItems() {

@@ -57,6 +57,17 @@ public class WalletRefundRequestEntity extends BaseEntity {
     @Column(name = "parent_request_id")
     private UUID parentRequestId;
 
+    /** Montant réellement versé hors app par l'admin à la résolution manuelle (V330). Nul si
+     *  l'admin ne l'a pas précisé ou si la demande n'est pas résolue à la main. Peut être
+     *  inférieur à {@link #amount} : frais d'opérateur à la charge de l'utilisateur. N'influe
+     *  jamais sur le débit du wallet. */
+    @Column(name = "paid_amount", precision = 10, scale = 2)
+    private BigDecimal paidAmount;
+
+    /** Note libre de l'admin à la résolution manuelle (V330), 500 caractères au plus. */
+    @Column(name = "resolution_note", columnDefinition = "TEXT")
+    private String resolutionNote;
+
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
 
@@ -83,4 +94,10 @@ public class WalletRefundRequestEntity extends BaseEntity {
 
     public UUID getParentRequestId() { return parentRequestId; }
     public void setParentRequestId(UUID parentRequestId) { this.parentRequestId = parentRequestId; }
+
+    public BigDecimal getPaidAmount() { return paidAmount; }
+    public void setPaidAmount(BigDecimal paidAmount) { this.paidAmount = paidAmount; }
+
+    public String getResolutionNote() { return resolutionNote; }
+    public void setResolutionNote(String resolutionNote) { this.resolutionNote = resolutionNote; }
 }

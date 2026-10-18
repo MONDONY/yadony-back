@@ -3,6 +3,7 @@ package com.yadony.api.payments.wallet;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.AdminAlertService;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
@@ -16,6 +17,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -35,6 +37,9 @@ import java.util.UUID;
 public class WalletRefundRequestService {
 
     private static final Logger log = LoggerFactory.getLogger(WalletRefundRequestService.class);
+
+    /** Longueur maximale de la note de résolution, alignée sur le DTO admin. */
+    public static final int RESOLUTION_NOTE_MAX_LENGTH = 500;
 
     private final WalletService walletService;
     private final WalletRefundRequestRepository refundRequestRepository;
@@ -234,6 +239,27 @@ public class WalletRefundRequestService {
      */
     @Transactional
     public WalletRefundRequestEntity resolve(UUID requestId, UUID adminId) {
+        return resolve(requestId, adminId, null, null);
+    }
+
+    /**
+     * Comme {@link #resolve(UUID, UUID)}, en gardant ce que l'admin a réellement versé hors app.
+     *
+     * <p>{@code paidAmount} est informatif : le débit du wallet reste celui décrit plus haut.
+     * L'utilisateur a demandé le remboursement de tout son solde ; l'écart entre le montant
+     * demandé et le montant versé correspond aux frais d'opérateur à sa charge (cas réel : 500
+     * XOF demandés, 487 XOF versés, ce que le wallet pawaPay avait encaissé).
+     *
+     * @param paidAmount montant versé, {@code null} si l'admin ne le précise pas (contrat d'avant)
+     * @param note       note libre, {@code null} ou vide si aucune ; 500 caractères au plus
+     * @throws YadonyBusinessException 422 {@code wallet-refund-paid-amount-invalid} si le montant
+     *         est nul ou négatif, {@code wallet-refund-paid-amount-too-high} s'il dépasse le
+     *         montant de la demande, {@code wallet-refund-paid-amount-scale} s'il a plus de
+     *         décimales que la devise n'en permet, {@code wallet-refund-note-too-long} si la note
+     *         dépasse 500 caractères
+     */
+    @Transactional
+    public WalletRefundRequestEntity resolve(UUID requestId, UUID adminId, BigDecimal paidAmount, String note) {
         WalletRefundRequestEntity request = refundRequestRepository.findById(requestId)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "wallet-refund-request-not-found", "Not Found", "Demande introuvable"));
@@ -242,6 +268,8 @@ public class WalletRefundRequestService {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "already-resolved",
                     "Unprocessable", "Cette demande a déjà été traitée");
         }
+        validatePaidAmount(request, paidAmount);
+        String resolutionNote = normalizeNote(note);
 
         BigDecimal currentBalance = walletService.getBalance(request.getUserId(), request.getCurrency());
         BigDecimal refundedAmount = currentBalance;
@@ -264,13 +292,67 @@ public class WalletRefundRequestService {
         request.setStatus(WalletRefundRequestStatus.RESOLVED);
         request.setResolvedAt(LocalDateTime.now(ZoneOffset.UTC));
         request.setResolvedBy(adminId);
+        request.setPaidAmount(paidAmount);
+        request.setResolutionNote(resolutionNote);
         WalletRefundRequestEntity saved = refundRequestRepository.save(request);
 
-        auditService.log("wallet_refund_request", saved.getId(), "RESOLVED", adminId,
-                Map.of("userId", request.getUserId(), "currency", request.getCurrency(),
-                        "refundedAmount", refundedAmount.toString()));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("userId", request.getUserId());
+        payload.put("currency", request.getCurrency());
+        payload.put("refundedAmount", refundedAmount.toString());
+        if (paidAmount != null) {
+            payload.put("paidAmount", paidAmount.toPlainString());
+        }
+        if (resolutionNote != null) {
+            payload.put("note", resolutionNote);
+        }
+        auditService.log("wallet_refund_request", saved.getId(), "RESOLVED", adminId, payload);
 
         return saved;
+    }
+
+    /**
+     * Le montant versé est strictement positif, ne dépasse pas le montant de la demande et
+     * respecte les décimales de la devise (0 pour XOF et XAF, 2 pour EUR) : un « 487,5 XOF »
+     * serait impossible à verser et fausserait le rapprochement.
+     */
+    private static void validatePaidAmount(WalletRefundRequestEntity request, BigDecimal paidAmount) {
+        if (paidAmount == null) {
+            return;
+        }
+        if (paidAmount.signum() <= 0) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "wallet-refund-paid-amount-invalid", "Unprocessable",
+                    "Le montant versé doit être strictement positif");
+        }
+        if (paidAmount.compareTo(request.getAmount()) > 0) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "wallet-refund-paid-amount-too-high", "Unprocessable",
+                    "Le montant versé dépasse le montant de la demande ("
+                            + request.getAmount().toPlainString() + " " + request.getCurrency() + ")",
+                    Map.of("maxAmount", request.getAmount()));
+        }
+        int maxDecimals = SupportedCurrency.fromCodeOrDefault(request.getCurrency()).minorUnit();
+        if (Math.max(paidAmount.stripTrailingZeros().scale(), 0) > maxDecimals) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "wallet-refund-paid-amount-scale", "Unprocessable",
+                    "Le montant versé a trop de décimales pour la devise " + request.getCurrency()
+                            + " (" + maxDecimals + " au plus)",
+                    Map.of("maxDecimals", maxDecimals));
+        }
+    }
+
+    private static String normalizeNote(String note) {
+        if (note == null || note.isBlank()) {
+            return null;
+        }
+        String trimmed = note.trim();
+        if (trimmed.length() > RESOLUTION_NOTE_MAX_LENGTH) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "wallet-refund-note-too-long", "Unprocessable",
+                    "La note dépasse " + RESOLUTION_NOTE_MAX_LENGTH + " caractères");
+        }
+        return trimmed;
     }
 
     /**
