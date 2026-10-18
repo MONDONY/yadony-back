@@ -1,5 +1,9 @@
 package com.yadony.api.config;
 
+import com.yadony.api.common.commission.CommissionGrid;
+import com.yadony.api.common.commission.CommissionGridService;
+import com.yadony.api.common.commission.CommissionTier;
+import com.yadony.api.config.dto.CommissionGridResponse;
 import com.yadony.api.config.dto.CommissionRateResponse;
 import com.yadony.api.config.dto.ContentCategoryResponse;
 import com.yadony.api.config.dto.FlightsEnabledResponse;
@@ -12,6 +16,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 @RestController
@@ -29,14 +34,31 @@ public class ConfigController {
      * la verrouille.
      */
     private final PlatformSettingsService settings;
+    private final CommissionGridService commissionGrids;
 
-    public ConfigController(PlatformSettingsService settings) {
+    public ConfigController(PlatformSettingsService settings, CommissionGridService commissionGrids) {
         this.settings = settings;
+        this.commissionGrids = commissionGrids;
     }
 
+    /**
+     * Taux unique pour les versions de l'app d'avant les paliers : le taux de la première tranche de la
+     * grille en vigueur, sinon {@code commission_rate}. La forme de la réponse ne change pas.
+     */
     @GetMapping("/commission-rate")
     public ResponseEntity<CommissionRateResponse> getCommissionRate() {
-        return ResponseEntity.ok(new CommissionRateResponse(settings.commissionRate()));
+        BigDecimal rate = commissionGrids.current()
+                .map(CommissionGrid::tiers)
+                .map(tiers -> tiers.get(0))
+                .map(CommissionTier::rate)
+                .orElseGet(settings::commissionRate);
+        return ResponseEntity.ok(new CommissionRateResponse(rate));
+    }
+
+    /** Grille de commission en vigueur et grille programmée (spec §5.4). Public comme tout {@code /config/**}. */
+    @GetMapping("/commission-grid")
+    public ResponseEntity<CommissionGridResponse> getCommissionGrid() {
+        return ResponseEntity.ok(CommissionGridResponse.of(commissionGrids.current(), commissionGrids.scheduled()));
     }
 
     @GetMapping("/urgency-threshold")
