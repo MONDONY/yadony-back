@@ -90,7 +90,7 @@ public final class NotificationDeeplink {
             case "GP_PRO_APPROVED", "GP_PRO_REJECTED", "GP_PRO_REVOKED" -> Optional.of("profile/gp-pro");
             case "KYC_VERIFIED" -> Optional.of("kyc/status");
             case "KYC_ACTION_REQUIRED" -> Optional.of("kyc/verify");
-            case "DISPUTE_UPDATED", "DISPUTE_RESOLVED" -> Optional.of("disputes");
+            case "DISPUTE_RESOLVED" -> Optional.of("disputes");
 
             case "BID_REJECTED" -> cancellationId.map(id -> "cancellations/" + id + "/rematch")
                     .or(() -> bidId.map(id -> "bids/" + id));

@@ -13,6 +13,20 @@ import java.util.UUID;
 public interface TravelerSubscriptionRepository extends JpaRepository<TravelerSubscriptionEntity, UUID> {
 
     /**
+     * Pose l'indicateur « nouveau » seulement s'il n'était pas déjà posé, de façon atomique.
+     * Le push d'un nouveau trajet ne part que pour cette transition : tant que l'abonné n'a
+     * pas regardé la nouveauté précédente ({@code markSeen}), le téléphone ne resonne pas.
+     * Atomique car les étapes d'un voyage publiées ensemble arrivent en parallèle (@Async).
+     *
+     * @return 1 si l'indicateur vient d'être posé, 0 s'il l'était déjà
+     */
+    @Transactional
+    @Modifying
+    @Query("UPDATE TravelerSubscriptionEntity s SET s.hasNew = true "
+            + "WHERE s.id = :id AND s.hasNew = false")
+    int markNewIfUnseen(@Param("id") UUID id);
+
+    /**
      * Crée l'abonnement s'il n'existe pas, de façon atomique : un double appui simultané
      * ne viole plus {@code uq_traveler_sub} (V102). Un {@code save()} suivi d'un catch ne
      * protégeait rien, l'INSERT partant au commit de la transaction du service.

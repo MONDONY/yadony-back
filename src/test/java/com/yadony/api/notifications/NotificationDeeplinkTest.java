@@ -188,7 +188,6 @@ class NotificationDeeplinkTest {
     void fixedDestinations() {
         assertThat(NotificationDeeplink.of("KYC_VERIFIED", Map.of())).contains("yadony://kyc/status");
         assertThat(NotificationDeeplink.of("KYC_ACTION_REQUIRED", Map.of())).contains("yadony://kyc/verify");
-        assertThat(NotificationDeeplink.of("DISPUTE_UPDATED", Map.of())).contains("yadony://disputes");
         assertThat(NotificationDeeplink.of("DISPUTE_RESOLVED", Map.of())).contains("yadony://disputes");
         assertThat(NotificationDeeplink.of("ACCOUNT_SUSPENDED", Map.of())).contains("yadony://account/disabled");
         assertThat(NotificationDeeplink.of("STRIPE_ONBOARDING_INCOMPLETE", Map.of())).contains("yadony://connect/onboarding/intro");

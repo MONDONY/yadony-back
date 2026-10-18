@@ -1,5 +1,6 @@
 package com.yadony.api.subscriptions;
 
+import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.AnnouncementPublishedEvent;
 import com.yadony.api.notifications.NotificationDispatcher;
@@ -22,6 +23,7 @@ class TravelerAvailabilityListenerTest {
 
     @Mock TravelerSubscriptionRepository repo;
     @Mock NotificationDispatcher dispatcher;
+    @Mock BlockVisibility blockVisibility;
     @InjectMocks TravelerAvailabilityListener listener;
 
     /** Dispatcher mocké : sans stub, {@code messagesFor} rend {@code null} → NPE. Français par défaut. */
@@ -48,16 +50,35 @@ class TravelerAvailabilityListenerTest {
         TravelerSubscriptionEntity pushOff = sub(travelerId, false);
         TravelerSubscriptionEntity pushOn = sub(travelerId, true);
         when(repo.findAllByTravelerId(travelerId)).thenReturn(List.of(pushOff, pushOn));
-        when(dispatcher.notifyUnlessBlocked(any(), eq(travelerId), anyString(), anyString(), anyMap(), anyBoolean()))
-                .thenReturn(true);
+        when(repo.markNewIfUnseen(any())).thenReturn(1);
 
         listener.onAnnouncementPublished(event(travelerId));
 
-        verify(repo, times(2)).save(any(TravelerSubscriptionEntity.class));
+        verify(repo, times(2)).markNewIfUnseen(any());
         verify(dispatcher).notifyUnlessBlocked(
                 eq(pushOff.getSenderId()), eq(travelerId), anyString(), anyString(), anyMap(), eq(false));
         verify(dispatcher).notifyUnlessBlocked(
                 eq(pushOn.getSenderId()), eq(travelerId), anyString(), anyString(), anyMap(), eq(true));
+    }
+
+    /**
+     * Bruit : un voyageur suivi publie en rafale (récurrents générés la nuit, étapes d'un
+     * voyage). Tant que l'abonné n'a pas regardé la nouveauté précédente, la suivante
+     * reste dans le feed sans faire sonner le téléphone.
+     */
+    @Test
+    void alreadyUnseenNews_staysInFeedWithoutPush() {
+        UUID travelerId = UUID.randomUUID();
+        TravelerSubscriptionEntity pushOn = sub(travelerId, true);
+        when(repo.findAllByTravelerId(travelerId)).thenReturn(List.of(pushOn));
+        when(repo.markNewIfUnseen(any())).thenReturn(0);
+
+        listener.onAnnouncementPublished(event(travelerId));
+
+        verify(dispatcher).notifyUnlessBlocked(
+                eq(pushOn.getSenderId()), eq(travelerId), anyString(), anyString(), anyMap(), eq(false));
+        verify(dispatcher, never()).notifyUnlessBlocked(
+                any(), any(), anyString(), anyString(), anyMap(), eq(true));
     }
 
     @Test
@@ -79,19 +100,16 @@ class TravelerAvailabilityListenerTest {
         TravelerSubscriptionEntity blocked = sub(travelerId, true);
         TravelerSubscriptionEntity visible = sub(travelerId, true);
         when(repo.findAllByTravelerId(travelerId)).thenReturn(List.of(blocked, visible));
-        when(dispatcher.notifyUnlessBlocked(
-                eq(blocked.getSenderId()), eq(travelerId), anyString(), anyString(), anyMap(), anyBoolean()))
-                .thenReturn(false);
-        when(dispatcher.notifyUnlessBlocked(
-                eq(visible.getSenderId()), eq(travelerId), anyString(), anyString(), anyMap(), anyBoolean()))
-                .thenReturn(true);
+        when(blockVisibility.isHidden(blocked.getSenderId(), travelerId)).thenReturn(true);
+        when(repo.markNewIfUnseen(any())).thenReturn(1);
 
         listener.onAnnouncementPublished(event(travelerId));
 
-        assertThat(blocked.isHasNew()).isFalse();
-        assertThat(visible.isHasNew()).isTrue();
-        verify(repo, times(1)).save(visible);
-        verify(repo, never()).save(blocked);
+        verify(repo, times(1)).markNewIfUnseen(any());
+        verify(dispatcher, never()).notifyUnlessBlocked(
+                eq(blocked.getSenderId()), any(), anyString(), anyString(), anyMap(), anyBoolean());
+        verify(dispatcher).notifyUnlessBlocked(
+                eq(visible.getSenderId()), eq(travelerId), anyString(), anyString(), anyMap(), eq(true));
         // La voie générique, aveugle au blocage, ne doit jamais être empruntée ici.
         verify(dispatcher, never()).notifyUser(any(), anyString(), anyString(), anyMap(), anyBoolean());
     }

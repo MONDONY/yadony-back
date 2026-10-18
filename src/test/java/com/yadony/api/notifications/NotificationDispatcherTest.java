@@ -14,7 +14,6 @@ import com.yadony.api.cancellation.events.ReturnDeadlineExpiredEvent;
 import com.yadony.api.cancellation.events.ReturnDeadlineWarningEvent;
 import com.yadony.api.disputes.events.DisputeOpenedEvent;
 import com.yadony.api.disputes.events.DisputeResolvedEvent;
-import com.yadony.api.disputes.events.DisputeUpdatedEvent;
 import com.yadony.api.kyc.events.UserKycVerifiedEvent;
 import com.yadony.api.kyc.events.UserKycActionRequiredEvent;
 import com.yadony.api.matching.BidEntity;
@@ -335,18 +334,6 @@ class NotificationDispatcherTest {
                 any(), argThat(data -> "RETURN_DEADLINE_EXPIRED".equals(data.get("type"))));
         verify(fcmService).sendToUser(eq(travelerId), eq("Délai de retour dépassé"),
                 any(), argThat(data -> "RETURN_DEADLINE_EXPIRED".equals(data.get("type"))));
-    }
-
-    @Test
-    void onDisputeUpdated_notifiesBothParties() {
-        UUID disputeId = UUID.randomUUID();
-        dispatcher.onDisputeUpdated(new DisputeUpdatedEvent(
-                disputeId, bidId, senderId, travelerId, "GUARANTEE_PAID"));
-
-        verify(fcmService).sendToUser(eq(senderId), eq("Litige mis à jour"), any(),
-                argThat(data -> disputeId.toString().equals(data.get("disputeId"))
-                        && "DISPUTE_UPDATED".equals(data.get("type"))));
-        verify(fcmService).sendToUser(eq(travelerId), eq("Litige mis à jour"), any(), any());
     }
 
     @Test
@@ -1536,6 +1523,21 @@ class NotificationDispatcherTest {
     }
 
     /** L'id de BaseEntity n'a pas de setter : il se pose par réflexion, comme setEntityId. */
+    /** Rappel du lendemain de l'expiration : texte « a expiré », même type que les rappels. */
+    @Test
+    void sendCardExpiredNotice_usesExpiredTextAndCardExpiringType() {
+        UserEntity user = new UserEntity();
+        setUserId(user, senderId);
+        user.setCommissionCardBrand("Visa");
+        user.setCommissionCardLast4("4242");
+
+        dispatcher.sendCardExpiredNotice(user);
+
+        verify(fcmService).sendToUser(eq(senderId), eq("Votre carte a expiré"),
+                eq("Visa ***4242 a expiré. Mettez-la à jour."),
+                argThat(data -> "CARD_EXPIRING".equals(data.get("type"))));
+    }
+
     private static void setUserId(UserEntity user, UUID id) {
         try {
             var field = UserEntity.class.getSuperclass().getDeclaredField("id");
