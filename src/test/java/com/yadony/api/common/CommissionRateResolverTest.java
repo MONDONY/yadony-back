@@ -25,6 +25,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -329,5 +330,57 @@ class CommissionRateResolverTest {
 
         assertThat(resolver().reductions(t, null, "CODE", null, null)).isEqualTo(CommissionReductions.NONE);
         org.mockito.Mockito.verifyNoInteractions(voucherService, promoService);
+    }
+
+    // ── reductionsWithPromoFallback : règle de repli commune aux trois rails ──
+
+    @Test
+    void reductionsWithPromoFallback_blankCode_readsReductionsWithoutValidating() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        UUID reference = UUID.randomUUID();
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        when(voucherService.peekForReference(s, reference)).thenReturn(Optional.empty());
+
+        assertThat(resolver().reductionsWithPromoFallback(t, s, "  ", reference)).isEqualTo(CommissionReductions.NONE);
+        assertThat(resolver().reductionsWithPromoFallback(t, s, null, reference)).isEqualTo(CommissionReductions.NONE);
+        verifyNoInteractions(promoService);
+    }
+
+    @Test
+    void reductionsWithPromoFallback_validCode_isValidatedForTheSender() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        UUID reference = UUID.randomUUID();
+        PromoDiscount discount = PromoDiscount.points(new BigDecimal("0.05"));
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        when(promoService.validateAndGetDiscount("WELCOME05", s, PromoCodeTarget.SENDER)).thenReturn(discount);
+        CommissionVoucherEntity voucher = activeVoucher(new BigDecimal("0.50"));
+        when(voucherService.peekForReference(s, reference)).thenReturn(Optional.of(voucher));
+
+        CommissionReductions r = resolver().reductionsWithPromoFallback(t, s, "WELCOME05", reference);
+
+        assertThat(r.promo()).isEqualTo(discount);
+        assertThat(r.voucherFactor()).isEqualByComparingTo("0.50");
+    }
+
+    @Test
+    void reductionsWithPromoFallback_invalidCode_fallsBackWithoutCode() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        UUID reference = UUID.randomUUID();
+        when(userRepository.findById(t)).thenReturn(Optional.of(withOverride(new BigDecimal("0.04"))));
+        lenient().when(userRepository.findById(s)).thenReturn(Optional.of(withOverride(null)));
+        when(promoService.validateAndGetDiscount("EXPIRED", s, PromoCodeTarget.SENDER))
+                .thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "promo-expired", "Promo Expired", "Ce code est expiré."));
+        CommissionVoucherEntity voucher = activeVoucher(new BigDecimal("0.50"));
+        when(voucherService.peekForReference(s, reference)).thenReturn(Optional.of(voucher));
+
+        CommissionReductions r = resolver().reductionsWithPromoFallback(t, s, "EXPIRED", reference);
+
+        assertThat(r.promo()).as("code invalide : aucune remise").isNull();
+        assertThat(r.overrideRate()).as("taux spécial conservé").isEqualByComparingTo("0.04");
+        assertThat(r.voucherFactor()).as("bon conservé").isEqualByComparingTo("0.50");
     }
 }

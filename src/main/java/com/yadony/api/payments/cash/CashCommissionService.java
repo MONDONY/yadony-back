@@ -312,7 +312,7 @@ public class CashCommissionService {
         }
         BigDecimal base = requirePositive(cashBase(bid, announcement), currency);
         CommissionResult result = CommissionCalculator.compute(base, currency, grid,
-                reductionsWithPromoFallback(announcement.getTravelerId(), bid.getSenderId(),
+                commissionRateResolver.reductionsWithPromoFallback(announcement.getTravelerId(), bid.getSenderId(),
                         bid.getPromoCode(), bid.getId()));
         bid.setCommissionRate(result.storableRate());
         return new BidCommissionQuote(result.commission(), result.promoEffective(), result.promoEffective());
@@ -341,24 +341,6 @@ public class CashCommissionService {
                     "Le montant calculé est invalide (≤ 0)");
         }
         return net;
-    }
-
-    /**
-     * Réductions personnelles d'un bid à grille. Un code promo devenu invalide (expiré, limite
-     * atteinte…) retombe sur les réductions sans code, comme le chemin hérité retombe sur le
-     * taux sans promo. Même règle que le rail carte ({@code PaymentService}).
-     */
-    private CommissionReductions reductionsWithPromoFallback(UUID travelerId, UUID senderId,
-                                                             String promoCode, UUID reference) {
-        if (promoCode == null || promoCode.isBlank()) {
-            return commissionRateResolver.reductions(travelerId, senderId, null, null, reference);
-        }
-        try {
-            return commissionRateResolver.reductions(travelerId, senderId, promoCode, senderId, reference);
-        } catch (YadonyBusinessException e) {
-            log.warn("Promo {} invalid for cash bid {} — fallback", promoCode, reference);
-            return commissionRateResolver.reductions(travelerId, senderId, null, null, reference);
-        }
     }
 
     // --- Card registration ---

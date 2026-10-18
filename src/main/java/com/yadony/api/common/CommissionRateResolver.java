@@ -170,6 +170,31 @@ public class CommissionRateResolver {
         return new CommissionReductions(override, promo, voucherFactor);
     }
 
+    /**
+     * {@link #reductions} d'un paiement à grille, avec la règle de repli commune aux trois rails
+     * (carte, espèces, mobile money) : sans code (nul ou blanc), réductions sans code ; un code
+     * devenu invalide (expiré, limite atteinte…) retombe sur les réductions sans code au lieu de
+     * faire échouer le paiement, comme le chemin hérité retombe sur le taux sans promo. Le code
+     * est validé pour l'expéditeur, cible SENDER. Source unique : une divergence entre rails
+     * ferait dépendre la commission du moyen de paiement.
+     *
+     * @param reference bid ou fil : le bon pris en compte est celui déjà rattaché à cette
+     *                  référence s'il existe (lecture pure, la consommation reste à l'appelant).
+     */
+    public CommissionReductions reductionsWithPromoFallback(UUID travelerId, UUID senderId, String promoCode,
+                                                            UUID reference) {
+        if (promoCode == null || promoCode.isBlank()) {
+            return reductions(travelerId, senderId, null, null, reference);
+        }
+        try {
+            return reductions(travelerId, senderId, promoCode, senderId, reference);
+        } catch (YadonyBusinessException e) {
+            log.warn("Promo {} invalide pour {} ({}) : repli sur les réductions sans promo",
+                    promoCode, reference, e.getErrorCode());
+            return reductions(travelerId, senderId, null, null, reference);
+        }
+    }
+
     private BigDecimal overrideOf(UUID userId) {
         if (userId == null) return null;
         return userRepository.findById(userId)

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -24,6 +25,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -39,6 +41,13 @@ class MobileMoneyBidPricingTest {
     @Mock CommissionRateResolver rates;
     @Mock CommissionGridService gridService;
     @InjectMocks MobileMoneyBidPricing pricing;
+
+    @BeforeEach
+    void setUp() {
+        // Règle de repli du code promo : celle du résolveur (CommissionRateResolverTest), exécutée
+        // pour de vrai sur le mock ; les bouchons de reductions(...) restent la source des réductions.
+        lenient().when(rates.reductionsWithPromoFallback(any(), any(), any(), any())).thenCallRealMethod();
+    }
 
     /** Grille 7/6/5 de la spec §4.6, minimums par défaut (650 FCFA). */
     private static final CommissionGrid GRID_7_6_5 = new CommissionGrid(UUID.randomUUID(),

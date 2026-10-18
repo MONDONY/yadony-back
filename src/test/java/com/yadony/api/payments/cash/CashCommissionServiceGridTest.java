@@ -117,6 +117,9 @@ class CashCommissionServiceGridTest {
         lenient().when(contacts.getContact(any()))
                 .thenReturn(new FirebaseContactService.Contact("+33600000000", "test@yadony.app"));
         lenient().when(bidGridItemRepository.findByBidId(any())).thenReturn(List.of());
+        // Règle de repli du code promo : celle du résolveur (CommissionRateResolverTest), exécutée
+        // pour de vrai sur le mock ; les bouchons de reductions(...) restent la source des réductions.
+        lenient().when(commissionRateResolver.reductionsWithPromoFallback(any(), any(), any(), any())).thenCallRealMethod();
         lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
         lenient().when(commissionGridService.require(GRID_7_6_5.id())).thenReturn(GRID_7_6_5);
         service = new CashCommissionService(props, userRepo, bidRepo, announcementRepo, events,

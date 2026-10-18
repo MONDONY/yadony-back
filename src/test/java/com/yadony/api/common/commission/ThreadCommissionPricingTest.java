@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -47,6 +48,9 @@ class ThreadCommissionPricingTest {
     @BeforeEach
     void setUp() {
         lenient().when(gridService.require(GRID_7_6_5.id())).thenReturn(GRID_7_6_5);
+        // Règle de repli du code promo : celle du résolveur (CommissionRateResolverTest), exécutée
+        // pour de vrai sur le mock ; les bouchons de reductions(...) restent la source des réductions.
+        lenient().when(rateResolver.reductionsWithPromoFallback(any(), any(), any(), any())).thenCallRealMethod();
         pricing = new ThreadCommissionPricing(gridService, rateResolver);
     }
 

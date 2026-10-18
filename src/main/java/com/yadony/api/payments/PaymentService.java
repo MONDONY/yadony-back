@@ -646,7 +646,7 @@ public class PaymentService {
                 // nouveau devis, mais sans revalider un code déjà racheté au premier essai.
                 CommissionReductions reductions = existing.isPresent()
                         ? reductionsOfRetriedBid(bid, announcement.getTravelerId(), sender.getId())
-                        : reductionsWithPromoFallback(announcement.getTravelerId(), sender.getId(),
+                        : commissionRateResolver.reductionsWithPromoFallback(announcement.getTravelerId(), sender.getId(),
                                 bid.getPromoCode(), bidId);
                 CommissionResult quote = CommissionCalculator.compute(totalNet, currency,
                         commissionGridService.require(bid.getCommissionGridId()), reductions);
@@ -1650,28 +1650,6 @@ public class PaymentService {
     }
 
     /**
-     * Réductions personnelles d'un premier paiement à grille. Un code promo devenu invalide
-     * (expiré, limite atteinte…) retombe sur les réductions sans code, comme le chemin hérité
-     * retombe sur le taux sans promo.
-     *
-     * @param reference bid ou fil : le bon pris en compte est celui déjà rattaché à cette
-     *                  référence s'il existe (lecture pure, la consommation reste à l'appelant).
-     */
-    private CommissionReductions reductionsWithPromoFallback(UUID travelerId, UUID senderId,
-                                                             String promoCode, UUID reference) {
-        if (promoCode == null || promoCode.isBlank()) {
-            return commissionRateResolver.reductions(travelerId, senderId, null, null, reference);
-        }
-        try {
-            return commissionRateResolver.reductions(travelerId, senderId, promoCode, senderId, reference);
-        } catch (YadonyBusinessException e) {
-            log.warn("Promo {} invalide pour {} ({}) : repli sur les réductions sans promo",
-                    promoCode, reference, e.getErrorCode());
-            return commissionRateResolver.reductions(travelerId, senderId, null, null, reference);
-        }
-    }
-
-    /**
      * Réductions d'un bid à grille re-tarifé lors d'une nouvelle tentative : taux spécial et bon
      * du jour pour ce bid (le bon déjà consommé pour lui, s'il y en a un), et la remise du code
      * DÉJÀ racheté lue sans contrôle. Le code n'est jamais revalidé : racheté, il échouerait sur
@@ -2113,7 +2091,7 @@ public class PaymentService {
                 // Grille figée sur le fil (héritée de la demande), jamais la grille du jour.
                 CommissionResult quote = CommissionCalculator.compute(amountEur, currency,
                         commissionGridService.require(commissionGridId),
-                        reductionsWithPromoFallback(traveler.getId(), sender.getId(), code, threadId));
+                        commissionRateResolver.reductionsWithPromoFallback(traveler.getId(), sender.getId(), code, threadId));
                 gridAmounts = new PriceBreakdown(quote.net(), quote.commission(), quote.gross());
                 // Taux réel exposé ; NegotiationService.recordAppliedPromo le borne à l'écriture.
                 rate = quote.effectiveRate();

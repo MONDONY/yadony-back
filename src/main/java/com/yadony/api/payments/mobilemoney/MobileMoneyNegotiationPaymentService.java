@@ -31,6 +31,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -179,7 +180,7 @@ public class MobileMoneyNegotiationPaymentService {
         if (commissionGridId == null) {
             return payload;
         }
-        Map<String, Object> withGrid = new java.util.LinkedHashMap<>(payload);
+        Map<String, Object> withGrid = new LinkedHashMap<>(payload);
         withGrid.put("commissionGridId", commissionGridId.toString());
         return withGrid;
     }

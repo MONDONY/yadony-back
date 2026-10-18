@@ -1,10 +1,7 @@
 package com.yadony.api.common.commission;
 
 import com.yadony.api.common.CommissionRateResolver;
-import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.currency.SupportedCurrency;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -25,8 +22,6 @@ import java.util.UUID;
  */
 @Component
 public class ThreadCommissionPricing {
-
-    private static final Logger log = LoggerFactory.getLogger(ThreadCommissionPricing.class);
 
     private final CommissionGridService gridService;
     private final CommissionRateResolver rateResolver;
@@ -69,19 +64,6 @@ public class ThreadCommissionPricing {
                     BigDecimal.ZERO.setScale(CommissionResult.STORED_RATE_SCALE), false, false);
         }
         return CommissionCalculator.compute(n, currency, gridService.require(gridId),
-                reductions(travelerId, senderId, threadId, promoCode));
-    }
-
-    private CommissionReductions reductions(UUID travelerId, UUID senderId, UUID threadId, String promoCode) {
-        if (promoCode == null || promoCode.isBlank()) {
-            return rateResolver.reductions(travelerId, senderId, null, null, threadId);
-        }
-        try {
-            return rateResolver.reductions(travelerId, senderId, promoCode, senderId, threadId);
-        } catch (YadonyBusinessException e) {
-            log.warn("Promo {} invalide pour la négociation {} ({}) : repli sur les réductions sans promo",
-                    promoCode, threadId, e.getErrorCode());
-            return rateResolver.reductions(travelerId, senderId, null, null, threadId);
-        }
+                rateResolver.reductionsWithPromoFallback(travelerId, senderId, promoCode, threadId));
     }
 }

@@ -675,6 +675,9 @@ class MobileMoneyBidPaymentServiceTest {
         bid.setCommissionGridId(grid.id());
         bid.setPromoCode("WELCOME05");
         when(gridService.require(grid.id())).thenReturn(grid);
+        // Règle de repli du code promo : celle du résolveur (CommissionRateResolverTest), exécutée
+        // pour de vrai sur le mock ; les bouchons de reductions(...) restent la source des réductions.
+        when(rates.reductionsWithPromoFallback(any(), any(), any(), any())).thenCallRealMethod();
         when(rates.reductions(traveler.getId(), sender.getId(), "WELCOME05", sender.getId(), bid.getId()))
                 .thenReturn(new com.yadony.api.common.commission.CommissionReductions(null,
                         com.yadony.api.promo.PromoDiscount.points(new BigDecimal("0.05")), null));

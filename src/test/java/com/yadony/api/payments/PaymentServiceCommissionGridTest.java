@@ -100,6 +100,9 @@ class PaymentServiceCommissionGridTest {
                 mock(ConnectAccountProvisioner.class));
         ReflectionTestUtils.setField(service, "commissionGridService", gridService);
         lenient().when(gridService.require(gridId)).thenReturn(GRID_7_6_5);
+        // Règle de repli du code promo : celle du résolveur (CommissionRateResolverTest), exécutée
+        // pour de vrai sur le mock ; les bouchons de reductions(...) restent la source des réductions.
+        lenient().when(resolver.reductionsWithPromoFallback(any(), any(), any(), any())).thenCallRealMethod();
         lenient().when(paymentRepository.save(any())).thenAnswer(inv -> {
             PaymentEntity p = inv.getArgument(0);
             if (p.getId() == null) {

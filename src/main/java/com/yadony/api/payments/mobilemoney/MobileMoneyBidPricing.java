@@ -15,7 +15,6 @@ import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.pawapay.PawapayAmounts;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -119,7 +118,8 @@ public class MobileMoneyBidPricing {
             return new Quote(new PriceBreakdown(result.net(), result.commission(), result.gross()), false);
         }
         CommissionResult result = CommissionCalculator.compute(requirePositive(scheduleNet(bid, announcement), currency),
-                currency, grid, reductionsWithPromoFallback(announcement.getTravelerId(), bid));
+                currency, grid, rates.reductionsWithPromoFallback(announcement.getTravelerId(), bid.getSenderId(),
+                        bid.getPromoCode(), bid.getId()));
         bid.setCommissionRate(result.storableRate());
         return new Quote(new PriceBreakdown(result.net(), result.commission(), result.gross()),
                 result.promoEffective(), result.promoEffective());
@@ -142,20 +142,6 @@ public class MobileMoneyBidPricing {
                     "invalid-amount", "Invalid Amount", "Le montant calculé est invalide (≤ 0)");
         }
         return net;
-    }
-
-    /** Réductions du jour pour ce bid ; un code devenu invalide retombe sur celles sans code. */
-    private CommissionReductions reductionsWithPromoFallback(UUID travelerId, BidEntity bid) {
-        String code = bid.getPromoCode();
-        if (code == null || code.isBlank()) {
-            return rates.reductions(travelerId, bid.getSenderId(), null, null, bid.getId());
-        }
-        try {
-            return rates.reductions(travelerId, bid.getSenderId(), code, bid.getSenderId(), bid.getId());
-        } catch (YadonyBusinessException e) {
-            log.warn("Promo {} invalide pour le bid mobile money {} — repli", code, bid.getId());
-            return rates.reductions(travelerId, bid.getSenderId(), null, null, bid.getId());
-        }
     }
 
     private record ResolvedRate(BigDecimal rate, boolean promoApplied) {}
