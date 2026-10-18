@@ -175,6 +175,28 @@ class KycStatusTransitionServiceTest {
     }
 
     @Test
+    void approveWithoutDocumentsByAdmin_verifies_andAuditsWithoutDocuments() {
+        user.setKycStatus(KycStatus.NOT_STARTED);
+
+        service.approveWithoutDocumentsByAdmin(kyc, user, ADMIN_ID, "Compte de démonstration review App Store");
+
+        assertThat(kyc.getStatus()).isEqualTo(KycVerificationStatus.VERIFIED);
+        assertThat(user.getKycStatus()).isEqualTo(KycStatus.VERIFIED);
+        assertThat(kyc.getDecisionKind()).isEqualTo(KycDecisionKind.APPROVED);
+        assertThat(kyc.getDecidedByAdminId()).isEqualTo(ADMIN_ID);
+        verify(kycRepository).save(kyc);
+        verify(userRepository).save(user);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Map<String, Object>> payload = ArgumentCaptor.forClass(java.util.Map.class);
+        verify(auditService).log(eq("kyc_verification"), eq(kyc.getId()),
+                eq("KYC_VERIFIED_WITHOUT_DOCUMENTS_BY_ADMIN"), eq(ADMIN_ID), payload.capture());
+        assertThat(payload.getValue()).containsEntry("sessionId", "")
+                .containsEntry("reason", "Compte de démonstration review App Store");
+        verify(eventPublisher).publishEvent(any(UserKycVerifiedEvent.class));
+    }
+
+    @Test
     void approveByAdmin_verifiesBothStatuses_recordsTheDecision_andPublishesTheSameEvent() {
         kyc.setVerificationSessionId("sess_1");
         kyc.setRejectionCode("document_expired");

@@ -82,12 +82,28 @@ public class KycStatusTransitionService {
      * VERIFIED.
      */
     public void approveByAdmin(KycVerificationEntity kyc, UserEntity user, UUID adminId, String reason) {
+        approve(kyc, user, adminId, reason, "KYC_VERIFIED_BY_ADMIN");
+    }
+
+    /**
+     * Validation sans aucune piece chez le fournisseur, reservee au super administrateur (compte
+     * de demonstration de la review App Store). Transition identique a {@link #approveByAdmin},
+     * seule l'action d'audit change : la file et l'historique doivent montrer qu'aucune identite
+     * n'a ete controlee.
+     */
+    public void approveWithoutDocumentsByAdmin(KycVerificationEntity kyc, UserEntity user, UUID adminId,
+                                               String reason) {
+        approve(kyc, user, adminId, reason, "KYC_VERIFIED_WITHOUT_DOCUMENTS_BY_ADMIN");
+    }
+
+    private void approve(KycVerificationEntity kyc, UserEntity user, UUID adminId, String reason,
+                         String auditAction) {
         KycVerificationStatus previous = kyc.getStatus();
         kyc.setRejectionCode(null);
         kyc.setRejectionReason(null);
         recordDecision(kyc, KycDecisionKind.APPROVED, adminId, reason);
         applyVerified(kyc, user);
-        auditService.log("kyc_verification", kyc.getId(), "KYC_VERIFIED_BY_ADMIN", adminId,
+        auditService.log("kyc_verification", kyc.getId(), auditAction, adminId,
                 decisionPayload(kyc, user, previous, null, reason));
         eventPublisher.publishEvent(new UserKycVerifiedEvent(user.getId()));
     }

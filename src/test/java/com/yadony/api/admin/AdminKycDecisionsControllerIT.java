@@ -210,6 +210,57 @@ class AdminKycDecisionsControllerIT {
                 .andExpect(jsonPath("$.code").value("kyc-already-verified"));
     }
 
+    // ── Validation sans pièce : SUPER_ADMIN seulement ────────────────────────
+
+    private static final String DEMO_REASON = "{\"reason\":\"Compte de démonstration review App Store\"}";
+
+    private static UsernamePasswordAuthenticationToken superAdmin() {
+        UsernamePasswordAuthenticationToken base = auth(AdminRole.SUPER_ADMIN, "USER_KYC", "KYC_DECIDE");
+        List<org.springframework.security.core.GrantedAuthority> authorities =
+                new java.util.ArrayList<>(base.getAuthorities());
+        authorities.add(new SimpleGrantedAuthority("ROLE_SUPER_ADMIN"));
+        return new UsernamePasswordAuthenticationToken(base.getPrincipal(), null, authorities);
+    }
+
+    @Test
+    void approveSansPiece_superAdmin_200() throws Exception {
+        when(review.detail(USER_ID)).thenReturn(detail());
+
+        mockMvc.perform(post("/admin/users/{id}/kyc/approve-without-documents", USER_ID)
+                        .contentType(MediaType.APPLICATION_JSON).content(DEMO_REASON)
+                        .with(authentication(superAdmin())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kycStatus").value("VERIFIED"));
+        verify(review).approveWithoutDocuments(USER_ID, ADMIN_ID, "Compte de démonstration review App Store");
+    }
+
+    @Test
+    void approveSansPiece_adminAvecKycDecide_403() throws Exception {
+        mockMvc.perform(post("/admin/users/{id}/kyc/approve-without-documents", USER_ID)
+                        .contentType(MediaType.APPLICATION_JSON).content(DEMO_REASON)
+                        .with(authentication(admin())))
+                .andExpect(status().isForbidden());
+        verify(review, never()).approveWithoutDocuments(any(), any(), any());
+    }
+
+    @Test
+    void approveSansPiece_support_403() throws Exception {
+        mockMvc.perform(post("/admin/users/{id}/kyc/approve-without-documents", USER_ID)
+                        .contentType(MediaType.APPLICATION_JSON).content(DEMO_REASON)
+                        .with(authentication(support())))
+                .andExpect(status().isForbidden());
+        verify(review, never()).approveWithoutDocuments(any(), any(), any());
+    }
+
+    @Test
+    void approveSansPiece_motifTropCourt_422() throws Exception {
+        mockMvc.perform(post("/admin/users/{id}/kyc/approve-without-documents", USER_ID)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"ok\"}")
+                        .with(authentication(superAdmin())))
+                .andExpect(status().isUnprocessableEntity());
+        verify(review, never()).approveWithoutDocuments(any(), any(), any());
+    }
+
     @Test
     void reject_admin_200() throws Exception {
         when(review.detail(USER_ID)).thenReturn(detail());

@@ -125,6 +125,61 @@ class KycAdminReviewServiceTest {
         assertProblem(() -> service.approve(unknown, ADMIN_ID, REASON), HttpStatus.NOT_FOUND, "user-not-found");
     }
 
+    // ── approveWithoutDocuments ───────────────────────────────────────────────
+
+    @Test
+    void approveWithoutDocuments_sansLigne_creeUneLigneSansSession() {
+        when(kycRepository.findByUserId(user.getId())).thenReturn(Optional.empty());
+        user.setKycStatus(KycStatus.NOT_STARTED);
+
+        service.approveWithoutDocuments(user.getId(), ADMIN_ID, REASON);
+
+        org.mockito.ArgumentCaptor<KycVerificationEntity> created =
+                org.mockito.ArgumentCaptor.forClass(KycVerificationEntity.class);
+        verify(transitions).approveWithoutDocumentsByAdmin(created.capture(), org.mockito.ArgumentMatchers.eq(user),
+                org.mockito.ArgumentMatchers.eq(ADMIN_ID), org.mockito.ArgumentMatchers.eq(REASON));
+        assertThat(created.getValue().getUserId()).isEqualTo(user.getId());
+        assertThat(created.getValue().getProvider()).isEqualTo(VerificationProviderKind.DIDIT);
+        assertThat(created.getValue().getVerificationSessionId()).isNull();
+        assertThat(created.getValue().getStatus()).isEqualTo(KycVerificationStatus.PENDING);
+    }
+
+    @Test
+    void approveWithoutDocuments_ligneExistante_estReutilisee() {
+        service.approveWithoutDocuments(user.getId(), ADMIN_ID, REASON);
+
+        verify(transitions).approveWithoutDocumentsByAdmin(kyc, user, ADMIN_ID, REASON);
+    }
+
+    @Test
+    void approveWithoutDocuments_ligneDejaVerifiee_409() {
+        kyc.setStatus(KycVerificationStatus.VERIFIED);
+
+        assertProblem(() -> service.approveWithoutDocuments(user.getId(), ADMIN_ID, REASON),
+                HttpStatus.CONFLICT, "kyc-already-verified");
+        verifyNoInteractions(transitions);
+    }
+
+    @Test
+    void approveWithoutDocuments_compteDejaVerifieSansLigne_409() {
+        when(kycRepository.findByUserId(user.getId())).thenReturn(Optional.empty());
+        user.setKycStatus(KycStatus.VERIFIED);
+
+        assertProblem(() -> service.approveWithoutDocuments(user.getId(), ADMIN_ID, REASON),
+                HttpStatus.CONFLICT, "kyc-already-verified");
+        verifyNoInteractions(transitions);
+    }
+
+    @Test
+    void approveWithoutDocuments_utilisateurInconnu_404() {
+        UUID unknown = UUID.randomUUID();
+        when(userRepository.findById(unknown)).thenReturn(Optional.empty());
+
+        assertProblem(() -> service.approveWithoutDocuments(unknown, ADMIN_ID, REASON),
+                HttpStatus.NOT_FOUND, "user-not-found");
+        verifyNoInteractions(transitions);
+    }
+
     // ── reject ────────────────────────────────────────────────────────────────
 
     @Test

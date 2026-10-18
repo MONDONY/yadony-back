@@ -387,6 +387,30 @@ public class KycAdminReviewService {
         transitions.approveByAdmin(kyc, user, adminId, reason);
     }
 
+    /**
+     * Valide un compte SANS session chez le fournisseur : seul usage prevu, le compte de
+     * demonstration remis aux equipes de review des stores, qui ne peut pas presenter de piece.
+     * Le controleur la reserve au super administrateur. Sans ligne {@code kyc_verifications},
+     * on en cree une (fournisseur actif, aucune session) : {@code GET /kyc/status} reste
+     * coherent et la revocation admin reste possible.
+     */
+    @Transactional
+    @CacheEvict(value = "announcements-search", allEntries = true)
+    public void approveWithoutDocuments(UUID userId, UUID adminId, String reason) {
+        UserEntity user = requireUser(userId);
+        KycVerificationEntity kyc = kycRepository.findByUserId(userId).orElseGet(() -> {
+            KycVerificationEntity created = new KycVerificationEntity();
+            created.setUserId(userId);
+            created.setProvider(VerificationProviderKind.DIDIT);
+            created.setStatus(KycVerificationStatus.PENDING);
+            return created;
+        });
+        if (user.getKycStatus() == KycStatus.VERIFIED || kyc.getStatus() == KycVerificationStatus.VERIFIED) {
+            throw alreadyVerified();
+        }
+        transitions.approveWithoutDocumentsByAdmin(kyc, user, adminId, reason);
+    }
+
     /** Refuse la session courante ; une ligne deja verifiee se revoque, elle ne se refuse pas. */
     @Transactional
     @CacheEvict(value = "announcements-search", allEntries = true)
