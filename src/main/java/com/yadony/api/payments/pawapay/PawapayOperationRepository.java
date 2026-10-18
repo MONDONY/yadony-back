@@ -27,6 +27,15 @@ public interface PawapayOperationRepository extends JpaRepository<PawapayOperati
     boolean existsByUserIdAndKindAndCurrencyAndPurposeAndStatusIn(UUID userId, PawapayOperationKind kind,
             String currency, PawapayOperationPurpose purpose, Collection<PawapayOperationStatus> statuses);
 
+    /**
+     * Variante bornée dans le temps de la garde anti-doublon des recharges : seules comptent
+     * les opérations créées APRÈS {@code createdAfter}. Une recharge restée ouverte au-delà de
+     * son délai de validation ne bloque plus la suivante.
+     */
+    boolean existsByUserIdAndKindAndCurrencyAndPurposeAndStatusInAndCreatedAtAfter(UUID userId,
+            PawapayOperationKind kind, String currency, PawapayOperationPurpose purpose,
+            Collection<PawapayOperationStatus> statuses, LocalDateTime createdAfter);
+
     Optional<PawapayOperationEntity> findByIdAndUserId(UUID id, UUID userId);
 
     /**

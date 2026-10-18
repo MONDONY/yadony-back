@@ -2,6 +2,8 @@ package com.yadony.api.payments.wallet.dto;
 
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayProviders;
+import com.yadony.api.payments.pawapay.ValidationHint;
+import java.time.Instant;
 import java.util.UUID;
 
 /**
@@ -20,10 +22,12 @@ public class WalletTopupResponse {
     private final String providerLabel;
     private final String msisdnMasked;
     private final String authorizationUrl; // Wave : page à ouvrir
+    private final Instant expiresAt;       // MOBILE_MONEY : fin du délai de validation
+    private final ValidationHint validationHint; // MOBILE_MONEY : comment l'opérateur demande la validation
 
     private WalletTopupResponse(String clientSecret, String redirectUrl, UUID topupId, String currency,
                                 String provider, String providerLabel, String msisdnMasked,
-                                String authorizationUrl) {
+                                String authorizationUrl, Instant expiresAt, ValidationHint validationHint) {
         this.clientSecret = clientSecret;
         this.redirectUrl = redirectUrl;
         this.topupId = topupId;
@@ -32,15 +36,19 @@ public class WalletTopupResponse {
         this.providerLabel = providerLabel;
         this.msisdnMasked = msisdnMasked;
         this.authorizationUrl = authorizationUrl;
+        this.expiresAt = expiresAt;
+        this.validationHint = validationHint;
     }
 
     public static WalletTopupResponse stripe(String clientSecret) {
-        return new WalletTopupResponse(clientSecret, null, null, null, null, null, null, null);
+        return new WalletTopupResponse(clientSecret, null, null, null, null, null, null, null, null, null);
     }
 
-    public static WalletTopupResponse mobileMoney(PawapayOperationEntity op) {
+    public static WalletTopupResponse mobileMoney(PawapayOperationEntity op, Instant expiresAt,
+                                                  ValidationHint validationHint) {
         return new WalletTopupResponse(null, null, op.getId(), op.getCurrency(), op.getProvider(),
-                PawapayProviders.label(op.getProvider()), op.getMsisdnMasked(), op.getAuthorizationUrl());
+                PawapayProviders.label(op.getProvider()), op.getMsisdnMasked(), op.getAuthorizationUrl(),
+                expiresAt, validationHint);
     }
 
     public String getClientSecret() { return clientSecret; }
@@ -51,4 +59,6 @@ public class WalletTopupResponse {
     public String getProviderLabel() { return providerLabel; }
     public String getMsisdnMasked() { return msisdnMasked; }
     public String getAuthorizationUrl() { return authorizationUrl; }
+    public Instant getExpiresAt() { return expiresAt; }
+    public ValidationHint getValidationHint() { return validationHint; }
 }

@@ -24,12 +24,18 @@ import com.yadony.api.payments.pawapay.PawapayProperties;
 import com.yadony.api.payments.pawapay.PawapayProviderResolver;
 import com.yadony.api.payments.pawapay.PawapayProviders;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
+import com.yadony.api.payments.pawapay.PawapayValidationHints;
+import com.yadony.api.payments.pawapay.ValidationHint;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
 import com.yadony.api.payments.wallet.dto.WalletTopupRequest;
 import com.yadony.api.payments.wallet.dto.WalletTopupResponse;
 import com.yadony.api.payments.wallet.dto.WalletTopupStatusResponse;
 import java.lang.reflect.Constructor;
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -57,6 +63,10 @@ class WalletMobileMoneyTopupServiceTest {
     private final UUID userId = UUID.randomUUID();
     private WalletMobileMoneyTopupService service;
 
+    /** Table d'indications réelle (pas un mock) : Orange CI -> lien SMS, MTN CI -> invite PIN. */
+    private static final PawapayValidationHints HINTS = new PawapayValidationHints(
+            Map.of("ORANGE_CIV", "SMS_LINK", "MTN_MOMO_CIV", "PIN_PROMPT"));
+
     /** Tel que le client l'envoie : E.164 avec le {@code +} et des espaces. */
     private static final String PHONE = "+225 07 34 56 78 90";
     /** Tel que pawaPay l'attend, et tel que le résolveur doit le recevoir. */
@@ -76,7 +86,7 @@ class WalletMobileMoneyTopupServiceTest {
 
     private WalletMobileMoneyTopupService service(boolean railEnabled) {
         return new WalletMobileMoneyTopupService(resolver, submission, operations, walletService, auditService,
-                props(railEnabled), TestMessages.resolver());
+                props(railEnabled), TestMessages.resolver(), HINTS);
     }
 
     private static PawapayProviderResolver.Resolved resolvedWithLimits(String provider, String currency,
@@ -113,9 +123,18 @@ class WalletMobileMoneyTopupServiceTest {
     }
 
     private static PawapayOperationEntity deposit(UUID userId, String amount) {
-        return new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.DEPOSIT,
+        PawapayOperationEntity op = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.DEPOSIT,
                 PawapayOperationPurpose.WALLET_TOPUP, userId, null, null, new BigDecimal(amount), "XOF",
                 "ORANGE_CIV", "CI", MSISDN);
+        // createdAt est posé par @PrePersist : une entité construite à la main n'en a pas.
+        ReflectionTestUtils.setField(op, "createdAt", LocalDateTime.now(ZoneOffset.UTC));
+        return op;
+    }
+
+    /** Raccourci de stub de la garde anti-doublon bornée dans le temps. */
+    private void pendingGuardReturns(boolean exists) {
+        when(operations.existsByUserIdAndKindAndCurrencyAndPurposeAndStatusInAndCreatedAtAfter(any(), any(), any(),
+                any(), any(), any())).thenReturn(exists);
     }
 
     private void resolves(PawapayProviderResolver.Resolved value) {
@@ -129,9 +148,7 @@ class WalletMobileMoneyTopupServiceTest {
     @DisplayName("dépôt soumis dans la devise de l'opérateur, pas dans celle du portefeuille")
     void initiate_submitsDepositInOperatorCurrency() {
         resolves(orangeCi(new BigDecimal("500"), new BigDecimal("1000000")));
-        when(operations.existsByUserIdAndKindAndCurrencyAndPurposeAndStatusIn(eq(userId),
-                eq(PawapayOperationKind.DEPOSIT), eq("XOF"), eq(PawapayOperationPurpose.WALLET_TOPUP),
-                eq(PawapayOperationStatus.OPEN))).thenReturn(false);
+        pendingGuardReturns(false);
         PawapayOperationEntity op = deposit(userId, "10000");
         when(submission.submitWalletDeposit(eq(userId), eq(MSISDN), eq("ORANGE_CIV"), eq("CI"),
                 eq(new BigDecimal("10000")), eq("XOF"), eq("wallet-topup-" + userId), isNull(), isNull()))
@@ -343,10 +360,9 @@ class WalletMobileMoneyTopupServiceTest {
     }
 
     @Test
-    void initiate_whenAnotherTopupPending_422() {
+    void initiate_whenPendingTopupYoungerThanExpiry_422AlreadyPending() {
         resolves(orangeCi(new BigDecimal("500"), new BigDecimal("1000000")));
-        when(operations.existsByUserIdAndKindAndCurrencyAndPurposeAndStatusIn(any(), any(), any(), any(), any()))
-                .thenReturn(true);
+        pendingGuardReturns(true);
 
         Throwable t = catchThrowable(() -> service.initiate(userId, request("10000", PHONE, null)));
 
@@ -355,21 +371,80 @@ class WalletMobileMoneyTopupServiceTest {
     }
 
     /**
-     * {@code OPEN} (non terminaux) et non {@code LIVE_OR_DONE} : une recharge déjà COMPLETED
-     * ne doit jamais bloquer la suivante, sinon un utilisateur ne recharge qu'une fois.
+     * La garde ne regarde que les recharges créées dans les 15 dernières minutes : une
+     * demande plus ancienne (même encore ouverte chez pawaPay) ne la déclenche pas, et la
+     * nouvelle recharge part chez l'opérateur.
      */
     @Test
-    void initiate_duplicateGuard_looksAtNonTerminalStatusesOnly() {
+    void initiate_whenPendingTopupOlderThanExpiry_allowsNewTopup() {
+        resolves(orangeCi(new BigDecimal("500"), new BigDecimal("1000000")));
+        pendingGuardReturns(false);
+        PawapayOperationEntity op = deposit(userId, "10000");
+        when(submission.submitWalletDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(op);
+
+        WalletTopupResponse response = service.initiate(userId, request("10000", PHONE, null));
+
+        assertThat(response.getTopupId()).isEqualTo(op.getId());
+        verify(submission).submitWalletDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    /**
+     * {@code OPEN} (non terminaux) et non {@code LIVE_OR_DONE} : une recharge déjà COMPLETED
+     * ne doit jamais bloquer la suivante, sinon un utilisateur ne recharge qu'une fois. Et la
+     * borne temporelle est « maintenant moins 15 min ».
+     */
+    @Test
+    void initiate_duplicateGuard_looksAtNonTerminalStatusesYoungerThanExpiryOnly() {
         resolves(orangeCi(new BigDecimal("500"), new BigDecimal("1000000")));
         when(submission.submitWalletDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(deposit(userId, "10000"));
+        ArgumentCaptor<LocalDateTime> since = ArgumentCaptor.forClass(LocalDateTime.class);
+        LocalDateTime before = LocalDateTime.now(ZoneOffset.UTC);
 
         service.initiate(userId, request("10000", PHONE, null));
 
-        verify(operations).existsByUserIdAndKindAndCurrencyAndPurposeAndStatusIn(userId,
-                PawapayOperationKind.DEPOSIT, "XOF", PawapayOperationPurpose.WALLET_TOPUP,
-                PawapayOperationStatus.OPEN);
+        LocalDateTime after = LocalDateTime.now(ZoneOffset.UTC);
+        verify(operations).existsByUserIdAndKindAndCurrencyAndPurposeAndStatusInAndCreatedAtAfter(eq(userId),
+                eq(PawapayOperationKind.DEPOSIT), eq("XOF"), eq(PawapayOperationPurpose.WALLET_TOPUP),
+                eq(PawapayOperationStatus.OPEN), since.capture());
+        assertThat(since.getValue()).isBetween(before.minus(WalletMobileMoneyTopupService.EXPIRY),
+                after.minus(WalletMobileMoneyTopupService.EXPIRY));
         assertThat(PawapayOperationStatus.OPEN).doesNotContain(PawapayOperationStatus.COMPLETED);
+    }
+
+    @Test
+    void initiate_returnsExpiresAtFifteenMinutesAfterCreation_andValidationHint() {
+        resolves(orangeCi(new BigDecimal("500"), new BigDecimal("1000000")));
+        PawapayOperationEntity op = deposit(userId, "10000");
+        LocalDateTime createdAt = LocalDateTime.of(2026, 10, 18, 9, 30, 0);
+        ReflectionTestUtils.setField(op, "createdAt", createdAt);
+        when(submission.submitWalletDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(op);
+
+        WalletTopupResponse response = service.initiate(userId, request("10000", PHONE, null));
+
+        assertThat(WalletMobileMoneyTopupService.EXPIRY).isEqualTo(Duration.ofMinutes(15));
+        assertThat(response.getExpiresAt()).isEqualTo(Instant.parse("2026-10-18T09:45:00Z"));
+        assertThat(response.getValidationHint()).isEqualTo(ValidationHint.SMS_LINK);
+    }
+
+    @Test
+    void initiate_unknownProvider_hintIsGeneric_andStripeResponseHasNoHint() {
+        resolves(orangeCi(new BigDecimal("500"), new BigDecimal("1000000")));
+        PawapayOperationEntity op = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.DEPOSIT,
+                PawapayOperationPurpose.WALLET_TOPUP, userId, null, null, new BigDecimal("10000"), "XOF",
+                "WAVE_CIV", "CI", MSISDN);
+        ReflectionTestUtils.setField(op, "createdAt", LocalDateTime.now(ZoneOffset.UTC));
+        when(submission.submitWalletDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(op);
+
+        WalletTopupResponse response = service.initiate(userId, request("10000", PHONE, null));
+
+        assertThat(response.getValidationHint()).isEqualTo(ValidationHint.GENERIC);
+        WalletTopupResponse stripe = WalletTopupResponse.stripe("secret");
+        assertThat(stripe.getExpiresAt()).isNull();
+        assertThat(stripe.getValidationHint()).isNull();
     }
 
     @Test
@@ -440,6 +515,7 @@ class WalletMobileMoneyTopupServiceTest {
         assertThat(s.currency()).isEqualTo("XOF");
         assertThat(s.providerLabel()).isEqualTo("Orange Money");
         assertThat(s.failureReason()).isNull();
+        assertThat(s.failureCode()).isNull();
     }
 
     @Test
@@ -456,33 +532,93 @@ class WalletMobileMoneyTopupServiceTest {
     }
 
     @Test
-    void status_failed_reportsTheClampedReason_andNoBalance() {
+    void status_failed_returnsYadonyCodeAndTranslatedReason() {
         PawapayOperationEntity op = deposit(userId, "10000");
         op.setStatus(PawapayOperationStatus.FAILED);
         op.setFailureMessage("x".repeat(200));
-        op.setFailureCode("PAYER_LIMIT_REACHED");
+        op.setFailureCode("INSUFFICIENT_BALANCE");
         ReflectionTestUtils.setField(op, "authorizationUrl", "https://wave.test/pay");
         when(operations.findByIdAndUserId(op.getId(), userId)).thenReturn(Optional.of(op));
 
         WalletTopupStatusResponse s = service.status(userId, op.getId());
 
         assertThat(s.status()).isEqualTo("FAILED");
-        assertThat(s.failureReason()).hasSize(64);
+        assertThat(s.failureCode()).isEqualTo("insufficient-balance");
+        assertThat(s.failureReason()).isEqualTo("Solde insuffisant sur votre compte mobile money.");
         assertThat(s.authorizationUrl()).isEqualTo("https://wave.test/pay");
         assertThat(s.walletBalance()).isNull();
+
+        TestMessages.requestWithAcceptLanguage("en");
+        assertThat(service.status(userId, op.getId()).failureReason())
+                .isEqualTo("Insufficient balance on your mobile money account.");
     }
 
     @Test
-    void status_failedWithoutMessage_fallsBackToTheCode() {
+    void status_failed_everyYadonyCodeHasAFrenchAndEnglishMessage() {
+        String[][] cases = {
+                {"INSUFFICIENT_BALANCE", "insufficient-balance", "Solde insuffisant sur votre compte mobile money.",
+                        "Insufficient balance on your mobile money account."},
+                {"PAYMENT_NOT_APPROVED", "not-approved", "Le paiement n'a pas été validé sur votre téléphone.",
+                        "The payment was not approved on your phone."},
+                {"PAYER_LIMIT_REACHED", "payer-limit-reached",
+                        "Votre opérateur a refusé : plafond de paiement atteint.",
+                        "Your operator declined the payment: payment limit reached."},
+                {"PAYER_NOT_FOUND", "invalid-number", "Ce numéro ne peut pas payer par mobile money.",
+                        "This number cannot pay with mobile money."},
+                {"PROVIDER_TEMPORARILY_UNAVAILABLE", "provider-unavailable",
+                        "Votre opérateur est indisponible pour le moment. Réessayez plus tard.",
+                        "Your operator is unavailable right now. Please try again later."},
+                {"SUBMIT_TIMEOUT", "expired", "La demande a expiré avant d'être validée.",
+                        "The request expired before it was approved."},
+                {"WHATEVER", "other", "Le paiement a été refusé par l'opérateur.",
+                        "The payment was declined by the operator."},
+        };
+        for (String[] c : cases) {
+            PawapayOperationEntity op = deposit(userId, "10000");
+            op.setStatus(PawapayOperationStatus.FAILED);
+            op.setFailureCode(c[0]);
+            when(operations.findByIdAndUserId(op.getId(), userId)).thenReturn(Optional.of(op));
+
+            TestMessages.clearRequest();
+            WalletTopupStatusResponse fr = service.status(userId, op.getId());
+            TestMessages.requestWithAcceptLanguage("en");
+            WalletTopupStatusResponse en = service.status(userId, op.getId());
+
+            assertThat(fr.failureCode()).as(c[0]).isEqualTo(c[1]);
+            assertThat(fr.failureReason()).as(c[0] + " fr").isEqualTo(c[2]);
+            assertThat(en.failureCode()).as(c[0] + " en code").isEqualTo(c[1]);
+            assertThat(en.failureReason()).as(c[0] + " en").isEqualTo(c[3]);
+        }
+    }
+
+    @Test
+    void status_failedWithoutCode_fallsBackToOther() {
         PawapayOperationEntity op = deposit(userId, "10000");
         op.setStatus(PawapayOperationStatus.SUBMIT_REJECTED);
-        op.setFailureCode("REJECTED");
         when(operations.findByIdAndUserId(op.getId(), userId)).thenReturn(Optional.of(op));
 
         WalletTopupStatusResponse s = service.status(userId, op.getId());
 
         assertThat(s.status()).isEqualTo("FAILED");
-        assertThat(s.failureReason()).isEqualTo("REJECTED");
+        assertThat(s.failureCode()).isEqualTo("other");
+        assertThat(s.failureReason()).isEqualTo("Le paiement a été refusé par l'opérateur.");
+    }
+
+    @Test
+    void status_pending_exposesExpiresAtAndHint() {
+        PawapayOperationEntity op = deposit(userId, "10000");
+        op.setStatus(PawapayOperationStatus.PROCESSING);
+        LocalDateTime createdAt = LocalDateTime.of(2026, 10, 18, 9, 30, 0);
+        ReflectionTestUtils.setField(op, "createdAt", createdAt);
+        when(operations.findByIdAndUserId(op.getId(), userId)).thenReturn(Optional.of(op));
+
+        WalletTopupStatusResponse s = service.status(userId, op.getId());
+
+        assertThat(s.status()).isEqualTo("PENDING");
+        assertThat(s.expiresAt()).isEqualTo(Instant.parse("2026-10-18T09:45:00Z"));
+        assertThat(s.validationHint()).isEqualTo(ValidationHint.SMS_LINK);
+        assertThat(s.failureCode()).isNull();
+        assertThat(s.failureReason()).isNull();
     }
 
     // ── providers ───────────────────────────────────────────────────────────
