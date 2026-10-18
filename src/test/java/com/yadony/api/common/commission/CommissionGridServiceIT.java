@@ -1,0 +1,146 @@
+package com.yadony.api.common.commission;
+
+import com.yadony.api.common.AuditService;
+import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.config.CacheConfig;
+import com.yadony.api.config.PlatformSettingsService;
+import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
+import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.when;
+
+/**
+ * Le service câblé comme en production (constructeur public {@code @Autowired}, vrai
+ * {@code CacheConfig}, vrai audit) sur PostgreSQL embarqué avec Flyway : transactions validées pour de
+ * vrai (sans cela l'éviction du cache après commit ne se déclenche jamais), trigger d'immuabilité actif.
+ * Les grilles en vigueur ne se suppriment pas : les tests s'isolent par leurs propres identifiants.
+ */
+@DataJpaTest
+@ActiveProfiles("test")
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@Import({CommissionGridService.class, CacheConfig.class, AuditService.class})
+@Transactional(propagation = Propagation.NOT_SUPPORTED)
+@DisplayName("CommissionGridService — câblage réel, commit, cache et trigger")
+class CommissionGridServiceIT {
+
+    private static final UUID ADMIN = UUID.randomUUID();
+
+    private static EmbeddedPostgres postgres;
+
+    @BeforeAll
+    static void startPostgres() throws Exception {
+        postgres = EmbeddedPostgres.builder().start();
+    }
+
+    @AfterAll
+    static void stopPostgres() throws Exception {
+        if (postgres != null) {
+            postgres.close();
+        }
+    }
+
+    @DynamicPropertySource
+    static void configurePostgres(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", () -> postgres.getJdbcUrl("postgres", "postgres"));
+        registry.add("spring.datasource.username", () -> "postgres");
+        registry.add("spring.datasource.password", () -> "postgres");
+        registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
+        registry.add("spring.jpa.database-platform", () -> "org.hibernate.dialect.PostgreSQLDialect");
+        registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
+        registry.add("spring.flyway.enabled", () -> true);
+    }
+
+    @MockitoBean PlatformSettingsService settings;
+    @Autowired CommissionGridService service;
+    @Autowired JdbcTemplate jdbc;
+
+    private static CommissionGridDraft draft(LocalDateTime effectiveFrom) {
+        return new CommissionGridDraft(
+                List.of(new CommissionTier(BigDecimal.ZERO, new BigDecimal("0.07")),
+                        new CommissionTier(new BigDecimal("100"), new BigDecimal("0.06"))),
+                CommissionGridService.defaultMinimums(), effectiveFrom, "IT");
+    }
+
+    private static LocalDateTime utcNow() {
+        return LocalDateTime.now(ZoneOffset.UTC);
+    }
+
+    @Test
+    @DisplayName("effet immédiat : la grille est la grille en vigueur dès le commit, l'audit est écrit")
+    void immediateGrid_becomesCurrent_andIsAudited() {
+        when(settings.commissionRate()).thenReturn(new BigDecimal("0.05"));
+        CommissionGrid grid = service.schedule(draft(null), Set.of(CommissionGridWarning.INCREASE_WITHIN_30_DAYS), ADMIN);
+
+        assertThat(service.current()).map(CommissionGrid::id).contains(grid.id());
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM audit_log WHERE entity_id = ? AND action = 'COMMISSION_GRID_SCHEDULED'",
+                Integer.class, grid.id())).isEqualTo(1);
+        // Une grille en vigueur ne s'annule pas : refus du service avant même le trigger.
+        assertThatThrownBy(() -> service.cancel(grid.id(), ADMIN))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT));
+    }
+
+    @Test
+    @DisplayName("programmer une seconde grille annule la première, qui reste dans l'historique")
+    void secondScheduledGrid_replacesFirst_andHistoryKeepsBoth() {
+        when(settings.commissionRate()).thenReturn(new BigDecimal("0.05"));
+        CommissionGrid first = service.schedule(draft(utcNow().plusDays(60)), Set.of(), ADMIN);
+        assertThat(service.scheduled()).map(CommissionGrid::id).contains(first.id());
+
+        CommissionGrid second = service.schedule(draft(utcNow().plusDays(61)), Set.of(), ADMIN);
+
+        assertThat(service.scheduled()).map(CommissionGrid::id).contains(second.id());
+        assertThat(service.require(second.id()).tiers()).hasSize(2);
+        List<CommissionGridHistoryEntry> history = service.history(PageRequest.of(0, 100)).getContent();
+        assertThat(history).filteredOn(h -> h.grid().id().equals(first.id())).singleElement()
+                .satisfies(h -> assertThat(h.cancelledAt()).isNotNull());
+        assertThat(history).filteredOn(h -> h.grid().id().equals(second.id())).singleElement()
+                .satisfies(h -> {
+                    assertThat(h.cancelledAt()).isNull();
+                    assertThat(h.createdBy()).isEqualTo(ADMIN);
+                    assertThat(h.note()).isEqualTo("IT");
+                });
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM audit_log WHERE entity_id = ? AND action = 'COMMISSION_GRID_CANCELLED'",
+                Integer.class, first.id())).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("annuler une grille programmée la masque aux lectures, cache compris")
+    void cancelScheduledGrid_hidesItFromReads() {
+        when(settings.commissionRate()).thenReturn(new BigDecimal("0.05"));
+        CommissionGrid grid = service.schedule(draft(utcNow().plusDays(70)), Set.of(), ADMIN);
+        assertThat(service.scheduled()).map(CommissionGrid::id).contains(grid.id());
+
+        service.cancel(grid.id(), ADMIN);
+
+        assertThat(service.scheduled().map(CommissionGrid::id).orElse(null)).isNotEqualTo(grid.id());
+        assertThatThrownBy(() -> service.require(grid.id()))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
+    }
+}
