@@ -65,8 +65,8 @@ import static org.mockito.Mockito.when;
  *
  * <p>Le décor H2 de {@code WalletControllerIT} ne conviendrait pas davantage : {@code
  * WalletService#credit} verrouille en {@code FOR NO KEY UPDATE} (refusé par H2, même en
- * {@code MODE=PostgreSQL}) et H2 ne joue pas les migrations Flyway (preuve de la suppression de
- * l'index {@code uq_pawapay_ops_live_wallet_topup} par V331).
+ * {@code MODE=PostgreSQL}), et l'index unique partiel {@code uq_pawapay_ops_live_wallet_topup}
+ * (V331, prédicat {@code topup_guard}) n'existe que dans les vraies migrations.
  *
  * <p>Pas de {@code @Transactional} sur la classe, pour deux raisons : {@code
  * WalletService#getOrCreate} est en {@code Propagation.NOT_SUPPORTED} et ne verrait pas les
@@ -270,9 +270,29 @@ class WalletMobileMoneyTopupIT {
     }
 
     /**
-     * Prouve que l'index unique partiel de V260 n'existe plus (V331) : la première recharge
-     * reste ACCEPTED (non terminale) mais a plus de 15 min, la seconde est acceptée. Avec
-     * l'index, l'insertion échouerait en {@code topup-already-pending} malgré la garde bornée.
+     * Course entre deux requêtes : la garde applicative (lecture) est franchie par les deux, c'est
+     * l'index unique partiel (V331) qui tranche. Deux recharges ouvertes récentes du même
+     * utilisateur et de la même devise, insérées directement : la 2e lève la violation, traduite
+     * en {@code topup-already-pending}.
+     */
+    @Test
+    void secondLiveTopupWithinExpiry_isRejectedByIndex() {
+        UUID userId = persistUser();
+        pawapayOperations.create(PawapayOperationKind.DEPOSIT, PawapayOperationPurpose.WALLET_TOPUP, userId, null,
+                null, new BigDecimal("10000"), CURRENCY, PROVIDER, "CI", MSISDN);
+
+        Throwable t = catchThrowable(() -> pawapayOperations.create(PawapayOperationKind.DEPOSIT,
+                PawapayOperationPurpose.WALLET_TOPUP, userId, null, null, new BigDecimal("5000"), CURRENCY,
+                PROVIDER, "CI", MSISDN));
+
+        assertThat(t).isInstanceOf(YadonyBusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "topup-already-pending");
+    }
+
+    /**
+     * La première recharge reste ACCEPTED (non terminale) mais a plus de 15 min : la 2e initiation
+     * libère sa garde ({@code topup_guard = false}) puis passe l'index. Le statut de la première
+     * n'est pas touché (un paiement validé tardivement crédite quand même).
      */
     @Test
     void secondTopupAfterExpiry_isAccepted_evenIfFirstStillAccepted() {
@@ -286,11 +306,12 @@ class WalletMobileMoneyTopupIT {
         assertThat(second.getTopupId()).isNotNull().isNotEqualTo(firstId);
         assertThat(operationRepository.findById(firstId).orElseThrow().getStatus())
                 .isEqualTo(PawapayOperationStatus.ACCEPTED);
+        assertThat(jdbc.queryForObject("SELECT topup_guard FROM pawapay_operations WHERE id = ?", Boolean.class,
+                firstId)).isFalse();
         assertThat(operationRepository.findById(second.getTopupId()).orElseThrow().getStatus())
                 .isEqualTo(PawapayOperationStatus.ACCEPTED);
-        assertThat(jdbc.queryForObject(
-                "SELECT count(*) FROM pg_indexes WHERE indexname = 'uq_pawapay_ops_live_wallet_topup'",
-                Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT topup_guard FROM pawapay_operations WHERE id = ?", Boolean.class,
+                second.getTopupId())).isTrue();
     }
 
     /**

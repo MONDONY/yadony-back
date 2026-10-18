@@ -413,6 +413,34 @@ class WalletMobileMoneyTopupServiceTest {
         assertThat(PawapayOperationStatus.OPEN).doesNotContain(PawapayOperationStatus.COMPLETED);
     }
 
+    /**
+     * La garde des recharges ouvertes de plus de 15 min est libérée AVANT le test « déjà en
+     * attente » et AVANT la soumission, avec la borne « maintenant moins 15 min » : l'index
+     * unique partiel reste ainsi l'arbitre des courses sans bloquer sur une demande expirée.
+     */
+    @Test
+    void initiate_releasesExpiredGuardsBeforeCheckingPending() {
+        resolves(orangeCi(new BigDecimal("500"), new BigDecimal("1000000")));
+        when(submission.submitWalletDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(deposit(userId, "10000"));
+        ArgumentCaptor<LocalDateTime> releaseBound = ArgumentCaptor.forClass(LocalDateTime.class);
+        ArgumentCaptor<LocalDateTime> guardBound = ArgumentCaptor.forClass(LocalDateTime.class);
+        LocalDateTime before = LocalDateTime.now(ZoneOffset.UTC);
+
+        service.initiate(userId, request("10000", PHONE, null));
+
+        LocalDateTime after = LocalDateTime.now(ZoneOffset.UTC);
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(operations, submission);
+        order.verify(operations).releaseExpiredTopupGuards(eq(userId), eq("XOF"), releaseBound.capture());
+        order.verify(operations).existsByUserIdAndKindAndCurrencyAndPurposeAndStatusInAndCreatedAtAfter(eq(userId),
+                any(), eq("XOF"), any(), any(), guardBound.capture());
+        order.verify(submission).submitWalletDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any());
+        assertThat(releaseBound.getValue()).isBetween(before.minus(WalletMobileMoneyTopupService.EXPIRY),
+                after.minus(WalletMobileMoneyTopupService.EXPIRY));
+        assertThat(guardBound.getValue()).isBetween(releaseBound.getValue().minusSeconds(1),
+                releaseBound.getValue().plusSeconds(1));
+    }
+
     @Test
     void initiate_returnsExpiresAtFifteenMinutesAfterCreation_andValidationHint() {
         resolves(orangeCi(new BigDecimal("500"), new BigDecimal("1000000")));

@@ -58,8 +58,9 @@ public class WalletMobileMoneyTopupService {
 
     /**
      * Délai de validation d'une recharge côté app : passé ce délai depuis sa création, elle
-     * est présentée comme expirée et ne bloque plus une nouvelle demande (la garde
-     * anti-doublon ne regarde que les recharges plus jeunes). La ligne reste ouverte jusqu'à
+     * est présentée comme expirée et ne bloque plus une nouvelle demande (sa garde
+     * {@code topup_guard} est libérée à la demande suivante, et la garde applicative ne regarde
+     * que les recharges plus jeunes). La ligne reste ouverte jusqu'à
      * ce que pawaPay tranche (callback ou poller) : un paiement validé tardivement crédite
      * quand même.
      */
@@ -118,7 +119,13 @@ public class WalletMobileMoneyTopupService {
         // ne doit jamais bloquer la suivante. Bornée à EXPIRY : une demande jamais validée
         // (SMS non reçu, PIN oublié) ne doit pas bloquer l'utilisateur jusqu'à ce que pawaPay
         // la déclare échouée.
+        // 1) Libérer la garde des recharges ouvertes de plus de EXPIRY (commit à part) : sans
+        //    cela l'index unique partiel (V331, qui ne compte que topup_guard) les verrait
+        //    encore. 2) Garde applicative, pour le message d'erreur du chemin normal.
+        //    3) Soumission : si deux requêtes simultanées franchissent la garde, l'index
+        //    tranche et PawapayOperationService.create le traduit en topup-already-pending.
         LocalDateTime notExpiredSince = LocalDateTime.now(ZoneOffset.UTC).minus(EXPIRY);
+        operations.releaseExpiredTopupGuards(userId, currency, notExpiredSince);
         if (operations.existsByUserIdAndKindAndCurrencyAndPurposeAndStatusInAndCreatedAtAfter(userId,
                 PawapayOperationKind.DEPOSIT, currency, PawapayOperationPurpose.WALLET_TOPUP,
                 PawapayOperationStatus.OPEN, notExpiredSince)) {

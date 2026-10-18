@@ -12,6 +12,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface PawapayOperationRepository extends JpaRepository<PawapayOperationEntity, UUID> {
 
@@ -35,6 +36,34 @@ public interface PawapayOperationRepository extends JpaRepository<PawapayOperati
     boolean existsByUserIdAndKindAndCurrencyAndPurposeAndStatusInAndCreatedAtAfter(UUID userId,
             PawapayOperationKind kind, String currency, PawapayOperationPurpose purpose,
             Collection<PawapayOperationStatus> statuses, LocalDateTime createdAfter);
+
+    /**
+     * Libère la garde anti-doublon ({@code topup_guard = false}) des recharges de portefeuille
+     * encore ouvertes d'un utilisateur et d'une devise, créées AVANT {@code createdBefore} :
+     * l'index unique partiel V331 ne les compte plus, une nouvelle recharge peut être créée.
+     * Le statut n'est pas touché (un paiement validé tardivement crédite quand même).
+     * Transaction propre (commit avant la soumission), {@code flush + clear} en binôme (voir
+     * memory backend_modifying_clear_flush_trap).
+     *
+     * @return le nombre de recharges libérées
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+        UPDATE PawapayOperationEntity o
+           SET o.topupGuard = false
+         WHERE o.userId = :userId
+           AND o.currency = :currency
+           AND o.purpose = com.yadony.api.payments.pawapay.PawapayOperationPurpose.WALLET_TOPUP
+           AND o.kind = com.yadony.api.payments.pawapay.PawapayOperationKind.DEPOSIT
+           AND o.topupGuard = true
+           AND o.createdAt < :createdBefore
+           AND o.status NOT IN (com.yadony.api.payments.pawapay.PawapayOperationStatus.COMPLETED,
+                                com.yadony.api.payments.pawapay.PawapayOperationStatus.FAILED,
+                                com.yadony.api.payments.pawapay.PawapayOperationStatus.SUBMIT_REJECTED)
+        """)
+    int releaseExpiredTopupGuards(@Param("userId") UUID userId, @Param("currency") String currency,
+                                  @Param("createdBefore") LocalDateTime createdBefore);
 
     Optional<PawapayOperationEntity> findByIdAndUserId(UUID id, UUID userId);
 

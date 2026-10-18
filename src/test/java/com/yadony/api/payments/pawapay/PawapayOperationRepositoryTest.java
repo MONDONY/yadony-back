@@ -157,6 +157,42 @@ class PawapayOperationRepositoryTest {
                 .get().extracting(PawapayOperationEntity::getId).isEqualTo(live.getId());
     }
 
+    private PawapayOperationEntity topup(UUID userId, String currency) {
+        return repository.saveAndFlush(new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.DEPOSIT,
+                PawapayOperationPurpose.WALLET_TOPUP, userId, null, null, new BigDecimal("10000"), currency,
+                "ORANGE_CIV", "CI", "2250734567890"));
+    }
+
+    @Test
+    void releaseExpiredTopupGuards_releasesOnlyOpenTopupsOfThatUserAndCurrencyOlderThanTheBound() {
+        UUID userId = UUID.randomUUID();
+        PawapayOperationEntity open = topup(userId, "XOF");
+        PawapayOperationEntity done = topup(userId, "XOF");
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        repository.applyTransition(done.getId(), PawapayOperationStatus.COMPLETED, null, null, "ptx", null, "{}",
+                now, null, now, now);
+        PawapayOperationEntity otherCurrency = topup(userId, "XAF");
+        PawapayOperationEntity otherUser = topup(UUID.randomUUID(), "XOF");
+        assertThat(open.isTopupGuard()).as("garde vraie par défaut").isTrue();
+
+        // Borne dans le passé : aucune recharge n'est « plus vieille » que la borne.
+        assertThat(repository.releaseExpiredTopupGuards(userId, "XOF", now.minusMinutes(15))).isZero();
+        assertThat(repository.findById(open.getId()).orElseThrow().isTopupGuard()).isTrue();
+
+        // Borne dans le futur : seule la recharge OUVERTE de cet utilisateur et de cette devise.
+        int released = repository.releaseExpiredTopupGuards(userId, "XOF", now.plusMinutes(1));
+
+        assertThat(released).isEqualTo(1);
+        PawapayOperationEntity reloaded = repository.findById(open.getId()).orElseThrow();
+        assertThat(reloaded.isTopupGuard()).isFalse();
+        assertThat(reloaded.getStatus()).as("le statut n'est pas touché").isEqualTo(PawapayOperationStatus.CREATED);
+        assertThat(repository.findById(done.getId()).orElseThrow().isTopupGuard()).isTrue();
+        assertThat(repository.findById(otherCurrency.getId()).orElseThrow().isTopupGuard()).isTrue();
+        assertThat(repository.findById(otherUser.getId()).orElseThrow().isTopupGuard()).isTrue();
+        // Idempotent.
+        assertThat(repository.releaseExpiredTopupGuards(userId, "XOF", now.plusMinutes(1))).isZero();
+    }
+
     @Test
     void status_helpers() {
         assertThat(PawapayOperationStatus.COMPLETED.isFinal()).isTrue();
