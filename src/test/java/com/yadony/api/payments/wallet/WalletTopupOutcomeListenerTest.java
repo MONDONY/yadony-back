@@ -161,27 +161,103 @@ class WalletTopupOutcomeListenerTest {
     @Test
     void failedWalletTopup_creditsNothingAndAudits() {
         UUID userId = UUID.randomUUID();
-        UUID id = UUID.randomUUID();
-        listener.onFailed(new PawapayOperationFailedEvent(id, PawapayOperationKind.DEPOSIT,
+        PawapayOperationEntity op = topup(userId);
+        when(operations.get(op.getId())).thenReturn(op);
+        when(notifications.messagesFor(userId)).thenReturn(TestMessages.fr());
+        listener.onFailed(new PawapayOperationFailedEvent(op.getId(), PawapayOperationKind.DEPOSIT,
                 PawapayOperationPurpose.WALLET_TOPUP, null, userId, "PAYER_LIMIT_REACHED", "limit"));
         verifyNoInteractions(walletService);
-        verify(auditService).log(eq("wallet_topup"), eq(id), eq("MOBILE_MONEY_FAILED"), eq(userId), any());
+        verify(auditService).log(eq("wallet_topup"), eq(op.getId()), eq("MOBILE_MONEY_FAILED"), eq(userId), any());
     }
 
     @Test
-    void failed_whenAuditThrows_logsAndSwallows() {
+    void onFailed_notifiesUserWithTranslatedReason() {
+        UUID userId = UUID.randomUUID();
+        PawapayOperationEntity op = topup(userId);
+        when(operations.get(op.getId())).thenReturn(op);
+        when(notifications.messagesFor(userId)).thenReturn(TestMessages.fr());
+
+        listener.onFailed(new PawapayOperationFailedEvent(op.getId(), PawapayOperationKind.DEPOSIT,
+                PawapayOperationPurpose.WALLET_TOPUP, null, userId, "PAYMENT_NOT_APPROVED", "declined"));
+
+        String expectedAmount = WalletAmountText.format(new BigDecimal("10000"), "XOF");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, String>> data = ArgumentCaptor.forClass(Map.class);
+        verify(notifications).notifyUser(eq(userId), eq("Recharge non aboutie"),
+                eq("Votre recharge de " + expectedAmount + " avec Orange Money n'a pas abouti : "
+                        + "Le paiement n'a pas été validé sur votre téléphone."), data.capture());
+        assertThat(data.getValue())
+                .containsEntry("type", "wallet_topup_failed")
+                .containsEntry("topupId", op.getId().toString())
+                .containsEntry("failureCode", "not-approved");
+        verify(auditService).log(eq("wallet_topup"), eq(op.getId()), eq("MOBILE_MONEY_FAILED"), eq(userId), any());
+    }
+
+    @Test
+    void onFailed_englishRecipientAndUnknownCode_rendersGenericReasonInEnglish() {
+        UUID userId = UUID.randomUUID();
+        PawapayOperationEntity op = topup(userId);
+        when(operations.get(op.getId())).thenReturn(op);
+        when(notifications.messagesFor(userId)).thenReturn(TestMessages.en());
+
+        listener.onFailed(new PawapayOperationFailedEvent(op.getId(), PawapayOperationKind.DEPOSIT,
+                PawapayOperationPurpose.WALLET_TOPUP, null, userId, null, null));
+
+        String expectedAmount = WalletAmountText.format(new BigDecimal("10000"), "XOF");
+        verify(notifications).notifyUser(eq(userId), eq("Top-up not completed"),
+                eq("Your " + expectedAmount + " top-up with Orange Money did not go through: "
+                        + "The payment was declined by the operator."), any());
+    }
+
+    @Test
+    void onFailed_notificationError_isSwallowed() {
+        UUID userId = UUID.randomUUID();
+        PawapayOperationEntity op = topup(userId);
+        when(operations.get(op.getId())).thenReturn(op);
+        when(notifications.messagesFor(userId)).thenReturn(TestMessages.fr());
+        doThrow(new RuntimeException("fcm indisponible")).when(notifications)
+                .notifyUser(any(), any(), any(), any());
+
+        assertThatCode(() -> listener.onFailed(new PawapayOperationFailedEvent(op.getId(),
+                PawapayOperationKind.DEPOSIT, PawapayOperationPurpose.WALLET_TOPUP, null, userId,
+                "PAYMENT_NOT_APPROVED", "declined"))).doesNotThrowAnyException();
+
+        verify(auditService).log(eq("wallet_topup"), eq(op.getId()), eq("MOBILE_MONEY_FAILED"), eq(userId), any());
+        verifyNoInteractions(walletService, adminAlertService);
+    }
+
+    @Test
+    void failed_whenOperationReadThrows_isSwallowedAndAuditStillWritten() {
         UUID userId = UUID.randomUUID();
         UUID id = UUID.randomUUID();
+        when(operations.get(id)).thenThrow(new RuntimeException("opération introuvable"));
+
+        assertThatCode(() -> listener.onFailed(new PawapayOperationFailedEvent(id, PawapayOperationKind.DEPOSIT,
+                PawapayOperationPurpose.WALLET_TOPUP, null, userId, "PAYMENT_NOT_APPROVED", "declined")))
+                .doesNotThrowAnyException();
+
+        verify(auditService).log(eq("wallet_topup"), eq(id), eq("MOBILE_MONEY_FAILED"), eq(userId), any());
+        verifyNoInteractions(notifications, adminAlertService);
+    }
+
+    @Test
+    void failed_whenAuditThrows_logsSwallowsAndStillNotifies() {
+        UUID userId = UUID.randomUUID();
+        PawapayOperationEntity op = topup(userId);
+        when(operations.get(op.getId())).thenReturn(op);
+        when(notifications.messagesFor(userId)).thenReturn(TestMessages.fr());
         doThrow(new RuntimeException("audit indisponible")).when(auditService)
-                .log(eq("wallet_topup"), eq(id), eq("MOBILE_MONEY_FAILED"), eq(userId), any());
+                .log(eq("wallet_topup"), eq(op.getId()), eq("MOBILE_MONEY_FAILED"), eq(userId), any());
 
         // Aucun argent n'a bougé pour un dépôt en échec : contrairement à onCompleted, l'erreur
         // est avalée après journalisation (rien à réconcilier manuellement, pas d'alerte admin).
-        assertThatCode(() -> listener.onFailed(new PawapayOperationFailedEvent(id, PawapayOperationKind.DEPOSIT,
-                PawapayOperationPurpose.WALLET_TOPUP, null, userId, "PAYER_LIMIT_REACHED", "limit")))
-                .doesNotThrowAnyException();
+        // L'utilisateur est prévenu malgré tout : l'audit en panne ne doit pas le laisser attendre.
+        assertThatCode(() -> listener.onFailed(new PawapayOperationFailedEvent(op.getId(),
+                PawapayOperationKind.DEPOSIT, PawapayOperationPurpose.WALLET_TOPUP, null, userId,
+                "PAYER_LIMIT_REACHED", "limit"))).doesNotThrowAnyException();
 
-        verifyNoInteractions(walletService, adminAlertService, notifications);
+        verifyNoInteractions(walletService, adminAlertService);
+        verify(notifications).notifyUser(eq(userId), eq("Recharge non aboutie"), any(), any());
     }
 
     @Test

@@ -146,7 +146,7 @@ public class NotificationPrefsService {
      */
     static final Set<String> ALWAYS_ON = Set.of(
             // Paiements et portefeuille
-            "CARD_EXPIRING", "wallet_topup_confirmed", "WALLET_ADJUSTED",
+            "CARD_EXPIRING", "wallet_topup_confirmed", "wallet_topup_failed", "WALLET_ADJUSTED",
             "STRIPE_ONBOARDING_INCOMPLETE",
             // Récompense de parrainage à choisir (crédit de solde ou code personnel)
             "REFERRAL_REWARD_AVAILABLE",

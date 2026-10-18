@@ -120,6 +120,9 @@ public final class NotificationDeeplink {
             case "FIRST_ACTION_REMINDER" -> Optional.of("first-steps");
             case "CARD_EXPIRING" -> Optional.of("payments/commission-method");
             case "REFERRAL_REWARD_AVAILABLE" -> Optional.of("profile/referral");
+            // Recharge du portefeuille par mobile money, confirmée ou non : l'écran du portefeuille
+            // (le solde à jour, ou le bouton pour réessayer). Aucun identifiant dans le lien.
+            case "wallet_topup_confirmed", "wallet_topup_failed" -> Optional.of("payments/wallet");
 
             default -> Optional.empty();
         };

@@ -209,7 +209,7 @@ class NotificationPrefsServiceTest {
     /** FLUTTER-GB (c) : argent, identité, litiges et modération ne se coupent pas. */
     @Test
     void isAllowed_alwaysOnTypes_ignoreEveryPref() {
-        for (String type : new String[]{"CARD_EXPIRING", "wallet_topup_confirmed", "WALLET_ADJUSTED",
+        for (String type : new String[]{"CARD_EXPIRING", "wallet_topup_confirmed", "wallet_topup_failed", "WALLET_ADJUSTED",
                 "STRIPE_ONBOARDING_INCOMPLETE", "KYC_VERIFIED", "KYC_ACTION_REQUIRED", "KYC_RESET",
                 "DISPUTE_RESOLVED", "SENDER_NOSHOW_REPORTED", "NOSHOW_DECISION",
                 "ADMIN_BROADCAST", "SYSTEM", "ADMIN_WARNING", "MESSAGING_MUTED", "ACCOUNT_SUSPENDED",
