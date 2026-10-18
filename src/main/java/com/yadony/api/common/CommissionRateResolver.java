@@ -2,9 +2,12 @@ package com.yadony.api.common;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.commission.CommissionReductions;
 import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.promo.PromoCodeTarget;
+import com.yadony.api.promo.PromoDiscount;
 import com.yadony.api.promo.PromoService;
+import com.yadony.api.voucher.CommissionVoucherEntity;
 import com.yadony.api.voucher.CommissionVoucherService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -126,23 +129,45 @@ public class CommissionRateResolver {
      */
     public BigDecimal resolve(UUID travelerId, UUID senderId, String promoCode, UUID promoUserId,
                               UUID reference) {
-        BigDecimal rate = globalRate();
-        rate = minNullable(rate, overrideOf(travelerId));
-        rate = minNullable(rate, overrideOf(senderId));
-        if (promoCode != null && !promoCode.isBlank() && promoUserId != null) {
-            rate = promoService.validateAndGetDiscount(promoCode, promoUserId, PromoCodeTarget.SENDER)
-                    .applyTo(rate);
+        CommissionReductions reductions = reductions(travelerId, senderId, promoCode, promoUserId, reference);
+        BigDecimal rate = minNullable(globalRate(), reductions.overrideRate());
+        if (reductions.promo() != null) {
+            rate = reductions.promo().applyTo(rate);
         }
+        if (reductions.voucherFactor() != null) {
+            rate = rate.multiply(reductions.voucherFactor());
+        }
+        return rate.max(BigDecimal.ZERO);
+    }
+
+    /**
+     * Réductions personnelles, séparées du taux : taux spécial (le plus bas du voyageur et
+     * de l'expéditeur), remise du code promo validé et facteur du bon de parrainage. Les
+     * rails les appliquent à la commission de la grille, qui n'est pas un taux unique.
+     *
+     * <p>Mêmes règles que {@link #resolve(UUID, UUID, String, UUID, UUID)} : un code promo
+     * invalide lève {@link YadonyBusinessException}, le bon n'est lu que si l'expéditeur
+     * est connu, et la lecture du bon ne consomme rien. Sans aucune réduction, renvoie
+     * {@link CommissionReductions#NONE}.
+     */
+    public CommissionReductions reductions(UUID travelerId, UUID senderId, String promoCode,
+                                           UUID promoUserId, UUID reference) {
+        BigDecimal override = minNullable(overrideOf(travelerId), overrideOf(senderId));
+        PromoDiscount promo = null;
+        if (promoCode != null && !promoCode.isBlank() && promoUserId != null) {
+            promo = promoService.validateAndGetDiscount(promoCode, promoUserId, PromoCodeTarget.SENDER);
+        }
+        BigDecimal voucherFactor = null;
         if (senderId != null) {
-            BigDecimal beforeVoucher = rate;
             var voucher = reference == null
                     ? voucherService.peekActive(senderId)
                     : voucherService.peekForReference(senderId, reference);
-            rate = voucher
-                    .map(v -> beforeVoucher.multiply(v.getFactor()))
-                    .orElse(beforeVoucher);
+            voucherFactor = voucher.map(CommissionVoucherEntity::getFactor).orElse(null);
         }
-        return rate.max(BigDecimal.ZERO);
+        if (override == null && promo == null && voucherFactor == null) {
+            return CommissionReductions.NONE;
+        }
+        return new CommissionReductions(override, promo, voucherFactor);
     }
 
     private BigDecimal overrideOf(UUID userId) {
@@ -153,6 +178,7 @@ public class CommissionRateResolver {
     }
 
     private static BigDecimal minNullable(BigDecimal base, BigDecimal candidate) {
+        if (base == null) return candidate;
         return candidate == null ? base : base.min(candidate);
     }
 }

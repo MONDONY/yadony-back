@@ -3,6 +3,7 @@ package com.yadony.api.common;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.commission.CommissionReductions;
 import com.yadony.api.config.PlatformSettingsTestFactory;
 import com.yadony.api.promo.PromoCodeTarget;
 import com.yadony.api.promo.PromoDiscount;
@@ -238,5 +239,95 @@ class CommissionRateResolverTest {
 
         assertThat(resolver().resolve(t)).isEqualByComparingTo("0.12");
         org.mockito.Mockito.verifyNoInteractions(voucherService);
+    }
+
+    // ── reductions : réductions personnelles exposées séparément du taux ─────
+
+    @Test
+    void reductions_minOfOverrides() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        when(userRepository.findById(t)).thenReturn(Optional.of(withOverride(new BigDecimal("0.10"))));
+        when(userRepository.findById(s)).thenReturn(Optional.of(withOverride(new BigDecimal("0.06"))));
+
+        CommissionReductions r = resolver().reductions(t, s, null, null, null);
+
+        assertThat(r.overrideRate()).isEqualByComparingTo("0.06");
+        assertThat(r.promo()).isNull();
+        assertThat(r.voucherFactor()).isNull();
+    }
+
+    @Test
+    void reductions_promoValidated_returnsDiscount() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        PromoDiscount discount = PromoDiscount.pricePercent(new BigDecimal("0.050"));
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        when(promoService.validateAndGetDiscount("MERCI-ABOU-7K2F", s, PromoCodeTarget.SENDER)).thenReturn(discount);
+
+        CommissionReductions r = resolver().reductions(t, s, "MERCI-ABOU-7K2F", s, null);
+
+        assertThat(r.promo()).isEqualTo(discount);
+        assertThat(r.overrideRate()).isNull();
+    }
+
+    @Test
+    void reductions_invalidPromo_throws() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        when(promoService.validateAndGetDiscount(any(), any(), any()))
+                .thenThrow(new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "promo-not-found", "Promo Not Found", "Code introuvable"));
+
+        assertThatThrownBy(() -> resolver().reductions(t, s, "BADCODE", s, null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("promo-not-found"));
+    }
+
+    @Test
+    void reductions_withReference_usesPeekForReference() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        UUID reference = UUID.randomUUID();
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        CommissionVoucherEntity voucher = activeVoucher(new BigDecimal("0.50"));
+        when(voucherService.peekForReference(s, reference)).thenReturn(Optional.of(voucher));
+
+        CommissionReductions r = resolver().reductions(t, s, null, null, reference);
+
+        assertThat(r.voucherFactor()).isEqualByComparingTo("0.50");
+        org.mockito.Mockito.verify(voucherService, org.mockito.Mockito.never()).peekActive(any());
+    }
+
+    @Test
+    void reductions_withoutReference_usesPeekActive() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        CommissionVoucherEntity voucher = activeVoucher(new BigDecimal("0.50"));
+        when(voucherService.peekActive(s)).thenReturn(Optional.of(voucher));
+
+        assertThat(resolver().reductions(t, s, null, null, null).voucherFactor()).isEqualByComparingTo("0.50");
+    }
+
+    @Test
+    void reductions_noneConfigured_allNull() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        when(voucherService.peekActive(s)).thenReturn(Optional.empty());
+
+        assertThat(resolver().reductions(t, s, null, null, null)).isEqualTo(CommissionReductions.NONE);
+    }
+
+    @Test
+    void reductions_unknownSender_neverConsultsVoucherNorPromo() {
+        UUID t = UUID.randomUUID();
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+
+        assertThat(resolver().reductions(t, null, "CODE", null, null)).isEqualTo(CommissionReductions.NONE);
+        org.mockito.Mockito.verifyNoInteractions(voucherService, promoService);
     }
 }
