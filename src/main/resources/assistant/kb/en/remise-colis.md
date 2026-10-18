@@ -8,5 +8,6 @@ routes:
 ---
 At handover, the sender shows the parcel QR (Activity › My parcels › your shipment › Show the drop-off QR) and the traveler scans it in the Tracking tab, then takes a photo of the parcel: the photo is required to validate pickup.
 The parcel then moves to "Handed to the traveler".
+The traveler checks the parcel at handover: if it doesn't match the declaration, they can refuse it from the parcel details ("Options" › "The parcel doesn't match"), with a photo, and the sender is refunded.
 Handover must happen before the trip's drop-off deadline; once that date has passed, the request is canceled and any payment is fully refunded.
 Be present at the agreed handover place: in case of a no-show, you can report it.
