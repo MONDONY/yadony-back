@@ -291,7 +291,9 @@ public class CashCommissionService {
      *       l'ouverture du fil (taux spécial, bon), sans code promo ni résolveur du jour ; le
      *       taux figé au fil n'est pas réécrit.</li>
      *   <li><b>Sinon</b> : la base du barème ({@link #cashBase}) et les réductions du jour pour ce
-     *       bid ; un code promo invalide retombe sur les réductions sans code. Le taux effectif
+     *       bid, règle unique {@link CommissionRateResolver#reductionsForBid} : un code déjà
+     *       verrouillé ou racheté ({@code promoCodeId}, {@link #bindAppliedPromo}) n'est jamais
+     *       revalidé, un code invalide retombe sur les réductions sans code. Le taux effectif
      *       est figé sur le bid, borné sous 1 ({@link CommissionResult#storableRate()}) : il n'est
      *       qu'informatif (rachat du code), les montants font foi.</li>
      * </ul>
@@ -307,13 +309,13 @@ public class CashCommissionService {
         if (bid.getNegotiatedNetEur() != null) {
             BigDecimal net = requirePositive(bid.getNegotiatedNetEur(), currency);
             CommissionResult result = CommissionCalculator.compute(net, currency, grid,
-                    new CommissionReductions(bid.getCommissionOverrideRate(), null, bid.getCommissionVoucherFactor()));
+                    CommissionReductions.frozen(bid.getCommissionOverrideRate(), bid.getCommissionVoucherFactor()));
             return new BidCommissionQuote(result.commission(), false, false);
         }
         BigDecimal base = requirePositive(cashBase(bid, announcement), currency);
         CommissionResult result = CommissionCalculator.compute(base, currency, grid,
-                commissionRateResolver.reductionsWithPromoFallback(announcement.getTravelerId(), bid.getSenderId(),
-                        bid.getPromoCode(), bid.getId()));
+                commissionRateResolver.reductionsForBid(announcement.getTravelerId(), bid.getSenderId(),
+                        bid.getPromoCode(), bid.getPromoCodeId(), bid.getId()));
         bid.setCommissionRate(result.storableRate());
         return new BidCommissionQuote(result.commission(), result.promoEffective(), result.promoEffective());
     }

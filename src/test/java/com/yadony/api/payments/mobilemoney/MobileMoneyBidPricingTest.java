@@ -47,6 +47,7 @@ class MobileMoneyBidPricingTest {
         // Règle de repli du code promo : celle du résolveur (CommissionRateResolverTest), exécutée
         // pour de vrai sur le mock ; les bouchons de reductions(...) restent la source des réductions.
         lenient().when(rates.reductionsWithPromoFallback(any(), any(), any(), any())).thenCallRealMethod();
+        lenient().when(rates.reductionsForBid(any(), any(), any(), isNull(), any())).thenCallRealMethod();
     }
 
     /** Grille 7/6/5 de la spec §4.6, minimums par défaut (650 FCFA). */
@@ -283,6 +284,26 @@ class MobileMoneyBidPricingTest {
         assertThat(quote.promoApplied()).isTrue();
         assertThat(quote.promoEffective()).isTrue();
         assertThat(b.getCommissionRate()).isEqualByComparingTo("0.01656");
+    }
+
+    @Test
+    void price_grid_redeemedPromo_isNotRevalidated() {
+        // Code déjà racheté pour ce bid (essai précédent) : sa remise est relue sans revalidation,
+        // sinon un code à usage unique échouerait sur son propre rachat.
+        AnnouncementEntity a = xof(new BigDecimal("4000"));
+        BidEntity b = gridBid(new BigDecimal("25"));
+        b.setPromoCode("WELCOME05");
+        UUID promoCodeId = UUID.randomUUID();
+        b.setPromoCodeId(promoCodeId);
+        when(gridItems.findByBidId(b.getId())).thenReturn(List.of());
+        when(rates.reductionsForBid(a.getTravelerId(), b.getSenderId(), "WELCOME05", promoCodeId, b.getId()))
+                .thenReturn(new CommissionReductions(null, PromoDiscount.points(new BigDecimal("0.05")), null));
+
+        MobileMoneyBidPricing.Quote quote = pricing.price(b, a);
+
+        assertThat(quote.price().commission()).isEqualByComparingTo("1656");
+        org.mockito.Mockito.verify(rates, org.mockito.Mockito.never())
+                .reductions(any(), any(), eq("WELCOME05"), any(), any());
     }
 
     @Test

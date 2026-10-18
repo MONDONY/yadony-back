@@ -195,6 +195,30 @@ public class CommissionRateResolver {
         }
     }
 
+    /**
+     * Réductions d'un bid à grille, RÈGLE UNIQUE de l'affichage ({@code BidService}) et des trois
+     * rails (carte, espèces, mobile money) : le total montré à l'expéditeur est ainsi exactement
+     * celui prélevé.
+     * <ul>
+     *   <li><b>Code déjà racheté ou verrouillé</b> ({@code promoCodeId}) : taux spécial et bon pour
+     *       ce bid, et la remise de ce code lue sans contrôle ({@link PromoService#discountOfRedeemed}).
+     *       Revalidé, un code à usage unique échouerait sur sa propre utilisation et la remise
+     *       accordée disparaîtrait. Code supprimé depuis : aucune remise.</li>
+     *   <li><b>Sinon</b> : {@link #reductionsWithPromoFallback}.</li>
+     * </ul>
+     *
+     * @param bidId référence du bon de parrainage pris en compte (lecture pure).
+     */
+    public CommissionReductions reductionsForBid(UUID travelerId, UUID senderId, String promoCode,
+                                                 UUID promoCodeId, UUID bidId) {
+        if (promoCodeId == null) {
+            return reductionsWithPromoFallback(travelerId, senderId, promoCode, bidId);
+        }
+        CommissionReductions base = reductions(travelerId, senderId, null, null, bidId);
+        PromoDiscount redeemed = promoService.discountOfRedeemed(promoCodeId).orElse(null);
+        return new CommissionReductions(base.overrideRate(), redeemed, base.voucherFactor());
+    }
+
     private BigDecimal overrideOf(UUID userId) {
         if (userId == null) return null;
         return userRepository.findById(userId)

@@ -19,8 +19,17 @@ public record CommissionReductions(BigDecimal overrideRate, PromoDiscount promo,
     /** Aucune réduction : commission de grille, minimum compris. */
     public static final CommissionReductions NONE = new CommissionReductions(null, null, null);
 
+    /**
+     * Réductions figées sur un bid à l'ouverture de sa négociation (spec §4.3) : taux spécial et
+     * facteur du bon, jamais de code promo. Relues pour convertir brut et net du fil, et par les
+     * rails pour un net négocié seul.
+     */
+    public static CommissionReductions frozen(BigDecimal overrideRate, BigDecimal voucherFactor) {
+        return new CommissionReductions(overrideRate, null, voucherFactor);
+    }
+
     /** Mêmes réductions sans le code promo, pour mesurer ce que le code fait gagner. */
     public CommissionReductions withoutPromo() {
-        return new CommissionReductions(overrideRate, null, voucherFactor);
+        return frozen(overrideRate, voucherFactor);
     }
 }

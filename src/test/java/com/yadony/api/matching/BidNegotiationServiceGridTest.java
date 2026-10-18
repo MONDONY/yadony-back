@@ -15,6 +15,7 @@ import com.yadony.api.matching.dto.BidNegotiationResponse;
 import com.yadony.api.matching.dto.BidNegotiationStartRequest;
 import com.yadony.api.matching.dto.BidNegotiationSummaryResponse;
 import com.yadony.api.matching.events.BidNegotiationMessagePostedEvent;
+import com.yadony.api.settings.MinPricePerKgGuard;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -239,6 +240,35 @@ class BidNegotiationServiceGridTest {
                     assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
                     assertThat(ex.getErrorCode()).isEqualTo("budget-below-commission-minimum");
                 });
+        verify(messageRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("prix minimum du voyageur sur un fil à grille : net par l'inverse figé, refus sans écriture")
+    void counter_gridBid_belowTravelerMinimum_isRefusedWithNetFromInverse() {
+        stubThread(SENDER_UID, sender(), TRAVELER_ID, "60.00");
+        lenient().when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender()));
+        MinPricePerKgGuard guard = org.mockito.Mockito.mock(MinPricePerKgGuard.class);
+        org.mockito.Mockito.doThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        MinPricePerKgGuard.ERROR_CODE, "Bid Below Min Price", "minimum"))
+                .when(guard).assertAtLeastMinimum(any(), any(), any(), any(), any());
+        service.setMinPriceGuard(guard);
+
+        assertThatThrownBy(() -> service.counter(BID_ID, SENDER_UID,
+                new BidNegotiationCounterRequest(new BigDecimal("51.00"), null)))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo(MinPricePerKgGuard.ERROR_CODE));
+
+        // Net 50,00 € (inverse de 51,00 € au contexte figé) et taux réel 1,00 / 50,00 = 2 %,
+        // qui n'exprime que le minimum en brut dans le message d'erreur.
+        ArgumentCaptor<BigDecimal> net = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> rate = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(guard).assertAtLeastMinimum(org.mockito.ArgumentMatchers.eq(TRAVELER_ID), net.capture(),
+                org.mockito.ArgumentMatchers.argThat(w -> w.compareTo(new BigDecimal("5")) == 0),
+                org.mockito.ArgumentMatchers.eq("EUR"), rate.capture());
+        assertThat(net.getValue()).isEqualByComparingTo("50.00");
+        assertThat(rate.getValue()).isEqualByComparingTo("0.02");
         verify(messageRepository, never()).save(any());
     }
 

@@ -44,6 +44,7 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
@@ -103,6 +104,7 @@ class PaymentServiceCommissionGridTest {
         // Règle de repli du code promo : celle du résolveur (CommissionRateResolverTest), exécutée
         // pour de vrai sur le mock ; les bouchons de reductions(...) restent la source des réductions.
         lenient().when(resolver.reductionsWithPromoFallback(any(), any(), any(), any())).thenCallRealMethod();
+        lenient().when(resolver.reductionsForBid(any(), any(), any(), isNull(), any())).thenCallRealMethod();
         lenient().when(paymentRepository.save(any())).thenAnswer(inv -> {
             PaymentEntity p = inv.getArgument(0);
             if (p.getId() == null) {
@@ -384,9 +386,11 @@ class PaymentServiceCommissionGridTest {
         bid.setCommissionRate(new BigDecimal("0.050000"));
         announcementRepository.findById(annId).orElseThrow().setPricePerKg(new BigDecimal("6.00"));
         when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(failedPayment("105.00", "5.00")));
-        when(promoService.discountOfRedeemed(promoCodeId))
-                .thenReturn(Optional.of(PromoDiscount.points(new BigDecimal("0.02"))));
-        reductions(null, bidId, new CommissionReductions(null, null, new BigDecimal("0.5")));
+        // Règle du code racheté : celle du résolveur (CommissionRateResolverTest#reductionsForBid_*).
+        // doReturn : when(...) exécuterait la vraie méthode bouchonnée au setUp sur des arguments nuls.
+        org.mockito.Mockito.doReturn(new CommissionReductions(null, PromoDiscount.points(new BigDecimal("0.02")),
+                        new BigDecimal("0.5")))
+                .when(resolver).reductionsForBid(any(), any(), any(), eq(promoCodeId), eq(bidId));
 
         PaymentIntentCreateParams params = withStripe(() -> service.createEscrow(request(), "uid-sender"));
 

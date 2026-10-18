@@ -195,6 +195,21 @@ class BidQuoteServiceGridTest {
     }
 
     @Test
+    @DisplayName("code promo sans effet hors minimum (commission déjà nulle) : aucune raison COMMISSION_MINIMUM")
+    void quote_promoWithoutEffect_noMinimum_noReason() {
+        // Taux spécial à 0 : rien à réduire, le minimum ne joue pas (commission nulle).
+        when(commissionRateResolver.reductions(TRAVELER_ID, SENDER_ID, "PROMO5", SENDER_ID, null))
+                .thenReturn(new CommissionReductions(BigDecimal.ZERO, PromoDiscount.points(new BigDecimal("0.05")), null));
+
+        BidQuoteResponse resp = quote("20.00", "PROMO5");
+
+        assertThat(resp.totalEur()).isEqualByComparingTo("20.00");
+        assertThat(resp.promoApplied()).isFalse();
+        assertThat(resp.minimumApplied()).isFalse();
+        assertThat(resp.promoIneffectiveReason()).isNull();
+    }
+
+    @Test
     @DisplayName("code promo efficace : commission de base affichée, total réduit, libellé sur l'écart en montant")
     void quote_promoEffective_totalReduced_labelFromAmountGap() {
         // Code transmis tel que saisi (le service promo est insensible à la casse), libellé en majuscules.
@@ -292,7 +307,7 @@ class BidQuoteServiceGridTest {
         bid.setPromoCode("PROMO5");
         when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement("4.00")));
         // Bon ×0,5 rattaché au bid : 5 kg × 4 € = 20 € → 1,40 € × 0,5 = 0,70 €.
-        when(commissionRateResolver.reductionsWithPromoFallback(TRAVELER_ID, SENDER_ID, "PROMO5", BID_ID))
+        when(commissionRateResolver.reductionsForBid(TRAVELER_ID, SENDER_ID, "PROMO5", null, BID_ID))
                 .thenReturn(new CommissionReductions(null, null, new BigDecimal("0.5")));
 
         BidResponse resp = bidService.toResponse(bid, sender(), SENDER_ID);
@@ -312,18 +327,16 @@ class BidQuoteServiceGridTest {
         bid.setPromoCode("PROMO5");
         bid.setPromoCodeId(promoCodeId);
         when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement("20.00")));
-        when(commissionRateResolver.reductions(TRAVELER_ID, SENDER_ID, null, null, BID_ID))
-                .thenReturn(CommissionReductions.NONE);
-        when(promoService.discountOfRedeemed(promoCodeId))
-                .thenReturn(Optional.of(PromoDiscount.points(new BigDecimal("0.05"))));
+        // Règle du code racheté : celle du résolveur (CommissionRateResolverTest#reductionsForBid_*).
+        when(commissionRateResolver.reductionsForBid(TRAVELER_ID, SENDER_ID, "PROMO5", promoCodeId, BID_ID))
+                .thenReturn(new CommissionReductions(null, PromoDiscount.points(new BigDecimal("0.05")), null));
 
         BidResponse resp = bidService.toResponse(bid, sender(), SENDER_ID);
 
         // 5 kg × 20 € = 100 € : 100 × (7 % − 5 points) = 2,00 €. Revalidé, un code à usage
         // unique échouerait sur son propre rachat et le total affiché remonterait à 107,00 €.
         assertThat(resp.totalSenderAmountEur()).isEqualByComparingTo("102.00");
-        verify(commissionRateResolver, never()).reductionsWithPromoFallback(any(), any(), any(), any());
-        verify(promoService, never()).validateAndGetDiscount(any(), any(), any());
+        verify(commissionRateResolver, never()).reductions(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -338,7 +351,7 @@ class BidQuoteServiceGridTest {
 
         // Taux spécial 4 % < grille 7 % : 4,00 €.
         assertThat(resp.totalSenderAmountEur()).isEqualByComparingTo("104.00");
-        verify(commissionRateResolver, never()).reductionsWithPromoFallback(any(), any(), any(), any());
+        verify(commissionRateResolver, never()).reductionsForBid(any(), any(), any(), any(), any());
     }
 
     @Test

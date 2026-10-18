@@ -678,6 +678,7 @@ class MobileMoneyBidPaymentServiceTest {
         // Règle de repli du code promo : celle du résolveur (CommissionRateResolverTest), exécutée
         // pour de vrai sur le mock ; les bouchons de reductions(...) restent la source des réductions.
         when(rates.reductionsWithPromoFallback(any(), any(), any(), any())).thenCallRealMethod();
+        when(rates.reductionsForBid(any(), any(), any(), org.mockito.ArgumentMatchers.isNull(), any())).thenCallRealMethod();
         when(rates.reductions(traveler.getId(), sender.getId(), "WELCOME05", sender.getId(), bid.getId()))
                 .thenReturn(new com.yadony.api.common.commission.CommissionReductions(null,
                         com.yadony.api.promo.PromoDiscount.points(new BigDecimal("0.05")), null));

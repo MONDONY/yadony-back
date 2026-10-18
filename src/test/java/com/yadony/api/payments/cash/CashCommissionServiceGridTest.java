@@ -120,6 +120,7 @@ class CashCommissionServiceGridTest {
         // Règle de repli du code promo : celle du résolveur (CommissionRateResolverTest), exécutée
         // pour de vrai sur le mock ; les bouchons de reductions(...) restent la source des réductions.
         lenient().when(commissionRateResolver.reductionsWithPromoFallback(any(), any(), any(), any())).thenCallRealMethod();
+        lenient().when(commissionRateResolver.reductionsForBid(any(), any(), any(), isNull(), any())).thenCallRealMethod();
         lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
         lenient().when(commissionGridService.require(GRID_7_6_5.id())).thenReturn(GRID_7_6_5);
         service = new CashCommissionService(props, userRepo, bidRepo, announcementRepo, events,
@@ -296,6 +297,28 @@ class CashCommissionServiceGridTest {
         assertThat(quote.commission()).isEqualByComparingTo("1.40");
         assertThat(quote.promoApplied()).isFalse();
         assertThat(quote.promoEffective()).isFalse();
+    }
+
+    @Test
+    void quoteBidCommission_gridRedeemedPromo_isNotRevalidated() {
+        // Code déjà verrouillé pour ce bid (bindAppliedPromo) : un nouveau devis, après le verrou
+        // ou le rachat, ne le revalide pas, sinon il échouerait sur sa propre utilisation et la
+        // commission prélevée perdrait la remise affichée.
+        BidEntity bid = bid("1", GRID_7_6_5.id());
+        bid.setPromoCode(CODE);
+        UUID promoCodeId = UUID.randomUUID();
+        bid.setPromoCodeId(promoCodeId);
+        when(commissionRateResolver.reductionsForBid(travelerId, senderId, CODE, promoCodeId, bid.getId()))
+                .thenReturn(new CommissionReductions(null, PromoDiscount.points(new BigDecimal("0.05")), null));
+
+        CashCommissionService.BidCommissionQuote quote =
+                service.quoteBidCommission(bid, announcement("100.00", "EUR"));
+
+        // 100 € × (7 % − 5 points) = 2,00 € au lieu de 7,00 €.
+        assertThat(quote.commission()).isEqualByComparingTo("2.00");
+        assertThat(quote.promoEffective()).isTrue();
+        verify(commissionRateResolver, never()).reductions(any(), any(), eq(CODE), any(), any());
+        verify(commissionRateResolver, never()).reductionsWithPromoFallback(any(), any(), any(), any());
     }
 
     @Test

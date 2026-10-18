@@ -642,12 +642,13 @@ public class PaymentService {
                 promoApplied = bid.getPromoCodeId() != null;
             } else {
                 // Grille figée à la création du bid, jamais la grille du jour (spec §4.4).
-                // Paiement existant dont le net a changé (prix au kilo modifié avant l'accord) :
-                // nouveau devis, mais sans revalider un code déjà racheté au premier essai.
-                CommissionReductions reductions = existing.isPresent()
-                        ? reductionsOfRetriedBid(bid, announcement.getTravelerId(), sender.getId())
-                        : commissionRateResolver.reductionsWithPromoFallback(announcement.getTravelerId(), sender.getId(),
-                                bid.getPromoCode(), bidId);
+                // Règle unique d'un bid à grille, celle de l'affichage : un code déjà racheté
+                // (promoCodeId) est relu sans revalidation. Paiement existant dont le net a changé
+                // (prix au kilo modifié avant l'accord) : seul ce code racheté peut compter, un code
+                // jamais racheté au premier essai n'est pas repris (il ne serait pas racheté ici).
+                CommissionReductions reductions = commissionRateResolver.reductionsForBid(
+                        announcement.getTravelerId(), sender.getId(),
+                        existing.isPresent() ? null : bid.getPromoCode(), bid.getPromoCodeId(), bidId);
                 CommissionResult quote = CommissionCalculator.compute(totalNet, currency,
                         commissionGridService.require(bid.getCommissionGridId()), reductions);
                 gridAmounts = new PriceBreakdown(quote.net(), quote.commission(), quote.gross());
@@ -1647,19 +1648,6 @@ public class PaymentService {
         PaymentResponse response = toPaymentResponse(payment, pi.getClientSecret());
         response.setPaymentMethodTypes(pi.getPaymentMethodTypes());
         return response;
-    }
-
-    /**
-     * Réductions d'un bid à grille re-tarifé lors d'une nouvelle tentative : taux spécial et bon
-     * du jour pour ce bid (le bon déjà consommé pour lui, s'il y en a un), et la remise du code
-     * DÉJÀ racheté lue sans contrôle. Le code n'est jamais revalidé : racheté, il échouerait sur
-     * sa propre utilisation et l'expéditeur perdrait une remise déjà accordée.
-     */
-    private CommissionReductions reductionsOfRetriedBid(BidEntity bid, UUID travelerId, UUID senderId) {
-        CommissionReductions base = commissionRateResolver.reductions(travelerId, senderId, null, null, bid.getId());
-        com.yadony.api.promo.PromoDiscount redeemed = bid.getPromoCodeId() == null ? null
-                : promoService.discountOfRedeemed(bid.getPromoCodeId()).orElse(null);
-        return new CommissionReductions(base.overrideRate(), redeemed, base.voucherFactor());
     }
 
     /**

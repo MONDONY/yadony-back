@@ -287,7 +287,8 @@ public class BidService {
         }
         return new BidQuoteResponse(result.net(), gridNet, kgNet, base.effectiveRate(), base.commission(),
                 result.gross(), promoApplied, promoLabel, currencyCode, result.minimumApplied(),
-                grid.minimum(currency), grid.id(), withCode && !promoApplied ? "COMMISSION_MINIMUM" : null);
+                grid.minimum(currency), grid.id(),
+                withCode && !promoApplied && result.minimumApplied() ? "COMMISSION_MINIMUM" : null);
     }
 
     @Transactional
@@ -1902,10 +1903,8 @@ public class BidService {
      * Total expéditeur d'un bid à grille figée, calculé comme les rails (carte, espèces, mobile
      * money) le calculeront : le brut négocié tel quel ; un net négocié seul avec les réductions
      * figées sur le bid à l'ouverture du fil ; sinon le net du barème avec les réductions du
-     * rail carte : avant tout rachat, code promo du bid (repli sans code s'il est devenu
-     * invalide) ; code déjà racheté ({@code promoCodeId}), sa remise lue sans revalidation,
-     * comme la reprise du paiement ({@code PaymentService}) : revalidé, un code à usage unique
-     * échouerait sur son propre rachat et le total affiché ne serait plus celui débité.
+     * rails, règle unique {@link CommissionRateResolver#reductionsForBid} (code déjà racheté relu
+     * sans revalidation, sinon repli sans code s'il est devenu invalide).
      *
      * <p>Coût en liste : le bon de parrainage se lit par bid (il dépend de la référence), pas par
      * couple voyageur/expéditeur ; {@link BidResponsePrefetch} ne peut donc pas le mutualiser.
@@ -1921,18 +1920,10 @@ public class BidService {
                 || totalNet.setScale(currency.minorUnit(), java.math.RoundingMode.HALF_UP).signum() <= 0) {
             return totalNet;
         }
-        CommissionReductions reductions;
-        if (negotiatedNet) {
-            reductions = new CommissionReductions(bid.getCommissionOverrideRate(), null, bid.getCommissionVoucherFactor());
-        } else if (bid.getPromoCodeId() != null) {
-            CommissionReductions base = commissionRateResolver.reductions(announcement.getTravelerId(),
-                    bid.getSenderId(), null, null, bid.getId());
-            reductions = new CommissionReductions(base.overrideRate(),
-                    promoService.discountOfRedeemed(bid.getPromoCodeId()).orElse(null), base.voucherFactor());
-        } else {
-            reductions = commissionRateResolver.reductionsWithPromoFallback(announcement.getTravelerId(),
-                    bid.getSenderId(), bid.getPromoCode(), bid.getId());
-        }
+        CommissionReductions reductions = negotiatedNet
+                ? CommissionReductions.frozen(bid.getCommissionOverrideRate(), bid.getCommissionVoucherFactor())
+                : commissionRateResolver.reductionsForBid(announcement.getTravelerId(), bid.getSenderId(),
+                        bid.getPromoCode(), bid.getPromoCodeId(), bid.getId());
         return CommissionCalculator.compute(totalNet, currency,
                 commissionGridService.require(bid.getCommissionGridId()), reductions).gross();
     }

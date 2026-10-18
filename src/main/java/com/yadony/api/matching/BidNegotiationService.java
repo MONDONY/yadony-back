@@ -188,7 +188,7 @@ public class BidNegotiationService {
                     CommissionReductions reductions = commissionRateResolver.reductions(
                             announcement.getTravelerId(), sender.getId(), null, null, null);
                     return new GridPricing(g, SupportedCurrency.fromCodeOrDefault(announcement.getCurrency()),
-                            new CommissionReductions(reductions.overrideRate(), null, reductions.voucherFactor()));
+                            CommissionReductions.frozen(reductions.overrideRate(), reductions.voucherFactor()));
                 })
                 .orElse(null);
         assertAtLeastTravelerMinimum(announcement, request.proposedTotalEur(), request.weightKg(), rate, grid);
@@ -769,7 +769,7 @@ public class BidNegotiationService {
         }
         return new GridPricing(commissionGridService.require(bid.getCommissionGridId()),
                 SupportedCurrency.fromCodeOrDefault(bid.getCurrency()),
-                new CommissionReductions(bid.getCommissionOverrideRate(), null, bid.getCommissionVoucherFactor()));
+                CommissionReductions.frozen(bid.getCommissionOverrideRate(), bid.getCommissionVoucherFactor()));
     }
 
     /**

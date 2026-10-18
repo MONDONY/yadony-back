@@ -100,8 +100,9 @@ public class MobileMoneyBidPricing {
      *   <li><b>Net négocié seul</b> : le net convenu, avec les réductions figées sur le bid à
      *       l'ouverture du fil (taux spécial, bon), sans code promo ni résolveur du jour ; le taux
      *       figé au fil n'est pas réécrit.</li>
-     *   <li><b>Sinon</b> : le net du barème et les réductions du jour pour ce bid, un code promo
-     *       invalide retombant sur les réductions sans code. Le taux effectif est figé sur le bid,
+     *   <li><b>Sinon</b> : le net du barème et les réductions du jour pour ce bid, règle unique
+     *       {@link CommissionRateResolver#reductionsForBid} : un code déjà racheté n'est jamais
+     *       revalidé, un code invalide retombe sur les réductions sans code. Le taux effectif est figé sur le bid,
      *       borné sous 1 ({@link CommissionResult#storableRate()}) : c'est le taux du rachat du
      *       code, les montants (portés par le paiement) font foi.</li>
      * </ul>
@@ -114,12 +115,12 @@ public class MobileMoneyBidPricing {
         if (bid.getNegotiatedNetEur() != null) {
             CommissionResult result = CommissionCalculator.compute(requirePositive(bid.getNegotiatedNetEur(), currency),
                     currency, grid,
-                    new CommissionReductions(bid.getCommissionOverrideRate(), null, bid.getCommissionVoucherFactor()));
+                    CommissionReductions.frozen(bid.getCommissionOverrideRate(), bid.getCommissionVoucherFactor()));
             return new Quote(new PriceBreakdown(result.net(), result.commission(), result.gross()), false);
         }
         CommissionResult result = CommissionCalculator.compute(requirePositive(scheduleNet(bid, announcement), currency),
-                currency, grid, rates.reductionsWithPromoFallback(announcement.getTravelerId(), bid.getSenderId(),
-                        bid.getPromoCode(), bid.getId()));
+                currency, grid, rates.reductionsForBid(announcement.getTravelerId(), bid.getSenderId(),
+                        bid.getPromoCode(), bid.getPromoCodeId(), bid.getId()));
         bid.setCommissionRate(result.storableRate());
         return new Quote(new PriceBreakdown(result.net(), result.commission(), result.gross()),
                 result.promoEffective(), result.promoEffective());

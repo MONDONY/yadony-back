@@ -25,6 +25,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -382,5 +384,69 @@ class CommissionRateResolverTest {
         assertThat(r.promo()).as("code invalide : aucune remise").isNull();
         assertThat(r.overrideRate()).as("taux spécial conservé").isEqualByComparingTo("0.04");
         assertThat(r.voucherFactor()).as("bon conservé").isEqualByComparingTo("0.50");
+    }
+
+    // ── reductionsForBid : règle unique d'un bid à grille, commune à l'affichage et aux rails ──
+
+    @Test
+    void reductionsForBid_redeemedCode_readsRedeemedDiscountWithoutValidating() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        UUID promoCodeId = UUID.randomUUID();
+        PromoDiscount discount = PromoDiscount.points(new BigDecimal("0.05"));
+        when(userRepository.findById(t)).thenReturn(Optional.of(withOverride(new BigDecimal("0.04"))));
+        lenient().when(userRepository.findById(s)).thenReturn(Optional.of(withOverride(null)));
+        CommissionVoucherEntity voucher = activeVoucher(new BigDecimal("0.50"));
+        when(voucherService.peekForReference(s, bidId)).thenReturn(Optional.of(voucher));
+        when(promoService.discountOfRedeemed(promoCodeId)).thenReturn(Optional.of(discount));
+
+        CommissionReductions r = resolver().reductionsForBid(t, s, "ONCE", promoCodeId, bidId);
+
+        assertThat(r.promo()).isEqualTo(discount);
+        assertThat(r.overrideRate()).isEqualByComparingTo("0.04");
+        assertThat(r.voucherFactor()).isEqualByComparingTo("0.50");
+        // Revalidé, un code à usage unique échouerait sur son propre rachat.
+        verify(promoService, never()).validateAndGetDiscount(any(), any(), any());
+    }
+
+    @Test
+    void reductionsForBid_redeemedCodeGone_noDiscount() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        UUID promoCodeId = UUID.randomUUID();
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        when(voucherService.peekForReference(s, bidId)).thenReturn(Optional.empty());
+        when(promoService.discountOfRedeemed(promoCodeId)).thenReturn(Optional.empty());
+
+        CommissionReductions r = resolver().reductionsForBid(t, s, "DELETED", promoCodeId, bidId);
+
+        assertThat(r.promo()).isNull();
+        verify(promoService, never()).validateAndGetDiscount(any(), any(), any());
+    }
+
+    @Test
+    void reductionsForBid_noRedeemedCode_fallsBackLikeTheRails() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        when(voucherService.peekForReference(s, bidId)).thenReturn(Optional.empty());
+        when(promoService.validateAndGetDiscount("EXPIRED", s, PromoCodeTarget.SENDER))
+                .thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "promo-expired", "Promo Expired", "Ce code est expiré."));
+
+        CommissionReductions r = resolver().reductionsForBid(t, s, "EXPIRED", null, bidId);
+
+        assertThat(r).isEqualTo(CommissionReductions.NONE);
+        verify(promoService, never()).discountOfRedeemed(any());
+    }
+
+    @Test
+    void frozen_keepsOverrideAndVoucher_neverAPromo() {
+        CommissionReductions r = CommissionReductions.frozen(new BigDecimal("0.04"), new BigDecimal("0.5"));
+
+        assertThat(r).isEqualTo(new CommissionReductions(new BigDecimal("0.04"), null, new BigDecimal("0.5")));
     }
 }
