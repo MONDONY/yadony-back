@@ -29,6 +29,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -165,11 +166,30 @@ public class WalletMobileMoneyTopupService {
                         && o.getKind() == PawapayOperationKind.DEPOSIT)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "topup-not-found",
                         "Not Found", "Recharge introuvable."));
+        return toStatusResponse(op);
+    }
+
+    /**
+     * Recharge mobile money encore ouverte de l'utilisateur, la plus récente, créée il y a
+     * moins de {@link #EXPIRY} : l'app la lit au démarrage pour reprendre l'écran d'attente
+     * (app tuée ou rouverte pendant la validation du PIN). Vide si aucune : une recharge
+     * finale ou expirée n'a plus d'écran d'attente à reprendre. La colonne {@code topup_guard}
+     * ne sert pas ici, elle n'est que le verrou d'unicité de la création.
+     */
+    @Transactional(readOnly = true)
+    public Optional<WalletTopupStatusResponse> pending(UUID userId) {
+        LocalDateTime notExpiredSince = LocalDateTime.now(ZoneOffset.UTC).minus(EXPIRY);
+        return operations.findFirstByUserIdAndKindAndPurposeAndStatusInAndCreatedAtAfterOrderByCreatedAtDesc(
+                userId, PawapayOperationKind.DEPOSIT, PawapayOperationPurpose.WALLET_TOPUP,
+                PawapayOperationStatus.OPEN, notExpiredSince).map(this::toStatusResponse);
+    }
+
+    private WalletTopupStatusResponse toStatusResponse(PawapayOperationEntity op) {
         String status = WalletTopupStatusResponse.statusOf(op.getStatus());
         // Solde relu seulement une fois la recharge confirmée : le renvoyer pendant l'attente
         // afficherait un solde d'avant crédit à côté d'un écran « recharge en cours ».
         BigDecimal balance = WalletTopupStatusResponse.CONFIRMED.equals(status)
-                ? walletService.getBalance(userId, op.getCurrency()) : null;
+                ? walletService.getBalance(op.getUserId(), op.getCurrency()) : null;
         // Échec : code Yadony stable + message traduit dans la langue de la requête. Le message
         // brut de l'opérateur n'est jamais reflété (ni tronqué, ni tel quel).
         String failureCode = WalletTopupStatusResponse.FAILED.equals(status)

@@ -38,6 +38,15 @@ public interface PawapayOperationRepository extends JpaRepository<PawapayOperati
             Collection<PawapayOperationStatus> statuses, LocalDateTime createdAfter);
 
     /**
+     * Opération la plus récente d'un utilisateur parmi {@code statuses}, créée APRÈS
+     * {@code createdAfter} : sert à retrouver la recharge mobile money en cours (écran d'attente
+     * repris par l'app), bornée par son délai de validation.
+     */
+    Optional<PawapayOperationEntity> findFirstByUserIdAndKindAndPurposeAndStatusInAndCreatedAtAfterOrderByCreatedAtDesc(
+            UUID userId, PawapayOperationKind kind, PawapayOperationPurpose purpose,
+            Collection<PawapayOperationStatus> statuses, LocalDateTime createdAfter);
+
+    /**
      * Libère la garde anti-doublon ({@code topup_guard = false}) des recharges de portefeuille
      * encore ouvertes d'un utilisateur et d'une devise, créées AVANT {@code createdBefore} :
      * l'index unique partiel V331 ne les compte plus, une nouvelle recharge peut être créée.

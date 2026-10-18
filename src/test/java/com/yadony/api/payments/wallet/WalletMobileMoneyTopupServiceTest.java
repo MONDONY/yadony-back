@@ -649,6 +649,53 @@ class WalletMobileMoneyTopupServiceTest {
         assertThat(s.failureReason()).isNull();
     }
 
+    // ── pending ─────────────────────────────────────────────────────────────
+
+    @Test
+    void pending_returnsMostRecentOpenTopup() {
+        PawapayOperationEntity op = deposit(userId, "10000");
+        op.setStatus(PawapayOperationStatus.PROCESSING);
+        when(operations.findFirstByUserIdAndKindAndPurposeAndStatusInAndCreatedAtAfterOrderByCreatedAtDesc(
+                eq(userId), eq(PawapayOperationKind.DEPOSIT), eq(PawapayOperationPurpose.WALLET_TOPUP),
+                eq(PawapayOperationStatus.OPEN), any())).thenReturn(Optional.of(op));
+
+        Optional<WalletTopupStatusResponse> pending = service.pending(userId);
+
+        assertThat(pending).isPresent();
+        WalletTopupStatusResponse s = pending.get();
+        assertThat(s.topupId()).isEqualTo(op.getId());
+        assertThat(s.status()).isEqualTo("PENDING");
+        assertThat(s.amount()).isEqualByComparingTo("10000");
+        assertThat(s.providerLabel()).isEqualTo("Orange Money");
+        assertThat(s.expiresAt()).isEqualTo(op.getCreatedAt().toInstant(ZoneOffset.UTC)
+                .plus(WalletMobileMoneyTopupService.EXPIRY));
+        assertThat(s.validationHint()).isEqualTo(ValidationHint.SMS_LINK);
+        assertThat(s.walletBalance()).isNull();
+    }
+
+    /**
+     * Les recharges finales (COMPLETED, FAILED...) sont exclues par le filtre de statut OPEN, les
+     * expirées par la borne de date : le service passe les deux au dépôt, qui ne renvoie rien.
+     */
+    @Test
+    void pending_ignoresFinalOrExpired_returnsEmpty() {
+        when(operations.findFirstByUserIdAndKindAndPurposeAndStatusInAndCreatedAtAfterOrderByCreatedAtDesc(
+                any(), any(), any(), any(), any())).thenReturn(Optional.empty());
+        LocalDateTime before = LocalDateTime.now(ZoneOffset.UTC);
+
+        assertThat(service.pending(userId)).isEmpty();
+
+        ArgumentCaptor<LocalDateTime> createdAfter = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(operations).findFirstByUserIdAndKindAndPurposeAndStatusInAndCreatedAtAfterOrderByCreatedAtDesc(
+                eq(userId), eq(PawapayOperationKind.DEPOSIT), eq(PawapayOperationPurpose.WALLET_TOPUP),
+                eq(PawapayOperationStatus.OPEN), createdAfter.capture());
+        assertThat(createdAfter.getValue())
+                .isBetween(before.minus(WalletMobileMoneyTopupService.EXPIRY),
+                        LocalDateTime.now(ZoneOffset.UTC).minus(WalletMobileMoneyTopupService.EXPIRY));
+        assertThat(PawapayOperationStatus.OPEN).doesNotContain(PawapayOperationStatus.COMPLETED,
+                PawapayOperationStatus.FAILED, PawapayOperationStatus.SUBMIT_REJECTED);
+    }
+
     // ── providers ───────────────────────────────────────────────────────────
 
     @Test

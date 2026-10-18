@@ -51,6 +51,7 @@ class WalletControllerIT {
     @Autowired WalletRefundRequestRepository walletRefundRequestRepository;
     @Autowired WalletAccountRepository walletAccountRepository;
     @Autowired com.yadony.api.payments.pawapay.PawapayOperationService pawapayOperationService;
+    @Autowired com.yadony.api.payments.pawapay.PawapayOperationRepository pawapayOperationRepository;
     @MockBean UserRepository userRepository;
     // Frais Stripe réels lus via PaymentIntent.retrieve (appel réseau) : neutralisés ici pour
     // ne jamais dépendre de Stripe en IT (cf. tâche 3, lot 2 « recharge wallet mobile money »).
@@ -612,6 +613,38 @@ class WalletControllerIT {
         mockMvc.perform(get("/wallet/topup/pas-un-uuid/status")
                 .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
             .andExpect(status().isBadRequest());
+    }
+
+    /** Aucune recharge ouverte : 204, l'app n'a pas d'écran d'attente à reprendre. */
+    @Test
+    void topupPending_none_returns204() throws Exception {
+        pawapayOperationRepository.deleteAll();
+
+        mockMvc.perform(get("/wallet/topup/pending")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void topupPending_open_returns200WithExpiresAt() throws Exception {
+        pawapayOperationRepository.deleteAll();
+        var op = pawapayOperationService.create(
+            com.yadony.api.payments.pawapay.PawapayOperationKind.DEPOSIT,
+            com.yadony.api.payments.pawapay.PawapayOperationPurpose.WALLET_TOPUP, USER_UUID, null, null,
+            new BigDecimal("10000"), "XOF", "ORANGE_CIV", "CI", "2250734567890");
+
+        mockMvc.perform(get("/wallet/topup/pending")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.topupId").value(op.getId().toString()))
+            .andExpect(jsonPath("$.status").value("PENDING"))
+            .andExpect(jsonPath("$.expiresAt").exists());
+    }
+
+    @Test
+    void topupPending_unauthenticated_returns401() throws Exception {
+        mockMvc.perform(get("/wallet/topup/pending"))
+            .andExpect(status().isUnauthorized());
     }
 
     @Test
