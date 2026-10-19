@@ -145,6 +145,28 @@ class CashCommissionServiceNegotiationTest {
         verifyNoInteractions(stripeCashGateway);
     }
 
+    // Fil sans grille avec taux spécial : le débit est net x taux résolu, arrondi HALF_UP. Le montant
+    // exposé au voyageur par NegotiationServiceTest (même taux, même net) vaut donc 1.77.
+    @Test
+    void settleNegotiationCommission_noGridSpecialRate_debitsNetTimesResolvedRate() {
+        UUID travelerId = UUID.randomUUID();
+        UUID senderId = UUID.randomUUID();
+        UUID threadId = UUID.randomUUID();
+        NegotiationThreadEntity thread = threadWithId(threadId);
+
+        when(negotiationThreadRepository.findById(threadId)).thenReturn(Optional.of(thread));
+        when(commissionRateResolver.resolve(eq(travelerId), eq(senderId), isNull(), isNull(), eq(threadId)))
+                .thenReturn(new BigDecimal("0.0375"));
+        when(walletService.getBalanceForUpdate(travelerId, "EUR")).thenReturn(new BigDecimal("20.00"));
+
+        service.settleNegotiationCommission(
+                travelerId, senderId, threadId, new BigDecimal("47.30"), CommissionSource.WALLET_FIRST);
+
+        verify(walletService).debit(eq(travelerId), eq("EUR"), eq(new BigDecimal("1.77")),
+                eq(WalletTransactionType.COMMISSION_DEDUCTED), eq(threadId.toString()),
+                eq("nego_commission_wallet_" + threadId));
+    }
+
     // Solde court en WALLET_FIRST : on ne touche JAMAIS la carte automatiquement.
     @Test
     void settleNegotiationCommission_walletShort_returnsInsufficientWithoutChargingCard() {

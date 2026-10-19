@@ -153,6 +153,9 @@ class NegotiationServiceTest {
         // Default commission rate used whenever toResponse() is called.
         // Lenient to avoid UnnecessaryStubbingException in error-path tests that never reach toResponse().
         lenient().when(commissionRateResolver.globalRate()).thenReturn(new BigDecimal("0.12"));
+        // Fil sans grille : taux que résout le règlement espèces (12 % par défaut dans ces tests).
+        lenient().when(commissionRateResolver.resolve(any(), any(), isNull(), isNull(), any()))
+            .thenReturn(new BigDecimal("0.12"));
         // Délai par défaut (miroir de application.yml) — lenient car seuls les tests CASH
         // du chemin AWAITING_COMMISSION l'exercent réellement.
         lenient().when(negotiationProperties.commissionWindowMinutes()).thenReturn(120);
@@ -1913,6 +1916,99 @@ class NegotiationServiceTest {
             verify(pricing).price(CASH_GRID_ID, new BigDecimal("5000"), "XOF", TRAVELER_ID, SENDER_ID, THREAD_ID);
             verify(cashGatePort).hasSufficientFunds(eq(TRAVELER_ID),
                 argThat(c -> c.compareTo(new BigDecimal("650")) == 0), eq("XOF"));
+        }
+
+        private void stubReadPath(UUID threadId, NegotiationThreadEntity thread) {
+            when(threadRepo.findById(threadId)).thenReturn(java.util.Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(threadId)).thenReturn(java.util.List.of());
+        }
+
+        @Test
+        @DisplayName("fil à grille AWAITING_COMMISSION : le voyageur reçoit la commission réduite par son taux spécial, celle que le règlement prélèvera")
+        void getById_traveler_awaitingCommissionGrid_exposesSettledCommission() {
+            UUID THREAD_ID = UUID.randomUUID();
+            var thread = threadFor(THREAD_ID);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_COMMISSION);
+            thread.setCurrency("XOF");
+            thread.setCurrentPriceEur(new BigDecimal("5000"));
+            thread.setCommissionGridId(CASH_GRID_ID);
+            // 400 au lieu des 650 du palier standard : le taux spécial du voyageur est déjà dans le devis.
+            var pricing = threadPricing(CASH_GRID_ID, "5000", "XOF", THREAD_ID, "400");
+            stubReadPath(THREAD_ID, thread);
+
+            var resp = service.getById(TRAVELER_ID, THREAD_ID);
+
+            assertThat(resp.travelerCashCommissionEur()).isEqualByComparingTo("400");
+            // Mêmes méthode et mêmes arguments que CashCommissionService.settleNegotiationCommission
+            // (grille figée, net du fil, devise du fil, voyageur, expéditeur, fil), et un seul devis.
+            verify(pricing, times(1)).price(CASH_GRID_ID, new BigDecimal("5000"), "XOF",
+                TRAVELER_ID, SENDER_ID, THREAD_ID);
+        }
+
+        @Test
+        @DisplayName("fil sans grille AWAITING_COMMISSION : net x taux résolu par le règlement, pas le taux global")
+        void getById_traveler_awaitingCommissionNoGrid_usesResolvedRateNotGlobalRate() {
+            UUID THREAD_ID = UUID.randomUUID();
+            var thread = threadFor(THREAD_ID);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_COMMISSION);
+            thread.setCurrentPriceEur(new BigDecimal("30"));
+            // Taux résolu (10 %) volontairement différent du globalRate du setup (12 %).
+            when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID, null, null, THREAD_ID))
+                .thenReturn(new BigDecimal("0.10"));
+            stubReadPath(THREAD_ID, thread);
+
+            var resp = service.getById(TRAVELER_ID, THREAD_ID);
+
+            // 30 x 10 % = 3,00 ; au globalRate on aurait 3,60.
+            assertThat(resp.travelerCashCommissionEur()).isEqualByComparingTo("3.00");
+        }
+
+        @Test
+        @DisplayName("fil sans grille avec taux spécial : le montant exposé est celui que settleNegotiationCommission prélève")
+        void getById_traveler_awaitingCommissionNoGridSpecialRate_matchesSettledAmount() {
+            UUID THREAD_ID = UUID.randomUUID();
+            var thread = threadFor(THREAD_ID);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_COMMISSION);
+            thread.setCurrentPriceEur(new BigDecimal("47.30"));
+            // Le règlement résout 3,75 % (taux spécial) : ni les 12 % globaux ni le taux figé du fil.
+            thread.setCommissionRate(new BigDecimal("0.12"));
+            when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID, null, null, THREAD_ID))
+                .thenReturn(new BigDecimal("0.0375"));
+            stubReadPath(THREAD_ID, thread);
+
+            var resp = service.getById(TRAVELER_ID, THREAD_ID);
+
+            // 47,30 x 0,0375 = 1,77375 -> 1,77 : le débit asserté par
+            // CashCommissionServiceNegotiationTest (même taux, même net, même arrondi).
+            assertThat(resp.travelerCashCommissionEur()).isEqualByComparingTo("1.77");
+            verify(commissionRateResolver, times(1)).resolve(TRAVELER_ID, SENDER_ID, null, null, THREAD_ID);
+        }
+
+        @Test
+        @DisplayName("fil AWAITING_COMMISSION lu par l'expéditeur : travelerCashCommissionEur reste nul")
+        void getById_sender_awaitingCommission_hidesTravelerCommission() {
+            UUID THREAD_ID = UUID.randomUUID();
+            var thread = threadFor(THREAD_ID);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_COMMISSION);
+            stubReadPath(THREAD_ID, thread);
+
+            var resp = service.getById(SENDER_ID, THREAD_ID);
+
+            assertThat(resp.travelerCashCommissionEur()).isNull();
+        }
+
+        @Test
+        @DisplayName("voyageur sur un fil qui n'attend pas sa commission : travelerCashCommissionEur reste nul")
+        void getById_traveler_notAwaitingCommission_isNull() {
+            UUID THREAD_ID = UUID.randomUUID();
+            var thread = threadFor(THREAD_ID);
+            stubReadPath(THREAD_ID, thread);
+
+            var resp = service.getById(TRAVELER_ID, THREAD_ID);
+
+            assertThat(resp.travelerCashCommissionEur()).isNull();
         }
 
         @Test
@@ -3951,6 +4047,39 @@ class NegotiationServiceTest {
             // Délai réglable (dony.negotiation.commission-window-minutes, stubbé à 120 ici) —
             // jamais en dur : l'échéance doit être strictement future.
             assertThat(published.expiresAt()).isAfter(before);
+        }
+
+        @Test
+        @DisplayName("thread CASH sans grille à taux spécial — l'événement et l'audit portent le montant réellement débité")
+        void finalizeInternal_cashNoGridSpecialRate_pendingEventCarriesSettledCommission() {
+            thread.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
+            request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.CASH));
+            request.setRecipientName("Fatou Diop");
+            request.setRecipientPhone("+221771234567");
+            when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID, null, null, THREAD_ID))
+                .thenReturn(new BigDecimal("0.0375"));
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(escrowPort.releaseEscrowForMethodSwitch(THREAD_ID)).thenReturn(true);
+            when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+
+            service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_x");
+
+            ArgumentCaptor<com.yadony.api.requests.event.NegotiationCommissionPendingEvent> captor =
+                ArgumentCaptor.forClass(com.yadony.api.requests.event.NegotiationCommissionPendingEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            // Net du fil x taux résolu par le règlement, arrondi HALF_UP : le débit de
+            // settleNegotiationCommission, et non le net x 12 % du taux global.
+            BigDecimal expected = thread.getCurrentPriceEur().multiply(new BigDecimal("0.0375"))
+                .setScale(2, java.math.RoundingMode.HALF_UP);
+            assertThat(expected).isNotEqualByComparingTo(
+                thread.getCurrentPriceEur().multiply(new BigDecimal("0.12")).setScale(2, java.math.RoundingMode.HALF_UP));
+            assertThat(captor.getValue().commissionAmount()).isEqualByComparingTo(expected);
+            verify(auditService).log(eq("NEGOTIATION_THREAD"), eq(THREAD_ID), eq("AWAITING_COMMISSION"),
+                eq(SENDER_ID), eq(java.util.Map.of("commission", expected.toPlainString())));
         }
 
         @Test
