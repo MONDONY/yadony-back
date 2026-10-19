@@ -99,7 +99,17 @@ class MoneyIntegrityMonitorIT {
         jdbcTemplate.update(insert, UUID.fromString("00000000-0000-4000-8000-000000000000"), userId, "TOP_UP",
                 new BigDecimal("5.00"), new BigDecimal("15.00"), sameInstant);
 
-        assertThat(monitor.runAll()).containsEntry("INV-02", 0L);
+        // Portefeuille aligné sur le grand livre : INV-01 reste à 0. La sonde garde le dernier
+        // compte de chaque règle entre deux passages (bean partagé par les tests) : un INV-01 à 1
+        // ici empêcherait l'alerte attendue par unSoldeSansMouvement… si elle passe après.
+        WalletAccountEntity wallet = new WalletAccountEntity();
+        wallet.setUserId(userId);
+        wallet.setCurrency("EUR");
+        wallet.setBalance(new BigDecimal("15.00"));
+        walletAccountRepository.saveAndFlush(wallet);
+
+        Map<String, Long> counts = monitor.runAll();
+        assertThat(counts).containsEntry("INV-02", 0L).containsEntry("INV-01", 0L);
         assertThat(jdbcTemplate.queryForList(
                 "SELECT seq FROM wallet_transactions WHERE user_id = ? ORDER BY seq", Long.class, userId))
                 .hasSize(2).isSorted();
