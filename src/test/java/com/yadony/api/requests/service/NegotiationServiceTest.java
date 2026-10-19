@@ -1948,18 +1948,21 @@ class NegotiationServiceTest {
         }
 
         @Test
-        @DisplayName("fil sans grille AWAITING_COMMISSION : ancien calcul au taux de l'écran du fil")
-        void getById_traveler_awaitingCommissionNoGrid_usesLegacyCalculation() {
+        @DisplayName("fil sans grille AWAITING_COMMISSION : net x taux résolu par le règlement, pas le taux global")
+        void getById_traveler_awaitingCommissionNoGrid_usesResolvedRateNotGlobalRate() {
             UUID THREAD_ID = UUID.randomUUID();
             var thread = threadFor(THREAD_ID);
             thread.setStatus(NegotiationThreadStatus.AWAITING_COMMISSION);
             thread.setCurrentPriceEur(new BigDecimal("30"));
+            // Taux résolu (10 %) volontairement différent du globalRate du setup (12 %).
+            when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID, null, null, THREAD_ID))
+                .thenReturn(new BigDecimal("0.10"));
             stubReadPath(THREAD_ID, thread);
 
             var resp = service.getById(TRAVELER_ID, THREAD_ID);
 
-            // 30 x 12 % (globalRate du setup) = 3,60.
-            assertThat(resp.travelerCashCommissionEur()).isEqualByComparingTo("3.60");
+            // 30 x 10 % = 3,00 ; au globalRate on aurait 3,60.
+            assertThat(resp.travelerCashCommissionEur()).isEqualByComparingTo("3.00");
         }
 
         @Test
@@ -4044,6 +4047,39 @@ class NegotiationServiceTest {
             // Délai réglable (dony.negotiation.commission-window-minutes, stubbé à 120 ici) —
             // jamais en dur : l'échéance doit être strictement future.
             assertThat(published.expiresAt()).isAfter(before);
+        }
+
+        @Test
+        @DisplayName("thread CASH sans grille à taux spécial — l'événement et l'audit portent le montant réellement débité")
+        void finalizeInternal_cashNoGridSpecialRate_pendingEventCarriesSettledCommission() {
+            thread.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
+            request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.CASH));
+            request.setRecipientName("Fatou Diop");
+            request.setRecipientPhone("+221771234567");
+            when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID, null, null, THREAD_ID))
+                .thenReturn(new BigDecimal("0.0375"));
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(escrowPort.releaseEscrowForMethodSwitch(THREAD_ID)).thenReturn(true);
+            when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+
+            service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_x");
+
+            ArgumentCaptor<com.yadony.api.requests.event.NegotiationCommissionPendingEvent> captor =
+                ArgumentCaptor.forClass(com.yadony.api.requests.event.NegotiationCommissionPendingEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            // Net du fil x taux résolu par le règlement, arrondi HALF_UP : le débit de
+            // settleNegotiationCommission, et non le net x 12 % du taux global.
+            BigDecimal expected = thread.getCurrentPriceEur().multiply(new BigDecimal("0.0375"))
+                .setScale(2, java.math.RoundingMode.HALF_UP);
+            assertThat(expected).isNotEqualByComparingTo(
+                thread.getCurrentPriceEur().multiply(new BigDecimal("0.12")).setScale(2, java.math.RoundingMode.HALF_UP));
+            assertThat(captor.getValue().commissionAmount()).isEqualByComparingTo(expected);
+            verify(auditService).log(eq("NEGOTIATION_THREAD"), eq(THREAD_ID), eq("AWAITING_COMMISSION"),
+                eq(SENDER_ID), eq(java.util.Map.of("commission", expected.toPlainString())));
         }
 
         @Test

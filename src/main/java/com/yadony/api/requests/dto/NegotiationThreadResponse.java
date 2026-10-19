@@ -89,6 +89,8 @@ public record NegotiationThreadResponse(
     // CashCommissionService.settleNegotiationCommission), dans la devise du fil. Renseignée
     // seulement quand le lecteur est le voyageur et que le fil attend sa commission
     // (AWAITING_COMMISSION, le bandeau « Réglez la commission »). Null sinon, donc absente du JSON.
+    // Ce montant tient compte des réductions du voyageur (taux spécial, bon) : ne jamais le
+    // combiner avec grossPriceEur, le brut public affiché à l'expéditeur, qui n'a pas ces réductions.
     // Additif, en fin de record : l'app annonce ce montant au lieu de le recalculer.
     BigDecimal travelerCashCommissionEur
 ) {
