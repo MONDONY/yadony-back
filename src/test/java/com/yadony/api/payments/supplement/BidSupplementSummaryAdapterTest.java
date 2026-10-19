@@ -38,6 +38,8 @@ class BidSupplementSummaryAdapterTest {
     private final StorageService storage = mock(StorageService.class);
     private final BidSupplementProperties properties = new BidSupplementProperties();
     private final BidSupplementRailHandler cardRail = mock(BidSupplementRailHandler.class);
+    private final com.yadony.api.auth.UserRepository users = mock(com.yadony.api.auth.UserRepository.class);
+    private final com.yadony.api.auth.UserEntity traveler = new com.yadony.api.auth.UserEntity();
 
     private final UUID travelerId = UUID.randomUUID();
     private final UUID senderId = UUID.randomUUID();
@@ -59,11 +61,14 @@ class BidSupplementSummaryAdapterTest {
         announcement.setTravelerId(travelerId);
         announcement.setDepartureAt(OffsetDateTime.ofInstant(NOW.plusSeconds(86_400), ZoneOffset.UTC));
         when(repository.findByBidIdOrderByCreatedAtDesc(bid.getId())).thenReturn(stored);
+        traveler.setStripeAccountId("acct_1");
+        when(users.findById(travelerId)).thenReturn(java.util.Optional.of(traveler));
     }
 
     private BidSupplementSummaryAdapter adapter(BidSupplementRailHandler... handlers) {
         return new BidSupplementSummaryAdapter(repository,
-                new BidSupplementWindow(properties, Clock.fixed(NOW, ZoneOffset.UTC)), properties, List.of(handlers), storage);
+                new BidSupplementWindow(properties, Clock.fixed(NOW, ZoneOffset.UTC)), properties, List.of(handlers), storage,
+                users);
     }
 
     private BidSupplementEntity add(BidSupplementStatus status, int minutesAgo) {
@@ -114,6 +119,12 @@ class BidSupplementSummaryAdapterTest {
         properties.setEnabled(false);
         assertThat(adapter(cardRail).view(bid, announcement, travelerId, null).requestAllowed())
                 .as("interrupteur coupé").isFalse();
+    }
+
+    @Test
+    void voyageurSansCompteDeVersementSurLeRail_pasDeBouton() {
+        traveler.setStripeAccountId(null);
+        assertThat(adapter(cardRail).view(bid, announcement, travelerId, null).requestAllowed()).isFalse();
     }
 
     @Test

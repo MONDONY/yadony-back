@@ -1,5 +1,6 @@
 package com.yadony.api.payments.supplement;
 
+import com.yadony.api.auth.UserEntity;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.cash.PaymentMethod;
 import org.springframework.http.HttpStatus;
@@ -23,6 +24,19 @@ public enum BidSupplementRail {
             case MOBILE_MONEY -> PAWAPAY;
             case CASH -> CASH;
             case WAVE, ORANGE_MONEY -> throw unsupported();
+        };
+    }
+
+    /**
+     * Le voyageur peut-il recevoir un supplément sur ce rail ? Carte : compte Connect (versement
+     * par Transfer, sinon encaissé sans destination) ; mobile money : compte mobile money dans la
+     * devise du colis ; espèces : toujours. Règle unique de la création et du bouton de l'app.
+     */
+    public boolean payableBy(UserEntity traveler, String currency) {
+        return switch (this) {
+            case STRIPE -> traveler.getStripeAccountId() != null && !traveler.getStripeAccountId().isBlank();
+            case PAWAPAY -> traveler.canReceiveMobileMoney(currency);
+            case CASH -> true;
         };
     }
 

@@ -155,7 +155,9 @@ public class BidSupplementService {
         if (handler == null) {
             throw BidSupplementRail.unsupported();
         }
-        requireRailPayable(rail, traveler, bid.getCurrency());
+        if (!rail.payableBy(traveler, bid.getCurrency())) {
+            throw BidSupplementRail.unsupported();
+        }
 
         if (supplements.existsByBidIdAndStatusIn(bidId, BidSupplementStatus.ACTIVE)) {
             throw alreadyActive();
@@ -377,18 +379,6 @@ public class BidSupplementService {
         if (!s.getExpiresAt().isAfter(window.now())) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "supplement-expired", "Supplement Expired",
                     "Le délai de réponse à cette demande de supplément est dépassé");
-        }
-    }
-
-    private void requireRailPayable(BidSupplementRail rail, UserEntity traveler, String currency) {
-        boolean payable = switch (rail) {
-            // Versement par Transfer Connect : sans compte, le supplément serait encaissé sans destination.
-            case STRIPE -> traveler.getStripeAccountId() != null && !traveler.getStripeAccountId().isBlank();
-            case PAWAPAY -> traveler.canReceiveMobileMoney(currency);
-            case CASH -> true;
-        };
-        if (!payable) {
-            throw BidSupplementRail.unsupported();
         }
     }
 

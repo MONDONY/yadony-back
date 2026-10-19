@@ -1,5 +1,6 @@
 package com.yadony.api.payments.supplement;
 
+import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
@@ -42,16 +43,18 @@ public class BidSupplementSummaryAdapter implements BidSupplementSummaryPort {
     private final BidSupplementProperties properties;
     private final Set<BidSupplementRail> supportedRails;
     private final StorageService storage;
+    private final UserRepository users;
 
     public BidSupplementSummaryAdapter(BidSupplementRepository supplements, BidSupplementWindow window,
                                        BidSupplementProperties properties, List<BidSupplementRailHandler> handlers,
-                                       StorageService storage) {
+                                       StorageService storage, UserRepository users) {
         this.supplements = supplements;
         this.window = window;
         this.properties = properties;
         this.supportedRails = handlers.stream().map(BidSupplementRailHandler::rail)
                 .collect(Collectors.toCollection(() -> EnumSet.noneOf(BidSupplementRail.class)));
         this.storage = storage;
+        this.users = users;
     }
 
     /** Suppléments d'une liste, regroupés par colis. */
@@ -94,18 +97,28 @@ public class BidSupplementSummaryAdapter implements BidSupplementSummaryPort {
         return properties.isEnabled()
                 && announcement != null
                 && callerId != null && callerId.equals(announcement.getTravelerId())
-                && railSupported(bid)
                 && all.size() < properties.getMaxPerBid()
                 && all.stream().noneMatch(s -> BidSupplementStatus.ACTIVE.contains(s.getStatus()))
-                && window.isOpen(bid, announcement);
+                && window.isOpen(bid, announcement)
+                && railPayable(bid, announcement);
     }
 
-    private boolean railSupported(BidEntity bid) {
+    /**
+     * Rail livré ET voyageur capable de recevoir sur ce rail : la même règle que la création, pour
+     * qu'aucun bouton n'ouvre une demande refusée en 422. Le voyageur est déjà chargé par la
+     * conversion du colis : la lecture ne coûte pas de requête.
+     */
+    private boolean railPayable(BidEntity bid, AnnouncementEntity announcement) {
+        BidSupplementRail rail;
         try {
-            return supportedRails.contains(BidSupplementRail.from(bid.getPaymentMethod()));
+            rail = BidSupplementRail.from(bid.getPaymentMethod());
         } catch (YadonyBusinessException legacyRail) {
             return false;
         }
+        return supportedRails.contains(rail)
+                && users.findById(announcement.getTravelerId())
+                        .map(traveler -> rail.payableBy(traveler, bid.getCurrency()))
+                        .orElse(false);
     }
 
     private List<BidSupplementEntity> supplementsOf(UUID bidId, Prefetch prefetch) {
