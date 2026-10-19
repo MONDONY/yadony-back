@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Sur un PostgreSQL embarqué avec le vrai Flyway (V332) : les colonnes {@code tiers} et
+ * Sur un PostgreSQL embarqué avec le vrai Flyway (V336) : les colonnes {@code tiers} et
  * {@code minimums} y sont réellement {@code jsonb}, le trigger d'immuabilité est actif, et
  * {@code ddl-auto=validate} fait échouer le contexte au moindre écart entre l'entité et la table.
  * Chaque test est transactionnel et annulé : le trigger n'interdit que ce qui est validé.

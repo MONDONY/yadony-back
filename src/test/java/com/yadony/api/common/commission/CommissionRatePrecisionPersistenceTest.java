@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Un taux effectif de commission (ex. 1/15 = 0,066667) ne doit pas être tronqué à 3 décimales :
- * les colonnes de taux sont en NUMERIC(7,6) depuis V332 et le mapping JPA doit suivre.
+ * les colonnes de taux sont en NUMERIC(7,6) depuis V336 et le mapping JPA doit suivre.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)

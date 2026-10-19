@@ -42,7 +42,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * jeton ; {@code /config/commission-rate} reste en place pour les anciennes versions de l'app.
  *
  * <p>PostgreSQL embarqué avec Flyway : les colonnes {@code jsonb} de {@code commission_grids} ne se lisent pas
- * sous H2. Le trigger d'immuabilité de V332 interdit de supprimer une grille en vigueur ; chaque test repart
+ * sous H2. Le trigger d'immuabilité de V336 interdit de supprimer une grille en vigueur ; chaque test repart
  * pourtant d'une table vide, donc la purge le désactive le temps du {@code DELETE}.
  */
 @SpringBootTest

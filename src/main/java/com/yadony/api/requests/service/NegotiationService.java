@@ -1328,7 +1328,7 @@ public class NegotiationService {
     }
 
     /**
-     * Total réellement payé, figé au scellement d'un fil à grille (V333) :
+     * Total réellement payé, figé au scellement d'un fil à grille (V337) :
      * <ul>
      *   <li>carte et mobile money : le montant du paiement du fil, celui débité, lu par
      *       {@link NegotiationEscrowPort#paidAmount} ; recalculé (brut des rails avec le code du

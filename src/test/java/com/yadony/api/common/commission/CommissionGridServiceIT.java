@@ -195,7 +195,7 @@ class CommissionGridServiceIT {
     void cancel_gridBecomesEffectiveBeforeFlush_isConflict() {
         // La base voit la grille en vigueur depuis un jour ; l'horloge du service retarde de deux jours
         // (même effet qu'une date d'effet atteinte entre le contrôle Java et l'UPDATE) : le contrôle passe,
-        // le trigger de V332 refuse. Écarts d'un jour : Hibernate (jdbc.time_zone UTC) relit une date
+        // le trigger de V336 refuse. Écarts d'un jour : Hibernate (jdbc.time_zone UTC) relit une date
         // écrite en SQL décalée du fuseau de la JVM, quelques heures au plus.
         UUID id = UUID.randomUUID();
         jdbc.update("INSERT INTO commission_grids (id, effective_from, tiers, minimums, created_by, created_at, updated_at) "

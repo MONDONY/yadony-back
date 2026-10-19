@@ -93,7 +93,7 @@ public class NegotiationThreadEntity extends BaseEntity {
     private UUID commissionGridId;
 
     /**
-     * Total payé par l'expéditeur, frais compris, figé au scellement d'un fil à grille (V333) :
+     * Total payé par l'expéditeur, frais compris, figé au scellement d'un fil à grille (V337) :
      * l'affichage le reprend tel quel au lieu de re-tarifer (code racheté, bon consommé).
      * {@code null} avant scellement et pour un fil sans grille.
      */
