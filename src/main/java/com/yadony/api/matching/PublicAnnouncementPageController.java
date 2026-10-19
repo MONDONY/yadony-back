@@ -234,24 +234,13 @@ public class PublicAnnouncementPageController {
 
     private enum MobileOs { ANDROID, IOS, OTHER }
 
-    /**
-     * Détection best-effort par User-Agent, comme {@link #isPreviewCrawler}.
-     * Elle n'a pas besoin d'être infaillible : au pire un visiteur mal
-     * identifié retombe sur le lien {@code yadony://}, sans jamais casser rien.
-     */
+    /** Délègue à {@link com.yadony.api.common.UserAgents}, partagé avec la page de suivi destinataire. */
     private MobileOs detectMobileOs(HttpServletRequest request) {
-        String agent = request.getHeader("User-Agent");
-        if (agent == null || agent.isBlank()) {
-            return MobileOs.OTHER;
-        }
-        String lower = agent.toLowerCase(Locale.ROOT);
-        if (lower.contains("android")) {
-            return MobileOs.ANDROID;
-        }
-        if (lower.contains("iphone") || lower.contains("ipad") || lower.contains("ipod")) {
-            return MobileOs.IOS;
-        }
-        return MobileOs.OTHER;
+        return switch (com.yadony.api.common.UserAgents.mobileOs(request.getHeader("User-Agent"))) {
+            case ANDROID -> MobileOs.ANDROID;
+            case IOS -> MobileOs.IOS;
+            case OTHER -> MobileOs.OTHER;
+        };
     }
 
     /**

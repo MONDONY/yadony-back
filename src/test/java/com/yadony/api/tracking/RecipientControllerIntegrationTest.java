@@ -90,6 +90,36 @@ class RecipientControllerIntegrationTest {
         return trackingEventRepository.save(e);
     }
 
+    // ── YADONY-FLUTTER-PROD-12 : inviter le destinataire dans l'app ───────────
+
+    @Test
+    void appInvite_showsOpenButtonAndMaskedPhone_neverTheFullNumber() throws Exception {
+        bid.setRecipientPhone("+225 07 01 02 03 34");
+        bidRepository.save(bid);
+
+        mockMvc.perform(get("/tracking/public/{token}", trackingToken)
+                        .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("Suivez ce colis dans l'app Yadony")))
+                .andExpect(content().string(containsString("yadony://colis/" + bid.getId())))
+                .andExpect(content().string(containsString("+225 •••• 34")))
+                .andExpect(content().string(not(containsString("0701020334"))))
+                .andExpect(content().string(not(containsString("07 01 02 03 34"))))
+                // Store non configuré en test : aucun bouton mort.
+                .andExpect(content().string(not(containsString("Télécharger l'app"))));
+    }
+
+    @Test
+    void appInvite_localNumber_hidesThePhoneSentence() throws Exception {
+        bid.setRecipientPhone("07 01 02 03 34");
+        bidRepository.save(bid);
+
+        mockMvc.perform(get("/tracking/public/{token}", trackingToken))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("Ouvrir dans Yadony")))
+                .andExpect(content().string(not(containsString("Inscrivez-vous avec le numéro"))));
+    }
+
     // ── Critère 1 : lien valide → page avec étapes et statut clair ────────────
 
     @Test

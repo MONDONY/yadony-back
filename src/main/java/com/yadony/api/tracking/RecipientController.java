@@ -52,6 +52,15 @@ public class RecipientController {
     @Value("${app.base-url}")
     private String appBaseUrl;
 
+    @Value("${app.store.ios:}")
+    private String storeUrlIos;
+
+    @Value("${app.store.android:}")
+    private String storeUrlAndroid;
+
+    private static final java.util.regex.Pattern PHONE_SEPARATORS = java.util.regex.Pattern.compile("[\\s\\-.()]");
+    private static final java.util.regex.Pattern E164 = java.util.regex.Pattern.compile("\\+\\d{8,15}");
+
     public RecipientController(BidRepository bidRepository,
                                AnnouncementRepository announcementRepository,
                                TrackingEventRepository trackingEventRepository,
@@ -65,8 +74,9 @@ public class RecipientController {
     }
 
     @GetMapping("/{trackingToken}")
-    public String trackingPage(@PathVariable String trackingToken, Model model) {
-        return buildTrackingPage(trackingToken, model);
+    public String trackingPage(@PathVariable String trackingToken, Model model,
+                               jakarta.servlet.http.HttpServletRequest request) {
+        return buildTrackingPage(trackingToken, model, request.getHeader("User-Agent"));
     }
 
     @GetMapping("/{trackingToken}/status")
@@ -121,7 +131,7 @@ public class RecipientController {
                 .orElse("");
     }
 
-    private String buildTrackingPage(String trackingToken, Model model) {
+    private String buildTrackingPage(String trackingToken, Model model, String userAgent) {
         Optional<BidEntity> bidOpt = bidRepository.findByTrackingToken(trackingToken);
 
         if (bidOpt.isEmpty()) {
@@ -164,8 +174,38 @@ public class RecipientController {
         model.addAttribute("invalid", false);
         model.addAttribute("trackingToken", trackingToken);
         model.addAttribute("isDelivered", bid.getStatus() == BidStatus.COMPLETED);
+        addAppInvitation(model, bid, userAgent);
 
         return "recipient/tracking";
+    }
+
+    /**
+     * Carte « Suivez ce colis dans l'app Yadony » (YADONY-FLUTTER-PROD-12) : lien
+     * {@code yadony://colis/{bidId}}, bouton store du téléphone détecté (absent si l'URL n'est
+     * pas configurée ou le système inconnu : jamais de bouton mort), et rappel du numéro sous
+     * lequel s'inscrire, MASQUÉ. Le numéro n'apparaît que s'il est international : c'est la
+     * seule forme que le rattrapage sait relier à un compte (ReceptionLinker).
+     */
+    private void addAppInvitation(Model model, BidEntity bid, String userAgent) {
+        model.addAttribute("appLink", "yadony://colis/" + bid.getId());
+        model.addAttribute("storeUrl",
+                com.yadony.api.common.UserAgents.storeUrlFor(userAgent, storeUrlIos, storeUrlAndroid));
+        model.addAttribute("maskedRecipientPhone", maskedRecipientPhone(bid.getRecipientPhone()));
+    }
+
+    /** {@code +225 07 01 02 03 34} → {@code +225 •••• 34} ; {@code null} si non international. */
+    static String maskedRecipientPhone(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String compact = PHONE_SEPARATORS.matcher(raw).replaceAll("");
+        if (compact.startsWith("00")) {
+            compact = "+" + compact.substring(2);
+        }
+        if (!E164.matcher(compact).matches()) {
+            return null;
+        }
+        return com.yadony.api.common.Msisdn.mask(compact);
     }
 
     private String resolvePhoto(String key) {
