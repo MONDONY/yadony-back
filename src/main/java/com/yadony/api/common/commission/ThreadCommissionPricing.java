@@ -67,6 +67,21 @@ public class ThreadCommissionPricing {
                 rateResolver.reductionsWithPromoFallback(travelerId, senderId, promoCode, threadId));
     }
 
+    /**
+     * Brut public du fil : grille figée, minimum compris, SANS aucune réduction personnelle
+     * (taux spécial, bon, code). C'est le brut montré au voyageur, qui ne doit pas pouvoir
+     * déduire les avantages privés de l'expéditeur par simple division brut / net. Un net nul à
+     * l'unité mineure ne coûte rien (brut = net), comme {@link #price}.
+     */
+    public BigDecimal publicGross(UUID gridId, BigDecimal net, String currencyCode) {
+        SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(currencyCode);
+        BigDecimal n = net.setScale(currency.minorUnit(), RoundingMode.HALF_UP);
+        if (n.signum() <= 0) {
+            return n;
+        }
+        return CommissionCalculator.compute(n, currency, gridService.require(gridId), CommissionReductions.NONE).gross();
+    }
+
     /** Commission minimum de la devise du fil sur sa grille figée ({@code minimumAmount} des devis). */
     public BigDecimal minimum(UUID gridId, String currencyCode) {
         return gridService.require(gridId).minimum(SupportedCurrency.fromCodeOrDefault(currencyCode));

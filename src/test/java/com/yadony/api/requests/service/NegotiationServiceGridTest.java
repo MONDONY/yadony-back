@@ -56,6 +56,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -167,6 +168,57 @@ class NegotiationServiceGridTest {
             assertThat(response.grossPriceEur()).isEqualByComparingTo("21.00");
         }
 
+        @Test @DisplayName("voyageur : brut public sans réduction personnelle de l'expéditeur")
+        void threadToResponse_grid_travelerSeesPublicGross() {
+            when(pricing.publicGross(gridId, new BigDecimal("20.00"), "EUR")).thenReturn(new BigDecimal("21.40"));
+            lenient().when(pricing.price(gridId, new BigDecimal("20.00"), "EUR", travelerId, senderId, thread.getId()))
+                    .thenReturn(result("20.00", "1.40", false, false));
+
+            var response = service.getById(travelerId, thread.getId());
+
+            assertThat(response.grossPriceEur()).isEqualByComparingTo("21.40");
+            // Ni le code ni le bon de l'expéditeur ne sont lus pour le brut affiché au voyageur.
+            verify(pricing, never()).price(any(), any(), any(), any(), any(), any(), any());
+        }
+
+        @Test @DisplayName("voyageur, fil scellé : toujours le brut public, jamais le total de l'expéditeur")
+        void threadToResponse_sealed_travelerStillSeesPublicGross() {
+            thread.setStatus(NegotiationThreadStatus.ACCEPTED);
+            thread.setSealedGrossEur(new BigDecimal("21.00"));
+            when(pricing.publicGross(gridId, new BigDecimal("20.00"), "EUR")).thenReturn(new BigDecimal("21.40"));
+            lenient().when(pricing.price(gridId, new BigDecimal("20.00"), "EUR", travelerId, senderId, thread.getId()))
+                    .thenReturn(result("20.00", "1.40", false, false));
+
+            assertThat(service.getById(travelerId, thread.getId()).grossPriceEur()).isEqualByComparingTo("21.40");
+        }
+
+        @Test @DisplayName("expéditeur, fil scellé dont le code a atteint sa limite : brut scellé, code jamais revalidé")
+        void threadToResponse_sealed_senderSeesSealedGross_codeNeverRevalidated() {
+            // Chaîne réelle (ThreadCommissionPricing + CommissionRateResolver) : seul le service des
+            // codes est un mock, qui échouerait désormais (code racheté, limite atteinte).
+            var gridService = mock(com.yadony.api.common.commission.CommissionGridService.class);
+            lenient().when(gridService.require(gridId)).thenReturn(new com.yadony.api.common.commission.CommissionGrid(
+                    gridId, LocalDateTime.of(2026, 10, 1, 0, 0),
+                    List.of(new com.yadony.api.common.commission.CommissionTier(BigDecimal.ZERO, new BigDecimal("0.07"))),
+                    com.yadony.api.common.commission.CommissionGridService.defaultMinimums()));
+            var promoService = mock(com.yadony.api.promo.PromoService.class);
+            lenient().when(promoService.validateAndGetDiscount(any(), any(), any()))
+                    .thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "promo-limit-reached",
+                            "Promo Limit Reached", "Limite atteinte"));
+            var resolver = new CommissionRateResolver(userRepository,
+                    com.yadony.api.config.PlatformSettingsTestFactory.defaults(), promoService,
+                    mock(com.yadony.api.voucher.CommissionVoucherService.class));
+            ReflectionTestUtils.setField(service, "threadCommissionPricing", new ThreadCommissionPricing(gridService, resolver));
+            thread.setStatus(NegotiationThreadStatus.ACCEPTED);
+            thread.setPaymentMethod(PaymentMethod.STRIPE);
+            thread.setSealedGrossEur(new BigDecimal("21.00"));
+
+            var response = service.getById(senderId, thread.getId());
+
+            assertThat(response.grossPriceEur()).isEqualByComparingTo("21.00");
+            verify(promoService, never()).validateAndGetDiscount(any(), any(), any());
+        }
+
         @Test @DisplayName("sans grille : net × (1 + taux du fil), comme avant")
         void noGrid_threadToResponse_legacyUnchanged() {
             thread.setCommissionGridId(null);
@@ -218,19 +270,24 @@ class NegotiationServiceGridTest {
 
             assertThat(accepted.senderGross()).isEqualByComparingTo("21.00");
             assertThat(accepted.commissionGridId()).isEqualTo(gridId);
+            assertThat(thread.getSealedGrossEur()).isEqualByComparingTo("21.00");
         }
 
-        @Test @DisplayName("espèces : la commission est au voyageur, aucun total expéditeur")
-        void seal_grid_cash_noSenderGross() {
+        @Test @DisplayName("espèces : brut scellé = net + commission du voyageur, aucun total expéditeur sur l'événement")
+        void seal_grid_cash_sealsNetPlusCommission() {
+            priced("20.00", result("20.00", "1.00", true, true), result("20.00", "1.40", false, false));
+
             assertThat(sealByDeposit(PaymentMethod.CASH).senderGross()).isNull();
-            verifyNoInteractions(pricing);
+            assertThat(thread.getSealedGrossEur()).isEqualByComparingTo("21.40");
+            verify(pricing, never()).price(any(), any(), any(), any(), any(), any(), any());
         }
 
-        @Test @DisplayName("sans grille : aucun total porté, le listener garde le calcul hérité")
+        @Test @DisplayName("sans grille : rien de scellé, le listener garde le calcul hérité")
         void noGrid_seal_legacyUnchanged() {
             thread.setCommissionGridId(null);
 
             assertThat(sealByDeposit(PaymentMethod.MOBILE_MONEY).senderGross()).isNull();
+            assertThat(thread.getSealedGrossEur()).isNull();
             verifyNoInteractions(pricing);
         }
     }
@@ -294,6 +351,18 @@ class NegotiationServiceGridTest {
             assertThat(q.totalEur()).isEqualByComparingTo("21.40");
             assertThat(q.promoApplied()).isFalse();
             assertThat(q.promoIneffectiveReason()).isNull();
+        }
+
+        @Test @DisplayName("fil scellé : 409, rien n'est re-tarifé")
+        void negotiationQuote_sealed_conflict() {
+            thread.setStatus(NegotiationThreadStatus.ACCEPTED);
+            thread.setSealedGrossEur(new BigDecimal("21.00"));
+
+            assertThatThrownBy(() -> service.quote(senderId, thread.getId(), null))
+                    .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                    .hasMessageContaining("negotiation/thread-sealed");
+            verifyNoInteractions(pricing);
+            verify(commissionRateResolver, never()).reductions(any(), any(), any(), any(), any());
         }
 
         @Test @DisplayName("code invalide : l'erreur remonte (validation stricte, comme le devis hérité)")

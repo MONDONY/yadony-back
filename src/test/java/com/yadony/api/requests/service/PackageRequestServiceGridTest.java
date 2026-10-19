@@ -420,6 +420,16 @@ class PackageRequestServiceGridTest {
                     .satisfies(t -> assertUnprocessable(t, "budget-below-commission-minimum"));
         }
 
+        @Test @DisplayName("budget démesuré → 422 budget-out-of-bounds, pas de 500")
+        void quote_grid_budgetAboveCeiling_422() {
+            gridInForce();
+            reductionsWithoutCode(CommissionReductions.NONE);
+
+            assertThatThrownBy(() -> service.quote(SENDER_ID, new BigDecimal("1e20"), null, null))
+                    .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                    .hasMessageContaining("request/budget-out-of-bounds");
+        }
+
         @Test @DisplayName("code invalide → l'erreur du code remonte (validation stricte)")
         void quote_grid_invalidCode_propagates() {
             gridInForce();

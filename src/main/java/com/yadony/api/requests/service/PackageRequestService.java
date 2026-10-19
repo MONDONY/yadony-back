@@ -9,6 +9,7 @@ import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.commission.CommissionCalculator;
 import com.yadony.api.common.commission.CommissionGrid;
 import com.yadony.api.common.commission.CommissionGridService;
+import com.yadony.api.common.commission.CommissionPromoLabel;
 import com.yadony.api.common.commission.CommissionReductions;
 import com.yadony.api.common.commission.CommissionResult;
 import com.yadony.api.common.StorageService;
@@ -42,7 +43,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.yadony.api.city.CityEntity;
-import com.yadony.api.payments.PriceBreakdown;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
@@ -197,7 +197,8 @@ public class PackageRequestService {
      * ({@code promoIneffectiveReason = COMMISSION_MINIMUM}). {@code rate} reste le taux hors code.
      *
      * @throws YadonyBusinessException 422 {@code budget-below-commission-minimum} quand le budget
-     *         ne couvre pas la commission minimum ; 422 {@code currency-unsupported}.
+     *         ne couvre pas la commission minimum ; 422 {@code currency-unsupported} ;
+     *         422 {@code request/budget-out-of-bounds} au-delà du plafond de la devise.
      */
     private NegotiationQuoteResponse quoteWithGrid(CommissionGrid grid, UUID senderId, BigDecimal budget,
                                                    String code, String currencyCode) {
@@ -206,6 +207,9 @@ public class PackageRequestService {
                 withCode ? code : null, withCode ? senderId : null, null);
         SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(
                 resolvePackageRequestCurrency(currencyCode, senderId));
+        // Même plafond qu'à la création : un budget que la demande refuserait n'a pas de devis
+        // (et un budget démesuré ferait déborder le calcul inverse en unités mineures).
+        assertBudgetWithinBounds(budget, currency.code());
         BigDecimal net = CommissionCalculator.netForGross(budget, currency, grid, CommissionReductions.NONE);
         CommissionResult result = CommissionCalculator.compute(net, currency, grid, reductions);
         CommissionResult base = reductions.promo() == null
@@ -213,14 +217,7 @@ public class PackageRequestService {
                 : CommissionCalculator.compute(net, currency, grid, reductions.withoutPromo());
 
         boolean promoApplied = result.promoEffective();
-        String promoLabel = null;
-        if (promoApplied) {
-            // Même libellé que BidService.quoteWithGrid : l'écart réel de commission, en points du net.
-            long pct = base.commission().subtract(result.commission())
-                    .multiply(BigDecimal.valueOf(100))
-                    .divide(net, 0, RoundingMode.DOWN).longValue();
-            promoLabel = messagesResolver.forRequest().get("quote.promo-label", code.toUpperCase(), pct);
-        }
+        String promoLabel = CommissionPromoLabel.of(messagesResolver.forRequest(), code, base, result);
         return new NegotiationQuoteResponse(net, base.effectiveRate(), result.commission(), result.gross(),
                 promoApplied, promoLabel, result.minimumApplied(), grid.minimum(currency), grid.id(),
                 withCode && !promoApplied && result.minimumApplied() ? "COMMISSION_MINIMUM" : null);
@@ -1191,7 +1188,9 @@ public class PackageRequestService {
     PackageRequestResponse toResponse(PackageRequestEntity e, java.util.UUID viewerThreadId,
                                       String viewerThreadStatus, ViewerPaymentCapabilities viewer,
                                       boolean isOwner) {
-        BigDecimal grossPriceEur = publicGross(e);
+        // Même brut que la recherche et la page publique : une seule règle (grille figée de la
+        // demande sans réduction personnelle, sinon taux global).
+        BigDecimal grossPriceEur = packageRequestSearchMapper.grossPriceEur(e);
         List<PackageRequestPhotoResponse> photos = photoService.activePhotos(e.getId());
         String photoUrl = photos.isEmpty() ? e.getPhotoUrl() : photos.get(0).url();
         // Capacités réelles du visiteur : carte si Connect actif, mobile money si compte de
@@ -1231,21 +1230,6 @@ public class PackageRequestService {
                 .map(com.yadony.api.auth.UserEntity::senderReliabilityIncidentCount)
                 .orElse(null)
         );
-    }
-
-    /**
-     * Prix public d'une demande, commission comprise, à partir du net stocké. Demande à grille :
-     * {@link PackageRequestSearchMapper#grossPriceEur}, la même règle que la recherche et la page
-     * publique (grille figée, aucune réduction personnelle). Sans grille : taux global, calcul
-     * hérité inchangé. {@code null} sans budget.
-     */
-    private BigDecimal publicGross(PackageRequestEntity e) {
-        if (e.getTargetPriceEur() == null) {
-            return null;
-        }
-        return e.getCommissionGridId() == null
-            ? PriceBreakdown.fromNet(e.getTargetPriceEur(), commissionRateResolver.globalRate()).gross()
-            : packageRequestSearchMapper.grossPriceEur(e);
     }
 
     /**

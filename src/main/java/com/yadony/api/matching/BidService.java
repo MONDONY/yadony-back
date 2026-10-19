@@ -15,6 +15,7 @@ import com.yadony.api.common.StorageService;
 import com.yadony.api.common.commission.CommissionCalculator;
 import com.yadony.api.common.commission.CommissionGrid;
 import com.yadony.api.common.commission.CommissionGridService;
+import com.yadony.api.common.commission.CommissionPromoLabel;
 import com.yadony.api.common.commission.CommissionReductions;
 import com.yadony.api.common.commission.CommissionResult;
 import com.yadony.api.common.i18n.MessagesResolver;
@@ -275,16 +276,7 @@ public class BidService {
                 : CommissionCalculator.compute(netEur, currency, grid, reductions.withoutPromo());
 
         boolean promoApplied = result.promoEffective();
-        String promoLabel = null;
-        if (promoApplied) {
-            // Même libellé qu'avant les grilles (points de commission), mesuré sur l'écart réel
-            // de commission en montant : sous grille, le code ne retranche pas des points fixes
-            // (minimum, tranches), seul l'écart en montant dit ce qu'il fait gagner.
-            long pct = base.commission().subtract(result.commission())
-                    .multiply(BigDecimal.valueOf(100))
-                    .divide(result.net(), 0, java.math.RoundingMode.DOWN).longValue();
-            promoLabel = messagesResolver.forRequest().get("quote.promo-label", promoCode.toUpperCase(), pct);
-        }
+        String promoLabel = CommissionPromoLabel.of(messagesResolver.forRequest(), promoCode, base, result);
         return new BidQuoteResponse(result.net(), gridNet, kgNet, base.effectiveRate(), base.commission(),
                 result.gross(), promoApplied, promoLabel, currencyCode, result.minimumApplied(),
                 grid.minimum(currency), grid.id(),

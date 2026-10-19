@@ -92,6 +92,14 @@ public class NegotiationThreadEntity extends BaseEntity {
     @Column(name = "commission_grid_id")
     private UUID commissionGridId;
 
+    /**
+     * Total payé par l'expéditeur, frais compris, figé au scellement d'un fil à grille (V332) :
+     * l'affichage le reprend tel quel au lieu de re-tarifer (code racheté, bon consommé).
+     * {@code null} avant scellement et pour un fil sans grille.
+     */
+    @Column(name = "sealed_gross_eur", precision = 10, scale = 2)
+    private BigDecimal sealedGrossEur;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "payment_method", length = 20)
     private PaymentMethod paymentMethod;  // null until trip-linking
@@ -209,6 +217,8 @@ public class NegotiationThreadEntity extends BaseEntity {
 
     public UUID getCommissionGridId() { return commissionGridId; }
 
+    public BigDecimal getSealedGrossEur() { return sealedGrossEur; }
+
     public PaymentMethod getPaymentMethod() { return paymentMethod; }
 
     public Set<PaymentMethod> getAvailablePaymentMethods() { return availablePaymentMethods; }
@@ -278,6 +288,8 @@ public class NegotiationThreadEntity extends BaseEntity {
     public void setCommissionRate(BigDecimal commissionRate) { this.commissionRate = commissionRate; }
 
     public void setCommissionGridId(UUID commissionGridId) { this.commissionGridId = commissionGridId; }
+
+    public void setSealedGrossEur(BigDecimal sealedGrossEur) { this.sealedGrossEur = sealedGrossEur; }
 
     public void setPaymentMethod(PaymentMethod paymentMethod) { this.paymentMethod = paymentMethod; }
 

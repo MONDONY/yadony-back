@@ -8,6 +8,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.commission.CommissionPromoLabel;
 import com.yadony.api.common.commission.CommissionResult;
 import com.yadony.api.common.commission.ThreadCommissionPricing;
 import com.yadony.api.common.i18n.MessagesResolver;
@@ -1307,9 +1308,9 @@ public class NegotiationService {
     }
 
     /**
-     * Brut vu (et payé) par l'expéditeur pour un net du fil, celui de l'écran du fil
-     * ({@code gross} de la réponse). Les notifications à l'expéditeur annoncent ce montant, pas
-     * le net du voyageur. Fil à grille : {@link ThreadCommissionPricing} avec le code promo du
+     * Brut payé par l'expéditeur pour un net du fil, avant scellement : les notifications à
+     * l'expéditeur annoncent ce montant, pas le net du voyageur, et l'écran du fil le montre
+     * ({@link #displayedGross}). Fil à grille : {@link ThreadCommissionPricing} avec le code promo du
      * fil, le calcul des rails carte et mobile money. Sans grille : taux figé sur le fil s'il
      * existe, sinon le taux de base, calcul hérité inchangé.
      */
@@ -1323,6 +1324,43 @@ public class NegotiationService {
         }
         BigDecimal rate = displayRate(thread);
         return PriceBreakdown.fromNet(net, rate).gross();
+    }
+
+    /**
+     * Total réellement payé, figé au scellement d'un fil à grille (V332) : carte et mobile money,
+     * le brut des rails avec le code du fil ({@link #senderGross}), calculé avant le rachat du
+     * code ; espèces, net + commission prélevée au voyageur ({@link #cashCommission}).
+     */
+    private BigDecimal sealedGross(NegotiationThreadEntity thread, UUID senderId) {
+        BigDecimal net = thread.getCurrentPriceEur();
+        return thread.getPaymentMethod() == PaymentMethod.CASH
+            ? net.add(cashCommission(thread, senderId))
+            : senderGross(thread, senderId, net);
+    }
+
+    /**
+     * Brut affiché sur le fil ({@code grossPriceEur}). Sans grille : {@link #senderGross}, calcul
+     * hérité inchangé. Fil à grille :
+     * <ul>
+     *   <li>tout lecteur autre que l'expéditeur (le voyageur) : brut public sans aucune réduction
+     *       personnelle, même après scellement, pour ne révéler ni taux spécial, ni bon, ni code
+     *       de l'expéditeur ;</li>
+     *   <li>l'expéditeur, fil scellé : le total figé au scellement, jamais re-tarifé (le code est
+     *       racheté et le bon consommé depuis : les relire annoncerait plus que le débit) ;</li>
+     *   <li>l'expéditeur avant scellement : {@link #senderGross}, le calcul des rails.</li>
+     * </ul>
+     */
+    private BigDecimal displayedGross(NegotiationThreadEntity thread, UUID senderId, UUID viewerId) {
+        BigDecimal net = thread.getCurrentPriceEur();
+        if (net == null || thread.getCommissionGridId() == null) {
+            return senderGross(thread, senderId, net);
+        }
+        if (!senderId.equals(viewerId)) {
+            return threadCommissionPricing.publicGross(thread.getCommissionGridId(), net, thread.getCurrency());
+        }
+        return thread.getSealedGrossEur() != null
+            ? thread.getSealedGrossEur()
+            : senderGross(thread, senderId, net);
     }
 
     /**
@@ -1644,6 +1682,11 @@ public class NegotiationService {
      */
     private void sealAcceptedThread(NegotiationThreadEntity thread, PackageRequestEntity request,
                                     UUID callerId, String paymentIntentId) {
+        if (thread.getCommissionGridId() != null) {
+            // Figé avant que ThreadAcceptedBidListener ne rachète le code et ne consomme le bon :
+            // l'affichage du fil scellé le reprend tel quel, sans jamais re-tarifer.
+            thread.setSealedGrossEur(sealedGross(thread, request.getSenderId()));
+        }
         thread.setPaymentIntentId(paymentIntentId);
         thread.setStatus(NegotiationThreadStatus.ACCEPTED);
         thread.setLastActivityAt(LocalDateTime.now(ZoneOffset.UTC));
@@ -1702,10 +1745,8 @@ public class NegotiationService {
             thread.getCommissionRate(),
             thread.getCurrency(),
             thread.getCommissionGridId(),
-            // Calculé ici, avant que ThreadAcceptedBidListener ne rachète le code : revalidé
-            // ensuite (limite d'usage atteinte), il retomberait sur le total sans la remise.
-            thread.getCommissionGridId() != null && thread.getPaymentMethod() != PaymentMethod.CASH
-                ? senderGross(thread, request.getSenderId(), thread.getCurrentPriceEur()) : null
+            // Espèces : la commission est due par le voyageur, l'expéditeur paie le net.
+            thread.getPaymentMethod() != PaymentMethod.CASH ? thread.getSealedGrossEur() : null
         ));
         // paymentIntentId est null pour un accord cash scellé par settleCommission/
         // confirmCommission (aucun escrow Stripe pour ce fil) — Map.of() rejette les
@@ -2230,8 +2271,16 @@ public class NegotiationService {
      * un code refusé remonte en 422, sinon l'expéditeur ne saurait jamais qu'il l'est (les rails,
      * eux, retombent sans bruit sur le tarif sans code). Un code valide que le minimum rend sans
      * effet n'est pas appliqué ({@code promoIneffectiveReason = COMMISSION_MINIMUM}).
+     *
+     * @throws ResponseStatusException 409 {@code negotiation/thread-sealed} sur un fil scellé.
      */
     private NegotiationQuoteResponse quoteWithGrid(NegotiationThreadEntity thread, UUID senderId, String code) {
+        if (thread.getSealedGrossEur() != null) {
+            // Fil scellé : le paiement est fait, il n'y a plus rien à chiffrer. Re-tarifer est exclu
+            // (code racheté, bon consommé) et les montants scellés ne disent ni la commission hors
+            // code ni l'effet du code : renvoyer des champs approximatifs serait pire qu'un refus.
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "negotiation/thread-sealed");
+        }
         boolean withCode = code != null && !code.isBlank();
         if (withCode) {
             commissionRateResolver.reductions(thread.getTravelerId(), senderId, code, senderId, thread.getId());
@@ -2245,14 +2294,7 @@ public class NegotiationService {
             : base;
 
         boolean promoApplied = result.promoEffective();
-        String promoLabel = null;
-        if (promoApplied) {
-            // Même libellé que BidService.quoteWithGrid : l'écart réel de commission, en points du net.
-            long pct = base.commission().subtract(result.commission())
-                .multiply(BigDecimal.valueOf(100))
-                .divide(result.net(), 0, RoundingMode.DOWN).longValue();
-            promoLabel = messagesResolver.forRequest().get("quote.promo-label", code.toUpperCase(), pct);
-        }
+        String promoLabel = CommissionPromoLabel.of(messagesResolver.forRequest(), code, base, result);
         return new NegotiationQuoteResponse(result.net(), base.effectiveRate(), base.commission(), result.gross(),
             promoApplied, promoLabel, result.minimumApplied(),
             threadCommissionPricing.minimum(thread.getCommissionGridId(), thread.getCurrency()),
@@ -2581,7 +2623,7 @@ public class NegotiationService {
             );
         }
 
-        BigDecimal gross = senderGross(t, request.getSenderId(), t.getCurrentPriceEur());
+        BigDecimal gross = displayedGross(t, request.getSenderId(), callerId);
 
         UserEntity senderUser = userRepository.findById(request.getSenderId()).orElse(null);
         String senderPhotoUrl = storageService.avatarUrl(
