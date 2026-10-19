@@ -93,6 +93,11 @@ class NegotiationServiceMobileMoneyTest {
 
     @BeforeEach
     void setUp() {
+        // Fil sans grille : taux que résout le règlement espèces (cashCommission).
+        org.mockito.Mockito.lenient().when(commissionRateResolver.resolve(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.any())).thenReturn(new java.math.BigDecimal("0.12"));
         service = new NegotiationService(requestRepo, threadRepo, messageRepo, userRepository, announcementRepo,
             eventPublisher, auditService, config, negotiationProperties, cashGatePort,
             escrowPort, storageService, photoService, commissionRateResolver, exchangeRateService, mobileMoneyPort,

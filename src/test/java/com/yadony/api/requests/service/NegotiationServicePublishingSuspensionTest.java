@@ -128,6 +128,11 @@ class NegotiationServicePublishingSuspensionTest {
         setId(request, REQUEST_ID);
 
         lenient().when(commissionRateResolver.globalRate()).thenReturn(new BigDecimal("0.12"));
+        // Fil sans grille : taux que résout le règlement espèces (cashCommission).
+        org.mockito.Mockito.lenient().when(commissionRateResolver.resolve(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.any())).thenReturn(new java.math.BigDecimal("0.12"));
         lenient().when(negotiationProperties.commissionWindowMinutes()).thenReturn(120);
         lenient().when(storageService.avatarUrl(any())).thenAnswer(inv -> inv.getArgument(0));
     }

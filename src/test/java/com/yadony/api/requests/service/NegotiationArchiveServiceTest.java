@@ -93,6 +93,11 @@ class NegotiationArchiveServiceTest {
         setId(request, REQUEST_ID);
         lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
         lenient().when(commissionRateResolver.globalRate()).thenReturn(new BigDecimal("0.12"));
+        // Fil sans grille : taux que résout le règlement espèces (cashCommission).
+        org.mockito.Mockito.lenient().when(commissionRateResolver.resolve(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.any())).thenReturn(new java.math.BigDecimal("0.12"));
         lenient().when(storageService.avatarUrl(any())).thenAnswer(inv -> inv.getArgument(0));
 
         service = new NegotiationService(requestRepo, threadRepo, messageRepo, userRepository,
