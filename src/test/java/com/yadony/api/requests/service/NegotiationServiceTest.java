@@ -153,6 +153,9 @@ class NegotiationServiceTest {
         // Default commission rate used whenever toResponse() is called.
         // Lenient to avoid UnnecessaryStubbingException in error-path tests that never reach toResponse().
         lenient().when(commissionRateResolver.globalRate()).thenReturn(new BigDecimal("0.12"));
+        // Fil sans grille : taux que résout le règlement espèces (12 % par défaut dans ces tests).
+        lenient().when(commissionRateResolver.resolve(any(), any(), isNull(), isNull(), any()))
+            .thenReturn(new BigDecimal("0.12"));
         // Délai par défaut (miroir de application.yml) — lenient car seuls les tests CASH
         // du chemin AWAITING_COMMISSION l'exercent réellement.
         lenient().when(negotiationProperties.commissionWindowMinutes()).thenReturn(120);
@@ -1957,6 +1960,27 @@ class NegotiationServiceTest {
 
             // 30 x 12 % (globalRate du setup) = 3,60.
             assertThat(resp.travelerCashCommissionEur()).isEqualByComparingTo("3.60");
+        }
+
+        @Test
+        @DisplayName("fil sans grille avec taux spécial : le montant exposé est celui que settleNegotiationCommission prélève")
+        void getById_traveler_awaitingCommissionNoGridSpecialRate_matchesSettledAmount() {
+            UUID THREAD_ID = UUID.randomUUID();
+            var thread = threadFor(THREAD_ID);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_COMMISSION);
+            thread.setCurrentPriceEur(new BigDecimal("47.30"));
+            // Le règlement résout 3,75 % (taux spécial) : ni les 12 % globaux ni le taux figé du fil.
+            thread.setCommissionRate(new BigDecimal("0.12"));
+            when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID, null, null, THREAD_ID))
+                .thenReturn(new BigDecimal("0.0375"));
+            stubReadPath(THREAD_ID, thread);
+
+            var resp = service.getById(TRAVELER_ID, THREAD_ID);
+
+            // 47,30 x 0,0375 = 1,77375 -> 1,77 : le débit asserté par
+            // CashCommissionServiceNegotiationTest (même taux, même net, même arrondi).
+            assertThat(resp.travelerCashCommissionEur()).isEqualByComparingTo("1.77");
+            verify(commissionRateResolver, times(1)).resolve(TRAVELER_ID, SENDER_ID, null, null, THREAD_ID);
         }
 
         @Test

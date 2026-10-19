@@ -14,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.UUID;
 
 /**
@@ -75,6 +76,17 @@ public class CommissionRateResolver {
      */
     public BigDecimal globalRate() {
         return settings.commissionRate();
+    }
+
+    /**
+     * Commission espèces d'un fil SANS grille : {@code net × taux}, arrondie à 2 décimales
+     * (HALF_UP). Source unique du calcul hérité, partagée par le prélèvement
+     * ({@code CashCommissionService.settleNegotiationCommission}) et par le montant annoncé au
+     * voyageur ({@code NegotiationService}), pour qu'ils ne divergent plus. Le taux vient de
+     * {@code resolve(voyageur, expéditeur, null, null, fil)}, jamais du taux figé sur le fil.
+     */
+    public static BigDecimal legacyCommission(BigDecimal net, BigDecimal rate) {
+        return net.multiply(rate).setScale(2, RoundingMode.HALF_UP);
     }
 
     /** Taux effectif à la navigation : seul le voyageur est connu (pas de promo). */

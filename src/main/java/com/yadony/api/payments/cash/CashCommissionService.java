@@ -675,7 +675,7 @@ public class CashCommissionService {
                     thread.getCurrency(), travelerId, senderId, threadId).commission();
         } else {
             BigDecimal rate = commissionRateResolver.resolve(travelerId, senderId, null, null, threadId);
-            commission = net.multiply(rate).setScale(2, RoundingMode.HALF_UP);
+            commission = CommissionRateResolver.legacyCommission(net, rate);
         }
         if (commission.signum() <= 0) {
             markNegotiationCommissionCharged(thread, NEGO_COMMISSION_VIA_WALLET, travelerId, commission);

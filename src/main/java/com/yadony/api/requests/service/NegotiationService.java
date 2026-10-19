@@ -1297,11 +1297,15 @@ public class NegotiationService {
      * Commission espèces du fil, prélevée au voyageur au règlement. Fil à grille (figée à sa
      * création, spec §4.4) : {@link ThreadCommissionPricing}, la source que lit aussi
      * {@code CashCommissionService.settleNegotiationCommission}, pour que le montant annoncé soit
-     * celui prélevé. Sans grille : taux de l'écran, calcul hérité inchangé.
+     * celui prélevé. Sans grille : le calcul hérité du prélèvement
+     * ({@link CommissionRateResolver#legacyCommission}), avec le taux que le règlement résout.
      */
     private BigDecimal cashCommission(NegotiationThreadEntity thread, UUID senderId) {
         if (thread.getCommissionGridId() == null) {
-            return PriceBreakdown.fromNet(thread.getCurrentPriceEur(), displayRate(thread)).commission();
+            // Même taux (taux spécial, bon du fil compris) et même arrondi que le prélèvement.
+            BigDecimal rate = commissionRateResolver.resolve(
+                thread.getTravelerId(), senderId, null, null, thread.getId());
+            return CommissionRateResolver.legacyCommission(thread.getCurrentPriceEur(), rate);
         }
         return threadCommissionPricing.price(thread.getCommissionGridId(), thread.getCurrentPriceEur(),
                 thread.getCurrency(), thread.getTravelerId(), senderId, thread.getId()).commission();
