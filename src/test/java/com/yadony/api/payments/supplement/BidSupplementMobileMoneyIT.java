@@ -123,6 +123,7 @@ class BidSupplementMobileMoneyIT {
     @Autowired EntityManager entityManager;
     @Autowired TransactionTemplate tx;
     @Autowired JdbcTemplate jdbc;
+    @Autowired com.yadony.api.payments.integrity.MoneyIntegrityMonitor monitor;
 
     @BeforeEach
     void pawapay() {
@@ -246,6 +247,7 @@ class BidSupplementMobileMoneyIT {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM audit_log WHERE entity_id = ? AND action = ?",
                 Integer.class, paymentId, "MM_PAYOUT_COMPLETED"))
                 .as("l'écouteur du paiement principal ignore le payout du supplément").isZero();
+        assertNoMoneyAnomaly(supplementId);
     }
 
     @Test
@@ -268,6 +270,18 @@ class BidSupplementMobileMoneyIT {
         awaitStatus(supplementId, "REFUNDED");
         assertThat(mobileMoney.status(p.bidId, supplementId, p.sender.getFirebaseUid()).paymentStatus())
                 .isEqualTo("REFUNDED");
+        assertNoMoneyAnomaly(supplementId);
+    }
+
+    /** Sonde d'intégrité : aucune ligne en faute pour ce supplément (INV-09, 17, 18). */
+    private void assertNoMoneyAnomaly(UUID supplementId) {
+        String id = supplementId.toString();
+        for (String code : java.util.List.of("INV-09", "INV-17", "INV-18")) {
+            assertThat(monitor.inspect(code, com.yadony.api.payments.integrity.MoneyIntegrityMonitor.MAX_INSPECT_ROWS)
+                    .orElseThrow().rows())
+                    .as(code + " pour le supplément " + id)
+                    .noneMatch(r -> r.values().stream().anyMatch(v -> String.valueOf(v).contains(id)));
+        }
     }
 
     // ── Aides ────────────────────────────────────────────────────────────────

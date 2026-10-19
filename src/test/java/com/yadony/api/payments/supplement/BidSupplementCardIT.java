@@ -97,6 +97,7 @@ class BidSupplementCardIT {
     @Autowired EntityManager entityManager;
     @Autowired TransactionTemplate tx;
     @Autowired JdbcTemplate jdbc;
+    @Autowired com.yadony.api.payments.integrity.MoneyIntegrityMonitor monitor;
     @Autowired BidSupplementCardReconciliationJob cardJob;
 
     @Test
@@ -154,6 +155,7 @@ class BidSupplementCardIT {
         Thread.sleep(500);
         verify(gateway, times(1)).createTransfer(anyLong(), anyString(), anyString(), anyString(), anyString(),
                 anyMap(), anyString());
+        assertNoMoneyAnomaly(supplementId);
     }
 
     @Test
@@ -170,6 +172,7 @@ class BidSupplementCardIT {
         awaitStatus(supplementId, "REFUNDED");
         assertThat(column(supplementId, "stripe_refund_id")).isEqualTo("re_supp");
         assertThat(column(supplementId, "closed_reason")).isEqualTo("PARCEL_REFUSED");
+        assertNoMoneyAnomaly(supplementId);
     }
 
     @Test
@@ -274,6 +277,17 @@ class BidSupplementCardIT {
             release.setLeaseUntil(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
             entityManager.persist(release);
         });
+    }
+
+    /** Sonde d'intégrité : aucune ligne en faute pour ce supplément (INV-09, 17, 18). */
+    private void assertNoMoneyAnomaly(UUID supplementId) {
+        String id = supplementId.toString();
+        for (String code : java.util.List.of("INV-09", "INV-17", "INV-18")) {
+            assertThat(monitor.inspect(code, com.yadony.api.payments.integrity.MoneyIntegrityMonitor.MAX_INSPECT_ROWS)
+                    .orElseThrow().rows())
+                    .as(code + " pour le supplément " + id)
+                    .noneMatch(r -> r.values().stream().anyMatch(v -> String.valueOf(v).contains(id)));
+        }
     }
 
     // ── Aides ────────────────────────────────────────────────────────────────
