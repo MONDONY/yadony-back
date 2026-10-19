@@ -32,15 +32,18 @@ public class FcmService {
     private final UserDeviceJpaRepository userDeviceRepository;
     private final NotificationPrefsService notificationPrefsService;
     private final NotificationRepository notificationRepository;
+    private final PushThrottle pushThrottle;
 
     public FcmService(UserRepository userRepository,
                       UserDeviceJpaRepository userDeviceRepository,
                       NotificationPrefsService notificationPrefsService,
-                      NotificationRepository notificationRepository) {
+                      NotificationRepository notificationRepository,
+                      PushThrottle pushThrottle) {
         this.userRepository = userRepository;
         this.userDeviceRepository = userDeviceRepository;
         this.notificationPrefsService = notificationPrefsService;
         this.notificationRepository = notificationRepository;
+        this.pushThrottle = pushThrottle;
     }
 
     /**
@@ -85,6 +88,10 @@ public class FcmService {
         }
         if (!notificationPrefsService.isAllowed(userId, notifType)) {
             log.debug("[FCM] Notification supprimée par pref user={} type={}", userId, notifType);
+            return false;
+        }
+        if (pushThrottle.hold(userId, notifType, data)) {
+            log.debug("[FCM] Push retenu, délai de calme du flux en cours user={} type={}", userId, notifType);
             return false;
         }
         return userRepository.findById(userId)
@@ -153,6 +160,31 @@ public class FcmService {
     private boolean sendToToken(String token, String title, String body,
                                 Map<String, String> data, UUID userId) {
         boolean isCritical = data != null && NotificationTypes.isCritical(data.get("type"));
+        // Flux qui se répète (conversation, fil, trajet, alerte) : le push suivant remplace
+        // celui-ci sur le téléphone au lieu de s'empiler, et iOS les range dans le même fil.
+        String collapseKey = data == null ? null
+                : PushCollapseKey.of(data.get("type"), data).orElse(null);
+        AndroidNotification.Builder androidNotification = AndroidNotification.builder()
+                .setChannelId("dony_transactional")
+                .setSound("default");
+        Aps.Builder aps = Aps.builder()
+                .setSound("default")
+                .setBadge(unreadBadge(userId))
+                // Les notifications critiques attendent un ACK sous 60 s,
+                // faute de quoi SmsFallbackScheduler envoie un SMS. Sans
+                // content-available, iOS ne réveille pas l'application tant
+                // que l'utilisateur n'ouvre pas la notification : l'ACK ne
+                // pourrait jamais partir depuis l'arrière-plan et le SMS
+                // serait envoyé à chaque fois, alors que le push est arrivé.
+                // Réservé aux critiques : c'est le seul cas qui justifie de
+                // réveiller le téléphone, et iOS bride ces réveils.
+                .setContentAvailable(isCritical);
+        ApnsConfig.Builder apns = ApnsConfig.builder();
+        if (collapseKey != null) {
+            androidNotification.setTag(collapseKey);
+            aps.setThreadId(collapseKey);
+            apns.putHeader("apns-collapse-id", collapseKey);
+        }
         Message.Builder builder = Message.builder()
                 .setToken(token)
                 .setNotification(Notification.builder()
@@ -161,29 +193,17 @@ public class FcmService {
                         .build())
                 .setAndroidConfig(AndroidConfig.builder()
                         .setPriority(AndroidConfig.Priority.HIGH)
-                        .setNotification(AndroidNotification.builder()
-                                .setChannelId("dony_transactional")
-                                .setSound("default")
-                                .build())
+                        .setNotification(androidNotification.build())
                         .build())
-                .setApnsConfig(ApnsConfig.builder()
-                        .setAps(Aps.builder()
-                                .setSound("default")
-                                .setBadge(unreadBadge(userId))
-                                // Les notifications critiques attendent un ACK sous 60 s,
-                                // faute de quoi SmsFallbackScheduler envoie un SMS. Sans
-                                // content-available, iOS ne réveille pas l'application tant
-                                // que l'utilisateur n'ouvre pas la notification : l'ACK ne
-                                // pourrait jamais partir depuis l'arrière-plan et le SMS
-                                // serait envoyé à chaque fois, alors que le push est arrivé.
-                                // Réservé aux critiques : c'est le seul cas qui justifie de
-                                // réveiller le téléphone, et iOS bride ces réveils.
-                                .setContentAvailable(isCritical)
-                                .build())
-                        .build());
+                .setApnsConfig(apns.setAps(aps.build()).build());
 
         if (data != null && !data.isEmpty()) {
             builder.putAllData(data);
+        }
+        if (collapseKey != null) {
+            // L'app au premier plan (Android) affiche sa propre notification locale : elle
+            // reprend cette clé pour remplacer, elle aussi, la précédente du même flux.
+            builder.putData("collapseKey", collapseKey);
         }
 
         try {
