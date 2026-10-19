@@ -4,6 +4,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.i18n.Messages;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.notifications.NotificationDispatcher;
+import com.yadony.api.payments.pawapay.PawapayFailureCodes;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayOperationPurpose;
@@ -60,6 +61,8 @@ import org.springframework.transaction.event.TransactionalEventListener;
  * puis AVALE l'exception (pas de {@code adminAlertService.raise}, pas de repropagation) — à la
  * différence de {@code onCompleted}, il n'y a rien à réconcilier manuellement, et repropager
  * risquerait d'empêcher d'autres écouteurs {@code AFTER_COMMIT} du même événement de s'exécuter.
+ * La notification à l'utilisateur ({@code wallet_topup_failed}) suit la même règle, dans son
+ * propre {@code try/catch} : l'audit et la notification ne se bloquent pas l'un l'autre.
  */
 @Component
 public class WalletTopupOutcomeListener {
@@ -131,6 +134,32 @@ public class WalletTopupOutcomeListener {
             // perdue. Journalisée puis avalée, jamais repropagée (voir le Javadoc de classe).
             log.error("Audit de l'échec de recharge {} impossible pour user {} : {}", event.operationId(),
                     event.userId(), e.getMessage(), e);
+        }
+        notifyFailure(event);
+    }
+
+    /**
+     * Prévient l'utilisateur que sa recharge n'a pas abouti, avec le motif traduit dans SA
+     * langue (le code opérateur est ramené à un code Yadony stable, jamais reflété tel quel).
+     * Bloc à part de l'audit : un audit en panne ne doit pas laisser l'utilisateur sans nouvelle,
+     * ni l'inverse. Même règle d'erreur que l'audit : journalisée puis avalée, un échec de
+     * notification ne fait pas perdre d'argent et ne doit pas bloquer les autres écouteurs.
+     */
+    private void notifyFailure(PawapayOperationFailedEvent event) {
+        try {
+            PawapayOperationEntity op = operations.get(event.operationId());
+            String failureCode = PawapayFailureCodes.toYadony(event.failureCode());
+            Messages m = notifications.messagesFor(event.userId());
+            notifications.notifyUser(event.userId(), m.get("notification.wallet-topup-failed.title"),
+                    m.get("notification.wallet-topup-failed.body",
+                            WalletAmountText.format(op.getAmount(), op.getCurrency()),
+                            PawapayProviders.label(op.getProvider()),
+                            m.get("topup.failure." + failureCode)),
+                    Map.of("type", "wallet_topup_failed", "topupId", op.getId().toString(),
+                            "failureCode", failureCode));
+        } catch (RuntimeException e) {
+            log.error("Notification de l'échec de recharge {} impossible pour user {} : {}",
+                    event.operationId(), event.userId(), e.getMessage(), e);
         }
     }
 }

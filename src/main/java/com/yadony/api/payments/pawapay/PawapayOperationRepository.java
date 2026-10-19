@@ -12,6 +12,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface PawapayOperationRepository extends JpaRepository<PawapayOperationEntity, UUID> {
 
@@ -26,6 +28,54 @@ public interface PawapayOperationRepository extends JpaRepository<PawapayOperati
 
     boolean existsByUserIdAndKindAndCurrencyAndPurposeAndStatusIn(UUID userId, PawapayOperationKind kind,
             String currency, PawapayOperationPurpose purpose, Collection<PawapayOperationStatus> statuses);
+
+    /**
+     * Variante bornée dans le temps de la garde anti-doublon des recharges : seules comptent
+     * les opérations créées APRÈS {@code createdAfter}. Une recharge restée ouverte au-delà de
+     * son délai de validation ne bloque plus la suivante.
+     */
+    boolean existsByUserIdAndKindAndCurrencyAndPurposeAndStatusInAndCreatedAtAfter(UUID userId,
+            PawapayOperationKind kind, String currency, PawapayOperationPurpose purpose,
+            Collection<PawapayOperationStatus> statuses, LocalDateTime createdAfter);
+
+    /**
+     * Opération la plus récente d'un utilisateur parmi {@code statuses}, créée APRÈS
+     * {@code createdAfter} : sert à retrouver la recharge mobile money en cours (écran d'attente
+     * repris par l'app), bornée par son délai de validation.
+     */
+    Optional<PawapayOperationEntity> findFirstByUserIdAndKindAndPurposeAndStatusInAndCreatedAtAfterOrderByCreatedAtDesc(
+            UUID userId, PawapayOperationKind kind, PawapayOperationPurpose purpose,
+            Collection<PawapayOperationStatus> statuses, LocalDateTime createdAfter);
+
+    /**
+     * Libère la garde anti-doublon ({@code topup_guard = false}) des recharges de portefeuille
+     * encore ouvertes d'un utilisateur et d'une devise, créées AVANT {@code createdBefore} :
+     * l'index unique partiel V331 ne les compte plus, une nouvelle recharge peut être créée.
+     * Le statut n'est pas touché (un paiement validé tardivement crédite quand même).
+     * Transaction propre (REQUIRES_NEW : commit avant la soumission, même si l'appelant est
+     * déjà dans une transaction, sinon l'UPDATE non commité bloquerait l'insertion de
+     * {@code PawapayOperationService.create} sous l'index unique), {@code flush + clear} en binôme (voir
+     * memory backend_modifying_clear_flush_trap).
+     *
+     * @return le nombre de recharges libérées
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+        UPDATE PawapayOperationEntity o
+           SET o.topupGuard = false
+         WHERE o.userId = :userId
+           AND o.currency = :currency
+           AND o.purpose = com.yadony.api.payments.pawapay.PawapayOperationPurpose.WALLET_TOPUP
+           AND o.kind = com.yadony.api.payments.pawapay.PawapayOperationKind.DEPOSIT
+           AND o.topupGuard = true
+           AND o.createdAt < :createdBefore
+           AND o.status NOT IN (com.yadony.api.payments.pawapay.PawapayOperationStatus.COMPLETED,
+                                com.yadony.api.payments.pawapay.PawapayOperationStatus.FAILED,
+                                com.yadony.api.payments.pawapay.PawapayOperationStatus.SUBMIT_REJECTED)
+        """)
+    int releaseExpiredTopupGuards(@Param("userId") UUID userId, @Param("currency") String currency,
+                                  @Param("createdBefore") LocalDateTime createdBefore);
 
     Optional<PawapayOperationEntity> findByIdAndUserId(UUID id, UUID userId);
 

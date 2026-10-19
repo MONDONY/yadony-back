@@ -85,9 +85,10 @@ public class PawapayOperationService {
                 throw inProgress(kind);
             }
             // Même filet, pour la recharge du portefeuille : la garde applicative lit avant
-            // d'écrire, deux requêtes concurrentes la franchissent toutes les deux. Le message
-            // rendu est celui de la garde, l'utilisateur ne doit pas voir deux textes selon
-            // qui des deux a gagné la course.
+            // d'écrire, deux requêtes concurrentes la franchissent toutes les deux ; l'index
+            // unique partiel (V331, qui ne compte que les recharges à topup_guard vrai, donc
+            // non expirées) est l'arbitre. Le message rendu est celui de la garde, l'utilisateur
+            // ne doit pas voir deux textes selon qui des deux a gagné la course.
             if (lowerCause.contains("uq_pawapay_ops_live_wallet_topup")) {
                 log.warn("pawaPay {} : recharge déjà en attente (course avec un create concurrent) pour userId={} : {}",
                         kind, userId, causeMessage);

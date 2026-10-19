@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @SpringBootTest
@@ -155,6 +156,49 @@ class PawapayOperationRepositoryTest {
         assertThat(repository.findFirstByPaymentIdAndKindAndStatusInOrderByCreatedAtDesc(paymentId,
                 PawapayOperationKind.PAYOUT, PawapayOperationStatus.LIVE_OR_DONE))
                 .get().extracting(PawapayOperationEntity::getId).isEqualTo(live.getId());
+    }
+
+    private PawapayOperationEntity topup(UUID userId, String currency) {
+        return repository.saveAndFlush(new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.DEPOSIT,
+                PawapayOperationPurpose.WALLET_TOPUP, userId, null, null, new BigDecimal("10000"), currency,
+                "ORANGE_CIV", "CI", "2250734567890"));
+    }
+
+    // Hors transaction de test : la libération s'exécute en REQUIRES_NEW (autre connexion) et ne
+    // verrait pas des lignes non commitées. Les lignes sont donc commitées puis supprimées.
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void releaseExpiredTopupGuards_releasesOnlyOpenTopupsOfThatUserAndCurrencyOlderThanTheBound() {
+        UUID userId = UUID.randomUUID();
+        UUID otherUserId = UUID.randomUUID();
+        try {
+            PawapayOperationEntity open = topup(userId, "XOF");
+            PawapayOperationEntity done = topup(userId, "XOF");
+            LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+            jdbc.update("UPDATE pawapay_operations SET status = 'COMPLETED' WHERE id = ?", done.getId());
+            PawapayOperationEntity otherCurrency = topup(userId, "XAF");
+            PawapayOperationEntity otherUser = topup(otherUserId, "XOF");
+            assertThat(open.isTopupGuard()).as("garde vraie par défaut").isTrue();
+
+            // Borne dans le passé : aucune recharge n'est « plus vieille » que la borne.
+            assertThat(repository.releaseExpiredTopupGuards(userId, "XOF", now.minusMinutes(15))).isZero();
+            assertThat(repository.findById(open.getId()).orElseThrow().isTopupGuard()).isTrue();
+
+            // Borne dans le futur : seule la recharge OUVERTE de cet utilisateur et de cette devise.
+            int released = repository.releaseExpiredTopupGuards(userId, "XOF", now.plusMinutes(1));
+
+            assertThat(released).isEqualTo(1);
+            PawapayOperationEntity reloaded = repository.findById(open.getId()).orElseThrow();
+            assertThat(reloaded.isTopupGuard()).isFalse();
+            assertThat(reloaded.getStatus()).as("le statut n'est pas touché").isEqualTo(PawapayOperationStatus.CREATED);
+            assertThat(repository.findById(done.getId()).orElseThrow().isTopupGuard()).isTrue();
+            assertThat(repository.findById(otherCurrency.getId()).orElseThrow().isTopupGuard()).isTrue();
+            assertThat(repository.findById(otherUser.getId()).orElseThrow().isTopupGuard()).isTrue();
+            // Idempotent.
+            assertThat(repository.releaseExpiredTopupGuards(userId, "XOF", now.plusMinutes(1))).isZero();
+        } finally {
+            jdbc.update("DELETE FROM pawapay_operations WHERE user_id IN (?, ?)", userId, otherUserId);
+        }
     }
 
     @Test

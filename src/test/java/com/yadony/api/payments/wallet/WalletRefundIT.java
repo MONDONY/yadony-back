@@ -593,11 +593,13 @@ class WalletRefundIT {
     /**
      * Filet de la garde « une seule recharge en attente » : la vérification applicative lit
      * avant d'écrire, deux requêtes concurrentes la franchissent toutes les deux. Seul l'index
-     * unique partiel {@code uq_pawapay_ops_live_wallet_topup} (V260) tranche — d'où ce test sur
-     * la VRAIE base, avec les vraies migrations : sur H2 il ne prouverait rien.
+     * unique partiel {@code uq_pawapay_ops_live_wallet_topup} (V260, recréé par V331 avec le
+     * prédicat {@code topup_guard}) tranche : d'où ce test sur la VRAIE base, avec les vraies
+     * migrations (sur H2 il ne prouverait rien). V331 : une recharge dont la garde a été
+     * libérée (ouverte depuis plus de 15 min) ne compte plus, sans changer son statut.
      */
     @Test
-    void create_uneSeuleRechargeVivanteParUtilisateurEtDevise() {
+    void create_uneSeuleRechargeVivanteParUtilisateurEtDevise_tantQueLaGardeEstVraie() {
         UUID userId = persistUser();
         PawapayOperationEntity first = liveTopup(userId, "XOF");
 
@@ -610,12 +612,27 @@ class WalletRefundIT {
         // XOF est en attente, les deux portefeuilles étant distincts.
         assertThat(liveTopup(userId, "XAF").getId()).isNotEqualTo(first.getId());
 
+        // Garde libérée (borne dans le futur : la recharge est « plus vieille » que la borne) :
+        // la première reste ACCEPTED/CREATED mais ne bloque plus la suivante.
+        assertThat(pawapayOperationRepository.releaseExpiredTopupGuards(userId, "XOF",
+                LocalDateTime.now(ZoneOffset.UTC).plusMinutes(1))).isEqualTo(1);
+        PawapayOperationEntity second = liveTopup(userId, "XOF");
+        assertThat(second.getId()).isNotEqualTo(first.getId());
+        assertThat(pawapayOperationRepository.findById(first.getId()).orElseThrow().isTopupGuard()).isFalse();
+        assertThat(pawapayOperationRepository.findById(first.getId()).orElseThrow().getStatus())
+                .isEqualTo(PawapayOperationStatus.CREATED);
+
+        // Et la nouvelle garde bloque de nouveau.
+        assertThatThrownBy(() -> liveTopup(userId, "XOF"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("topup-already-pending");
+
         // Une recharge TERMINÉE ne doit jamais bloquer la suivante, sinon on ne recharge
         // qu'une fois dans sa vie.
-        assertThat(pawapayOperations.apply(first.getId(), PawapayOperationStatus.COMPLETED, null, null, null, null,
+        assertThat(pawapayOperations.apply(second.getId(), PawapayOperationStatus.COMPLETED, null, null, null, null,
                 "{}", PawapayOperationService.Source.SYSTEM)).isTrue();
 
-        assertThat(liveTopup(userId, "XOF").getId()).isNotEqualTo(first.getId());
+        assertThat(liveTopup(userId, "XOF").getId()).isNotEqualTo(second.getId());
     }
 
     // --- Tâche 6, Step 1 : les 5 scénarios de bout en bout du brief. ---

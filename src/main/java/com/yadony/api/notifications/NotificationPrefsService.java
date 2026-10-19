@@ -146,7 +146,7 @@ public class NotificationPrefsService {
      */
     static final Set<String> ALWAYS_ON = Set.of(
             // Paiements et portefeuille
-            "CARD_EXPIRING", "wallet_topup_confirmed", "WALLET_ADJUSTED",
+            "CARD_EXPIRING", "wallet_topup_confirmed", "wallet_topup_failed", "WALLET_ADJUSTED",
             "STRIPE_ONBOARDING_INCOMPLETE",
             // Virement Stripe vers la banque du voyageur (arrivé, échoué)
             "BANK_PAYOUT_PAID", "BANK_PAYOUT_FAILED",

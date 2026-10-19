@@ -8,6 +8,7 @@ import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
 import com.yadony.api.payments.pawapay.PawapayErrors;
+import com.yadony.api.payments.pawapay.PawapayFailureCodes;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayOperationPurpose;
@@ -17,13 +18,18 @@ import com.yadony.api.payments.pawapay.PawapayProperties;
 import com.yadony.api.payments.pawapay.PawapayProviderResolver;
 import com.yadony.api.payments.pawapay.PawapayProviders;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
-import com.yadony.api.payments.pawapay.PawapayText;
+import com.yadony.api.payments.pawapay.PawapayValidationHints;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
 import com.yadony.api.payments.wallet.dto.WalletTopupRequest;
 import com.yadony.api.payments.wallet.dto.WalletTopupResponse;
 import com.yadony.api.payments.wallet.dto.WalletTopupStatusResponse;
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,6 +57,16 @@ public class WalletMobileMoneyTopupService {
     /** Libellé métier des journaux d'indisponibilité pawaPay — jamais un numéro. */
     static final String CONTEXT = "la recharge du portefeuille";
 
+    /**
+     * Délai de validation d'une recharge côté app : passé ce délai depuis sa création, elle
+     * est présentée comme expirée et ne bloque plus une nouvelle demande (sa garde
+     * {@code topup_guard} est libérée à la demande suivante, et la garde applicative ne regarde
+     * que les recharges plus jeunes). La ligne reste ouverte jusqu'à
+     * ce que pawaPay tranche (callback ou poller) : un paiement validé tardivement crédite
+     * quand même.
+     */
+    public static final Duration EXPIRY = Duration.ofMinutes(15);
+
     private final PawapayProviderResolver resolver;
     private final PawapaySubmissionService submission;
     private final PawapayOperationRepository operations;
@@ -58,11 +74,13 @@ public class WalletMobileMoneyTopupService {
     private final AuditService auditService;
     private final PawapayProperties props;
     private final MessagesResolver messagesResolver;
+    private final PawapayValidationHints validationHints;
 
     public WalletMobileMoneyTopupService(PawapayProviderResolver resolver, PawapaySubmissionService submission,
                                          PawapayOperationRepository operations, WalletService walletService,
                                          AuditService auditService, PawapayProperties props,
-                                         MessagesResolver messagesResolver) {
+                                         MessagesResolver messagesResolver,
+                                         PawapayValidationHints validationHints) {
         this.resolver = resolver;
         this.submission = submission;
         this.operations = operations;
@@ -70,6 +88,7 @@ public class WalletMobileMoneyTopupService {
         this.auditService = auditService;
         this.props = props;
         this.messagesResolver = messagesResolver;
+        this.validationHints = validationHints;
     }
 
     /**
@@ -95,12 +114,22 @@ public class WalletMobileMoneyTopupService {
         }
         String currency = resolved.config().currency();
         BigDecimal amount = withinBounds(m, request.getAmount(), resolved.config().deposit(), currency);
-        // Une seule recharge NON TERMINALE par utilisateur et devise : empiler les demandes
-        // de code sur un même téléphone n'apporte rien et multiplie les débits accidentels.
-        // OPEN et non LIVE_OR_DONE : une recharge déjà COMPLETED est finie, elle ne doit
-        // jamais bloquer la suivante.
-        if (operations.existsByUserIdAndKindAndCurrencyAndPurposeAndStatusIn(userId, PawapayOperationKind.DEPOSIT,
-                currency, PawapayOperationPurpose.WALLET_TOPUP, PawapayOperationStatus.OPEN)) {
+        // Une seule recharge NON TERMINALE ET NON EXPIRÉE par utilisateur et devise : empiler
+        // les demandes de code sur un même téléphone n'apporte rien et multiplie les débits
+        // accidentels. OPEN et non LIVE_OR_DONE : une recharge déjà COMPLETED est finie, elle
+        // ne doit jamais bloquer la suivante. Bornée à EXPIRY : une demande jamais validée
+        // (SMS non reçu, PIN oublié) ne doit pas bloquer l'utilisateur jusqu'à ce que pawaPay
+        // la déclare échouée.
+        // 1) Libérer la garde des recharges ouvertes de plus de EXPIRY (commit à part) : sans
+        //    cela l'index unique partiel (V331, qui ne compte que topup_guard) les verrait
+        //    encore. 2) Garde applicative, pour le message d'erreur du chemin normal.
+        //    3) Soumission : si deux requêtes simultanées franchissent la garde, l'index
+        //    tranche et PawapayOperationService.create le traduit en topup-already-pending.
+        LocalDateTime notExpiredSince = LocalDateTime.now(ZoneOffset.UTC).minus(EXPIRY);
+        operations.releaseExpiredTopupGuards(userId, currency, notExpiredSince);
+        if (operations.existsByUserIdAndKindAndCurrencyAndPurposeAndStatusInAndCreatedAtAfter(userId,
+                PawapayOperationKind.DEPOSIT, currency, PawapayOperationPurpose.WALLET_TOPUP,
+                PawapayOperationStatus.OPEN, notExpiredSince)) {
             throw PawapayErrors.walletTopupAlreadyPending();
         }
         String successfulUrl = null;
@@ -122,7 +151,7 @@ public class WalletMobileMoneyTopupService {
         auditService.log("wallet_topup", op.getId(), "MOBILE_MONEY_INITIATED", userId,
                 Map.of("currency", currency, "amount", amount.toPlainString(), "provider", op.getProvider(),
                         "msisdnMasked", op.getMsisdnMasked(), "status", op.getStatus().name()));
-        return WalletTopupResponse.mobileMoney(op);
+        return WalletTopupResponse.mobileMoney(op, expiresAt(op), validationHints.forProvider(op.getProvider()));
     }
 
     /**
@@ -137,14 +166,40 @@ public class WalletMobileMoneyTopupService {
                         && o.getKind() == PawapayOperationKind.DEPOSIT)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "topup-not-found",
                         "Not Found", "Recharge introuvable."));
+        return toStatusResponse(op);
+    }
+
+    /**
+     * Recharge mobile money encore ouverte de l'utilisateur, la plus récente, créée il y a
+     * moins de {@link #EXPIRY} : l'app la lit au démarrage pour reprendre l'écran d'attente
+     * (app tuée ou rouverte pendant la validation du PIN). Vide si aucune : une recharge
+     * finale ou expirée n'a plus d'écran d'attente à reprendre. La colonne {@code topup_guard}
+     * ne sert pas ici, elle n'est que le verrou d'unicité de la création.
+     */
+    @Transactional(readOnly = true)
+    public Optional<WalletTopupStatusResponse> pending(UUID userId) {
+        LocalDateTime notExpiredSince = LocalDateTime.now(ZoneOffset.UTC).minus(EXPIRY);
+        return operations.findFirstByUserIdAndKindAndPurposeAndStatusInAndCreatedAtAfterOrderByCreatedAtDesc(
+                userId, PawapayOperationKind.DEPOSIT, PawapayOperationPurpose.WALLET_TOPUP,
+                PawapayOperationStatus.OPEN, notExpiredSince).map(this::toStatusResponse);
+    }
+
+    private WalletTopupStatusResponse toStatusResponse(PawapayOperationEntity op) {
         String status = WalletTopupStatusResponse.statusOf(op.getStatus());
         // Solde relu seulement une fois la recharge confirmée : le renvoyer pendant l'attente
         // afficherait un solde d'avant crédit à côté d'un écran « recharge en cours ».
         BigDecimal balance = WalletTopupStatusResponse.CONFIRMED.equals(status)
-                ? walletService.getBalance(userId, op.getCurrency()) : null;
+                ? walletService.getBalance(op.getUserId(), op.getCurrency()) : null;
+        // Échec : code Yadony stable + message traduit dans la langue de la requête. Le message
+        // brut de l'opérateur n'est jamais reflété (ni tronqué, ni tel quel).
+        String failureCode = WalletTopupStatusResponse.FAILED.equals(status)
+                ? PawapayFailureCodes.toYadony(op.getFailureCode()) : null;
+        String failureReason = failureCode == null ? null
+                : messagesResolver.forRequest().get("topup.failure." + failureCode);
         return new WalletTopupStatusResponse(op.getId(), status, op.getAmount(), op.getCurrency(), op.getProvider(),
                 PawapayProviders.label(op.getProvider()), op.getMsisdnMasked(),
-                op.getAuthorizationUrl(), failureReason(op), balance);
+                op.getAuthorizationUrl(), failureReason, balance, expiresAt(op),
+                validationHints.forProvider(op.getProvider()), failureCode);
     }
 
     /**
@@ -225,9 +280,9 @@ public class WalletMobileMoneyTopupService {
         return m.get("problem.topup.amount.invalid", cents);
     }
 
-    /** Message d'échec borné ({@code failure_code} fait 64 caractères), jamais reflété brut. */
-    private static String failureReason(PawapayOperationEntity op) {
-        return op.getFailureMessage() != null ? PawapayText.clamp(op.getFailureMessage()) : op.getFailureCode();
+    /** Fin du délai de validation : création (UTC, {@code LocalDateTime} par convention du dépôt) + {@link #EXPIRY}. */
+    private static Instant expiresAt(PawapayOperationEntity op) {
+        return op.getCreatedAt().toInstant(ZoneOffset.UTC).plus(EXPIRY);
     }
 
     /** Libellé métier d'un numéro reconnu mais inexploitable pour une recharge. */

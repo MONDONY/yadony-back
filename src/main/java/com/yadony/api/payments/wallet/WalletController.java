@@ -156,6 +156,20 @@ public class WalletController {
         return ResponseEntity.ok(mobileMoneyTopupService.status(userId, topupId));
     }
 
+    /**
+     * Recharge mobile money en cours de l'utilisateur, pour que l'app reprenne l'écran
+     * d'attente après une fermeture. 204 si aucune recharge ouverte et non expirée. Déclarée
+     * à côté de {@code /topup/{topupId}/status} sans conflit : le chemin littéral
+     * {@code /topup/pending} n'a qu'un segment après {@code /topup}.
+     */
+    @GetMapping("/topup/pending")
+    public ResponseEntity<WalletTopupStatusResponse> topupPending() {
+        UUID userId = currentUserId();
+        return mobileMoneyTopupService.pending(userId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
+    }
+
     /** Recharge par carte depuis le portail PRO : session Stripe Checkout hébergée. */
     @PostMapping("/topup/checkout-session")
     public ResponseEntity<WalletTopupCheckoutResponse> topupCheckoutSession(

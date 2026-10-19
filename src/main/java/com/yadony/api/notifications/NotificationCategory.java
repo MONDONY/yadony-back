@@ -35,6 +35,7 @@ public enum NotificationCategory {
             "KYC_VERIFIED", "KYC_ACTION_REQUIRED", "KYC_RESET",
             "STRIPE_ONBOARDING_INCOMPLETE", "CARD_EXPIRING", "WALLET_ADJUSTED", "REFERRAL_REWARD_AVAILABLE",
             "BANK_PAYOUT_PAID", "BANK_PAYOUT_FAILED",
+            "wallet_topup_confirmed", "wallet_topup_failed",
             "negotiation_awaiting_payment", "negotiation_commission_pending",
             "negotiation_commission_declined", "negotiation_commission_expired",
             "BID_NEGOTIATION_COMMISSION_DUE");

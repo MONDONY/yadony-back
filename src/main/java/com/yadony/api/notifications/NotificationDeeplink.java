@@ -124,6 +124,9 @@ public final class NotificationDeeplink {
             case "BANK_PAYOUT_PAID" -> Optional.of("payments/money");
             case "BANK_PAYOUT_FAILED" -> Optional.of("payments/onboarding");
             case "REFERRAL_REWARD_AVAILABLE" -> Optional.of("profile/referral");
+            // Recharge du portefeuille par mobile money, confirmée ou non : l'écran du portefeuille
+            // (le solde à jour, ou le bouton pour réessayer). Aucun identifiant dans le lien.
+            case "wallet_topup_confirmed", "wallet_topup_failed" -> Optional.of("payments/wallet");
 
             default -> Optional.empty();
         };

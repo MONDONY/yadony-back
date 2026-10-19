@@ -1,7 +1,9 @@
 package com.yadony.api.payments.wallet.dto;
 
 import com.yadony.api.payments.pawapay.PawapayOperationStatus;
+import com.yadony.api.payments.pawapay.ValidationHint;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.UUID;
 
 /**
@@ -12,10 +14,17 @@ import java.util.UUID;
  *
  * @param walletBalance solde après crédit, uniquement sur {@code CONFIRMED} ; nul sinon,
  *                      pour ne pas laisser croire qu'un solde inchangé est un solde crédité
+ * @param failureReason message d'échec traduit dans la langue de la requête ; nul hors échec
+ * @param expiresAt     fin du délai de validation (création + 15 min)
+ * @param validationHint comment l'opérateur demande la validation au payeur
+ * @param failureCode   code d'échec Yadony stable ({@code insufficient-balance}, {@code other}…) ;
+ *                      nul hors échec
  */
 public record WalletTopupStatusResponse(UUID topupId, String status, BigDecimal amount, String currency,
                                         String provider, String providerLabel, String msisdnMasked,
-                                        String authorizationUrl, String failureReason, BigDecimal walletBalance) {
+                                        String authorizationUrl, String failureReason, BigDecimal walletBalance,
+                                        Instant expiresAt, ValidationHint validationHint,
+                                        String failureCode) {
 
     public static final String PENDING = "PENDING";
     public static final String CONFIRMED = "CONFIRMED";

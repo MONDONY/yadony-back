@@ -184,6 +184,16 @@ class NotificationDeeplinkTest {
         }
     }
 
+    /** Recharge du portefeuille (confirmée ou échouée) : l'écran du portefeuille, sans identifiant. */
+    @Test
+    void walletTopupTypes_openTheWallet() {
+        for (String type : new String[]{"wallet_topup_confirmed", "wallet_topup_failed"}) {
+            assertThat(NotificationDeeplink.of(type, Map.of())).contains("yadony://payments/wallet");
+            assertThat(NotificationDeeplink.of(type, Map.of("topupId", bidId, "failureCode", "other")))
+                    .contains("yadony://payments/wallet");
+        }
+    }
+
     @Test
     void fixedDestinations() {
         assertThat(NotificationDeeplink.of("KYC_VERIFIED", Map.of())).contains("yadony://kyc/status");

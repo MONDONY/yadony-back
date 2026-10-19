@@ -1829,6 +1829,23 @@ public class PaymentService {
         }
     }
 
+    /**
+     * {@code capability.updated} : n'alerte que sur une vraie perte, la transition
+     * {@code active → inactive} lue dans {@code previous_attributes.status}.
+     *
+     * <p>Une capacité demandée naît {@code inactive} pendant l'onboarding (statut précédent
+     * {@code unrequested}, ou statut inchangé et absent des attributs précédents). La traiter
+     * comme une perte passait le compte en cours d'ouverture DISABLED et levait une alerte
+     * INCIDENT : 5 fausses alertes le 18/10 sur 3 comptes (YADONY-BACK-PROD-C), et une course
+     * avec {@link #handleAccountUpdated} qui recalcule PENDING / COMPLETE au même moment.
+     *
+     * <p>Sur une vraie perte, le statut n'est plus forcé à DISABLED : il est recalculé depuis le
+     * compte relu chez Stripe, par la même règle que {@code account.updated}
+     * ({@link #deriveStripeAccountStatus}). Une simple pièce à fournir donne PENDING_ONBOARDING
+     * (l'utilisateur peut reprendre l'onboarding) au lieu d'un écran « compte désactivé » sans
+     * issue. Si la relecture échoue, DISABLED reste le repli prudent : il bloque les versements
+     * tant que Stripe n'a pas confirmé l'état du compte.
+     */
     void handleCapabilityUpdated(Event event) {
         event.getDataObjectDeserializer().getObject().ifPresent(obj -> {
             try {
@@ -1837,15 +1854,15 @@ public class PaymentService {
                 String status = cap.getStatus();
                 String capabilityId = cap.getId(); // e.g. "transfers", "card_payments"
                 if ("inactive".equals(status) && accountId != null) {
-                    userRepository.findByStripeAccountId(accountId).ifPresent(user -> {
-                        user.setStripeAccountStatus(StripeAccountStatus.DISABLED);
-                        userRepository.save(user);
-                        auditService.log("USER", user.getId(), "STRIPE_CAPABILITY_LOST",
-                                user.getId(), Map.of("capability", capabilityId, "status", status));
-                        adminAlert.raise("STRIPE_CAPABILITY_LOST",
-                                "Compte " + accountId + " a perdu la capacité " + capabilityId,
-                                Map.of("accountId", accountId, "status", status));
-                    });
+                    String previousStatus = previousCapabilityStatus(event);
+                    if (!"active".equals(previousStatus)) {
+                        // Capacité pas encore activée (onboarding en cours) : rien de perdu.
+                        log.info("Capability {} inactive on account {} (previous status: {}) — not a loss, ignored",
+                                capabilityId, accountId, previousStatus);
+                        return;
+                    }
+                    userRepository.findByStripeAccountId(accountId).ifPresent(user ->
+                            onCapabilityLost(user, cap, accountId, capabilityId, status));
                 } else if ("pending".equals(status)) {
                     log.info("Capability {} pending on account {} — awaiting Stripe review", capabilityId, accountId);
                 }
@@ -1853,6 +1870,50 @@ public class PaymentService {
                 log.warn("Could not parse capability.updated: {}", e.getMessage());
             }
         });
+    }
+
+    private void onCapabilityLost(UserEntity user, com.stripe.model.Capability cap,
+                                  String accountId, String capabilityId, String status) {
+        StripeAccountStatus newStatus = StripeAccountStatus.DISABLED;
+        try {
+            Account account = stripeGateway.retrieveAccount(accountId);
+            if (account != null) {
+                newStatus = deriveStripeAccountStatus(account);
+            }
+        } catch (StripeException e) {
+            log.warn("capability.updated: could not fetch account {} — falling back to DISABLED: {}",
+                    accountId, e.getMessage());
+        }
+        user.setStripeAccountStatus(newStatus);
+        userRepository.save(user);
+
+        Map<String, Object> context = new java.util.LinkedHashMap<>();
+        context.put("accountId", accountId);
+        context.put("capability", capabilityId);
+        context.put("status", status);
+        context.put("previousStatus", "active");
+        context.put("stripeAccountStatus", newStatus.name());
+        var requirements = cap.getRequirements();
+        if (requirements != null) {
+            if (requirements.getDisabledReason() != null) {
+                context.put("disabledReason", requirements.getDisabledReason());
+            }
+            if (requirements.getCurrentlyDue() != null && !requirements.getCurrentlyDue().isEmpty()) {
+                context.put("currentlyDue", String.join(", ", requirements.getCurrentlyDue()));
+            }
+        }
+        auditService.log("USER", user.getId(), "STRIPE_CAPABILITY_LOST", user.getId(), context);
+        adminAlert.raise("STRIPE_CAPABILITY_LOST",
+                "Compte " + accountId + " a perdu la capacité " + capabilityId,
+                context, accountId);
+    }
+
+    /** {@code previous_attributes.status} de l'évènement, ou {@code null} s'il est absent. */
+    private static String previousCapabilityStatus(Event event) {
+        Event.Data data = event.getData();
+        if (data == null || data.getPreviousAttributes() == null) return null;
+        Object previous = data.getPreviousAttributes().get("status");
+        return previous != null ? previous.toString() : null;
     }
 
     void handleRefundUpdated(Event event) {
