@@ -290,7 +290,8 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
      * {@code GET /bids/{bidId}/supplements/{id}/mobile-money/status}, pour l'expéditeur et le
      * voyageur. Même contrat que le statut du colis ({@code MobileMoneyPaymentStatusResponse}) :
      * {@code paymentStatus} traduit l'état du supplément ({@code PENDING}, {@code ESCROW} une fois
-     * payé, {@code RELEASED} versé, {@code REFUNDED}, {@code CANCELLED} clos sans paiement),
+     * payé, {@code RELEASED} versé, {@code REFUND_PENDING} remboursement en cours, {@code REFUNDED}
+     * remboursé, {@code CANCELLED} clos sans paiement),
      * {@code deadlineAt} est l'échéance de la demande, {@code amount} le brut.
      */
     @Transactional(readOnly = true)
@@ -316,19 +317,32 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
                         o.getProvider(), PawapayProviders.label(o.getProvider()), o.getMsisdnMasked(),
                         o.getAuthorizationUrl(), o.getFailureCode(), o.getFailureMessage()))
                 .orElse(null);
-        return new MobileMoneyPaymentStatusResponse(s.getBidId(), bidStatus, paymentStatus(s.getStatus()),
+        return new MobileMoneyPaymentStatusResponse(s.getBidId(), bidStatus, paymentStatus(s),
                 s.getExpiresAt(), s.getGrossAmount(), s.getCurrency(), view);
     }
 
-    /** Statut du supplément dans le vocabulaire du paiement mobile money du colis, lu par l'app. */
+    /**
+     * Statut du supplément dans le vocabulaire du paiement mobile money du colis, lu par l'app. Un
+     * remboursement pas encore confirmé par pawaPay est {@code REFUND_PENDING}, jamais {@code REFUNDED} :
+     * l'app ne compare {@code paymentStatus} qu'à {@code ESCROW}, {@code RELEASED} et {@code CANCELLED},
+     * une valeur nouvelle n'y est ni « payé » ni « annulé ».
+     */
     static String paymentStatus(BidSupplementStatus status) {
         return switch (status) {
             case COMMISSION_PENDING, PROPOSED, PAYMENT_PENDING -> "PENDING";
             case PAID, PAYOUT_PENDING -> "ESCROW";
             case PAID_OUT -> "RELEASED";
-            case REFUND_PENDING, REFUNDED -> "REFUNDED";
+            case REFUND_PENDING -> "REFUND_PENDING";
+            case REFUNDED -> "REFUNDED";
             case DECLINED, EXPIRED, WITHDRAWN, CANCELLED -> "CANCELLED";
         };
+    }
+
+    /** Comme {@link #paymentStatus(BidSupplementStatus)} ; un paiement tardif encore à rendre est en cours de remboursement. */
+    static String paymentStatus(BidSupplementEntity s) {
+        boolean lateUnrefunded = BidSupplementCardLedger.CLOSED_UNPAID.contains(s.getStatus())
+                && s.getPaidAt() != null && s.getRefundedAt() == null;
+        return lateUnrefunded ? "REFUND_PENDING" : paymentStatus(s.getStatus());
     }
 
     // ── Aides ────────────────────────────────────────────────────────────────

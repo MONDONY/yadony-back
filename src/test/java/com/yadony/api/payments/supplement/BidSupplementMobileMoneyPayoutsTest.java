@@ -26,6 +26,7 @@ import org.springframework.http.HttpStatus;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -55,7 +56,9 @@ class BidSupplementMobileMoneyPayoutsTest {
     @Mock PayoutHoldPolicy holdPolicy;
     @Mock DisputeRepository disputes;
     @Mock AdminAlertEscalator alerts;
+    @Mock com.yadony.api.payments.pawapay.PawapayClient client;
 
+    private final BidSupplementProperties properties = new BidSupplementProperties();
     private BidSupplementMobileMoneyPayouts payouts;
     private BidSupplementEntity s;
     private UserEntity traveler;
@@ -65,7 +68,9 @@ class BidSupplementMobileMoneyPayoutsTest {
     @BeforeEach
     void setUp() {
         payouts = new BidSupplementMobileMoneyPayouts(ledger, supplements, users, payments, operations, submission,
-                holdPolicy, disputes, alerts);
+                holdPolicy, disputes, alerts, client, properties);
+        lenient().when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", config("ORANGE_SEN", null, null),
+                "WAVE_SEN", config("WAVE_SEN", null, null)));
         traveler = new UserEntity();
         setId(traveler, UUID.randomUUID());
         traveler.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
@@ -94,6 +99,14 @@ class BidSupplementMobileMoneyPayoutsTest {
         lenient().when(ledger.beginPayout(s.getId())).thenReturn(Optional.of(claim));
         lenient().when(payments.findForBid(s.getBidId())).thenReturn(Optional.of(principal));
         lenient().when(operations.findLiveForSupplement(s.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
+    }
+
+    private static com.yadony.api.payments.pawapay.dto.PawapayProviderConfig config(String provider, String min,
+                                                                                   String max) {
+        com.yadony.api.payments.pawapay.dto.PawapayProviderConfig.Limits limits =
+                new com.yadony.api.payments.pawapay.dto.PawapayProviderConfig.Limits(
+                        min == null ? null : new BigDecimal(min), max == null ? null : new BigDecimal(max), null, null);
+        return new com.yadony.api.payments.pawapay.dto.PawapayProviderConfig(provider, "SEN", "XOF", limits, limits);
     }
 
     private PawapayOperationEntity op(PawapayOperationKind kind, PawapayOperationStatus status, String msisdn,
@@ -196,7 +209,7 @@ class BidSupplementMobileMoneyPayoutsTest {
 
         PawapayOperationEntity created = op(PawapayOperationKind.PAYOUT, PawapayOperationStatus.CREATED,
                 "221770000002", "ORANGE_SEN");
-        when(operations.findLiveForSupplement(s.getId(), PawapayOperationKind.PAYOUT))
+        lenient().when(operations.findLiveForSupplement(s.getId(), PawapayOperationKind.PAYOUT))
                 .thenReturn(Optional.empty(), Optional.of(created));
         org.mockito.Mockito.doThrow(new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
                         "mobile-money-provider-unavailable", "Down", "panne"))
@@ -234,5 +247,89 @@ class BidSupplementMobileMoneyPayoutsTest {
         payouts.payoutForBid(s.getBidId());
         verify(submission).submitSupplementPayout(eq(s.getId()), any(), any(), any(), any(), any(), any(),
                 startsWith("supp-"));
+    }
+
+    // ── Corrections de relecture ─────────────────────────────────────────────
+
+    @Test
+    void versement_apresTroisEchecs_plusDeSoumission_alerteManuelle() {
+        when(operations.countDeadForSupplement(s.getId(), PawapayOperationKind.PAYOUT)).thenReturn(3L);
+
+        assertThat(payouts.payout(s.getId())).isFalse();
+
+        verify(alerts).raiseOnce(eq("SUPP_MM_PAYOUT_MANUAL_" + s.getId()), anyString(), anyMap());
+        verify(ledger, never()).beginPayout(any());
+        verifyNoInteractions(submission);
+    }
+
+    @Test
+    void versement_plafondReglable() {
+        properties.setMmMaxAttempts(5);
+        when(operations.countDeadForSupplement(s.getId(), PawapayOperationKind.PAYOUT)).thenReturn(3L);
+        when(submission.submitSupplementPayout(any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(op(PawapayOperationKind.PAYOUT, PawapayOperationStatus.ACCEPTED, "221770000002", "ORANGE_SEN"));
+        assertThat(payouts.payout(s.getId())).isTrue();
+    }
+
+    @Test
+    void versement_horsLimitesDeLOperateur_pasDeSoumission_restePaye() {
+        when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", config("ORANGE_SEN", "100", "5000")));
+
+        assertThat(payouts.payout(s.getId())).isFalse();
+
+        verify(alerts).raiseOnce(eq("SUPP_MM_PAYOUT_LIMITS_" + s.getId()), anyString(), anyMap());
+        verify(ledger, never()).beginPayout(any());
+        verifyNoInteractions(submission);
+    }
+
+    @Test
+    void versement_operateurAbsentDeLaConfiguration_pasDeSoumission() {
+        when(client.activeConfiguration()).thenReturn(Map.of());
+        assertThat(payouts.payout(s.getId())).isFalse();
+        verify(alerts).raiseOnce(eq("SUPP_MM_PAYOUT_LIMITS_" + s.getId()), anyString(), anyMap());
+        verifyNoInteractions(submission);
+    }
+
+    @Test
+    void versement_configurationIllisible_soumisQuandMeme() {
+        when(client.activeConfiguration()).thenThrow(new IllegalStateException("pawaPay muet"));
+        when(submission.submitSupplementPayout(any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(op(PawapayOperationKind.PAYOUT, PawapayOperationStatus.ACCEPTED, "221770000002", "ORANGE_SEN"));
+        assertThat(payouts.payout(s.getId())).isTrue();
+    }
+
+    @Test
+    void reprise_sansOperation_rejoueLesGardes_avantDeSoumettre() {
+        s.setStatus(BidSupplementStatus.PAYOUT_PENDING);
+        when(ledger.pendingPayout(s.getId())).thenReturn(Optional.of(claim));
+        when(holdPolicy.isHeld(traveler.getId())).thenReturn(true);
+
+        assertThat(payouts.resume(s.getId())).isFalse();
+
+        verify(ledger).revertPayout(s.getId(), "PAYOUT_HOLD");
+        verify(alerts).raiseOnce(eq("SUPP_PAYOUT_BLOCKED_" + s.getId()), anyString(), anyMap());
+        verifyNoInteractions(submission);
+    }
+
+    @Test
+    void reprise_sansOperation_plafondAtteint_retourAPaye() {
+        s.setStatus(BidSupplementStatus.PAYOUT_PENDING);
+        when(ledger.pendingPayout(s.getId())).thenReturn(Optional.of(claim));
+        when(operations.countDeadForSupplement(s.getId(), PawapayOperationKind.PAYOUT)).thenReturn(3L);
+
+        assertThat(payouts.resume(s.getId())).isFalse();
+
+        verify(ledger).revertPayout(eq(s.getId()), anyString());
+        verifyNoInteractions(submission);
+    }
+
+    @Test
+    void reprise_sansOperation_gardesLevees_soumet() {
+        s.setStatus(BidSupplementStatus.PAYOUT_PENDING);
+        when(ledger.pendingPayout(s.getId())).thenReturn(Optional.of(claim));
+        when(submission.submitSupplementPayout(any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(op(PawapayOperationKind.PAYOUT, PawapayOperationStatus.ACCEPTED, "221770000002", "ORANGE_SEN"));
+        assertThat(payouts.resume(s.getId())).isTrue();
+        verify(ledger, never()).revertPayout(any(), any());
     }
 }

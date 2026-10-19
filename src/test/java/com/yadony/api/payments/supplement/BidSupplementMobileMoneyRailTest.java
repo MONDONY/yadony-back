@@ -337,11 +337,24 @@ class BidSupplementMobileMoneyRailTest {
         assertThat(BidSupplementMobileMoneyRail.paymentStatus(BidSupplementStatus.PAID)).isEqualTo("ESCROW");
         assertThat(BidSupplementMobileMoneyRail.paymentStatus(BidSupplementStatus.PAYOUT_PENDING)).isEqualTo("ESCROW");
         assertThat(BidSupplementMobileMoneyRail.paymentStatus(BidSupplementStatus.PAID_OUT)).isEqualTo("RELEASED");
-        assertThat(BidSupplementMobileMoneyRail.paymentStatus(BidSupplementStatus.REFUND_PENDING)).isEqualTo("REFUNDED");
+        assertThat(BidSupplementMobileMoneyRail.paymentStatus(BidSupplementStatus.REFUND_PENDING))
+                .as("remboursement en cours, jamais annoncé comme fait").isEqualTo("REFUND_PENDING");
         assertThat(BidSupplementMobileMoneyRail.paymentStatus(BidSupplementStatus.REFUNDED)).isEqualTo("REFUNDED");
         for (BidSupplementStatus closed : BidSupplementCardLedger.CLOSED_UNPAID) {
             assertThat(BidSupplementMobileMoneyRail.paymentStatus(closed)).isEqualTo("CANCELLED");
         }
+    }
+
+    @Test
+    void statut_paiementTardifARendre_remboursementEnCours() {
+        when(operations.findLatestForSupplement(s.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
+        s.setStatus(BidSupplementStatus.DECLINED);
+        assertThat(rail(true).status(bid.getId(), s.getId(), "uid-sender").paymentStatus()).isEqualTo("CANCELLED");
+        s.setPaidAt(NOW_UTC);
+        assertThat(rail(true).status(bid.getId(), s.getId(), "uid-sender").paymentStatus()).isEqualTo("REFUND_PENDING");
+        s.setRefundedAt(NOW_UTC);
+        s.setStatus(BidSupplementStatus.REFUNDED);
+        assertThat(rail(true).status(bid.getId(), s.getId(), "uid-sender").paymentStatus()).isEqualTo("REFUNDED");
     }
 
     // ── Catalogue du payeur ──────────────────────────────────────────────────

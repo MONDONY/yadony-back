@@ -24,9 +24,10 @@ import java.util.UUID;
  * ({@code related_operation_id} = le dépôt), comme {@code RefundProcessor.refundEscrowedMobileMoney}.
  *
  * <p>Réservation en transaction courte ({@code PAID → REFUND_PENDING}), soumission hors
- * transaction, puis {@code REFUNDED} à la confirmation ({@link BidSupplementOutcomeListener}). Refus,
- * échec ou opérateur sans remboursement : le supplément reste à rembourser, alerte admin, le filet
- * réessaie. Jamais de remboursement si un versement du supplément existe déjà.
+ * transaction, puis {@code REFUNDED} à la confirmation ({@link BidSupplementOutcomeListener}). Refus ou
+ * échec : le supplément reste à rembourser, alerte admin, le filet réessaie, au plus
+ * {@code mm-max-attempts} opérations mortes ; au-delà, ou opérateur sans remboursement, plus aucune
+ * soumission automatique (intervention manuelle). Jamais de remboursement après un versement.
  */
 @Component
 public class BidSupplementMobileMoneyRefunds {
@@ -38,15 +39,17 @@ public class BidSupplementMobileMoneyRefunds {
     private final PawapaySubmissionService submission;
     private final PawapayClient client;
     private final AdminAlertEscalator alerts;
+    private final BidSupplementProperties properties;
 
     public BidSupplementMobileMoneyRefunds(BidSupplementMobileMoneyLedger ledger, PawapayOperationService operations,
                                            PawapaySubmissionService submission, PawapayClient client,
-                                           AdminAlertEscalator alerts) {
+                                           AdminAlertEscalator alerts, BidSupplementProperties properties) {
         this.ledger = ledger;
         this.operations = operations;
         this.submission = submission;
         this.client = client;
         this.alerts = alerts;
+        this.properties = properties;
     }
 
     /** @return vrai si un remboursement a été soumis (ou constaté abouti) par cet appel. */
@@ -96,6 +99,15 @@ public class BidSupplementMobileMoneyRefunds {
             return false;
         }
         PawapayOperationEntity depositOp = deposit.get();
+        long dead = operations.countDeadForSupplement(id, PawapayOperationKind.REFUND);
+        if (dead >= properties.getMmMaxAttempts()) {
+            // Échec définitif probable (dépôt trop ancien, déjà remboursé, solde) : plus de soumission.
+            alerts.raiseOnce("SUPP_MM_REFUND_MANUAL_" + id,
+                    "Remboursement mobile money du supplément " + id + " : " + dead + " échecs, plus de nouvelle "
+                            + "tentative automatique, intervention manuelle requise",
+                    context(claim, Map.of("deadOperations", dead)));
+            return false;
+        }
         if (Boolean.FALSE.equals(supportsRefund(depositOp))) {
             // v1 : pas de repli par versement vers le numéro payeur (noté pour une v2).
             alerts.raiseOnce("SUPP_MM_NO_REFUND_" + id,

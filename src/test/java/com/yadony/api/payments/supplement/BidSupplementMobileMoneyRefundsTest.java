@@ -42,6 +42,7 @@ class BidSupplementMobileMoneyRefundsTest {
     @Mock PawapayClient client;
     @Mock AdminAlertEscalator alerts;
 
+    private final BidSupplementProperties properties = new BidSupplementProperties();
     private BidSupplementMobileMoneyRefunds refunds;
     private final UUID id = UUID.randomUUID();
     private final UUID senderId = UUID.randomUUID();
@@ -50,7 +51,7 @@ class BidSupplementMobileMoneyRefundsTest {
 
     @BeforeEach
     void setUp() {
-        refunds = new BidSupplementMobileMoneyRefunds(ledger, operations, submission, client, alerts);
+        refunds = new BidSupplementMobileMoneyRefunds(ledger, operations, submission, client, alerts, properties);
         claim = new BidSupplementMobileMoneyLedger.Claim(id, UUID.randomUUID(), senderId, UUID.randomUUID(),
                 new BigDecimal("13000"), new BigDecimal("13700"), "XOF", BidSupplementStatus.REFUND_PENDING,
                 LocalDateTime.now());
@@ -165,5 +166,23 @@ class BidSupplementMobileMoneyRefundsTest {
         when(submission.submitSupplementRefund(any(), any(), any(), any())).thenThrow(new IllegalStateException("muet"));
         assertThat(refunds.refund(id)).isTrue();
         verify(alerts, never()).raiseOnce(eq("SUPP_REFUND_FAILED_" + id), anyString(), anyMap());
+    }
+
+    @Test
+    void remboursement_apresTroisEchecs_plusDeSoumission_alerteManuelle() {
+        when(operations.countDeadForSupplement(id, PawapayOperationKind.REFUND)).thenReturn(3L);
+
+        assertThat(refunds.refund(id)).isFalse();
+
+        verify(alerts).raiseOnce(eq("SUPP_MM_REFUND_MANUAL_" + id), anyString(), anyMap());
+        verifyNoInteractions(submission);
+    }
+
+    @Test
+    void remboursement_sousLePlafond_soumis() {
+        when(operations.countDeadForSupplement(id, PawapayOperationKind.REFUND)).thenReturn(2L);
+        when(submission.submitSupplementRefund(any(), any(), any(), any()))
+                .thenReturn(op(PawapayOperationKind.REFUND, PawapayOperationStatus.ACCEPTED));
+        assertThat(refunds.refund(id)).isTrue();
     }
 }

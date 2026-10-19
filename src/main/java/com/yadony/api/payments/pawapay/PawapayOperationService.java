@@ -245,6 +245,12 @@ public class PawapayOperationService {
                 PawapayOperationStatus.LIVE_OR_DONE);
     }
 
+    /** Opérations mortes (échouées ou refusées à la soumission) d'un supplément, pour ce type. */
+    @Transactional(readOnly = true)
+    public long countDeadForSupplement(UUID bidSupplementId, PawapayOperationKind kind) {
+        return repository.countByBidSupplementIdAndKindAndStatusIn(bidSupplementId, kind, PawapayOperationStatus.DEAD);
+    }
+
     /** Dernière opération d'un supplément pour ce type, quel que soit son statut. */
     @Transactional(readOnly = true)
     public Optional<PawapayOperationEntity> findLatestForSupplement(UUID bidSupplementId, PawapayOperationKind kind) {
