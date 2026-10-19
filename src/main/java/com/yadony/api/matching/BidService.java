@@ -1720,29 +1720,15 @@ public class BidService {
                 ? cancellation.getRematchStatus()
                 : null;
 
-        // Compute total net: sum of grid items + KG part (for display in Flutter)
-        //
-        // Bid issu d'une négociation : l'accord figé EST le total, on ne le recompose
-        // pas. Le recomposer double-compterait les articles de grille (le prix négocié
-        // les couvre déjà, et le prix/kg vient d'être réécrit depuis ce même prix) et
-        // ignorerait complètement les articles hors grille, que le voyageur n'a jamais
-        // tarifés. L'expéditeur verrait alors dans « Mes envois » un total différent de
-        // celui du fil, et différent encore de ce qui lui est réellement débité.
-        java.math.BigDecimal totalNetAmountEur;
-        if (bid.getNegotiatedNetEur() != null) {
-            totalNetAmountEur = bid.getNegotiatedNetEur().setScale(2, java.math.RoundingMode.HALF_UP);
-        } else {
-            java.util.List<BidGridItemEntity> bidGridItems = prefetch != null
-                    ? prefetch.gridItems(bid.getId())
-                    : bidGridItemRepository.findByBidId(bid.getId());
-            java.math.BigDecimal gridNet = bidGridItems.stream()
-                    .map(i -> i.getUnitPriceNetSnapshot().multiply(java.math.BigDecimal.valueOf(i.getQuantity())))
-                    .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
-            java.math.BigDecimal kgNet = (bid.getWeightKg() != null && pricePerKg != null)
-                    ? bid.getWeightKg().multiply(pricePerKg)
-                    : java.math.BigDecimal.ZERO;
-            totalNetAmountEur = gridNet.add(kgNet).setScale(2, java.math.RoundingMode.HALF_UP);
-        }
+        // Net total (règle unique BidNetTotal) : l'accord négocié tel quel, sinon grille + kilo.
+        // L'expéditeur verrait sinon dans « Mes envois » un total différent de celui du fil,
+        // et différent encore de ce qui lui est réellement débité.
+        java.math.BigDecimal totalNetAmountEur = BidNetTotal.compute(bid, announcement,
+                bid.getNegotiatedNetEur() != null
+                        ? java.util.List.of()
+                        : prefetch != null
+                                ? prefetch.gridItems(bid.getId())
+                                : bidGridItemRepository.findByBidId(bid.getId()));
 
         // Montant total payé par l'EXPÉDITEUR = net + commission, dans les DEUX
         // modes de paiement. En carte, il règle le brut à Yadony. En espèces, il
