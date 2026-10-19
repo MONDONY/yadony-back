@@ -116,11 +116,11 @@ class MoneyIntegrityMonitorIT {
     }
 
     @Test
-    void lesDixSeptInvariantsTournentSurLeSchemaReelEtSontAZeroSurUneBaseVide() {
+    void lesDixHuitInvariantsTournentSurLeSchemaReelEtSontAZeroSurUneBaseVide() {
         Map<String, Long> counts = monitor.runAll();
 
         assertThat(counts).hasSize(MoneyInvariants.ALL.size());
-        assertThat(MoneyInvariants.ALL).hasSize(17);
+        assertThat(MoneyInvariants.ALL).hasSize(18);
         assertThat(counts.values()).allSatisfy(n -> assertThat(n).isZero());
         verify(alertEscalator, never()).raiseOnce(anyString(), anyString(), anyString(), anyMap());
     }

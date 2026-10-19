@@ -97,7 +97,7 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
     @Override
     public SupplementAcceptResponse accept(BidSupplementEntity supplement, UserEntity sender) {
         ledger.startPayment(supplement);
-        BidSupplementResponse view = BidSupplementViews.of(supplement, true, storage, window.now());
+        BidSupplementResponse view = BidSupplementViews.of(supplement, true, storage, window);
         return new SupplementAcceptResponse(view, BidSupplementRail.PAWAPAY.name(), null, null,
                 supplement.getGrossAmount(), supplement.getCurrency());
     }

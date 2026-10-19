@@ -56,6 +56,31 @@ class BidSupplementHandoverGateTest {
     }
 
     @Test
+    void commissionEn3dsDepuisMoinsDe30Min_bloqueLaRemise() {
+        BidSupplementEntity s = open(BidSupplementStatus.COMMISSION_PENDING, NOW_UTC.plusMinutes(90));
+        setCreatedAt(s, NOW_UTC.minusMinutes(29));
+        assertThat(gate.blockingCode(bidId)).contains("handover-supplement-pending");
+        verify(service, never()).expireUnderBidLock(any());
+    }
+
+    @Test
+    void commissionEn3dsDepuisPlusDe30Min_neBloquePlus_etEstAnnuleeSansAttendreLeFilet() {
+        // Relecture B4 : l'échéance (2 h) n'est pas passée, mais la 3DS n'a jamais été confirmée dans
+        // le délai de 30 min ; le filet l'annulerait à son prochain passage, la remise n'attend pas.
+        BidSupplementEntity s = open(BidSupplementStatus.COMMISSION_PENDING, NOW_UTC.plusMinutes(90));
+        setCreatedAt(s, NOW_UTC.minusMinutes(30));
+        assertThat(gate.blockingCode(bidId)).isEmpty();
+        verify(service).expireUnderBidLock(s);
+    }
+
+    @Test
+    void lesTrenteMinutesNeConcernentQueLaCommission_uneDemandeProposeeAncienneBloqueToujours() {
+        BidSupplementEntity s = open(BidSupplementStatus.PROPOSED, NOW_UTC.plusMinutes(10));
+        setCreatedAt(s, NOW_UTC.minusMinutes(110));
+        assertThat(gate.blockingCode(bidId)).contains("handover-supplement-pending");
+    }
+
+    @Test
     void paiementEnVol_bloqueMemeEchu() {
         open(BidSupplementStatus.PAYMENT_PENDING, NOW_UTC.minusMinutes(30));
         assertThat(gate.blockingCode(bidId)).contains("handover-supplement-pending");
@@ -66,5 +91,15 @@ class BidSupplementHandoverGateTest {
     void aucuneDemandeOuverte_laisseLaRemise() {
         when(supplements.findByBidIdAndStatusInForUpdate(bidId, BidSupplementStatus.OPEN)).thenReturn(Optional.empty());
         assertThat(gate.blockingCode(bidId)).isEmpty();
+    }
+
+    private static void setCreatedAt(BidSupplementEntity s, LocalDateTime createdAt) {
+        try {
+            java.lang.reflect.Field f = com.yadony.api.common.BaseEntity.class.getDeclaredField("createdAt");
+            f.setAccessible(true);
+            f.set(s, createdAt);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
     }
 }

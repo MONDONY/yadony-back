@@ -55,13 +55,13 @@ class BidSupplementCardRailTest {
     @Mock StorageService storage;
 
     private BidSupplementCardRail rail;
+    private BidSupplementWindow window;
     private BidSupplementEntity s;
     private UserEntity sender;
 
     @BeforeEach
     void setUp() {
-        BidSupplementWindow window = new BidSupplementWindow(new BidSupplementProperties(),
-                Clock.fixed(NOW, ZoneOffset.UTC));
+        window = new BidSupplementWindow(new BidSupplementProperties(), Clock.fixed(NOW, ZoneOffset.UTC));
         rail = new BidSupplementCardRail(gateway, ledger, supplements, users, paymentService, storage, window,
                 "pk_test_1");
         sender = new UserEntity();
@@ -117,7 +117,7 @@ class BidSupplementCardRailTest {
         when(ledger.storePaymentIntent(s.getId(), 1, "pi_1")).thenReturn(stored);
 
         SupplementAcceptResponse r = rail.afterAcceptCommit(new SupplementAcceptResponse(
-                BidSupplementViews.of(s, true, storage, LocalDateTime.now()), "STRIPE", null, null,
+                BidSupplementViews.of(s, true, storage, window), "STRIPE", null, null,
                 s.getGrossAmount(), "EUR", "pk_test_1"));
 
         PaymentIntentCreateParams p = params.getValue();
@@ -159,7 +159,7 @@ class BidSupplementCardRailTest {
         when(ledger.storePaymentIntent(s.getId(), 1, "pi_1")).thenReturn(copyWithPi("pi_1"));
 
         SupplementAcceptResponse r = rail.afterAcceptCommit(new SupplementAcceptResponse(
-                BidSupplementViews.of(s, true, storage, LocalDateTime.now()), "STRIPE", null, null,
+                BidSupplementViews.of(s, true, storage, window), "STRIPE", null, null,
                 s.getGrossAmount(), "EUR", "pk_test_1"));
 
         PaymentIntentCreateParams p = params.getValue();

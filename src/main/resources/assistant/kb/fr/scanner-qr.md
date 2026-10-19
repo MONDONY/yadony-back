@@ -11,4 +11,5 @@ routes:
 Pour valider une étape, ouvrez l'onglet Suivi en mode « Valider une étape », choisissez votre trajet et scannez le QR du colis : chaque scan valide l'étape suivante (récupération, transit facultatif, arrivée).
 Si le QR est illisible, touchez « QR illisible ? Saisir le numéro » et entrez le numéro de suivi DON-… ; une photo du colis est alors obligatoire.
 Sans réseau, le scan est mémorisé et envoyé dès le retour de la connexion (voir Lectures hors-ligne).
+Si un supplément de prix attend la réponse ou le paiement de l'expéditeur, le scan de remise est bloqué jusqu'à sa réponse.
 Si la caméra est refusée, autorisez-la dans les réglages de votre téléphone.

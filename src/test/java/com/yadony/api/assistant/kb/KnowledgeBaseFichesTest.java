@@ -147,6 +147,24 @@ class KnowledgeBaseFichesTest {
     }
 
     @Test
+    void leSupplementDePrixTrouveSaFicheDansLesDeuxLangues() {
+        KnowledgeBase kb = productionKb();
+        assertThat(firstHit(kb, "fr", "Comment demander un supplément à l'expéditeur ?")).isEqualTo("supplement-prix");
+        assertThat(firstHit(kb, "fr", "Le voyageur me demande de payer plus, que faire ?")).isEqualTo("supplement-prix");
+        assertThat(firstHit(kb, "fr", "supplément")).isEqualTo("supplement-prix");
+        assertThat(firstHit(kb, "en", "How do I request an extra charge?")).isEqualTo("supplement-prix");
+        assertThat(firstHit(kb, "en", "The traveler asks me to pay more, what can I do?")).isEqualTo("supplement-prix");
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        for (String locale : List.of("fr", "en")) {
+            KbArticle fiche = corpus.articles(locale).stream().filter(a -> a.id().equals("supplement-prix"))
+                    .findFirst().orElseThrow();
+            // Règles réelles du code (BidSupplementProperties) : bornes, plafond, délai, marge avant départ.
+            assertThat(fiche.body()).as(locale).contains("300").contains("2").contains("15").contains("30");
+            assertThat(fiche.routes()).extracting(KbRoute::path).containsExactly("/demandes", "/envois", "/tracking");
+        }
+    }
+
+    @Test
     void leNumeroDejaUtiliseMeneAChangerNumero() {
         // YADONY-FLUTTER-PROD-Y : le 409 « numéro déjà utilisé » doit trouver sa réponse.
         KnowledgeBase kb = productionKb();

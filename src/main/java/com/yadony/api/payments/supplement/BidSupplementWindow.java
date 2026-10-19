@@ -36,6 +36,11 @@ public class BidSupplementWindow {
         this.clock = clock;
     }
 
+    /** Délai laissé au voyageur pour confirmer la 3DS de la commission d'un supplément espèces. */
+    public java.time.Duration commissionConfirmWindow() {
+        return properties.getCommissionConfirmWindow();
+    }
+
     /** Maintenant, en UTC (colonnes {@code TIMESTAMP} de la base). */
     public LocalDateTime now() {
         return LocalDateTime.now(clock.withZone(ZoneOffset.UTC));

@@ -5,12 +5,16 @@ import com.yadony.api.payments.integrity.MoneyInvariant.Severity;
 import java.util.List;
 
 /**
- * Les 17 règles de cohérence de l'argent vérifiées par {@link MoneyIntegrityMonitor}. Écrites
+ * Les 18 règles de cohérence de l'argent vérifiées par {@link MoneyIntegrityMonitor}. Écrites
  * le 05/10 contre le schéma réel ; {@code MoneyIntegrityMonitorIT} les exécute toutes sur
  * Postgres embarqué avec les migrations, une colonne renommée y casse avant la production.
  *
  * <p>Familles : wallet (01-03, 14, 15), séquestre (04-06, 08), montants et devises (07, 17),
- * doublons et commission (09, 10), prestataires (11-13, 16).
+ * doublons et commission (09, 10), prestataires (11-13, 16), supplément de prix à la remise (18).
+ *
+ * <p>Les colonnes {@code TIMESTAMP} sans fuseau écrites en UTC ({@code bid_supplements},
+ * {@code payment_splits}) se comparent à {@code now() AT TIME ZONE 'UTC'}, jamais à {@code now()} :
+ * le résultat ne dépend pas du fuseau de la session.
  */
 public final class MoneyInvariants {
 
@@ -54,8 +58,8 @@ public final class MoneyInvariants {
                     SELECT 'SIGNE_INCOHERENT_AVEC_TYPE', t.id, t.user_id, t.currency, t.amount
                     FROM wallet_transactions t
                     WHERE (t.type IN ('TOP_UP','REFUND','REFERRAL_REWARD','ADMIN_CREDIT','TOP_UP_CODE') AND t.amount <= 0)
-                       OR (t.type IN ('BID_PAYMENT','COMMISSION_DEDUCTED','ADMIN_REFUND_OUT','SELF_REFUND_OUT','FORFEITED_ON_DELETION','ADMIN_DEBIT') AND t.amount > 0)
-                       OR (t.type IN ('BID_PAYMENT','ADMIN_REFUND_OUT','SELF_REFUND_OUT','FORFEITED_ON_DELETION','ADMIN_DEBIT') AND t.amount = 0)
+                       OR (t.type IN ('BID_PAYMENT','COMMISSION_DEDUCTED','ADMIN_REFUND_OUT','SELF_REFUND_OUT','FORFEITED_ON_DELETION','ADMIN_DEBIT','SUPPLEMENT_COMMISSION_DEDUCTED') AND t.amount > 0)
+                       OR (t.type IN ('BID_PAYMENT','ADMIN_REFUND_OUT','SELF_REFUND_OUT','FORFEITED_ON_DELETION','ADMIN_DEBIT','SUPPLEMENT_COMMISSION_DEDUCTED') AND t.amount = 0)
                     UNION ALL
                     SELECT 'AJUSTEMENT_ADMIN_SANS_AUTEUR', t.id, t.user_id, t.currency, t.amount
                     FROM wallet_transactions t
@@ -211,6 +215,17 @@ public final class MoneyInvariants {
                     SELECT 'COMMISSION_RECREDIT_DOUBLE', t.payment_ref || ':' || t.currency, COUNT(*)
                     FROM wallet_transactions t
                     WHERE t.type = 'REFUND' AND t.payment_ref LIKE 'refund-%'
+                    GROUP BY t.payment_ref, t.currency HAVING COUNT(*) > 1
+                    UNION ALL
+                    -- Supplément espèces : une ligne de commission par devise (portefeuille du colis, complément).
+                    SELECT 'SUPPLEMENT_COMMISSION_DOUBLE', t.payment_ref || ':' || t.currency, COUNT(*)
+                    FROM wallet_transactions t
+                    WHERE t.type = 'SUPPLEMENT_COMMISSION_DEDUCTED'
+                    GROUP BY t.payment_ref, t.currency HAVING COUNT(*) > 1
+                    UNION ALL
+                    SELECT 'SUPPLEMENT_RECREDIT_DOUBLE', t.payment_ref || ':' || t.currency, COUNT(*)
+                    FROM wallet_transactions t
+                    WHERE t.type = 'REFUND' AND t.payment_ref LIKE 'supplement-refund-%'
                     GROUP BY t.payment_ref, t.currency HAVING COUNT(*) > 1
                     UNION ALL
                     SELECT 'COMMISSION_PI_PARTAGE', b.commission_payment_intent_id::text, COUNT(*)
@@ -382,14 +397,107 @@ public final class MoneyInvariants {
                     UNION ALL
                     SELECT 'COMMISSION_LEDGER_VS_BID', t.id, t.currency, b.currency
                     FROM wallet_transactions t JOIN bids b ON b.id = t.bid_id
-                    WHERE t.type = 'COMMISSION_DEDUCTED' AND t.currency <> b.currency
+                    WHERE t.type IN ('COMMISSION_DEDUCTED', 'SUPPLEMENT_COMMISSION_DEDUCTED') AND t.currency <> b.currency
                       AND (t.source_currency IS NULL OR t.source_currency <> b.currency)
+                    UNION ALL
+                    SELECT 'SUPPLEMENT_VS_BID', s.id, s.currency, b.currency
+                    FROM bid_supplements s JOIN bids b ON b.id = s.bid_id
+                    WHERE s.deleted_at IS NULL AND s.currency <> b.currency
+                    UNION ALL
+                    SELECT 'PAWAPAY_OP_VS_SUPPLEMENT', o.id, o.currency, s.currency
+                    FROM pawapay_operations o JOIN bid_supplements s ON s.id = o.bid_supplement_id
+                    WHERE o.currency <> s.currency
                     UNION ALL
                     SELECT 'REFUND_ITEM_VS_REQUEST', i.id, t.currency, r.currency
                     FROM wallet_refund_request_items i
                     JOIN wallet_refund_requests r ON r.id = i.refund_request_id
                     JOIN wallet_transactions t ON t.id = i.wallet_transaction_id
                     WHERE t.currency <> r.currency
+                    """),
+            new MoneyInvariant("INV-18", "Supplément de prix cohérent : encaissé, versé ou rendu, commission rendue", Severity.HAUTE, """
+                    WITH ops AS (
+                        SELECT o.bid_supplement_id AS supplement_id,
+                               bool_or(o.kind = 'DEPOSIT' AND o.status = 'COMPLETED') AS deposit_done,
+                               max(o.amount) FILTER (WHERE o.kind = 'DEPOSIT' AND o.status = 'COMPLETED') AS deposit_amount,
+                               bool_or(o.kind = 'PAYOUT' AND o.status = 'COMPLETED') AS payout_done,
+                               max(o.amount) FILTER (WHERE o.kind = 'PAYOUT' AND o.status = 'COMPLETED') AS payout_amount,
+                               bool_or(o.kind = 'REFUND' AND o.status = 'COMPLETED') AS refund_done
+                        FROM pawapay_operations o
+                        WHERE o.bid_supplement_id IS NOT NULL
+                        GROUP BY o.bid_supplement_id
+                    )
+                    SELECT * FROM (
+                        SELECT s.id AS supplement_id, s.bid_id, s.rail, s.status, s.currency, s.net_amount,
+                               s.commission_amount, s.gross_amount, s.commission_status, s.commission_charged_via,
+                               s.paid_at, s.updated_at, b.status AS bid_status,
+                               CASE
+                                   WHEN s.status IN ('PAID','REFUND_PENDING')
+                                        AND b.status IN ('CANCELLED','REJECTED','EXPIRED','NO_SHOW','PARCEL_REFUSED')
+                                        AND b.updated_at < now() - interval '1 hour'
+                                        THEN 'SUPPLEMENT_PAYE_SUR_BID_MORT'
+                                   WHEN s.rail = 'CASH' AND s.commission_status = 'CHARGED'
+                                        AND (s.status IN ('DECLINED','EXPIRED','WITHDRAWN','CANCELLED','REFUNDED')
+                                             OR b.status IN ('CANCELLED','REJECTED','EXPIRED','NO_SHOW','PARCEL_REFUSED'))
+                                        AND s.updated_at < (now() AT TIME ZONE 'UTC') - interval '1 hour'
+                                        THEN 'SUPPLEMENT_COMMISSION_NON_RENDUE'
+                                   WHEN s.rail = 'CASH' AND s.commission_status = 'REFUND_FAILED'
+                                        THEN 'SUPPLEMENT_COMMISSION_REMBOURSEMENT_ECHOUE'
+                                   WHEN s.rail = 'CASH' AND s.status = 'PAID' AND s.commission_amount > 0
+                                        AND s.commission_status IS DISTINCT FROM 'CHARGED'
+                                        THEN 'SUPPLEMENT_ESPECES_SANS_COMMISSION'
+                                   WHEN s.rail = 'CASH' AND s.commission_charged_via = 'WALLET'
+                                        AND s.commission_status IN ('CHARGED','REFUNDED')
+                                        AND NOT EXISTS (SELECT 1 FROM wallet_transactions t
+                                                        WHERE t.type = 'SUPPLEMENT_COMMISSION_DEDUCTED'
+                                                          AND t.payment_ref = 'supplement-' || s.id::text)
+                                        THEN 'SUPPLEMENT_COMMISSION_SANS_LIGNE_LEDGER'
+                                   WHEN s.rail = 'CASH' AND s.commission_charged_via = 'WALLET'
+                                        AND s.commission_status = 'REFUNDED'
+                                        AND NOT EXISTS (SELECT 1 FROM wallet_transactions t
+                                                        WHERE t.type = 'REFUND'
+                                                          AND t.payment_ref = 'supplement-refund-' || s.id::text)
+                                        THEN 'SUPPLEMENT_COMMISSION_REMBOURSEE_SANS_RECREDIT'
+                                   WHEN s.rail = 'STRIPE' AND s.status = 'PAID_OUT' AND s.stripe_transfer_id IS NULL
+                                        THEN 'SUPPLEMENT_VERSE_SANS_TRANSFERT'
+                                   WHEN s.rail = 'STRIPE' AND s.paid_at IS NOT NULL AND s.stripe_payment_intent_id IS NULL
+                                        THEN 'SUPPLEMENT_PAYE_SANS_ENCAISSEMENT'
+                                   WHEN s.rail = 'PAWAPAY' AND s.paid_at IS NOT NULL AND NOT COALESCE(o.deposit_done, false)
+                                        THEN 'SUPPLEMENT_PAYE_SANS_ENCAISSEMENT'
+                                   WHEN s.rail = 'PAWAPAY' AND COALESCE(o.payout_done, false) AND COALESCE(o.refund_done, false)
+                                        THEN 'SUPPLEMENT_MM_VERSE_ET_REMBOURSE'
+                                   WHEN s.rail = 'PAWAPAY' AND s.status = 'PAID_OUT' AND NOT COALESCE(o.payout_done, false)
+                                        THEN 'SUPPLEMENT_MM_VERSE_SANS_PAYOUT'
+                                   WHEN s.rail = 'PAWAPAY' AND o.deposit_amount IS NOT NULL AND o.deposit_amount <> s.gross_amount
+                                        THEN 'SUPPLEMENT_DEPOT_MONTANT_DIFFERENT'
+                                   WHEN s.rail = 'PAWAPAY' AND o.payout_amount IS NOT NULL AND o.payout_amount > s.net_amount
+                                        THEN 'SUPPLEMENT_VERSEMENT_SUPERIEUR_AU_NET'
+                                   -- Principal versé depuis plus de 2 h, supplément resté payé (le filet relance à
+                                   -- 30 min). Un partage admin d'un litige (payment_splits) est exclu : décision
+                                   -- manuelle, alerte SUPP_UNSETTLED_ à J+3.
+                                   WHEN s.rail IN ('STRIPE','PAWAPAY') AND s.status = 'PAID'
+                                        AND EXISTS (
+                                            SELECT 1 FROM payments p
+                                            WHERE p.deleted_at IS NULL AND p.status = 'RELEASED'
+                                              AND (p.bid_id = s.bid_id
+                                                   OR (p.bid_id IS NULL AND b.linked_negotiation_thread_id IS NOT NULL
+                                                       AND p.negotiation_thread_id = b.linked_negotiation_thread_id))
+                                              AND NOT EXISTS (SELECT 1 FROM payment_splits ps
+                                                              WHERE ps.payment_id = p.id AND ps.deleted_at IS NULL)
+                                              AND (EXISTS (SELECT 1 FROM stripe_release_intents i
+                                                           WHERE i.payment_id = p.id AND i.status = 'DONE'
+                                                             AND i.updated_at < now() - interval '2 hours')
+                                                   OR EXISTS (SELECT 1 FROM pawapay_operations po
+                                                              WHERE po.payment_id = p.id AND po.kind = 'PAYOUT'
+                                                                AND po.status = 'COMPLETED'
+                                                                AND COALESCE(po.finalized_at, po.updated_at) < now() - interval '2 hours')))
+                                        THEN 'SUPPLEMENT_NON_VERSE_APRES_LIBERATION'
+                               END AS anomaly
+                        FROM bid_supplements s
+                        JOIN bids b ON b.id = s.bid_id
+                        LEFT JOIN ops o ON o.supplement_id = s.id
+                        WHERE s.deleted_at IS NULL
+                    ) x
+                    WHERE anomaly IS NOT NULL
                     """)
     );
 }

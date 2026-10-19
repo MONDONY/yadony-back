@@ -160,7 +160,7 @@ public class BidSupplementCardRail implements BidSupplementRailHandler {
                 s = ledger.find(supplementId).orElse(s);
             }
         }
-        return BidSupplementViews.of(s, true, storage, window.now());
+        return BidSupplementViews.of(s, true, storage, window);
     }
 
     /** Paiement réussi signalé par Stripe (webhook). */
@@ -258,7 +258,7 @@ public class BidSupplementCardRail implements BidSupplementRailHandler {
     }
 
     private SupplementAcceptResponse response(BidSupplementEntity s, PaymentIntentView pi) {
-        BidSupplementResponse view = BidSupplementViews.of(s, true, storage, window.now());
+        BidSupplementResponse view = BidSupplementViews.of(s, true, storage, window);
         if (pi == null) {
             return new SupplementAcceptResponse(view, BidSupplementRail.STRIPE.name(), null, null,
                     s.getGrossAmount(), s.getCurrency(), publishableKey);

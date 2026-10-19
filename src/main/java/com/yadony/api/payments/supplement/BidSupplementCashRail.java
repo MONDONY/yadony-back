@@ -369,7 +369,7 @@ public class BidSupplementCashRail implements BidSupplementRailHandler {
     @Override
     public SupplementAcceptResponse accept(BidSupplementEntity supplement, UserEntity sender) {
         ledger.acceptCash(supplement);
-        return new SupplementAcceptResponse(BidSupplementViews.of(supplement, true, storage, window.now()),
+        return new SupplementAcceptResponse(BidSupplementViews.of(supplement, true, storage, window),
                 BidSupplementRail.CASH.name(), null, null, supplement.getGrossAmount(), supplement.getCurrency());
     }
 
@@ -382,7 +382,7 @@ public class BidSupplementCashRail implements BidSupplementRailHandler {
     }
 
     private BidSupplementResponse view(BidSupplementEntity s) {
-        return BidSupplementViews.of(s, false, storage, window.now());
+        return BidSupplementViews.of(s, false, storage, window);
     }
 
     private static YadonyBusinessException cardDeclined(String declineCode) {
