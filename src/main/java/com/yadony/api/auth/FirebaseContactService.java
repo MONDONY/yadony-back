@@ -3,10 +3,12 @@ package com.yadony.api.auth;
 import com.yadony.api.common.YadonyBusinessException;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.google.firebase.auth.AuthErrorCode;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseAuthException;
 import com.google.firebase.auth.UidIdentifier;
 import com.google.firebase.auth.UserIdentifier;
+import com.google.firebase.auth.UserInfo;
 import com.google.firebase.auth.UserRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Source de vérité des coordonnées de contact (téléphone, email) : Firebase Auth,
@@ -168,28 +171,112 @@ public class FirebaseContactService {
      * enchaîner {@code deleteUser} puis {@code evict} laisse la PII en RAM dès qu'un
      * chemin oublie le second appel.
      */
-    public void deleteAccount(String firebaseUid) {
+    public DeletionOutcome deleteAccount(String firebaseUid) {
         if (firebaseUid == null) {
-            return;
+            return DeletionOutcome.SKIPPED;
         }
+        DeletionOutcome outcome = DeletionOutcome.SKIPPED;
         if (!unavailable()) {
             try {
                 firebaseAuth.deleteUser(firebaseUid);
+                outcome = DeletionOutcome.DELETED;
             } catch (FirebaseAuthException e) {
-                log.warn("Firebase deleteUser({}) a échoué : {}", firebaseUid, e.getAuthErrorCode());
+                if (e.getAuthErrorCode() == AuthErrorCode.USER_NOT_FOUND) {
+                    outcome = DeletionOutcome.ALREADY_GONE;
+                } else {
+                    log.warn("Firebase deleteUser({}) a échoué : {}", firebaseUid, e.getAuthErrorCode());
+                    outcome = DeletionOutcome.FAILED;
+                }
             }
         }
         cache.invalidate(firebaseUid);
+        return outcome;
+    }
+
+    /**
+     * Issue d'une suppression de compte Firebase. {@code FAILED} : le compte existe
+     * toujours côté Firebase avec son numéro et son email (l'appelant décide d'alerter).
+     */
+    public enum DeletionOutcome {
+        /** Compte supprimé. */
+        DELETED,
+        /** Firebase ne connaissait déjà plus cet UID. */
+        ALREADY_GONE,
+        /** Rien à faire (UID nul) ou Firebase non configuré (test/CI). */
+        SKIPPED,
+        /** Firebase a refusé ou n'a pas répondu : le compte est toujours là. */
+        FAILED
+    }
+
+    /**
+     * Compte Firebase qui porte un numéro : UID, email et fournisseurs de connexion
+     * ({@code phone}, {@code google.com}, {@code password}, {@code apple.com}…).
+     * Transitoire, jamais persisté ni journalisé (l'email est une PII).
+     */
+    public record PhoneHolder(String uid, String email, Set<String> providerIds) {
+        /**
+         * Vrai si ce compte n'a pour toute identité que le numéro : ni email, ni autre
+         * fournisseur. C'est le seul cas où un compte Firebase sans compte Yadony actif
+         * peut être libéré au profit de celui qui vient de prouver posséder le numéro.
+         */
+        public boolean phoneOnly() {
+            return (email == null || email.isBlank())
+                    && providerIds.stream().allMatch("phone"::equals);
+        }
+    }
+
+    /**
+     * Compte Firebase qui porte ce numéro, ou vide si aucun. Une panne Firebase est
+     * traitée comme « aucun » (même repli que {@link #findUidByPhone}) : l'écriture qui
+     * suit échouera alors proprement si le numéro est en réalité pris.
+     */
+    public Optional<PhoneHolder> findPhoneHolder(String phoneNumber) {
+        if (unavailable() || phoneNumber == null || phoneNumber.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            UserRecord record = firebaseAuth.getUserByPhoneNumber(phoneNumber);
+            UserInfo[] providers = record.getProviderData();
+            Set<String> providerIds = providers == null ? Set.of()
+                    : java.util.Arrays.stream(providers)
+                            .map(UserInfo::getProviderId)
+                            .filter(java.util.Objects::nonNull)
+                            .collect(Collectors.toUnmodifiableSet());
+            return Optional.of(new PhoneHolder(record.getUid(), record.getEmail(), providerIds));
+        } catch (FirebaseAuthException e) {
+            if (e.getAuthErrorCode() != AuthErrorCode.USER_NOT_FOUND) {
+                log.warn("Firebase getUserByPhoneNumber a échoué : {}", e.getAuthErrorCode());
+            }
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Retire le numéro d'un compte Firebase sans le supprimer. Repli quand
+     * {@link #deleteAccount} échoue sur un compte fantôme. Vrai si le numéro n'est plus
+     * porté par ce compte (retiré, ou compte déjà disparu).
+     */
+    public boolean clearPhone(String firebaseUid) {
+        if (unavailable() || firebaseUid == null) {
+            return false;
+        }
+        try {
+            firebaseAuth.updateUser(new UserRecord.UpdateRequest(firebaseUid).setPhoneNumber(null));
+            return true;
+        } catch (FirebaseAuthException e) {
+            if (e.getAuthErrorCode() == AuthErrorCode.USER_NOT_FOUND) {
+                return true;
+            }
+            log.warn("Firebase updateUser({}) sans numéro a échoué : {}", firebaseUid, e.getAuthErrorCode());
+            return false;
+        } finally {
+            cache.invalidate(firebaseUid);
+        }
     }
 
     /** Vrai si cet email appartient à un compte Firebase autre que {@code selfUid}. */
     public boolean isEmailTakenByAnother(String email, String selfUid) {
         return isTakenByAnother(findUidByEmail(email), selfUid);
-    }
-
-    /** Vrai si ce numéro appartient à un compte Firebase autre que {@code selfUid}. */
-    public boolean isPhoneTakenByAnother(String phoneNumber, String selfUid) {
-        return isTakenByAnother(findUidByPhone(phoneNumber), selfUid);
     }
 
     private static boolean isTakenByAnother(Optional<String> foundUid, String selfUid) {

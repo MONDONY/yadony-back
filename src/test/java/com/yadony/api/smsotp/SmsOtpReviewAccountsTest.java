@@ -51,7 +51,7 @@ class SmsOtpReviewAccountsTest {
         when(environment.getActiveProfiles()).thenReturn(new String[] {profile});
         return new SmsOtpService(smsOtpRepository, passwordEncoder, smsService, properties,
                 firebaseAuth, userRepository, firebaseContact, auditService, environment,
-                TestMessages.resolver(), twilioVerify);
+                TestMessages.resolver(), twilioVerify, null);
     }
 
     private SmsOtpEntity pendingToken() {

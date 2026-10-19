@@ -621,7 +621,7 @@ class AuthServiceTest {
                     new UpdateProfileRequest(null, null, null, null, "+33699000001", null, null));
 
             verify(firebaseContact, never()).updatePhone(any(), any());
-            verify(firebaseContact, never()).isPhoneTakenByAnother(any(), any());
+            verify(firebaseContact, never()).findPhoneHolder(any());
         }
 
         @Test

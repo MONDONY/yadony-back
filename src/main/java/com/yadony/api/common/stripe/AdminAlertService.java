@@ -58,7 +58,8 @@ public class AdminAlertService {
             "EXCHANGE_RATE_SYNC_REJECTED",
             "PHOTO_PURGE_FAILING",
             "PHOTO_PURGE_STALE",
-            "PHOTO_RECONCILE_BLOCKED");
+            "PHOTO_RECONCILE_BLOCKED",
+            "FIREBASE_USER_DELETE_FAILED");
 
     /** Préfixe du message (log et issue Sentry) de toute alerte admin. */
     public static final String PREFIXE_ALERTE = "[ADMIN ALERT] ";

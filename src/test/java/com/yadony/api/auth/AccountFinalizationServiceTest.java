@@ -36,6 +36,7 @@ class AccountFinalizationServiceTest {
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private AuditService auditService;
     @Mock private FirebaseContactService firebaseContact;
+    @Mock private com.yadony.api.common.stripe.AdminAlertService adminAlertService;
 
     @InjectMocks private AccountFinalizationService service;
 
@@ -194,6 +195,34 @@ class AccountFinalizationServiceTest {
         // Suppression et purge du cache sont une seule opération portée par le service
         // qui détient le cache : l'appelant ne peut plus oublier la seconde.
         verify(firebaseContact).deleteAccount("uid-test");
+    }
+
+    @Test
+    @DisplayName("suppression Firebase ratée → alerte admin FIREBASE_USER_DELETE_FAILED, sans PII")
+    void firebaseDeletionFailure_raisesAdminAlert() {
+        UserEntity user = makeUser();
+        when(kycRepository.findByUserId(any())).thenReturn(Optional.empty());
+        when(firebaseContact.deleteAccount("uid-test")).thenReturn(FirebaseContactService.DeletionOutcome.FAILED);
+
+        service.finalize(user, FinalizationReason.SOFT_GRACE_EXPIRED);
+
+        verify(adminAlertService).raise(eq("FIREBASE_USER_DELETE_FAILED"), anyString(), argThat(ctx ->
+                user.getId().equals(ctx.get("userId")) && "uid-test".equals(ctx.get("firebaseUid"))
+                        && ctx.keySet().stream().noneMatch(k -> k.contains("phone") || k.contains("email"))));
+    }
+
+    @Test
+    @DisplayName("suppression Firebase réussie ou compte déjà parti → aucune alerte")
+    void firebaseDeletionOk_noAlert() {
+        when(kycRepository.findByUserId(any())).thenReturn(Optional.empty());
+        when(firebaseContact.deleteAccount("uid-test"))
+                .thenReturn(FirebaseContactService.DeletionOutcome.DELETED)
+                .thenReturn(FirebaseContactService.DeletionOutcome.ALREADY_GONE);
+
+        service.finalize(makeUser(), FinalizationReason.HARD_IMMEDIATE);
+        service.finalize(makeUser(), FinalizationReason.HARD_IMMEDIATE);
+
+        verifyNoInteractions(adminAlertService);
     }
 
     @Test
