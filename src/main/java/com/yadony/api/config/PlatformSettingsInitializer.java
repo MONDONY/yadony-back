@@ -33,6 +33,9 @@ public class PlatformSettingsInitializer {
     private final boolean criticalSmsFallbackEnabledProperty;
     private final int assistantDailyQuotaProperty;
     private final int assistantFormDraftDailyQuotaProperty;
+    private final boolean paypalEnabledProperty;
+    private final boolean applePayEnabledProperty;
+    private final boolean googlePayEnabledProperty;
 
     public PlatformSettingsInitializer(PlatformSettingRepository repository,
                                        YadonyConfigProperties config,
@@ -43,7 +46,11 @@ public class PlatformSettingsInitializer {
                                        boolean criticalSmsFallbackEnabledProperty,
                                        @Value("${yadony.assistant.daily-quota:20}") String assistantDailyQuotaProperty,
                                        @Value("${yadony.assistant.form-draft.daily-quota:30}")
-                                       String assistantFormDraftDailyQuotaProperty) {
+                                       String assistantFormDraftDailyQuotaProperty,
+                                       @Value("${yadony.payments.paypal-enabled:}") String paypalEnabledProperty,
+                                       @Value("${yadony.payments.apple-pay-enabled:}") String applePayEnabledProperty,
+                                       @Value("${yadony.payments.google-pay-enabled:}")
+                                       String googlePayEnabledProperty) {
         this.repository = repository;
         this.config = config;
         this.smsEnabledProperty = smsEnabledProperty;
@@ -58,6 +65,14 @@ public class PlatformSettingsInitializer {
                 PlatformSettingKey.DEFAULT_ASSISTANT_DAILY_QUOTA);
         this.assistantFormDraftDailyQuotaProperty = quotaOr(assistantFormDraftDailyQuotaProperty,
                 PlatformSettingKey.DEFAULT_ASSISTANT_FORM_DRAFT_DAILY_QUOTA);
+        this.paypalEnabledProperty = booleanOrFalse(paypalEnabledProperty);
+        this.applePayEnabledProperty = booleanOrFalse(applePayEnabledProperty);
+        this.googlePayEnabledProperty = booleanOrFalse(googlePayEnabledProperty);
+    }
+
+    /** Vide ou absent vaut faux, comme {@code kyc_didit_enabled} : jamais un démarrage en échec. */
+    private static boolean booleanOrFalse(String raw) {
+        return raw != null && !raw.isBlank() && Boolean.parseBoolean(raw.trim());
     }
 
     /**
@@ -111,6 +126,11 @@ public class PlatformSettingsInitializer {
         defaults.put(PlatformSettingKey.ASSISTANT_DAILY_QUOTA, String.valueOf(assistantDailyQuotaProperty));
         defaults.put(PlatformSettingKey.ASSISTANT_FORM_DRAFT_DAILY_QUOTA,
                 String.valueOf(assistantFormDraftDailyQuotaProperty));
+        // Moyens de paiement : amorcés une seule fois depuis PAYMENTS_*_ENABLED (faux par défaut),
+        // le back-office fait ensuite autorité — changer la variable après coup ne fait plus rien.
+        defaults.put(PlatformSettingKey.PAYMENTS_PAYPAL_ENABLED, String.valueOf(paypalEnabledProperty));
+        defaults.put(PlatformSettingKey.PAYMENTS_APPLE_PAY_ENABLED, String.valueOf(applePayEnabledProperty));
+        defaults.put(PlatformSettingKey.PAYMENTS_GOOGLE_PAY_ENABLED, String.valueOf(googlePayEnabledProperty));
 
         int inserted = 0;
         for (Map.Entry<PlatformSettingKey, String> entry : defaults.entrySet()) {

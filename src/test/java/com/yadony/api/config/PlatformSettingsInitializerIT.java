@@ -58,6 +58,13 @@ class PlatformSettingsInitializerIT {
         assertThat(repository.findBySettingKey("pro_enabled")).isPresent()
                 .get().extracting(PlatformSettingEntity::getSettingValue)
                 .isEqualTo("false");
+        // Moyens de paiement de la feuille : éteints tant qu'on ne les configure pas chez Stripe/Apple.
+        for (String key : java.util.List.of("payments_paypal_enabled", "payments_apple_pay_enabled",
+                "payments_google_pay_enabled")) {
+            assertThat(repository.findBySettingKey(key)).as(key).isPresent()
+                    .get().extracting(PlatformSettingEntity::getSettingValue)
+                    .isEqualTo("false");
+        }
         assertThat(repository.findBySettingKey("commission_rate")).isPresent()
                 .get().extracting(PlatformSettingEntity::getSettingValue)
                 .isEqualTo(config.commission().rate().toPlainString());

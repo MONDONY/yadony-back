@@ -41,8 +41,13 @@ public class BidSupplementCardRail implements BidSupplementRailHandler {
 
     private static final Logger log = LoggerFactory.getLogger(BidSupplementCardRail.class);
 
-    /** Mêmes moyens que le paiement principal ({@code PaymentService.createEscrow}). */
+    /**
+     * Moyens du paiement principal ({@code PaymentService.createEscrow}) : la carte (qui porte Apple
+     * Pay et Google Pay), plus PayPal seulement si {@code payments_paypal_enabled} est vrai — « paypal »
+     * en dur faisait refuser le PaymentIntent par Stripe live (YADONY-FLUTTER-PROD-11).
+     */
     static final List<String> PAYMENT_METHOD_TYPES = List.of("card", "paypal");
+    static final List<String> CARD_ONLY = List.of("card");
 
     static final String SCOPE = "BID_SUPPLEMENT";
 
@@ -211,9 +216,6 @@ public class BidSupplementCardRail implements BidSupplementRailHandler {
                     .setCurrency(currency.code())
                     .setCustomer(customerId)
                     .setStatementDescriptorSuffix("YADONY")
-                    .setPaymentMethodOptions(PaymentIntentCreateParams.PaymentMethodOptions.builder()
-                            .setPaypal(PaymentService.paypalOptions(sender))
-                            .build())
                     .putMetadata("bid_supplement_id", s.getId().toString())
                     .putMetadata("scope", SCOPE)
                     .putMetadata("supplement_bid_id", s.getBidId().toString())
@@ -221,7 +223,13 @@ public class BidSupplementCardRail implements BidSupplementRailHandler {
                     // client_secret et en déduirait le net. La trace complète est dans l'audit.
                     .putMetadata("sender_id", s.getSenderId().toString())
                     .putMetadata("currency", currency.code());
-            PAYMENT_METHOD_TYPES.forEach(params::addPaymentMethodType);
+            boolean paypal = paymentService.paypalEnabled();
+            if (paypal) {
+                params.setPaymentMethodOptions(PaymentIntentCreateParams.PaymentMethodOptions.builder()
+                        .setPaypal(PaymentService.paypalOptions(sender))
+                        .build());
+            }
+            (paypal ? PAYMENT_METHOD_TYPES : CARD_ONLY).forEach(params::addPaymentMethodType);
             return gateway.createPaymentIntent(params.build(), idempotencyKey(s));
         } catch (StripeException e) {
             log.error("Création du PaymentIntent du supplément {} en échec", s.getId(), e);
@@ -256,7 +264,7 @@ public class BidSupplementCardRail implements BidSupplementRailHandler {
                     s.getGrossAmount(), s.getCurrency(), publishableKey);
         }
         List<String> types = pi.paymentMethodTypes() == null || pi.paymentMethodTypes().isEmpty()
-                ? PAYMENT_METHOD_TYPES : pi.paymentMethodTypes();
+                ? (paymentService.paypalEnabled() ? PAYMENT_METHOD_TYPES : CARD_ONLY) : pi.paymentMethodTypes();
         return new SupplementAcceptResponse(view, BidSupplementRail.STRIPE.name(), pi.clientSecret(), types,
                 s.getGrossAmount(), s.getCurrency(), publishableKey);
     }

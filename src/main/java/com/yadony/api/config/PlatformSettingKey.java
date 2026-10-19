@@ -40,6 +40,17 @@ import java.util.Arrays;
  * alertes ne fait rien et l'application garde sa barre de navigation d'avant (sans
  * l'onglet Billets). Faux par défaut : on l'allume depuis le back-office, sans
  * redéploiement, une fois le compte Travelpayouts prêt.
+ *
+ * <p>{@code PAYMENTS_PAYPAL_ENABLED}, {@code PAYMENTS_APPLE_PAY_ENABLED} et
+ * {@code PAYMENTS_GOOGLE_PAY_ENABLED} sont les drapeaux des moyens de paiement de la feuille
+ * de paiement (YADONY-FLUTTER-PROD-11). PayPal faux : « paypal » n'est jamais ajouté aux
+ * {@code payment_method_types} des PaymentIntent (Stripe refuse sinon le PaymentIntent tant que
+ * la capacité {@code paypal_payments} n'est pas active). Apple Pay ou Google Pay faux :
+ * l'application, qui lit {@code GET /config/payment-methods} à chaque ouverture de la feuille,
+ * ne montre pas le bouton (sans certificat de traitement Apple, la feuille Apple Pay se
+ * referme sur un faux « annulé »). Faux par défaut, amorcés depuis
+ * {@code PAYMENTS_*_ENABLED} au premier démarrage, puis pilotés depuis le back-office sans
+ * redéploiement. À n'allumer qu'une fois le moyen configuré chez Stripe (et Apple).
  */
 public enum PlatformSettingKey {
 
@@ -56,7 +67,10 @@ public enum PlatformSettingKey {
     PHOTO_PURGE_ENABLED("photo_purge_enabled", PlatformSettingType.BOOLEAN),
     FLIGHTS_ENABLED("flights_enabled", PlatformSettingType.BOOLEAN),
     ASSISTANT_DAILY_QUOTA("assistant_daily_quota", PlatformSettingType.INTEGER),
-    ASSISTANT_FORM_DRAFT_DAILY_QUOTA("assistant_form_draft_daily_quota", PlatformSettingType.INTEGER);
+    ASSISTANT_FORM_DRAFT_DAILY_QUOTA("assistant_form_draft_daily_quota", PlatformSettingType.INTEGER),
+    PAYMENTS_PAYPAL_ENABLED("payments_paypal_enabled", PlatformSettingType.BOOLEAN),
+    PAYMENTS_APPLE_PAY_ENABLED("payments_apple_pay_enabled", PlatformSettingType.BOOLEAN),
+    PAYMENTS_GOOGLE_PAY_ENABLED("payments_google_pay_enabled", PlatformSettingType.BOOLEAN);
 
     /** Défauts des réglages photos : aucune property, le panel admin est le seul levier. */
     public static final int DEFAULT_PHOTO_RETENTION_DAYS = 7;

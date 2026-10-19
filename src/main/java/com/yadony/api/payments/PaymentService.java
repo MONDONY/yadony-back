@@ -137,15 +137,24 @@ public class PaymentService {
      * PayPal dans la PaymentSheet, seulement quand le compte Stripe plateforme a la capacité
      * {@code paypal_payments} active (YADONY-FLUTTER-PROD-10/11 : en prod elle ne l'est pas, Stripe
      * répondait {@code payment_intent_invalid_parameter} et l'app montrait un bouton PayPal mort).
-     * Drapeau de config plutôt qu'une lecture du compte Stripe : l'activation est un acte manuel
-     * (demande à Stripe), rare, et un drapeau ne coûte aucun appel ni cache. Défaut {@code false}.
+     * Réglage plateforme {@code payments_paypal_enabled} (back-office, sans redéploiement ; amorcé
+     * depuis {@code PAYMENTS_PAYPAL_ENABLED}). Injecté par champ, comme ci-dessus, pour ne pas
+     * toucher aux constructeurs des tests unitaires ; absent (tests hors Spring) : faux.
      */
-    @org.springframework.beans.factory.annotation.Value("${yadony.payments.paypal-enabled:false}")
-    private boolean paypalEnabled;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.yadony.api.config.PlatformSettingsService platformSettings;
 
-    /** Tests unitaires (hors contexte Spring) : bascule du drapeau PayPal. */
+    /** Tests unitaires (hors contexte Spring) : force le drapeau PayPal. */
+    private Boolean paypalEnabledOverride;
+
     void setPaypalEnabled(boolean paypalEnabled) {
-        this.paypalEnabled = paypalEnabled;
+        this.paypalEnabledOverride = paypalEnabled;
+    }
+
+    /** Vrai : « paypal » est ajouté aux PaymentIntent de la feuille (séquestre, négociation, supplément). */
+    public boolean paypalEnabled() {
+        if (paypalEnabledOverride != null) return paypalEnabledOverride;
+        return platformSettings != null && platformSettings.paypalEnabled();
     }
 
     public PaymentService(UserRepository userRepository,
@@ -841,7 +850,7 @@ public class PaymentService {
             // La page PayPal s'affiche dans la langue de l'expéditeur (FLUTTER-NT).
             PaymentIntentCreateParams.PaymentMethodOptions.Builder methodOptions =
                     PaymentIntentCreateParams.PaymentMethodOptions.builder();
-            if (paypalEnabled) {
+            if (paypalEnabled()) {
                 paramsBuilder.addPaymentMethodType("paypal");
                 methodOptions.setPaypal(paypalOptions(sender));
             }
@@ -2303,7 +2312,7 @@ public class PaymentService {
                     .putMetadata("commission_rate", rate.toPlainString())
                     .putMetadata("currency", currency.code())
                     .putMetadata("scope", "NEGOTIATION");
-            if (paypalEnabled) {
+            if (paypalEnabled()) {
                 // Page PayPal dans la langue de l'expéditeur (FLUTTER-NT).
                 paramsBuilder.addPaymentMethodType("paypal")
                         .setPaymentMethodOptions(PaymentIntentCreateParams.PaymentMethodOptions.builder()
