@@ -4305,6 +4305,78 @@ class BidServiceTest {
             assertThat(resp.totalNetAmountWithSupplementEur()).isNull();
         }
 
+        /** Les chemins voyageur passent son id : sans lui, supplementRequestAllowed restait faux. */
+        private void verifyViewedByTraveler() {
+            verify(port, atLeastOnce()).view(any(), any(), eq(TRAVELER_ID), any());
+            verify(port, never()).view(any(), any(), isNull(), any());
+        }
+
+        @Test
+        @DisplayName("acceptation : la réponse est calculée pour le voyageur")
+        void acceptBid_viewsAsTraveler() {
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity bid = buildBid();
+            bidService.setSupplementSummaryPort(port);
+            when(port.view(any(), any(), any(), any())).thenReturn(BidSupplementView.NONE);
+            when(bidRepository.findByIdForUpdate(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+            bidService.acceptBid(BID_ID, TRAVELER_UID);
+
+            verifyViewedByTraveler();
+        }
+
+        @Test
+        @DisplayName("refus de la demande : la réponse est calculée pour le voyageur")
+        void rejectBid_viewsAsTraveler() {
+            AnnouncementEntity announcement = buildAnnouncement();
+            bidService.setSupplementSummaryPort(port);
+            when(port.view(any(), any(), any(), any())).thenReturn(BidSupplementView.NONE);
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(buildBid()));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+
+            bidService.rejectBid(BID_ID, TRAVELER_UID, new BidRejectRequest("NO_CAPACITY"));
+
+            verifyViewedByTraveler();
+        }
+
+        @Test
+        @DisplayName("confirmation de présence et refus du colis : réponse calculée pour le voyageur")
+        void confirmPresenceAndRefuseParcel_viewAsTraveler() {
+            stubAcceptedBid(buildTraveler());
+            when(port.view(any(), any(), any(), any())).thenReturn(BidSupplementView.NONE);
+
+            bidService.confirmPresence(BID_ID, TRAVELER_UID);
+            bidService.refuseParcel(BID_ID, TRAVELER_UID, "Colis non conforme", null);
+
+            verifyViewedByTraveler();
+        }
+
+        @Test
+        @DisplayName("listes du voyageur (trajet, mes colis) : calculées pour lui")
+        void travelerLists_viewAsTraveler() {
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.ACCEPTED);
+            bidService.setSupplementSummaryPort(port);
+            when(port.view(any(), any(), any(), any())).thenReturn(BidSupplementView.NONE);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+            when(bidRepository.findByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(List.of(bid));
+            when(bidRepository.findByTravelerIdFiltered(eq(TRAVELER_ID), isNull(), isNull(), isNull(),
+                    eq(BidStatus.NEGOTIATION_STATUSES), any())).thenReturn(new PageImpl<>(List.of(bid)));
+            when(userRepository.findAllById(any())).thenReturn(List.of(buildSender()));
+
+            bidService.getBidsForAnnouncement(ANNOUNCEMENT_ID, TRAVELER_UID);
+            bidService.getTravelerBids(TRAVELER_UID, null, null, null, 0, 20);
+
+            verify(port, times(2)).view(any(), any(), eq(TRAVELER_ID), any());
+            verify(port, never()).view(any(), any(), isNull(), any());
+        }
+
         @Test
         @DisplayName("refus du colis après un supplément refusé ou expiré : pas compté à l'expéditeur")
         void refuseParcel_afterADeclinedSupplement_doesNotCountAgainstTheSender() {

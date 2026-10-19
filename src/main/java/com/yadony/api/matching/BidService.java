@@ -858,7 +858,7 @@ public class BidService {
                 .stream().collect(Collectors.toMap(UserEntity::getId, u -> u));
         BidResponsePrefetch prefetch = prefetchFor(visible);
         return visible.stream()
-                .map(b -> toResponse(b, sendersById.get(b.getSenderId()), null, prefetch))
+                .map(b -> toResponse(b, sendersById.get(b.getSenderId()), traveler.getId(), prefetch))
                 .toList();
     }
 
@@ -961,7 +961,7 @@ public class BidService {
                         bids.getContent().stream().map(BidEntity::getSenderId).distinct().toList())
                 .stream().collect(Collectors.toMap(UserEntity::getId, u -> u));
         BidResponsePrefetch prefetch = prefetchFor(bids.getContent());
-        return bids.map(b -> toResponse(b, sendersById.get(b.getSenderId()), null, prefetch));
+        return bids.map(b -> toResponse(b, sendersById.get(b.getSenderId()), traveler.getId(), prefetch));
     }
 
     @Transactional
@@ -1066,7 +1066,7 @@ public class BidService {
                 bid.getId(), bid.getSenderId(), traveler.getId(), announcement.getId(),
                 bid.getPaymentMethod() != null && bid.getPaymentMethod().isMobileMoney()));
 
-        return toResponse(bid, userRepository.findById(bid.getSenderId()).orElse(null));
+        return toResponse(bid, userRepository.findById(bid.getSenderId()).orElse(null), traveler.getId());
     }
 
     @Transactional
@@ -1139,7 +1139,7 @@ public class BidService {
                 bid.getId(), bid.getSenderId(), bid.getRejectionReason(),
                 bid.getAnnouncementId(), rematchEligible));
 
-        return toResponse(bid, userRepository.findById(bid.getSenderId()).orElse(null));
+        return toResponse(bid, userRepository.findById(bid.getSenderId()).orElse(null), traveler.getId());
     }
 
     @Transactional
@@ -1160,7 +1160,7 @@ public class BidService {
 
         auditService.log("BID", bidId, "PRESENCE_CONFIRMED", traveler.getId(), Map.of());
 
-        return toResponse(bid, userRepository.findById(bid.getSenderId()).orElse(null));
+        return toResponse(bid, userRepository.findById(bid.getSenderId()).orElse(null), traveler.getId());
     }
 
     @Transactional
@@ -1390,7 +1390,7 @@ public class BidService {
                 Map.of("reason", reason != null ? reason : "",
                         "senderId", bid.getSenderId().toString()));
 
-        return toResponse(bid, sender);
+        return toResponse(bid, sender, traveler.getId());
     }
 
     /** Upload une photo de colis pour le sender courant ; renvoie la clé S3. */
