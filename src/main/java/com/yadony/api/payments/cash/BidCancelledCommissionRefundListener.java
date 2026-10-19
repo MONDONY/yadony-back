@@ -6,6 +6,8 @@ import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.matching.events.HandoverExpiredEvent;
+import com.yadony.api.matching.events.ParcelRefusedEvent;
+import com.yadony.api.matching.events.VoyageurNoShowEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -34,6 +36,13 @@ import java.util.UUID;
  * </ul>
  * Remise espèces jamais confirmée ni signalée ({@link HandoverExpiredEvent}, FLUTTER-QR,
  * « pas de fautif automatique ») : même remboursement, clé {@code wallet-refund-expired-{bidId}}.
+ *
+ * <p>Règle du propriétaire (19/10/2026) : « la commission est toujours rendue en cas de refus
+ * ou d'annulation », quel que soit le fautif. Le colis refusé à la remise par le voyageur
+ * ({@link ParcelRefusedEvent}, clé {@code wallet-refund-refused-{bidId}}) et le voyageur
+ * absent au rendez-vous ({@link VoyageurNoShowEvent}, clé {@code wallet-refund-noshow-{bidId}})
+ * rendent donc aussi la commission : le paiement de l'expéditeur était déjà remboursé sur ces
+ * deux chemins, la commission prélevée au voyageur restait acquise.
  * Bid issu d'une négociation : la ligne COMMISSION_DEDUCTED porte l'id du fil (bid_id NULL),
  * {@link CashCommissionService#refundCommissionToWallet} la retrouve par
  * {@code linkedNegotiationThreadId}.
@@ -69,6 +78,18 @@ public class BidCancelledCommissionRefundListener {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onHandoverExpired(HandoverExpiredEvent event) {
         refund(event.bidId(), "wallet-refund-expired-", "handover-expired");
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void onParcelRefused(ParcelRefusedEvent event) {
+        refund(event.getBidId(), "wallet-refund-refused-", "parcel-refused");
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void onTravelerNoShow(VoyageurNoShowEvent event) {
+        refund(event.getBidId(), "wallet-refund-noshow-", "traveler-no-show");
     }
 
     private void refund(UUID bidId, String walletKeyPrefix, String trigger) {

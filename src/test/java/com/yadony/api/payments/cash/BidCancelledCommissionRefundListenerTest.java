@@ -5,6 +5,8 @@ import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.events.BidRejectedEvent;
+import com.yadony.api.matching.events.ParcelRefusedEvent;
+import com.yadony.api.matching.events.VoyageurNoShowEvent;
 import com.yadony.api.matching.events.HandoverExpiredEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -56,6 +58,42 @@ class BidCancelledCommissionRefundListenerTest {
         verify(cashCommissionService).refundCommissionToWallet(eq(bid), eq(travelerId),
                 eq("wallet-refund-cancel-" + bidId));
         verify(cashCommissionService, never()).refundCommission(any());
+    }
+
+    /** Règle « commission toujours rendue » : colis refusé à la remise par le voyageur. */
+    @Test
+    void parcelRefusedRefundsWalletCommission() {
+        BidEntity bid = cashBid(CommissionChargedVia.WALLET);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(announcement()));
+
+        listener.onParcelRefused(new ParcelRefusedEvent(bidId, travelerId, senderId, "Objet interdit"));
+
+        verify(cashCommissionService).refundCommissionToWallet(eq(bid), eq(travelerId),
+                eq("wallet-refund-refused-" + bidId));
+    }
+
+    @Test
+    void parcelRefusedRefundsCardCommission() {
+        BidEntity bid = cashBid(CommissionChargedVia.CARD);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+
+        listener.onParcelRefused(new ParcelRefusedEvent(bidId, travelerId, senderId, null));
+
+        verify(cashCommissionService).refundCommission(bid);
+    }
+
+    /** Même règle quand le voyageur est absent au rendez-vous : la commission lui est rendue. */
+    @Test
+    void travelerNoShowRefundsWalletCommission() {
+        BidEntity bid = cashBid(CommissionChargedVia.WALLET);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(announcement()));
+
+        listener.onTravelerNoShow(new VoyageurNoShowEvent(bidId, travelerId, senderId, 1));
+
+        verify(cashCommissionService).refundCommissionToWallet(eq(bid), eq(travelerId),
+                eq("wallet-refund-noshow-" + bidId));
     }
 
     @Test

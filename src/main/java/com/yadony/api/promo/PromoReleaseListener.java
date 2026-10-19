@@ -47,7 +47,8 @@ import java.util.UUID;
  *       contestation, arbitrage admin)</td><td>remboursement intégral sur tous les rails</td>
  *       <td>oui (décision du propriétaire)</td></tr>
  *   <tr><td>{@link ParcelRefusedEvent}</td><td>carte/mobile money remboursés ; espèces :
- *       commission conservée</td><td>oui sur tous les rails (décision explicite du
+ *       commission recréditée ({@code BidCancelledCommissionRefundListener}, règle « toujours
+ *       rendue » du 19/10/2026)</td><td>oui sur tous les rails (décision explicite du
  *       propriétaire)</td></tr>
  *   <tr><td>{@link AdminPaymentRefundedEvent}</td><td>remboursement manuel par un admin</td>
  *       <td>oui ; paiement porté par un fil : bid(s) matérialisé(s) de ce fil</td></tr>
