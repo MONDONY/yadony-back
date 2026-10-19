@@ -2645,11 +2645,20 @@ public class NegotiationService {
         // render the payment-method picker, so we don't want a stale "false" here to
         // ever be mistaken for an authoritative "cash unavailable".
         boolean cashCommissionAvailable = true;
-        if (checkCashAvailability && t.getCurrentPriceEur() != null) {
-            BigDecimal commission = cashCommission(t, request.getSenderId());
-            cashCommissionAvailable = cashGatePort.hasSufficientFunds(t.getTravelerId(), commission, t.getCurrency())
+        // Commission annoncée au voyageur sur le bandeau « Réglez la commission » : le fil attend
+        // son règlement (AWAITING_COMMISSION) et c'est lui qui lit. Même valeur que celle qui
+        // sert la disponibilité ci-dessous, calculée une seule fois.
+        boolean travelerAwaitsCommission = t.getStatus() == NegotiationThreadStatus.AWAITING_COMMISSION
+            && callerId != null && callerId.equals(t.getTravelerId());
+        BigDecimal cashCommissionEur = null;
+        if ((checkCashAvailability || travelerAwaitsCommission) && t.getCurrentPriceEur() != null) {
+            cashCommissionEur = cashCommission(t, request.getSenderId());
+        }
+        if (checkCashAvailability && cashCommissionEur != null) {
+            cashCommissionAvailable = cashGatePort.hasSufficientFunds(t.getTravelerId(), cashCommissionEur, t.getCurrency())
                 || cashGatePort.hasCommissionCard(t.getTravelerId());
         }
+        BigDecimal travelerCashCommissionEur = travelerAwaitsCommission ? cashCommissionEur : null;
 
         // canNudge : le viewer peut relancer l'autre partie si le thread est encore en
         // négociation (OPEN/AWAITING_TRIP), que ce n'est pas son tour d'agir, que la dernière
@@ -2733,7 +2742,8 @@ public class NegotiationService {
             archived,
             traveler.isGpPro(),
             senderUser != null && senderUser.isGpPro(),
-            t.getCommissionGridId()
+            t.getCommissionGridId(),
+            travelerCashCommissionEur
         );
     }
 

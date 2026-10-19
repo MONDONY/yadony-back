@@ -1915,6 +1915,75 @@ class NegotiationServiceTest {
                 argThat(c -> c.compareTo(new BigDecimal("650")) == 0), eq("XOF"));
         }
 
+        private void stubReadPath(UUID threadId, NegotiationThreadEntity thread) {
+            when(threadRepo.findById(threadId)).thenReturn(java.util.Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(threadId)).thenReturn(java.util.List.of());
+        }
+
+        @Test
+        @DisplayName("fil à grille AWAITING_COMMISSION : le voyageur reçoit la commission réduite par son taux spécial, celle que le règlement prélèvera")
+        void getById_traveler_awaitingCommissionGrid_exposesSettledCommission() {
+            UUID THREAD_ID = UUID.randomUUID();
+            var thread = threadFor(THREAD_ID);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_COMMISSION);
+            thread.setCurrency("XOF");
+            thread.setCurrentPriceEur(new BigDecimal("5000"));
+            thread.setCommissionGridId(CASH_GRID_ID);
+            // 400 au lieu des 650 du palier standard : le taux spécial du voyageur est déjà dans le devis.
+            var pricing = threadPricing(CASH_GRID_ID, "5000", "XOF", THREAD_ID, "400");
+            stubReadPath(THREAD_ID, thread);
+
+            var resp = service.getById(TRAVELER_ID, THREAD_ID);
+
+            assertThat(resp.travelerCashCommissionEur()).isEqualByComparingTo("400");
+            // Mêmes méthode et mêmes arguments que CashCommissionService.settleNegotiationCommission
+            // (grille figée, net du fil, devise du fil, voyageur, expéditeur, fil), et un seul devis.
+            verify(pricing, times(1)).price(CASH_GRID_ID, new BigDecimal("5000"), "XOF",
+                TRAVELER_ID, SENDER_ID, THREAD_ID);
+        }
+
+        @Test
+        @DisplayName("fil sans grille AWAITING_COMMISSION : ancien calcul au taux de l'écran du fil")
+        void getById_traveler_awaitingCommissionNoGrid_usesLegacyCalculation() {
+            UUID THREAD_ID = UUID.randomUUID();
+            var thread = threadFor(THREAD_ID);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_COMMISSION);
+            thread.setCurrentPriceEur(new BigDecimal("30"));
+            stubReadPath(THREAD_ID, thread);
+
+            var resp = service.getById(TRAVELER_ID, THREAD_ID);
+
+            // 30 x 12 % (globalRate du setup) = 3,60.
+            assertThat(resp.travelerCashCommissionEur()).isEqualByComparingTo("3.60");
+        }
+
+        @Test
+        @DisplayName("fil AWAITING_COMMISSION lu par l'expéditeur : travelerCashCommissionEur reste nul")
+        void getById_sender_awaitingCommission_hidesTravelerCommission() {
+            UUID THREAD_ID = UUID.randomUUID();
+            var thread = threadFor(THREAD_ID);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_COMMISSION);
+            stubReadPath(THREAD_ID, thread);
+
+            var resp = service.getById(SENDER_ID, THREAD_ID);
+
+            assertThat(resp.travelerCashCommissionEur()).isNull();
+        }
+
+        @Test
+        @DisplayName("voyageur sur un fil qui n'attend pas sa commission : travelerCashCommissionEur reste nul")
+        void getById_traveler_notAwaitingCommission_isNull() {
+            UUID THREAD_ID = UUID.randomUUID();
+            var thread = threadFor(THREAD_ID);
+            stubReadPath(THREAD_ID, thread);
+
+            var resp = service.getById(TRAVELER_ID, THREAD_ID);
+
+            assertThat(resp.travelerCashCommissionEur()).isNull();
+        }
+
         @Test
         @DisplayName("fil AWAITING_DEPOSIT : la réponse porte l'échéance du dépôt")
         void getById_awaitingDeposit_exposesDepositExpiresAt() {
