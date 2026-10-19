@@ -93,9 +93,11 @@ public class AdminBroadcastController {
         payload.put("targetDestination", saved.getTargetDestination());
         payload.put("targetUserId", saved.getTargetUserId());
         payload.put("recipientCount", saved.getRecipientCount());
+        payload.put("push", request.pushOrDefault());
         auditService.log("admin_broadcast", saved.getId(), "BROADCAST_SENT", adminId, payload);
 
-        broadcastService.dispatchAsync(saved.getId(), saved.getTitle(), saved.getBody(), target);
+        broadcastService.dispatchAsync(saved.getId(), saved.getTitle(), saved.getBody(), target,
+                request.pushOrDefault());
 
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(AdminBroadcastResponse.from(saved));
     }

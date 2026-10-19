@@ -10,3 +10,4 @@ Notifications are set in Profile › ☰ › Settings › Notifications.
 You turn each type of alert on or off: messages, price discussions, new trips, new matching parcels, reminders and tips.
 Critical protections (delivery confirmed, payment received, dispute opened, trip rescheduled) are always on to protect your transactions.
 To silence a single conversation, use mute inside that conversation.
+Updates that need nothing from you (recipient confirming, invitation accepted, request expired, report handled) arrive in your notification list without making your phone ring.

@@ -406,4 +406,18 @@ class NotificationPrefsServiceTest {
         e.setPushPromo(promo);
         return e;
     }
+
+    /**
+     * Étape 2 du plan bruit : ces types restent dans le feed sans jamais sonner. Aucun type
+     * critique ne doit s'y glisser : il perdrait son push et son repli SMS.
+     */
+    @Test
+    void feedOnly_coversSilentTypes_andNeverACriticalOne() {
+        assertThat(NotificationPrefsService.isFeedOnly("RECIPIENT_CONFIRMED")).isTrue();
+        assertThat(NotificationPrefsService.isFeedOnly("REPORT_RESOLVED")).isTrue();
+        assertThat(NotificationPrefsService.isFeedOnly("BID_ACCEPTED")).isFalse();
+        assertThat(NotificationPrefsService.isFeedOnly(null)).isFalse();
+        assertThat(NotificationPrefsService.FEED_ONLY).hasSize(12)
+                .noneMatch(NotificationTypes::isCritical);
+    }
 }

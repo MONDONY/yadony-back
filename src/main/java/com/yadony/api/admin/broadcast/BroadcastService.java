@@ -14,7 +14,10 @@ import java.util.UUID;
 /**
  * Envoi d'un broadcast : comptage et historisation synchrones, diffusion asynchrone.
  *
- * <p>Canaux : notification in-app + push FCM via {@code NotificationDispatcher}.
+ * <p>Canaux : notification in-app, plus le push FCM quand l'admin le demande
+ * ({@code push}), via {@code NotificationDispatcher}. Sans push, le message attend dans la
+ * boite Annonces sans faire sonner : un concours ou une info de service ne justifie pas
+ * toujours de reveiller tous les telephones.
  * <b>Jamais de SMS</b> — le repli SMS est reserve aux notifications critiques
  * ({@code SmsFallbackScheduler}), et un broadcast n'en est pas une.
  *
@@ -57,7 +60,8 @@ public class BroadcastService {
      * ligne de notification en echec ne doit pas priver les suivants du message.
      */
     @Async("broadcastExecutor")
-    public void dispatchAsync(UUID broadcastId, String title, String body, BroadcastTarget target) {
+    public void dispatchAsync(UUID broadcastId, String title, String body, BroadcastTarget target,
+                              boolean push) {
         Map<String, String> data = Map.of(
                 "type", NOTIFICATION_TYPE,
                 "broadcastId", broadcastId.toString());
@@ -70,7 +74,7 @@ public class BroadcastService {
             page = audienceService.page(target, pageNumber);
             for (UUID userId : page.getContent()) {
                 try {
-                    notificationDispatcher.notifyUser(userId, title, body, data);
+                    notificationDispatcher.notifyUser(userId, title, body, data, push);
                     sent++;
                 } catch (RuntimeException e) {
                     failed++;

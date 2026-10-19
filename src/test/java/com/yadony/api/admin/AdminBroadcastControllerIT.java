@@ -30,6 +30,8 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -122,10 +124,34 @@ class AdminBroadcastControllerIT {
                 .andExpect(jsonPath("$.recipientCount").value(37))
                 .andExpect(jsonPath("$.targetType").value("ALL"));
 
+        // Sans le champ push (admin pas encore à jour) : comportement d'avant, avec push.
         verify(broadcastService).dispatchAsync(eq(saved.getId()), eq("Maintenance"),
-                eq("Service indisponible ce soir."), any(BroadcastTarget.class));
+                eq("Service indisponible ce soir."), any(BroadcastTarget.class), eq(true));
         verify(auditService).log(eq("admin_broadcast"), eq(saved.getId()),
                 eq("BROADCAST_SENT"), eq(ADMIN_ID), any(Map.class));
+    }
+
+    @Test
+    @DisplayName("POST — push:false → diffusion sans push, choix trace dans l'audit")
+    void send_withPushFalse_dispatchesWithoutPush() throws Exception {
+        AdminBroadcastEntity saved = persisted(12);
+        when(broadcastService.record(eq("Défi du jour"), eq("Rendez-vous à 21 h."),
+                any(BroadcastTarget.class), eq(ADMIN_ID))).thenReturn(saved);
+
+        mockMvc.perform(post("/admin/notifications/broadcast")
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body("""
+                                {"title":"Défi du jour","body":"Rendez-vous à 21 h.",
+                                 "target":{"type":"ALL"},"push":false}
+                                """)))
+                .andExpect(status().isAccepted());
+
+        // Titre et corps diffusés = ceux de la ligne d'historique (ici le stub persisted()).
+        verify(broadcastService).dispatchAsync(eq(saved.getId()), eq(saved.getTitle()),
+                eq(saved.getBody()), any(BroadcastTarget.class), eq(false));
+        verify(auditService).log(eq("admin_broadcast"), eq(saved.getId()), eq("BROADCAST_SENT"),
+                eq(ADMIN_ID), argThat((Map<String, Object> m) -> Boolean.FALSE.equals(m.get("push"))));
     }
 
     /**
@@ -144,7 +170,7 @@ class AdminBroadcastControllerIT {
                                 """)))
                 .andExpect(status().isUnprocessableEntity());
 
-        verify(broadcastService, never()).dispatchAsync(any(), any(), any(), any());
+        verify(broadcastService, never()).dispatchAsync(any(), any(), any(), any(), anyBoolean());
     }
 
     @Test
@@ -188,7 +214,7 @@ class AdminBroadcastControllerIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.recipientCount").value(128));
 
-        verify(broadcastService, never()).dispatchAsync(any(), any(), any(), any());
+        verify(broadcastService, never()).dispatchAsync(any(), any(), any(), any(), anyBoolean());
     }
 
     // ── GET /admin/notifications/broadcasts ───────────────────────────────────
@@ -238,7 +264,7 @@ class AdminBroadcastControllerIT {
                 .andExpect(jsonPath("$.code").value("broadcast-user-not-reachable"));
 
         verify(broadcastService, never()).record(any(), any(), any(), any());
-        verify(broadcastService, never()).dispatchAsync(any(), any(), any(), any());
+        verify(broadcastService, never()).dispatchAsync(any(), any(), any(), any(), anyBoolean());
     }
 
     @Test
