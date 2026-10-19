@@ -330,4 +330,11 @@ class BidSupplementCashLedgerTest {
         t.setAmount(new BigDecimal(amount));
         return t;
     }
+
+    @Test
+    void finDeFileDuFilet_toucheLaDateSansChangerLEtat() {
+        ledger.touch(s.getId());
+        verify(supplements).touch(s.getId(), LocalDateTime.ofInstant(NOW, ZoneOffset.UTC));
+        verifyNoInteractions(events, auditService);
+    }
 }

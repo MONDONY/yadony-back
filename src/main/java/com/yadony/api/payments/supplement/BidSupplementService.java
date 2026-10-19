@@ -392,7 +392,11 @@ public class BidSupplementService {
             return requestRefundOfPaid(bid, reason);
         }
         BidSupplementEntity s = open.get();
-        BidSupplementStatus previous = close(s, BidSupplementStatus.CANCELLED, reason);
+        // Commission espèces jamais prélevée : la demande n'a jamais atteint l'expéditeur, il ne doit
+        // pas la voir (même motif que l'échéance d'une 3DS jamais confirmée).
+        BidSupplementStatus previous = close(s, BidSupplementStatus.CANCELLED,
+                s.getStatus() == BidSupplementStatus.COMMISSION_PENDING
+                        ? BidSupplementCashLedger.COMMISSION_NOT_CONFIRMED : reason);
         events.publishEvent(new BidSupplementCancelledEvent(s.getId(), bidId, s.getSenderId(), s.getTravelerId(),
                 s.getRail(), previous, reason));
         audit(s, "BID_SUPPLEMENT_CANCELLED_BID_ENDED", null, Map.of("bidStatus", bid.getStatus().name(),

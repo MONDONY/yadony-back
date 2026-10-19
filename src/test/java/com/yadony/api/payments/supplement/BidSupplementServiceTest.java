@@ -736,4 +736,19 @@ class BidSupplementServiceTest {
         }
         throw new AssertionError("Exception " + code + " attendue");
     }
+
+    @Test
+    void onBidEnded_demandeEnAttenteDeCommission_closeCommeJamaisAdressee() {
+        BidSupplementEntity s = existing(BidSupplementStatus.COMMISSION_PENDING);
+        s.setRail(BidSupplementRail.CASH);
+        bid.setStatus(BidStatus.CANCELLED);
+        when(supplements.findByBidIdAndStatusInForUpdate(bid.getId(), BidSupplementStatus.OPEN)).thenReturn(Optional.of(s));
+
+        assertThat(service(cardRail).onBidEnded(bid.getId(), "BID_REJECTED")).isTrue();
+
+        assertThat(s.getStatus()).isEqualTo(BidSupplementStatus.CANCELLED);
+        assertThat(s.getClosedReason()).isEqualTo("COMMISSION_NOT_CONFIRMED");
+        verify(events).publishEvent(new BidSupplementCancelledEvent(s.getId(), bid.getId(), sender.getId(),
+                traveler.getId(), BidSupplementRail.CASH, BidSupplementStatus.COMMISSION_PENDING, "BID_REJECTED"));
+    }
 }

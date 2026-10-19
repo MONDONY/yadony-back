@@ -1,5 +1,6 @@
 package com.yadony.api.payments.supplement;
 
+import com.stripe.exception.IdempotencyException;
 import com.stripe.exception.StripeException;
 import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.payments.cash.CommissionChargedVia;
@@ -76,9 +77,10 @@ public class BidSupplementCashRefunds {
             try {
                 PaymentIntentView pi = gateway.retrievePaymentIntent(paymentIntentId);
                 if (pi.succeeded()) {
-                    // Commission tardive : enregistrée, puis rendue tout de suite (et par l'événement).
-                    ledger.commissionCharged(supplementId, pi.id(), "cancel-refused");
-                    return refundCard(supplementId);
+                    // Commission tardive sur une demande close : enregistrée ; son remboursement part de
+                    // l'événement publié par le registre (un seul chemin de remboursement).
+                    return ledger.commissionCharged(supplementId, pi.id(), "cancel-refused")
+                            == BidSupplementCashLedger.ChargeOutcome.LATE_REFUND;
                 }
                 if (pi.canceled()) {
                     return ledger.commissionFailed(supplementId, paymentIntentId, "canceled");
@@ -89,6 +91,8 @@ public class BidSupplementCashRefunds {
                 log.error("Commission {} du supplément {} : annulation et relecture en échec", paymentIntentId,
                         supplementId, retrieveError);
             }
+            // Repasse en fin de file du filet (tri par updated_at) : pas de famine des autres demandes.
+            ledger.touch(supplementId);
             return false;
         }
     }
@@ -112,13 +116,31 @@ public class BidSupplementCashRefunds {
                     claim.travelerId(), refundId);
             return done;
         } catch (Exception e) {
+            boolean stillCharged = ledger.find(supplementId)
+                    .map(s -> s.getCommissionStatus() == CommissionStatus.CHARGED).orElse(false);
+            if (!stillCharged) {
+                // Un remboursement concurrent (événement et filet, webhook charge.refunded) a abouti.
+                log.info("Commission du supplément {} déjà soldée par un autre passage ({})", supplementId,
+                        e.getMessage());
+                return false;
+            }
+            ledger.touch(supplementId);
+            if (e instanceof IdempotencyException) {
+                // Même clé encore en vol chez Stripe (deux passages simultanés) : on réessaiera plus tard.
+                log.info("Remboursement de la commission du supplément {} en cours ailleurs : réessai au filet",
+                        supplementId);
+                return false;
+            }
             log.error("Remboursement de la commission du supplément {} en échec", supplementId, e);
-            ledger.auditOnly(supplementId, "BID_SUPPLEMENT_COMMISSION_REFUND_ERROR",
-                    Map.of("error", String.valueOf(e.getMessage())));
-            alerts.raiseOnce("SUPP_COMM_REFUND_FAIL_" + supplementId,
+            boolean raised = alerts.raiseOnce("SUPP_COMM_REFUND_FAIL_" + supplementId,
                     "Commission du supplément espèces " + supplementId + " non rendue : " + e.getMessage(),
                     Map.of("supplementId", supplementId.toString(), "bidId", claim.bidId().toString(),
                             "error", String.valueOf(e.getMessage())));
+            if (raised) {
+                // Une trace par incident, pas une à chaque passage du filet.
+                ledger.auditOnly(supplementId, "BID_SUPPLEMENT_COMMISSION_REFUND_ERROR",
+                        Map.of("error", String.valueOf(e.getMessage())));
+            }
             return false;
         }
     }

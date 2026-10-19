@@ -114,6 +114,7 @@ class BidSupplementCashIT {
     @Autowired EntityManager entityManager;
     @Autowired TransactionTemplate tx;
     @Autowired JdbcTemplate jdbc;
+    @Autowired BidSupplementCashReconciliationJob cashJob;
 
     @Test
     void solde_commissionDuSupplementPuisColisAnnule_toutRendu_sansFauxPositifDIntegrite() throws Exception {
@@ -253,16 +254,164 @@ class BidSupplementCashIT {
         assertThat(third.status()).as("deux refus de carte ne consomment pas le plafond de 2").isEqualTo("PROPOSED");
     }
 
+
+    // ── Relecture B4 ─────────────────────────────────────────────────────────
+
+    @Test
+    void doublePostSimultaneSurLeSolde_unSeulDebitEtUn409() throws Exception {
+        Parties p = parties(null);
+        topUp(p.traveler.getId(), "10.00");
+        java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            List<java.util.concurrent.Future<Object>> results = new java.util.ArrayList<>();
+            for (int i = 0; i < 2; i++) {
+                results.add(pool.submit(() -> {
+                    start.await();
+                    try {
+                        return paymentFlow.create(p.bidId, p.traveler.getFirebaseUid(), request(p, null));
+                    } catch (YadonyBusinessException e) {
+                        return e;
+                    }
+                }));
+            }
+            start.countDown();
+            List<Object> outcomes = new java.util.ArrayList<>();
+            for (var f : results) {
+                outcomes.add(f.get(60, java.util.concurrent.TimeUnit.SECONDS));
+            }
+            assertThat(outcomes).filteredOn(o -> o instanceof BidSupplementResponse).hasSize(1);
+            assertThat(outcomes).filteredOn(o -> o instanceof YadonyBusinessException).singleElement()
+                    .satisfies(o -> assertThat(((YadonyBusinessException) o).getErrorCode())
+                            .isEqualTo("supplement-already-active"));
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM wallet_transactions WHERE bid_id = ? "
+                + "AND type = 'SUPPLEMENT_COMMISSION_DEDUCTED'", Integer.class, p.bidId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM bid_supplements WHERE bid_id = ?", Integer.class,
+                p.bidId)).isEqualTo(1);
+    }
+
+    @Test
+    void multidevise_colisXofComplementEur_deuxPortefeuillesDebites_puisRefus_deuxRecredits_integriteVerte()
+            throws Exception {
+        Parties p = parties(null, "XOF");
+        topUp(p.traveler.getId(), "XOF", "300");
+        topUp(p.traveler.getId(), "EUR", "10.00");
+
+        BidSupplementResponse created = paymentFlow.create(p.bidId, p.traveler.getFirebaseUid(),
+                new CreateSupplementRequest(new BigDecimal("20000"), BidSupplementReason.OTHER, null, null,
+                        "tracking/" + p.bidId + "/1_supplement.jpg", CommissionSource.WALLET_FIRST, "EUR"));
+
+        assertThat(created.status()).isEqualTo("PROPOSED");
+        assertThat(created.commissionAmount()).isGreaterThan(new BigDecimal("300"));
+        UUID supplementId = created.id();
+        List<Map<String, Object>> debits = jdbc.queryForList("SELECT currency, amount, source_currency, "
+                + "idempotency_key FROM wallet_transactions WHERE payment_ref = ? ORDER BY currency",
+                "supplement-" + supplementId);
+        assertThat(debits).hasSize(2);
+        assertThat(debits.get(0)).containsEntry("currency", "EUR").containsEntry("source_currency", "XOF")
+                .containsEntry("idempotency_key", "supplement-commission-" + supplementId + "-active");
+        assertThat(debits.get(1)).containsEntry("currency", "XOF")
+                .containsEntry("idempotency_key", "supplement-commission-" + supplementId);
+        assertThat((BigDecimal) debits.get(1).get("amount")).isEqualByComparingTo("-300");
+        assertThat(walletService.getBalance(p.traveler.getId(), "XOF")).isEqualByComparingTo("0");
+
+        supplementService.decline(p.bidId, supplementId, p.sender.getFirebaseUid());
+
+        awaitColumn(supplementId, "commission_status", "REFUNDED");
+        List<Map<String, Object>> credits = jdbc.queryForList("SELECT currency, idempotency_key FROM "
+                + "wallet_transactions WHERE type = 'REFUND' AND payment_ref = ? ORDER BY currency",
+                "supplement-refund-" + supplementId);
+        assertThat(credits).extracting(r -> r.get("idempotency_key")).containsExactly(
+                "supplement-refund-" + supplementId + "-EUR", "supplement-refund-" + supplementId + "-XOF");
+        assertThat(walletService.getBalance(p.traveler.getId(), "XOF")).isEqualByComparingTo("300");
+        assertThat(walletService.getBalance(p.traveler.getId(), "EUR")).isEqualByComparingTo("10.00");
+
+        Map<String, Long> counts = monitor.runAll();
+        assertThat(counts).containsEntry("INV-01", 0L).containsEntry("INV-02", 0L).containsEntry("INV-03", 0L)
+                .containsEntry("INV-09", 0L).containsEntry("INV-10", 0L);
+    }
+
+    @Test
+    void confirmationRejoueeEtWebhook_uneSeuleTransitionEtUneSeuleNotification() throws Exception {
+        Parties p = parties("pm_card");
+        String piId = "pi_" + UUID.randomUUID().toString().replace("-", "");
+        when(gateway.createPaymentIntent(any(), any())).thenReturn(new PaymentIntentView(piId, "requires_action",
+                110L, "eur", piId + "_secret", null, List.of("card")));
+        UUID supplementId = paymentFlow.create(p.bidId, p.traveler.getFirebaseUid(), request(p, CommissionSource.CARD))
+                .id();
+        when(gateway.retrievePaymentIntent(piId)).thenReturn(new PaymentIntentView(piId, "succeeded", 110L, "eur",
+                null, "ch_c", List.of("card")));
+
+        assertThat(paymentFlow.confirmCommission(p.bidId, supplementId, p.traveler.getFirebaseUid()).status())
+                .isEqualTo("PROPOSED");
+        assertThat(paymentFlow.confirmCommission(p.bidId, supplementId, p.traveler.getFirebaseUid()).status())
+                .isEqualTo("PROPOSED");
+        assertThat(dispatcher.dispatch(event("evt_" + UUID.randomUUID(), "payment_intent.succeeded",
+                "{\"id\":\"" + piId + "\",\"object\":\"payment_intent\",\"status\":\"succeeded\","
+                        + "\"metadata\":{\"bid_supplement_id\":\"" + supplementId + "\","
+                        + "\"commission_purpose\":\"bid_supplement_commission\"}}"))).isTrue();
+
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM audit_log WHERE entity_id = ? AND action = ?",
+                Integer.class, supplementId, "BID_SUPPLEMENT_COMMISSION_CHARGED_CARD")).isEqualTo(1);
+        Supplier<Integer> notified = () -> jdbc.queryForObject("SELECT count(*) FROM notifications WHERE user_id = ? "
+                + "AND type = 'BID_SUPPLEMENT_REQUESTED'", Integer.class, p.sender.getId());
+        for (int i = 0; i < 100 && notified.get() == 0; i++) {
+            Thread.sleep(100);
+        }
+        Thread.sleep(500);
+        assertThat(notified.get()).isEqualTo(1);
+    }
+
+    @Test
+    void retraitPendantLeDebitDeLaCarte_paymentIntentAnnulee_etFiletRetrouveLaDemandeSiLAnnulationEchoue()
+            throws Exception {
+        Parties p = parties("pm_card");
+        String piId = "pi_" + UUID.randomUUID().toString().replace("-", "");
+        UUID[] created = new UUID[1];
+        when(gateway.createPaymentIntent(any(), any())).thenAnswer(inv -> {
+            // Le voyageur retire sa demande pendant que Stripe répond.
+            UUID id = jdbc.queryForObject("SELECT id FROM bid_supplements WHERE bid_id = ?", UUID.class, p.bidId);
+            created[0] = id;
+            supplementService.withdraw(p.bidId, id, p.traveler.getFirebaseUid());
+            return new PaymentIntentView(piId, "requires_action", 110L, "eur", piId + "_secret", null,
+                    List.of("card"));
+        });
+        when(gateway.cancelPaymentIntent(piId))
+                .thenThrow(new com.stripe.exception.ApiConnectionException("timeout"))
+                .thenReturn(new PaymentIntentView(piId, "canceled", 110L, "eur", null, null, List.of("card")));
+        when(gateway.retrievePaymentIntent(piId)).thenThrow(new com.stripe.exception.ApiConnectionException("timeout"));
+
+        BidSupplementResponse r = paymentFlow.create(p.bidId, p.traveler.getFirebaseUid(), request(p, CommissionSource.CARD));
+
+        assertThat(r.status()).isEqualTo("WITHDRAWN");
+        assertThat(r.commissionClientSecret()).isNull();
+        UUID id = created[0];
+        assertThat(column(id, "commission_payment_intent_id")).isEqualTo(piId);
+        assertThat(column(id, "commission_status")).as("annulation en échec : reste à défaire").isNull();
+        // Le filet la retrouve (statut nul et PaymentIntent posée sur une demande close) et l'annule.
+        assertThat(cashJob.run().settled()).isZero();
+        jdbc.update("UPDATE bid_supplements SET updated_at = updated_at - interval '1 hour' WHERE id = ?", id);
+        assertThat(cashJob.run().settled()).isEqualTo(1);
+        assertThat(column(id, "commission_status")).isEqualTo("FAILED");
+    }
+
     // ── Aides ────────────────────────────────────────────────────────────────
 
     private record Parties(UserEntity traveler, UserEntity sender, UUID bidId) {
     }
 
     private Parties parties(String commissionCard) {
+        return parties(commissionCard, "EUR");
+    }
+
+    private Parties parties(String commissionCard, String currency) {
         UserEntity traveler = persistUser(commissionCard);
         UserEntity sender = persistUser(null);
-        UUID announcementId = persistAnnouncement(traveler.getId());
-        UUID bidId = persistCashBid(announcementId, sender.getId());
+        UUID announcementId = persistAnnouncement(traveler.getId(), currency);
+        UUID bidId = persistCashBid(announcementId, sender.getId(), currency);
         return new Parties(traveler, sender, bidId);
     }
 
@@ -272,7 +421,11 @@ class BidSupplementCashIT {
     }
 
     private void topUp(UUID userId, String amount) {
-        tx.executeWithoutResult(status -> walletService.credit(userId, "EUR", new BigDecimal(amount),
+        topUp(userId, "EUR", amount);
+    }
+
+    private void topUp(UUID userId, String currency, String amount) {
+        tx.executeWithoutResult(status -> walletService.credit(userId, currency, new BigDecimal(amount),
                 WalletTransactionType.TOP_UP, "pi_topup_" + UUID.randomUUID(), "topup-" + UUID.randomUUID()));
     }
 
@@ -327,7 +480,7 @@ class BidSupplementCashIT {
         return userRepository.saveAndFlush(user);
     }
 
-    private UUID persistAnnouncement(UUID travelerId) {
+    private UUID persistAnnouncement(UUID travelerId, String currency) {
         return tx.execute(status -> {
             AnnouncementEntity announcement = new AnnouncementEntity();
             announcement.setTravelerId(travelerId);
@@ -344,7 +497,7 @@ class BidSupplementCashIT {
             announcement.setAvailableKg(new BigDecimal("20.00"));
             announcement.setTotalKg(new BigDecimal("23.00"));
             announcement.setPricePerKg(new BigDecimal("20.00"));
-            announcement.setCurrency("EUR");
+            announcement.setCurrency(currency);
             announcement.setTimezone("Europe/Paris");
             announcement.setStatus(AnnouncementStatus.ACTIVE);
             announcement.setAcceptedPaymentMethods(EnumSet.of(PaymentMethod.CASH));
@@ -353,13 +506,13 @@ class BidSupplementCashIT {
         });
     }
 
-    private UUID persistCashBid(UUID announcementId, UUID senderId) {
+    private UUID persistCashBid(UUID announcementId, UUID senderId, String currency) {
         return tx.execute(status -> {
             BidEntity bid = new BidEntity();
             bid.setAnnouncementId(announcementId);
             bid.setSenderId(senderId);
             bid.setPaymentMethod(PaymentMethod.CASH);
-            bid.setCurrency("EUR");
+            bid.setCurrency(currency);
             bid.setWeightKg(new BigDecimal("2"));
             bid.setStatus(BidStatus.ACCEPTED);
             // Commission principale déjà prélevée par carte (acceptation espèces) : cohérente pour INV-10.

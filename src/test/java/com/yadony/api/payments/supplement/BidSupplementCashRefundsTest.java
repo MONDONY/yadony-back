@@ -1,6 +1,7 @@
 package com.yadony.api.payments.supplement;
 
 import com.stripe.exception.ApiConnectionException;
+import com.stripe.exception.IdempotencyException;
 import com.stripe.exception.InvalidRequestException;
 import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.payments.cash.CommissionChargedVia;
@@ -90,13 +91,48 @@ class BidSupplementCashRefundsTest {
     }
 
     @Test
-    void carte_echecStripe_resteAPrelevee_alerteUneFois() throws Exception {
+    void carte_echecStripe_resteAPrelevee_alerteEtTraceUneSeuleFois_finDeFile() throws Exception {
         chargedByCard();
         when(gateway.findRefund(any(), any())).thenThrow(new ApiConnectionException("timeout"));
+        when(alerts.raiseOnce(eq("SUPP_COMM_REFUND_FAIL_" + s.getId()), anyString(), anyMap())).thenReturn(true, false);
 
         assertThat(refunds.settle(s.getId())).isFalse();
+        assertThat(refunds.settle(s.getId())).isFalse();
+
         verify(ledger, never()).cardRefunded(any(), any(), any());
-        verify(alerts).raiseOnce(eq("SUPP_COMM_REFUND_FAIL_" + s.getId()), anyString(), anyMap());
+        verify(ledger, org.mockito.Mockito.times(1)).auditOnly(eq(s.getId()),
+                eq("BID_SUPPLEMENT_COMMISSION_REFUND_ERROR"), anyMap());
+        verify(ledger, org.mockito.Mockito.times(2)).touch(s.getId());
+    }
+
+    @Test
+    void carte_deuxPassagesSimultanes_409IdempotenceChezStripe_niAlerteNiTrace() throws Exception {
+        chargedByCard();
+        when(gateway.findRefund("pi_c", s.getId().toString())).thenReturn(Optional.empty());
+        when(gateway.createRefund(eq("pi_c"), anyMap(), anyString())).thenThrow(new IdempotencyException(
+                "Keys for idempotent requests can only be used with the same parameters", "req", "idempotency_key_in_use",
+                409));
+
+        assertThat(refunds.settle(s.getId())).isFalse();
+
+        verify(ledger).touch(s.getId());
+        verifyNoInteractions(alerts);
+        verify(ledger, never()).auditOnly(any(), any(), any());
+    }
+
+    @Test
+    void carte_echecMaisDejaRembourseeParUnAutrePassage_rienASignaler() throws Exception {
+        chargedByCard();
+        when(gateway.findRefund(any(), any())).thenThrow(new ApiConnectionException("timeout"));
+        BidSupplementEntity refunded = new BidSupplementEntity();
+        refunded.setCommissionStatus(CommissionStatus.REFUNDED);
+        when(ledger.find(s.getId())).thenReturn(Optional.of(s), Optional.of(refunded));
+
+        assertThat(refunds.settle(s.getId())).isFalse();
+
+        verifyNoInteractions(alerts);
+        verify(ledger, never()).touch(any());
+        verify(ledger, never()).auditOnly(any(), any(), any());
     }
 
     @Test
@@ -129,14 +165,12 @@ class BidSupplementCashRefundsTest {
         doThrow(new InvalidRequestException("already succeeded", null, "req", null, 400, null))
                 .when(gateway).cancelPaymentIntent("pi_c");
         when(gateway.retrievePaymentIntent("pi_c")).thenReturn(view("succeeded"));
-        when(ledger.cardRefundClaim(s.getId())).thenReturn(Optional.of(
-                new BidSupplementCashLedger.CardRefundClaim(s.getId(), s.getBidId(), s.getTravelerId(), "pi_c")));
-        when(gateway.findRefund("pi_c", s.getId().toString())).thenReturn(Optional.empty());
-        when(gateway.createRefund(eq("pi_c"), anyMap(), anyString())).thenReturn("re_late");
-        when(ledger.cardRefunded(s.getId(), "re_late", "refund")).thenReturn(true);
+        when(ledger.commissionCharged(s.getId(), "pi_c", "cancel-refused"))
+                .thenReturn(BidSupplementCashLedger.ChargeOutcome.LATE_REFUND);
 
         assertThat(refunds.settle(s.getId())).isTrue();
-        verify(ledger).commissionCharged(s.getId(), "pi_c", "cancel-refused");
+        // Le remboursement part de l'événement publié par le registre, pas d'un appel direct concurrent.
+        verify(gateway, never()).createRefund(any(), any(), any());
     }
 
     @Test
@@ -152,6 +186,7 @@ class BidSupplementCashRefundsTest {
         assertThat(refunds.settle(s.getId())).isTrue();
         assertThat(refunds.settle(s.getId())).isFalse();
         assertThat(refunds.settle(s.getId())).isFalse();
+        verify(ledger, org.mockito.Mockito.times(2)).touch(s.getId());
     }
 
     @Test

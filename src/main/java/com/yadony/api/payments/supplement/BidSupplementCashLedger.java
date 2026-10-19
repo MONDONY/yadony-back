@@ -315,6 +315,16 @@ public class BidSupplementCashLedger {
         return true;
     }
 
+    /**
+     * Tentative du filet sans issue (Stripe en échec, PaymentIntent pas encore tranchée) : la demande
+     * repasse en fin de file ({@code ORDER BY updated_at}), pour qu'une centaine d'échecs ne bloque
+     * pas indéfiniment les suivantes.
+     */
+    @Transactional
+    public void touch(UUID supplementId) {
+        supplements.touch(supplementId, window.now());
+    }
+
     /** Trace d'un événement sans transition. */
     @Transactional
     public void auditOnly(UUID supplementId, String action, Map<String, Object> extra) {

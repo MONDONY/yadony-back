@@ -191,6 +191,11 @@ public interface BidSupplementRepository extends JpaRepository<BidSupplementEnti
 
     Optional<BidSupplementEntity> findByCommissionPaymentIntentId(String commissionPaymentIntentId);
 
+    /** Filet : repousse une demande en fin de file sans changer son état (ni sa version). */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE BidSupplementEntity s SET s.updatedAt = :now WHERE s.id = :id")
+    int touch(@Param("id") UUID id, @Param("now") LocalDateTime now);
+
     /** Filet espèces : demandes encore en attente de leur commission, créées avant {@code before}. */
     @Query("SELECT s.id FROM BidSupplementEntity s WHERE s.rail = com.yadony.api.payments.supplement.BidSupplementRail.CASH "
             + "AND s.status = com.yadony.api.payments.supplement.BidSupplementStatus.COMMISSION_PENDING "
@@ -200,10 +205,12 @@ public interface BidSupplementRepository extends JpaRepository<BidSupplementEnti
     /**
      * Filet espèces : demandes closes (ou remboursées) dont la commission reste à défaire,
      * inchangées depuis {@code before} : commission prélevée à rendre ({@code CHARGED}), ou
-     * PaymentIntent de commission en 3DS à annuler ({@code REQUIRES_3DS}).
+     * PaymentIntent de commission en 3DS à annuler ({@code REQUIRES_3DS}, ou statut encore nul :
+     * demande close pendant le débit de la carte).
      */
     @Query("SELECT s.id FROM BidSupplementEntity s WHERE s.rail = com.yadony.api.payments.supplement.BidSupplementRail.CASH "
-            + "AND s.status IN :statuses AND s.commissionStatus IN :commissionStatuses "
+            + "AND s.status IN :statuses AND (s.commissionStatus IN :commissionStatuses "
+            + "OR (s.commissionStatus IS NULL AND s.commissionPaymentIntentId IS NOT NULL)) "
             + "AND s.updatedAt < :before ORDER BY s.updatedAt")
     List<UUID> findCashIdsWithCommissionToSettle(@Param("statuses") Collection<BidSupplementStatus> statuses,
                                                  @Param("commissionStatuses")

@@ -70,6 +70,7 @@ class BidSupplementCashRailTest {
     @Mock ActiveCurrencyResolver activeCurrencyResolver;
     @Mock StripeSupplementGateway gateway;
     @Mock BidSupplementCashLedger ledger;
+    @Mock BidSupplementCashRefunds refunds;
     @Mock BidSupplementRepository supplements;
     @Mock UserRepository users;
     @Mock StorageService storage;
@@ -82,8 +83,8 @@ class BidSupplementCashRailTest {
     void setUp() {
         BidSupplementWindow window = new BidSupplementWindow(new BidSupplementProperties(),
                 Clock.fixed(NOW, ZoneOffset.UTC));
-        rail = new BidSupplementCashRail(collector, walletService, activeCurrencyResolver, gateway, ledger, supplements,
-                users, storage, window);
+        rail = new BidSupplementCashRail(collector, walletService, activeCurrencyResolver, gateway, ledger, refunds,
+                supplements, users, storage, window);
         traveler = new UserEntity();
         setId(traveler, UUID.randomUUID());
         traveler.setFirebaseUid("uid-traveler");
@@ -351,15 +352,75 @@ class BidSupplementCashRailTest {
     }
 
     @Test
-    void apresCommit_erreurReseau_503SansCloreLaDemande() throws Exception {
+    void apresCommit_erreurReseau_503SansCloreLaDemande_puisRepriseParConfirm() throws Exception {
         pendingCard();
-        when(gateway.createPaymentIntent(any(), anyString())).thenThrow(new ApiConnectionException("timeout"));
+        when(users.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
+        when(supplements.findByIdAndBidId(s.getId(), s.getBidId())).thenReturn(Optional.of(s));
+        String key = "supplement_commission_" + s.getId() + "_v1";
+        when(gateway.createPaymentIntent(any(), eq(key))).thenThrow(new ApiConnectionException("timeout"))
+                .thenReturn(pi("pi_c", "requires_action"));
+        BidSupplementEntity withPi = copyPending();
+        withPi.setCommissionPaymentIntentId("pi_c");
+        withPi.setCommissionStatus(CommissionStatus.REQUIRES_3DS);
+        when(ledger.commissionRequiresAction(s.getId(), "pi_c")).thenReturn(withPi);
 
         Throwable thrown = catchThrowable(() -> rail.afterCreateCommit(view("COMMISSION_PENDING")));
 
         assertThat(thrown).isInstanceOfSatisfying(YadonyBusinessException.class,
                 e -> assertThat(e.getErrorCode()).isEqualTo(StripeUnavailable.CODE));
         verify(ledger, never()).commissionFailed(any(), any(), any());
+        assertThat(s.getStatus()).isEqualTo(BidSupplementStatus.COMMISSION_PENDING);
+
+        // Reprise : la demande en attente sans PaymentIntent relance le débit avec la MÊME clé.
+        BidSupplementResponse resumed = rail.confirmCommission(s.getBidId(), s.getId(), "uid-traveler");
+
+        assertThat(resumed.commissionClientSecret()).isEqualTo("pi_c_secret");
+        verify(gateway, org.mockito.Mockito.times(2)).createPaymentIntent(any(), eq(key));
+        verify(gateway, never()).retrievePaymentIntent(anyString());
+    }
+
+    @Test
+    void confirmer_enAttenteSansPaymentIntentHorsCarte_vueSansRelance() {
+        when(users.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
+        when(supplements.findByIdAndBidId(s.getId(), s.getBidId())).thenReturn(Optional.of(s));
+        s.setStatus(BidSupplementStatus.COMMISSION_PENDING);
+
+        assertThat(rail.confirmCommission(s.getBidId(), s.getId(), "uid-traveler").status())
+                .isEqualTo("COMMISSION_PENDING");
+        s.setCommissionChargedVia(CommissionChargedVia.CARD);
+        s.setCommissionStatus(CommissionStatus.FAILED);
+        rail.confirmCommission(s.getBidId(), s.getId(), "uid-traveler");
+        verifyNoInteractions(gateway);
+    }
+
+    @Test
+    void apresCommit_3dsMaisDemandeCloseEntreTemps_paymentIntentAbandonnee() throws Exception {
+        pendingCard();
+        when(gateway.createPaymentIntent(any(), anyString())).thenReturn(pi("pi_c", "requires_action"));
+        BidSupplementEntity closed = copyPending();
+        closed.setStatus(BidSupplementStatus.WITHDRAWN);
+        closed.setCommissionPaymentIntentId("pi_c");
+        when(ledger.commissionRequiresAction(s.getId(), "pi_c")).thenReturn(closed);
+
+        BidSupplementResponse r = rail.afterCreateCommit(view("COMMISSION_PENDING"));
+
+        verify(refunds).settle(s.getId());
+        assertThat(r.commissionClientSecret()).as("aucune 3DS à présenter pour une demande retirée").isNull();
+    }
+
+    @Test
+    void webhookEchec_demandeFermee_paymentIntentAnnuleeAuMieux() throws Exception {
+        when(ledger.commissionFailed(s.getId(), "pi_c", "payment_failed:authentication_failed")).thenReturn(true);
+        when(ledger.commissionFailed(s.getId(), "pi_d", "payment_failed:x")).thenReturn(true);
+        lenient().when(gateway.cancelPaymentIntent("pi_d")).thenThrow(new InvalidRequestException("no", null, "req", null, 400,
+                null));
+
+        rail.onCommissionWebhook("payment_intent.payment_failed", s.getId(), "pi_c", "authentication_failed");
+        rail.onCommissionWebhook("payment_intent.payment_failed", s.getId(), "pi_d", "x");
+        rail.onCommissionWebhook("payment_intent.payment_failed", s.getId(), null, "x");
+
+        verify(gateway).cancelPaymentIntent("pi_c");
+        verify(gateway).cancelPaymentIntent("pi_d");
     }
 
     @Test

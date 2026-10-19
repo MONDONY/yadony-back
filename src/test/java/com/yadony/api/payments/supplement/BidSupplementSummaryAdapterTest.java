@@ -278,4 +278,15 @@ class BidSupplementSummaryAdapterTest {
         add(BidSupplementStatus.WITHDRAWN, 10).setClosedReason("WITHDRAWN_BY_TRAVELER");
         assertThat(adapter(cardRail).view(bid, announcement, travelerId, null).requestAllowed()).isFalse();
     }
+
+    @Test
+    void especes_demandeAnnuleeAvantSaCommissionParLaFinDuColis_invisiblePourLExpediteur() {
+        BidSupplementEntity s = add(BidSupplementStatus.CANCELLED, 5);
+        s.setRail(BidSupplementRail.CASH);
+        s.setClosedReason(BidSupplementCashLedger.COMMISSION_NOT_CONFIRMED);
+
+        assertThat(adapter(cardRail).view(bid, announcement, senderId, null).supplement()).isNull();
+        assertThat(adapter(cardRail).view(bid, announcement, travelerId, null).supplement().status())
+                .isEqualTo("CANCELLED");
+    }
 }

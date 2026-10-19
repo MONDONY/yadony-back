@@ -312,4 +312,21 @@ class BidSupplementStripeWebhookRouterTest {
                 .isFalse();
         verifyNoInteractions(cashLedger, alerts);
     }
+
+    @Test
+    void commissionRembourseeHorsAppSurDemandeVivante_alerte_surDemandeClose_rien() {
+        s.setRail(BidSupplementRail.CASH);
+        s.setStatus(BidSupplementStatus.PROPOSED);
+        when(supplements.findByCommissionPaymentIntentId("pi_c")).thenReturn(Optional.of(s));
+        when(cashLedger.cardRefunded(s.getId(), "re_c", "webhook")).thenReturn(true);
+        String refunded = "{\"id\":\"ch_c\",\"payment_intent\":\"pi_c\",\"amount\":110,\"amount_refunded\":110,"
+                + "\"refunds\":{\"data\":[{\"id\":\"re_c\"}]}}";
+
+        assertThat(router.handle(event("charge.refunded", refunded))).isTrue();
+        verify(alerts).raiseOnce(eq("SUPP_COMM_REFUND_LIVE_" + s.getId()), anyString(), anyMap());
+
+        s.setStatus(BidSupplementStatus.DECLINED);
+        assertThat(router.handle(event("charge.refunded", refunded))).isTrue();
+        verify(alerts, org.mockito.Mockito.times(1)).raiseOnce(anyString(), anyString(), anyMap());
+    }
 }

@@ -240,7 +240,8 @@ public class BidSupplementStripeWebhookRouter {
 
     /**
      * Commission d'un supplément espèces remboursée (par nous, ou depuis le Dashboard) :
-     * {@code CHARGED → REFUNDED} si le remboursement est intégral, sinon alerte.
+     * {@code CHARGED → REFUNDED} si le remboursement est intégral, sinon alerte. Intégral sur une
+     * demande encore vivante (proposée, acceptée) : alerte aussi.
      */
     private boolean handleCommissionRefunded(BidSupplementEntity s, JsonNode charge) {
         long amount = charge.path("amount").asLong(0);
@@ -248,7 +249,16 @@ public class BidSupplementStripeWebhookRouter {
         if (amount > 0 && refunded >= amount) {
             JsonNode refunds = charge.path("refunds").path("data");
             String refundId = refunds.isArray() && !refunds.isEmpty() ? refunds.get(0).path("id").asText(null) : null;
-            cashLedger.cardRefunded(s.getId(), refundId, "webhook");
+            if (cashLedger.cardRefunded(s.getId(), refundId, "webhook")
+                    && !BidSupplementCashLedger.SETTLEABLE.contains(s.getStatus())) {
+                // Remboursée hors de l'app (Dashboard) alors que la demande vit encore (proposée, acceptée) :
+                // la commission n'est plus payée, un admin décide.
+                alerts.raiseOnce("SUPP_COMM_REFUND_LIVE_" + s.getId(),
+                        "Commission du supplément " + s.getId() + " remboursée alors que la demande est "
+                                + s.getStatus() + " : à vérifier",
+                        Map.of("supplementId", s.getId().toString(), "bidId", s.getBidId().toString(),
+                                "status", s.getStatus().name()));
+            }
         } else {
             cashLedger.auditOnly(s.getId(), "BID_SUPPLEMENT_COMMISSION_PARTIAL_REFUND",
                     Map.of("amountRefunded", refunded, "amount", amount));

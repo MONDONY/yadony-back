@@ -68,6 +68,7 @@ public class BidSupplementCashRail implements BidSupplementRailHandler {
     private final ActiveCurrencyResolver activeCurrencyResolver;
     private final StripeSupplementGateway gateway;
     private final BidSupplementCashLedger ledger;
+    private final BidSupplementCashRefunds refunds;
     private final BidSupplementRepository supplements;
     private final UserRepository users;
     private final StorageService storage;
@@ -75,13 +76,15 @@ public class BidSupplementCashRail implements BidSupplementRailHandler {
 
     public BidSupplementCashRail(WalletCommissionCollector collector, WalletService walletService,
                                  ActiveCurrencyResolver activeCurrencyResolver, StripeSupplementGateway gateway,
-                                 BidSupplementCashLedger ledger, BidSupplementRepository supplements,
-                                 UserRepository users, StorageService storage, BidSupplementWindow window) {
+                                 BidSupplementCashLedger ledger, BidSupplementCashRefunds refunds,
+                                 BidSupplementRepository supplements, UserRepository users, StorageService storage,
+                                 BidSupplementWindow window) {
         this.collector = collector;
         this.walletService = walletService;
         this.activeCurrencyResolver = activeCurrencyResolver;
         this.gateway = gateway;
         this.ledger = ledger;
+        this.refunds = refunds;
         this.supplements = supplements;
         this.users = users;
         this.storage = storage;
@@ -211,7 +214,14 @@ public class BidSupplementCashRail implements BidSupplementRailHandler {
      * Débit de la carte commission du voyageur, présent dans l'app : confirmation immédiate SANS
      * {@code off_session}, pour qu'une 3DS revienne en {@code requires_action} (et non en refus
      * {@code authentication_required}). Clé {@code supplement_commission_<id>_v1} : une seule
-     * tentative par demande, une carte refusée clôt la demande.
+     * tentative par demande, une carte refusée clôt la demande. Après une erreur Stripe d'issue
+     * inconnue (502/503), {@link #confirmCommission} relance cet appel avec la même clé : Stripe
+     * rend la même PaymentIntent, jamais un second débit.
+     *
+     * <p>Mêmes paramètres que le débit carte de la commission principale espèces
+     * ({@code CashCommissionService} : client, moyen de paiement enregistré, {@code confirm}), sans
+     * {@code use_stripe_sdk} ni {@code return_url} comme lui ; seule différence, pas
+     * d'{@code off_session} (le voyageur est devant l'app) et {@code payment_method_types = card}.
      */
     BidSupplementResponse chargeCard(UUID supplementId) {
         BidSupplementEntity s = ledger.find(supplementId).orElseThrow(BidSupplementCashRail::notFound);
@@ -276,8 +286,13 @@ public class BidSupplementCashRail implements BidSupplementRailHandler {
         if (s.getRail() != BidSupplementRail.CASH) {
             throw BidSupplementRail.unsupported();
         }
-        if (s.getStatus() != BidSupplementStatus.COMMISSION_PENDING || s.getCommissionPaymentIntentId() == null) {
+        if (s.getStatus() != BidSupplementStatus.COMMISSION_PENDING) {
             return view(s);
+        }
+        if (s.getCommissionPaymentIntentId() == null) {
+            // Débit de la carte resté sans réponse (502/503 à la création) : on le relance, même clé.
+            return s.getCommissionChargedVia() == CommissionChargedVia.CARD && s.getCommissionStatus() == null
+                    ? chargeCard(supplementId) : view(s);
         }
         PaymentIntentView pi;
         try {
@@ -300,15 +315,16 @@ public class BidSupplementCashRail implements BidSupplementRailHandler {
                 ledger.commissionCharged(supplementId, pi.id(), source);
                 return view(reload(supplementId));
             }
-            case "requires_action", "requires_confirmation" -> {
+            case "requires_action", "requires_confirmation", "processing" -> {
                 BidSupplementEntity s = ledger.commissionRequiresAction(supplementId, pi.id());
-                BidSupplementResponse view = view(s);
-                return s.getStatus() == BidSupplementStatus.COMMISSION_PENDING
-                        ? view.withCommissionClientSecret(pi.clientSecret()) : view;
-            }
-            case "processing" -> {
-                // Rare pour une carte : le webhook tranchera. La demande reste en attente.
-                return view(ledger.commissionRequiresAction(supplementId, pi.id()));
+                if (s.getStatus() != BidSupplementStatus.COMMISSION_PENDING) {
+                    // Demande close pendant le débit (retrait, colis terminé) : la PaymentIntent ne doit
+                    // plus pouvoir aboutir. Annulée tout de suite (le filet reprend en cas d'échec).
+                    refunds.settle(supplementId);
+                    return view(reload(supplementId));
+                }
+                // processing : rare pour une carte, le webhook tranchera ; pas de 3DS à présenter.
+                return "processing".equals(status) ? view(s) : view(s).withCommissionClientSecret(pi.clientSecret());
             }
             default -> {
                 // requires_payment_method (refus ou 3DS échouée), canceled : rien n'a été prélevé.
@@ -322,10 +338,27 @@ public class BidSupplementCashRail implements BidSupplementRailHandler {
     public void onCommissionWebhook(String type, UUID supplementId, String paymentIntentId, String failureCode) {
         switch (type) {
             case "payment_intent.succeeded" -> ledger.commissionCharged(supplementId, paymentIntentId, "webhook");
-            case "payment_intent.payment_failed" -> ledger.commissionFailed(supplementId, paymentIntentId,
-                    "payment_failed:" + failureCode);
+            case "payment_intent.payment_failed" -> {
+                // 3DS échouée : demande close ; la PaymentIntent est annulée pour qu'une nouvelle
+                // tentative depuis un vieux client secret ne puisse plus débiter.
+                if (ledger.commissionFailed(supplementId, paymentIntentId, "payment_failed:" + failureCode)) {
+                    cancelQuietly(supplementId, paymentIntentId);
+                }
+            }
             case "payment_intent.canceled" -> ledger.commissionFailed(supplementId, paymentIntentId, "canceled");
             default -> log.debug("Webhook {} de la commission du supplément {} : rien à faire", type, supplementId);
+        }
+    }
+
+    private void cancelQuietly(UUID supplementId, String paymentIntentId) {
+        if (paymentIntentId == null) {
+            return;
+        }
+        try {
+            gateway.cancelPaymentIntent(paymentIntentId);
+        } catch (StripeException e) {
+            log.warn("Commission {} du supplément {} : annulation après échec refusée ({})", paymentIntentId,
+                    supplementId, e.getMessage());
         }
     }
 
