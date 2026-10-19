@@ -1263,7 +1263,23 @@ public class CashCommissionService {
             RequestOptions opts = RequestOptions.builder()
                     .setIdempotencyKey("bid_refund_" + bid.getId())
                     .build();
-            stripeCashGateway.createRefund(params, opts);
+            com.stripe.model.Refund refund = stripeCashGateway.createRefund(params, opts);
+            String refundStatus = refund != null ? refund.getStatus() : null;
+            if ("failed".equals(refundStatus) || "canceled".equals(refundStatus)) {
+                // Refus immédiat de Stripe, sans exception : même issue qu'une StripeException.
+                bid.setCommissionStatus(CommissionStatus.REFUND_FAILED);
+                bidRepo.save(bid);
+                log.error("Refund {} for bid {}: status {}", refund.getId(), bid.getId(), refundStatus);
+                return;
+            }
+            // succeeded, ou pending / requires_action : le remboursement est engagé chez Stripe et
+            // aboutira sans nouvelle action de notre part. Aucun état « remboursement en cours »
+            // n'existe pour la commission : REFUNDED, et un échec ultérieur arrive par le webhook
+            // charge.refund.updated (audit REFUND_FAILED + alerte admin, PaymentService).
+            if (!"succeeded".equals(refundStatus)) {
+                log.info("Refund {} for bid {} still {}: commission marked REFUNDED, webhook follows up",
+                        refund != null ? refund.getId() : null, bid.getId(), refundStatus);
+            }
             bid.setCommissionStatus(CommissionStatus.REFUNDED);
             bidRepo.save(bid);
             markNegotiationCommissionRefunded(thread);

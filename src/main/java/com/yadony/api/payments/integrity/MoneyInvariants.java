@@ -39,7 +39,7 @@ public final class MoneyInvariants {
                     SELECT id, user_id, currency, type, amount, balance_after, prev_balance_after, created_at
                     FROM (
                         SELECT t.id, t.user_id, t.currency, t.type, t.amount, t.balance_after, t.created_at,
-                               LAG(t.balance_after) OVER (PARTITION BY t.user_id, t.currency ORDER BY t.created_at, t.id) AS prev_balance_after
+                               LAG(t.balance_after) OVER (PARTITION BY t.user_id, t.currency ORDER BY t.created_at, t.seq) AS prev_balance_after
                         FROM wallet_transactions t
                     ) x
                     WHERE COALESCE(prev_balance_after, 0) + amount <> balance_after

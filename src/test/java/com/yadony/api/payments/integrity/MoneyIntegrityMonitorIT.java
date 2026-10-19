@@ -80,6 +80,28 @@ class MoneyIntegrityMonitorIT {
     @AfterEach
     void cleanDb() {
         jdbcTemplate.update("DELETE FROM wallet_accounts");
+        // Grand livre en ajout seul (V309) : DELETE refusé, TRUNCATE permis pour les tests.
+        jdbcTemplate.execute("TRUNCATE wallet_transactions");
+    }
+
+    @Test
+    void inv02_deuxMouvementsDeMemeHorodatage_suiventLOrdreDInsertion() {
+        // Deux mouvements écrits dans la même transaction partagent created_at. L'id du
+        // second est choisi plus petit que celui du premier : trié par (created_at, id),
+        // l'ancien ordre lisait le second avant le premier et voyait une fausse rupture.
+        UUID userId = persistUser();
+        java.sql.Timestamp sameInstant = java.sql.Timestamp.from(java.time.Instant.parse("2026-10-19T10:00:00Z"));
+        String insert = "INSERT INTO wallet_transactions (id, user_id, currency, type, amount, balance_after, created_at)"
+                + " VALUES (?, ?, 'EUR', ?, ?, ?, ?)";
+        jdbcTemplate.update(insert, UUID.fromString("ffffffff-ffff-4fff-bfff-ffffffffffff"), userId, "TOP_UP",
+                new BigDecimal("10.00"), new BigDecimal("10.00"), sameInstant);
+        jdbcTemplate.update(insert, UUID.fromString("00000000-0000-4000-8000-000000000000"), userId, "TOP_UP",
+                new BigDecimal("5.00"), new BigDecimal("15.00"), sameInstant);
+
+        assertThat(monitor.runAll()).containsEntry("INV-02", 0L);
+        assertThat(jdbcTemplate.queryForList(
+                "SELECT seq FROM wallet_transactions WHERE user_id = ? ORDER BY seq", Long.class, userId))
+                .hasSize(2).isSorted();
     }
 
     @Test
