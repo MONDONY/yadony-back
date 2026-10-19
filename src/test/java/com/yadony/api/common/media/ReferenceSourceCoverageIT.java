@@ -22,7 +22,7 @@ class ReferenceSourceCoverageIT {
 
     /** Source dédiée attendue par préfixe (les sources « tous préfixes » des saisies libres ne suffisent pas). */
     private static final Map<String, Set<String>> DEDICATED_SOURCES = Map.of(
-            "tracking/", Set.of("TrackingPhotoReferenceSource"),
+            "tracking/", Set.of("TrackingPhotoReferenceSource", "BidSupplementPhotoReferenceSource"),
             "package_requests/", Set.of("PackageRequestPhotoReferenceSource"),
             "bids/", Set.of("BidPhotoReferenceSource"),
             "users/", Set.of("AvatarReferenceSource"),
