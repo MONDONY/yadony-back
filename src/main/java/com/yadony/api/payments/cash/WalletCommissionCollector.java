@@ -171,6 +171,34 @@ public class WalletCommissionCollector {
         }
     }
 
+    /**
+     * Commission du supplément de prix d'un colis espèces : mêmes portefeuilles et même ordre que
+     * {@link #executeForBid}, mais en {@code SUPPLEMENT_COMMISSION_DEDUCTED} (jamais
+     * {@code COMMISSION_DEDUCTED}, réservé à la commission principale du colis : INV-09), avec
+     * {@code bid_id} du colis, {@code payment_ref = "supplement-<id>"} et une clé d'idempotence par
+     * portefeuille ({@code supplement-commission-<id>}, {@code …-active} pour le complément).
+     * Aucune ligne à zéro : une commission nulle ne débite rien.
+     */
+    public void executeForSupplement(CommissionSplit s, UUID travelerId, UUID bidId, UUID supplementId) {
+        requireCovered(s);
+        String paymentRef = supplementPaymentRef(supplementId);
+        String key = "supplement-commission-" + supplementId;
+        if (s.fromBidWallet().signum() > 0) {
+            walletService.debit(travelerId, s.bidCurrency(), s.fromBidWallet(),
+                    WalletTransactionType.SUPPLEMENT_COMMISSION_DEDUCTED, bidId, paymentRef, key, null, null, null);
+        }
+        if (s.remainingBid().signum() > 0 && s.remainingActive().signum() > 0) {
+            walletService.debit(travelerId, s.activeCurrency(), s.remainingActive(),
+                    WalletTransactionType.SUPPLEMENT_COMMISSION_DEDUCTED, bidId, paymentRef, key + "-active",
+                    s.bidCurrency(), s.remainingBid(), s.appliedRate());
+        }
+    }
+
+    /** {@code payment_ref} des lignes de commission d'un supplément (lecture pour le recrédit). */
+    public static String supplementPaymentRef(UUID supplementId) {
+        return "supplement-" + supplementId;
+    }
+
     /** Solde débitable sous verrou : zéro si la devise est gelée (jamais verrouillée alors). */
     private BigDecimal lockedBalance(UUID travelerId, String code) {
         if (walletService.isFrozen(travelerId, code)) {

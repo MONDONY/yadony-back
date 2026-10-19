@@ -17,6 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -555,4 +556,95 @@ class WalletServiceTest {
         assertThat(walletService.isFrozen(userId, "EUR")).isFalse();
     }
 
+    // ── Débit rattaché à un colis et idempotent (commission du supplément espèces, B4) ──
+
+    @Test
+    void debitBidEtCle_ecritBidRefCleEtConversion_sousVerrou() {
+        UUID userId = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        WalletAccountEntity wallet = wallet(userId, "EUR", new BigDecimal("10.00"));
+        when(walletTransactionRepository.findByIdempotencyKey("supplement-commission-s1-active"))
+                .thenReturn(Optional.empty());
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR")).thenReturn(Optional.of(wallet));
+
+        walletService.debit(userId, "eur", new BigDecimal("1.53"), WalletTransactionType.SUPPLEMENT_COMMISSION_DEDUCTED,
+                bidId, "supplement-s1", "supplement-commission-s1-active", "XOF", new BigDecimal("1000"),
+                new BigDecimal("0.001530"));
+
+        assertThat(wallet.getBalance()).isEqualByComparingTo("8.47");
+        ArgumentCaptor<WalletTransactionEntity> tx = ArgumentCaptor.forClass(WalletTransactionEntity.class);
+        verify(walletTransactionRepository).save(tx.capture());
+        WalletTransactionEntity line = tx.getValue();
+        assertThat(line.getType()).isEqualTo(WalletTransactionType.SUPPLEMENT_COMMISSION_DEDUCTED);
+        assertThat(line.getAmount()).isEqualByComparingTo("-1.53");
+        assertThat(line.getBalanceAfter()).isEqualByComparingTo("8.47");
+        assertThat(line.getBidId()).isEqualTo(bidId);
+        assertThat(line.getPaymentRef()).isEqualTo("supplement-s1");
+        assertThat(line.getIdempotencyKey()).isEqualTo("supplement-commission-s1-active");
+        assertThat(line.getSourceCurrency()).isEqualTo("XOF");
+        assertThat(line.getSourceAmount()).isEqualByComparingTo("1000");
+        assertThat(line.getAppliedRate()).isEqualByComparingTo("0.001530");
+        verify(auditService).log(eq("wallet"), any(), eq("WALLET_SUPPLEMENT_COMMISSION_DEDUCTED"), eq(userId), anyMap());
+    }
+
+    @Test
+    void debitBidEtCle_sansConversion_auditSansDevisesSource() {
+        UUID userId = UUID.randomUUID();
+        WalletAccountEntity wallet = wallet(userId, "EUR", new BigDecimal("5.00"));
+        when(walletTransactionRepository.findByIdempotencyKey("k")).thenReturn(Optional.empty());
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR")).thenReturn(Optional.of(wallet));
+
+        walletService.debit(userId, "EUR", new BigDecimal("5.00"), WalletTransactionType.SUPPLEMENT_COMMISSION_DEDUCTED,
+                UUID.randomUUID(), "supplement-s2", "k", null, null, null);
+
+        assertThat(wallet.getBalance()).isEqualByComparingTo("0.00");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Map<String, Object>> audit = ArgumentCaptor.forClass(java.util.Map.class);
+        verify(auditService).log(eq("wallet"), any(), anyString(), eq(userId), audit.capture());
+        assertThat(audit.getValue()).doesNotContainKey("sourceCurrency").containsEntry("paymentRef", "supplement-s2");
+    }
+
+    @Test
+    void debitBidEtCle_cleDejaVue_aucunEffet() {
+        UUID userId = UUID.randomUUID();
+        when(walletTransactionRepository.findByIdempotencyKey("supplement-commission-s3"))
+                .thenReturn(Optional.of(new WalletTransactionEntity()));
+
+        walletService.debit(userId, "EUR", BigDecimal.ONE, WalletTransactionType.SUPPLEMENT_COMMISSION_DEDUCTED,
+                UUID.randomUUID(), "supplement-s3", "supplement-commission-s3", null, null, null);
+
+        verify(walletAccountRepository, never()).findByUserIdAndCurrencyForUpdate(any(), any());
+        verify(walletTransactionRepository, never()).save(any());
+    }
+
+    @Test
+    void debitBidEtCle_soldeInsuffisant_leveSansEcrire() {
+        UUID userId = UUID.randomUUID();
+        WalletAccountEntity wallet = wallet(userId, "EUR", new BigDecimal("0.50"));
+        when(walletTransactionRepository.findByIdempotencyKey("k4")).thenReturn(Optional.empty());
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR")).thenReturn(Optional.of(wallet));
+
+        Throwable thrown = catchThrowable(() -> walletService.debit(userId, "EUR", BigDecimal.ONE,
+                WalletTransactionType.SUPPLEMENT_COMMISSION_DEDUCTED, UUID.randomUUID(), "supplement-s4", "k4",
+                null, null, null));
+
+        assertThat(thrown).isInstanceOf(InsufficientWalletBalanceException.class);
+        assertThat(wallet.getBalance()).isEqualByComparingTo("0.50");
+        verify(walletTransactionRepository, never()).save(any());
+    }
+
+    @Test
+    void debitBidEtCle_deviseGelee_422() {
+        UUID userId = UUID.randomUUID();
+        when(walletTransactionRepository.findByIdempotencyKey("k5")).thenReturn(Optional.empty());
+        when(walletRefundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(userId), eq("EUR"), anyList()))
+                .thenReturn(true);
+
+        Throwable thrown = catchThrowable(() -> walletService.debit(userId, "EUR", BigDecimal.ONE,
+                WalletTransactionType.SUPPLEMENT_COMMISSION_DEDUCTED, UUID.randomUUID(), "supplement-s5", "k5",
+                null, null, null));
+
+        assertThat(thrown).isInstanceOf(com.yadony.api.common.YadonyBusinessException.class);
+        verify(walletTransactionRepository, never()).save(any());
+    }
 }

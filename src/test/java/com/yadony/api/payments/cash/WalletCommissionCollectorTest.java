@@ -15,6 +15,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
@@ -312,5 +314,56 @@ class WalletCommissionCollectorTest {
         assertThat(result).extracting(com.yadony.api.payments.cash.dto.FundingAlternativeDto::currency)
                 .containsExactly("USD");
         verify(walletService, never()).getBalance(traveler, "EUR");
+    }
+
+    // ── Commission du supplément espèces (B4) ────────────────────────────────
+
+    @Test
+    void executeForSupplement_deuxPortefeuilles_typeDedieRefEtCleParPortefeuille() {
+        balances("600", "5.00");
+        when(exchangeRateService.convert(new BigDecimal("450"), "XOF", "EUR")).thenReturn(new BigDecimal("0.686"));
+        when(exchangeRateService.convert(new BigDecimal("1050"), "XOF", "EUR")).thenReturn(new BigDecimal("1.60"));
+        UUID supplement = UUID.randomUUID();
+
+        CommissionSplit s = collector.plan(traveler, "XOF", "EUR", new BigDecimal("1050"));
+        collector.executeForSupplement(s, traveler, bid, supplement);
+
+        verify(walletService).debit(traveler, "XOF", new BigDecimal("600"),
+                com.yadony.api.payments.wallet.WalletTransactionType.SUPPLEMENT_COMMISSION_DEDUCTED, bid,
+                "supplement-" + supplement, "supplement-commission-" + supplement, null, null, null);
+        verify(walletService).debit(eq(traveler), eq("EUR"), eq(new BigDecimal("0.69")),
+                eq(com.yadony.api.payments.wallet.WalletTransactionType.SUPPLEMENT_COMMISSION_DEDUCTED), eq(bid),
+                eq("supplement-" + supplement), eq("supplement-commission-" + supplement + "-active"), eq("XOF"),
+                eq(new BigDecimal("450")), any());
+        // Jamais le type de la commission principale (INV-09) ni ses surcharges.
+        verify(walletService, never()).debit(any(), any(), any(),
+                eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), any(UUID.class));
+    }
+
+    @Test
+    void executeForSupplement_memeDevise_uneSeuleLigne_etRienSiCommissionNulle() {
+        when(walletService.getBalanceForUpdate(traveler, "EUR")).thenReturn(new BigDecimal("5.00"));
+        UUID supplement = UUID.randomUUID();
+
+        CommissionSplit s = collector.plan(traveler, "EUR", "EUR", new BigDecimal("1.10"));
+        collector.executeForSupplement(s, traveler, bid, supplement);
+        CommissionSplit zero = collector.plan(traveler, "EUR", "EUR", BigDecimal.ZERO);
+        collector.executeForSupplement(zero, traveler, bid, UUID.randomUUID());
+
+        verify(walletService, times(1)).debit(any(), any(), any(), any(), any(UUID.class), any(), any(), any(), any(),
+                any());
+        verify(walletService).debit(traveler, "EUR", new BigDecimal("1.10"),
+                com.yadony.api.payments.wallet.WalletTransactionType.SUPPLEMENT_COMMISSION_DEDUCTED, bid,
+                "supplement-" + supplement, "supplement-commission-" + supplement, null, null, null);
+    }
+
+    @Test
+    void executeForSupplement_nonCouverte_aucunDebit() {
+        when(walletService.getBalanceForUpdate(traveler, "EUR")).thenReturn(new BigDecimal("0.50"));
+        CommissionSplit s = collector.plan(traveler, "EUR", "EUR", new BigDecimal("1.10"));
+
+        assertThatThrownBy(() -> collector.executeForSupplement(s, traveler, bid, UUID.randomUUID()))
+                .isInstanceOf(IllegalStateException.class);
+        verifyNoInteractions(exchangeRateService);
     }
 }

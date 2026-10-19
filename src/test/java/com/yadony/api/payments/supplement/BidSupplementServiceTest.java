@@ -150,7 +150,7 @@ class BidSupplementServiceTest {
         // min(maintenant + 2 h, départ − 15 min) : le départ est dans 24 h.
         assertThat(s.getExpiresAt()).isEqualTo(NOW_UTC.plusHours(2));
         verify(bids).lockForUpdate(bid.getId());
-        verify(cardRail).onCreated(s);
+        verify(cardRail).onCreated(eq(s), any(CreateSupplementRequest.class));
 
         ArgumentCaptor<Object> event = ArgumentCaptor.forClass(Object.class);
         verify(events).publishEvent(event.capture());
@@ -300,7 +300,7 @@ class BidSupplementServiceTest {
 
     @Test
     void create_plafondAtteint_422() {
-        when(supplements.countByBidId(bid.getId())).thenReturn(2L);
+        when(supplements.countTowardLimit(eq(bid.getId()), any())).thenReturn(2L);
         assertError(() -> service(cardRail).create(bid.getId(), "uid-traveler", requestFor("20")),
                 HttpStatus.UNPROCESSABLE_ENTITY, "supplement-limit-reached");
     }
@@ -548,15 +548,103 @@ class BidSupplementServiceTest {
     }
 
     @Test
-    void onBidEnded_supplementEspecesPaye_laisseAuRailEspeces() {
+    void onBidEnded_supplementEspecesAccepte_rembourseToutDeSuite_etCommissionRendueParLeRail() {
         BidSupplementEntity s = existing(BidSupplementStatus.PAID);
         s.setRail(BidSupplementRail.CASH);
         bid.setStatus(BidStatus.CANCELLED);
         lenient().when(supplements.findByBidIdAndStatusInForUpdate(bid.getId(), BidSupplementService.SETTLING))
                 .thenReturn(Optional.of(s));
 
+        assertThat(service(cardRail).onBidEnded(bid.getId(), "BID_REJECTED")).isTrue();
+
+        // Plus de PAID sur un colis mort : le filet B1 ne le reprend plus à chaque passage.
+        assertThat(s.getStatus()).isEqualTo(BidSupplementStatus.REFUNDED);
+        assertThat(s.getRefundedAt()).isEqualTo(NOW_UTC);
+        assertThat(s.getClosedReason()).isEqualTo("BID_REJECTED");
+        verify(events).publishEvent(new com.yadony.api.payments.supplement.events.BidSupplementRefundRequestedEvent(
+                s.getId(), bid.getId(), BidSupplementRail.CASH, BidSupplementStatus.PAID, "BID_REJECTED"));
+        verify(auditService).log(eq("BID_SUPPLEMENT"), eq(s.getId()), eq("BID_SUPPLEMENT_CASH_CANCELLED_BID_ENDED"),
+                eq(null), anyMap());
+    }
+
+    @Test
+    void onBidEnded_supplementEspecesDejaRembourse_rienDeNeuf() {
+        BidSupplementEntity s = existing(BidSupplementStatus.PAID_OUT);
+        s.setRail(BidSupplementRail.CASH);
+        bid.setStatus(BidStatus.CANCELLED);
+        lenient().when(supplements.findByBidIdAndStatusInForUpdate(bid.getId(), BidSupplementService.SETTLING))
+                .thenReturn(Optional.of(s));
+
         assertThat(service(cardRail).onBidEnded(bid.getId(), "BID_REJECTED")).isFalse();
-        assertThat(s.getStatus()).isEqualTo(BidSupplementStatus.PAID);
+        verify(events, never()).publishEvent(any());
+    }
+
+    // ── Rail espèces : commission en attente ─────────────────────────────────
+
+    @Test
+    void create_commissionCarteEnAttente_expediteurPasEncorePrevenu() {
+        BidSupplementRailHandler cash = mock(BidSupplementRailHandler.class);
+        when(cash.rail()).thenReturn(BidSupplementRail.CASH);
+        bid.setPaymentMethod(PaymentMethod.CASH);
+        org.mockito.Mockito.doAnswer(inv -> {
+            BidSupplementEntity created = inv.getArgument(0);
+            created.setStatus(BidSupplementStatus.COMMISSION_PENDING);
+            return null;
+        }).when(cash).onCreated(any(), any());
+
+        BidSupplementResponse r = service(cash).create(bid.getId(), "uid-traveler", requestFor("20"));
+
+        assertThat(r.status()).isEqualTo("COMMISSION_PENDING");
+        assertThat(r.blocksHandover()).isTrue();
+        verify(events, never()).publishEvent(any(BidSupplementRequestedEvent.class));
+        verify(auditService).log(eq("BID_SUPPLEMENT"), any(), eq("BID_SUPPLEMENT_REQUESTED"), eq(traveler.getId()),
+                anyMap());
+    }
+
+    @Test
+    void withdraw_avantLaCommission_motifDistinct() {
+        BidSupplementEntity s = existing(BidSupplementStatus.COMMISSION_PENDING);
+        s.setRail(BidSupplementRail.CASH);
+
+        service(cardRail).withdraw(bid.getId(), s.getId(), "uid-traveler");
+
+        assertThat(s.getStatus()).isEqualTo(BidSupplementStatus.WITHDRAWN);
+        assertThat(s.getClosedReason()).isEqualTo("WITHDRAWN_BEFORE_COMMISSION");
+        assertThat(BidSupplementService.NEVER_PROPOSED_REASONS).contains("WITHDRAWN_BEFORE_COMMISSION",
+                "COMMISSION_FAILED", "COMMISSION_NOT_CONFIRMED");
+    }
+
+    @Test
+    void cancelUnconfirmedCommission_apres30Minutes_annulee() {
+        BidSupplementEntity s = existing(BidSupplementStatus.COMMISSION_PENDING);
+        s.setRail(BidSupplementRail.CASH);
+        createdAt(s, NOW_UTC.minusMinutes(31));
+        when(supplements.findBidIdById(s.getId())).thenReturn(Optional.of(bid.getId()));
+
+        assertThat(service(cardRail).cancelUnconfirmedCommission(s.getId(), NOW_UTC.minusMinutes(30))).isTrue();
+
+        verify(bids).lockForUpdate(bid.getId());
+        assertThat(s.getStatus()).isEqualTo(BidSupplementStatus.CANCELLED);
+        assertThat(s.getClosedReason()).isEqualTo("COMMISSION_NOT_CONFIRMED");
+        verify(events).publishEvent(any(BidSupplementCancelledEvent.class));
+    }
+
+    @Test
+    void cancelUnconfirmedCommission_tropRecenteDejaProposeeOuInconnue_sansEffet() {
+        BidSupplementEntity recent = existing(BidSupplementStatus.COMMISSION_PENDING);
+        createdAt(recent, NOW_UTC.minusMinutes(5));
+        BidSupplementEntity proposed = existing(BidSupplementStatus.PROPOSED);
+        createdAt(proposed, NOW_UTC.minusHours(1));
+        BidSupplementEntity noDate = existing(BidSupplementStatus.COMMISSION_PENDING);
+        UUID unknown = UUID.randomUUID();
+        when(supplements.findBidIdById(any())).thenReturn(Optional.of(bid.getId()));
+        when(supplements.findBidIdById(unknown)).thenReturn(Optional.empty());
+        LocalDateTime before = NOW_UTC.minusMinutes(30);
+
+        assertThat(service(cardRail).cancelUnconfirmedCommission(recent.getId(), before)).isFalse();
+        assertThat(service(cardRail).cancelUnconfirmedCommission(proposed.getId(), before)).isFalse();
+        assertThat(service(cardRail).cancelUnconfirmedCommission(noDate.getId(), before)).isFalse();
+        assertThat(service(cardRail).cancelUnconfirmedCommission(unknown, before)).isFalse();
         verify(events, never()).publishEvent(any());
     }
 
@@ -621,6 +709,16 @@ class BidSupplementServiceTest {
         return s;
     }
 
+    static void createdAt(BidSupplementEntity s, LocalDateTime at) {
+        try {
+            java.lang.reflect.Field f = com.yadony.api.common.BaseEntity.class.getDeclaredField("createdAt");
+            f.setAccessible(true);
+            f.set(s, at);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     private UserEntity user(String uid) {
         UserEntity u = new UserEntity();
         setId(u, UUID.randomUUID());
@@ -637,5 +735,20 @@ class BidSupplementServiceTest {
             return e;
         }
         throw new AssertionError("Exception " + code + " attendue");
+    }
+
+    @Test
+    void onBidEnded_demandeEnAttenteDeCommission_closeCommeJamaisAdressee() {
+        BidSupplementEntity s = existing(BidSupplementStatus.COMMISSION_PENDING);
+        s.setRail(BidSupplementRail.CASH);
+        bid.setStatus(BidStatus.CANCELLED);
+        when(supplements.findByBidIdAndStatusInForUpdate(bid.getId(), BidSupplementStatus.OPEN)).thenReturn(Optional.of(s));
+
+        assertThat(service(cardRail).onBidEnded(bid.getId(), "BID_REJECTED")).isTrue();
+
+        assertThat(s.getStatus()).isEqualTo(BidSupplementStatus.CANCELLED);
+        assertThat(s.getClosedReason()).isEqualTo("COMMISSION_NOT_CONFIRMED");
+        verify(events).publishEvent(new BidSupplementCancelledEvent(s.getId(), bid.getId(), sender.getId(),
+                traveler.getId(), BidSupplementRail.CASH, BidSupplementStatus.COMMISSION_PENDING, "BID_REJECTED"));
     }
 }

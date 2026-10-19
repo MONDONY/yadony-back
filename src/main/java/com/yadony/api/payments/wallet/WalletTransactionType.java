@@ -45,4 +45,13 @@ public enum WalletTransactionType {
      * non-cash par {@code WalletRefundAllocator} : jamais remboursable, perdu à la suppression.
      */
     TOP_UP_CODE
+    ,
+    /**
+     * Commission du supplément de prix d'un colis payé en espèces, prélevée au voyageur au moment
+     * de sa demande ({@code payment_ref = "supplement-<id>"}, {@code bid_id} du colis). Distincte de
+     * {@link #COMMISSION_DEDUCTED} : la commission principale du colis garde sa ligne unique
+     * (INV-09) et son remboursement ne touche jamais celle du supplément. Recrédit en {@link #REFUND}
+     * avec {@code payment_ref = "supplement-refund-<id>"}.
+     */
+    SUPPLEMENT_COMMISSION_DEDUCTED
 }

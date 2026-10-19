@@ -35,6 +35,11 @@ public class BidSupplementProperties {
      * « intervention manuelle » prend le relais.
      */
     private int mmMaxAttempts = 3;
+    /**
+     * Rail espèces : délai laissé au voyageur pour confirmer la 3DS de la commission du supplément ;
+     * au-delà, la demande ({@code COMMISSION_PENDING}) est annulée par le filet.
+     */
+    private Duration commissionConfirmWindow = Duration.ofMinutes(30);
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
@@ -56,4 +61,6 @@ public class BidSupplementProperties {
     public int getMmMaxAttempts() { return mmMaxAttempts; }
     public void setMmMaxAttempts(int mmMaxAttempts) { this.mmMaxAttempts = mmMaxAttempts; }
     public void setReconcileEnabled(boolean reconcileEnabled) { this.reconcileEnabled = reconcileEnabled; }
+    public Duration getCommissionConfirmWindow() { return commissionConfirmWindow; }
+    public void setCommissionConfirmWindow(Duration commissionConfirmWindow) { this.commissionConfirmWindow = commissionConfirmWindow; }
 }

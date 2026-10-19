@@ -358,6 +358,62 @@ public class WalletService {
     }
 
     /**
+     * Débit rattaché à un colis ET idempotent par clé : {@code bidId} et {@code paymentRef} sont
+     * écrits sur la ligne, une ligne portant déjà {@code idempotencyKey} rend l'appel sans effet.
+     * Conversion snapshotée comme les autres variantes ({@code sourceCurrency},
+     * {@code sourceAmount}, {@code appliedRate} nuls quand rien n'est converti). Sert à la
+     * commission du supplément de prix (une clé par portefeuille débité).
+     */
+    @Transactional(noRollbackFor = InsufficientWalletBalanceException.class)
+    public void debit(UUID userId, String currency, BigDecimal amount, WalletTransactionType type, UUID bidId,
+                      String paymentRef, String idempotencyKey,
+                      String sourceCurrency, BigDecimal sourceAmount, BigDecimal appliedRate) {
+        if (idempotencyKey != null && walletTransactionRepository.findByIdempotencyKey(idempotencyKey).isPresent()) {
+            log.info("Idempotent debit ignored for key={}", idempotencyKey);
+            return;
+        }
+
+        String code = normalize(currency);
+        assertNotFrozen(userId, code);
+        WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, code)
+                .orElseGet(() -> getOrCreate(userId, code));
+
+        if (wallet.getBalance().compareTo(amount) < 0) {
+            throw new InsufficientWalletBalanceException(wallet.getBalance(), amount);
+        }
+
+        BigDecimal newBalance = wallet.getBalance().subtract(amount);
+        wallet.setBalance(newBalance);
+        walletAccountRepository.save(wallet);
+
+        WalletTransactionEntity tx = new WalletTransactionEntity();
+        tx.setUserId(userId);
+        tx.setCurrency(code);
+        tx.setType(type);
+        tx.setAmount(amount.negate());
+        tx.setBalanceAfter(newBalance);
+        tx.setBidId(bidId);
+        tx.setPaymentRef(paymentRef);
+        tx.setIdempotencyKey(idempotencyKey);
+        tx.setSourceCurrency(sourceCurrency);
+        tx.setSourceAmount(sourceAmount);
+        tx.setAppliedRate(appliedRate);
+        walletTransactionRepository.save(tx);
+
+        Map<String, Object> audit = new java.util.LinkedHashMap<>();
+        audit.put("amount", amount.toString());
+        audit.put("currency", code);
+        audit.put("bidId", String.valueOf(bidId));
+        audit.put("paymentRef", String.valueOf(paymentRef));
+        if (sourceCurrency != null) {
+            audit.put("sourceCurrency", sourceCurrency);
+            audit.put("sourceAmount", String.valueOf(sourceAmount));
+            audit.put("appliedRate", String.valueOf(appliedRate));
+        }
+        auditService.log("wallet", wallet.getId(), "WALLET_" + type.name(), userId, audit);
+    }
+
+    /**
      * Débit d'un remboursement déjà confirmé (Stripe ou admin) : ignore volontairement
      * {@code assertNotFrozen}, puisque c'est la demande en cours qui gèle la devise.
      *

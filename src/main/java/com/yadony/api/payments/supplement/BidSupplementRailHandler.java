@@ -1,6 +1,8 @@
 package com.yadony.api.payments.supplement;
 
 import com.yadony.api.auth.UserEntity;
+import com.yadony.api.matching.dto.BidSupplementResponse;
+import com.yadony.api.payments.supplement.dto.CreateSupplementRequest;
 import com.yadony.api.payments.supplement.dto.SupplementAcceptResponse;
 
 /**
@@ -13,11 +15,30 @@ public interface BidSupplementRailHandler {
     BidSupplementRail rail();
 
     /**
-     * Fin de la création, dans la transaction et sous le verrou du colis : le rail espèces y
-     * prélève la commission du supplément au voyageur et peut laisser la demande en
-     * {@code COMMISSION_PENDING}. Par défaut, rien : la demande reste {@code PROPOSED}.
+     * Le voyageur peut-il demander un supplément sur ce rail, au-delà de {@link BidSupplementRail#payableBy} ?
+     * Le rail espèces exige de quoi payer la commission (solde ou carte commission). Sert au bouton
+     * de l'app ({@code supplementRequestAllowed}) ; la création fait le contrôle exact. Par défaut, oui.
      */
-    default void onCreated(BidSupplementEntity supplement) {
+    default boolean canRequest(UserEntity traveler, String currency) {
+        return true;
+    }
+
+    /**
+     * Fin de la création, dans la transaction et sous le verrou du colis : le rail espèces y
+     * prélève la commission du supplément au voyageur (solde), ou laisse la demande en
+     * {@code COMMISSION_PENDING} pour la carte, débitée après le commit
+     * ({@link #afterCreateCommit}). Une exception annule la création. Par défaut, rien : la
+     * demande reste {@code PROPOSED}.
+     */
+    default void onCreated(BidSupplementEntity supplement, CreateSupplementRequest request) {
+    }
+
+    /**
+     * Suite de la création, APRÈS son commit et hors de toute transaction : le rail espèces y
+     * débite la carte commission du voyageur. Par défaut, la réponse de la création.
+     */
+    default BidSupplementResponse afterCreateCommit(BidSupplementResponse created) {
+        return created;
     }
 
     /**

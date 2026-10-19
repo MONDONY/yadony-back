@@ -35,16 +35,21 @@ public class BidSupplementStripeWebhookRouter {
 
     private final BidSupplementCardRail rail;
     private final BidSupplementCardLedger ledger;
+    private final BidSupplementCashRail cashRail;
+    private final BidSupplementCashLedger cashLedger;
     private final BidSupplementRepository supplements;
     private final AdminAlertEscalator alerts;
     private final StripeSupplementGateway gateway;
     private final ObjectMapper mapper;
 
     public BidSupplementStripeWebhookRouter(BidSupplementCardRail rail, BidSupplementCardLedger ledger,
+                                            BidSupplementCashRail cashRail, BidSupplementCashLedger cashLedger,
                                             BidSupplementRepository supplements, AdminAlertEscalator alerts,
                                             StripeSupplementGateway gateway, ObjectMapper mapper) {
         this.rail = rail;
         this.ledger = ledger;
+        this.cashRail = cashRail;
+        this.cashLedger = cashLedger;
         this.supplements = supplements;
         this.alerts = alerts;
         this.gateway = gateway;
@@ -93,6 +98,12 @@ public class BidSupplementStripeWebhookRouter {
             return true;
         }
         String piId = pi.path("id").asText(null);
+        if (BidSupplementCashRail.COMMISSION_PURPOSE.equals(pi.path("metadata").path("commission_purpose").asText(null))) {
+            // Commission d'un supplément espèces, prélevée au voyageur : jamais un paiement de l'expéditeur.
+            cashRail.onCommissionWebhook(type, supplementId, piId,
+                    pi.path("last_payment_error").path("code").asText("unknown"));
+            return true;
+        }
         switch (type) {
             case "payment_intent.succeeded" -> rail.onPaymentSucceeded(supplementId, piId,
                     pi.path("latest_charge").isTextual() ? pi.path("latest_charge").asText() : null);
@@ -107,6 +118,10 @@ public class BidSupplementStripeWebhookRouter {
     }
 
     private boolean handleChargeRefunded(JsonNode charge) {
+        Optional<BidSupplementEntity> commission = commissionLookup(charge.path("payment_intent").asText(null));
+        if (commission.isPresent()) {
+            return handleCommissionRefunded(commission.get(), charge);
+        }
         Optional<BidSupplementEntity> found = lookup(charge.path("payment_intent").asText(null),
                 charge.path("id").asText(null));
         if (found.isEmpty()) {
@@ -162,6 +177,22 @@ public class BidSupplementStripeWebhookRouter {
      * sont avalées sans effet : elles ne concernent pas les traitements du colis.
      */
     private boolean handleRefundUpdated(JsonNode refund) {
+        Optional<BidSupplementEntity> commission = commissionLookup(refund.path("payment_intent").asText(null));
+        if (commission.isPresent()) {
+            BidSupplementEntity s = commission.get();
+            String status = refund.path("status").asText("");
+            String refundId = refund.path("id").asText(null);
+            if (("failed".equals(status) || "canceled".equals(status))
+                    && cashLedger.commissionRefundFailed(s.getId(), refundId)) {
+                alerts.raiseOnce("SUPP_COMM_REFUND_FAIL_" + s.getId(),
+                        "Remboursement " + refundId + " de la commission du supplément " + s.getId()
+                                + " échoué chez Stripe (" + refund.path("failure_reason").asText("inconnu")
+                                + ") : commission à rendre au voyageur à la main",
+                        Map.of("supplementId", s.getId().toString(), "bidId", s.getBidId().toString(),
+                                "refundId", String.valueOf(refundId)));
+            }
+            return true;
+        }
         Optional<BidSupplementEntity> found = lookup(refund.path("payment_intent").asText(null),
                 refund.path("charge").asText(null));
         if (found.isEmpty()) {
@@ -188,6 +219,9 @@ public class BidSupplementStripeWebhookRouter {
         Optional<BidSupplementEntity> found = lookup(dispute.path("payment_intent").asText(null),
                 dispute.path("charge").asText(null));
         if (found.isEmpty()) {
+            found = commissionLookup(dispute.path("payment_intent").asText(null));
+        }
+        if (found.isEmpty()) {
             return false;
         }
         BidSupplementEntity s = found.get();
@@ -202,6 +236,43 @@ public class BidSupplementStripeWebhookRouter {
                             "disputeId", dispute.path("id").asText("unknown")));
         }
         return true;
+    }
+
+    /**
+     * Commission d'un supplément espèces remboursée (par nous, ou depuis le Dashboard) :
+     * {@code CHARGED → REFUNDED} si le remboursement est intégral, sinon alerte. Intégral sur une
+     * demande encore vivante (proposée, acceptée) : alerte aussi.
+     */
+    private boolean handleCommissionRefunded(BidSupplementEntity s, JsonNode charge) {
+        long amount = charge.path("amount").asLong(0);
+        long refunded = charge.path("amount_refunded").asLong(0);
+        if (amount > 0 && refunded >= amount) {
+            JsonNode refunds = charge.path("refunds").path("data");
+            String refundId = refunds.isArray() && !refunds.isEmpty() ? refunds.get(0).path("id").asText(null) : null;
+            if (cashLedger.cardRefunded(s.getId(), refundId, "webhook")
+                    && !BidSupplementCashLedger.SETTLEABLE.contains(s.getStatus())) {
+                // Remboursée hors de l'app (Dashboard) alors que la demande vit encore (proposée, acceptée) :
+                // la commission n'est plus payée, un admin décide.
+                alerts.raiseOnce("SUPP_COMM_REFUND_LIVE_" + s.getId(),
+                        "Commission du supplément " + s.getId() + " remboursée alors que la demande est "
+                                + s.getStatus() + " : à vérifier",
+                        Map.of("supplementId", s.getId().toString(), "bidId", s.getBidId().toString(),
+                                "status", s.getStatus().name()));
+            }
+        } else {
+            cashLedger.auditOnly(s.getId(), "BID_SUPPLEMENT_COMMISSION_PARTIAL_REFUND",
+                    Map.of("amountRefunded", refunded, "amount", amount));
+            alerts.raiseOnce("SUPP_COMM_PARTIAL_REF_" + s.getId(),
+                    "Remboursement partiel de la commission du supplément " + s.getId() + " : à traiter à la main",
+                    Map.of("supplementId", s.getId().toString(), "amountRefunded", refunded, "amount", amount));
+        }
+        return true;
+    }
+
+    /** Supplément espèces dont {@code paymentIntentId} est la PaymentIntent de commission. */
+    private Optional<BidSupplementEntity> commissionLookup(String paymentIntentId) {
+        return paymentIntentId == null || paymentIntentId.isBlank() ? Optional.empty()
+                : supplements.findByCommissionPaymentIntentId(paymentIntentId);
     }
 
     private Optional<BidSupplementEntity> lookup(String paymentIntentId, String chargeId) {

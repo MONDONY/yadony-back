@@ -23,13 +23,14 @@ class BidSupplementPaymentFlowTest {
     private final BidSupplementService service = mock(BidSupplementService.class);
     private final BidSupplementCardRail cardRail = mock(BidSupplementCardRail.class);
     private final BidSupplementRailHandler cashRail = mock(BidSupplementRailHandler.class);
+    private final BidSupplementCashRail cashComponent = mock(BidSupplementCashRail.class);
     private final UUID bidId = UUID.randomUUID();
     private final UUID id = UUID.randomUUID();
 
     private BidSupplementPaymentFlow flow() {
         when(cardRail.rail()).thenReturn(BidSupplementRail.STRIPE);
         when(cashRail.rail()).thenReturn(null);
-        return new BidSupplementPaymentFlow(service, cardRail, List.of(cardRail, cashRail));
+        return new BidSupplementPaymentFlow(service, cardRail, cashComponent, List.of(cardRail, cashRail));
     }
 
     private static SupplementAcceptResponse prepared(String rail) {
@@ -75,5 +76,52 @@ class BidSupplementPaymentFlowTest {
         BidSupplementResponse view = mock(BidSupplementResponse.class);
         when(cardRail.confirmPayment(bidId, id, "uid")).thenReturn(view);
         assertThat(flow.confirmPayment(bidId, id, "uid")).isSameAs(view);
+    }
+
+    // ── Création en deux temps (rail espèces, B4) ────────────────────────────
+
+    private static BidSupplementResponse created(String rail, String status) {
+        return new BidSupplementResponse(UUID.randomUUID(), status, rail, "EUR", BigDecimal.TEN, BigDecimal.ONE,
+                BigDecimal.valueOf(11), "OTHER", null, null, null, null, null, null, true);
+    }
+
+    @Test
+    void creation_suiteDuRailApresLeCommit_sinonReponseDuService() {
+        BidSupplementRailHandler cash = mock(BidSupplementRailHandler.class);
+        when(cardRail.rail()).thenReturn(BidSupplementRail.STRIPE);
+        when(cash.rail()).thenReturn(BidSupplementRail.CASH);
+        BidSupplementPaymentFlow flow = new BidSupplementPaymentFlow(service, cardRail, cashComponent,
+                List.of(cardRail, cash));
+        com.yadony.api.payments.supplement.dto.CreateSupplementRequest request =
+                new com.yadony.api.payments.supplement.dto.CreateSupplementRequest(BigDecimal.TEN,
+                        BidSupplementReason.OTHER, null, null, "tracking/x/1.jpg");
+        BidSupplementResponse pending = created("CASH", "COMMISSION_PENDING");
+        BidSupplementResponse charged = pending.withCommissionClientSecret("pi_secret");
+        BidSupplementResponse mm = created("PAWAPAY", "PROPOSED");
+        BidSupplementResponse noRail = created(null, "PROPOSED");
+        when(service.create(bidId, "uid", request)).thenReturn(pending, mm, noRail);
+        when(cash.afterCreateCommit(pending)).thenReturn(charged);
+
+        assertThat(flow.create(bidId, "uid", request)).isSameAs(charged);
+        assertThat(flow.create(bidId, "uid", request)).as("rail sans composant").isSameAs(mm);
+        assertThat(flow.create(bidId, "uid", request)).isSameAs(noRail);
+    }
+
+    @Test
+    void creation_interblocagePersistant_409() {
+        BidSupplementPaymentFlow flow = flow();
+        when(service.create(org.mockito.ArgumentMatchers.eq(bidId), org.mockito.ArgumentMatchers.eq("uid"),
+                org.mockito.ArgumentMatchers.any())).thenThrow(new PessimisticLockingFailureException("deadlock"));
+
+        assertThatThrownBy(() -> flow.create(bidId, "uid", null)).hasFieldOrPropertyWithValue("errorCode",
+                "payment-busy");
+    }
+
+    @Test
+    void confirmationDeLaCommission_delegueAuRailEspeces() {
+        BidSupplementPaymentFlow flow = flow();
+        BidSupplementResponse view = created("CASH", "PROPOSED");
+        when(cashComponent.confirmCommission(bidId, id, "uid")).thenReturn(view);
+        assertThat(flow.confirmCommission(bidId, id, "uid")).isSameAs(view);
     }
 }

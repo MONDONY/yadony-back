@@ -31,6 +31,8 @@ class BidSupplementStripeWebhookRouterTest {
 
     @Mock BidSupplementCardRail rail;
     @Mock BidSupplementCardLedger ledger;
+    @Mock BidSupplementCashRail cashRail;
+    @Mock BidSupplementCashLedger cashLedger;
     @Mock BidSupplementRepository supplements;
     @Mock AdminAlertEscalator alerts;
     @Mock StripeSupplementGateway gateway;
@@ -40,7 +42,7 @@ class BidSupplementStripeWebhookRouterTest {
 
     @BeforeEach
     void setUp() {
-        router = new BidSupplementStripeWebhookRouter(rail, ledger, supplements, alerts, gateway,
+        router = new BidSupplementStripeWebhookRouter(rail, ledger, cashRail, cashLedger, supplements, alerts, gateway,
                 new ObjectMapper());
         s = new BidSupplementEntity();
         setId(s, UUID.randomUUID());
@@ -228,5 +230,103 @@ class BidSupplementStripeWebhookRouterTest {
         when(broken.getDataObjectDeserializer()).thenThrow(new IllegalStateException("payload"));
         assertThat(router.handle(broken)).isFalse();
         verifyNoInteractions(rail, ledger, supplements);
+    }
+
+    // ── Commission d'un supplément espèces (B4) ──────────────────────────────
+
+    static String commissionPi(UUID supplementId, String status) {
+        return "{\"id\":\"pi_c\",\"object\":\"payment_intent\",\"status\":\"" + status + "\","
+                + "\"last_payment_error\":{\"code\":\"authentication_failed\"},"
+                + "\"metadata\":{\"bid_supplement_id\":\"" + supplementId + "\","
+                + "\"commission_purpose\":\"bid_supplement_commission\",\"scope\":\"BID_SUPPLEMENT_COMMISSION\"}}";
+    }
+
+    @Test
+    void paymentIntentDeCommission_routeeVersLeRailEspeces_jamaisLeRailCarte() {
+        assertThat(router.handle(event("payment_intent.succeeded", commissionPi(s.getId(), "succeeded")))).isTrue();
+        assertThat(router.handle(event("payment_intent.payment_failed",
+                commissionPi(s.getId(), "requires_payment_method")))).isTrue();
+
+        verify(cashRail).onCommissionWebhook("payment_intent.succeeded", s.getId(), "pi_c", "authentication_failed");
+        verify(cashRail).onCommissionWebhook("payment_intent.payment_failed", s.getId(), "pi_c",
+                "authentication_failed");
+        verifyNoInteractions(rail, ledger);
+    }
+
+    @Test
+    void chargeDeCommissionRembourseeEntierement_commissionRendue() {
+        s.setRail(BidSupplementRail.CASH);
+        when(supplements.findByCommissionPaymentIntentId("pi_c")).thenReturn(Optional.of(s));
+
+        assertThat(router.handle(event("charge.refunded", "{\"id\":\"ch_c\",\"payment_intent\":\"pi_c\","
+                + "\"amount\":110,\"amount_refunded\":110,\"refunds\":{\"data\":[{\"id\":\"re_c\"}]}}"))).isTrue();
+        assertThat(router.handle(event("charge.refunded", "{\"id\":\"ch_c\",\"payment_intent\":\"pi_c\","
+                + "\"amount\":110,\"amount_refunded\":110}"))).isTrue();
+
+        verify(cashLedger).cardRefunded(s.getId(), "re_c", "webhook");
+        verify(cashLedger).cardRefunded(s.getId(), null, "webhook");
+        verifyNoInteractions(ledger, alerts);
+    }
+
+    @Test
+    void chargeDeCommissionRembourseePartiellement_alerte() {
+        when(supplements.findByCommissionPaymentIntentId("pi_c")).thenReturn(Optional.of(s));
+
+        assertThat(router.handle(event("charge.refunded", "{\"id\":\"ch_c\",\"payment_intent\":\"pi_c\","
+                + "\"amount\":110,\"amount_refunded\":50}"))).isTrue();
+
+        verify(cashLedger).auditOnly(eq(s.getId()), eq("BID_SUPPLEMENT_COMMISSION_PARTIAL_REFUND"), anyMap());
+        verify(alerts).raiseOnce(eq("SUPP_COMM_PARTIAL_REF_" + s.getId()), anyString(), anyMap());
+    }
+
+    @Test
+    void refundDeCommissionEchoue_alerte_autresMisesAJourAvalees() {
+        when(supplements.findByCommissionPaymentIntentId("pi_c")).thenReturn(Optional.of(s));
+        when(cashLedger.commissionRefundFailed(s.getId(), "re_c")).thenReturn(true);
+
+        assertThat(router.handle(event("charge.refund.updated",
+                "{\"id\":\"re_c\",\"payment_intent\":\"pi_c\",\"status\":\"failed\"}"))).isTrue();
+        assertThat(router.handle(event("charge.refund.updated",
+                "{\"id\":\"re_c\",\"payment_intent\":\"pi_c\",\"status\":\"succeeded\"}"))).isTrue();
+
+        verify(alerts).raiseOnce(eq("SUPP_COMM_REFUND_FAIL_" + s.getId()), anyString(), anyMap());
+        verify(cashLedger, org.mockito.Mockito.times(1)).commissionRefundFailed(any(), any());
+        verifyNoInteractions(ledger);
+    }
+
+    @Test
+    void litigeSurLaChargeDeCommission_alerte() {
+        when(supplements.findByCommissionPaymentIntentId("pi_c")).thenReturn(Optional.of(s));
+
+        assertThat(router.handle(event("charge.dispute.created",
+                "{\"id\":\"dp_c\",\"charge\":\"ch_c\",\"payment_intent\":\"pi_c\",\"status\":\"needs_response\"}")))
+                .isTrue();
+
+        verify(alerts).raiseOnce(eq("SUPP_CHARGEBACK_" + s.getId()), anyString(), anyMap());
+    }
+
+    @Test
+    void chargeInconnue_nonRoutee() {
+        assertThat(router.handle(event("charge.refunded", "{\"id\":\"ch_x\",\"amount\":100}"))).isFalse();
+        assertThat(router.handle(event("charge.refund.updated", "{\"id\":\"re_x\",\"status\":\"failed\"}")))
+                .isFalse();
+        verifyNoInteractions(cashLedger, alerts);
+    }
+
+    @Test
+    void commissionRembourseeHorsAppSurDemandeVivante_alerte_surDemandeClose_rien() {
+        s.setRail(BidSupplementRail.CASH);
+        s.setStatus(BidSupplementStatus.PROPOSED);
+        when(supplements.findByCommissionPaymentIntentId("pi_c")).thenReturn(Optional.of(s));
+        when(cashLedger.cardRefunded(s.getId(), "re_c", "webhook")).thenReturn(true);
+        String refunded = "{\"id\":\"ch_c\",\"payment_intent\":\"pi_c\",\"amount\":110,\"amount_refunded\":110,"
+                + "\"refunds\":{\"data\":[{\"id\":\"re_c\"}]}}";
+
+        assertThat(router.handle(event("charge.refunded", refunded))).isTrue();
+        verify(alerts).raiseOnce(eq("SUPP_COMM_REFUND_LIVE_" + s.getId()), anyString(), anyMap());
+
+        s.setStatus(BidSupplementStatus.DECLINED);
+        assertThat(router.handle(event("charge.refunded", refunded))).isTrue();
+        verify(alerts, org.mockito.Mockito.times(1)).raiseOnce(anyString(), anyString(), anyMap());
     }
 }
