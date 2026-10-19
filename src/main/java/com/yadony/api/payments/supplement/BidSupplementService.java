@@ -29,6 +29,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -299,10 +300,13 @@ public class BidSupplementService {
      * remboursement, porté par les rails. N'agit que si le colis est réellement dans
      * {@link #TERMINAL_UNDELIVERED} : un événement mal interprété ne ferme rien. Idempotent.
      *
+     * <p>Transaction propre : un colis en échec ne fait pas échouer les autres colis d'un même
+     * trajet annulé.
+     *
      * @param reason clé du plan §5.1 ({@code BID_REJECTED}, {@code PARCEL_REFUSED}…).
      * @return vrai si une demande a été annulée.
      */
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean onBidEnded(UUID bidId, String reason) {
         if (bidId == null) {
             return false;

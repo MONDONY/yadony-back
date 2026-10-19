@@ -27,6 +27,8 @@ public class BidSupplementProperties {
     private BigDecimal maxNetEur = new BigDecimal("300");
     /** Intervalle du filet planifié (expiration, colis terminé). */
     private Duration reconcileInterval = Duration.ofMinutes(10);
+    /** Filet planifié actif ; coupé dans les tests (une base partagée, des horloges réelles). */
+    private boolean reconcileEnabled = true;
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
@@ -44,4 +46,6 @@ public class BidSupplementProperties {
     public void setMaxNetEur(BigDecimal maxNetEur) { this.maxNetEur = maxNetEur; }
     public Duration getReconcileInterval() { return reconcileInterval; }
     public void setReconcileInterval(Duration reconcileInterval) { this.reconcileInterval = reconcileInterval; }
+    public boolean isReconcileEnabled() { return reconcileEnabled; }
+    public void setReconcileEnabled(boolean reconcileEnabled) { this.reconcileEnabled = reconcileEnabled; }
 }

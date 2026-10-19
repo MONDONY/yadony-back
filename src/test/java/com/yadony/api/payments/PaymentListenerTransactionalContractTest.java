@@ -4,6 +4,7 @@ import com.yadony.api.matching.AnnouncementService;
 import com.yadony.api.payments.mobilemoney.MobileMoneyDepositOutcomeListener;
 import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutOutcomeListener;
 import com.yadony.api.payments.mobilemoney.MobileMoneyRefundOutcomeListener;
+import com.yadony.api.payments.supplement.BidSupplementTerminationListener;
 import com.yadony.api.payments.wallet.WalletTopupOutcomeListener;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -70,7 +71,17 @@ class PaymentListenerTransactionalContractTest {
                 // Lot 1 recharge wallet, tâche 4 : crédit du portefeuille sur les mêmes
                 // événements génériques (purpose WALLET_TOPUP) — même contrat.
                 Arguments.of(WalletTopupOutcomeListener.class, "onCompleted"),
-                Arguments.of(WalletTopupOutcomeListener.class, "onFailed")
+                Arguments.of(WalletTopupOutcomeListener.class, "onFailed"),
+                // Supplément de prix : fins de colis sans livraison (plan §5.1).
+                Arguments.of(BidSupplementTerminationListener.class, "onBidRejected"),
+                Arguments.of(BidSupplementTerminationListener.class, "onTripCancelled"),
+                Arguments.of(BidSupplementTerminationListener.class, "onParcelRefused"),
+                Arguments.of(BidSupplementTerminationListener.class, "onTravelerNoShow"),
+                Arguments.of(BidSupplementTerminationListener.class, "onHandoverExpired"),
+                Arguments.of(BidSupplementTerminationListener.class, "onCancellationConfirmed"),
+                Arguments.of(BidSupplementTerminationListener.class, "onBidExpiredOnDeparture"),
+                Arguments.of(BidSupplementTerminationListener.class, "onAdminPaymentRefunded"),
+                Arguments.of(BidSupplementTerminationListener.class, "onAdminBidCancelled")
         );
     }
 

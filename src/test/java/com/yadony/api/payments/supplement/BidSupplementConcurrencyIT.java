@@ -105,6 +105,7 @@ class BidSupplementConcurrencyIT {
     @Autowired EntityManager entityManager;
     @Autowired TransactionTemplate tx;
     @Autowired JdbcTemplate jdbc;
+    @Autowired BidSupplementReconciliationJob reconciliationJob;
 
     @RepeatedTest(3)
     void demandeEtScanSimultanes_jamaisDeRemiseAvecUneDemandeOuverteAnterieure() throws Exception {
@@ -175,6 +176,32 @@ class BidSupplementConcurrencyIT {
 
         supplementService.withdraw(bidId, supplement.id(), traveler.getFirebaseUid());
         assertThat(trackingService.recordScan(depart, traveler.getFirebaseUid()).created()).isTrue();
+    }
+
+    @org.junit.jupiter.api.Test
+    void filet_surPostgres_expireLesEchuesEtAnnuleCellesDesColisTermines() {
+        UserEntity traveler = persistUser("acct_" + UUID.randomUUID());
+        UserEntity sender = persistUser(null);
+        UUID expiringBid = persistAcceptedBid(persistAnnouncement(traveler.getId()), sender.getId());
+        UUID endedBid = persistAcceptedBid(persistAnnouncement(traveler.getId()), sender.getId());
+        var expiring = supplementService.create(expiringBid, traveler.getFirebaseUid(), new CreateSupplementRequest(
+                new BigDecimal("15"), BidSupplementReason.OTHER, null, null, "tracking/" + expiringBid + "/1.jpg"));
+        var ofEndedBid = supplementService.create(endedBid, traveler.getFirebaseUid(), new CreateSupplementRequest(
+                new BigDecimal("15"), BidSupplementReason.OTHER, null, null, "tracking/" + endedBid + "/1.jpg"));
+        jdbc.update("UPDATE bid_supplements SET expires_at = expires_at - interval '3 hours' WHERE id = ?", expiring.id());
+        jdbc.update("UPDATE bids SET status = 'CANCELLED', updated_at = updated_at - interval '1 hour' WHERE id = ?",
+                endedBid);
+
+        BidSupplementReconciliationJob.Outcome outcome = reconciliationJob.run();
+
+        assertThat(outcome.expired()).isGreaterThanOrEqualTo(1);
+        assertThat(outcome.cancelled()).isGreaterThanOrEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT status FROM bid_supplements WHERE id = ?", String.class, expiring.id()))
+                .isEqualTo("EXPIRED");
+        assertThat(jdbc.queryForObject("SELECT status FROM bid_supplements WHERE id = ?", String.class, ofEndedBid.id()))
+                .isEqualTo("CANCELLED");
+        assertThat(jdbc.queryForObject("SELECT closed_reason FROM bid_supplements WHERE id = ?", String.class,
+                ofEndedBid.id())).isEqualTo("BID_ENDED");
     }
 
     private UserEntity persistUser(String stripeAccountId) {
