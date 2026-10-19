@@ -14,7 +14,7 @@ import java.sql.Statement;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Brut scellé d'un fil de négociation à grille : colonne facultative, strictement positive. */
-class V332NegotiationThreadSealedGrossMigrationTest {
+class V333NegotiationThreadSealedGrossMigrationTest {
 
     private static EmbeddedPostgres postgres;
     private static DataSource dataSource;
@@ -40,10 +40,10 @@ class V332NegotiationThreadSealedGrossMigrationTest {
 
     @Test
     void migrate_addsNullablePositiveSealedGross() throws Exception {
-        Flyway baseline = flywayUpTo("331");
+        Flyway baseline = flywayUpTo("332");
         baseline.clean();
         baseline.migrate();
-        flywayUpTo("332").migrate();
+        flywayUpTo("333").migrate();
 
         try (Connection c = dataSource.getConnection(); Statement s = c.createStatement()) {
             ResultSet rs = s.executeQuery("SELECT data_type, numeric_precision, numeric_scale, is_nullable "

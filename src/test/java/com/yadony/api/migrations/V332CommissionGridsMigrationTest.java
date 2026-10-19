@@ -19,7 +19,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class V331CommissionGridsMigrationTest {
+class V332CommissionGridsMigrationTest {
 
     private static final String UTC_NOW = "(now() AT TIME ZONE 'UTC')";
     private static final String TIERS = "'[{\"fromEur\":\"0\",\"rate\":\"0.07\"},{\"fromEur\":\"100\",\"rate\":\"0.06\"}]'::jsonb";
@@ -48,7 +48,7 @@ class V331CommissionGridsMigrationTest {
     }
 
     private static void migrateTo330ThenFresh() {
-        Flyway baseline = flywayUpTo("330");
+        Flyway baseline = flywayUpTo("331");
         baseline.clean();
         baseline.migrate();
     }
@@ -81,7 +81,7 @@ class V331CommissionGridsMigrationTest {
     @Test
     void migrate_createsTableAndColumns() throws Exception {
         migrateTo330ThenFresh();
-        flywayUpTo("331").migrate();
+        flywayUpTo("332").migrate();
 
         try (Connection c = dataSource.getConnection(); Statement s = c.createStatement()) {
             ResultSet rs = s.executeQuery("SELECT column_name FROM information_schema.columns "
@@ -123,7 +123,7 @@ class V331CommissionGridsMigrationTest {
     @Test
     void trigger_rejectsUpdateOfEffectiveGrid() throws Exception {
         migrateTo330ThenFresh();
-        flywayUpTo("331").migrate();
+        flywayUpTo("332").migrate();
 
         try (Connection c = dataSource.getConnection(); Statement s = c.createStatement()) {
             UUID id = insertGrid(s, UTC_NOW + " - interval '1 minute'");
@@ -139,7 +139,7 @@ class V331CommissionGridsMigrationTest {
     @Test
     void trigger_allowsCancellingScheduledGrid() throws Exception {
         migrateTo330ThenFresh();
-        flywayUpTo("331").migrate();
+        flywayUpTo("332").migrate();
 
         try (Connection c = dataSource.getConnection(); Statement s = c.createStatement()) {
             UUID id = insertGrid(s, UTC_NOW + " + interval '1 day'");
@@ -167,7 +167,7 @@ class V331CommissionGridsMigrationTest {
                     + "VALUES ('" + promoId + "', '" + UUID.randomUUID() + "', '" + UUID.randomUUID() + "', '"
                     + UUID.randomUUID() + "', 0.030, now())");
         }
-        flywayUpTo("331").migrate();
+        flywayUpTo("332").migrate();
 
         try (Connection c = dataSource.getConnection(); Statement s = c.createStatement()) {
             assertThat(rate(s, "bids", bidId)).isEqualByComparingTo("0.050000");
