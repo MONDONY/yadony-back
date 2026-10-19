@@ -44,6 +44,8 @@ final class BidResponsePrefetch {
     private final Map<UUID, List<CancellationEntity>> cancellations;
     private final Map<UUID, List<BidGridItemEntity>> gridItems;
     private final Map<UUID, List<BidPhotoResponse>> photos;
+    /** Suppléments de la liste ({@link BidSupplementSummaryPort#prefetch}), null hors port. */
+    private final BidSupplementSummaryPort.Prefetch supplements;
     /** Taux de commission résolus pendant la conversion, par couple voyageur/expéditeur. */
     private final Map<String, BigDecimal> commissionRates = new HashMap<>();
 
@@ -52,6 +54,16 @@ final class BidResponsePrefetch {
                         Map<UUID, List<CancellationEntity>> cancellations,
                         Map<UUID, List<BidGridItemEntity>> gridItems,
                         Map<UUID, List<BidPhotoResponse>> photos) {
+        this(recipientLinks, bidRaterPairs, cancellations, gridItems, photos, null);
+    }
+
+    BidResponsePrefetch(Map<UUID, BidRecipientLinkEntity> recipientLinks,
+                        Set<String> bidRaterPairs,
+                        Map<UUID, List<CancellationEntity>> cancellations,
+                        Map<UUID, List<BidGridItemEntity>> gridItems,
+                        Map<UUID, List<BidPhotoResponse>> photos,
+                        BidSupplementSummaryPort.Prefetch supplements) {
+        this.supplements = supplements;
         this.recipientLinks = recipientLinks;
         this.bidRaterPairs = bidRaterPairs;
         this.cancellations = cancellations;
@@ -73,6 +85,10 @@ final class BidResponsePrefetch {
 
     List<BidGridItemEntity> gridItems(UUID bidId) {
         return gridItems.getOrDefault(bidId, List.of());
+    }
+
+    BidSupplementSummaryPort.Prefetch supplements() {
+        return supplements;
     }
 
     List<BidPhotoResponse> photos(UUID bidId) {

@@ -109,6 +109,14 @@ public class BidService {
     private final com.yadony.api.matching.reception.BidRecipientLinkRepository recipientLinkRepository;
     private final CommissionGridService commissionGridService;
 
+    /** Supplément de prix à la remise (payments/supplement) ; aucun tant que Spring ne l'a pas injecté. */
+    private BidSupplementSummaryPort supplementSummary = BidSupplementSummaryPort.NONE;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setSupplementSummaryPort(BidSupplementSummaryPort supplementSummary) {
+        this.supplementSummary = supplementSummary;
+    }
+
     /** Jours de contact après livraison : même clé que la fenêtre d'appel in-app (calls/). */
     @org.springframework.beans.factory.annotation.Value("${yadony.calls.delivery-grace-days:3}")
     private int contactGraceDays = 3;
@@ -1368,7 +1376,9 @@ public class BidService {
         bidRepository.save(bid);
 
         UserEntity sender = userRepository.findById(bid.getSenderId()).orElse(null);
-        if (sender != null) {
+        // Colis refusé après un supplément refusé ou expiré : l'écart de prix est réglé par le
+        // refus, l'expéditeur n'est pas sanctionné (décision du propriétaire du 19/10/2026).
+        if (sender != null && !supplementSummary.excusesParcelRefusal(bid.getId())) {
             sender.setRefusedCount(sender.getRefusedCount() + 1);
             userRepository.save(sender);
         }
@@ -1576,7 +1586,7 @@ public class BidService {
                 BidResponsePrefetch.loadInChunks(bidIds, bidGridItemRepository::findByBidIdIn).stream()
                         .collect(Collectors.groupingBy(BidGridItemEntity::getBidId));
         return new BidResponsePrefetch(links, raterPairs, cancellations, gridItems,
-                bidPhotoService.activePhotosByBid(bidIds));
+                bidPhotoService.activePhotosByBid(bidIds), supplementSummary.prefetch(bidIds));
     }
 
     /**
@@ -1753,11 +1763,23 @@ public class BidService {
                         && bid.getWeightKg().signum() > 0)
                         ? totalSenderAmountEur.divide(bid.getWeightKg(), 2, java.math.RoundingMode.HALF_UP)
                         : null;
+        // Supplément de prix : les totaux « avec supplément » n'ajoutent qu'un supplément payé.
+        BidSupplementView supplementView = supplementSummary.view(bid, announcement, callerId,
+                prefetch != null ? prefetch.supplements() : null);
+        java.math.BigDecimal totalSenderAmountWithSupplementEur =
+                supplementView.paidGross() != null && totalSenderAmountEur != null
+                        ? totalSenderAmountEur.add(supplementView.paidGross())
+                        : null;
+        java.math.BigDecimal totalNetAmountWithSupplementEur =
+                supplementView.paidNet() != null && totalNetAmountEur != null
+                        ? totalNetAmountEur.add(supplementView.paidNet())
+                        : null;
         // SÉCURITÉ (règle métier) : l'expéditeur ne reçoit JAMAIS le net du
         // voyageur — ni le tarif/kg net, ni le total net. Seulement le brut.
         if (callerId != null && callerId.equals(bid.getSenderId())) {
             pricePerKg = null;
             totalNetAmountEur = null;
+            totalNetAmountWithSupplementEur = null;
         }
 
         return new BidResponse(
@@ -1851,7 +1873,11 @@ public class BidService {
                 replacementRequestedAt(recipientLink),
                 ContactWindow.isOpen(bid, contactGraceDays, LocalDateTime.now(ZoneOffset.UTC)),
                 sender != null ? sender.senderReliabilityIncidentCount() : null,
-                PickupCodes.renewalNeeded(bid, LocalDateTime.now(ZoneOffset.UTC))
+                PickupCodes.renewalNeeded(bid, LocalDateTime.now(ZoneOffset.UTC)),
+                supplementView.supplement(),
+                supplementView.requestAllowed(),
+                totalSenderAmountWithSupplementEur,
+                totalNetAmountWithSupplementEur
         );
     }
 
