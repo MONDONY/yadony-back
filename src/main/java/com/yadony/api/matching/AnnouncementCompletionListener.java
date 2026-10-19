@@ -30,7 +30,22 @@ import java.util.UUID;
  *   <li>{@link HandoverExpiredEvent} — cash handover never confirmed nor reported, bid → CANCELLED</li>
  * </ul>
  *
- * <p>Rule: a trip is done when no bid on the announcement remains in ACCEPTED status.
+ * <p>Rule: a trip is done when no bid on the announcement remains in flight
+ * ({@link BidStatus#IN_FLIGHT}) AND the trip actually carried something or actually left:
+ * <ul>
+ *   <li>at least one parcel delivered ({@link BidStatus#COMPLETED}) → COMPLETED ;</li>
+ *   <li>nothing delivered, trip {@link AnnouncementStatus#IN_PROGRESS} (departure passed, or
+ *       underway early through a transit scan) → COMPLETED, same rule as the departure
+ *       transition ({@code AnnouncementService#applyInProgressTransition}, trigger
+ *       {@code DEPARTURE_NO_ACCEPTED_BIDS}) ;</li>
+ *   <li>nothing delivered, trip still ACTIVE/FULL → left open (YADONY-FLUTTER-PROD-15) : a
+ *       parcel refused, a cash handover expired or a no-show before departure must not close
+ *       the trip, which stays bookable. The freed capacity is given back (and FULL → ACTIVE) by
+ *       the transaction that ended the parcel ({@code BidService#refuseParcel},
+ *       {@code NoShowService#expireUnconfirmedCashHandover}), never here. If departure time
+ *       has passed meanwhile, the departure scheduler closes the trip and also expires the
+ *       pending requests, which completing it here would have skipped.</li>
+ * </ul>
  * PENDING/EXPIRED are not counted (pre-departure commitments, not in-flight).
  *
  * <p>Idempotent: COMPLETED/CANCELLED announcements are silently skipped.
@@ -64,7 +79,7 @@ public class AnnouncementCompletionListener {
             log.warn("DeliveryConfirmedEvent for unknown bidId={} — skipping", event.getBidId());
             return;
         }
-        checkAndCompleteIfDone(bidOpt.get().getAnnouncementId(), event.getBidId());
+        checkAndCompleteIfDone(bidOpt.get().getAnnouncementId(), event.getBidId(), true);
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -75,7 +90,7 @@ public class AnnouncementCompletionListener {
             log.warn("VoyageurNoShowEvent for unknown bidId={} — skipping", event.getBidId());
             return;
         }
-        checkAndCompleteIfDone(bidOpt.get().getAnnouncementId(), event.getBidId());
+        checkAndCompleteIfDone(bidOpt.get().getAnnouncementId(), event.getBidId(), false);
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -86,7 +101,7 @@ public class AnnouncementCompletionListener {
             log.warn("ParcelRefusedEvent for unknown bidId={} — skipping", event.getBidId());
             return;
         }
-        checkAndCompleteIfDone(bidOpt.get().getAnnouncementId(), event.getBidId());
+        checkAndCompleteIfDone(bidOpt.get().getAnnouncementId(), event.getBidId(), false);
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -95,10 +110,15 @@ public class AnnouncementCompletionListener {
         if (event.announcementId() == null) {
             return;
         }
-        checkAndCompleteIfDone(event.announcementId(), event.bidId());
+        checkAndCompleteIfDone(event.announcementId(), event.bidId(), false);
     }
 
-    private void checkAndCompleteIfDone(UUID announcementId, UUID triggeringBidId) {
+    /**
+     * @param triggeringBidDelivered le colis déclencheur vient d'être livré (DeliveryConfirmedEvent) :
+     *                               inutile de chercher un colis livré en base
+     */
+    private void checkAndCompleteIfDone(UUID announcementId, UUID triggeringBidId,
+                                        boolean triggeringBidDelivered) {
         Optional<AnnouncementEntity> announcementOpt = announcementRepository.findById(announcementId);
         if (announcementOpt.isEmpty()) {
             log.warn("Completion check for unknown announcementId={} (triggering bid={}) — skipping",
@@ -132,6 +152,18 @@ public class AnnouncementCompletionListener {
             return;
         }
 
+        // YADONY-FLUTTER-PROD-15 : refuser à la remise le seul colis d'un trajet, avant le
+        // départ, le passait « Terminé » et le sortait des trajets actifs. Plus aucun colis en
+        // vol ne suffit pas : il faut qu'un colis ait été livré, ou que le trajet soit parti.
+        boolean anyDelivered = triggeringBidDelivered
+                || bidRepository.existsByAnnouncementIdAndStatus(announcementId, BidStatus.COMPLETED);
+        boolean underway = announcement.getStatus() == AnnouncementStatus.IN_PROGRESS;
+        if (!anyDelivered && !underway) {
+            log.info("Announcement {} left {} : no parcel in flight nor delivered, trip not underway "
+                    + "(triggering bid={})", announcementId, announcement.getStatus(), triggeringBidId);
+            return;
+        }
+
         AnnouncementStatus previousStatus = announcement.getStatus();
         announcement.setStatus(AnnouncementStatus.COMPLETED);
         announcementRepository.save(announcement);
@@ -148,7 +180,8 @@ public class AnnouncementCompletionListener {
                 announcement.getId(),
                 Map.of(
                         "previousStatus", previousStatus.name(),
-                        "lastDeliveredBidId", triggeringBidId.toString()
+                        "lastDeliveredBidId", triggeringBidId.toString(),
+                        "trigger", anyDelivered ? "LAST_PARCEL_RESOLVED" : "UNDERWAY_NO_PARCEL_DELIVERED"
                 )
         );
 

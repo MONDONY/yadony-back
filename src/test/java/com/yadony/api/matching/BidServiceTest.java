@@ -4076,6 +4076,76 @@ class BidServiceTest {
         }
 
         @Test
+        @DisplayName("PROD-15 : refus du seul colis d'un trajet FULL avant départ → kilos rendus, trajet ACTIVE")
+        void refuseParcel_onFullTripBeforeDeparture_releasesCapacityAndReopens() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setAvailableKg(BigDecimal.ZERO);
+            announcement.setStatus(AnnouncementStatus.FULL);
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.ACCEPTED);
+
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.empty());
+            when(bidRepository.save(any())).thenReturn(bid);
+
+            bidService.refuseParcel(BID_ID, TRAVELER_UID, "content_mismatch", "https://photo.jpg");
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PARCEL_REFUSED);
+            assertThat(announcement.getAvailableKg()).isEqualByComparingTo("5");
+            assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
+            verify(announcementRepository).save(announcement);
+        }
+
+        @Test
+        @DisplayName("PROD-15 : refus d'un colis remis, trajet ACTIVE avant départ → kilos rendus")
+        void refuseParcel_handedOverBeforeDeparture_releasesCapacity() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setAvailableKg(BigDecimal.valueOf(15));
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.HANDED_OVER);
+
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.empty());
+            when(bidRepository.save(any())).thenReturn(bid);
+
+            bidService.refuseParcel(BID_ID, TRAVELER_UID, "content_mismatch", null);
+
+            assertThat(announcement.getAvailableKg()).isEqualByComparingTo("20");
+            assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
+        }
+
+        @Test
+        @DisplayName("PROD-15 : refus d'un colis accepté après le départ → aucun kilo rendu, statut du trajet intact")
+        void refuseParcel_acceptedAfterDeparture_doesNotReleaseCapacity() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setDepartureDate(LocalDate.now().minusDays(2));
+            announcement.setAvailableKg(BigDecimal.ZERO);
+            announcement.setStatus(AnnouncementStatus.IN_PROGRESS);
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.ACCEPTED);
+
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.empty());
+            when(bidRepository.save(any())).thenReturn(bid);
+
+            bidService.refuseParcel(BID_ID, TRAVELER_UID, "content_mismatch", null);
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PARCEL_REFUSED);
+            assertThat(announcement.getAvailableKg()).isEqualByComparingTo("0");
+            assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.IN_PROGRESS);
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
         @DisplayName("status invalide → 422")
         void refuseParcel_invalidStatus_throwsUnprocessable() {
             UserEntity traveler = buildTraveler();

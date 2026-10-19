@@ -209,6 +209,42 @@ class NoShowServiceTest {
     }
 
     @Test
+    @DisplayName("PROD-15 : remise espèces expirée avant le départ sur un trajet FULL → kilos rendus, trajet ACTIVE")
+    void expireUnconfirmedCashHandover_beforeDeparture_releasesCapacity() {
+        cashBid(CommissionStatus.CHARGED);
+        bid.setWeightKg(java.math.BigDecimal.valueOf(8));
+        announcement.setDepartureDate(java.time.LocalDate.now().plusDays(3));
+        announcement.setAvailableKg(java.math.BigDecimal.ZERO);
+        announcement.setStatus(AnnouncementStatus.FULL);
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+        service.expireUnconfirmedCashHandover(BID_ID);
+
+        assertThat(announcement.getAvailableKg()).isEqualByComparingTo("8");
+        assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
+        verify(announcementRepository).save(announcement);
+    }
+
+    @Test
+    @DisplayName("PROD-15 : remise espèces expirée après le départ → aucun kilo rendu")
+    void expireUnconfirmedCashHandover_afterDeparture_keepsCapacity() {
+        cashBid(CommissionStatus.CHARGED);
+        bid.setWeightKg(java.math.BigDecimal.valueOf(8));
+        announcement.setDepartureDate(java.time.LocalDate.now().minusDays(2));
+        announcement.setAvailableKg(java.math.BigDecimal.ZERO);
+        announcement.setStatus(AnnouncementStatus.FULL);
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+        service.expireUnconfirmedCashHandover(BID_ID);
+
+        assertThat(announcement.getAvailableKg()).isEqualByComparingTo("0");
+        assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.FULL);
+        verify(announcementRepository, never()).save(any());
+    }
+
+    @Test
     @DisplayName("trajet introuvable → annulé quand même, voyageur inconnu dans l'événement")
     void expireUnconfirmedCashHandover_announcementMissing() {
         cashBid(CommissionStatus.CHARGED);

@@ -338,6 +338,113 @@ class AnnouncementCompletionListenerTest {
         verify(announcementRepository).save(ann);
     }
 
+    // ── YADONY-FLUTTER-PROD-15 : pas de « Terminé » sans colis livré ni départ ──
+
+    private static final List<BidStatus> IN_FLIGHT_LIST =
+            List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED);
+
+    @Test
+    @DisplayName("PROD-15 : refus du seul colis avant le départ → trajet ACTIVE conservé, aucun audit COMPLETED")
+    void parcelRefused_onlyParcelBeforeDeparture_keepsTripOpen() {
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(refusedBid()));
+        AnnouncementEntity ann = announcement(AnnouncementStatus.ACTIVE);
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(ann));
+        when(bidRepository.existsByAnnouncementIdAndStatusIn(announcementId, IN_FLIGHT_LIST)).thenReturn(false);
+        when(bidRepository.existsByAnnouncementIdAndStatus(announcementId, BidStatus.COMPLETED)).thenReturn(false);
+
+        listener.onParcelRefused(refusedEvent());
+
+        assertThat(ann.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
+        verify(announcementRepository, never()).save(any());
+        verify(auditService, never()).log(any(), any(), any(), any(), any());
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    @DisplayName("PROD-15 : refus d'un colis alors qu'un autre est livré → trajet COMPLETED")
+    void parcelRefused_otherParcelDelivered_completesTrip() {
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(refusedBid()));
+        AnnouncementEntity ann = announcement(AnnouncementStatus.ACTIVE);
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(ann));
+        when(bidRepository.existsByAnnouncementIdAndStatusIn(announcementId, IN_FLIGHT_LIST)).thenReturn(false);
+        when(bidRepository.existsByAnnouncementIdAndStatus(announcementId, BidStatus.COMPLETED)).thenReturn(true);
+
+        listener.onParcelRefused(refusedEvent());
+
+        assertThat(ann.getStatus()).isEqualTo(AnnouncementStatus.COMPLETED);
+        verify(announcementRepository).save(ann);
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        ArgumentCaptor<Map> captor = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).log(eq("ANNOUNCEMENT"), eq(travelerId), eq("ANNOUNCEMENT_COMPLETED"),
+                eq(announcementId), captor.capture());
+        assertThat(captor.getValue()).containsEntry("trigger", "LAST_PARCEL_RESOLVED");
+    }
+
+    @Test
+    @DisplayName("PROD-15 : refus du dernier colis d'un trajet parti (IN_PROGRESS), rien de livré → COMPLETED tracé")
+    void parcelRefused_afterDeparture_nothingDelivered_completesWithTrigger() {
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(refusedBid()));
+        AnnouncementEntity ann = announcement(AnnouncementStatus.IN_PROGRESS);
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(ann));
+        when(bidRepository.existsByAnnouncementIdAndStatusIn(announcementId, IN_FLIGHT_LIST)).thenReturn(false);
+        when(bidRepository.existsByAnnouncementIdAndStatus(announcementId, BidStatus.COMPLETED)).thenReturn(false);
+
+        listener.onParcelRefused(refusedEvent());
+
+        assertThat(ann.getStatus()).isEqualTo(AnnouncementStatus.COMPLETED);
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        ArgumentCaptor<Map> captor = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).log(eq("ANNOUNCEMENT"), eq(travelerId), eq("ANNOUNCEMENT_COMPLETED"),
+                eq(announcementId), captor.capture());
+        assertThat(captor.getValue())
+                .containsEntry("previousStatus", "IN_PROGRESS")
+                .containsEntry("trigger", "UNDERWAY_NO_PARCEL_DELIVERED");
+    }
+
+    @Test
+    @DisplayName("PROD-15 : remise espèces expirée sur le seul colis avant le départ → trajet non terminé")
+    void handoverExpired_onlyParcelBeforeDeparture_keepsTripOpen() {
+        AnnouncementEntity ann = announcement(AnnouncementStatus.ACTIVE);
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(ann));
+        when(bidRepository.existsByAnnouncementIdAndStatusIn(announcementId, IN_FLIGHT_LIST)).thenReturn(false);
+        when(bidRepository.existsByAnnouncementIdAndStatus(announcementId, BidStatus.COMPLETED)).thenReturn(false);
+
+        listener.onHandoverExpired(new HandoverExpiredEvent(bidId, announcementId, UUID.randomUUID(), travelerId, true));
+
+        assertThat(ann.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
+        verify(announcementRepository, never()).save(any());
+        verify(auditService, never()).log(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("PROD-15 : no-show sur le seul colis d'un trajet FULL pas encore parti → trajet non terminé")
+    void noShow_onlyParcelBeforeDeparture_keepsTripOpen() {
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(noShowBid()));
+        AnnouncementEntity ann = announcement(AnnouncementStatus.FULL);
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(ann));
+        when(bidRepository.existsByAnnouncementIdAndStatusIn(announcementId, IN_FLIGHT_LIST)).thenReturn(false);
+        when(bidRepository.existsByAnnouncementIdAndStatus(announcementId, BidStatus.COMPLETED)).thenReturn(false);
+
+        listener.onVoyageurNoShow(noShowEvent());
+
+        assertThat(ann.getStatus()).isEqualTo(AnnouncementStatus.FULL);
+        verify(announcementRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("livraison confirmée : le colis déclencheur compte comme livré, sans requête supplémentaire")
+    void delivery_doesNotQueryDeliveredBids() {
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(completedBid()));
+        AnnouncementEntity ann = announcement(AnnouncementStatus.IN_PROGRESS);
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(ann));
+        when(bidRepository.existsByAnnouncementIdAndStatusIn(announcementId, IN_FLIGHT_LIST)).thenReturn(false);
+
+        listener.onDeliveryConfirmed(deliveryEvent());
+
+        assertThat(ann.getStatus()).isEqualTo(AnnouncementStatus.COMPLETED);
+        verify(bidRepository, never()).existsByAnnouncementIdAndStatus(any(), any());
+    }
+
     @Test
     @DisplayName("parcel refused bid inconnu → no-op")
     void parcelRefused_unknownBid_skips() {
