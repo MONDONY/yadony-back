@@ -1,7 +1,7 @@
 ---
 id: mobile-money
 title: Pay and get paid by mobile money
-keywords: mobile money, Orange Money, Wave, MTN, Moov, mobile money payout, mobile money number, network, CFA franc, XOF, XAF, pay by mobile money
+keywords: mobile money, Orange Money, MTN, Moov, mobile money payout, mobile money number, network, CFA franc, XOF, XAF, pay by mobile money
 routes:
   - path: /payments/mobile-money/account
     label: Mobile money payout

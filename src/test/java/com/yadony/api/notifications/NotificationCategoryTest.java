@@ -21,6 +21,8 @@ class NotificationCategoryTest {
         assertThat(NotificationCategory.fromType("MOBILE_MONEY_PAYMENT_CONFIRMED")).isEqualTo(NotificationCategory.PAIEMENTS);
         assertThat(NotificationCategory.fromType("MOBILE_MONEY_PAYMENT_FAILED")).isEqualTo(NotificationCategory.PAIEMENTS);
         assertThat(NotificationCategory.fromType("MM_PAYMENT_EXPIRED")).isEqualTo(NotificationCategory.PAIEMENTS);
+        assertThat(NotificationCategory.fromType("wallet_topup_confirmed")).isEqualTo(NotificationCategory.PAIEMENTS);
+        assertThat(NotificationCategory.fromType("wallet_topup_failed")).isEqualTo(NotificationCategory.PAIEMENTS);
         assertThat(NotificationCategory.fromType("KYC_ACTION_REQUIRED")).isEqualTo(NotificationCategory.PAIEMENTS);
         assertThat(NotificationCategory.fromType("CARD_EXPIRING")).isEqualTo(NotificationCategory.PAIEMENTS);
         assertThat(NotificationCategory.fromType("REFERRAL_REWARD_AVAILABLE")).isEqualTo(NotificationCategory.PAIEMENTS);

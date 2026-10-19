@@ -523,6 +523,13 @@ yadony:
     # calculer le montant qu'un remboursement ou un versement peut envoyer sans vider le wallet
     # pawaPay : maxSûr = floor(solde / (1 + (refund-percent + marge) / 100)).
     refund-safety-margin-percent: ${PAWAPAY_REFUND_SAFETY_MARGIN_PERCENT:1.0}
+    # Indication de validation par opérateur (SMS_LINK | PIN_PROMPT | GENERIC), lue par
+    # PawapayValidationHints. Opérateur absent ou valeur invalide = GENERIC. Seul cas constaté :
+    # Orange CI envoie un SMS avec un lien à ouvrir. Syntaxe : littéral de map SpEL entre guillemets.
+    validation-hints: "{ORANGE_CIV: 'SMS_LINK'}"
+    # Pays annoncés « bientôt » dans le catalogue (GET /payments/mobile-money/countries) : codes ISO
+    # alpha-2 séparés par des virgules. Un pays déjà ouvert chez pawaPay en est retiré automatiquement.
+    upcoming-countries: ${PAWAPAY_UPCOMING_COUNTRIES:ML}
   email:
     resend-api-key: ${RESEND_API_KEY:}
     from-address: ${YADONY_EMAIL_FROM_ADDRESS:noreply@yadony.com}

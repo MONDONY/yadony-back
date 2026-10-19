@@ -67,7 +67,8 @@ class PawapayOperationServiceTest {
      * Filet du doublon de recharge : la garde applicative de
      * {@code WalletMobileMoneyTopupService} lit avant d'écrire, deux requêtes concurrentes la
      * franchissent toutes les deux. L'index unique partiel
-     * {@code uq_pawapay_ops_live_wallet_topup} (V260) tranche, et doit ressortir avec le
+     * {@code uq_pawapay_ops_live_wallet_topup} (V260, recréé par V331 avec le prédicat
+     * {@code topup_guard}) tranche, et doit ressortir avec le
      * message de la garde — pas un 500, pas un texte différent selon qui gagne la course.
      */
     @Test
