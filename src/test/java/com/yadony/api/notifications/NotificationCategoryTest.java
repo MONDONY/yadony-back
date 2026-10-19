@@ -29,6 +29,11 @@ class NotificationCategoryTest {
         assertThat(NotificationCategory.fromType("negotiation_commission_pending")).isEqualTo(NotificationCategory.PAIEMENTS);
         assertThat(NotificationCategory.fromType("negotiation_awaiting_payment")).isEqualTo(NotificationCategory.PAIEMENTS);
         assertThat(NotificationCategory.fromType("BID_NEGOTIATION_COMMISSION_DUE")).isEqualTo(NotificationCategory.PAIEMENTS);
+        for (String type : new String[]{"BID_SUPPLEMENT_REQUESTED", "BID_SUPPLEMENT_PAID", "BID_SUPPLEMENT_DECLINED",
+                "BID_SUPPLEMENT_EXPIRED", "BID_SUPPLEMENT_WITHDRAWN", "BID_SUPPLEMENT_REFUNDED",
+                "BID_SUPPLEMENT_PAID_OUT"}) {
+            assertThat(NotificationCategory.fromType(type)).as(type).isEqualTo(NotificationCategory.PAIEMENTS);
+        }
     }
 
     @Test

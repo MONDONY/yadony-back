@@ -60,6 +60,13 @@ public final class NotificationDeeplink {
             // régénération du code. Une app antérieure qui ignore la query ouvre le colis.
             case "CONFIRMATION_CODE_REQUESTED" -> bidId.map(id -> "bids/" + id + "?action=new-code");
 
+            // Supplément de prix demandé à la remise : le colis s'ouvre sur l'encart de réponse.
+            // Une app antérieure qui ignore la query ouvre le colis.
+            case "BID_SUPPLEMENT_REQUESTED" -> bidId.map(id -> "bids/" + id + "?action=supplement");
+            case "BID_SUPPLEMENT_PAID", "BID_SUPPLEMENT_DECLINED", "BID_SUPPLEMENT_EXPIRED",
+                 "BID_SUPPLEMENT_WITHDRAWN", "BID_SUPPLEMENT_REFUNDED", "BID_SUPPLEMENT_PAID_OUT" ->
+                    bidId.map(id -> "bids/" + id);
+
             case "BID_ACCEPTED", "DELIVERY_CONFIRMED", "PAYMENT_RELEASED", "DISPUTE_OPENED", "PARCEL_REFUSED",
                  "CONFIRMATION_CODE_READY", "CONFIRMATION_CODE_BLOCKED", "DELIVERY_NOSHOW_REPORTED", "MM_PAYMENT_PENDING",
                  "HANDOVER_REMINDER_H2", "MOBILE_MONEY_PAYMENT_CONFIRMED", "SENDER_NOSHOW_REPORTED", "NOSHOW_DECISION", "MOBILE_MONEY_PAYMENT_FAILED",

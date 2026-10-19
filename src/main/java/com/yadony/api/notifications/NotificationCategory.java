@@ -38,7 +38,11 @@ public enum NotificationCategory {
             "wallet_topup_confirmed", "wallet_topup_failed",
             "negotiation_awaiting_payment", "negotiation_commission_pending",
             "negotiation_commission_declined", "negotiation_commission_expired",
-            "BID_NEGOTIATION_COMMISSION_DUE");
+            "BID_NEGOTIATION_COMMISSION_DUE",
+            // Supplément de prix à la remise (V338).
+            "BID_SUPPLEMENT_REQUESTED", "BID_SUPPLEMENT_PAID", "BID_SUPPLEMENT_DECLINED",
+            "BID_SUPPLEMENT_EXPIRED", "BID_SUPPLEMENT_WITHDRAWN", "BID_SUPPLEMENT_REFUNDED",
+            "BID_SUPPLEMENT_PAID_OUT");
 
     private static final Set<String> TRAJETS_TYPES = Set.of(
             "TRIP_IN_PROGRESS", "CORRIDOR_ALERT", "FLIGHT_PRICE_ALERT", "TRIP_SPACE_FREED", "TRAVELER_NEW_ANNOUNCEMENT",

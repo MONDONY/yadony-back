@@ -33,6 +33,9 @@ class NotificationTypesTest {
     void isCritical_nullOrOtherType_returnsFalse() {
         assertThat(NotificationTypes.isCritical(null)).isFalse();
         assertThat(NotificationTypes.isCritical("BID_CREATED")).isFalse();
+        // Supplément de prix : jamais de SMS de repli (décision du 19/10/2026).
+        assertThat(NotificationTypes.isCritical("BID_SUPPLEMENT_REQUESTED")).isFalse();
+        assertThat(NotificationTypes.isCritical("BID_SUPPLEMENT_PAID")).isFalse();
         assertThat(NotificationTypes.isCritical("")).isFalse();
     }
 }
