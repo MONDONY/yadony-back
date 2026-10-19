@@ -48,6 +48,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -343,6 +344,44 @@ class BidQuoteServiceGridTest {
         // unique échouerait sur son propre rachat et le total affiché remonterait à 107,00 €.
         assertThat(resp.totalSenderAmountEur()).isEqualByComparingTo("102.00");
         verify(commissionRateResolver, never()).reductions(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("bid carte déjà tenté, net changé, code jamais racheté : total sans le code, comme la reprise carte")
+    void toResponse_gridCardRetryWithChangedNet_ignoresNeverRedeemedCode() {
+        // Miroir de PaymentServiceCommissionGridTest#createEscrow_grid_retryWithChangedNet_withoutRedeemedPromo :
+        // 2 kg × 5 € = 10 € ; la reprise débite 11,00 € (minimum 1 €) sans reprendre JAMAISAPPLIQUE.
+        BidEntity bid = gridBid();
+        bid.setWeightKg(new BigDecimal("2"));
+        bid.setStatus(BidStatus.AWAITING_PAYMENT);
+        bid.setPromoCode("JAMAISAPPLIQUE");
+        when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement("5.00")));
+        when(paymentService.gridCardAttempt(BID_ID, new BigDecimal("10.00"), com.yadony.api.payments.currency.SupportedCurrency.EUR))
+                .thenReturn(Optional.of(new PaymentService.GridCardAttempt(null)));
+        when(commissionRateResolver.displayReductionsForBid(TRAVELER_ID, SENDER_ID, null, null, BID_ID))
+                .thenReturn(CommissionReductions.NONE);
+
+        BidResponse resp = bidService.toResponse(bid, sender(), SENDER_ID);
+
+        assertThat(resp.totalSenderAmountEur()).isEqualByComparingTo("11.00");
+        verify(commissionRateResolver, never()).displayReductionsForBid(any(), any(), eq("JAMAISAPPLIQUE"), any(), any());
+    }
+
+    @Test
+    @DisplayName("bid carte déjà tenté au même net : total = montants du paiement, rejoués tels quels par la reprise")
+    void toResponse_gridCardRetrySameNet_showsCommittedPaymentGross() {
+        BidEntity bid = gridBid();
+        bid.setPromoCode("PROMO5");
+        when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement("4.00")));
+        when(paymentService.gridCardAttempt(BID_ID, new BigDecimal("20.00"), com.yadony.api.payments.currency.SupportedCurrency.EUR))
+                .thenReturn(Optional.of(new PaymentService.GridCardAttempt(new com.yadony.api.payments.PriceBreakdown(
+                        new BigDecimal("20.00"), new BigDecimal("0.70"), new BigDecimal("20.70")))));
+
+        BidResponse resp = bidService.toResponse(bid, sender(), SENDER_ID);
+
+        assertThat(resp.totalSenderAmountEur()).isEqualByComparingTo("20.70");
+        verify(commissionGridService, never()).require(any());
+        verify(commissionRateResolver, never()).displayReductionsForBid(any(), any(), any(), any(), any());
     }
 
     /** Événement d'un fil à grille scellé : 5 kg, net 100 €, payé {@code senderGross} (nul en espèces). */

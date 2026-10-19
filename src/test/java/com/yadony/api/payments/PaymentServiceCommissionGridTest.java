@@ -18,6 +18,7 @@ import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidGridItemRepository;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.dto.CreatePaymentRequest;
 import com.yadony.api.payments.dto.PaymentResponse;
 import com.yadony.api.promo.PromoDiscount;
@@ -335,6 +336,21 @@ class PaymentServiceCommissionGridTest {
         p.setCommissionAmount(new BigDecimal(commission));
         p.setCurrency("EUR");
         return p;
+    }
+
+    @Test
+    @DisplayName("tentative carte vue de l'affichage : rien sans paiement, montants rejoués, ou re-tarif si le net a changé")
+    void gridCardAttempt_mirrorsTheRetryOfCreateEscrow() {
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        assertThat(service.gridCardAttempt(bidId, new BigDecimal("0.50"), SupportedCurrency.EUR)).isEmpty();
+
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(failedPayment("1.50", "1.00")));
+        assertThat(service.gridCardAttempt(bidId, new BigDecimal("0.50"), SupportedCurrency.EUR))
+                .hasValueSatisfying(a -> assertThat(a.committed().gross()).isEqualByComparingTo("1.50"));
+        // Net passé à 10 € : la reprise re-tarifera (createEscrow_grid_retryWithChangedNet_withoutRedeemedPromo).
+        assertThat(service.gridCardAttempt(bidId, new BigDecimal("10.00"), SupportedCurrency.EUR))
+                .hasValueSatisfying(a -> assertThat(a.committed()).isNull());
+        verifyNoInteractions(gridService, promoService);
     }
 
     @Test

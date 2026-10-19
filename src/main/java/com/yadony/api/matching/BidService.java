@@ -1898,6 +1898,10 @@ public class BidService {
      * rails, règle unique {@link CommissionRateResolver#reductionsForBid} (code déjà racheté relu
      * sans revalidation, sinon repli sans code s'il est devenu invalide).
      *
+     * <p>Bid carte ayant déjà un paiement : ce que débitera une nouvelle tentative
+     * ({@code PaymentService.createEscrow}) — les montants enregistrés s'ils correspondent encore
+     * au net, sinon la grille figée sans un code jamais racheté (la tentative ne le reprend pas).
+     *
      * <p>Coût en liste : le bon de parrainage se lit par bid (il dépend de la référence), pas par
      * couple voyageur/expéditeur ; {@link BidResponsePrefetch} ne peut donc pas le mutualiser.
      */
@@ -1912,10 +1916,21 @@ public class BidService {
                 || totalNet.setScale(currency.minorUnit(), java.math.RoundingMode.HALF_UP).signum() <= 0) {
             return totalNet;
         }
+        String promoCode = bid.getPromoCode();
+        if (!negotiatedNet && bid.getPaymentMethod() == PaymentMethod.STRIPE) {
+            java.util.Optional<PaymentService.GridCardAttempt> attempt =
+                    paymentService.gridCardAttempt(bid.getId(), totalNet, currency);
+            if (attempt.isPresent() && attempt.get().committed() != null) {
+                return attempt.get().committed().gross();
+            }
+            if (attempt.isPresent()) {
+                promoCode = null;
+            }
+        }
         CommissionReductions reductions = negotiatedNet
                 ? CommissionReductions.frozen(bid.getCommissionOverrideRate(), bid.getCommissionVoucherFactor())
                 : commissionRateResolver.displayReductionsForBid(announcement.getTravelerId(), bid.getSenderId(),
-                        bid.getPromoCode(), bid.getPromoCodeId(), bid.getId());
+                        promoCode, bid.getPromoCodeId(), bid.getId());
         return CommissionCalculator.compute(totalNet, currency,
                 commissionGridService.require(bid.getCommissionGridId()), reductions).gross();
     }

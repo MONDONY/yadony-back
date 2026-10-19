@@ -1660,6 +1660,29 @@ public class PaymentService {
     }
 
     /**
+     * Paiement carte déjà créé pour un bid, vu comme le verra une nouvelle tentative de
+     * {@link #createEscrow} sur un bid à grille, pour que l'affichage annonce ce qu'elle débitera.
+     *
+     * @param committed montants enregistrés que la tentative rejouera tels quels
+     *                  ({@link #committedGridAmounts}), {@code null} s'ils ne correspondent plus
+     *                  au net : la tentative re-tarife alors sur la grille figée, sans code
+     *                  jamais racheté.
+     */
+    public record GridCardAttempt(PriceBreakdown committed) {}
+
+    /**
+     * {@link GridCardAttempt} du bid, vide s'il n'a encore aucun paiement : même lecture que
+     * {@code existing} dans {@link #createEscrow} (toute ligne {@code payments} du bid, quel que
+     * soit son statut). Lecture pure.
+     *
+     * @param totalNet net du bid, comme le calcule {@link #createEscrow}
+     */
+    public Optional<GridCardAttempt> gridCardAttempt(UUID bidId, BigDecimal totalNet, SupportedCurrency currency) {
+        return paymentRepository.findByBidId(bidId)
+                .map(p -> new GridCardAttempt(committedGridAmounts(p, totalNet, currency).orElse(null)));
+    }
+
+    /**
      * Montants déjà enregistrés sur le paiement d'un objet à grille, rejoués tels quels par une
      * nouvelle tentative : brut et commission y sont déjà arrondis, et le taux enregistré est
      * borné sous 1, donc {@code net × taux} ne les redonnerait pas.
