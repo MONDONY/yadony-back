@@ -179,6 +179,22 @@ class BidSupplementConcurrencyIT {
     }
 
     @org.junit.jupiter.api.Test
+    void demandeEchueNonFermee_laRemisePasse_etLaDemandeExpire() {
+        UserEntity traveler = persistUser("acct_" + UUID.randomUUID());
+        UserEntity sender = persistUser(null);
+        UUID bidId = persistAcceptedBid(persistAnnouncement(traveler.getId()), sender.getId());
+        var supplement = supplementService.create(bidId, traveler.getFirebaseUid(), new CreateSupplementRequest(
+                new BigDecimal("15"), BidSupplementReason.OTHER, null, null, "tracking/" + bidId + "/1.jpg"));
+        jdbc.update("UPDATE bid_supplements SET expires_at = expires_at - interval '3 hours' WHERE id = ?",
+                supplement.id());
+
+        assertThat(trackingService.recordScan(new QrScanRequest(bidId, TrackingEventType.DEPART,
+                null, null, null, null, null), traveler.getFirebaseUid()).created()).isTrue();
+        assertThat(jdbc.queryForObject("SELECT status FROM bid_supplements WHERE id = ?", String.class,
+                supplement.id())).isEqualTo("EXPIRED");
+    }
+
+    @org.junit.jupiter.api.Test
     void filet_surPostgres_expireLesEchuesEtAnnuleCellesDesColisTermines() {
         UserEntity traveler = persistUser("acct_" + UUID.randomUUID());
         UserEntity sender = persistUser(null);

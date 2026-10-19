@@ -21,7 +21,8 @@ final class BidSupplementViews {
      * @param forSender vrai pour l'expéditeur du colis : ni net, ni commission, ni statut de
      *                  commission (il retrouverait le net du voyageur par soustraction).
      */
-    static BidSupplementResponse of(BidSupplementEntity s, boolean forSender, StorageService storage) {
+    static BidSupplementResponse of(BidSupplementEntity s, boolean forSender, StorageService storage,
+                                    LocalDateTime now) {
         return new BidSupplementResponse(
                 s.getId(),
                 s.getStatus().name(),
@@ -37,7 +38,20 @@ final class BidSupplementViews {
                 utc(s.getExpiresAt()),
                 utc(s.getPaidAt()),
                 forSender || s.getCommissionStatus() == null ? null : s.getCommissionStatus().name(),
-                s.getStatus().isOpen());
+                blocksHandover(s, now));
+    }
+
+    /**
+     * La demande bloque-t-elle la remise ? Un paiement en vol, toujours ; une demande qui attend
+     * l'expéditeur (ou la 3DS du voyageur), seulement avant son échéance : échue, l'expéditeur ne
+     * peut plus y répondre, elle ne doit plus retenir le colis en attendant le filet.
+     */
+    static boolean blocksHandover(BidSupplementEntity s, LocalDateTime now) {
+        return switch (s.getStatus()) {
+            case PAYMENT_PENDING -> true;
+            case PROPOSED, COMMISSION_PENDING -> s.getExpiresAt().isAfter(now);
+            default -> false;
+        };
     }
 
     private static OffsetDateTime utc(LocalDateTime value) {

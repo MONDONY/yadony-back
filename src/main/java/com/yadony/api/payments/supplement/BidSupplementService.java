@@ -198,7 +198,7 @@ public class BidSupplementService {
         events.publishEvent(new BidSupplementRequestedEvent(s.getId(), bidId, bid.getSenderId(), traveler.getId(),
                 s.getGrossAmount(), s.getCurrency(), s.getExpiresAt(), announcement.getTimezone()));
         audit(s, "BID_SUPPLEMENT_REQUESTED", traveler.getId(), Map.of("reason", s.getReasonCode().name()));
-        return BidSupplementViews.of(s, false, storage);
+        return BidSupplementViews.of(s, false, storage, window.now());
     }
 
     @Transactional
@@ -216,7 +216,7 @@ public class BidSupplementService {
         events.publishEvent(new BidSupplementWithdrawnEvent(s.getId(), bidId, s.getSenderId(), s.getTravelerId(),
                 s.getRail(), previous));
         audit(s, "BID_SUPPLEMENT_WITHDRAWN", traveler.getId(), Map.of());
-        return BidSupplementViews.of(s, false, storage);
+        return BidSupplementViews.of(s, false, storage, window.now());
     }
 
     // ── Expéditeur ───────────────────────────────────────────────────────────
@@ -232,7 +232,7 @@ public class BidSupplementService {
         events.publishEvent(new BidSupplementDeclinedEvent(s.getId(), bidId, s.getSenderId(), s.getTravelerId(),
                 s.getRail(), previous));
         audit(s, "BID_SUPPLEMENT_DECLINED", sender.getId(), Map.of());
-        return BidSupplementViews.of(s, true, storage);
+        return BidSupplementViews.of(s, true, storage, window.now());
     }
 
     /**
@@ -280,18 +280,28 @@ public class BidSupplementService {
         if (s.getStatus() == BidSupplementStatus.PAYMENT_PENDING && handler != null && !handler.mayExpire(s)) {
             return false;
         }
+        expireUnderBidLock(s);
+        return true;
+    }
+
+    /**
+     * Clôt une demande échue déjà verrouillée, colis compris (filet, ou porte de la remise sous le
+     * verrou du scan). {@code COMMISSION_PENDING} (3DS jamais confirmée) est annulée plutôt
+     * qu'expirée : rien n'a été proposé à l'expéditeur.
+     */
+    public void expireUnderBidLock(BidSupplementEntity s) {
+        UUID bidId = s.getBidId();
         if (s.getStatus() == BidSupplementStatus.COMMISSION_PENDING) {
             BidSupplementStatus previous = close(s, BidSupplementStatus.CANCELLED, "COMMISSION_NOT_CONFIRMED");
             events.publishEvent(new BidSupplementCancelledEvent(s.getId(), bidId, s.getSenderId(), s.getTravelerId(),
                     s.getRail(), previous, "COMMISSION_NOT_CONFIRMED"));
             audit(s, "BID_SUPPLEMENT_CANCELLED_COMMISSION_PENDING", null, Map.of());
-            return true;
+            return;
         }
         BidSupplementStatus previous = close(s, BidSupplementStatus.EXPIRED, "EXPIRED");
         events.publishEvent(new BidSupplementExpiredEvent(s.getId(), bidId, s.getSenderId(), s.getTravelerId(),
                 s.getRail(), previous));
         audit(s, "BID_SUPPLEMENT_EXPIRED", null, Map.of());
-        return true;
     }
 
     /**

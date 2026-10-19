@@ -153,6 +153,17 @@ class BidSupplementSummaryAdapterTest {
     }
 
     @Test
+    void demandeEchueNonEncoreFermee_neBloquePlusLaRemise() {
+        BidSupplementEntity s = add(BidSupplementStatus.PROPOSED, 130);
+        s.setExpiresAt(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC).minusMinutes(1));
+        assertThat(adapter(cardRail).view(bid, announcement, travelerId, null).supplement().blocksHandover()).isFalse();
+
+        s.setStatus(BidSupplementStatus.PAYMENT_PENDING);
+        assertThat(adapter(cardRail).view(bid, announcement, travelerId, null).supplement().blocksHandover())
+                .as("paiement en vol").isTrue();
+    }
+
+    @Test
     void montantsPayes_seulementPourUnSupplementPayeNonRembourse() {
         BidSupplementEntity s = add(BidSupplementStatus.PROPOSED, 5);
         assertThat(adapter(cardRail).view(bid, announcement, travelerId, null).paidGross()).isNull();
