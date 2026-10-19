@@ -34,7 +34,7 @@ final class BidSupplementViews {
                 s.getReasonCode().name(),
                 s.getReasonText(),
                 s.getGridItemLabel(),
-                storage.generatePresignedUrl(s.getPhotoKey(), PHOTO_URL_TTL),
+                s.getPhotoPurgedAt() != null ? null : storage.generatePresignedUrl(s.getPhotoKey(), PHOTO_URL_TTL),
                 utc(s.getExpiresAt()),
                 utc(s.getPaidAt()),
                 forSender || s.getCommissionStatus() == null ? null : s.getCommissionStatus().name(),

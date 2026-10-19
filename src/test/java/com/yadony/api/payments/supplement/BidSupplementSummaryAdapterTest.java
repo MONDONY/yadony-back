@@ -152,6 +152,13 @@ class BidSupplementSummaryAdapterTest {
     }
 
     @Test
+    void photoPurgee_plusDUrl() {
+        BidSupplementEntity s = add(BidSupplementStatus.PAID_OUT, 5);
+        s.markPhotoPurged(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC));
+        assertThat(adapter(cardRail).view(bid, announcement, travelerId, null).supplement().photoUrl()).isNull();
+    }
+
+    @Test
     void expediteur_neVoitQueLeBrut() {
         add(BidSupplementStatus.PROPOSED, 5);
 

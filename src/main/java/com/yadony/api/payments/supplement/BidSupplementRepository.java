@@ -56,7 +56,18 @@ public interface BidSupplementRepository extends JpaRepository<BidSupplementEnti
                                                @Param("bidStatuses") Collection<com.yadony.api.matching.BidStatus> bidStatuses,
                                                @Param("before") LocalDateTime before, Pageable page);
 
-    /** Rapprochement R2 : clés photo sous {@code prefix}, suppléments supprimés logiquement compris. */
-    @Query(value = "SELECT photo_key FROM bid_supplements WHERE photo_key LIKE CONCAT(:prefix, '%')", nativeQuery = true)
+    /** Purge après livraison : colis dont une photo de supplément n'est pas encore purgée. */
+    @Query("SELECT DISTINCT s.bidId FROM BidSupplementEntity s WHERE s.photoPurgedAt IS NULL")
+    List<UUID> findBidIdsWithLivePhotos();
+
+    @Query("SELECT s FROM BidSupplementEntity s WHERE s.bidId = :bidId AND s.photoPurgedAt IS NULL")
+    List<BidSupplementEntity> findLivePhotosByBidId(@Param("bidId") UUID bidId);
+
+    /**
+     * Rapprochement R2 : clés photo encore vivantes sous {@code prefix}, suppléments supprimés
+     * logiquement compris ; une photo purgée n'est plus revendiquée.
+     */
+    @Query(value = "SELECT photo_key FROM bid_supplements WHERE photo_key LIKE CONCAT(:prefix, '%') "
+            + "AND photo_purged_at IS NULL", nativeQuery = true)
     List<String> findPhotoKeysUnderIncludingDeleted(@Param("prefix") String prefix);
 }

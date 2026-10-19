@@ -20,6 +20,9 @@ CREATE TABLE bid_supplements (
     reason_text                   VARCHAR(500) NULL,
     grid_item_label               VARCHAR(120) NULL,
     photo_key                     VARCHAR(512) NOT NULL,
+    -- Photo supprimée de R2 par la purge après livraison (BidSupplementPhotoPurgeParticipant) :
+    -- la clé reste pour l'historique, la source de références ne la revendique plus.
+    photo_purged_at               TIMESTAMP    NULL,
     expires_at                    TIMESTAMP    NOT NULL,
     responded_at                  TIMESTAMP    NULL,
     paid_at                       TIMESTAMP    NULL,

@@ -36,6 +36,16 @@ class BidSupplementPhotoReferenceSourceTest {
         assertThat(source.referencedKeys("bids/")).isEmpty();
     }
 
+    @Test
+    void photoPurgee_plusRevendiquee() {
+        UUID bid = UUID.randomUUID();
+        BidSupplementEntity purged = supplement(bid, "tracking/" + bid + "/3_supplement.jpg", BidSupplementStatus.PAID_OUT);
+        purged.markPhotoPurged(LocalDateTime.now());
+        supplements.saveAndFlush(purged);
+
+        assertThat(source.referencedKeys("tracking/")).doesNotContain("tracking/" + bid + "/3_supplement.jpg");
+    }
+
     private static BidSupplementEntity supplement(UUID bidId, String photoKey, BidSupplementStatus status) {
         BidSupplementEntity s = new BidSupplementEntity();
         s.setBidId(bidId);

@@ -78,6 +78,9 @@ public class BidSupplementEntity extends BaseEntity {
     @Column(name = "photo_key", nullable = false, length = 512)
     private String photoKey;
 
+    @Column(name = "photo_purged_at")
+    private LocalDateTime photoPurgedAt;
+
     @Column(name = "expires_at", nullable = false)
     private LocalDateTime expiresAt;
 
@@ -153,6 +156,9 @@ public class BidSupplementEntity extends BaseEntity {
     public void setGridItemLabel(String gridItemLabel) { this.gridItemLabel = gridItemLabel; }
     public String getPhotoKey() { return photoKey; }
     public void setPhotoKey(String photoKey) { this.photoKey = photoKey; }
+    public LocalDateTime getPhotoPurgedAt() { return photoPurgedAt; }
+    /** Photo supprimée de R2 par la purge après livraison : plus d'URL, plus revendiquée. */
+    public void markPhotoPurged(LocalDateTime at) { this.photoPurgedAt = at; }
     public LocalDateTime getExpiresAt() { return expiresAt; }
     public void setExpiresAt(LocalDateTime expiresAt) { this.expiresAt = expiresAt; }
     public LocalDateTime getRespondedAt() { return respondedAt; }
