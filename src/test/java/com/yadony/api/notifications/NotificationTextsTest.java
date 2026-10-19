@@ -36,6 +36,26 @@ class NotificationTextsTest {
     private static final BigDecimal MONTANT = new BigDecimal("1250.00");
     private static final BigDecimal POIDS = new BigDecimal("32.5");
 
+    /**
+     * Tous les codes Yadony qu'une recharge échouée peut porter : les valeurs de
+     * {@code PawapayFailureCodes} (lues par réflexion, pour qu'un code ajouté entre dans le pire
+     * cas sans retoucher ce test) plus le repli {@code other}.
+     */
+    private static final List<String> TOPUP_FAILURE_CODES = topupFailureCodes();
+
+    @SuppressWarnings("unchecked")
+    private static List<String> topupFailureCodes() {
+        try {
+            var field = com.yadony.api.payments.pawapay.PawapayFailureCodes.class.getDeclaredField("BY_PAWAPAY_CODE");
+            field.setAccessible(true);
+            var codes = new java.util.TreeSet<>(((Map<String, String>) field.get(null)).values());
+            codes.add(com.yadony.api.payments.pawapay.PawapayFailureCodes.OTHER);
+            return List.copyOf(codes);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     private static Stream<Messages> deuxLangues() {
         return Stream.of(TestMessages.fr(), TestMessages.en());
     }
@@ -192,6 +212,17 @@ class NotificationTextsTest {
         String pireMontant = com.yadony.api.payments.wallet.WalletAmountText.format(new BigDecimal("99999.99"), "CAD");
         map.put("walletAdjustedByAdmin crédit", NotificationTexts.walletAdjustedByAdmin(m, true, pireMontant));
         map.put("walletAdjustedByAdmin débit", NotificationTexts.walletAdjustedByAdmin(m, false, pireMontant));
+        // Recharge mobile money : montant XOF à huit chiffres (bien au-delà des plafonds
+        // opérateurs), chaque libellé d'opérateur connu et un code inconnu rendu tel quel.
+        String pireRecharge = com.yadony.api.payments.wallet.WalletAmountText.format(new BigDecimal("10000000"), "XOF");
+        for (String provider : new String[] {"ORANGE_SEN", "WAVE_CIV", "MTN_MOMO_CMR", "FREE_SEN", "MOOV_BEN",
+                "AIRTEL_COD", "VODACOM_MPESA_COD", null}) {
+            map.put("walletTopupConfirmed " + provider, NotificationTexts.walletTopupConfirmed(m, pireRecharge,
+                    com.yadony.api.payments.pawapay.PawapayProviders.label(provider)));
+        }
+        for (String code : TOPUP_FAILURE_CODES) {
+            map.put("walletTopupFailed " + code, NotificationTexts.walletTopupFailed(m, pireRecharge, code));
+        }
         map.put("bankPayoutPaid montant", NotificationTexts.bankPayoutPaid(m, pireMontant));
         map.put("bankPayoutPaid sans-montant", NotificationTexts.bankPayoutPaid(m, ""));
         map.put("bankPayoutFailed", NotificationTexts.bankPayoutFailed(m));
@@ -551,6 +582,26 @@ class NotificationTextsTest {
                 "Drop-off deadline passed", "The drop-off deadline has passed: request cancelled."));
         assertThat(NotificationTexts.handoverDeadlinePassedRefunded(TestMessages.en()).body())
                 .isEqualTo("The drop-off deadline has passed: request cancelled and refunded.");
+    }
+
+    // Log prod du 19/10 : « Votre recharge de 2 000 F CFA avec MTN MoMo n'a pas abouti : Le
+    // paiement n'a pas été validé sur votre téléphone. », 112 caractères pour un cap de 72.
+    @Test
+    void walletTopupFailed_shortReasonForEveryCode_bothLanguages() {
+        String montant = com.yadony.api.payments.wallet.WalletAmountText.format(new BigDecimal("2000"), "XOF");
+        assertThat(NotificationTexts.walletTopupFailed(TestMessages.fr(), montant, "not-approved")).isEqualTo(
+                new NotificationText("Recharge non aboutie",
+                        "Recharge de " + montant + " : paiement non validé sur le téléphone."));
+        assertThat(NotificationTexts.walletTopupFailed(TestMessages.en(), montant, "other")).isEqualTo(
+                new NotificationText("Top-up not completed", "Top-up of " + montant + ": payment declined by the operator."));
+        assertThat(TOPUP_FAILURE_CODES).contains("insufficient-balance", "not-approved", "payer-limit-reached",
+                "invalid-number", "provider-unavailable", "expired", "other");
+        for (Messages m : List.of(TestMessages.fr(), TestMessages.en())) {
+            for (String code : TOPUP_FAILURE_CODES) {
+                String reason = m.get("notification.wallet-topup-failed.reason." + code);
+                assertThat(reason).as(code).isNotBlank().doesNotStartWith("notification.").endsWith(".");
+            }
+        }
     }
 
     @Test

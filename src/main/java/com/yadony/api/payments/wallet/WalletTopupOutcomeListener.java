@@ -4,6 +4,8 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.i18n.Messages;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.notifications.NotificationDispatcher;
+import com.yadony.api.notifications.NotificationText;
+import com.yadony.api.notifications.NotificationTexts;
 import com.yadony.api.payments.pawapay.PawapayFailureCodes;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
@@ -99,10 +101,9 @@ public class WalletTopupOutcomeListener {
                     Map.of("currency", op.getCurrency(), "amount", op.getAmount().toPlainString(), "provider",
                             op.getProvider()));
             Messages m = notifications.messagesFor(op.getUserId());
-            notifications.notifyUser(op.getUserId(), m.get("notification.wallet-topup-confirmed.title"),
-                    m.get("notification.wallet-topup-confirmed.body",
-                            WalletAmountText.format(op.getAmount(), op.getCurrency()),
-                            PawapayProviders.label(op.getProvider())),
+            NotificationText text = NotificationTexts.walletTopupConfirmed(m,
+                    WalletAmountText.format(op.getAmount(), op.getCurrency()), PawapayProviders.label(op.getProvider()));
+            notifications.notifyUser(op.getUserId(), text.title(), text.body(),
                     Map.of("type", "wallet_topup_confirmed", "topupId", op.getId().toString()));
         } catch (RuntimeException e) {
             // event.operationId() / event.userId(), jamais op : si la relecture ci-dessus a
@@ -139,8 +140,9 @@ public class WalletTopupOutcomeListener {
     }
 
     /**
-     * Prévient l'utilisateur que sa recharge n'a pas abouti, avec le motif traduit dans SA
-     * langue (le code opérateur est ramené à un code Yadony stable, jamais reflété tel quel).
+     * Prévient l'utilisateur que sa recharge n'a pas abouti, avec le motif COURT traduit dans SA
+     * langue (le code opérateur est ramené à un code Yadony stable, jamais reflété tel quel ;
+     * le texte complet reste sur l'écran de la recharge, voir {@link NotificationTexts#walletTopupFailed}).
      * Bloc à part de l'audit : un audit en panne ne doit pas laisser l'utilisateur sans nouvelle,
      * ni l'inverse. Même règle d'erreur que l'audit : journalisée puis avalée, un échec de
      * notification ne fait pas perdre d'argent et ne doit pas bloquer les autres écouteurs.
@@ -150,11 +152,9 @@ public class WalletTopupOutcomeListener {
             PawapayOperationEntity op = operations.get(event.operationId());
             String failureCode = PawapayFailureCodes.toYadony(event.failureCode());
             Messages m = notifications.messagesFor(event.userId());
-            notifications.notifyUser(event.userId(), m.get("notification.wallet-topup-failed.title"),
-                    m.get("notification.wallet-topup-failed.body",
-                            WalletAmountText.format(op.getAmount(), op.getCurrency()),
-                            PawapayProviders.label(op.getProvider()),
-                            m.get("topup.failure." + failureCode)),
+            NotificationText text = NotificationTexts.walletTopupFailed(m,
+                    WalletAmountText.format(op.getAmount(), op.getCurrency()), failureCode);
+            notifications.notifyUser(event.userId(), text.title(), text.body(),
                     Map.of("type", "wallet_topup_failed", "topupId", op.getId().toString(),
                             "failureCode", failureCode));
         } catch (RuntimeException e) {

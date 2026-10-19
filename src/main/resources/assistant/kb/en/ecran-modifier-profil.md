@@ -12,4 +12,4 @@ routes:
   - path: /profile/public
     label: My public profile
 ---
-You are on Edit profile. Tap "Edit" at the bottom of the screen to start editing: photo ("Change photo"), first and last name, "About", city and, for travelers, languages spoken ("Add a language"), then tap "Save". Email and phone are changed separately, from the "Contact details" section. The "Profile complete" gauge shows what is left to fill in.
+You are on Edit profile. Tap "Edit" at the bottom of the screen to start editing: photo ("Change photo"), first and last name, "About", city and, for travelers, languages spoken ("Add a language"), then tap "Save". Email and phone are added separately, from the "Contact details" section; once saved, they cannot be replaced in the app. The "Profile complete" gauge shows what is left to fill in.

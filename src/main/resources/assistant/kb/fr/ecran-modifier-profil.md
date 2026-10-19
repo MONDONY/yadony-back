@@ -12,4 +12,4 @@ routes:
   - path: /profile/public
     label: Mon profil public
 ---
-Vous êtes sur Modifier le profil. Touchez « Modifier » en bas de l'écran pour passer en édition : photo (« Modifier la photo »), prénom et nom, « À propos », ville et, pour les voyageurs, langues parlées (« Ajouter une langue »), puis touchez « Enregistrer ». L'email et le téléphone se changent à part, depuis la rubrique « Coordonnées ». La jauge « Profil complet » indique ce qu'il reste à remplir.
+Vous êtes sur Modifier le profil. Touchez « Modifier » en bas de l'écran pour passer en édition : photo (« Modifier la photo »), prénom et nom, « À propos », ville et, pour les voyageurs, langues parlées (« Ajouter une langue »), puis touchez « Enregistrer ». L'email et le téléphone s'ajoutent à part, depuis la rubrique « Coordonnées » ; une fois enregistrés, ils ne se remplacent pas depuis l'app. La jauge « Profil complet » indique ce qu'il reste à remplir.
