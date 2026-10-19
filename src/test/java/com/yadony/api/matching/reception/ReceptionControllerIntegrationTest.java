@@ -91,6 +91,22 @@ class ReceptionControllerIntegrationTest {
                         .value("PENDING"));
     }
 
+    /** V341 : l'annulation d'un colis n'est annoncée qu'une fois à son destinataire. */
+    @Test
+    void claimCancelNotification_firstCallWinsThenNothing() {
+        BidEntity bid = persistBid(BidStatus.CANCELLED);
+        link(bid, ReceptionLinkStatus.CONFIRMED);
+        BidEntity declined = persistBid(BidStatus.CANCELLED);
+        link(declined, ReceptionLinkStatus.DECLINED);
+        var audience = java.util.EnumSet.of(ReceptionLinkStatus.PENDING, ReceptionLinkStatus.CONFIRMED);
+        var now = java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC);
+
+        assertThat(linkRepository.claimCancelNotification(bid.getId(), audience, now)).isEqualTo(1);
+        assertThat(linkRepository.claimCancelNotification(bid.getId(), audience, now)).isZero();
+        assertThat(linkRepository.claimCancelNotification(declined.getId(), audience, now)).isZero();
+        assertThat(linkRepository.findByBidId(bid.getId()).orElseThrow().getCancelNotifiedAt()).isNotNull();
+    }
+
     @Test
     void list_withoutLinks_returnsEmptyArray() throws Exception {
         mockMvc.perform(get("/receptions").with(authentication(as(recipient))))

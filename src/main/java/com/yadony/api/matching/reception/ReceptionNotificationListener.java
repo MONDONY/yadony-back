@@ -22,6 +22,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
@@ -203,7 +205,23 @@ public class ReceptionNotificationListener {
         }
     }
 
+    /**
+     * Une seule annonce par colis : plusieurs chemins mènent à la même annulation (relance du
+     * remboursement par l'admin, absence de l'expéditeur confirmée après coup).
+     */
     private void notifyCancelled(UUID bidId) {
+        if (bidId == null) {
+            return;
+        }
+        try {
+            if (linkRepository.claimCancelNotification(bidId, CANCELLATION_AUDIENCE,
+                    OffsetDateTime.now(ZoneOffset.UTC)) == 0) {
+                return;
+            }
+        } catch (Exception e) {
+            log.warn("Annulation du colis {} non annoncée au destinataire : {}", bidId, e.toString());
+            return;
+        }
         notifyRecipient(bidId, ReceptionNotifications.CANCELLED, CANCELLATION_AUDIENCE,
                 m -> NotificationTexts.recipientParcelCancelled(m));
     }

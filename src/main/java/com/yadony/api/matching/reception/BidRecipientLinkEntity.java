@@ -34,6 +34,10 @@ public class BidRecipientLinkEntity extends BaseEntity {
     @Column(name = "responded_at")
     private OffsetDateTime respondedAt;
 
+    /** Annulation du colis annoncée au destinataire (V341) : une seule fois par colis. */
+    @Column(name = "cancel_notified_at")
+    private OffsetDateTime cancelNotifiedAt;
+
     protected BidRecipientLinkEntity() {}
 
     public BidRecipientLinkEntity(UUID bidId, UUID recipientUserId) {
@@ -49,6 +53,8 @@ public class BidRecipientLinkEntity extends BaseEntity {
     public ReceptionLinkStatus getStatus() { return status; }
 
     public OffsetDateTime getRespondedAt() { return respondedAt; }
+
+    public OffsetDateTime getCancelNotifiedAt() { return cancelNotifiedAt; }
 
     /** Enregistre la réponse du destinataire. */
     public void respond(ReceptionLinkStatus answer, OffsetDateTime at) {

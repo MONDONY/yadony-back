@@ -32,7 +32,13 @@ public class PushThrottle {
         /** Demandes sur un même trajet : le voyageur ouvre l'app et les voit toutes. */
         NEW_BIDS(Duration.ofMinutes(15)),
         /** Même événement pour plusieurs colis d'une personne (arrivée, annulation...). */
-        BURST(Duration.ofMinutes(2));
+        BURST(Duration.ofMinutes(2)),
+        /**
+         * Même trajet ou même demande signalé par plusieurs sources (deux alertes qui le
+         * couvrent, une alerte et un abonnement au voyageur, un colis compatible) : une seule
+         * sonnerie, les autres restent dans le feed.
+         */
+        SAME_SUBJECT(Duration.ofHours(24));
 
         final Duration window;
 
@@ -43,6 +49,9 @@ public class PushThrottle {
 
     /** Types émis en série pour une même personne par un seul événement. */
     static final Set<String> BURST_TYPES = Set.of("TRIP_ARRIVED", "TRIP_CANCELLED", "BID_EXPIRED", "BID_REJECTED");
+
+    /** Découverte d'un trajet ou d'une demande : alertes, abonnements, colis compatibles. */
+    static final Set<String> DISCOVERY_TYPES = Set.of("CORRIDOR_ALERT", "TRAVELER_NEW_ANNOUNCEMENT", "PACKAGE_MATCH");
 
     private final Map<Rule, Cache<String, Boolean>> recent = new EnumMap<>(Rule.class);
 
@@ -84,9 +93,18 @@ public class PushThrottle {
                     PushCollapseKey.of(type, data).map(key -> new Stream(Rule.CHAT, key));
             case "BID_CREATED" ->
                     NotificationGroupKey.of(type, data).map(key -> new Stream(Rule.NEW_BIDS, key));
-            default -> BURST_TYPES.contains(type)
-                    ? Optional.of(new Stream(Rule.BURST, type))
-                    : Optional.empty();
+            default -> {
+                if (BURST_TYPES.contains(type)) {
+                    yield Optional.of(new Stream(Rule.BURST, type));
+                }
+                if (DISCOVERY_TYPES.contains(type)) {
+                    // Le récapitulatif de 9 h n'a pas d'identifiant : il n'est jamais retenu.
+                    yield NotificationGroupKey.uuid(data, "announcementId").map(id -> "trip:" + id)
+                            .or(() -> NotificationGroupKey.uuid(data, "requestId").map(id -> "request:" + id))
+                            .map(key -> new Stream(Rule.SAME_SUBJECT, key));
+                }
+                yield Optional.empty();
+            }
         };
     }
 }
