@@ -509,6 +509,15 @@ public class PaymentService {
                     "bid-not-payable", "Bid Not Payable",
                     "Cette demande ne peut plus être payée (statut : " + bid.getStatus() + ")");
         }
+        // Bid matérialisé depuis un fil de demande d'envoi : l'expéditeur a payé sur le fil
+        // (paiement keyed sur negotiation_thread_id, jamais sur ce bid), qui crée le bid déjà
+        // ACCEPTED. findByBidId ne le trouverait pas : sans cette garde, un second escrow
+        // débiterait le brut porté par le bid (fil à grille) ou le barème.
+        if (bid.getLinkedNegotiationThreadId() != null) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                    "payment-already-completed", "Payment Already Completed",
+                    "Le paiement pour cette demande a déjà été effectué");
+        }
 
         // Devise figée au bid, pas la préférence courante de l'expéditeur : elle a pu
         // changer depuis la création du bid (lot 2 — gel au premier mouvement d'argent).

@@ -20,15 +20,19 @@ import com.yadony.api.matching.dto.BidQuoteResponse;
 import com.yadony.api.matching.dto.BidResponse;
 import com.yadony.api.matching.reception.BidRecipientLinkRepository;
 import com.yadony.api.payments.PaymentService;
+import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.pawapay.PawapayProperties;
 import com.yadony.api.promo.PromoDiscount;
 import com.yadony.api.promo.PromoService;
 import com.yadony.api.ratings.RatingRepository;
+import com.yadony.api.requests.event.PackageRequestAcceptedEvent;
+import com.yadony.api.voucher.CommissionVoucherService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -45,6 +49,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -93,6 +98,7 @@ class BidQuoteServiceGridTest {
     private static final UUID TRAVELER_ID = UUID.randomUUID();
     private static final UUID ANN_ID = UUID.randomUUID();
     private static final UUID BID_ID = UUID.randomUUID();
+    private static final UUID THREAD_ID = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
@@ -339,18 +345,60 @@ class BidQuoteServiceGridTest {
         verify(commissionRateResolver, never()).reductions(any(), any(), any(), any(), any());
     }
 
-    @Test
-    @DisplayName("bid à grille au net négocié seul : réductions figées sur le bid, sans résolveur du jour")
-    void toResponse_gridBid_negotiatedNetOnly_usesFrozenReductions() {
-        BidEntity bid = gridBid();
-        bid.setNegotiatedNetEur(new BigDecimal("100.00"));
-        bid.setCommissionOverrideRate(new BigDecimal("0.04"));
+    /** Événement d'un fil à grille scellé : 5 kg, net 100 €, payé {@code senderGross} (nul en espèces). */
+    private PackageRequestAcceptedEvent threadAccepted(PaymentMethod method, BigDecimal senderGross) {
+        return new PackageRequestAcceptedEvent(THREAD_ID, UUID.randomUUID(), SENDER_ID, TRAVELER_ID,
+                new BigDecimal("100.00"), ANN_ID, new BigDecimal("5"), "Vêtements", "CLOTHING",
+                method == PaymentMethod.STRIPE ? "pi_thread" : null, "Fatou Diop", "+221771234567",
+                LocalDateTime.now(), "1.2.3.4", method, List.of(),
+                method == PaymentMethod.CASH ? "WALLET" : null, null, null, "EUR",
+                GRID_7_6_5.id(), senderGross);
+    }
+
+    /** Bid que le vrai {@link ThreadAcceptedBidListener} matérialise pour cet événement. */
+    private BidEntity materialize(PackageRequestAcceptedEvent event) {
+        ThreadAcceptedBidListener listener = new ThreadAcceptedBidListener(bidRepository,
+                announcementRepository, auditService, eventPublisher, storageService, bidPhotoService,
+                promoService, mock(CommissionVoucherService.class));
+        when(bidRepository.findByLinkedNegotiationThreadId(THREAD_ID)).thenReturn(Optional.empty());
+        when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> {
+            BidEntity b = inv.getArgument(0);
+            ReflectionTestUtils.setField(b, "id", BID_ID);
+            return b;
+        });
         when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement("4.00")));
+        listener.onPackageRequestAccepted(event);
+        ArgumentCaptor<BidEntity> saved = ArgumentCaptor.forClass(BidEntity.class);
+        verify(bidRepository).save(saved.capture());
+        return saved.getValue();
+    }
+
+    @Test
+    @DisplayName("bid matérialisé d'un fil à grille payé carte : « Mes envois » affiche le total payé (bon ×0,5)")
+    void toResponse_bidMaterializedFromGridThread_showsSealedSenderGross() {
+        // Net 100 € : grille 7 % → 7,00 €, bon ×0,5 → 3,50 € ; l'expéditeur a payé 103,50 €.
+        BidEntity bid = materialize(threadAccepted(PaymentMethod.STRIPE, new BigDecimal("103.50")));
 
         BidResponse resp = bidService.toResponse(bid, sender(), SENDER_ID);
 
-        // Taux spécial 4 % < grille 7 % : 4,00 €.
-        assertThat(resp.totalSenderAmountEur()).isEqualByComparingTo("104.00");
+        // Recalculé depuis le net sans les réductions du fil, le total serait 107,00 €.
+        assertThat(resp.totalSenderAmountEur()).isEqualByComparingTo("103.50");
+        verify(commissionGridService, never()).require(any());
+        verify(commissionRateResolver, never()).reductionsForBid(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("bid matérialisé d'un fil à grille réglé en espèces : net + commission publique de la grille")
+    void toResponse_bidMaterializedFromCashGridThread_showsPublicGross() {
+        // Espèces : senderGross nul, l'expéditeur remet le net, la commission est prélevée au
+        // voyageur. Comme le chemin hérité (net × (1 + taux)), le total affiché est le net plus la
+        // commission de la grille, sans réduction personnelle : 100 € + 7,00 €.
+        BidEntity bid = materialize(threadAccepted(PaymentMethod.CASH, null));
+
+        BidResponse resp = bidService.toResponse(bid, sender(), SENDER_ID);
+
+        assertThat(bid.getNegotiatedGrossEur()).isNull();
+        assertThat(resp.totalSenderAmountEur()).isEqualByComparingTo("107.00");
         verify(commissionRateResolver, never()).reductionsForBid(any(), any(), any(), any(), any());
     }
 

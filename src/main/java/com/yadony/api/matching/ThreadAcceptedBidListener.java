@@ -94,6 +94,15 @@ public class ThreadAcceptedBidListener {
         // dédiée ouvre son surplus (réécrit price_per_kg) ou si le trajet lié a
         // un tarif catalogue différent du prix d'accord.
         bid.setNegotiatedNetEur(e.agreedPriceEur());
+        // Fil à grille payé par l'expéditeur (carte, mobile money) : son total exact, scellé
+        // sur le fil (taux spécial, bon, code compris). « Mes envois » l'affiche tel quel ; le
+        // recalculer depuis le net perdrait les réductions déjà appliquées. Le paiement vit sur
+        // le fil : aucun rail ne relit ce brut pour prélever (createEscrow refuse un bid
+        // matérialisé, les rails mobile money et espèces exigent un bid PENDING). En espèces,
+        // senderGross est nul : le net seul, comme avant.
+        if (e.commissionGridId() != null && e.senderGross() != null) {
+            bid.setNegotiatedGrossEur(e.senderGross());
+        }
         // Recipient details + disclaimer are completed by the sender before payment,
         // so they are carried on the event and set here at bid creation. If absent
         // (edited afterwards), onPackageRequestDetailsCompleted re-applies them.

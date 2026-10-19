@@ -647,12 +647,16 @@ public class BidNegotiationService {
         auditService.log("BID", bidId, "BID_NEGOTIATION_HIDDEN", ctx.userId(), visibilityAudit(ctx));
     }
 
-    /** Participant d'un bid qui EST une discussion de prix ; une offre ferme répond 404. */
+    /**
+     * Participant d'un bid qui EST une discussion de prix ; une offre ferme répond 404, de même
+     * qu'un bid matérialisé depuis un fil de demande d'envoi, dont le brut est le total payé
+     * sur le fil (même règle que {@link BidRepository#findNegotiationsForUser}).
+     */
     private Participant loadNegotiation(UUID bidId, String firebaseUid) {
         Participant ctx = loadParticipant(bidId, firebaseUid);
         BidEntity bid = ctx.bid();
         boolean isNegotiation = BidStatus.NEGOTIATION_STATUSES.contains(bid.getStatus())
-                || bid.getNegotiatedGrossEur() != null;
+                || (bid.getNegotiatedGrossEur() != null && bid.getLinkedNegotiationThreadId() == null);
         if (!isNegotiation) {
             throw negotiationNotFound();
         }
