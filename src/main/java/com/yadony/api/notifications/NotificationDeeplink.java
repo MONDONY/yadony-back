@@ -119,6 +119,10 @@ public final class NotificationDeeplink {
             case "STRIPE_ONBOARDING_INCOMPLETE" -> Optional.of("connect/onboarding/intro");
             case "FIRST_ACTION_REMINDER" -> Optional.of("first-steps");
             case "CARD_EXPIRING" -> Optional.of("payments/commission-method");
+            // Virement Stripe vers la banque du voyageur : arrivé → Mon argent ; échoué → l'écran
+            // Paiements, d'où il met à jour son compte bancaire.
+            case "BANK_PAYOUT_PAID" -> Optional.of("payments/money");
+            case "BANK_PAYOUT_FAILED" -> Optional.of("payments/onboarding");
             case "REFERRAL_REWARD_AVAILABLE" -> Optional.of("profile/referral");
             // Recharge du portefeuille par mobile money, confirmée ou non : l'écran du portefeuille
             // (le solde à jour, ou le bouton pour réessayer). Aucun identifiant dans le lien.

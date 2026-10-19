@@ -51,6 +51,13 @@ public interface StripeGateway {
 
     AccountLink createAccountLink(AccountLinkCreateParams params) throws StripeException;
 
+    /**
+     * Lien de connexion à usage unique au tableau de bord Stripe Express du compte connecté
+     * ({@code POST /v1/accounts/{id}/login_links}). Valable pour les comptes v2 dont
+     * {@code dashboard = express}.
+     */
+    com.stripe.model.LoginLink createLoginLink(String accountId) throws StripeException;
+
     PaymentIntent createPaymentIntent(PaymentIntentCreateParams params) throws StripeException;
 
     PaymentIntent retrievePaymentIntent(String paymentIntentId) throws StripeException;

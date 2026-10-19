@@ -93,13 +93,19 @@ public class MoneyOverviewReadModel {
                        AND o.status NOT IN ('COMPLETED', 'FAILED', 'SUBMIT_REJECTED')) AS open_payouts,
                    (SELECT COUNT(*) FROM pawapay_operations o
                      WHERE p.id IS NOT NULL AND o.payment_id = p.id AND o.kind = 'REFUND'
-                       AND o.status NOT IN ('COMPLETED', 'FAILED', 'SUBMIT_REJECTED')) AS open_refunds
+                       AND o.status NOT IN ('COMPLETED', 'FAILED', 'SUBMIT_REJECTED')) AS open_refunds,
+                   bt.id AS bank_tracking_id, bt.available_on AS bank_available_on,
+                   bt.payout_status AS bank_payout_status, bt.arrival_date AS bank_arrival_date,
+                   bt.paid_at AS bank_paid_at, bt.failure_code AS bank_failure_code
             FROM my_bids mb
             LEFT JOIN payments p
                    ON p.deleted_at IS NULL
                   AND (p.bid_id = mb.bid_id
                        OR (p.bid_id IS NULL AND mb.linked_negotiation_thread_id IS NOT NULL
                            AND p.negotiation_thread_id = mb.linked_negotiation_thread_id))
+            LEFT JOIN bank_payout_tracking bt
+                   ON bt.deleted_at IS NULL AND mb.role = 'TRAVELER' AND p.id IS NOT NULL
+                  AND bt.payment_id = p.id
             WHERE (p.id IS NOT NULL
                    AND (p.status = 'ESCROW'
                         OR (p.status IN ('RELEASED', 'REFUNDED')
@@ -167,7 +173,18 @@ public class MoneyOverviewReadModel {
                 rs.getLong("all_disputes"),
                 rs.getObject("hold_until", OffsetDateTime.class),
                 rs.getLong("open_payouts"),
-                rs.getLong("open_refunds"));
+                rs.getLong("open_refunds"),
+                rs.getObject("bank_tracking_id") == null ? null : new MoneyRow.BankPayoutRow(
+                        rs.getObject("bank_available_on", LocalDate.class),
+                        rs.getString("bank_payout_status"),
+                        rs.getObject("bank_arrival_date", LocalDate.class),
+                        instant(rs, "bank_paid_at"),
+                        rs.getString("bank_failure_code")));
+    }
+
+    private static java.time.Instant instant(ResultSet rs, String column) throws SQLException {
+        OffsetDateTime value = rs.getObject(column, OffsetDateTime.class);
+        return value == null ? null : value.toInstant();
     }
 
     private static UUID uuid(ResultSet rs, String column) throws SQLException {

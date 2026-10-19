@@ -47,7 +47,30 @@ public record MoneyRow(
         long allDisputes,
         OffsetDateTime holdUntil,
         long openPayouts,
-        long openRefunds) {
+        long openRefunds,
+        BankPayoutRow bankPayout) {
+
+    /** Lignes construites sans suivi de virement bancaire (espèces, mobile money, tests). */
+    public MoneyRow(MoneyRole role, UUID bidId, String bidStatus, String bidPaymentMethod, String bidCurrency,
+                    String trackingNumber, BigDecimal weightKg, String commissionStatus, UUID announcementId,
+                    String departureCity, String arrivalCity, LocalDate departureDate, LocalDate arrivalDate,
+                    UUID counterpartyId, UUID paymentId, String paymentStatus, String rail, BigDecimal amount,
+                    BigDecimal commissionAmount, BigDecimal refundedAmount, String paymentCurrency, boolean chargeback,
+                    LocalDateTime payoutHeldAt, OffsetDateTime escrowReleasedAt, OffsetDateTime paymentUpdatedAt,
+                    long openDisputes, long allDisputes, OffsetDateTime holdUntil, long openPayouts, long openRefunds) {
+        this(role, bidId, bidStatus, bidPaymentMethod, bidCurrency, trackingNumber, weightKg, commissionStatus,
+                announcementId, departureCity, arrivalCity, departureDate, arrivalDate, counterpartyId, paymentId,
+                paymentStatus, rail, amount, commissionAmount, refundedAmount, paymentCurrency, chargeback,
+                payoutHeldAt, escrowReleasedAt, paymentUpdatedAt, openDisputes, allDisputes, holdUntil, openPayouts,
+                openRefunds, null);
+    }
+
+    /**
+     * Suivi du virement bancaire (table {@code bank_payout_tracking}, V335) d'un paiement carte
+     * transféré au voyageur ; {@code null} sinon.
+     */
+    public record BankPayoutRow(LocalDate availableOn, String payoutStatus, LocalDate arrivalDate,
+                                java.time.Instant paidAt, String failureCode) {}
 
     boolean hasPayment() {
         return paymentId != null;

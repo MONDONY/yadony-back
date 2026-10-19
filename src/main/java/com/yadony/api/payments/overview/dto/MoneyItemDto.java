@@ -30,6 +30,9 @@ import java.util.UUID;
  *                        jour même) : échéance prévisible d'un séquestre versé à la confirmation de
  *                        livraison. Ajoutée en fin d'objet (FLUTTER-HV, suite), les apps antérieures
  *                        l'ignorent.
+ * @param bankPayout      voyageur, colis payé par carte et déjà transféré : suivi du virement vers sa
+ *                        banque. Absent (omis du JSON) sinon : expéditeur, mobile money, espèces,
+ *                        argent pas encore transféré.
  */
 public record MoneyItemDto(
         UUID bidId,
@@ -50,5 +53,17 @@ public record MoneyItemDto(
         String bidStatus,
         BigDecimal weightKg,
         String cashCommissionStatus,
-        LocalDate arrivalDate) {
+        LocalDate arrivalDate,
+        BankPayoutDto bankPayout) {
+
+    /** Item sans suivi de virement bancaire. */
+    public MoneyItemDto(UUID bidId, String trackingNumber, UUID announcementId, MoneyRole role, String departureCity,
+                        String arrivalCity, LocalDate departureDate, BigDecimal amount, String currency,
+                        MoneyChannel channel, MoneyState state, ReleaseCondition releaseCondition,
+                        OffsetDateTime releaseAt, OffsetDateTime settledAt, String counterpartyName, String bidStatus,
+                        BigDecimal weightKg, String cashCommissionStatus, LocalDate arrivalDate) {
+        this(bidId, trackingNumber, announcementId, role, departureCity, arrivalCity, departureDate, amount, currency,
+                channel, state, releaseCondition, releaseAt, settledAt, counterpartyName, bidStatus, weightKg,
+                cashCommissionStatus, arrivalDate, null);
+    }
 }

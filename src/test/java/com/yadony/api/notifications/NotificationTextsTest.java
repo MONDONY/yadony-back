@@ -192,6 +192,9 @@ class NotificationTextsTest {
         String pireMontant = com.yadony.api.payments.wallet.WalletAmountText.format(new BigDecimal("99999.99"), "CAD");
         map.put("walletAdjustedByAdmin crédit", NotificationTexts.walletAdjustedByAdmin(m, true, pireMontant));
         map.put("walletAdjustedByAdmin débit", NotificationTexts.walletAdjustedByAdmin(m, false, pireMontant));
+        map.put("bankPayoutPaid montant", NotificationTexts.bankPayoutPaid(m, pireMontant));
+        map.put("bankPayoutPaid sans-montant", NotificationTexts.bankPayoutPaid(m, ""));
+        map.put("bankPayoutFailed", NotificationTexts.bankPayoutFailed(m));
         map.put("referralRewardAvailable", NotificationTexts.referralRewardAvailable(m, NOM));
         map.put("referralRewardAvailable sans prénom", NotificationTexts.referralRewardAvailable(m, null));
         map.put("supportReply", NotificationTexts.supportReply(m));

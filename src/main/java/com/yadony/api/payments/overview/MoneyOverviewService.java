@@ -3,7 +3,9 @@ package com.yadony.api.payments.overview;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.payments.bankpayout.BankPayoutStatus;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
+import com.yadony.api.payments.overview.dto.BankPayoutDto;
 import com.yadony.api.payments.overview.dto.MoneyItemDto;
 import com.yadony.api.payments.overview.dto.MoneyOverviewResponse;
 import com.yadony.api.payments.overview.dto.SenderTotalDto;
@@ -16,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -108,7 +111,7 @@ public class MoneyOverviewService {
                 continue;
             }
             String name = row.counterpartyId() == null ? null : names.get(row.counterpartyId());
-            MoneyItemDto item = toItem(row, resolved.get(), name);
+            MoneyItemDto item = toItem(row, resolved.get(), name, now.toLocalDate());
             (row.role() == MoneyRole.TRAVELER ? travelerItems : senderItems).add(item);
         }
         travelerItems.sort(DISPLAY);
@@ -171,14 +174,34 @@ public class MoneyOverviewService {
                 .collect(Collectors.toMap(UserEntity::getId, UserEntity::publicDisplayName, (a, b) -> a));
     }
 
-    private static MoneyItemDto toItem(MoneyRow row, MoneyStateResolver.Resolution r, String counterpartyName) {
+    private static MoneyItemDto toItem(MoneyRow row, MoneyStateResolver.Resolution r, String counterpartyName,
+                                       LocalDate todayUtc) {
         return new MoneyItemDto(
                 row.bidId(), row.trackingNumber(), row.announcementId(), row.role(),
                 row.departureCity(), row.arrivalCity(), row.departureDate(),
                 r.amount(), r.currency(), channel(row), r.state(), r.condition(),
                 r.releaseAt(), r.settledAt(), counterpartyName, row.bidStatus(), row.weightKg(),
                 r.state() == MoneyState.CASH ? row.commissionStatus() : null,
-                row.arrivalDate());
+                row.arrivalDate(),
+                bankPayout(row, todayUtc));
+    }
+
+    /**
+     * Suivi du virement bancaire, seulement pour le voyageur d'un colis carte déjà transféré (ligne
+     * {@code bank_payout_tracking} présente). Absent dans tous les autres cas. Ne touche ni à
+     * {@code state} ni à {@code settledAt}.
+     */
+    static BankPayoutDto bankPayout(MoneyRow row, LocalDate todayUtc) {
+        MoneyRow.BankPayoutRow tracking = row.bankPayout();
+        if (tracking == null || row.role() != MoneyRole.TRAVELER || channel(row) != MoneyChannel.CARD
+                || !"RELEASED".equals(row.paymentStatus())) {
+            return null;
+        }
+        BankPayoutStatus status = BankPayoutStatus.derive(tracking.payoutStatus(), tracking.availableOn(), todayUtc);
+        return new BankPayoutDto(status, tracking.availableOn(),
+                status == BankPayoutStatus.IN_TRANSIT || status == BankPayoutStatus.PAID ? tracking.arrivalDate() : null,
+                status == BankPayoutStatus.PAID ? tracking.paidAt() : null,
+                status == BankPayoutStatus.FAILED ? tracking.failureCode() : null);
     }
 
     static MoneyChannel channel(MoneyRow row) {

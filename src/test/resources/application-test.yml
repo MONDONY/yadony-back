@@ -67,6 +67,8 @@ yadony:
       enabled: false
     release-recovery:
       enabled: false
+    bank-payout-sync:
+      enabled: false
   activation:
     first-action-reminders:
       cron: "-"
