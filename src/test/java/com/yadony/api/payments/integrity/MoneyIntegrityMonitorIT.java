@@ -81,7 +81,8 @@ class MoneyIntegrityMonitorIT {
     void cleanDb() {
         jdbcTemplate.update("DELETE FROM wallet_accounts");
         // Grand livre en ajout seul (V309) : DELETE refusé, TRUNCATE permis pour les tests.
-        jdbcTemplate.execute("TRUNCATE wallet_transactions");
+        // CASCADE : des tables y font référence (vides dans ce test).
+        jdbcTemplate.execute("TRUNCATE wallet_transactions CASCADE");
     }
 
     @Test
