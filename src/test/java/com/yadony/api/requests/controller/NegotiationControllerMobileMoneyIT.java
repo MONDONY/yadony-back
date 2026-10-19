@@ -2,7 +2,9 @@ package com.yadony.api.requests.controller;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.payments.mobilemoney.MobileMoneyAcceptedOperatorsService;
 import com.yadony.api.payments.mobilemoney.MobileMoneyNegotiationPaymentService;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyAcceptedOperatorsResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyNegotiationStatusResponse;
 import com.yadony.api.requests.entity.NegotiationThreadEntity;
 import com.yadony.api.requests.entity.NegotiationThreadStatus;
@@ -49,6 +51,7 @@ class NegotiationControllerMobileMoneyIT {
 
     @MockBean private NegotiationService service;
     @MockBean private MobileMoneyNegotiationPaymentService mobileMoney;
+    @MockBean private MobileMoneyAcceptedOperatorsService acceptedOperators;
     @MockBean private com.yadony.api.payments.PaymentService paymentService;
     @MockBean private UserRepository userRepository;
 
@@ -136,6 +139,44 @@ class NegotiationControllerMobileMoneyIT {
     @Test
     void initiate_asTraveler_is403() throws Exception {
         mockMvc.perform(post("/negotiations/" + UUID.randomUUID() + "/mobile-money/initiate")
+                .with(authentication(authAs("uid-sender", "TRAVELER"))))
+            .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void acceptedOperators_thread_returns200() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        NegotiationThreadEntity thread = new NegotiationThreadEntity();
+        thread.setTravelerId(travelerId);
+        thread.setCurrency("XOF");
+        when(service.requireParticipantThread(SENDER_UUID, threadId)).thenReturn(thread);
+        when(acceptedOperators.forTraveler(travelerId, "XOF"))
+                .thenReturn(new MobileMoneyAcceptedOperatorsResponse("XOF", "Aminata", List.of("ORANGE_CIV", "MTN_MOMO_CIV")));
+
+        mockMvc.perform(get("/negotiations/" + threadId + "/mobile-money/accepted-operators")
+                .with(authentication(authAs("uid-sender", "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.currency").value("XOF"))
+            .andExpect(jsonPath("$.travelerFirstName").value("Aminata"))
+            .andExpect(jsonPath("$.providers[0]").value("ORANGE_CIV"));
+    }
+
+    @Test
+    void acceptedOperators_notParticipant_isRefusedBeforeCatalogue() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        when(service.requireParticipantThread(SENDER_UUID, threadId))
+                .thenThrow(new ResponseStatusException(HttpStatus.FORBIDDEN, "forbidden"));
+
+        mockMvc.perform(get("/negotiations/" + threadId + "/mobile-money/accepted-operators")
+                .with(authentication(authAs("uid-sender", "SENDER"))))
+            .andExpect(status().isForbidden());
+        verify(acceptedOperators, never()).forTraveler(any(UUID.class), any());
+    }
+
+    @Test
+    void acceptedOperators_asTraveler_is403() throws Exception {
+        mockMvc.perform(get("/negotiations/" + UUID.randomUUID() + "/mobile-money/accepted-operators")
                 .with(authentication(authAs("uid-sender", "TRAVELER"))))
             .andExpect(status().isForbidden());
     }

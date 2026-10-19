@@ -12,6 +12,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyAcceptedOperatorsResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPayerProvidersResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
@@ -25,6 +27,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -143,5 +146,43 @@ class MobileMoneyPaymentControllerIT {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.travelerAccepts[1]").value("Wave"));
         mockMvc.perform(post("/bids/{bidId}/mobile-money/providers", BID_ID).with(authentication(auth("t-uid", "ROLE_TRAVELER"))))
                 .andExpect(status().isForbidden());
+    }
+    @Test
+    void acceptedOperators_sender_returns200() throws Exception {
+        when(service.acceptedOperators(BID_ID, SENDER_ID))
+                .thenReturn(new MobileMoneyAcceptedOperatorsResponse("XOF", "Aminata", List.of("ORANGE_SEN", "WAVE_SEN")));
+        mockMvc.perform(get("/bids/{bidId}/mobile-money/accepted-operators", BID_ID).with(authentication(auth("s-uid", "ROLE_SENDER"))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.currency").value("XOF"))
+                .andExpect(jsonPath("$.travelerFirstName").value("Aminata"))
+                .andExpect(jsonPath("$.providers[0]").value("ORANGE_SEN"))
+                .andExpect(jsonPath("$.providers[1]").value("WAVE_SEN"));
+    }
+
+    @Test
+    void acceptedOperators_otherUser_returns403() throws Exception {
+        when(service.acceptedOperators(BID_ID, SENDER_ID)).thenThrow(
+                new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden", "Vous n'êtes pas l'expéditeur de ce colis"));
+        mockMvc.perform(get("/bids/{bidId}/mobile-money/accepted-operators", BID_ID).with(authentication(auth("s-uid", "ROLE_SENDER"))))
+                .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("forbidden"));
+        // Un voyageur seul (sans le rôle expéditeur) est refusé avant d'atteindre le service.
+        mockMvc.perform(get("/bids/{bidId}/mobile-money/accepted-operators", BID_ID).with(authentication(auth("t-uid", "ROLE_TRAVELER"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void acceptedOperators_paidBid_stillReturns200() throws Exception {
+        // Aucune garde sur le statut du paiement : le service répond aussi pour un colis déjà payé (supplément).
+        when(service.acceptedOperators(BID_ID, SENDER_ID))
+                .thenReturn(new MobileMoneyAcceptedOperatorsResponse("XOF", "Aminata", List.of("ORANGE_SEN")));
+        mockMvc.perform(get("/bids/{bidId}/mobile-money/accepted-operators", BID_ID).with(authentication(auth("s-uid", "ROLE_SENDER"))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.providers[0]").value("ORANGE_SEN"));
+    }
+
+    @Test
+    void acceptedOperators_providerDown_returns502() throws Exception {
+        when(service.acceptedOperators(BID_ID, SENDER_ID)).thenThrow(new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
+                "mobile-money-provider-unavailable", "Bad Gateway", "pawaPay indisponible"));
+        mockMvc.perform(get("/bids/{bidId}/mobile-money/accepted-operators", BID_ID).with(authentication(auth("s-uid", "ROLE_SENDER"))))
+                .andExpect(status().isBadGateway()).andExpect(jsonPath("$.code").value("mobile-money-provider-unavailable"));
     }
 }

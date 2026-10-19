@@ -25,6 +25,7 @@ import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.events.MobileMoneyDepositFailedEvent;
 import com.yadony.api.payments.events.MobileMoneyPaymentConfirmedEvent;
 import com.yadony.api.payments.events.MobileMoneyPaymentExpiredEvent;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyAcceptedOperatorsResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPayerProvidersResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
@@ -127,6 +128,14 @@ public class MobileMoneyBidPaymentService {
      */
     @Autowired(required = false)
     private AdminAlertService adminAlert;
+
+    /**
+     * Catalogue des opérateurs acceptés par le voyageur. Injecté par champ (comme
+     * {@link #adminAlert}) pour ne pas alourdir le constructeur, dont dépendent les tests unitaires
+     * de l'acceptation et de l'initiation, qui n'en ont pas besoin.
+     */
+    @Autowired
+    private MobileMoneyAcceptedOperatorsService acceptedOperators;
 
     public MobileMoneyBidPaymentService(BidRepository bidRepository, AnnouncementRepository announcementRepository,
                                         UserRepository userRepository, PaymentRepository paymentRepository,
@@ -437,6 +446,30 @@ public class MobileMoneyBidPaymentService {
             case COUNTRY_UNKNOWN -> "Pays non reconnu pour ce numéro.";
             case PROVIDER_NOT_AVAILABLE -> "Réseau " + e.providerLabel() + " indisponible pour ce numéro.";
         };
+    }
+
+    // ── Opérateurs acceptés par le voyageur ─────────────────────────────────
+
+    /**
+     * Opérateurs avec lesquels l'expéditeur peut payer ce colis, sans numéro payeur. Aucune garde sur
+     * le statut du paiement : sert aussi au supplément d'un colis déjà payé. Devise du paiement
+     * pawaPay s'il existe, sinon celle de l'annonce. Liste vide = aucun réseau commun (200).
+     */
+    @Transactional(readOnly = true)
+    public MobileMoneyAcceptedOperatorsResponse acceptedOperators(UUID bidId, UUID senderId) {
+        BidEntity bid = bidRepository.findById(bidId).orElseThrow(() -> notFound("bid-not-found", "Demande introuvable"));
+        if (!bid.getSenderId().equals(senderId)) {
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden", "Vous n'êtes pas l'expéditeur de ce colis");
+        }
+        AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
+                .orElseThrow(() -> notFound("announcement-not-found", "Annonce introuvable"));
+        String currency = paymentRepository.findByBidId(bidId)
+                .filter(p -> p.getRail() == PaymentRail.PAWAPAY)
+                .map(PaymentEntity::getCurrency)
+                .orElse(announcement.getCurrency());
+        UserEntity traveler = userRepository.findById(announcement.getTravelerId())
+                .orElseThrow(() -> notFound("user-not-found", "Voyageur introuvable"));
+        return acceptedOperators.forTraveler(traveler, currency);
     }
 
     // ── Catalogue du payeur ─────────────────────────────────────────────────

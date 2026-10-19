@@ -26,15 +26,18 @@ public class NegotiationController {
     private final NegotiationService service;
     private final com.yadony.api.payments.PaymentService paymentService;
     private final com.yadony.api.payments.mobilemoney.MobileMoneyNegotiationPaymentService mobileMoney;
+    private final com.yadony.api.payments.mobilemoney.MobileMoneyAcceptedOperatorsService acceptedOperators;
     private final UserRepository userRepository;
 
     public NegotiationController(NegotiationService service,
                                  com.yadony.api.payments.PaymentService paymentService,
                                  com.yadony.api.payments.mobilemoney.MobileMoneyNegotiationPaymentService mobileMoney,
+                                 com.yadony.api.payments.mobilemoney.MobileMoneyAcceptedOperatorsService acceptedOperators,
                                  UserRepository userRepository) {
         this.service = service;
         this.paymentService = paymentService;
         this.mobileMoney = mobileMoney;
+        this.acceptedOperators = acceptedOperators;
         this.userRepository = userRepository;
     }
 
@@ -310,6 +313,14 @@ public class NegotiationController {
     public com.yadony.api.payments.mobilemoney.dto.MobileMoneyNegotiationStatusResponse mobileMoneyStatus(@PathVariable UUID id) {
         var thread = service.requireParticipantThread(requireUserId(), id);
         return mobileMoney.status(id, thread.getDepositExpiresAt());
+    }
+
+    /** Opérateurs que le voyageur du fil accepte, dans la devise du fil : l'expéditeur choisit son réseau avant de payer. */
+    @GetMapping("/{id}/mobile-money/accepted-operators")
+    @PreAuthorize("hasRole('SENDER')")
+    public com.yadony.api.payments.mobilemoney.dto.MobileMoneyAcceptedOperatorsResponse mobileMoneyAcceptedOperators(@PathVariable UUID id) {
+        var thread = service.requireParticipantThread(requireUserId(), id);
+        return acceptedOperators.forTraveler(thread.getTravelerId(), thread.getCurrency());
     }
 
     /** L'expéditeur renonce au dépôt en cours : le fil revient à « à payer ». 409 si un dépôt est en vol. */
