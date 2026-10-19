@@ -8,6 +8,7 @@ routes:
 ---
 Notifications are set in Profile › ☰ › Settings › Notifications.
 You turn each type of alert on or off: messages, price discussions, new trips, new matching parcels, reminders and tips.
+Three settings follow your role on a parcel: "My parcels" (formerly "Matches & offers") for what you receive as a sender, "My trips" for what you receive as a traveler (requests received, supplements, rescheduling) and "Parcels for me" for tracking parcels sent to you. An alert that concerns both the sender and the traveler (return, deadline, payment confirmed) arrives as long as "My parcels" or "My trips" is on.
 Critical protections (delivery confirmed, payment received, dispute opened, trip rescheduled) are always on to protect your transactions.
 To silence a single conversation, use mute inside that conversation.
 Updates that need nothing from you (recipient confirming, invitation accepted, request expired, report handled) arrive in your notification list without making your phone ring.

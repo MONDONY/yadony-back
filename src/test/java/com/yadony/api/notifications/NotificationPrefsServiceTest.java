@@ -206,6 +206,108 @@ class NotificationPrefsServiceTest {
         }
     }
 
+    private NotificationPrefsEntity roles(boolean sender, boolean trips, boolean recipient) {
+        NotificationPrefsEntity e = buildEntity(true, true, true, true, false);
+        e.setPushActivityBids(sender);
+        e.setPushMyTrips(trips);
+        e.setPushRecipientParcels(recipient);
+        return e;
+    }
+
+    /** V340 : « Mes envois » coupé, le voyageur et le destinataire reçoivent toujours. */
+    @Test
+    void isAllowed_senderPrefOff_onlySilencesWhatTheSenderReceives() {
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(roles(false, true, true)));
+        for (String type : new String[]{"BID_ACCEPTED", "BID_REJECTED", "TRIP_CANCELLED",
+                "TRAVELER_INVITE", "BID_SUPPLEMENT_REQUESTED", "RECIPIENT_CONFIRMED", "TRIP_ARRIVED"}) {
+            assertThat(service.isAllowed(USER_ID, type)).as(type).isFalse();
+        }
+        for (String type : new String[]{"BID_CREATED", "BID_SUPPLEMENT_PAID", "RECIPIENT_CHANGED",
+                "RECIPIENT_PARCEL_DEPARTED", "RECIPIENT_INVITATION",
+                "PARCEL_RETURNED", "MOBILE_MONEY_PAYMENT_CONFIRMED"}) {
+            assertThat(service.isAllowed(USER_ID, type)).as(type).isTrue();
+        }
+    }
+
+    /** V340 : « Mes trajets » coupé, seuls les types reçus en voyageur se taisent. */
+    @Test
+    void isAllowed_tripsPrefOff_onlySilencesWhatTheTravelerReceives() {
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(roles(true, false, true)));
+        for (String type : new String[]{"BID_CREATED", "TRIP_RESCHEDULE_WITHDRAWN",
+                "PARCEL_RETURN_TO_SENDER", "DELIVERY_RETRY_APPOINTMENT", "BID_SUPPLEMENT_PAID_OUT"}) {
+            assertThat(service.isAllowed(USER_ID, type)).as(type).isFalse();
+        }
+        assertThat(service.isAllowed(USER_ID, "BID_ACCEPTED")).isTrue();
+        assertThat(service.isAllowed(USER_ID, "RECIPIENT_PARCEL_ARRIVED")).isTrue();
+    }
+
+    /** V340 : « Colis pour moi » coupé, seul le suivi du destinataire se tait. */
+    @Test
+    void isAllowed_recipientPrefOff_onlySilencesTheRecipientFollowUp() {
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(roles(true, true, false)));
+        for (String type : new String[]{"RECIPIENT_PARCEL_INCOMING", "RECIPIENT_PARCEL_ANNOUNCED",
+                "RECIPIENT_PARCEL_ARRIVED", "RECIPIENT_PICKUP_UPDATED", "RECIPIENT_INVITATION",
+                "RECIPIENT_INVITATION_REMOVED", "RECIPIENT_PARCEL_REASSIGNED"}) {
+            assertThat(service.isAllowed(USER_ID, type)).as(type).isFalse();
+        }
+        assertThat(service.isAllowed(USER_ID, "BID_CREATED")).isTrue();
+        assertThat(service.isAllowed(USER_ID, "RECIPIENT_CONFIRMED")).isTrue();
+    }
+
+    /** Envoyé aux deux parties : il part tant que l'un des deux rôles est activé. */
+    @Test
+    void isAllowed_typesSentToBothParties_needBothRolesOffToBeSilenced() {
+        String[] shared = {"BID_CANCELLED_BY_ADMIN", "BID_SUPPLEMENT_EXPIRED", "BID_EXPIRED",
+                "DELIVERY_NOSHOW_REPORTED", "PARCEL_UNCLAIMED", "MM_PAYMENT_EXPIRED",
+                "MOBILE_MONEY_PAYMENT_CONFIRMED", "PARCEL_RETURNED", "RETURN_DEADLINE_WARNING",
+                "RETURN_DEADLINE_EXPIRED", "RECIPIENT_DECLINED", "RECIPIENT_WITHDRAWN"};
+        for (String type : shared) {
+            assertThat(NotificationPrefsService.TYPE_TO_PREF.get(type)).as(type)
+                    .isEqualTo(NotificationPrefsService.SENDER_OR_TRAVELER);
+        }
+        when(repository.findById(USER_ID)).thenReturn(
+                Optional.of(roles(false, true, false)),
+                Optional.of(roles(true, false, false)),
+                Optional.of(roles(false, false, true)));
+        assertThat(service.isAllowed(USER_ID, "PARCEL_RETURNED")).isTrue();
+        assertThat(service.isAllowed(USER_ID, "PARCEL_RETURNED")).isTrue();
+        assertThat(service.isAllowed(USER_ID, "PARCEL_RETURNED")).isFalse();
+    }
+
+    /** Une application qui ne connaît que « Offres » règle les trois rôles d'un coup, comme avant. */
+    @Test
+    void upsert_withoutRoleFields_appliesTheOldOffersChoiceToEveryRole() {
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(roles(true, true, true)));
+        service.upsert(FIREBASE_UID, new NotificationPrefsDto(false, true, true, true, false, true));
+        ArgumentCaptor<NotificationPrefsEntity> captor = ArgumentCaptor.forClass(NotificationPrefsEntity.class);
+        verify(repository).save(captor.capture());
+        assertThat(captor.getValue().isPushActivityBids()).isFalse();
+        assertThat(captor.getValue().isPushMyTrips()).isFalse();
+        assertThat(captor.getValue().isPushRecipientParcels()).isFalse();
+    }
+
+    @Test
+    void upsert_roleFields_areStoredSeparately() {
+        when(repository.findById(USER_ID)).thenReturn(Optional.empty());
+        service.upsert(FIREBASE_UID, new NotificationPrefsDto(true, true, true, true, false, true,
+                true, true, true, false, true));
+        ArgumentCaptor<NotificationPrefsEntity> captor = ArgumentCaptor.forClass(NotificationPrefsEntity.class);
+        verify(repository).save(captor.capture());
+        assertThat(captor.getValue().isPushActivityBids()).isTrue();
+        assertThat(captor.getValue().isPushMyTrips()).isFalse();
+        assertThat(captor.getValue().isPushRecipientParcels()).isTrue();
+    }
+
+    @Test
+    void getPrefs_returnsTheRoleFields() {
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(roles(true, false, true)));
+        NotificationPrefsDto result = service.getPrefs(FIREBASE_UID);
+        assertThat(result.pushMyTrips()).isFalse();
+        assertThat(result.pushRecipientParcels()).isTrue();
+        assertThat(NotificationPrefsDto.defaults().pushMyTrips()).isTrue();
+        assertThat(NotificationPrefsDto.defaults().pushRecipientParcels()).isTrue();
+    }
+
     /** FLUTTER-GB (c) : argent, identité, litiges et modération ne se coupent pas. */
     @Test
     void isAllowed_alwaysOnTypes_ignoreEveryPref() {
@@ -396,10 +498,13 @@ class NotificationPrefsServiceTest {
         assertThat(service.isPackageMatchEnabled(USER_ID)).isFalse();
     }
 
+    /** {@code bids} règle les trois rôles à la fois, comme l'ancien « Offres » (V340). */
     private NotificationPrefsEntity buildEntity(boolean bids, boolean negs, boolean msgs, boolean reminder, boolean promo) {
         NotificationPrefsEntity e = new NotificationPrefsEntity();
         e.setUserId(USER_ID);
         e.setPushActivityBids(bids);
+        e.setPushMyTrips(bids);
+        e.setPushRecipientParcels(bids);
         e.setPushActivityNegotiations(negs);
         e.setPushMessages(msgs);
         e.setPushTripReminder(reminder);

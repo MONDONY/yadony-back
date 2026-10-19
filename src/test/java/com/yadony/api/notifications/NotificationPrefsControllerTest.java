@@ -73,7 +73,9 @@ class NotificationPrefsControllerTest {
                 .andExpect(jsonPath("$.pushPromo").value(false))
                 .andExpect(jsonPath("$.pushMissedCalls").value(true))
                 .andExpect(jsonPath("$.pushTravelerAutomations").value(true))
-                .andExpect(jsonPath("$.pushRemindersTips").value(true));
+                .andExpect(jsonPath("$.pushRemindersTips").value(true))
+                .andExpect(jsonPath("$.pushMyTrips").value(true))
+                .andExpect(jsonPath("$.pushRecipientParcels").value(true));
     }
 
     /** Ancienne application : six champs seulement, les trois nouveaux arrivent à null. */
@@ -110,6 +112,24 @@ class NotificationPrefsControllerTest {
                 Boolean.FALSE.equals(dto.pushMissedCalls())
                         && Boolean.FALSE.equals(dto.pushTravelerAutomations())
                         && Boolean.FALSE.equals(dto.pushRemindersTips())));
+    }
+
+    @Test
+    void updatePreferences_roleFields_reachTheService() throws Exception {
+        String body = "{\"pushActivityBids\":true,\"pushActivityNegotiations\":true,"
+                + "\"pushMessages\":true,\"pushTripReminder\":true,\"pushPromo\":false,"
+                + "\"pushCorridorAlerts\":true,\"pushMyTrips\":false,"
+                + "\"pushRecipientParcels\":true}";
+        mockMvc.perform(put("/notifications/preferences")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body)
+                        .with(authentication(asUser())))
+                .andExpect(status().isNoContent());
+
+        verify(notificationPrefsService).upsert(eq(FIREBASE_UID), argThat(dto ->
+                Boolean.FALSE.equals(dto.pushMyTrips())
+                        && Boolean.TRUE.equals(dto.pushRecipientParcels())
+                        && dto.pushMissedCalls() == null));
     }
 
     @Test
