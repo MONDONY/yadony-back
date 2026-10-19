@@ -1,7 +1,7 @@
 ---
 id: moyens-paiement
 title: Les moyens de paiement (carte, espèces, mobile money)
-keywords: moyens de paiement, payer, carte bancaire, espèces, cash, mobile money, Orange Money, Wave, MTN, comment payer, séquestre
+keywords: moyens de paiement, payer, carte bancaire, espèces, cash, mobile money, Orange Money, MTN, comment payer, séquestre
 ---
 Les moyens de paiement sont la carte bancaire (avec Apple Pay, Google Pay ou PayPal quand l'app les propose), les espèces et le mobile money.
 Le voyageur choisit ceux qu'il accepte sur son trajet, et l'expéditeur choisit parmi eux au moment de payer ; ils dépendent aussi de la devise (le mobile money est proposé pour les trajets en XOF ou XAF, sinon seules la carte et les espèces, voire les espèces seules).
