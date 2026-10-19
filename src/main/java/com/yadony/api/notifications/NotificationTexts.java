@@ -872,6 +872,25 @@ public final class NotificationTexts {
                 m.get("notification.bid-supplement-paid-out.body", netText));
     }
 
+    /** Recharge mobile money créditée sur le portefeuille, avec le montant et l'opérateur. */
+    public static NotificationText walletTopupConfirmed(Messages m, String amountText, String providerLabel) {
+        return new NotificationText(m.get("notification.wallet-topup-confirmed.title"),
+                m.get("notification.wallet-topup-confirmed.body", amountText, providerLabel));
+    }
+
+    /**
+     * Recharge mobile money non aboutie. Le motif est la forme COURTE du code Yadony
+     * ({@code notification.wallet-topup-failed.reason.<code>}), pas la phrase de l'écran
+     * ({@code topup.failure.<code>}) : celle-ci, avec l'opérateur, faisait 112 caractères pour
+     * un cap de 72. L'écran de la recharge garde le texte complet. {@code failureCode} est le
+     * code Yadony déjà normalisé ({@code PawapayFailureCodes.toYadony}).
+     */
+    public static NotificationText walletTopupFailed(Messages m, String amountText, String failureCode) {
+        return new NotificationText(m.get("notification.wallet-topup-failed.title"),
+                m.get("notification.wallet-topup-failed.body", amountText,
+                        m.get("notification.wallet-topup-failed.reason." + failureCode)));
+    }
+
     public static NotificationText walletAdjustedByAdmin(Messages m, boolean credit, String amountText) {
         String key = credit ? "notification.wallet-admin-credit" : "notification.wallet-admin-debit";
         return new NotificationText(m.get(key + ".title"), m.get(key + ".body", amountText));

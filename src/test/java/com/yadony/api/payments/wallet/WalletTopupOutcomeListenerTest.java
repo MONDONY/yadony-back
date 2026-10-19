@@ -184,8 +184,7 @@ class WalletTopupOutcomeListenerTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, String>> data = ArgumentCaptor.forClass(Map.class);
         verify(notifications).notifyUser(eq(userId), eq("Recharge non aboutie"),
-                eq("Votre recharge de " + expectedAmount + " avec Orange Money n'a pas abouti : "
-                        + "Le paiement n'a pas été validé sur votre téléphone."), data.capture());
+                eq("Recharge de " + expectedAmount + " : paiement non validé sur le téléphone."), data.capture());
         assertThat(data.getValue())
                 .containsEntry("type", "wallet_topup_failed")
                 .containsEntry("topupId", op.getId().toString())
@@ -205,8 +204,7 @@ class WalletTopupOutcomeListenerTest {
 
         String expectedAmount = WalletAmountText.format(new BigDecimal("10000"), "XOF");
         verify(notifications).notifyUser(eq(userId), eq("Top-up not completed"),
-                eq("Your " + expectedAmount + " top-up with Orange Money did not go through: "
-                        + "The payment was declined by the operator."), any());
+                eq("Top-up of " + expectedAmount + ": payment declined by the operator."), any());
     }
 
     @Test
