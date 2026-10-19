@@ -136,4 +136,30 @@ class NegotiationEscrowAdapterTest {
         when(paymentService.cancelNegotiationEscrow(THREAD, "payment-method-switch")).thenReturn(false);
         assertThat(adapter.releaseEscrowForMethodSwitch(THREAD)).isFalse();
     }
+
+    @Test
+    @DisplayName("montant payé du fil : celui du paiement vivant (en attente, séquestre, versé)")
+    void paidAmount_livePayment_returnsItsAmount() {
+        for (PaymentStatus status : new PaymentStatus[]{PaymentStatus.PENDING, PaymentStatus.ESCROW, PaymentStatus.RELEASED}) {
+            PaymentEntity p = paymentWithPi("pi_real");
+            p.setStatus(status);
+            when(paymentRepository.findByNegotiationThreadId(THREAD)).thenReturn(Optional.of(p));
+
+            assertThat(adapter.paidAmount(THREAD)).as(status.name()).contains(new java.math.BigDecimal("35.00"));
+        }
+    }
+
+    @Test
+    @DisplayName("montant payé du fil : rien pour un paiement échoué, annulé, remboursé ou absent")
+    void paidAmount_deadOrMissingPayment_isEmpty() {
+        for (PaymentStatus status : new PaymentStatus[]{PaymentStatus.FAILED, PaymentStatus.CANCELLED, PaymentStatus.REFUNDED}) {
+            PaymentEntity p = paymentWithPi("pi_real");
+            p.setStatus(status);
+            when(paymentRepository.findByNegotiationThreadId(THREAD)).thenReturn(Optional.of(p));
+
+            assertThat(adapter.paidAmount(THREAD)).as(status.name()).isEmpty();
+        }
+        when(paymentRepository.findByNegotiationThreadId(THREAD)).thenReturn(Optional.empty());
+        assertThat(adapter.paidAmount(THREAD)).isEmpty();
+    }
 }

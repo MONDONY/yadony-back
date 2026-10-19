@@ -56,6 +56,22 @@ public class ThreadCommissionPricing {
      */
     public CommissionResult price(UUID gridId, BigDecimal net, String currencyCode,
                                   UUID travelerId, UUID senderId, UUID threadId, String promoCode) {
+        return price(gridId, net, currencyCode, travelerId, senderId, threadId, promoCode, false);
+    }
+
+    /**
+     * Même devis que {@link #price(UUID, BigDecimal, String, UUID, UUID, UUID, String)}, pour un
+     * affichage (réponse du fil, notification) : le repli d'un code devenu invalide n'est journalisé
+     * qu'en DEBUG ({@link CommissionRateResolver#displayReductionsWithPromoFallback}), les montants
+     * sont identiques.
+     */
+    public CommissionResult displayPrice(UUID gridId, BigDecimal net, String currencyCode,
+                                         UUID travelerId, UUID senderId, UUID threadId, String promoCode) {
+        return price(gridId, net, currencyCode, travelerId, senderId, threadId, promoCode, true);
+    }
+
+    private CommissionResult price(UUID gridId, BigDecimal net, String currencyCode, UUID travelerId,
+                                   UUID senderId, UUID threadId, String promoCode, boolean display) {
         SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(currencyCode);
         BigDecimal n = net.setScale(currency.minorUnit(), RoundingMode.HALF_UP);
         if (n.signum() <= 0) {
@@ -63,8 +79,10 @@ public class ThreadCommissionPricing {
             return new CommissionResult(n, zero, n,
                     BigDecimal.ZERO.setScale(CommissionResult.STORED_RATE_SCALE), false, false);
         }
-        return CommissionCalculator.compute(n, currency, gridService.require(gridId),
-                rateResolver.reductionsWithPromoFallback(travelerId, senderId, promoCode, threadId));
+        CommissionReductions reductions = display
+                ? rateResolver.displayReductionsWithPromoFallback(travelerId, senderId, promoCode, threadId)
+                : rateResolver.reductionsWithPromoFallback(travelerId, senderId, promoCode, threadId);
+        return CommissionCalculator.compute(n, currency, gridService.require(gridId), reductions);
     }
 
     /**

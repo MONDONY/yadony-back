@@ -95,6 +95,8 @@ class NegotiationServiceTest {
         // Brut affiché du fil (code du fil compris), même devis dans ces tests.
         lenient().when(pricing.price(eq(gridId), eq(n), eq(currency), eq(TRAVELER_ID), eq(SENDER_ID), eq(threadId), any()))
             .thenReturn(result);
+        lenient().when(pricing.displayPrice(eq(gridId), eq(n), eq(currency), eq(TRAVELER_ID), eq(SENDER_ID), eq(threadId), any()))
+            .thenReturn(result);
         org.springframework.test.util.ReflectionTestUtils.setField(service, "threadCommissionPricing", pricing);
         return pricing;
     }
@@ -102,10 +104,12 @@ class NegotiationServiceTest {
     /** Fil à grille dont seul le brut affiché importe : commission nulle pour tout net. */
     private void anyThreadPricing() {
         var pricing = mock(com.yadony.api.common.commission.ThreadCommissionPricing.class);
-        lenient().when(pricing.price(any(), any(), any(), any(), any(), any(), any())).thenAnswer(inv -> {
+        org.mockito.stubbing.Answer<Object> netOnly = inv -> {
             BigDecimal n = inv.getArgument(1);
             return new com.yadony.api.common.commission.CommissionResult(n, BigDecimal.ZERO, n, BigDecimal.ZERO, false, false);
-        });
+        };
+        lenient().when(pricing.price(any(), any(), any(), any(), any(), any(), any())).thenAnswer(netOnly);
+        lenient().when(pricing.displayPrice(any(), any(), any(), any(), any(), any(), any())).thenAnswer(netOnly);
         org.springframework.test.util.ReflectionTestUtils.setField(service, "threadCommissionPricing", pricing);
     }
 

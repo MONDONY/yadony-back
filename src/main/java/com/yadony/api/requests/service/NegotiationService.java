@@ -1311,15 +1311,16 @@ public class NegotiationService {
      * Brut payé par l'expéditeur pour un net du fil, avant scellement : les notifications à
      * l'expéditeur annoncent ce montant, pas le net du voyageur, et l'écran du fil le montre
      * ({@link #displayedGross}). Fil à grille : {@link ThreadCommissionPricing} avec le code promo du
-     * fil, le calcul des rails carte et mobile money. Sans grille : taux figé sur le fil s'il
-     * existe, sinon le taux de base, calcul hérité inchangé.
+     * fil, le calcul des rails carte et mobile money ; affichage seulement, un code devenu invalide
+     * n'y est journalisé qu'en DEBUG. Sans grille : taux figé sur le fil s'il existe, sinon le taux
+     * de base, calcul hérité inchangé.
      */
     private BigDecimal senderGross(NegotiationThreadEntity thread, UUID senderId, BigDecimal net) {
         if (net == null) {
             return null;
         }
         if (thread.getCommissionGridId() != null) {
-            return threadCommissionPricing.price(thread.getCommissionGridId(), net, thread.getCurrency(),
+            return threadCommissionPricing.displayPrice(thread.getCommissionGridId(), net, thread.getCurrency(),
                 thread.getTravelerId(), senderId, thread.getId(), thread.getPromoCode()).gross();
         }
         BigDecimal rate = displayRate(thread);
@@ -1327,15 +1328,26 @@ public class NegotiationService {
     }
 
     /**
-     * Total réellement payé, figé au scellement d'un fil à grille (V332) : carte et mobile money,
-     * le brut des rails avec le code du fil ({@link #senderGross}), calculé avant le rachat du
-     * code ; espèces, net + commission prélevée au voyageur ({@link #cashCommission}).
+     * Total réellement payé, figé au scellement d'un fil à grille (V332) :
+     * <ul>
+     *   <li>carte et mobile money : le montant du paiement du fil, celui débité, lu par
+     *       {@link NegotiationEscrowPort#paidAmount} ; recalculé (brut des rails avec le code du
+     *       fil, avant son rachat) seulement si ce paiement est introuvable, ce qui ne devrait pas
+     *       arriver puisque le scellement suit sa confirmation. Recalculer d'office annoncerait un
+     *       autre montant si le taux spécial, le bon ou le code ont changé depuis l'initiation ;</li>
+     *   <li>espèces : net + commission prélevée au voyageur ({@link #cashCommission}).</li>
+     * </ul>
      */
     private BigDecimal sealedGross(NegotiationThreadEntity thread, UUID senderId) {
         BigDecimal net = thread.getCurrentPriceEur();
-        return thread.getPaymentMethod() == PaymentMethod.CASH
-            ? net.add(cashCommission(thread, senderId))
-            : senderGross(thread, senderId, net);
+        if (thread.getPaymentMethod() == PaymentMethod.CASH) {
+            return net.add(cashCommission(thread, senderId));
+        }
+        return escrowPort.paidAmount(thread.getId()).orElseGet(() -> {
+            log.warn("Fil {} scellé sans paiement lisible : brut recalculé sur la grille figée", thread.getId());
+            return threadCommissionPricing.price(thread.getCommissionGridId(), net, thread.getCurrency(),
+                thread.getTravelerId(), senderId, thread.getId(), thread.getPromoCode()).gross();
+        });
     }
 
     /**

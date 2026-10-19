@@ -1,5 +1,7 @@
 package com.yadony.api.requests;
 
+import java.math.BigDecimal;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -48,4 +50,12 @@ public interface NegotiationEscrowPort {
      *         the current method and refuse the switch.
      */
     boolean releaseEscrowForMethodSwitch(UUID threadId);
+
+    /**
+     * Total du paiement en ligne du fil (carte ou mobile money : un seul paiement par fil, keyé sur
+     * {@code negotiation_thread_id}), dans la devise du fil, tel qu'enregistré à sa création :
+     * c'est le montant débité à l'expéditeur, commission comprise. Vide sans paiement vivant
+     * (aucun, échoué, annulé ou remboursé). Lecture pure.
+     */
+    Optional<BigDecimal> paidAmount(UUID threadId);
 }

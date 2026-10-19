@@ -1914,7 +1914,7 @@ public class BidService {
         }
         CommissionReductions reductions = negotiatedNet
                 ? CommissionReductions.frozen(bid.getCommissionOverrideRate(), bid.getCommissionVoucherFactor())
-                : commissionRateResolver.reductionsForBid(announcement.getTravelerId(), bid.getSenderId(),
+                : commissionRateResolver.displayReductionsForBid(announcement.getTravelerId(), bid.getSenderId(),
                         bid.getPromoCode(), bid.getPromoCodeId(), bid.getId());
         return CommissionCalculator.compute(totalNet, currency,
                 commissionGridService.require(bid.getCommissionGridId()), reductions).gross();

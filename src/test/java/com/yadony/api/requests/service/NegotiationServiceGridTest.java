@@ -152,6 +152,8 @@ class NegotiationServiceGridTest {
     private void priced(String net, CommissionResult withThreadCode, CommissionResult withoutCode) {
         lenient().when(pricing.price(gridId, new BigDecimal(net), "EUR", travelerId, senderId, thread.getId(),
                 thread.getPromoCode())).thenReturn(withThreadCode);
+        lenient().when(pricing.displayPrice(gridId, new BigDecimal(net), "EUR", travelerId, senderId, thread.getId(),
+                thread.getPromoCode())).thenReturn(withThreadCode);
         lenient().when(pricing.price(gridId, new BigDecimal(net), "EUR", travelerId, senderId, thread.getId()))
                 .thenReturn(withoutCode);
     }
@@ -237,7 +239,7 @@ class NegotiationServiceGridTest {
             when(messageRepo.findByThreadIdOrderByCreatedAtAsc(thread.getId())).thenReturn(List.of(
                     NegotiationMessageEntity.create(thread.getId(), senderId, NegotiationMessageKind.COUNTER,
                             new BigDecimal("20.00"), null)));
-            when(pricing.price(gridId, new BigDecimal("30.00"), "EUR", travelerId, senderId, thread.getId(),
+            when(pricing.displayPrice(gridId, new BigDecimal("30.00"), "EUR", travelerId, senderId, thread.getId(),
                     "WELCOME5")).thenReturn(result("30.00", "1.00", true, true));
 
             service.counter(travelerId, thread.getId(), new NegotiationCounterRequest(new BigDecimal("30.00"), null));
@@ -265,12 +267,39 @@ class NegotiationServiceGridTest {
         @Test @DisplayName("accord scellé, fil à grille payé par l'expéditeur : l'événement porte son total")
         void seal_grid_eventCarriesSenderGross() {
             priced("20.00", result("20.00", "1.00", true, true), result("20.00", "1.40", false, false));
+            when(escrowPort.paidAmount(thread.getId())).thenReturn(Optional.of(new BigDecimal("21.00")));
 
             PackageRequestAcceptedEvent accepted = sealByDeposit(PaymentMethod.MOBILE_MONEY);
 
             assertThat(accepted.senderGross()).isEqualByComparingTo("21.00");
             assertThat(accepted.commissionGridId()).isEqualTo(gridId);
             assertThat(thread.getSealedGrossEur()).isEqualByComparingTo("21.00");
+        }
+
+        @Test @DisplayName("réductions changées depuis l'initiation : brut scellé = montant du paiement, jamais recalculé")
+        void seal_grid_reductionsChangedSincePayment_sealsPaidAmount() {
+            // Payé 20,70 € (bon ×0,5 lu à l'initiation) ; au scellement le bon n'est plus lu et le
+            // calcul du jour donnerait 21,00 €. Seul le montant débité fait foi.
+            priced("20.00", result("20.00", "1.00", true, true), result("20.00", "1.40", false, false));
+            when(escrowPort.paidAmount(thread.getId())).thenReturn(Optional.of(new BigDecimal("20.70")));
+
+            PackageRequestAcceptedEvent accepted = sealByDeposit(PaymentMethod.MOBILE_MONEY);
+
+            assertThat(thread.getSealedGrossEur()).isEqualByComparingTo("20.70");
+            assertThat(accepted.senderGross()).isEqualByComparingTo("20.70");
+            verify(pricing, never()).price(any(), any(), any(), any(), any(), any(), any());
+        }
+
+        @Test @DisplayName("paiement du fil introuvable au scellement : dernier recours, brut des rails recalculé")
+        void seal_grid_paymentUnreadable_recomputesRailsGross() {
+            priced("20.00", result("20.00", "1.00", true, true), result("20.00", "1.40", false, false));
+            when(escrowPort.paidAmount(thread.getId())).thenReturn(Optional.empty());
+
+            sealByDeposit(PaymentMethod.MOBILE_MONEY);
+
+            assertThat(thread.getSealedGrossEur()).isEqualByComparingTo("21.00");
+            verify(pricing).price(gridId, new BigDecimal("20.00"), "EUR", travelerId, senderId, thread.getId(),
+                    "WELCOME5");
         }
 
         @Test @DisplayName("espèces : brut scellé = net + commission du voyageur, aucun total expéditeur sur l'événement")

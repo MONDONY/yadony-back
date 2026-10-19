@@ -4,6 +4,7 @@ import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.promo.PromoDiscount;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -60,6 +61,24 @@ class ThreadCommissionPricingTest {
 
     private CommissionResult price(String net, String currency) {
         return pricing.price(GRID_7_6_5.id(), new BigDecimal(net), currency, travelerId, senderId, threadId);
+    }
+
+    @Test
+    @DisplayName("devis d'affichage : mêmes montants, repli du code par la variante DEBUG du résolveur")
+    void displayPrice_sameAmounts_usesDisplayFallback() {
+        when(rateResolver.displayReductionsWithPromoFallback(travelerId, senderId, "WELCOME5", threadId))
+                .thenReturn(new CommissionReductions(null, null, new BigDecimal("0.5")));
+        when(rateResolver.reductionsWithPromoFallback(travelerId, senderId, "WELCOME5", threadId))
+                .thenReturn(new CommissionReductions(null, null, new BigDecimal("0.5")));
+
+        CommissionResult shown = pricing.displayPrice(GRID_7_6_5.id(), new BigDecimal("100"), "EUR",
+                travelerId, senderId, threadId, "WELCOME5");
+        CommissionResult charged = pricing.price(GRID_7_6_5.id(), new BigDecimal("100"), "EUR",
+                travelerId, senderId, threadId, "WELCOME5");
+
+        assertThat(shown).isEqualTo(charged);
+        assertThat(shown.commission()).isEqualByComparingTo("3.50");
+        verify(rateResolver).displayReductionsWithPromoFallback(travelerId, senderId, "WELCOME5", threadId);
     }
 
     @Test

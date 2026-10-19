@@ -10,6 +10,7 @@ import com.yadony.api.promo.PromoDiscount;
 import com.yadony.api.promo.PromoService;
 import com.yadony.api.voucher.CommissionVoucherEntity;
 import com.yadony.api.voucher.CommissionVoucherService;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -17,6 +18,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -384,6 +386,81 @@ class CommissionRateResolverTest {
         assertThat(r.promo()).as("code invalide : aucune remise").isNull();
         assertThat(r.overrideRate()).as("taux spécial conservé").isEqualByComparingTo("0.04");
         assertThat(r.voucherFactor()).as("bon conservé").isEqualByComparingTo("0.50");
+    }
+
+    /** Journal du résolveur capturé pendant {@code call}, tous niveaux (DEBUG compris). */
+    private static List<ch.qos.logback.classic.spi.ILoggingEvent> logsOf(Runnable call) {
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(CommissionRateResolver.class);
+        ch.qos.logback.classic.Level previous = logger.getLevel();
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+        try {
+            call.run();
+            return List.copyOf(appender.list);
+        } finally {
+            logger.detachAppender(appender);
+            logger.setLevel(previous);
+        }
+    }
+
+    private void expiredCodeFor(UUID s, UUID reference) {
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        lenient().when(voucherService.peekForReference(s, reference)).thenReturn(Optional.empty());
+        when(promoService.validateAndGetDiscount("EXPIRED", s, PromoCodeTarget.SENDER))
+                .thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "promo-expired", "Promo Expired", "Ce code est expiré."));
+    }
+
+    @Test
+    @DisplayName("prélèvement : le repli d'un code invalide est journalisé en WARN")
+    void reductionsWithPromoFallback_invalidCode_logsWarn() {
+        UUID s = UUID.randomUUID();
+        UUID reference = UUID.randomUUID();
+        expiredCodeFor(s, reference);
+
+        var logs = logsOf(() -> resolver().reductionsWithPromoFallback(UUID.randomUUID(), s, "EXPIRED", reference));
+
+        assertThat(logs).singleElement().satisfies(e ->
+                assertThat(e.getLevel()).isEqualTo(ch.qos.logback.classic.Level.WARN));
+    }
+
+    @Test
+    @DisplayName("affichage : même repli, journalisé en DEBUG seulement (pas un WARN par rendu de liste)")
+    void displayReductionsWithPromoFallback_invalidCode_logsDebugWithSameReductions() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        UUID reference = UUID.randomUUID();
+        expiredCodeFor(s, reference);
+
+        CommissionReductions[] shown = new CommissionReductions[1];
+        var logs = logsOf(() -> shown[0] = resolver().displayReductionsWithPromoFallback(t, s, "EXPIRED", reference));
+
+        assertThat(shown[0]).isEqualTo(CommissionReductions.NONE);
+        assertThat(logs).singleElement().satisfies(e ->
+                assertThat(e.getLevel()).isEqualTo(ch.qos.logback.classic.Level.DEBUG));
+    }
+
+    @Test
+    @DisplayName("affichage d'un bid sans code racheté : repli en DEBUG ; code racheté : remise relue sans validation")
+    void displayReductionsForBid_followsTheBidRule() {
+        UUID s = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        expiredCodeFor(s, bidId);
+        UUID promoCodeId = UUID.randomUUID();
+        PromoDiscount discount = PromoDiscount.points(new BigDecimal("0.05"));
+        when(promoService.discountOfRedeemed(promoCodeId)).thenReturn(Optional.of(discount));
+
+        var logs = logsOf(() -> resolver().displayReductionsForBid(UUID.randomUUID(), s, "EXPIRED", null, bidId));
+        CommissionReductions redeemed = resolver().displayReductionsForBid(UUID.randomUUID(), s, "ONCE", promoCodeId, bidId);
+
+        assertThat(logs).singleElement().satisfies(e ->
+                assertThat(e.getLevel()).isEqualTo(ch.qos.logback.classic.Level.DEBUG));
+        assertThat(redeemed.promo()).isEqualTo(discount);
+        verify(promoService, never()).validateAndGetDiscount(eq("ONCE"), any(), any());
     }
 
     // ── reductionsForBid : règle unique d'un bid à grille, commune à l'affichage et aux rails ──

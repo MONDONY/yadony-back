@@ -7,6 +7,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
+import java.util.EnumSet;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -21,6 +25,10 @@ public class NegotiationEscrowAdapter implements NegotiationEscrowPort {
 
     /** Manual-capture PaymentIntent state where the card is authorized and funds are held. */
     private static final String STATUS_ESCROW_HELD = "requires_capture";
+
+    /** Paiement dont le montant a été ou va être débité : ni échoué, ni annulé, ni remboursé. */
+    private static final Set<PaymentStatus> LIVE_STATUSES =
+            EnumSet.of(PaymentStatus.PENDING, PaymentStatus.ESCROW, PaymentStatus.RELEASED);
 
     private final PaymentRepository paymentRepository;
     private final PaymentService paymentService;
@@ -87,5 +95,12 @@ public class NegotiationEscrowAdapter implements NegotiationEscrowPort {
         // Delegates to PaymentService — the canonical owner of Stripe escrow
         // lifecycle (cancel PaymentIntent + flip PaymentEntity → CANCELLED + audit).
         return paymentService.cancelNegotiationEscrow(threadId, "payment-method-switch");
+    }
+
+    @Override
+    public Optional<BigDecimal> paidAmount(UUID threadId) {
+        return paymentRepository.findByNegotiationThreadId(threadId)
+                .filter(p -> LIVE_STATUSES.contains(p.getStatus()))
+                .map(PaymentEntity::getAmount);
     }
 }

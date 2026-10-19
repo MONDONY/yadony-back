@@ -313,7 +313,7 @@ class BidQuoteServiceGridTest {
         bid.setPromoCode("PROMO5");
         when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement("4.00")));
         // Bon ×0,5 rattaché au bid : 5 kg × 4 € = 20 € → 1,40 € × 0,5 = 0,70 €.
-        when(commissionRateResolver.reductionsForBid(TRAVELER_ID, SENDER_ID, "PROMO5", null, BID_ID))
+        when(commissionRateResolver.displayReductionsForBid(TRAVELER_ID, SENDER_ID, "PROMO5", null, BID_ID))
                 .thenReturn(new CommissionReductions(null, null, new BigDecimal("0.5")));
 
         BidResponse resp = bidService.toResponse(bid, sender(), SENDER_ID);
@@ -334,7 +334,7 @@ class BidQuoteServiceGridTest {
         bid.setPromoCodeId(promoCodeId);
         when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(announcement("20.00")));
         // Règle du code racheté : celle du résolveur (CommissionRateResolverTest#reductionsForBid_*).
-        when(commissionRateResolver.reductionsForBid(TRAVELER_ID, SENDER_ID, "PROMO5", promoCodeId, BID_ID))
+        when(commissionRateResolver.displayReductionsForBid(TRAVELER_ID, SENDER_ID, "PROMO5", promoCodeId, BID_ID))
                 .thenReturn(new CommissionReductions(null, PromoDiscount.points(new BigDecimal("0.05")), null));
 
         BidResponse resp = bidService.toResponse(bid, sender(), SENDER_ID);
@@ -384,7 +384,7 @@ class BidQuoteServiceGridTest {
         // Recalculé depuis le net sans les réductions du fil, le total serait 107,00 €.
         assertThat(resp.totalSenderAmountEur()).isEqualByComparingTo("103.50");
         verify(commissionGridService, never()).require(any());
-        verify(commissionRateResolver, never()).reductionsForBid(any(), any(), any(), any(), any());
+        verify(commissionRateResolver, never()).displayReductionsForBid(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -399,7 +399,7 @@ class BidQuoteServiceGridTest {
 
         assertThat(bid.getNegotiatedGrossEur()).isNull();
         assertThat(resp.totalSenderAmountEur()).isEqualByComparingTo("107.00");
-        verify(commissionRateResolver, never()).reductionsForBid(any(), any(), any(), any(), any());
+        verify(commissionRateResolver, never()).displayReductionsForBid(any(), any(), any(), any(), any());
     }
 
     @Test
