@@ -2125,4 +2125,52 @@ class TrackingServiceTest {
 
         assertThat(result).extracting(TripScanHistoryEntryDto::scanMethod).containsExactly("MANUAL", null);
     }
+
+    // ── Supplément de prix en attente : scan de remise bloqué ────────────────
+
+    @Test
+    void processScan_departWhileASupplementAwaitsTheSender_is409_beforeAnyInsert() {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        stubDepartScan(bid);
+        service.setHandoverBlockers(List.of(id -> Optional.of("handover-supplement-pending")));
+
+        Throwable thrown = catchThrowable(() -> service.processScan(
+                new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null), "uid-traveler"));
+
+        assertThat(thrown).isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+            assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+            assertThat(e.getErrorCode()).isEqualTo("handover-supplement-pending");
+            assertThat(e.getProperties()).containsEntry("bidId", bidId.toString());
+        });
+        verify(trackingEventRepository, never()).save(any());
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
+        assertThat(bid.getConfirmationCode()).isNull();
+    }
+
+    @Test
+    void processScan_departAlreadyRecorded_staysIdempotentDespiteAPendingSupplement() {
+        BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
+        stubDepartScan(bid);
+        TrackingEventEntity existing = new TrackingEventEntity();
+        setId(existing, UUID.randomUUID());
+        existing.setBidId(bidId);
+        existing.setEventType(TrackingEventType.DEPART);
+        existing.setScannedAt(LocalDateTime.of(2026, 10, 10, 14, 45));
+        when(trackingEventRepository.findFirstByBidIdAndEventTypeOrderByScannedAtAsc(bidId, TrackingEventType.DEPART))
+                .thenReturn(Optional.of(existing));
+        service.setHandoverBlockers(List.of(id -> Optional.of("handover-supplement-pending")));
+
+        assertThat(service.processScan(new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null),
+                "uid-traveler").id()).isEqualTo(existing.getId());
+    }
+
+    @Test
+    void processScan_departOnceTheSupplementIsAnswered_isRecorded() {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        stubDepartScan(bid);
+        service.setHandoverBlockers(List.of(id -> Optional.empty()));
+
+        assertThat(service.processScan(new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null),
+                "uid-traveler").eventType()).isEqualTo("DEPART");
+    }
 }
