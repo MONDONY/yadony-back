@@ -171,7 +171,7 @@ class PaymentServiceOnBehalfOfTest {
     // ── on_behalf_of success path ─────────────────────────────────────────────
 
     @Test
-    void success_paymentIntent_no_onBehalfOf_cardAndPaypal_no_transferData_no_appFee() {
+    void success_paymentIntent_no_onBehalfOf_cardOnlyByDefault_no_transferData_no_appFee() {
         UserEntity traveler = buildTraveler("acct_traveler_123", StripeAccountStatus.ONBOARDING_COMPLETE);
         stubCommonRepositories(traveler);
         when(paymentRepository.save(any())).thenAnswer(inv -> {
@@ -194,9 +194,10 @@ class PaymentServiceOnBehalfOfTest {
             assertThat(resp.getStatus()).isEqualTo("PENDING");
 
             PaymentIntentCreateParams params = paramsCaptor.getValue();
-            // on_behalf_of retiré (incompatible PayPal) ; PI Stripe-native carte + PayPal
+            // on_behalf_of retiré (incompatible PayPal) ; PayPal absent par défaut
+            // (yadony.payments.paypal-enabled=false, YADONY-FLUTTER-PROD-10/11)
             assertThat(params.getOnBehalfOf()).isNull();
-            assertThat(params.getPaymentMethodTypes()).containsExactly("card", "paypal");
+            assertThat(params.getPaymentMethodTypes()).containsExactly("card");
             // statement descriptor suffix
             assertThat(params.getStatementDescriptorSuffix()).isEqualTo("YADONY");
             // capture_method = manual (escrow)

@@ -229,6 +229,10 @@ yadony:
   # Auto-réparation des paiements carte restés PENDING (PendingCardPaymentAutoHealJob) : relit le
   # PaymentIntent chez Stripe et applique la resynchronisation (séquestre, versement si déjà livré).
   payments:
+    # PayPal dans la PaymentSheet (séquestre d'offre et négociation). À n'activer qu'une fois la
+    # capacité paypal_payments active sur le compte Stripe plateforme : sinon Stripe refuse le
+    # PaymentIntent (payment_intent_invalid_parameter, YADONY-FLUTTER-PROD-10/11).
+    paypal-enabled: ${PAYMENTS_PAYPAL_ENABLED:false}
     # Reprise des versements carte réservés non confirmés par Stripe (PROD_CHECKLIST 9.23).
     release-recovery:
       enabled: ${PAYMENT_RELEASE_RECOVERY_ENABLED:true}

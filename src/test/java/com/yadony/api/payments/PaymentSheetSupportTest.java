@@ -175,6 +175,7 @@ class PaymentSheetSupportTest {
 
     @Test
     void createEscrow_attachesExistingCustomer_andSetsSetupFutureUsageByDefault() {
+        service.setPaypalEnabled(true);
         stubCommonRepositories(buildSender("cus_existing"));
 
         try (MockedStatic<com.stripe.model.Account> acctStatic = mockStatic(com.stripe.model.Account.class);
@@ -260,10 +261,50 @@ class PaymentSheetSupportTest {
         }
     }
 
+    // ── PayPal seulement si activé (YADONY-FLUTTER-PROD-10/11) ───────────────
+
+    @Test
+    void createEscrow_paypalDisabled_cardOnly_noPaypalOptions() {
+        stubCommonRepositories(buildSender("cus_existing"));
+
+        try (MockedStatic<com.stripe.model.Account> acctStatic = mockStatic(com.stripe.model.Account.class);
+             MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            var captor = stubStripeStatics(acctStatic, piStatic);
+
+            service.createEscrow(requestWithSave(null), "uid-sender");
+
+            PaymentIntentCreateParams params = captor.getValue();
+            assertThat(params.getPaymentMethodTypes()).containsExactly("card");
+            assertThat(params.getPaymentMethodOptions().getPaypal()).isNull();
+            // La carte garde son enregistrement par défaut.
+            assertThat(((PaymentIntentCreateParams.PaymentMethodOptions.Card)
+                    params.getPaymentMethodOptions().getCard()).getSetupFutureUsage())
+                    .isEqualTo(PaymentIntentCreateParams.PaymentMethodOptions.Card.SetupFutureUsage.OFF_SESSION);
+        }
+    }
+
+    @Test
+    void createEscrow_paypalEnabled_cardAndPaypal() {
+        service.setPaypalEnabled(true);
+        stubCommonRepositories(buildSender("cus_existing"));
+
+        try (MockedStatic<com.stripe.model.Account> acctStatic = mockStatic(com.stripe.model.Account.class);
+             MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            var captor = stubStripeStatics(acctStatic, piStatic);
+
+            service.createEscrow(requestWithSave(false), "uid-sender");
+
+            PaymentIntentCreateParams params = captor.getValue();
+            assertThat(params.getPaymentMethodTypes()).containsExactly("card", "paypal");
+            assertThat(params.getPaymentMethodOptions().getPaypal()).isNotNull();
+        }
+    }
+
     // ── Langue de la page PayPal (FLUTTER-NT) ────────────────────────────────
 
     @Test
     void createEscrow_opensPayPalInEnglish_forEnglishSpeakingSender() {
+        service.setPaypalEnabled(true);
         UserEntity sender = buildSender("cus_existing");
         sender.setPreferredLanguage(AppLanguage.EN);
         stubCommonRepositories(sender);

@@ -133,6 +133,21 @@ public class PaymentService {
     @org.springframework.beans.factory.annotation.Autowired
     private CommissionGridService commissionGridService;
 
+    /**
+     * PayPal dans la PaymentSheet, seulement quand le compte Stripe plateforme a la capacité
+     * {@code paypal_payments} active (YADONY-FLUTTER-PROD-10/11 : en prod elle ne l'est pas, Stripe
+     * répondait {@code payment_intent_invalid_parameter} et l'app montrait un bouton PayPal mort).
+     * Drapeau de config plutôt qu'une lecture du compte Stripe : l'activation est un acte manuel
+     * (demande à Stripe), rare, et un drapeau ne coûte aucun appel ni cache. Défaut {@code false}.
+     */
+    @org.springframework.beans.factory.annotation.Value("${yadony.payments.paypal-enabled:false}")
+    private boolean paypalEnabled;
+
+    /** Tests unitaires (hors contexte Spring) : bascule du drapeau PayPal. */
+    void setPaypalEnabled(boolean paypalEnabled) {
+        this.paypalEnabled = paypalEnabled;
+    }
+
     public PaymentService(UserRepository userRepository,
                           BidRepository bidRepository,
                           BidGridItemRepository bidGridItemRepository,
@@ -801,11 +816,11 @@ public class PaymentService {
                     .setCurrency(currency.code())
                     .setCustomer(customerId)
                     .setCaptureMethod(PaymentIntentCreateParams.CaptureMethod.MANUAL)
-                    // Approche A : carte + Apple Pay + Google Pay (= "card") + PayPal,
-                    // tous dans la PaymentSheet. on_behalf_of retiré : PayPal ne le
-                    // supporte pas, et il n'est pas requis en separate charges & transfers.
+                    // Approche A : carte + Apple Pay + Google Pay (= "card") + PayPal si
+                    // activé (paypalEnabled, ajouté plus bas), tous dans la PaymentSheet.
+                    // on_behalf_of retiré : PayPal ne le supporte pas, et il n'est pas requis
+                    // en separate charges & transfers.
                     .addPaymentMethodType("card")
-                    .addPaymentMethodType("paypal")
                     .setStatementDescriptorSuffix("YADONY")
                     // Separate charges and transfers: no transfer_data, no application_fee_amount.
                     // Funds stay on platform balance (on_behalf_of = statement/dashboard only).
@@ -825,8 +840,11 @@ public class PaymentService {
             // que Stripe refuse sans paiements récurrents PayPal activés (FLUTTER-7S).
             // La page PayPal s'affiche dans la langue de l'expéditeur (FLUTTER-NT).
             PaymentIntentCreateParams.PaymentMethodOptions.Builder methodOptions =
-                    PaymentIntentCreateParams.PaymentMethodOptions.builder()
-                            .setPaypal(paypalOptions(sender));
+                    PaymentIntentCreateParams.PaymentMethodOptions.builder();
+            if (paypalEnabled) {
+                paramsBuilder.addPaymentMethodType("paypal");
+                methodOptions.setPaypal(paypalOptions(sender));
+            }
             if (!Boolean.FALSE.equals(request.getSavePaymentMethod())) {
                 methodOptions.setCard(PaymentIntentCreateParams.PaymentMethodOptions.Card.builder()
                         .setSetupFutureUsage(PaymentIntentCreateParams.PaymentMethodOptions
@@ -2268,10 +2286,9 @@ public class PaymentService {
                     .setCurrency(currency.code())
                     .setCustomer(customerId)
                     .setCaptureMethod(PaymentIntentCreateParams.CaptureMethod.MANUAL)
-                    // Approche A : carte + wallets + PayPal dans la PaymentSheet.
+                    // Approche A : carte + wallets (+ PayPal si activé, plus bas) dans la PaymentSheet.
                     // on_behalf_of retiré (PayPal ne le supporte pas).
                     .addPaymentMethodType("card")
-                    .addPaymentMethodType("paypal")
                     // Modèle "separate charges and transfers" (cohérent avec createEscrow) :
                     // PAS d'application_fee_amount ni de transfer_data ici. Le gross reste sur
                     // le solde plateforme ; à la livraison, DeliveryEventListener crée un
@@ -2284,11 +2301,14 @@ public class PaymentService {
                     .putMetadata("traveler_id", traveler.getId().toString())
                     .putMetadata("commission_rate", rate.toPlainString())
                     .putMetadata("currency", currency.code())
-                    .putMetadata("scope", "NEGOTIATION")
-                    // Page PayPal dans la langue de l'expéditeur (FLUTTER-NT).
-                    .setPaymentMethodOptions(PaymentIntentCreateParams.PaymentMethodOptions.builder()
-                            .setPaypal(paypalOptions(sender))
-                            .build());
+                    .putMetadata("scope", "NEGOTIATION");
+            if (paypalEnabled) {
+                // Page PayPal dans la langue de l'expéditeur (FLUTTER-NT).
+                paramsBuilder.addPaymentMethodType("paypal")
+                        .setPaymentMethodOptions(PaymentIntentCreateParams.PaymentMethodOptions.builder()
+                                .setPaypal(paypalOptions(sender))
+                                .build());
+            }
             PaymentIntentCreateParams params = paramsBuilder.build();
 
             PaymentIntent pi = stripeGateway.createPaymentIntent(params);
