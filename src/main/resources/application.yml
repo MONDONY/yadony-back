@@ -285,6 +285,16 @@ yadony:
     rate: ${YADONY_COMMISSION_RATE:0.05}
     minimum-amount: ${YADONY_COMMISSION_MINIMUM_AMOUNT:1.00}
     no-show-contestation-hours: ${YADONY_COMMISSION_NO_SHOW_CONTESTATION_HOURS:24}
+  # Supplément de prix demandé par le voyageur à la remise (V338). Éteint tant que les
+  # apps qui l'affichent ne sont pas sorties ; bornes décidées par le propriétaire (19/10).
+  bid-supplement:
+    enabled: ${BID_SUPPLEMENT_ENABLED:false}
+    expiry: ${BID_SUPPLEMENT_EXPIRY:PT2H}
+    departure-margin: ${BID_SUPPLEMENT_DEPARTURE_MARGIN:PT15M}
+    max-per-bid: ${BID_SUPPLEMENT_MAX_PER_BID:2}
+    min-net-eur: ${BID_SUPPLEMENT_MIN_NET_EUR:1}
+    max-net-eur: ${BID_SUPPLEMENT_MAX_NET_EUR:300}
+    reconcile-interval: ${BID_SUPPLEMENT_RECONCILE_INTERVAL:PT10M}
   # Procédure « destinataire absent » (FLUTTER-E2, V301).
   delivery-no-show:
     min-wait-minutes: ${YADONY_DELIVERY_NO_SHOW_MIN_WAIT_MINUTES:120}
