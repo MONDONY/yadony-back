@@ -82,6 +82,15 @@ public class PawapayOperationEntity {
     @Column(name = "purpose", nullable = false, length = 20, updatable = false)
     private PawapayOperationPurpose purpose = PawapayOperationPurpose.BID_PAYMENT;
 
+    /**
+     * Garde « une recharge en cours par utilisateur et par devise » : l'index unique partiel
+     * {@code uq_pawapay_ops_live_wallet_topup} (V331) ne compte que les lignes où elle est
+     * vraie. Passée à faux par {@code releaseExpiredTopupGuards} une fois le délai de
+     * validation écoulé ; jamais remise à vrai.
+     */
+    @Column(name = "topup_guard", nullable = false)
+    private boolean topupGuard = true;
+
     /** Utilisateur concerné pour une opération de wallet (topup / refund) ; null pour un paiement de colis. */
     @Column(name = "user_id", updatable = false)
     private UUID userId;
@@ -172,6 +181,7 @@ public class PawapayOperationEntity {
     public UUID getRelatedOperationId() { return relatedOperationId; }
     public PawapayOperationPurpose getPurpose() { return purpose; }
     public UUID getUserId() { return userId; }
+    public boolean isTopupGuard() { return topupGuard; }
     public String getAuthorizationUrl() { return authorizationUrl; }
     public String getProviderTransactionId() { return providerTransactionId; }
     public String getFailureCode() { return failureCode; }

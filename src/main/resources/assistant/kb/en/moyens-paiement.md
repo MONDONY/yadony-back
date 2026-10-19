@@ -1,7 +1,7 @@
 ---
 id: moyens-paiement
 title: Payment methods (card, cash, mobile money)
-keywords: payment methods, pay, credit card, cash, mobile money, Orange Money, Wave, MTN, how to pay, escrow
+keywords: payment methods, pay, credit card, cash, mobile money, Orange Money, MTN, how to pay, escrow
 ---
 The payment methods are bank card (with Apple Pay, Google Pay or PayPal when the app offers them), cash and mobile money.
 The traveler chooses which ones they accept on their trip, and the sender picks among them when paying; they also depend on the currency (mobile money is offered for trips in XOF or XAF, otherwise only card and cash, or cash only).
