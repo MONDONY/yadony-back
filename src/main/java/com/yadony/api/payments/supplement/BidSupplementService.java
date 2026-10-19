@@ -191,7 +191,12 @@ public class BidSupplementService {
             s = supplements.saveAndFlush(s);
         } catch (DataIntegrityViolationException e) {
             // Filet de l'index uq_bid_supplements_one_active : la garde ci-dessus lit avant d'écrire.
-            throw alreadyActive();
+            // Toute autre contrainte est une vraie erreur, relancée telle quelle.
+            String cause = String.valueOf(e.getMostSpecificCause().getMessage()).toLowerCase(java.util.Locale.ROOT);
+            if (cause.contains("uq_bid_supplements_one_active")) {
+                throw alreadyActive();
+            }
+            throw e;
         }
         handler.onCreated(s);
 

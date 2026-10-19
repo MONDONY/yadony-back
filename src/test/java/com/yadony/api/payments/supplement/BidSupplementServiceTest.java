@@ -288,6 +288,15 @@ class BidSupplementServiceTest {
     }
 
     @Test
+    void create_autreViolationDeContrainte_relancee() {
+        DataIntegrityViolationException other = new DataIntegrityViolationException("chk_bid_supplements_amounts");
+        doThrow(other).when(supplements).saveAndFlush(any());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                () -> service(cardRail).create(bid.getId(), "uid-traveler", requestFor("20"))).isSameAs(other);
+    }
+
+    @Test
     void create_plafondAtteint_422() {
         when(supplements.countByBidId(bid.getId())).thenReturn(2L);
         assertError(() -> service(cardRail).create(bid.getId(), "uid-traveler", requestFor("20")),
