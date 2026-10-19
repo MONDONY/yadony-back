@@ -1,6 +1,10 @@
 package com.yadony.api.smsotp;
 
 import com.yadony.api.auth.FirebaseContactService;
+import com.yadony.api.auth.FirebaseContactService.DeletionOutcome;
+import com.yadony.api.auth.FirebaseContactService.PhoneHolder;
+import com.yadony.api.auth.PhoneOwnershipService;
+import com.yadony.api.auth.UserStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
@@ -58,6 +62,13 @@ class SmsOtpServiceTest {
     // Instance réelle et non un mock : messagesResolver.forRequest().get("sms.otp", ...)
     // doit lire le vrai RequestContextHolder posé par TestMessages, pas un mock muet.
     private final MessagesResolver messagesResolver = TestMessages.resolver();
+    // Le rattachement délègue à une vraie instance, construite sur les mêmes mocks : la
+    // règle de libération des numéros fantômes est vérifiée ici, de bout en bout.
+    @Mock private org.springframework.transaction.PlatformTransactionManager transactionManager;
+
+    private PhoneOwnershipService phoneOwnership() {
+        return new PhoneOwnershipService(firebaseContact, userRepository, auditService, transactionManager);
+    }
 
     private static final String PHONE = "+221701234567";
 
@@ -65,7 +76,7 @@ class SmsOtpServiceTest {
         when(environment.getActiveProfiles()).thenReturn(new String[] {"test"});
         return new SmsOtpService(smsOtpRepository, passwordEncoder, smsService, properties,
                 firebaseAuth, userRepository, firebaseContact, auditService, environment, messagesResolver,
-                twilioVerify);
+                twilioVerify, phoneOwnership());
     }
 
     @AfterEach
@@ -173,7 +184,7 @@ class SmsOtpServiceTest {
             when(stagingEnvironment.getActiveProfiles()).thenReturn(new String[] {"staging"});
             SmsOtpService service = new SmsOtpService(smsOtpRepository, passwordEncoder, smsService,
                     properties, firebaseAuth, userRepository, firebaseContact, auditService, stagingEnvironment, messagesResolver,
-                    twilioVerify);
+                    twilioVerify, phoneOwnership());
             when(smsService.isEnabled()).thenReturn(false);
 
             assertThatThrownBy(() -> service.sendOtp(PHONE))
@@ -190,7 +201,7 @@ class SmsOtpServiceTest {
             when(prodEnvironment.getActiveProfiles()).thenReturn(new String[] {"prod"});
             SmsOtpService service = new SmsOtpService(smsOtpRepository, passwordEncoder, smsService,
                     properties, firebaseAuth, userRepository, firebaseContact, auditService, prodEnvironment,
-                    messagesResolver, twilioVerify);
+                    messagesResolver, twilioVerify, phoneOwnership());
             when(smsService.isEnabled()).thenReturn(false);
 
             assertThatThrownBy(() -> service.sendOtp(PHONE))
@@ -415,7 +426,7 @@ class SmsOtpServiceTest {
             when(environment.getActiveProfiles()).thenReturn(new String[] {"test"});
             SmsOtpService serviceWithoutFirebase = new SmsOtpService(
                     smsOtpRepository, passwordEncoder, smsService, properties, null,
-                    userRepository, firebaseContact, auditService, environment, null, twilioVerify);
+                    userRepository, firebaseContact, auditService, environment, null, twilioVerify, phoneOwnership());
             givenValidOtp();
 
             String result = serviceWithoutFirebase.verifyOtp(PHONE, "123456");
@@ -477,7 +488,7 @@ class SmsOtpServiceTest {
             when(userRepository.findByFirebaseUid(UID)).thenReturn(Optional.of(account()));
             givenValidOtp();
             when(firebaseContact.getContact(UID)).thenReturn(FirebaseContactService.Contact.EMPTY);
-            when(firebaseContact.isPhoneTakenByAnother(PHONE, UID)).thenReturn(false);
+            when(firebaseContact.findPhoneHolder(PHONE)).thenReturn(Optional.empty());
 
             when(firebaseContact.issueSessionToken(UID)).thenReturn("session-token");
 
@@ -523,20 +534,299 @@ class SmsOtpServiceTest {
             verify(firebaseContact, never()).updatePhone(anyString(), anyString());
         }
 
-        @Test
-        @DisplayName("numéro déjà rattaché à un autre compte → 409")
-        void attach_phoneTakenByAnother_conflict() {
-            SmsOtpService service = newService();
-            when(userRepository.findByFirebaseUid(UID)).thenReturn(Optional.of(account()));
+        // ── YADONY-FLUTTER-PROD-Y : numéro porté par un autre compte Firebase ──────────
+
+        private static final String OTHER_UID = "uid-porteur-du-numero";
+
+        private PhoneHolder phoneOnlyHolder() {
+            return new PhoneHolder(OTHER_UID, null, java.util.Set.of("phone"));
+        }
+
+        private UserEntity holderRow(UserStatus status, boolean anonymized) {
+            UserEntity u = new UserEntity();
+            u.setFirebaseUid(OTHER_UID);
+            u.setStatus(status);
+            org.springframework.test.util.ReflectionTestUtils.setField(u, "id", java.util.UUID.randomUUID());
+            if (anonymized) {
+                u.setDeletedAt(LocalDateTime.now(ZoneOffset.UTC).minusDays(1));
+            }
+            return u;
+        }
+
+        private UserEntity givenAccountWithoutPhone() {
+            UserEntity me = account();
+            when(userRepository.findByFirebaseUid(UID)).thenReturn(Optional.of(me));
             givenValidOtp();
             when(firebaseContact.getContact(UID)).thenReturn(FirebaseContactService.Contact.EMPTY);
-            when(firebaseContact.isPhoneTakenByAnother(PHONE, UID)).thenReturn(true);
+            return me;
+        }
+
+        private void assertConflict(SmsOtpService service, String expectedCode) {
+            assertThatThrownBy(() -> service.attachPhoneToAccount(UID, PHONE, "123456"))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(ex.getErrorCode()).isEqualTo(expectedCode);
+                    });
+            verify(firebaseContact, never()).deleteAccount(anyString());
+            verify(firebaseContact, never()).clearPhone(anyString());
+            verify(firebaseContact, never()).updatePhone(anyString(), anyString());
+        }
+
+        @SuppressWarnings("unchecked")
+        private Map<String, Object> reclaimAuditPayload() {
+            org.mockito.ArgumentCaptor<Map<String, Object>> payload = org.mockito.ArgumentCaptor.forClass(Map.class);
+            verify(auditService).log(eq("USER"), any(), eq("USER_PHONE_RECLAIMED"), any(), payload.capture());
+            return payload.getValue();
+        }
+
+        @Test
+        @DisplayName("fantôme sans ligne users (inscription abandonnée) → supprimé puis numéro rattaché, audit sans numéro")
+        void attach_phantomWithoutUserRow_isReclaimed() {
+            SmsOtpService service = newService();
+            UserEntity me = givenAccountWithoutPhone();
+            when(firebaseContact.findPhoneHolder(PHONE)).thenReturn(Optional.of(phoneOnlyHolder()));
+            when(userRepository.findByFirebaseUidIncludingDeleted(OTHER_UID)).thenReturn(Optional.empty());
+            when(firebaseContact.deleteAccount(OTHER_UID)).thenReturn(DeletionOutcome.DELETED);
+            when(firebaseContact.issueSessionToken(UID)).thenReturn("session-token");
+
+            String token = service.attachPhoneToAccount(UID, PHONE, "123456");
+
+            assertThat(token).isEqualTo("session-token");
+            org.mockito.InOrder order = inOrder(firebaseContact);
+            order.verify(firebaseContact).deleteAccount(OTHER_UID);
+            order.verify(firebaseContact).updatePhone(UID, PHONE);
+            verify(firebaseContact, never()).clearPhone(anyString());
+            Map<String, Object> payload = reclaimAuditPayload();
+            assertThat(payload)
+                    .containsEntry("releasedFirebaseUid", OTHER_UID)
+                    .containsEntry("holderAccount", "NONE")
+                    .containsEntry("releaseMethod", "FIREBASE_USER_DELETED");
+            // Aucune valeur ni clé ne porte le numéro : audit_log est immuable.
+            assertThat(payload.values()).doesNotContain(PHONE);
+            assertThat(payload.toString()).doesNotContain(PHONE).doesNotContain("701234567");
+            verify(auditService).log(eq("USER"), eq(me.getId()), eq("USER_PHONE_ATTACHED"), eq(me.getId()), any());
+            // La trace de libération part dans sa propre transaction (survit à un échec qui suit).
+            verify(transactionManager).getTransaction(argThat(def ->
+                    def.getPropagationBehavior() == org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW));
+        }
+
+        @Test
+        @DisplayName("fantôme d'un compte anonymisé (deleted_at posé, suppression Firebase ratée) → récupéré")
+        void attach_phantomOfAnonymizedAccount_isReclaimed() {
+            SmsOtpService service = newService();
+            givenAccountWithoutPhone();
+            UserEntity anonymized = holderRow(UserStatus.PENDING_DELETION, true);
+            when(firebaseContact.findPhoneHolder(PHONE)).thenReturn(Optional.of(phoneOnlyHolder()));
+            when(userRepository.findByFirebaseUidIncludingDeleted(OTHER_UID)).thenReturn(Optional.of(anonymized));
+            when(firebaseContact.deleteAccount(OTHER_UID)).thenReturn(DeletionOutcome.DELETED);
+
+            service.attachPhoneToAccount(UID, PHONE, "123456");
+
+            verify(firebaseContact).updatePhone(UID, PHONE);
+            assertThat(reclaimAuditPayload())
+                    .containsEntry("holderAccount", "ANONYMIZED")
+                    .containsEntry("releasedUserId", anonymized.getId());
+        }
+
+        @Test
+        @DisplayName("fantôme impossible à supprimer → numéro retiré du fantôme, puis rattaché")
+        void attach_phantomDeleteFails_clearsPhoneInstead() {
+            SmsOtpService service = newService();
+            givenAccountWithoutPhone();
+            when(firebaseContact.findPhoneHolder(PHONE)).thenReturn(Optional.of(phoneOnlyHolder()));
+            when(userRepository.findByFirebaseUidIncludingDeleted(OTHER_UID)).thenReturn(Optional.empty());
+            when(firebaseContact.deleteAccount(OTHER_UID)).thenReturn(DeletionOutcome.FAILED);
+            when(firebaseContact.clearPhone(OTHER_UID)).thenReturn(true);
+
+            service.attachPhoneToAccount(UID, PHONE, "123456");
+
+            verify(firebaseContact).updatePhone(UID, PHONE);
+            assertThat(reclaimAuditPayload()).containsEntry("releaseMethod", "PHONE_CLEARED");
+        }
+
+        @Test
+        @DisplayName("fantôme ni supprimable ni modifiable → 503 phone-release-failed, rien rattaché")
+        void attach_phantomCannotBeReleased_503() {
+            SmsOtpService service = newService();
+            givenAccountWithoutPhone();
+            when(firebaseContact.findPhoneHolder(PHONE)).thenReturn(Optional.of(phoneOnlyHolder()));
+            when(userRepository.findByFirebaseUidIncludingDeleted(OTHER_UID)).thenReturn(Optional.empty());
+            when(firebaseContact.deleteAccount(OTHER_UID)).thenReturn(DeletionOutcome.FAILED);
+            when(firebaseContact.clearPhone(OTHER_UID)).thenReturn(false);
+
+            assertThatThrownBy(() -> service.attachPhoneToAccount(UID, PHONE, "123456"))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+                        assertThat(ex.getErrorCode()).isEqualTo("phone-release-failed");
+                    });
+            verify(firebaseContact, never()).updatePhone(anyString(), anyString());
+            verify(auditService, never()).log(any(), any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("2e écriture refusée une fois → nouvel essai qui aboutit")
+        void attach_afterReclaim_secondWriteRetried() {
+            SmsOtpService service = newService();
+            givenAccountWithoutPhone();
+            when(firebaseContact.findPhoneHolder(PHONE)).thenReturn(Optional.of(phoneOnlyHolder()));
+            when(userRepository.findByFirebaseUidIncludingDeleted(OTHER_UID)).thenReturn(Optional.empty());
+            when(firebaseContact.deleteAccount(OTHER_UID)).thenReturn(DeletionOutcome.DELETED);
+            doThrow(new YadonyBusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error", "Firebase Error", "x"))
+                    .doNothing()
+                    .when(firebaseContact).updatePhone(UID, PHONE);
+
+            service.attachPhoneToAccount(UID, PHONE, "123456");
+
+            verify(firebaseContact, times(2)).updatePhone(UID, PHONE);
+            verify(auditService).log(eq("USER"), any(), eq("USER_PHONE_ATTACHED"), any(), any());
+        }
+
+        @Test
+        @DisplayName("2e écriture refusée deux fois → 503 phone-attach-failed, pas d'audit de rattachement ni de jeton")
+        void attach_afterReclaim_secondWriteFailsTwice_503() {
+            SmsOtpService service = newService();
+            givenAccountWithoutPhone();
+            when(firebaseContact.findPhoneHolder(PHONE)).thenReturn(Optional.of(phoneOnlyHolder()));
+            when(userRepository.findByFirebaseUidIncludingDeleted(OTHER_UID)).thenReturn(Optional.empty());
+            when(firebaseContact.deleteAccount(OTHER_UID)).thenReturn(DeletionOutcome.DELETED);
+            doThrow(new YadonyBusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error", "Firebase Error", "x"))
+                    .when(firebaseContact).updatePhone(UID, PHONE);
+
+            assertThatThrownBy(() -> service.attachPhoneToAccount(UID, PHONE, "123456"))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+                        assertThat(ex.getErrorCode()).isEqualTo("phone-attach-failed");
+                    });
+            verify(firebaseContact, times(2)).updatePhone(UID, PHONE);
+            // La libération est tracée (transaction indépendante), le rattachement non.
+            reclaimAuditPayload();
+            verify(auditService, never()).log(any(), any(), eq("USER_PHONE_ATTACHED"), any(), any());
+            verify(firebaseContact, never()).issueSessionToken(anyString());
+        }
+
+        @Test
+        @DisplayName("sans libération, un refus Firebase n'est pas réessayé (comportement inchangé)")
+        void attach_noReclaim_writeFailure_propagates() {
+            SmsOtpService service = newService();
+            givenAccountWithoutPhone();
+            when(firebaseContact.findPhoneHolder(PHONE)).thenReturn(Optional.empty());
+            doThrow(new YadonyBusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error", "Firebase Error", "x"))
+                    .when(firebaseContact).updatePhone(UID, PHONE);
 
             assertThatThrownBy(() -> service.attachPhoneToAccount(UID, PHONE, "123456"))
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
-                            .isEqualTo("phone-already-exists"));
-            verify(firebaseContact, never()).updatePhone(anyString(), anyString());
+                            .isEqualTo("firebase-error"));
+            verify(firebaseContact, times(1)).updatePhone(UID, PHONE);
+        }
+
+        @Test
+        @DisplayName("compte en cours de suppression (PENDING_DELETION) → 409 phone-pending-deletion, rien supprimé")
+        void attach_holderPendingDeletion_conflict() {
+            SmsOtpService service = newService();
+            givenAccountWithoutPhone();
+            when(firebaseContact.findPhoneHolder(PHONE)).thenReturn(Optional.of(phoneOnlyHolder()));
+            when(userRepository.findByFirebaseUidIncludingDeleted(OTHER_UID))
+                    .thenReturn(Optional.of(holderRow(UserStatus.PENDING_DELETION, false)));
+
+            assertConflict(service, "phone-pending-deletion");
+        }
+
+        @Test
+        @DisplayName("message 409 phone-pending-deletion : explique comment annuler la suppression")
+        void attach_holderPendingDeletion_detail() {
+            SmsOtpService service = newService();
+            givenAccountWithoutPhone();
+            when(firebaseContact.findPhoneHolder(PHONE)).thenReturn(Optional.of(phoneOnlyHolder()));
+            when(userRepository.findByFirebaseUidIncludingDeleted(OTHER_UID))
+                    .thenReturn(Optional.of(holderRow(UserStatus.PENDING_DELETION, false)));
+
+            assertThatThrownBy(() -> service.attachPhoneToAccount(UID, PHONE, "123456"))
+                    .hasMessageContaining("Connectez-vous avec ce numéro pour annuler la suppression");
+        }
+
+        @Test
+        @DisplayName("vrai compte Yadony actif → 409 phone-already-exists, jamais supprimé")
+        void attach_holderActive_conflict() {
+            SmsOtpService service = newService();
+            givenAccountWithoutPhone();
+            when(firebaseContact.findPhoneHolder(PHONE)).thenReturn(Optional.of(phoneOnlyHolder()));
+            when(userRepository.findByFirebaseUidIncludingDeleted(OTHER_UID))
+                    .thenReturn(Optional.of(holderRow(UserStatus.ACTIVE, false)));
+
+            assertConflict(service, "phone-already-exists");
+        }
+
+        @Test
+        @DisplayName("compte suspendu (ligne non supprimée) → 409 phone-already-exists")
+        void attach_holderSuspended_conflict() {
+            SmsOtpService service = newService();
+            givenAccountWithoutPhone();
+            when(firebaseContact.findPhoneHolder(PHONE)).thenReturn(Optional.of(phoneOnlyHolder()));
+            when(userRepository.findByFirebaseUidIncludingDeleted(OTHER_UID))
+                    .thenReturn(Optional.of(holderRow(UserStatus.SUSPENDED, false)));
+
+            assertConflict(service, "phone-already-exists");
+        }
+
+        @Test
+        @DisplayName("message 409 phone-already-exists : oriente vers la connexion ou le support")
+        void attach_holderActive_detail() {
+            SmsOtpService service = newService();
+            givenAccountWithoutPhone();
+            when(firebaseContact.findPhoneHolder(PHONE)).thenReturn(Optional.of(phoneOnlyHolder()));
+            when(userRepository.findByFirebaseUidIncludingDeleted(OTHER_UID))
+                    .thenReturn(Optional.of(holderRow(UserStatus.ACTIVE, false)));
+
+            assertThatThrownBy(() -> service.attachPhoneToAccount(UID, PHONE, "123456"))
+                    .hasMessageContaining("contactez le support pour regrouper vos comptes");
+        }
+
+        @Test
+        @DisplayName("fantôme avec e-mail (sans ligne users) → 409 phone-already-exists, jamais supprimé")
+        void attach_holderWithEmail_conflict() {
+            SmsOtpService service = newService();
+            givenAccountWithoutPhone();
+            when(firebaseContact.findPhoneHolder(PHONE)).thenReturn(Optional.of(
+                    new PhoneHolder(OTHER_UID, "awa@example.com", java.util.Set.of("phone", "password"))));
+            when(userRepository.findByFirebaseUidIncludingDeleted(OTHER_UID)).thenReturn(Optional.empty());
+
+            assertConflict(service, "phone-already-exists");
+        }
+
+        @Test
+        @DisplayName("fantôme connecté avec Google (sans e-mail exposé) → 409 phone-already-exists")
+        void attach_holderWithGoogle_conflict() {
+            SmsOtpService service = newService();
+            givenAccountWithoutPhone();
+            when(firebaseContact.findPhoneHolder(PHONE)).thenReturn(Optional.of(
+                    new PhoneHolder(OTHER_UID, null, java.util.Set.of("phone", "google.com"))));
+            when(userRepository.findByFirebaseUidIncludingDeleted(OTHER_UID))
+                    .thenReturn(Optional.of(holderRow(UserStatus.ACTIVE, true)));
+
+            assertConflict(service, "phone-already-exists");
+        }
+
+        @Test
+        @DisplayName("le porteur est l'utilisateur courant → pas de libération, écriture directe")
+        void attach_holderIsCurrentUser_noReclaim() {
+            SmsOtpService service = newService();
+            givenAccountWithoutPhone();
+            when(firebaseContact.findPhoneHolder(PHONE)).thenReturn(Optional.of(
+                    new PhoneHolder(UID, null, java.util.Set.of("phone"))));
+
+            service.attachPhoneToAccount(UID, PHONE, "123456");
+
+            verify(firebaseContact, never()).deleteAccount(anyString());
+            verify(userRepository, never()).findByFirebaseUidIncludingDeleted(anyString());
+            verify(firebaseContact).updatePhone(UID, PHONE);
+            verify(auditService, never()).log(any(), any(), eq("USER_PHONE_RECLAIMED"), any(), any());
         }
 
         @Test

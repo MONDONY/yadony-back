@@ -147,6 +147,16 @@ class KnowledgeBaseFichesTest {
     }
 
     @Test
+    void leNumeroDejaUtiliseMeneAChangerNumero() {
+        // YADONY-FLUTTER-PROD-Y : le 409 « numéro déjà utilisé » doit trouver sa réponse.
+        KnowledgeBase kb = productionKb();
+        assertThat(firstHit(kb, "fr", "Ce numéro est déjà utilisé par un autre compte"))
+                .isEqualTo("changer-numero");
+        assertThat(firstHit(kb, "en", "This number is already used by another account"))
+                .isEqualTo("changer-numero");
+    }
+
+    @Test
     void lesMotsSeulsUsuelsPassentLeSeuil() {
         KnowledgeBase kb = productionKb();
         assertThat(firstHit(kb, "fr", "remboursement")).isEqualTo("remboursement");

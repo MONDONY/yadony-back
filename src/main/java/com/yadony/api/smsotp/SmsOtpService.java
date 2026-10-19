@@ -1,6 +1,7 @@
 package com.yadony.api.smsotp;
 
 import com.yadony.api.auth.FirebaseContactService;
+import com.yadony.api.auth.PhoneOwnershipService;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
@@ -53,6 +54,7 @@ public class SmsOtpService {
     private final AuditService auditService;
     private final MessagesResolver messagesResolver;
     private final TwilioVerifyService twilioVerify;
+    private final PhoneOwnershipService phoneOwnership;
     private final boolean devProfile;
     private volatile String dummyHash;
 
@@ -66,7 +68,8 @@ public class SmsOtpService {
                           AuditService auditService,
                           Environment environment,
                           MessagesResolver messagesResolver,
-                          TwilioVerifyService twilioVerify) {
+                          TwilioVerifyService twilioVerify,
+                          PhoneOwnershipService phoneOwnership) {
         this.smsOtpRepository = smsOtpRepository;
         this.passwordEncoder  = passwordEncoder;
         this.smsService       = smsService;
@@ -77,6 +80,7 @@ public class SmsOtpService {
         this.auditService     = auditService;
         this.messagesResolver = messagesResolver;
         this.twilioVerify     = twilioVerify;
+        this.phoneOwnership   = phoneOwnership;
         List<String> activeProfiles = Arrays.asList(environment.getActiveProfiles());
         // Liste blanche, pas « tout sauf prod » : staging a de vrais testeurs et ses logs
         // partent vers Loki et Sentry. L'ancienne condition y relayait le code OTP en
@@ -267,6 +271,9 @@ public class SmsOtpService {
      *
      * <p>Ajout seulement, jamais remplacement : le numéro identifie le compte
      * Firebase. Un compte qui en porte déjà un est refusé (409).
+     *
+     * <p>Numéro porté par un autre compte Firebase : voir {@link PhoneOwnershipService}
+     * (fantôme libéré, compte en suppression ou vrai compte refusés en 409).
      */
     public String attachPhoneToAccount(String firebaseUid, String phoneNumber, String code) {
         log.info("attachPhoneToAccount: uid={} phone='{}'", firebaseUid, maskPhone(phoneNumber));
@@ -286,13 +293,7 @@ public class SmsOtpService {
                     "Un numéro est déjà associé à ce compte et ne peut pas être remplacé");
         }
 
-        if (firebaseContact.isPhoneTakenByAnother(phoneNumber, firebaseUid)) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT, "phone-already-exists",
-                    "Phone Number Already Registered", "Ce numéro est déjà associé à un compte");
-        }
-
-        firebaseContact.updatePhone(firebaseUid, phoneNumber);
+        phoneOwnership.claimPhone(user, phoneNumber);
 
         // Payload sans PII : le numéro lui-même ne doit pas atterrir dans audit_log.
         auditService.log("USER", user.getId(), "USER_PHONE_ATTACHED", user.getId(),

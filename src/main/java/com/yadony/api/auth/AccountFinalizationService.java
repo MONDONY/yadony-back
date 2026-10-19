@@ -4,6 +4,7 @@ import com.yadony.api.auth.events.AccountDeletionRequestedEvent;
 import com.yadony.api.auth.events.UserFinalizedEvent;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.kyc.KycRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,19 +32,22 @@ public class AccountFinalizationService {
     private final ApplicationEventPublisher eventPublisher;
     private final AuditService auditService;
     private final FirebaseContactService firebaseContact;
+    private final AdminAlertService adminAlertService;
 
     public AccountFinalizationService(UserRepository userRepository,
                                       KycRepository kycRepository,
                                       StorageService storageService,
                                       ApplicationEventPublisher eventPublisher,
                                       AuditService auditService,
-                                      FirebaseContactService firebaseContact) {
+                                      FirebaseContactService firebaseContact,
+                                      AdminAlertService adminAlertService) {
         this.userRepository = userRepository;
         this.kycRepository = kycRepository;
         this.storageService = storageService;
         this.eventPublisher = eventPublisher;
         this.auditService = auditService;
         this.firebaseContact = firebaseContact;
+        this.adminAlertService = adminAlertService;
     }
 
     @Transactional
@@ -128,7 +132,14 @@ public class AccountFinalizationService {
         eventPublisher.publishEvent(new UserFinalizedEvent(userId, reason));
 
         // 5. Delete Firebase user (porteur du téléphone et de l'email)
-        firebaseContact.deleteAccount(user.getFirebaseUid());
+        // Un échec laisse numéro et email dans Firebase Auth (RGPD), et le numéro y reste
+        // bloqué tant qu'aucun rattachement ne le libère (PhoneOwnershipService) : on alerte.
+        if (firebaseContact.deleteAccount(firebaseUid) == FirebaseContactService.DeletionOutcome.FAILED) {
+            adminAlertService.raise("FIREBASE_USER_DELETE_FAILED",
+                    "Compte finalisé mais utilisateur Firebase non supprimé : numéro et email "
+                            + "restent dans Firebase Auth. Le supprimer depuis la console Firebase.",
+                    Map.of("userId", userId, "firebaseUid", firebaseUid, "reason", reason.name()));
+        }
 
         // 6. Immutable audit entry
         auditService.log("USER", userId, "USER_GDPR_DELETION", userId,

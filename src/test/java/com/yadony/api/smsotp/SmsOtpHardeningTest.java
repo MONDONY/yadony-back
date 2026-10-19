@@ -63,7 +63,7 @@ class SmsOtpHardeningTest {
         lenient().when(smsService.isEnabled()).thenReturn(true);
         service = new SmsOtpService(repository, passwordEncoder, smsService, properties,
                 null, userRepository, firebaseContact, auditService, environment,
-                TestMessages.resolver(), twilioVerify);
+                TestMessages.resolver(), twilioVerify, null);
     }
 
     @AfterEach

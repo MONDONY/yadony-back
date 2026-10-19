@@ -61,6 +61,7 @@ class SmsOtpAttemptsPersistenceTest {
     @MockitoBean FirebaseContactService firebaseContact;
     @MockitoBean AuditService auditService;
     @MockitoBean MessagesResolver messagesResolver;
+    @MockitoBean com.yadony.api.auth.PhoneOwnershipService phoneOwnership;
 
     private SmsOtpEntity savedToken(String phone) {
         SmsOtpEntity token = new SmsOtpEntity();

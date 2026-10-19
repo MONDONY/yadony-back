@@ -11,6 +11,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -244,5 +245,103 @@ class FirebaseContactServiceTest {
         assertThat(new FirebaseContactService(null).issueSessionToken("uid-1")).isNull();
         assertThat(service.issueSessionToken(null)).isNull();
         verify(firebaseAuth, never()).createCustomToken(anyString());
+    }
+
+    // ── YADONY-FLUTTER-PROD-Y : porteur d'un numéro, suppression, retrait du numéro ──
+
+    private static FirebaseAuthException authError(com.google.firebase.auth.AuthErrorCode code) {
+        FirebaseAuthException e = mock(FirebaseAuthException.class);
+        when(e.getAuthErrorCode()).thenReturn(code);
+        return e;
+    }
+
+    private static com.google.firebase.auth.UserInfo provider(String id) {
+        com.google.firebase.auth.UserInfo info = mock(com.google.firebase.auth.UserInfo.class);
+        when(info.getProviderId()).thenReturn(id);
+        return info;
+    }
+
+    @Test
+    @DisplayName("findPhoneHolder → uid, email et fournisseurs ; phoneOnly vrai sans email ni autre fournisseur")
+    void findPhoneHolder_phoneOnly() throws Exception {
+        UserRecord record = mock(UserRecord.class);
+        when(record.getUid()).thenReturn("uid-fantome");
+        com.google.firebase.auth.UserInfo phone = provider("phone");
+        when(record.getProviderData()).thenReturn(new com.google.firebase.auth.UserInfo[] {phone});
+        when(firebaseAuth.getUserByPhoneNumber("+221701234567")).thenReturn(record);
+
+        FirebaseContactService.PhoneHolder holder = service.findPhoneHolder("+221701234567").orElseThrow();
+
+        assertThat(holder.uid()).isEqualTo("uid-fantome");
+        assertThat(holder.providerIds()).containsExactly("phone");
+        assertThat(holder.phoneOnly()).isTrue();
+    }
+
+    @Test
+    @DisplayName("findPhoneHolder → phoneOnly faux avec Google ou avec un email")
+    void findPhoneHolder_otherIdentity() throws Exception {
+        UserRecord google = mock(UserRecord.class);
+        when(google.getUid()).thenReturn("uid-google");
+        com.google.firebase.auth.UserInfo phone = provider("phone");
+        com.google.firebase.auth.UserInfo googleProvider = provider("google.com");
+        when(google.getProviderData()).thenReturn(new com.google.firebase.auth.UserInfo[] {phone, googleProvider});
+        when(firebaseAuth.getUserByPhoneNumber("+221701234567")).thenReturn(google);
+
+        assertThat(service.findPhoneHolder("+221701234567").orElseThrow().phoneOnly()).isFalse();
+        assertThat(new FirebaseContactService.PhoneHolder("u", "awa@example.com", Set.of("phone")).phoneOnly())
+                .isFalse();
+        assertThat(new FirebaseContactService.PhoneHolder("u", " ", Set.of()).phoneOnly()).isTrue();
+    }
+
+    @Test
+    @DisplayName("findPhoneHolder → vide si aucun compte, en cas de panne, sans Firebase ou sans numéro")
+    void findPhoneHolder_empty() throws Exception {
+        FirebaseAuthException notFound = authError(com.google.firebase.auth.AuthErrorCode.USER_NOT_FOUND);
+        when(firebaseAuth.getUserByPhoneNumber("+221700000001")).thenThrow(notFound);
+        FirebaseAuthException outage = authError(null);
+        when(firebaseAuth.getUserByPhoneNumber("+221700000002")).thenThrow(outage);
+        UserRecord noProviders = mock(UserRecord.class);
+        when(noProviders.getUid()).thenReturn("uid-nu");
+        when(firebaseAuth.getUserByPhoneNumber("+221700000003")).thenReturn(noProviders);
+
+        assertThat(service.findPhoneHolder("+221700000001")).isEmpty();
+        assertThat(service.findPhoneHolder("+221700000002")).isEmpty();
+        assertThat(service.findPhoneHolder("+221700000003").orElseThrow().phoneOnly()).isTrue();
+        assertThat(service.findPhoneHolder(" ")).isEmpty();
+        assertThat(new FirebaseContactService(null).findPhoneHolder("+221701234567")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("deleteAccount → DELETED, ALREADY_GONE, FAILED ou SKIPPED selon Firebase")
+    void deleteAccount_outcomes() throws Exception {
+        assertThat(service.deleteAccount("uid-ok")).isEqualTo(FirebaseContactService.DeletionOutcome.DELETED);
+
+        FirebaseAuthException notFound = authError(com.google.firebase.auth.AuthErrorCode.USER_NOT_FOUND);
+        doThrow(notFound).when(firebaseAuth).deleteUser("uid-parti");
+        assertThat(service.deleteAccount("uid-parti")).isEqualTo(FirebaseContactService.DeletionOutcome.ALREADY_GONE);
+
+        FirebaseAuthException outage = authError(null);
+        doThrow(outage).when(firebaseAuth).deleteUser("uid-ko");
+        assertThat(service.deleteAccount("uid-ko")).isEqualTo(FirebaseContactService.DeletionOutcome.FAILED);
+
+        assertThat(service.deleteAccount(null)).isEqualTo(FirebaseContactService.DeletionOutcome.SKIPPED);
+        assertThat(new FirebaseContactService(null).deleteAccount("uid-ok"))
+                .isEqualTo(FirebaseContactService.DeletionOutcome.SKIPPED);
+    }
+
+    @Test
+    @DisplayName("clearPhone → retire le numéro (vrai), compte disparu (vrai), panne (faux), sans Firebase (faux)")
+    void clearPhone_outcomes() throws Exception {
+        assertThat(service.clearPhone("uid-ok")).isTrue();
+        verify(firebaseAuth).updateUser(any(UserRecord.UpdateRequest.class));
+
+        FirebaseAuthException notFound = authError(com.google.firebase.auth.AuthErrorCode.USER_NOT_FOUND);
+        FirebaseAuthException outage = authError(null);
+        when(firebaseAuth.updateUser(any(UserRecord.UpdateRequest.class))).thenThrow(notFound).thenThrow(outage);
+        assertThat(service.clearPhone("uid-parti")).isTrue();
+        assertThat(service.clearPhone("uid-ko")).isFalse();
+
+        assertThat(service.clearPhone(null)).isFalse();
+        assertThat(new FirebaseContactService(null).clearPhone("uid-ok")).isFalse();
     }
 }
