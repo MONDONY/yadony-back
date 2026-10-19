@@ -125,7 +125,7 @@ Tout objet sans grille (créé avant la première grille, ou tant qu'aucune n'es
 
 ### Textes de l'assistant
 
-Fiches `assistant/kb/{fr,en}/commission.md` (même `id`, mêmes routes) : les frais de service dépendent du prix du transport, un minimum peut s'appliquer (aujourd'hui 1 € ou 650 FCFA), le montant exact est affiché avant de confirmer, les frais sont identiques quel que soit le moyen de paiement, aucun pourcentage en dur. Le paragraphe espèces est conservé tel quel. Les autres fiches (`kilos-prix`, `ecran-grille-prix`, `gp-pro`, `paiement-especes`, etc.) ne citent aucun taux ni ne nient le minimum : inchangées. Les fiches sont lues au démarrage depuis le jar, donc effectives après déploiement du back.
+Fiches `assistant/kb/{fr,en}/commission.md` (même `id`, mêmes routes) : les frais de service dépendent du prix du transport, un montant minimum peut s'appliquer selon le prix (sans montant cité, la fiche doit être vraie avant toute grille), le montant exact minimum compris est affiché avant de confirmer, aucun pourcentage en dur et aucune affirmation sur le moyen de paiement (Ruling 27). Le paragraphe espèces est conservé tel quel. Les autres fiches (`kilos-prix`, `ecran-grille-prix`, `gp-pro`, `paiement-especes`, etc.) ne citent aucun taux ni ne nient le minimum : inchangées. Les fiches sont lues au démarrage depuis le jar, donc effectives après déploiement du back.
 
 ## Pièges et points d'attention
 
