@@ -12,6 +12,12 @@ import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.PageResponse;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.commission.CommissionCalculator;
+import com.yadony.api.common.commission.CommissionGrid;
+import com.yadony.api.common.commission.CommissionGridService;
+import com.yadony.api.common.commission.CommissionPromoLabel;
+import com.yadony.api.common.commission.CommissionReductions;
+import com.yadony.api.common.commission.CommissionResult;
 import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.config.ContentCategoryNormalizer;
 import com.yadony.api.matching.dto.AddressDto;
@@ -35,6 +41,7 @@ import com.yadony.api.cancellation.CancellationScope;
 import com.yadony.api.payments.PaymentService;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.currency.CurrencyPaymentRails;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.pawapay.PawapayErrors;
 import com.yadony.api.payments.pawapay.PawapayProperties;
 import com.yadony.api.ratings.RatingRepository;
@@ -100,6 +107,7 @@ public class BidService {
 
     private final TripRescheduleRepository rescheduleRepository;
     private final com.yadony.api.matching.reception.BidRecipientLinkRepository recipientLinkRepository;
+    private final CommissionGridService commissionGridService;
 
     /** Jours de contact après livraison : même clé que la fenêtre d'appel in-app (calls/). */
     @org.springframework.beans.factory.annotation.Value("${yadony.calls.delivery-grace-days:3}")
@@ -122,7 +130,8 @@ public class BidService {
                       PaymentService paymentService,
                       MessagesResolver messagesResolver,
                       TripRescheduleRepository rescheduleRepository,
-                      com.yadony.api.matching.reception.BidRecipientLinkRepository recipientLinkRepository) {
+                      com.yadony.api.matching.reception.BidRecipientLinkRepository recipientLinkRepository,
+                      CommissionGridService commissionGridService) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -144,6 +153,7 @@ public class BidService {
         this.messagesResolver = messagesResolver;
         this.rescheduleRepository = rescheduleRepository;
         this.recipientLinkRepository = recipientLinkRepository;
+        this.commissionGridService = commissionGridService;
     }
 
     /**
@@ -201,6 +211,13 @@ public class BidService {
         // silencieusement le taux (ancien comportement) pouvait égaler le taux courant et ne
         // faire gagner aucune remise réelle (régression WELCOME05, 5 % promo = 5 % global).
         String promoCode = request.promoCode() != null ? request.promoCode().strip() : null;
+        String currencyCode = ann.getCurrency() != null ? ann.getCurrency().toUpperCase(java.util.Locale.ROOT) : "EUR";
+        // Grille en vigueur : c'est elle que le bid figera à sa création (createBid), donc celle
+        // que les rails appliqueront au paiement.
+        Optional<CommissionGrid> grid = commissionGridService.current();
+        if (grid.isPresent()) {
+            return quoteWithGrid(grid.get(), ann, sender.getId(), netEur, gridNet, kgNet, promoCode, currencyCode);
+        }
         boolean promoApplied = false;
         String promoLabel = null;
         BigDecimal rate;
@@ -227,7 +244,43 @@ public class BidService {
         }
 
         return new BidQuoteResponse(netEur, gridNet, kgNet, rate, commissionEur, totalEur, promoApplied, promoLabel,
-                ann.getCurrency() != null ? ann.getCurrency().toUpperCase(java.util.Locale.ROOT) : "EUR");
+                currencyCode, false, null, null, null);
+    }
+
+    /**
+     * Devis sous grille de commission (spec §4.2, §5.4), même calcul que les rails au premier
+     * paiement ({@link CommissionCalculator}) : le total affiché est exactement celui qui sera
+     * prélevé. Sémantique des champs hérités conservée : {@code commissionEur} et {@code rate}
+     * hors code promo, {@code totalEur} code promo déduit.
+     *
+     * <p>Le code promo reste validé strictement, comme sur le chemin hérité : un code invalide
+     * remonte en 422 au lieu du repli silencieux des rails, sinon l'expéditeur ne saurait jamais
+     * que son code est refusé. Un code valide que le minimum rend sans effet n'est pas appliqué
+     * ({@code promoIneffectiveReason = COMMISSION_MINIMUM}) : les rails ne le rachèteront pas.
+     */
+    private BidQuoteResponse quoteWithGrid(CommissionGrid grid, AnnouncementEntity ann, UUID senderId,
+                                           BigDecimal netEur, BigDecimal gridNet, BigDecimal kgNet,
+                                           String promoCode, String currencyCode) {
+        SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(ann.getCurrency());
+        if (netEur.setScale(currency.minorUnit(), java.math.RoundingMode.HALF_UP).signum() <= 0) {
+            // Même refus que les rails : la grille ne tarife pas un net nul.
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "invalid-amount", "Invalid Amount", "Le montant calculé est invalide (≤ 0)");
+        }
+        boolean withCode = promoCode != null && !promoCode.isBlank();
+        CommissionReductions reductions = commissionRateResolver.reductions(ann.getTravelerId(), senderId,
+                withCode ? promoCode : null, withCode ? senderId : null, null);
+        CommissionResult result = CommissionCalculator.compute(netEur, currency, grid, reductions);
+        CommissionResult base = reductions.promo() == null
+                ? result
+                : CommissionCalculator.compute(netEur, currency, grid, reductions.withoutPromo());
+
+        boolean promoApplied = result.promoEffective();
+        String promoLabel = CommissionPromoLabel.of(messagesResolver.forRequest(), promoCode, base, result);
+        return new BidQuoteResponse(result.net(), gridNet, kgNet, base.effectiveRate(), base.commission(),
+                result.gross(), promoApplied, promoLabel, currencyCode, result.minimumApplied(),
+                grid.minimum(currency), grid.id(),
+                withCode && !promoApplied && result.minimumApplied() ? "COMMISSION_MINIMUM" : null);
     }
 
     @Transactional
@@ -300,6 +353,9 @@ public class BidService {
         }
         bid.setStatus(BidStatus.PENDING);
         bid.setCurrency(announcement.getCurrency());
+        // Grille de commission figée à la création : les rails de paiement la liront
+        // au lieu de la grille courante (une grille programmée ensuite ne touche pas ce bid).
+        commissionGridService.current().ifPresent(g -> bid.setCommissionGridId(g.id()));
 
         // Code promo stocké brut (validation + rachat au moment du paiement).
         if (request.promoCode() != null && !request.promoCode().isBlank()) {
@@ -1702,26 +1758,9 @@ public class BidService {
         // avant (PENDING, pas de rate) on résout en direct — ainsi le brut est
         // toujours calculable côté serveur, sans que l'app n'ait besoin du net
         // pour le dériver.
-        java.math.BigDecimal effectiveRate = bid.getCommissionRate();
-        if (effectiveRate == null && announcement != null) {
-            UUID rateTravelerId = announcement.getTravelerId();
-            effectiveRate = prefetch != null
-                    ? prefetch.commissionRate(rateTravelerId, bid.getSenderId(),
-                            () -> commissionRateResolver.resolve(rateTravelerId, bid.getSenderId()))
-                    : commissionRateResolver.resolve(rateTravelerId, bid.getSenderId());
-        }
-        // Brut négocié : le nombre exact sur lequel les deux parties se sont mises
-        // d'accord, et exactement celui que débitera l'escrow. Le redériver du net
-        // par (1 + taux) pourrait dériver d'un centime après arrondi.
-        java.math.BigDecimal totalSenderAmountEur;
-        if (bid.getNegotiatedGrossEur() != null) {
-            totalSenderAmountEur = bid.getNegotiatedGrossEur().setScale(2, java.math.RoundingMode.HALF_UP);
-        } else if (effectiveRate != null) {
-            totalSenderAmountEur =
-                    com.yadony.api.payments.PriceBreakdown.fromNet(totalNetAmountEur, effectiveRate).gross();
-        } else {
-            totalSenderAmountEur = totalNetAmountEur;
-        }
+        java.math.BigDecimal totalSenderAmountEur = bid.getCommissionGridId() != null
+                ? gridSenderAmount(bid, announcement, totalNetAmountEur)
+                : legacySenderAmount(bid, announcement, totalNetAmountEur, prefetch);
         // Tarif/kg affiché à l'expéditeur (brut), dérivé du total brut.
         java.math.BigDecimal pricePerKgSenderEur =
                 (totalSenderAmountEur != null && bid.getWeightKg() != null
@@ -1828,6 +1867,72 @@ public class BidService {
                 sender != null ? sender.senderReliabilityIncidentCount() : null,
                 PickupCodes.renewalNeeded(bid, LocalDateTime.now(ZoneOffset.UTC))
         );
+    }
+
+    /** Total expéditeur d'un bid sans grille (chemin hérité, inchangé) : taux figé, sinon résolu. */
+    private BigDecimal legacySenderAmount(BidEntity bid, AnnouncementEntity announcement, BigDecimal totalNet,
+                                          BidResponsePrefetch prefetch) {
+        java.math.BigDecimal effectiveRate = bid.getCommissionRate();
+        if (effectiveRate == null && announcement != null) {
+            UUID rateTravelerId = announcement.getTravelerId();
+            effectiveRate = prefetch != null
+                    ? prefetch.commissionRate(rateTravelerId, bid.getSenderId(),
+                            () -> commissionRateResolver.resolve(rateTravelerId, bid.getSenderId()))
+                    : commissionRateResolver.resolve(rateTravelerId, bid.getSenderId());
+        }
+        // Brut négocié : le nombre exact sur lequel les deux parties se sont mises
+        // d'accord, et exactement celui que débitera l'escrow. Le redériver du net
+        // par (1 + taux) pourrait dériver d'un centime après arrondi.
+        if (bid.getNegotiatedGrossEur() != null) {
+            return bid.getNegotiatedGrossEur().setScale(2, java.math.RoundingMode.HALF_UP);
+        } else if (effectiveRate != null) {
+            return com.yadony.api.payments.PriceBreakdown.fromNet(totalNet, effectiveRate).gross();
+        }
+        return totalNet;
+    }
+
+    /**
+     * Total expéditeur d'un bid à grille figée, calculé comme les rails (carte, espèces, mobile
+     * money) le calculeront : le brut négocié tel quel ; un net négocié seul avec les réductions
+     * figées sur le bid à l'ouverture du fil ; sinon le net du barème avec les réductions du
+     * rails, règle unique {@link CommissionRateResolver#reductionsForBid} (code déjà racheté relu
+     * sans revalidation, sinon repli sans code s'il est devenu invalide).
+     *
+     * <p>Bid carte ayant déjà un paiement : ce que débitera une nouvelle tentative
+     * ({@code PaymentService.createEscrow}) — les montants enregistrés s'ils correspondent encore
+     * au net, sinon la grille figée sans un code jamais racheté (la tentative ne le reprend pas).
+     *
+     * <p>Coût en liste : le bon de parrainage se lit par bid (il dépend de la référence), pas par
+     * couple voyageur/expéditeur ; {@link BidResponsePrefetch} ne peut donc pas le mutualiser.
+     */
+    private BigDecimal gridSenderAmount(BidEntity bid, AnnouncementEntity announcement, BigDecimal totalNet) {
+        if (bid.getNegotiatedGrossEur() != null) {
+            return bid.getNegotiatedGrossEur().setScale(2, java.math.RoundingMode.HALF_UP);
+        }
+        boolean negotiatedNet = bid.getNegotiatedNetEur() != null;
+        SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(
+                announcement != null ? announcement.getCurrency() : bid.getCurrency());
+        if ((!negotiatedNet && announcement == null)
+                || totalNet.setScale(currency.minorUnit(), java.math.RoundingMode.HALF_UP).signum() <= 0) {
+            return totalNet;
+        }
+        String promoCode = bid.getPromoCode();
+        if (!negotiatedNet && bid.getPaymentMethod() == PaymentMethod.STRIPE) {
+            java.util.Optional<PaymentService.GridCardAttempt> attempt =
+                    paymentService.gridCardAttempt(bid.getId(), totalNet, currency);
+            if (attempt.isPresent() && attempt.get().committed() != null) {
+                return attempt.get().committed().gross();
+            }
+            if (attempt.isPresent()) {
+                promoCode = null;
+            }
+        }
+        CommissionReductions reductions = negotiatedNet
+                ? CommissionReductions.frozen(bid.getCommissionOverrideRate(), bid.getCommissionVoucherFactor())
+                : commissionRateResolver.displayReductionsForBid(announcement.getTravelerId(), bid.getSenderId(),
+                        promoCode, bid.getPromoCodeId(), bid.getId());
+        return CommissionCalculator.compute(totalNet, currency,
+                commissionGridService.require(bid.getCommissionGridId()), reductions).gross();
     }
 
     /** Adresse de remise du colis au voyageur, prise sur le trajet. */

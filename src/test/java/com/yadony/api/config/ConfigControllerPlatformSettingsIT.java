@@ -48,6 +48,14 @@ class ConfigControllerPlatformSettingsIT {
                 .andExpect(jsonPath("$.rate").isNumber());
     }
 
+    /** Sans grille en vigueur, la route renvoie exactement {@code commission_rate}, comme avant les paliers. */
+    @Test
+    void commissionRate_noGrid_unchanged() throws Exception {
+        mockMvc.perform(get("/config/commission-rate"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rate").value(settings.commissionRate().doubleValue()));
+    }
+
     @Test
     void urgencyThresholdKeepsItsResponseShape() throws Exception {
         // Le seuil est exprime en JOURS : un renommage en heures multiplierait la valeur

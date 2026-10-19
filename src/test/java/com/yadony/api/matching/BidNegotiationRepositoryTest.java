@@ -242,6 +242,27 @@ class BidNegotiationRepositoryTest {
     }
 
     @Test
+    @DisplayName("un bid matérialisé d'un fil de demande, au total payé figé, n'est pas une discussion de prix")
+    void bidMaterializedFromThread_withSealedGross_isNeverListed() {
+        UUID travelerId = UUID.randomUUID();
+        UUID senderId = UUID.randomUUID();
+        UUID announcementId = newAnnouncement(travelerId, LocalDate.now().plusDays(10));
+        BidEntity b = new BidEntity();
+        b.setAnnouncementId(announcementId);
+        b.setSenderId(senderId);
+        b.setStatus(BidStatus.ACCEPTED);
+        b.setLinkedNegotiationThreadId(UUID.randomUUID());
+        b.setNegotiatedNetEur(new BigDecimal("100.00"));
+        b.setNegotiatedGrossEur(new BigDecimal("103.50"));
+        UUID bidId = em.persistAndFlush(b).getId();
+        bidRepository.updateNegotiationSenderArchivedAt(bidId, LocalDateTime.now(ZoneOffset.UTC));
+
+        assertThat(bidRepository.findNegotiationsForUser(senderId)).isEmpty();
+        assertThat(bidRepository.findNegotiationsForUser(travelerId)).isEmpty();
+        assertThat(bidRepository.findArchivedNegotiationsForUser(senderId)).isEmpty();
+    }
+
+    @Test
     @DisplayName("un fil réglé rangé par le voyageur quitte sa liste courante et passe dans Archivées")
     void settledNegotiationArchivedByTraveler_movesToArchived() {
         UUID travelerId = UUID.randomUUID();

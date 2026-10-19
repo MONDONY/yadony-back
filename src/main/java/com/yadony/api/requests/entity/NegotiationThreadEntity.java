@@ -85,8 +85,20 @@ public class NegotiationThreadEntity extends BaseEntity {
     private String promoCode;
 
     /** Taux de commission effectif retenu au paiement (promo déjà appliqué si présent). */
-    @Column(name = "commission_rate", precision = 4, scale = 3)
+    @Column(name = "commission_rate", precision = 7, scale = 6)
     private BigDecimal commissionRate;
+
+    /** Grille de commission de la demande, héritée à la création du fil (null : chemin hérité). */
+    @Column(name = "commission_grid_id")
+    private UUID commissionGridId;
+
+    /**
+     * Total payé par l'expéditeur, frais compris, figé au scellement d'un fil à grille (V337) :
+     * l'affichage le reprend tel quel au lieu de re-tarifer (code racheté, bon consommé).
+     * {@code null} avant scellement et pour un fil sans grille.
+     */
+    @Column(name = "sealed_gross_eur", precision = 10, scale = 2)
+    private BigDecimal sealedGrossEur;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "payment_method", length = 20)
@@ -203,6 +215,10 @@ public class NegotiationThreadEntity extends BaseEntity {
 
     public BigDecimal getCommissionRate() { return commissionRate; }
 
+    public UUID getCommissionGridId() { return commissionGridId; }
+
+    public BigDecimal getSealedGrossEur() { return sealedGrossEur; }
+
     public PaymentMethod getPaymentMethod() { return paymentMethod; }
 
     public Set<PaymentMethod> getAvailablePaymentMethods() { return availablePaymentMethods; }
@@ -270,6 +286,10 @@ public class NegotiationThreadEntity extends BaseEntity {
     public void setPromoCode(String promoCode) { this.promoCode = promoCode; }
 
     public void setCommissionRate(BigDecimal commissionRate) { this.commissionRate = commissionRate; }
+
+    public void setCommissionGridId(UUID commissionGridId) { this.commissionGridId = commissionGridId; }
+
+    public void setSealedGrossEur(BigDecimal sealedGrossEur) { this.sealedGrossEur = sealedGrossEur; }
 
     public void setPaymentMethod(PaymentMethod paymentMethod) { this.paymentMethod = paymentMethod; }
 

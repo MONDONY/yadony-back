@@ -3,12 +3,14 @@ package com.yadony.api.common;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.commission.CommissionReductions;
 import com.yadony.api.config.PlatformSettingsTestFactory;
 import com.yadony.api.promo.PromoCodeTarget;
 import com.yadony.api.promo.PromoDiscount;
 import com.yadony.api.promo.PromoService;
 import com.yadony.api.voucher.CommissionVoucherEntity;
 import com.yadony.api.voucher.CommissionVoucherService;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -16,6 +18,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -24,6 +27,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -238,5 +244,286 @@ class CommissionRateResolverTest {
 
         assertThat(resolver().resolve(t)).isEqualByComparingTo("0.12");
         org.mockito.Mockito.verifyNoInteractions(voucherService);
+    }
+
+    // ── reductions : réductions personnelles exposées séparément du taux ─────
+
+    @Test
+    void reductions_minOfOverrides() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        when(userRepository.findById(t)).thenReturn(Optional.of(withOverride(new BigDecimal("0.10"))));
+        when(userRepository.findById(s)).thenReturn(Optional.of(withOverride(new BigDecimal("0.06"))));
+
+        CommissionReductions r = resolver().reductions(t, s, null, null, null);
+
+        assertThat(r.overrideRate()).isEqualByComparingTo("0.06");
+        assertThat(r.promo()).isNull();
+        assertThat(r.voucherFactor()).isNull();
+    }
+
+    @Test
+    void reductions_promoValidated_returnsDiscount() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        PromoDiscount discount = PromoDiscount.pricePercent(new BigDecimal("0.050"));
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        when(promoService.validateAndGetDiscount("MERCI-ABOU-7K2F", s, PromoCodeTarget.SENDER)).thenReturn(discount);
+
+        CommissionReductions r = resolver().reductions(t, s, "MERCI-ABOU-7K2F", s, null);
+
+        assertThat(r.promo()).isEqualTo(discount);
+        assertThat(r.overrideRate()).isNull();
+    }
+
+    @Test
+    void reductions_invalidPromo_throws() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        when(promoService.validateAndGetDiscount(any(), any(), any()))
+                .thenThrow(new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "promo-not-found", "Promo Not Found", "Code introuvable"));
+
+        assertThatThrownBy(() -> resolver().reductions(t, s, "BADCODE", s, null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("promo-not-found"));
+    }
+
+    @Test
+    void reductions_withReference_usesPeekForReference() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        UUID reference = UUID.randomUUID();
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        CommissionVoucherEntity voucher = activeVoucher(new BigDecimal("0.50"));
+        when(voucherService.peekForReference(s, reference)).thenReturn(Optional.of(voucher));
+
+        CommissionReductions r = resolver().reductions(t, s, null, null, reference);
+
+        assertThat(r.voucherFactor()).isEqualByComparingTo("0.50");
+        org.mockito.Mockito.verify(voucherService, org.mockito.Mockito.never()).peekActive(any());
+    }
+
+    @Test
+    void reductions_withoutReference_usesPeekActive() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        CommissionVoucherEntity voucher = activeVoucher(new BigDecimal("0.50"));
+        when(voucherService.peekActive(s)).thenReturn(Optional.of(voucher));
+
+        assertThat(resolver().reductions(t, s, null, null, null).voucherFactor()).isEqualByComparingTo("0.50");
+    }
+
+    @Test
+    void reductions_noneConfigured_allNull() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        when(voucherService.peekActive(s)).thenReturn(Optional.empty());
+
+        assertThat(resolver().reductions(t, s, null, null, null)).isEqualTo(CommissionReductions.NONE);
+    }
+
+    @Test
+    void reductions_unknownSender_neverConsultsVoucherNorPromo() {
+        UUID t = UUID.randomUUID();
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+
+        assertThat(resolver().reductions(t, null, "CODE", null, null)).isEqualTo(CommissionReductions.NONE);
+        org.mockito.Mockito.verifyNoInteractions(voucherService, promoService);
+    }
+
+    // ── reductionsWithPromoFallback : règle de repli commune aux trois rails ──
+
+    @Test
+    void reductionsWithPromoFallback_blankCode_readsReductionsWithoutValidating() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        UUID reference = UUID.randomUUID();
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        when(voucherService.peekForReference(s, reference)).thenReturn(Optional.empty());
+
+        assertThat(resolver().reductionsWithPromoFallback(t, s, "  ", reference)).isEqualTo(CommissionReductions.NONE);
+        assertThat(resolver().reductionsWithPromoFallback(t, s, null, reference)).isEqualTo(CommissionReductions.NONE);
+        verifyNoInteractions(promoService);
+    }
+
+    @Test
+    void reductionsWithPromoFallback_validCode_isValidatedForTheSender() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        UUID reference = UUID.randomUUID();
+        PromoDiscount discount = PromoDiscount.points(new BigDecimal("0.05"));
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        when(promoService.validateAndGetDiscount("WELCOME05", s, PromoCodeTarget.SENDER)).thenReturn(discount);
+        CommissionVoucherEntity voucher = activeVoucher(new BigDecimal("0.50"));
+        when(voucherService.peekForReference(s, reference)).thenReturn(Optional.of(voucher));
+
+        CommissionReductions r = resolver().reductionsWithPromoFallback(t, s, "WELCOME05", reference);
+
+        assertThat(r.promo()).isEqualTo(discount);
+        assertThat(r.voucherFactor()).isEqualByComparingTo("0.50");
+    }
+
+    @Test
+    void reductionsWithPromoFallback_invalidCode_fallsBackWithoutCode() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        UUID reference = UUID.randomUUID();
+        when(userRepository.findById(t)).thenReturn(Optional.of(withOverride(new BigDecimal("0.04"))));
+        lenient().when(userRepository.findById(s)).thenReturn(Optional.of(withOverride(null)));
+        when(promoService.validateAndGetDiscount("EXPIRED", s, PromoCodeTarget.SENDER))
+                .thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "promo-expired", "Promo Expired", "Ce code est expiré."));
+        CommissionVoucherEntity voucher = activeVoucher(new BigDecimal("0.50"));
+        when(voucherService.peekForReference(s, reference)).thenReturn(Optional.of(voucher));
+
+        CommissionReductions r = resolver().reductionsWithPromoFallback(t, s, "EXPIRED", reference);
+
+        assertThat(r.promo()).as("code invalide : aucune remise").isNull();
+        assertThat(r.overrideRate()).as("taux spécial conservé").isEqualByComparingTo("0.04");
+        assertThat(r.voucherFactor()).as("bon conservé").isEqualByComparingTo("0.50");
+    }
+
+    /** Journal du résolveur capturé pendant {@code call}, tous niveaux (DEBUG compris). */
+    private static List<ch.qos.logback.classic.spi.ILoggingEvent> logsOf(Runnable call) {
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(CommissionRateResolver.class);
+        ch.qos.logback.classic.Level previous = logger.getLevel();
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+        try {
+            call.run();
+            return List.copyOf(appender.list);
+        } finally {
+            logger.detachAppender(appender);
+            logger.setLevel(previous);
+        }
+    }
+
+    private void expiredCodeFor(UUID s, UUID reference) {
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        lenient().when(voucherService.peekForReference(s, reference)).thenReturn(Optional.empty());
+        when(promoService.validateAndGetDiscount("EXPIRED", s, PromoCodeTarget.SENDER))
+                .thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "promo-expired", "Promo Expired", "Ce code est expiré."));
+    }
+
+    @Test
+    @DisplayName("prélèvement : le repli d'un code invalide est journalisé en WARN")
+    void reductionsWithPromoFallback_invalidCode_logsWarn() {
+        UUID s = UUID.randomUUID();
+        UUID reference = UUID.randomUUID();
+        expiredCodeFor(s, reference);
+
+        var logs = logsOf(() -> resolver().reductionsWithPromoFallback(UUID.randomUUID(), s, "EXPIRED", reference));
+
+        assertThat(logs).singleElement().satisfies(e ->
+                assertThat(e.getLevel()).isEqualTo(ch.qos.logback.classic.Level.WARN));
+    }
+
+    @Test
+    @DisplayName("affichage : même repli, journalisé en DEBUG seulement (pas un WARN par rendu de liste)")
+    void displayReductionsWithPromoFallback_invalidCode_logsDebugWithSameReductions() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        UUID reference = UUID.randomUUID();
+        expiredCodeFor(s, reference);
+
+        CommissionReductions[] shown = new CommissionReductions[1];
+        var logs = logsOf(() -> shown[0] = resolver().displayReductionsWithPromoFallback(t, s, "EXPIRED", reference));
+
+        assertThat(shown[0]).isEqualTo(CommissionReductions.NONE);
+        assertThat(logs).singleElement().satisfies(e ->
+                assertThat(e.getLevel()).isEqualTo(ch.qos.logback.classic.Level.DEBUG));
+    }
+
+    @Test
+    @DisplayName("affichage d'un bid sans code racheté : repli en DEBUG ; code racheté : remise relue sans validation")
+    void displayReductionsForBid_followsTheBidRule() {
+        UUID s = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        expiredCodeFor(s, bidId);
+        UUID promoCodeId = UUID.randomUUID();
+        PromoDiscount discount = PromoDiscount.points(new BigDecimal("0.05"));
+        when(promoService.discountOfRedeemed(promoCodeId)).thenReturn(Optional.of(discount));
+
+        var logs = logsOf(() -> resolver().displayReductionsForBid(UUID.randomUUID(), s, "EXPIRED", null, bidId));
+        CommissionReductions redeemed = resolver().displayReductionsForBid(UUID.randomUUID(), s, "ONCE", promoCodeId, bidId);
+
+        assertThat(logs).singleElement().satisfies(e ->
+                assertThat(e.getLevel()).isEqualTo(ch.qos.logback.classic.Level.DEBUG));
+        assertThat(redeemed.promo()).isEqualTo(discount);
+        verify(promoService, never()).validateAndGetDiscount(eq("ONCE"), any(), any());
+    }
+
+    // ── reductionsForBid : règle unique d'un bid à grille, commune à l'affichage et aux rails ──
+
+    @Test
+    void reductionsForBid_redeemedCode_readsRedeemedDiscountWithoutValidating() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        UUID promoCodeId = UUID.randomUUID();
+        PromoDiscount discount = PromoDiscount.points(new BigDecimal("0.05"));
+        when(userRepository.findById(t)).thenReturn(Optional.of(withOverride(new BigDecimal("0.04"))));
+        lenient().when(userRepository.findById(s)).thenReturn(Optional.of(withOverride(null)));
+        CommissionVoucherEntity voucher = activeVoucher(new BigDecimal("0.50"));
+        when(voucherService.peekForReference(s, bidId)).thenReturn(Optional.of(voucher));
+        when(promoService.discountOfRedeemed(promoCodeId)).thenReturn(Optional.of(discount));
+
+        CommissionReductions r = resolver().reductionsForBid(t, s, "ONCE", promoCodeId, bidId);
+
+        assertThat(r.promo()).isEqualTo(discount);
+        assertThat(r.overrideRate()).isEqualByComparingTo("0.04");
+        assertThat(r.voucherFactor()).isEqualByComparingTo("0.50");
+        // Revalidé, un code à usage unique échouerait sur son propre rachat.
+        verify(promoService, never()).validateAndGetDiscount(any(), any(), any());
+    }
+
+    @Test
+    void reductionsForBid_redeemedCodeGone_noDiscount() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        UUID promoCodeId = UUID.randomUUID();
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        when(voucherService.peekForReference(s, bidId)).thenReturn(Optional.empty());
+        when(promoService.discountOfRedeemed(promoCodeId)).thenReturn(Optional.empty());
+
+        CommissionReductions r = resolver().reductionsForBid(t, s, "DELETED", promoCodeId, bidId);
+
+        assertThat(r.promo()).isNull();
+        verify(promoService, never()).validateAndGetDiscount(any(), any(), any());
+    }
+
+    @Test
+    void reductionsForBid_noRedeemedCode_fallsBackLikeTheRails() {
+        UUID t = UUID.randomUUID();
+        UUID s = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        lenient().when(userRepository.findById(any())).thenReturn(Optional.of(withOverride(null)));
+        when(voucherService.peekForReference(s, bidId)).thenReturn(Optional.empty());
+        when(promoService.validateAndGetDiscount("EXPIRED", s, PromoCodeTarget.SENDER))
+                .thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "promo-expired", "Promo Expired", "Ce code est expiré."));
+
+        CommissionReductions r = resolver().reductionsForBid(t, s, "EXPIRED", null, bidId);
+
+        assertThat(r).isEqualTo(CommissionReductions.NONE);
+        verify(promoService, never()).discountOfRedeemed(any());
+    }
+
+    @Test
+    void frozen_keepsOverrideAndVoucher_neverAPromo() {
+        CommissionReductions r = CommissionReductions.frozen(new BigDecimal("0.04"), new BigDecimal("0.5"));
+
+        assertThat(r).isEqualTo(new CommissionReductions(new BigDecimal("0.04"), null, new BigDecimal("0.5")));
     }
 }

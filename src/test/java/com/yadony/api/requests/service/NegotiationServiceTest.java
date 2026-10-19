@@ -76,6 +76,42 @@ class NegotiationServiceTest {
     private final UUID SENDER_ID = UUID.randomUUID();
     private final UUID TRAVELER_ID = UUID.randomUUID();
     private final UUID REQUEST_ID = UUID.randomUUID();
+    private final UUID THREAD_GRID_ID = UUID.randomUUID();
+
+    /** Grille figée sur les fils des tests espèces à grille. */
+    private static final UUID CASH_GRID_ID = UUID.randomUUID();
+
+    /**
+     * Injecte un {@link com.yadony.api.common.commission.ThreadCommissionPricing} simulé qui sert
+     * {@code commission} pour ce fil (le calcul lui-même est couvert par ThreadCommissionPricingTest).
+     */
+    private com.yadony.api.common.commission.ThreadCommissionPricing threadPricing(
+            UUID gridId, String net, String currency, UUID threadId, String commission) {
+        var pricing = mock(com.yadony.api.common.commission.ThreadCommissionPricing.class);
+        BigDecimal n = new BigDecimal(net);
+        BigDecimal c = new BigDecimal(commission);
+        var result = new com.yadony.api.common.commission.CommissionResult(n, c, n.add(c), BigDecimal.ZERO, false, false);
+        when(pricing.price(gridId, n, currency, TRAVELER_ID, SENDER_ID, threadId)).thenReturn(result);
+        // Brut affiché du fil (code du fil compris), même devis dans ces tests.
+        lenient().when(pricing.price(eq(gridId), eq(n), eq(currency), eq(TRAVELER_ID), eq(SENDER_ID), eq(threadId), any()))
+            .thenReturn(result);
+        lenient().when(pricing.displayPrice(eq(gridId), eq(n), eq(currency), eq(TRAVELER_ID), eq(SENDER_ID), eq(threadId), any()))
+            .thenReturn(result);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "threadCommissionPricing", pricing);
+        return pricing;
+    }
+
+    /** Fil à grille dont seul le brut affiché importe : commission nulle pour tout net. */
+    private void anyThreadPricing() {
+        var pricing = mock(com.yadony.api.common.commission.ThreadCommissionPricing.class);
+        org.mockito.stubbing.Answer<Object> netOnly = inv -> {
+            BigDecimal n = inv.getArgument(1);
+            return new com.yadony.api.common.commission.CommissionResult(n, BigDecimal.ZERO, n, BigDecimal.ZERO, false, false);
+        };
+        lenient().when(pricing.price(any(), any(), any(), any(), any(), any(), any())).thenAnswer(netOnly);
+        lenient().when(pricing.displayPrice(any(), any(), any(), any(), any(), any(), any())).thenAnswer(netOnly);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "threadCommissionPricing", pricing);
+    }
 
     private PackageRequestEntity request;
     private UserEntity traveler;
@@ -254,6 +290,47 @@ class NegotiationServiceTest {
                 ArgumentCaptor.forClass(NegotiationThreadEntity.class);
             verify(threadRepo).save(captor.capture());
             assertThat(captor.getValue().getPromoCode()).isEqualTo("WELCOME6");
+        }
+
+        @Test
+        @DisplayName("le fil hérite de la grille de sa demande, pas de la grille du jour")
+        void threadStart_inheritsRequestGrid() {
+            UUID gridId = UUID.randomUUID();
+            request.setCommissionGridId(gridId);
+            anyThreadPricing();
+
+            when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
+            when(config.threadsPerMinuteRateLimit()).thenReturn(1);
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findActiveByPackageRequestIdAndTravelerId(REQUEST_ID, TRAVELER_ID))
+                .thenReturn(Optional.empty());
+            when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
+                .thenReturn(0L);
+            when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
+            when(threadRepo.save(any())).thenAnswer(inv -> {
+                NegotiationThreadEntity t = inv.getArgument(0);
+                try {
+                    var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                    idField.setAccessible(true);
+                    idField.set(t, UUID.randomUUID());
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+                return t;
+            });
+            stubMatchingTrip();
+
+            service.start(TRAVELER_ID, new NegotiationStartRequest(
+                REQUEST_ID, new BigDecimal("30"),
+                LocalDate.now().plusDays(5), new BigDecimal("10"),
+                TRIP_ANNOUNCEMENT_ID, "Pas de problème", false, null));
+
+            ArgumentCaptor<NegotiationThreadEntity> captor =
+                ArgumentCaptor.forClass(NegotiationThreadEntity.class);
+            verify(threadRepo).save(captor.capture());
+            assertThat(captor.getValue().getCommissionGridId()).isEqualTo(gridId);
         }
 
         @Test
@@ -1814,6 +1891,31 @@ class NegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("fil à grille — le solde est comparé à la commission de la grille figée")
+        void getById_cashGrid_checksFundsAgainstGridCommission() {
+            UUID THREAD_ID = UUID.randomUUID();
+            var thread = threadFor(THREAD_ID);
+            thread.setCurrency("XOF");
+            thread.setCurrentPriceEur(new BigDecimal("5000"));
+            thread.setCommissionGridId(CASH_GRID_ID);
+            var pricing = threadPricing(CASH_GRID_ID, "5000", "XOF", THREAD_ID, "650");
+
+            when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(java.util.List.of());
+            when(cashGatePort.hasSufficientFunds(eq(TRAVELER_ID), any(), any())).thenReturn(true);
+
+            service.getById(TRAVELER_ID, THREAD_ID);
+
+            // Le devis partagé avec le rail espèces (le montant que
+            // CashCommissionService.settleNegotiationCommission prélèvera).
+            verify(pricing).price(CASH_GRID_ID, new BigDecimal("5000"), "XOF", TRAVELER_ID, SENDER_ID, THREAD_ID);
+            verify(cashGatePort).hasSufficientFunds(eq(TRAVELER_ID),
+                argThat(c -> c.compareTo(new BigDecimal("650")) == 0), eq("XOF"));
+        }
+
+        @Test
         @DisplayName("fil AWAITING_DEPOSIT : la réponse porte l'échéance du dépôt")
         void getById_awaitingDeposit_exposesDepositExpiresAt() {
             UUID THREAD_ID = UUID.randomUUID();
@@ -1989,6 +2091,33 @@ class NegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("fil à grille — taux effectif au-delà de 100 % borné à 0,999999 (CHECK [0, 1[)")
+        void recordAppliedPromo_gridThread_capsRate() {
+            UUID threadId = UUID.randomUUID();
+            var thread = new NegotiationThreadEntity();
+            thread.setCommissionGridId(UUID.randomUUID());
+            when(threadRepo.findById(threadId)).thenReturn(Optional.of(thread));
+
+            service.recordAppliedPromo(threadId, "WELCOME6", new BigDecimal("2.000000"));
+
+            assertThat(thread.getCommissionRate()).isEqualByComparingTo("0.999999");
+        }
+
+        @Test
+        @DisplayName("fil à grille, code effacé — taux nul conservé")
+        void recordAppliedPromo_gridThread_nullRateStaysNull() {
+            UUID threadId = UUID.randomUUID();
+            var thread = new NegotiationThreadEntity();
+            thread.setCommissionGridId(UUID.randomUUID());
+            thread.setCommissionRate(new BigDecimal("0.05"));
+            when(threadRepo.findById(threadId)).thenReturn(Optional.of(thread));
+
+            service.recordAppliedPromo(threadId, null, null);
+
+            assertThat(thread.getCommissionRate()).isNull();
+        }
+
+        @Test
         @DisplayName("thread introuvable — no-op silencieux")
         void recordAppliedPromo_threadNotFound_noop() {
             UUID threadId = UUID.randomUUID();
@@ -1997,6 +2126,34 @@ class NegotiationServiceTest {
             service.recordAppliedPromo(threadId, "WELCOME6", new BigDecimal("0.06"));
 
             verify(threadRepo, never()).save(any());
+        }
+    }
+
+    @Nested
+    @DisplayName("commissionGridIdOf() — grille figée sur le fil")
+    class CommissionGridIdOfTests {
+        @Test
+        @DisplayName("fil à grille — rend la grille héritée de la demande")
+        void commissionGridIdOf_returnsFrozenGrid() {
+            UUID threadId = UUID.randomUUID();
+            UUID gridId = UUID.randomUUID();
+            var thread = new NegotiationThreadEntity();
+            thread.setCommissionGridId(gridId);
+            when(threadRepo.findById(threadId)).thenReturn(Optional.of(thread));
+
+            assertThat(service.commissionGridIdOf(threadId)).isEqualTo(gridId);
+        }
+
+        @Test
+        @DisplayName("fil antérieur aux grilles ou introuvable — null, calcul hérité")
+        void commissionGridIdOf_legacyOrMissing_returnsNull() {
+            UUID legacy = UUID.randomUUID();
+            when(threadRepo.findById(legacy)).thenReturn(Optional.of(new NegotiationThreadEntity()));
+            UUID missing = UUID.randomUUID();
+            when(threadRepo.findById(missing)).thenReturn(Optional.empty());
+
+            assertThat(service.commissionGridIdOf(legacy)).isNull();
+            assertThat(service.commissionGridIdOf(missing)).isNull();
         }
     }
 
@@ -3796,6 +3953,37 @@ class NegotiationServiceTest {
             assertThat(published.expiresAt()).isAfter(before);
         }
 
+        @Test
+        @DisplayName("thread CASH à grille — l'événement et l'audit portent la commission de la grille figée")
+        void finalizeInternal_cashGrid_pendingEventCarriesGridCommission() {
+            thread.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
+            thread.setCommissionGridId(CASH_GRID_ID);
+            request.setAcceptedPaymentMethods(java.util.EnumSet.of(PaymentMethod.CASH));
+            request.setRecipientName("Fatou Diop");
+            request.setRecipientPhone("+221771234567");
+            var pricing = threadPricing(CASH_GRID_ID, "35", thread.getCurrency(), THREAD_ID, "2.45");
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(escrowPort.releaseEscrowForMethodSwitch(THREAD_ID)).thenReturn(true);
+            when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+
+            service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_x");
+
+            ArgumentCaptor<com.yadony.api.requests.event.NegotiationCommissionPendingEvent> captor =
+                ArgumentCaptor.forClass(com.yadony.api.requests.event.NegotiationCommissionPendingEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            // Devis partagé avec le règlement (2,45 € sur la grille 7/6/5), et non
+            // 35 € × 12 % = 4,20 € (taux global).
+            verify(pricing).price(CASH_GRID_ID, new BigDecimal("35"), thread.getCurrency(),
+                TRAVELER_ID, SENDER_ID, THREAD_ID);
+            assertThat(captor.getValue().commissionAmount()).isEqualByComparingTo("2.45");
+            verify(auditService).log(eq("NEGOTIATION_THREAD"), eq(THREAD_ID), eq("AWAITING_COMMISSION"),
+                eq(SENDER_ID), eq(java.util.Map.of("commission", "2.45")));
+        }
+
         // Idempotence : un double tap de l'expéditeur (ou une relance après timeout réseau)
         // ne doit jamais lui montrer une erreur pour une action qui a déjà réussi.
         @Test
@@ -3839,6 +4027,8 @@ class NegotiationServiceTest {
             // matérialisé est annulé avant remise — sans elle le remboursement est
             // silencieusement sauté).
             thread.setCommissionChargedVia("CARD");
+            thread.setCommissionGridId(THREAD_GRID_ID);
+            anyThreadPricing();
 
             NegotiationThreadEntity competing = new NegotiationThreadEntity();
             competing.setPackageRequestId(REQUEST_ID);
@@ -3873,6 +4063,8 @@ class NegotiationServiceTest {
             // Sans cette propagation, ThreadAcceptedBidListener ne saurait pas comment
             // rembourser la commission si le bid matérialisé est annulé avant remise.
             assertThat(sealedCaptor.getValue().commissionChargedVia()).isEqualTo("CARD");
+            // La grille du fil voyage dans l'événement : le bid matérialisé la recopie.
+            assertThat(sealedCaptor.getValue().commissionGridId()).isEqualTo(THREAD_GRID_ID);
             verifyNoInteractions(cashGatePort);
         }
 

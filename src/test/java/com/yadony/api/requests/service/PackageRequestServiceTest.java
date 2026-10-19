@@ -78,6 +78,7 @@ class PackageRequestServiceTest {
     @Mock private com.yadony.api.common.BlockVisibility blockVisibility;
     @Mock private PackageRequestInsightService insightService;
     @Mock private TravelerNegotiationLookup negotiationLookup;
+    @Mock private com.yadony.api.common.commission.CommissionGridService commissionGridService;
     /** Real record (not mocked) — threshold-days=3 mirrors application-test.yml (yadony.urgency.threshold-days). */
     private final YadonyConfigProperties yadonyConfig =
             new YadonyConfigProperties(null, null, new YadonyConfigProperties.Urgency(3), null);
@@ -124,7 +125,8 @@ class PackageRequestServiceTest {
         // Real mapper wired to the same mocks so SearchTests assertions remain valid
         PackageRequestSearchMapper realMapper = new PackageRequestSearchMapper(
                 userRepository, cityRepository, storageService, photoService,
-                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3));
+                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
+                commissionGridService);
         service = serviceWithProEnabled(realMapper, true);
     }
 
@@ -144,7 +146,8 @@ class PackageRequestServiceTest {
                 exchangeRateService, mapper, matchingService,
                 yadonyConfig, announcementRepository, commissionRateResolver,
                 com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(proEnabled),
-                blockVisibility, TestMessages.resolver(), insightService, negotiationLookup);
+                blockVisibility, TestMessages.resolver(), insightService, negotiationLookup,
+                commissionGridService);
     }
 
     // ========== Task 12: create() tests ==========
@@ -330,7 +333,7 @@ class PackageRequestServiceTest {
         void quote_noPromo_baseRate() {
             when(commissionRateResolver.resolve(isNull(), eq(SENDER_ID))).thenReturn(new BigDecimal("0.05"));
 
-            var quote = service.quote(SENDER_ID, new BigDecimal("40.00"), null);
+            var quote = service.quote(SENDER_ID, new BigDecimal("40.00"), null, null);
 
             assertThat(quote.totalEur()).isEqualByComparingTo("40.00");
             assertThat(quote.rate()).isEqualByComparingTo("0.05");
@@ -345,7 +348,7 @@ class PackageRequestServiceTest {
             when(commissionRateResolver.resolve(isNull(), eq(SENDER_ID), eq("WELCOME6")))
                 .thenReturn(new BigDecimal("0.06"));
 
-            var quote = service.quote(SENDER_ID, new BigDecimal("40.00"), "WELCOME6");
+            var quote = service.quote(SENDER_ID, new BigDecimal("40.00"), "WELCOME6", null);
 
             assertThat(quote.rate()).isEqualByComparingTo("0.12"); // base, jamais affecté
             assertThat(quote.commissionEur()).isEqualByComparingTo("4.29"); // 40 - 40/1.12
@@ -362,7 +365,7 @@ class PackageRequestServiceTest {
                 .thenReturn(new BigDecimal("0.07"));
             TestMessages.requestWithAcceptLanguage("en");
 
-            var quote = service.quote(SENDER_ID, new BigDecimal("40.00"), "welcome");
+            var quote = service.quote(SENDER_ID, new BigDecimal("40.00"), "welcome", null);
 
             assertThat(quote.promoLabel()).isEqualTo("Code WELCOME: 5% off");
         }
@@ -373,7 +376,7 @@ class PackageRequestServiceTest {
                 .thenThrow(new com.yadony.api.common.YadonyBusinessException(
                     HttpStatus.NOT_FOUND, "promo-not-found", "Promo Not Found", "Introuvable"));
 
-            assertThatThrownBy(() -> service.quote(SENDER_ID, new BigDecimal("40.00"), "BADCODE"))
+            assertThatThrownBy(() -> service.quote(SENDER_ID, new BigDecimal("40.00"), "BADCODE", null))
                 .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class);
         }
     }
@@ -556,6 +559,35 @@ class PackageRequestServiceTest {
             assertThat(saved.getTransportMode()).isEqualTo(TransportMode.PLANE);
             assertThat(saved.getTargetPriceEur()).isEqualByComparingTo("35.00"); // 39.20 / 1.12
             assertThat(saved.isNegotiable()).isTrue();
+        }
+
+        @Test @DisplayName("grille en vigueur → son id est figé sur la demande à la création")
+        void packageRequestCreate_freezesGrid() {
+            UUID gridId = UUID.randomUUID();
+            when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+            when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
+            when(commissionGridService.current()).thenReturn(Optional.of(
+                new com.yadony.api.common.commission.CommissionGrid(
+                    gridId, java.time.LocalDateTime.MIN, List.of(), java.util.Map.of())));
+
+            PackageRequestEntity saved = service.createAndReturnEntity(SENDER_ID, validRequest());
+
+            assertThat(saved.getCommissionGridId()).isEqualTo(gridId);
+        }
+
+        @Test @DisplayName("aucune grille en vigueur → la demande reste sans grille (chemin hérité)")
+        void packageRequestCreate_noGrid_null() {
+            when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+            when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
+            when(commissionGridService.current()).thenReturn(Optional.empty());
+
+            PackageRequestEntity saved = service.createAndReturnEntity(SENDER_ID, validRequest());
+
+            assertThat(saved.getCommissionGridId()).isNull();
         }
 
         @Test @DisplayName("devise business CAD de l'expéditeur → assignée à la demande")
@@ -2338,7 +2370,8 @@ class PackageRequestServiceTest {
             // l'offre PRO est fermee, le plafond PRO (10) s'applique a tout le monde.
             PackageRequestService proClosed = serviceWithProEnabled(
                     new PackageRequestSearchMapper(userRepository, cityRepository, storageService, photoService,
-                            com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(false)),
+                            com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(false),
+                            commissionGridService),
                     false);
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
             when(repository.countBySenderIdAndStatus(SENDER_ID, PackageRequestStatus.DRAFT))

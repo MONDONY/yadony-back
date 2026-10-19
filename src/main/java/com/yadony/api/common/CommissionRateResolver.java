@@ -2,9 +2,12 @@ package com.yadony.api.common;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.commission.CommissionReductions;
 import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.promo.PromoCodeTarget;
+import com.yadony.api.promo.PromoDiscount;
 import com.yadony.api.promo.PromoService;
+import com.yadony.api.voucher.CommissionVoucherEntity;
 import com.yadony.api.voucher.CommissionVoucherService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -126,23 +129,133 @@ public class CommissionRateResolver {
      */
     public BigDecimal resolve(UUID travelerId, UUID senderId, String promoCode, UUID promoUserId,
                               UUID reference) {
-        BigDecimal rate = globalRate();
-        rate = minNullable(rate, overrideOf(travelerId));
-        rate = minNullable(rate, overrideOf(senderId));
-        if (promoCode != null && !promoCode.isBlank() && promoUserId != null) {
-            rate = promoService.validateAndGetDiscount(promoCode, promoUserId, PromoCodeTarget.SENDER)
-                    .applyTo(rate);
+        CommissionReductions reductions = reductions(travelerId, senderId, promoCode, promoUserId, reference);
+        BigDecimal rate = minNullable(globalRate(), reductions.overrideRate());
+        if (reductions.promo() != null) {
+            rate = reductions.promo().applyTo(rate);
         }
+        if (reductions.voucherFactor() != null) {
+            rate = rate.multiply(reductions.voucherFactor());
+        }
+        return rate.max(BigDecimal.ZERO);
+    }
+
+    /**
+     * Réductions personnelles, séparées du taux : taux spécial (le plus bas du voyageur et
+     * de l'expéditeur), remise du code promo validé et facteur du bon de parrainage. Les
+     * rails les appliquent à la commission de la grille, qui n'est pas un taux unique.
+     *
+     * <p>Mêmes règles que {@link #resolve(UUID, UUID, String, UUID, UUID)} : un code promo
+     * invalide lève {@link YadonyBusinessException}, le bon n'est lu que si l'expéditeur
+     * est connu, et la lecture du bon ne consomme rien. Sans aucune réduction, renvoie
+     * {@link CommissionReductions#NONE}.
+     */
+    public CommissionReductions reductions(UUID travelerId, UUID senderId, String promoCode,
+                                           UUID promoUserId, UUID reference) {
+        BigDecimal override = minNullable(overrideOf(travelerId), overrideOf(senderId));
+        PromoDiscount promo = null;
+        if (promoCode != null && !promoCode.isBlank() && promoUserId != null) {
+            promo = promoService.validateAndGetDiscount(promoCode, promoUserId, PromoCodeTarget.SENDER);
+        }
+        BigDecimal voucherFactor = null;
         if (senderId != null) {
-            BigDecimal beforeVoucher = rate;
             var voucher = reference == null
                     ? voucherService.peekActive(senderId)
                     : voucherService.peekForReference(senderId, reference);
-            rate = voucher
-                    .map(v -> beforeVoucher.multiply(v.getFactor()))
-                    .orElse(beforeVoucher);
+            voucherFactor = voucher.map(CommissionVoucherEntity::getFactor).orElse(null);
         }
-        return rate.max(BigDecimal.ZERO);
+        if (override == null && promo == null && voucherFactor == null) {
+            return CommissionReductions.NONE;
+        }
+        return new CommissionReductions(override, promo, voucherFactor);
+    }
+
+    /**
+     * {@link #reductions} d'un paiement à grille, avec la règle de repli commune aux trois rails
+     * (carte, espèces, mobile money) : sans code (nul ou blanc), réductions sans code ; un code
+     * devenu invalide (expiré, limite atteinte…) retombe sur les réductions sans code au lieu de
+     * faire échouer le paiement, comme le chemin hérité retombe sur le taux sans promo. Le code
+     * est validé pour l'expéditeur, cible SENDER. Source unique : une divergence entre rails
+     * ferait dépendre la commission du moyen de paiement.
+     *
+     * <p>Réservée aux prélèvements : le repli y est journalisé en WARN. Un affichage passe par
+     * {@link #displayReductionsWithPromoFallback}.
+     *
+     * @param reference bid ou fil : le bon pris en compte est celui déjà rattaché à cette
+     *                  référence s'il existe (lecture pure, la consommation reste à l'appelant).
+     */
+    public CommissionReductions reductionsWithPromoFallback(UUID travelerId, UUID senderId, String promoCode,
+                                                            UUID reference) {
+        return withPromoFallback(travelerId, senderId, promoCode, reference, false);
+    }
+
+    /**
+     * Même règle que {@link #reductionsWithPromoFallback}, pour un affichage (réponse d'un bid,
+     * d'un fil, notification) : le repli n'est journalisé qu'en DEBUG. Un code expiré resterait
+     * sinon un WARN par objet et par rendu de liste, qui noierait ceux des prélèvements.
+     */
+    public CommissionReductions displayReductionsWithPromoFallback(UUID travelerId, UUID senderId,
+                                                                   String promoCode, UUID reference) {
+        return withPromoFallback(travelerId, senderId, promoCode, reference, true);
+    }
+
+    private CommissionReductions withPromoFallback(UUID travelerId, UUID senderId, String promoCode,
+                                                   UUID reference, boolean display) {
+        if (promoCode == null || promoCode.isBlank()) {
+            return reductions(travelerId, senderId, null, null, reference);
+        }
+        try {
+            return reductions(travelerId, senderId, promoCode, senderId, reference);
+        } catch (YadonyBusinessException e) {
+            if (display) {
+                log.debug("Promo {} invalide pour {} ({}) : affichage sans promo",
+                        promoCode, reference, e.getErrorCode());
+            } else {
+                log.warn("Promo {} invalide pour {} ({}) : repli sur les réductions sans promo",
+                        promoCode, reference, e.getErrorCode());
+            }
+            return reductions(travelerId, senderId, null, null, reference);
+        }
+    }
+
+    /**
+     * Réductions d'un bid à grille, RÈGLE UNIQUE de l'affichage ({@code BidService}) et des trois
+     * rails (carte, espèces, mobile money) : le total montré à l'expéditeur est ainsi exactement
+     * celui prélevé.
+     * <ul>
+     *   <li><b>Code déjà racheté ou verrouillé</b> ({@code promoCodeId}) : taux spécial et bon pour
+     *       ce bid, et la remise de ce code lue sans contrôle ({@link PromoService#discountOfRedeemed}).
+     *       Revalidé, un code à usage unique échouerait sur sa propre utilisation et la remise
+     *       accordée disparaîtrait. Code supprimé depuis : aucune remise.</li>
+     *   <li><b>Sinon</b> : {@link #reductionsWithPromoFallback}.</li>
+     * </ul>
+     *
+     * <p>Réservée aux prélèvements (repli journalisé en WARN) ; l'affichage passe par
+     * {@link #displayReductionsForBid}, même règle.
+     *
+     * @param bidId référence du bon de parrainage pris en compte (lecture pure).
+     */
+    public CommissionReductions reductionsForBid(UUID travelerId, UUID senderId, String promoCode,
+                                                 UUID promoCodeId, UUID bidId) {
+        if (promoCodeId == null) {
+            return reductionsWithPromoFallback(travelerId, senderId, promoCode, bidId);
+        }
+        return withRedeemedCode(travelerId, senderId, promoCodeId, bidId);
+    }
+
+    /** {@link #reductionsForBid} pour l'affichage d'un bid : repli d'un code invalide journalisé en DEBUG. */
+    public CommissionReductions displayReductionsForBid(UUID travelerId, UUID senderId, String promoCode,
+                                                        UUID promoCodeId, UUID bidId) {
+        if (promoCodeId == null) {
+            return displayReductionsWithPromoFallback(travelerId, senderId, promoCode, bidId);
+        }
+        return withRedeemedCode(travelerId, senderId, promoCodeId, bidId);
+    }
+
+    private CommissionReductions withRedeemedCode(UUID travelerId, UUID senderId, UUID promoCodeId, UUID bidId) {
+        CommissionReductions base = reductions(travelerId, senderId, null, null, bidId);
+        PromoDiscount redeemed = promoService.discountOfRedeemed(promoCodeId).orElse(null);
+        return new CommissionReductions(base.overrideRate(), redeemed, base.voucherFactor());
     }
 
     private BigDecimal overrideOf(UUID userId) {
@@ -153,6 +266,7 @@ public class CommissionRateResolver {
     }
 
     private static BigDecimal minNullable(BigDecimal base, BigDecimal candidate) {
+        if (base == null) return candidate;
         return candidate == null ? base : base.min(candidate);
     }
 }

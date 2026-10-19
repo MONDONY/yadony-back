@@ -19,7 +19,8 @@ class PackageRequestSearchMapperGpProTest {
         PackageRequestSearchMapper mapper = new PackageRequestSearchMapper(
                 mock(com.yadony.api.auth.UserRepository.class), mock(com.yadony.api.city.CityRepository.class),
                 mock(StorageService.class), mock(PackageRequestPhotoService.class),
-                PlatformSettingsTestFactory.withUrgencyThresholdDays(3));
+                PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
+                mock(com.yadony.api.common.commission.CommissionGridService.class));
         UserEntity sender = new UserEntity();
         sender.setUsername("user1");
         sender.setGpPro(true);

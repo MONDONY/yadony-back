@@ -40,6 +40,7 @@ class BidCheckoutServiceTest {
     @Mock private BidGridItemRepository bidGridItemRepository;
     @Mock private AnnouncementPriceGridItemRepository annGridItemRepository;
     @Mock private BidPhotoService bidPhotoService;
+    @Mock private com.yadony.api.common.commission.CommissionGridService commissionGridService;
     @Mock private HttpServletRequest httpRequest;
 
     @InjectMocks private BidCheckoutService service;
@@ -704,6 +705,43 @@ class BidCheckoutServiceTest {
         service.checkout("uid-sender", req, httpRequest);
 
         assertThat(savedBid.getAllValues().get(0).getCurrency()).isEqualTo("USD");
+    }
+
+    @Test
+    void checkout_freezesCurrentGrid() {
+        UUID gridId = UUID.randomUUID();
+        when(commissionGridService.current()).thenReturn(Optional.of(
+            new com.yadony.api.common.commission.CommissionGrid(
+                gridId, java.time.LocalDateTime.MIN, java.util.List.of(), java.util.Map.of())));
+        ArgumentCaptor<BidEntity> savedBid = ArgumentCaptor.forClass(BidEntity.class);
+        when(bidRepository.save(savedBid.capture())).thenAnswer(inv -> {
+            BidEntity b = inv.getArgument(0);
+            if (b.getId() == null) ReflectionTestUtils.setField(b, "id", UUID.randomUUID());
+            return b;
+        });
+        when(paymentService.createEscrow(any(CreatePaymentRequest.class), eq("uid-sender")))
+            .thenReturn(stubPaymentResponse());
+
+        service.checkout("uid-sender", req, httpRequest);
+
+        assertThat(savedBid.getAllValues().get(0).getCommissionGridId()).isEqualTo(gridId);
+    }
+
+    @Test
+    void checkout_noGrid_leavesBidWithoutGrid() {
+        when(commissionGridService.current()).thenReturn(Optional.empty());
+        ArgumentCaptor<BidEntity> savedBid = ArgumentCaptor.forClass(BidEntity.class);
+        when(bidRepository.save(savedBid.capture())).thenAnswer(inv -> {
+            BidEntity b = inv.getArgument(0);
+            if (b.getId() == null) ReflectionTestUtils.setField(b, "id", UUID.randomUUID());
+            return b;
+        });
+        when(paymentService.createEscrow(any(CreatePaymentRequest.class), eq("uid-sender")))
+            .thenReturn(stubPaymentResponse());
+
+        service.checkout("uid-sender", req, httpRequest);
+
+        assertThat(savedBid.getAllValues().get(0).getCommissionGridId()).isNull();
     }
 
     @Test

@@ -40,9 +40,16 @@ public interface NegotiationMobileMoneyPort {
      * Crée le paiement PENDING keyé sur le fil (rail PAWAPAY), dans la transaction appelante.
      * Idempotent : un PENDING existant est rendu tel quel, un CANCELLED est recyclé.
      * Ne soumet JAMAIS rien à pawaPay.
+     *
+     * @param commissionGridId grille figée sur le fil, {@code null} pour un fil sans grille
+     *                         (commission {@code net × commissionRate}, calcul hérité).
+     * @param gridCommission   commission d'un fil à grille, celle que l'appelant annonce
+     *                         ({@code ThreadCommissionPricing}) ; non nulle si et seulement si la
+     *                         grille l'est. {@code commissionRate} n'est alors qu'informatif.
      */
     PendingDeposit createPendingDeposit(UUID threadId, UUID senderId, UUID travelerId,
-                                        BigDecimal net, BigDecimal commissionRate, String currency);
+                                        BigDecimal net, BigDecimal commissionRate, String currency,
+                                        UUID commissionGridId, BigDecimal gridCommission);
 
     /** Annule le paiement PENDING du fil si aucun dépôt n'est en vol. */
     ReleaseOutcome releasePendingDeposit(UUID threadId);

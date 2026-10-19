@@ -164,7 +164,8 @@ class PackageRequestServiceMatchingTest {
 
         PackageRequestSearchMapper realMapper = new PackageRequestSearchMapper(
                 userRepository, cityRepository, storageService, photoService,
-                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3));
+                com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
+                org.mockito.Mockito.mock(com.yadony.api.common.commission.CommissionGridService.class));
         service = new PackageRequestService(
                 repository, userRepository, eventPublisher, auditService, config,
                 threadRepository, cityRepository, storageService, photoService, favoriteRepository, activeCurrencyResolver,
@@ -172,7 +173,8 @@ class PackageRequestServiceMatchingTest {
                 yadonyConfig, announcementRepository, commissionRateResolver,
                 com.yadony.api.config.PlatformSettingsTestFactory.defaults(),
                 blockVisibility, null, org.mockito.Mockito.mock(PackageRequestInsightService.class),
-                org.mockito.Mockito.mock(TravelerNegotiationLookup.class));
+                org.mockito.Mockito.mock(TravelerNegotiationLookup.class),
+                org.mockito.Mockito.mock(com.yadony.api.common.commission.CommissionGridService.class));
     }
 
     @Test

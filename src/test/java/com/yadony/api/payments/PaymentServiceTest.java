@@ -31,6 +31,7 @@ import com.stripe.param.PaymentIntentCancelParams;
 import com.stripe.param.PaymentIntentCreateParams;
 import org.assertj.core.api.ThrowableAssert;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -216,6 +217,26 @@ class PaymentServiceTest {
         when(request.getBidId()).thenReturn(bidId);
 
         assertYadonyError(() -> service.createEscrow(request, "uid-sender"), "payment-already-completed");
+    }
+
+    @Test
+    @DisplayName("bid matérialisé depuis un fil : payé sur le fil, jamais un second escrow (brut du fil à grille)")
+    void createEscrow_bidMaterializedFromThread_throwsConflictWithoutAnyPayment() {
+        UserEntity sender = buildUser(senderId, "uid-sender");
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+        BidEntity bid = buildBid(BidStatus.ACCEPTED);
+        bid.setLinkedNegotiationThreadId(UUID.randomUUID());
+        bid.setCommissionGridId(UUID.randomUUID());
+        bid.setNegotiatedNetEur(new BigDecimal("100.00"));
+        bid.setNegotiatedGrossEur(new BigDecimal("103.50"));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+
+        var request = mock(com.yadony.api.payments.dto.CreatePaymentRequest.class);
+        when(request.getBidId()).thenReturn(bidId);
+
+        assertYadonyError(() -> service.createEscrow(request, "uid-sender"), "payment-already-completed");
+        verify(paymentRepository, never()).findByBidId(any());
+        verify(paymentRepository, never()).save(any());
     }
 
     // Lot B (revue round 3 — inventaire) : POST /payments (PaymentController.createEscrow)

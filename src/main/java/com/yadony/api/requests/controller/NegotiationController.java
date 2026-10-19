@@ -268,9 +268,10 @@ public class NegotiationController {
         String code = thread.commissionRate() != null
                 ? thread.promoCode()
                 : promoCode != null ? promoCode : thread.promoCode();
+        // Grille figée sur le fil : la commission ne suit jamais la grille du jour.
         var response = paymentService.createNegotiationEscrow(
             id, senderId, thread.travelerId(), thread.currentPriceEur(), code,
-            thread.commissionRate(), thread.currency());
+            thread.commissionRate(), thread.currency(), service.commissionGridIdOf(id));
         // Persiste le taux réellement appliqué pour que le rachat (redeem, décompte
         // per-user-limit) puisse se raccrocher au bid_id une fois matérialisé après
         // paiement confirmé (ThreadAcceptedBidListener) — createNegotiationEscrow ne

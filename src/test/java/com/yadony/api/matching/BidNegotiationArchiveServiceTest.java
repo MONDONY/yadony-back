@@ -80,7 +80,7 @@ class BidNegotiationArchiveServiceTest {
                 bidRepository, announcementRepository, userRepository, messageRepository,
                 customItemRepository, bidGridItemRepository, annGridItemRepository,
                 bidPhotoService, commissionRateResolver, auditService, eventPublisher,
-                new MatchingNegotiationConfig(3, 1, 24, "-"), bidService, mobileMoneyPort);
+                new MatchingNegotiationConfig(3, 1, 24, "-"), bidService, mobileMoneyPort, null);
 
         announcement = new AnnouncementEntity();
         announcement.setTravelerId(TRAVELER_ID);
@@ -237,6 +237,17 @@ class BidNegotiationArchiveServiceTest {
 
         assertThatThrownBy(() -> service.archive(BID_ID, SENDER_UID))
                 .satisfies(t -> assertProblem(t, HttpStatus.NOT_FOUND, "negotiation-not-found"));
+    }
+
+    @Test
+    @DisplayName("un bid matérialisé d'un fil de demande, au total payé figé, n'est pas une discussion de prix → 404")
+    void archive_bidMaterializedFromThread_returns404() {
+        BidEntity b = bid(BidStatus.ACCEPTED, true);
+        b.setLinkedNegotiationThreadId(UUID.randomUUID());
+
+        assertThatThrownBy(() -> service.archive(BID_ID, SENDER_UID))
+                .satisfies(t -> assertProblem(t, HttpStatus.NOT_FOUND, "negotiation-not-found"));
+        verifyNoInteractions(auditService);
     }
 
     @Test

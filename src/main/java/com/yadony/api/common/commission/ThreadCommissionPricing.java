@@ -1,0 +1,107 @@
+package com.yadony.api.common.commission;
+
+import com.yadony.api.common.CommissionRateResolver;
+import com.yadony.api.payments.currency.SupportedCurrency;
+import org.springframework.stereotype.Component;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.UUID;
+
+/**
+ * Commission d'un fil de demande d'envoi à grille figée (héritée de sa demande, spec §4.4) :
+ * source unique du montant ANNONCÉ (événement {@code NegotiationCommissionPendingEvent}, contrôle
+ * du solde du voyageur, devis) et du montant PRÉLEVÉ au règlement espèces
+ * ({@code CashCommissionService.settleNegotiationCommission}) ou DÉPOSÉ en mobile money
+ * ({@code NegotiationService.prepareMobileMoneyDeposit}). Les deux doivent être égaux.
+ *
+ * <p>Grille marginale, taux spécial et bon de parrainage rattachés au fil, code promo du fil pour
+ * le seul rail mobile money (le rail espèces des fils n'en prend pas), minimum de la devise, un
+ * seul arrondi à l'unité mineure (francs entiers en XOF/XAF). Lecture pure : ni le bon ni le code
+ * ne sont consommés.
+ */
+@Component
+public class ThreadCommissionPricing {
+
+    private final CommissionGridService gridService;
+    private final CommissionRateResolver rateResolver;
+
+    public ThreadCommissionPricing(CommissionGridService gridService, CommissionRateResolver rateResolver) {
+        this.gridService = gridService;
+        this.rateResolver = rateResolver;
+    }
+
+    /**
+     * Devis de la commission du fil.
+     *
+     * @param gridId       grille figée sur le fil (non nulle : un fil sans grille garde le calcul hérité).
+     * @param net          net du voyageur, dans la devise du fil.
+     * @param currencyCode devise du fil ({@code negotiation_threads.currency}), EUR par défaut.
+     * @param threadId     référence du bon de parrainage déjà rattaché au fil.
+     * @return devis complet ; un net nul à l'unité mineure ne coûte rien (commission 0, brut = net),
+     *         comme {@code net × taux} sur le chemin hérité.
+     */
+    public CommissionResult price(UUID gridId, BigDecimal net, String currencyCode,
+                                  UUID travelerId, UUID senderId, UUID threadId) {
+        return price(gridId, net, currencyCode, travelerId, senderId, threadId, null);
+    }
+
+    /**
+     * Même devis, avec le code promo copié sur le fil (dépôt mobile money, comme la carte).
+     *
+     * @param promoCode code du fil, {@code null} ou blanc sans code. Un code devenu invalide
+     *                  (expiré, limite atteinte…) retombe sur les réductions sans code, comme le
+     *                  rail carte ; {@link CommissionResult#promoEffective()} dit alors faux, de
+     *                  même quand le minimum annule tout le gain : le code ne doit pas être racheté.
+     */
+    public CommissionResult price(UUID gridId, BigDecimal net, String currencyCode,
+                                  UUID travelerId, UUID senderId, UUID threadId, String promoCode) {
+        return price(gridId, net, currencyCode, travelerId, senderId, threadId, promoCode, false);
+    }
+
+    /**
+     * Même devis que {@link #price(UUID, BigDecimal, String, UUID, UUID, UUID, String)}, pour un
+     * affichage (réponse du fil, notification) : le repli d'un code devenu invalide n'est journalisé
+     * qu'en DEBUG ({@link CommissionRateResolver#displayReductionsWithPromoFallback}), les montants
+     * sont identiques.
+     */
+    public CommissionResult displayPrice(UUID gridId, BigDecimal net, String currencyCode,
+                                         UUID travelerId, UUID senderId, UUID threadId, String promoCode) {
+        return price(gridId, net, currencyCode, travelerId, senderId, threadId, promoCode, true);
+    }
+
+    private CommissionResult price(UUID gridId, BigDecimal net, String currencyCode, UUID travelerId,
+                                   UUID senderId, UUID threadId, String promoCode, boolean display) {
+        SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(currencyCode);
+        BigDecimal n = net.setScale(currency.minorUnit(), RoundingMode.HALF_UP);
+        if (n.signum() <= 0) {
+            BigDecimal zero = BigDecimal.ZERO.setScale(currency.minorUnit());
+            return new CommissionResult(n, zero, n,
+                    BigDecimal.ZERO.setScale(CommissionResult.STORED_RATE_SCALE), false, false);
+        }
+        CommissionReductions reductions = display
+                ? rateResolver.displayReductionsWithPromoFallback(travelerId, senderId, promoCode, threadId)
+                : rateResolver.reductionsWithPromoFallback(travelerId, senderId, promoCode, threadId);
+        return CommissionCalculator.compute(n, currency, gridService.require(gridId), reductions);
+    }
+
+    /**
+     * Brut public du fil : grille figée, minimum compris, SANS aucune réduction personnelle
+     * (taux spécial, bon, code). C'est le brut montré au voyageur, qui ne doit pas pouvoir
+     * déduire les avantages privés de l'expéditeur par simple division brut / net. Un net nul à
+     * l'unité mineure ne coûte rien (brut = net), comme {@link #price}.
+     */
+    public BigDecimal publicGross(UUID gridId, BigDecimal net, String currencyCode) {
+        SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(currencyCode);
+        BigDecimal n = net.setScale(currency.minorUnit(), RoundingMode.HALF_UP);
+        if (n.signum() <= 0) {
+            return n;
+        }
+        return CommissionCalculator.compute(n, currency, gridService.require(gridId), CommissionReductions.NONE).gross();
+    }
+
+    /** Commission minimum de la devise du fil sur sa grille figée ({@code minimumAmount} des devis). */
+    public BigDecimal minimum(UUID gridId, String currencyCode) {
+        return gridService.require(gridId).minimum(SupportedCurrency.fromCodeOrDefault(currencyCode));
+    }
+}

@@ -127,6 +127,17 @@ public class CacheConfig {
                         .recordStats()
                         .build());
 
+        // commission-grids : liste de TOUTES les grilles de commission non annulees (CommissionGridService).
+        // Lue a chaque devis, paiement et ecran de prix ; la grille en vigueur est choisie dans la liste
+        // d'apres l'horloge, a chaque appel, donc un changement de grille a sa date ne depend pas du cache.
+        // Videe apres chaque ecriture validee ; la TTL de 30 s n'est qu'un filet multi-instances.
+        manager.registerCustomCache("commission-grids",
+                Caffeine.newBuilder()
+                        .maximumSize(1)
+                        .expireAfterWrite(30, TimeUnit.SECONDS)
+                        .recordStats()
+                        .build());
+
         // Standard caches that use the default spec
         manager.setCacheNames(java.util.List.of(
                 "announcements-search",

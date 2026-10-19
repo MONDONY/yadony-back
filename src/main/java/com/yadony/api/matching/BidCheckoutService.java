@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.commission.CommissionGridService;
 import com.yadony.api.config.ContentCategoryNormalizer;
 import com.yadony.api.matching.dto.BidCheckoutRequest;
 import com.yadony.api.matching.dto.BidCheckoutResponse;
@@ -43,6 +44,7 @@ public class BidCheckoutService {
     private final BidGridItemRepository bidGridItemRepository;
     private final AnnouncementPriceGridItemRepository annGridItemRepository;
     private final BidPhotoService bidPhotoService;
+    private final CommissionGridService commissionGridService;
 
     public BidCheckoutService(BidRepository bidRepository,
                               AnnouncementRepository announcementRepository,
@@ -52,7 +54,8 @@ public class BidCheckoutService {
                               @Value("${stripe.publishable-key:}") String stripePublishableKey,
                               BidGridItemRepository bidGridItemRepository,
                               AnnouncementPriceGridItemRepository annGridItemRepository,
-                              BidPhotoService bidPhotoService) {
+                              BidPhotoService bidPhotoService,
+                              CommissionGridService commissionGridService) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -62,6 +65,7 @@ public class BidCheckoutService {
         this.bidGridItemRepository = bidGridItemRepository;
         this.annGridItemRepository = annGridItemRepository;
         this.bidPhotoService = bidPhotoService;
+        this.commissionGridService = commissionGridService;
     }
 
     @Transactional(noRollbackFor = BidAlreadyPaidException.class)
@@ -235,6 +239,8 @@ public class BidCheckoutService {
         bid.setDisclaimerSignedIp(ip);
         bid.setStatus(BidStatus.AWAITING_PAYMENT);
         bid.setAwaitingPaymentExpiresAt(now.plusMinutes(AWAITING_PAYMENT_GRACE_MINUTES));
+        // Grille figée à la création (un bid repris plus haut garde celle qu'il porte déjà).
+        commissionGridService.current().ifPresent(g -> bid.setCommissionGridId(g.id()));
 
         BidEntity saved = bidRepository.save(bid);
 

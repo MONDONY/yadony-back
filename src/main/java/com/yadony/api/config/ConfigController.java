@@ -1,5 +1,9 @@
 package com.yadony.api.config;
 
+import com.yadony.api.common.commission.CommissionGrid;
+import com.yadony.api.common.commission.CommissionGridService;
+import com.yadony.api.common.commission.CommissionTier;
+import com.yadony.api.config.dto.CommissionGridResponse;
 import com.yadony.api.config.dto.CommissionRateResponse;
 import com.yadony.api.config.dto.ContentCategoryResponse;
 import com.yadony.api.config.dto.FlightsEnabledResponse;
@@ -9,10 +13,13 @@ import com.yadony.api.config.dto.SmsEnabledResponse;
 import com.yadony.api.config.dto.UrgencyThresholdResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigDecimal;
 import java.util.List;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/config")
@@ -29,14 +36,42 @@ public class ConfigController {
      * la verrouille.
      */
     private final PlatformSettingsService settings;
+    private final CommissionGridService commissionGrids;
 
-    public ConfigController(PlatformSettingsService settings) {
+    public ConfigController(PlatformSettingsService settings, CommissionGridService commissionGrids) {
         this.settings = settings;
+        this.commissionGrids = commissionGrids;
     }
 
+    /**
+     * Taux unique pour les versions de l'app d'avant les paliers : le taux de la première tranche de la
+     * grille en vigueur, sinon {@code commission_rate}. La forme de la réponse ne change pas.
+     */
     @GetMapping("/commission-rate")
     public ResponseEntity<CommissionRateResponse> getCommissionRate() {
-        return ResponseEntity.ok(new CommissionRateResponse(settings.commissionRate()));
+        BigDecimal rate = commissionGrids.current()
+                .map(CommissionGrid::tiers)
+                .map(tiers -> tiers.get(0))
+                .map(CommissionTier::rate)
+                .orElseGet(settings::commissionRate);
+        return ResponseEntity.ok(new CommissionRateResponse(rate));
+    }
+
+    /** Grille de commission en vigueur et grille programmée (spec §5.4). Public comme tout {@code /config/**}. */
+    @GetMapping("/commission-grid")
+    public ResponseEntity<CommissionGridResponse> getCommissionGrid() {
+        return ResponseEntity.ok(CommissionGridResponse.of(commissionGrids.current(), commissionGrids.scheduled()));
+    }
+
+    /**
+     * Une grille par identifiant, en vigueur, passée ou programmée : celle figée sur un bid, un fil ou
+     * une demande ({@code commissionGridId} des devis), pour que le client recalcule exactement le prix
+     * déjà annoncé même après l'entrée en vigueur d'une autre grille. Public comme tout {@code /config/**}.
+     * 404 {@code commission-grid-not-found} si elle est inconnue ou annulée (jamais utilisable).
+     */
+    @GetMapping("/commission-grid/{id}")
+    public ResponseEntity<CommissionGridResponse.GridView> getCommissionGridById(@PathVariable UUID id) {
+        return ResponseEntity.ok(CommissionGridResponse.GridView.from(commissionGrids.require(id)));
     }
 
     @GetMapping("/urgency-threshold")

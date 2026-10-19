@@ -5,8 +5,12 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.city.CityEntity;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.commission.CommissionCalculator;
+import com.yadony.api.common.commission.CommissionGridService;
+import com.yadony.api.common.commission.CommissionReductions;
 import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.payments.currency.AnnouncementPaymentRails;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.requests.dto.PackageRequestPhotoResponse;
 import com.yadony.api.requests.dto.PackageRequestSearchResponse;
 import com.yadony.api.requests.entity.PackageRequestEntity;
@@ -36,17 +40,20 @@ public class PackageRequestSearchMapper {
     private final StorageService storageService;
     private final PackageRequestPhotoService photoService;
     private final PlatformSettingsService settings;
+    private final CommissionGridService commissionGridService;
 
     public PackageRequestSearchMapper(UserRepository userRepository,
                                       com.yadony.api.city.CityRepository cityRepository,
                                       StorageService storageService,
                                       PackageRequestPhotoService photoService,
-                                      PlatformSettingsService settings) {
+                                      PlatformSettingsService settings,
+                                      CommissionGridService commissionGridService) {
         this.userRepository = userRepository;
         this.cityRepository = cityRepository;
         this.storageService = storageService;
         this.photoService = photoService;
         this.settings = settings;
+        this.commissionGridService = commissionGridService;
     }
 
     /**
@@ -63,11 +70,21 @@ public class PackageRequestSearchMapper {
      * l'employer ici ferait révéler ces valeurs privées par simple division brut/net, ce qui
      * est précisément le motif pour lequel le net d'un trajet est masqué aux invités. Le taux
      * global, lui, est public. Ne pas remplacer cet appel par le resolver.
+     *
+     * <p>Demande à grille (figée à sa création) : commission de cette grille, minimum compris,
+     * toujours SANS réduction personnelle ({@link CommissionReductions#NONE}), pour la même raison.
+     * Source aussi du prix de la page publique de partage ({@code PublicPackageRequestPageController}).
      */
-    private java.math.BigDecimal grossPriceEur(java.math.BigDecimal net) {
-        return net == null
-                ? null
-                : com.yadony.api.payments.PriceBreakdown.fromNet(net, settings.commissionRate()).gross();
+    public java.math.BigDecimal grossPriceEur(PackageRequestEntity entity) {
+        java.math.BigDecimal net = entity.getTargetPriceEur();
+        if (net == null) {
+            return null;
+        }
+        if (entity.getCommissionGridId() == null) {
+            return com.yadony.api.payments.PriceBreakdown.fromNet(net, settings.commissionRate()).gross();
+        }
+        return CommissionCalculator.compute(net, SupportedCurrency.fromCodeOrDefault(entity.getCurrency()),
+                commissionGridService.require(entity.getCommissionGridId()), CommissionReductions.NONE).gross();
     }
 
     /**
@@ -140,7 +157,7 @@ public class PackageRequestSearchMapper {
                 computeUrgent(entity.getDesiredDate()),
                 null, null, null, entity.getCurrency(),
                 availablePaymentMethods,
-                grossPriceEur(entity.getTargetPriceEur()),
+                grossPriceEur(entity),
                 // Converti joint par le service (withViewerConversion), qui connaît le lecteur.
                 null, null,
                 // Audience : posée par le service pour les seules demandes du lecteur.

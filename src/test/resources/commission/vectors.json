@@ -1,0 +1,217 @@
+{
+  "description": "Vecteurs de référence de la commission par paliers (spec 2026-10-18 §4.6). Fichier recopié tel quel dans dony_app pour tester le portage Dart : ne pas changer un vecteur sans changer les deux.",
+  "grid": {
+    "tiers": [
+      { "fromEur": "0", "rate": "0.07" },
+      { "fromEur": "100", "rate": "0.06" },
+      { "fromEur": "300", "rate": "0.05" }
+    ],
+    "minimums": {
+      "EUR": "1.00",
+      "XOF": "650",
+      "XAF": "650",
+      "USD": "1.10",
+      "CAD": "1.50",
+      "GBP": "0.90",
+      "CHF": "0.95"
+    }
+  },
+  "vectors": [
+    {
+      "case": "Minimum",
+      "currency": "EUR",
+      "net": "5.00",
+      "reductions": {},
+      "expected": { "commission": "1.00", "gross": "6.00", "minimumApplied": true, "promoEffective": false }
+    },
+    {
+      "case": "Juste sous le minimum",
+      "currency": "EUR",
+      "net": "14.28",
+      "reductions": {},
+      "expected": { "commission": "1.00", "gross": "15.28", "minimumApplied": true, "promoEffective": false }
+    },
+    {
+      "case": "Juste au-dessus du minimum",
+      "currency": "EUR",
+      "net": "14.29",
+      "reductions": {},
+      "expected": { "commission": "1.00", "gross": "15.29", "minimumApplied": false, "promoEffective": false }
+    },
+    {
+      "case": "Tranche 1",
+      "currency": "EUR",
+      "net": "20.00",
+      "reductions": {},
+      "expected": { "commission": "1.40", "gross": "21.40", "minimumApplied": false, "promoEffective": false }
+    },
+    {
+      "case": "Fin de tranche 1",
+      "currency": "EUR",
+      "net": "100.00",
+      "reductions": {},
+      "expected": { "commission": "7.00", "gross": "107.00", "minimumApplied": false, "promoEffective": false }
+    },
+    {
+      "case": "Tranche 2",
+      "currency": "EUR",
+      "net": "150.00",
+      "reductions": {},
+      "expected": { "commission": "10.00", "gross": "160.00", "minimumApplied": false, "promoEffective": false }
+    },
+    {
+      "case": "Fin de tranche 2",
+      "currency": "EUR",
+      "net": "300.00",
+      "reductions": {},
+      "expected": { "commission": "19.00", "gross": "319.00", "minimumApplied": false, "promoEffective": false }
+    },
+    {
+      "case": "Tranche 3",
+      "currency": "EUR",
+      "net": "500.00",
+      "reductions": {},
+      "expected": { "commission": "29.00", "gross": "529.00", "minimumApplied": false, "promoEffective": false }
+    },
+    {
+      "case": "XOF, minimum",
+      "currency": "XOF",
+      "net": "5000",
+      "reductions": {},
+      "expected": { "commission": "650", "gross": "5650", "minimumApplied": true, "promoEffective": false }
+    },
+    {
+      "case": "XOF, tranche 1",
+      "currency": "XOF",
+      "net": "20000",
+      "reductions": {},
+      "expected": { "commission": "1400", "gross": "21400", "minimumApplied": false, "promoEffective": false }
+    },
+    {
+      "case": "XOF, tranche 2 (bornes converties sans arrondi)",
+      "currency": "XOF",
+      "net": "100000",
+      "reductions": {},
+      "expected": { "commission": "6656", "gross": "106656", "minimumApplied": false, "promoEffective": false }
+    },
+    {
+      "case": "USD, minimum",
+      "currency": "USD",
+      "net": "5.00",
+      "reductions": {},
+      "expected": { "commission": "1.10", "gross": "6.10", "minimumApplied": true, "promoEffective": false }
+    },
+    {
+      "case": "Promo 5 points, N = 20 € (le minimum prime sur 0,40 €, mais la promo fait gagner 0,40 €)",
+      "currency": "EUR",
+      "net": "20.00",
+      "reductions": { "promoPoints": "0.05" },
+      "expected": { "commission": "1.00", "gross": "21.00", "minimumApplied": true, "promoEffective": true }
+    },
+    {
+      "case": "Promo sans effet : 5 points, N = 10 € (minimum avec ou sans promo)",
+      "currency": "EUR",
+      "net": "10.00",
+      "reductions": { "promoPoints": "0.05" },
+      "expected": { "commission": "1.00", "gross": "11.00", "minimumApplied": true, "promoEffective": false }
+    },
+    {
+      "case": "Promo offerte (points >= taux)",
+      "currency": "EUR",
+      "net": "20.00",
+      "reductions": { "promoPoints": "0.07" },
+      "expected": { "commission": "0.00", "gross": "20.00", "minimumApplied": false, "promoEffective": true }
+    },
+    {
+      "case": "Promo 3 % du prix payé, N = 200 € (taux 0,065, remise 0,032)",
+      "currency": "EUR",
+      "net": "200.00",
+      "reductions": { "promoPricePercent": "0.03" },
+      "expected": { "commission": "6.60", "gross": "206.60", "minimumApplied": false, "promoEffective": true }
+    },
+    {
+      "case": "Bon x0,5, N = 100 €",
+      "currency": "EUR",
+      "net": "100.00",
+      "reductions": { "voucherFactor": "0.5" },
+      "expected": { "commission": "3.50", "gross": "103.50", "minimumApplied": false, "promoEffective": false }
+    },
+    {
+      "case": "Bon x0,5, N = 5 € (après minimum)",
+      "currency": "EUR",
+      "net": "5.00",
+      "reductions": { "voucherFactor": "0.5" },
+      "expected": { "commission": "0.50", "gross": "5.50", "minimumApplied": true, "promoEffective": false }
+    },
+    {
+      "case": "Promo 5 points + bon x0,5, N = 20 € (minimum 1,00 € x 0,5)",
+      "currency": "EUR",
+      "net": "20.00",
+      "reductions": { "promoPoints": "0.05", "voucherFactor": "0.5" },
+      "expected": { "commission": "0.50", "gross": "20.50", "minimumApplied": true, "promoEffective": true }
+    },
+    {
+      "case": "Override 4 %, N = 100 €",
+      "currency": "EUR",
+      "net": "100.00",
+      "reductions": { "overrideRate": "0.04" },
+      "expected": { "commission": "4.00", "gross": "104.00", "minimumApplied": false, "promoEffective": false }
+    },
+    {
+      "case": "Négociation de trajet, net vers brut : taux spécial 4 % + bon x0,5, N = 50 €",
+      "currency": "EUR",
+      "net": "50.00",
+      "reductions": { "overrideRate": "0.04", "voucherFactor": "0.5" },
+      "expected": { "commission": "1.00", "gross": "51.00", "minimumApplied": false, "promoEffective": false }
+    },
+    {
+      "case": "Négociation de trajet, brut vers net : taux spécial 4 % + bon x0,5, G = 51,00 €",
+      "currency": "EUR",
+      "gross": "51.00",
+      "reductions": { "overrideRate": "0.04", "voucherFactor": "0.5" },
+      "expected": { "net": "50.00", "commission": "1.00" }
+    },
+    {
+      "case": "Inverse, G = 21,40 €",
+      "currency": "EUR",
+      "gross": "21.40",
+      "reductions": {},
+      "expected": { "net": "20.00", "commission": "1.40" }
+    },
+    {
+      "case": "Inverse, G = 1,50 €",
+      "currency": "EUR",
+      "gross": "1.50",
+      "reductions": {},
+      "expected": { "net": "0.50", "commission": "1.00" }
+    },
+    {
+      "case": "Inverse XOF, minimum, G = 5 650",
+      "currency": "XOF",
+      "gross": "5650",
+      "reductions": {},
+      "expected": { "net": "5000", "commission": "650" }
+    },
+    {
+      "case": "Inverse XAF, tranche 1, G = 21 400",
+      "currency": "XAF",
+      "gross": "21400",
+      "reductions": {},
+      "expected": { "net": "20000", "commission": "1400" }
+    },
+    {
+      "case": "Inverse, G = 1,00 € (budget au minimum)",
+      "currency": "EUR",
+      "gross": "1.00",
+      "reductions": {},
+      "expected": { "error": "budget-below-commission-minimum" }
+    },
+    {
+      "case": "Inverse avec bon x0,5, G = 0,50 € (minimum effectif 1,00 € x 0,5)",
+      "currency": "EUR",
+      "gross": "0.50",
+      "reductions": { "voucherFactor": "0.5" },
+      "expected": { "error": "budget-below-commission-minimum" }
+    }
+  ]
+}

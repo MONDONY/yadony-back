@@ -31,6 +31,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -101,14 +102,29 @@ public class MobileMoneyNegotiationPaymentService {
 
     // ── Création (transaction de l'appelant) ─────────────────────────────
 
+    /**
+     * Voir {@link NegotiationMobileMoneyPort#createPendingDeposit}.
+     *
+     * @param commissionGridId grille figée sur le fil, {@code null} pour un fil sans grille.
+     * @param gridCommission   commission du fil à grille, calculée par l'appelant
+     *                         ({@code ThreadCommissionPricing}, minimum compris) : la même que
+     *                         celle qu'il annonce. Non nulle si et seulement si la grille l'est ;
+     *                         {@code commissionRate} n'est alors qu'informatif.
+     */
     @Transactional
     public NegotiationMobileMoneyPort.PendingDeposit createPendingPayment(UUID threadId, UUID senderId, UUID travelerId,
                                                                           BigDecimal net, BigDecimal commissionRate,
-                                                                          String currency) {
+                                                                          String currency, UUID commissionGridId,
+                                                                          BigDecimal gridCommission) {
+        if ((commissionGridId == null) != (gridCommission == null)) {
+            throw new IllegalArgumentException("Grille et commission de grille vont ensemble (fil " + threadId + ")");
+        }
         // Prix du fil, jamais la grille bid : le net négocié et le taux (promo compris) sont figés
         // sur le fil ; ici on ne fait qu'arrondir à l'unité mineure de la devise (0 décimale en XOF).
+        // Fil à grille : la commission reçue (déjà arrondie) remplace net × taux.
         BigDecimal roundedNet = PawapayAmounts.round(net, currency);
-        BigDecimal commission = PawapayAmounts.round(roundedNet.multiply(commissionRate), currency);
+        BigDecimal commission = PawapayAmounts.round(
+                gridCommission != null ? gridCommission : roundedNet.multiply(commissionRate), currency);
         BigDecimal gross = roundedNet.add(commission);
         LocalDateTime expiresAt = LocalDateTime.now(ZoneOffset.UTC).plusMinutes(props.depositDeadlineMinutes());
 
@@ -137,8 +153,9 @@ public class MobileMoneyNegotiationPaymentService {
             p.setStatus(PaymentStatus.PENDING);
             p.setLegacyDestinationCharge(false);
             p = paymentRepository.save(p);
-            audit.log("PAYMENT", p.getId(), AUDIT_CREATED, senderId, Map.of("threadId", threadId.toString(),
-                    "amount", gross.toPlainString(), "commission", commission.toPlainString(), "currency", currency, "recycled", "true"));
+            audit.log("PAYMENT", p.getId(), AUDIT_CREATED, senderId, withGrid(Map.of("threadId", threadId.toString(),
+                    "amount", gross.toPlainString(), "commission", commission.toPlainString(), "currency", currency, "recycled", "true"),
+                    commissionGridId));
             return new NegotiationMobileMoneyPort.PendingDeposit(p.getId(), gross, commission, expiresAt);
         }
 
@@ -152,10 +169,20 @@ public class MobileMoneyNegotiationPaymentService {
         payment.setStatus(PaymentStatus.PENDING);
         payment.setLegacyDestinationCharge(false);
         payment = paymentRepository.save(payment);
-        audit.log("PAYMENT", payment.getId(), AUDIT_CREATED, senderId, Map.of("threadId", threadId.toString(),
+        audit.log("PAYMENT", payment.getId(), AUDIT_CREATED, senderId, withGrid(Map.of("threadId", threadId.toString(),
                 "travelerId", travelerId.toString(), "amount", gross.toPlainString(),
-                "commission", commission.toPlainString(), "currency", currency));
+                "commission", commission.toPlainString(), "currency", currency), commissionGridId));
         return new NegotiationMobileMoneyPort.PendingDeposit(payment.getId(), gross, commission, expiresAt);
+    }
+
+    /** Charge d'audit, avec la grille qui a tarifé le dépôt quand le fil en a une. */
+    private static Map<String, Object> withGrid(Map<String, Object> payload, UUID commissionGridId) {
+        if (commissionGridId == null) {
+            return payload;
+        }
+        Map<String, Object> withGrid = new LinkedHashMap<>(payload);
+        withGrid.put("commissionGridId", commissionGridId.toString());
+        return withGrid;
     }
 
     // ── Initiation du deposit (transaction séparée de la création) ───────

@@ -791,14 +791,16 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
      * conclu puis réglé (ACCEPTED, HANDED_OVER, DELIVERED…) ou clos reste listé : seul
      * l'utilisateur range ou retire une discussion, jamais le serveur (FLUTTER-HM — le
      * fil disparaissait de toutes les puces dès le paiement, alors que seules ces
-     * discussions terminées peuvent être rangées ou retirées).
+     * discussions terminées peuvent être rangées ou retirées). Un bid matérialisé depuis un
+     * fil de demande d'envoi ({@code linkedNegotiationThreadId}) porte aussi un brut (total
+     * payé d'un fil à grille) sans être une discussion de prix : il n'est jamais listé.
      */
     @Query("""
         SELECT b FROM BidEntity b
         JOIN AnnouncementEntity a ON b.announcementId = a.id
         WHERE (b.status IN (com.yadony.api.matching.BidStatus.NEGOTIATING,
                             com.yadony.api.matching.BidStatus.NEGOTIATION_CLOSED)
-               OR b.negotiatedGrossEur IS NOT NULL)
+               OR (b.negotiatedGrossEur IS NOT NULL AND b.linkedNegotiationThreadId IS NULL))
           AND ((b.senderId = :userId
                 AND b.negotiationSenderHiddenAt IS NULL AND b.negotiationSenderArchivedAt IS NULL)
                OR (a.travelerId = :userId
@@ -818,7 +820,7 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
         JOIN AnnouncementEntity a ON b.announcementId = a.id
         WHERE (b.status IN (com.yadony.api.matching.BidStatus.NEGOTIATING,
                             com.yadony.api.matching.BidStatus.NEGOTIATION_CLOSED)
-               OR b.negotiatedGrossEur IS NOT NULL)
+               OR (b.negotiatedGrossEur IS NOT NULL AND b.linkedNegotiationThreadId IS NULL))
           AND ((b.senderId = :userId
                 AND b.negotiationSenderHiddenAt IS NULL AND b.negotiationSenderArchivedAt IS NOT NULL)
                OR (a.travelerId = :userId

@@ -63,9 +63,17 @@ public record BidNegotiationResponse(
         BigDecimal commissionRate,
         // Badge GP Pro de la contrepartie (voyageur pour l'expéditeur, et inversement).
         // Champ de fin de contrat : un client qui l'ignore ne change pas.
-        boolean counterpartyGpPro
+        boolean counterpartyGpPro,
+        // Grille de commission figée sur le fil (spec §4.4), null sur un fil d'avant les grilles
+        // (taux unique commissionRate). Servie aux deux rôles : elle n'apprend rien du net.
+        UUID commissionGridId,
+        // Réductions personnelles figées à l'ouverture d'un fil à grille, servies au seul voyageur
+        // comme commissionRate : avec la grille, elles permettent à l'app l'aperçu exact
+        // « je touche N → l'expéditeur paie G ». Taux spécial et facteur du bon, null sans.
+        BigDecimal commissionOverrideRate,
+        BigDecimal commissionVoucherFactor
 ) {
-    /** Ancienne arité, sans {@code commissionRate} ni {@code counterpartyGpPro}. */
+    /** Ancienne arité, sans {@code commissionRate}, {@code counterpartyGpPro} ni grille. */
     public BidNegotiationResponse(UUID bidId, UUID announcementId, String status, String role, int round,
                                   int maxRounds, boolean myTurn, boolean canCounter, String currency,
                                   BigDecimal proposedGrossEur, BigDecimal netEur, BigDecimal commissionEur,
@@ -80,7 +88,7 @@ public record BidNegotiationResponse(
                 proposedGrossEur, netEur, commissionEur, suggestedGrossEur, weightKg, description,
                 contentCategory, gridItems, customItems, photoUrls, counterpartyName, departureCity,
                 arrivalCity, departureDate, expiresAt, messages, paymentMethod, counterpartyId,
-                commissionDueBy, null, false);
+                commissionDueBy, null, false, null, null, null);
     }
 
     /** Arité d'avant {@code counterpartyGpPro}. */
@@ -99,6 +107,25 @@ public record BidNegotiationResponse(
                 proposedGrossEur, netEur, commissionEur, suggestedGrossEur, weightKg, description,
                 contentCategory, gridItems, customItems, photoUrls, counterpartyName, departureCity,
                 arrivalCity, departureDate, expiresAt, messages, paymentMethod, counterpartyId,
-                commissionDueBy, commissionRate, false);
+                commissionDueBy, commissionRate, false, null, null, null);
+    }
+
+    /** Arité d'avant la grille de commission ({@code commissionGridId} et réductions figées). */
+    public BidNegotiationResponse(UUID bidId, UUID announcementId, String status, String role, int round,
+                                  int maxRounds, boolean myTurn, boolean canCounter, String currency,
+                                  BigDecimal proposedGrossEur, BigDecimal netEur, BigDecimal commissionEur,
+                                  BigDecimal suggestedGrossEur, BigDecimal weightKg, String description,
+                                  String contentCategory, List<BidGridItemLine> gridItems,
+                                  List<BidCustomItemResponse> customItems, List<String> photoUrls,
+                                  String counterpartyName, String departureCity, String arrivalCity,
+                                  LocalDate departureDate, LocalDateTime expiresAt,
+                                  List<BidNegotiationMessageResponse> messages, String paymentMethod,
+                                  UUID counterpartyId, LocalDateTime commissionDueBy,
+                                  BigDecimal commissionRate, boolean counterpartyGpPro) {
+        this(bidId, announcementId, status, role, round, maxRounds, myTurn, canCounter, currency,
+                proposedGrossEur, netEur, commissionEur, suggestedGrossEur, weightKg, description,
+                contentCategory, gridItems, customItems, photoUrls, counterpartyName, departureCity,
+                arrivalCity, departureDate, expiresAt, messages, paymentMethod, counterpartyId,
+                commissionDueBy, commissionRate, counterpartyGpPro, null, null, null);
     }
 }

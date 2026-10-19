@@ -64,13 +64,18 @@ public class PackageRequestController {
      * Devis transparent pendant que l'expéditeur fixe son budget (étape 3) :
      * commission Yadony (taux + montant) et prévisualisation d'un code promo
      * optionnel, avant même qu'un voyageur/thread existe.
+     *
+     * @param currency devise de la future demande, facultative : sans elle, celle que la
+     *                 création retiendrait (portefeuille, sinon pays). Sous grille, elle fixe
+     *                 le minimum de commission ; sans grille, elle est ignorée.
      */
     @GetMapping("/quote")
     @PreAuthorize("hasRole('SENDER')")
     public NegotiationQuoteResponse quote(
             @RequestParam BigDecimal budgetEur,
-            @RequestParam(required = false) String promoCode) {
-        return service.quote(requireUserId(), budgetEur, promoCode);
+            @RequestParam(required = false) String promoCode,
+            @RequestParam(required = false) String currency) {
+        return service.quote(requireUserId(), budgetEur, promoCode, currency);
     }
 
     @GetMapping("/me")
