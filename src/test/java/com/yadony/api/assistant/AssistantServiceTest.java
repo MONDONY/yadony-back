@@ -128,6 +128,88 @@ class AssistantServiceTest {
         assertThat(service.ask("uid", ask("q")).answer()).hasSize(600);
     }
 
+    // ── Réponses structurées (YADONY-FLUTTER-PROD-13) ───────────────────────
+
+    private static AssistantAskRequest askRich(String q) {
+        return new AssistantAskRequest(q, "fr", List.of(), null, "rich");
+    }
+
+    @Test
+    void sansFormat_promptTexteBrut_etAucuneReponseRiche() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(phone));
+        llmAnswers(new ParsedAnswer("Allez dans **Moi**.", true, List.of()));
+        ArgumentCaptor<String> system = ArgumentCaptor.forClass(String.class);
+
+        AssistantAskResponse r = service.ask("uid", ask("q"));
+
+        verify(router).complete(system.capture(), anyString(), any());
+        assertThat(system.getValue()).contains(AssistantPromptBuilder.PLAIN_FORM)
+                .doesNotContain(AssistantPromptBuilder.RICH_FORM);
+        assertThat(r.answerRich()).isNull();
+        assertThat(r.answer()).as("comportement historique inchangé").isEqualTo("Allez dans **Moi**.");
+    }
+
+    @Test
+    void formatRich_promptRiche_reponseRicheEtBruteDerivee() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(phone));
+        llmAnswers(new ParsedAnswer("## Numéro\nAllez dans **Moi**.\n* Touchez **Modifier**\n- Voir [aide](https://x)",
+                true, List.of()));
+        ArgumentCaptor<String> system = ArgumentCaptor.forClass(String.class);
+
+        AssistantAskResponse r = service.ask("uid", askRich("q"));
+
+        verify(router).complete(system.capture(), anyString(), any());
+        assertThat(system.getValue()).contains(AssistantPromptBuilder.RICH_FORM)
+                .doesNotContain(AssistantPromptBuilder.PLAIN_FORM);
+        assertThat(r.answerRich()).isEqualTo("Numéro\nAllez dans **Moi**.\n- Touchez **Modifier**\n- Voir aide");
+        assertThat(r.answer()).isEqualTo("Numéro\nAllez dans Moi.\n• Touchez Modifier\n• Voir aide")
+                .doesNotContain("**", "#", "](");
+    }
+
+    @Test
+    void formatRich_tronqueA700SurUneFinDeLigne() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(phone));
+        String longue = "Réponse directe.\n" + ("- " + "mot ".repeat(40) + "\n").repeat(5);
+        llmAnswers(new ParsedAnswer(longue, true, List.of()));
+
+        AssistantAskResponse r = service.ask("uid", askRich("q"));
+
+        assertThat(r.answerRich()).hasSizeLessThanOrEqualTo(700).doesNotEndWith("\n");
+        assertThat(r.answer()).doesNotContain("**");
+    }
+
+    @Test
+    void formatRich_reponseQuiNeSurvitPasAuCrible_repliSurLeTexteBrut() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(phone));
+        llmAnswers(new ParsedAnswer("**", true, List.of()));
+
+        AssistantAskResponse r = service.ask("uid", askRich("q"));
+
+        assertThat(r.answerRich()).isNull();
+        assertThat(r.answer()).isEqualTo("**");
+    }
+
+    @Test
+    void formatRich_reponsesEcritesParLeBack_sansVersionRiche() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of());
+        AssistantAskResponse r = service.ask("uid", askRich("q"));
+        assertThat(r.answerRich()).isNull();
+        assertThat(r.answer()).startsWith("Je n'ai pas trouvé");
+    }
+
+    @Test
+    void formatInconnu_traiteCommeAbsent() {
+        assertThat(new AssistantAskRequest("q", "fr", List.of(), null, "markdown").rich()).isFalse();
+        assertThat(new AssistantAskRequest("q", "fr", List.of(), null, " RICH ").rich()).isTrue();
+        assertThat(new AssistantAskRequest("q", "fr", List.of()).rich()).isFalse();
+    }
+
+    @Test
+    void ecranRiche_seulementPourUneFicheDePlusieursLignes() {
+        assertThat(AssistantService.screenRich("Ligne une.\nLigne deux.")).isEqualTo("Ligne une.\nLigne deux.");
+        assertThat(AssistantService.screenRich("Une seule ligne.")).isNull();
+    }
+
     @Test
     void modeDegradeQuandAucunFournisseurNeRepond() {
         when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(phone, trip, other));

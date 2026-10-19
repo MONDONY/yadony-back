@@ -170,6 +170,14 @@ public class OpenAiCompatibleClient {
      * OpenRouter seulement ; ce paramètre n'est pas standard et d'autres fournisseurs pourraient le
      * refuser. Un modèle à réflexion obligatoire répond alors en erreur et le routeur bascule.
      */
+    /**
+     * Plafond de sortie (JSON complet : réponse, routes, suggestions). 600 suffisait au texte brut de 600
+     * caractères ; la réponse riche (700 caractères balises comprises, YADONY-FLUTTER-PROD-13) le frôlait.
+     * Seuls les tokens produits sont facturés : le plafond ne coûte rien tant que la réponse est courte, et
+     * le quota se compte en questions, pas en tokens.
+     */
+    static final int MAX_TOKENS = 900;
+
     static Map<String, Object> requestBody(LlmProviderConfig provider, String system, String user) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", provider.model());
@@ -177,7 +185,7 @@ public class OpenAiCompatibleClient {
                 Map.of("role", "system", "content", system),
                 Map.of("role", "user", "content", user)));
         body.put("temperature", 0.2);
-        body.put("max_tokens", 600);
+        body.put("max_tokens", MAX_TOKENS);
         if (provider.supportsJsonMode()) {
             body.put("response_format", Map.of("type", "json_object"));
         }

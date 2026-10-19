@@ -97,6 +97,39 @@ class AssistantControllerIntegrationTest {
                 .andExpect(jsonPath("$.suggestions[2].kind").value("DISCOVERY"));
     }
 
+    /** YADONY-FLUTTER-PROD-13 : sans {@code format}, la réponse est exactement celle d'avant, sans {@code answerRich}. */
+    @Test
+    void sansFormat_pasDeReponseRiche() throws Exception {
+        when(router.complete(anyString(), anyString(), any())).thenReturn(Optional.of(new LlmResult<>("claude",
+                new ParsedAnswer("Allez dans Moi.", true, List.of()))));
+        mockMvc.perform(post("/assistant/ask").with(authentication(asUser("uid-plain")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"question\":\"Où je change mon numéro ?\",\"locale\":\"fr\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.answer").value("Allez dans Moi."))
+                .andExpect(jsonPath("$.answerRich").doesNotExist());
+    }
+
+    /** {@code format=rich} : la sortie brute du modèle passe par le vrai parseur puis la liste blanche. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void formatRich_reponseRicheEtBrute() throws Exception {
+        ArgumentCaptor<String> system = ArgumentCaptor.forClass(String.class);
+        when(router.complete(system.capture(), anyString(), any())).thenAnswer(inv -> {
+            String raw = "{\"answer\":\"### Changer\\nAllez dans **Moi**.\\n- Touchez **Modifier**\","
+                    + "\"answered\":true,\"routes\":[]}";
+            var parser = (java.util.function.Function<String, ParsedAnswer>) inv.getArgument(2);
+            return Optional.of(new LlmResult<>("claude", parser.apply(raw)));
+        });
+        mockMvc.perform(post("/assistant/ask").with(authentication(asUser("uid-rich")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"question\":\"Où je change mon numéro ?\",\"locale\":\"fr\",\"format\":\"rich\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.answerRich").value("Changer\nAllez dans **Moi**.\n- Touchez **Modifier**"))
+                .andExpect(jsonPath("$.answer").value("Changer\nAllez dans Moi.\n• Touchez Modifier"));
+        assertThat(system.getValue()).contains(AssistantPromptBuilder.RICH_FORM);
+    }
+
     @Test
     void sansFicheLesSuggestionsSontUneListeVide() throws Exception {
         mockMvc.perform(post("/assistant/ask").with(authentication(asUser("uid-suggestions-vides")))
