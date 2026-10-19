@@ -76,6 +76,10 @@ yadony:
     first-action-reminders:
       cron: "-"
   notifications:
+    # E-mails des notifications : coupés, la clé Resend de test ferait partir de vrais appels.
+    # NotificationEmailServiceTest et ResendEmailServiceTest les exercent directement.
+    email:
+      enabled: false
     # Coupé en test : le résultat d'un envoi ne doit pas dépendre de l'heure du CI.
     # PushQuietHoursTest l'exerce avec une horloge fixe.
     quiet-hours:

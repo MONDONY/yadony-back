@@ -61,6 +61,14 @@ public class NotificationPrefsEntity {
     @Column(name = "push_recipient_parcels", nullable = false)
     private boolean pushRecipientParcels = true;
 
+    /** E-mails récapitulatifs d'un colis (réservation, livraison, annulation, retour), V342. */
+    @Column(name = "email_recaps", nullable = false)
+    private boolean emailRecaps = true;
+
+    /** E-mails d'alertes (trajets, prix des vols) et de conseils, V342. */
+    @Column(name = "email_alerts_tips", nullable = false)
+    private boolean emailAlertsTips = true;
+
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
@@ -96,5 +104,9 @@ public class NotificationPrefsEntity {
     public void setPushMyTrips(boolean v) { this.pushMyTrips = v; }
     public boolean isPushRecipientParcels() { return pushRecipientParcels; }
     public void setPushRecipientParcels(boolean v) { this.pushRecipientParcels = v; }
+    public boolean isEmailRecaps() { return emailRecaps; }
+    public void setEmailRecaps(boolean v) { this.emailRecaps = v; }
+    public boolean isEmailAlertsTips() { return emailAlertsTips; }
+    public void setEmailAlertsTips(boolean v) { this.emailAlertsTips = v; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
 }

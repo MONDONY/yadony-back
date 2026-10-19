@@ -66,6 +66,25 @@ class EmailOtpTemplateI18nTest {
                 .containsSubsequence(">1</td>", ">2</td>", ">3</td>", ">4</td>", ">5</td>", ">6</td>");
     }
 
+    /** Gabarit des e-mails de notification (étape 5 du plan bruit) : clés résolues dans les deux langues. */
+    @Test
+    void rendLeGabaritDeNotificationDansLesDeuxLangues() {
+        for (Locale locale : new Locale[]{Locale.FRENCH, Locale.ENGLISH}) {
+            Context context = new Context(locale);
+            context.setVariable("eyebrow", "E");
+            context.setVariable("heading", "H");
+            context.setVariable("body", "B");
+            context.setVariable("detail", "D");
+            context.setVariable("optional", true);
+            context.setVariable("appUrl", "https://yadony.com");
+            context.setVariable("lang", locale.getLanguage());
+            String html = templateEngine.process("email-notification", context);
+
+            assertThat(html).doesNotContain("??").contains("https://yadony.com");
+            assertThat(html).contains(locale == Locale.FRENCH ? "Ouvrir Yadony" : "Open Yadony");
+        }
+    }
+
     private String render(Locale locale) {
         Context context = new Context(locale);
         context.setVariable("otpCode", "123456");

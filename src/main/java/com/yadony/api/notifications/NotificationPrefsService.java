@@ -258,7 +258,24 @@ public class NotificationPrefsService {
                 ? dto.pushMyTrips() : dto.pushActivityBids());
         entity.setPushRecipientParcels(dto.pushRecipientParcels() != null
                 ? dto.pushRecipientParcels() : dto.pushActivityBids());
+        if (dto.emailRecaps() != null) entity.setEmailRecaps(dto.emailRecaps());
+        if (dto.emailAlertsTips() != null) entity.setEmailAlertsTips(dto.emailAlertsTips());
         repository.save(entity);
+    }
+
+    /**
+     * L'e-mail de cette famille peut-il partir ? Les reçus, décisions et démarches du compte
+     * partent toujours ; les récapitulatifs et les alertes et conseils suivent leur réglage.
+     * Sans ligne de préférence, tout part.
+     */
+    @Transactional(readOnly = true)
+    public boolean isEmailAllowed(UUID userId, NotificationEmailPolicy.Kind kind) {
+        if (kind == null) return false;
+        return kind.pref()
+                .map(pref -> repository.findById(userId)
+                        .map(prefs -> "emailRecaps".equals(pref) ? prefs.isEmailRecaps() : prefs.isEmailAlertsTips())
+                        .orElse(true))
+                .orElse(true);
     }
 
     /**
@@ -344,7 +361,9 @@ public class NotificationPrefsService {
                 e.isPushTravelerAutomations(),
                 e.isPushRemindersTips(),
                 e.isPushMyTrips(),
-                e.isPushRecipientParcels()
+                e.isPushRecipientParcels(),
+                e.isEmailRecaps(),
+                e.isEmailAlertsTips()
         );
     }
 }

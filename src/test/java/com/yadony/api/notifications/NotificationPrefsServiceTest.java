@@ -206,6 +206,58 @@ class NotificationPrefsServiceTest {
         }
     }
 
+    /** V342 : reçus, décisions et compte partent toujours ; récapitulatifs et alertes suivent leur réglage. */
+    @Test
+    void isEmailAllowed_followsItsFamily() {
+        NotificationPrefsEntity e = buildEntity(true, true, true, true, false);
+        e.setEmailRecaps(false);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(e));
+
+        assertThat(service.isEmailAllowed(USER_ID, NotificationEmailPolicy.Kind.RECAP)).isFalse();
+        assertThat(service.isEmailAllowed(USER_ID, NotificationEmailPolicy.Kind.ALERT)).isTrue();
+        assertThat(service.isEmailAllowed(USER_ID, NotificationEmailPolicy.Kind.RECEIPT)).isTrue();
+        assertThat(service.isEmailAllowed(USER_ID, NotificationEmailPolicy.Kind.DECISION)).isTrue();
+        assertThat(service.isEmailAllowed(USER_ID, null)).isFalse();
+
+        e.setEmailRecaps(true);
+        e.setEmailAlertsTips(false);
+        assertThat(service.isEmailAllowed(USER_ID, NotificationEmailPolicy.Kind.TIP)).isFalse();
+        assertThat(service.isEmailAllowed(USER_ID, NotificationEmailPolicy.Kind.RECAP)).isTrue();
+    }
+
+    @Test
+    void isEmailAllowed_noRow_everythingLeaves() {
+        when(repository.findById(USER_ID)).thenReturn(Optional.empty());
+        assertThat(service.isEmailAllowed(USER_ID, NotificationEmailPolicy.Kind.ALERT)).isTrue();
+    }
+
+    @Test
+    void upsert_emailFields_storedWhenSent_keptWhenAbsent() {
+        NotificationPrefsEntity existing = buildEntity(true, true, true, true, false);
+        existing.setEmailAlertsTips(false);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(existing));
+
+        service.upsert(FIREBASE_UID, new NotificationPrefsDto(true, true, true, true, false, true,
+                null, null, null, null, null, false, null));
+
+        ArgumentCaptor<NotificationPrefsEntity> captor = ArgumentCaptor.forClass(NotificationPrefsEntity.class);
+        verify(repository).save(captor.capture());
+        assertThat(captor.getValue().isEmailRecaps()).isFalse();
+        assertThat(captor.getValue().isEmailAlertsTips()).isFalse();
+    }
+
+    @Test
+    void getPrefs_returnsTheEmailFields() {
+        NotificationPrefsEntity e = buildEntity(true, true, true, true, false);
+        e.setEmailRecaps(false);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(e));
+
+        NotificationPrefsDto dto = service.getPrefs(FIREBASE_UID);
+        assertThat(dto.emailRecaps()).isFalse();
+        assertThat(dto.emailAlertsTips()).isTrue();
+        assertThat(NotificationPrefsDto.defaults().emailRecaps()).isTrue();
+    }
+
     private NotificationPrefsEntity roles(boolean sender, boolean trips, boolean recipient) {
         NotificationPrefsEntity e = buildEntity(true, true, true, true, false);
         e.setPushActivityBids(sender);

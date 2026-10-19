@@ -101,11 +101,14 @@ public class CorridorAlertDigestScheduler {
                         alert.getDepartureCity(), alert.getArrivalCity());
                 String title = text.title();
                 String body = text.body();
+                // « digest » : ce récapitulatif part par e-mail plutôt qu'en push quand
+                // l'utilisateur a une adresse (NotificationEmailPolicy), l'alerte en direct non.
                 Map<String, String> data = Map.of(
                         "type", "CORRIDOR_ALERT",
                         "alertId", alert.getId().toString(),
                         "corridor", corridor,
-                        "direction", alert.getDirection().name());
+                        "direction", alert.getDirection().name(),
+                        "digest", "true");
 
                 notificationDispatcher.notifyUser(alert.getOwnerId(), title, body, data);
 

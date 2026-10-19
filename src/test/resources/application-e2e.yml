@@ -71,6 +71,8 @@ app:
 yadony:
   # Même raison qu'en test : un envoi ne doit pas dépendre de l'heure.
   notifications:
+    email:
+      enabled: false
     quiet-hours:
       enabled: false
       digest-cron: "-"
