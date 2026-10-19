@@ -52,6 +52,7 @@ class ReceptionNotificationListenerTest {
     @BeforeEach
     void setUp() {
         lenient().when(notificationDispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
+        lenient().when(linkRepository.claimCancelNotification(any(), any(), any())).thenReturn(1);
     }
 
     private BidRecipientLinkEntity link(ReceptionLinkStatus status) {
@@ -276,6 +277,27 @@ class ReceptionNotificationListenerTest {
     void bidRejected_noLink_getsNothing() {
         when(linkRepository.findByBidId(bidId)).thenReturn(Optional.empty());
         listener.onBidRejected(new BidRejectedEvent(bidId, UUID.randomUUID(), "TRAVELER_NO_RESPONSE"));
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
+    }
+
+    /** Relance du remboursement par l'admin, absence confirmée après coup : une seule annonce. */
+    @Test
+    void cancellation_alreadyAnnounced_isNotSentAgain() {
+        when(linkRepository.claimCancelNotification(eq(bidId), any(), any())).thenReturn(0);
+        listener.onBidRejected(new BidRejectedEvent(bidId, UUID.randomUUID(), "CANCELLED_BY_ADMIN"));
+        listener.onCancellationConfirmed(new CancellationConfirmedEvent(bidId, UUID.randomUUID(),
+                CancellationReason.SENDER_NO_SHOW));
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
+        verify(linkRepository, never()).findByBidId(any());
+    }
+
+    @Test
+    void cancellation_claimFailure_sendsNothingAndDoesNotThrow() {
+        when(linkRepository.claimCancelNotification(eq(bidId), any(), any()))
+                .thenThrow(new IllegalStateException("db down"));
+        assertThatCode(() -> listener.onBidRejected(
+                new BidRejectedEvent(bidId, UUID.randomUUID(), "CANCELLED_BY_SENDER")))
+                .doesNotThrowAnyException();
         verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
     }
 

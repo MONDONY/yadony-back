@@ -3,10 +3,13 @@ package com.yadony.api.matching.reception;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Collection;
 import java.util.List;
@@ -24,6 +27,25 @@ public interface BidRecipientLinkRepository extends JpaRepository<BidRecipientLi
     boolean existsByBidIdAndRecipientUserIdAndStatus(UUID bidId, UUID recipientUserId, ReceptionLinkStatus status);
 
     List<BidRecipientLinkEntity> findByBidIdIn(Collection<UUID> bidIds);
+
+    /**
+     * Réserve l'annonce de l'annulation d'un colis à son destinataire : rend 1 la première
+     * fois, 0 ensuite. Atomique, deux annulations simultanées n'en laissent passer qu'une.
+     * Seul un lien actif dont le statut est dans {@code audience} est concerné.
+     */
+    @Transactional
+    @Modifying
+    @Query("""
+            UPDATE BidRecipientLinkEntity l
+               SET l.cancelNotifiedAt = :at
+             WHERE l.bidId = :bidId
+               AND l.cancelNotifiedAt IS NULL
+               AND l.status IN :audience
+               AND l.deletedAt IS NULL
+            """)
+    int claimCancelNotification(@Param("bidId") UUID bidId,
+                                @Param("audience") Collection<ReceptionLinkStatus> audience,
+                                @Param("at") OffsetDateTime at);
 
     List<BidRecipientLinkEntity> findByRecipientUserIdAndStatusIn(UUID recipientUserId,
                                                                   Collection<ReceptionLinkStatus> statuses);
