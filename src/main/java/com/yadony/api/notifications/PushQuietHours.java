@@ -22,7 +22,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * ne fait pas sonner : il reste dans le feed et compte pour le récapitulatif du matin
  * ({@link NightDigestScheduler}). Le reste de la journée, au-delà de {@link #DAILY_CAP} push non
  * critiques, les suivants restent dans le feed. Un type critique part toujours : il porte un
- * repli SMS et une échéance.
+ * repli SMS et une échéance. Un type toujours actif ({@link NotificationPrefsService#isAlwaysOn})
+ * respecte la nuit mais échappe au plafond.
  *
  * <p>Mémoire du processus (Caffeine) : un redémarrage perd au pire un récapitulatif ou remet
  * le compteur du jour à zéro. Coupé par {@code yadony.notifications.quiet-hours.enabled}.
@@ -67,6 +68,12 @@ public class PushQuietHours {
         if (isQuietHour(local.getHour())) {
             heldOvernight.get(user.getId(), id -> new AtomicInteger()).incrementAndGet();
             return true;
+        }
+        // Argent, identité, litiges, compte : jamais plafonnés et jamais comptés. Sans quoi
+        // une contrepartie qui enchaîne les messages épuiserait le plafond de la journée et
+        // ferait taire une alerte de compte ou de paiement qui suit.
+        if (NotificationPrefsService.isAlwaysOn(type)) {
+            return false;
         }
         String day = user.getId() + "|" + local.toLocalDate();
         return sentToday.get(day, k -> new AtomicInteger()).incrementAndGet() > DAILY_CAP;

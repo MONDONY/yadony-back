@@ -72,6 +72,36 @@ class PushQuietHoursTest {
         assertThat(quiet.isMorning(awa)).isTrue();
     }
 
+    /** Une contrepartie qui enchaîne les messages ne doit pas faire taire une alerte de compte. */
+    @Test
+    void daytime_alwaysOnTypesEscapeTheCapAndDoNotCount() {
+        PushQuietHours quiet = at("2026-07-10T12:00:00Z");
+        UserEntity awa = user("SN");
+
+        for (int i = 0; i < PushQuietHours.DAILY_CAP + 3; i++) {
+            quiet.hold(awa, "NEW_MESSAGE");
+        }
+        assertThat(quiet.hold(awa, "ACCOUNT_SUSPENDED")).isFalse();
+        assertThat(quiet.hold(awa, "KYC_ACTION_REQUIRED")).isFalse();
+        assertThat(quiet.hold(awa, "DISPUTE_OPENED")).isFalse();
+
+        UserEntity moussa = user("SN");
+        for (int i = 0; i < 5; i++) {
+            quiet.hold(moussa, "WALLET_ADJUSTED");
+        }
+        for (int i = 0; i < PushQuietHours.DAILY_CAP; i++) {
+            assertThat(quiet.hold(moussa, "NEW_MESSAGE")).isFalse();
+        }
+    }
+
+    /** La nuit, un type toujours actif attend le matin comme les autres : rien n'est urgent. */
+    @Test
+    void night_alwaysOnTypesWaitForTheDigest() {
+        PushQuietHours quiet = at("2026-07-10T01:00:00Z");
+
+        assertThat(quiet.hold(user("SN"), "KYC_VERIFIED")).isTrue();
+    }
+
     @Test
     void disabled_neverHolds() {
         PushQuietHours quiet = new PushQuietHours(false,
