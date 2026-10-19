@@ -172,6 +172,32 @@ public class NotificationPrefsService {
             "ANNOUNCEMENT_REMOVED"
     );
 
+    /**
+     * Types qui ne demandent aucune action à celui qui les reçoit : ils restent dans le feed
+     * in-app mais ne font jamais sonner le téléphone, quels que soient les réglages (y compris
+     * ceux de {@link #ALWAYS_ON}). Plan de réduction du bruit, étape 2 : bonne nouvelle sans
+     * suite à donner, information sur une action que la personne vient de faire elle-même,
+     * ou expiration qu'elle découvrira en ouvrant l'app.
+     */
+    static final Set<String> FEED_ONLY = Set.of(
+            // L'utilisateur vient d'agir lui-même, ou l'autre partie l'informe sans rien demander
+            "negotiation_deposit_pending", "TRIP_RESCHEDULE_KEPT", "BID_CANCELLED_BEFORE_PAYMENT",
+            // Destinataire : il a lui-même donné le code, ou n'est plus concerné
+            "RECIPIENT_PARCEL_DELIVERED", "RECIPIENT_PARCEL_REASSIGNED",
+            // Expéditeur et voyageur : bonne nouvelle ou changement visible au moment d'agir
+            "RECIPIENT_CONFIRMED", "RECIPIENT_CHANGED",
+            "RECIPIENT_INVITATION_ACCEPTED", "RECIPIENT_INVITATION_REMOVED",
+            // Expirations découvertes à l'ouverture de l'app
+            "request_expired", "bid_negotiation_expired",
+            // Suite d'un signalement, consultable dans la boîte Annonces
+            "REPORT_RESOLVED"
+    );
+
+    /** Le type reste-t-il dans le feed sans jamais partir en push ? */
+    public static boolean isFeedOnly(String type) {
+        return type != null && FEED_ONLY.contains(type);
+    }
+
     /** Le type part-il quels que soient les réglages ? */
     static boolean isAlwaysOn(String type) {
         return type != null && (NotificationTypes.isCritical(type)

@@ -79,6 +79,10 @@ public class FcmService {
 
     public boolean sendToUser(UUID userId, String title, String body, Map<String, String> data) {
         String notifType = data != null ? data.get("type") : null;
+        if (NotificationPrefsService.isFeedOnly(notifType)) {
+            log.debug("[FCM] Type {} réservé au feed, pas de push user={}", notifType, userId);
+            return false;
+        }
         if (!notificationPrefsService.isAllowed(userId, notifType)) {
             log.debug("[FCM] Notification supprimée par pref user={} type={}", userId, notifType);
             return false;

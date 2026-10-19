@@ -17,9 +17,11 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -60,11 +62,11 @@ class BroadcastServiceTest {
         when(audienceService.page(ALL, 1)).thenReturn(
                 new PageImpl<>(List.of(u3), PageRequest.of(1, 2), 3));
 
-        service.dispatchAsync(BROADCAST_ID, "Titre", "Corps", ALL);
+        service.dispatchAsync(BROADCAST_ID, "Titre", "Corps", ALL, true);
 
-        verify(notificationDispatcher).notifyUser(eq(u1), eq("Titre"), eq("Corps"), any());
-        verify(notificationDispatcher).notifyUser(eq(u2), eq("Titre"), eq("Corps"), any());
-        verify(notificationDispatcher).notifyUser(eq(u3), eq("Titre"), eq("Corps"), any());
+        verify(notificationDispatcher).notifyUser(eq(u1), eq("Titre"), eq("Corps"), any(), anyBoolean());
+        verify(notificationDispatcher).notifyUser(eq(u2), eq("Titre"), eq("Corps"), any(), anyBoolean());
+        verify(notificationDispatcher).notifyUser(eq(u3), eq("Titre"), eq("Corps"), any(), anyBoolean());
     }
 
     @Test
@@ -73,11 +75,11 @@ class BroadcastServiceTest {
         when(audienceService.page(ALL, 0)).thenReturn(
                 new PageImpl<>(List.of(u1), PageRequest.of(0, 200), 1));
 
-        service.dispatchAsync(BROADCAST_ID, "Titre", "Corps", ALL);
+        service.dispatchAsync(BROADCAST_ID, "Titre", "Corps", ALL, true);
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, String>> payload = ArgumentCaptor.forClass(Map.class);
-        verify(notificationDispatcher).notifyUser(eq(u1), anyString(), anyString(), payload.capture());
+        verify(notificationDispatcher).notifyUser(eq(u1), anyString(), anyString(), payload.capture(), eq(true));
         assertThat(payload.getValue())
                 .containsEntry("type", "ADMIN_BROADCAST")
                 .containsEntry("broadcastId", BROADCAST_ID.toString());
@@ -90,12 +92,25 @@ class BroadcastServiceTest {
         when(audienceService.page(ALL, 0)).thenReturn(
                 new PageImpl<>(List.of(failing, surviving), PageRequest.of(0, 200), 2));
         doThrow(new IllegalStateException("FCM indisponible"))
-                .when(notificationDispatcher).notifyUser(eq(failing), anyString(), anyString(), any());
+                .when(notificationDispatcher).notifyUser(eq(failing), anyString(), anyString(), any(), anyBoolean());
 
-        service.dispatchAsync(BROADCAST_ID, "Titre", "Corps", ALL);
+        service.dispatchAsync(BROADCAST_ID, "Titre", "Corps", ALL, true);
 
-        verify(notificationDispatcher).notifyUser(eq(surviving), anyString(), anyString(), any());
-        verify(notificationDispatcher, times(2)).notifyUser(any(), anyString(), anyString(), any());
+        verify(notificationDispatcher).notifyUser(eq(surviving), anyString(), anyString(), any(), anyBoolean());
+        verify(notificationDispatcher, times(2)).notifyUser(any(), anyString(), anyString(), any(), anyBoolean());
+    }
+
+    /** Sans push : le message va dans la boîte Annonces sans faire sonner les téléphones. */
+    @Test
+    void dispatchWithoutPush_notifiesInAppOnly() {
+        UUID u1 = UUID.randomUUID();
+        when(audienceService.page(ALL, 0)).thenReturn(
+                new PageImpl<>(List.of(u1), PageRequest.of(0, 200), 1));
+
+        service.dispatchAsync(BROADCAST_ID, "Titre", "Corps", ALL, false);
+
+        verify(notificationDispatcher).notifyUser(eq(u1), eq("Titre"), eq("Corps"), any(), eq(false));
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any(), eq(true));
     }
 
     @Test
@@ -103,9 +118,9 @@ class BroadcastServiceTest {
         when(audienceService.page(ALL, 0)).thenReturn(
                 new PageImpl<>(List.of(), PageRequest.of(0, 200), 0));
 
-        service.dispatchAsync(BROADCAST_ID, "Titre", "Corps", ALL);
+        service.dispatchAsync(BROADCAST_ID, "Titre", "Corps", ALL, true);
 
-        verify(notificationDispatcher, times(0)).notifyUser(any(), anyString(), anyString(), any());
+        verify(notificationDispatcher, times(0)).notifyUser(any(), anyString(), anyString(), any(), anyBoolean());
     }
 
     /**
@@ -118,7 +133,7 @@ class BroadcastServiceTest {
     @Test
     void dispatchAsyncIsWiredToTheBoundedBroadcastExecutorQualifier() throws NoSuchMethodException {
         Async async = BroadcastService.class
-                .getMethod("dispatchAsync", UUID.class, String.class, String.class, BroadcastTarget.class)
+                .getMethod("dispatchAsync", UUID.class, String.class, String.class, BroadcastTarget.class, boolean.class)
                 .getAnnotation(Async.class);
 
         assertThat(async).isNotNull();

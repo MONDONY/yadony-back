@@ -46,6 +46,16 @@ class FcmServiceTest {
         verifyNoInteractions(userRepository);
     }
 
+    // Bruit (étape 2) : un type réservé au feed ne part jamais en push, même autorisé
+    @Test
+    void sendToUser_feedOnlyType_neverPushes() {
+        boolean result = service.sendToUser(USER_ID, "Titre", "Corps",
+                java.util.Map.of("type", "RECIPIENT_CONFIRMED"));
+
+        org.assertj.core.api.Assertions.assertThat(result).isFalse();
+        verifyNoInteractions(notificationPrefsService, userRepository, userDeviceRepository);
+    }
+
     // Test 2: isAllowed() retourne true → la méthode continue et appelle userRepository.findById()
     @Test
     void sendToUser_prefEnabled_proceedsToUserRepository() {
