@@ -31,6 +31,7 @@ import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -56,6 +57,7 @@ class NegotiationControllerMobileMoneyIT {
     @MockBean private UserRepository userRepository;
 
     private static final UUID SENDER_UUID = UUID.randomUUID();
+    private static final UUID TRAVELER_UUID = UUID.randomUUID();
 
     @BeforeEach
     void setupAuth() {
@@ -78,8 +80,8 @@ class NegotiationControllerMobileMoneyIT {
         UUID threadId = UUID.randomUUID();
         LocalDateTime expiresAt = LocalDateTime.now().plusMinutes(30);
         when(service.prepareMobileMoneyDeposit(SENDER_UUID, threadId))
-                .thenReturn(new NegotiationService.PreparedDeposit(threadId, UUID.randomUUID(), new BigDecimal("33000"), "XOF", expiresAt));
-        when(mobileMoney.initiateDeposit(eq(threadId), eq(SENDER_UUID), eq("+221771234567"), eq(expiresAt)))
+                .thenReturn(new NegotiationService.PreparedDeposit(threadId, UUID.randomUUID(), TRAVELER_UUID, new BigDecimal("33000"), "XOF", expiresAt));
+        when(mobileMoney.initiateDeposit(eq(threadId), eq(SENDER_UUID), eq("+221771234567"), isNull(), eq(TRAVELER_UUID), eq(expiresAt)))
                 .thenReturn(new MobileMoneyNegotiationStatusResponse(threadId, "PENDING", expiresAt, new BigDecimal("33000"), "XOF", null));
 
         mockMvc.perform(post("/negotiations/" + threadId + "/mobile-money/initiate")
@@ -93,7 +95,25 @@ class NegotiationControllerMobileMoneyIT {
 
         var order = inOrder(service, mobileMoney);
         order.verify(service).prepareMobileMoneyDeposit(SENDER_UUID, threadId);
-        order.verify(mobileMoney).initiateDeposit(threadId, SENDER_UUID, "+221771234567", expiresAt);
+        order.verify(mobileMoney).initiateDeposit(threadId, SENDER_UUID, "+221771234567", null, TRAVELER_UUID, expiresAt);
+    }
+
+    @Test
+    void initiate_withProvider_passesItThrough() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        LocalDateTime expiresAt = LocalDateTime.now().plusMinutes(30);
+        when(service.prepareMobileMoneyDeposit(SENDER_UUID, threadId))
+                .thenReturn(new NegotiationService.PreparedDeposit(threadId, UUID.randomUUID(), TRAVELER_UUID, new BigDecimal("33000"), "XOF", expiresAt));
+        when(mobileMoney.initiateDeposit(eq(threadId), eq(SENDER_UUID), eq("+221771234567"), eq("MTN_MOMO_CIV"), eq(TRAVELER_UUID), eq(expiresAt)))
+                .thenReturn(new MobileMoneyNegotiationStatusResponse(threadId, "PENDING", expiresAt, new BigDecimal("33000"), "XOF", null));
+
+        mockMvc.perform(post("/negotiations/" + threadId + "/mobile-money/initiate")
+                .with(authentication(authAs("uid-sender", "SENDER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"phoneNumber\":\"+221771234567\",\"provider\":\"MTN_MOMO_CIV\"}"))
+            .andExpect(status().isCreated());
+
+        verify(mobileMoney).initiateDeposit(threadId, SENDER_UUID, "+221771234567", "MTN_MOMO_CIV", TRAVELER_UUID, expiresAt);
     }
 
     @Test
@@ -107,7 +127,7 @@ class NegotiationControllerMobileMoneyIT {
             .andExpect(status().isUnprocessableEntity())
             .andExpect(content().contentType("application/problem+json"))
             .andExpect(jsonPath("$.code").value("payment-method/not-in-available-set"));
-        verify(mobileMoney, never()).initiateDeposit(any(), any(), any(), any());
+        verify(mobileMoney, never()).initiateDeposit(any(), any(), any(), any(), any(), any());
     }
 
     @Test

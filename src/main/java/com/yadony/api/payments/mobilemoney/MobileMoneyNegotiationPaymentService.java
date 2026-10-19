@@ -23,7 +23,6 @@ import com.yadony.api.payments.pawapay.PawapayOperationService;
 import com.yadony.api.payments.pawapay.PawapayOperationStatus;
 import com.yadony.api.payments.pawapay.PawapayProperties;
 import com.yadony.api.payments.pawapay.PawapayProviderResolver;
-import com.yadony.api.payments.pawapay.PawapayProviders;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import com.yadony.api.payments.pawapay.PawapayText;
 import com.yadony.api.requests.NegotiationMobileMoneyPort;
@@ -192,7 +191,7 @@ public class MobileMoneyNegotiationPaymentService {
 
     @Transactional
     public MobileMoneyNegotiationStatusResponse initiateDeposit(UUID threadId, UUID senderId, String phoneOverride,
-                                                                LocalDateTime deadline) {
+                                                                String provider, UUID travelerId, LocalDateTime deadline) {
         PaymentEntity payment = paymentRepository.findByNegotiationThreadIdForUpdate(threadId)
                 .filter(p -> p.getRail() == PaymentRail.PAWAPAY)
                 .orElseThrow(() -> notFound("mobile-money-payment-not-found", "Aucun paiement mobile money pour cette négociation"));
@@ -214,7 +213,7 @@ public class MobileMoneyNegotiationPaymentService {
         String msisdn = resolvePayerMsisdn(senderId, phoneOverride, payment.getCurrency());
         PawapayProviderResolver.Resolved resolved;
         try {
-            resolved = providers.resolve(msisdn, PawapayOperationKind.DEPOSIT, payment.getCurrency(),
+            resolved = providers.resolve(msisdn, PawapayOperationKind.DEPOSIT, payment.getCurrency(), provider,
                     "l'initiation du deposit pour la négociation " + threadId);
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
             throw payerUnsupported(switch (e.reason()) {
@@ -224,6 +223,14 @@ public class MobileMoneyNegotiationPaymentService {
                 case COUNTRY_UNKNOWN -> "Pays non reconnu pour ce numéro.";
                 case PROVIDER_NOT_AVAILABLE -> "Réseau " + e.providerLabel() + " indisponible pour ce numéro.";
             });
+        }
+        // Couplage (décision produit), comme pour le colis : l'expéditeur ne paie qu'avec une marque
+        // acceptée par le voyageur du fil. Vérifié pour l'ancien client (prédit) comme pour le
+        // nouveau (choisi).
+        UserEntity traveler = userRepository.findById(travelerId)
+                .orElseThrow(() -> notFound("user-not-found", "Voyageur introuvable"));
+        if (!MobileMoneyNetworks.acceptsBrand(traveler, resolved.provider())) {
+            throw payerUnsupported(MobileMoneyNetworks.notAcceptedDetail(traveler, resolved.providerLabel()));
         }
         var limits = resolved.config().deposit();
         if (limits.minAmount() != null && payment.getAmount().compareTo(limits.minAmount()) < 0

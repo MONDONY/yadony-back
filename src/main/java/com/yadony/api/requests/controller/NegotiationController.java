@@ -304,8 +304,9 @@ public class NegotiationController {
         UUID senderId = requireUserId();
         NegotiationService.PreparedDeposit prepared = service.prepareMobileMoneyDeposit(senderId, id);
         String phone = body == null ? null : body.phoneNumber();
+        String provider = body == null ? null : body.provider();
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(mobileMoney.initiateDeposit(id, senderId, phone, prepared.expiresAt()));
+                .body(mobileMoney.initiateDeposit(id, senderId, phone, provider, prepared.travelerId(), prepared.expiresAt()));
     }
 
     @GetMapping("/{id}/mobile-money/status")

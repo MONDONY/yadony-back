@@ -52,6 +52,19 @@ public final class MobileMoneyNetworks {
         return brand != null && acceptedBrands(traveler).contains(brand);
     }
 
+    /**
+     * Détail du 422 « mobile-money-payer-unsupported » quand le réseau du payeur n'est pas accepté
+     * par le voyageur. Commun au colis (bid) et au fil de négociation.
+     *
+     * @param providerLabel libellé du réseau refusé (« Orange Money »).
+     */
+    public static String notAcceptedDetail(UserEntity traveler, String providerLabel) {
+        List<String> labels = acceptedLabels(traveler);
+        return labels.isEmpty()
+                ? "Ce voyageur n'accepte aucun réseau mobile money pour le moment."
+                : "Ce voyageur n'accepte pas " + providerLabel + ". Réseaux acceptés : " + String.join(", ", labels) + ".";
+    }
+
     /** Code accepté de cette marque, s'il existe : c'est lui qui reçoit le versement. */
     public static Optional<String> providerForBrand(UserEntity traveler, String brand) {
         if (brand == null) {

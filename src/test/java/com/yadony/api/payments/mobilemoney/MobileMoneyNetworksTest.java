@@ -67,4 +67,16 @@ class MobileMoneyNetworksTest {
         assertThat(MobileMoneyNetworks.acceptedLabels(none)).isEmpty();
         assertThat(MobileMoneyNetworks.acceptsBrand(none, "ORANGE_SEN")).isFalse();
     }
+
+    @Test
+    void notAcceptedDetail_withoutAnyNetwork_saysSo() {
+        assertThat(MobileMoneyNetworks.notAcceptedDetail(travelerWith(null, null), "MTN MoMo"))
+                .isEqualTo("Ce voyageur n'accepte aucun réseau mobile money pour le moment.");
+    }
+
+    @Test
+    void notAcceptedDetail_withNetworks_namesTheRefusedOneAndListsTheAcceptedOnes() {
+        assertThat(MobileMoneyNetworks.notAcceptedDetail(travelerWith("ORANGE_CIV,WAVE_CIV", null), "MTN MoMo"))
+                .isEqualTo("Ce voyageur n'accepte pas MTN MoMo. Réseaux acceptés : Orange Money, Wave.");
+    }
 }
