@@ -4,6 +4,7 @@ import com.yadony.api.activation.dto.ActivationResponse.Opportunities;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.UserZones;
 import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.notifications.NotificationTexts;
 import org.slf4j.Logger;
@@ -89,7 +90,7 @@ public class FirstActionReminderScheduler {
     /** Réserve la relance (compteur + horodatage) ; null si le compte est à ignorer. */
     private Reservation reserve(UUID id, Instant now) {
         UserEntity user = userRepository.findById(id).orElse(null);
-        if (user == null || !ActivationZones.isWithinWindow(user.getCountry(), now, windowStartHour, windowEndHour)) {
+        if (user == null || !UserZones.isWithinWindow(user.getCountry(), now, windowStartHour, windowEndHour)) {
             return null;
         }
         // La boucle peut durer : quelqu'un qui vient d'agir ne doit pas être relancé.
