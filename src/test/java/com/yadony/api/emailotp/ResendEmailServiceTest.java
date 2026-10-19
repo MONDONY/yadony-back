@@ -225,6 +225,56 @@ class ResendEmailServiceTest {
         verify(mockRestClient, never()).post();
     }
 
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> lastPayload() {
+        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
+        verify(requestBodySpec, atLeastOnce()).body(captor.capture());
+        return (Map<String, Object>) captor.getValue();
+    }
+
+    @Test
+    @DisplayName("sendNotification — titre et texte de la notification, ligne de la famille, bouton")
+    void notificationEmail_recapInFrench() {
+        service.sendNotification("user@example.com", com.yadony.api.notifications.NotificationEmailPolicy.Kind.RECAP,
+                "DELIVERY_CONFIRMED", "Colis livré", "Fatou a reçu votre colis.", TestMessages.fr());
+
+        Map<String, Object> payload = lastPayload();
+        assertThat(payload).containsEntry("subject", "Colis livré").containsEntry("to", List.of("user@example.com"));
+        assertThat((String) payload.get("html"))
+                .contains("Colis livré").contains("Fatou a reçu votre colis.")
+                .contains("Votre colis").contains("Ouvrir Yadony").contains("https://yadony.com")
+                .contains("notez le voyageur")
+                .contains("Vous pouvez couper ces e-mails")
+                .contains(LOGO_URL).doesNotContain("??");
+        assertThat((String) payload.get("text")).contains("Colis livré").contains("notez le voyageur");
+    }
+
+    @Test
+    @DisplayName("sendNotification — un reçu part toujours : pas de ligne pour couper, version anglaise")
+    void notificationEmail_receiptInEnglish() {
+        service.sendNotification("user@example.com", com.yadony.api.notifications.NotificationEmailPolicy.Kind.RECEIPT,
+                "PAYMENT_RELEASED", "Payment sent", "Your earnings are on their way.", TestMessages.en());
+
+        String html = (String) lastPayload().get("html");
+        assertThat(html).contains("Receipt").contains("serves as your receipt").contains("Open Yadony")
+                .doesNotContain("turn these emails off").doesNotContain("??");
+    }
+
+    @Test
+    @DisplayName("sendNotification — sans clé Resend rien ne part, un échec n'est jamais levé")
+    void notificationEmail_notConfiguredOrFailing() {
+        service = new ResendEmailService("noreply@yadony.app", mockRestClient, templateEngine(), false, false, true);
+        service.sendNotification("user@example.com", com.yadony.api.notifications.NotificationEmailPolicy.Kind.DECISION,
+                "DISPUTE_RESOLVED", "Litige résolu", "", TestMessages.fr());
+        verify(mockRestClient, never()).post();
+
+        when(requestBodySpec.retrieve()).thenThrow(new org.springframework.web.client.RestClientException("boom"));
+        service = new ResendEmailService("noreply@yadony.app", mockRestClient, templateEngine(), true, false, true);
+        org.assertj.core.api.Assertions.assertThatCode(() -> service.sendNotification("user@example.com",
+                com.yadony.api.notifications.NotificationEmailPolicy.Kind.DECISION, "DISPUTE_RESOLVED",
+                "Litige résolu", null, TestMessages.fr())).doesNotThrowAnyException();
+    }
+
     private static TemplateEngine templateEngine() {
         ClassLoaderTemplateResolver resolver = new ClassLoaderTemplateResolver();
         resolver.setPrefix("templates/");

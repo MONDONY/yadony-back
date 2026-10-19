@@ -3,6 +3,7 @@ package com.yadony.api.emailotp;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.i18n.Messages;
 import com.yadony.api.gppro.events.GpProDecisionEvent;
+import com.yadony.api.notifications.NotificationEmailPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -143,6 +144,58 @@ public class ResendEmailService {
         } catch (RuntimeException e) {
             log.error("Resend: échec de l'e-mail de décision GP Pro vers {}: {}", maskEmail(to), e.getClass().getSimpleName());
         }
+    }
+
+    /** Bouton des e-mails de notification : le site mène à l'application. */
+    static final String APP_URL = "https://yadony.com";
+
+    /**
+     * E-mail d'une notification (reçu, décision, récapitulatif, alerte) : titre et texte de
+     * la notification, puis la ligne de sa famille. Comme {@link #sendGpProDecision}, ne lève
+     * jamais : la notification est déjà dans l'app, un échec est seulement journalisé.
+     */
+    public void sendNotification(String to, NotificationEmailPolicy.Kind kind, String type,
+                                 String title, String body, Messages m) {
+        try {
+            if (!emailSendingConfigured) {
+                return;
+            }
+            String family = "email.notif.kind." + kind.name().toLowerCase(java.util.Locale.ROOT);
+            String detail = m.get(family + ".detail");
+            if (NotificationEmailPolicy.hasTypeDetail(type)) {
+                detail = detail + " " + m.get("email.notif.type." + type + ".detail");
+            }
+            String text = String.join("\n\n", title, body == null ? "" : body, detail,
+                    m.get("email.notif.cta") + " : " + APP_URL);
+            Map<String, Object> payload = Map.of(
+                    "from", fromAddress,
+                    "to", List.of(to),
+                    "subject", title,
+                    "html", renderNotificationHtml(kind, family, title, body, detail, m),
+                    "text", text
+            );
+            restClient.post()
+                    .uri("/emails")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(payload)
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (RuntimeException e) {
+            log.error("Resend: échec de l'e-mail de notification {} vers {}: {}", type, maskEmail(to), e.getClass().getSimpleName());
+        }
+    }
+
+    private String renderNotificationHtml(NotificationEmailPolicy.Kind kind, String family, String heading,
+                                          String body, String detail, Messages m) {
+        Context context = new Context(m.locale());
+        context.setVariable("eyebrow", m.get(family + ".eyebrow"));
+        context.setVariable("heading", heading);
+        context.setVariable("body", body);
+        context.setVariable("detail", detail);
+        context.setVariable("optional", kind.pref().isPresent());
+        context.setVariable("appUrl", APP_URL);
+        context.setVariable("lang", m.language().code());
+        return templateEngine.process("email-notification", context);
     }
 
     private String renderGpProDecisionHtml(String heading, String body, boolean approved, Messages m) {

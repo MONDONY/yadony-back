@@ -74,13 +74,28 @@ public class NotificationDispatcher {
     private final BlockVisibility blockVisibility;
     private final com.yadony.api.payments.pawapay.PawapayProperties pawapayProperties;
     private final MessagesResolver messagesResolver;
+    private final NotificationEmailService notificationEmails;
 
+    /** Sans e-mails : tests qui n'exercent que le push et le feed. */
     public NotificationDispatcher(FcmService fcmService, SmsService smsService,
                                   UserRepository userRepository,
                                   NotificationService notificationService,
                                   BlockVisibility blockVisibility,
                                   com.yadony.api.payments.pawapay.PawapayProperties pawapayProperties,
                                   MessagesResolver messagesResolver) {
+        this(fcmService, smsService, userRepository, notificationService, blockVisibility,
+                pawapayProperties, messagesResolver, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public NotificationDispatcher(FcmService fcmService, SmsService smsService,
+                                  UserRepository userRepository,
+                                  NotificationService notificationService,
+                                  BlockVisibility blockVisibility,
+                                  com.yadony.api.payments.pawapay.PawapayProperties pawapayProperties,
+                                  MessagesResolver messagesResolver,
+                                  NotificationEmailService notificationEmails) {
+        this.notificationEmails = notificationEmails;
         this.fcmService = fcmService;
         this.smsService = smsService;
         this.userRepository = userRepository;
@@ -107,10 +122,27 @@ public class NotificationDispatcher {
     }
 
     public void notifyUser(UUID userId, String title, String body, Map<String, String> data, boolean push) {
-        var saved = notificationService.persist(userId, data.getOrDefault("type", ""), title, body, data, false);
-        if (push) {
+        String type = data.getOrDefault("type", "");
+        var saved = notificationService.persist(userId, type, title, body, data, false);
+        // Étape 5 du plan bruit : un reçu, une décision ou un récapitulatif part aussi par
+        // e-mail ; une alerte ou un conseil part par e-mail à la place du push quand c'est possible.
+        boolean pushReplaced = push && notificationEmails != null
+                && notificationEmails.replacesPush(userId, type, data);
+        sendEmail(userId, type, title, body, data);
+        if (push && !pushReplaced) {
             Map<String, String> dataWithId = withNotificationId(data, saved.getId());
             fcmService.sendToUser(userId, title, body, dataWithId);
+        }
+    }
+
+    private void sendEmail(UUID userId, String type, String title, String body, Map<String, String> data) {
+        if (notificationEmails == null) {
+            return;
+        }
+        try {
+            notificationEmails.send(userId, type, title, body, data);
+        } catch (RuntimeException e) {
+            log.warn("E-mail de la notification {} non programmé : {}", type, e.getClass().getSimpleName());
         }
     }
 
@@ -148,6 +180,7 @@ public class NotificationDispatcher {
     // Critical: persisted with is_critical=true → SmsFallbackScheduler sends SMS if no ACK in 60s
     private void notifyCritical(UUID userId, String title, String body, Map<String, String> data) {
         var saved = notificationService.persist(userId, data.getOrDefault("type", ""), title, body, data, true);
+        sendEmail(userId, data.getOrDefault("type", ""), title, body, data);
         Map<String, String> dataWithId = withNotificationId(data, saved.getId());
         fcmService.sendToUser(userId, title, body, dataWithId);
     }

@@ -15,6 +15,9 @@ package com.yadony.api.notifications;
  * même règle que les champs V305. Une application qui ne les envoie pas ne connaît que
  * l'ancien « Offres » : son choix vaut alors pour les trois rôles, comme avant.
  *
+ * <p>V342 : {@code emailRecaps} et {@code emailAlertsTips} règlent les e-mails coupables
+ * ({@link NotificationEmailPolicy}) ; {@code null} en écriture laisse la valeur stockée.
+ *
  * <p>{@code pushTripReminder} n'est plus lu par aucun type (voir
  * {@code NotificationPrefsService}) mais reste dans le contrat pour les anciennes versions.
  */
@@ -29,7 +32,9 @@ public record NotificationPrefsDto(
     Boolean pushTravelerAutomations,
     Boolean pushRemindersTips,
     Boolean pushMyTrips,
-    Boolean pushRecipientParcels
+    Boolean pushRecipientParcels,
+    Boolean emailRecaps,
+    Boolean emailAlertsTips
 ) {
     /** Forme historique à six champs : les réglages V305 restent inchangés. */
     public NotificationPrefsDto(boolean pushActivityBids, boolean pushActivityNegotiations,
@@ -50,8 +55,20 @@ public record NotificationPrefsDto(
                 pushRemindersTips, null, null);
     }
 
+    /** Forme V340 à onze champs : les réglages e-mail (V342) restent inchangés. */
+    public NotificationPrefsDto(boolean pushActivityBids, boolean pushActivityNegotiations,
+                                boolean pushMessages, boolean pushTripReminder,
+                                boolean pushPromo, boolean pushCorridorAlerts,
+                                Boolean pushMissedCalls, Boolean pushTravelerAutomations,
+                                Boolean pushRemindersTips, Boolean pushMyTrips,
+                                Boolean pushRecipientParcels) {
+        this(pushActivityBids, pushActivityNegotiations, pushMessages, pushTripReminder,
+                pushPromo, pushCorridorAlerts, pushMissedCalls, pushTravelerAutomations,
+                pushRemindersTips, pushMyTrips, pushRecipientParcels, null, null);
+    }
+
     public static NotificationPrefsDto defaults() {
         return new NotificationPrefsDto(true, true, true, true, false, true, true, true, true,
-                true, true);
+                true, true, true, true);
     }
 }

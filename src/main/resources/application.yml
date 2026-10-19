@@ -289,6 +289,10 @@ yadony:
     # Les retenus de la nuit partent en un récapitulatif dès 8 h (NightDigestScheduler).
     quiet-hours:
       enabled: ${YADONY_NOTIFICATIONS_QUIET_HOURS_ENABLED:true}
+    # E-mails des notifications (NotificationEmailPolicy) : reçus, décisions, récapitulatifs,
+    # alertes. Sans clé Resend, ResendEmailService n'envoie rien de toute façon.
+    email:
+      enabled: ${YADONY_NOTIFICATIONS_EMAIL_ENABLED:true}
     caps:
       # Que faire d'un libellé qui dépasse NotificationCaps (titre 28, corps 72) :
       # off | warn | strict. « warn » tant que les points d'émission ne sont pas

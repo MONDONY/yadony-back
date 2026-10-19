@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="fr" th:lang="${lang}" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="color-scheme" content="light dark">
+  <meta name="supported-color-schemes" content="light dark">
+  <title th:text="${heading}">Yadony</title>
+  <!-- E-mail d'une notification (NotificationEmailPolicy) : même charpente (filet bleu, contenu centré) et mêmes
+       jetons de couleur que email-otp.html, voir son commentaire. Le titre et le texte sont ceux de la notification. -->
+  <style>
+    @media only screen and (max-width: 620px) {
+      .wrapper { padding: 24px 12px !important; }
+      .card-pad { padding: 28px 22px 24px !important; }
+      .heading { font-size: 22px !important; line-height: 30px !important; }
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .bg { background: #14130F !important; }
+      .card { background: #1E1D1A !important; border-color: #3A3733 !important; }
+      .logo-tile { background: #FFFFFF !important; padding: 6px 10px !important; border-radius: 8px !important; }
+      .eyebrow { color: #EA9468 !important; }
+      .strong { color: #F2F1ED !important; }
+      .muted { color: #D2CDC2 !important; }
+      .topbar { background: #3D72FF !important; }
+      .link { color: #A8BEFF !important; }
+      .cta { background: #3D72FF !important; }
+    }
+
+    [data-ogsc] .eyebrow { color: #EA9468 !important; }
+    [data-ogsc] .strong { color: #F2F1ED !important; }
+    [data-ogsc] .muted { color: #D2CDC2 !important; }
+    [data-ogsc] .link { color: #A8BEFF !important; }
+    [data-ogsb] .logo-tile { background: #FFFFFF !important; padding: 6px 10px !important; border-radius: 8px !important; }
+  </style>
+</head>
+<body class="bg" style="margin:0; padding:0; background:#F2F1ED; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%;">
+  <div style="display:none; max-height:0; max-width:0; overflow:hidden; opacity:0; color:transparent; mso-hide:all;" th:text="${body}">
+    Votre colis est livré.
+  </div>
+
+  <table role="presentation" class="bg" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%; background:#F2F1ED;">
+    <tr>
+      <td class="wrapper" align="center" style="padding:40px 16px;">
+
+        <table role="presentation" class="card" width="560" cellspacing="0" cellpadding="0" border="0" style="width:560px; max-width:560px; background:#FFFFFF; border:1px solid #E8E5DF; border-radius:16px; overflow:hidden;">
+          <tr>
+            <td class="topbar" style="height:6px; line-height:6px; font-size:0; background:#0B5FFF;">&nbsp;</td>
+          </tr>
+          <tr>
+            <td class="card-pad" align="center" style="padding:36px 40px 32px; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:0 auto 28px;">
+                <tr>
+                  <td class="logo-tile" style="padding:0;">
+                    <img src="https://yadony.com/logos/logo-yadony.png" width="128" height="35" alt="Yadony" style="display:block; width:128px; height:35px; border:0; outline:none; text-decoration:none;">
+                  </td>
+                </tr>
+              </table>
+
+              <p class="eyebrow" style="margin:0 0 8px; color:#B95524; font-size:13px; line-height:18px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase;" th:text="${eyebrow}">
+                Votre colis
+              </p>
+              <h1 class="heading strong" style="margin:0 0 16px; color:#0A2540; font-size:26px; line-height:34px; font-weight:700;" th:text="${heading}">
+                Colis livré
+              </h1>
+              <p class="muted" style="margin:0 0 12px; color:#54504A; font-size:16px; line-height:24px;" th:text="#{email.otp.greeting}">Bonjour,</p>
+              <p th:if="${body != null and !#strings.isEmpty(body)}" class="strong" style="margin:0 0 12px; color:#0A2540; font-size:16px; line-height:24px; white-space:pre-line;" th:text="${body}">Votre colis est livré.</p>
+              <p class="muted" style="margin:0 0 28px; color:#54504A; font-size:15px; line-height:23px;" th:text="${detail}">Retrouvez tout le suivi dans l'application Yadony.</p>
+
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:0 auto;">
+                <tr>
+                  <td class="cta" align="center" style="background:#0B5FFF; border-radius:12px;">
+                    <a th:href="${appUrl}" href="https://yadony.com" target="_blank" rel="noopener" style="display:inline-block; padding:14px 28px; color:#FFFFFF; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size:16px; line-height:20px; font-weight:700; text-decoration:none;" th:text="#{email.notif.cta}">Ouvrir Yadony</a>
+                  </td>
+                </tr>
+              </table>
+
+            </td>
+          </tr>
+        </table>
+
+        <table role="presentation" width="560" cellspacing="0" cellpadding="0" border="0" style="width:560px; max-width:560px;">
+          <tr>
+            <td align="center" style="padding:24px 16px 0; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+              <p class="muted" style="margin:0 0 10px; color:#54504A; font-size:13px; line-height:20px;">
+                <a class="link" href="https://whatsapp.com/channel/0029VbCfmMzAYlUE5EddiT41" target="_blank" rel="noopener" style="color:#0A4DD9; font-weight:600; text-decoration:none;">WhatsApp</a>
+                &nbsp;&middot;&nbsp;
+                <a class="link" href="https://www.youtube.com/@yadony" target="_blank" rel="noopener" style="color:#0A4DD9; font-weight:600; text-decoration:none;">YouTube</a>
+                &nbsp;&middot;&nbsp;
+                <a class="link" href="https://www.tiktok.com/@yadony_app" target="_blank" rel="noopener" style="color:#0A4DD9; font-weight:600; text-decoration:none;">TikTok</a>
+                &nbsp;&middot;&nbsp;
+                <a class="link" href="https://www.facebook.com/groups/1051558350756867" target="_blank" rel="noopener" style="color:#0A4DD9; font-weight:600; text-decoration:none;">Facebook</a>
+                &nbsp;&middot;&nbsp;
+                <a class="link" href="https://www.instagram.com/yadony2026/" target="_blank" rel="noopener" style="color:#0A4DD9; font-weight:600; text-decoration:none;">Instagram</a>
+              </p>
+              <p class="muted" style="margin:0 0 4px; color:#54504A; font-size:12px; line-height:18px;" th:text="${optional} ? #{email.notif.why.optional} : #{email.notif.why.always}">
+                Vous recevez cet e-mail car il concerne votre compte Yadony.
+              </p>
+              <p class="muted" style="margin:0 0 4px; color:#54504A; font-size:12px; line-height:18px;" th:text="#{email.otp.no-reply}">
+                Cet e-mail est envoyé automatiquement, merci de ne pas y répondre.
+              </p>
+              <p class="muted" style="margin:0; color:#54504A; font-size:12px; line-height:18px;" th:text="#{email.otp.copyright}">
+                © 2026 Yadony. Tous droits réservés.
+              </p>
+            </td>
+          </tr>
+        </table>
+
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
