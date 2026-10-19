@@ -63,19 +63,32 @@ class AssistantStatusIntegrationTest {
 
     @Test
     void ecranConnu200SansQuota() throws Exception {
-        when(service.screen("/envois", "fr")).thenReturn(Optional.of(new AssistantScreenResponse("ecran-mes-colis",
+        when(service.screen("/envois", "fr", false)).thenReturn(Optional.of(new AssistantScreenResponse("ecran-mes-colis",
                 "L'écran Mes colis", "Vous êtes sur Mes colis.", List.of("Comment annuler ?"), List.of())));
         mockMvc.perform(get("/assistant/screen").param("path", "/envois").param("locale", "fr")
                         .with(authentication(withRole("ROLE_SENDER"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.explanation").value("Vous êtes sur Mes colis."))
-                .andExpect(jsonPath("$.questions[0]").value("Comment annuler ?"));
+                .andExpect(jsonPath("$.questions[0]").value("Comment annuler ?"))
+                .andExpect(jsonPath("$.explanationRich").doesNotExist());
         verifyNoInteractions(router);
+    }
+
+    /** YADONY-FLUTTER-PROD-13 : {@code format=rich} ajoute {@code explanationRich}. */
+    @Test
+    void ecranFormatRich() throws Exception {
+        when(service.screen("/envois", "fr", true)).thenReturn(Optional.of(new AssistantScreenResponse(
+                "ecran-mes-colis", "L'écran Mes colis", "Ligne une.\nLigne deux.", List.of(), List.of(),
+                "Ligne une.\nLigne deux.")));
+        mockMvc.perform(get("/assistant/screen").param("path", "/envois").param("locale", "fr")
+                        .param("format", "rich").with(authentication(withRole("ROLE_SENDER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.explanationRich").value("Ligne une.\nLigne deux."));
     }
 
     @Test
     void ecranInconnu204() throws Exception {
-        when(service.screen(anyString(), any())).thenReturn(Optional.empty());
+        when(service.screen(anyString(), any(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(Optional.empty());
         mockMvc.perform(get("/assistant/screen").param("path", "/inconnu")
                         .with(authentication(withRole("ROLE_SENDER"))))
                 .andExpect(status().isNoContent());

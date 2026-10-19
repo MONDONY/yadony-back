@@ -138,4 +138,13 @@ class AssistantPromptBuilderTest {
         assertThat(builder.user("fr", List.of(hit), List.of(), "x", false, null, List.of())).doesNotContain("<discover>");
         assertThat(builder.user("fr", List.of(hit), List.of(), "x", false, null, null)).doesNotContain("<discover>");
     }
+
+    @Test
+    void varianteRiche_formeEcriteUneFoisEnAnglais() {
+        AssistantPromptBuilder builder = new AssistantPromptBuilder();
+        assertThat(builder.system()).isEqualTo(builder.system(false)).contains("Plain text: no Markdown, no links.");
+        assertThat(builder.system(true)).contains("**double asterisks**", "\"- \"", "at most 3", "No headings")
+                .doesNotContain("Plain text: no Markdown").doesNotContain("%s");
+        assertThat(builder.system(false)).doesNotContain("%s");
+    }
 }

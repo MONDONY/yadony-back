@@ -40,6 +40,8 @@ public class AssistantService {
     static final int MAX_HISTORY = 12;
     static final int MAX_TURN_LENGTH = 1000;
     static final int MAX_ANSWER = 600;
+    /** Réponse riche ({@code format=rich}), balises comprises : un peu de marge pour les puces et le gras. */
+    static final int MAX_RICH_ANSWER = 700;
     static final int MAX_ACTIONS = 2;
     /** Questions utilisateur précédentes ajoutées à la recherche de relance (jamais les réponses de l'assistant). */
     static final int MAX_CONTEXT_QUESTIONS = 2;
@@ -132,7 +134,8 @@ public class AssistantService {
         String hitsLocale = otherLanguage ? otherLocale(locale) : locale;
         List<KbArticle> discover = knowledgeBase.discoveryCandidates(hitsLocale, Set.copyOf(sources), searched,
                 DISCOVERY_CANDIDATES);
-        Optional<LlmResult<ParsedAnswer>> result = router.complete(promptBuilder.system(),
+        boolean rich = request.rich();
+        Optional<LlmResult<ParsedAnswer>> result = router.complete(promptBuilder.system(rich),
                 promptBuilder.user(locale, hits, maskedHistory, TrackingNumbers.mask(question), otherLanguage,
                         parcelPrompt, discover),
                 parser::parse);
@@ -156,10 +159,20 @@ public class AssistantService {
         if (parcel == null && parsed.aboutMyParcel()) {
             return chooseParcel(uid, locale, sources, slug, remaining);
         }
-        String answer = truncate(parsed.answer(), MAX_ANSWER);
+        // Riche : le modèle n'écrit qu'un texte, passé au crible ; la version brute en dérive, si bien que
+        // « answer » reste toujours du texte brut (historique, escalade, anciennes versions de l'app).
+        String answerRich = null;
+        String answer;
+        if (rich) {
+            String sanitized = AssistantRichText.sanitize(parsed.answer());
+            answerRich = sanitized.isEmpty() ? null : AssistantRichText.truncate(sanitized, MAX_RICH_ANSWER);
+            answer = answerRich == null ? truncate(parsed.answer(), MAX_ANSWER) : AssistantRichText.plain(answerRich);
+        } else {
+            answer = truncate(parsed.answer(), MAX_ANSWER);
+        }
         return new AssistantAskResponse(answer, parsed.answered(), filterActions(parsed.routes(), hits, parcelActions),
                 sources, slug, remaining, parcel == null ? null : parcel.bidId(), List.of(),
-                parsed.answered() ? suggestions(parsed, discover, question, history) : List.of());
+                parsed.answered() ? suggestions(parsed, discover, question, history) : List.of(), answerRich);
     }
 
     /**
@@ -245,6 +258,14 @@ public class AssistantService {
 
     /** Explication d'un écran, écrite dans sa fiche ; ses autres routes, hors l'écran lui-même, en boutons. */
     public Optional<AssistantScreenResponse> screen(String path, String locale) {
+        return screen(path, locale, false);
+    }
+
+    /**
+     * @param rich vrai avec {@code format=rich} : {@code explanationRich} reprend la fiche ligne par ligne
+     *             (un paragraphe par ligne, ses puces gardées) quand elle en compte plusieurs ; sinon null
+     */
+    public Optional<AssistantScreenResponse> screen(String path, String locale, boolean rich) {
         // Un motif de route tient en 120 caractères (KnowledgeBaseLoader) : au-delà, aucun écran.
         if (path == null || path.isBlank() || path.length() > 120) return Optional.empty();
         String lang = normalizeLocale(locale);
@@ -253,7 +274,14 @@ public class AssistantService {
                 a.body(), a.questions(), a.routes().stream()
                 .filter(r -> whitelist.contains(r.path()) && !a.screens().contains(r.path()))
                 .limit(MAX_ACTIONS)
-                .map(r -> new AssistantAction(r.path(), r.label())).toList()));
+                .map(r -> new AssistantAction(r.path(), r.label())).toList(),
+                rich ? screenRich(a.body()) : null));
+    }
+
+    /** Fiche de plusieurs lignes : texte riche ligne par ligne ; une seule ligne, rien à structurer : null. */
+    static String screenRich(String body) {
+        String rich = AssistantRichText.sanitize(body);
+        return rich.indexOf('\n') < 0 ? null : rich;
     }
 
     /** La question vise l'un de ses colis sans dire lequel : aucun colis, ou les siens à choisir. */

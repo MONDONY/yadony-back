@@ -45,15 +45,18 @@ public class AssistantController {
     /**
      * Explication de l'écran {@code path} (motif de route GoRouter, ex. {@code /bids/:bidId}) : 200 avec la fiche,
      * 204 si aucun écran ne correspond. Même accès que {@code /ask}, sans quota ni fournisseur.
+     * {@code format=rich} ajoute {@code explanationRich} (YADONY-FLUTTER-PROD-13).
      */
     @GetMapping("/screen")
     public ResponseEntity<AssistantScreenResponse> screen(
-            @RequestParam String path, @RequestParam(required = false) String locale) {
+            @RequestParam String path, @RequestParam(required = false) String locale,
+            @RequestParam(required = false) String format) {
         if (!properties.enabled()) {
             throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "assistant-disabled", "Not Found",
                     "L'assistant n'est pas disponible.");
         }
-        return service.screen(path, locale).map(ResponseEntity::ok)
+        boolean rich = AssistantAskRequest.FORMAT_RICH.equalsIgnoreCase(format == null ? null : format.strip());
+        return service.screen(path, locale, rich).map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.noContent().build());
     }
 
