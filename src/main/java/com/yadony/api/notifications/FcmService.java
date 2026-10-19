@@ -33,17 +33,20 @@ public class FcmService {
     private final NotificationPrefsService notificationPrefsService;
     private final NotificationRepository notificationRepository;
     private final PushThrottle pushThrottle;
+    private final PushQuietHours pushQuietHours;
 
     public FcmService(UserRepository userRepository,
                       UserDeviceJpaRepository userDeviceRepository,
                       NotificationPrefsService notificationPrefsService,
                       NotificationRepository notificationRepository,
-                      PushThrottle pushThrottle) {
+                      PushThrottle pushThrottle,
+                      PushQuietHours pushQuietHours) {
         this.userRepository = userRepository;
         this.userDeviceRepository = userDeviceRepository;
         this.notificationPrefsService = notificationPrefsService;
         this.notificationRepository = notificationRepository;
         this.pushThrottle = pushThrottle;
+        this.pushQuietHours = pushQuietHours;
     }
 
     /**
@@ -96,6 +99,13 @@ public class FcmService {
         }
         return userRepository.findById(userId)
                 .map(user -> {
+                    // Nuit à l'heure locale, ou plafond du jour atteint : le push reste dans
+                    // le feed (les retenus de la nuit partent en récapitulatif à 8 h).
+                    if (pushQuietHours.hold(user, notifType)) {
+                        log.debug("[FCM] Push retenu (heures calmes ou plafond du jour) user={} type={}",
+                                userId, notifType);
+                        return false;
+                    }
                     // Un utilisateur peut être connecté sur plusieurs appareils (iPhone +
                     // Android). users.fcm_token ne retient que le dernier inscrit : s'y
                     // limiter rendrait muets tous les autres appareils. On diffuse donc à

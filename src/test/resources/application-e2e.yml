@@ -69,6 +69,11 @@ app:
     block-when-quota-exceeded: false
 
 yadony:
+  # Même raison qu'en test : un envoi ne doit pas dépendre de l'heure.
+  notifications:
+    quiet-hours:
+      enabled: false
+      digest-cron: "-"
   # Pas de passage planifié pendant les tests : MoneyIntegrityMonitorIT appelle runAll() directement.
   money-integrity:
     enabled: false

@@ -285,6 +285,10 @@ yadony:
       # Slugs des projets Sentry relayés, séparés par des virgules (vide = tous).
       projects: ${SENTRY_WEBHOOK_PROJECTS:}
   notifications:
+    # Heures calmes (22 h - 8 h, heure locale) et plafond de 10 push non critiques par jour.
+    # Les retenus de la nuit partent en un récapitulatif dès 8 h (NightDigestScheduler).
+    quiet-hours:
+      enabled: ${YADONY_NOTIFICATIONS_QUIET_HOURS_ENABLED:true}
     caps:
       # Que faire d'un libellé qui dépasse NotificationCaps (titre 28, corps 72) :
       # off | warn | strict. « warn » tant que les points d'émission ne sont pas

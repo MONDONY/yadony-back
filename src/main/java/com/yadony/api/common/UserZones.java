@@ -1,4 +1,4 @@
-package com.yadony.api.activation;
+package com.yadony.api.common;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -7,10 +7,14 @@ import java.util.Map;
 
 import static java.util.Map.entry;
 
-/** Fuseau d'envoi des relances, déduit du pays de l'utilisateur (Europe/Paris par défaut). */
-final class ActivationZones {
+/**
+ * Fuseau horaire d'un utilisateur, déduit de son pays de résidence (Europe/Paris par défaut).
+ * Sert aux envois qui doivent respecter l'heure locale : relances d'activation, heures calmes
+ * des notifications.
+ */
+public final class UserZones {
 
-    static final ZoneId DEFAULT = ZoneId.of("Europe/Paris");
+    public static final ZoneId DEFAULT = ZoneId.of("Europe/Paris");
 
     private static final Map<String, ZoneId> ZONES = Map.ofEntries(
             entry("GB", ZoneId.of("Europe/London")), entry("IE", ZoneId.of("Europe/Dublin")),
@@ -27,16 +31,16 @@ final class ActivationZones {
             entry("TD", ZoneId.of("Africa/Ndjamena")), entry("CG", ZoneId.of("Africa/Brazzaville")),
             entry("GQ", ZoneId.of("Africa/Malabo")), entry("GA", ZoneId.of("Africa/Libreville")));
 
-    private ActivationZones() {}
+    private UserZones() {}
 
-    static ZoneId zoneFor(String country) {
+    public static ZoneId zoneFor(String country) {
         if (country == null) {
             return DEFAULT;
         }
         return ZONES.getOrDefault(country.trim().toUpperCase(Locale.ROOT), DEFAULT);
     }
 
-    static boolean isWithinWindow(String country, Instant now, int startHour, int endHour) {
+    public static boolean isWithinWindow(String country, Instant now, int startHour, int endHour) {
         int hour = now.atZone(zoneFor(country)).getHour();
         return hour >= startHour && hour < endHour;
     }

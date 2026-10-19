@@ -76,6 +76,11 @@ yadony:
     first-action-reminders:
       cron: "-"
   notifications:
+    # Coupé en test : le résultat d'un envoi ne doit pas dépendre de l'heure du CI.
+    # PushQuietHoursTest l'exerce avec une horloge fixe.
+    quiet-hours:
+      enabled: false
+      digest-cron: "-"
     caps:
       # Un libellé qui dépasse les caps (titre 28, corps 72) doit échouer au
       # test, jamais en production : strict ici, warn en prod.

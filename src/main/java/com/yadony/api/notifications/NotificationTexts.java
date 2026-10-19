@@ -760,6 +760,12 @@ public final class NotificationTexts {
                 m.get("notification.card-expiring.body", b, l));
     }
 
+    /** Récapitulatif du matin : push retenus pendant les heures calmes. */
+    public static NotificationText nightDigest(Messages m, int count) {
+        return new NotificationText(m.get("notification.night-digest.title"),
+                m.plural("notification.night-digest.body", count, String.valueOf(count)));
+    }
+
     public static NotificationText cardExpired(Messages m, String brand, String last4) {
         String b = brand == null || brand.isBlank() ? m.get("notification.card-expiring.default-brand") : truncateAtWord(brand.trim(), 16);
         String l = last4 == null || last4.isBlank() ? "****" : last4;

@@ -31,6 +31,7 @@ class FcmServiceTest {
     @Mock NotificationPrefsService notificationPrefsService;
     @Mock NotificationRepository notificationRepository;
     @Mock PushThrottle pushThrottle;
+    @Mock PushQuietHours pushQuietHours;
     @InjectMocks FcmService service;
 
     private static final UUID USER_ID = UUID.randomUUID();
@@ -191,6 +192,20 @@ class FcmServiceTest {
 
         assertThat(service.sendToUser(USER_ID, "Message", "Corps", data)).isFalse();
         verifyNoInteractions(userRepository);
+    }
+
+    // Bruit (étape 4) : heures calmes ou plafond du jour → push retenu, aucun envoi Firebase
+    @Test
+    void sendToUser_heldByQuietHours_sendsNothing() {
+        UserEntity user = new UserEntity();
+        ReflectionTestUtils.setField(user, "id", USER_ID);
+        user.setFcmToken("token-android");
+        when(notificationPrefsService.isAllowed(USER_ID, "BID_CREATED")).thenReturn(true);
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(pushQuietHours.hold(user, "BID_CREATED")).thenReturn(true);
+
+        assertThat(service.sendToUser(USER_ID, "Titre", "Corps", Map.of("type", "BID_CREATED"))).isFalse();
+        verifyNoInteractions(userDeviceRepository);
     }
 
     /** Flux qui se répète : la clé de remplacement part pour Android, iOS et l'app. */
