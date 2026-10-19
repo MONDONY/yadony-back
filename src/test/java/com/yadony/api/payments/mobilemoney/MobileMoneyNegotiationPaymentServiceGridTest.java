@@ -1,5 +1,7 @@
 package com.yadony.api.payments.mobilemoney;
 
+import com.yadony.api.payments.pawapay.PawapayValidationHints;
+import com.yadony.api.common.i18n.TestMessages;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -66,7 +68,7 @@ class MobileMoneyNegotiationPaymentServiceGridTest {
                 "yadony://negotiations/%s/mobile-money/awaiting", "yadony://payments/wallet",
                 new PawapayProperties.BalanceMin(null, null));
         service = new MobileMoneyNegotiationPaymentService(paymentRepository, userRepository, operations, submission,
-                providers, firebaseContact, audit, events, transactionManager, props);
+                providers, firebaseContact, audit, events, transactionManager, props, new MobileMoneyOperationViews(TestMessages.resolver(), new PawapayValidationHints(Map.of("ORANGE_CIV", "SMS_LINK"))));
     }
 
     private PaymentEntity payment(PaymentStatus status, String amount, String commission) {

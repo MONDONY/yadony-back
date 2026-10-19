@@ -1,5 +1,6 @@
 package com.yadony.api.payments.mobilemoney;
 
+import com.yadony.api.payments.pawapay.ValidationHint;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.when;
@@ -63,7 +64,7 @@ class MobileMoneyPaymentControllerIT {
         return new MobileMoneyPaymentStatusResponse(BID_ID, bidStatus, paymentStatus, LocalDateTime.of(2026, 9, 4, 12, 0),
                 new BigDecimal("16800"), "XOF",
                 new MobileMoneyPaymentStatusResponse.OperationView(UUID.randomUUID(), "ACCEPTED", "ORANGE_SEN", "Orange Money",
-                        "+221 •••• 67", null, null, null));
+                        "+221 •••• 67", null, null, null, null, null, ValidationHint.PIN_PROMPT));
     }
 
     @Test
@@ -108,6 +109,23 @@ class MobileMoneyPaymentControllerIT {
         mockMvc.perform(get("/bids/{bidId}/mobile-money/status", BID_ID).with(authentication(auth("t-uid", "ROLE_TRAVELER"))))
                 .andExpect(status().isOk());
         mockMvc.perform(get("/bids/{bidId}/mobile-money/status", BID_ID)).andExpect(status().is4xxClientError());
+    }
+
+    @Test
+    void status_failedDeposit_exposesFailureReasonCode() throws Exception {
+        MobileMoneyPaymentStatusResponse failed = new MobileMoneyPaymentStatusResponse(BID_ID, "AWAITING_PAYMENT", "PENDING",
+                LocalDateTime.of(2026, 9, 4, 12, 0), new BigDecimal("16800"), "XOF",
+                new MobileMoneyPaymentStatusResponse.OperationView(UUID.randomUUID(), "FAILED", "ORANGE_CIV", "Orange Money",
+                        "+225 •••• 67", null, "PAYMENT_NOT_APPROVED", "Le paiement n'a pas été validé sur votre téléphone.",
+                        "not-approved", "Le paiement n'a pas été validé sur votre téléphone.", ValidationHint.SMS_LINK));
+        when(service.status(BID_ID, SENDER_ID)).thenReturn(failed);
+
+        mockMvc.perform(get("/bids/{bidId}/mobile-money/status", BID_ID).with(authentication(auth("s-uid", "ROLE_SENDER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.deposit.failureReasonCode").value("not-approved"))
+                .andExpect(jsonPath("$.deposit.failureReason").value("Le paiement n'a pas été validé sur votre téléphone."))
+                .andExpect(jsonPath("$.deposit.failureCode").value("PAYMENT_NOT_APPROVED"))
+                .andExpect(jsonPath("$.deposit.validationHint").value("SMS_LINK"));
     }
 
     @Test

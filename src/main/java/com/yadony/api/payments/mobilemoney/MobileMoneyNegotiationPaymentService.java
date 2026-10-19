@@ -76,6 +76,7 @@ public class MobileMoneyNegotiationPaymentService {
     private final AuditService audit;
     private final ApplicationEventPublisher events;
     private final PawapayProperties props;
+    private final MobileMoneyOperationViews views;
     private final TransactionTemplate independentAuditTransaction;
 
     /** Même motif que {@link MobileMoneyBidPaymentService#adminAlert} : optionnel, jamais dans le constructeur. */
@@ -86,7 +87,8 @@ public class MobileMoneyNegotiationPaymentService {
                                                 PawapayOperationService operations, PawapaySubmissionService submission,
                                                 PawapayProviderResolver providers, FirebaseContactService firebaseContact,
                                                 AuditService audit, ApplicationEventPublisher events,
-                                                PlatformTransactionManager transactionManager, PawapayProperties props) {
+                                                PlatformTransactionManager transactionManager, PawapayProperties props,
+                                                MobileMoneyOperationViews views) {
         this.paymentRepository = paymentRepository;
         this.userRepository = userRepository;
         this.operations = operations;
@@ -96,6 +98,7 @@ public class MobileMoneyNegotiationPaymentService {
         this.audit = audit;
         this.events = events;
         this.props = props;
+        this.views = views;
         this.independentAuditTransaction = new TransactionTemplate(transactionManager);
         this.independentAuditTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -241,8 +244,7 @@ public class MobileMoneyNegotiationPaymentService {
                         "msisdnMasked", op.getMsisdnMasked(), "status", op.getStatus().name())));
         if (op.getStatus() == PawapayOperationStatus.SUBMIT_REJECTED) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-deposit-rejected",
-                    "Deposit Rejected", "Paiement refusé par l'opérateur : "
-                    + (op.getFailureMessage() != null ? op.getFailureMessage() : op.getFailureCode()));
+                    "Deposit Rejected", views.rejectedDetail(op));
         }
         return status(threadId, deadline, Optional.of(payment), Optional.of(op));
     }
@@ -287,9 +289,7 @@ public class MobileMoneyNegotiationPaymentService {
 
     private MobileMoneyNegotiationStatusResponse status(UUID threadId, LocalDateTime deadline, Optional<PaymentEntity> payment,
                                                         Optional<PawapayOperationEntity> deposit) {
-        var view = deposit.map(o -> new MobileMoneyPaymentStatusResponse.OperationView(
-                o.getId(), o.getStatus().name(), o.getProvider(), PawapayProviders.label(o.getProvider()),
-                o.getMsisdnMasked(), o.getAuthorizationUrl(), o.getFailureCode(), o.getFailureMessage())).orElse(null);
+        var view = deposit.map(views::view).orElse(null);
         return new MobileMoneyNegotiationStatusResponse(threadId, payment.map(p -> p.getStatus().name()).orElse(null), deadline,
                 payment.map(PaymentEntity::getAmount).orElse(null), payment.map(PaymentEntity::getCurrency).orElse(null), view);
     }

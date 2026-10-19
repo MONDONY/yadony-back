@@ -1,5 +1,8 @@
 package com.yadony.api.payments.mobilemoney;
 
+import java.util.Map;
+import com.yadony.api.payments.pawapay.PawapayValidationHints;
+import com.yadony.api.common.i18n.TestMessages;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -77,7 +80,7 @@ class MobileMoneyBidPaymentServiceEscrowTest {
     @BeforeEach
     void setUp() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, null, paymentRepository,
-                operations, submission, null, null, null, audit, events, null, null, transactionManager, null);
+                operations, submission, null, null, null, audit, events, null, null, transactionManager, null, new MobileMoneyOperationViews(TestMessages.resolver(), new PawapayValidationHints(Map.of("ORANGE_CIV", "SMS_LINK"))));
         ReflectionTestUtils.setField(service, "adminAlert", adminAlert);
         announcement = new AnnouncementEntity();
         ReflectionTestUtils.setField(announcement, "id", UUID.randomUUID());

@@ -106,6 +106,7 @@ public class MobileMoneyBidPaymentService {
     private final PromoService promoService;
     private final CommissionVoucherService voucherService;
     private final PawapayProperties props;
+    private final MobileMoneyOperationViews views;
 
     /**
      * Transaction INDÉPENDANTE, réservée à l'entrée d'audit d'un dépôt refusé —
@@ -134,7 +135,8 @@ public class MobileMoneyBidPaymentService {
                                         FirebaseContactService firebaseContact, AuditService audit,
                                         ApplicationEventPublisher events,
                                         PromoService promoService, CommissionVoucherService voucherService,
-                                        PlatformTransactionManager transactionManager, PawapayProperties props) {
+                                        PlatformTransactionManager transactionManager, PawapayProperties props,
+                                        MobileMoneyOperationViews views) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -149,6 +151,7 @@ public class MobileMoneyBidPaymentService {
         this.promoService = promoService;
         this.voucherService = voucherService;
         this.props = props;
+        this.views = views;
         this.independentAuditTransaction = new TransactionTemplate(transactionManager);
         this.independentAuditTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -359,8 +362,7 @@ public class MobileMoneyBidPaymentService {
                         "msisdnMasked", op.getMsisdnMasked(), "status", op.getStatus().name())));
         if (op.getStatus() == PawapayOperationStatus.SUBMIT_REJECTED) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-deposit-rejected",
-                    "Deposit Rejected", "Paiement refusé par l'opérateur : "
-                    + (op.getFailureMessage() != null ? op.getFailureMessage() : op.getFailureCode()));
+                    "Deposit Rejected", views.rejectedDetail(op));
         }
         return status(bid, null, Optional.of(payment), Optional.of(op));
     }
@@ -832,9 +834,7 @@ public class MobileMoneyBidPaymentService {
     private MobileMoneyPaymentStatusResponse status(BidEntity bid, AnnouncementEntity announcement,
                                                     Optional<PaymentEntity> payment,
                                                     Optional<PawapayOperationEntity> deposit) {
-        MobileMoneyPaymentStatusResponse.OperationView view = deposit.map(o -> new MobileMoneyPaymentStatusResponse.OperationView(
-                o.getId(), o.getStatus().name(), o.getProvider(), PawapayProviders.label(o.getProvider()), o.getMsisdnMasked(),
-                o.getAuthorizationUrl(), o.getFailureCode(), o.getFailureMessage())).orElse(null);
+        MobileMoneyPaymentStatusResponse.OperationView view = deposit.map(views::view).orElse(null);
         return new MobileMoneyPaymentStatusResponse(bid.getId(), bid.getStatus().name(),
                 payment.map(p -> p.getStatus().name()).orElse(null), bid.getAwaitingPaymentExpiresAt(),
                 payment.map(PaymentEntity::getAmount).orElse(null),

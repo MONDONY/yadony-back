@@ -1,5 +1,7 @@
 package com.yadony.api.payments.mobilemoney;
 
+import com.yadony.api.payments.pawapay.PawapayValidationHints;
+import com.yadony.api.common.i18n.TestMessages;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -74,7 +76,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
                 "https://api-staging.yadony.com", "yadony://bids/%s/mobile-money/awaiting",
                 "yadony://negotiations/%s/mobile-money/awaiting", "yadony://payments/wallet", new PawapayProperties.BalanceMin(null, null));
         service = new MobileMoneyNegotiationPaymentService(paymentRepository, userRepository, operations, submission,
-                providers, firebaseContact, audit, events, transactionManager, props);
+                providers, firebaseContact, audit, events, transactionManager, props, views());
     }
 
     /** Même props, avec un résolveur RÉEL adossé à {@link #client} mocké — seule façon de faire lever
@@ -83,12 +85,16 @@ class MobileMoneyNegotiationPaymentServiceTest {
      * {@code MobileMoneyBidPaymentServiceTest}, qui procède de même. */
     private MobileMoneyNegotiationPaymentService serviceWithRealResolver() {
         return new MobileMoneyNegotiationPaymentService(paymentRepository, userRepository, operations, submission,
-                new PawapayProviderResolver(client), firebaseContact, audit, events, transactionManager, props);
+                new PawapayProviderResolver(client), firebaseContact, audit, events, transactionManager, props, views());
     }
 
     private MobileMoneyNegotiationPaymentService serviceWithProps(PawapayProperties p) {
         return new MobileMoneyNegotiationPaymentService(paymentRepository, userRepository, operations, submission,
-                providers, firebaseContact, audit, events, transactionManager, p);
+                providers, firebaseContact, audit, events, transactionManager, p, views());
+    }
+
+    private static MobileMoneyOperationViews views() {
+        return new MobileMoneyOperationViews(TestMessages.resolver(), new PawapayValidationHints(Map.of("ORANGE_CIV", "SMS_LINK")));
     }
 
     private static PawapayProperties disabledProps() {
@@ -689,18 +695,20 @@ class MobileMoneyNegotiationPaymentServiceTest {
     // ── initiateDeposit — refus pawaPay ────────────────────────────────────
 
     @Test
-    void initiateDeposit_submitRejected_is422WithReason() {
+    void initiateDeposit_submitRejected_detailIsTranslated() {
         PaymentEntity p = payment(PaymentStatus.PENDING);
         when(paymentRepository.findByNegotiationThreadIdForUpdate(threadId)).thenReturn(Optional.of(p));
         when(operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
         when(providers.resolve(eq("221771234567"), eq(PawapayOperationKind.DEPOSIT), eq("XOF"), any())).thenReturn(resolved());
         PawapayOperationEntity rejected = operation(p.getId(), PawapayOperationStatus.SUBMIT_REJECTED, new BigDecimal("33000"));
+        rejected.setFailureCode("INSUFFICIENT_BALANCE");
         rejected.setFailureMessage("Provider down");
         when(submission.submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(rejected);
 
         assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, "+221771234567", LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
                 .isInstanceOf(YadonyBusinessException.class)
-                .hasMessageContaining("Provider down")
+                .hasMessage("Solde insuffisant sur votre compte mobile money.")
+                .hasMessageNotContaining("Provider down")
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-deposit-rejected"));
     }
 
