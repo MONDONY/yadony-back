@@ -76,7 +76,7 @@ class MobileMoneyCountriesControllerIT {
         mockMvc.perform(get("/payments/mobile-money/countries").param("operation", "REFUND")
                         .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
                 .andExpect(status().isUnprocessableEntity())
-                .andExpect(jsonPath("$.errorCode").doesNotExist());
+                .andExpect(jsonPath("$.code").value("invalid-operation"));
     }
 
     @Test

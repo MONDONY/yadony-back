@@ -12,6 +12,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 public interface PawapayOperationRepository extends JpaRepository<PawapayOperationEntity, UUID> {
@@ -51,12 +52,14 @@ public interface PawapayOperationRepository extends JpaRepository<PawapayOperati
      * encore ouvertes d'un utilisateur et d'une devise, créées AVANT {@code createdBefore} :
      * l'index unique partiel V331 ne les compte plus, une nouvelle recharge peut être créée.
      * Le statut n'est pas touché (un paiement validé tardivement crédite quand même).
-     * Transaction propre (commit avant la soumission), {@code flush + clear} en binôme (voir
+     * Transaction propre (REQUIRES_NEW : commit avant la soumission, même si l'appelant est
+     * déjà dans une transaction, sinon l'UPDATE non commité bloquerait l'insertion de
+     * {@code PawapayOperationService.create} sous l'index unique), {@code flush + clear} en binôme (voir
      * memory backend_modifying_clear_flush_trap).
      *
      * @return le nombre de recharges libérées
      */
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
         UPDATE PawapayOperationEntity o
