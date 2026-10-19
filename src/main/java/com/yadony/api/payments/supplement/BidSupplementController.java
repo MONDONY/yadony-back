@@ -30,9 +30,11 @@ import java.util.UUID;
 public class BidSupplementController {
 
     private final BidSupplementService service;
+    private final BidSupplementPaymentFlow paymentFlow;
 
-    public BidSupplementController(BidSupplementService service) {
+    public BidSupplementController(BidSupplementService service, BidSupplementPaymentFlow paymentFlow) {
         this.service = service;
+        this.paymentFlow = paymentFlow;
     }
 
     @GetMapping("/bids/{bidId}/supplements/options")
@@ -63,7 +65,18 @@ public class BidSupplementController {
     @PostMapping("/bids/{bidId}/supplements/{supplementId}/accept")
     @PreAuthorize("hasRole('SENDER')")
     public SupplementAcceptResponse accept(@PathVariable UUID bidId, @PathVariable UUID supplementId) {
-        return service.accept(bidId, supplementId, firebaseUid());
+        return paymentFlow.accept(bidId, supplementId, firebaseUid());
+    }
+
+    /**
+     * Filet de l'app après la PaymentSheet (rail carte), comme {@code POST /bids/{id}/confirm-payment} :
+     * relit le PaymentIntent chez Stripe et enregistre le paiement s'il a réussi, sans attendre le
+     * webhook. Idempotent ; vue de l'expéditeur (brut seulement).
+     */
+    @PostMapping("/bids/{bidId}/supplements/{supplementId}/confirm-payment")
+    @PreAuthorize("hasRole('SENDER')")
+    public BidSupplementResponse confirmPayment(@PathVariable UUID bidId, @PathVariable UUID supplementId) {
+        return paymentFlow.confirmPayment(bidId, supplementId, firebaseUid());
     }
 
     @PostMapping("/bids/{bidId}/supplements/{supplementId}/decline")

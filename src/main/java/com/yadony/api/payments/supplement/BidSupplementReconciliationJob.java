@@ -11,8 +11,9 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Filet planifié des suppléments non payés (plan §5.2, points 1 et 2) : expire les demandes échues
- * et annule celles d'un colis terminé sans livraison dont l'événement aurait été perdu. Chaque
+ * Filet planifié des suppléments (plan §5.2, points 1 et 2) : expire les demandes échues, annule
+ * celles d'un colis terminé sans livraison dont l'événement aurait été perdu et demande le
+ * remboursement d'un supplément payé sur un tel colis (le rail le rend). Chaque
  * élément a sa propre transaction ; un élément en échec n'arrête pas le lot. Instance unique, pas
  * de verrou distribué (comme {@code StripeReleaseRecoveryJob}).
  */
@@ -25,6 +26,11 @@ public class BidSupplementReconciliationJob {
 
     /** Un colis terminé depuis moins longtemps est laissé à son événement de fin. */
     static final Duration BID_ENDED_GRACE = Duration.ofMinutes(15);
+
+    /** Statuts d'une demande que la fin du colis doit encore traiter. */
+    static final java.util.Set<BidSupplementStatus> ENDED_BID_STATUSES = java.util.EnumSet.of(
+            BidSupplementStatus.COMMISSION_PENDING, BidSupplementStatus.PROPOSED, BidSupplementStatus.PAYMENT_PENDING,
+            BidSupplementStatus.PAID);
 
     private final BidSupplementRepository supplements;
     private final BidSupplementService service;
@@ -65,7 +71,9 @@ public class BidSupplementReconciliationJob {
         }
 
         int cancelled = 0;
-        List<UUID> ended = supplements.findBidIdsEndedWithSupplementIn(BidSupplementStatus.OPEN,
+        // Ouvertes (à annuler) ou payées (à rembourser, rail carte ou mobile money) : un PAID resté
+        // sur un colis mort après un événement de fin perdu.
+        List<UUID> ended = supplements.findBidIdsEndedWithSupplementIn(ENDED_BID_STATUSES,
                 BidSupplementService.TERMINAL_UNDELIVERED, window.now().minus(BID_ENDED_GRACE),
                 PageRequest.of(0, BATCH_SIZE));
         for (UUID bidId : ended) {

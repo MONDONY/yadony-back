@@ -21,6 +21,7 @@ import com.yadony.api.payments.supplement.dto.SupplementQuoteResponse;
 import com.yadony.api.payments.supplement.events.BidSupplementCancelledEvent;
 import com.yadony.api.payments.supplement.events.BidSupplementDeclinedEvent;
 import com.yadony.api.payments.supplement.events.BidSupplementExpiredEvent;
+import com.yadony.api.payments.supplement.events.BidSupplementRefundRequestedEvent;
 import com.yadony.api.payments.supplement.events.BidSupplementRequestedEvent;
 import com.yadony.api.payments.supplement.events.BidSupplementWithdrawnEvent;
 import org.slf4j.Logger;
@@ -63,6 +64,10 @@ public class BidSupplementService {
     /** Colis terminés sans livraison : une demande encore ouverte y est annulée (plan §5.1). */
     public static final Set<BidStatus> TERMINAL_UNDELIVERED = EnumSet.of(BidStatus.CANCELLED, BidStatus.REJECTED,
             BidStatus.EXPIRED, BidStatus.NO_SHOW, BidStatus.PARCEL_REFUSED);
+
+    /** Supplément payé, pas encore remboursé : à rendre si le colis finit sans livraison. */
+    static final Set<BidSupplementStatus> SETTLING = EnumSet.of(BidSupplementStatus.PAID,
+            BidSupplementStatus.REFUND_PENDING, BidSupplementStatus.PAYOUT_PENDING, BidSupplementStatus.PAID_OUT);
 
     private final BidSupplementRepository supplements;
     private final BidRepository bids;
@@ -315,15 +320,15 @@ public class BidSupplementService {
 
     /**
      * Le colis s'est terminé sans livraison : une demande encore ouverte est annulée (les rails
-     * défont leur part sur {@link BidSupplementCancelledEvent}). Une demande payée relève du
-     * remboursement, porté par les rails. N'agit que si le colis est réellement dans
+     * défont leur part sur {@link BidSupplementCancelledEvent}). Une demande payée est à
+     * rembourser : le rail le fait sur {@link BidSupplementRefundRequestedEvent}. N'agit que si le colis est réellement dans
      * {@link #TERMINAL_UNDELIVERED} : un événement mal interprété ne ferme rien. Idempotent.
      *
      * <p>Transaction propre : un colis en échec ne fait pas échouer les autres colis d'un même
      * trajet annulé.
      *
      * @param reason clé du plan §5.1 ({@code BID_REJECTED}, {@code PARCEL_REFUSED}…).
-     * @return vrai si une demande a été annulée.
+     * @return vrai si une demande a été annulée ou son remboursement demandé.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean onBidEnded(UUID bidId, String reason) {
@@ -337,7 +342,7 @@ public class BidSupplementService {
         }
         Optional<BidSupplementEntity> open = supplements.findByBidIdAndStatusInForUpdate(bidId, BidSupplementStatus.OPEN);
         if (open.isEmpty()) {
-            return false;
+            return requestRefundOfPaid(bid, reason);
         }
         BidSupplementEntity s = open.get();
         BidSupplementStatus previous = close(s, BidSupplementStatus.CANCELLED, reason);
@@ -346,6 +351,32 @@ public class BidSupplementService {
         audit(s, "BID_SUPPLEMENT_CANCELLED_BID_ENDED", null, Map.of("bidStatus", bid.getStatus().name(),
                 "endReason", reason));
         log.info("Supplément {} annulé : colis {} terminé ({})", s.getId(), bidId, reason);
+        return true;
+    }
+
+    /**
+     * Colis terminé sans livraison avec un supplément déjà payé (carte, mobile money) : l'argent
+     * est rendu à l'expéditeur par le rail, après le commit ({@link BidSupplementRefundRequestedEvent}).
+     * {@code PAID → REFUND_PENDING} ; un {@code REFUND_PENDING} est redemandé (reprise) ; un
+     * supplément déjà versé ({@code PAYOUT_PENDING}, {@code PAID_OUT}) ne change pas de statut, le
+     * rail lève une alerte. Le rail espèces (commission seulement) a sa propre règle.
+     */
+    private boolean requestRefundOfPaid(BidEntity bid, String reason) {
+        Optional<BidSupplementEntity> paid = supplements.findByBidIdAndStatusInForUpdate(bid.getId(), SETTLING);
+        if (paid.isEmpty() || paid.get().getRail() == BidSupplementRail.CASH) {
+            return false;
+        }
+        BidSupplementEntity s = paid.get();
+        if (s.getStatus() == BidSupplementStatus.PAID) {
+            s.setStatus(BidSupplementStatus.REFUND_PENDING);
+            s.setClosedReason(reason);
+            supplements.save(s);
+            audit(s, "BID_SUPPLEMENT_REFUND_REQUESTED", null, Map.of("bidStatus", bid.getStatus().name(),
+                    "endReason", reason));
+        }
+        events.publishEvent(new BidSupplementRefundRequestedEvent(s.getId(), bid.getId(), s.getRail(),
+                s.getStatus(), reason));
+        log.info("Supplément {} à rembourser : colis {} terminé ({})", s.getId(), bid.getId(), reason);
         return true;
     }
 

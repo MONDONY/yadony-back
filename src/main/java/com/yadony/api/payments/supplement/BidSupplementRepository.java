@@ -70,4 +70,38 @@ public interface BidSupplementRepository extends JpaRepository<BidSupplementEnti
     @Query(value = "SELECT photo_key FROM bid_supplements WHERE photo_key LIKE CONCAT(:prefix, '%') "
             + "AND photo_purged_at IS NULL", nativeQuery = true)
     List<String> findPhotoKeysUnderIncludingDeleted(@Param("prefix") String prefix);
+    // ── Rail carte (B2) ──────────────────────────────────────────────────────
+
+    Optional<BidSupplementEntity> findByIdAndBidId(UUID id, UUID bidId);
+
+    Optional<BidSupplementEntity> findByStripePaymentIntentId(String stripePaymentIntentId);
+
+    Optional<BidSupplementEntity> findByStripeChargeId(String stripeChargeId);
+
+    List<BidSupplementEntity> findByBidIdAndRailAndStatus(UUID bidId, BidSupplementRail rail, BidSupplementStatus status);
+
+    /** Filet carte : suppléments d'un rail dans l'un des {@code statuses}, inchangés depuis {@code before}. */
+    @Query("SELECT s.id FROM BidSupplementEntity s WHERE s.rail = :rail AND s.status IN :statuses "
+            + "AND s.updatedAt < :before ORDER BY s.updatedAt")
+    List<UUID> findIdsByRailAndStatusInUpdatedBefore(@Param("rail") BidSupplementRail rail,
+                                                     @Param("statuses") Collection<BidSupplementStatus> statuses,
+                                                     @Param("before") LocalDateTime before, Pageable page);
+
+    /**
+     * Filet carte : paiements tardifs (arrivés sur une demande déjà close) encore à rembourser.
+     * La demande garde son statut clos : la passer en REFUND_PENDING heurterait l'index
+     * {@code uq_bid_supplements_one_active} si une autre demande a été ouverte entre-temps.
+     */
+    @Query("SELECT s.id FROM BidSupplementEntity s WHERE s.rail = :rail AND s.status IN :statuses "
+            + "AND s.paidAt IS NOT NULL AND s.refundedAt IS NULL AND s.updatedAt < :before ORDER BY s.updatedAt")
+    List<UUID> findIdsPaidLateUnrefunded(@Param("rail") BidSupplementRail rail,
+                                         @Param("statuses") Collection<BidSupplementStatus> statuses,
+                                         @Param("before") LocalDateTime before, Pageable page);
+
+    /** Filet carte : suppléments payés depuis {@code before}, candidats au versement manqué. */
+    @Query("SELECT s.id FROM BidSupplementEntity s WHERE s.rail = :rail AND s.status = :status "
+            + "AND s.paidAt < :before ORDER BY s.paidAt")
+    List<UUID> findIdsByRailAndStatusPaidBefore(@Param("rail") BidSupplementRail rail,
+                                                @Param("status") BidSupplementStatus status,
+                                                @Param("before") LocalDateTime before, Pageable page);
 }

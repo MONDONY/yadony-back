@@ -511,6 +511,53 @@ class BidSupplementServiceTest {
         verify(events, never()).publishEvent(any());
     }
 
+    @Test
+    void onBidEnded_supplementPaye_passeEnRemboursementEtLeDemandeAuRail() {
+        BidSupplementEntity s = existing(BidSupplementStatus.PAID);
+        bid.setStatus(BidStatus.PARCEL_REFUSED);
+        lenient().when(supplements.findByBidIdAndStatusInForUpdate(bid.getId(), BidSupplementService.SETTLING))
+                .thenReturn(Optional.of(s));
+
+        assertThat(service(cardRail).onBidEnded(bid.getId(), "PARCEL_REFUSED")).isTrue();
+
+        assertThat(s.getStatus()).isEqualTo(BidSupplementStatus.REFUND_PENDING);
+        assertThat(s.getClosedReason()).isEqualTo("PARCEL_REFUSED");
+        verify(events).publishEvent(new com.yadony.api.payments.supplement.events.BidSupplementRefundRequestedEvent(
+                s.getId(), bid.getId(), BidSupplementRail.STRIPE, BidSupplementStatus.REFUND_PENDING, "PARCEL_REFUSED"));
+        verify(auditService).log(eq("BID_SUPPLEMENT"), eq(s.getId()), eq("BID_SUPPLEMENT_REFUND_REQUESTED"),
+                eq(null), anyMap());
+    }
+
+    @Test
+    void onBidEnded_dejaEnRemboursementOuVerse_redemandeSansChangerLeStatut() {
+        bid.setStatus(BidStatus.CANCELLED);
+        for (BidSupplementStatus status : List.of(BidSupplementStatus.REFUND_PENDING, BidSupplementStatus.PAID_OUT)) {
+            BidSupplementEntity s = existing(status);
+            lenient().when(supplements.findByBidIdAndStatusInForUpdate(bid.getId(), BidSupplementService.SETTLING))
+                    .thenReturn(Optional.of(s));
+
+            assertThat(service(cardRail).onBidEnded(bid.getId(), "BID_REJECTED")).isTrue();
+
+            assertThat(s.getStatus()).isEqualTo(status);
+            verify(events).publishEvent(new com.yadony.api.payments.supplement.events.BidSupplementRefundRequestedEvent(
+                    s.getId(), bid.getId(), BidSupplementRail.STRIPE, status, "BID_REJECTED"));
+        }
+        verify(supplements, never()).save(any());
+    }
+
+    @Test
+    void onBidEnded_supplementEspecesPaye_laisseAuRailEspeces() {
+        BidSupplementEntity s = existing(BidSupplementStatus.PAID);
+        s.setRail(BidSupplementRail.CASH);
+        bid.setStatus(BidStatus.CANCELLED);
+        lenient().when(supplements.findByBidIdAndStatusInForUpdate(bid.getId(), BidSupplementService.SETTLING))
+                .thenReturn(Optional.of(s));
+
+        assertThat(service(cardRail).onBidEnded(bid.getId(), "BID_REJECTED")).isFalse();
+        assertThat(s.getStatus()).isEqualTo(BidSupplementStatus.PAID);
+        verify(events, never()).publishEvent(any());
+    }
+
     // ── Aides ────────────────────────────────────────────────────────────────
 
     private BidSupplementEntity existing(BidSupplementStatus status) {

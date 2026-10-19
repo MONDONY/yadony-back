@@ -45,9 +45,11 @@ class BidSupplementReconciliationJobTest {
     }
 
     @Test
-    void annuleLesDemandesDesColisTerminesDepuis15Minutes() {
+    void annuleLesDemandesDesColisTerminesDepuis15Minutes_payeesComprises() {
+        assertThat(BidSupplementReconciliationJob.ENDED_BID_STATUSES).containsAll(BidSupplementStatus.OPEN)
+                .contains(BidSupplementStatus.PAID).doesNotContain(BidSupplementStatus.REFUND_PENDING);
         UUID bidId = UUID.randomUUID();
-        when(repository.findBidIdsEndedWithSupplementIn(eq(BidSupplementStatus.OPEN),
+        when(repository.findBidIdsEndedWithSupplementIn(eq(BidSupplementReconciliationJob.ENDED_BID_STATUSES),
                 eq(BidSupplementService.TERMINAL_UNDELIVERED), eq(NOW_UTC.minusMinutes(15)), any(Pageable.class)))
                 .thenReturn(List.of(bidId));
         when(service.onBidEnded(bidId, "BID_ENDED")).thenReturn(true);

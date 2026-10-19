@@ -7,6 +7,7 @@ import com.yadony.api.payments.cash.CashCommissionWebhookHandler;
 import com.yadony.api.payments.chargeback.ChargebackService;
 import com.yadony.api.payments.currency.CurrencyCatalog;
 import com.yadony.api.payments.currency.SupportedCurrency;
+import com.yadony.api.payments.supplement.BidSupplementStripeWebhookRouter;
 import com.yadony.api.payments.wallet.WalletService;
 import com.yadony.api.payments.wallet.WalletSelfRefundService;
 import com.yadony.api.payments.wallet.WalletTransactionType;
@@ -68,6 +69,12 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
     private final CurrencyCatalog currencyCatalog;
     /** Suivi du virement bancaire des voyageurs (payout.* des comptes connectés). */
     private final BankPayoutTrackingService bankPayoutTracking;
+    /**
+     * Supplément de prix (plan 2026-10-19 §1.3-d) : ses PaymentIntents (métadonnée
+     * {@code bid_supplement_id}) et ses charges (recherche en base) sont traités AVANT tout
+     * traitement du colis, de la commission espèces ou de la recharge du solde.
+     */
+    private final BidSupplementStripeWebhookRouter supplementRouter;
 
     public PaymentStripeWebhookHandler(PaymentService paymentService,
                                         CashCommissionWebhookHandler cashHandler,
@@ -80,7 +87,6 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
                 objectMapper, currencyCatalog, null);
     }
 
-    @Autowired
     public PaymentStripeWebhookHandler(PaymentService paymentService,
                                         CashCommissionWebhookHandler cashHandler,
                                         ChargebackService chargebackService,
@@ -89,6 +95,21 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
                                         ObjectMapper objectMapper,
                                         CurrencyCatalog currencyCatalog,
                                         BankPayoutTrackingService bankPayoutTracking) {
+        this(paymentService, cashHandler, chargebackService, walletService, walletSelfRefundService,
+                objectMapper, currencyCatalog, bankPayoutTracking, null);
+    }
+
+    @Autowired
+    public PaymentStripeWebhookHandler(PaymentService paymentService,
+                                        CashCommissionWebhookHandler cashHandler,
+                                        ChargebackService chargebackService,
+                                        WalletService walletService,
+                                        WalletSelfRefundService walletSelfRefundService,
+                                        ObjectMapper objectMapper,
+                                        CurrencyCatalog currencyCatalog,
+                                        BankPayoutTrackingService bankPayoutTracking,
+                                        BidSupplementStripeWebhookRouter supplementRouter) {
+        this.supplementRouter = supplementRouter;
         this.bankPayoutTracking = bankPayoutTracking;
         this.paymentService = paymentService;
         this.cashHandler = cashHandler;
@@ -106,6 +127,9 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
 
     @Override
     public void handle(Event event) {
+        if (supplementRouter != null && supplementRouter.handle(event)) {
+            return;
+        }
         if (event.getType() != null && event.getType().startsWith("payout.")) {
             handlePayout(event);
             return;
