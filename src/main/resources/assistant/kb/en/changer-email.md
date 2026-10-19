@@ -1,11 +1,11 @@
 ---
 id: changer-email
-title: Change my email address
-keywords: email, e-mail, mail address, change, update, add, code, verification
+title: Add my email address
+keywords: email, e-mail, mail address, change, update, replace, add, code, verification
 routes:
   - path: /profile/edit/email
-    label: Change my email
+    label: Add my email
 ---
-You can change your email address from your profile: Profile › ☰ › Edit profile › Contact details › Email.
-Enter the new address, then the verification code sent to that email to confirm it.
-If no email is set yet, the "Email" row in the My account section of the Profile tab lets you add one.
+If no email is set yet, add one from your profile: Profile › ☰ › Edit profile › Contact details › Email.
+Enter the address, then the verification code sent to that email to confirm it.
+An address already linked to the account can't be changed or replaced: it identifies you when you sign in.
