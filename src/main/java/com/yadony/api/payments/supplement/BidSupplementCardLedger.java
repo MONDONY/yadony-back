@@ -68,11 +68,12 @@ public class BidSupplementCardLedger {
 
     /** Ce que la transaction a réservé, pour l'appel Stripe qui suit. */
     public record Claim(UUID supplementId, UUID bidId, UUID senderId, UUID travelerId, BigDecimal net,
-                       BigDecimal gross, String currency, String paymentIntentId, String chargeId) {
+                       BigDecimal gross, String currency, String paymentIntentId, String chargeId, String refundId) {
 
         static Claim of(BidSupplementEntity s) {
             return new Claim(s.getId(), s.getBidId(), s.getSenderId(), s.getTravelerId(), s.getNetAmount(),
-                    s.getGrossAmount(), s.getCurrency(), s.getStripePaymentIntentId(), s.getStripeChargeId());
+                    s.getGrossAmount(), s.getCurrency(), s.getStripePaymentIntentId(), s.getStripeChargeId(),
+                    s.getStripeRefundId());
         }
     }
 
@@ -316,6 +317,44 @@ public class BidSupplementCardLedger {
         audit(s, "BID_SUPPLEMENT_REFUNDED", null, extra);
         events.publishEvent(new BidSupplementRefundedEvent(s.getId(), s.getBidId(), s.getSenderId(),
                 s.getGrossAmount(), s.getCurrency(), false));
+        return true;
+    }
+
+    /**
+     * Refund du supplément échoué chez Stripe ({@code charge.refund.updated}, statut
+     * {@code failed} ou {@code canceled}) : l'argent n'est pas rendu, le supplément ne doit pas
+     * rester {@code REFUNDED}. Il redevient « à rembourser » :
+     * <ul>
+     *   <li>{@code REFUND_PENDING} en règle générale (le filet relance le remboursement) ;</li>
+     *   <li>{@code CANCELLED} payé et non remboursé (paiement tardif, que le filet relance aussi)
+     *       si une autre demande est active sur le colis : un second {@code REFUND_PENDING}
+     *       violerait l'index {@code uq_bid_supplements_one_active}.</li>
+     * </ul>
+     * Le refund échoué reste dans {@code stripe_refund_id} : le prochain essai change de clé
+     * d'idempotence (sinon Stripe rendrait le même refund échoué). Un vieux refund échoué, autre
+     * que celui enregistré, ne défait rien.
+     *
+     * @return vrai si le supplément est désormais à rembourser.
+     */
+    @Transactional
+    public boolean refundFailed(UUID supplementId, String refundId) {
+        BidSupplementEntity s = lock(supplementId).orElse(null);
+        if (s == null) {
+            return false;
+        }
+        boolean sameRefund = s.getStripeRefundId() == null || s.getStripeRefundId().equals(refundId);
+        boolean latePayment = CLOSED_UNPAID.contains(s.getStatus()) && s.getPaidAt() != null
+                && s.getRefundedAt() == null;
+        if (s.getStatus() == BidSupplementStatus.REFUNDED && sameRefund) {
+            boolean otherActive = supplements.existsByBidIdAndStatusIn(s.getBidId(), BidSupplementStatus.ACTIVE);
+            s.setStatus(otherActive ? BidSupplementStatus.CANCELLED : BidSupplementStatus.REFUND_PENDING);
+            s.setRefundedAt(null);
+        } else if (!(s.getStatus() == BidSupplementStatus.REFUND_PENDING || latePayment) || !sameRefund) {
+            return false;
+        }
+        s.setStripeRefundId(refundId);
+        supplements.save(s);
+        audit(s, "BID_SUPPLEMENT_REFUND_FAILED", null, Map.of("refundId", String.valueOf(refundId)));
         return true;
     }
 

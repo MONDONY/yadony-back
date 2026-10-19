@@ -1,10 +1,5 @@
 package com.yadony.api.payments.supplement;
 
-import com.yadony.api.payments.PaymentEntity;
-import com.yadony.api.payments.PaymentRepository;
-import com.yadony.api.payments.PaymentStatus;
-import com.yadony.api.payments.StripeReleaseIntentEntity;
-import com.yadony.api.payments.StripeReleaseIntentRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -17,14 +12,11 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.EnumSet;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
-import static com.yadony.api.payments.supplement.BidSupplementPricingTest.setId;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -39,13 +31,11 @@ class BidSupplementCardReconciliationJobTest {
     @Mock BidSupplementRepository supplements;
     @Mock BidSupplementCardPayouts payouts;
     @Mock BidSupplementCardRefunds refunds;
-    @Mock PaymentRepository payments;
-    @Mock StripeReleaseIntentRepository releaseIntents;
 
     private final BidSupplementProperties properties = new BidSupplementProperties();
 
     private BidSupplementCardReconciliationJob job() {
-        return new BidSupplementCardReconciliationJob(supplements, payouts, refunds, payments, releaseIntents,
+        return new BidSupplementCardReconciliationJob(supplements, payouts, refunds,
                 new BidSupplementWindow(properties, Clock.fixed(NOW, ZoneOffset.UTC)), properties);
     }
 
@@ -68,36 +58,19 @@ class BidSupplementCardReconciliationJobTest {
     }
 
     @Test
-    void versementBloque_repris_etVersementManque_seulementSiLePrincipalEstVerse() {
+    void versementBloque_repris_etVersementsManques_selectionnesEnBase() {
         UUID stuck = UUID.randomUUID();
-        UUID released = UUID.randomUUID();
-        UUID principalHeld = UUID.randomUUID();
-        UUID noPayment = UUID.randomUUID();
+        UUID missed = UUID.randomUUID();
         org.mockito.Mockito.lenient().when(supplements.findIdsByRailAndStatusInUpdatedBefore(eq(BidSupplementRail.STRIPE),
                 eq(EnumSet.of(BidSupplementStatus.PAYOUT_PENDING)), any(), any(Pageable.class)))
                 .thenReturn(List.of(stuck));
         when(payouts.resume(stuck)).thenReturn(true);
-        when(supplements.findIdsByRailAndStatusPaidBefore(BidSupplementRail.STRIPE, BidSupplementStatus.PAID,
-                NOW_UTC.minusMinutes(30), org.springframework.data.domain.PageRequest.of(0, 100)))
-                .thenReturn(List.of(released, principalHeld, noPayment));
-        mockPrincipal(released, PaymentStatus.RELEASED, StripeReleaseIntentEntity.Status.DONE);
-        mockPrincipal(principalHeld, PaymentStatus.RELEASED, StripeReleaseIntentEntity.Status.PENDING);
-        when(supplements.findBidIdById(noPayment)).thenReturn(Optional.empty());
-        when(payouts.payout(released)).thenReturn(true);
+        // Le filtre « versement principal fait » est dans la requête : plus de tri en Java après coup.
+        when(supplements.findIdsAwaitingMissedPayout(BidSupplementRail.STRIPE, NOW_UTC.minusMinutes(30),
+                org.springframework.data.domain.PageRequest.of(0, 100))).thenReturn(List.of(missed));
+        when(payouts.payout(missed)).thenReturn(true);
 
         assertThat(job().run().paidOut()).isEqualTo(2);
-        verify(payouts, never()).payout(principalHeld);
-        verify(payouts, never()).payout(noPayment);
-    }
-
-    @Test
-    void partageAdmin_principalNonVerseParLExecuteur_supplementLaisseAPaye() {
-        UUID split = UUID.randomUUID();
-        when(supplements.findIdsByRailAndStatusPaidBefore(any(), any(), any(), any())).thenReturn(List.of(split));
-        mockPrincipal(split, PaymentStatus.REFUNDED, null);
-
-        assertThat(job().run().paidOut()).isZero();
-        verify(payouts, never()).payout(split);
     }
 
     @Test
@@ -109,19 +82,5 @@ class BidSupplementCardReconciliationJobTest {
         properties.setReconcileEnabled(true);
         job().scheduledRun();
         verify(supplements).findIdsPaidLateUnrefunded(any(), any(), any(), any());
-    }
-
-    private void mockPrincipal(UUID supplementId, PaymentStatus status, StripeReleaseIntentEntity.Status intent) {
-        UUID bidId = UUID.randomUUID();
-        PaymentEntity payment = new PaymentEntity();
-        setId(payment, UUID.randomUUID());
-        payment.setStatus(status);
-        when(supplements.findBidIdById(supplementId)).thenReturn(Optional.of(bidId));
-        when(payments.findForBid(bidId)).thenReturn(Optional.of(payment));
-        if (intent != null) {
-            StripeReleaseIntentEntity release = new StripeReleaseIntentEntity();
-            release.setStatus(intent);
-            when(releaseIntents.findByPaymentId(payment.getId())).thenReturn(Optional.of(release));
-        }
     }
 }

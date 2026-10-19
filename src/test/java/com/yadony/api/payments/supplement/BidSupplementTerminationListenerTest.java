@@ -85,7 +85,7 @@ class BidSupplementTerminationListenerTest {
     @Test
     void remboursementAdmin() {
         listener.onAdminPaymentRefunded(new AdminPaymentRefundedEvent(UUID.randomUUID(), bidId, null, UUID.randomUUID()));
-        verify(service).onBidEnded(bidId, "ADMIN_REFUND");
+        verify(service).onPrincipalRefunded(bidId);
     }
 
     @Test

@@ -87,7 +87,12 @@ public class BidSupplementTerminationListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onAdminPaymentRefunded(AdminPaymentRefundedEvent e) {
-        end(e.bidId(), "ADMIN_REFUND");
+        // Remboursement admin du principal : aussi sur un colis non terminé (hors litige ouvert).
+        try {
+            service.onPrincipalRefunded(e.bidId());
+        } catch (RuntimeException ex) {
+            log.error("Remboursement du supplément du colis {} (remboursement admin) en échec", e.bidId(), ex);
+        }
     }
 
     /** Redondant avec {@link BidRejectedEvent} (annulation admin) : écouté par prudence, sans double effet. */

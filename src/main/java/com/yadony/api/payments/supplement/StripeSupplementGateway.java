@@ -37,6 +37,16 @@ public interface StripeSupplementGateway {
     String createRefund(String paymentIntentId, Map<String, String> metadata, String idempotencyKey)
             throws StripeException;
 
+    /** Dernier remboursement non échoué du PaymentIntent (quel qu'en soit l'auteur, Dashboard compris). */
+    Optional<String> latestRefund(String paymentIntentId) throws StripeException;
+
+    /** État de la charge du supplément : litige bancaire, montant déjà remboursé. */
+    ChargeView retrieveCharge(String chargeId) throws StripeException;
+
+    /** Vue minimale d'une charge. */
+    record ChargeView(boolean disputed, long amountRefunded) {
+    }
+
     /** Vue minimale d'un PaymentIntent. */
     record PaymentIntentView(String id, String status, Long amount, String currency, String clientSecret,
                              String latestCharge, List<String> paymentMethodTypes) {

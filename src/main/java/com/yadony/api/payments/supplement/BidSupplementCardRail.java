@@ -204,7 +204,6 @@ public class BidSupplementCardRail implements BidSupplementRailHandler {
                 HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Expéditeur introuvable"));
         SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(s.getCurrency());
         CurrencyAmount gross = CurrencyAmount.of(s.getGrossAmount(), currency);
-        CurrencyAmount commission = CurrencyAmount.of(s.getCommissionAmount(), currency);
         try {
             String customerId = paymentService.ensureStripeCustomer(sender);
             PaymentIntentCreateParams.Builder params = PaymentIntentCreateParams.builder()
@@ -218,9 +217,9 @@ public class BidSupplementCardRail implements BidSupplementRailHandler {
                     .putMetadata("bid_supplement_id", s.getId().toString())
                     .putMetadata("scope", SCOPE)
                     .putMetadata("supplement_bid_id", s.getBidId().toString())
+                    // Ni commission ni voyageur : l'expéditeur lit ces métadonnées avec le
+                    // client_secret et en déduirait le net. La trace complète est dans l'audit.
                     .putMetadata("sender_id", s.getSenderId().toString())
-                    .putMetadata("traveler_id", s.getTravelerId().toString())
-                    .putMetadata("commission_minor", String.valueOf(commission.minor()))
                     .putMetadata("currency", currency.code());
             PAYMENT_METHOD_TYPES.forEach(params::addPaymentMethodType);
             return gateway.createPaymentIntent(params.build(), idempotencyKey(s));

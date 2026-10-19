@@ -133,8 +133,9 @@ class BidSupplementCardRailTest {
         assertThat(p.getMetadata()).containsEntry("bid_supplement_id", s.getId().toString())
                 .containsEntry("scope", "BID_SUPPLEMENT")
                 .containsEntry("supplement_bid_id", s.getBidId().toString())
-                .containsEntry("commission_minor", "110")
-                .doesNotContainKeys("bid_id", "payment_id", "wallet_topup", "commission_purpose");
+                .as("l'expéditeur lit les métadonnées avec le client_secret : ni commission ni voyageur")
+                .doesNotContainKeys("bid_id", "payment_id", "wallet_topup", "commission_purpose",
+                        "commission_minor", "commission_amount", "traveler_id", "net_amount");
 
         assertThat(r.clientSecret()).isEqualTo("pi_1_secret_x");
         assertThat(r.paymentMethodTypes()).containsExactly("card", "paypal");

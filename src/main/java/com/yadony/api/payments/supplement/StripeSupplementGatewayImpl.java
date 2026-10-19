@@ -1,6 +1,7 @@
 package com.yadony.api.payments.supplement;
 
 import com.stripe.exception.StripeException;
+import com.stripe.model.Charge;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.Refund;
 import com.stripe.model.Transfer;
@@ -82,6 +83,23 @@ public class StripeSupplementGatewayImpl implements StripeSupplementGateway {
                         .putAllMetadata(metadata)
                         .build(),
                 key(idempotencyKey)).getId();
+    }
+
+    @Override
+    public Optional<String> latestRefund(String paymentIntentId) throws StripeException {
+        // Stripe liste du plus récent au plus ancien.
+        return Refund.list(RefundListParams.builder().setPaymentIntent(paymentIntentId).setLimit(10L).build())
+                .getData().stream()
+                .filter(r -> !"failed".equals(r.getStatus()) && !"canceled".equals(r.getStatus()))
+                .map(Refund::getId)
+                .findFirst();
+    }
+
+    @Override
+    public ChargeView retrieveCharge(String chargeId) throws StripeException {
+        Charge charge = Charge.retrieve(chargeId);
+        return new ChargeView(Boolean.TRUE.equals(charge.getDisputed()),
+                charge.getAmountRefunded() == null ? 0L : charge.getAmountRefunded());
     }
 
     private static RequestOptions key(String idempotencyKey) {

@@ -98,10 +98,34 @@ public interface BidSupplementRepository extends JpaRepository<BidSupplementEnti
                                          @Param("statuses") Collection<BidSupplementStatus> statuses,
                                          @Param("before") LocalDateTime before, Pageable page);
 
-    /** Filet carte : suppléments payés depuis {@code before}, candidats au versement manqué. */
-    @Query("SELECT s.id FROM BidSupplementEntity s WHERE s.rail = :rail AND s.status = :status "
-            + "AND s.paidAt < :before ORDER BY s.paidAt")
-    List<UUID> findIdsByRailAndStatusPaidBefore(@Param("rail") BidSupplementRail rail,
-                                                @Param("status") BidSupplementStatus status,
-                                                @Param("before") LocalDateTime before, Pageable page);
+    /**
+     * Filet carte, versement manqué : suppléments {@code PAID} depuis {@code before} dont le
+     * versement principal a réellement abouti par l'exécuteur des versements (paiement
+     * {@code RELEASED} et réservation {@code stripe_release_intents} {@code DONE}, donc
+     * {@code PaymentReleasedEvent} publié). Filtré ici et non en Java après coup : sinon plus de
+     * {@code page} suppléments en transit (principal pas encore versé) cacheraient à jamais un
+     * supplément réellement manqué. Paiement du colis ou du fil de négociation lié, comme
+     * {@code PaymentRepository.findForBid}. Un partage admin d'un litige ne passe pas par la
+     * réservation : le supplément reste payé (décision manuelle).
+     */
+    @Query("""
+            SELECT s.id FROM BidSupplementEntity s
+            WHERE s.rail = :rail
+              AND s.status = com.yadony.api.payments.supplement.BidSupplementStatus.PAID
+              AND s.paidAt < :before
+              AND EXISTS (
+                  SELECT 1 FROM com.yadony.api.payments.PaymentEntity p,
+                                com.yadony.api.payments.StripeReleaseIntentEntity i,
+                                com.yadony.api.matching.BidEntity b
+                  WHERE b.id = s.bidId
+                    AND i.paymentId = p.id
+                    AND i.status = com.yadony.api.payments.StripeReleaseIntentEntity.Status.DONE
+                    AND p.status = com.yadony.api.payments.PaymentStatus.RELEASED
+                    AND (p.bidId = s.bidId
+                         OR (p.bidId IS NULL AND b.linkedNegotiationThreadId IS NOT NULL
+                             AND p.negotiationThreadId = b.linkedNegotiationThreadId)))
+            ORDER BY s.paidAt
+            """)
+    List<UUID> findIdsAwaitingMissedPayout(@Param("rail") BidSupplementRail rail,
+                                           @Param("before") LocalDateTime before, Pageable page);
 }

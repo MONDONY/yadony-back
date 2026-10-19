@@ -69,6 +69,7 @@ class BidSupplementServiceTest {
     @Mock AuditService auditService;
     @Mock ApplicationEventPublisher events;
     @Mock StorageService storage;
+    @Mock com.yadony.api.disputes.DisputeRepository disputes;
 
     private final BidSupplementRailHandler cardRail = mock(BidSupplementRailHandler.class);
     private final BidSupplementProperties properties = new BidSupplementProperties();
@@ -83,6 +84,7 @@ class BidSupplementServiceTest {
         properties.setEnabled(true);
         traveler = user("uid-traveler");
         traveler.setStripeAccountId("acct_1");
+        traveler.setStripeAccountStatus(com.yadony.api.auth.StripeAccountStatus.ONBOARDING_COMPLETE);
         sender = user("uid-sender");
         announcement = new AnnouncementEntity();
         setId(announcement, UUID.randomUUID());
@@ -116,7 +118,7 @@ class BidSupplementServiceTest {
     private BidSupplementService service(BidSupplementRailHandler... handlers) {
         BidSupplementWindow window = new BidSupplementWindow(properties, Clock.fixed(NOW, ZoneOffset.UTC));
         return new BidSupplementService(supplements, bids, announcements, gridItems, users, pricing, window,
-                properties, List.of(handlers), auditService, events, storage);
+                properties, List.of(handlers), auditService, events, storage, disputes);
     }
 
     private static CreateSupplementRequest request(String net) {
@@ -556,6 +558,46 @@ class BidSupplementServiceTest {
         assertThat(service(cardRail).onBidEnded(bid.getId(), "BID_REJECTED")).isFalse();
         assertThat(s.getStatus()).isEqualTo(BidSupplementStatus.PAID);
         verify(events, never()).publishEvent(any());
+    }
+
+    @Test
+    void remboursementAdminDuPrincipal_colisEnCours_supplementPayeRembourse() {
+        BidSupplementEntity s = existing(BidSupplementStatus.PAID);
+        bid.setStatus(BidStatus.COMPLETED);
+        lenient().when(supplements.findByBidIdAndStatusInForUpdate(bid.getId(), BidSupplementService.SETTLING))
+                .thenReturn(Optional.of(s));
+
+        assertThat(service(cardRail).onPrincipalRefunded(bid.getId())).isTrue();
+
+        assertThat(s.getStatus()).isEqualTo(BidSupplementStatus.REFUND_PENDING);
+        assertThat(s.getClosedReason()).isEqualTo("ADMIN_REFUND");
+        verify(events).publishEvent(new com.yadony.api.payments.supplement.events.BidSupplementRefundRequestedEvent(
+                s.getId(), bid.getId(), BidSupplementRail.STRIPE, BidSupplementStatus.REFUND_PENDING, "ADMIN_REFUND"));
+    }
+
+    @Test
+    void remboursementAdminDuPrincipal_litigeOuvert_supplementResteAPaye() {
+        BidSupplementEntity s = existing(BidSupplementStatus.PAID);
+        bid.setStatus(BidStatus.COMPLETED);
+        when(disputes.existsByBidIdAndStatusAndTypeStartingWith(bid.getId(), "OPEN", "")).thenReturn(true);
+        lenient().when(supplements.findByBidIdAndStatusInForUpdate(bid.getId(), BidSupplementService.SETTLING))
+                .thenReturn(Optional.of(s));
+
+        assertThat(service(cardRail).onPrincipalRefunded(bid.getId())).isFalse();
+        assertThat(s.getStatus()).isEqualTo(BidSupplementStatus.PAID);
+        verify(events, never()).publishEvent(any());
+    }
+
+    @Test
+    void remboursementAdminDuPrincipal_colisTermine_memeRegleQueLaFinDuColis() {
+        BidSupplementEntity s = existing(BidSupplementStatus.PROPOSED);
+        bid.setStatus(BidStatus.CANCELLED);
+        when(supplements.findByBidIdAndStatusInForUpdate(bid.getId(), BidSupplementStatus.OPEN))
+                .thenReturn(Optional.of(s));
+
+        assertThat(service(cardRail).onPrincipalRefunded(bid.getId())).isTrue();
+        assertThat(s.getStatus()).isEqualTo(BidSupplementStatus.CANCELLED);
+        assertThat(service(cardRail).onPrincipalRefunded(null)).isFalse();
     }
 
     // ── Aides ────────────────────────────────────────────────────────────────

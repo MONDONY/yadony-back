@@ -81,13 +81,15 @@ public class BidSupplementService {
     private final AuditService auditService;
     private final ApplicationEventPublisher events;
     private final StorageService storage;
+    private final com.yadony.api.disputes.DisputeRepository disputes;
 
     public BidSupplementService(BidSupplementRepository supplements, BidRepository bids,
                                 AnnouncementRepository announcements,
                                 AnnouncementPriceGridItemRepository announcementGridItems,
                                 UserRepository users, BidSupplementPricing pricing, BidSupplementWindow window,
                                 BidSupplementProperties properties, List<BidSupplementRailHandler> handlers,
-                                AuditService auditService, ApplicationEventPublisher events, StorageService storage) {
+                                AuditService auditService, ApplicationEventPublisher events, StorageService storage,
+                                com.yadony.api.disputes.DisputeRepository disputes) {
         this.supplements = supplements;
         this.bids = bids;
         this.announcements = announcements;
@@ -101,6 +103,7 @@ public class BidSupplementService {
         this.auditService = auditService;
         this.events = events;
         this.storage = storage;
+        this.disputes = disputes;
     }
 
     /** Un composant existe-t-il pour ce rail ? Faux tant que le rail n'est pas livré. */
@@ -340,6 +343,12 @@ public class BidSupplementService {
         if (bid == null || !TERMINAL_UNDELIVERED.contains(bid.getStatus())) {
             return false;
         }
+        return endUnderBidLock(bid, reason);
+    }
+
+    /** {@link #onBidEnded}, colis déjà verrouillé et terminé sans livraison. */
+    private boolean endUnderBidLock(BidEntity bid, String reason) {
+        UUID bidId = bid.getId();
         Optional<BidSupplementEntity> open = supplements.findByBidIdAndStatusInForUpdate(bidId, BidSupplementStatus.OPEN);
         if (open.isEmpty()) {
             return requestRefundOfPaid(bid, reason);
@@ -378,6 +387,40 @@ public class BidSupplementService {
                 s.getStatus(), reason));
         log.info("Supplément {} à rembourser : colis {} terminé ({})", s.getId(), bid.getId(), reason);
         return true;
+    }
+
+    /**
+     * Paiement principal remboursé par l'administration ({@code AdminPaymentRefundedEvent}) :
+     * <ul>
+     *   <li>colis terminé sans livraison : même règle que {@link #onBidEnded} ;</li>
+     *   <li>colis encore en cours ou livré : un supplément payé (carte, mobile money) est
+     *       remboursé aussi, l'expéditeur ne paie pas un supplément d'un transport remboursé ;</li>
+     *   <li>litige ouvert sur le colis : rien, le supplément reste payé (décision manuelle).</li>
+     * </ul>
+     * Idempotent.
+     *
+     * @return vrai si une demande a été annulée ou son remboursement demandé.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean onPrincipalRefunded(UUID bidId) {
+        if (bidId == null) {
+            return false;
+        }
+        bids.lockForUpdate(bidId);
+        BidEntity bid = bids.findById(bidId).orElse(null);
+        if (bid == null) {
+            return false;
+        }
+        if (TERMINAL_UNDELIVERED.contains(bid.getStatus())) {
+            return endUnderBidLock(bid, "ADMIN_REFUND");
+        }
+        if (disputes.existsByBidIdAndStatusAndTypeStartingWith(bidId, com.yadony.api.disputes.DisputeTypes.STATUS_OPEN,
+                "")) {
+            log.info("Principal du colis {} remboursé, litige ouvert : supplément laissé payé (décision manuelle)",
+                    bidId);
+            return false;
+        }
+        return requestRefundOfPaid(bid, "ADMIN_REFUND");
     }
 
     // ── Règles ───────────────────────────────────────────────────────────────

@@ -19,8 +19,9 @@ import java.util.UUID;
  *
  * <ul>
  *   <li>{@code payment_intent.*} : routé par la métadonnée {@code bid_supplement_id} ;</li>
- *   <li>{@code charge.refunded} et {@code charge.dispute.*} : routés par une recherche en base sur
- *       le PaymentIntent ou la charge (la métadonnée d'une charge ne fait pas foi).</li>
+ *   <li>{@code charge.refunded}, {@code charge.refund.updated} et {@code charge.dispute.*} :
+ *       routés par une recherche en base sur le PaymentIntent ou la charge (la métadonnée d'une
+ *       charge ne fait pas foi).</li>
  * </ul>
  *
  * Le payload brut est lu (et non l'objet désérialisé) : un écart de version d'API entre Stripe et
@@ -36,15 +37,17 @@ public class BidSupplementStripeWebhookRouter {
     private final BidSupplementCardLedger ledger;
     private final BidSupplementRepository supplements;
     private final AdminAlertEscalator alerts;
+    private final StripeSupplementGateway gateway;
     private final ObjectMapper mapper;
 
     public BidSupplementStripeWebhookRouter(BidSupplementCardRail rail, BidSupplementCardLedger ledger,
                                             BidSupplementRepository supplements, AdminAlertEscalator alerts,
-                                            ObjectMapper mapper) {
+                                            StripeSupplementGateway gateway, ObjectMapper mapper) {
         this.rail = rail;
         this.ledger = ledger;
         this.supplements = supplements;
         this.alerts = alerts;
+        this.gateway = gateway;
         this.mapper = mapper;
     }
 
@@ -57,7 +60,7 @@ public class BidSupplementStripeWebhookRouter {
     public boolean handle(Event event) {
         String type = event.getType();
         if (type == null || !(type.startsWith("payment_intent.") || "charge.refunded".equals(type)
-                || type.startsWith("charge.dispute."))) {
+                || "charge.refund.updated".equals(type) || type.startsWith("charge.dispute."))) {
             return false;
         }
         JsonNode object = object(event);
@@ -69,6 +72,9 @@ public class BidSupplementStripeWebhookRouter {
         }
         if ("charge.refunded".equals(type)) {
             return handleChargeRefunded(object);
+        }
+        if ("charge.refund.updated".equals(type)) {
+            return handleRefundUpdated(object);
         }
         return handleDispute(type, object);
     }
@@ -112,6 +118,9 @@ public class BidSupplementStripeWebhookRouter {
         if (amount > 0 && refunded >= amount) {
             JsonNode refunds = charge.path("refunds").path("data");
             String refundId = refunds.isArray() && !refunds.isEmpty() ? refunds.get(0).path("id").asText(null) : null;
+            if (refundId == null) {
+                refundId = latestRefund(s);
+            }
             if (!ledger.completeRefund(s.getId(), refundId, "webhook")
                     && (s.getStatus() == BidSupplementStatus.PAYOUT_PENDING
                     || s.getStatus() == BidSupplementStatus.PAID_OUT)) {
@@ -125,6 +134,48 @@ public class BidSupplementStripeWebhookRouter {
             alerts.raiseOnce("SUPP_PARTIAL_REFUND_" + s.getId(),
                     "Remboursement partiel de la charge du supplément " + s.getId() + " : à traiter à la main",
                     Map.of("supplementId", s.getId().toString(), "amountRefunded", refunded, "amount", amount));
+        }
+        return true;
+    }
+
+    /**
+     * {@code charge.refunds.data} n'est pas toujours fourni dans l'événement : l'identifiant du
+     * remboursement est alors relu chez Stripe. Une lecture en échec n'empêche pas d'enregistrer
+     * le remboursement (l'argent est rendu), seul l'identifiant manque.
+     */
+    private String latestRefund(BidSupplementEntity s) {
+        if (s.getStripePaymentIntentId() == null) {
+            return null;
+        }
+        try {
+            return gateway.latestRefund(s.getStripePaymentIntentId()).orElse(null);
+        } catch (Exception e) {
+            log.warn("Supplément {} : identifiant du remboursement illisible ({})", s.getId(), e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * {@code charge.refund.updated} : un Refund du supplément qui échoue après coup (carte
+     * expirée, compte fermé) n'a pas rendu l'argent. Le supplément redevient à rembourser
+     * ({@link BidSupplementCardLedger#refundFailed}) et une alerte part. Les autres mises à jour
+     * sont avalées sans effet : elles ne concernent pas les traitements du colis.
+     */
+    private boolean handleRefundUpdated(JsonNode refund) {
+        Optional<BidSupplementEntity> found = lookup(refund.path("payment_intent").asText(null),
+                refund.path("charge").asText(null));
+        if (found.isEmpty()) {
+            return false;
+        }
+        BidSupplementEntity s = found.get();
+        String status = refund.path("status").asText("");
+        String refundId = refund.path("id").asText(null);
+        if (("failed".equals(status) || "canceled".equals(status)) && ledger.refundFailed(s.getId(), refundId)) {
+            alerts.raiseOnce("SUPP_REFUND_FAILED_" + s.getId(),
+                    "Remboursement " + refundId + " du supplément " + s.getId() + " échoué chez Stripe ("
+                            + refund.path("failure_reason").asText("inconnu") + ") : à rembourser de nouveau",
+                    Map.of("supplementId", s.getId().toString(), "bidId", s.getBidId().toString(),
+                            "refundId", String.valueOf(refundId)));
         }
         return true;
     }

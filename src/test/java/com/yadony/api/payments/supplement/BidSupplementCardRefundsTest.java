@@ -45,7 +45,7 @@ class BidSupplementCardRefundsTest {
 
     private Claim claim(String piId) {
         return new Claim(id, bidId, UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("20.00"),
-                new BigDecimal("21.10"), "EUR", piId, "ch_1");
+                new BigDecimal("21.10"), "EUR", piId, "ch_1", null);
     }
 
     private BidSupplementCardRefunds refunds() {
@@ -61,6 +61,19 @@ class BidSupplementCardRefundsTest {
 
         assertThat(refunds().refund(id)).isTrue();
         verify(ledger).completeRefund(id, "re_1", "refund");
+    }
+
+    @Test
+    void apresUnRefundEchoue_nouvelleCleDIdempotence() throws Exception {
+        Claim failedBefore = new Claim(id, bidId, UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("20.00"),
+                new BigDecimal("21.10"), "EUR", "pi_1", "ch_1", "re_failed");
+        when(ledger.beginRefund(id)).thenReturn(new RefundClaim(RefundDecision.PROCEED, failedBefore));
+        when(gateway.findRefund("pi_1", id.toString())).thenReturn(Optional.empty());
+        when(gateway.createRefund(eq("pi_1"), anyMap(), eq("supplement-refund-" + id + "-after-re_failed")))
+                .thenReturn("re_2");
+
+        assertThat(refunds().refund(id)).isTrue();
+        verify(ledger).completeRefund(id, "re_2", "refund");
     }
 
     @Test

@@ -24,8 +24,10 @@ import java.util.UUID;
  * Transfer pour le versement principal du colis.
  *
  * <p>Réservation {@code PAID → PAYOUT_PENDING} dans une transaction courte, appel Stripe hors
- * transaction, puis {@code PAID_OUT} (ou retour à {@code PAID} et alerte). Une reprise cherche
- * d'abord le Transfer du groupe : la clé d'idempotence Stripe n'est valable que 24 h.
+ * transaction, puis {@code PAID_OUT}. Échec Stripe : retour à {@code PAID} et alerte ; Transfer
+ * parti mais enregistrement en échec : reste {@code PAYOUT_PENDING} (alerte dédiée), le filet
+ * reprend. Une reprise cherche d'abord le Transfer du groupe : la clé d'idempotence Stripe n'est
+ * valable que 24 h.
  */
 @Component
 public class BidSupplementCardPayouts {
@@ -96,12 +98,13 @@ public class BidSupplementCardPayouts {
 
     private boolean transfer(BidSupplementCardLedger.Claim claim, String destination) {
         UUID id = claim.supplementId();
+        String transferId;
+        String chargeId = claim.chargeId();
         try {
-            String transferId = gateway.findTransferByGroup(transferGroup(id)).orElse(null);
-            String chargeId = claim.chargeId();
+            transferId = gateway.findTransferByGroup(transferGroup(id)).orElse(null);
             if (transferId == null) {
                 if (destination == null) {
-                    throw new IllegalStateException("compte Connect du voyageur absent");
+                    throw new IllegalStateException("compte Connect du voyageur absent ou incomplet");
                 }
                 if (chargeId == null && claim.paymentIntentId() != null) {
                     chargeId = gateway.retrievePaymentIntent(claim.paymentIntentId()).latestCharge();
@@ -117,11 +120,9 @@ public class BidSupplementCardPayouts {
                 transferId = gateway.createTransfer(CurrencyAmount.of(claim.net(), currency).minor(), currency.code(),
                         destination, chargeId, transferGroup(id), metadata, "supplement-transfer-" + id);
             }
-            ledger.completePayout(id, transferId, chargeId);
-            log.info("Supplément {} versé au voyageur {} (Transfer {})", id, claim.travelerId(), transferId);
-            return true;
         } catch (Exception e) {
-            log.error("Versement du supplément {} en échec", id, e);
+            // Aucun Transfer : retour à PAID, le filet réessaie.
+            log.error("Transfer du supplément {} en échec", id, e);
             ledger.revertPayout(id, e.getMessage());
             alerts.raiseOnce("SUPP_TRANSFER_FAILED_" + id,
                     "Transfer du supplément " + id + " en échec : " + e.getMessage(),
@@ -129,8 +130,29 @@ public class BidSupplementCardPayouts {
                             "error", String.valueOf(e.getMessage())));
             return false;
         }
+        try {
+            ledger.completePayout(id, transferId, chargeId);
+        } catch (RuntimeException e) {
+            // Le Transfer est parti : surtout pas de retour à PAID (il repartirait). Le supplément
+            // reste PAYOUT_PENDING ; le filet retrouve le Transfer par son groupe et enregistre.
+            log.error("Transfer {} du supplément {} parti, enregistrement en échec", transferId, id, e);
+            alerts.raiseOnce("SUPP_PAYOUT_UNRECORDED_" + id,
+                    "Transfer " + transferId + " du supplément " + id + " parti, mais versement non enregistré en "
+                            + "base (" + e.getMessage() + ") : le filet le reprendra",
+                    Map.of("supplementId", id.toString(), "bidId", claim.bidId().toString(),
+                            "transferId", transferId, "error", String.valueOf(e.getMessage())));
+            return false;
+        }
+        log.info("Supplément {} versé au voyageur {} (Transfer {})", id, claim.travelerId(), transferId);
+        return true;
     }
 
+    /**
+     * Raison de retenir le versement, ou {@code null}. Mêmes gardes que le versement principal
+     * (retenue du voyageur, litige admin, compte Connect complet), plus l'état de la charge du
+     * supplément chez Stripe : une charge contestée ou partiellement remboursée n'est pas versée
+     * (pas d'inversion de Transfer en v1, un admin tranche).
+     */
     private String blockingReason(BidSupplementEntity s) {
         if (holdPolicy.isHeld(s.getTravelerId())) {
             return "PAYOUT_HOLD";
@@ -140,14 +162,38 @@ public class BidSupplementCardPayouts {
             return "DISPUTE_OPEN";
         }
         if (destination(s.getTravelerId()) == null) {
-            return "NO_STRIPE_ACCOUNT";
+            return "STRIPE_ACCOUNT_NOT_READY";
         }
-        return null;
+        return chargeBlockingReason(s);
     }
 
+    private String chargeBlockingReason(BidSupplementEntity s) {
+        try {
+            String chargeId = s.getStripeChargeId();
+            if (chargeId == null && s.getStripePaymentIntentId() != null) {
+                chargeId = gateway.retrievePaymentIntent(s.getStripePaymentIntentId()).latestCharge();
+            }
+            if (chargeId == null) {
+                return "CHARGE_UNKNOWN";
+            }
+            StripeSupplementGateway.ChargeView charge = gateway.retrieveCharge(chargeId);
+            if (charge.disputed()) {
+                return "CHARGE_DISPUTED";
+            }
+            if (charge.amountRefunded() > 0) {
+                return "CHARGE_PARTIALLY_REFUNDED";
+            }
+            return null;
+        } catch (Exception e) {
+            log.warn("Supplément {} : état de la charge illisible ({})", s.getId(), e.getMessage());
+            return "CHARGE_CHECK_FAILED";
+        }
+    }
+
+    /** Compte Connect complet du voyageur ({@code ONBOARDING_COMPLETE}, comme le principal), sinon nul. */
     private String destination(UUID travelerId) {
-        return users.findById(travelerId).map(UserEntity::getStripeAccountId)
-                .filter(account -> !account.isBlank()).orElse(null);
+        return users.findById(travelerId).filter(BidSupplementRail::stripeAccountReady)
+                .map(UserEntity::getStripeAccountId).orElse(null);
     }
 
     private static Map<String, Object> context(BidSupplementEntity s, Map<String, Object> extra) {

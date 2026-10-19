@@ -97,6 +97,7 @@ class BidSupplementCardIT {
     @Autowired EntityManager entityManager;
     @Autowired TransactionTemplate tx;
     @Autowired JdbcTemplate jdbc;
+    @Autowired BidSupplementCardReconciliationJob cardJob;
 
     @Test
     void demandeAcceptationWebhookRejoue_puisVersementApresLePrincipal() throws Exception {
@@ -136,6 +137,7 @@ class BidSupplementCardIT {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM payments WHERE bid_id = ?", Integer.class, p.bidId))
                 .as("jamais de ligne payments pour un supplément").isZero();
 
+        when(gateway.retrieveCharge("ch_supp")).thenReturn(new StripeSupplementGateway.ChargeView(false, 0L));
         when(gateway.findTransferByGroup("supplement_" + supplementId)).thenReturn(Optional.empty());
         when(gateway.createTransfer(eq(2000L), eq("eur"), eq(p.traveler.getStripeAccountId()), eq("ch_supp"),
                 eq("supplement_" + supplementId), anyMap(), eq("supplement-transfer-" + supplementId)))
@@ -191,6 +193,87 @@ class BidSupplementCardIT {
         awaitStatus(supplementId, "REFUNDED");
         assertThat(column(supplementId, "stripe_charge_id")).isEqualTo("ch_late");
         assertThat(column(supplementId, "stripe_refund_id")).isEqualTo("re_late");
+    }
+
+    /**
+     * Filet « versement manqué » : le principal versé est filtré dans la requête. Avec plus de 100
+     * suppléments payés en transit (plus anciens, principal pas encore versé), le supplément
+     * réellement manqué est tout de même versé.
+     */
+    @Test
+    void filetVersementManque_auDelaDe100SupplementsEnTransit() throws Exception {
+        UserEntity traveler = persistUser("acct_" + UUID.randomUUID(), null);
+        UserEntity sender = persistUser(null, "cus_" + UUID.randomUUID());
+        UUID announcementId = persistAnnouncement(traveler.getId());
+        java.time.LocalDateTime now = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC);
+        for (int i = 0; i < 101; i++) {
+            UUID bidId = persistAcceptedBid(announcementId, sender.getId());
+            persistPaidSupplement(bidId, traveler.getId(), sender.getId(), now.minusHours(3).plusSeconds(i));
+        }
+        UUID missedBid = persistAcceptedBid(announcementId, sender.getId());
+        UUID missed = persistPaidSupplement(missedBid, traveler.getId(), sender.getId(), now.minusHours(1));
+        persistReleasedPrincipal(missedBid);
+        when(gateway.retrieveCharge(any())).thenReturn(new StripeSupplementGateway.ChargeView(false, 0L));
+        when(gateway.findTransferByGroup("supplement_" + missed)).thenReturn(Optional.empty());
+        when(gateway.createTransfer(anyLong(), anyString(), anyString(), anyString(), eq("supplement_" + missed),
+                anyMap(), eq("supplement-transfer-" + missed))).thenReturn("tr_missed");
+
+        cardJob.run();
+
+        assertThat(column(missed, "status")).isEqualTo("PAID_OUT");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM bid_supplements s JOIN bids b ON b.id = s.bid_id "
+                + "WHERE b.announcement_id = ? AND s.status = 'PAID'", Integer.class, announcementId))
+                .as("les suppléments en transit attendent leur versement principal").isEqualTo(101);
+    }
+
+    private UUID persistPaidSupplement(UUID bidId, UUID travelerId, UUID senderId, java.time.LocalDateTime paidAt) {
+        return tx.execute(status -> {
+            BidSupplementEntity s = new BidSupplementEntity();
+            s.setBidId(bidId);
+            s.setTravelerId(travelerId);
+            s.setSenderId(senderId);
+            s.setRail(BidSupplementRail.STRIPE);
+            s.setStatus(BidSupplementStatus.PAID);
+            s.setCurrency("EUR");
+            s.setNetAmount(new BigDecimal("20.00"));
+            s.setCommissionAmount(new BigDecimal("1.10"));
+            s.setGrossAmount(new BigDecimal("21.10"));
+            s.setReasonCode(BidSupplementReason.OTHER);
+            s.setPhotoKey("tracking/" + bidId + "/1.jpg");
+            s.setExpiresAt(paidAt.plusHours(1));
+            s.setStripePiAttempt(1);
+            s.setStripePaymentIntentId("pi_" + UUID.randomUUID());
+            s.setStripeChargeId("ch_" + UUID.randomUUID());
+            s.setPaidAt(paidAt);
+            entityManager.persist(s);
+            return s.getId();
+        });
+    }
+
+    private void persistReleasedPrincipal(UUID bidId) {
+        tx.executeWithoutResult(status -> {
+            com.yadony.api.payments.PaymentEntity payment = new com.yadony.api.payments.PaymentEntity();
+            payment.setBidId(bidId);
+            payment.setAmount(new BigDecimal("55.00"));
+            payment.setCommissionAmount(new BigDecimal("5.00"));
+            payment.setCurrency("EUR");
+            payment.setStatus(com.yadony.api.payments.PaymentStatus.RELEASED);
+            payment.setStripePaymentIntentId("pi_principal_" + UUID.randomUUID());
+            payment.setEscrowReleasedAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
+            entityManager.persist(payment);
+            com.yadony.api.payments.StripeReleaseIntentEntity release = new com.yadony.api.payments.StripeReleaseIntentEntity();
+            release.setPaymentId(payment.getId());
+            release.setKind(com.yadony.api.payments.StripeReleaseIntentEntity.Kind.TRANSFER);
+            release.setStatus(com.yadony.api.payments.StripeReleaseIntentEntity.Status.DONE);
+            release.setSource("delivery");
+            release.setAuditAction("PAYMENT_RELEASED");
+            release.setBidId(bidId);
+            release.setAmountMinor(5000L);
+            release.setCurrency("eur");
+            release.setDestination("acct_principal");
+            release.setLeaseUntil(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+            entityManager.persist(release);
+        });
     }
 
     // ── Aides ────────────────────────────────────────────────────────────────

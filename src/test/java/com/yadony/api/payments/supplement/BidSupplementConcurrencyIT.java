@@ -204,7 +204,8 @@ class BidSupplementConcurrencyIT {
         user.setStatus(UserStatus.ACTIVE);
         user.setKycStatus(KycStatus.PENDING);
         user.setRoles(Set.of(Role.TRAVELER, Role.SENDER));
-        user.setStripeAccountStatus(StripeAccountStatus.NOT_CREATED);
+        user.setStripeAccountStatus(stripeAccountId == null ? StripeAccountStatus.NOT_CREATED
+                : StripeAccountStatus.ONBOARDING_COMPLETE);
         user.setStripeAccountId(stripeAccountId);
         return userRepository.saveAndFlush(user);
     }

@@ -52,6 +52,15 @@ public class BidSupplementCardRefunds {
         }
     }
 
+    /**
+     * Clé du Refund : {@code supplement-refund-<id>}, suffixée du refund échoué précédent s'il y en
+     * a un (sinon, pendant 24 h, Stripe rendrait le même refund échoué au lieu d'en créer un).
+     */
+    static String refundKey(BidSupplementCardLedger.Claim claim) {
+        String key = "supplement-refund-" + claim.supplementId();
+        return claim.refundId() == null ? key : key + "-after-" + claim.refundId();
+    }
+
     private boolean execute(BidSupplementCardLedger.Claim claim) {
         UUID id = claim.supplementId();
         try {
@@ -62,7 +71,7 @@ public class BidSupplementCardRefunds {
             if (refundId == null) {
                 refundId = gateway.createRefund(claim.paymentIntentId(),
                         Map.of("bid_supplement_id", id.toString(), "supplement_bid_id", claim.bidId().toString()),
-                        "supplement-refund-" + id);
+                        refundKey(claim));
             }
             ledger.completeRefund(id, refundId, "refund");
             log.info("Supplément {} remboursé à l'expéditeur {} (Refund {})", id, claim.senderId(), refundId);

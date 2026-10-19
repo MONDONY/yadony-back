@@ -290,6 +290,49 @@ class BidSupplementCardLedgerTest {
     }
 
     @Test
+    void refundEchoue_retourEnRemboursementEnAttente_sansAutreDemandeActive() {
+        s.setStatus(BidSupplementStatus.REFUNDED);
+        s.setStripeRefundId("re_1");
+        s.setRefundedAt(NOW_UTC);
+
+        assertThat(ledger.refundFailed(s.getId(), "re_1")).isTrue();
+
+        assertThat(s.getStatus()).isEqualTo(BidSupplementStatus.REFUND_PENDING);
+        assertThat(s.getRefundedAt()).isNull();
+        assertThat(s.getStripeRefundId()).as("gardé pour changer de clé au prochain essai").isEqualTo("re_1");
+        verify(auditService).log(eq("BID_SUPPLEMENT"), eq(s.getId()), eq("BID_SUPPLEMENT_REFUND_FAILED"), eq(null),
+                anyMap());
+    }
+
+    @Test
+    void refundEchoue_autreDemandeActiveSurLeColis_paiementTardifARembourser() {
+        s.setStatus(BidSupplementStatus.REFUNDED);
+        s.setStripeRefundId("re_1");
+        s.setRefundedAt(NOW_UTC);
+        s.setPaidAt(NOW_UTC);
+        when(supplements.existsByBidIdAndStatusIn(bid.getId(), BidSupplementStatus.ACTIVE)).thenReturn(true);
+
+        assertThat(ledger.refundFailed(s.getId(), "re_1")).isTrue();
+
+        assertThat(s.getStatus()).as("index une demande active par colis").isEqualTo(BidSupplementStatus.CANCELLED);
+        assertThat(s.getRefundedAt()).isNull();
+    }
+
+    @Test
+    void refundEchoue_enAttenteDeRemboursement_retenuPourLaClefSuivante_autreRefundIgnore() {
+        s.setStatus(BidSupplementStatus.REFUND_PENDING);
+        assertThat(ledger.refundFailed(s.getId(), "re_1")).isTrue();
+        assertThat(s.getStripeRefundId()).isEqualTo("re_1");
+
+        s.setStatus(BidSupplementStatus.REFUNDED);
+        s.setStripeRefundId("re_ok");
+        assertThat(ledger.refundFailed(s.getId(), "re_ancien")).as("un vieux refund échoué ne défait rien").isFalse();
+        s.setStatus(BidSupplementStatus.PAID_OUT);
+        assertThat(ledger.refundFailed(s.getId(), "re_ok")).isFalse();
+        assertThat(ledger.refundFailed(UUID.randomUUID(), "re_ok")).isFalse();
+    }
+
+    @Test
     void auditSeul_etLectureFraiche() {
         when(supplements.findById(s.getId())).thenReturn(Optional.of(s));
         ledger.auditOnly(s.getId(), "BID_SUPPLEMENT_CHARGEBACK", Map.of("event", "charge.dispute.created"));

@@ -33,13 +33,15 @@ class BidSupplementStripeWebhookRouterTest {
     @Mock BidSupplementCardLedger ledger;
     @Mock BidSupplementRepository supplements;
     @Mock AdminAlertEscalator alerts;
+    @Mock StripeSupplementGateway gateway;
 
     private BidSupplementStripeWebhookRouter router;
     private BidSupplementEntity s;
 
     @BeforeEach
     void setUp() {
-        router = new BidSupplementStripeWebhookRouter(rail, ledger, supplements, alerts, new ObjectMapper());
+        router = new BidSupplementStripeWebhookRouter(rail, ledger, supplements, alerts, gateway,
+                new ObjectMapper());
         s = new BidSupplementEntity();
         setId(s, UUID.randomUUID());
         s.setBidId(UUID.randomUUID());
@@ -104,6 +106,54 @@ class BidSupplementStripeWebhookRouterTest {
                 + "\"amount\":2110,\"amount_refunded\":2110,\"refunds\":{\"data\":[{\"id\":\"re_1\"}]}}"))).isTrue();
 
         verify(ledger).completeRefund(s.getId(), "re_1", "webhook");
+        verifyNoInteractions(alerts);
+    }
+
+    @Test
+    void chargeRembourseeSansListeDesRefunds_identifiantReluChezStripe() throws Exception {
+        when(supplements.findByStripePaymentIntentId("pi_s")).thenReturn(Optional.of(s));
+        when(gateway.latestRefund("pi_s")).thenReturn(Optional.of("re_lu"));
+
+        assertThat(router.handle(event("charge.refunded", "{\"id\":\"ch_s\",\"payment_intent\":\"pi_s\","
+                + "\"amount\":2110,\"amount_refunded\":2110}"))).isTrue();
+
+        verify(ledger).completeRefund(s.getId(), "re_lu", "webhook");
+    }
+
+    @Test
+    void chargeRembourseeSansListe_lectureStripeEnEchec_rembourseQuandMeme() throws Exception {
+        when(supplements.findByStripePaymentIntentId("pi_s")).thenReturn(Optional.of(s));
+        when(gateway.latestRefund("pi_s")).thenThrow(new com.stripe.exception.ApiConnectionException("timeout"));
+
+        assertThat(router.handle(event("charge.refunded", "{\"id\":\"ch_s\",\"payment_intent\":\"pi_s\","
+                + "\"amount\":2110,\"amount_refunded\":2110}"))).isTrue();
+
+        verify(ledger).completeRefund(s.getId(), null, "webhook");
+    }
+
+    @Test
+    void refundEchoueDuSupplement_plusFaussementRembourse_etAlerte() {
+        s.setStatus(BidSupplementStatus.REFUNDED);
+        when(supplements.findByStripePaymentIntentId("pi_s")).thenReturn(Optional.of(s));
+        when(ledger.refundFailed(s.getId(), "re_1")).thenReturn(true);
+
+        assertThat(router.handle(event("charge.refund.updated", "{\"id\":\"re_1\",\"object\":\"refund\","
+                + "\"status\":\"failed\",\"failure_reason\":\"expired_or_canceled_card\","
+                + "\"payment_intent\":\"pi_s\",\"charge\":\"ch_s\"}"))).isTrue();
+
+        verify(ledger).refundFailed(s.getId(), "re_1");
+        verify(alerts).raiseOnce(eq("SUPP_REFUND_FAILED_" + s.getId()), anyString(), anyMap());
+    }
+
+    @Test
+    void refundMisAJourSansEchec_duSupplement_avaleSansEffet_inconnu_laisse() {
+        when(supplements.findByStripePaymentIntentId("pi_s")).thenReturn(Optional.of(s));
+
+        assertThat(router.handle(event("charge.refund.updated", "{\"id\":\"re_1\",\"status\":\"succeeded\","
+                + "\"payment_intent\":\"pi_s\"}"))).isTrue();
+        assertThat(router.handle(event("charge.refund.updated", "{\"id\":\"re_2\",\"status\":\"failed\","
+                + "\"payment_intent\":\"pi_autre\"}"))).isFalse();
+        verify(ledger, never()).refundFailed(any(), any());
         verifyNoInteractions(alerts);
     }
 

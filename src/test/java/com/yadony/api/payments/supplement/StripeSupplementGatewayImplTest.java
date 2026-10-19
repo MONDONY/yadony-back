@@ -128,4 +128,29 @@ class StripeSupplementGatewayImplTest {
             assertThat(gateway.findRefund("pi_1", "absent")).isEmpty();
         }
     }
+
+    @Test
+    void dernierRefundNonEchoue_etEtatDeLaCharge() throws Exception {
+        Refund failed = mock(Refund.class);
+        when(failed.getStatus()).thenReturn("failed");
+        Refund ok = mock(Refund.class);
+        when(ok.getStatus()).thenReturn("succeeded");
+        when(ok.getId()).thenReturn("re_dashboard");
+        RefundCollection page = mock(RefundCollection.class);
+        when(page.getData()).thenReturn(List.of(failed, ok));
+        com.stripe.model.Charge disputed = mock(com.stripe.model.Charge.class);
+        when(disputed.getDisputed()).thenReturn(true);
+        when(disputed.getAmountRefunded()).thenReturn(300L);
+        com.stripe.model.Charge clean = mock(com.stripe.model.Charge.class);
+        try (MockedStatic<Refund> refunds = mockStatic(Refund.class);
+             MockedStatic<com.stripe.model.Charge> charges = mockStatic(com.stripe.model.Charge.class)) {
+            refunds.when(() -> Refund.list(any(RefundListParams.class))).thenReturn(page);
+            charges.when(() -> com.stripe.model.Charge.retrieve("ch_1")).thenReturn(disputed);
+            charges.when(() -> com.stripe.model.Charge.retrieve("ch_2")).thenReturn(clean);
+
+            assertThat(gateway.latestRefund("pi_1")).contains("re_dashboard");
+            assertThat(gateway.retrieveCharge("ch_1")).isEqualTo(new StripeSupplementGateway.ChargeView(true, 300L));
+            assertThat(gateway.retrieveCharge("ch_2")).isEqualTo(new StripeSupplementGateway.ChargeView(false, 0L));
+        }
+    }
 }

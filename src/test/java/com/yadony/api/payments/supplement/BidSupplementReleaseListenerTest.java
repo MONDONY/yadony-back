@@ -71,7 +71,7 @@ class BidSupplementReleaseListenerTest {
     private UserEntity traveler;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
         // Registre réel : la réservation exclusive PAID → PAYOUT_PENDING est la garde anti double versement.
         BidSupplementCardLedger ledger = new BidSupplementCardLedger(supplements, bids, auditService, events,
                 new BidSupplementWindow(new BidSupplementProperties(), Clock.fixed(NOW, ZoneOffset.UTC)));
@@ -82,6 +82,7 @@ class BidSupplementReleaseListenerTest {
         traveler = new UserEntity();
         setId(traveler, UUID.randomUUID());
         traveler.setStripeAccountId("acct_traveler");
+        traveler.setStripeAccountStatus(com.yadony.api.auth.StripeAccountStatus.ONBOARDING_COMPLETE);
         BidEntity bid = new BidEntity();
         setId(bid, UUID.randomUUID());
         bid.setStatus(BidStatus.COMPLETED);
@@ -104,6 +105,7 @@ class BidSupplementReleaseListenerTest {
         lenient().when(supplements.findByBidIdAndRailAndStatus(bid.getId(), BidSupplementRail.STRIPE,
                 BidSupplementStatus.PAID)).thenAnswer(inv -> s.getStatus() == BidSupplementStatus.PAID ? List.of(s) : List.of());
         lenient().when(users.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+        lenient().when(gateway.retrieveCharge(any())).thenReturn(new StripeSupplementGateway.ChargeView(false, 0L));
     }
 
     private PaymentReleasedEvent cardRelease() {
@@ -229,6 +231,54 @@ class BidSupplementReleaseListenerTest {
         assertThat(payouts.payout(s.getId())).isFalse();
         assertThat(payouts.payout(UUID.randomUUID())).isFalse();
         verifyNoInteractions(gateway, alerts);
+    }
+
+    @Test
+    void chargeDuSupplementContestee_ouPartiellementRemboursee_versementRetenu() throws Exception {
+        when(gateway.retrieveCharge("ch_1")).thenReturn(new StripeSupplementGateway.ChargeView(true, 0L),
+                new StripeSupplementGateway.ChargeView(false, 500L));
+
+        assertThat(payouts.payout(s.getId())).isFalse();
+        assertThat(payouts.payout(s.getId())).isFalse();
+
+        assertThat(s.getStatus()).isEqualTo(BidSupplementStatus.PAID);
+        verify(alerts, org.mockito.Mockito.times(2)).raiseOnce(eq("SUPP_PAYOUT_BLOCKED_" + s.getId()), anyString(),
+                anyMap());
+        verify(gateway, never()).createTransfer(anyLong(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void lectureDeLaChargeImpossible_versementRetenu() throws Exception {
+        when(gateway.retrieveCharge("ch_1")).thenThrow(new ApiConnectionException("timeout"));
+        assertThat(payouts.payout(s.getId())).isFalse();
+        assertThat(s.getStatus()).isEqualTo(BidSupplementStatus.PAID);
+        verify(gateway, never()).createTransfer(anyLong(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void compteConnectPlusValide_versementRetenu() throws Exception {
+        traveler.setStripeAccountStatus(com.yadony.api.auth.StripeAccountStatus.DISABLED);
+        assertThat(payouts.payout(s.getId())).isFalse();
+        assertThat(s.getStatus()).isEqualTo(BidSupplementStatus.PAID);
+        verify(alerts).raiseOnce(eq("SUPP_PAYOUT_BLOCKED_" + s.getId()), anyString(), anyMap());
+        verify(gateway, never()).createTransfer(anyLong(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void transferPartiMaisNonEnregistre_resteEnVersementEtAlerteDediee() throws Exception {
+        when(gateway.findTransferByGroup(anyString())).thenReturn(Optional.empty());
+        when(gateway.createTransfer(anyLong(), anyString(), anyString(), anyString(), anyString(), anyMap(),
+                anyString())).thenReturn("tr_1");
+        when(supplements.save(s)).thenReturn(s).thenThrow(new IllegalStateException("base indisponible"));
+
+        assertThat(payouts.payout(s.getId())).isFalse();
+
+        // Jamais de retour à PAID (le Transfer repartirait) : la transaction annulée laisse
+        // PAYOUT_PENDING en base, le filet retrouvera le Transfer par son groupe.
+        verify(auditService, never()).log(any(), any(), eq("BID_SUPPLEMENT_PAYOUT_FAILED"), any(), anyMap());
+        verify(alerts).raiseOnce(eq("SUPP_PAYOUT_UNRECORDED_" + s.getId()), org.mockito.ArgumentMatchers.contains("tr_1"),
+                anyMap());
+        verify(alerts, never()).raiseOnce(startsWith("SUPP_TRANSFER_FAILED_"), anyString(), anyMap());
     }
 
     @Test

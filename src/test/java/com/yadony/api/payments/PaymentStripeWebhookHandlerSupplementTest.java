@@ -51,6 +51,7 @@ class PaymentStripeWebhookHandlerSupplementTest {
     @Mock BidSupplementCardLedger ledger;
     @Mock BidSupplementRepository supplements;
     @Mock AdminAlertEscalator alerts;
+    @Mock com.yadony.api.payments.supplement.StripeSupplementGateway gateway;
 
     private PaymentStripeWebhookHandler handler;
     private final UUID supplementId = UUID.randomUUID();
@@ -58,7 +59,7 @@ class PaymentStripeWebhookHandlerSupplementTest {
     @BeforeEach
     void setUp() {
         BidSupplementStripeWebhookRouter router = new BidSupplementStripeWebhookRouter(cardRail, ledger, supplements,
-                alerts, new ObjectMapper());
+                alerts, gateway, new ObjectMapper());
         handler = new PaymentStripeWebhookHandler(paymentService, cashHandler, chargebackService, walletService,
                 walletSelfRefundService, new ObjectMapper(), new CurrencyCatalog(), bankPayoutTracking, router);
     }
