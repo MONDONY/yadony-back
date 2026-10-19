@@ -73,8 +73,54 @@ public record PackageRequestSearchResponse(
      * sur la demande (aucun fil, ou fil terminé : accepté, refusé, annulé, expiré), pour un
      * visiteur anonyme et pour l'expéditeur lui-même. Champ additif (FLUTTER-NZ).
      */
-    MyNegotiation myNegotiation
+    MyNegotiation myNegotiation,
+    /**
+     * Grille de commission figée sur la demande ({@code null} sans grille). Additif, en fin de
+     * record : les cartes du fil servent le même brut que le détail, l'app s'en sert pour ses aperçus.
+     */
+    UUID commissionGridId
 ) {
+    /**
+     * Arité d'avant {@code commissionGridId} : le champ y vaut {@code null}.
+     */
+    public PackageRequestSearchResponse(
+            UUID id,
+            String departureCity, String arrivalCity,
+            BigDecimal departureLat, BigDecimal departureLng,
+            BigDecimal arrivalLat, BigDecimal arrivalLng,
+            LocalDate desiredDate, int dateToleranceDays,
+            BigDecimal weightKg, ParcelSize parcelSize,
+            TransportMode transportMode,
+            String contentCategory,
+            BigDecimal targetPriceEur, boolean negotiable, String photoUrl,
+            String pickupNeighborhood, String deliveryNeighborhood,
+            SenderPublicProfile sender,
+            Set<PaymentMethod> acceptedPaymentMethods,
+            List<PackageRequestPhotoResponse> photos,
+            boolean isFavorite,
+            boolean urgent,
+            Integer matchScore,
+            UUID matchedTripId,
+            LocalDate matchedTripDepartureDate,
+            String currency,
+            Set<PaymentMethod> availablePaymentMethods,
+            BigDecimal grossPriceEur,
+            BigDecimal convertedDisplayPrice,
+            String convertedCurrency,
+            Long uniqueViewerCount,
+            MyNegotiation myNegotiation) {
+        this(id, departureCity, arrivalCity,
+                departureLat, departureLng, arrivalLat, arrivalLng,
+                desiredDate, dateToleranceDays,
+                weightKg, parcelSize, transportMode, contentCategory,
+                targetPriceEur, negotiable, photoUrl,
+                pickupNeighborhood, deliveryNeighborhood,
+                sender, acceptedPaymentMethods, photos, isFavorite, urgent,
+                matchScore, matchedTripId, matchedTripDepartureDate, currency,
+                availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency,
+                uniqueViewerCount, myNegotiation, null);
+    }
+
     /**
      * Ancienne arité, sans {@code myNegotiation} : garde compilables les appelants qui ne
      * connaissent pas le champ (favoris, tests). Le champ y vaut {@code null}.
@@ -144,7 +190,7 @@ public record PackageRequestSearchResponse(
                 sender, acceptedPaymentMethods, photos, isFavorite, urgent,
                 matchScore, matchedTripId, matchedTripDepartureDate, currency,
                 availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency,
-                uniqueViewerCount, myNegotiation);
+                uniqueViewerCount, myNegotiation, commissionGridId);
     }
 
     /**
@@ -168,7 +214,7 @@ public record PackageRequestSearchResponse(
                 sender, acceptedPaymentMethods, photos, isFavorite, urgent,
                 matchScore, matchedTripId, matchedTripDepartureDate, currency,
                 availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency,
-                uniqueViewerCount, myNegotiation);
+                uniqueViewerCount, myNegotiation, commissionGridId);
     }
 
     /** Copie enrichie des informations de match. Utilisé uniquement quand matchingMyTrips est actif. */
@@ -183,7 +229,7 @@ public record PackageRequestSearchResponse(
                 sender, acceptedPaymentMethods, photos, isFavorite, urgent,
                 info.matchScore(), info.tripId(), info.tripDepartureDate(), currency,
                 availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency,
-                uniqueViewerCount, myNegotiation);
+                uniqueViewerCount, myNegotiation, commissionGridId);
     }
 
     /** Copie portant l'audience, posée par {@code PackageRequestService} sur les seules demandes du lecteur. */
@@ -198,6 +244,6 @@ public record PackageRequestSearchResponse(
                 sender, acceptedPaymentMethods, photos, isFavorite, urgent,
                 matchScore, matchedTripId, matchedTripDepartureDate, currency,
                 availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency,
-                uniqueViewerCount, myNegotiation);
+                uniqueViewerCount, myNegotiation, commissionGridId);
     }
 }

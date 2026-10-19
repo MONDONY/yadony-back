@@ -1228,7 +1228,8 @@ public class PackageRequestService {
             // propriétaire (sa liste « Mes demandes » n'en a pas l'usage).
             isOwner ? null : userRepository.findById(e.getSenderId())
                 .map(com.yadony.api.auth.UserEntity::senderReliabilityIncidentCount)
-                .orElse(null)
+                .orElse(null),
+            e.getCommissionGridId()
         );
     }
 

@@ -793,6 +793,20 @@ class PackageRequestServiceTest {
             assertThat(service.getById(SENDER_ID, entity.getId()).senderIncidentCount()).isNull();
         }
 
+        @Test @DisplayName("grille figée : commissionGridId reprend celle de la demande, null sans grille")
+        void getById_exposesFrozenCommissionGridId() {
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+            org.mockito.Mockito.lenient().when(userRepository.findById(SENDER_ID))
+                .thenReturn(Optional.of(new com.yadony.api.auth.UserEntity()));
+
+            assertThat(service.getById(UUID.randomUUID(), entity.getId()).commissionGridId()).isNull();
+
+            UUID gridId = UUID.randomUUID();
+            entity.setCommissionGridId(gridId);
+            assertThat(service.getById(UUID.randomUUID(), entity.getId()).commissionGridId()).isEqualTo(gridId);
+        }
+
         @Test @DisplayName("propriétaire → pas de viewerThreadId")
         void getById_owner_noViewerThread() {
             PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);

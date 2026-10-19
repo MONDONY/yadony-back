@@ -35,4 +35,28 @@ class PackageRequestSearchMapperGpProTest {
 
         assertThat(response.sender().gpPro()).isTrue();
     }
+
+    @Test
+    void searchResponseExposesFrozenCommissionGridId() {
+        PackageRequestSearchMapper mapper = new PackageRequestSearchMapper(
+                mock(com.yadony.api.auth.UserRepository.class), mock(com.yadony.api.city.CityRepository.class),
+                mock(StorageService.class), mock(PackageRequestPhotoService.class),
+                PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
+                mock(com.yadony.api.common.commission.CommissionGridService.class));
+        PackageRequestEntity entity = new PackageRequestEntity();
+        entity.setSenderId(UUID.randomUUID());
+        org.springframework.test.util.ReflectionTestUtils.setField(entity, "id", UUID.randomUUID());
+
+        assertThat(mapper.toSearchResponse(entity, false, ViewerPaymentCapabilities.NONE,
+                Map.of(), Map.of(), Map.of()).commissionGridId()).isNull();
+
+        UUID gridId = UUID.randomUUID();
+        entity.setCommissionGridId(gridId);
+        var response = mapper.toSearchResponse(entity, false, ViewerPaymentCapabilities.NONE,
+                Map.of(), Map.of(), Map.of());
+        assertThat(response.commissionGridId()).isEqualTo(gridId);
+        // Les copies enrichies (conversion, audience) ne perdent pas la grille.
+        assertThat(response.withConvertedPrice(null, "XOF").withUniqueViewerCount(3L)
+                .commissionGridId()).isEqualTo(gridId);
+    }
 }
