@@ -32,12 +32,13 @@ class PaymentServiceWebhookHandlerTest {
     @Mock UserRepository userRepository;
     @Mock AuditService auditService;
     @Mock AdminAlertService adminAlert;
+    @Mock StripeGateway stripeGateway;
 
     PaymentService service;
 
     @BeforeEach
     void setUp() {
-        service = PaymentServiceTestFactory.bare(paymentRepository, userRepository, auditService, adminAlert);
+        service = PaymentServiceTestFactory.bare(paymentRepository, userRepository, auditService, adminAlert, stripeGateway);
     }
 
     /** Build a mock Event backed by a mocked EventDataObjectDeserializer returning the given object. */
@@ -140,38 +141,156 @@ class PaymentServiceWebhookHandlerTest {
 
     // ── handleCapabilityUpdated ───────────────────────────────────────────────
 
-    @Test
-    void handleCapabilityUpdated_setsDisabledOnInactiveTransfers() {
+    /** Évènement capability.updated avec les attributs précédents donnés (null = aucun). */
+    private Event capabilityEvent(Capability cap, java.util.Map<String, Object> previousAttributes) {
+        Event event = mockEvent(cap);
+        Event.Data data = new Event.Data();
+        data.setPreviousAttributes(previousAttributes);
+        lenient().when(event.getData()).thenReturn(data);
+        return event;
+    }
+
+    private Capability inactiveCapability(String id, String accountId) {
         Capability cap = mock(Capability.class);
-        when(cap.getId()).thenReturn("transfers");
+        lenient().when(cap.getId()).thenReturn(id);
         when(cap.getStatus()).thenReturn("inactive");
-        when(cap.getAccount()).thenReturn("acct_cap_001");
+        when(cap.getAccount()).thenReturn(accountId);
+        return cap;
+    }
+
+    @Test
+    void handleCapabilityUpdated_inactiveAfterUnrequested_isOnboarding_noAlertNoDisable() {
+        Capability cap = inactiveCapability("transfers", "acct_cap_new");
+
+        service.handleCapabilityUpdated(capabilityEvent(cap, java.util.Map.of("status", "unrequested")));
+
+        verify(userRepository, never()).findByStripeAccountId(any());
+        verify(userRepository, never()).save(any());
+        verify(adminAlert, never()).raise(any(), any(), any());
+        verify(adminAlert, never()).raise(any(), any(), any(), any());
+        verify(auditService, never()).log(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void handleCapabilityUpdated_inactiveWithoutPreviousStatus_isIgnored() {
+        Capability cap = inactiveCapability("card_payments", "acct_cap_req");
+
+        // Statut inchangé : Stripe ne met que les requirements dans previous_attributes.
+        service.handleCapabilityUpdated(capabilityEvent(cap,
+                java.util.Map.of("requirements", java.util.Map.of("currently_due", java.util.List.of()))));
+
+        verify(userRepository, never()).findByStripeAccountId(any());
+        verify(adminAlert, never()).raise(any(), any(), any(), any());
+    }
+
+    @Test
+    void handleCapabilityUpdated_inactiveWithoutAnyPreviousAttributes_isIgnored() {
+        Capability cap = inactiveCapability("transfers", "acct_cap_none");
+
+        service.handleCapabilityUpdated(capabilityEvent(cap, null));
+
+        verify(userRepository, never()).findByStripeAccountId(any());
+        verify(adminAlert, never()).raise(any(), any(), any(), any());
+    }
+
+    @Test
+    void handleCapabilityUpdated_inactiveWithoutEventData_isIgnored() {
+        Capability cap = inactiveCapability("transfers", "acct_cap_nodata");
+        Event event = mockEvent(cap);
+        when(event.getData()).thenReturn(null);
+
+        service.handleCapabilityUpdated(event);
+
+        verify(userRepository, never()).findByStripeAccountId(any());
+        verify(adminAlert, never()).raise(any(), any(), any(), any());
+    }
+
+    @Test
+    void handleCapabilityUpdated_activeToInactive_alertsAuditsAndDerivesStatusFromAccount() throws Exception {
+        Capability cap = inactiveCapability("transfers", "acct_cap_001");
+        Capability.Requirements req = mock(Capability.Requirements.class);
+        when(req.getDisabledReason()).thenReturn("requirements.past_due");
+        when(req.getCurrentlyDue()).thenReturn(java.util.List.of("individual.verification.document"));
+        when(cap.getRequirements()).thenReturn(req);
 
         var user = new UserEntity();
+        user.setStripeAccountStatus(StripeAccountStatus.ONBOARDING_COMPLETE);
         when(userRepository.findByStripeAccountId("acct_cap_001")).thenReturn(Optional.of(user));
 
-        service.handleCapabilityUpdated(mockEvent(cap));
+        com.stripe.model.Account account = mock(com.stripe.model.Account.class);
+        com.stripe.model.Account.Requirements accReq = mock(com.stripe.model.Account.Requirements.class);
+        when(accReq.getDisabledReason()).thenReturn("requirements.past_due");
+        when(account.getRequirements()).thenReturn(accReq);
+        when(account.getChargesEnabled()).thenReturn(false);
+        when(stripeGateway.retrieveAccount("acct_cap_001")).thenReturn(account);
 
-        assertThat(user.getStripeAccountStatus()).isEqualTo(StripeAccountStatus.DISABLED);
+        service.handleCapabilityUpdated(capabilityEvent(cap, java.util.Map.of("status", "active")));
+
+        // Pièce à fournir : l'utilisateur peut reprendre l'onboarding, pas un DISABLED sans issue.
+        assertThat(user.getStripeAccountStatus()).isEqualTo(StripeAccountStatus.PENDING_ONBOARDING);
         verify(userRepository).save(user);
-        verify(adminAlert).raise(eq("STRIPE_CAPABILITY_LOST"), any(), any());
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> ctx =
+                org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(adminAlert, times(1)).raise(eq("STRIPE_CAPABILITY_LOST"), any(), ctx.capture(), eq("acct_cap_001"));
+        assertThat(ctx.getValue())
+                .containsEntry("capability", "transfers")
+                .containsEntry("previousStatus", "active")
+                .containsEntry("disabledReason", "requirements.past_due")
+                .containsEntry("currentlyDue", "individual.verification.document")
+                .containsEntry("stripeAccountStatus", "PENDING_ONBOARDING");
         verify(auditService).log(eq("USER"), any(), eq("STRIPE_CAPABILITY_LOST"), any(), any());
     }
 
     @Test
-    void handleCapabilityUpdated_setsDisabledOnInactiveCardPayments() {
-        Capability cap = mock(Capability.class);
-        when(cap.getId()).thenReturn("card_payments");
-        when(cap.getStatus()).thenReturn("inactive");
-        when(cap.getAccount()).thenReturn("acct_cap_004");
+    void handleCapabilityUpdated_activeToInactive_accountRejected_derivesRejected() throws Exception {
+        Capability cap = inactiveCapability("card_payments", "acct_cap_004");
+        when(cap.getRequirements()).thenReturn(null);
 
         var user = new UserEntity();
         when(userRepository.findByStripeAccountId("acct_cap_004")).thenReturn(Optional.of(user));
+        com.stripe.model.Account account = mock(com.stripe.model.Account.class);
+        com.stripe.model.Account.Requirements accReq = mock(com.stripe.model.Account.Requirements.class);
+        when(accReq.getDisabledReason()).thenReturn("rejected.fraud");
+        when(account.getRequirements()).thenReturn(accReq);
+        when(stripeGateway.retrieveAccount("acct_cap_004")).thenReturn(account);
 
-        service.handleCapabilityUpdated(mockEvent(cap));
+        service.handleCapabilityUpdated(capabilityEvent(cap, java.util.Map.of("status", "active")));
+
+        assertThat(user.getStripeAccountStatus()).isEqualTo(StripeAccountStatus.REJECTED);
+        verify(adminAlert).raise(eq("STRIPE_CAPABILITY_LOST"), any(), any(), eq("acct_cap_004"));
+    }
+
+    @Test
+    void handleCapabilityUpdated_activeToInactive_accountFetchFails_fallsBackToDisabled() throws Exception {
+        Capability cap = inactiveCapability("transfers", "acct_cap_005");
+        Capability.Requirements req = mock(Capability.Requirements.class);
+        when(req.getDisabledReason()).thenReturn(null);
+        when(req.getCurrentlyDue()).thenReturn(java.util.List.of());
+        when(cap.getRequirements()).thenReturn(req);
+
+        var user = new UserEntity();
+        when(userRepository.findByStripeAccountId("acct_cap_005")).thenReturn(Optional.of(user));
+        when(stripeGateway.retrieveAccount("acct_cap_005"))
+                .thenThrow(new com.stripe.exception.ApiConnectionException("timeout"));
+
+        service.handleCapabilityUpdated(capabilityEvent(cap, java.util.Map.of("status", "active")));
 
         assertThat(user.getStripeAccountStatus()).isEqualTo(StripeAccountStatus.DISABLED);
-        verify(adminAlert).raise(eq("STRIPE_CAPABILITY_LOST"), any(), any());
+        verify(userRepository).save(user);
+        verify(adminAlert).raise(eq("STRIPE_CAPABILITY_LOST"), any(), any(), eq("acct_cap_005"));
+        verify(auditService).log(eq("USER"), any(), eq("STRIPE_CAPABILITY_LOST"), any(), any());
+    }
+
+    @Test
+    void handleCapabilityUpdated_activeToInactive_unknownAccount_doesNothing() {
+        Capability cap = inactiveCapability("transfers", "acct_cap_ghost");
+        when(userRepository.findByStripeAccountId("acct_cap_ghost")).thenReturn(Optional.empty());
+
+        service.handleCapabilityUpdated(capabilityEvent(cap, java.util.Map.of("status", "active")));
+
+        verify(userRepository, never()).save(any());
+        verify(adminAlert, never()).raise(any(), any(), any(), any());
     }
 
     @Test

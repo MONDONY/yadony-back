@@ -113,7 +113,7 @@ class NotificationTextsTest {
         map.put("returnDeadlineExpired", NotificationTexts.returnDeadlineExpired(m));
         map.put("disputeOpenedForSender", NotificationTexts.disputeOpenedForSender(m));
         map.put("disputeOpenedForTraveler", NotificationTexts.disputeOpenedForTraveler(m));
-        map.put("disputeUpdated", NotificationTexts.disputeUpdated(m));
+        map.put("cardExpired", NotificationTexts.cardExpired(m, "Visa", "4242"));
         map.put("disputeResolved", NotificationTexts.disputeResolved(m));
         // Délai de contestation à trois chiffres : le réglage n'est pas borné.
         map.put("senderNoShowReported", NotificationTexts.senderNoShowReported(m, 168));

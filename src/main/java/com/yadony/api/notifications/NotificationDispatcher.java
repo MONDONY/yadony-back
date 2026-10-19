@@ -18,7 +18,6 @@ import com.yadony.api.common.i18n.Messages;
 import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.disputes.events.DisputeOpenedEvent;
 import com.yadony.api.disputes.events.DisputeResolvedEvent;
-import com.yadony.api.disputes.events.DisputeUpdatedEvent;
 import com.yadony.api.kyc.events.UserKycVerifiedEvent;
 import com.yadony.api.kyc.events.UserKycActionRequiredEvent;
 import com.yadony.api.kyc.events.UserKycRevokedEvent;
@@ -749,14 +748,6 @@ public class NotificationDispatcher {
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
-    public void onDisputeUpdated(DisputeUpdatedEvent event) {
-        Map<String, String> data = disputeData(
-                "DISPUTE_UPDATED", event.disputeId(), event.bidId());
-        notifyDisputeParties(event.senderId(), event.travelerId(), NotificationTexts::disputeUpdated, data);
-    }
-
-    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
-    @Async
     public void onDisputeResolved(DisputeResolvedEvent event) {
         Map<String, String> data = disputeData(
                 "DISPUTE_RESOLVED", event.disputeId(), event.bidId());
@@ -929,6 +920,13 @@ public class NotificationDispatcher {
 
     public void sendCardExpiringNotice(com.yadony.api.auth.UserEntity user) {
         var text = NotificationTexts.cardExpiring(messagesFor(user.getId()),
+                user.getCommissionCardBrand(), user.getCommissionCardLast4());
+        notifyUser(user.getId(), text.title(), text.body(), Map.of("type", "CARD_EXPIRING"));
+    }
+
+    /** Dernier rappel, le lendemain de l'expiration : même type, l'app ouvre le même écran. */
+    public void sendCardExpiredNotice(com.yadony.api.auth.UserEntity user) {
+        var text = NotificationTexts.cardExpired(messagesFor(user.getId()),
                 user.getCommissionCardBrand(), user.getCommissionCardLast4());
         notifyUser(user.getId(), text.title(), text.body(), Map.of("type", "CARD_EXPIRING"));
     }

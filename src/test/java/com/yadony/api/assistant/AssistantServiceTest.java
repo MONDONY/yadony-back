@@ -24,6 +24,7 @@ import org.mockito.ArgumentCaptor;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -642,5 +643,107 @@ class AssistantServiceTest {
         assertThat(service.screen(" ", "fr")).isEmpty();
         assertThat(service.screen(null, "fr")).isEmpty();
         assertThat(service.screen("/" + "a".repeat(120), "fr")).isEmpty();
+    }
+
+    // ── Suggestions (FLUTTER-RD) ────────────────────────────────────────────
+
+    private final KbArticle referral = new KbArticle("fr", "parrainage", "Parrainer un proche", List.of(), List.of(), "corps");
+    private final KbArticle favorites = new KbArticle("fr", "favoris", "Mes favoris", List.of(), List.of(), "corps");
+
+    private static ParsedAnswer withSuggestions(boolean answered, List<String> followUps, String id, String question) {
+        return new ParsedAnswer("Allez dans Moi.", answered, List.of(), false, followUps, id, question);
+    }
+
+    @Test
+    void suggestionsDeuxSuitesPuisUneDecouverte() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(phone));
+        when(kb.discoveryCandidates(eq("fr"), eq(Set.of("changer-numero")), anyString(), eq(5)))
+                .thenReturn(List.of(referral, favorites));
+        llmAnswers(withSuggestions(true, List.of("Faut-il un code ?", "Et mon e-mail ?", "Une troisième ?"),
+                "parrainage", "Comment parrainer un ami ?"));
+        AssistantAskResponse r = service.ask("uid", ask("Où je change mon numéro ?"));
+        assertThat(r.suggestions()).extracting("text", "kind").containsExactly(
+                org.assertj.core.groups.Tuple.tuple("Faut-il un code ?", "FOLLOW_UP"),
+                org.assertj.core.groups.Tuple.tuple("Et mon e-mail ?", "FOLLOW_UP"),
+                org.assertj.core.groups.Tuple.tuple("Comment parrainer un ami ?", "DISCOVERY"));
+    }
+
+    @Test
+    void lesFichesDecouverteSontTransmisesAuModele() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(phone));
+        when(kb.discoveryCandidates(anyString(), any(), anyString(), anyInt())).thenReturn(List.of(referral));
+        llmAnswers(withSuggestions(true, List.of(), null, null));
+        service.ask("uid", ask("Où je change mon numéro ?"));
+        ArgumentCaptor<String> user = ArgumentCaptor.forClass(String.class);
+        verify(router).complete(anyString(), user.capture(), any());
+        assertThat(user.getValue()).contains("<feature id=\"parrainage\">Parrainer un proche</feature>");
+    }
+
+    @Test
+    void suggestionsFiltrees() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(phone));
+        when(kb.discoveryCandidates(anyString(), any(), anyString(), anyInt())).thenReturn(List.of(referral));
+        String tooLong = "x".repeat(81);
+        llmAnswers(withSuggestions(true, Arrays.asList("  ", tooLong, "où je change mon numéro", "Et le code — reçu ?",
+                "et le code, reçu ?"), "parrainage", "  Et le code, reçu ? "));
+        AssistantAskResponse r = service.ask("uid", ask("Où je change mon numéro ?"));
+        // Vide, trop longue, la question posée et les doublons (dont la découverte) sont retirés ;
+        // le tiret cadratin devient une virgule.
+        assertThat(r.suggestions()).extracting("text", "kind").containsExactly(
+                org.assertj.core.groups.Tuple.tuple("Et le code, reçu ?", "FOLLOW_UP"));
+    }
+
+    @Test
+    void decouverteHorsDesFichesProposeesEstRetiree() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(phone));
+        when(kb.discoveryCandidates(anyString(), any(), anyString(), anyInt())).thenReturn(List.of(referral));
+        llmAnswers(withSuggestions(true, List.of(), "crypto-wallet", "Puis-je payer en bitcoin ?"));
+        assertThat(service.ask("uid", ask("Où je change mon numéro ?")).suggestions()).isEmpty();
+    }
+
+    @Test
+    void questionDejaPoseeDansLHistoriqueEstRetiree() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(phone));
+        llmAnswers(withSuggestions(true, List.of("Comment recharger ?", "Faut-il un code ?"), null, null));
+        AssistantAskResponse r = service.ask("uid", new AssistantAskRequest("Où je change mon numéro ?", "fr",
+                List.of(new AssistantHistoryTurn("user", "comment recharger"),
+                        new AssistantHistoryTurn("assistant", "Faut-il un code ?"))));
+        // Une question de l'assistant dans l'historique ne compte pas : seule celle de l'utilisateur est écartée.
+        assertThat(r.suggestions()).extracting("text").containsExactly("Faut-il un code ?");
+    }
+
+    @Test
+    void pasDeSuggestionQuandLaReponseNEstPasTrouvee() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(phone));
+        when(kb.discoveryCandidates(anyString(), any(), anyString(), anyInt())).thenReturn(List.of(referral));
+        llmAnswers(withSuggestions(false, List.of("Et après ?"), "parrainage", "Comment parrainer ?"));
+        assertThat(service.ask("uid", ask("Où je change mon numéro ?")).suggestions()).isEmpty();
+    }
+
+    @Test
+    void pasDeSuggestionSansFournisseurNiSansFiche() {
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of(phone));
+        when(router.complete(anyString(), anyString(), any())).thenReturn(Optional.empty());
+        assertThat(service.ask("uid", ask("Où je change mon numéro ?")).suggestions()).isNotNull().isEmpty();
+
+        when(kb.search(anyString(), anyString(), any(), anyInt())).thenReturn(List.of());
+        assertThat(service.ask("uid", ask("Où je change mon numéro ?")).suggestions()).isNotNull().isEmpty();
+    }
+
+    @Test
+    void fichesDecouverteDansLaLangueDesFichesTrouvees() {
+        // Téléphone en anglais, question en français : les fiches viennent de l'index français.
+        when(kb.search(eq("en"), anyString(), any(), anyInt())).thenReturn(List.of());
+        when(kb.search(eq("fr"), anyString(), any(), anyInt())).thenReturn(List.of(phone));
+        llmAnswers(withSuggestions(true, List.of(), null, null));
+        service.ask("uid", new AssistantAskRequest("Où je change mon numéro ?", "en", List.of()));
+        verify(kb).discoveryCandidates(eq("fr"), any(), anyString(), eq(5));
+    }
+
+    @Test
+    void reponseCourteGardeUneListeVide() {
+        assertThat(new AssistantAskResponse("a", true, List.of(), List.of(), "x", 1).suggestions()).isEmpty();
+        assertThat(new AssistantAskResponse("a", true, List.of(), List.of(), "x", 1, null, List.of(), null)
+                .suggestions()).isEmpty();
     }
 }

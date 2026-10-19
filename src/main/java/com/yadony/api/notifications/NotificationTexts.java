@@ -397,10 +397,6 @@ public final class NotificationTexts {
                 m.get("notification.dispute-opened.traveler.body"));
     }
 
-    public static NotificationText disputeUpdated(Messages m) {
-        return new NotificationText(m.get("notification.dispute-updated.title"),
-                m.get("notification.dispute-updated.body"));
-    }
 
     public static NotificationText disputeResolved(Messages m) {
         return new NotificationText(m.get("notification.dispute-resolved.title"),
@@ -762,6 +758,13 @@ public final class NotificationTexts {
         String l = last4 == null || last4.isBlank() ? "****" : last4;
         return new NotificationText(m.get("notification.card-expiring.title"),
                 m.get("notification.card-expiring.body", b, l));
+    }
+
+    public static NotificationText cardExpired(Messages m, String brand, String last4) {
+        String b = brand == null || brand.isBlank() ? m.get("notification.card-expiring.default-brand") : truncateAtWord(brand.trim(), 16);
+        String l = last4 == null || last4.isBlank() ? "****" : last4;
+        return new NotificationText(m.get("notification.card-expired.title"),
+                m.get("notification.card-expired.body", b, l));
     }
 
     // ── Annonces et compte ───────────────────────────────────────────────────

@@ -14,4 +14,4 @@ routes:
   - path: /demandes
     label: Requests
 ---
-You are on a parcel's details: the ticket at the top sums up the trip and the current step. As the sender, you find the pickup code to pass on to the recipient ("Regenerate the code" if it is blocked), then, depending on the step, "Pay for my shipment", "Show the drop-off QR" or "Track my parcel". As the traveler, you see your earnings, tap "Accept" or "Decline", then "Scan the parcel QR" and "Confirm the drop-off". The "Options" menu lets you contact the other person, report or cancel.
+You are on a parcel's details: the ticket at the top sums up the trip and the current step. As the sender, you find the pickup code to pass on to the recipient ("Regenerate the code" if it is blocked), then, depending on the step, "Pay for my shipment", "Show the drop-off QR" or "Track my parcel". As the traveler, you see your earnings, tap "Accept" or "Decline", then "Scan the parcel QR" and "Confirm the drop-off". The "Options" menu lets you contact the other person, report or cancel; the traveler can also refuse a parcel that doesn't match the declaration there.

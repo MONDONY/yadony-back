@@ -125,6 +125,16 @@ public class AdminAlertService {
     }
 
     public void raise(String code, String detail, Map<String, Object> context) {
+        raise(code, detail, context, null);
+    }
+
+    /**
+     * Variante qui affine l'empreinte Sentry : {@code ["admin-alert", code, empreinte]}.
+     * Utile quand chaque objet concerné (un compte Connect, par exemple) mérite son issue :
+     * une régression sur un compte redevient visible au lieu de se fondre dans l'issue
+     * commune du code. {@code empreinte} nulle ou vide = empreinte par code seul.
+     */
+    public void raise(String code, String detail, Map<String, Object> context, String empreinte) {
         Gravite gravite = graviteDe(code);
         journaliser(gravite, code, detail, context);
 
@@ -143,7 +153,9 @@ public class AdminAlertService {
             Sentry.withScope(scope -> {
                 context.forEach((k, v) -> scope.setExtra(k, String.valueOf(v)));
                 scope.setTag(AdminAlertSentryFilter.TAG_ADMIN_ALERT, code);
-                scope.setFingerprint(List.of("admin-alert", code));
+                scope.setFingerprint(empreinte == null || empreinte.isBlank()
+                        ? List.of("admin-alert", code)
+                        : List.of("admin-alert", code, empreinte));
                 Sentry.captureMessage(PREFIXE_ALERTE + code + " — " + detail, niveauSentry(gravite));
             });
         }

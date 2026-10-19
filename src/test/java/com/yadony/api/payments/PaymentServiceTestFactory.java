@@ -103,6 +103,15 @@ class PaymentServiceTestFactory {
                                UserRepository userRepository,
                                AuditService auditService,
                                AdminAlertService adminAlert) {
+        return bare(paymentRepository, userRepository, auditService, adminAlert, new StripeGatewayImpl(null));
+    }
+
+    /** Variante avec une passerelle Stripe fournie (mock) pour les handlers qui relisent le compte. */
+    static PaymentService bare(PaymentRepository paymentRepository,
+                               UserRepository userRepository,
+                               AuditService auditService,
+                               AdminAlertService adminAlert,
+                               StripeGateway stripeGateway) {
         return new PaymentService(
                 userRepository,
                 mock(BidRepository.class),
@@ -116,7 +125,7 @@ class PaymentServiceTestFactory {
                 adminAlert,
                 stubbedResolver(),
                 mock(PromoService.class),
-                new StripeGatewayImpl(null),
+                stripeGateway,
                 PaymentServiceTestFactory.stubbedContacts(), mock(com.yadony.api.voucher.CommissionVoucherService.class), mock(com.yadony.api.payments.ConnectAccountProvisioner.class)
         );
     }

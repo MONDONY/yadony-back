@@ -136,6 +136,17 @@ class KnowledgeBaseFichesTest {
     }
 
     @Test
+    void leColisNonConformeMeneAuRefusDuVoyageur() {
+        KnowledgeBase kb = productionKb();
+        assertThat(firstHit(kb, "fr", "Le colis ne correspond pas à ce qui a été déclaré, que faire ?"))
+                .isEqualTo("colis-non-conforme");
+        assertThat(firstHit(kb, "fr", "Comment corriger le prix d'un colis mal déclaré ?"))
+                .isEqualTo("colis-non-conforme");
+        assertThat(firstHit(kb, "en", "The parcel doesn't match what was declared, what can I do?"))
+                .isEqualTo("colis-non-conforme");
+    }
+
+    @Test
     void lesMotsSeulsUsuelsPassentLeSeuil() {
         KnowledgeBase kb = productionKb();
         assertThat(firstHit(kb, "fr", "remboursement")).isEqualTo("remboursement");
@@ -221,5 +232,35 @@ class KnowledgeBaseFichesTest {
     private static Map<String, List<String>> cheminsParId(List<KbArticle> articles) {
         return articles.stream().collect(Collectors.toMap(KbArticle::id,
                 a -> a.routes().stream().map(KbRoute::path).toList(), (x, y) -> x));
+    }
+
+    @Test
+    void lesFichesDecouverteSontDesFonctionnalitesReellesDesDeuxLangues() {
+        KnowledgeBase kb = productionKb();
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        java.util.Set<String> enIds = corpus.articles("en").stream().map(KbArticle::id)
+                .collect(Collectors.toSet());
+        java.util.Set<String> frIds = corpus.articles("fr").stream().map(KbArticle::id)
+                .collect(Collectors.toSet());
+        // Chaque exclusion désigne une fiche qui existe : une faute de frappe la laisserait passer.
+        assertThat(frIds).containsAll(KnowledgeBase.NOT_DISCOVERABLE);
+        assertThat(enIds).containsAll(KnowledgeBase.NOT_DISCOVERABLE);
+
+        List<KbArticle> picked = kb.discoveryCandidates("fr", java.util.Set.of("parrainage"), "Comment recharger ?", 5);
+        assertThat(picked).hasSize(5).allSatisfy(a -> {
+            assertThat(a.screens()).isEmpty();
+            assertThat(KnowledgeBase.NOT_DISCOVERABLE).doesNotContain(a.id());
+            assertThat(a.id()).isNotEqualTo("parrainage");
+            assertThat(enIds).contains(a.id());
+        });
+        assertThat(picked).doesNotHaveDuplicates();
+        // Même question, même liste ; autre question, autre point de départ.
+        assertThat(kb.discoveryCandidates("fr", java.util.Set.of("parrainage"), "Comment recharger ?", 5))
+                .isEqualTo(picked);
+        assertThat(kb.discoveryCandidates("en", java.util.Set.of(), "How do I top up?", 5))
+                .allSatisfy(a -> assertThat(a.locale()).isEqualTo("en"));
+        assertThat(kb.discoveryCandidates("fr", java.util.Set.of(), "q", 0)).isEmpty();
+        assertThat(kb.discoveryCandidates("de", java.util.Set.of(), null, 1))
+                .allSatisfy(a -> assertThat(a.locale()).isEqualTo("fr"));
     }
 }

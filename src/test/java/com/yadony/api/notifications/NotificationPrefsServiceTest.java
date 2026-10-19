@@ -211,7 +211,7 @@ class NotificationPrefsServiceTest {
     void isAllowed_alwaysOnTypes_ignoreEveryPref() {
         for (String type : new String[]{"CARD_EXPIRING", "wallet_topup_confirmed", "WALLET_ADJUSTED",
                 "STRIPE_ONBOARDING_INCOMPLETE", "KYC_VERIFIED", "KYC_ACTION_REQUIRED", "KYC_RESET",
-                "DISPUTE_UPDATED", "DISPUTE_RESOLVED", "SENDER_NOSHOW_REPORTED", "NOSHOW_DECISION",
+                "DISPUTE_RESOLVED", "SENDER_NOSHOW_REPORTED", "NOSHOW_DECISION",
                 "ADMIN_BROADCAST", "SYSTEM", "ADMIN_WARNING", "MESSAGING_MUTED", "ACCOUNT_SUSPENDED",
                 "REPORT_RESOLVED", "ANNOUNCEMENT_REMOVED", "HANDOVER_REMINDER_H2", "TRIP_RESCHEDULED"}) {
             assertThat(service.isAllowed(USER_ID, type)).as(type).isTrue();
