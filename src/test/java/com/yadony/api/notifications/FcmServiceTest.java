@@ -30,6 +30,7 @@ class FcmServiceTest {
     @Mock UserDeviceJpaRepository userDeviceRepository;
     @Mock NotificationPrefsService notificationPrefsService;
     @Mock NotificationRepository notificationRepository;
+    @Mock PushThrottle pushThrottle;
     @InjectMocks FcmService service;
 
     private static final UUID USER_ID = UUID.randomUUID();
@@ -179,6 +180,50 @@ class FcmServiceTest {
         }
 
         verify(messaging, times(1)).send(any(Message.class));
+    }
+
+    // Bruit (étape 3) : délai de calme du flux en cours → push retenu, sans même lire l'utilisateur
+    @Test
+    void sendToUser_heldByThrottle_returnsFalseWithoutCallingUserRepo() {
+        when(notificationPrefsService.isAllowed(USER_ID, "NEW_MESSAGE")).thenReturn(true);
+        Map<String, String> data = Map.of("type", "NEW_MESSAGE", "conversationId", "conv_abc");
+        when(pushThrottle.hold(USER_ID, "NEW_MESSAGE", data)).thenReturn(true);
+
+        assertThat(service.sendToUser(USER_ID, "Message", "Corps", data)).isFalse();
+        verifyNoInteractions(userRepository);
+    }
+
+    /** Flux qui se répète : la clé de remplacement part pour Android, iOS et l'app. */
+    @Test
+    void sendToUser_repeatedStream_carriesTheCollapseKey() throws Exception {
+        UserEntity user = new UserEntity();
+        ReflectionTestUtils.setField(user, "id", USER_ID);
+        user.setFcmToken("token-android");
+        when(notificationPrefsService.isAllowed(USER_ID, "NEW_MESSAGE")).thenReturn(true);
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(userDeviceRepository.findByUserIdOrderByLastSeenAtDesc(USER_ID)).thenReturn(List.of());
+
+        FirebaseMessaging messaging = mock(FirebaseMessaging.class);
+        org.mockito.ArgumentCaptor<Message> sent = org.mockito.ArgumentCaptor.forClass(Message.class);
+        when(messaging.send(sent.capture())).thenReturn("msg-id");
+
+        try (MockedStatic<FirebaseMessaging> fcmStatic = mockStatic(FirebaseMessaging.class)) {
+            fcmStatic.when(FirebaseMessaging::getInstance).thenReturn(messaging);
+            service.sendToUser(USER_ID, "Message", "Corps",
+                    Map.of("type", "NEW_MESSAGE", "conversationId", "conv_abc"));
+        }
+
+        Message message = sent.getValue();
+        @SuppressWarnings("unchecked")
+        Map<String, String> data = (Map<String, String>) ReflectionTestUtils.getField(message, "data");
+        assertThat(data).containsEntry("collapseKey", "chat:conv_abc");
+        Object android = ReflectionTestUtils.getField(message, "androidConfig");
+        Object androidNotification = ReflectionTestUtils.getField(android, "notification");
+        assertThat(ReflectionTestUtils.getField(androidNotification, "tag")).isEqualTo("chat:conv_abc");
+        Object apns = ReflectionTestUtils.getField(message, "apnsConfig");
+        @SuppressWarnings("unchecked")
+        Map<String, String> headers = (Map<String, String>) ReflectionTestUtils.getField(apns, "headers");
+        assertThat(headers).containsEntry("apns-collapse-id", "chat:conv_abc");
     }
 
     private static UserDeviceEntity device(String fcmToken) {

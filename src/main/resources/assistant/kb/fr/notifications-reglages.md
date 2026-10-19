@@ -11,3 +11,4 @@ Vous activez ou coupez chaque type d'alerte : messages, discussions de prix, nou
 Les protections critiques (livraison confirmée, paiement reçu, litige ouvert, trajet reporté) sont toujours actives pour protéger vos transactions.
 Pour couper une seule conversation, utilisez la sourdine dans la conversation.
 Les informations qui ne demandent rien de votre part (destinataire qui confirme, invitation acceptée, demande expirée, signalement traité) arrivent dans la liste des notifications sans faire sonner le téléphone.
+Pour éviter les rafales, une même conversation ne fait sonner le téléphone qu'une fois toutes les 5 minutes, et les nouvelles demandes sur un même trajet une fois toutes les 15 minutes : les suivantes restent visibles dans l'app. Les alertes critiques sonnent toujours.
