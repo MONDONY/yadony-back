@@ -11,7 +11,7 @@ import java.time.LocalDate;
 import java.util.UUID;
 
 /**
- * Suivi du virement bancaire d'un paiement carte versé au voyageur (V331) : Transfer de la
+ * Suivi du virement bancaire d'un paiement carte versé au voyageur (V335) : Transfer de la
  * livraison, date de disponibilité sur le compte Connect, puis dernier payout Stripe connu qui le
  * contient. {@code payoutStatus} garde le statut brut Stripe ({@code pending}, {@code in_transit},
  * {@code paid}, {@code failed}, {@code canceled}) ; le statut montré à l'app est dérivé par

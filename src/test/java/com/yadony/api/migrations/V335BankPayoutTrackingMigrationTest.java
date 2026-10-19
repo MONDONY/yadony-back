@@ -18,7 +18,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class V331BankPayoutTrackingMigrationTest {
+class V335BankPayoutTrackingMigrationTest {
 
     private static EmbeddedPostgres postgres;
     private static DataSource dataSource;
@@ -43,11 +43,11 @@ class V331BankPayoutTrackingMigrationTest {
     }
 
     @Test
-    void v331_createsTheBankPayoutTrackingTable() throws Exception {
+    void v335_createsTheBankPayoutTrackingTable() throws Exception {
         Flyway baseline = flywayUpTo("330");
         baseline.clean();
         baseline.migrate();
-        flywayUpTo("331").migrate();
+        flywayUpTo("335").migrate();
 
         try (Connection c = dataSource.getConnection(); Statement s = c.createStatement()) {
             ResultSet rs = s.executeQuery("SELECT column_name FROM information_schema.columns "

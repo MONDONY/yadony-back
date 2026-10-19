@@ -66,7 +66,7 @@ public record MoneyRow(
     }
 
     /**
-     * Suivi du virement bancaire (table {@code bank_payout_tracking}, V331) d'un paiement carte
+     * Suivi du virement bancaire (table {@code bank_payout_tracking}, V335) d'un paiement carte
      * transféré au voyageur ; {@code null} sinon.
      */
     public record BankPayoutRow(LocalDate availableOn, String payoutStatus, LocalDate arrivalDate,
