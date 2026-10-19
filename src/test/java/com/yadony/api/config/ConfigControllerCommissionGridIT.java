@@ -176,4 +176,41 @@ class ConfigControllerCommissionGridIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.rate").value(settings.commissionRate().doubleValue()));
     }
+
+    @Test
+    void commissionGridById_pastGrid_isStillReadable_withoutToken() throws Exception {
+        CommissionGrid past = schedule(null, "0.07");
+        CommissionGrid current = schedule(null, "0.065");
+
+        // Une grille remplacée reste lisible : un bid ou un fil qui l'a figée la relit telle quelle.
+        mockMvc.perform(get("/config/commission-grid/{id}", past.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.gridId").value(past.id().toString()))
+                .andExpect(jsonPath("$.effectiveFrom").isNotEmpty())
+                .andExpect(jsonPath("$.tiers.length()").value(2))
+                .andExpect(jsonPath("$.tiers[0].rate").value(0.07))
+                .andExpect(jsonPath("$.minimums.EUR").value(1.00))
+                .andExpect(jsonPath("$.minimums.XOF").value(650));
+        mockMvc.perform(get("/config/commission-grid/{id}", current.id()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tiers[0].rate").value(0.065));
+    }
+
+    @Test
+    void commissionGridById_unknown_404ProblemDetail() throws Exception {
+        mockMvc.perform(get("/config/commission-grid/{id}", UUID.randomUUID()))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.code").value("commission-grid-not-found"));
+    }
+
+    @Test
+    void commissionGridById_cancelled_404() throws Exception {
+        CommissionGrid cancelled = schedule(LocalDateTime.now(ZoneOffset.UTC).plusDays(45), "0.08");
+        grids.cancel(cancelled.id(), UUID.randomUUID());
+
+        mockMvc.perform(get("/config/commission-grid/{id}", cancelled.id()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("commission-grid-not-found"));
+    }
 }

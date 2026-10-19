@@ -13,11 +13,13 @@ import com.yadony.api.config.dto.SmsEnabledResponse;
 import com.yadony.api.config.dto.UrgencyThresholdResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/config")
@@ -59,6 +61,17 @@ public class ConfigController {
     @GetMapping("/commission-grid")
     public ResponseEntity<CommissionGridResponse> getCommissionGrid() {
         return ResponseEntity.ok(CommissionGridResponse.of(commissionGrids.current(), commissionGrids.scheduled()));
+    }
+
+    /**
+     * Une grille par identifiant, en vigueur, passée ou programmée : celle figée sur un bid, un fil ou
+     * une demande ({@code commissionGridId} des devis), pour que le client recalcule exactement le prix
+     * déjà annoncé même après l'entrée en vigueur d'une autre grille. Public comme tout {@code /config/**}.
+     * 404 {@code commission-grid-not-found} si elle est inconnue ou annulée (jamais utilisable).
+     */
+    @GetMapping("/commission-grid/{id}")
+    public ResponseEntity<CommissionGridResponse.GridView> getCommissionGridById(@PathVariable UUID id) {
+        return ResponseEntity.ok(CommissionGridResponse.GridView.from(commissionGrids.require(id)));
     }
 
     @GetMapping("/urgency-threshold")

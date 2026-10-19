@@ -36,7 +36,7 @@ public record CommissionGridResponse(GridView current, GridView next) {
     public record GridView(UUID gridId, LocalDateTime effectiveFrom, List<CommissionTier> tiers,
                            Map<String, BigDecimal> minimums) {
 
-        static GridView from(CommissionGrid grid) {
+        public static GridView from(CommissionGrid grid) {
             Map<String, BigDecimal> byCode = new LinkedHashMap<>();
             grid.minimums().entrySet().stream()
                     .sorted(Map.Entry.comparingByKey())
