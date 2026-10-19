@@ -62,6 +62,9 @@ yadony:
   # Pas d'appel Stripe ni pawaPay réel pendant les tests.
   reconciliation:
     enabled: false
+  # Filet des suppléments de prix : appelé directement par ses tests.
+  bid-supplement:
+    reconcile-enabled: false
   payments:
     auto-heal:
       enabled: false

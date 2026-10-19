@@ -109,6 +109,14 @@ public class BidService {
     private final com.yadony.api.matching.reception.BidRecipientLinkRepository recipientLinkRepository;
     private final CommissionGridService commissionGridService;
 
+    /** Supplément de prix à la remise (payments/supplement) ; aucun tant que Spring ne l'a pas injecté. */
+    private BidSupplementSummaryPort supplementSummary = BidSupplementSummaryPort.NONE;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setSupplementSummaryPort(BidSupplementSummaryPort supplementSummary) {
+        this.supplementSummary = supplementSummary;
+    }
+
     /** Jours de contact après livraison : même clé que la fenêtre d'appel in-app (calls/). */
     @org.springframework.beans.factory.annotation.Value("${yadony.calls.delivery-grace-days:3}")
     private int contactGraceDays = 3;
@@ -850,7 +858,7 @@ public class BidService {
                 .stream().collect(Collectors.toMap(UserEntity::getId, u -> u));
         BidResponsePrefetch prefetch = prefetchFor(visible);
         return visible.stream()
-                .map(b -> toResponse(b, sendersById.get(b.getSenderId()), null, prefetch))
+                .map(b -> toResponse(b, sendersById.get(b.getSenderId()), traveler.getId(), prefetch))
                 .toList();
     }
 
@@ -953,7 +961,7 @@ public class BidService {
                         bids.getContent().stream().map(BidEntity::getSenderId).distinct().toList())
                 .stream().collect(Collectors.toMap(UserEntity::getId, u -> u));
         BidResponsePrefetch prefetch = prefetchFor(bids.getContent());
-        return bids.map(b -> toResponse(b, sendersById.get(b.getSenderId()), null, prefetch));
+        return bids.map(b -> toResponse(b, sendersById.get(b.getSenderId()), traveler.getId(), prefetch));
     }
 
     @Transactional
@@ -1058,7 +1066,7 @@ public class BidService {
                 bid.getId(), bid.getSenderId(), traveler.getId(), announcement.getId(),
                 bid.getPaymentMethod() != null && bid.getPaymentMethod().isMobileMoney()));
 
-        return toResponse(bid, userRepository.findById(bid.getSenderId()).orElse(null));
+        return toResponse(bid, userRepository.findById(bid.getSenderId()).orElse(null), traveler.getId());
     }
 
     @Transactional
@@ -1131,7 +1139,7 @@ public class BidService {
                 bid.getId(), bid.getSenderId(), bid.getRejectionReason(),
                 bid.getAnnouncementId(), rematchEligible));
 
-        return toResponse(bid, userRepository.findById(bid.getSenderId()).orElse(null));
+        return toResponse(bid, userRepository.findById(bid.getSenderId()).orElse(null), traveler.getId());
     }
 
     @Transactional
@@ -1152,7 +1160,7 @@ public class BidService {
 
         auditService.log("BID", bidId, "PRESENCE_CONFIRMED", traveler.getId(), Map.of());
 
-        return toResponse(bid, userRepository.findById(bid.getSenderId()).orElse(null));
+        return toResponse(bid, userRepository.findById(bid.getSenderId()).orElse(null), traveler.getId());
     }
 
     @Transactional
@@ -1368,7 +1376,10 @@ public class BidService {
         bidRepository.save(bid);
 
         UserEntity sender = userRepository.findById(bid.getSenderId()).orElse(null);
-        if (sender != null) {
+        // Colis refusé après un supplément refusé ou expiré, ou pendant qu'il attend la réponse de
+        // l'expéditeur : l'écart de prix est réglé par le refus, l'expéditeur n'est pas sanctionné
+        // (décisions du propriétaire du 19/10/2026). La demande ouverte est fermée par la fin du colis.
+        if (sender != null && !supplementSummary.excusesParcelRefusal(bid.getId())) {
             sender.setRefusedCount(sender.getRefusedCount() + 1);
             userRepository.save(sender);
         }
@@ -1380,7 +1391,7 @@ public class BidService {
                 Map.of("reason", reason != null ? reason : "",
                         "senderId", bid.getSenderId().toString()));
 
-        return toResponse(bid, sender);
+        return toResponse(bid, sender, traveler.getId());
     }
 
     /** Upload une photo de colis pour le sender courant ; renvoie la clé S3. */
@@ -1576,7 +1587,7 @@ public class BidService {
                 BidResponsePrefetch.loadInChunks(bidIds, bidGridItemRepository::findByBidIdIn).stream()
                         .collect(Collectors.groupingBy(BidGridItemEntity::getBidId));
         return new BidResponsePrefetch(links, raterPairs, cancellations, gridItems,
-                bidPhotoService.activePhotosByBid(bidIds));
+                bidPhotoService.activePhotosByBid(bidIds), supplementSummary.prefetch(bidIds));
     }
 
     /**
@@ -1720,29 +1731,15 @@ public class BidService {
                 ? cancellation.getRematchStatus()
                 : null;
 
-        // Compute total net: sum of grid items + KG part (for display in Flutter)
-        //
-        // Bid issu d'une négociation : l'accord figé EST le total, on ne le recompose
-        // pas. Le recomposer double-compterait les articles de grille (le prix négocié
-        // les couvre déjà, et le prix/kg vient d'être réécrit depuis ce même prix) et
-        // ignorerait complètement les articles hors grille, que le voyageur n'a jamais
-        // tarifés. L'expéditeur verrait alors dans « Mes envois » un total différent de
-        // celui du fil, et différent encore de ce qui lui est réellement débité.
-        java.math.BigDecimal totalNetAmountEur;
-        if (bid.getNegotiatedNetEur() != null) {
-            totalNetAmountEur = bid.getNegotiatedNetEur().setScale(2, java.math.RoundingMode.HALF_UP);
-        } else {
-            java.util.List<BidGridItemEntity> bidGridItems = prefetch != null
-                    ? prefetch.gridItems(bid.getId())
-                    : bidGridItemRepository.findByBidId(bid.getId());
-            java.math.BigDecimal gridNet = bidGridItems.stream()
-                    .map(i -> i.getUnitPriceNetSnapshot().multiply(java.math.BigDecimal.valueOf(i.getQuantity())))
-                    .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
-            java.math.BigDecimal kgNet = (bid.getWeightKg() != null && pricePerKg != null)
-                    ? bid.getWeightKg().multiply(pricePerKg)
-                    : java.math.BigDecimal.ZERO;
-            totalNetAmountEur = gridNet.add(kgNet).setScale(2, java.math.RoundingMode.HALF_UP);
-        }
+        // Net total (règle unique BidNetTotal) : l'accord négocié tel quel, sinon grille + kilo.
+        // L'expéditeur verrait sinon dans « Mes envois » un total différent de celui du fil,
+        // et différent encore de ce qui lui est réellement débité.
+        java.math.BigDecimal totalNetAmountEur = BidNetTotal.compute(bid, announcement,
+                bid.getNegotiatedNetEur() != null
+                        ? java.util.List.of()
+                        : prefetch != null
+                                ? prefetch.gridItems(bid.getId())
+                                : bidGridItemRepository.findByBidId(bid.getId()));
 
         // Montant total payé par l'EXPÉDITEUR = net + commission, dans les DEUX
         // modes de paiement. En carte, il règle le brut à Yadony. En espèces, il
@@ -1767,11 +1764,23 @@ public class BidService {
                         && bid.getWeightKg().signum() > 0)
                         ? totalSenderAmountEur.divide(bid.getWeightKg(), 2, java.math.RoundingMode.HALF_UP)
                         : null;
+        // Supplément de prix : les totaux « avec supplément » n'ajoutent qu'un supplément payé.
+        BidSupplementView supplementView = supplementSummary.view(bid, announcement, callerId,
+                prefetch != null ? prefetch.supplements() : null);
+        java.math.BigDecimal totalSenderAmountWithSupplementEur =
+                supplementView.paidGross() != null && totalSenderAmountEur != null
+                        ? totalSenderAmountEur.add(supplementView.paidGross())
+                        : null;
+        java.math.BigDecimal totalNetAmountWithSupplementEur =
+                supplementView.paidNet() != null && totalNetAmountEur != null
+                        ? totalNetAmountEur.add(supplementView.paidNet())
+                        : null;
         // SÉCURITÉ (règle métier) : l'expéditeur ne reçoit JAMAIS le net du
         // voyageur — ni le tarif/kg net, ni le total net. Seulement le brut.
         if (callerId != null && callerId.equals(bid.getSenderId())) {
             pricePerKg = null;
             totalNetAmountEur = null;
+            totalNetAmountWithSupplementEur = null;
         }
 
         return new BidResponse(
@@ -1865,7 +1874,11 @@ public class BidService {
                 replacementRequestedAt(recipientLink),
                 ContactWindow.isOpen(bid, contactGraceDays, LocalDateTime.now(ZoneOffset.UTC)),
                 sender != null ? sender.senderReliabilityIncidentCount() : null,
-                PickupCodes.renewalNeeded(bid, LocalDateTime.now(ZoneOffset.UTC))
+                PickupCodes.renewalNeeded(bid, LocalDateTime.now(ZoneOffset.UTC)),
+                supplementView.supplement(),
+                supplementView.requestAllowed(),
+                totalSenderAmountWithSupplementEur,
+                totalNetAmountWithSupplementEur
         );
     }
 

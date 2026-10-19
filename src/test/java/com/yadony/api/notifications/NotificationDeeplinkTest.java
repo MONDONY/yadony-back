@@ -64,6 +64,18 @@ class NotificationDeeplinkTest {
         assertThat(NotificationCategory.fromType("CONFIRMATION_CODE_REQUESTED")).isEqualTo(NotificationCategory.COLIS);
     }
 
+    /** Supplément de prix : la demande ouvre le colis sur l'encart de réponse, les issues sur le colis. */
+    @Test
+    void bidSupplementTypesOpenTheBid() {
+        assertThat(NotificationDeeplink.of("BID_SUPPLEMENT_REQUESTED", Map.of("bidId", bidId)))
+                .contains("yadony://bids/" + bidId + "?action=supplement");
+        for (String type : new String[]{"BID_SUPPLEMENT_PAID", "BID_SUPPLEMENT_DECLINED", "BID_SUPPLEMENT_EXPIRED",
+                "BID_SUPPLEMENT_WITHDRAWN", "BID_SUPPLEMENT_REFUNDED", "BID_SUPPLEMENT_PAID_OUT"}) {
+            assertThat(NotificationDeeplink.of(type, Map.of("bidId", bidId))).as(type).contains("yadony://bids/" + bidId);
+            assertThat(NotificationDeeplink.of(type, Map.of("bidId", "../admin"))).as(type).isEmpty();
+        }
+    }
+
     /** Le destinataire suit son colis depuis ses réceptions ; l'expéditeur reste sur le bid. */
     @Test
     void recipientTypesOpenTheReception() {

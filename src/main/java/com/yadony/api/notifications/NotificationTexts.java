@@ -818,6 +818,60 @@ public final class NotificationTexts {
                 m.get("notification.bank-payout-failed.body"));
     }
 
+    // ── Supplément de prix à la remise ───────────────────────────────────────
+
+    /**
+     * Le voyageur demande un supplément : l'expéditeur voit le BRUT et l'heure limite, lue dans le
+     * fuseau du trajet (là où se fait la remise).
+     */
+    public static NotificationText bidSupplementRequested(Messages m, String grossText,
+                                                          java.time.ZonedDateTime deadline) {
+        String time = deadline.format(java.time.format.DateTimeFormatter.ofPattern(
+                m.get("notification.bid-supplement-requested.time-pattern"), m.locale()));
+        return new NotificationText(m.get("notification.bid-supplement-requested.title"),
+                m.get("notification.bid-supplement-requested.body", grossText, time));
+    }
+
+    /** Supplément payé (carte, mobile money) ou accepté en espèces, vu par le voyageur. */
+    public static NotificationText bidSupplementPaid(Messages m, String grossText, boolean cash) {
+        return new NotificationText(m.get("notification.bid-supplement-paid.title"),
+                m.get(cash ? "notification.bid-supplement-paid.cash-body" : "notification.bid-supplement-paid.body",
+                        grossText));
+    }
+
+    /** Refusé par l'expéditeur : le voyageur transporte au prix prévu ou refuse le colis. */
+    public static NotificationText bidSupplementDeclined(Messages m) {
+        return new NotificationText(m.get("notification.bid-supplement-declined.title"),
+                m.get("notification.bid-supplement-declined.body"));
+    }
+
+    public static NotificationText bidSupplementExpiredForTraveler(Messages m) {
+        return new NotificationText(m.get("notification.bid-supplement-expired.title"),
+                m.get("notification.bid-supplement-declined.body"));
+    }
+
+    public static NotificationText bidSupplementExpiredForSender(Messages m) {
+        return new NotificationText(m.get("notification.bid-supplement-expired.title"),
+                m.get("notification.bid-supplement-expired.sender-body"));
+    }
+
+    public static NotificationText bidSupplementWithdrawn(Messages m) {
+        return new NotificationText(m.get("notification.bid-supplement-withdrawn.title"),
+                m.get("notification.bid-supplement-withdrawn.body"));
+    }
+
+    /** Argent du supplément rendu : le brut à l'expéditeur, ou la commission espèces au voyageur. */
+    public static NotificationText bidSupplementRefunded(Messages m, String amountText, boolean commissionOnly) {
+        return new NotificationText(m.get("notification.bid-supplement-refunded.title"),
+                m.get(commissionOnly ? "notification.bid-supplement-refunded.commission-body"
+                        : "notification.bid-supplement-refunded.body", amountText));
+    }
+
+    public static NotificationText bidSupplementPaidOut(Messages m, String netText) {
+        return new NotificationText(m.get("notification.bid-supplement-paid-out.title"),
+                m.get("notification.bid-supplement-paid-out.body", netText));
+    }
+
     public static NotificationText walletAdjustedByAdmin(Messages m, boolean credit, String amountText) {
         String key = credit ? "notification.wallet-admin-credit" : "notification.wallet-admin-debit";
         return new NotificationText(m.get(key + ".title"), m.get(key + ".body", amountText));

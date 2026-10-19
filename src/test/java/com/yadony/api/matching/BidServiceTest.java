@@ -4229,4 +4229,184 @@ class BidServiceTest {
         // Avant le fix, toResponse recevait `traveler` → senderName aurait été "drissa".
         assertThat(row.senderName()).isEqualTo("abou");
     }
+
+    // ─── Supplément de prix à la remise ─────────────────────────────────────────
+
+    @Nested
+    @DisplayName("supplément de prix")
+    class SupplementTests {
+
+        private final BidSupplementSummaryPort port = org.mockito.Mockito.mock(BidSupplementSummaryPort.class);
+
+        private com.yadony.api.matching.dto.BidSupplementResponse supplement(boolean forSender) {
+            return new com.yadony.api.matching.dto.BidSupplementResponse(UUID.randomUUID(), "PAID", "STRIPE", "EUR",
+                    forSender ? null : new BigDecimal("10.00"), forSender ? null : new BigDecimal("1.00"),
+                    new BigDecimal("11.00"), "GRID_ITEM", null, "Téléphone", "https://signed", null, null, null, false);
+        }
+
+        private BidEntity stubAcceptedBid(UserEntity caller) {
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.ACCEPTED);
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findByFirebaseUid(caller.getFirebaseUid())).thenReturn(Optional.of(caller));
+            lenient().when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(buildSender()));
+            lenient().when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(buildTraveler()));
+            bidService.setSupplementSummaryPort(port);
+            return bid;
+        }
+
+        @Test
+        @DisplayName("voyageur : supplément, droit de demander et totaux avec le supplément payé")
+        void traveler_seesSupplementAndTotalsWithThePaidSupplement() {
+            BidEntity bid = stubAcceptedBid(buildTraveler());
+            when(port.view(eq(bid), any(), eq(TRAVELER_ID), any()))
+                    .thenReturn(new BidSupplementView(supplement(false), true, new BigDecimal("11.00"), new BigDecimal("10.00")));
+
+            BidResponse resp = bidService.getBidById(BID_ID, TRAVELER_UID);
+
+            assertThat(resp.supplement().netAmount()).isEqualByComparingTo("10.00");
+            assertThat(resp.supplementRequestAllowed()).isTrue();
+            // 5 kg × 5 € = 25 € (sans taux résolu, brut = net) ; inchangés pour les anciennes apps.
+            assertThat(resp.totalSenderAmountEur()).isEqualByComparingTo("25.00");
+            assertThat(resp.totalNetAmountEur()).isEqualByComparingTo("25.00");
+            assertThat(resp.totalSenderAmountWithSupplementEur()).isEqualByComparingTo("36.00");
+            assertThat(resp.totalNetAmountWithSupplementEur()).isEqualByComparingTo("35.00");
+        }
+
+        @Test
+        @DisplayName("expéditeur : jamais le net, même avec un supplément payé")
+        void sender_neverSeesTheNet_evenWithAPaidSupplement() {
+            BidEntity bid = stubAcceptedBid(buildSender());
+            when(port.view(eq(bid), any(), eq(SENDER_ID), any()))
+                    .thenReturn(new BidSupplementView(supplement(true), false, new BigDecimal("11.00"), new BigDecimal("10.00")));
+
+            BidResponse resp = bidService.getBidById(BID_ID, SENDER_UID);
+
+            assertThat(resp.supplement().netAmount()).isNull();
+            assertThat(resp.supplementRequestAllowed()).isFalse();
+            assertThat(resp.totalSenderAmountWithSupplementEur()).isEqualByComparingTo("36.00");
+            assertThat(resp.totalNetAmountEur()).isNull();
+            assertThat(resp.totalNetAmountWithSupplementEur()).isNull();
+        }
+
+        @Test
+        @DisplayName("sans supplément payé : totaux « avec supplément » nuls")
+        void withoutPaidSupplement_totalsWithSupplementAreNull() {
+            BidEntity bid = stubAcceptedBid(buildTraveler());
+            when(port.view(eq(bid), any(), eq(TRAVELER_ID), any())).thenReturn(BidSupplementView.NONE);
+
+            BidResponse resp = bidService.getBidById(BID_ID, TRAVELER_UID);
+
+            assertThat(resp.supplement()).isNull();
+            assertThat(resp.supplementRequestAllowed()).isFalse();
+            assertThat(resp.totalSenderAmountWithSupplementEur()).isNull();
+            assertThat(resp.totalNetAmountWithSupplementEur()).isNull();
+        }
+
+        /** Les chemins voyageur passent son id : sans lui, supplementRequestAllowed restait faux. */
+        private void verifyViewedByTraveler() {
+            verify(port, atLeastOnce()).view(any(), any(), eq(TRAVELER_ID), any());
+            verify(port, never()).view(any(), any(), isNull(), any());
+        }
+
+        @Test
+        @DisplayName("acceptation : la réponse est calculée pour le voyageur")
+        void acceptBid_viewsAsTraveler() {
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity bid = buildBid();
+            bidService.setSupplementSummaryPort(port);
+            when(port.view(any(), any(), any(), any())).thenReturn(BidSupplementView.NONE);
+            when(bidRepository.findByIdForUpdate(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+            bidService.acceptBid(BID_ID, TRAVELER_UID);
+
+            verifyViewedByTraveler();
+        }
+
+        @Test
+        @DisplayName("refus de la demande : la réponse est calculée pour le voyageur")
+        void rejectBid_viewsAsTraveler() {
+            AnnouncementEntity announcement = buildAnnouncement();
+            bidService.setSupplementSummaryPort(port);
+            when(port.view(any(), any(), any(), any())).thenReturn(BidSupplementView.NONE);
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(buildBid()));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+
+            bidService.rejectBid(BID_ID, TRAVELER_UID, new BidRejectRequest("NO_CAPACITY"));
+
+            verifyViewedByTraveler();
+        }
+
+        @Test
+        @DisplayName("confirmation de présence et refus du colis : réponse calculée pour le voyageur")
+        void confirmPresenceAndRefuseParcel_viewAsTraveler() {
+            stubAcceptedBid(buildTraveler());
+            when(port.view(any(), any(), any(), any())).thenReturn(BidSupplementView.NONE);
+
+            bidService.confirmPresence(BID_ID, TRAVELER_UID);
+            bidService.refuseParcel(BID_ID, TRAVELER_UID, "Colis non conforme", null);
+
+            verifyViewedByTraveler();
+        }
+
+        @Test
+        @DisplayName("listes du voyageur (trajet, mes colis) : calculées pour lui")
+        void travelerLists_viewAsTraveler() {
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.ACCEPTED);
+            bidService.setSupplementSummaryPort(port);
+            when(port.view(any(), any(), any(), any())).thenReturn(BidSupplementView.NONE);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+            when(bidRepository.findByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(List.of(bid));
+            when(bidRepository.findByTravelerIdFiltered(eq(TRAVELER_ID), isNull(), isNull(), isNull(),
+                    eq(BidStatus.NEGOTIATION_STATUSES), any())).thenReturn(new PageImpl<>(List.of(bid)));
+            when(userRepository.findAllById(any())).thenReturn(List.of(buildSender()));
+
+            bidService.getBidsForAnnouncement(ANNOUNCEMENT_ID, TRAVELER_UID);
+            bidService.getTravelerBids(TRAVELER_UID, null, null, null, 0, 20);
+
+            verify(port, times(2)).view(any(), any(), eq(TRAVELER_ID), any());
+            verify(port, never()).view(any(), any(), isNull(), any());
+        }
+
+        @Test
+        @DisplayName("refus du colis après un supplément refusé ou expiré : pas compté à l'expéditeur")
+        void refuseParcel_afterADeclinedSupplement_doesNotCountAgainstTheSender() {
+            UserEntity sender = buildSender();
+            sender.setRefusedCount(1);
+            BidEntity bid = stubAcceptedBid(buildTraveler());
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(port.excusesParcelRefusal(BID_ID)).thenReturn(true);
+            when(port.view(any(), any(), any(), any())).thenReturn(BidSupplementView.NONE);
+
+            bidService.refuseParcel(BID_ID, TRAVELER_UID, "Colis non conforme", null);
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PARCEL_REFUSED);
+            assertThat(sender.getRefusedCount()).isEqualTo(1);
+            verify(userRepository, never()).save(sender);
+        }
+
+        @Test
+        @DisplayName("refus du colis sans supplément refusé : compté comme avant")
+        void refuseParcel_withoutDeclinedSupplement_countsAsBefore() {
+            UserEntity sender = buildSender();
+            sender.setRefusedCount(1);
+            stubAcceptedBid(buildTraveler());
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(port.view(any(), any(), any(), any())).thenReturn(BidSupplementView.NONE);
+
+            bidService.refuseParcel(BID_ID, TRAVELER_UID, "Colis non conforme", null);
+
+            assertThat(sender.getRefusedCount()).isEqualTo(2);
+            verify(userRepository).save(sender);
+        }
+    }
 }

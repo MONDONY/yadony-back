@@ -112,6 +112,14 @@ public class TrackingService {
         this.recipientLinkRepository = recipientLinkRepository;
     }
 
+    /** Raisons de bloquer la remise (supplément de prix en attente) ; aucune tant que Spring ne les a pas injectées. */
+    private List<HandoverBlocker> handoverBlockers = List.of();
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setHandoverBlockers(List<HandoverBlocker> handoverBlockers) {
+        this.handoverBlockers = List.copyOf(handoverBlockers);
+    }
+
     /** Mode recette (FLUTTER-FA) ; fermé tant que Spring ne l'a pas injecté. */
     private com.yadony.api.common.RecetteMode recetteMode = com.yadony.api.common.RecetteMode.disabled();
 
@@ -338,6 +346,7 @@ public class TrackingService {
 
         if (request.eventType() == TrackingEventType.DEPART) {
             assertTrackingNumberOnDepart(bid, request.trackingNumber(), request.scanMethod());
+            assertHandoverNotBlocked(bid);
         }
 
         String photoKey = validatedPhotoKey(bid, request.photoUrl());
@@ -525,6 +534,24 @@ public class TrackingService {
 
     private static String scanMethodName(TrackingEventEntity e) {
         return e.getScanMethod() != null ? e.getScanMethod().name() : null;
+    }
+
+    /**
+     * Un supplément de prix attend la réponse de l'expéditeur : la remise attend. Sous le verrou
+     * du colis, que la création d'un supplément prend aussi : aucune course entre les deux. Le 409
+     * n'est pas définitif pour l'app : un scan hors ligne reste en file et se rejoue plus tard.
+     */
+    private void assertHandoverNotBlocked(BidEntity bid) {
+        if (bid.getStatus() != BidStatus.ACCEPTED) {
+            return;
+        }
+        handoverBlockers.stream().map(b -> b.blockingCode(bid.getId())).flatMap(Optional::stream).findFirst()
+                .ifPresent(code -> {
+                    log.info("Scan DEPART du colis {} refusé : {}", bid.getId(), code);
+                    throw new YadonyBusinessException(HttpStatus.CONFLICT, code, "Handover Blocked",
+                            "Un supplément de prix attend la réponse de l'expéditeur.",
+                            Map.of("bidId", bid.getId().toString()));
+                });
     }
 
     /**

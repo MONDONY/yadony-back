@@ -139,5 +139,18 @@ public record BidResponse(
          * lui-même restant réservé à l'expéditeur : l'expéditeur le régénère
          * ({@code POST /tracking/{bidId}/refresh-code}), le voyageur le lui demande
          * ({@code POST /tracking/{bidId}/request-code}, FLUTTER-G2). */
-        boolean pickupCodeRenewalNeeded
+        boolean pickupCodeRenewalNeeded,
+        /** Supplément de prix demandé par le voyageur à la remise : l'actif, sinon le dernier clos
+         * (encart « refusé / expiré »), null sans demande. L'expéditeur n'en voit que le brut. */
+        BidSupplementResponse supplement,
+        /** L'appelant (voyageur du trajet) peut demander un supplément maintenant : interrupteur
+         * allumé, colis accepté ou remis avant le départ, aucune demande active, plafond non
+         * atteint, rail du colis pris en charge. SEULE source du bouton côté app. */
+        boolean supplementRequestAllowed,
+        /** {@link #totalSenderAmountEur} plus le brut d'un supplément payé (PAID, PAYOUT_PENDING,
+         * PAID_OUT), null sans supplément payé. Devise du colis. */
+        java.math.BigDecimal totalSenderAmountWithSupplementEur,
+        /** {@link #totalNetAmountEur} plus le net de ce même supplément, null sans supplément payé
+         * et TOUJOURS null pour l'expéditeur (même règle que {@code totalNetAmountEur}). */
+        java.math.BigDecimal totalNetAmountWithSupplementEur
 ) {}

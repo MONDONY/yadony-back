@@ -195,6 +195,20 @@ class NotificationTextsTest {
         map.put("bankPayoutPaid montant", NotificationTexts.bankPayoutPaid(m, pireMontant));
         map.put("bankPayoutPaid sans-montant", NotificationTexts.bankPayoutPaid(m, ""));
         map.put("bankPayoutFailed", NotificationTexts.bankPayoutFailed(m));
+        String pireBrut = com.yadony.api.payments.wallet.WalletAmountText.format(new BigDecimal("196787"), "XOF");
+        java.time.ZonedDateTime limite = java.time.ZonedDateTime.of(2026, 10, 19, 23, 59, 0, 0,
+                java.time.ZoneId.of("Africa/Dakar"));
+        map.put("bidSupplementRequested", NotificationTexts.bidSupplementRequested(m, pireMontant, limite));
+        map.put("bidSupplementRequested xof", NotificationTexts.bidSupplementRequested(m, pireBrut, limite));
+        map.put("bidSupplementPaid", NotificationTexts.bidSupplementPaid(m, pireMontant, false));
+        map.put("bidSupplementPaid espèces", NotificationTexts.bidSupplementPaid(m, pireMontant, true));
+        map.put("bidSupplementDeclined", NotificationTexts.bidSupplementDeclined(m));
+        map.put("bidSupplementExpiredForTraveler", NotificationTexts.bidSupplementExpiredForTraveler(m));
+        map.put("bidSupplementExpiredForSender", NotificationTexts.bidSupplementExpiredForSender(m));
+        map.put("bidSupplementWithdrawn", NotificationTexts.bidSupplementWithdrawn(m));
+        map.put("bidSupplementRefunded", NotificationTexts.bidSupplementRefunded(m, pireMontant, false));
+        map.put("bidSupplementRefunded commission", NotificationTexts.bidSupplementRefunded(m, pireMontant, true));
+        map.put("bidSupplementPaidOut", NotificationTexts.bidSupplementPaidOut(m, pireMontant));
         map.put("referralRewardAvailable", NotificationTexts.referralRewardAvailable(m, NOM));
         map.put("referralRewardAvailable sans prénom", NotificationTexts.referralRewardAvailable(m, null));
         map.put("supportReply", NotificationTexts.supportReply(m));
