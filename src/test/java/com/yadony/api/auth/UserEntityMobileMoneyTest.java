@@ -2,6 +2,7 @@ package com.yadony.api.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class UserEntityMobileMoneyTest {
@@ -29,5 +30,58 @@ class UserEntityMobileMoneyTest {
         assertThat(com.yadony.api.payments.cash.PaymentMethod.ORANGE_MONEY.isMobileMoney()).isFalse();
         assertThat(com.yadony.api.payments.cash.PaymentMethod.STRIPE.isMobileMoney()).isFalse();
         assertThat(com.yadony.api.payments.cash.PaymentMethod.CASH.isMobileMoney()).isFalse();
+    }
+
+
+    private UserEntity user(MobileMoneyPayoutStatus status, String currencies, String legacyCurrency) {
+        UserEntity u = new UserEntity();
+        u.setMobileMoneyStatus(status);
+        u.setMobileMoneyCurrencies(currencies);
+        u.setMobileMoneyCurrency(legacyCurrency);
+        return u;
+    }
+
+    @Test
+    void canReceive_isTrueForAnyCurrencyOfTheList_whenActive() {
+        UserEntity u = user(MobileMoneyPayoutStatus.ACTIVE, "XOF,XAF", "XOF");
+        assertThat(u.canReceiveMobileMoney("XAF")).isTrue();
+        assertThat(u.canReceiveMobileMoney("xof")).isTrue();
+        assertThat(u.canReceiveMobileMoney("GNF")).isFalse();
+    }
+
+    @Test
+    void canReceive_isFalse_whenStatusIsNotActive() {
+        UserEntity u = user(MobileMoneyPayoutStatus.DISABLED, "XOF,XAF", "XOF");
+        assertThat(u.canReceiveMobileMoney("XAF")).isFalse();
+    }
+
+    @Test
+    void canReceive_fallsBackOnLegacyCurrency_whenTheListIsEmpty() {
+        assertThat(user(MobileMoneyPayoutStatus.ACTIVE, null, "XOF").canReceiveMobileMoney("XOF")).isTrue();
+        assertThat(user(MobileMoneyPayoutStatus.ACTIVE, " ", "XOF").canReceiveMobileMoney("XAF")).isFalse();
+        assertThat(user(MobileMoneyPayoutStatus.ACTIVE, null, null).canReceiveMobileMoney("XOF")).isFalse();
+    }
+
+    @Test
+    void canReceive_isFalse_forANullCurrency() {
+        assertThat(user(MobileMoneyPayoutStatus.ACTIVE, "XOF", "XOF").canReceiveMobileMoney(null)).isFalse();
+    }
+
+    @Test
+    void currencyList_roundTripsThroughTheCsvColumn() {
+        UserEntity u = new UserEntity();
+        assertThat(u.getMobileMoneyCurrencyList()).isEmpty();
+
+        u.setMobileMoneyCurrencyList(List.of("XOF", "XAF"));
+        assertThat(u.getMobileMoneyCurrencies()).isEqualTo("XOF,XAF");
+        assertThat(u.getMobileMoneyCurrencyList()).containsExactly("XOF", "XAF");
+
+        u.setMobileMoneyCurrencies("XOF, ,XAF");
+        assertThat(u.getMobileMoneyCurrencyList()).containsExactly("XOF", "XAF");
+
+        u.setMobileMoneyCurrencyList(List.of());
+        assertThat(u.getMobileMoneyCurrencies()).isNull();
+        u.setMobileMoneyCurrencyList(null);
+        assertThat(u.getMobileMoneyCurrencies()).isNull();
     }
 }
