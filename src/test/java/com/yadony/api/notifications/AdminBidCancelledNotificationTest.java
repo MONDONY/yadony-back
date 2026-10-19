@@ -93,7 +93,7 @@ class AdminBidCancelledNotificationTest {
 
     @Test
     void typeRangeEtLienProfond() {
-        assertThat(NotificationPrefsService.TYPE_TO_PREF.get("BID_CANCELLED_BY_ADMIN")).isEqualTo("pushActivityBids");
+        assertThat(NotificationPrefsService.TYPE_TO_PREF.get("BID_CANCELLED_BY_ADMIN")).isEqualTo(NotificationPrefsService.SENDER_OR_TRAVELER);
         assertThat(NotificationDeeplink.of("BID_CANCELLED_BY_ADMIN", Map.of("bidId", bidId.toString())))
                 .contains("yadony://bids/" + bidId);
     }

@@ -53,6 +53,14 @@ public class NotificationPrefsEntity {
     @Column(name = "push_reminders_tips", nullable = false)
     private boolean pushRemindersTips = true;
 
+    /** Ce que reçoit le voyageur sur ses trajets (demandes, suppléments, reports), V340. */
+    @Column(name = "push_my_trips", nullable = false)
+    private boolean pushMyTrips = true;
+
+    /** Colis envoyés par un autre à l'utilisateur, destinataire (suivi, invitations), V340. */
+    @Column(name = "push_recipient_parcels", nullable = false)
+    private boolean pushRecipientParcels = true;
+
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
@@ -84,5 +92,9 @@ public class NotificationPrefsEntity {
     public void setPushTravelerAutomations(boolean v) { this.pushTravelerAutomations = v; }
     public boolean isPushRemindersTips() { return pushRemindersTips; }
     public void setPushRemindersTips(boolean v) { this.pushRemindersTips = v; }
+    public boolean isPushMyTrips() { return pushMyTrips; }
+    public void setPushMyTrips(boolean v) { this.pushMyTrips = v; }
+    public boolean isPushRecipientParcels() { return pushRecipientParcels; }
+    public void setPushRecipientParcels(boolean v) { this.pushRecipientParcels = v; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
 }

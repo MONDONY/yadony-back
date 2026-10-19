@@ -21,25 +21,34 @@ public class NotificationPrefsService {
      * défaut sûr pour une notification nouvelle, mais il rend un réglage inopérant sans
      * bruit (FLUTTER-GB). {@code NotificationPrefsClassificationTest} échoue donc dès qu'un
      * type émis dans le code n'est classé nulle part.
+     *
+     * <p>Réglages par rôle (V340) : {@code pushActivityBids} (« Mes envois ») suit ce que
+     * reçoit l'expéditeur, {@code pushMyTrips} ce que reçoit le voyageur et
+     * {@code pushRecipientParcels} ce que reçoit le destinataire d'un colis. Un type envoyé
+     * aux deux parties d'un colis engagé ({@link #SENDER_OR_TRAVELER}) part si l'un des deux
+     * premiers est activé : le type seul ne dit pas à quel titre la personne le reçoit, et
+     * couper par erreur un retour ou une échéance coûte plus cher qu'un push de trop.
      */
+    static final String SENDER_OR_TRAVELER = "pushMyParcelsOrTrips";
+
     static final Map<String, String> TYPE_TO_PREF = Map.ofEntries(
-            Map.entry("BID_CREATED",                  "pushActivityBids"),
+            Map.entry("BID_CREATED",                  "pushMyTrips"),
             Map.entry("BID_ACCEPTED",                 "pushActivityBids"),
             Map.entry("BID_REJECTED",                 "pushActivityBids"),
-            Map.entry("BID_CANCELLED_BY_ADMIN",       "pushActivityBids"),
+            Map.entry("BID_CANCELLED_BY_ADMIN",       SENDER_OR_TRAVELER),
             Map.entry("PARCEL_REFUSED",               "pushActivityBids"),
             // Supplément de prix à la remise : une réponse attendue ou une issue du colis.
             Map.entry("BID_SUPPLEMENT_REQUESTED",     "pushActivityBids"),
-            Map.entry("BID_SUPPLEMENT_PAID",          "pushActivityBids"),
-            Map.entry("BID_SUPPLEMENT_DECLINED",      "pushActivityBids"),
-            Map.entry("BID_SUPPLEMENT_EXPIRED",       "pushActivityBids"),
+            Map.entry("BID_SUPPLEMENT_PAID",          "pushMyTrips"),
+            Map.entry("BID_SUPPLEMENT_DECLINED",      "pushMyTrips"),
+            Map.entry("BID_SUPPLEMENT_EXPIRED",       SENDER_OR_TRAVELER),
             Map.entry("BID_SUPPLEMENT_WITHDRAWN",     "pushActivityBids"),
             Map.entry("BID_SUPPLEMENT_REFUNDED",      "pushActivityBids"),
-            Map.entry("BID_SUPPLEMENT_PAID_OUT",      "pushActivityBids"),
-            Map.entry("BID_EXPIRED",                  "pushActivityBids"),
+            Map.entry("BID_SUPPLEMENT_PAID_OUT",      "pushMyTrips"),
+            Map.entry("BID_EXPIRED",                  SENDER_OR_TRAVELER),
             Map.entry("TRIP_CANCELLED",               "pushActivityBids"),
-            Map.entry("TRIP_RESCHEDULE_KEPT",         "pushActivityBids"),
-            Map.entry("TRIP_RESCHEDULE_WITHDRAWN",    "pushActivityBids"),
+            Map.entry("TRIP_RESCHEDULE_KEPT",         "pushMyTrips"),
+            Map.entry("TRIP_RESCHEDULE_WITHDRAWN",    "pushMyTrips"),
             Map.entry("negotiation_started",          "pushActivityNegotiations"),
             Map.entry("negotiation_counter",          "pushActivityNegotiations"),
             Map.entry("negotiation_awaiting_trip",    "pushActivityNegotiations"),
@@ -69,39 +78,39 @@ public class NotificationPrefsService {
             Map.entry("CONFIRMATION_CODE_READY",      "pushActivityBids"),
             Map.entry("CONFIRMATION_CODE_BLOCKED",    "pushActivityBids"),
             Map.entry("CONFIRMATION_CODE_REQUESTED",  "pushActivityBids"),
-            Map.entry("DELIVERY_NOSHOW_REPORTED",     "pushActivityBids"),
-            Map.entry("DELIVERY_RETRY_APPOINTMENT",   "pushActivityBids"),
-            Map.entry("PARCEL_UNCLAIMED",             "pushActivityBids"),
+            Map.entry("DELIVERY_NOSHOW_REPORTED",     SENDER_OR_TRAVELER),
+            Map.entry("DELIVERY_RETRY_APPOINTMENT",   "pushMyTrips"),
+            Map.entry("PARCEL_UNCLAIMED",             SENDER_OR_TRAVELER),
             Map.entry("MM_PAYMENT_PENDING",           "pushActivityBids"),
-            Map.entry("MM_PAYMENT_EXPIRED",           "pushActivityBids"),
-            Map.entry("BID_CANCELLED_BEFORE_PAYMENT", "pushActivityBids"),
-            Map.entry("MOBILE_MONEY_PAYMENT_CONFIRMED", "pushActivityBids"),
+            Map.entry("MM_PAYMENT_EXPIRED",           SENDER_OR_TRAVELER),
+            Map.entry("BID_CANCELLED_BEFORE_PAYMENT", "pushMyTrips"),
+            Map.entry("MOBILE_MONEY_PAYMENT_CONFIRMED", SENDER_OR_TRAVELER),
             Map.entry("MOBILE_MONEY_PAYMENT_FAILED",  "pushActivityBids"),
-            Map.entry("PARCEL_RETURNED",              "pushActivityBids"),
+            Map.entry("PARCEL_RETURNED",              SENDER_OR_TRAVELER),
             Map.entry("PARCEL_RETURN_REQUIRED",       "pushActivityBids"),
-            Map.entry("PARCEL_RETURN_TO_SENDER",      "pushActivityBids"),
-            Map.entry("RETURN_DEADLINE_WARNING",      "pushActivityBids"),
-            Map.entry("RETURN_DEADLINE_EXPIRED",      "pushActivityBids"),
+            Map.entry("PARCEL_RETURN_TO_SENDER",      "pushMyTrips"),
+            Map.entry("RETURN_DEADLINE_WARNING",      SENDER_OR_TRAVELER),
+            Map.entry("RETURN_DEADLINE_EXPIRED",      SENDER_OR_TRAVELER),
             // Suivi du colis par son destinataire (lot 2) et réponses relayées à l'expéditeur.
-            Map.entry("RECIPIENT_PARCEL_INCOMING",    "pushActivityBids"),
-            Map.entry("RECIPIENT_PARCEL_ANNOUNCED",   "pushActivityBids"),
-            Map.entry("RECIPIENT_PARCEL_DEPARTED",    "pushActivityBids"),
-            Map.entry("RECIPIENT_PARCEL_ARRIVED",     "pushActivityBids"),
-            Map.entry("RECIPIENT_PARCEL_DELIVERED",   "pushActivityBids"),
-            Map.entry("RECIPIENT_PARCEL_CANCELLED",   "pushActivityBids"),
-            Map.entry("RECIPIENT_PARCEL_RESCHEDULED", "pushActivityBids"),
-            Map.entry("RECIPIENT_PICKUP_UPDATED",     "pushActivityBids"),
+            Map.entry("RECIPIENT_PARCEL_INCOMING",    "pushRecipientParcels"),
+            Map.entry("RECIPIENT_PARCEL_ANNOUNCED",   "pushRecipientParcels"),
+            Map.entry("RECIPIENT_PARCEL_DEPARTED",    "pushRecipientParcels"),
+            Map.entry("RECIPIENT_PARCEL_ARRIVED",     "pushRecipientParcels"),
+            Map.entry("RECIPIENT_PARCEL_DELIVERED",   "pushRecipientParcels"),
+            Map.entry("RECIPIENT_PARCEL_CANCELLED",   "pushRecipientParcels"),
+            Map.entry("RECIPIENT_PARCEL_RESCHEDULED", "pushRecipientParcels"),
+            Map.entry("RECIPIENT_PICKUP_UPDATED",     "pushRecipientParcels"),
             Map.entry("RECIPIENT_CONFIRMED",          "pushActivityBids"),
-            Map.entry("RECIPIENT_DECLINED",           "pushActivityBids"),
-            Map.entry("RECIPIENT_WITHDRAWN",          "pushActivityBids"),
+            Map.entry("RECIPIENT_DECLINED",           SENDER_OR_TRAVELER),
+            Map.entry("RECIPIENT_WITHDRAWN",          SENDER_OR_TRAVELER),
             Map.entry("RECIPIENT_REPLACEMENT_REQUESTED", "pushActivityBids"),
             // Changement de destinataire (lot 3A) : ancien destinataire et voyageur.
-            Map.entry("RECIPIENT_PARCEL_REASSIGNED",  "pushActivityBids"),
-            Map.entry("RECIPIENT_CHANGED",            "pushActivityBids"),
+            Map.entry("RECIPIENT_PARCEL_REASSIGNED",  "pushRecipientParcels"),
+            Map.entry("RECIPIENT_CHANGED",            "pushMyTrips"),
             // Invitations au carnet de destinataires (lot 4).
-            Map.entry("RECIPIENT_INVITATION",         "pushActivityBids"),
+            Map.entry("RECIPIENT_INVITATION",         "pushRecipientParcels"),
             Map.entry("RECIPIENT_INVITATION_ACCEPTED", "pushActivityBids"),
-            Map.entry("RECIPIENT_INVITATION_REMOVED", "pushActivityBids"),
+            Map.entry("RECIPIENT_INVITATION_REMOVED", "pushRecipientParcels"),
             // FLUTTER-GB : arrivée du trajet (instructions de retrait, à l'expéditeur) et
             // demande de colis retirée par la modération, suivies comme le reste du colis.
             Map.entry("TRIP_ARRIVED",                 "pushActivityBids"),
@@ -243,6 +252,12 @@ public class NotificationPrefsService {
             entity.setPushTravelerAutomations(dto.pushTravelerAutomations());
         }
         if (dto.pushRemindersTips() != null) entity.setPushRemindersTips(dto.pushRemindersTips());
+        // V340 : une application qui ne connaît que « Offres » ne les envoie pas. Son choix
+        // vaut alors pour les trois rôles, comme avant le découpage.
+        entity.setPushMyTrips(dto.pushMyTrips() != null
+                ? dto.pushMyTrips() : dto.pushActivityBids());
+        entity.setPushRecipientParcels(dto.pushRecipientParcels() != null
+                ? dto.pushRecipientParcels() : dto.pushActivityBids());
         repository.save(entity);
     }
 
@@ -302,6 +317,9 @@ public class NotificationPrefsService {
             case "pushMissedCalls"          -> prefs.isPushMissedCalls();
             case "pushTravelerAutomations"  -> prefs.isPushTravelerAutomations();
             case "pushRemindersTips"        -> prefs.isPushRemindersTips();
+            case "pushMyTrips"              -> prefs.isPushMyTrips();
+            case "pushRecipientParcels"     -> prefs.isPushRecipientParcels();
+            case SENDER_OR_TRAVELER         -> prefs.isPushActivityBids() || prefs.isPushMyTrips();
             default                         -> true;
         };
     }
@@ -324,7 +342,9 @@ public class NotificationPrefsService {
                 e.isPushCorridorAlerts(),
                 e.isPushMissedCalls(),
                 e.isPushTravelerAutomations(),
-                e.isPushRemindersTips()
+                e.isPushRemindersTips(),
+                e.isPushMyTrips(),
+                e.isPushRecipientParcels()
         );
     }
 }
