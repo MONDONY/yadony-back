@@ -108,6 +108,7 @@ class BidSupplementCardRailTest {
 
     @Test
     void paiement_creeLaPaymentIntent_captureAutomatiqueSansReferenceAuColis() throws Exception {
+        when(paymentService.paypalEnabled()).thenReturn(true);
         when(paymentService.ensureStripeCustomer(sender)).thenReturn("cus_1");
         ArgumentCaptor<PaymentIntentCreateParams> params = ArgumentCaptor.forClass(PaymentIntentCreateParams.class);
         when(gateway.createPaymentIntent(params.capture(), eq("supplement-pi-" + s.getId() + "-v1")))
@@ -129,6 +130,7 @@ class BidSupplementCardRailTest {
         assertThat(p.getOnBehalfOf()).isNull();
         assertThat(p.getSetupFutureUsage()).isNull();
         assertThat(p.getPaymentMethodTypes()).containsExactly("card", "paypal");
+        assertThat(p.getPaymentMethodOptions().getPaypal()).isNotNull();
         assertThat(p.getStatementDescriptorSuffix()).isEqualTo("YADONY");
         assertThat(p.getMetadata()).containsEntry("bid_supplement_id", s.getId().toString())
                 .containsEntry("scope", "BID_SUPPLEMENT")
@@ -146,7 +148,39 @@ class BidSupplementCardRailTest {
     }
 
     @Test
+    void paiement_paypalDesactive_carteSeule_sansOptionsPaypal() throws Exception {
+        // YADONY-FLUTTER-PROD-11 : « paypal » sans la capacité Stripe fait refuser le PaymentIntent.
+        when(paymentService.paypalEnabled()).thenReturn(false);
+        when(paymentService.ensureStripeCustomer(sender)).thenReturn("cus_1");
+        ArgumentCaptor<PaymentIntentCreateParams> params = ArgumentCaptor.forClass(PaymentIntentCreateParams.class);
+        when(gateway.createPaymentIntent(params.capture(), eq("supplement-pi-" + s.getId() + "-v1")))
+                .thenReturn(new PaymentIntentView("pi_1", "requires_payment_method", 2110L, "eur",
+                        "pi_1_secret_x", null, List.of("card")));
+        when(ledger.storePaymentIntent(s.getId(), 1, "pi_1")).thenReturn(copyWithPi("pi_1"));
+
+        SupplementAcceptResponse r = rail.afterAcceptCommit(new SupplementAcceptResponse(
+                BidSupplementViews.of(s, true, storage, LocalDateTime.now()), "STRIPE", null, null,
+                s.getGrossAmount(), "EUR", "pk_test_1"));
+
+        PaymentIntentCreateParams p = params.getValue();
+        assertThat(p.getPaymentMethodTypes()).containsExactly("card");
+        assertThat(p.getPaymentMethodOptions()).isNull();
+        assertThat(r.paymentMethodTypes()).containsExactly("card");
+    }
+
+    @Test
+    void paiement_relance_paypalDesactive_repliSurLaCarteSeule() throws Exception {
+        when(paymentService.paypalEnabled()).thenReturn(false);
+        s.setStripePaymentIntentId("pi_1");
+        when(gateway.retrievePaymentIntent("pi_1")).thenReturn(new PaymentIntentView("pi_1", "requires_action",
+                2110L, "eur", "pi_1_secret_x", null, null));
+
+        assertThat(rail.pay(s.getId()).paymentMethodTypes()).containsExactly("card");
+    }
+
+    @Test
     void paiement_relance_reutiliseLaPaymentIntentEncorePayable() throws Exception {
+        when(paymentService.paypalEnabled()).thenReturn(true);
         s.setStripePaymentIntentId("pi_1");
         when(gateway.retrievePaymentIntent("pi_1")).thenReturn(new PaymentIntentView("pi_1", "requires_action",
                 2110L, "eur", "pi_1_secret_x", null, null));

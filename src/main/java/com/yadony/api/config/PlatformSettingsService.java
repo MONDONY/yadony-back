@@ -164,6 +164,25 @@ public class PlatformSettingsService {
         return raw != null && Boolean.parseBoolean(raw);
     }
 
+    /**
+     * PayPal dans la feuille de paiement : vrai, « paypal » est ajouté aux PaymentIntent
+     * (séquestre, négociation, supplément). Ligne absente : faux. Voir
+     * {@link PlatformSettingKey#PAYMENTS_PAYPAL_ENABLED}.
+     */
+    public boolean paypalEnabled() {
+        return Boolean.parseBoolean(cache.all().get(PlatformSettingKey.PAYMENTS_PAYPAL_ENABLED.key()));
+    }
+
+    /** Bouton Apple Pay dans la feuille de paiement de l'application. Ligne absente : faux. */
+    public boolean applePayEnabled() {
+        return Boolean.parseBoolean(cache.all().get(PlatformSettingKey.PAYMENTS_APPLE_PAY_ENABLED.key()));
+    }
+
+    /** Bouton Google Pay dans la feuille de paiement de l'application. Ligne absente : faux. */
+    public boolean googlePayEnabled() {
+        return Boolean.parseBoolean(cache.all().get(PlatformSettingKey.PAYMENTS_GOOGLE_PAY_ENABLED.key()));
+    }
+
     /** Questions à l'assistant d'aide par utilisateur et par jour UTC. */
     public int assistantDailyQuota() {
         return intOr(PlatformSettingKey.ASSISTANT_DAILY_QUOTA, PlatformSettingKey.DEFAULT_ASSISTANT_DAILY_QUOTA);
@@ -255,6 +274,9 @@ public class PlatformSettingsService {
             case FLIGHTS_ENABLED -> String.valueOf(flightsEnabled());
             case ASSISTANT_DAILY_QUOTA -> String.valueOf(assistantDailyQuota());
             case ASSISTANT_FORM_DRAFT_DAILY_QUOTA -> String.valueOf(assistantFormDraftDailyQuota());
+            case PAYMENTS_PAYPAL_ENABLED -> String.valueOf(paypalEnabled());
+            case PAYMENTS_APPLE_PAY_ENABLED -> String.valueOf(applePayEnabled());
+            case PAYMENTS_GOOGLE_PAY_ENABLED -> String.valueOf(googlePayEnabled());
         };
     }
 
@@ -399,7 +421,18 @@ public class PlatformSettingsService {
                     "Le quota de questions à l'assistant doit être un entier entre 1 et 1000");
             case ASSISTANT_FORM_DRAFT_DAILY_QUOTA -> boundedInt(value, MIN_ASSISTANT_QUOTA, MAX_ASSISTANT_QUOTA,
                     "Le quota de remplissage par l'IA doit être un entier entre 1 et 1000");
+            case PAYMENTS_PAYPAL_ENABLED -> strictBoolean(value, "L'activation de PayPal attend true ou false");
+            case PAYMENTS_APPLE_PAY_ENABLED -> strictBoolean(value, "L'activation d'Apple Pay attend true ou false");
+            case PAYMENTS_GOOGLE_PAY_ENABLED -> strictBoolean(value,
+                    "L'activation de Google Pay attend true ou false");
         };
+    }
+
+    private String strictBoolean(String value, String message) {
+        if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
+            throw invalid(message);
+        }
+        return String.valueOf(Boolean.parseBoolean(value));
     }
 
     private String boundedInt(String value, int min, int max, String message) {

@@ -7,6 +7,7 @@ import com.yadony.api.config.dto.CommissionGridResponse;
 import com.yadony.api.config.dto.CommissionRateResponse;
 import com.yadony.api.config.dto.ContentCategoryResponse;
 import com.yadony.api.config.dto.FlightsEnabledResponse;
+import com.yadony.api.config.dto.PaymentMethodsResponse;
 import com.yadony.api.config.dto.ProEnabledResponse;
 import com.yadony.api.config.dto.ReimbursementCapResponse;
 import com.yadony.api.config.dto.SmsEnabledResponse;
@@ -111,5 +112,18 @@ public class ConfigController {
     @GetMapping("/flights-enabled")
     public ResponseEntity<FlightsEnabledResponse> getFlightsEnabled() {
         return ResponseEntity.ok(new FlightsEnabledResponse(settings.flightsEnabled()));
+    }
+
+    /**
+     * Drapeaux des moyens de paiement de la feuille (YADONY-FLUTTER-PROD-11), lus par
+     * l'application à CHAQUE ouverture de la feuille de paiement : une bascule faite dans le
+     * back-office s'applique au paiement suivant, sans redémarrage de l'application. PayPal reste
+     * en plus décidé par paiement ({@code paymentMethodTypes} du PaymentIntent). Public comme ses
+     * voisins : rien de sensible.
+     */
+    @GetMapping("/payment-methods")
+    public ResponseEntity<PaymentMethodsResponse> getPaymentMethods() {
+        return ResponseEntity.ok(new PaymentMethodsResponse(
+                settings.applePayEnabled(), settings.googlePayEnabled(), settings.paypalEnabled()));
     }
 }
