@@ -13,6 +13,7 @@ import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderPrediction;
 import java.math.BigDecimal;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -170,6 +171,7 @@ class PawapayProviderResolverTest {
         PawapayProviderResolver.Catalogue c = resolver.catalogue("221771234567", PawapayOperationKind.PAYOUT, "xof", "ctx");
         assertThat(c.options()).extracting(PawapayProviderConfig::provider).containsExactly("WAVE_SEN", "ORANGE_SEN");
         assertThat(c.detected()).isEqualTo("WAVE_SEN");
+        assertThat(c.predicted()).isEqualTo("WAVE_SEN");
         assertThat(c.countryAlpha2()).isEqualTo("SN");
         assertThat(c.currency()).isEqualTo("XOF");
         assertThat(c.msisdn()).isEqualTo("221771234567");
@@ -193,6 +195,17 @@ class PawapayProviderResolverTest {
         PawapayProviderResolver.Catalogue c = resolver.catalogue("221771234567", PawapayOperationKind.PAYOUT, "XOF", "ctx");
         assertThat(c.detected()).isNull();
         assertThat(c.options()).extracting(PawapayProviderConfig::provider).containsExactly("ORANGE_SEN", "WAVE_SEN");
+    }
+
+    /** Le prédit brut reste exposé, même exclu des options : il dit à quel réseau le numéro appartient. */
+    @Test
+    void catalogue_exposesTheRawPrediction_evenWhenItIsClosedForTheOperation() {
+        predicts("FREE_SEN", null);
+        configured(ORANGE, FREE_PAYOUT_CLOSED, WAVE);
+        assertThat(resolver.catalogue("221771234567", PawapayOperationKind.PAYOUT, "XOF", "ctx").predicted())
+                .isEqualTo("FREE_SEN");
+        assertThat(new PawapayProviderResolver.Catalogue("SN", "XOF", "221771234567", "ORANGE_SEN", List.of(ORANGE))
+                .predicted()).as("constructeur historique : prédit = détecté").isEqualTo("ORANGE_SEN");
     }
 
     @Test

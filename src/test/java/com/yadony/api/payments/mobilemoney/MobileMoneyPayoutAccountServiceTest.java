@@ -248,14 +248,45 @@ class MobileMoneyPayoutAccountServiceTest {
         assertThat(e.getMessage()).isEqualTo("This number belongs to MTN MoMo.");
     }
 
+    /** Review Focus 3, fermeture MTN : le prédit fermé au versement n'ouvre jamais la porte à Orange. */
     @Test
-    void add_whenPawapayDetectsNoUsableOperator_acceptsTheChosenCodeFromTheCatalogue() {
-        // Opérateur prédit fermé au versement : detected nul, Orange reste au catalogue du numéro.
+    void add_orangeOnAnMtnNumber_whileMtnPayoutsAreClosed_isStill422WrongNetwork() {
         PawapayProviderConfig mtnClosed = new PawapayProviderConfig("MTN_MOMO_CIV", "CIV", "XOF", OK, CLOSED);
         predicts(CIV_MTN_NUMBER, "CIV", "MTN_MOMO_CIV", ORANGE_CIV, mtnClosed);
         when(repository.findByUserIdAndProviderAndDeletedAtIsNull(userId, "ORANGE_CIV")).thenReturn(Optional.empty());
 
-        AccountView view = service.add(userId, CIV_MTN_NUMBER, "ORANGE_CIV");
+        YadonyBusinessException e = thrown(() -> service.add(userId, CIV_MTN_NUMBER, "ORANGE_CIV"));
+
+        assertThat(e.getErrorCode()).isEqualTo("mobile-money-account-wrong-network");
+        assertThat(e.getMessage()).isEqualTo("Ce numéro est un numéro MTN MoMo.");
+        assertNothingWritten();
+    }
+
+    @Test
+    void add_thePredictedOperator_whileItsPayoutsAreClosed_is422OperationClosed() {
+        PawapayProviderConfig mtnClosed = new PawapayProviderConfig("MTN_MOMO_CIV", "CIV", "XOF", OK, CLOSED);
+        predicts(CIV_MTN_NUMBER, "CIV", "MTN_MOMO_CIV", ORANGE_CIV, mtnClosed);
+        when(repository.findByUserIdAndProviderAndDeletedAtIsNull(userId, "MTN_MOMO_CIV")).thenReturn(Optional.empty());
+
+        YadonyBusinessException e = thrown(() -> service.add(userId, CIV_MTN_NUMBER, "MTN_MOMO_CIV"));
+
+        assertThat(e.getErrorCode()).isEqualTo("mobile-money-account-unsupported");
+        assertThat(e.getMessage()).isEqualTo("MTN MoMo ne permet pas encore le versement.");
+        assertNothingWritten();
+    }
+
+    /** Sans prédiction du tout (aucun chemin du résolveur réel aujourd'hui), le code au catalogue est accepté. */
+    @Test
+    void add_withoutAnyPrediction_acceptsTheChosenCodeFromTheCatalogue() {
+        PawapayProviderResolver resolver = org.mockito.Mockito.mock(PawapayProviderResolver.class);
+        when(resolver.catalogue(eq(CIV_ORANGE_NUMBER), any(), any(), anyString()))
+                .thenReturn(new PawapayProviderResolver.Catalogue("CI", "XOF", CIV_ORANGE_NUMBER, null,
+                        List.of(ORANGE_CIV, MTN_CIV), null));
+        when(repository.findByUserIdAndProviderAndDeletedAtIsNull(userId, "ORANGE_CIV")).thenReturn(Optional.empty());
+        MobileMoneyPayoutAccountService withoutPrediction = new MobileMoneyPayoutAccountService(userRepository,
+                repository, accounts, resolver, audit, props(true), TestMessages.resolver());
+
+        AccountView view = withoutPrediction.add(userId, CIV_ORANGE_NUMBER, "ORANGE_CIV");
 
         assertThat(view.provider()).isEqualTo("ORANGE_CIV");
         verify(repository).save(any());
@@ -358,6 +389,20 @@ class MobileMoneyPayoutAccountServiceTest {
         MobileMoneyPayoutAccountEntity account = existing("ORANGE_CIV", "CI", CIV_ORANGE_NUMBER);
         when(repository.findByIdAndUserIdAndDeletedAtIsNull(account.getId(), userId)).thenReturn(Optional.of(account));
         predicts(CIV_MTN_NUMBER, "CIV", "MTN_MOMO_CIV");
+
+        YadonyBusinessException e = thrown(() -> service.changeNumber(userId, account.getId(), CIV_MTN_NUMBER));
+
+        assertThat(e.getErrorCode()).isEqualTo("mobile-money-account-wrong-network");
+        assertThat(account.getMsisdn()).isEqualTo(CIV_ORANGE_NUMBER);
+        assertNothingWritten();
+    }
+
+    @Test
+    void changeNumber_toAnMtnNumber_whileMtnPayoutsAreClosed_is422WrongNetwork() {
+        MobileMoneyPayoutAccountEntity account = existing("ORANGE_CIV", "CI", CIV_ORANGE_NUMBER);
+        when(repository.findByIdAndUserIdAndDeletedAtIsNull(account.getId(), userId)).thenReturn(Optional.of(account));
+        PawapayProviderConfig mtnClosed = new PawapayProviderConfig("MTN_MOMO_CIV", "CIV", "XOF", OK, CLOSED);
+        predicts(CIV_MTN_NUMBER, "CIV", "MTN_MOMO_CIV", ORANGE_CIV, mtnClosed);
 
         YadonyBusinessException e = thrown(() -> service.changeNumber(userId, account.getId(), CIV_MTN_NUMBER));
 
@@ -512,13 +557,26 @@ class MobileMoneyPayoutAccountServiceTest {
     }
 
     @Test
-    void upsert_withoutCodeAndNoUsableDetectedOperator_is422Unsupported() {
+    void upsert_withoutCode_whenThePredictedOperatorIsClosed_is422OperationClosed() {
         PawapayProviderConfig mtnClosed = new PawapayProviderConfig("MTN_MOMO_CIV", "CIV", "XOF", OK, CLOSED);
         predicts(CIV_MTN_NUMBER, "CIV", "MTN_MOMO_CIV", ORANGE_CIV, mtnClosed);
 
         YadonyBusinessException e = thrown(() -> service.upsert(userId, CIV_MTN_NUMBER, null, "firebase"));
 
         assertThat(e.getErrorCode()).isEqualTo("mobile-money-account-unsupported");
+        assertThat(e.getMessage()).isEqualTo("MTN MoMo ne permet pas encore le versement.");
+        assertNothingWritten();
+    }
+
+    @Test
+    void upsert_orangeOnAnMtnNumber_whileMtnPayoutsAreClosed_is422WrongNetwork() {
+        PawapayProviderConfig mtnClosed = new PawapayProviderConfig("MTN_MOMO_CIV", "CIV", "XOF", OK, CLOSED);
+        predicts(CIV_MTN_NUMBER, "CIV", "MTN_MOMO_CIV", ORANGE_CIV, mtnClosed);
+
+        YadonyBusinessException e = thrown(() -> service.upsert(userId, CIV_MTN_NUMBER, "ORANGE_CIV", "provided"));
+
+        assertThat(e.getErrorCode()).isEqualTo("mobile-money-account-wrong-network");
+        verify(repository, never()).findByUserIdAndProviderAndDeletedAtIsNull(any(), any());
         assertNothingWritten();
     }
 

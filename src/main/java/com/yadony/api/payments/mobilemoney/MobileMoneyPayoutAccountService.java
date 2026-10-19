@@ -256,10 +256,17 @@ public class MobileMoneyPayoutAccountService {
     }
 
     /**
-     * Le numéro peut-il recevoir des versements sur {@code code} ? Le code doit figurer au catalogue
-     * PAYOUT du numéro (sinon 422 {@code unsupported}), et pawaPay ne doit pas y détecter un autre
-     * opérateur (sinon 422 {@code wrong-network}) ; sans opérateur détecté utilisable, le code choisi
-     * au catalogue est accepté. {@code code} nul : l'opérateur détecté.
+     * Le numéro peut-il recevoir des versements sur {@code code} ? Seul l'opérateur que pawaPay
+     * PRÉDIT pour le numéro est accepté, même quand il est fermé au versement (jamais un compte
+     * Orange sur un numéro MTN pendant une fermeture MTN, Review Focus 3) :
+     * <ul>
+     *   <li>code hors du catalogue PAYOUT du numéro : 422 {@code unsupported} (« Réseau X
+     *       indisponible ») ; c'est le prédit lui-même, fermé au versement : 422 {@code unsupported}
+     *       ({@code operation-closed}) ;</li>
+     *   <li>code au catalogue mais prédit différent : 422 {@code wrong-network} nommant le prédit.</li>
+     * </ul>
+     * Sans prédiction (pas de chemin connu aujourd'hui : le résolveur rejette un prédit inconnu),
+     * le code choisi au catalogue est accepté. {@code code} nul : le prédit.
      */
     private Checked check(UUID userId, String msisdn, String code, Messages m) {
         PawapayProviderResolver.Catalogue catalogue;
@@ -269,18 +276,20 @@ public class MobileMoneyPayoutAccountService {
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
             throw unsupported(userId, reasonDetail(m, e));
         }
-        String detected = catalogue.detected();
-        String wanted = code != null ? code : detected;
+        String predicted = catalogue.predicted();
+        String wanted = code != null ? code : predicted;
         if (wanted == null) {
             throw unsupported(userId, m.get("problem.mobile-money-account.no-provider"));
         }
-        PawapayProviderConfig option = catalogue.option(wanted).orElseThrow(() ->
-                unsupported(userId, m.get("problem.mobile-money.network-unavailable", PawapayProviders.label(wanted))));
-        if (detected != null && !detected.equalsIgnoreCase(option.provider())) {
-            log.warn("Compte de versement {} refusé pour {} : pawaPay détecte {}", option.provider(), userId, detected);
+        boolean isPredicted = wanted.equalsIgnoreCase(predicted);
+        PawapayProviderConfig option = catalogue.option(wanted).orElseThrow(() -> unsupported(userId, isPredicted
+                ? m.get("problem.mobile-money-account.operation-closed", PawapayProviders.label(wanted))
+                : m.get("problem.mobile-money.network-unavailable", PawapayProviders.label(wanted))));
+        if (predicted != null && !isPredicted) {
+            log.warn("Compte de versement {} refusé pour {} : pawaPay prédit {}", option.provider(), userId, predicted);
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-account-wrong-network",
                     "Mobile Money Account Wrong Network",
-                    m.get("problem.mobile-money-account.wrong-network", PawapayProviders.label(detected)));
+                    m.get("problem.mobile-money-account.wrong-network", PawapayProviders.label(predicted)));
         }
         return new Checked(catalogue.msisdn(), option.provider(), catalogue.countryAlpha2(),
                 catalogue.currency().toUpperCase(Locale.ROOT));
