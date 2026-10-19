@@ -2732,7 +2732,8 @@ public class NegotiationService {
             request.getSenderId(),
             archived,
             traveler.isGpPro(),
-            senderUser != null && senderUser.isGpPro()
+            senderUser != null && senderUser.isGpPro(),
+            t.getCommissionGridId()
         );
     }
 

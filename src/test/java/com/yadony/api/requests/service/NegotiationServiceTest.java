@@ -5051,6 +5051,36 @@ class NegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("grille figée : commissionGridId reprend celle du fil, null sans grille")
+        void toResponse_exposesFrozenCommissionGridId() {
+            NegotiationThreadEntity thread = new NegotiationThreadEntity();
+            thread.setPackageRequestId(REQUEST_ID);
+            thread.setTravelerId(TRAVELER_ID);
+            thread.setStatus(NegotiationThreadStatus.OPEN);
+            thread.setCurrency("EUR");
+            thread.setCurrentPriceEur(new BigDecimal("35"));
+            thread.setRoundsCount((short) 1);
+            thread.setLastActivityAt(java.time.LocalDateTime.now());
+            request.setDepartureCity("Paris");
+            request.setArrivalCity("Dakar");
+            request.setWeightKg(new BigDecimal("5"));
+            when(userRepository.findById(request.getSenderId())).thenReturn(Optional.of(new UserEntity()));
+
+            assertThat(service.toResponse(
+                thread, List.of(), null, traveler, request, TRAVELER_ID, "Expéditeur", null)
+                .commissionGridId()).isNull();
+
+            UUID gridId = UUID.randomUUID();
+            thread.setCommissionGridId(gridId);
+            anyThreadPricing();
+            NegotiationThreadResponse json = service.toResponse(
+                thread, List.of(), null, traveler, request, TRAVELER_ID, "Expéditeur", null);
+            assertThat(json.commissionGridId()).isEqualTo(gridId);
+            assertThat(new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules()
+                .valueToTree(json).get("commissionGridId").asText()).isEqualTo(gridId.toString());
+        }
+
+        @Test
         @DisplayName("FLUTTER-Q4 : le brut suit le taux de la plateforme, puis le taux figé sur le fil")
         void toResponse_grossFollowsPlatformRateThenFrozenRate() {
             NegotiationThreadEntity thread = new NegotiationThreadEntity();

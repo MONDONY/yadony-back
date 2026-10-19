@@ -161,7 +161,10 @@ public class PackageRequestSearchMapper {
                 // Converti joint par le service (withViewerConversion), qui connaît le lecteur.
                 null, null,
                 // Audience : posée par le service pour les seules demandes du lecteur.
-                null
+                null,
+                // Négociation en cours : posée par le service, qui connaît le lecteur.
+                null,
+                entity.getCommissionGridId()
         );
     }
 
