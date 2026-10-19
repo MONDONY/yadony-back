@@ -21,6 +21,7 @@ import com.yadony.api.payments.supplement.dto.SupplementQuoteResponse;
 import com.yadony.api.payments.supplement.events.BidSupplementCancelledEvent;
 import com.yadony.api.payments.supplement.events.BidSupplementDeclinedEvent;
 import com.yadony.api.payments.supplement.events.BidSupplementExpiredEvent;
+import com.yadony.api.payments.supplement.events.BidSupplementRefundRequestedEvent;
 import com.yadony.api.payments.supplement.events.BidSupplementRequestedEvent;
 import com.yadony.api.payments.supplement.events.BidSupplementWithdrawnEvent;
 import org.slf4j.Logger;
@@ -64,6 +65,10 @@ public class BidSupplementService {
     public static final Set<BidStatus> TERMINAL_UNDELIVERED = EnumSet.of(BidStatus.CANCELLED, BidStatus.REJECTED,
             BidStatus.EXPIRED, BidStatus.NO_SHOW, BidStatus.PARCEL_REFUSED);
 
+    /** Supplément payé, pas encore remboursé : à rendre si le colis finit sans livraison. */
+    static final Set<BidSupplementStatus> SETTLING = EnumSet.of(BidSupplementStatus.PAID,
+            BidSupplementStatus.REFUND_PENDING, BidSupplementStatus.PAYOUT_PENDING, BidSupplementStatus.PAID_OUT);
+
     private final BidSupplementRepository supplements;
     private final BidRepository bids;
     private final AnnouncementRepository announcements;
@@ -76,13 +81,15 @@ public class BidSupplementService {
     private final AuditService auditService;
     private final ApplicationEventPublisher events;
     private final StorageService storage;
+    private final com.yadony.api.disputes.DisputeRepository disputes;
 
     public BidSupplementService(BidSupplementRepository supplements, BidRepository bids,
                                 AnnouncementRepository announcements,
                                 AnnouncementPriceGridItemRepository announcementGridItems,
                                 UserRepository users, BidSupplementPricing pricing, BidSupplementWindow window,
                                 BidSupplementProperties properties, List<BidSupplementRailHandler> handlers,
-                                AuditService auditService, ApplicationEventPublisher events, StorageService storage) {
+                                AuditService auditService, ApplicationEventPublisher events, StorageService storage,
+                                com.yadony.api.disputes.DisputeRepository disputes) {
         this.supplements = supplements;
         this.bids = bids;
         this.announcements = announcements;
@@ -96,6 +103,7 @@ public class BidSupplementService {
         this.auditService = auditService;
         this.events = events;
         this.storage = storage;
+        this.disputes = disputes;
     }
 
     /** Un composant existe-t-il pour ce rail ? Faux tant que le rail n'est pas livré. */
@@ -315,15 +323,15 @@ public class BidSupplementService {
 
     /**
      * Le colis s'est terminé sans livraison : une demande encore ouverte est annulée (les rails
-     * défont leur part sur {@link BidSupplementCancelledEvent}). Une demande payée relève du
-     * remboursement, porté par les rails. N'agit que si le colis est réellement dans
+     * défont leur part sur {@link BidSupplementCancelledEvent}). Une demande payée est à
+     * rembourser : le rail le fait sur {@link BidSupplementRefundRequestedEvent}. N'agit que si le colis est réellement dans
      * {@link #TERMINAL_UNDELIVERED} : un événement mal interprété ne ferme rien. Idempotent.
      *
      * <p>Transaction propre : un colis en échec ne fait pas échouer les autres colis d'un même
      * trajet annulé.
      *
      * @param reason clé du plan §5.1 ({@code BID_REJECTED}, {@code PARCEL_REFUSED}…).
-     * @return vrai si une demande a été annulée.
+     * @return vrai si une demande a été annulée ou son remboursement demandé.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean onBidEnded(UUID bidId, String reason) {
@@ -335,9 +343,15 @@ public class BidSupplementService {
         if (bid == null || !TERMINAL_UNDELIVERED.contains(bid.getStatus())) {
             return false;
         }
+        return endUnderBidLock(bid, reason);
+    }
+
+    /** {@link #onBidEnded}, colis déjà verrouillé et terminé sans livraison. */
+    private boolean endUnderBidLock(BidEntity bid, String reason) {
+        UUID bidId = bid.getId();
         Optional<BidSupplementEntity> open = supplements.findByBidIdAndStatusInForUpdate(bidId, BidSupplementStatus.OPEN);
         if (open.isEmpty()) {
-            return false;
+            return requestRefundOfPaid(bid, reason);
         }
         BidSupplementEntity s = open.get();
         BidSupplementStatus previous = close(s, BidSupplementStatus.CANCELLED, reason);
@@ -347,6 +361,66 @@ public class BidSupplementService {
                 "endReason", reason));
         log.info("Supplément {} annulé : colis {} terminé ({})", s.getId(), bidId, reason);
         return true;
+    }
+
+    /**
+     * Colis terminé sans livraison avec un supplément déjà payé (carte, mobile money) : l'argent
+     * est rendu à l'expéditeur par le rail, après le commit ({@link BidSupplementRefundRequestedEvent}).
+     * {@code PAID → REFUND_PENDING} ; un {@code REFUND_PENDING} est redemandé (reprise) ; un
+     * supplément déjà versé ({@code PAYOUT_PENDING}, {@code PAID_OUT}) ne change pas de statut, le
+     * rail lève une alerte. Le rail espèces (commission seulement) a sa propre règle.
+     */
+    private boolean requestRefundOfPaid(BidEntity bid, String reason) {
+        Optional<BidSupplementEntity> paid = supplements.findByBidIdAndStatusInForUpdate(bid.getId(), SETTLING);
+        if (paid.isEmpty() || paid.get().getRail() == BidSupplementRail.CASH) {
+            return false;
+        }
+        BidSupplementEntity s = paid.get();
+        if (s.getStatus() == BidSupplementStatus.PAID) {
+            s.setStatus(BidSupplementStatus.REFUND_PENDING);
+            s.setClosedReason(reason);
+            supplements.save(s);
+            audit(s, "BID_SUPPLEMENT_REFUND_REQUESTED", null, Map.of("bidStatus", bid.getStatus().name(),
+                    "endReason", reason));
+        }
+        events.publishEvent(new BidSupplementRefundRequestedEvent(s.getId(), bid.getId(), s.getRail(),
+                s.getStatus(), reason));
+        log.info("Supplément {} à rembourser : colis {} terminé ({})", s.getId(), bid.getId(), reason);
+        return true;
+    }
+
+    /**
+     * Paiement principal remboursé par l'administration ({@code AdminPaymentRefundedEvent}) :
+     * <ul>
+     *   <li>colis terminé sans livraison : même règle que {@link #onBidEnded} ;</li>
+     *   <li>colis encore en cours ou livré : un supplément payé (carte, mobile money) est
+     *       remboursé aussi, l'expéditeur ne paie pas un supplément d'un transport remboursé ;</li>
+     *   <li>litige ouvert sur le colis : rien, le supplément reste payé (décision manuelle).</li>
+     * </ul>
+     * Idempotent.
+     *
+     * @return vrai si une demande a été annulée ou son remboursement demandé.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean onPrincipalRefunded(UUID bidId) {
+        if (bidId == null) {
+            return false;
+        }
+        bids.lockForUpdate(bidId);
+        BidEntity bid = bids.findById(bidId).orElse(null);
+        if (bid == null) {
+            return false;
+        }
+        if (TERMINAL_UNDELIVERED.contains(bid.getStatus())) {
+            return endUnderBidLock(bid, "ADMIN_REFUND");
+        }
+        if (disputes.existsByBidIdAndStatusAndTypeStartingWith(bidId, com.yadony.api.disputes.DisputeTypes.STATUS_OPEN,
+                "")) {
+            log.info("Principal du colis {} remboursé, litige ouvert : supplément laissé payé (décision manuelle)",
+                    bidId);
+            return false;
+        }
+        return requestRefundOfPaid(bid, "ADMIN_REFUND");
     }
 
     // ── Règles ───────────────────────────────────────────────────────────────

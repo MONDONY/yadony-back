@@ -3,6 +3,7 @@ package com.yadony.api.payments.supplement;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.dto.BidSupplementResponse;
 import com.yadony.api.payments.supplement.dto.CreateSupplementRequest;
+import com.yadony.api.payments.supplement.dto.SupplementAcceptResponse;
 import com.yadony.api.payments.supplement.dto.SupplementOptionsResponse;
 import com.yadony.api.payments.supplement.dto.SupplementQuoteResponse;
 import org.junit.jupiter.api.Test;
@@ -44,6 +45,7 @@ class BidSupplementControllerIT {
 
     @Autowired MockMvc mockMvc;
     @MockBean BidSupplementService service;
+    @MockBean BidSupplementPaymentFlow paymentFlow;
 
     private final UUID bidId = UUID.randomUUID();
     private final UUID supplementId = UUID.randomUUID();
@@ -161,7 +163,7 @@ class BidSupplementControllerIT {
 
     @Test
     void acceptation_railNonLivre_422() throws Exception {
-        when(service.accept(bidId, supplementId, "uid-s")).thenThrow(new YadonyBusinessException(
+        when(paymentFlow.accept(bidId, supplementId, "uid-s")).thenThrow(new YadonyBusinessException(
                 HttpStatus.UNPROCESSABLE_ENTITY, "supplement-rail-unsupported", "Supplement Rail Unsupported", "non"));
 
         mockMvc.perform(post("/bids/" + bidId + "/supplements/" + supplementId + "/accept")
@@ -178,7 +180,55 @@ class BidSupplementControllerIT {
         mockMvc.perform(post("/bids/" + bidId + "/supplements/" + supplementId + "/decline")
                         .with(authentication(as("uid-t", "TRAVELER"))))
                 .andExpect(status().isForbidden());
+        mockMvc.perform(post("/bids/" + bidId + "/supplements/" + supplementId + "/confirm-payment")
+                        .with(authentication(as("uid-t", "TRAVELER"))))
+                .andExpect(status().isForbidden());
         verify(service, never()).accept(any(), any(), any());
+        verify(paymentFlow, never()).accept(any(), any(), any());
+        verify(paymentFlow, never()).confirmPayment(any(), any(), any());
         verify(service, never()).decline(any(), any(), any());
+    }
+
+    @Test
+    void acceptation_carte_contratDeLaPaymentSheet() throws Exception {
+        when(paymentFlow.accept(bidId, supplementId, "uid-s")).thenReturn(new SupplementAcceptResponse(
+                response("PAYMENT_PENDING", true), "STRIPE", "pi_1_secret_x", List.of("card", "paypal"),
+                new BigDecimal("21.10"), "EUR", "pk_test_1"));
+
+        mockMvc.perform(post("/bids/" + bidId + "/supplements/" + supplementId + "/accept")
+                        .with(authentication(as("uid-s", "SENDER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rail").value("STRIPE"))
+                .andExpect(jsonPath("$.clientSecret").value("pi_1_secret_x"))
+                .andExpect(jsonPath("$.publishableKey").value("pk_test_1"))
+                .andExpect(jsonPath("$.paymentMethodTypes[1]").value("paypal"))
+                .andExpect(jsonPath("$.amount").value(21.10))
+                .andExpect(jsonPath("$.currency").value("EUR"))
+                .andExpect(jsonPath("$.supplement.status").value("PAYMENT_PENDING"))
+                .andExpect(jsonPath("$.supplement.netAmount").doesNotExist());
+    }
+
+    @Test
+    void confirmationDuPaiement_expediteur_vueSansNet() throws Exception {
+        when(paymentFlow.confirmPayment(bidId, supplementId, "uid-s")).thenReturn(response("PAID", true));
+
+        mockMvc.perform(post("/bids/" + bidId + "/supplements/" + supplementId + "/confirm-payment")
+                        .with(authentication(as("uid-s", "SENDER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PAID"))
+                .andExpect(jsonPath("$.netAmount").doesNotExist())
+                .andExpect(jsonPath("$.grossAmount").value(21.10));
+    }
+
+    @Test
+    void confirmationDuPaiement_stripeInjoignable_502ProblemJson() throws Exception {
+        when(paymentFlow.confirmPayment(bidId, supplementId, "uid-s"))
+                .thenThrow(com.yadony.api.common.stripe.StripeUnavailable.exception());
+
+        mockMvc.perform(post("/bids/" + bidId + "/supplements/" + supplementId + "/confirm-payment")
+                        .with(authentication(as("uid-s", "SENDER"))))
+                .andExpect(status().isBadGateway())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("stripe-unavailable"));
     }
 }

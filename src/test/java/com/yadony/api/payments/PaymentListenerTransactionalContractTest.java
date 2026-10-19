@@ -4,6 +4,7 @@ import com.yadony.api.matching.AnnouncementService;
 import com.yadony.api.payments.mobilemoney.MobileMoneyDepositOutcomeListener;
 import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutOutcomeListener;
 import com.yadony.api.payments.mobilemoney.MobileMoneyRefundOutcomeListener;
+import com.yadony.api.payments.supplement.BidSupplementCardListener;
 import com.yadony.api.payments.supplement.BidSupplementTerminationListener;
 import com.yadony.api.payments.wallet.WalletTopupOutcomeListener;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -96,7 +97,13 @@ class PaymentListenerTransactionalContractTest {
                 Arguments.of(DeliveryEventListener.class, "handleDeliveryConfirmed"),
                 Arguments.of(DeliveryEventListener.class, "handleParcelUnclaimed"),
                 Arguments.of(NegotiationCaptureListener.class, "onEscrowReady"),
-                Arguments.of(BidAcceptedEventListener.class, "onBidAccepted")
+                Arguments.of(BidAcceptedEventListener.class, "onBidAccepted"),
+                // Supplément de prix, rail carte (plan B2) : annulation de la PaymentIntent, Refund et
+                // Transfer du supplément. Chaque étape ouvre ses transactions courtes
+                // (BidSupplementCardLedger) autour de l'appel Stripe, jamais une transaction englobante.
+                Arguments.of(BidSupplementCardListener.class, "onClosed"),
+                Arguments.of(BidSupplementCardListener.class, "onRefundRequested"),
+                Arguments.of(BidSupplementCardListener.class, "onPaymentReleased")
         );
     }
 

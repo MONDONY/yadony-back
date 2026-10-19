@@ -24,8 +24,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.RepeatedTest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -77,26 +75,6 @@ class BidSupplementConcurrencyIT {
         registry.add("spring.jpa.database-platform", () -> "org.hibernate.dialect.PostgreSQLDialect");
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
         registry.add("spring.flyway.enabled", () -> true);
-    }
-
-    /** Rail carte factice : la création n'a besoin que de son existence. */
-    @TestConfiguration
-    static class CardRail {
-        @Bean
-        BidSupplementRailHandler testCardRail() {
-            return new BidSupplementRailHandler() {
-                @Override
-                public BidSupplementRail rail() {
-                    return BidSupplementRail.STRIPE;
-                }
-
-                @Override
-                public com.yadony.api.payments.supplement.dto.SupplementAcceptResponse accept(
-                        BidSupplementEntity supplement, UserEntity sender) {
-                    throw new UnsupportedOperationException();
-                }
-            };
-        }
     }
 
     @Autowired BidSupplementService supplementService;
@@ -226,7 +204,8 @@ class BidSupplementConcurrencyIT {
         user.setStatus(UserStatus.ACTIVE);
         user.setKycStatus(KycStatus.PENDING);
         user.setRoles(Set.of(Role.TRAVELER, Role.SENDER));
-        user.setStripeAccountStatus(StripeAccountStatus.NOT_CREATED);
+        user.setStripeAccountStatus(stripeAccountId == null ? StripeAccountStatus.NOT_CREATED
+                : StripeAccountStatus.ONBOARDING_COMPLETE);
         user.setStripeAccountId(stripeAccountId);
         return userRepository.saveAndFlush(user);
     }

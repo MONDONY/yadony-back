@@ -908,14 +908,10 @@ public class PaymentService {
     // ── Support YadonyPaymentSheet : customer + cartes enregistrées ─────────────
 
     /**
-     * Garantit un customer Stripe pour l'utilisateur (créé et persisté si absent).
-     * Même pattern que CashCommissionService#ensureStripeCustomer.
-     */
-    /**
      * Langue de la page PayPal : celle choisie par le payeur dans l'app. Sans elle,
      * PayPal suit la langue du navigateur et s'ouvrait en anglais (FLUTTER-NT).
      */
-    static PaymentIntentCreateParams.PaymentMethodOptions.Paypal paypalOptions(UserEntity payer) {
+    public static PaymentIntentCreateParams.PaymentMethodOptions.Paypal paypalOptions(UserEntity payer) {
         PaymentIntentCreateParams.PaymentMethodOptions.Paypal.PreferredLocale locale =
                 payer.getPreferredLanguage() == AppLanguage.EN
                         ? PaymentIntentCreateParams.PaymentMethodOptions.Paypal.PreferredLocale.EN_GB
@@ -925,7 +921,12 @@ public class PaymentService {
                 .build();
     }
 
-    private String ensureStripeCustomer(UserEntity user) throws StripeException {
+    /**
+     * Garantit un customer Stripe pour l'utilisateur (créé et persisté si absent).
+     * Même pattern que CashCommissionService#ensureStripeCustomer. Public pour le supplément de
+     * prix (paiement carte de l'expéditeur avec ses cartes enregistrées).
+     */
+    public String ensureStripeCustomer(UserEntity user) throws StripeException {
         if (user.getStripeCustomerId() != null) {
             return user.getStripeCustomerId();
         }

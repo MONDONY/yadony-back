@@ -20,8 +20,20 @@ public interface BidSupplementRailHandler {
     default void onCreated(BidSupplementEntity supplement) {
     }
 
-    /** Acceptation par l'expéditeur d'une demande {@code PROPOSED} ou {@code PAYMENT_PENDING}, non échue. */
+    /**
+     * Acceptation par l'expéditeur d'une demande {@code PROPOSED} ou {@code PAYMENT_PENDING}, non
+     * échue, dans la transaction et sous les verrous du colis et de la demande : aucun appel
+     * prestataire ici.
+     */
     SupplementAcceptResponse accept(BidSupplementEntity supplement, UserEntity sender);
+
+    /**
+     * Suite de l'acceptation, APRÈS le commit de {@link #accept} et hors de toute transaction : le
+     * rail carte y crée (ou réutilise) le PaymentIntent. Par défaut, la réponse de {@link #accept}.
+     */
+    default SupplementAcceptResponse afterAcceptCommit(SupplementAcceptResponse prepared) {
+        return prepared;
+    }
 
     /**
      * Une demande {@code PAYMENT_PENDING} échue peut-elle être close maintenant ? Un dépôt mobile

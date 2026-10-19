@@ -62,6 +62,7 @@ class BidSupplementSummaryAdapterTest {
         announcement.setDepartureAt(OffsetDateTime.ofInstant(NOW.plusSeconds(86_400), ZoneOffset.UTC));
         when(repository.findByBidIdOrderByCreatedAtDesc(bid.getId())).thenReturn(stored);
         traveler.setStripeAccountId("acct_1");
+        traveler.setStripeAccountStatus(com.yadony.api.auth.StripeAccountStatus.ONBOARDING_COMPLETE);
         when(users.findById(travelerId)).thenReturn(java.util.Optional.of(traveler));
     }
 
