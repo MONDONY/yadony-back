@@ -11,11 +11,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.springframework.cache.concurrent.ConcurrentMapCacheManager;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
+import org.springframework.orm.jpa.JpaSystemException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
@@ -34,9 +36,12 @@ import java.util.UUID;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -64,6 +69,7 @@ class CommissionGridServiceTest {
     private AuditService auditService;
     private PlatformSettingsService settings;
     private MutableClock clock;
+    private CommissionGridWriteLock writeLock;
     private CommissionGridService service;
     private final List<CommissionGridEntity> stored = new ArrayList<>();
 
@@ -85,8 +91,9 @@ class CommissionGridServiceTest {
             stored.add(e);
             return e;
         });
+        writeLock = mock(CommissionGridWriteLock.class);
         service = new CommissionGridService(repository, auditService, settings,
-                new ConcurrentMapCacheManager("commission-grids"), clock);
+                new ConcurrentMapCacheManager("commission-grids"), writeLock, clock);
     }
 
     // ── Fabriques ────────────────────────────────────────────────────────────────
@@ -413,6 +420,49 @@ class CommissionGridServiceTest {
 
         assertThat(thrown(() -> service.cancel(inForce.getId(), ADMIN)).getErrorCode())
                 .isEqualTo("commission-grid-already-effective");
+    }
+
+    @Test
+    @DisplayName("la date d'effet passe entre le contrôle et l'écriture : refus du trigger traduit en 409")
+    void cancel_triggerRefusesAtFlush_409() {
+        CommissionGridEntity scheduled = given(T0.plusSeconds(1), tiers776(), minimums());
+        when(repository.findById(scheduled.getId())).thenReturn(Optional.of(scheduled));
+        // Forme réelle : PSQLException « ERROR: commission_grid_immutable » enveloppée par Hibernate puis Spring.
+        doThrow(new JpaSystemException(new RuntimeException("could not execute statement",
+                new java.sql.SQLException("ERROR: commission_grid_immutable\n  Détail : operation UPDATE interdite"))))
+                .when(repository).flush();
+
+        YadonyBusinessException e = thrown(() -> service.cancel(scheduled.getId(), ADMIN));
+
+        assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(e.getErrorCode()).isEqualTo("commission-grid-already-effective");
+    }
+
+    @Test
+    @DisplayName("un autre échec d'écriture à l'annulation n'est pas maquillé en 409")
+    void cancel_otherFlushFailure_isRethrown() {
+        CommissionGridEntity scheduled = given(T0.plusDays(1), tiers776(), minimums());
+        when(repository.findById(scheduled.getId())).thenReturn(Optional.of(scheduled));
+        JpaSystemException failure = new JpaSystemException(new RuntimeException("connexion perdue"));
+        doThrow(failure).when(repository).flush();
+
+        assertThatThrownBy(() -> service.cancel(scheduled.getId(), ADMIN)).isSameAs(failure);
+    }
+
+    @Test
+    @DisplayName("programmer et annuler prennent le verrou des grilles avant toute lecture")
+    void scheduleAndCancel_takeTheWriteLockFirst() {
+        CommissionGridEntity scheduled = given(T0.plusDays(40), tiers776(), minimums());
+        when(repository.findById(scheduled.getId())).thenReturn(Optional.of(scheduled));
+        InOrder order = inOrder(writeLock, repository);
+
+        service.schedule(draft(tiers776(), minimums(), T0.plusDays(50)), Set.of(), ADMIN);
+        order.verify(writeLock).acquire();
+        order.verify(repository).findAllByOrderByEffectiveFromDesc();
+
+        service.cancel(scheduled.getId(), ADMIN);
+        order.verify(writeLock).acquire();
+        order.verify(repository).findById(scheduled.getId());
     }
 
     @Test

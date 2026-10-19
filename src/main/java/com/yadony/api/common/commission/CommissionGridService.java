@@ -52,6 +52,8 @@ public class CommissionGridService {
 
     private static final String AUDIT_ENTITY = "COMMISSION_GRID";
     private static final String VALIDATION = "validation";
+    /** Message du {@code RAISE EXCEPTION} du trigger d'immuabilité des grilles (V331). */
+    private static final String IMMUTABLE_TRIGGER_MESSAGE = "commission_grid_immutable";
 
     /** Une date d'effet un peu passée (délai de saisie, horloge du navigateur) est ramenée à maintenant. */
     private static final Duration PAST_TOLERANCE = Duration.ofMinutes(5);
@@ -69,20 +71,24 @@ public class CommissionGridService {
     private final AuditService auditService;
     private final PlatformSettingsService settings;
     private final CacheManager cacheManager;
+    private final CommissionGridWriteLock writeLock;
     private final Clock clock;
 
     @Autowired
     public CommissionGridService(CommissionGridRepository repository, AuditService auditService,
-                                 PlatformSettingsService settings, CacheManager cacheManager) {
-        this(repository, auditService, settings, cacheManager, Clock.systemUTC());
+                                 PlatformSettingsService settings, CacheManager cacheManager,
+                                 CommissionGridWriteLock writeLock) {
+        this(repository, auditService, settings, cacheManager, writeLock, Clock.systemUTC());
     }
 
     CommissionGridService(CommissionGridRepository repository, AuditService auditService,
-                          PlatformSettingsService settings, CacheManager cacheManager, Clock clock) {
+                          PlatformSettingsService settings, CacheManager cacheManager,
+                          CommissionGridWriteLock writeLock, Clock clock) {
         this.repository = repository;
         this.auditService = auditService;
         this.settings = settings;
         this.cacheManager = cacheManager;
+        this.writeLock = writeLock;
         this.clock = clock;
     }
 
@@ -148,6 +154,8 @@ public class CommissionGridService {
      */
     @Transactional
     public CommissionGrid schedule(CommissionGridDraft draft, Set<CommissionGridWarning> acknowledged, UUID adminId) {
+        // Avant toute lecture : une programmation concurrente est validée, donc vue et remplacée ici.
+        writeLock.acquire();
         LocalDateTime now = now();
         LocalDateTime effectiveFrom = validatedEffectiveFrom(draft, now);
 
@@ -185,18 +193,28 @@ public class CommissionGridService {
      * Annule (suppression logique) une grille programmée.
      *
      * @throws YadonyBusinessException 404 {@code commission-grid-not-found} ; 409
-     *         {@code commission-grid-already-effective} si la grille est déjà en vigueur
+     *         {@code commission-grid-already-effective} si la grille est déjà en vigueur, y compris
+     *         quand elle le devient entre ce contrôle et l'écriture (refus du trigger de V331)
      */
     @Transactional
     public void cancel(UUID id, UUID adminId) {
+        writeLock.acquire();
         CommissionGridEntity entity = repository.findById(id).orElseThrow(CommissionGridService::notFound);
         LocalDateTime now = now();
         if (!entity.getEffectiveFrom().isAfter(now)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "commission-grid-already-effective",
-                    "Commission Grid Already Effective",
-                    "Une grille déjà en vigueur ne peut pas être annulée : programmez-en une nouvelle.");
+            throw alreadyEffective();
         }
         cancelEntity(entity, now, adminId, Map.of("reason", "CANCELLED"));
+        // Écrit tout de suite, pas au commit : un refus du trigger (date d'effet atteinte entre le
+        // contrôle et l'écriture, ou horloge de la base en avance) devient ici le même 409, pas un 500.
+        try {
+            repository.flush();
+        } catch (RuntimeException e) {
+            if (isImmutableGridRefusal(e)) {
+                throw alreadyEffective();
+            }
+            throw e;
+        }
         evictAfterCommit();
     }
 
@@ -393,6 +411,22 @@ public class CommissionGridService {
         payload.put("effectiveFrom", entity.getEffectiveFrom().toString());
         payload.putAll(extra);
         auditService.log(AUDIT_ENTITY, entity.getId(), "COMMISSION_GRID_CANCELLED", adminId, payload);
+    }
+
+    /** Refus levé par le trigger d'immuabilité de V331, quelle que soit l'exception Spring qui l'enveloppe. */
+    private static boolean isImmutableGridRefusal(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t.getMessage() != null && t.getMessage().contains(IMMUTABLE_TRIGGER_MESSAGE)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static YadonyBusinessException alreadyEffective() {
+        return new YadonyBusinessException(HttpStatus.CONFLICT, "commission-grid-already-effective",
+                "Commission Grid Already Effective",
+                "Une grille déjà en vigueur ne peut pas être annulée : programmez-en une nouvelle.");
     }
 
     private static YadonyBusinessException notFound() {
