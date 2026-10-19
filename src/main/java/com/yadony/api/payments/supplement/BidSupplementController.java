@@ -60,7 +60,18 @@ public class BidSupplementController {
     @PreAuthorize("hasRole('TRAVELER')")
     public ResponseEntity<BidSupplementResponse> create(@PathVariable UUID bidId,
                                                         @Valid @RequestBody CreateSupplementRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(service.create(bidId, firebaseUid(), request));
+        return ResponseEntity.status(HttpStatus.CREATED).body(paymentFlow.create(bidId, firebaseUid(), request));
+    }
+
+    /**
+     * Rail espèces : après la 3DS de la carte commission ({@code commissionClientSecret} de la
+     * création), relit la PaymentIntent et enregistre la commission ; la demande passe alors à
+     * l'expéditeur ({@code PROPOSED}). Idempotent ; vue du voyageur.
+     */
+    @PostMapping("/bids/{bidId}/supplements/{supplementId}/commission/confirm")
+    @PreAuthorize("hasRole('TRAVELER')")
+    public BidSupplementResponse confirmCommission(@PathVariable UUID bidId, @PathVariable UUID supplementId) {
+        return paymentFlow.confirmCommission(bidId, supplementId, firebaseUid());
     }
 
     @DeleteMapping("/bids/{bidId}/supplements/{supplementId}")

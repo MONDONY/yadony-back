@@ -70,6 +70,10 @@ public class BidSupplementNotificationListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onWithdrawn(BidSupplementWithdrawnEvent e) {
+        if (e.previousStatus() == com.yadony.api.payments.supplement.BidSupplementStatus.COMMISSION_PENDING) {
+            // Retirée avant que sa commission (espèces) ne soit prélevée : l'expéditeur n'en a jamais été prévenu.
+            return;
+        }
         notify(e.senderId(), NotificationTexts.bidSupplementWithdrawn(dispatcher.messagesFor(e.senderId())),
                 BidSupplementNotifications.WITHDRAWN, e.bidId(), e.supplementId());
     }

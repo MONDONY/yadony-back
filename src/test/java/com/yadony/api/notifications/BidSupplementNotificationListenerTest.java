@@ -105,6 +105,13 @@ class BidSupplementNotificationListenerTest {
     }
 
     @Test
+    void retireAvantLaCommissionEspeces_expediteurJamaisPrevenu() {
+        listener.onWithdrawn(new BidSupplementWithdrawnEvent(supplementId, bidId, senderId, travelerId,
+                BidSupplementRail.CASH, BidSupplementStatus.COMMISSION_PENDING));
+        org.mockito.Mockito.verifyNoInteractions(dispatcher);
+    }
+
+    @Test
     void rembourse_expediteurOuCommissionAuVoyageur() {
         listener.onRefunded(new BidSupplementRefundedEvent(supplementId, bidId, senderId,
                 new BigDecimal("21.10"), "EUR", false));

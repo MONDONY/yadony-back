@@ -3,6 +3,7 @@ package com.yadony.api.payments.supplement;
 import com.yadony.api.common.TransientLockRetry;
 import com.yadony.api.matching.dto.BidSupplementResponse;
 import com.yadony.api.payments.PaymentBusy;
+import com.yadony.api.payments.supplement.dto.CreateSupplementRequest;
 import com.yadony.api.payments.supplement.dto.SupplementAcceptResponse;
 import org.springframework.stereotype.Component;
 
@@ -25,17 +26,39 @@ public class BidSupplementPaymentFlow {
 
     private final BidSupplementService service;
     private final BidSupplementCardRail cardRail;
+    private final BidSupplementCashRail cashRail;
     private final Map<BidSupplementRail, BidSupplementRailHandler> handlers = new EnumMap<>(BidSupplementRail.class);
 
     public BidSupplementPaymentFlow(BidSupplementService service, BidSupplementCardRail cardRail,
-                                    List<BidSupplementRailHandler> handlers) {
+                                    BidSupplementCashRail cashRail, List<BidSupplementRailHandler> handlers) {
         this.service = service;
         this.cardRail = cardRail;
+        this.cashRail = cashRail;
         handlers.forEach(h -> {
             if (h.rail() != null) {
                 this.handlers.putIfAbsent(h.rail(), h);
             }
         });
+    }
+
+    /**
+     * Création en deux temps, comme l'acceptation : la transaction de
+     * {@link BidSupplementService#create} (verrou du colis, commission prélevée sur le solde pour
+     * les espèces), puis, APRÈS son commit, {@link BidSupplementRailHandler#afterCreateCommit}
+     * (débit de la carte commission, rail espèces).
+     */
+    public BidSupplementResponse create(UUID bidId, String firebaseUid, CreateSupplementRequest request) {
+        BidSupplementResponse created = TransientLockRetry.run("supplement create " + bidId,
+                () -> service.create(bidId, firebaseUid, request), conflict -> PaymentBusy.exception());
+        BidSupplementRailHandler handler = created.rail() == null ? null
+                : handlers.get(BidSupplementRail.valueOf(created.rail()));
+        return handler == null ? created : handler.afterCreateCommit(created);
+    }
+
+    /** Rail espèces, après la 3DS du voyageur : voir {@link BidSupplementCashRail#confirmCommission}. */
+    public BidSupplementResponse confirmCommission(UUID bidId, UUID supplementId, String firebaseUid) {
+        return TransientLockRetry.run("supplement commission confirm " + supplementId,
+                () -> cashRail.confirmCommission(bidId, supplementId, firebaseUid), conflict -> PaymentBusy.exception());
     }
 
     public SupplementAcceptResponse accept(UUID bidId, UUID supplementId, String firebaseUid) {

@@ -23,13 +23,14 @@ class BidSupplementPaymentFlowTest {
     private final BidSupplementService service = mock(BidSupplementService.class);
     private final BidSupplementCardRail cardRail = mock(BidSupplementCardRail.class);
     private final BidSupplementRailHandler cashRail = mock(BidSupplementRailHandler.class);
+    private final BidSupplementCashRail cashComponent = mock(BidSupplementCashRail.class);
     private final UUID bidId = UUID.randomUUID();
     private final UUID id = UUID.randomUUID();
 
     private BidSupplementPaymentFlow flow() {
         when(cardRail.rail()).thenReturn(BidSupplementRail.STRIPE);
         when(cashRail.rail()).thenReturn(null);
-        return new BidSupplementPaymentFlow(service, cardRail, List.of(cardRail, cashRail));
+        return new BidSupplementPaymentFlow(service, cardRail, cashComponent, List.of(cardRail, cashRail));
     }
 
     private static SupplementAcceptResponse prepared(String rail) {

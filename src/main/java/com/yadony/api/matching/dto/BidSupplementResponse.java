@@ -21,6 +21,10 @@ import java.util.UUID;
  * @param expiresAt      échéance de réponse de l'expéditeur (UTC).
  * @param blocksHandover vrai tant que la demande attend une réponse ou un paiement : le scan de
  *                       remise (DEPART) est refusé en 409 {@code handover-supplement-pending}.
+ * @param commissionClientSecret rail espèces, voyageur seulement : client secret du PaymentIntent de
+ *                       la commission du supplément quand la carte demande une authentification
+ *                       (3DS, statut {@code COMMISSION_PENDING}). Renseigné uniquement dans la
+ *                       réponse de la création et de {@code …/commission/confirm} ; nul partout ailleurs.
  */
 public record BidSupplementResponse(
         UUID id,
@@ -37,5 +41,23 @@ public record BidSupplementResponse(
         OffsetDateTime expiresAt,
         OffsetDateTime paidAt,
         String commissionStatus,
-        boolean blocksHandover
-) {}
+        boolean blocksHandover,
+        String commissionClientSecret
+) {
+
+    /** Sans client secret de commission : toutes les vues sauf la création espèces en 3DS. */
+    public BidSupplementResponse(UUID id, String status, String rail, String currency, BigDecimal netAmount,
+                                 BigDecimal commissionAmount, BigDecimal grossAmount, String reasonCode,
+                                 String reasonText, String gridItemLabel, String photoUrl, OffsetDateTime expiresAt,
+                                 OffsetDateTime paidAt, String commissionStatus, boolean blocksHandover) {
+        this(id, status, rail, currency, netAmount, commissionAmount, grossAmount, reasonCode, reasonText,
+                gridItemLabel, photoUrl, expiresAt, paidAt, commissionStatus, blocksHandover, null);
+    }
+
+    /** Même vue, avec le client secret de la 3DS de la commission. */
+    public BidSupplementResponse withCommissionClientSecret(String clientSecret) {
+        return new BidSupplementResponse(id, status, rail, currency, netAmount, commissionAmount, grossAmount,
+                reasonCode, reasonText, gridItemLabel, photoUrl, expiresAt, paidAt, commissionStatus, blocksHandover,
+                clientSecret);
+    }
+}

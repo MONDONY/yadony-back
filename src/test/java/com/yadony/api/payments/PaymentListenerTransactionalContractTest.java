@@ -5,6 +5,7 @@ import com.yadony.api.payments.mobilemoney.MobileMoneyDepositOutcomeListener;
 import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutOutcomeListener;
 import com.yadony.api.payments.mobilemoney.MobileMoneyRefundOutcomeListener;
 import com.yadony.api.payments.supplement.BidSupplementCardListener;
+import com.yadony.api.payments.supplement.BidSupplementCashListener;
 import com.yadony.api.payments.supplement.BidSupplementMobileMoneyListener;
 import com.yadony.api.payments.supplement.BidSupplementOutcomeListener;
 import com.yadony.api.payments.supplement.BidSupplementTerminationListener;
@@ -113,7 +114,12 @@ class PaymentListenerTransactionalContractTest {
                 // Rail mobile money (plan B3) : payout et refund pawaPay du supplément, même règle
                 // (transactions courtes autour de l'appel réseau, jamais une transaction englobante).
                 Arguments.of(BidSupplementMobileMoneyListener.class, "onRefundRequested"),
-                Arguments.of(BidSupplementMobileMoneyListener.class, "onPaymentReleased")
+                Arguments.of(BidSupplementMobileMoneyListener.class, "onPaymentReleased"),
+                // Rail espèces (plan B4) : commission du supplément rendue au voyageur (Refund Stripe ou
+                // recrédit du solde), PaymentIntent de commission annulée ; transactions courtes autour
+                // de l'appel Stripe (BidSupplementCashLedger), jamais une transaction englobante.
+                Arguments.of(BidSupplementCashListener.class, "onClosed"),
+                Arguments.of(BidSupplementCashListener.class, "onRefundRequested")
         );
     }
 

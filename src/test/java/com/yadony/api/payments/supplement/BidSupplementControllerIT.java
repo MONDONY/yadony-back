@@ -73,7 +73,7 @@ class BidSupplementControllerIT {
 
     @Test
     void create_voyageur_201() throws Exception {
-        when(service.create(eq(bidId), eq("uid-t"), any(CreateSupplementRequest.class)))
+        when(paymentFlow.create(eq(bidId), eq("uid-t"), any(CreateSupplementRequest.class)))
                 .thenReturn(response("PROPOSED", false));
 
         mockMvc.perform(post("/bids/" + bidId + "/supplements").with(authentication(as("uid-t", "SENDER", "TRAVELER")))
@@ -92,12 +92,12 @@ class BidSupplementControllerIT {
                         .contentType(MediaType.APPLICATION_JSON).content("{\"netAmount\": 20, \"reasonCode\": \"OTHER\"}"))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON));
-        verifyNoInteractions(service);
+        verifyNoInteractions(service, paymentFlow);
     }
 
     @Test
     void create_erreurMetier_problemJsonAvecCodeEtProprietes() throws Exception {
-        when(service.create(eq(bidId), eq("uid-t"), any())).thenThrow(new YadonyBusinessException(
+        when(paymentFlow.create(eq(bidId), eq("uid-t"), any())).thenThrow(new YadonyBusinessException(
                 HttpStatus.UNPROCESSABLE_ENTITY, "supplement-amount-out-of-range", "Supplement Amount Out Of Range",
                 "hors bornes", Map.of("min", new BigDecimal("1.00"), "max", new BigDecimal("300.00"), "currency", "EUR")));
 
@@ -118,7 +118,7 @@ class BidSupplementControllerIT {
         mockMvc.perform(post("/bids/" + bidId + "/supplements").with(authentication(as("uid-s", "SENDER")))
                         .contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY.formatted(bidId)))
                 .andExpect(status().isForbidden());
-        verifyNoInteractions(service);
+        verifyNoInteractions(service, paymentFlow);
     }
 
     @Test
@@ -313,5 +313,105 @@ class BidSupplementControllerIT {
         mockMvc.perform(post("/bids/" + bidId + "/supplements/" + supplementId + "/mobile-money/providers")
                         .with(authentication(as("uid-s", "SENDER"))))
                 .andExpect(status().isOk());
+    }
+    // ── Rail espèces (B4) ────────────────────────────────────────────────────
+
+    private BidSupplementResponse cashPending(String clientSecret) {
+        return new BidSupplementResponse(supplementId, "COMMISSION_PENDING", "CASH", "EUR", new BigDecimal("20.00"),
+                new BigDecimal("1.10"), new BigDecimal("21.10"), "GRID_ITEM", null, null, "https://signed",
+                OffsetDateTime.parse("2026-10-19T12:00:00Z"), null, "REQUIRES_3DS", true, clientSecret);
+    }
+
+    @Test
+    void create_especesCarte3ds_clientSecretDeCommission() throws Exception {
+        when(paymentFlow.create(eq(bidId), eq("uid-t"), any(CreateSupplementRequest.class)))
+                .thenReturn(cashPending("pi_c_secret"));
+
+        mockMvc.perform(post("/bids/" + bidId + "/supplements").with(authentication(as("uid-t", "TRAVELER")))
+                        .contentType(MediaType.APPLICATION_JSON).content("""
+                                {"netAmount": 20, "reasonCode": "GRID_ITEM", "photoKey": "tracking/%s/1.jpg",
+                                 "commissionSource": "CARD", "fundingCurrency": "XOF"}
+                                """.formatted(bidId)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("COMMISSION_PENDING"))
+                .andExpect(jsonPath("$.commissionStatus").value("REQUIRES_3DS"))
+                .andExpect(jsonPath("$.commissionClientSecret").value("pi_c_secret"));
+
+        org.mockito.ArgumentCaptor<CreateSupplementRequest> request =
+                org.mockito.ArgumentCaptor.forClass(CreateSupplementRequest.class);
+        verify(paymentFlow).create(eq(bidId), eq("uid-t"), request.capture());
+        org.assertj.core.api.Assertions.assertThat(request.getValue().commissionSource())
+                .isEqualTo(com.yadony.api.payments.cash.CommissionSource.CARD);
+        org.assertj.core.api.Assertions.assertThat(request.getValue().fundingCurrency()).isEqualTo("XOF");
+    }
+
+    @Test
+    void create_sourceDeCommissionInconnue_rejeteeSansAppel() throws Exception {
+        mockMvc.perform(post("/bids/" + bidId + "/supplements").with(authentication(as("uid-t", "TRAVELER")))
+                        .contentType(MediaType.APPLICATION_JSON).content("""
+                                {"netAmount": 20, "reasonCode": "GRID_ITEM", "photoKey": "tracking/%s/1.jpg",
+                                 "commissionSource": "BITCOIN"}
+                                """.formatted(bidId)))
+                .andExpect(status().is4xxClientError());
+        verifyNoInteractions(paymentFlow);
+    }
+
+    @Test
+    void create_especesSoldeCourt_422AvecAlternatives() throws Exception {
+        Map<String, Object> props = new java.util.LinkedHashMap<>();
+        props.put("availableBalance", new BigDecimal("0.40"));
+        props.put("requiredCommission", new BigDecimal("1.10"));
+        props.put("shortfall", new BigDecimal("0.70"));
+        props.put("hasCard", false);
+        props.put("currency", "EUR");
+        props.put("bidCurrency", "EUR");
+        props.put("alternatives", List.of(new com.yadony.api.payments.cash.dto.FundingAlternativeDto("XOF",
+                new BigDecimal("5000"), new BigDecimal("722"))));
+        when(paymentFlow.create(eq(bidId), eq("uid-t"), any())).thenThrow(new YadonyBusinessException(
+                HttpStatus.UNPROCESSABLE_ENTITY, "supplement-commission-unfunded", "Supplement Commission Unfunded",
+                "solde court", props));
+
+        mockMvc.perform(post("/bids/" + bidId + "/supplements").with(authentication(as("uid-t", "TRAVELER")))
+                        .contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY.formatted(bidId)))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("supplement-commission-unfunded"))
+                .andExpect(jsonPath("$.shortfall").value(0.70))
+                .andExpect(jsonPath("$.hasCard").value(false))
+                .andExpect(jsonPath("$.alternatives[0].currency").value("XOF"))
+                .andExpect(jsonPath("$.alternatives[0].required").value(722));
+    }
+
+    @Test
+    void confirmerCommission_voyageur200_expediteurSeul403() throws Exception {
+        when(paymentFlow.confirmCommission(bidId, supplementId, "uid-t")).thenReturn(response("PROPOSED", false));
+
+        mockMvc.perform(post("/bids/" + bidId + "/supplements/" + supplementId + "/commission/confirm")
+                        .with(authentication(as("uid-t", "TRAVELER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PROPOSED"))
+                .andExpect(jsonPath("$.netAmount").value(20.00));
+        mockMvc.perform(post("/bids/" + bidId + "/supplements/" + supplementId + "/commission/confirm")
+                        .with(authentication(as("uid-s", "SENDER"))))
+                .andExpect(status().isForbidden());
+        verify(paymentFlow).confirmCommission(bidId, supplementId, "uid-t");
+    }
+
+    @Test
+    void accepter_especes_payeSansClientSecret() throws Exception {
+        BidSupplementResponse paid = new BidSupplementResponse(supplementId, "PAID", "CASH", "EUR", null, null,
+                new BigDecimal("21.10"), "GRID_ITEM", null, null, "https://signed",
+                OffsetDateTime.parse("2026-10-19T12:00:00Z"), OffsetDateTime.parse("2026-10-19T10:05:00Z"), null, false);
+        when(paymentFlow.accept(bidId, supplementId, "uid-s")).thenReturn(new SupplementAcceptResponse(paid, "CASH",
+                null, null, new BigDecimal("21.10"), "EUR"));
+
+        mockMvc.perform(post("/bids/" + bidId + "/supplements/" + supplementId + "/accept")
+                        .with(authentication(as("uid-s", "SENDER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rail").value("CASH"))
+                .andExpect(jsonPath("$.clientSecret").doesNotExist())
+                .andExpect(jsonPath("$.amount").value(21.10))
+                .andExpect(jsonPath("$.supplement.status").value("PAID"))
+                .andExpect(jsonPath("$.supplement.netAmount").doesNotExist());
     }
 }

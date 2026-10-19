@@ -41,6 +41,14 @@ public interface BidSupplementRepository extends JpaRepository<BidSupplementEnti
 
     long countByBidId(UUID bidId);
 
+    /**
+     * Demandes du colis qui comptent dans le plafond {@code max-per-bid} : toutes, sauf celles
+     * closes sans jamais avoir atteint l'expéditeur ({@code closedReasons}, rail espèces).
+     */
+    @Query("SELECT COUNT(s) FROM BidSupplementEntity s WHERE s.bidId = :bidId "
+            + "AND (s.closedReason IS NULL OR s.closedReason NOT IN :closedReasons)")
+    long countTowardLimit(@Param("bidId") UUID bidId, @Param("closedReasons") Collection<String> closedReasons);
+
     /** Filet : demandes encore ouvertes dont l'échéance est passée. */
     @Query("SELECT s.id FROM BidSupplementEntity s WHERE s.status IN :statuses AND s.expiresAt < :now ORDER BY s.expiresAt")
     List<UUID> findIdsOpenExpiredBefore(@Param("statuses") Collection<BidSupplementStatus> statuses,
@@ -178,4 +186,27 @@ public interface BidSupplementRepository extends JpaRepository<BidSupplementEnti
             """)
     List<UUID> findIdsWithUnappliedMobileMoneyDeposit(@Param("statuses") Collection<BidSupplementStatus> statuses,
                                                       @Param("before") LocalDateTime before, Pageable page);
+
+    // ── Rail espèces (B4) ────────────────────────────────────────────────────
+
+    Optional<BidSupplementEntity> findByCommissionPaymentIntentId(String commissionPaymentIntentId);
+
+    /** Filet espèces : demandes encore en attente de leur commission, créées avant {@code before}. */
+    @Query("SELECT s.id FROM BidSupplementEntity s WHERE s.rail = com.yadony.api.payments.supplement.BidSupplementRail.CASH "
+            + "AND s.status = com.yadony.api.payments.supplement.BidSupplementStatus.COMMISSION_PENDING "
+            + "AND s.createdAt < :before ORDER BY s.createdAt")
+    List<UUID> findIdsAwaitingCommissionBefore(@Param("before") LocalDateTime before, Pageable page);
+
+    /**
+     * Filet espèces : demandes closes (ou remboursées) dont la commission reste à défaire,
+     * inchangées depuis {@code before} : commission prélevée à rendre ({@code CHARGED}), ou
+     * PaymentIntent de commission en 3DS à annuler ({@code REQUIRES_3DS}).
+     */
+    @Query("SELECT s.id FROM BidSupplementEntity s WHERE s.rail = com.yadony.api.payments.supplement.BidSupplementRail.CASH "
+            + "AND s.status IN :statuses AND s.commissionStatus IN :commissionStatuses "
+            + "AND s.updatedAt < :before ORDER BY s.updatedAt")
+    List<UUID> findCashIdsWithCommissionToSettle(@Param("statuses") Collection<BidSupplementStatus> statuses,
+                                                 @Param("commissionStatuses")
+                                                 Collection<com.yadony.api.payments.cash.CommissionStatus> commissionStatuses,
+                                                 @Param("before") LocalDateTime before, Pageable page);
 }

@@ -46,7 +46,7 @@ public class BidSupplementSummaryAdapter implements BidSupplementSummaryPort {
     private final BidSupplementRepository supplements;
     private final BidSupplementWindow window;
     private final BidSupplementProperties properties;
-    private final Set<BidSupplementRail> supportedRails;
+    private final Map<BidSupplementRail, BidSupplementRailHandler> handlers;
     private final StorageService storage;
     private final UserRepository users;
 
@@ -57,8 +57,8 @@ public class BidSupplementSummaryAdapter implements BidSupplementSummaryPort {
         this.window = window;
         this.properties = properties;
         // Un composant sans rail (doublure de test) ne débloque rien, comme dans BidSupplementPaymentFlow.
-        this.supportedRails = handlers.stream().map(BidSupplementRailHandler::rail).filter(java.util.Objects::nonNull)
-                .collect(Collectors.toCollection(() -> EnumSet.noneOf(BidSupplementRail.class)));
+        this.handlers = handlers.stream().filter(h -> h.rail() != null).collect(Collectors.toMap(
+                BidSupplementRailHandler::rail, h -> h, (a, b) -> a, () -> new java.util.EnumMap<>(BidSupplementRail.class)));
         this.storage = storage;
         this.users = users;
     }
@@ -81,9 +81,12 @@ public class BidSupplementSummaryAdapter implements BidSupplementSummaryPort {
     @Override
     public BidSupplementView view(BidEntity bid, AnnouncementEntity announcement, UUID callerId, Prefetch prefetch) {
         List<BidSupplementEntity> all = supplementsOf(bid.getId(), prefetch);
-        BidSupplementEntity shown = all.stream().filter(s -> BidSupplementStatus.ACTIVE.contains(s.getStatus()))
-                .findFirst().orElse(all.isEmpty() ? null : all.get(0));
         boolean forSender = callerId != null && callerId.equals(bid.getSenderId());
+        // L'expéditeur ne voit pas une demande qui ne lui a jamais été adressée (commission espèces
+        // en attente ou refusée) : il ne la retrouverait dans aucune notification.
+        List<BidSupplementEntity> visible = forSender ? all.stream().filter(s -> !hiddenFromSender(s)).toList() : all;
+        BidSupplementEntity shown = visible.stream().filter(s -> BidSupplementStatus.ACTIVE.contains(s.getStatus()))
+                .findFirst().orElse(visible.isEmpty() ? null : visible.get(0));
         boolean paid = shown != null && BidSupplementStatus.PAID_STATES.contains(shown.getStatus());
         return new BidSupplementView(
                 shown == null ? null : BidSupplementViews.of(shown, forSender, storage, window.now()),
@@ -103,7 +106,7 @@ public class BidSupplementSummaryAdapter implements BidSupplementSummaryPort {
         return properties.isEnabled()
                 && announcement != null
                 && callerId != null && callerId.equals(announcement.getTravelerId())
-                && all.size() < properties.getMaxPerBid()
+                && all.stream().filter(s -> !neverProposed(s)).count() < properties.getMaxPerBid()
                 && all.stream().noneMatch(s -> BidSupplementStatus.ACTIVE.contains(s.getStatus()))
                 && window.isOpen(bid, announcement)
                 && railPayable(bid, announcement);
@@ -121,10 +124,25 @@ public class BidSupplementSummaryAdapter implements BidSupplementSummaryPort {
         } catch (YadonyBusinessException legacyRail) {
             return false;
         }
-        return supportedRails.contains(rail)
+        BidSupplementRailHandler handler = handlers.get(rail);
+        return handler != null
                 && users.findById(announcement.getTravelerId())
-                        .map(traveler -> rail.payableBy(traveler, bid.getCurrency()))
+                        .map(traveler -> rail.payableBy(traveler, bid.getCurrency())
+                                && handler.canRequest(traveler, bid.getCurrency()))
                         .orElse(false);
+    }
+
+    /**
+     * Demande close sans avoir atteint l'expéditeur : commission espèces refusée, jamais confirmée,
+     * ou retrait avant la commission. Hors plafond {@code max-per-bid}.
+     */
+    static boolean neverProposed(BidSupplementEntity s) {
+        return s.getClosedReason() != null && BidSupplementService.NEVER_PROPOSED_REASONS.contains(s.getClosedReason());
+    }
+
+    /** L'expéditeur ne voit ni une demande close sans lui avoir été adressée, ni une demande en attente de commission. */
+    static boolean hiddenFromSender(BidSupplementEntity s) {
+        return s.getStatus() == BidSupplementStatus.COMMISSION_PENDING || neverProposed(s);
     }
 
     private List<BidSupplementEntity> supplementsOf(UUID bidId, Prefetch prefetch) {

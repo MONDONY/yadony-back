@@ -51,6 +51,7 @@ class BidSupplementSummaryAdapterTest {
     void setUp() {
         properties.setEnabled(true);
         when(cardRail.rail()).thenReturn(BidSupplementRail.STRIPE);
+        when(cardRail.canRequest(any(), any())).thenReturn(true);
         when(storage.generatePresignedUrl(any(), any())).thenReturn("https://signed");
         bid = new BidEntity();
         setId(bid, UUID.randomUUID());
@@ -229,5 +230,52 @@ class BidSupplementSummaryAdapterTest {
         assertThat(adapter.excusesParcelRefusal(bid.getId())).isTrue();
         latest.setStatus(BidSupplementStatus.COMMISSION_PENDING);
         assertThat(adapter.excusesParcelRefusal(bid.getId())).isTrue();
+    }
+
+    // ── Rail espèces (B4) ────────────────────────────────────────────────────
+
+    @Test
+    void especes_boutonSeulementSiLeVoyageurPeutPayerLaCommission() {
+        BidSupplementRailHandler cash = mock(BidSupplementRailHandler.class);
+        when(cash.rail()).thenReturn(BidSupplementRail.CASH);
+        bid.setPaymentMethod(PaymentMethod.CASH);
+        bid.setCurrency("EUR");
+        traveler.setStripeAccountId(null);
+        when(cash.canRequest(traveler, "EUR")).thenReturn(false, true);
+
+        assertThat(adapter(cash).view(bid, announcement, travelerId, null).requestAllowed())
+                .as("ni solde ni carte commission").isFalse();
+        assertThat(adapter(cash).view(bid, announcement, travelerId, null).requestAllowed()).isTrue();
+    }
+
+    @Test
+    void especes_expediteurNeVoitPasUneDemandeQuiNeLuiAJamaisEteAdressee() {
+        BidSupplementEntity pending = add(BidSupplementStatus.COMMISSION_PENDING, 5);
+        pending.setRail(BidSupplementRail.CASH);
+
+        assertThat(adapter(cardRail).view(bid, announcement, senderId, null).supplement()).isNull();
+        assertThat(adapter(cardRail).view(bid, announcement, travelerId, null).supplement().status())
+                .isEqualTo("COMMISSION_PENDING");
+
+        stored.clear();
+        BidSupplementEntity declined = add(BidSupplementStatus.DECLINED, 30);
+        BidSupplementEntity failed = add(BidSupplementStatus.CANCELLED, 10);
+        failed.setClosedReason(BidSupplementCashLedger.COMMISSION_FAILED);
+
+        assertThat(adapter(cardRail).view(bid, announcement, senderId, null).supplement().id())
+                .as("le dernier clos qu'il a vu").isEqualTo(declined.getId());
+        assertThat(adapter(cardRail).view(bid, announcement, travelerId, null).supplement().id())
+                .isEqualTo(failed.getId());
+    }
+
+    @Test
+    void especes_demandesJamaisProposeesHorsPlafond() {
+        add(BidSupplementStatus.DECLINED, 40);
+        add(BidSupplementStatus.CANCELLED, 30).setClosedReason(BidSupplementCashLedger.COMMISSION_NOT_CONFIRMED);
+        add(BidSupplementStatus.WITHDRAWN, 20).setClosedReason("WITHDRAWN_BEFORE_COMMISSION");
+
+        assertThat(adapter(cardRail).view(bid, announcement, travelerId, null).requestAllowed()).isTrue();
+        add(BidSupplementStatus.WITHDRAWN, 10).setClosedReason("WITHDRAWN_BY_TRAVELER");
+        assertThat(adapter(cardRail).view(bid, announcement, travelerId, null).requestAllowed()).isFalse();
     }
 }

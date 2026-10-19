@@ -65,6 +65,14 @@ public class BidSupplementService {
     public static final Set<BidStatus> TERMINAL_UNDELIVERED = EnumSet.of(BidStatus.CANCELLED, BidStatus.REJECTED,
             BidStatus.EXPIRED, BidStatus.NO_SHOW, BidStatus.PARCEL_REFUSED);
 
+    /**
+     * Demandes qui n'ont jamais atteint l'expéditeur (commission espèces refusée, 3DS jamais
+     * confirmée, retrait avant la commission) : elles ne comptent pas dans le plafond
+     * {@code max-per-bid} et l'expéditeur ne les voit pas.
+     */
+    public static final Set<String> NEVER_PROPOSED_REASONS = Set.of(BidSupplementCashLedger.COMMISSION_FAILED,
+            BidSupplementCashLedger.COMMISSION_NOT_CONFIRMED, "WITHDRAWN_BEFORE_COMMISSION");
+
     /** Supplément payé, pas encore remboursé : à rendre si le colis finit sans livraison. */
     static final Set<BidSupplementStatus> SETTLING = EnumSet.of(BidSupplementStatus.PAID,
             BidSupplementStatus.REFUND_PENDING, BidSupplementStatus.PAYOUT_PENDING, BidSupplementStatus.PAID_OUT);
@@ -170,7 +178,7 @@ public class BidSupplementService {
         if (supplements.existsByBidIdAndStatusIn(bidId, BidSupplementStatus.ACTIVE)) {
             throw alreadyActive();
         }
-        if (supplements.countByBidId(bidId) >= properties.getMaxPerBid()) {
+        if (supplements.countTowardLimit(bidId, NEVER_PROPOSED_REASONS) >= properties.getMaxPerBid()) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "supplement-limit-reached",
                     "Supplement Limit Reached", "Le nombre maximum de demandes de supplément pour ce colis est atteint",
                     Map.of("max", properties.getMaxPerBid()));
@@ -208,10 +216,14 @@ public class BidSupplementService {
             }
             throw e;
         }
-        handler.onCreated(s);
+        handler.onCreated(s, request);
 
-        events.publishEvent(new BidSupplementRequestedEvent(s.getId(), bidId, bid.getSenderId(), traveler.getId(),
-                s.getGrossAmount(), s.getCurrency(), s.getExpiresAt(), announcement.getTimezone()));
+        // Espèces payées par carte : la demande attend sa commission (COMMISSION_PENDING) et ne
+        // sera annoncée à l'expéditeur qu'une fois la commission prélevée (BidSupplementCashLedger).
+        if (s.getStatus() == BidSupplementStatus.PROPOSED) {
+            events.publishEvent(new BidSupplementRequestedEvent(s.getId(), bidId, bid.getSenderId(), traveler.getId(),
+                    s.getGrossAmount(), s.getCurrency(), s.getExpiresAt(), announcement.getTimezone()));
+        }
         audit(s, "BID_SUPPLEMENT_REQUESTED", traveler.getId(), Map.of("reason", s.getReasonCode().name()));
         return BidSupplementViews.of(s, false, storage, window.now());
     }
@@ -227,7 +239,10 @@ public class BidSupplementService {
         if (s.getStatus() != BidSupplementStatus.PROPOSED && s.getStatus() != BidSupplementStatus.COMMISSION_PENDING) {
             throw notPending();
         }
-        BidSupplementStatus previous = close(s, BidSupplementStatus.WITHDRAWN, "WITHDRAWN_BY_TRAVELER");
+        // Retirée avant que sa commission ne soit prélevée : l'expéditeur ne l'a jamais vue.
+        BidSupplementStatus previous = close(s, BidSupplementStatus.WITHDRAWN,
+                s.getStatus() == BidSupplementStatus.COMMISSION_PENDING ? "WITHDRAWN_BEFORE_COMMISSION"
+                        : "WITHDRAWN_BY_TRAVELER");
         events.publishEvent(new BidSupplementWithdrawnEvent(s.getId(), bidId, s.getSenderId(), s.getTravelerId(),
                 s.getRail(), previous));
         audit(s, "BID_SUPPLEMENT_WITHDRAWN", traveler.getId(), Map.of());
@@ -322,6 +337,29 @@ public class BidSupplementService {
     }
 
     /**
+     * Demande espèces restée en {@code COMMISSION_PENDING} depuis avant {@code createdBefore} (3DS
+     * de la commission jamais confirmée, plan §4.4 : 30 min) : annulée comme une demande échue,
+     * le rail espèces annule ensuite la PaymentIntent de commission. Idempotent.
+     *
+     * @return vrai si la demande a été annulée.
+     */
+    @Transactional
+    public boolean cancelUnconfirmedCommission(UUID supplementId, java.time.LocalDateTime createdBefore) {
+        Optional<UUID> foundBid = supplements.findBidIdById(supplementId);
+        if (foundBid.isEmpty()) {
+            return false;
+        }
+        bids.lockForUpdate(foundBid.get());
+        BidSupplementEntity s = supplementForUpdate(foundBid.get(), supplementId);
+        if (s.getStatus() != BidSupplementStatus.COMMISSION_PENDING || s.getCreatedAt() == null
+                || !s.getCreatedAt().isBefore(createdBefore)) {
+            return false;
+        }
+        expireUnderBidLock(s);
+        return true;
+    }
+
+    /**
      * Le colis s'est terminé sans livraison : une demande encore ouverte est annulée (les rails
      * défont leur part sur {@link BidSupplementCancelledEvent}). Une demande payée est à
      * rembourser : le rail le fait sur {@link BidSupplementRefundRequestedEvent}. N'agit que si le colis est réellement dans
@@ -368,14 +406,35 @@ public class BidSupplementService {
      * est rendu à l'expéditeur par le rail, après le commit ({@link BidSupplementRefundRequestedEvent}).
      * {@code PAID → REFUND_PENDING} ; un {@code REFUND_PENDING} est redemandé (reprise) ; un
      * supplément déjà versé ({@code PAYOUT_PENDING}, {@code PAID_OUT}) ne change pas de statut, le
-     * rail lève une alerte. Le rail espèces (commission seulement) a sa propre règle.
+     * rail lève une alerte.
+     *
+     * <p>Espèces : aucun argent n'est passé par l'app (le complément se remet en main propre, et
+     * se rend avec le colis). {@code PAID → REFUNDED} tout de suite, et le rail rend au voyageur la
+     * commission du supplément après le commit (même événement). Un {@code REFUNDED} ne revient plus
+     * dans le filet des colis terminés.
      */
     private boolean requestRefundOfPaid(BidEntity bid, String reason) {
         Optional<BidSupplementEntity> paid = supplements.findByBidIdAndStatusInForUpdate(bid.getId(), SETTLING);
-        if (paid.isEmpty() || paid.get().getRail() == BidSupplementRail.CASH) {
+        if (paid.isEmpty()) {
             return false;
         }
         BidSupplementEntity s = paid.get();
+        if (s.getRail() == BidSupplementRail.CASH) {
+            if (s.getStatus() != BidSupplementStatus.PAID) {
+                return false;
+            }
+            s.setStatus(BidSupplementStatus.REFUNDED);
+            s.setRefundedAt(window.now());
+            s.setClosedReason(reason);
+            supplements.save(s);
+            audit(s, "BID_SUPPLEMENT_CASH_CANCELLED_BID_ENDED", null, Map.of("bidStatus", bid.getStatus().name(),
+                    "endReason", reason));
+            events.publishEvent(new BidSupplementRefundRequestedEvent(s.getId(), bid.getId(), s.getRail(),
+                    BidSupplementStatus.PAID, reason));
+            log.info("Supplément espèces {} clos : colis {} terminé ({}), commission à rendre", s.getId(),
+                    bid.getId(), reason);
+            return true;
+        }
         if (s.getStatus() == BidSupplementStatus.PAID) {
             s.setStatus(BidSupplementStatus.REFUND_PENDING);
             s.setClosedReason(reason);

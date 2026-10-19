@@ -49,6 +49,8 @@ class PaymentStripeWebhookHandlerSupplementTest {
     @Mock BankPayoutTrackingService bankPayoutTracking;
     @Mock BidSupplementCardRail cardRail;
     @Mock BidSupplementCardLedger ledger;
+    @Mock com.yadony.api.payments.supplement.BidSupplementCashRail cashRail;
+    @Mock com.yadony.api.payments.supplement.BidSupplementCashLedger cashLedger;
     @Mock BidSupplementRepository supplements;
     @Mock AdminAlertEscalator alerts;
     @Mock com.yadony.api.payments.supplement.StripeSupplementGateway gateway;
@@ -58,8 +60,8 @@ class PaymentStripeWebhookHandlerSupplementTest {
 
     @BeforeEach
     void setUp() {
-        BidSupplementStripeWebhookRouter router = new BidSupplementStripeWebhookRouter(cardRail, ledger, supplements,
-                alerts, gateway, new ObjectMapper());
+        BidSupplementStripeWebhookRouter router = new BidSupplementStripeWebhookRouter(cardRail, ledger, cashRail,
+                cashLedger, supplements, alerts, gateway, new ObjectMapper());
         handler = new PaymentStripeWebhookHandler(paymentService, cashHandler, chargebackService, walletService,
                 walletSelfRefundService, new ObjectMapper(), new CurrencyCatalog(), bankPayoutTracking, router);
     }
