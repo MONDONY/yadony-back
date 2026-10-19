@@ -148,6 +148,8 @@ public class NotificationPrefsService {
             // Paiements et portefeuille
             "CARD_EXPIRING", "wallet_topup_confirmed", "wallet_topup_failed", "WALLET_ADJUSTED",
             "STRIPE_ONBOARDING_INCOMPLETE",
+            // Virement Stripe vers la banque du voyageur (arrivé, échoué)
+            "BANK_PAYOUT_PAID", "BANK_PAYOUT_FAILED",
             // Récompense de parrainage à choisir (crédit de solde ou code personnel)
             "REFERRAL_REWARD_AVAILABLE",
             // Décision de l'admin sur le badge GP Pro
