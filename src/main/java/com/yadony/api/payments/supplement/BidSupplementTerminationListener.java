@@ -13,8 +13,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
@@ -27,7 +25,9 @@ import java.util.UUID;
  * pas le colis ({@code CancellationConfirmedEvent} hors no-show, remboursement admin d'un colis en
  * cours) ne ferme rien. Idempotent : plusieurs événements pour la même fin n'ont qu'un effet.
  *
- * <p>Le filet planifié ({@link BidSupplementReconciliationJob}) rattrape un événement perdu.
+ * <p>Pas de transaction propre : {@link BidSupplementService#onBidEnded} ouvre la sienne
+ * (REQUIRES_NEW) colis par colis ; en ouvrir une ici tiendrait deux connexions par thread.
+ * Le filet planifié ({@link BidSupplementReconciliationJob}) rattrape un événement perdu.
  */
 @Component
 public class BidSupplementTerminationListener {
@@ -42,14 +42,12 @@ public class BidSupplementTerminationListener {
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onBidRejected(BidRejectedEvent e) {
         end(e.getBidId(), "BID_REJECTED");
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onTripCancelled(TripCancelledEvent e) {
         if (e.getAffectedBidIds() != null) {
             e.getAffectedBidIds().forEach(bidId -> end(bidId, "TRIP_CANCELLED"));
@@ -58,42 +56,36 @@ public class BidSupplementTerminationListener {
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onParcelRefused(ParcelRefusedEvent e) {
         end(e.getBidId(), "PARCEL_REFUSED");
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onTravelerNoShow(VoyageurNoShowEvent e) {
         end(e.getBidId(), "TRAVELER_NO_SHOW");
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onHandoverExpired(HandoverExpiredEvent e) {
         end(e.bidId(), "HANDOVER_EXPIRED");
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onCancellationConfirmed(CancellationConfirmedEvent e) {
         end(e.bidId(), "CANCELLATION_CONFIRMED");
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onBidExpiredOnDeparture(BidExpiredOnDepartureEvent e) {
         end(e.getBidId(), "BID_EXPIRED");
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onAdminPaymentRefunded(AdminPaymentRefundedEvent e) {
         end(e.bidId(), "ADMIN_REFUND");
     }
@@ -101,7 +93,6 @@ public class BidSupplementTerminationListener {
     /** Redondant avec {@link BidRejectedEvent} (annulation admin) : écouté par prudence, sans double effet. */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onAdminBidCancelled(AdminBidCancelledEvent e) {
         end(e.bidId(), "ADMIN_CANCELLED");
     }

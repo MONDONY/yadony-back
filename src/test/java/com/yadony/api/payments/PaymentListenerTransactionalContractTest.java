@@ -48,7 +48,18 @@ class PaymentListenerTransactionalContractTest {
                 Arguments.of(SenderNoShowConfirmedListener.class, "onCancellationConfirmed"),
                 // Versement de rattrapage d'un séquestre tardif : délègue au chemin de livraison,
                 // dont la transaction REQUIRES_NEW porte le claim.
-                Arguments.of(DeliveredEscrowReleaser.class, "onEscrowReady")
+                Arguments.of(DeliveredEscrowReleaser.class, "onEscrowReady"),
+                // Supplément de prix : fins de colis sans livraison (plan §5.1). Délègue à
+                // BidSupplementService#onBidEnded, qui ouvre sa propre transaction (REQUIRES_NEW).
+                Arguments.of(BidSupplementTerminationListener.class, "onBidRejected"),
+                Arguments.of(BidSupplementTerminationListener.class, "onTripCancelled"),
+                Arguments.of(BidSupplementTerminationListener.class, "onParcelRefused"),
+                Arguments.of(BidSupplementTerminationListener.class, "onTravelerNoShow"),
+                Arguments.of(BidSupplementTerminationListener.class, "onHandoverExpired"),
+                Arguments.of(BidSupplementTerminationListener.class, "onCancellationConfirmed"),
+                Arguments.of(BidSupplementTerminationListener.class, "onBidExpiredOnDeparture"),
+                Arguments.of(BidSupplementTerminationListener.class, "onAdminPaymentRefunded"),
+                Arguments.of(BidSupplementTerminationListener.class, "onAdminBidCancelled")
         );
     }
 
@@ -71,17 +82,7 @@ class PaymentListenerTransactionalContractTest {
                 // Lot 1 recharge wallet, tâche 4 : crédit du portefeuille sur les mêmes
                 // événements génériques (purpose WALLET_TOPUP) — même contrat.
                 Arguments.of(WalletTopupOutcomeListener.class, "onCompleted"),
-                Arguments.of(WalletTopupOutcomeListener.class, "onFailed"),
-                // Supplément de prix : fins de colis sans livraison (plan §5.1).
-                Arguments.of(BidSupplementTerminationListener.class, "onBidRejected"),
-                Arguments.of(BidSupplementTerminationListener.class, "onTripCancelled"),
-                Arguments.of(BidSupplementTerminationListener.class, "onParcelRefused"),
-                Arguments.of(BidSupplementTerminationListener.class, "onTravelerNoShow"),
-                Arguments.of(BidSupplementTerminationListener.class, "onHandoverExpired"),
-                Arguments.of(BidSupplementTerminationListener.class, "onCancellationConfirmed"),
-                Arguments.of(BidSupplementTerminationListener.class, "onBidExpiredOnDeparture"),
-                Arguments.of(BidSupplementTerminationListener.class, "onAdminPaymentRefunded"),
-                Arguments.of(BidSupplementTerminationListener.class, "onAdminBidCancelled")
+                Arguments.of(WalletTopupOutcomeListener.class, "onFailed")
         );
     }
 
@@ -158,6 +159,19 @@ class PaymentListenerTransactionalContractTest {
         assertThat(tx.propagation())
                 .as("%s#%s doit utiliser REQUIRES_NEW", listenerClass.getSimpleName(), methodName)
                 .isEqualTo(Propagation.REQUIRES_NEW);
+    }
+
+    /** Une seule connexion par thread : la transaction est ouverte par onBidEnded, pas par l'écouteur. */
+    @Test
+    void supplement_termination_listener_holds_no_transaction_of_its_own() throws NoSuchMethodException {
+        for (Method m : BidSupplementTerminationListener.class.getDeclaredMethods()) {
+            if (m.isAnnotationPresent(TransactionalEventListener.class)) {
+                assertThat(m.getAnnotation(Transactional.class)).as(m.getName()).isNull();
+            }
+        }
+        Transactional tx = com.yadony.api.payments.supplement.BidSupplementService.class
+                .getMethod("onBidEnded", UUID.class, String.class).getAnnotation(Transactional.class);
+        assertThat(tx.propagation()).isEqualTo(Propagation.REQUIRES_NEW);
     }
 
     @Test
