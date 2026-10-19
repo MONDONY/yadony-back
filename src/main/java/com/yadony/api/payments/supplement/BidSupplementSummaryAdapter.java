@@ -32,8 +32,13 @@ public class BidSupplementSummaryAdapter implements BidSupplementSummaryPort {
     /** Taille d'un lot {@code IN (...)}, comme {@code BidResponsePrefetch.CHUNK_SIZE}. */
     private static final int CHUNK_SIZE = 500;
 
+    /**
+     * Dernière demande qui excuse le refus du colis (décisions du propriétaire du 19/10/2026) :
+     * refusée ou laissée expirer par l'expéditeur, ou encore en attente de sa réponse (la fin du
+     * colis la ferme ensuite).
+     */
     private static final Set<BidSupplementStatus> EXCUSING = EnumSet.of(BidSupplementStatus.DECLINED,
-            BidSupplementStatus.EXPIRED);
+            BidSupplementStatus.EXPIRED, BidSupplementStatus.PROPOSED, BidSupplementStatus.COMMISSION_PENDING);
 
     private static final Comparator<BidSupplementEntity> NEWEST_FIRST =
             Comparator.comparing(BidSupplementEntity::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder()));

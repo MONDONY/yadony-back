@@ -40,9 +40,9 @@ public interface BidSupplementSummaryPort {
     BidSupplementView view(BidEntity bid, AnnouncementEntity announcement, UUID callerId, Prefetch prefetch);
 
     /**
-     * Le dernier supplément du colis a-t-il été refusé par l'expéditeur ou laissé expirer ? Le
-     * refus du colis qui suit n'est alors pas compté à l'expéditeur (décision du propriétaire du
-     * 19/10/2026 : pas de suspension pour un colis refusé après un supplément refusé).
+     * Le dernier supplément du colis a-t-il été refusé par l'expéditeur, laissé expirer, ou attend-il
+     * encore sa réponse ? Le refus du colis n'est alors pas compté à l'expéditeur (décisions du
+     * propriétaire du 19/10/2026 : pas de suspension pour un colis refusé autour d'un supplément).
      */
     boolean excusesParcelRefusal(UUID bidId);
 

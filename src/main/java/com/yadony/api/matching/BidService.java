@@ -1376,8 +1376,9 @@ public class BidService {
         bidRepository.save(bid);
 
         UserEntity sender = userRepository.findById(bid.getSenderId()).orElse(null);
-        // Colis refusé après un supplément refusé ou expiré : l'écart de prix est réglé par le
-        // refus, l'expéditeur n'est pas sanctionné (décision du propriétaire du 19/10/2026).
+        // Colis refusé après un supplément refusé ou expiré, ou pendant qu'il attend la réponse de
+        // l'expéditeur : l'écart de prix est réglé par le refus, l'expéditeur n'est pas sanctionné
+        // (décisions du propriétaire du 19/10/2026). La demande ouverte est fermée par la fin du colis.
         if (sender != null && !supplementSummary.excusesParcelRefusal(bid.getId())) {
             sender.setRefusedCount(sender.getRefusedCount() + 1);
             userRepository.save(sender);

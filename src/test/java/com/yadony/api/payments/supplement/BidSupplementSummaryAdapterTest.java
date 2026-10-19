@@ -204,7 +204,7 @@ class BidSupplementSummaryAdapterTest {
     }
 
     @Test
-    void refusDuColis_excuseSeulementApresUnSupplementRefuseOuExpire() {
+    void refusDuColis_excuseApresUnSupplementRefuseExpireOuEnAttente() {
         BidSupplementSummaryAdapter adapter = adapter(cardRail);
         assertThat(adapter.excusesParcelRefusal(bid.getId())).isFalse();
         add(BidSupplementStatus.DECLINED, 10);
@@ -213,8 +213,13 @@ class BidSupplementSummaryAdapterTest {
         assertThat(adapter.excusesParcelRefusal(bid.getId())).isTrue();
         stored.get(0).setStatus(BidSupplementStatus.WITHDRAWN);
         assertThat(adapter.excusesParcelRefusal(bid.getId())).isFalse();
-        add(BidSupplementStatus.PROPOSED, 1);
+        BidSupplementEntity latest = add(BidSupplementStatus.PAYMENT_PENDING, 1);
         stored.get(0).setStatus(BidSupplementStatus.DECLINED);
         assertThat(adapter.excusesParcelRefusal(bid.getId())).as("la dernière demande compte").isFalse();
+        // Décision du propriétaire : une demande encore ouverte excuse aussi le refus.
+        latest.setStatus(BidSupplementStatus.PROPOSED);
+        assertThat(adapter.excusesParcelRefusal(bid.getId())).isTrue();
+        latest.setStatus(BidSupplementStatus.COMMISSION_PENDING);
+        assertThat(adapter.excusesParcelRefusal(bid.getId())).isTrue();
     }
 }
