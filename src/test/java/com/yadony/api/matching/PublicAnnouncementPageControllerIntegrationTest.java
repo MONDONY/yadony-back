@@ -183,6 +183,46 @@ class PublicAnnouncementPageControllerIntegrationTest {
                         org.hamcrest.Matchers.containsString("n'est plus disponible")));
     }
 
+    /**
+     * Lien WhatsApp d'un trajet passé : la page « plus disponible » doit quand même
+     * proposer d'ouvrir l'application, qui affiche elle-même le trajet fermé.
+     */
+    @Test
+    void unavailablePage_withValidUuid_offersToOpenTheApp() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.CANCELLED);
+
+        mockMvc.perform(get("/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("href=\"yadony://annonce/" + a.getId() + "\"")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("Ouvrir dans Yadony")))
+                // Aucun store configuré dans ce contexte : pas de bouton mort.
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("Télécharger l'app"))));
+    }
+
+    /** Trajet inexistant : l'UUID reste lisible, l'app sait dire qu'il n'existe plus. */
+    @Test
+    void unavailablePage_unknownUuid_stillOffersToOpenTheApp() throws Exception {
+        UUID unknown = UUID.randomUUID();
+
+        mockMvc.perform(get("/public/annonce/" + unknown).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("yadony://annonce/" + unknown)));
+    }
+
+    /** Identifiant illisible : jamais de deep link fabriqué avec la chaîne brute du chemin. */
+    @Test
+    void unavailablePage_malformedId_hasNoDeepLinkWithTheRawString() throws Exception {
+        mockMvc.perform(get("/public/annonce/pas-un-uuid").header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("yadony://annonce/pas-un-uuid"))))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("Ouvrir dans Yadony"))));
+    }
+
     @Test
     void unavailablePage_doesNotIncrementTheAttributionCounter() throws Exception {
         AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.CANCELLED);
