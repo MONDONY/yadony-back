@@ -3,6 +3,7 @@ package com.yadony.api.payments.mobilemoney;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import com.yadony.api.payments.pawapay.PawapayOperationPurpose;
 import com.yadony.api.payments.pawapay.PawapayText;
 import com.yadony.api.payments.pawapay.events.PawapayOperationCompletedEvent;
 import com.yadony.api.payments.pawapay.events.PawapayOperationFailedEvent;
@@ -56,7 +57,7 @@ public class MobileMoneyRefundOutcomeListener {
     @Async
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onCompleted(PawapayOperationCompletedEvent event) {
-        if (event.kind() != PawapayOperationKind.REFUND || event.paymentId() == null) return;
+        if (!concernsBidPayment(event.purpose()) || event.kind() != PawapayOperationKind.REFUND || event.paymentId() == null) return;
         audit.log("PAYMENT", event.paymentId(), "MM_REFUND_COMPLETED", null,
                 Map.of("operationId", event.operationId().toString()));
     }
@@ -65,7 +66,7 @@ public class MobileMoneyRefundOutcomeListener {
     @Async
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onFailed(PawapayOperationFailedEvent event) {
-        if (event.kind() != PawapayOperationKind.REFUND || event.paymentId() == null) return;
+        if (!concernsBidPayment(event.purpose()) || event.kind() != PawapayOperationKind.REFUND || event.paymentId() == null) return;
         String failureCode = PawapayText.clamp(event.failureCode());
         String failureMessage = PawapayText.clamp(event.failureMessage());
         audit.log("PAYMENT", event.paymentId(), "MM_REFUND_FAILED", null,
@@ -74,5 +75,15 @@ public class MobileMoneyRefundOutcomeListener {
                 "Remboursement mobile money échoué pour le paiement " + event.paymentId() + " : " + failureCode,
                 Map.of("paymentId", event.paymentId().toString(), "operationId", event.operationId().toString(),
                         "failureCode", String.valueOf(failureCode), "failureMessage", String.valueOf(failureMessage)));
+    }
+
+    /**
+     * Seul le paiement principal du colis concerne cet écouteur : une opération de supplément de
+     * prix ({@code BID_SUPPLEMENT}) a son propre écouteur et ne porte jamais de {@code payment_id},
+     * garde doublée par sécurité (plan supplément §1.3-c) : sans elle, une opération de supplément
+     * mal rattachée passerait pour un mouvement du paiement principal.
+     */
+    private static boolean concernsBidPayment(PawapayOperationPurpose purpose) {
+        return purpose == PawapayOperationPurpose.BID_PAYMENT;
     }
 }

@@ -32,6 +32,21 @@ class PawapayReturnControllerIT {
                 .andExpect(header().string("Location", "yadony://bids/" + bidId + "/mobile-money/awaiting"));
     }
 
+    /** Supplément de prix payé par Wave : retour sur l'écran d'attente du supplément. */
+    @Test
+    void return_supplement_redirectsToTheSupplementAwaitingDeepLink() throws Exception {
+        UUID bidId = UUID.randomUUID();
+        UUID supplementId = UUID.randomUUID();
+        mockMvc.perform(get("/pawapay/return/{bidId}", bidId).param("supplement", supplementId.toString())
+                        .param("outcome", "success"))
+                .andExpect(status().isFound())
+                .andExpect(header().string("Location",
+                        "yadony://bids/" + bidId + "/supplements/" + supplementId + "/mobile-money/awaiting"));
+        mockMvc.perform(get("/pawapay/return/{bidId}", bidId).param("supplement", "X-Injected:1"))
+                .andExpect(status().isFound())
+                .andExpect(header().string("Location", "yadony://"));
+    }
+
     @Test
     void return_withGarbageId_redirectsToAppRoot() throws Exception {
         mockMvc.perform(get("/pawapay/return/{bidId}", "not-a-uuid"))

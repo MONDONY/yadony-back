@@ -1,12 +1,14 @@
 package com.yadony.api.payments.pawapay;
 
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -20,15 +22,34 @@ public class PawapayReturnController {
 
     private final PawapayProperties props;
 
-    public PawapayReturnController(PawapayProperties props) {
+    /**
+     * Écran d'attente du paiement d'un supplément de prix : modèle {@code String.format} avec le
+     * bidId puis l'id du supplément.
+     */
+    private final String deepLinkAwaitingSupplement;
+
+    public PawapayReturnController(PawapayProperties props,
+                                   @Value("${yadony.pawapay.deep-link-awaiting-supplement:"
+                                           + "yadony://bids/%s/supplements/%s/mobile-money/awaiting}")
+                                   String deepLinkAwaitingSupplement) {
         this.props = props;
+        this.deepLinkAwaitingSupplement = deepLinkAwaitingSupplement;
     }
 
+    /**
+     * Retour Wave d'un dépôt de colis, ou d'un supplément de prix ({@code ?supplement=<id>}) : l'écran
+     * d'attente de l'un ou de l'autre. Un identifiant illisible renvoie à la racine de l'app, jamais
+     * le texte reçu.
+     */
     @GetMapping("/{bidId}")
-    public ResponseEntity<Void> back(@PathVariable String bidId) {
+    public ResponseEntity<Void> back(@PathVariable String bidId,
+                                     @RequestParam(name = "supplement", required = false) String supplementId) {
         String location;
         try {
-            location = String.format(props.deepLinkAwaiting(), UUID.fromString(bidId));
+            UUID bid = UUID.fromString(bidId);
+            location = supplementId == null
+                    ? String.format(props.deepLinkAwaiting(), bid)
+                    : String.format(deepLinkAwaitingSupplement, bid, UUID.fromString(supplementId));
         } catch (IllegalArgumentException e) {
             location = "yadony://";
         }

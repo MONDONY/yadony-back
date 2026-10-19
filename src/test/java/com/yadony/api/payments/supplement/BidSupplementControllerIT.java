@@ -2,6 +2,9 @@ package com.yadony.api.payments.supplement;
 
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.dto.BidSupplementResponse;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPayerProvidersResponse;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
 import com.yadony.api.payments.supplement.dto.CreateSupplementRequest;
 import com.yadony.api.payments.supplement.dto.SupplementAcceptResponse;
 import com.yadony.api.payments.supplement.dto.SupplementOptionsResponse;
@@ -46,6 +49,7 @@ class BidSupplementControllerIT {
     @Autowired MockMvc mockMvc;
     @MockBean BidSupplementService service;
     @MockBean BidSupplementPaymentFlow paymentFlow;
+    @MockBean BidSupplementMobileMoneyRail mobileMoney;
 
     private final UUID bidId = UUID.randomUUID();
     private final UUID supplementId = UUID.randomUUID();
@@ -230,5 +234,84 @@ class BidSupplementControllerIT {
                 .andExpect(status().isBadGateway())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.code").value("stripe-unavailable"));
+    }
+
+    // ── Rail mobile money (B3) ───────────────────────────────────────────────
+
+    private MobileMoneyPaymentStatusResponse mmStatus(String paymentStatus) {
+        return new MobileMoneyPaymentStatusResponse(bidId, "ACCEPTED", paymentStatus,
+                java.time.LocalDateTime.parse("2026-10-19T12:00:00"), new BigDecimal("13700"), "XOF",
+                new MobileMoneyPaymentStatusResponse.OperationView(UUID.randomUUID(), "ACCEPTED", "WAVE_SEN", "Wave",
+                        "+221 •••• 01", "https://pay.wave.com/x", null, null));
+    }
+
+    @Test
+    void mobileMoneyInitiate_expediteur_201_avecNumeroEtOperateur() throws Exception {
+        when(mobileMoney.initiate(bidId, supplementId, "uid-s", "+221770000001", "WAVE_SEN"))
+                .thenReturn(mmStatus("PENDING"));
+
+        mockMvc.perform(post("/bids/" + bidId + "/supplements/" + supplementId + "/mobile-money/initiate")
+                        .with(authentication(as("uid-s", "SENDER")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"phoneNumber\": \"+221770000001\", \"provider\": \"WAVE_SEN\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.bidId").value(bidId.toString()))
+                .andExpect(jsonPath("$.paymentStatus").value("PENDING"))
+                .andExpect(jsonPath("$.amount").value(13700))
+                .andExpect(jsonPath("$.currency").value("XOF"))
+                .andExpect(jsonPath("$.deposit.authorizationUrl").value("https://pay.wave.com/x"));
+    }
+
+    @Test
+    void mobileMoneyInitiate_sansCorps_201_voyageurSeul_403() throws Exception {
+        when(mobileMoney.initiate(bidId, supplementId, "uid-s", null, null)).thenReturn(mmStatus("PENDING"));
+        mockMvc.perform(post("/bids/" + bidId + "/supplements/" + supplementId + "/mobile-money/initiate")
+                        .with(authentication(as("uid-s", "SENDER"))))
+                .andExpect(status().isCreated());
+        mockMvc.perform(post("/bids/" + bidId + "/supplements/" + supplementId + "/mobile-money/initiate")
+                        .with(authentication(as("uid-t", "TRAVELER"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void mobileMoneyInitiate_erreurMetier_problemJson() throws Exception {
+        when(mobileMoney.initiate(any(), any(), any(), any(), any())).thenThrow(new YadonyBusinessException(
+                HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-disabled", "Mobile Money Disabled", "coupé"));
+        mockMvc.perform(post("/bids/" + bidId + "/supplements/" + supplementId + "/mobile-money/initiate")
+                        .with(authentication(as("uid-s", "SENDER"))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("mobile-money-disabled"));
+    }
+
+    @Test
+    void mobileMoneyStatus_expediteurEtVoyageur() throws Exception {
+        when(mobileMoney.status(bidId, supplementId, "uid-t")).thenReturn(mmStatus("ESCROW"));
+        mockMvc.perform(get("/bids/" + bidId + "/supplements/" + supplementId + "/mobile-money/status")
+                        .with(authentication(as("uid-t", "TRAVELER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paymentStatus").value("ESCROW"));
+        mockMvc.perform(get("/bids/" + bidId + "/supplements/" + supplementId + "/mobile-money/status"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void mobileMoneyProviders_catalogueDuPayeur() throws Exception {
+        when(mobileMoney.providersForPayer(bidId, supplementId, "uid-s", "+221770000001"))
+                .thenReturn(new MobileMoneyPayerProvidersResponse("SN", "XOF", "+221 •••• 01", "ORANGE_SEN",
+                        List.of(new MobileMoneyProvidersResponse.ProviderOption("ORANGE_SEN", "Orange Money", true)),
+                        List.of("Orange Money"), "Awa"));
+        mockMvc.perform(post("/bids/" + bidId + "/supplements/" + supplementId + "/mobile-money/providers")
+                        .with(authentication(as("uid-s", "SENDER")))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"phoneNumber\": \"+221770000001\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.detected").value("ORANGE_SEN"))
+                .andExpect(jsonPath("$.providers[0].code").value("ORANGE_SEN"));
+        when(mobileMoney.providersForPayer(bidId, supplementId, "uid-s", null))
+                .thenReturn(new MobileMoneyPayerProvidersResponse("SN", "XOF", "+221 •••• 01", null, List.of(),
+                        List.of(), "Awa"));
+        mockMvc.perform(post("/bids/" + bidId + "/supplements/" + supplementId + "/mobile-money/providers")
+                        .with(authentication(as("uid-s", "SENDER"))))
+                .andExpect(status().isOk());
     }
 }

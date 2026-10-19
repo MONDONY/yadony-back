@@ -285,4 +285,23 @@ class MobileMoneyPayoutOutcomeListenerTest {
         assertThat(alertContext.getValue().get("failureCode")).isEqualTo("null");
         assertThat(alertContext.getValue().get("failureMessage")).isEqualTo("null");
     }
+
+    /**
+     * Supplément de prix (plan §1.3-c) : une opération {@code BID_SUPPLEMENT} est ignorée, même si
+     * elle portait par erreur un {@code payment_id} : elle a son propre écouteur
+     * ({@code BidSupplementOutcomeListener}) et ne doit jamais toucher au paiement principal.
+     */
+    @Test
+    void operationDeSupplement_ignoree_memeAvecUnPaymentId() {
+        java.util.UUID opId = java.util.UUID.randomUUID();
+        java.util.UUID paymentId = java.util.UUID.randomUUID();
+        listener.onCompleted(new com.yadony.api.payments.pawapay.events.PawapayOperationCompletedEvent(opId,
+                com.yadony.api.payments.pawapay.PawapayOperationKind.PAYOUT,
+                com.yadony.api.payments.pawapay.PawapayOperationPurpose.BID_SUPPLEMENT, paymentId, java.util.UUID.randomUUID()));
+        listener.onFailed(new com.yadony.api.payments.pawapay.events.PawapayOperationFailedEvent(opId,
+                com.yadony.api.payments.pawapay.PawapayOperationKind.PAYOUT,
+                com.yadony.api.payments.pawapay.PawapayOperationPurpose.BID_SUPPLEMENT, paymentId, java.util.UUID.randomUUID(),
+                "FAILED", "non"));
+        org.mockito.Mockito.verifyNoInteractions(operations, paymentRepository, bidRepository, announcementRepository, events, adminAlert, audit);
+    }
 }

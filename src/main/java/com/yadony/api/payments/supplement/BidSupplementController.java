@@ -2,6 +2,10 @@ package com.yadony.api.payments.supplement;
 
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.dto.BidSupplementResponse;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyInitiateRequest;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPayerProvidersResponse;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersRequest;
 import com.yadony.api.payments.supplement.dto.CreateSupplementRequest;
 import com.yadony.api.payments.supplement.dto.SupplementAcceptResponse;
 import com.yadony.api.payments.supplement.dto.SupplementOptionsResponse;
@@ -31,10 +35,13 @@ public class BidSupplementController {
 
     private final BidSupplementService service;
     private final BidSupplementPaymentFlow paymentFlow;
+    private final BidSupplementMobileMoneyRail mobileMoney;
 
-    public BidSupplementController(BidSupplementService service, BidSupplementPaymentFlow paymentFlow) {
+    public BidSupplementController(BidSupplementService service, BidSupplementPaymentFlow paymentFlow,
+                                   BidSupplementMobileMoneyRail mobileMoney) {
         this.service = service;
         this.paymentFlow = paymentFlow;
+        this.mobileMoney = mobileMoney;
     }
 
     @GetMapping("/bids/{bidId}/supplements/options")
@@ -83,6 +90,40 @@ public class BidSupplementController {
     @PreAuthorize("hasRole('SENDER')")
     public BidSupplementResponse decline(@PathVariable UUID bidId, @PathVariable UUID supplementId) {
         return service.decline(bidId, supplementId, firebaseUid());
+    }
+
+    /**
+     * Rail mobile money : l'expéditeur déclenche le push PIN (ou la redirection Wave) du brut du
+     * supplément. Corps optionnel : autre numéro payeur et opérateur choisi (même contrat que
+     * {@code POST /bids/{id}/mobile-money/initiate}). Idempotent : un dépôt en vol est relu.
+     */
+    @PostMapping("/bids/{bidId}/supplements/{supplementId}/mobile-money/initiate")
+    @PreAuthorize("hasRole('SENDER')")
+    public ResponseEntity<MobileMoneyPaymentStatusResponse> initiateMobileMoney(
+            @PathVariable UUID bidId, @PathVariable UUID supplementId,
+            @RequestBody(required = false) MobileMoneyInitiateRequest body) {
+        String phone = body == null ? null : body.phoneNumber();
+        String provider = body == null ? null : body.provider();
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(mobileMoney.initiate(bidId, supplementId, firebaseUid(), phone, provider));
+    }
+
+    /** Réseaux avec lesquels l'expéditeur peut payer le supplément. Corps optionnel : autre numéro payeur. */
+    @PostMapping("/bids/{bidId}/supplements/{supplementId}/mobile-money/providers")
+    @PreAuthorize("hasRole('SENDER')")
+    public MobileMoneyPayerProvidersResponse mobileMoneyProviders(
+            @PathVariable UUID bidId, @PathVariable UUID supplementId,
+            @RequestBody(required = false) MobileMoneyProvidersRequest body) {
+        return mobileMoney.providersForPayer(bidId, supplementId, firebaseUid(),
+                body == null ? null : body.phoneNumber());
+    }
+
+    /** Statut du paiement mobile money du supplément, pour l'expéditeur et le voyageur. */
+    @GetMapping("/bids/{bidId}/supplements/{supplementId}/mobile-money/status")
+    @PreAuthorize("hasAnyRole('SENDER', 'TRAVELER')")
+    public MobileMoneyPaymentStatusResponse mobileMoneyStatus(@PathVariable UUID bidId,
+                                                              @PathVariable UUID supplementId) {
+        return mobileMoney.status(bidId, supplementId, firebaseUid());
     }
 
     private static String firebaseUid() {
