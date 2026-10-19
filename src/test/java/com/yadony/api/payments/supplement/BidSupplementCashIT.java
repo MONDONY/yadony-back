@@ -56,6 +56,7 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.when;
 
 /**
@@ -379,9 +380,10 @@ class BidSupplementCashIT {
             return new PaymentIntentView(piId, "requires_action", 110L, "eur", piId + "_secret", null,
                     List.of("card"));
         });
+        // L'annulation échoue tant que le filet n'est pas passé : l'écouteur asynchrone de clôture peut
+        // tourner avant ou après la pose de la PaymentIntent, il ne doit pas consommer une réponse « canceled ».
         when(gateway.cancelPaymentIntent(piId))
-                .thenThrow(new com.stripe.exception.ApiConnectionException("timeout"))
-                .thenReturn(new PaymentIntentView(piId, "canceled", 110L, "eur", null, null, List.of("card")));
+                .thenThrow(new com.stripe.exception.ApiConnectionException("timeout"));
         when(gateway.retrievePaymentIntent(piId)).thenThrow(new com.stripe.exception.ApiConnectionException("timeout"));
 
         BidSupplementResponse r = paymentFlow.create(p.bidId, p.traveler.getFirebaseUid(), request(p, CommissionSource.CARD));
@@ -390,7 +392,10 @@ class BidSupplementCashIT {
         assertThat(r.commissionClientSecret()).isNull();
         UUID id = created[0];
         assertThat(column(id, "commission_payment_intent_id")).isEqualTo(piId);
+        Thread.sleep(1000); // laisse finir l'écouteur asynchrone de clôture
         assertThat(column(id, "commission_status")).as("annulation en échec : reste à défaire").isNull();
+        doReturn(new PaymentIntentView(piId, "canceled", 110L, "eur", null, null, List.of("card")))
+                .when(gateway).cancelPaymentIntent(piId);
         // Le filet la retrouve (statut nul et PaymentIntent posée sur une demande close) et l'annule.
         assertThat(cashJob.run().settled()).isZero();
         jdbc.update("UPDATE bid_supplements SET updated_at = updated_at - interval '1 hour' WHERE id = ?", id);
