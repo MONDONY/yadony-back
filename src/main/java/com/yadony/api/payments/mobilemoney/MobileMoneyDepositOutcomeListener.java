@@ -3,6 +3,7 @@ package com.yadony.api.payments.mobilemoney;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import com.yadony.api.payments.pawapay.PawapayOperationPurpose;
 import com.yadony.api.payments.pawapay.events.PawapayOperationCompletedEvent;
 import com.yadony.api.payments.pawapay.events.PawapayOperationFailedEvent;
 import java.util.Map;
@@ -76,7 +77,7 @@ public class MobileMoneyDepositOutcomeListener {
     @Async
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onCompleted(PawapayOperationCompletedEvent event) {
-        if (event.kind() != PawapayOperationKind.DEPOSIT || event.paymentId() == null) return;
+        if (!concernsBidPayment(event.purpose()) || event.kind() != PawapayOperationKind.DEPOSIT || event.paymentId() == null) return;
         try {
             if (isThreadScoped(event.paymentId())) {
                 negotiationService.confirmEscrow(event.operationId(), event.paymentId());
@@ -97,11 +98,21 @@ public class MobileMoneyDepositOutcomeListener {
     @Async
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onFailed(PawapayOperationFailedEvent event) {
-        if (event.kind() != PawapayOperationKind.DEPOSIT || event.paymentId() == null) return;
+        if (!concernsBidPayment(event.purpose()) || event.kind() != PawapayOperationKind.DEPOSIT || event.paymentId() == null) return;
         if (isThreadScoped(event.paymentId())) {
             negotiationService.notifyDepositFailed(event.operationId(), event.paymentId(), event.failureCode());
         } else {
             bidService.notifyDepositFailed(event.operationId(), event.paymentId(), event.failureCode());
         }
+    }
+
+    /**
+     * Seul le paiement principal du colis concerne cet écouteur : une opération de supplément de
+     * prix ({@code BID_SUPPLEMENT}) a son propre écouteur et ne porte jamais de {@code payment_id},
+     * garde doublée par sécurité (plan supplément §1.3-c) : sans elle, une opération de supplément
+     * mal rattachée passerait pour un mouvement du paiement principal.
+     */
+    private static boolean concernsBidPayment(PawapayOperationPurpose purpose) {
+        return purpose == PawapayOperationPurpose.BID_PAYMENT;
     }
 }

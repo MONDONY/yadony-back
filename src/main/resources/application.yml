@@ -299,6 +299,8 @@ yadony:
     min-net-eur: ${BID_SUPPLEMENT_MIN_NET_EUR:1}
     max-net-eur: ${BID_SUPPLEMENT_MAX_NET_EUR:300}
     reconcile-interval: ${BID_SUPPLEMENT_RECONCILE_INTERVAL:PT10M}
+    # Mobile money : opérations pawaPay mortes (versement, remboursement) avant intervention manuelle.
+    mm-max-attempts: ${BID_SUPPLEMENT_MM_MAX_ATTEMPTS:3}
   # Procédure « destinataire absent » (FLUTTER-E2, V301).
   delivery-no-show:
     min-wait-minutes: ${YADONY_DELIVERY_NO_SHOW_MIN_WAIT_MINUTES:120}
@@ -510,6 +512,8 @@ yadony:
     return-base-url: ${PAWAPAY_RETURN_BASE_URL:https://api.yadony.com}
     deep-link-awaiting: ${PAWAPAY_DEEP_LINK_AWAITING:yadony://bids/%s/mobile-money/awaiting}
     deep-link-awaiting-thread: ${PAWAPAY_DEEP_LINK_AWAITING_THREAD:yadony://negotiations/%s/mobile-money/awaiting}
+    # Écran d'attente du paiement d'un supplément de prix (bidId puis id du supplément).
+    deep-link-awaiting-supplement: ${PAWAPAY_DEEP_LINK_AWAITING_SUPPLEMENT:yadony://bids/%s/supplements/%s/mobile-money/awaiting}
     # Recharge du portefeuille : écran unique, aucun identifiant à interpoler.
     deep-link-wallet: ${PAWAPAY_DEEP_LINK_WALLET:yadony://payments/wallet}
     poll-cron: ${PAWAPAY_POLL_CRON:0 */2 * * * *}

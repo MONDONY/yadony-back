@@ -75,6 +75,39 @@ public class PawapaySubmissionService {
                 amount, deposit.getCurrency())));
     }
 
+    // ── Supplément de prix (purpose BID_SUPPLEMENT, payment_id toujours nul) ──
+
+    /** Dépôt du brut d'un supplément par l'expéditeur ({@code senderId} porté en {@code user_id}). */
+    public PawapayOperationEntity submitSupplementDeposit(UUID supplementId, UUID senderId, String msisdn,
+                                                          String provider, String country, BigDecimal amount,
+                                                          String currency, String clientReference,
+                                                          String successfulUrl, String failedUrl) {
+        PawapayOperationEntity op = operations.createForSupplement(PawapayOperationKind.DEPOSIT, senderId,
+                supplementId, null, amount, currency, provider, country, msisdn);
+        return submit(op, () -> client.initiateDeposit(new PawapayDepositRequest(op.getId(), op.getMsisdn(),
+                provider, amount, currency, DEPOSIT_MESSAGE, clientReference, successfulUrl, failedUrl)));
+    }
+
+    /** Versement du net d'un supplément au voyageur ({@code travelerId} porté en {@code user_id}). */
+    public PawapayOperationEntity submitSupplementPayout(UUID supplementId, UUID travelerId, String msisdn,
+                                                         String provider, String country, BigDecimal amount,
+                                                         String currency, String clientReference) {
+        PawapayOperationEntity op = operations.createForSupplement(PawapayOperationKind.PAYOUT, travelerId,
+                supplementId, null, amount, currency, provider, country, msisdn);
+        return submit(op, () -> client.initiatePayout(new PawapayPayoutRequest(op.getId(), op.getMsisdn(),
+                provider, amount, currency, PAYOUT_MESSAGE, clientReference)));
+    }
+
+    /** Remboursement du dépôt d'un supplément à l'expéditeur, lié au dépôt d'origine. */
+    public PawapayOperationEntity submitSupplementRefund(UUID supplementId, UUID senderId,
+                                                         PawapayOperationEntity deposit, BigDecimal amount) {
+        PawapayOperationEntity op = operations.createForSupplement(PawapayOperationKind.REFUND, senderId,
+                supplementId, deposit.getId(), amount, deposit.getCurrency(), deposit.getProvider(),
+                deposit.getCountry(), deposit.getMsisdn());
+        return submit(op, () -> client.initiateRefund(new PawapayRefundRequest(op.getId(), deposit.getId(),
+                amount, deposit.getCurrency())));
+    }
+
     /**
      * Remboursement de wallet, premier temps : réserve l'opération REFUND (purpose
      * {@code WALLET_REFUND}, sans paiement de colis) liée au dépôt d'origine, SANS appel

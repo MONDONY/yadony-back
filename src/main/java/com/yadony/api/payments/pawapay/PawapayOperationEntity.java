@@ -95,6 +95,15 @@ public class PawapayOperationEntity {
     @Column(name = "user_id", updatable = false)
     private UUID userId;
 
+    /**
+     * Supplément de prix payé, versé ou remboursé par cette opération (purpose {@code BID_SUPPLEMENT},
+     * V338). Jamais avec {@code payment_id} : l'index {@code uq_pawapay_ops_live_per_payment}
+     * refuserait un second dépôt sur le paiement du colis, et les écouteurs du paiement principal
+     * prendraient l'opération pour la leur.
+     */
+    @Column(name = "bid_supplement_id", updatable = false)
+    private UUID bidSupplementId;
+
     /** Pour un REFUND : le DEPOSIT d'origine. */
     @Column(name = "related_operation_id")
     private UUID relatedOperationId;
@@ -155,6 +164,16 @@ public class PawapayOperationEntity {
         this.userId = userId;
     }
 
+    /** Opération d'un supplément de prix : purpose {@code BID_SUPPLEMENT}, jamais de paiement de colis. */
+    public static PawapayOperationEntity forSupplement(UUID id, PawapayOperationKind kind, UUID userId,
+                                                       UUID bidSupplementId, UUID relatedOperationId, BigDecimal amount,
+                                                       String currency, String provider, String country, String msisdn) {
+        PawapayOperationEntity op = new PawapayOperationEntity(id, kind, PawapayOperationPurpose.BID_SUPPLEMENT, userId,
+                null, relatedOperationId, amount, currency, provider, country, msisdn);
+        op.bidSupplementId = bidSupplementId;
+        return op;
+    }
+
     @PrePersist
     void onCreate() {
         createdAt = LocalDateTime.now(ZoneOffset.UTC);
@@ -181,6 +200,7 @@ public class PawapayOperationEntity {
     public UUID getRelatedOperationId() { return relatedOperationId; }
     public PawapayOperationPurpose getPurpose() { return purpose; }
     public UUID getUserId() { return userId; }
+    public UUID getBidSupplementId() { return bidSupplementId; }
     public boolean isTopupGuard() { return topupGuard; }
     public String getAuthorizationUrl() { return authorizationUrl; }
     public String getProviderTransactionId() { return providerTransactionId; }

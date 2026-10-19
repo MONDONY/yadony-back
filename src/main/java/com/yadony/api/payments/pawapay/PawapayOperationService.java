@@ -68,6 +68,35 @@ public class PawapayOperationService {
         }
         PawapayOperationEntity op = new PawapayOperationEntity(UUID.randomUUID(), kind, purpose, userId, paymentId,
                 relatedOperationId, amount, currency, provider, country, msisdn);
+        return save(op);
+    }
+
+    /**
+     * Opération d'un supplément de prix (purpose {@code BID_SUPPLEMENT}) : {@code userId}
+     * obligatoire (expéditeur pour le dépôt et le remboursement, voyageur pour le versement,
+     * {@code chk_pawapay_ops_wallet_user}), {@code payment_id} toujours nul. Au plus une opération
+     * vivante ou aboutie par (supplément, type) : garde applicative + index
+     * {@code uq_pawapay_ops_live_per_supplement} (V338), traduits en 409.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public PawapayOperationEntity createForSupplement(PawapayOperationKind kind, UUID userId, UUID bidSupplementId,
+                                                      UUID relatedOperationId, BigDecimal amount, String currency,
+                                                      String provider, String country, String msisdn) {
+        if (userId == null || bidSupplementId == null) {
+            throw new IllegalArgumentException("Opération de supplément sans utilisateur ou sans supplément");
+        }
+        if (repository.existsByBidSupplementIdAndKindAndStatusIn(bidSupplementId, kind,
+                PawapayOperationStatus.LIVE_OR_DONE)) {
+            throw inProgress(kind);
+        }
+        return save(PawapayOperationEntity.forSupplement(UUID.randomUUID(), kind, userId, bidSupplementId,
+                relatedOperationId, amount, currency, provider, country, msisdn));
+    }
+
+    private PawapayOperationEntity save(PawapayOperationEntity op) {
+        PawapayOperationKind kind = op.getKind();
+        UUID paymentId = op.getPaymentId();
+        UUID userId = op.getUserId();
         try {
             return repository.saveAndFlush(op);
         } catch (DataIntegrityViolationException e) {
@@ -82,6 +111,13 @@ public class PawapayOperationService {
             if (lowerCause.contains("uq_pawapay_ops_live_per_payment")) {
                 log.warn("pawaPay {} : index unique heurté (course avec un create concurrent) pour paymentId={} : {}",
                         kind, paymentId, causeMessage);
+                throw inProgress(kind);
+            }
+            // Même filet pour un supplément de prix (V338) : deux initiations concurrentes
+            // franchissent toutes deux la garde applicative, l'index tranche.
+            if (lowerCause.contains("uq_pawapay_ops_live_per_supplement")) {
+                log.warn("pawaPay {} : opération déjà vivante pour le supplément {} : {}",
+                        kind, op.getBidSupplementId(), causeMessage);
                 throw inProgress(kind);
             }
             // Même filet, pour la recharge du portefeuille : la garde applicative lit avant
@@ -200,6 +236,25 @@ public class PawapayOperationService {
     @Transactional(readOnly = true)
     public Optional<PawapayOperationEntity> findLatest(UUID paymentId, PawapayOperationKind kind) {
         return repository.findFirstByPaymentIdAndKindOrderByCreatedAtDesc(paymentId, kind);
+    }
+
+    /** Opération vivante ou aboutie d'un supplément, pour ce type. */
+    @Transactional(readOnly = true)
+    public Optional<PawapayOperationEntity> findLiveForSupplement(UUID bidSupplementId, PawapayOperationKind kind) {
+        return repository.findFirstByBidSupplementIdAndKindAndStatusInOrderByCreatedAtDesc(bidSupplementId, kind,
+                PawapayOperationStatus.LIVE_OR_DONE);
+    }
+
+    /** Opérations mortes (échouées ou refusées à la soumission) d'un supplément, pour ce type. */
+    @Transactional(readOnly = true)
+    public long countDeadForSupplement(UUID bidSupplementId, PawapayOperationKind kind) {
+        return repository.countByBidSupplementIdAndKindAndStatusIn(bidSupplementId, kind, PawapayOperationStatus.DEAD);
+    }
+
+    /** Dernière opération d'un supplément pour ce type, quel que soit son statut. */
+    @Transactional(readOnly = true)
+    public Optional<PawapayOperationEntity> findLatestForSupplement(UUID bidSupplementId, PawapayOperationKind kind) {
+        return repository.findFirstByBidSupplementIdAndKindOrderByCreatedAtDesc(bidSupplementId, kind);
     }
 
     @Transactional(readOnly = true)

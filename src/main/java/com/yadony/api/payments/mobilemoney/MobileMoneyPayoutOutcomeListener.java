@@ -10,6 +10,7 @@ import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import com.yadony.api.payments.pawapay.PawapayOperationPurpose;
 import com.yadony.api.payments.pawapay.PawapayOperationService;
 import com.yadony.api.payments.pawapay.PawapayText;
 import com.yadony.api.payments.pawapay.events.PawapayOperationCompletedEvent;
@@ -83,7 +84,7 @@ public class MobileMoneyPayoutOutcomeListener {
     @Async
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onCompleted(PawapayOperationCompletedEvent event) {
-        if (event.kind() != PawapayOperationKind.PAYOUT || event.paymentId() == null) return;
+        if (!concernsBidPayment(event.purpose()) || event.kind() != PawapayOperationKind.PAYOUT || event.paymentId() == null) return;
         PawapayOperationEntity op = operations.get(event.operationId());
         // Cas structurellement impossible aujourd'hui (le paiement, son bid
         // et son annonce existent nécessairement pour avoir pu être versés), mais un log.warn
@@ -128,7 +129,7 @@ public class MobileMoneyPayoutOutcomeListener {
     @Async
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onFailed(PawapayOperationFailedEvent event) {
-        if (event.kind() != PawapayOperationKind.PAYOUT || event.paymentId() == null) return;
+        if (!concernsBidPayment(event.purpose()) || event.kind() != PawapayOperationKind.PAYOUT || event.paymentId() == null) return;
         // Bornés avant audit, journal ou Telegram : failureMessage est TEXT en base (non borné),
         // failureCode l'est déjà à 64 par sa colonne — même garde ici, par défense en profondeur.
         String failureCode = PawapayText.clamp(event.failureCode());
@@ -139,5 +140,15 @@ public class MobileMoneyPayoutOutcomeListener {
                 "Payout mobile money échoué pour le paiement " + event.paymentId() + " : " + failureCode,
                 Map.of("paymentId", event.paymentId().toString(), "operationId", event.operationId().toString(),
                         "failureCode", String.valueOf(failureCode), "failureMessage", String.valueOf(failureMessage)));
+    }
+
+    /**
+     * Seul le paiement principal du colis concerne cet écouteur : une opération de supplément de
+     * prix ({@code BID_SUPPLEMENT}) a son propre écouteur et ne porte jamais de {@code payment_id},
+     * garde doublée par sécurité (plan supplément §1.3-c) : sans elle, une opération de supplément
+     * mal rattachée passerait pour un mouvement du paiement principal.
+     */
+    private static boolean concernsBidPayment(PawapayOperationPurpose purpose) {
+        return purpose == PawapayOperationPurpose.BID_PAYMENT;
     }
 }

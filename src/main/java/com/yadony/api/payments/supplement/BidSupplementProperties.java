@@ -29,6 +29,12 @@ public class BidSupplementProperties {
     private Duration reconcileInterval = Duration.ofMinutes(10);
     /** Filet planifié actif ; coupé dans les tests (une base partagée, des horloges réelles). */
     private boolean reconcileEnabled = true;
+    /**
+     * Rail mobile money : nombre d'opérations pawaPay mortes (échouées ou refusées) d'un même type
+     * (versement, remboursement) au-delà duquel le filet cesse de resoumettre ; une alerte
+     * « intervention manuelle » prend le relais.
+     */
+    private int mmMaxAttempts = 3;
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
@@ -47,5 +53,7 @@ public class BidSupplementProperties {
     public Duration getReconcileInterval() { return reconcileInterval; }
     public void setReconcileInterval(Duration reconcileInterval) { this.reconcileInterval = reconcileInterval; }
     public boolean isReconcileEnabled() { return reconcileEnabled; }
+    public int getMmMaxAttempts() { return mmMaxAttempts; }
+    public void setMmMaxAttempts(int mmMaxAttempts) { this.mmMaxAttempts = mmMaxAttempts; }
     public void setReconcileEnabled(boolean reconcileEnabled) { this.reconcileEnabled = reconcileEnabled; }
 }

@@ -5,6 +5,8 @@ import com.yadony.api.payments.mobilemoney.MobileMoneyDepositOutcomeListener;
 import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutOutcomeListener;
 import com.yadony.api.payments.mobilemoney.MobileMoneyRefundOutcomeListener;
 import com.yadony.api.payments.supplement.BidSupplementCardListener;
+import com.yadony.api.payments.supplement.BidSupplementMobileMoneyListener;
+import com.yadony.api.payments.supplement.BidSupplementOutcomeListener;
 import com.yadony.api.payments.supplement.BidSupplementTerminationListener;
 import com.yadony.api.payments.wallet.WalletTopupOutcomeListener;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -83,7 +85,11 @@ class PaymentListenerTransactionalContractTest {
                 // Lot 1 recharge wallet, tâche 4 : crédit du portefeuille sur les mêmes
                 // événements génériques (purpose WALLET_TOPUP) — même contrat.
                 Arguments.of(WalletTopupOutcomeListener.class, "onCompleted"),
-                Arguments.of(WalletTopupOutcomeListener.class, "onFailed")
+                Arguments.of(WalletTopupOutcomeListener.class, "onFailed"),
+                // Supplément de prix, rail mobile money (plan B3) : issue des opérations pawaPay
+                // BID_SUPPLEMENT, mêmes événements génériques, même contrat. Aucun appel pawaPay ici.
+                Arguments.of(BidSupplementOutcomeListener.class, "onCompleted"),
+                Arguments.of(BidSupplementOutcomeListener.class, "onFailed")
         );
     }
 
@@ -103,7 +109,11 @@ class PaymentListenerTransactionalContractTest {
                 // (BidSupplementCardLedger) autour de l'appel Stripe, jamais une transaction englobante.
                 Arguments.of(BidSupplementCardListener.class, "onClosed"),
                 Arguments.of(BidSupplementCardListener.class, "onRefundRequested"),
-                Arguments.of(BidSupplementCardListener.class, "onPaymentReleased")
+                Arguments.of(BidSupplementCardListener.class, "onPaymentReleased"),
+                // Rail mobile money (plan B3) : payout et refund pawaPay du supplément, même règle
+                // (transactions courtes autour de l'appel réseau, jamais une transaction englobante).
+                Arguments.of(BidSupplementMobileMoneyListener.class, "onRefundRequested"),
+                Arguments.of(BidSupplementMobileMoneyListener.class, "onPaymentReleased")
         );
     }
 

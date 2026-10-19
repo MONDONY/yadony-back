@@ -128,4 +128,54 @@ public interface BidSupplementRepository extends JpaRepository<BidSupplementEnti
             """)
     List<UUID> findIdsAwaitingMissedPayout(@Param("rail") BidSupplementRail rail,
                                            @Param("before") LocalDateTime before, Pageable page);
+
+    // ── Rail mobile money (B3) ───────────────────────────────────────────────
+
+    /**
+     * Filet mobile money, versement manqué : suppléments {@code PAWAPAY} {@code PAID} depuis
+     * {@code before} dont le versement principal a réellement abouti chez pawaPay (paiement
+     * {@code RELEASED} et payout principal {@code COMPLETED}, donc {@code PaymentReleasedEvent}
+     * publié). Filtré en base, comme le filet carte, pour qu'aucun supplément en transit ne cache un
+     * supplément réellement manqué. Paiement du colis ou du fil de négociation lié.
+     */
+    @Query("""
+            SELECT s.id FROM BidSupplementEntity s
+            WHERE s.rail = com.yadony.api.payments.supplement.BidSupplementRail.PAWAPAY
+              AND s.status = com.yadony.api.payments.supplement.BidSupplementStatus.PAID
+              AND s.paidAt < :before
+              AND EXISTS (
+                  SELECT 1 FROM com.yadony.api.payments.PaymentEntity p,
+                                com.yadony.api.payments.pawapay.PawapayOperationEntity o,
+                                com.yadony.api.matching.BidEntity b
+                  WHERE b.id = s.bidId
+                    AND o.paymentId = p.id
+                    AND o.kind = com.yadony.api.payments.pawapay.PawapayOperationKind.PAYOUT
+                    AND o.status = com.yadony.api.payments.pawapay.PawapayOperationStatus.COMPLETED
+                    AND p.status = com.yadony.api.payments.PaymentStatus.RELEASED
+                    AND (p.bidId = s.bidId
+                         OR (p.bidId IS NULL AND b.linkedNegotiationThreadId IS NOT NULL
+                             AND p.negotiationThreadId = b.linkedNegotiationThreadId)))
+            ORDER BY s.paidAt
+            """)
+    List<UUID> findIdsAwaitingMissedMobileMoneyPayout(@Param("before") LocalDateTime before, Pageable page);
+
+    /**
+     * Filet mobile money : dépôts aboutis chez pawaPay mais jamais appliqués au supplément (écouteur
+     * en échec) : demande encore en attente de paiement, ou close sans paiement enregistré.
+     */
+    @Query("""
+            SELECT s.id FROM BidSupplementEntity s
+            WHERE s.rail = com.yadony.api.payments.supplement.BidSupplementRail.PAWAPAY
+              AND s.status IN :statuses
+              AND s.paidAt IS NULL
+              AND s.updatedAt < :before
+              AND EXISTS (
+                  SELECT 1 FROM com.yadony.api.payments.pawapay.PawapayOperationEntity o
+                  WHERE o.bidSupplementId = s.id
+                    AND o.kind = com.yadony.api.payments.pawapay.PawapayOperationKind.DEPOSIT
+                    AND o.status = com.yadony.api.payments.pawapay.PawapayOperationStatus.COMPLETED)
+            ORDER BY s.updatedAt
+            """)
+    List<UUID> findIdsWithUnappliedMobileMoneyDeposit(@Param("statuses") Collection<BidSupplementStatus> statuses,
+                                                      @Param("before") LocalDateTime before, Pageable page);
 }

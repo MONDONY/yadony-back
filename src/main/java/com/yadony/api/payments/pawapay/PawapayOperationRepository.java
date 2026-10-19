@@ -26,6 +26,20 @@ public interface PawapayOperationRepository extends JpaRepository<PawapayOperati
     boolean existsByPaymentIdAndKindAndStatusIn(
             UUID paymentId, PawapayOperationKind kind, Collection<PawapayOperationStatus> statuses);
 
+    // ── Supplément de prix (purpose BID_SUPPLEMENT, payment_id toujours nul) ──
+
+    Optional<PawapayOperationEntity> findFirstByBidSupplementIdAndKindOrderByCreatedAtDesc(
+            UUID bidSupplementId, PawapayOperationKind kind);
+
+    Optional<PawapayOperationEntity> findFirstByBidSupplementIdAndKindAndStatusInOrderByCreatedAtDesc(
+            UUID bidSupplementId, PawapayOperationKind kind, Collection<PawapayOperationStatus> statuses);
+
+    boolean existsByBidSupplementIdAndKindAndStatusIn(
+            UUID bidSupplementId, PawapayOperationKind kind, Collection<PawapayOperationStatus> statuses);
+
+    long countByBidSupplementIdAndKindAndStatusIn(
+            UUID bidSupplementId, PawapayOperationKind kind, Collection<PawapayOperationStatus> statuses);
+
     boolean existsByUserIdAndKindAndCurrencyAndPurposeAndStatusIn(UUID userId, PawapayOperationKind kind,
             String currency, PawapayOperationPurpose purpose, Collection<PawapayOperationStatus> statuses);
 

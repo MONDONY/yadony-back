@@ -56,7 +56,8 @@ public class BidSupplementSummaryAdapter implements BidSupplementSummaryPort {
         this.supplements = supplements;
         this.window = window;
         this.properties = properties;
-        this.supportedRails = handlers.stream().map(BidSupplementRailHandler::rail)
+        // Un composant sans rail (doublure de test) ne débloque rien, comme dans BidSupplementPaymentFlow.
+        this.supportedRails = handlers.stream().map(BidSupplementRailHandler::rail).filter(java.util.Objects::nonNull)
                 .collect(Collectors.toCollection(() -> EnumSet.noneOf(BidSupplementRail.class)));
         this.storage = storage;
         this.users = users;
