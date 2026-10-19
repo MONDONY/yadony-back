@@ -227,6 +227,7 @@ public class BidSupplementService {
         bids.lockForUpdate(bidId);
         BidSupplementEntity s = supplementForUpdate(bidId, supplementId);
         requireSender(sender, s);
+        requireBidInHandover(bidId);
         requireAwaitingSender(s);
         BidSupplementStatus previous = close(s, BidSupplementStatus.DECLINED, "DECLINED_BY_SENDER");
         events.publishEvent(new BidSupplementDeclinedEvent(s.getId(), bidId, s.getSenderId(), s.getTravelerId(),
@@ -246,6 +247,7 @@ public class BidSupplementService {
         bids.lockForUpdate(bidId);
         BidSupplementEntity s = supplementForUpdate(bidId, supplementId);
         requireSender(sender, s);
+        requireBidInHandover(bidId);
         requireAwaitingSender(s);
         BidSupplementRailHandler handler = handlers.get(s.getRail());
         if (handler == null) {
@@ -349,6 +351,18 @@ public class BidSupplementService {
         s.setClosedReason(reason);
         supplements.save(s);
         return previous;
+    }
+
+    /**
+     * Relu sous le verrou du colis : une réponse à un colis terminé (annulé, refusé…) n'a plus de
+     * sens, la fin du colis ferme la demande ({@link #onBidEnded}).
+     */
+    private void requireBidInHandover(UUID bidId) {
+        BidStatus status = bid(bidId).getStatus();
+        if (status != BidStatus.ACCEPTED && status != BidStatus.HANDED_OVER) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-bid-status",
+                    "Unprocessable", "Ce colis n'attend plus de réponse à un supplément");
+        }
     }
 
     private void requireAwaitingSender(BidSupplementEntity s) {

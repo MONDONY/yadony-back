@@ -394,6 +394,27 @@ class BidSupplementServiceTest {
     }
 
     @Test
+    void accepterOuRefuser_surUnColisTermine_422EtRailJamaisAppele() {
+        BidSupplementEntity s = existing(BidSupplementStatus.PROPOSED);
+        bid.setStatus(BidStatus.CANCELLED);
+
+        assertError(() -> service(cardRail).accept(bid.getId(), s.getId(), "uid-sender"),
+                HttpStatus.UNPROCESSABLE_ENTITY, "invalid-bid-status");
+        assertError(() -> service(cardRail).decline(bid.getId(), s.getId(), "uid-sender"),
+                HttpStatus.UNPROCESSABLE_ENTITY, "invalid-bid-status");
+        verify(cardRail, never()).accept(any(), any());
+        assertThat(s.getStatus()).isEqualTo(BidSupplementStatus.PROPOSED);
+    }
+
+    @Test
+    void accepter_surUnColisRemisAvantLeDepart_delegueAuRail() {
+        BidSupplementEntity s = existing(BidSupplementStatus.PROPOSED);
+        bid.setStatus(BidStatus.HANDED_OVER);
+        service(cardRail).accept(bid.getId(), s.getId(), "uid-sender");
+        verify(cardRail).accept(s, sender);
+    }
+
+    @Test
     void accept_demandeDejaRefusee_409() {
         BidSupplementEntity s = existing(BidSupplementStatus.DECLINED);
         assertError(() -> service(cardRail).accept(bid.getId(), s.getId(), "uid-sender"),
