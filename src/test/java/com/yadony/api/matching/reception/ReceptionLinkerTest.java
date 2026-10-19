@@ -392,4 +392,50 @@ class ReceptionLinkerTest {
         assertThat(linker.catchUp(me)).isZero();
         verify(linkRepository, never()).findCatchUpCandidates(any(), any(), any());
     }
+    // ── catchUpAndNotify (YADONY-FLUTTER-PROD-12 : inscription, ajout du numéro) ──
+
+    @Test
+    void catchUpAndNotify_linkCreated_pushesIncoming() {
+        UserEntity me = user(recipientId, "uid-r", "Fatou");
+        when(firebaseContact.getContact("uid-r"))
+                .thenReturn(new FirebaseContactService.Contact("+221771234567", null));
+        when(linkRepository.findCatchUpCandidates(recipientId, BidStatus.IN_FLIGHT, "%7")).thenReturn(List.of(bid));
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(user(senderId, "uid-s", "Awa")));
+
+        assertThat(linker.catchUpAndNotify(me)).isEqualTo(1);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, String>> data = ArgumentCaptor.forClass(Map.class);
+        verify(notificationDispatcher).notifyUser(eq(recipientId), eq("Un colis pour vous ?"),
+                eq("Awa : colis Paris vers Dakar."), data.capture());
+        assertThat(data.getValue()).containsEntry("type", "RECIPIENT_PARCEL_INCOMING")
+                .containsEntry("bidId", bidId.toString());
+        verify(auditService).log(eq("BID_RECIPIENT_LINK"), any(), eq("LINKED_ON_CATCH_UP"), eq(null), any());
+    }
+
+    @Test
+    void catchUpAndNotify_trustedSender_pushesAnnouncement() {
+        UserEntity me = user(recipientId, "uid-r", "Fatou");
+        when(firebaseContact.getContact("uid-r"))
+                .thenReturn(new FirebaseContactService.Contact("+221771234567", null));
+        when(linkRepository.findCatchUpCandidates(recipientId, BidStatus.IN_FLIGHT, "%7")).thenReturn(List.of(bid));
+        when(recipientTrust.isTrusted(senderId, recipientId)).thenReturn(true);
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(user(senderId, "uid-s", "Awa")));
+
+        assertThat(linker.catchUpAndNotify(me)).isEqualTo(1);
+
+        verify(notificationDispatcher).notifyUser(eq(recipientId), eq("Un colis arrive"),
+                eq("Awa vous envoie un colis. Suivez-le dans l'app."), any());
+    }
+
+    @Test
+    void catchUpAndNotify_noLink_noPush() {
+        UserEntity me = user(recipientId, "uid-r", "Fatou");
+        when(firebaseContact.getContact("uid-r"))
+                .thenReturn(new FirebaseContactService.Contact("+221771234567", null));
+        when(linkRepository.findCatchUpCandidates(recipientId, BidStatus.IN_FLIGHT, "%7")).thenReturn(List.of());
+
+        assertThat(linker.catchUpAndNotify(me)).isZero();
+        verify(notificationDispatcher, never()).notifyUser(any(), any(), any(), any());
+    }
 }

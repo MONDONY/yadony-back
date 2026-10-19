@@ -58,6 +58,17 @@ public class SmsOtpService {
     private final boolean devProfile;
     private volatile String dummyHash;
 
+    /**
+     * Publie {@link com.yadony.api.auth.events.UserPhoneAttachedEvent} ; injecté par setter pour
+     * ne pas toucher aux constructeurs des tests unitaires (sans lui, rien n'est publié).
+     */
+    private org.springframework.context.ApplicationEventPublisher eventPublisher;
+
+    @Autowired(required = false)
+    void setEventPublisher(org.springframework.context.ApplicationEventPublisher eventPublisher) {
+        this.eventPublisher = eventPublisher;
+    }
+
     public SmsOtpService(SmsOtpRepository smsOtpRepository,
                           PasswordEncoder passwordEncoder,
                           SmsService smsService,
@@ -298,6 +309,11 @@ public class SmsOtpService {
         // Payload sans PII : le numéro lui-même ne doit pas atterrir dans audit_log.
         auditService.log("USER", user.getId(), "USER_PHONE_ATTACHED", user.getId(),
                 Map.of("verifiedBy", "sms-otp"));
+        // Colis envoyés à ce numéro avant qu'il soit rattaché : les réceptions les retrouvent
+        // (ReceptionCatchUpListener, après validation et en asynchrone).
+        if (eventPublisher != null) {
+            eventPublisher.publishEvent(new com.yadony.api.auth.events.UserPhoneAttachedEvent(user.getId()));
+        }
 
         // Firebase vient de révoquer le jeton de rafraîchissement du client (changement
         // de coordonnées) : on lui rend de quoi rouvrir sa session sans la perdre.

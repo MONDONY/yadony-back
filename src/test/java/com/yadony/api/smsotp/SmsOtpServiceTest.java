@@ -501,6 +501,41 @@ class SmsOtpServiceTest {
         }
 
         @Test
+        @DisplayName("numéro rattaché → UserPhoneAttachedEvent publié (rattrapage des réceptions)")
+        void attach_success_publishesPhoneAttachedEvent() {
+            SmsOtpService service = newService();
+            org.springframework.context.ApplicationEventPublisher publisher =
+                    org.mockito.Mockito.mock(org.springframework.context.ApplicationEventPublisher.class);
+            service.setEventPublisher(publisher);
+            UserEntity account = account();
+            when(userRepository.findByFirebaseUid(UID)).thenReturn(Optional.of(account));
+            givenValidOtp();
+            when(firebaseContact.getContact(UID)).thenReturn(FirebaseContactService.Contact.EMPTY);
+            when(firebaseContact.findPhoneHolder(PHONE)).thenReturn(Optional.empty());
+
+            service.attachPhoneToAccount(UID, PHONE, "123456");
+
+            verify(publisher).publishEvent(new com.yadony.api.auth.events.UserPhoneAttachedEvent(account.getId()));
+        }
+
+        @Test
+        @DisplayName("numéro déjà défini → aucun événement")
+        void attach_phoneAlreadySet_publishesNothing() {
+            SmsOtpService service = newService();
+            org.springframework.context.ApplicationEventPublisher publisher =
+                    org.mockito.Mockito.mock(org.springframework.context.ApplicationEventPublisher.class);
+            service.setEventPublisher(publisher);
+            when(userRepository.findByFirebaseUid(UID)).thenReturn(Optional.of(account()));
+            givenValidOtp();
+            when(firebaseContact.getContact(UID)).thenReturn(
+                    new FirebaseContactService.Contact("+221700000000", null));
+
+            assertThatThrownBy(() -> service.attachPhoneToAccount(UID, PHONE, "123456"))
+                    .isInstanceOf(YadonyBusinessException.class);
+            verify(publisher, never()).publishEvent(any(Object.class));
+        }
+
+        @Test
         @DisplayName("code faux → aucune écriture : la preuve de possession est exigée")
         void attach_wrongCode_writesNothing() {
             SmsOtpService service = newService();

@@ -140,6 +140,23 @@ public class ReceptionLinker {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public int catchUp(UserEntity user) {
+        return catchUp(user, false);
+    }
+
+    /**
+     * Rattrapage à l'inscription ou à l'ajout d'un numéro (YADONY-FLUTTER-PROD-12) : comme
+     * {@link #catchUp(UserEntity)}, mais chaque colis rattaché déclenche le push habituel
+     * (« {Prénom} vous envoie un colis », ou l'annonce pour un destinataire de confiance) :
+     * l'utilisateur n'a pas encore ouvert ses réceptions et ne sait pas qu'un colis l'attend.
+     *
+     * @return nombre de liens créés
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public int catchUpAndNotify(UserEntity user) {
+        return catchUp(user, true);
+    }
+
+    private int catchUp(UserEntity user, boolean notify) {
         String phone = firebaseContact.getContact(user.getFirebaseUid()).phoneNumber();
         String key = ReceptionPhones.digitsKey(phone);
         if (key.isEmpty()) {
@@ -150,7 +167,7 @@ public class ReceptionLinker {
                 user.getId(), BidStatus.IN_FLIGHT, suffix);
         int created = 0;
         if (recetteMode.appliesTo(user)) {
-            created += catchUpOwnParcels(user, key, suffix);
+            created += catchUpOwnParcels(user, key, suffix, notify);
         }
         for (BidEntity bid : candidates) {
             if (bid.getTrackingToken() == null
@@ -160,8 +177,15 @@ public class ReceptionLinker {
             }
             if (recipientTrust.isTrusted(bid.getSenderId(), user.getId())) {
                 saveConfirmed(bid, user.getId(), "LINKED_TRUSTED_ON_CATCH_UP");
+                if (notify) {
+                    notifyAnnounced(bid, user.getId());
+                }
             } else {
                 save(bid, user.getId(), "LINKED_ON_CATCH_UP");
+                if (notify) {
+                    notifyIncoming(bid, announcementRepository.findById(bid.getAnnouncementId()).orElse(null),
+                            user.getId());
+                }
             }
             created++;
         }
@@ -172,13 +196,17 @@ public class ReceptionLinker {
      * Mode recette : colis actifs de {@code user} dont il a saisi son propre numéro comme
      * destinataire, exclus du rattrapage normal ({@code findCatchUpCandidates}).
      */
-    private int catchUpOwnParcels(UserEntity user, String key, String suffix) {
+    private int catchUpOwnParcels(UserEntity user, String key, String suffix, boolean notify) {
         int created = 0;
         for (BidEntity bid : linkRepository.findOwnCatchUpCandidates(user.getId(), BidStatus.IN_FLIGHT, suffix)) {
             if (bid.getTrackingToken() == null || !key.equals(ReceptionPhones.digitsKey(bid.getRecipientPhone()))) {
                 continue;
             }
             saveSelf(bid, user.getId(), "RECETTE_ON_CATCH_UP");
+            if (notify) {
+                notifyIncoming(bid, announcementRepository.findById(bid.getAnnouncementId()).orElse(null),
+                        user.getId());
+            }
             created++;
         }
         return created;
