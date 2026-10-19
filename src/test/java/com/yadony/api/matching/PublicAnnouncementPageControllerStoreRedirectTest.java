@@ -104,4 +104,31 @@ class PublicAnnouncementPageControllerStoreRedirectTest {
                         containsString("yadony://annonce/" + a.getId())))
                 .andExpect(content().string(containsString("Ouvrir dans l'application")));
     }
+
+    /** Page « plus disponible » sur iPhone : bouton App Store en plus de l'ouverture de l'app. */
+    @Test
+    void unavailablePage_iosVisitor_getsTheAppStoreButton() throws Exception {
+        AnnouncementEntity a = persistMinimalAnnouncement();
+        a.setStatus(AnnouncementStatus.CANCELLED);
+        announcementRepository.saveAndFlush(a);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", IOS_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("n'est plus disponible")))
+                .andExpect(content().string(containsString("yadony://annonce/" + a.getId())))
+                .andExpect(content().string(
+                        containsString("href=\"https://apps.apple.com/app/yadony/id0000000000\"")))
+                .andExpect(content().string(containsString("Télécharger l'app")));
+    }
+
+    /** Ordinateur : aucun store mobile à proposer, seul le bouton d'ouverture reste. */
+    @Test
+    void unavailablePage_desktopVisitor_hasNoStoreButton() throws Exception {
+        UUID unknown = UUID.randomUUID();
+
+        mockMvc.perform(get("/public/annonce/" + unknown).header("User-Agent", DESKTOP_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("yadony://annonce/" + unknown)))
+                .andExpect(content().string(not(containsString("Télécharger l'app"))));
+    }
 }
