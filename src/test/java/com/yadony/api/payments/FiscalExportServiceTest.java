@@ -2,7 +2,13 @@ package com.yadony.api.payments;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.AnnouncementEntity;
+import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.payments.supplement.BidSupplementEntity;
+import com.yadony.api.payments.supplement.BidSupplementRail;
+import com.yadony.api.payments.supplement.BidSupplementRepository;
+import com.yadony.api.payments.supplement.BidSupplementStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -16,6 +22,7 @@ import java.lang.reflect.Field;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -29,6 +36,7 @@ class FiscalExportServiceTest {
     @Mock private PaymentRepository paymentRepository;
     @Mock private BidRepository bidRepository;
     @Mock private AnnouncementRepository announcementRepository;
+    @Mock private BidSupplementRepository supplementRepository;
 
     @InjectMocks private FiscalExportService service;
 
@@ -152,6 +160,74 @@ class FiscalExportServiceTest {
 
             assertThat(content).contains("DAC7");
             assertThat(content).contains("Kofi Mensah");
+        }
+    }
+
+    @Nested
+    @DisplayName("Supplément de prix versé (B5)")
+    class Supplements {
+
+        @Test
+        void resume_supplementVerseCompteDansLeBrutEtLaCommission() {
+            PaymentEntity p = buildPayment(BigDecimal.valueOf(100), BigDecimal.valueOf(12));
+            when(paymentRepository.findReleasedByTravelerAndYear(eq(TRAVELER_ID), any(), any())).thenReturn(List.of(p));
+            when(supplementRepository.findPaidOutByTravelerBetween(eq(TRAVELER_ID), any(), any()))
+                    .thenReturn(List.of(paidOut(new BigDecimal("21.10"), new BigDecimal("1.10"), null)));
+
+            String content = new String(service.generateCsv(traveler, 2025, "summary"));
+
+            // brut 100 + 21,10 ; commission 12 + 1,10 ; net 108
+            assertThat(content).contains("121.10").contains("13.10").contains("108.00");
+        }
+
+        @Test
+        void dac7_brutEtCommissionAvecSupplement_nombreDeTransactionsInchange() {
+            PaymentEntity p = buildPayment(BigDecimal.valueOf(200), BigDecimal.valueOf(24));
+            when(paymentRepository.findReleasedByTravelerAndYear(eq(TRAVELER_ID), any(), any())).thenReturn(List.of(p));
+            when(supplementRepository.findPaidOutByTravelerBetween(eq(TRAVELER_ID), any(), any()))
+                    .thenReturn(List.of(paidOut(new BigDecimal("21.10"), new BigDecimal("1.10"), null)));
+
+            String csv = new String(service.generateCsv(traveler, 2025, "dac7"));
+            String html = new String(service.generateHtml(traveler, 2025, "dac7"));
+
+            assertThat(csv).contains("Revenu brut total (€),221.10").contains("Commissions retenues (€),25.10")
+                    .contains("Revenu net total (€),196.00").contains("Nombre de transactions,1");
+            assertThat(html).contains("221.10 €").contains("25.10 €").contains("<td>1</td>");
+        }
+
+        @Test
+        void transactions_ligneDuSupplementAvecSonTrajet() throws Exception {
+            UUID bidId = UUID.randomUUID();
+            UUID announcementId = UUID.randomUUID();
+            BidEntity bid = new BidEntity();
+            bid.setAnnouncementId(announcementId);
+            AnnouncementEntity announcement = new AnnouncementEntity();
+            announcement.setDepartureCity("Paris");
+            announcement.setArrivalCity("Dakar");
+            when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(announcement));
+            when(paymentRepository.findReleasedByTravelerAndYear(eq(TRAVELER_ID), any(), any())).thenReturn(List.of());
+            when(supplementRepository.findPaidOutByTravelerBetween(eq(TRAVELER_ID), any(), any()))
+                    .thenReturn(List.of(paidOut(new BigDecimal("21.10"), new BigDecimal("1.10"), bidId)));
+
+            String csv = new String(service.generateCsv(traveler, 2025, "transactions"));
+            String html = new String(service.generateHtml(traveler, 2025, "transactions"));
+
+            assertThat(csv).contains("2025-06-01,Paris → Dakar (supplément),21.10,1.10,20.00");
+            assertThat(html).contains("Paris → Dakar (supplément)").contains("<td>20.00</td>");
+        }
+
+        private BidSupplementEntity paidOut(BigDecimal gross, BigDecimal commission, UUID bidId) {
+            BidSupplementEntity s = new BidSupplementEntity();
+            s.setBidId(bidId);
+            s.setRail(BidSupplementRail.STRIPE);
+            s.setStatus(BidSupplementStatus.PAID_OUT);
+            s.setCurrency("EUR");
+            s.setGrossAmount(gross);
+            s.setCommissionAmount(commission);
+            s.setNetAmount(gross.subtract(commission));
+            s.setPaidOutAt(LocalDateTime.of(2025, 6, 1, 12, 0));
+            return s;
         }
     }
 
