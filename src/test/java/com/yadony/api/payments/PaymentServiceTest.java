@@ -1228,8 +1228,11 @@ class PaymentServiceTest {
 
     // ── createNegotiationEscrow (Model B) ─────────────────────────────────────
 
-    @Test
-    void createNegotiationEscrow_usesServerCadOneToOne_withoutFxQuote() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest(name = "paypalEnabled={0}")
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    void createNegotiationEscrow_usesServerCadOneToOne_withoutFxQuote(boolean paypalEnabled) throws Exception {
+        // YADONY-FLUTTER-PROD-10/11 : PayPal seulement quand le drapeau est actif.
+        service.setPaypalEnabled(paypalEnabled);
         UUID threadId = UUID.randomUUID();
 
         // sender and traveler
@@ -1279,11 +1282,16 @@ class PaymentServiceTest {
             assertThat(params.getApplicationFeeAmount()).isNull();         // PAS de fee ici
             assertThat(params.getTransferData()).isNull();                 // pas de destination charge
             assertThat(params.getOnBehalfOf()).isNull();                   // retiré (incompatible PayPal)
-            assertThat(params.getPaymentMethodTypes()).containsExactly("card", "paypal");
-            // Page PayPal dans la langue de l'expéditeur, FR par défaut (FLUTTER-NT)
-            assertThat(((PaymentIntentCreateParams.PaymentMethodOptions.Paypal)
-                    params.getPaymentMethodOptions().getPaypal()).getPreferredLocale())
-                    .isEqualTo(PaymentIntentCreateParams.PaymentMethodOptions.Paypal.PreferredLocale.FR_FR);
+            if (paypalEnabled) {
+                assertThat(params.getPaymentMethodTypes()).containsExactly("card", "paypal");
+                // Page PayPal dans la langue de l'expéditeur, FR par défaut (FLUTTER-NT)
+                assertThat(((PaymentIntentCreateParams.PaymentMethodOptions.Paypal)
+                        params.getPaymentMethodOptions().getPaypal()).getPreferredLocale())
+                        .isEqualTo(PaymentIntentCreateParams.PaymentMethodOptions.Paypal.PreferredLocale.FR_FR);
+            } else {
+                assertThat(params.getPaymentMethodTypes()).containsExactly("card");
+                assertThat(params.getPaymentMethodOptions()).isNull();
+            }
 
             // L'entité paiement enregistre toujours gross + commission : la commission
             // sert au calcul du Transfer(net = gross - commission) à la livraison.
