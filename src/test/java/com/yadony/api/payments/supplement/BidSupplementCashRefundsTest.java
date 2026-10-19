@@ -96,7 +96,7 @@ class BidSupplementCashRefundsTest {
 
         assertThat(refunds.settle(s.getId())).isFalse();
         verify(ledger, never()).cardRefunded(any(), any(), any());
-        verify(alerts).raiseOnce(eq("SUPP_COMMISSION_REFUND_FAILED_" + s.getId()), anyString(), anyMap());
+        verify(alerts).raiseOnce(eq("SUPP_COMM_REFUND_FAIL_" + s.getId()), anyString(), anyMap());
     }
 
     @Test

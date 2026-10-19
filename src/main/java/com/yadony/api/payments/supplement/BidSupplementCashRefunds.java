@@ -115,7 +115,7 @@ public class BidSupplementCashRefunds {
             log.error("Remboursement de la commission du supplément {} en échec", supplementId, e);
             ledger.auditOnly(supplementId, "BID_SUPPLEMENT_COMMISSION_REFUND_ERROR",
                     Map.of("error", String.valueOf(e.getMessage())));
-            alerts.raiseOnce("SUPP_COMMISSION_REFUND_FAILED_" + supplementId,
+            alerts.raiseOnce("SUPP_COMM_REFUND_FAIL_" + supplementId,
                     "Commission du supplément espèces " + supplementId + " non rendue : " + e.getMessage(),
                     Map.of("supplementId", supplementId.toString(), "bidId", claim.bidId().toString(),
                             "error", String.valueOf(e.getMessage())));

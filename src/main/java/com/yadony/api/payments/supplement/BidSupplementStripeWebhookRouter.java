@@ -184,7 +184,7 @@ public class BidSupplementStripeWebhookRouter {
             String refundId = refund.path("id").asText(null);
             if (("failed".equals(status) || "canceled".equals(status))
                     && cashLedger.commissionRefundFailed(s.getId(), refundId)) {
-                alerts.raiseOnce("SUPP_COMMISSION_REFUND_FAILED_" + s.getId(),
+                alerts.raiseOnce("SUPP_COMM_REFUND_FAIL_" + s.getId(),
                         "Remboursement " + refundId + " de la commission du supplément " + s.getId()
                                 + " échoué chez Stripe (" + refund.path("failure_reason").asText("inconnu")
                                 + ") : commission à rendre au voyageur à la main",
@@ -252,7 +252,7 @@ public class BidSupplementStripeWebhookRouter {
         } else {
             cashLedger.auditOnly(s.getId(), "BID_SUPPLEMENT_COMMISSION_PARTIAL_REFUND",
                     Map.of("amountRefunded", refunded, "amount", amount));
-            alerts.raiseOnce("SUPP_COMMISSION_PARTIAL_REFUND_" + s.getId(),
+            alerts.raiseOnce("SUPP_COMM_PARTIAL_REF_" + s.getId(),
                     "Remboursement partiel de la commission du supplément " + s.getId() + " : à traiter à la main",
                     Map.of("supplementId", s.getId().toString(), "amountRefunded", refunded, "amount", amount));
         }

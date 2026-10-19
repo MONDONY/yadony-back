@@ -276,7 +276,7 @@ class BidSupplementStripeWebhookRouterTest {
                 + "\"amount\":110,\"amount_refunded\":50}"))).isTrue();
 
         verify(cashLedger).auditOnly(eq(s.getId()), eq("BID_SUPPLEMENT_COMMISSION_PARTIAL_REFUND"), anyMap());
-        verify(alerts).raiseOnce(eq("SUPP_COMMISSION_PARTIAL_REFUND_" + s.getId()), anyString(), anyMap());
+        verify(alerts).raiseOnce(eq("SUPP_COMM_PARTIAL_REF_" + s.getId()), anyString(), anyMap());
     }
 
     @Test
@@ -289,7 +289,7 @@ class BidSupplementStripeWebhookRouterTest {
         assertThat(router.handle(event("charge.refund.updated",
                 "{\"id\":\"re_c\",\"payment_intent\":\"pi_c\",\"status\":\"succeeded\"}"))).isTrue();
 
-        verify(alerts).raiseOnce(eq("SUPP_COMMISSION_REFUND_FAILED_" + s.getId()), anyString(), anyMap());
+        verify(alerts).raiseOnce(eq("SUPP_COMM_REFUND_FAIL_" + s.getId()), anyString(), anyMap());
         verify(cashLedger, org.mockito.Mockito.times(1)).commissionRefundFailed(any(), any());
         verifyNoInteractions(ledger);
     }
