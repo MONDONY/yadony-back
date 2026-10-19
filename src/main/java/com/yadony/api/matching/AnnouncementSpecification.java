@@ -99,10 +99,26 @@ public class AnnouncementSpecification {
                 cb.greaterThan(root.get("handoverDeadline"), nowUtc));
     }
 
+    /**
+     * Capacité restante d'au moins {@code kg}. Un trajet en capacité libre
+     * ({@link CapacityUnit#KG_FREE}) passe toujours : sa capacité n'est pas bornée et son
+     * {@code availableKg} n'est qu'une valeur technique (≈ 1), jamais décrémentée par les
+     * réservations. Sans cette exception, « Valise 23 kg » excluait tous les trajets en
+     * kilo libre (YADONY-FLUTTER-PROD-Z). Même règle que
+     * {@link AnnouncementEntity#reserveCapacity} (aucune limite en KG_FREE).
+     */
     public static Specification<AnnouncementEntity> minAvailableKg(BigDecimal kg) {
-        return (root, query, cb) -> cb.greaterThanOrEqualTo(root.get("availableKg"), kg);
+        return (root, query, cb) -> cb.or(
+                cb.equal(root.get("capacityUnit"), CapacityUnit.KG_FREE),
+                cb.greaterThanOrEqualTo(root.get("availableKg"), kg));
     }
 
+    /**
+     * Capacité restante d'au plus {@code kg}. Comportement inchangé pour
+     * {@link CapacityUnit#KG_FREE} : son {@code availableKg} technique (≈ 1) le laisse
+     * passer, comme avant. La borne haute de la fourchette de poids de l'accueil ne doit
+     * pas faire disparaître un trajet qui accepte justement les petits colis.
+     */
     public static Specification<AnnouncementEntity> maxAvailableKg(BigDecimal kg) {
         return (root, query, cb) -> cb.lessThanOrEqualTo(root.get("availableKg"), kg);
     }

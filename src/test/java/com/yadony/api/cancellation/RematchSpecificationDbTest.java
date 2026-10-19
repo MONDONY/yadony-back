@@ -132,6 +132,20 @@ class RematchSpecificationDbTest {
     }
 
     @Test
+    @DisplayName("capacité libre (KG_FREE, availableKg technique à 1) → proposée malgré weightKg 5")
+    void kgFreeAlternative_isIncludedDespiteTechnicalAvailableKg() {
+        AnnouncementEntity cancelled = persistCancelled(UUID.randomUUID());
+        AnnouncementEntity kgFree = persist(UUID.randomUUID(),
+                LocalDate.now(ZoneOffset.UTC).plusDays(1), BigDecimal.ONE, AnnouncementStatus.ACTIVE);
+        kgFree.setCapacityUnit(com.yadony.api.matching.CapacityUnit.KG_FREE);
+        repository.saveAndFlush(kgFree);
+
+        List<AnnouncementEntity> results = runSpec(cancelled);
+
+        assertThat(results).extracting(AnnouncementEntity::getId).contains(kgFree.getId());
+    }
+
+    @Test
     @DisplayName("annonce (autre) du voyageur qui annule → exclue")
     void otherAnnouncementFromCancellingTraveler_isExcluded() {
         UUID cancellingTraveler = UUID.randomUUID();
