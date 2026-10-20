@@ -1,7 +1,9 @@
 package com.yadony.api.matching;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneOffset;
 import java.util.EnumSet;
 import java.util.Set;
 
@@ -39,9 +41,12 @@ public final class TripRescheduleRules {
     }
 
     /**
-     * Jusqu'à quand l'expéditeur peut se retirer, en heure locale du trajet. Colis
-     * accepté : la nouvelle date limite de remise (après, il doit remettre le colis).
-     * Colis déjà remis : le nouveau départ. Sans réponse, le colis reste sur le trajet.
+     * Jusqu'à quand l'expéditeur peut se retirer, <b>en UTC</b> (convention des
+     * {@code LocalDateTime} du projet : l'app reçoit l'heure suffixée « Z »). Colis accepté :
+     * la nouvelle date limite de remise, déjà en UTC (après, il doit remettre le colis).
+     * Colis déjà remis : le nouveau départ, heure murale du fuseau du trajet ramenée en UTC.
+     * Sans réponse, le colis reste sur le trajet. Mélanger les deux repères décalait la
+     * décision du décalage horaire (YADONY-FLUTTER-PROD-1R).
      */
     public static LocalDateTime decisionDeadline(BidEntity bid, AnnouncementEntity announcement) {
         if (bid.getStatus() == BidStatus.ACCEPTED && bid.getHandoverDeadline() != null) {
@@ -49,19 +54,22 @@ public final class TripRescheduleRules {
         }
         LocalTime time = announcement.getDepartureTime() != null
                 ? announcement.getDepartureTime() : LocalTime.of(23, 59);
-        return announcement.getDepartureDate().atTime(time);
+        return announcement.getDepartureDate().atTime(time)
+                .atZone(TripTimezones.zoneOf(announcement.getTimezone()))
+                .withZoneSameInstant(ZoneOffset.UTC)
+                .toLocalDateTime();
     }
 
     /** L'expéditeur peut-il encore répondre au report en attente sur ce colis ? */
     public static boolean decisionOpen(BidEntity bid, AnnouncementEntity announcement) {
+        return decisionOpen(bid, announcement, Instant.now());
+    }
+
+    static boolean decisionOpen(BidEntity bid, AnnouncementEntity announcement, Instant now) {
         if (bid.getPendingRescheduleId() == null || announcement == null
                 || !DECISION_STATUSES.contains(bid.getStatus())) {
             return false;
         }
-        return nowAt(announcement).isBefore(decisionDeadline(bid, announcement));
-    }
-
-    static LocalDateTime nowAt(AnnouncementEntity announcement) {
-        return LocalDateTime.now(TripTimezones.zoneOf(announcement.getTimezone()));
+        return now.isBefore(decisionDeadline(bid, announcement).toInstant(ZoneOffset.UTC));
     }
 }

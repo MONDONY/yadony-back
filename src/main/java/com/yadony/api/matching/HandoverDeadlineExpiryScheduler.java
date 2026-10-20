@@ -63,8 +63,8 @@ public class HandoverDeadlineExpiryScheduler {
 
     /** Un passage, à l'instant {@code now} : testable sans dépendre de l'horloge. */
     int expireAt(Instant now) {
-        LocalDateTime upperBound = LocalDateTime.ofInstant(now, ZoneOffset.UTC)
-                .plusHours(HandoverDeadlineRules.MAX_ZONE_AHEAD_HOURS);
+        // Date limite stockée en UTC : la borne est exacte (YADONY-FLUTTER-PROD-1R).
+        LocalDateTime upperBound = LocalDateTime.ofInstant(now, ZoneOffset.UTC);
         List<UUID> candidates = bidRepository.findIdsForHandoverDeadlineExpiry(
                 HandoverDeadlineRules.EXPIRABLE_STATUSES, upperBound);
         int changed = 0;

@@ -212,9 +212,15 @@ public class FavoriteService {
      * filtre, partagée par la liste et par {@link #getFavoriteIds}. Son propre trajet est
      * aussi retiré : arrivé par le transfert d'un favori d'invité, il ouvrait la réservation
      * sur son propre trajet (FLUTTER-R9).
+     *
+     * <p>Un trajet dont la date limite de dépôt est passée est masqué aussi, comme dans la
+     * recherche (YADONY-FLUTTER-PROD-1R) : on ne peut plus y faire de demande (409). Le favori
+     * reste en base : si le voyageur reporte son trajet, la nouvelle date limite le fait
+     * réapparaître. Même règle que pour une demande favorite expirée, déjà masquée.
      */
     private List<AnnouncementEntity> presentableTrips(List<UUID> ids, Set<UUID> hidden, UUID callerId) {
         if (ids.isEmpty()) return List.of();
+        java.time.Instant now = java.time.Instant.now();
         return announcementRepository.findAllById(ids).stream()
                 .filter(a -> a.getStatus() != AnnouncementStatus.CANCELLED
                         && a.getStatus() != AnnouncementStatus.COMPLETED
@@ -223,7 +229,8 @@ public class FavoriteService {
                         // rester visible dans les favoris de l'utilisateur.
                         && a.getStatus() != AnnouncementStatus.REMOVED_BY_ADMIN
                         && !callerId.equals(a.getTravelerId())
-                        && !ownerHidden(hidden, a.getTravelerId()))
+                        && !ownerHidden(hidden, a.getTravelerId())
+                        && !a.isHandoverDeadlinePassed(now))
                 .toList();
     }
 

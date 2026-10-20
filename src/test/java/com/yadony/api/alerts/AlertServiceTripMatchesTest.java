@@ -566,6 +566,39 @@ class AlertServiceTripMatchesTest {
         assertThat(service.findSenderAlertsMatchingTrip(trip)).hasSize(1);
     }
 
+    // ── PROD-1R : date limite de dépôt passée (UTC) ─────────────────────────
+
+    @Test
+    void getTripMatches_handoverDeadlinePassedInUtc_excluded_stillOpen_included() {
+        UUID travelerId = UUID.randomUUID();
+        // Horloge : 2026-07-15T12:00Z. Limite 11:59 UTC passée ; 13:00 UTC (15:00 à Paris) à venir.
+        AnnouncementEntity closed = trip(travelerId, LocalDate.of(2026, 7, 16),
+                new BigDecimal("15.00"), new BigDecimal("8.50"));
+        closed.setHandoverDeadline(java.time.LocalDateTime.of(2026, 7, 15, 11, 59));
+        AnnouncementEntity open = trip(travelerId, LocalDate.of(2026, 7, 16),
+                new BigDecimal("15.00"), new BigDecimal("8.50"));
+        open.setTimezone("Europe/Paris");
+        open.setHandoverDeadline(java.time.LocalDateTime.of(2026, 7, 15, 13, 0));
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(senderAlert()));
+        when(announcementRepository.findActiveByCorridor("Paris", "Bamako")).thenReturn(List.of(closed, open));
+        when(userRepository.findAllById(anyCollection()))
+                .thenReturn(List.of(traveler(travelerId, "Moussa", "Diallo", null)));
+
+        assertThat(service.getTripMatches(uid, alertId))
+                .extracting(AlertTripMatchDto::announcementId)
+                .containsExactly(open.getId());
+    }
+
+    @Test
+    void findSenderAlertsMatchingTrip_handoverDeadlinePassed_noAlertWithoutQuery() {
+        AnnouncementEntity trip = tripAt("Paris", "Bamako", LocalDate.of(2026, 7, 16),
+                BigDecimal.ONE, BigDecimal.ONE, AnnouncementStatus.ACTIVE);
+        trip.setHandoverDeadline(java.time.LocalDateTime.of(2026, 7, 15, 11, 0));
+
+        assertThat(service.findSenderAlertsMatchingTrip(trip)).isEmpty();
+        verifyNoInteractions(alertRepository);
+    }
+
     private static void setCreatedAt(Object target, java.time.LocalDateTime at) {
         try {
             var f = com.yadony.api.common.BaseEntity.class.getDeclaredField("createdAt");

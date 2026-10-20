@@ -25,7 +25,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 class NoShowSchedulerTest {
 
     @Mock private BidRepository bidRepository;
-    @Mock private AnnouncementRepository announcementRepository;
     @Mock private NoShowService noShowService;
 
     @InjectMocks private NoShowScheduler scheduler;
@@ -47,76 +46,60 @@ class NoShowSchedulerTest {
     }
 
     /**
-     * La date limite du colis est une heure murale du fuseau du trajet : le no-show part
-     * 1 h après CET instant-là, jamais 1 h après la même heure lue en UTC.
+     * La date limite du colis est stockée en UTC (YADONY-FLUTTER-PROD-1R) : le no-show part
+     * 1 h après cet instant UTC, quel que soit le fuseau du trajet. La lire comme une heure
+     * murale de Paris déclarait l'absence deux heures trop tôt en été.
      */
     @Nested
-    @DisplayName("fuseau du trajet")
-    class TimezoneTests {
+    @DisplayName("date limite en UTC")
+    class UtcDeadlineTests {
 
-        private AnnouncementEntity tripIn(String timezone) throws Exception {
-            AnnouncementEntity a = new AnnouncementEntity();
-            setId(a, ANNOUNCEMENT_ID);
-            a.setTimezone(timezone);
-            return a;
-        }
-
-        private boolean noShowAt(String timezone, LocalDateTime deadline, String nowUtc) throws Exception {
-            bid.setHandoverDeadline(deadline);
-            return NoShowScheduler.isPastGrace(bid, tripIn(timezone), Instant.parse(nowUtc));
+        private boolean noShowAt(LocalDateTime utcDeadline, String nowUtc) {
+            bid.setHandoverDeadline(utcDeadline);
+            return NoShowScheduler.isPastGrace(bid, Instant.parse(nowUtc));
         }
 
         @Test
-        @DisplayName("Paris en été (UTC+2) : 12:30 locale + 1 h = 11:30 UTC, dépassé à 12:00 UTC")
-        void parisSummer() throws Exception {
-            // L'ancienne comparaison en UTC attendait 13:30 UTC : deux heures de retard.
-            assertThat(noShowAt("Europe/Paris", LocalDateTime.of(2026, 7, 15, 12, 30), "2026-07-15T12:00:00Z")).isTrue();
-            assertThat(noShowAt("Europe/Paris", LocalDateTime.of(2026, 7, 15, 13, 30), "2026-07-15T12:00:00Z")).isFalse();
+        @DisplayName("PROD-1R : limite 18:30 UTC (20:30 à Paris), rien à 16:33Z ni à 19:30Z pile")
+        void prod1rNotBeforeGrace() {
+            LocalDateTime deadline = LocalDateTime.of(2026, 10, 19, 18, 30);
+            assertThat(noShowAt(deadline, "2026-10-19T16:33:00Z")).isFalse();
+            assertThat(noShowAt(deadline, "2026-10-19T19:30:00Z")).isFalse();
+            assertThat(noShowAt(deadline, "2026-10-19T19:30:01Z")).isTrue();
         }
 
         @Test
-        @DisplayName("Paris en hiver (UTC+1) : 11:30 locale dépassée à 12:00 UTC, 12:00 locale pas encore")
-        void parisWinter() throws Exception {
-            assertThat(noShowAt("Europe/Paris", LocalDateTime.of(2026, 1, 15, 11, 30), "2026-01-15T12:00:00Z")).isTrue();
-            assertThat(noShowAt("Europe/Paris", LocalDateTime.of(2026, 1, 15, 12, 0), "2026-01-15T12:00:00Z")).isFalse();
+        @DisplayName("la grâce d'1 h est stricte et comptée en UTC")
+        void graceIsStrictUtc() {
+            assertThat(noShowAt(LocalDateTime.of(2026, 7, 15, 10, 59), "2026-07-15T12:00:00Z")).isTrue();
+            assertThat(noShowAt(LocalDateTime.of(2026, 7, 15, 11, 0), "2026-07-15T12:00:00Z")).isFalse();
         }
 
         @Test
-        @DisplayName("Abidjan (UTC+0) : heure locale = UTC, la grâce d'1 h est stricte")
-        void abidjan() throws Exception {
-            assertThat(noShowAt("Africa/Abidjan", LocalDateTime.of(2026, 7, 15, 10, 59), "2026-07-15T12:00:00Z")).isTrue();
-            assertThat(noShowAt("Africa/Abidjan", LocalDateTime.of(2026, 7, 15, 11, 0), "2026-07-15T12:00:00Z")).isFalse();
+        @DisplayName("passage à 16:33Z : requête bornée à now - 1 h en UTC, aucun colis de limite 18:30Z traité")
+        void runAt1633ExpiresNothing() throws Exception {
+            bid.setHandoverDeadline(LocalDateTime.of(2026, 10, 19, 18, 30));
+            when(bidRepository.findNoShowBids(any())).thenReturn(List.of(bid));
+
+            scheduler.detectNoShowsAt(Instant.parse("2026-10-19T16:33:00Z"));
+
+            verify(bidRepository).findNoShowBids(LocalDateTime.of(2026, 10, 19, 15, 33));
+            verifyNoInteractions(noShowService);
         }
 
         @Test
-        @DisplayName("Douala (UTC+1, sans heure d'été) : 11:30 locale dépassée, 12:30 locale pas encore")
-        void douala() throws Exception {
-            assertThat(noShowAt("Africa/Douala", LocalDateTime.of(2026, 7, 15, 11, 30), "2026-07-15T12:00:00Z")).isTrue();
-            assertThat(noShowAt("Africa/Douala", LocalDateTime.of(2026, 7, 15, 12, 30), "2026-07-15T12:00:00Z")).isFalse();
-        }
-
-        @Test
-        @DisplayName("trajet introuvable : repli sur Europe/Paris, comme TripTimezones")
-        void missingTripFallsBackToParis() {
-            bid.setHandoverDeadline(LocalDateTime.of(2026, 7, 15, 12, 30));
-            assertThat(NoShowScheduler.isPastGrace(bid, null, Instant.parse("2026-07-15T12:00:00Z"))).isTrue();
-        }
-
-        @Test
-        @DisplayName("passage : requête large (now - 1 h + 14 h), seul le colis dépassé dans son fuseau est traité")
-        void runFiltersCandidatesInTripTimezone() throws Exception {
-            bid.setHandoverDeadline(LocalDateTime.of(2026, 7, 15, 12, 30)); // Paris : dépassé
+        @DisplayName("passage : seul le colis dont limite + 1 h est dépassée en UTC est traité")
+        void runFiltersCandidatesInUtc() throws Exception {
+            bid.setHandoverDeadline(LocalDateTime.of(2026, 7, 15, 10, 30)); // dépassé
             BidEntity notYet = new BidEntity();
             UUID notYetId = UUID.randomUUID();
             setId(notYet, notYetId);
             setField(notYet, "announcementId", ANNOUNCEMENT_ID);
-            notYet.setHandoverDeadline(LocalDateTime.of(2026, 7, 15, 13, 30)); // Paris : pas encore
+            notYet.setHandoverDeadline(LocalDateTime.of(2026, 7, 15, 11, 30)); // pas encore
             when(bidRepository.findNoShowBids(any())).thenReturn(List.of(bid, notYet));
-            when(announcementRepository.findAllById(any())).thenReturn(List.of(tripIn("Europe/Paris")));
 
             scheduler.detectNoShowsAt(Instant.parse("2026-07-15T12:00:00Z"));
 
-            verify(bidRepository).findNoShowBids(LocalDateTime.of(2026, 7, 16, 1, 0));
             verify(noShowService).recordTravelerNoShow(BID_ID, "scheduler");
             verify(noShowService, never()).recordTravelerNoShow(notYetId, "scheduler");
         }

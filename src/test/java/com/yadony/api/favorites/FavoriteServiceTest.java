@@ -491,6 +491,36 @@ class FavoriteServiceTest {
         verify(announcementSearchMapper).toSearchResponseList(eq(List.of(a1)), anySet());
     }
 
+    /**
+     * PROD-1R : un trajet dont la date limite de dépôt (UTC) est passée n'est plus présenté
+     * dans les favoris ni dans les identifiants favoris ; un trajet dont la limite est dans
+     * une heure reste visible, même au départ de Paris.
+     */
+    @Test
+    void getFavoriteTrips_hidesTripsWhoseHandoverDeadlinePassed() {
+        UUID owner = UUID.randomUUID();
+        AnnouncementEntity closed = tripOwnedBy(owner);
+        org.springframework.test.util.ReflectionTestUtils.setField(closed, "id", UUID.randomUUID());
+        closed.setStatus(AnnouncementStatus.ACTIVE);
+        closed.setHandoverDeadline(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1));
+        AnnouncementEntity open = tripOwnedBy(owner);
+        org.springframework.test.util.ReflectionTestUtils.setField(open, "id", UUID.randomUUID());
+        open.setStatus(AnnouncementStatus.ACTIVE);
+        open.setTimezone("Europe/Paris");
+        open.setHandoverDeadline(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusHours(1));
+        when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.TRIP))
+                .thenReturn(List.of(closed.getId(), open.getId()));
+        when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.PACKAGE_REQUEST)).thenReturn(List.of());
+        when(announcementRepository.findAllById(anyCollection())).thenReturn(List.of(closed, open));
+        when(blockVisibility.hiddenUserIdsFor(userId)).thenReturn(Set.of());
+        AnnouncementSearchResponse dto = mock(AnnouncementSearchResponse.class);
+        when(announcementSearchMapper.toSearchResponseList(eq(List.of(open)), anySet())).thenReturn(List.of(dto));
+
+        assertThat(service.getFavoriteTrips(userId)).hasSize(1);
+        verify(announcementSearchMapper).toSearchResponseList(eq(List.of(open)), anySet());
+        assertThat(service.getFavoriteIds(userId).trips()).containsExactly(open.getId());
+    }
+
     @Test
     void getFavoriteTrips_isFavoriteTruePassedToMapper() {
         UUID t1 = UUID.randomUUID();

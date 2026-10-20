@@ -381,6 +381,9 @@ public class AlertService {
                 // ouvert avec de la place (FLUTTER-EW). Couvre correspondances,
                 // compteurs et digest, qui passent tous par ici.
                 .filter(AnnouncementEntity::isPubliclyVisible)
+                // Même règle que la recherche (handoverDeadlineNotPassed) : un trajet dont la
+                // date limite de dépôt est passée n'accepte plus de demande (PROD-1R).
+                .filter(a -> !a.isHandoverDeadlinePassed(clock.instant()))
                 .filter(a -> !alert.getOwnerId().equals(a.getTravelerId()))
                 .filter(a -> !hidden.contains(a.getTravelerId()))
                 .filter(a -> fitsAlertDate(a.getDepartureDate(), alert))
@@ -433,6 +436,10 @@ public class AlertService {
         }
         // Trajet dédié non ouvert au public : aucune alerte de tiers (FLUTTER-EW).
         if (!trip.isPubliclyVisible()) {
+            return List.of();
+        }
+        // Dépôt déjà clos : personne ne pourrait y faire de demande (PROD-1R).
+        if (trip.isHandoverDeadlinePassed(clock.instant())) {
             return List.of();
         }
         LocalDate today = today();

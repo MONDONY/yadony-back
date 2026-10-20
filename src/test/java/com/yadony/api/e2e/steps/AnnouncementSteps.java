@@ -154,8 +154,9 @@ public class AnnouncementSteps extends AbstractSteps {
         body.put("departureTime", "08:00");
         body.put("arrivalTime", "20:00");
 
-        // Date limite de dépôt : avant le départ (08:00 le jour `date`).
-        body.put("handoverDeadline", date + "T07:30:00");
+        // Date limite de dépôt, en UTC comme l'envoie l'app : avant le départ (08:00 à Paris
+        // le jour `date`, soit 06:00 UTC en été), comparée en UTC depuis PROD-1R.
+        body.put("handoverDeadline", date + "T05:30:00");
 
         // Pickup address (departure)
         Map<String, Object> pickupAddress = new HashMap<>();

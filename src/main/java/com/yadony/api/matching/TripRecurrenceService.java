@@ -251,16 +251,18 @@ public class TripRecurrenceService {
         // Remise au plus tard N jours avant le départ (0 = à l'heure du départ), champ stocké
         // depuis le lot mobile money mais jamais appliqué jusqu'ici.
         int leadDays = rec.getHandoverLeadDays() == null ? 0 : rec.getHandoverLeadDays();
-        LocalDateTime handoverDeadline = departureDt.minusDays(leadDays);
+        // Départ en heure murale de la ville de départ ; la date limite, elle, est stockée en
+        // UTC comme celle saisie dans l'app (YADONY-FLUTTER-PROD-1R) : on convertit ici.
+        java.time.ZoneId departureZone = TripTimezones.zoneOf(TripTimezones.resolve(
+                rec.getDepartureCity(), null, TripTimezones.Lookup.of(announcementRepository)));
+        LocalDateTime departureUtc = departureDt.atZone(departureZone)
+                .withZoneSameInstant(java.time.ZoneOffset.UTC).toLocalDateTime();
+        LocalDateTime handoverDeadline = departureUtc.minusDays(leadDays);
         // Une limite déjà expirée à la publication (départ proche, délai de remise long)
         // ouvrirait le signalement de no-show dès l'acceptation du bid : repli sur l'heure
         // du départ, comportement historique d'avant l'introduction du délai de remise.
-        // Comparée à l'heure locale de la ville de départ : c'est dans ce fuseau que le trajet
-        // généré lira sa date limite (TripTimezones), pas dans celui du serveur.
-        java.time.ZoneId departureZone = TripTimezones.zoneOf(TripTimezones.resolve(
-                rec.getDepartureCity(), null, TripTimezones.Lookup.of(announcementRepository)));
-        if (handoverDeadline.isBefore(LocalDateTime.now(departureZone))) {
-            handoverDeadline = departureDt;
+        if (handoverDeadline.isBefore(LocalDateTime.now(java.time.ZoneOffset.UTC))) {
+            handoverDeadline = departureUtc;
         }
         return new AnnouncementRequest(
                 rec.getDepartureCity(),

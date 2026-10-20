@@ -47,8 +47,8 @@ public class MatchingService {
     }
 
     public List<MatchingRequestDto> findMatchingRequests(UUID travelerId) {
-        List<AnnouncementEntity> activeAnnouncements =
-                announcementRepository.findActiveByTravelerId(travelerId);
+        List<AnnouncementEntity> activeAnnouncements = openForDeposit(
+                announcementRepository.findActiveByTravelerId(travelerId));
 
         // Résolu une fois pour tout l'appel : la liste des blocages ne dépend que
         // du voyageur, pas des demandes parcourues.
@@ -74,6 +74,18 @@ public class MatchingService {
 
         results.sort((a, b) -> Integer.compare(b.matchScore(), a.matchScore()));
         return results;
+    }
+
+    /**
+     * Trajets du voyageur qui acceptent encore des colis : une demande ne peut plus être
+     * proposée sur un trajet dont la date limite de dépôt est passée (409 à la création,
+     * YADONY-FLUTTER-PROD-1R). Ces trajets ne servent donc plus de base aux suggestions.
+     */
+    static List<AnnouncementEntity> openForDeposit(List<AnnouncementEntity> announcements) {
+        java.time.Instant now = java.time.Instant.now();
+        return announcements.stream()
+                .filter(a -> !a.isHandoverDeadlinePassed(now))
+                .toList();
     }
 
     /**
@@ -115,8 +127,8 @@ public class MatchingService {
      * liste filtrée.
      */
     public Map<UUID, MatchInfo> findBestMatchByRequestId(UUID travelerId) {
-        List<AnnouncementEntity> activeAnnouncements =
-                announcementRepository.findActiveByTravelerId(travelerId);
+        List<AnnouncementEntity> activeAnnouncements = openForDeposit(
+                announcementRepository.findActiveByTravelerId(travelerId));
 
         Set<UUID> hiddenSenderIds = blockVisibility.hiddenUserIdsFor(travelerId);
 

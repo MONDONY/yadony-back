@@ -87,11 +87,10 @@ public class AnnouncementSpecification {
      * Exclut les trajets dont la date limite de remise des colis est passée : on ne peut
      * plus y faire de demande ({@code BidService#assertCanBidOn} la refuse en 409).
      *
-     * <p>{@code handoverDeadline} est une heure murale dans le fuseau du trajet, que la
-     * requête compare à {@code nowUtc} faute de conversion par ligne portable (H2 en test).
-     * Sur les corridors servis (UTC à UTC+2), l'écart laisse au pire un trajet visible
-     * deux heures de trop ; la garde de création, elle, applique le fuseau exact.
-     * Une annonce sans date limite (antérieure à V207) reste visible.
+     * <p>{@code handoverDeadline} est stockée en UTC (convention des {@code LocalDateTime}
+     * du projet) : la comparaison avec {@code nowUtc} est exacte, sans écart de fuseau, et
+     * suit la même règle que la garde de création ({@link AnnouncementEntity#isHandoverDeadlinePassed},
+     * YADONY-FLUTTER-PROD-1R). Une annonce sans date limite (antérieure à V207) reste visible.
      */
     public static Specification<AnnouncementEntity> handoverDeadlineNotPassed(LocalDateTime nowUtc) {
         return (root, query, cb) -> cb.or(

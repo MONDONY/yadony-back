@@ -502,8 +502,8 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
                                             @Param("threshold") LocalDateTime threshold);
 
     // No-show detection: ACCEPTED bids with handoverDeadline before :cutoff, no DEPART scan, not yet marked NO_SHOW.
-    // handoverDeadline est une heure murale du fuseau du trajet : :cutoff est une borne LARGE
-    // (now - 1 h + 14 h) et NoShowScheduler tranche ensuite dans le fuseau exact.
+    // handoverDeadline est stockée en UTC : :cutoff (now - 1 h, UTC) est une borne exacte
+    // (YADONY-FLUTTER-PROD-1R).
     // Exclut les bids où le voyageur a déclaré l'expéditeur absent (remise) : tant que
     // l'expéditeur a ses 24 h pour confirmer/contester, ou qu'un litige est ouvert, le bid
     // reste ACCEPTED et ce flux suit son propre cours. Sans cette exclusion, l'expéditeur
@@ -885,9 +885,9 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
      * des demandes encore non engagées dont le trajet a une date limite au plus tard à
      * {@code upperBound}.
      *
-     * <p>Filtre large : la date limite est une heure murale du fuseau du trajet, comparée ici à
-     * une borne UTC élargie du plus grand décalage en avance ({@code now + 14 h}). Le tri exact
-     * se fait ensuite trajet par trajet, via {@link AnnouncementEntity#isHandoverDeadlinePassed}.
+     * <p>La date limite est stockée en UTC et {@code upperBound} vaut l'instant présent en UTC
+     * (YADONY-FLUTTER-PROD-1R). La décision est reconfirmée trajet par trajet, via
+     * {@link AnnouncementEntity#isHandoverDeadlinePassed}.
      * Un trajet sans date limite n'est jamais candidat.
      */
     @Query("""

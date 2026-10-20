@@ -228,7 +228,7 @@ class CancellationServiceNoShowTest {
         verify(eventPublisher, never()).publishEvent(any());
     }
 
-    // ─── FLUTTER-QR : échéance lue dans le fuseau du trajet ──────────────────────
+    // ─── PROD-1R : échéance stockée et comparée en UTC ────────────────────────────
 
     private void tripIn(String timezone) {
         com.yadony.api.matching.AnnouncementEntity announcement = new com.yadony.api.matching.AnnouncementEntity();
@@ -238,16 +238,16 @@ class CancellationServiceNoShowTest {
         when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
     }
 
-    /**
-     * Échéance 12:00 à Tokyo, il est 12:30 à Tokyo : passée. L'ancienne comparaison avec
-     * l'heure de la JVM (UTC sur le serveur, 03:30) refusait le signalement jusqu'à 21:00 UTC,
-     * bien après le passage du job no-show.
-     */
+    private static LocalDateTime utcNowPlusMinutes(long minutes) {
+        return LocalDateTime.now(java.time.ZoneOffset.UTC).plusMinutes(minutes);
+    }
+
+    /** Échéance passée de 30 min en UTC : signalable, même pour un trajet de Tokyo. */
     @Test
-    void reportSenderNoShow_deadlineReadInTripTimezone_acceptedOncePassedLocally() {
+    void reportSenderNoShow_deadlinePassedInUtc_accepted() {
         tripIn("Asia/Tokyo");
-        LocalDateTime deadline = LocalDateTime.now(java.time.ZoneId.of("Asia/Tokyo")).minusMinutes(30);
-        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid(BidStatus.ACCEPTED, PaymentMethod.CASH, deadline)));
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(
+                bid(BidStatus.ACCEPTED, PaymentMethod.CASH, utcNowPlusMinutes(-30))));
         when(cancellationRepository.existsByBidIdAndNoShowStatusIn(any(), any())).thenReturn(false);
         when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -257,22 +257,23 @@ class CancellationServiceNoShowTest {
     }
 
     @Test
-    void reportTravelerNoShow_deadlineReadInTripTimezone_acceptedOncePassedLocally() {
-        tripIn("Asia/Tokyo");
-        LocalDateTime deadline = LocalDateTime.now(java.time.ZoneId.of("Asia/Tokyo")).minusMinutes(30);
-        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid(BidStatus.ACCEPTED, PaymentMethod.CASH, deadline)));
+    void reportTravelerNoShow_deadlinePassedInUtc_accepted() {
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(
+                bid(BidStatus.ACCEPTED, PaymentMethod.CASH, utcNowPlusMinutes(-30))));
 
         service.reportTravelerNoShow(BID_ID, SENDER_ID);
 
         verify(eventPublisher).publishEvent(any(TravelerNoShowReportedEvent.class));
     }
 
-    /** Échéance dans 30 min à l'heure de New York : pas encore signalable, où que tourne la JVM. */
+    /**
+     * PROD-1R : échéance dans 1 h en UTC, trajet de Paris (UTC+1/+2). L'ancienne lecture en
+     * heure murale de Paris la croyait déjà passée et ouvrait le signalement trop tôt.
+     */
     @Test
-    void reportTravelerNoShow_deadlineNotYetPassedInTripTimezone_throws() {
-        tripIn("America/New_York");
-        LocalDateTime deadline = LocalDateTime.now(java.time.ZoneId.of("America/New_York")).plusMinutes(30);
-        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid(BidStatus.ACCEPTED, PaymentMethod.CASH, deadline)));
+    void reportTravelerNoShow_deadlineNotYetPassedInUtc_throwsEvenForParis() {
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(
+                bid(BidStatus.ACCEPTED, PaymentMethod.CASH, utcNowPlusMinutes(60))));
 
         assertThatThrownBy(() -> service.reportTravelerNoShow(BID_ID, SENDER_ID))
                 .isInstanceOf(IllegalStateException.class)
@@ -283,6 +284,6 @@ class CancellationServiceNoShowTest {
     @Test
     void handoverDeadlinePassed_withoutDeadline_isFalse() {
         assertThat(CancellationService.handoverDeadlinePassed(
-                bid(BidStatus.ACCEPTED, PaymentMethod.CASH, null), null)).isFalse();
+                bid(BidStatus.ACCEPTED, PaymentMethod.CASH, null))).isFalse();
     }
 }

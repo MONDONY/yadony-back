@@ -234,7 +234,7 @@ class TripRescheduleServiceTest {
     void reschedule_withHandoverDeadlineAlreadyPassed_isRefused() {
         LocalDate tomorrow = LocalDate.now().plusDays(1);
         var req = new TripRescheduleRequest(tomorrow, LocalTime.of(23, 0), null, null,
-                LocalDateTime.now().minusHours(2), TripRescheduleReason.POSTPONED, null);
+                LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1), TripRescheduleReason.POSTPONED, null);
 
         assertThatThrownBy(() -> service.reschedule(announcementId, "uid-traveler", req))
                 .isInstanceOfSatisfying(YadonyBusinessException.class,

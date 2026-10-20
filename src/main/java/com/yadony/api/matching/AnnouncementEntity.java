@@ -367,9 +367,13 @@ public class AnnouncementEntity extends BaseEntity {
     /**
      * La date limite de remise des colis est-elle atteinte à l'instant {@code now} ?
      *
-     * <p>{@code handoverDeadline} est une heure murale dans le fuseau du trajet (comparée
-     * à {@code departureDate/departureTime} à la publication), jamais de l'UTC : on la
-     * replace donc dans {@link #timezone} avant de la comparer. Sans date limite
+     * <p>{@code handoverDeadline} est stockée en <b>UTC</b>, comme tout {@code LocalDateTime}
+     * du projet : l'app l'envoie en {@code toUtc().toIso8601String()}, Jackson retire le
+     * « Z » à la lecture et {@code JacksonConfig} le remet à l'écriture. On la compare donc
+     * telle quelle à {@code now}, sans passer par le fuseau du trajet. La lire comme une
+     * heure murale de la ville de départ fermait le dépôt deux heures trop tôt à Paris en
+     * été (YADONY-FLUTTER-PROD-1R : limite 18:30Z, demande refusée en 409 à 16:33Z).
+     * Le fuseau du trajet ne sert qu'à l'AFFICHAGE de cette heure. Sans date limite
      * (annonces antérieures à V207), rien n'est considéré comme dépassé.
      *
      * <p>Au-delà de cette date, le voyageur n'attend plus de colis : une demande créée
@@ -380,7 +384,7 @@ public class AnnouncementEntity extends BaseEntity {
         if (handoverDeadline == null) {
             return false;
         }
-        return !handoverDeadline.atZone(TripTimezones.zoneOf(timezone)).toInstant().isAfter(now);
+        return !HandoverDeadlineRules.deadlineInstant(handoverDeadline).isAfter(now);
     }
 
     public UUID getReservedSenderId() { return reservedSenderId; }
