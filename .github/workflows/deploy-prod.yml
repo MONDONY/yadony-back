@@ -168,6 +168,8 @@ jobs:
           ASSISTANT_DAILY_QUOTA=${{ vars.ASSISTANT_DAILY_QUOTA || '20' }}
           ASSISTANT_FORM_DRAFT_ENABLED=${{ vars.ASSISTANT_FORM_DRAFT_ENABLED || 'false' }}
           ASSISTANT_FORM_DRAFT_DAILY_QUOTA=${{ vars.ASSISTANT_FORM_DRAFT_DAILY_QUOTA || '30' }}
+          # Supplément de prix à la remise : éteint par défaut, allumé par la variable d'environnement GitHub.
+          BID_SUPPLEMENT_ENABLED=${{ vars.BID_SUPPLEMENT_ENABLED || 'false' }}
           STORE_OS_REDIRECT_ENABLED=${{ vars.STORE_OS_REDIRECT_ENABLED }}
           STORAGE_PUBLIC_BASE_URL=${{ vars.STORAGE_PUBLIC_BASE_URL }}
           SWAGGER_ENABLED=${{ vars.SWAGGER_ENABLED }}
