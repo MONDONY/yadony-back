@@ -204,6 +204,9 @@ class GuestDataExposureIT {
             "priceGridItems", "reservedKg", "surplusEligible", "surplusPublished",
             "handoverDeadline", "isFavorite", "urgent", "currency", "negotiable",
             "availablePaymentMethods",
+            // Réseaux mobile money acceptés par le voyageur (code opérateur, libellé, marque, pays) :
+            // ce que l'expéditeur doit savoir pour choisir de payer, jamais un numéro ni un compte.
+            "acceptedMobileMoneyNetworks", "code", "brand", "country",
             // AddressDto : le point de retrait d'un TRAJET est public par construction, c'est
             // sur lui qu'un expediteur decide. A ne pas confondre avec pickupAddressLabel,
             // l'adresse exacte d'un COLIS, qui n'est renseignee qu'apres acceptation.
