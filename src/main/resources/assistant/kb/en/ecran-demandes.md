@@ -12,4 +12,4 @@ routes:
   - path: /announcements/trips
     label: My trips
 ---
-You are on Requests, the list of requests from senders on your trips, sorted into "To review", "Accepted" and "Completed". In "To review", tap "Accept" or "Decline" right on the card, or open the request to check the parcel before deciding. If your balance does not cover the service fee of a cash payment, the app offers "Top up my wallet" or "Pay by card". The search finds a request by sender or tracking number.
+You are on Requests: sender requests on your trips, in "To review", "Accepted" and "Completed". A "Trip: City → City" chip can filter the list on one trip; its cross goes back to all requests. In "To review", tap "Accept" or "Decline" on the card, or open the request to check the parcel. If your balance does not cover the service fee of a cash payment, the app offers "Top up my wallet" or "Pay by card". The search finds a request by sender or tracking number.
