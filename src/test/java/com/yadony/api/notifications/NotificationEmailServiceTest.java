@@ -120,4 +120,66 @@ class NotificationEmailServiceTest {
                 .doesNotThrowAnyException();
         assertThat(service(true).replacesPush(userId, "FIRST_ACTION_REMINDER", Map.of())).isFalse();
     }
+
+    @Test
+    void typeWithItsOwnLink_sendsItsButton() {
+        NotificationEmailLink.Cta cta = new NotificationEmailLink.Cta("https://api/resume?t=x", "label", "detail");
+        NotificationEmailLink link = link("STRIPE_ONBOARDING_INCOMPLETE", userId -> Optional.of(cta));
+
+        withLinks(link).send(userId, "STRIPE_ONBOARDING_INCOMPLETE", "Finalisez vos paiements", "b", Map.of());
+
+        verify(resend).sendNotification(eq("awa@exemple.com"), eq(Kind.ACCOUNT), eq("STRIPE_ONBOARDING_INCOMPLETE"),
+                eq("Finalisez vos paiements"), eq("b"), eq(cta), any());
+    }
+
+    @Test
+    void linkWithoutButton_orFailing_keepsTheDefaultButton() {
+        withLinks(link("STRIPE_ONBOARDING_INCOMPLETE", userId -> Optional.empty()))
+                .send(userId, "STRIPE_ONBOARDING_INCOMPLETE", "t", "b", Map.of());
+        withLinks(link("STRIPE_ONBOARDING_INCOMPLETE", userId -> { throw new IllegalStateException("down"); }))
+                .send(userId, "STRIPE_ONBOARDING_INCOMPLETE", "t", "b", Map.of());
+        // Un lien d'un autre type ne s'applique pas.
+        withLinks(link("FLIGHT_PRICE_ALERT", userId -> { throw new AssertionError("jamais appelé"); }))
+                .send(userId, "STRIPE_ONBOARDING_INCOMPLETE", "t", "b", Map.of());
+
+        verify(resend, times(3)).sendNotification(eq("awa@exemple.com"), eq(Kind.ACCOUNT),
+                eq("STRIPE_ONBOARDING_INCOMPLETE"), eq("t"), eq("b"), any(com.yadony.api.common.i18n.Messages.class));
+        verify(resend, never()).sendNotification(anyString(), any(), anyString(), anyString(), anyString(),
+                any(NotificationEmailLink.Cta.class), any());
+    }
+
+    @Test
+    void springConstructor_collectsTheLinks() {
+        @SuppressWarnings("unchecked")
+        org.springframework.beans.factory.ObjectProvider<NotificationEmailLink> provider =
+                mock(org.springframework.beans.factory.ObjectProvider.class);
+        NotificationEmailLink.Cta cta = new NotificationEmailLink.Cta("u", "l", "d");
+        when(provider.orderedStream()).thenAnswer(inv -> java.util.stream.Stream.of(
+                link("STRIPE_ONBOARDING_INCOMPLETE", id -> Optional.of(cta))));
+
+        new NotificationEmailService(true, userRepository, contacts, prefs, resend, messages, provider)
+                .send(userId, "STRIPE_ONBOARDING_INCOMPLETE", "t", "b", Map.of());
+
+        verify(resend).sendNotification(anyString(), any(), anyString(), anyString(), anyString(), eq(cta), any());
+    }
+
+    private NotificationEmailService withLinks(NotificationEmailLink... links) {
+        return new NotificationEmailService(true, userRepository, contacts, prefs, resend, messages,
+                java.util.List.of(links), clock);
+    }
+
+    private static NotificationEmailLink link(String type,
+                                              java.util.function.Function<UUID, Optional<NotificationEmailLink.Cta>> cta) {
+        return new NotificationEmailLink() {
+            @Override
+            public String type() {
+                return type;
+            }
+
+            @Override
+            public Optional<Cta> ctaFor(UUID userId) {
+                return cta.apply(userId);
+            }
+        };
+    }
 }

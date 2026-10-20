@@ -3,6 +3,7 @@ package com.yadony.api.emailotp;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.i18n.Messages;
 import com.yadony.api.gppro.events.GpProDecisionEvent;
+import com.yadony.api.notifications.NotificationEmailLink;
 import com.yadony.api.notifications.NotificationEmailPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -156,22 +157,39 @@ public class ResendEmailService {
      */
     public void sendNotification(String to, NotificationEmailPolicy.Kind kind, String type,
                                  String title, String body, Messages m) {
+        sendNotification(to, kind, type, title, body, null, m);
+    }
+
+    /**
+     * Variante avec un bouton propre au type ({@link NotificationEmailLink.Cta}) : son lien,
+     * son libellé, et sa ligne à la place de celle de la famille. {@code cta} nul = bouton
+     * « Ouvrir Yadony » vers le site.
+     */
+    public void sendNotification(String to, NotificationEmailPolicy.Kind kind, String type,
+                                 String title, String body, NotificationEmailLink.Cta cta, Messages m) {
         try {
             if (!emailSendingConfigured) {
                 return;
             }
             String family = "email.notif.kind." + kind.name().toLowerCase(java.util.Locale.ROOT);
-            String detail = m.get(family + ".detail");
-            if (NotificationEmailPolicy.hasTypeDetail(type)) {
-                detail = detail + " " + m.get("email.notif.type." + type + ".detail");
+            String detail;
+            if (cta != null) {
+                detail = m.get(cta.detailKey());
+            } else {
+                detail = m.get(family + ".detail");
+                if (NotificationEmailPolicy.hasTypeDetail(type)) {
+                    detail = detail + " " + m.get("email.notif.type." + type + ".detail");
+                }
             }
+            String ctaUrl = cta != null ? cta.url() : APP_URL;
+            String ctaLabel = m.get(cta != null ? cta.labelKey() : "email.notif.cta");
             String text = String.join("\n\n", title, body == null ? "" : body, detail,
-                    m.get("email.notif.cta") + " : " + APP_URL);
+                    ctaLabel + " : " + ctaUrl);
             Map<String, Object> payload = Map.of(
                     "from", fromAddress,
                     "to", List.of(to),
                     "subject", title,
-                    "html", renderNotificationHtml(kind, family, title, body, detail, m),
+                    "html", renderNotificationHtml(kind, family, title, body, detail, ctaUrl, ctaLabel, m),
                     "text", text
             );
             restClient.post()
@@ -186,14 +204,16 @@ public class ResendEmailService {
     }
 
     private String renderNotificationHtml(NotificationEmailPolicy.Kind kind, String family, String heading,
-                                          String body, String detail, Messages m) {
+                                          String body, String detail, String ctaUrl, String ctaLabel,
+                                          Messages m) {
         Context context = new Context(m.locale());
         context.setVariable("eyebrow", m.get(family + ".eyebrow"));
         context.setVariable("heading", heading);
         context.setVariable("body", body);
         context.setVariable("detail", detail);
         context.setVariable("optional", kind.pref().isPresent());
-        context.setVariable("appUrl", APP_URL);
+        context.setVariable("appUrl", ctaUrl);
+        context.setVariable("ctaLabel", ctaLabel);
         context.setVariable("lang", m.language().code());
         return templateEngine.process("email-notification", context);
     }

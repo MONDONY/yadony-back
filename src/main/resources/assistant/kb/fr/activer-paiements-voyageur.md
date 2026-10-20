@@ -1,7 +1,7 @@
 ---
 id: activer-paiements-voyageur
 title: Activer la réception de mes paiements par carte
-keywords: recevoir mes paiements, compte bancaire, IBAN, RIB, virement, paiement par carte voyageur, activer les paiements, onboarding, voyageur payé, recevoir mon argent, recevoir l'argent, toucher mon argent, être payé, compte pour être payé
+keywords: recevoir mes paiements, compte bancaire, IBAN, RIB, virement, paiement par carte voyageur, activer les paiements, onboarding, voyageur payé, recevoir mon argent, recevoir l'argent, toucher mon argent, être payé, compte pour être payé, terminer mon inscription, reprendre l'inscription Stripe, e-mail de relance
 routes:
   - path: /payments/onboarding
     label: Recevoir mes paiements
@@ -10,3 +10,4 @@ Ouvrez Moi › Argent › Recevoir mes paiements, puis connectez votre compte ba
 Votre identité doit d'abord être vérifiée, sinon la ligne reste grisée.
 Cette ligne n'apparaît pas si l'activation n'est pas possible dans votre pays de résidence, ou si le compte est déjà actif.
 C'est le pays de résidence de votre profil qui compte, pas le pays où vous vous trouvez ; sans activation, vous pouvez continuer à être payé en espèces ou par mobile money.
+Si vous avez commencé sans terminer, Yadony vous le rappelle le lendemain puis une semaine plus tard : par e-mail si votre compte a une adresse, avec un bouton « Terminer mon inscription » qui rouvre le formulaire Stripe là où vous vous êtes arrêté (valable 14 jours), sinon par notification.

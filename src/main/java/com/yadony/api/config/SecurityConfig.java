@@ -188,6 +188,10 @@ public class SecurityConfig {
                     // Stripe redirige ici après onboarding — pas de token Firebase (browser Stripe)
                     "/payments/onboarding/return",
                     "/payments/onboarding/refresh",
+                    // Bouton de l'e-mail de relance Stripe Connect, ouvert dans un navigateur.
+                    // Sécurité = jeton HMAC signé vérifié dans StripeOnboardingResumeController.
+                    "/payments/onboarding/resume",
+                    "/payments/onboarding/resume/done",
                     // Callbacks pawaPay : pas de token Firebase (serveur à serveur). Sécurité =
                     // signature RFC 9421 vérifiée dans PawapayCallbackController, obligatoire en prod.
                     "/pawapay/callbacks/**",

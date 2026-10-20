@@ -261,6 +261,35 @@ class ResendEmailServiceTest {
     }
 
     @Test
+    @DisplayName("sendNotification — bouton propre au type : son lien, son libellé, sa ligne à la place de la famille")
+    void notificationEmail_withTypeCta() {
+        String url = "https://api.yadony.com/api/v1/payments/onboarding/resume?t=abc.def";
+        var cta = new com.yadony.api.notifications.NotificationEmailLink.Cta(url,
+                "email.notif.cta.stripe-onboarding",
+                "email.notif.type.STRIPE_ONBOARDING_INCOMPLETE.link-detail");
+
+        service.sendNotification("user@example.com", com.yadony.api.notifications.NotificationEmailPolicy.Kind.ACCOUNT,
+                "STRIPE_ONBOARDING_INCOMPLETE", "Finalisez vos paiements",
+                "Il manque quelques informations pour être payé par carte.", cta, TestMessages.fr());
+
+        Map<String, Object> payload = lastPayload();
+        assertThat((String) payload.get("html"))
+                .contains("Terminer mon inscription").contains("href=\"" + url + "\"")
+                .contains("formulaire sécurisé de Stripe")
+                .doesNotContain("Ouvrir Yadony").doesNotContain("se termine dans l")
+                .doesNotContain("??");
+        assertThat((String) payload.get("text"))
+                .contains("Terminer mon inscription : " + url)
+                .contains("valable 14 jours");
+
+        service.sendNotification("user@example.com", com.yadony.api.notifications.NotificationEmailPolicy.Kind.ACCOUNT,
+                "STRIPE_ONBOARDING_INCOMPLETE", "Finish your payment setup", "A few details are missing.",
+                cta, TestMessages.en());
+        assertThat((String) lastPayload().get("html")).contains("Finish my setup").contains("Stripe, our payment partner")
+                .doesNotContain("??");
+    }
+
+    @Test
     @DisplayName("sendNotification — sans clé Resend rien ne part, un échec n'est jamais levé")
     void notificationEmail_notConfiguredOrFailing() {
         service = new ResendEmailService("noreply@yadony.app", mockRestClient, templateEngine(), false, false, true);
