@@ -7,7 +7,8 @@ routes:
     label: Service fee card
 ---
 The Yadony service fee (the "commission") helps cover payment costs, support, fraud prevention and the development of the platform.
-It depends on the price of the transport. Depending on the price, a minimum amount may apply. It is set by Yadony; the app shows the exact amount of the fee, minimum included, not a percentage, before you confirm, when you set a price, accept an offer or pay.
-It is added to the price entered by the traveler: they receive exactly their amount, and the sender pays the total, service fee included.
-For a parcel paid in cash, the sender hands the traveler the total, service fee included, and the service fee is taken from the traveler's wallet, or from their service fee card, when they accept the parcel: the parcel page shows what the traveler collects, the fee charged and what they keep.
-For an extra charge requested at handover, the service fee only applies to the difference: no minimum is charged a second time.
+The service fee is always paid by the sender. It is calculated according to the Yadony fee schedule, based on the price of the transport; the app shows the exact amount of the fee, not a percentage, before you confirm, when you set a price, accept an offer or pay.
+It is added to the traveler's price: the traveler receives exactly their price, and the sender pays the total. In search, the prices shown to the sender include the fee; at payment, the breakdown appears: traveler's price + service fee = total.
+By card or mobile money, the sender pays the total in the app; the traveler receives their price, and the service fee does not touch their balance.
+In cash, the sender hands the traveler the total in person, traveler's price and service fee included. The service fee is advanced by the traveler: it is taken from their wallet, or from their service fee card, when they accept the parcel, and the sender pays it back to them as part of this cash payment. The parcel page shows what the traveler collects, the service fee advanced and what they keep.
+For an extra charge requested at handover, the service fee only applies to the difference.
