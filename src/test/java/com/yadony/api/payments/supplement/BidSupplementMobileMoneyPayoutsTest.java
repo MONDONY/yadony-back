@@ -5,6 +5,7 @@ import com.yadony.api.auth.MobileMoneyPayoutStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.disputes.DisputeRepository;
 import com.yadony.api.disputes.DisputeTypes;
 import com.yadony.api.payments.PaymentEntity;
@@ -75,7 +76,7 @@ class BidSupplementMobileMoneyPayoutsTest {
     @BeforeEach
     void setUp() {
         payouts = new BidSupplementMobileMoneyPayouts(ledger, supplements, users,
-                new MobileMoneyPayoutAccounts(accountRepository), payments, operations, submission,
+                new MobileMoneyPayoutAccounts(accountRepository, TestMessages.resolver()), payments, operations, submission,
                 holdPolicy, disputes, alerts, client, properties);
         lenient().when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", config("ORANGE_SEN", null, null),
                 "WAVE_SEN", config("WAVE_SEN", null, null)));

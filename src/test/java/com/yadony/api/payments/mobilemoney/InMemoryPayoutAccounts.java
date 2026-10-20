@@ -1,5 +1,6 @@
 package com.yadony.api.payments.mobilemoney;
 
+import com.yadony.api.common.i18n.TestMessages;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -20,7 +21,7 @@ public class InMemoryPayoutAccounts extends MobileMoneyPayoutAccounts {
     private final Map<UUID, List<MobileMoneyPayoutAccountEntity>> byUser = new HashMap<>();
 
     public InMemoryPayoutAccounts() {
-        super(null);
+        super(null, TestMessages.resolver());
     }
 
     /** Remplace les comptes de l'utilisateur : un compte par code, le premier est le plus ancien. */

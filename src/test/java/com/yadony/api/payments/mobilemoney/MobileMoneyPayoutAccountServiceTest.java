@@ -254,6 +254,21 @@ class MobileMoneyPayoutAccountServiceTest {
         assertThat(e.getMessage()).isEqualTo("This number belongs to MTN MoMo.");
     }
 
+    @Test
+    void add_unknownUser_is404_withATranslatedDetailThatNeverCarriesTheUserId() {
+        when(userRepository.findByIdForUpdate(userId)).thenReturn(Optional.empty());
+
+        YadonyBusinessException fr = thrown(() -> service.add(userId, CIV_ORANGE_NUMBER, "ORANGE_CIV"));
+        assertThat(fr.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(fr.getErrorCode()).isEqualTo("user-not-found");
+        assertThat(fr.getMessage()).isEqualTo("Utilisateur introuvable.").doesNotContain(userId.toString());
+
+        TestMessages.requestWithAcceptLanguage("en");
+        YadonyBusinessException en = thrown(() -> service.add(userId, CIV_ORANGE_NUMBER, "ORANGE_CIV"));
+        assertThat(en.getMessage()).isEqualTo("User not found.");
+        assertNothingWritten();
+    }
+
     /** Review Focus 3, fermeture MTN : le prédit fermé au versement n'ouvre jamais la porte à Orange. */
     @Test
     void add_orangeOnAnMtnNumber_whileMtnPayoutsAreClosed_isStill422WrongNetwork() {

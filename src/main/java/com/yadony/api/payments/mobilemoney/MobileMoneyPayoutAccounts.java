@@ -2,6 +2,8 @@ package com.yadony.api.payments.mobilemoney;
 
 import com.yadony.api.auth.MobileMoneyPayoutStatus;
 import com.yadony.api.auth.UserEntity;
+import com.yadony.api.common.i18n.Messages;
+import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.payments.pawapay.PawapayProviders;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -29,9 +31,11 @@ public class MobileMoneyPayoutAccounts {
     }
 
     private final MobileMoneyPayoutAccountRepository repository;
+    private final MessagesResolver messagesResolver;
 
-    public MobileMoneyPayoutAccounts(MobileMoneyPayoutAccountRepository repository) {
+    public MobileMoneyPayoutAccounts(MobileMoneyPayoutAccountRepository repository, MessagesResolver messagesResolver) {
         this.repository = repository;
+        this.messagesResolver = messagesResolver;
     }
 
     /** Comptes vivants, le plus ancien d'abord. */
@@ -93,15 +97,15 @@ public class MobileMoneyPayoutAccounts {
         }
         List<MobileMoneyPayoutAccountEntity> accounts = activeIn(userId, currency);
         if (accounts.isEmpty()) {
-            return Optional.of("Ce voyageur n'accepte aucun réseau mobile money pour le moment.");
+            return Optional.of(messagesResolver.forRequest().get("problem.mobile-money-payer.no-network"));
         }
         String brand = PawapayProviders.brand(providerCode);
         boolean sameBrandElsewhere = brand != null
                 && accounts.stream().anyMatch(a -> brand.equals(PawapayProviders.brand(a.getProvider())));
         String rejected = sameBrandElsewhere && countryAlpha2 != null
                 ? providerLabel + " (" + countryAlpha2.toUpperCase(Locale.ROOT) + ")" : providerLabel;
-        return Optional.of("Ce voyageur n'accepte pas " + rejected + ". Réseaux acceptés : "
-                + String.join(", ", labelsOf(accounts, sameBrandElsewhere ? brand : null)) + ".");
+        return Optional.of(messagesResolver.forRequest().get("problem.mobile-money-payer.network-refused", rejected,
+                String.join(", ", labelsOf(accounts, sameBrandElsewhere ? brand : null))));
     }
 
     /**

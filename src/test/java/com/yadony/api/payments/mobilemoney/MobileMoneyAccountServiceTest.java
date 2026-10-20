@@ -123,7 +123,7 @@ class MobileMoneyAccountServiceTest {
     private MobileMoneyAccountService newService(boolean enabled) {
         PawapayProviderResolver resolver = new PawapayProviderResolver(client);
         MobileMoneyPayoutAccountService payoutAccounts = new MobileMoneyPayoutAccountService(userRepository,
-                accountRepository, new MobileMoneyPayoutAccounts(accountRepository), resolver, audit, props(enabled),
+                accountRepository, new MobileMoneyPayoutAccounts(accountRepository, TestMessages.resolver()), resolver, audit, props(enabled),
                 TestMessages.resolver());
         return new MobileMoneyAccountService(userRepository, firebaseContact, resolver, payoutAccounts, props(enabled),
                 TestMessages.resolver());
