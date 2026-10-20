@@ -86,7 +86,9 @@ import static org.mockito.Mockito.when;
 class BidSupplementMobileMoneyIT {
 
     private static final String PAYER = "221770000001";
+    /** Numéro figé dans le payout principal : périmé, il ne doit JAMAIS servir au supplément. */
     private static final String PRINCIPAL_PAYEE = "221770000099";
+    private static final String ACCOUNT_MSISDN = "221770000002";
 
     private static EmbeddedPostgres postgres;
 
@@ -221,7 +223,7 @@ class BidSupplementMobileMoneyIT {
     }
 
     @Test
-    void versementApresLePayoutPrincipal_versLaMemeDestination_puisVerse() throws Exception {
+    void versementApresLePayoutPrincipal_versLeCompteDuCodeDuDepot_puisVerse() throws Exception {
         Parties p = parties();
         UUID supplementId = payDeposit(p);
         UUID paymentId = persistReleasedPrincipal(p.bidId);
@@ -235,7 +237,8 @@ class BidSupplementMobileMoneyIT {
         // sans attente, la vérification précédait parfois l'appel sous charge.
         ArgumentCaptor<PawapayPayoutRequest> payout = ArgumentCaptor.forClass(PawapayPayoutRequest.class);
         verify(client, timeout(10_000).times(1)).initiatePayout(payout.capture());
-        assertThat(payout.getValue().phoneNumber()).isEqualTo(PRINCIPAL_PAYEE);
+        // Le compte du code du dépôt du supplément (celui que le verrou protège), pas le numéro figé du principal.
+        assertThat(payout.getValue().phoneNumber()).isEqualTo(ACCOUNT_MSISDN).isNotEqualTo(PRINCIPAL_PAYEE);
         assertThat(payout.getValue().amount()).isEqualByComparingTo("13000");
         UUID payoutId = payout.getValue().payoutId();
         Map<String, Object> row = jdbc.queryForMap("SELECT purpose, payment_id, user_id FROM pawapay_operations "
@@ -370,7 +373,7 @@ class BidSupplementMobileMoneyIT {
         if (traveler) {
             user.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
             user.setMobileMoneyCurrency("XOF");
-            user.setMobileMoneyMsisdn("221770000002");
+            user.setMobileMoneyMsisdn(ACCOUNT_MSISDN);
             user.setMobileMoneyMsisdnMasked("+221 •••• 02");
             user.setMobileMoneyProvider("ORANGE_SEN");
             user.setMobileMoneyProviderList(List.of("ORANGE_SEN"));
@@ -380,7 +383,7 @@ class BidSupplementMobileMoneyIT {
         if (traveler) {
             // Le compte de versement vit dans sa table ; le résumé de l'utilisateur n'en est que le reflet.
             MobileMoneyPayoutAccountEntity account = new MobileMoneyPayoutAccountEntity(saved.getId(), "ORANGE_SEN", "SN",
-                    "XOF", "221770000002", "+221 •••• 02", java.time.Instant.now());
+                    "XOF", ACCOUNT_MSISDN, "+221 •••• 02", java.time.Instant.now());
             account.setMigrated(true);
             accountRepository.saveAndFlush(account);
         }

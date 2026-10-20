@@ -88,19 +88,20 @@ public class MobileMoneyPayoutInitiator {
      * Verse {@code net} au voyageur {@code travelerId} pour {@code payment}. Trois issues
      * possibles :
      * <ol>
-     *   <li><b>destination absente</b> : le versement part sur le compte du voyageur du MÊME code
-     *       pawaPay que le dépôt du paiement (opérateur et pays), dans la devise du paiement ; à
-     *       défaut sur le compte repris par la migration dans cette devise, avec SON numéro et SON
-     *       code (jamais le code du dépôt) ({@link MobileMoneyPayoutAccounts#destinationFor}). Sans
-     *       aucun des deux (compte retiré entre le séquestre et la livraison, autre devise, autre
-     *       opérateur) : alerte {@code PAWAPAY_PAYOUT_NO_ACCOUNT}, exception, AUCUN appel pawaPay ;</li>
-     *   <li><b>payout déjà vivant ou abouti</b> ({@link PawapayOperationService#findLive}) :
+     *   <li><b>payout déjà vivant ou abouti</b> (examiné AVANT la destination : une reprise ne soumet jamais, donc
+     *       elle reste possible même si plus aucun compte ne correspond) ({@link PawapayOperationService#findLive}) :
      *       une soumission antérieure a déjà été acceptée par pawaPay (relance après un
      *       claim annulé pour une raison indépendante, ou événement de livraison rejoué) —
      *       on le reprend tel quel, on n'en soumet JAMAIS un second. Alerte
      *       {@code MM_PAYOUT_ORPHAN_<paymentId>}, dédupliquée ({@link AdminAlertEscalator}) :
      *       la relance admin rappelle {@code release()} sur ce même payout vivant à chaque
      *       tentative d'un opérateur — sans dédup, chaque tentative posterait sur Telegram ;</li>
+     *   <li><b>destination absente</b> (aucun payout vivant) : le versement part sur le compte du voyageur du MÊME code
+     *       pawaPay que le dépôt du paiement (opérateur et pays), dans la devise du paiement ; à
+     *       défaut sur le compte repris par la migration dans cette devise, avec SON numéro et SON
+     *       code (jamais le code du dépôt) ({@link MobileMoneyPayoutAccounts#destinationFor}). Sans
+     *       aucun des deux (compte retiré entre le séquestre et la livraison, autre devise, autre
+     *       opérateur) : alerte {@code PAWAPAY_PAYOUT_NO_ACCOUNT}, exception, AUCUN appel pawaPay ;</li>
      *   <li><b>soumission</b> : {@link PawapaySubmissionService#submitPayout} appelle
      *       pawaPay. Un {@code SUBMIT_REJECTED} (rien n'est parti) lève après une alerte
      *       {@code PAWAPAY_PAYOUT_REJECTED}. Un {@code ACCEPTED} est audité dans
@@ -130,20 +131,6 @@ public class MobileMoneyPayoutInitiator {
             throw new PayoutHeldException("Payout blocked for payment " + payment.getId()
                     + (payment.isDisputed() ? ": payment disputed" : ": traveler " + travelerId + " payouts are held"));
         }
-        // Code du dépôt du paiement : il désigne le compte qui reçoit (même opérateur, même pays).
-        String depositProvider = operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)
-                .map(PawapayOperationEntity::getProvider).orElse(null);
-        Optional<PayoutDestination> destination = accounts.destinationFor(travelerId, depositProvider, payment.getCurrency());
-        if (destination.isEmpty()) {
-            adminAlert.raise("PAWAPAY_PAYOUT_NO_ACCOUNT",
-                    "Versement impossible : le voyageur n'a pas de compte mobile money actif compatible "
-                            + "avec ce paiement (payment " + payment.getId() + ")",
-                    Map.of("paymentId", payment.getId().toString(), "travelerId", travelerId.toString(), "source", source));
-            throw new IllegalStateException("Traveler " + travelerId
-                    + " has no active mobile money account for currency " + payment.getCurrency());
-        }
-        PayoutDestination to = destination.get();
-
         Optional<PawapayOperationEntity> live = operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT);
         if (live.isPresent()) {
             PawapayOperationEntity op = live.get();
@@ -155,6 +142,20 @@ public class MobileMoneyPayoutInitiator {
                     Map.of("paymentId", payment.getId().toString(), "operationId", op.getId().toString(), "source", source));
             return op;
         }
+
+        // Code du dépôt du paiement : il désigne le compte qui reçoit (même opérateur, même pays).
+        String depositProvider = operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)
+                .map(PawapayOperationEntity::getProvider).orElse(null);
+        Optional<PayoutDestination> destination = accounts.destinationFor(travelerId, depositProvider, payment.getCurrency());
+        if (destination.isEmpty()) {
+            adminAlert.raise("PAWAPAY_PAYOUT_NO_ACCOUNT",
+                    "Versement impossible : le voyageur n'a pas de compte mobile money actif compatible "
+                            + "avec ce paiement (payment " + payment.getId() + ")",
+                    Map.of("paymentId", payment.getId().toString(), "travelerId", travelerId.toString(), "source", source));
+            throw new IllegalStateException("Traveler " + travelerId + " has no payout account matching deposit provider "
+                    + depositProvider + " and currency " + payment.getCurrency());
+        }
+        PayoutDestination to = destination.get();
 
         PawapayOperationEntity op = submission.submitPayout(payment.getId(), to.msisdn(), to.provider(), to.country(),
                 net, payment.getCurrency(), "bid-" + bidId);

@@ -27,11 +27,13 @@ import java.util.UUID;
 /**
  * Versement du net d'un supplément mobile money au voyageur (plan §4.3 « Versement »), après la
  * CONFIRMATION du versement principal du colis ({@code PaymentReleasedEvent} mobile money, publié
- * par {@code MobileMoneyPayoutOutcomeListener} sur le payout principal {@code COMPLETED}). Même
- * destination que le versement principal : le numéro, l'opérateur et le pays du payout principal
- * abouti ; à défaut, le compte de versement du voyageur du même code pawaPay que le dépôt du
- * supplément, sinon le compte repris par la migration, dans la devise du supplément
- * ({@link MobileMoneyPayoutAccounts#destinationFor}, règle du versement principal).
+ * par {@code MobileMoneyPayoutOutcomeListener} sur le payout principal {@code COMPLETED}). Destination :
+ * le compte de versement du voyageur du même code pawaPay que le DÉPÔT DU SUPPLÉMENT (sinon le compte
+ * repris par la migration), dans la devise du supplément ({@link MobileMoneyPayoutAccounts#destinationFor}),
+ * c'est-à-dire le compte que le verrou {@code pendingPayouts} protège. Le numéro figé dans le payout
+ * principal n'est jamais réutilisé tel quel : le voyageur a pu retirer ce compte ou en changer le numéro
+ * une fois le principal abouti. Seul repli, sans dépôt lisible pour le supplément : le compte vivant qui
+ * porte encore le code ET le numéro du payout principal.
  *
  * <p>Réservation {@code PAID → PAYOUT_PENDING} en transaction courte, payout pawaPay
  * ({@code BID_SUPPLEMENT}, voyageur en {@code user_id}) hors transaction, puis {@code PAID_OUT} à la
@@ -254,9 +256,7 @@ public class BidSupplementMobileMoneyPayouts {
         audit.put("operationId", op.getId().toString());
         audit.put("provider", op.getProvider());
         audit.put("msisdnMasked", op.getMsisdnMasked());
-        if (destination.accountId() != null) {
-            audit.put("accountId", destination.accountId().toString());
-        }
+        audit.put("accountId", destination.accountId().toString());
         ledger.auditOnly(id, "BID_SUPPLEMENT_PAYOUT_SUBMITTED", audit);
         log.info("Payout mobile money {} soumis pour le supplément {}", op.getId(), id);
         return true;
@@ -270,28 +270,44 @@ public class BidSupplementMobileMoneyPayouts {
         return true;
     }
 
-    /** {@code accountId} : compte de versement choisi (absent quand on reprend le payout principal). */
+    /** Où verser : le compte vivant choisi. Le numéro n'apparaît jamais dans {@code toString} (logs). */
     record Destination(String msisdn, String provider, String country, UUID accountId) {
+        @Override
+        public String toString() {
+            return "Destination[accountId=" + accountId + ", provider=" + provider + ", country=" + country + "]";
+        }
     }
 
     /**
-     * Destination du versement principal abouti du colis (même numéro, même opérateur) ; à défaut,
-     * le compte de versement du voyageur du même code que le dépôt du supplément, sinon le compte
-     * repris par la migration (son numéro et son propre code), dans la devise du supplément.
+     * Compte de versement du voyageur du même code que le dépôt du supplément, sinon le compte repris
+     * par la migration (son numéro et son propre code), dans la devise du supplément. Sans dépôt lisible
+     * pour le supplément : d'abord le compte vivant qui porte encore le code ET le numéro du payout
+     * principal abouti, puis la même règle qu'ailleurs. Jamais le numéro figé d'un compte retiré ou modifié.
      */
     Optional<Destination> destination(UUID bidId, UUID supplementId, UUID travelerId, String currency) {
-        Optional<PawapayOperationEntity> principal = payments.findForBid(bidId)
+        Optional<PawapayOperationEntity> deposit = operations.findLiveForSupplement(supplementId,
+                PawapayOperationKind.DEPOSIT);
+        if (deposit.isEmpty()) {
+            Optional<Destination> ofPrincipal = livePrincipalAccount(bidId, travelerId, currency);
+            if (ofPrincipal.isPresent()) {
+                return ofPrincipal;
+            }
+        }
+        return accounts.destinationFor(travelerId, deposit.map(PawapayOperationEntity::getProvider).orElse(null),
+                currency).map(d -> new Destination(d.msisdn(), d.provider(), d.country(), d.accountId()));
+    }
+
+    /** Compte vivant dont le code et le numéro sont ceux du payout principal abouti du colis. */
+    private Optional<Destination> livePrincipalAccount(UUID bidId, UUID travelerId, String currency) {
+        return payments.findForBid(bidId)
                 .filter(p -> p.getRail() == PaymentRail.PAWAPAY)
                 .flatMap(p -> operations.findLive(p.getId(), PawapayOperationKind.PAYOUT))
-                .filter(op -> op.getStatus() == PawapayOperationStatus.COMPLETED);
-        if (principal.isPresent()) {
-            PawapayOperationEntity op = principal.get();
-            return Optional.of(new Destination(op.getMsisdn(), op.getProvider(), op.getCountry(), null));
-        }
-        String depositProvider = operations.findLiveForSupplement(supplementId, PawapayOperationKind.DEPOSIT)
-                .map(PawapayOperationEntity::getProvider).orElse(null);
-        return accounts.destinationFor(travelerId, depositProvider, currency)
-                .map(d -> new Destination(d.msisdn(), d.provider(), d.country(), d.accountId()));
+                .filter(op -> op.getStatus() == PawapayOperationStatus.COMPLETED)
+                .flatMap(op -> accounts.activeIn(travelerId, currency).stream()
+                        .filter(a -> a.getProvider().equalsIgnoreCase(op.getProvider())
+                                && a.getMsisdn() != null && a.getMsisdn().equals(op.getMsisdn()))
+                        .findFirst())
+                .map(a -> new Destination(a.getMsisdn(), a.getProvider(), a.getCountry(), a.getId()));
     }
 
     /** Raison de retenir le versement, ou {@code null} : mêmes gardes que le versement principal. */

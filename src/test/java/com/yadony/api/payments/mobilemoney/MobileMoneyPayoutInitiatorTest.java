@@ -227,16 +227,33 @@ class MobileMoneyPayoutInitiatorTest {
         givenDeposit("ORANGE_SEN");
         assertThatThrownBy(() -> initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "delivery"))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageNotContaining("2250700000001");
+                .hasMessageNotContaining("2250700000001")
+                .hasMessageContaining("ORANGE_SEN").hasMessageContaining("XOF");
         verify(adminAlert).raise(eq("PAWAPAY_PAYOUT_NO_ACCOUNT"), any(), any());
         verify(submission, never()).submitPayout(any(), any(), any(), any(), any(), any(), any());
         verify(audit, never()).log(any(), any(), any(), any(), any());
     }
 
+    /**
+     * Une reprise ne soumet jamais : un payout vivant est repris même si plus aucun compte ne correspond
+     * (compte retiré depuis), sans alerte « pas de compte » ni lecture du dépôt.
+     */
+    @Test
+    void release_orphanLivePayout_isReusedEvenWhenNoAccountMatchesAnymore() {
+        givenAccounts();
+        PawapayOperationEntity live = payout(PawapayOperationStatus.ACCEPTED);
+        when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.of(live));
+
+        assertThat(initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "admin-relance")).isSameAs(live);
+
+        verify(adminAlert, never()).raise(any(), any(), any());
+        verify(submission, never()).submitPayout(any(), any(), any(), any(), any(), any(), any());
+        verify(operations, never()).findLatest(any(), any());
+    }
+
     @Test
     void release_findsAnOrphanLivePayout_andDoesNotSubmitAgain() {
         givenAccounts(account("ORANGE_SEN", "SN", "XOF", "221771234567", false));
-        givenDeposit("ORANGE_SEN");
         PawapayOperationEntity live = payout(PawapayOperationStatus.ACCEPTED);
         when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.of(live));
 
@@ -257,7 +274,6 @@ class MobileMoneyPayoutInitiatorTest {
     @Test
     void release_orphanAlert_goesThroughDedupedEscalator_onEveryRelance() {
         givenAccounts(account("ORANGE_SEN", "SN", "XOF", "221771234567", false));
-        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit("ORANGE_SEN")));
         PawapayOperationEntity live = payout(PawapayOperationStatus.ACCEPTED);
         when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.of(live));
 
