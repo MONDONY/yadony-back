@@ -22,7 +22,7 @@ import java.math.BigDecimal;
 import java.util.UUID;
 
 /**
- * À la finalisation d'un compte : nettoyage du client Stripe (existant) et perte de la
+ * À la finalisation d'un compte : fermeture du compte Stripe Connect et perte de la
  * part non-cash du wallet ({@code FORFEITED_ON_DELETION}). Le cash encore en cours de
  * remboursement (ou repris par un ticket manuel) n'est jamais touché. Idempotent : un
  * second passage ne trouve plus de non-cash.
@@ -60,7 +60,9 @@ public class UserFinalizedPaymentsListener {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onUserFinalized(UserFinalizedEvent event) {
         forfeitNonCash(event.getUserId());
-        userRepository.findById(event.getUserId())
+        // IncludingDeleted : le compte finalisé porte deleted_at, et findById (@Where) ne le
+        // trouvait jamais : le nettoyage Stripe ne tournait pour aucun compte supprimé.
+        userRepository.findByIdIncludingDeleted(event.getUserId())
                 .ifPresent(stripeCustomerService::cleanupForUser);
     }
 

@@ -1,11 +1,13 @@
 package com.yadony.api.auth;
 
 import com.yadony.api.auth.events.AccountDeletionRequestedEvent;
+import com.yadony.api.auth.events.IdentitySessionsErasureRequestedEvent;
 import com.yadony.api.auth.events.UserFinalizedEvent;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.kyc.KycRepository;
 import com.yadony.api.kyc.KycVerificationEntity;
+import com.yadony.api.kyc.provider.VerificationProviderKind;
 import com.google.firebase.auth.FirebaseAuth;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -165,6 +167,60 @@ class AccountFinalizationServiceTest {
 
         assertThat(kyc.getVerificationSessionId()).isNull();
         assertThat(kyc.getDeletedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("capture la session Didit avant de la vider et la publie pour effacement chez Didit")
+    void capturesDiditSessionBeforeClearingIt() {
+        UserEntity user = makeUser();
+        UUID userId = user.getId();
+        KycVerificationEntity kyc = new KycVerificationEntity();
+        kyc.setProvider(VerificationProviderKind.DIDIT);
+        kyc.setVerificationSessionId("11111111-2222-3333-4444-555555555555");
+        when(kycRepository.findByUserId(userId)).thenReturn(Optional.of(kyc));
+
+        service.finalize(user, FinalizationReason.HARD_IMMEDIATE);
+
+        assertThat(kyc.getVerificationSessionId()).isNull();
+        ArgumentCaptor<IdentitySessionsErasureRequestedEvent> captor =
+                ArgumentCaptor.forClass(IdentitySessionsErasureRequestedEvent.class);
+        verify(eventPublisher).publishEvent(captor.capture());
+        assertThat(captor.getValue().userId()).isEqualTo(userId);
+        assertThat(captor.getValue().diditSessionIds())
+                .containsExactly("11111111-2222-3333-4444-555555555555");
+    }
+
+    @Test
+    @DisplayName("une session Stripe Identity n'est pas envoyée à l'effacement Didit")
+    void doesNotSendStripeSessionToDidit() {
+        UserEntity user = makeUser();
+        UUID userId = user.getId();
+        KycVerificationEntity kyc = new KycVerificationEntity();
+        kyc.setProvider(VerificationProviderKind.STRIPE);
+        kyc.setVerificationSessionId("vs_test_123");
+        when(kycRepository.findByUserId(userId)).thenReturn(Optional.of(kyc));
+
+        service.finalize(user, FinalizationReason.HARD_IMMEDIATE);
+
+        ArgumentCaptor<IdentitySessionsErasureRequestedEvent> captor =
+                ArgumentCaptor.forClass(IdentitySessionsErasureRequestedEvent.class);
+        verify(eventPublisher).publishEvent(captor.capture());
+        assertThat(captor.getValue().diditSessionIds()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("sans ligne KYC, l'effacement Didit est quand même demandé (sessions refusées)")
+    void publishesErasureEvenWithoutKycRow() {
+        UserEntity user = makeUser();
+        when(kycRepository.findByUserId(any())).thenReturn(Optional.empty());
+
+        service.finalize(user, FinalizationReason.SOFT_GRACE_EXPIRED);
+
+        ArgumentCaptor<IdentitySessionsErasureRequestedEvent> captor =
+                ArgumentCaptor.forClass(IdentitySessionsErasureRequestedEvent.class);
+        verify(eventPublisher).publishEvent(captor.capture());
+        assertThat(captor.getValue().userId()).isEqualTo(user.getId());
+        assertThat(captor.getValue().diditSessionIds()).isEmpty();
     }
 
     @Test

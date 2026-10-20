@@ -1,11 +1,13 @@
 package com.yadony.api.auth;
 
 import com.yadony.api.auth.events.AccountDeletionRequestedEvent;
+import com.yadony.api.auth.events.IdentitySessionsErasureRequestedEvent;
 import com.yadony.api.auth.events.UserFinalizedEvent;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.kyc.KycRepository;
+import com.yadony.api.kyc.provider.VerificationProviderKind;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -87,7 +89,15 @@ public class AccountFinalizationService {
         userRepository.save(user);
 
         // 2. Soft-delete KYC
+        // La session Didit est capturée AVANT d'être vidée : c'est la seule référence à la session
+        // qui détient les pièces d'identité chez Didit (rétention illimitée par défaut). Elle part
+        // à l'effacement chez Didit après commit (étape 4, package kyc).
+        List<String> diditSessionIds = new ArrayList<>();
         kycRepository.findByUserId(userId).ifPresent(kyc -> {
+            String sessionId = kyc.getVerificationSessionId();
+            if (kyc.getProvider() == VerificationProviderKind.DIDIT && sessionId != null && !sessionId.isBlank()) {
+                diditSessionIds.add(sessionId);
+            }
             // Lot C — le soft-delete seul laissait intact le pointeur de session Stripe, qui
             // mene aux pieces d'identite detenues par Stripe : la suppression du compte
             // laissait donc un chemin d'acces vivant vers les documents de l'utilisateur.
@@ -130,6 +140,9 @@ public class AccountFinalizationService {
         // second déclenchement (ex. déjà traité via requestDeletion) ne trouve plus rien à faire.
         eventPublisher.publishEvent(new AccountDeletionRequestedEvent(userId));
         eventPublisher.publishEvent(new UserFinalizedEvent(userId, reason));
+        // Toujours publié, même sans session sur la ligne KYC : le package kyc y ajoute les
+        // sessions refusées ou révoquées de l'utilisateur, restées elles aussi chez Didit.
+        eventPublisher.publishEvent(new IdentitySessionsErasureRequestedEvent(userId, diditSessionIds));
 
         // 5. Delete Firebase user (porteur du téléphone et de l'email)
         // Un échec laisse numéro et email dans Firebase Auth (RGPD), et le numéro y reste

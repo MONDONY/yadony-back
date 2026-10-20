@@ -3,14 +3,20 @@ package com.yadony.api.payments;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Account;
 import com.stripe.model.AccountLink;
+import com.stripe.model.Balance;
 import com.stripe.model.Customer;
 import com.stripe.model.EphemeralKey;
 import com.stripe.model.PaymentIntent;
+import com.stripe.model.Payout;
+import com.stripe.model.StripeCollection;
+import com.stripe.net.RequestOptions;
 import com.stripe.StripeClient;
 import com.stripe.param.AccountLinkCreateParams;
+import com.stripe.param.AccountRejectParams;
 import com.stripe.param.CustomerCreateParams;
 import com.stripe.param.EphemeralKeyCreateParams;
 import com.stripe.param.PaymentIntentCreateParams;
+import com.stripe.param.PayoutListParams;
 import org.springframework.stereotype.Component;
 
 /**
@@ -53,6 +59,32 @@ public class StripeGatewayImpl implements StripeGateway {
     @Override
     public AccountLink createAccountLink(AccountLinkCreateParams params) throws StripeException {
         return AccountLink.create(params);
+    }
+
+    @Override
+    public Balance retrieveConnectedBalance(String accountId) throws StripeException {
+        return stripeClient.v1().balance().retrieve(onAccount(accountId));
+    }
+
+    @Override
+    public StripeCollection<Payout> listConnectedPayouts(String accountId, String status) throws StripeException {
+        return stripeClient.v1().payouts().list(
+                PayoutListParams.builder().setStatus(status).setLimit(1L).build(), onAccount(accountId));
+    }
+
+    @Override
+    public Account deleteAccount(String accountId) throws StripeException {
+        return stripeClient.v1().accounts().delete(accountId);
+    }
+
+    @Override
+    public Account rejectAccount(String accountId, String reason) throws StripeException {
+        return stripeClient.v1().accounts().reject(accountId,
+                AccountRejectParams.builder().setReason(reason).build());
+    }
+
+    private static RequestOptions onAccount(String accountId) {
+        return RequestOptions.builder().setStripeAccount(accountId).build();
     }
 
     @Override

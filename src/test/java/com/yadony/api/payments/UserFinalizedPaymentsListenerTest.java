@@ -46,7 +46,7 @@ class UserFinalizedPaymentsListenerTest {
     void setUp() {
         listener = new UserFinalizedPaymentsListener(stripeCustomerService, userRepository,
                 walletAccountRepository, walletSelfRefundService, walletService);
-        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(new UserEntity()));
+        when(userRepository.findByIdIncludingDeleted(USER_ID)).thenReturn(Optional.of(new UserEntity()));
     }
 
     private WalletAccountEntity wallet(String currency, String balance) {
