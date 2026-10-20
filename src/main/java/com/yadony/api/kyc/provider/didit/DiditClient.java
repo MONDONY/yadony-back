@@ -3,12 +3,15 @@ package com.yadony.api.kyc.provider.didit;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
 import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
 import org.springframework.http.client.BufferingClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.time.Duration;
 import java.util.Map;
@@ -18,8 +21,9 @@ import java.util.UUID;
 /**
  * Appels HTTP a l'API Didit (v3).
  *
- * <p>Deux operations seulement : ouvrir une session et relire sa decision. Didit n'expose pas
- * d'annulation de session, il n'y a donc rien a appeler pour abandonner.
+ * <p>Trois operations : ouvrir une session, relire sa decision, et l'effacer a la suppression
+ * d'un compte (RGPD). Didit n'expose pas d'annulation de session, il n'y a donc rien a appeler
+ * pour abandonner.
  */
 @Component
 public class DiditClient {
@@ -142,5 +146,61 @@ public class DiditClient {
                     sessionId, e.getClass().getSimpleName());
             return Optional.empty();
         }
+    }
+
+    /**
+     * Efface une session chez Didit, pieces d'identite et gabarits biometriques compris
+     * ({@code DELETE /v3/session/{id}/delete/}, instruction {@code privacy_erasure}). La cle API
+     * doit porter la permission {@code delete:sessions}, sinon Didit repond 403.
+     *
+     * <p>Didit repond 200 avec un corps JSON (204 auparavant) : tout 2xx vaut effacement. Un
+     * 404 (session inconnue ou deja effacee) vaut aussi effacement : il n'y a plus rien a
+     * effacer. Le corps n'est jamais lu ni journalise.
+     *
+     * <p>Ne leve jamais : l'appelant rejoue plus tard un {@link DeletionOutcome.Status#FAILED}.
+     *
+     * @param instructionId reference de la demande, inscrite dans le journal d'audit de Didit
+     */
+    public DeletionOutcome deleteSession(String sessionId, String instructionId) {
+        try {
+            restClient.method(HttpMethod.DELETE)
+                    .uri(properties.baseUrl() + "/v3/session/" + sessionId + "/delete/")
+                    .header("x-api-key", properties.apiKey())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of(
+                            "deletion_instruction", "privacy_erasure",
+                            "instruction_id", instructionId))
+                    .retrieve()
+                    .toBodilessEntity();
+            return DeletionOutcome.deleted();
+        } catch (RestClientResponseException e) {
+            int status = e.getStatusCode().value();
+            if (status == 404) {
+                return DeletionOutcome.alreadyDeleted();
+            }
+            log.warn("Effacement Didit refusé pour la session {} (HTTP {})", sessionId, status);
+            return DeletionOutcome.failed(status);
+        } catch (RestClientException e) {
+            log.warn("Effacement Didit injoignable pour la session {} ({})",
+                    sessionId, e.getClass().getSimpleName());
+            return DeletionOutcome.failed(null);
+        }
+    }
+
+    /**
+     * Issue d'un effacement. {@code httpStatus} n'est renseigne que pour un refus HTTP de Didit
+     * (403 : permission {@code delete:sessions} absente, 429, 503...), jamais le corps.
+     */
+    public record DeletionOutcome(Status status, Integer httpStatus) {
+
+        public enum Status { DELETED, ALREADY_DELETED, FAILED }
+
+        static DeletionOutcome deleted() { return new DeletionOutcome(Status.DELETED, null); }
+
+        static DeletionOutcome alreadyDeleted() { return new DeletionOutcome(Status.ALREADY_DELETED, null); }
+
+        static DeletionOutcome failed(Integer httpStatus) { return new DeletionOutcome(Status.FAILED, httpStatus); }
+
+        public boolean erased() { return status != Status.FAILED; }
     }
 }

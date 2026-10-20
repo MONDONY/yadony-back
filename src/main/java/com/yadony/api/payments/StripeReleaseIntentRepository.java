@@ -123,4 +123,6 @@ public interface StripeReleaseIntentRepository extends JpaRepository<StripeRelea
      * verrou du pays de résidence ({@code CountryLockService}).
      */
     boolean existsByDestination(String destination);
+
+    boolean existsByDestinationAndStatus(String destination, StripeReleaseIntentEntity.Status status);
 }

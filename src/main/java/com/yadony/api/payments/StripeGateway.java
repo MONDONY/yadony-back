@@ -3,9 +3,12 @@ package com.yadony.api.payments;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Account;
 import com.stripe.model.AccountLink;
+import com.stripe.model.Balance;
 import com.stripe.model.Customer;
 import com.stripe.model.EphemeralKey;
 import com.stripe.model.PaymentIntent;
+import com.stripe.model.Payout;
+import com.stripe.model.StripeCollection;
 import com.stripe.param.AccountLinkCreateParams;
 import com.stripe.param.CustomerCreateParams;
 import com.stripe.param.EphemeralKeyCreateParams;
@@ -50,6 +53,21 @@ public interface StripeGateway {
     Account retrieveAccount(String accountId) throws StripeException;
 
     AccountLink createAccountLink(AccountLinkCreateParams params) throws StripeException;
+
+    /** Solde d'un compte connecté ({@code GET /v1/balance}, en-tête {@code Stripe-Account}). */
+    Balance retrieveConnectedBalance(String accountId) throws StripeException;
+
+    /** Versements du compte connecté vers sa banque, filtrés par statut ({@code GET /v1/payouts}). */
+    StripeCollection<Payout> listConnectedPayouts(String accountId, String status) throws StripeException;
+
+    /**
+     * Supprime un compte connecté ({@code DELETE /v1/accounts/{id}}). Possible quand la plateforme
+     * porte les pertes (Express/Custom) et que tous les soldes sont à zéro.
+     */
+    Account deleteAccount(String accountId) throws StripeException;
+
+    /** Rejette un compte connecté ({@code POST /v1/accounts/{id}/reject}) : plus de paiement ni de versement. */
+    Account rejectAccount(String accountId, String reason) throws StripeException;
 
     /**
      * Lien de connexion à usage unique au tableau de bord Stripe Express du compte connecté

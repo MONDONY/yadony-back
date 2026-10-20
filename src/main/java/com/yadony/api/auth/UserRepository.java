@@ -105,6 +105,19 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     @Query("SELECT u FROM UserEntity u WHERE u.id = :id")
     Optional<UserEntity> findByIdForUpdate(@Param("id") UUID id);
 
+    /**
+     * RGPD : détache le compte Stripe Connect fermé d'un compte finalisé. Native, pour atteindre
+     * une ligne soft-deletée ({@code @Where}) ; conditionnée au même identifiant de compte pour ne
+     * jamais effacer un compte qui aurait changé entre-temps.
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = "UPDATE users SET stripe_account_id = NULL, stripe_account_status = 'NOT_CREATED', "
+            + "stripe_account_created_at = NULL, stripe_onboarding_completed_at = NULL, "
+            + "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+            + "WHERE id = :id AND stripe_account_id = :accountId",
+            nativeQuery = true)
+    int clearStripeAccount(@Param("id") UUID id, @Param("accountId") String accountId);
+
     /** RGPD : efface le motif de retrait du badge GP Pro (texte libre saisi par l'admin). */
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query(value = "UPDATE users SET gp_pro_revoked_reason = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = :id",

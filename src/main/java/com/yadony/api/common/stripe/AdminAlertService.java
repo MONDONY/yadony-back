@@ -62,7 +62,9 @@ public class AdminAlertService {
             "PHOTO_PURGE_FAILING",
             "PHOTO_PURGE_STALE",
             "PHOTO_RECONCILE_BLOCKED",
-            "FIREBASE_USER_DELETE_FAILED");
+            "FIREBASE_USER_DELETE_FAILED",
+            // Suppression RGPD : session d'identité restée chez Didit, à effacer depuis sa console.
+            "DIDIT_SESSION_DELETE_FAILED");
 
     /** Préfixe du message (log et issue Sentry) de toute alerte admin. */
     public static final String PREFIXE_ALERTE = "[ADMIN ALERT] ";

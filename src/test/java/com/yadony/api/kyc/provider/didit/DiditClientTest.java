@@ -3,10 +3,12 @@ package com.yadony.api.kyc.provider.didit;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
+import java.io.IOException;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -15,7 +17,10 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withException;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withNoContent;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 class DiditClientTest {
@@ -128,5 +133,75 @@ class DiditClientTest {
 
         assertThat(response.path("session_id").asText()).isEqualTo("sess_2");
         server.verify();
+    }
+
+    private static final String SESSION = "11111111-2222-3333-4444-555555555555";
+    private static final String DELETE_URL = "https://verification.didit.me/v3/session/" + SESSION + "/delete/";
+
+    @Test
+    void deleteSession_envoieUnEffacementRgpdEtAccepteLe200Json() {
+        server.expect(requestTo(DELETE_URL))
+                .andExpect(method(HttpMethod.DELETE))
+                .andExpect(header("x-api-key", "cle"))
+                .andExpect(jsonPath("$.deletion_instruction").value("privacy_erasure"))
+                .andExpect(jsonPath("$.instruction_id").value("user-deletion-42"))
+                .andRespond(withSuccess("""
+                        {"session_id":"%s","session_number":1024,"face_retention_outcome":"deleted"}
+                        """.formatted(SESSION), MediaType.APPLICATION_JSON));
+
+        DiditClient.DeletionOutcome outcome = client.deleteSession(SESSION, "user-deletion-42");
+
+        assertThat(outcome.status()).isEqualTo(DiditClient.DeletionOutcome.Status.DELETED);
+        assertThat(outcome.erased()).isTrue();
+        assertThat(outcome.httpStatus()).isNull();
+        server.verify();
+    }
+
+    /** Ancien contrat de Didit : 204 sans corps. Toujours accepté. */
+    @Test
+    void deleteSession_accepteEncoreLe204() {
+        server.expect(requestTo(DELETE_URL)).andRespond(withNoContent());
+
+        assertThat(client.deleteSession(SESSION, "i").status())
+                .isEqualTo(DiditClient.DeletionOutcome.Status.DELETED);
+    }
+
+    @Test
+    void deleteSession_404_vautDejaEfface() {
+        server.expect(requestTo(DELETE_URL)).andRespond(withStatus(HttpStatus.NOT_FOUND));
+
+        DiditClient.DeletionOutcome outcome = client.deleteSession(SESSION, "i");
+
+        assertThat(outcome.status()).isEqualTo(DiditClient.DeletionOutcome.Status.ALREADY_DELETED);
+        assertThat(outcome.erased()).isTrue();
+    }
+
+    @Test
+    void deleteSession_403_echecAvecLeStatut() {
+        server.expect(requestTo(DELETE_URL)).andRespond(withStatus(HttpStatus.FORBIDDEN)
+                .body("{\"detail\":\"permission\"}").contentType(MediaType.APPLICATION_JSON));
+
+        DiditClient.DeletionOutcome outcome = client.deleteSession(SESSION, "i");
+
+        assertThat(outcome.status()).isEqualTo(DiditClient.DeletionOutcome.Status.FAILED);
+        assertThat(outcome.httpStatus()).isEqualTo(403);
+        assertThat(outcome.erased()).isFalse();
+    }
+
+    @Test
+    void deleteSession_503_echecRejouable() {
+        server.expect(requestTo(DELETE_URL)).andRespond(withServerError());
+
+        assertThat(client.deleteSession(SESSION, "i").httpStatus()).isEqualTo(500);
+    }
+
+    @Test
+    void deleteSession_reseauCoupe_echecSansStatut() {
+        server.expect(requestTo(DELETE_URL)).andRespond(withException(new IOException("connexion refusée")));
+
+        DiditClient.DeletionOutcome outcome = client.deleteSession(SESSION, "i");
+
+        assertThat(outcome.status()).isEqualTo(DiditClient.DeletionOutcome.Status.FAILED);
+        assertThat(outcome.httpStatus()).isNull();
     }
 }
