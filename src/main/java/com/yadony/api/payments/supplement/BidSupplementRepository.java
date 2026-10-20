@@ -216,4 +216,43 @@ public interface BidSupplementRepository extends JpaRepository<BidSupplementEnti
                                                  @Param("commissionStatuses")
                                                  Collection<com.yadony.api.payments.cash.CommissionStatus> commissionStatuses,
                                                  @Param("before") LocalDateTime before, Pageable page);
+
+    // ── Filet complet (B5) ───────────────────────────────────────────────────
+
+    /**
+     * Filet, supplément non soldé (plan §5.2 point 4, décision n° 3 du propriétaire) : supplément
+     * carte ou mobile money encore {@code PAID} alors que le paiement principal du colis a été
+     * tranché autrement que par un versement, depuis avant {@code before} : partage admin d'un
+     * litige ({@code payment_splits}, jamais suivi d'un {@code PaymentReleasedEvent}) ou principal
+     * remboursé pendant un litige ouvert. Le supplément reste bloqué : l'admin décide (verser ou
+     * rembourser). Paiement du colis ou du fil de négociation lié, comme {@code findForBid}.
+     */
+    @Query("""
+            SELECT s.id FROM BidSupplementEntity s, com.yadony.api.matching.BidEntity b
+            WHERE b.id = s.bidId
+              AND s.status = com.yadony.api.payments.supplement.BidSupplementStatus.PAID
+              AND s.rail IN (com.yadony.api.payments.supplement.BidSupplementRail.STRIPE,
+                             com.yadony.api.payments.supplement.BidSupplementRail.PAWAPAY)
+              AND EXISTS (
+                  SELECT 1 FROM com.yadony.api.payments.PaymentEntity p
+                  WHERE (p.bidId = s.bidId
+                         OR (p.bidId IS NULL AND b.linkedNegotiationThreadId IS NOT NULL
+                             AND p.negotiationThreadId = b.linkedNegotiationThreadId))
+                    AND (EXISTS (SELECT 1 FROM com.yadony.api.payments.split.PaymentSplitEntity ps
+                                 WHERE ps.paymentId = p.id AND ps.createdAt < :before)
+                         OR (p.status = com.yadony.api.payments.PaymentStatus.REFUNDED AND p.updatedAt < :before)))
+            ORDER BY s.paidAt
+            """)
+    List<UUID> findIdsUnsettledAfterPrincipalDecision(@Param("before") LocalDateTime before, Pageable page);
+
+    /**
+     * Export fiscal du voyageur : suppléments carte ou mobile money versés entre {@code from} et
+     * {@code to} (un supplément espèces n'est jamais versé par l'app, comme le principal espèces).
+     */
+    @Query("SELECT s FROM BidSupplementEntity s WHERE s.travelerId = :travelerId "
+            + "AND s.status = com.yadony.api.payments.supplement.BidSupplementStatus.PAID_OUT "
+            + "AND s.paidOutAt BETWEEN :from AND :to ORDER BY s.paidOutAt")
+    List<BidSupplementEntity> findPaidOutByTravelerBetween(@Param("travelerId") UUID travelerId,
+                                                           @Param("from") LocalDateTime from,
+                                                           @Param("to") LocalDateTime to);
 }

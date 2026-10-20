@@ -1246,9 +1246,10 @@ public class BidService {
      *  il délègue à {@code MobileMoneyBidPaymentService#acceptBid} (via {@link BidNegotiationMobileMoneyPort}), qui réserve la capacité
      *  dans la même transaction.
      *
-     *  <p>Volontairement muet sur IN_TRANSIT/ARRIVED : ses deux appelants
+     *  <p>Volontairement muet sur IN_TRANSIT/ARRIVED : ses appelants
      *  ({@link #cancelBid} via CancellationGuard, {@link #cancelBidForDeletedSender}
-     *  via CANCELLABLE_BID_STATUSES) refusent déjà ces statuts en amont. */
+     *  via CANCELLABLE_BID_STATUSES, {@link #refuseParcel} limité à ACCEPTED/HANDED_OVER)
+     *  refusent déjà ces statuts en amont. */
     private void restoreCapacityIfNeeded(BidEntity bid, AnnouncementEntity announcement) {
         boolean awaitingMobileMoney = bid.getStatus() == BidStatus.AWAITING_PAYMENT
                 && bid.getPaymentMethod() == PaymentMethod.MOBILE_MONEY;
@@ -1368,6 +1369,14 @@ public class BidService {
                 && com.yadony.api.cancellation.CancellationGuard.hasDeparted(announcement)) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "parcel-refusal-locked",
                     "Parcel Refusal Locked", "Le trajet est parti : le colis ne peut plus être refusé");
+        }
+
+        // Le colis refusé rend sa place au trajet, comme une annulation (restoreCapacityIfNeeded) :
+        // ses kilos restaient prélevés, et un trajet FULL le restait. Seul endroit où la capacité
+        // revient ; AnnouncementCompletionListener ne décide ensuite que de la clôture du trajet.
+        // Après le départ, rien à rendre : le trajet n'est plus réservable.
+        if (!com.yadony.api.cancellation.CancellationGuard.hasDeparted(announcement)) {
+            restoreCapacityIfNeeded(bid, announcement);
         }
 
         bid.setStatus(BidStatus.PARCEL_REFUSED);

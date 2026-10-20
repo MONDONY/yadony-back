@@ -96,12 +96,13 @@ public class PublicPackageRequestPageController {
                                      Model model) {
         model.addAttribute("storeUrl", firstNonBlank(storeUrlAndroid, storeUrlIos));
 
-        Optional<PackageRequestEntity> found = parseUuid(id)
+        Optional<UUID> parsedId = parseUuid(id);
+        Optional<PackageRequestEntity> found = parsedId
                 .flatMap(packageRequestRepository::findById)
                 .filter(this::isPubliclyVisible);
 
         if (found.isEmpty()) {
-            return unavailable(model);
+            return unavailable(model, parsedId.orElse(null), request);
         }
 
         PackageRequestEntity packageRequest = found.get();
@@ -256,8 +257,22 @@ public class PublicPackageRequestPageController {
         return packageRequest.isPubliclyListable();
     }
 
-    private String unavailable(Model model) {
+    /**
+     * Page « plus disponible » : un lien partagé (WhatsApp) d'une demande fermée arrive ici.
+     *
+     * <p>Bouton principal « Ouvrir dans Yadony » vers {@code yadony://demande/{id}} dès que
+     * l'identifiant est un UUID lisible, même si la demande n'existe plus : l'application sait
+     * afficher l'état « demande fermée ». L'URL est construite à partir de l'UUID parsé, jamais
+     * de la chaîne brute du chemin. Identifiant illisible : pas de lien applicatif, faute de
+     * route d'accueil garantie côté app. Bouton secondaire vers le store du système détecté,
+     * seulement s'il est configuré (même logique que la page de suivi destinataire).
+     * Aucune requête supplémentaire en base, et le compteur d'attribution n'est pas touché.
+     */
+    private String unavailable(Model model, UUID parsedId, HttpServletRequest request) {
         model.addAttribute("unavailable", true);
+        model.addAttribute("unavailableAppLink", parsedId == null ? null : "yadony://demande/" + parsedId);
+        model.addAttribute("unavailableStoreUrl", com.yadony.api.common.UserAgents.storeUrlFor(
+                request.getHeader("User-Agent"), storeUrlIos, storeUrlAndroid));
         model.addAttribute("pageTitle", "Demande indisponible | Yadony");
         model.addAttribute("ogTitle", "Demande indisponible");
         model.addAttribute("ogDescription",

@@ -83,11 +83,22 @@ public class NoShowService {
             return false;
         }
 
+        AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId()).orElse(null);
+
+        // Colis annulé avant toute remise : ses kilos reviennent au trajet (FULL → ACTIVE), comme
+        // pour toute annulation d'un colis ACCEPTED. Sans cela, le trajet resté ouvert
+        // (AnnouncementCompletionListener ne le clôt plus sans colis livré) gardait une soute
+        // pleine de colis qui n'existent plus. Après le départ, rien à rendre.
+        if (announcement != null
+                && !com.yadony.api.cancellation.CancellationGuard.hasDeparted(announcement)
+                && announcement.releaseCapacity(bid.getWeightKg())) {
+            announcementRepository.save(announcement);
+        }
+
         bid.setStatus(BidStatus.CANCELLED);
         bid.setRejectionReason(HANDOVER_NOT_CONFIRMED_REASON);
         bidRepository.save(bid);
 
-        AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId()).orElse(null);
         UUID travelerId = announcement != null ? announcement.getTravelerId() : null;
         boolean commissionCharged = bid.getCommissionStatus() == CommissionStatus.CHARGED;
 

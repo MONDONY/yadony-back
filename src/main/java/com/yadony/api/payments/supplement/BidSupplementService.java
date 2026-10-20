@@ -225,7 +225,7 @@ public class BidSupplementService {
                     s.getGrossAmount(), s.getCurrency(), s.getExpiresAt(), announcement.getTimezone()));
         }
         audit(s, "BID_SUPPLEMENT_REQUESTED", traveler.getId(), Map.of("reason", s.getReasonCode().name()));
-        return BidSupplementViews.of(s, false, storage, window.now());
+        return BidSupplementViews.of(s, false, storage, window);
     }
 
     @Transactional
@@ -246,7 +246,7 @@ public class BidSupplementService {
         events.publishEvent(new BidSupplementWithdrawnEvent(s.getId(), bidId, s.getSenderId(), s.getTravelerId(),
                 s.getRail(), previous));
         audit(s, "BID_SUPPLEMENT_WITHDRAWN", traveler.getId(), Map.of());
-        return BidSupplementViews.of(s, false, storage, window.now());
+        return BidSupplementViews.of(s, false, storage, window);
     }
 
     // ── Expéditeur ───────────────────────────────────────────────────────────
@@ -263,7 +263,7 @@ public class BidSupplementService {
         events.publishEvent(new BidSupplementDeclinedEvent(s.getId(), bidId, s.getSenderId(), s.getTravelerId(),
                 s.getRail(), previous));
         audit(s, "BID_SUPPLEMENT_DECLINED", sender.getId(), Map.of());
-        return BidSupplementViews.of(s, true, storage, window.now());
+        return BidSupplementViews.of(s, true, storage, window);
     }
 
     /**

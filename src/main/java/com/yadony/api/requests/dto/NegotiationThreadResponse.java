@@ -84,8 +84,42 @@ public record NegotiationThreadResponse(
     boolean senderGpPro,
     // Grille de commission figée sur le fil (null pour un fil sans grille). Additif, en fin
     // de record : l'app s'en sert pour ses aperçus au lieu de recalculer avec une autre grille.
-    UUID commissionGridId
+    UUID commissionGridId,
+    // Commission espèces exacte que le règlement prélèvera au voyageur de ce fil (même devis que
+    // CashCommissionService.settleNegotiationCommission), dans la devise du fil. Renseignée
+    // seulement quand le lecteur est le voyageur et que le fil attend sa commission
+    // (AWAITING_COMMISSION, le bandeau « Réglez la commission »). Null sinon, donc absente du JSON.
+    // Ce montant tient compte des réductions du voyageur (taux spécial, bon) : ne jamais le
+    // combiner avec grossPriceEur, le brut public affiché à l'expéditeur, qui n'a pas ces réductions.
+    // Additif, en fin de record : l'app annonce ce montant au lieu de le recalculer.
+    BigDecimal travelerCashCommissionEur
 ) {
+    /** Constructeur de compatibilité (sans travelerCashCommissionEur, null). */
+    public NegotiationThreadResponse(
+            UUID id, UUID packageRequestId, UUID travelerId, UUID travelerAnnouncementId,
+            LocalDate travelerTravelDate, BigDecimal travelerAvailableKg, String travelerCapacityUnit,
+            NegotiationThreadStatus status, BigDecimal currentPriceEur, int roundsCount,
+            LocalDateTime lastActivityAt, LocalDateTime createdAt, List<NegotiationMessageResponse> messages,
+            String paymentIntentClientSecret, String travelerName, BigDecimal travelerRating,
+            Integer travelerTripsCount, String travelerPhotoUrl, String departureCity, String arrivalCity,
+            BigDecimal weightKg, String senderName, String senderPhotoUrl, boolean isMyTurn,
+            boolean canAccept, boolean canCounter, int roundsRemaining, LinkedTripSummary linkedTrip,
+            BigDecimal grossPriceEur, PaymentMethod paymentMethod, UUID materializedBidId,
+            boolean cashCommissionAvailable, Set<PaymentMethod> availablePaymentMethods, boolean canNudge,
+            boolean hasUnread, String promoCode, BigDecimal commissionRate, String currency,
+            String commissionStatus, LocalDateTime commissionDeadline, LocalDateTime depositExpiresAt,
+            UUID senderId, boolean archived, boolean travelerGpPro, boolean senderGpPro,
+            UUID commissionGridId) {
+        this(id, packageRequestId, travelerId, travelerAnnouncementId, travelerTravelDate,
+                travelerAvailableKg, travelerCapacityUnit, status, currentPriceEur, roundsCount,
+                lastActivityAt, createdAt, messages, paymentIntentClientSecret, travelerName, travelerRating,
+                travelerTripsCount, travelerPhotoUrl, departureCity, arrivalCity, weightKg, senderName,
+                senderPhotoUrl, isMyTurn, canAccept, canCounter, roundsRemaining, linkedTrip, grossPriceEur,
+                paymentMethod, materializedBidId, cashCommissionAvailable, availablePaymentMethods, canNudge,
+                hasUnread, promoCode, commissionRate, currency, commissionStatus, commissionDeadline,
+                depositExpiresAt, senderId, archived, travelerGpPro, senderGpPro, commissionGridId, null);
+    }
+
     /** Constructeur de compatibilité (sans commissionGridId, null) — ancienne arité canonique. */
     public NegotiationThreadResponse(
             UUID id, UUID packageRequestId, UUID travelerId, UUID travelerAnnouncementId,

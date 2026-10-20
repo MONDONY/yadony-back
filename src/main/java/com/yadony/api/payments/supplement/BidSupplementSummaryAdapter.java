@@ -89,7 +89,7 @@ public class BidSupplementSummaryAdapter implements BidSupplementSummaryPort {
                 .findFirst().orElse(visible.isEmpty() ? null : visible.get(0));
         boolean paid = shown != null && BidSupplementStatus.PAID_STATES.contains(shown.getStatus());
         return new BidSupplementView(
-                shown == null ? null : BidSupplementViews.of(shown, forSender, storage, window.now()),
+                shown == null ? null : BidSupplementViews.of(shown, forSender, storage, window),
                 requestAllowed(bid, announcement, callerId, all),
                 paid ? shown.getGrossAmount() : null,
                 paid ? shown.getNetAmount() : null);

@@ -171,6 +171,7 @@ class BidSupplementCashIT {
         Map<String, Long> counts = monitor.runAll();
         assertThat(counts).containsEntry("INV-01", 0L).containsEntry("INV-02", 0L).containsEntry("INV-03", 0L)
                 .containsEntry("INV-09", 0L).containsEntry("INV-10", 0L);
+        assertNoMoneyAnomaly(supplementId);
     }
 
     @Test
@@ -234,6 +235,7 @@ class BidSupplementCashIT {
         awaitColumn(supplementId, "commission_status", "REFUNDED");
         assertThat(column(supplementId, "status")).isEqualTo("WITHDRAWN");
         assertThat(column(supplementId, "closed_reason")).isEqualTo("WITHDRAWN_BY_TRAVELER");
+        assertNoMoneyAnomaly(supplementId);
     }
 
     @Test
@@ -333,6 +335,7 @@ class BidSupplementCashIT {
         Map<String, Long> counts = monitor.runAll();
         assertThat(counts).containsEntry("INV-01", 0L).containsEntry("INV-02", 0L).containsEntry("INV-03", 0L)
                 .containsEntry("INV-09", 0L).containsEntry("INV-10", 0L);
+        assertNoMoneyAnomaly(supplementId);
     }
 
     @Test
@@ -401,6 +404,17 @@ class BidSupplementCashIT {
         jdbc.update("UPDATE bid_supplements SET updated_at = updated_at - interval '1 hour' WHERE id = ?", id);
         assertThat(cashJob.run().settled()).isEqualTo(1);
         assertThat(column(id, "commission_status")).isEqualTo("FAILED");
+    }
+
+    /** Sonde d'intégrité : aucune ligne en faute pour ce supplément (INV-09, 17, 18). */
+    private void assertNoMoneyAnomaly(UUID supplementId) {
+        String id = supplementId.toString();
+        for (String code : java.util.List.of("INV-09", "INV-17", "INV-18")) {
+            assertThat(monitor.inspect(code, com.yadony.api.payments.integrity.MoneyIntegrityMonitor.MAX_INSPECT_ROWS)
+                    .orElseThrow().rows())
+                    .as(code + " pour le supplément " + id)
+                    .noneMatch(r -> r.values().stream().anyMatch(v -> String.valueOf(v).contains(id)));
+        }
     }
 
     // ── Aides ────────────────────────────────────────────────────────────────

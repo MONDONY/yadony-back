@@ -146,12 +146,13 @@ public class PublicAnnouncementPageController {
         // entre deux liens avec une condition composee.
         model.addAttribute("storeUrl", firstNonBlank(storeUrlAndroid, storeUrlIos));
 
-        Optional<AnnouncementEntity> found = parseUuid(id)
+        Optional<UUID> parsedId = parseUuid(id);
+        Optional<AnnouncementEntity> found = parsedId
                 .flatMap(announcementRepository::findById)
                 .filter(this::isPubliclyVisible);
 
         if (found.isEmpty()) {
-            return unavailable(model);
+            return unavailable(model, parsedId.orElse(null), request);
         }
 
         AnnouncementEntity announcement = found.get();
@@ -422,8 +423,22 @@ public class PublicAnnouncementPageController {
         return false;
     }
 
-    private String unavailable(Model model) {
+    /**
+     * Page « plus disponible » : un lien partagé (WhatsApp) d'un trajet passé arrive ici.
+     *
+     * <p>Bouton principal « Ouvrir dans Yadony » vers {@code yadony://annonce/{id}} dès que
+     * l'identifiant est un UUID lisible, même si le trajet n'existe plus : l'application sait
+     * afficher l'état « trajet fermé ». L'URL est construite à partir de l'UUID parsé, jamais
+     * de la chaîne brute du chemin. Identifiant illisible : pas de lien applicatif, faute de
+     * route d'accueil garantie côté app. Bouton secondaire vers le store du système détecté,
+     * seulement s'il est configuré (même logique que la page de suivi destinataire).
+     * Aucune requête supplémentaire en base, et le compteur d'attribution n'est pas touché.
+     */
+    private String unavailable(Model model, UUID parsedId, HttpServletRequest request) {
         model.addAttribute("unavailable", true);
+        model.addAttribute("unavailableAppLink", parsedId == null ? null : "yadony://annonce/" + parsedId);
+        model.addAttribute("unavailableStoreUrl", com.yadony.api.common.UserAgents.storeUrlFor(
+                request.getHeader("User-Agent"), storeUrlIos, storeUrlAndroid));
         model.addAttribute("pageTitle", "Trajet indisponible | Yadony");
         model.addAttribute("ogTitle", "Trajet indisponible");
         model.addAttribute("ogDescription",

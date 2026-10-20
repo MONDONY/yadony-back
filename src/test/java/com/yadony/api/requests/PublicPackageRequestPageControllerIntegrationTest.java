@@ -306,4 +306,26 @@ class PublicPackageRequestPageControllerIntegrationTest {
                 .andExpect(content().string(containsString("yadony://demande/" + r.getId())))
                 .andExpect(content().string(containsString("Proposer mon trajet")));
     }
+
+    /** Lien partagé d'une demande fermée : la page propose quand même d'ouvrir l'app. */
+    @Test
+    void unavailablePage_withValidUuid_offersToOpenTheApp() throws Exception {
+        PackageRequestEntity r = persistRequest(PackageRequestStatus.CANCELLED);
+
+        mockMvc.perform(get("/demande/" + r.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("n'est plus disponible")))
+                .andExpect(content().string(containsString("href=\"yadony://demande/" + r.getId() + "\"")))
+                .andExpect(content().string(containsString("Ouvrir dans Yadony")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("Télécharger l'app"))));
+    }
+
+    /** Identifiant illisible : jamais de deep link fabriqué avec la chaîne brute du chemin. */
+    @Test
+    void unavailablePage_malformedId_hasNoDeepLinkWithTheRawString() throws Exception {
+        mockMvc.perform(get("/public/demande/pas-un-uuid").header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("yadony://demande/pas-un-uuid"))))
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("Ouvrir dans Yadony"))));
+    }
 }

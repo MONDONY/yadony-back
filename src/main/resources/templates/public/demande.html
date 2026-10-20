@@ -48,8 +48,13 @@
       <h1>Cette demande n'est plus disponible</h1>
       <p>Elle a été retirée, ou n'a plus besoin de voyageur. D'autres colis attendent chaque semaine un trajet.</p>
     </div>
-    <a class="btn btn-primary" th:if="${!#strings.isEmpty(storeUrl)}"
-       th:href="${storeUrl}">Voir d'autres demandes</a>
+    <!-- Liens assemblés côté contrôleur : deep link depuis l'UUID parsé, store du système détecté. -->
+    <div class="actions" th:if="${unavailableAppLink != null or unavailableStoreUrl != null}">
+      <a class="btn btn-primary open-app" th:if="${unavailableAppLink != null}"
+         th:href="${unavailableAppLink}">Ouvrir dans Yadony</a>
+      <a class="btn btn-secondary store" th:if="${unavailableStoreUrl != null}"
+         th:href="${unavailableStoreUrl}" rel="noopener noreferrer">Télécharger l'app</a>
+    </div>
   </section>
 
   <!-- Demande ouverte à une proposition de trajet -->
