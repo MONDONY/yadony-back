@@ -209,6 +209,11 @@ public class ReportService {
         return report;
     }
 
+    /** Texte client ramené à une ligne : contrôles, retours à la ligne et séparateurs Unicode deviennent une espace. */
+    static String oneLine(String raw) {
+        return raw == null ? "" : raw.replaceAll("[\\p{Cc}\\p{Zl}\\p{Zp}\\s]+", " ").strip();
+    }
+
     /** Longueur de la description reprise dans l'alerte : le détail complet reste dans l'admin. */
     static final int ALERT_DESCRIPTION_MAX = 200;
 
@@ -221,20 +226,21 @@ public class ReportService {
     private void alertAdminAfterCommit(ReportEntity report, UUID reporterId, int photoCount) {
         Runnable alert = () -> {
             try {
-                String route = report.getScreenRoute();
-                String description = report.getDescription() == null ? ""
-                        : report.getDescription().strip().replaceAll("\\s+", " ");
+                // Route et description viennent du client : une seule ligne, sans caractère de
+                // contrôle, pour ne forger ni fausse ligne Telegram ni fausse ligne de journal.
+                String route = oneLine(report.getScreenRoute());
+                String description = oneLine(report.getDescription());
                 if (description.length() > ALERT_DESCRIPTION_MAX) {
                     description = description.substring(0, ALERT_DESCRIPTION_MAX) + "…";
                 }
                 Map<String, Object> context = new java.util.LinkedHashMap<>();
                 context.put("reportId", report.getId());
                 context.put("motif", report.getReason().name());
-                if (route != null && !route.isBlank()) context.put("ecran", route);
+                if (!route.isEmpty()) context.put("ecran", route);
                 context.put("captures", photoCount);
                 context.put("userId", reporterId);
                 adminAlertService.raise("APP_REPORT_CREATED",
-                        "Nouveau signalement de bug" + (route == null || route.isBlank() ? "" : " sur " + route)
+                        "Nouveau signalement de bug" + (route.isEmpty() ? "" : " sur " + route)
                                 + (description.isEmpty() ? "" : " : " + description),
                         context);
             } catch (RuntimeException e) {

@@ -199,6 +199,28 @@ class ReportServiceTest {
         assertThat(detail.getValue()).endsWith("…").hasSizeLessThan(260);
     }
 
+    /** Écran et description viennent du client : aucune fausse ligne dans l'alerte ni dans le journal. */
+    @Test
+    void createReport_routeEtDescriptionAvecSautsDeLigne_restentSurUneLigne() throws Exception {
+        stubUser();
+        when(reportRepository.save(any())).thenAnswer(inv -> {
+            ReportEntity r = inv.getArgument(0);
+            setId(r, UUID.randomUUID());
+            return r;
+        });
+
+        service().createReport("uid-1", ReportTargetType.APP, null, ReportReason.SCREEN_BUG,
+                "ligne1\r\nCode : FAUX\u2028ligne3\u0000", List.of(), "/home\nCode : STRIPE_PAYOUT_FAILED\r");
+
+        org.mockito.ArgumentCaptor<String> detail = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.ArgumentCaptor<Map<String, Object>> context = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(adminAlertService).raise(eq("APP_REPORT_CREATED"), detail.capture(), context.capture());
+        assertThat(detail.getValue()).doesNotContain("\n", "\r", "\u2028", "\u0000");
+        assertThat(String.valueOf(context.getValue().get("ecran"))).doesNotContain("\n", "\r");
+        assertThat(ReportService.oneLine(null)).isEmpty();
+        assertThat(ReportService.oneLine("  a \t b \u0085 c ")).isEqualTo("a b c");
+    }
+
     /** Les signalements de modération (utilisateur, annonce…) ont leur propre file dans l'admin. */
     @Test
     void createReport_signalementDeModeration_neLevePasDAlerteTelegram() throws Exception {
