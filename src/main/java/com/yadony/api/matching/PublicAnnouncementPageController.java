@@ -187,6 +187,7 @@ public class PublicAnnouncementPageController {
         model.addAttribute("cheapestGridPrice",
                 formatDecimal(cheapestGridPrice(announcement)));
         model.addAttribute("currency", SupportedCurrency.symbolOf(announcement.getCurrency()));
+        model.addAttribute("serviceFeeExtra", priceGridService.displaysPriceBeforeServiceFee());
         // Lieux de remise et de récupération, tels que le voyageur les a saisis.
         model.addAttribute("pickupAddress", announcement.getPickupAddressLabel());
         model.addAttribute("deliveryAddress", announcement.getDeliveryAddressLabel());
@@ -305,7 +306,8 @@ public class PublicAnnouncementPageController {
     }
 
     /**
-     * Prix affiché à l'expéditeur, commission Yadony comprise.
+     * Prix affiché à l'expéditeur : frais de service Yadony compris sans grille de commission, prix du
+     * voyageur sous grille (la page ajoute alors « + frais de service Yadony », {@code serviceFeeExtra}).
      *
      * <p>{@code pricePerKg} est le net voyageur : l'afficher annoncerait un
      * tarif que personne ne paiera, et surtout un tarif <em>différent</em> de

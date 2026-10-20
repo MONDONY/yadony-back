@@ -120,6 +120,18 @@ class PriceGridServiceTest {
     }
 
     @Test
+    void displaysPriceBeforeServiceFee_followsTheCurrentGrid() {
+        when(commissionGridService.current()).thenReturn(java.util.Optional.empty());
+        assertThat(service.displaysPriceBeforeServiceFee()).isFalse();
+
+        when(commissionGridService.current()).thenReturn(java.util.Optional.of(new CommissionGrid(UUID.randomUUID(),
+                java.time.LocalDateTime.of(2026, 10, 1, 0, 0),
+                List.of(new CommissionTier(BigDecimal.ZERO, new BigDecimal("0.07"))),
+                CommissionGridService.defaultMinimums())));
+        assertThat(service.displaysPriceBeforeServiceFee()).isTrue();
+    }
+
+    @Test
     void addItem_rejects_when_limit_reached() {
         UUID travelerId = UUID.randomUUID();
         when(gridRepo.countByTravelerId(travelerId)).thenReturn(20L);
