@@ -47,8 +47,10 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -214,7 +216,9 @@ public class MobileMoneyBidPaymentService {
         if (!traveler.canReceiveMobileMoney(announcement.getCurrency())) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-currency-mismatch",
                     "Mobile Money Currency Mismatch",
-                    "Votre compte de versement est en " + traveler.getMobileMoneyCurrency()
+                    (traveler.getMobileMoneyCurrencyList().size() > 1
+                            ? "Vos comptes de versement sont en " : "Votre compte de versement est en ")
+                            + String.join(", ", traveler.getMobileMoneyCurrencyList())
                             + ", ce trajet est en " + announcement.getCurrency() + ".");
         }
         if (AnnouncementStatus.OUT_OF_MARKET.contains(announcement.getStatus())) {
@@ -387,9 +391,9 @@ public class MobileMoneyBidPaymentService {
         // Le compte mobile money vérifié de l'expéditeur passe avant le numéro pré-rempli à la
         // demande : ce dernier est souvent le téléphone du compte, étranger, et pawaPay le refuse
         // (Sentry FLUTTER-DE). Un numéro saisi sur l'écran de paiement reste prioritaire.
-        String accountMsisdn = sender.map(u -> u.mobileMoneyPayerMsisdn(currency)).orElse(null);
-        if (accountMsisdn != null) {
-            return accountMsisdn;
+        Optional<String> accountMsisdn = payoutAccounts.payerMsisdnIn(bid.getSenderId(), currency);
+        if (accountMsisdn.isPresent()) {
+            return accountMsisdn.get();
         }
         if (bid.getMobileMoneyPhone() != null) {
             return bid.getMobileMoneyPhone();
@@ -498,8 +502,9 @@ public class MobileMoneyBidPaymentService {
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
             throw payerUnsupported(payerReason(e, payment.getCurrency()));
         }
+        Set<String> accepted = payoutAccounts.acceptedCodes(traveler.getId(), payment.getCurrency());
         List<MobileMoneyProvidersResponse.ProviderOption> options = catalogue.options().stream()
-                .filter(o -> payoutAccounts.accepts(traveler.getId(), o.provider(), payment.getCurrency()))
+                .filter(o -> accepted.contains(o.provider().toUpperCase(Locale.ROOT)))
                 .map(o -> new MobileMoneyProvidersResponse.ProviderOption(o.provider(), PawapayProviders.label(o.provider()),
                         o.provider().equalsIgnoreCase(catalogue.detected())))
                 .toList();

@@ -232,7 +232,7 @@ class MobileMoneyAccountServiceTest {
     void activate_replacingALockedAccount_is409Locked_andTouchesNothing() {
         MobileMoneyPayoutAccountEntity existing = liveAccount("ORANGE_SEN", "221770000001");
         senegalNumberPredicts("ORANGE_SEN");
-        when(accountRepository.countParcelsAwaitingPayout(userId, "ORANGE_SEN")).thenReturn(1);
+        when(accountRepository.countParcelsAwaitingPayout(userId, List.of("ORANGE_SEN"))).thenReturn(1);
 
         YadonyBusinessException ex = catchThrowableOfType(
                 () -> service.activate(userId, "+221 77 123 45 67", null), YadonyBusinessException.class);
@@ -681,8 +681,8 @@ class MobileMoneyAccountServiceTest {
         user.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
         MobileMoneyPayoutAccountEntity orange = liveAccount("ORANGE_SEN", "221771234567");
         MobileMoneyPayoutAccountEntity wave = liveAccount("WAVE_SEN", "221760000002");
-        when(accountRepository.countParcelsAwaitingPayout(userId, "ORANGE_SEN")).thenReturn(0);
-        when(accountRepository.countParcelsAwaitingPayout(userId, "WAVE_SEN")).thenReturn(1);
+        when(accountRepository.countParcelsAwaitingPayout(userId, List.of("ORANGE_SEN"))).thenReturn(0);
+        when(accountRepository.countParcelsAwaitingPayout(userId, List.of("WAVE_SEN"))).thenReturn(1);
 
         YadonyBusinessException ex = catchThrowableOfType(() -> service.disable(userId), YadonyBusinessException.class);
 

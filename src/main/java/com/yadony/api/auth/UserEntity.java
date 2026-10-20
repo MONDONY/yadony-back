@@ -571,24 +571,11 @@ public class UserEntity extends BaseEntity {
      * réactivé dans une autre devise entre deux portails doit être refusé partout pareil.
      */
     public boolean canReceiveMobileMoney(String currency) {
-        if (!hasActiveMobileMoney() || currency == null) {
-            return false;
-        }
-        List<String> currencies = getMobileMoneyCurrencyList();
-        if (currencies.isEmpty()) {
-            return mobileMoneyCurrency != null && mobileMoneyCurrency.equalsIgnoreCase(currency);
-        }
-        return currencies.stream().anyMatch(currency::equalsIgnoreCase);
-    }
-
-    /**
-     * Numéro de son compte mobile money à utiliser pour PAYER dans cette devise, ou null.
-     * Le compte a été vérifié auprès de l'opérateur à son activation : c'est le numéro le
-     * plus sûr pour un dépôt, avant le numéro saisi à la demande ou le téléphone du compte
-     * (souvent étranger, par exemple +33, et refusé par pawaPay — Sentry FLUTTER-DE).
-     */
-    public String mobileMoneyPayerMsisdn(String currency) {
-        return canReceiveMobileMoney(currency) ? mobileMoneyMsisdn : null;
+        // Liste des devises des comptes vivants, tenue par MobileMoneyPayoutAccounts#syncSummary
+        // et posée par V343 pour tout compte repris ; un ACTIVE sans compte complet y est passé
+        // DISABLED. Aucun repli sur mobile_money_currency (le seul compte le plus ancien).
+        return hasActiveMobileMoney() && currency != null
+                && getMobileMoneyCurrencyList().stream().anyMatch(currency::equalsIgnoreCase);
     }
 
     public MobileMoneyPayoutStatus getMobileMoneyStatus() { return mobileMoneyStatus; }
@@ -621,9 +608,6 @@ public class UserEntity extends BaseEntity {
     public void setMobileMoneyProviderList(List<String> providers) {
         this.mobileMoneyProviders = providers == null || providers.isEmpty() ? null : String.join(",", providers);
     }
-
-    public String getMobileMoneyCurrencies() { return mobileMoneyCurrencies; }
-    public void setMobileMoneyCurrencies(String mobileMoneyCurrencies) { this.mobileMoneyCurrencies = mobileMoneyCurrencies; }
 
     /** Devises des comptes de versement actifs ; liste vide quand la colonne est nulle ou blanche. */
     public List<String> getMobileMoneyCurrencyList() {

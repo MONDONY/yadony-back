@@ -98,6 +98,14 @@ class V343MobileMoneyPayoutAccountsMigrationTest {
         }
     }
 
+    private String statusOf(UUID userId) throws SQLException {
+        try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery("SELECT mobile_money_status FROM users WHERE id = '" + userId + "'")) {
+            assertThat(rs.next()).isTrue();
+            return rs.getString(1);
+        }
+    }
+
     private void insertAccount(UUID userId, String provider, boolean deleted) throws SQLException {
         try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
             statement.executeUpdate("""
@@ -138,6 +146,31 @@ class V343MobileMoneyPayoutAccountsMigrationTest {
         assertThat(currenciesOf(b)).isNull();
         assertThat(currenciesOf(c)).isNull();
         assertThat(currenciesOf(d)).isNull();
+
+        // ACTIVE sans compte repris : passé DISABLED (plus aucun ACTIVE sans ligne de compte).
+        assertThat(statusOf(a)).isEqualTo("ACTIVE");
+        assertThat(statusOf(b)).isEqualTo("DISABLED");
+        assertThat(statusOf(c)).isEqualTo("DISABLED");
+        assertThat(statusOf(d)).as("utilisateur supprimé : intouché").isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void afterV343_anActiveUserWithOnlyTheCurrencyMissing_isDisabled() throws Exception {
+        UUID id = UUID.randomUUID();
+        try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
+            statement.executeUpdate("""
+                    INSERT INTO users (id, firebase_uid, username, status, mobile_money_status, mobile_money_msisdn,
+                        mobile_money_msisdn_masked, mobile_money_provider, mobile_money_country, mobile_money_currency,
+                        created_at, updated_at)
+                    VALUES ('%s', 'uid-nc', 'user-nc', 'ACTIVE', 'ACTIVE', 'c', '+225 ** 1', 'ORANGE_CIV', 'CI', NULL, now(), now())
+                    """.formatted(id));
+        }
+
+        flywayUpTo("343").migrate();
+
+        assertThat(countAccounts()).isZero();
+        assertThat(statusOf(id)).isEqualTo("DISABLED");
+        assertThat(currenciesOf(id)).isNull();
     }
 
     @Test

@@ -60,3 +60,17 @@ WHERE mobile_money_status = 'ACTIVE'
   AND mobile_money_provider IS NOT NULL
   AND mobile_money_country IS NOT NULL
   AND mobile_money_currency IS NOT NULL;
+
+-- Un utilisateur ACTIVE sans compte complet (numéro, opérateur, pays ou devise manquant) n'a pas été
+-- repris ci-dessus : il n'a aucune ligne de compte, donc aucun versement possible. Le laisser ACTIVE
+-- ferait proposer le mobile money sur ses trajets (hasActiveMobileMoney) pour un argent sans
+-- destination à la livraison. canReceiveMobileMoney ne lit plus que mobile_money_currencies, sans
+-- repli sur mobile_money_currency : le statut doit dire la même chose que la table.
+UPDATE users
+SET mobile_money_status = 'DISABLED'
+WHERE mobile_money_status = 'ACTIVE'
+  AND deleted_at IS NULL
+  AND (mobile_money_msisdn IS NULL
+       OR mobile_money_provider IS NULL
+       OR mobile_money_country IS NULL
+       OR mobile_money_currency IS NULL);

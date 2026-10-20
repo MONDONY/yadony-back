@@ -267,13 +267,13 @@ public class MobileMoneyNegotiationPaymentService {
                 throw payerUnsupported("Numéro de téléphone invalide.");
             }
         }
-        Optional<UserEntity> sender = userRepository.findById(senderId);
-        // Même ordre que MobileMoneyBidPaymentService : compte mobile money vérifié d'abord,
-        // le téléphone du compte est souvent étranger (Sentry FLUTTER-DE).
-        String accountMsisdn = sender.map(u -> u.mobileMoneyPayerMsisdn(currency)).orElse(null);
-        if (accountMsisdn != null) {
-            return accountMsisdn;
+        // Même ordre que MobileMoneyBidPaymentService : compte mobile money vérifié d'abord (celui
+        // de la devise du paiement), le téléphone du compte est souvent étranger (Sentry FLUTTER-DE).
+        Optional<String> accountMsisdn = payoutAccounts.payerMsisdnIn(senderId, currency);
+        if (accountMsisdn.isPresent()) {
+            return accountMsisdn.get();
         }
+        Optional<UserEntity> sender = userRepository.findById(senderId);
         String firebasePhone = sender
                 .map(u -> firebaseContact.getContact(u.getFirebaseUid()).phoneNumber()).orElse(null);
         if (firebasePhone == null || firebasePhone.isBlank()) {

@@ -51,6 +51,7 @@ class AnnouncementPaymentMethodFilterIntegrationTest {
     private UUID cashOnly;
     private UUID cfaCashAndMobileMoney;
     private UUID cfaMobileMoneyInactive;
+    private UUID cfaMobileMoneyOtherCurrency;
 
     @BeforeEach
     void seed() {
@@ -72,13 +73,17 @@ class AnnouncementPaymentMethodFilterIntegrationTest {
         UserEntity plain = traveler("pm-plain", StripeAccountStatus.NOT_CREATED,
                 MobileMoneyPayoutStatus.NOT_CONFIGURED);
         UserEntity mobileMoney = traveler("pm-mm", StripeAccountStatus.NOT_CREATED,
-                MobileMoneyPayoutStatus.ACTIVE);
+                MobileMoneyPayoutStatus.ACTIVE, "XOF");
+        // Compte de versement actif, mais en XAF : ne reçoit pas un trajet XOF (ni filtre ni réponse).
+        UserEntity mobileMoneyXaf = traveler("pm-mm-xaf", StripeAccountStatus.NOT_CREATED,
+                MobileMoneyPayoutStatus.ACTIVE, "XAF");
 
         cardAndCash = trip(connect, "EUR", EnumSet.of(PaymentMethod.STRIPE, PaymentMethod.CASH));
         cardWithoutConnect = trip(plain, "EUR", EnumSet.of(PaymentMethod.STRIPE));
         cashOnly = trip(connect, "EUR", EnumSet.of(PaymentMethod.CASH));
         cfaCashAndMobileMoney = trip(mobileMoney, "XOF", EnumSet.of(PaymentMethod.CASH, PaymentMethod.MOBILE_MONEY));
         cfaMobileMoneyInactive = trip(plain, "XOF", EnumSet.of(PaymentMethod.MOBILE_MONEY));
+        cfaMobileMoneyOtherCurrency = trip(mobileMoneyXaf, "XOF", EnumSet.of(PaymentMethod.CASH, PaymentMethod.MOBILE_MONEY));
     }
 
     @Test
@@ -89,7 +94,8 @@ class AnnouncementPaymentMethodFilterIntegrationTest {
 
     @Test
     void cash_keepsTripsAcceptingCash() throws Exception {
-        assertThat(search("CASH")).containsExactlyInAnyOrder(cardAndCash, cashOnly, cfaCashAndMobileMoney);
+        assertThat(search("CASH")).containsExactlyInAnyOrder(cardAndCash, cashOnly, cfaCashAndMobileMoney,
+                cfaMobileMoneyOtherCurrency);
     }
 
     @Test
@@ -104,8 +110,8 @@ class AnnouncementPaymentMethodFilterIntegrationTest {
 
     @Test
     void unknownOrAbsent_appliesNoFilter() throws Exception {
-        assertThat(search("WAVE")).hasSize(5);
-        assertThat(search(null)).hasSize(5);
+        assertThat(search("WAVE")).hasSize(6);
+        assertThat(search(null)).hasSize(6);
     }
 
     @Test
@@ -125,6 +131,7 @@ class AnnouncementPaymentMethodFilterIntegrationTest {
         }
         assertThat(cardWithoutConnect).isNotNull();
         assertThat(cfaMobileMoneyInactive).isNotNull();
+        assertThat(cfaMobileMoneyOtherCurrency).isNotNull();
     }
 
     @Test
@@ -132,7 +139,7 @@ class AnnouncementPaymentMethodFilterIntegrationTest {
         mockMvc.perform(get("/announcements").param("paymentMethods", "CASH").param("size", "1").with(reader()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content.length()").value(1))
-                .andExpect(jsonPath("$.totalElements").value(3));
+                .andExpect(jsonPath("$.totalElements").value(4));
     }
 
     /** Lecteur sans compte en base : aucun blocage, devise d'affichage par défaut. */
@@ -155,6 +162,11 @@ class AnnouncementPaymentMethodFilterIntegrationTest {
     }
 
     private UserEntity traveler(String uid, StripeAccountStatus stripe, MobileMoneyPayoutStatus mobileMoney) {
+        return traveler(uid, stripe, mobileMoney, null);
+    }
+
+    private UserEntity traveler(String uid, StripeAccountStatus stripe, MobileMoneyPayoutStatus mobileMoney,
+                                String mobileMoneyCurrency) {
         var user = new UserEntity();
         user.setFirebaseUid(uid);
         user.setStatus(com.yadony.api.auth.UserStatus.ACTIVE);
@@ -162,6 +174,7 @@ class AnnouncementPaymentMethodFilterIntegrationTest {
         user.setRoles(new HashSet<>(List.of(com.yadony.api.auth.Role.TRAVELER)));
         user.setStripeAccountStatus(stripe);
         user.setMobileMoneyStatus(mobileMoney);
+        user.setMobileMoneyCurrencyList(mobileMoneyCurrency == null ? List.of() : List.of(mobileMoneyCurrency));
         return userRepository.save(user);
     }
 

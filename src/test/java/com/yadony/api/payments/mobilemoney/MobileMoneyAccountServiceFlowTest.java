@@ -104,8 +104,8 @@ class MobileMoneyAccountServiceFlowTest {
         // Voyageur repris par la migration V343 : un compte XOF Orange CI, « MTN accepté » coché jadis.
         MobileMoneyPayoutAccountEntity migrated = new MobileMoneyPayoutAccountEntity(user.getId(), "ORANGE_CIV", "CI",
                 "XOF", CIV_NUMBER, Msisdn.mask(CIV_NUMBER), Instant.parse("2026-01-02T03:04:05Z"));
-        migrated.setMigrated(true);
-        migrated.setLegacyAcceptedProviders("ORANGE_CIV,MTN_MOMO_CIV");
+        PayoutAccountFixtures.setMigrated(migrated, true);
+        PayoutAccountFixtures.setLegacyAcceptedProviders(migrated, "ORANGE_CIV,MTN_MOMO_CIV");
         repository.saveAndFlush(migrated);
         accounts.syncSummary(user);
         userRepository.saveAndFlush(user);

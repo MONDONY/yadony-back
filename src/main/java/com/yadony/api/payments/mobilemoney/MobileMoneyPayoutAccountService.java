@@ -107,7 +107,7 @@ public class MobileMoneyPayoutAccountService {
             }
         }
         return new MobileMoneyPayoutAccountsResponse(
-                live.stream().map(a -> view(userId, a)).toList(),
+                live.stream().map(this::view).toList(),
                 suggested.stream().map(c -> new ProviderView(c, PawapayProviders.label(c))).toList());
     }
 
@@ -137,7 +137,7 @@ public class MobileMoneyPayoutAccountService {
         String msisdn = normalizePhone(phoneNumber, m);
         UserEntity user = lockUser(userId);
         MobileMoneyPayoutAccountEntity account = ownedAccount(userId, accountId, m);
-        requireUnlocked(userId, account, m);
+        requireUnlocked(account, m);
         return replaceNumber(user, account, check(userId, msisdn, account.getProvider(), m), "provided");
     }
 
@@ -150,7 +150,7 @@ public class MobileMoneyPayoutAccountService {
         Messages m = messagesResolver.forRequest();
         UserEntity user = lockUser(userId);
         MobileMoneyPayoutAccountEntity account = ownedAccount(userId, accountId, m);
-        requireUnlocked(userId, account, m);
+        requireUnlocked(account, m);
         account.softDelete();
         repository.save(account);
         accounts.syncSummary(user);
@@ -169,7 +169,7 @@ public class MobileMoneyPayoutAccountService {
         UserEntity user = lockUser(userId);
         List<MobileMoneyPayoutAccountEntity> live = accounts.active(userId);
         for (MobileMoneyPayoutAccountEntity account : live) {
-            requireUnlocked(userId, account, m);
+            requireUnlocked(account, m);
         }
         for (MobileMoneyPayoutAccountEntity account : live) {
             account.softDelete();
@@ -189,6 +189,8 @@ public class MobileMoneyPayoutAccountService {
     /**
      * Ancien contrat {@code POST /payments/mobile-money/account} : crée le compte de ce code s'il n'y
      * en a pas d'actif, sinon remplace son numéro (verrou appliqué, jamais de 409 {@code exists}).
+     * Idempotent : le même numéro renvoyé pour un compte existant (app qui rejoue, compte verrouillé
+     * compris) répond la vue du compte, sans verrou, sans écriture ni audit.
      * {@code provider} nul ou blanc : l'opérateur que pawaPay détecte pour le numéro.
      * {@code source} ({@code provided}, {@code firebase}) va dans l'audit.
      */
@@ -206,7 +208,10 @@ public class MobileMoneyPayoutAccountService {
         if (existing.isEmpty()) {
             return create(user, checked, origin);
         }
-        requireUnlocked(userId, existing.get(), m);
+        if (checked.msisdn().equals(existing.get().getMsisdn())) {
+            return view(existing.get());
+        }
+        requireUnlocked(existing.get(), m);
         return replaceNumber(user, existing.get(), checked, origin);
     }
 
@@ -221,7 +226,7 @@ public class MobileMoneyPayoutAccountService {
         audit.log("USER", user.getId(), ADDED, user.getId(), Map.of("accountId", account.getId(),
                 "provider", account.getProvider(), "country", account.getCountry(), "currency", account.getCurrency(),
                 "msisdnMasked", account.getMsisdnMasked(), "source", source));
-        return view(user.getId(), account);
+        return view(account);
     }
 
     private AccountView replaceNumber(UserEntity user, MobileMoneyPayoutAccountEntity account, Checked checked,
@@ -236,7 +241,7 @@ public class MobileMoneyPayoutAccountService {
         audit.log("USER", user.getId(), NUMBER_CHANGED, user.getId(), Map.of("accountId", account.getId(),
                 "provider", account.getProvider(), "oldMsisdnMasked", oldMasked,
                 "msisdnMasked", account.getMsisdnMasked(), "source", source));
-        return view(user.getId(), account);
+        return view(account);
     }
 
     // ── validation partagée (ajout, changement de numéro, upsert) ───────────
@@ -343,8 +348,8 @@ public class MobileMoneyPayoutAccountService {
                         "Mobile Money Account Not Found", m.get("problem.mobile-money-account.not-found")));
     }
 
-    private void requireUnlocked(UUID userId, MobileMoneyPayoutAccountEntity account, Messages m) {
-        int pending = accounts.pendingPayouts(userId, account.getProvider());
+    private void requireUnlocked(MobileMoneyPayoutAccountEntity account, Messages m) {
+        int pending = accounts.pendingPayouts(account);
         if (pending > 0) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "mobile-money-account-locked",
                     "Mobile Money Account Locked", m.plural("problem.mobile-money-account.locked", pending, pending),
@@ -352,10 +357,10 @@ public class MobileMoneyPayoutAccountService {
         }
     }
 
-    private AccountView view(UUID userId, MobileMoneyPayoutAccountEntity a) {
+    private AccountView view(MobileMoneyPayoutAccountEntity a) {
         return new AccountView(a.getId(), a.getProvider(), PawapayProviders.label(a.getProvider()),
                 PawapayProviders.brand(a.getProvider()), a.getCountry(), a.getCurrency(), a.getMsisdnMasked(),
-                a.getVerifiedAt(), accounts.pendingPayouts(userId, a.getProvider()));
+                a.getVerifiedAt(), accounts.pendingPayouts(a));
     }
 
     /** Rejet métier (422) : trace la branche d'échec pour le support, sans jamais loguer le numéro. */

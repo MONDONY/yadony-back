@@ -144,7 +144,9 @@ public class MobileMoneyPayoutInitiator {
         }
 
         // Code du dépôt du paiement : il désigne le compte qui reçoit (même opérateur, même pays).
-        String depositProvider = operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)
+        // Le dépôt vivant ou abouti, jamais un dépôt échoué plus récent : même règle que le verrou
+        // des comptes (MobileMoneyPayoutAccountRepository#countParcelsAwaitingPayout).
+        String depositProvider = operations.findLive(payment.getId(), PawapayOperationKind.DEPOSIT)
                 .map(PawapayOperationEntity::getProvider).orElse(null);
         Optional<PayoutDestination> destination = accounts.destinationFor(travelerId, depositProvider, payment.getCurrency());
         if (destination.isEmpty()) {

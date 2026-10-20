@@ -82,6 +82,7 @@ class TripRecurrenceServiceTest {
         when(user.getFirebaseUid()).thenReturn("firebase-uid");
         lenient().when(user.hasActiveStripeConnect()).thenReturn(stripeConnectActive);
         lenient().when(user.hasActiveMobileMoney()).thenReturn(mobileMoneyActive);
+        lenient().when(user.canReceiveMobileMoney("XOF")).thenReturn(mobileMoneyActive);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
     }
 

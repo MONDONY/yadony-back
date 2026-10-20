@@ -651,6 +651,7 @@ class FavoriteServiceTest {
         } catch (Exception e) { throw new RuntimeException(e); }
         caller.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
         caller.setMobileMoneyCurrency("XOF");
+        caller.setMobileMoneyCurrencyList(java.util.List.of("XOF"));
         when(userRepository.findById(userId)).thenReturn(Optional.of(caller));
 
         PackageRequestEntity pr1 = mock(PackageRequestEntity.class);

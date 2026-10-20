@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
@@ -123,6 +124,11 @@ class MobileMoneyPayoutAccountServiceTest {
                 com.yadony.api.common.Msisdn.mask(msisdn), Instant.parse("2026-03-04T10:11:12Z"));
         ReflectionTestUtils.setField(a, "id", UUID.randomUUID());
         return a;
+    }
+
+    /** Le compte du code donné, pour bouchonner {@link MobileMoneyPayoutAccounts#pendingPayouts}. */
+    private static MobileMoneyPayoutAccountEntity onCode(String provider) {
+        return argThat(a -> a != null && provider.equals(a.getProvider()));
     }
 
     @SuppressWarnings("unchecked")
@@ -364,7 +370,7 @@ class MobileMoneyPayoutAccountServiceTest {
     void changeNumber_replacesTheNumber_andAuditsBothMaskedForms() {
         MobileMoneyPayoutAccountEntity account = existing("ORANGE_CIV", "CI", CIV_ORANGE_NUMBER);
         when(repository.findByIdAndUserIdAndDeletedAtIsNull(account.getId(), userId)).thenReturn(Optional.of(account));
-        when(accounts.pendingPayouts(userId, "ORANGE_CIV")).thenReturn(0);
+        when(accounts.pendingPayouts(onCode("ORANGE_CIV"))).thenReturn(0);
         predicts(CIV_NEW_ORANGE_NUMBER, "CIV", "ORANGE_CIV");
 
         AccountView view = service.changeNumber(userId, account.getId(), "+225 07 09 99 99 99");
@@ -415,7 +421,7 @@ class MobileMoneyPayoutAccountServiceTest {
     void changeNumber_whileAParcelAwaitsItsPayout_is409Locked_andTouchesNothing() {
         MobileMoneyPayoutAccountEntity account = existing("ORANGE_CIV", "CI", CIV_ORANGE_NUMBER);
         when(repository.findByIdAndUserIdAndDeletedAtIsNull(account.getId(), userId)).thenReturn(Optional.of(account));
-        when(accounts.pendingPayouts(userId, "ORANGE_CIV")).thenReturn(2);
+        when(accounts.pendingPayouts(onCode("ORANGE_CIV"))).thenReturn(2);
 
         YadonyBusinessException e = thrown(() -> service.changeNumber(userId, account.getId(), CIV_NEW_ORANGE_NUMBER));
 
@@ -448,7 +454,7 @@ class MobileMoneyPayoutAccountServiceTest {
     void remove_softDeletes_resyncsTheSummary_andAudits() {
         MobileMoneyPayoutAccountEntity account = existing("ORANGE_CIV", "CI", CIV_ORANGE_NUMBER);
         when(repository.findByIdAndUserIdAndDeletedAtIsNull(account.getId(), userId)).thenReturn(Optional.of(account));
-        when(accounts.pendingPayouts(userId, "ORANGE_CIV")).thenReturn(0);
+        when(accounts.pendingPayouts(onCode("ORANGE_CIV"))).thenReturn(0);
 
         service.remove(userId, account.getId());
 
@@ -480,7 +486,7 @@ class MobileMoneyPayoutAccountServiceTest {
     void remove_whileAParcelAwaitsItsPayout_is409Locked_singular() {
         MobileMoneyPayoutAccountEntity account = existing("ORANGE_CIV", "CI", CIV_ORANGE_NUMBER);
         when(repository.findByIdAndUserIdAndDeletedAtIsNull(account.getId(), userId)).thenReturn(Optional.of(account));
-        when(accounts.pendingPayouts(userId, "ORANGE_CIV")).thenReturn(1);
+        when(accounts.pendingPayouts(onCode("ORANGE_CIV"))).thenReturn(1);
 
         YadonyBusinessException e = thrown(() -> service.remove(userId, account.getId()));
 
@@ -532,8 +538,8 @@ class MobileMoneyPayoutAccountServiceTest {
         MobileMoneyPayoutAccountEntity civ = existing("ORANGE_CIV", "CI", CIV_ORANGE_NUMBER);
         MobileMoneyPayoutAccountEntity sen = existing("ORANGE_SEN", "SN", SEN_ORANGE_NUMBER);
         when(accounts.active(userId)).thenReturn(List.of(civ, sen));
-        when(accounts.pendingPayouts(userId, "ORANGE_CIV")).thenReturn(0);
-        when(accounts.pendingPayouts(userId, "ORANGE_SEN")).thenReturn(2);
+        when(accounts.pendingPayouts(onCode("ORANGE_CIV"))).thenReturn(0);
+        when(accounts.pendingPayouts(onCode("ORANGE_SEN"))).thenReturn(2);
 
         YadonyBusinessException e = thrown(() -> service.removeAll(userId));
 
@@ -575,7 +581,7 @@ class MobileMoneyPayoutAccountServiceTest {
     void upsert_withALiveAccountOfThatCode_replacesItsNumber_neverA409() {
         MobileMoneyPayoutAccountEntity account = existing("ORANGE_CIV", "CI", CIV_ORANGE_NUMBER);
         when(repository.findByUserIdAndProviderAndDeletedAtIsNull(userId, "ORANGE_CIV")).thenReturn(Optional.of(account));
-        when(accounts.pendingPayouts(userId, "ORANGE_CIV")).thenReturn(0);
+        when(accounts.pendingPayouts(onCode("ORANGE_CIV"))).thenReturn(0);
         predicts(CIV_NEW_ORANGE_NUMBER, "CIV", "ORANGE_CIV");
 
         AccountView view = service.upsert(userId, CIV_NEW_ORANGE_NUMBER, "ORANGE_CIV", "provided");
@@ -591,7 +597,7 @@ class MobileMoneyPayoutAccountServiceTest {
     void upsert_replacingALockedAccount_is409Locked() {
         MobileMoneyPayoutAccountEntity account = existing("ORANGE_CIV", "CI", CIV_ORANGE_NUMBER);
         when(repository.findByUserIdAndProviderAndDeletedAtIsNull(userId, "ORANGE_CIV")).thenReturn(Optional.of(account));
-        when(accounts.pendingPayouts(userId, "ORANGE_CIV")).thenReturn(2);
+        when(accounts.pendingPayouts(onCode("ORANGE_CIV"))).thenReturn(2);
         predicts(CIV_NEW_ORANGE_NUMBER, "CIV", "ORANGE_CIV");
 
         YadonyBusinessException e = thrown(() -> service.upsert(userId, CIV_NEW_ORANGE_NUMBER, "ORANGE_CIV", "provided"));
@@ -599,6 +605,24 @@ class MobileMoneyPayoutAccountServiceTest {
         assertThat(e.getErrorCode()).isEqualTo("mobile-money-account-locked");
         assertThat(e.getProperties()).containsEntry("pendingPayouts", 2);
         assertThat(account.getMsisdn()).isEqualTo(CIV_ORANGE_NUMBER);
+        assertNothingWritten();
+    }
+
+    /** Idempotence : l'app qui rejoue le même numéro sur un compte verrouillé reçoit 200, rien n'est écrit. */
+    @Test
+    void upsert_sameNumberOnALockedAccount_returnsTheView_withoutLockCheckWriteOrAudit() {
+        MobileMoneyPayoutAccountEntity account = existing("ORANGE_CIV", "CI", CIV_ORANGE_NUMBER);
+        Instant verifiedAt = account.getVerifiedAt();
+        when(repository.findByUserIdAndProviderAndDeletedAtIsNull(userId, "ORANGE_CIV")).thenReturn(Optional.of(account));
+        when(accounts.pendingPayouts(onCode("ORANGE_CIV"))).thenReturn(2);
+        predicts(CIV_ORANGE_NUMBER, "CIV", "ORANGE_CIV");
+
+        AccountView view = service.upsert(userId, "+225 07 01 23 45 67", "ORANGE_CIV", "provided");
+
+        assertThat(view.id()).isEqualTo(account.getId());
+        assertThat(view.pendingPayouts()).isEqualTo(2);
+        assertThat(account.getMsisdn()).isEqualTo(CIV_ORANGE_NUMBER);
+        assertThat(account.getVerifiedAt()).isEqualTo(verifiedAt);
         assertNothingWritten();
     }
 
@@ -642,12 +666,12 @@ class MobileMoneyPayoutAccountServiceTest {
     @Test
     void list_returnsEveryLiveAccount_withItsLock_andSuggestsLegacyCodesWithoutAccount() {
         MobileMoneyPayoutAccountEntity civ = existing("ORANGE_CIV", "CI", CIV_ORANGE_NUMBER);
-        civ.setMigrated(true);
-        civ.setLegacyAcceptedProviders("ORANGE_CIV, mtn_momo_civ,MOOV_CIV,ORANGE_SEN,bad code");
+        PayoutAccountFixtures.setMigrated(civ, true);
+        PayoutAccountFixtures.setLegacyAcceptedProviders(civ, "ORANGE_CIV, mtn_momo_civ,MOOV_CIV,ORANGE_SEN,bad code");
         MobileMoneyPayoutAccountEntity sen = existing("ORANGE_SEN", "SN", SEN_ORANGE_NUMBER);
         when(accounts.active(userId)).thenReturn(List.of(civ, sen));
-        when(accounts.pendingPayouts(userId, "ORANGE_CIV")).thenReturn(1);
-        when(accounts.pendingPayouts(userId, "ORANGE_SEN")).thenReturn(0);
+        when(accounts.pendingPayouts(onCode("ORANGE_CIV"))).thenReturn(1);
+        when(accounts.pendingPayouts(onCode("ORANGE_SEN"))).thenReturn(0);
 
         MobileMoneyPayoutAccountsResponse r = service.list(userId);
 
@@ -663,7 +687,7 @@ class MobileMoneyPayoutAccountServiceTest {
     @Test
     void list_withoutMigratedAccount_suggestsNothing() {
         MobileMoneyPayoutAccountEntity civ = existing("ORANGE_CIV", "CI", CIV_ORANGE_NUMBER);
-        civ.setLegacyAcceptedProviders("MTN_MOMO_CIV");
+        PayoutAccountFixtures.setLegacyAcceptedProviders(civ, "MTN_MOMO_CIV");
         when(accounts.active(userId)).thenReturn(List.of(civ));
 
         assertThat(service.list(userId).suggestedProviders()).isEmpty();

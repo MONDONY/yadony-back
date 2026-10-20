@@ -20,6 +20,7 @@ import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
 import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutAccountEntity;
 import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutAccountRepository;
+import com.yadony.api.payments.mobilemoney.PayoutAccountFixtures;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
 import com.yadony.api.payments.pawapay.PawapayClient;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
@@ -387,6 +388,7 @@ class BidSupplementMobileMoneyIT {
         if (traveler) {
             user.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
             user.setMobileMoneyCurrency("XOF");
+            user.setMobileMoneyCurrencyList(java.util.List.of("XOF"));
             user.setMobileMoneyMsisdn(ACCOUNT_MSISDN);
             user.setMobileMoneyMsisdnMasked("+221 •••• 02");
             user.setMobileMoneyProvider("ORANGE_SEN");
@@ -398,7 +400,7 @@ class BidSupplementMobileMoneyIT {
             // Le compte de versement vit dans sa table ; le résumé de l'utilisateur n'en est que le reflet.
             MobileMoneyPayoutAccountEntity account = new MobileMoneyPayoutAccountEntity(saved.getId(), "ORANGE_SEN", "SN",
                     "XOF", ACCOUNT_MSISDN, "+221 •••• 02", java.time.Instant.now());
-            account.setMigrated(true);
+            PayoutAccountFixtures.setMigrated(account, true);
             accountRepository.saveAndFlush(account);
         }
         return saved;

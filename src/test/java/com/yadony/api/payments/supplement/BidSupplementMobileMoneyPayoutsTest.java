@@ -13,6 +13,7 @@ import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.hold.PayoutHoldPolicy;
 import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutAccountEntity;
 import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutAccountRepository;
+import com.yadony.api.payments.mobilemoney.PayoutAccountFixtures;
 import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutAccounts;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
@@ -82,6 +83,7 @@ class BidSupplementMobileMoneyPayoutsTest {
         setId(traveler, UUID.randomUUID());
         traveler.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
         traveler.setMobileMoneyCurrency("XOF");
+        traveler.setMobileMoneyCurrencyList(java.util.List.of("XOF"));
         traveler.setMobileMoneyMsisdn("221770000002");
         traveler.setMobileMoneyProvider("ORANGE_SEN");
         traveler.setMobileMoneyProviderList(List.of("ORANGE_SEN", "WAVE_SEN"));
@@ -113,7 +115,7 @@ class BidSupplementMobileMoneyPayoutsTest {
     private MobileMoneyPayoutAccountEntity account(String provider, String country, String msisdn, boolean migrated) {
         MobileMoneyPayoutAccountEntity a = new MobileMoneyPayoutAccountEntity(traveler.getId(), provider, country, "XOF",
                 msisdn, "masked", Instant.parse("2026-03-04T10:11:12Z"));
-        a.setMigrated(migrated);
+        PayoutAccountFixtures.setMigrated(a, migrated);
         setId(a, UUID.randomUUID());
         return a;
     }
@@ -311,6 +313,7 @@ class BidSupplementMobileMoneyPayoutsTest {
 
         when(disputes.existsByBidIdAndStatusAndTypeStartingWith(any(), any(), any())).thenReturn(false);
         traveler.setMobileMoneyCurrency("XAF");
+        traveler.setMobileMoneyCurrencyList(java.util.List.of("XAF"));
         assertThat(payouts.payout(s.getId())).isFalse();
 
         verify(alerts, org.mockito.Mockito.times(3)).raiseOnce(eq("SUPP_PAYOUT_BLOCKED_" + s.getId()), anyString(),

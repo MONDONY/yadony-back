@@ -623,18 +623,16 @@ class MobileMoneyNegotiationPaymentServiceTest {
     }
 
     // Sentry FLUTTER-DE : sans numéro saisi, le compte mobile money vérifié de l'expéditeur
-    // passe avant le téléphone du compte (souvent étranger).
+    // passe avant le téléphone du compte (souvent étranger) ; celui de la devise du paiement (XOF),
+    // pas le plus ancien (XAF).
     @Test
     void initiateDeposit_withoutTypedNumber_usesTheSendersActiveMobileMoneyAccount() {
         MobileMoneyNegotiationPaymentService svc = serviceWithRealResolver();
         PaymentEntity p = payment(PaymentStatus.PENDING);
         when(paymentRepository.findByNegotiationThreadIdForUpdate(threadId)).thenReturn(Optional.of(p));
         when(operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
-        UserEntity sender = new UserEntity();
-        sender.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
-        sender.setMobileMoneyCurrency("XOF");
-        sender.setMobileMoneyMsisdn("221770000099");
-        when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
+        payoutAccounts.add(senderId, "XAF", "MTN_MOMO_CMR", "237670000099");
+        payoutAccounts.add(senderId, "XOF", "ORANGE_SEN", "221770000099");
         when(client.predictProvider("221770000099")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> svc.initiateDeposit(threadId, senderId, null, null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))

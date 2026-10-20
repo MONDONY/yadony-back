@@ -4,7 +4,6 @@ import com.yadony.api.payments.mobilemoney.MobileMoneyOperationViews;
 import java.util.Map;
 import com.yadony.api.payments.pawapay.PawapayValidationHints;
 import com.yadony.api.common.i18n.TestMessages;
-import com.yadony.api.auth.MobileMoneyPayoutStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.StorageService;
@@ -212,9 +211,8 @@ class BidSupplementMobileMoneyRailTest {
 
     @Test
     void initiation_compteMobileMoneyDeLExpediteur_prioritaire() {
-        sender.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
-        sender.setMobileMoneyCurrency("XOF");
-        sender.setMobileMoneyMsisdn("221770000777");
+        payoutAccounts.add(sender.getId(), "XAF", "MTN_MOMO_CMR", "237670000777");
+        payoutAccounts.add(sender.getId(), "XOF", "ORANGE_SEN", "221770000777");
         when(operations.findLiveForSupplement(s.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
         when(providers.resolve(eq("221770000777"), any(), any(), any(), anyString()))
                 .thenReturn(resolved("ORANGE_SEN", "PROVIDER_AUTH", null, null));

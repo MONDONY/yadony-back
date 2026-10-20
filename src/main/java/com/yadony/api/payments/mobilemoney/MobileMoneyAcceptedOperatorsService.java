@@ -9,6 +9,8 @@ import com.yadony.api.payments.mobilemoney.dto.MobileMoneyCountriesResponse.Oper
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -16,7 +18,7 @@ import org.springframework.stereotype.Service;
 /**
  * Opérateurs avec lesquels un expéditeur peut payer un voyageur, sans connaître son numéro : le
  * catalogue de dépôt ({@link MobileMoneyCountriesService}) filtré sur la devise du colis, puis sur
- * les comptes de versement du voyageur (code exact, même devise : {@link MobileMoneyPayoutAccounts#accepts}). Lecture seule, sans donnée personnelle de l'expéditeur.
+ * les comptes de versement du voyageur (code exact, même devise : {@link MobileMoneyPayoutAccounts#acceptedCodes}, lus une fois). Lecture seule, sans donnée personnelle de l'expéditeur.
  * Le catalogue lève lui-même 422 {@code mobile-money-disabled} (rail coupé) et 502
  * {@code mobile-money-provider-unavailable} (pawaPay injoignable) : ils remontent tels quels.
  */
@@ -48,12 +50,13 @@ public class MobileMoneyAcceptedOperatorsService {
      */
     public MobileMoneyAcceptedOperatorsResponse forTraveler(UserEntity traveler, String currency) {
         List<String> providers = new ArrayList<>();
+        Set<String> accepted = payoutAccounts.acceptedCodes(traveler.getId(), currency);
         for (CountryOption country : countries.countries(PawapayOperationKind.DEPOSIT).available()) {
             if (currency == null || !currency.equalsIgnoreCase(country.currency())) {
                 continue;
             }
             for (OperatorOption operator : country.operators()) {
-                if (payoutAccounts.accepts(traveler.getId(), operator.code(), currency)) {
+                if (operator.code() != null && accepted.contains(operator.code().toUpperCase(Locale.ROOT))) {
                     providers.add(operator.code());
                 }
             }

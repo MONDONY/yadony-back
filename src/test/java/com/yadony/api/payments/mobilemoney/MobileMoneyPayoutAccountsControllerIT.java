@@ -140,6 +140,21 @@ class MobileMoneyPayoutAccountsControllerIT {
     }
 
     @Test
+    void oversizedFields_are422_beforeReachingTheService() throws Exception {
+        mockMvc.perform(post(BASE).with(authentication(traveler())).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"phoneNumber\":\"" + "1".repeat(33) + "\",\"provider\":\"ORANGE_CIV\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON));
+        mockMvc.perform(post(BASE).with(authentication(traveler())).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"phoneNumber\":\"+2250701234567\",\"provider\":\"" + "A".repeat(31) + "\"}"))
+                .andExpect(status().isUnprocessableEntity());
+        mockMvc.perform(put(BASE + "/" + ACCOUNT_ID + "/number").with(authentication(traveler()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"phoneNumber\":\"" + "1".repeat(33) + "\"}"))
+                .andExpect(status().isUnprocessableEntity());
+        org.mockito.Mockito.verifyNoInteractions(service);
+    }
+
+    @Test
     void anonymous_is401() throws Exception {
         mockMvc.perform(get(BASE)).andExpect(status().isUnauthorized());
         mockMvc.perform(post(BASE).contentType(MediaType.APPLICATION_JSON)

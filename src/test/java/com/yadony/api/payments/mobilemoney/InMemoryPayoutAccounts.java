@@ -34,7 +34,18 @@ public class InMemoryPayoutAccounts extends MobileMoneyPayoutAccounts {
             ReflectionTestUtils.setField(a, "id", UUID.randomUUID());
             accounts.add(a);
         }
-        byUser.put(userId, accounts);
+        byUser.put(userId, new ArrayList<>(accounts));
+        return this;
+    }
+
+    /** Ajoute à l'utilisateur un compte de ce code avec ce numéro (plus récent que les précédents). */
+    public InMemoryPayoutAccounts add(UUID userId, String currency, String providerCode, String msisdn) {
+        String alpha3 = providerCode.substring(providerCode.lastIndexOf('_') + 1);
+        MobileMoneyPayoutAccountEntity a = new MobileMoneyPayoutAccountEntity(userId, providerCode,
+                ALPHA2.getOrDefault(alpha3, alpha3.substring(0, 2)), currency, msisdn, "masked",
+                Instant.parse("2026-01-01T00:00:00Z"));
+        ReflectionTestUtils.setField(a, "id", UUID.randomUUID());
+        byUser.computeIfAbsent(userId, k -> new ArrayList<>()).add(a);
         return this;
     }
 

@@ -75,12 +75,9 @@ public class MobileMoneyPayoutAccountEntity extends BaseEntity {
     public String getLegacyAcceptedProviders() { return legacyAcceptedProviders; }
     public Instant getVerifiedAt() { return verifiedAt; }
 
-    public void setProvider(String provider) { this.provider = provider; }
-    public void setCountry(String country) { this.country = country; }
-    public void setCurrency(String currency) { this.currency = currency; }
+    // Opérateur, pays et devise sont figés à la création ; migrated et legacyAcceptedProviders ne
+    // sont écrits que par la reprise V343. Seul le numéro d'un compte change.
     public void setMsisdn(String msisdn) { this.msisdn = msisdn; }
     public void setMsisdnMasked(String msisdnMasked) { this.msisdnMasked = msisdnMasked; }
-    public void setMigrated(boolean migrated) { this.migrated = migrated; }
-    public void setLegacyAcceptedProviders(String legacyAcceptedProviders) { this.legacyAcceptedProviders = legacyAcceptedProviders; }
     public void setVerifiedAt(Instant verifiedAt) { this.verifiedAt = verifiedAt; }
 }

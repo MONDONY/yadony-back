@@ -8,7 +8,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 
 /**
@@ -47,10 +49,27 @@ public class MobileMoneyPayoutAccounts {
 
     /** Le voyageur a-t-il un compte de ce code exact (insensible à la casse) dans cette devise ? */
     public boolean accepts(UUID userId, String providerCode, String currency) {
-        if (providerCode == null) {
-            return false;
-        }
-        return activeIn(userId, currency).stream().anyMatch(a -> providerCode.equalsIgnoreCase(a.getProvider()));
+        return providerCode != null && acceptedCodes(userId, currency).contains(providerCode.toUpperCase(Locale.ROOT));
+    }
+
+    /**
+     * Codes (en majuscules) des comptes vivants dans cette devise : à charger une fois avant de filtrer
+     * un catalogue d'opérateurs, plutôt qu'un {@link #accepts} (une requête) par option.
+     */
+    public Set<String> acceptedCodes(UUID userId, String currency) {
+        return activeIn(userId, currency).stream().map(a -> a.getProvider().toUpperCase(Locale.ROOT))
+                .collect(Collectors.toUnmodifiableSet());
+    }
+
+    /**
+     * Numéro à utiliser pour PAYER dans cette devise : celui du plus ancien compte vivant de cette
+     * devise, ou vide. Le compte a été vérifié auprès de l'opérateur à son ajout : c'est le numéro le
+     * plus sûr pour un dépôt, avant le numéro saisi à la demande ou le téléphone du compte (souvent
+     * étranger, par exemple +33, et refusé par pawaPay, Sentry FLUTTER-DE). Jamais le numéro d'un
+     * compte d'une autre devise (un expéditeur XOF + XAF paie en XAF avec son numéro XAF).
+     */
+    public Optional<String> payerMsisdnIn(UUID userId, String currency) {
+        return activeIn(userId, currency).stream().findFirst().map(MobileMoneyPayoutAccountEntity::getMsisdn);
     }
 
     /**
@@ -115,9 +134,27 @@ public class MobileMoneyPayoutAccounts {
                 .map(a -> new PayoutDestination(a.getId(), a.getMsisdn(), a.getProvider(), a.getCountry()));
     }
 
-    /** Colis payés sur ce code qui attendent leur versement : verrou du retrait et du changement de numéro. */
-    public int pendingPayouts(UUID userId, String providerCode) {
-        return repository.countParcelsAwaitingPayout(userId, providerCode);
+    /**
+     * Colis qui attendent leur versement sur ce compte : verrou du retrait et du changement de numéro,
+     * et {@code pendingPayouts} de la vue. Ceux payés sur son propre code ; pour le compte repris par la
+     * migration, repli de versement ({@link #destinationFor}), aussi ceux payés sur un des réseaux
+     * cochés sur l'ancien compte ({@code legacyAcceptedProviders}) qui n'a pas de compte vivant à lui.
+     * Un colis tenu par plusieurs de ces codes ne compte qu'une fois.
+     */
+    public int pendingPayouts(MobileMoneyPayoutAccountEntity account) {
+        LinkedHashSet<String> codes = new LinkedHashSet<>();
+        codes.add(account.getProvider().toUpperCase(Locale.ROOT));
+        if (account.isMigrated() && account.getLegacyAcceptedProviders() != null) {
+            Set<String> liveCodes = active(account.getUserId()).stream()
+                    .map(a -> a.getProvider().toUpperCase(Locale.ROOT)).collect(Collectors.toSet());
+            for (String raw : account.getLegacyAcceptedProviders().split(",")) {
+                String code = raw.trim().toUpperCase(Locale.ROOT);
+                if (PawapayProviders.isWellFormed(code) && !liveCodes.contains(code)) {
+                    codes.add(code);
+                }
+            }
+        }
+        return repository.countParcelsAwaitingPayout(account.getUserId(), List.copyOf(codes));
     }
 
     /**

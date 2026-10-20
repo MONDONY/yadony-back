@@ -36,8 +36,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -217,7 +219,7 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
      * Numéro payeur : saisi sur l'écran de paiement, sinon le compte mobile money vérifié de
      * l'expéditeur dans la devise, sinon le numéro qui a payé le colis.
      */
-    private static String payerMsisdn(UserEntity sender, BidEntity bid, String phoneOverride, String currency) {
+    private String payerMsisdn(UserEntity sender, BidEntity bid, String phoneOverride, String currency) {
         if (phoneOverride != null && !phoneOverride.isBlank()) {
             try {
                 return Msisdn.normalize(phoneOverride);
@@ -225,9 +227,9 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
                 throw payerUnsupported("Numéro de téléphone invalide.");
             }
         }
-        String account = sender.mobileMoneyPayerMsisdn(currency);
-        if (account != null) {
-            return account;
+        Optional<String> account = payoutAccounts.payerMsisdnIn(sender.getId(), currency);
+        if (account.isPresent()) {
+            return account.get();
         }
         if (bid.getMobileMoneyPhone() != null && !bid.getMobileMoneyPhone().isBlank()) {
             return bid.getMobileMoneyPhone();
@@ -273,8 +275,9 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
             throw payerUnsupported(payerReason(e, s.getCurrency()));
         }
+        Set<String> accepted = payoutAccounts.acceptedCodes(traveler.getId(), s.getCurrency());
         List<MobileMoneyProvidersResponse.ProviderOption> options = catalogue.options().stream()
-                .filter(o -> payoutAccounts.accepts(traveler.getId(), o.provider(), s.getCurrency()))
+                .filter(o -> accepted.contains(o.provider().toUpperCase(Locale.ROOT)))
                 .map(o -> new MobileMoneyProvidersResponse.ProviderOption(o.provider(),
                         PawapayProviders.label(o.provider()), o.provider().equalsIgnoreCase(catalogue.detected())))
                 .toList();

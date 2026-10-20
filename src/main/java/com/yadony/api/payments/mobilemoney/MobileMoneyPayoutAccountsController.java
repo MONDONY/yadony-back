@@ -5,6 +5,7 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPayoutAccountRequest;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPayoutAccountsResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPayoutAccountsResponse.AccountView;
+import jakarta.validation.Valid;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -45,14 +46,14 @@ public class MobileMoneyPayoutAccountsController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public AccountView add(@AuthenticationPrincipal String firebaseUid, @RequestBody MobileMoneyPayoutAccountRequest body) {
+    public AccountView add(@AuthenticationPrincipal String firebaseUid, @Valid @RequestBody MobileMoneyPayoutAccountRequest body) {
         return service.add(callerId(firebaseUid), body.phoneNumber(), body.provider());
     }
 
     /** Seul {@code phoneNumber} est lu : l'opérateur d'un compte ne change pas. */
     @PutMapping("/{id}/number")
     public AccountView changeNumber(@AuthenticationPrincipal String firebaseUid, @PathVariable UUID id,
-                                    @RequestBody MobileMoneyPayoutAccountRequest body) {
+                                    @Valid @RequestBody MobileMoneyPayoutAccountRequest body) {
         return service.changeNumber(callerId(firebaseUid), id, body.phoneNumber());
     }
 

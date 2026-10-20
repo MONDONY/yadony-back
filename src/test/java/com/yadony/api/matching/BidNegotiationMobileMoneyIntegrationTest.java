@@ -165,6 +165,7 @@ class BidNegotiationMobileMoneyIntegrationTest {
             u.setMobileMoneyProvider("ORANGE_SEN");
             u.setMobileMoneyCountry("SN");
             u.setMobileMoneyCurrency("XOF");
+            u.setMobileMoneyCurrencyList(java.util.List.of("XOF"));
         }
         return userRepository.save(u);
     }

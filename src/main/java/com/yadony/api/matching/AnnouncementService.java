@@ -1137,7 +1137,7 @@ public class AnnouncementService {
                 com.yadony.api.payments.currency.AnnouncementPaymentRails.offerable(
                         announcement.getAcceptedPaymentMethods(), announcement.getCurrency(),
                         traveler != null && traveler.hasActiveStripeConnect(),
-                        traveler != null && traveler.hasActiveMobileMoney()),
+                        traveler != null && traveler.canReceiveMobileMoney(announcement.getCurrency())),
                 // Convertis joints juste en dessous (withConvertedPrices).
                 null, null, null,
                 viewerId != null && viewerId.equals(announcement.getTravelerId())
@@ -1445,7 +1445,7 @@ public class AnnouncementService {
                 com.yadony.api.payments.currency.AnnouncementPaymentRails.offerable(
                         saved.getAcceptedPaymentMethods(), saved.getCurrency(),
                         user.hasActiveStripeConnect(),
-                        user.hasActiveMobileMoney()),
+                        user.canReceiveMobileMoney(saved.getCurrency())),
                 // Retour d'écriture : le lecteur est le propriétaire, qui lit dans la
                 // devise de sa propre annonce — rien à convertir.
                 null, null, null,
@@ -2166,7 +2166,8 @@ public class AnnouncementService {
     private AnnouncementResponse toResponse(AnnouncementEntity entity, CardCounts counts) {
         UserEntity traveler = userRepository.findById(entity.getTravelerId()).orElse(null);
         boolean travelerHasConnect = traveler != null && traveler.hasActiveStripeConnect();
-        boolean travelerHasMobileMoney = traveler != null && traveler.hasActiveMobileMoney();
+        // Compte de versement dans la devise du trajet : un compte XOF ne reçoit pas un trajet XAF.
+        boolean travelerHasMobileMoney = traveler != null && traveler.canReceiveMobileMoney(entity.getCurrency());
         // Le choix explicite du voyageur borne aussi : un trajet déclaré « espèces
         // uniquement » n'annonçait pas moins la carte dès que le compte Connect était actif,
         // et l'expéditeur se heurtait à card-not-accepted au moment de la demande.

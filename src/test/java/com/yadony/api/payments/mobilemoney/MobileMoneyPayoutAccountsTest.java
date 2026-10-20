@@ -1,6 +1,8 @@
 package com.yadony.api.payments.mobilemoney;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -37,7 +39,7 @@ class MobileMoneyPayoutAccountsTest {
                                                           String msisdn, Instant verifiedAt, boolean migrated) {
         MobileMoneyPayoutAccountEntity a = new MobileMoneyPayoutAccountEntity(UUID.randomUUID(), provider, country,
                 currency, msisdn, "masked-" + msisdn.substring(msisdn.length() - 2), verifiedAt);
-        a.setMigrated(migrated);
+        PayoutAccountFixtures.setMigrated(a, migrated);
         ReflectionTestUtils.setField(a, "id", UUID.randomUUID());
         return a;
     }
@@ -180,12 +182,61 @@ class MobileMoneyPayoutAccountsTest {
         assertThat(accounts.destinationFor(userId, "MTN_MOMO_CMR", "XOF")).isEmpty();
     }
 
-    @Test
-    void pendingPayouts_delegatesToTheLockQuery() {
-        when(repository.countParcelsAwaitingPayout(userId, "ORANGE_CIV")).thenReturn(2);
+    private MobileMoneyPayoutAccountEntity owned(String provider, boolean migrated, String legacy) {
+        MobileMoneyPayoutAccountEntity a = new MobileMoneyPayoutAccountEntity(userId, provider, "CI", "XOF",
+                "+2250700000001", "masked-01", CIV_VERIFIED);
+        PayoutAccountFixtures.setMigrated(a, migrated);
+        PayoutAccountFixtures.setLegacyAcceptedProviders(a, legacy);
+        ReflectionTestUtils.setField(a, "id", UUID.randomUUID());
+        return a;
+    }
 
-        assertThat(accounts.pendingPayouts(userId, "ORANGE_CIV")).isEqualTo(2);
-        verify(repository).countParcelsAwaitingPayout(userId, "ORANGE_CIV");
+    @Test
+    void pendingPayouts_ofAnOrdinaryAccount_countsItsOwnCodeInUpperCase() {
+        var mtn = owned("mtn_momo_civ", false, "ORANGE_CIV");
+        when(repository.countParcelsAwaitingPayout(userId, List.of("MTN_MOMO_CIV"))).thenReturn(2);
+
+        assertThat(accounts.pendingPayouts(mtn)).isEqualTo(2);
+        verify(repository, never()).findByUserIdAndDeletedAtIsNullOrderByCreatedAtAsc(any());
+    }
+
+    /**
+     * Le compte repris est le repli de versement des réseaux cochés sur l'ancien compte : un colis MTN
+     * payé avant la bascule le verrouille tant qu'aucun compte MTN n'existe, puis verrouille le compte MTN.
+     */
+    @Test
+    void pendingPayouts_ofTheMigratedAccount_addsTheLegacyCodesWithoutALiveAccountOfTheirOwn() {
+        var orange = owned("ORANGE_CIV", true, "ORANGE_CIV, mtn_momo_civ,MOOV_CIV,bad code");
+        given(orange);
+        when(repository.countParcelsAwaitingPayout(userId, List.of("ORANGE_CIV", "MTN_MOMO_CIV", "MOOV_CIV"))).thenReturn(1);
+        assertThat(accounts.pendingPayouts(orange)).isEqualTo(1);
+
+        var mtn = owned("MTN_MOMO_CIV", false, null);
+        given(orange, mtn);
+        when(repository.countParcelsAwaitingPayout(userId, List.of("ORANGE_CIV", "MOOV_CIV"))).thenReturn(0);
+        assertThat(accounts.pendingPayouts(orange)).isZero();
+    }
+
+    @Test
+    void acceptedCodes_areTheUpperCaseCodesOfTheCurrency_andAcceptsIgnoresCase() {
+        given(account("orange_civ", "CI", "XOF", "+2250700000001", CIV_VERIFIED, false),
+                account("MTN_MOMO_CMR", "CM", "XAF", "+237670000002", CMR_VERIFIED, false));
+
+        assertThat(accounts.acceptedCodes(userId, "xof")).containsExactly("ORANGE_CIV");
+        assertThat(accounts.accepts(userId, "Orange_Civ", "XOF")).isTrue();
+        assertThat(accounts.accepts(userId, "MTN_MOMO_CMR", "XOF")).isFalse();
+        assertThat(accounts.accepts(userId, null, "XOF")).isFalse();
+    }
+
+    /** Expéditeur XOF (compte le plus ancien) + XAF qui paie en XAF sans saisir de numéro : son numéro XAF. */
+    @Test
+    void payerMsisdnIn_isTheOldestAccountOfThatCurrency_neverAnotherCurrencysNumber() {
+        given(account("ORANGE_CIV", "CI", "XOF", "+2250700000001", CIV_VERIFIED, false),
+                account("MTN_MOMO_CMR", "CM", "XAF", "+237670000002", CMR_VERIFIED, false));
+
+        assertThat(accounts.payerMsisdnIn(userId, "XAF")).contains("+237670000002");
+        assertThat(accounts.payerMsisdnIn(userId, "xof")).contains("+2250700000001");
+        assertThat(accounts.payerMsisdnIn(userId, "EUR")).isEmpty();
     }
 
     // ── Résumé utilisateur ───────────────────────────────────────────────────────────────────

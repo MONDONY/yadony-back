@@ -71,7 +71,7 @@ class MobileMoneyPayoutInitiatorHoldTest {
         payment.setCurrency("XOF");
         MobileMoneyPayoutAccountEntity account = new MobileMoneyPayoutAccountEntity(travelerId, "ORANGE_SEN", "SN", "XOF",
                 "221771234567", "masked", Instant.parse("2026-03-04T10:11:12Z"));
-        account.setMigrated(true);
+        PayoutAccountFixtures.setMigrated(account, true);
         ReflectionTestUtils.setField(account, "id", UUID.randomUUID());
         lenient().when(accountRepository.findByUserIdAndDeletedAtIsNullOrderByCreatedAtAsc(travelerId))
                 .thenReturn(List.of(account));

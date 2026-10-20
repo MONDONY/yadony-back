@@ -36,7 +36,7 @@ class UserEntityMobileMoneyTest {
     private UserEntity user(MobileMoneyPayoutStatus status, String currencies, String legacyCurrency) {
         UserEntity u = new UserEntity();
         u.setMobileMoneyStatus(status);
-        u.setMobileMoneyCurrencies(currencies);
+        org.springframework.test.util.ReflectionTestUtils.setField(u, "mobileMoneyCurrencies", currencies);
         u.setMobileMoneyCurrency(legacyCurrency);
         return u;
     }
@@ -55,10 +55,11 @@ class UserEntityMobileMoneyTest {
         assertThat(u.canReceiveMobileMoney("XAF")).isFalse();
     }
 
+    /** Plus de repli sur la devise du compte le plus ancien : sans liste, aucune devise (V343 a désactivé ces cas). */
     @Test
-    void canReceive_fallsBackOnLegacyCurrency_whenTheListIsEmpty() {
-        assertThat(user(MobileMoneyPayoutStatus.ACTIVE, null, "XOF").canReceiveMobileMoney("XOF")).isTrue();
-        assertThat(user(MobileMoneyPayoutStatus.ACTIVE, " ", "XOF").canReceiveMobileMoney("XAF")).isFalse();
+    void canReceive_isFalse_whenTheListIsEmpty_evenWithTheLegacyCurrency() {
+        assertThat(user(MobileMoneyPayoutStatus.ACTIVE, null, "XOF").canReceiveMobileMoney("XOF")).isFalse();
+        assertThat(user(MobileMoneyPayoutStatus.ACTIVE, " ", "XOF").canReceiveMobileMoney("XOF")).isFalse();
         assertThat(user(MobileMoneyPayoutStatus.ACTIVE, null, null).canReceiveMobileMoney("XOF")).isFalse();
     }
 
@@ -73,15 +74,19 @@ class UserEntityMobileMoneyTest {
         assertThat(u.getMobileMoneyCurrencyList()).isEmpty();
 
         u.setMobileMoneyCurrencyList(List.of("XOF", "XAF"));
-        assertThat(u.getMobileMoneyCurrencies()).isEqualTo("XOF,XAF");
+        assertThat(csv(u)).isEqualTo("XOF,XAF");
         assertThat(u.getMobileMoneyCurrencyList()).containsExactly("XOF", "XAF");
 
-        u.setMobileMoneyCurrencies("XOF, ,XAF");
+        org.springframework.test.util.ReflectionTestUtils.setField(u, "mobileMoneyCurrencies", "XOF, ,XAF");
         assertThat(u.getMobileMoneyCurrencyList()).containsExactly("XOF", "XAF");
 
         u.setMobileMoneyCurrencyList(List.of());
-        assertThat(u.getMobileMoneyCurrencies()).isNull();
+        assertThat(csv(u)).isNull();
         u.setMobileMoneyCurrencyList(null);
-        assertThat(u.getMobileMoneyCurrencies()).isNull();
+        assertThat(csv(u)).isNull();
+    }
+
+    private static Object csv(UserEntity u) {
+        return org.springframework.test.util.ReflectionTestUtils.getField(u, "mobileMoneyCurrencies");
     }
 }

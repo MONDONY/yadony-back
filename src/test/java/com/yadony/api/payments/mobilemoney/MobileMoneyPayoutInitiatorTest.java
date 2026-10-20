@@ -75,7 +75,7 @@ class MobileMoneyPayoutInitiatorTest {
                                                    boolean migrated) {
         MobileMoneyPayoutAccountEntity a = new MobileMoneyPayoutAccountEntity(travelerId, provider, country, currency,
                 msisdn, "masked", Instant.parse("2026-03-04T10:11:12Z"));
-        a.setMigrated(migrated);
+        PayoutAccountFixtures.setMigrated(a, migrated);
         ReflectionTestUtils.setField(a, "id", UUID.randomUUID());
         return a;
     }
@@ -100,8 +100,10 @@ class MobileMoneyPayoutInitiatorTest {
         return o;
     }
 
+    /** Dépôt vivant ou abouti ; les autres lectures de findLive (le payout) restent à vide. */
     private void givenDeposit(String provider) {
-        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit(provider)));
+        lenient().when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
+        when(operations.findLive(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit(provider)));
     }
 
     @Test
@@ -168,11 +170,32 @@ class MobileMoneyPayoutInitiatorTest {
                 .containsEntry("accountId", orange.getId().toString());
     }
 
+    /**
+     * Le code qui route le versement est celui du dépôt vivant ou abouti, jamais d'un dépôt échoué plus
+     * récent : même règle que le verrou des comptes, sinon le compte verrouillé ne serait pas celui payé.
+     */
+    @Test
+    void release_routesOnTheCompletedDeposit_notOnALaterFailedOne() {
+        givenAccounts(account("MTN_MOMO_SEN", "SN", "XOF", "221761234567", false),
+                account("ORANGE_SEN", "SN", "XOF", "221771234567", false));
+        givenDeposit("ORANGE_SEN");
+        PawapayOperationEntity failedMtn = deposit("MTN_MOMO_SEN");
+        failedMtn.setStatus(PawapayOperationStatus.FAILED);
+        lenient().when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(failedMtn));
+        when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
+        when(submission.submitPayout(any(), any(), any(), any(), any(), any(), any())).thenReturn(payout(PawapayOperationStatus.ACCEPTED));
+
+        initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "delivery");
+
+        verify(submission).submitPayout(payment.getId(), "221771234567", "ORANGE_SEN", "SN", new BigDecimal("15000"), "XOF", "bid-" + bidId);
+        verify(operations, never()).findLatest(any(), any());
+    }
+
     @Test
     void release_withoutAnyDeposit_usesTheMigratedAccount() {
         givenAccounts(account("ORANGE_SEN", "SN", "XOF", "221771234567", true));
         when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
-        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
+        when(operations.findLive(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
         when(submission.submitPayout(any(), any(), eq("ORANGE_SEN"), any(), any(), any(), any())).thenReturn(payout(PawapayOperationStatus.ACCEPTED));
 
         initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "delivery");
@@ -248,7 +271,7 @@ class MobileMoneyPayoutInitiatorTest {
 
         verify(adminAlert, never()).raise(any(), any(), any());
         verify(submission, never()).submitPayout(any(), any(), any(), any(), any(), any(), any());
-        verify(operations, never()).findLatest(any(), any());
+        verify(operations, never()).findLive(any(), eq(PawapayOperationKind.DEPOSIT));
     }
 
     @Test

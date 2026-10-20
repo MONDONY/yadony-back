@@ -129,6 +129,7 @@ class MobileMoneyBidPaymentServiceTest {
         // acceptBid_travelerCurrencyMismatch_is422) — sans quoi le chemin heureux serait
         // rejeté par cette même garde, un compte sans devise ne correspondant à aucune annonce.
         traveler.setMobileMoneyCurrency("XOF");
+        traveler.setMobileMoneyCurrencyList(java.util.List.of("XOF"));
         sender = new UserEntity();
         ReflectionTestUtils.setField(sender, "id", UUID.randomUUID());
         sender.setFirebaseUid("s-uid");
@@ -303,13 +304,28 @@ class MobileMoneyBidPaymentServiceTest {
     void acceptBid_travelerCurrencyMismatch_is422() {
         stubLocks();
         traveler.setMobileMoneyCurrency("XAF");
+        traveler.setMobileMoneyCurrencyList(java.util.List.of("XAF"));
         when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
         when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.acceptBid(bid.getId(), traveler.getId()))
                 .isInstanceOf(YadonyBusinessException.class)
+                .hasMessage("Votre compte de versement est en XAF, ce trajet est en XOF.")
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-currency-mismatch");
         verify(paymentRepository, never()).save(any());
         verify(events, never()).publishEvent(any());
+    }
+
+    /** Plusieurs comptes, aucun dans la devise du trajet : le message nomme toutes leurs devises. */
+    @Test
+    void acceptBid_travelerAccountsInOtherCurrencies_messageListsEveryCurrency() {
+        stubLocks();
+        traveler.setMobileMoneyCurrency("XAF");
+        traveler.setMobileMoneyCurrencyList(java.util.List.of("XAF", "GHS"));
+        when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+        when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.acceptBid(bid.getId(), traveler.getId()))
+                .isInstanceOf(YadonyBusinessException.class)
+                .hasMessage("Vos comptes de versement sont en XAF, GHS, ce trajet est en XOF.");
     }
 
     // ── initiateDeposit ─────────────────────────────────────────────────────
@@ -1095,11 +1111,9 @@ class MobileMoneyBidPaymentServiceTest {
     @Test
     void providersForPayer_prefersTheSendersActiveMobileMoneyAccount_overTheBidNumber() {
         awaitingPayment();
-        sender.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
-        sender.setMobileMoneyCurrency("XOF");
-        sender.setMobileMoneyMsisdn("221770000099");
+        payoutAccounts.add(sender.getId(), "XOF", "ORANGE_SEN", "221770000099");
         bid.setMobileMoneyPhone("33612345678");
-        when(userRepository.findById(sender.getId())).thenReturn(Optional.of(sender));
+        lenient().when(userRepository.findById(sender.getId())).thenReturn(Optional.of(sender));
         when(client.predictProvider("221770000099"))
                 .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221770000099")));
         when(client.activeConfiguration()).thenReturn(configuration(ORANGE_SEN, WAVE_SEN, FREE_SEN));
@@ -1113,9 +1127,7 @@ class MobileMoneyBidPaymentServiceTest {
     @Test
     void providersForPayer_ignoresAMobileMoneyAccountInAnotherCurrency() {
         awaitingPayment();
-        sender.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
-        sender.setMobileMoneyCurrency("XAF");
-        sender.setMobileMoneyMsisdn("237670000099");
+        payoutAccounts.add(sender.getId(), "XAF", "MTN_MOMO_CMR", "237670000099");
         when(userRepository.findById(sender.getId())).thenReturn(Optional.of(sender));
         senegalPayerPredicts("ORANGE_SEN");
 
@@ -1124,12 +1136,31 @@ class MobileMoneyBidPaymentServiceTest {
         assertThat(r.msisdnMasked()).isEqualTo("+221 •••• 67");
     }
 
+    /**
+     * Expéditeur avec un compte XAF (le plus ancien, celui du résumé utilisateur) et un compte XOF qui
+     * paie un colis XOF sans saisir de numéro : son numéro XOF, jamais celui du compte le plus ancien.
+     */
+    @Test
+    void providersForPayer_senderWithAccountsInTwoCurrencies_usesTheNumberOfThePaymentCurrency() {
+        awaitingPayment();
+        payoutAccounts.add(sender.getId(), "XAF", "MTN_MOMO_CMR", "237670000099");
+        payoutAccounts.add(sender.getId(), "XOF", "ORANGE_SEN", "221770000099");
+        bid.setMobileMoneyPhone("33612345678");
+        lenient().when(userRepository.findById(sender.getId())).thenReturn(Optional.of(sender));
+        when(client.predictProvider("221770000099"))
+                .thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221770000099")));
+        when(client.activeConfiguration()).thenReturn(configuration(ORANGE_SEN, WAVE_SEN, FREE_SEN));
+
+        MobileMoneyPayerProvidersResponse r = service.providersForPayer(bid.getId(), sender.getId(), null);
+
+        assertThat(r.msisdnMasked()).isEqualTo("+221 •••• 99");
+        verify(client, never()).predictProvider("237670000099");
+    }
+
     @Test
     void providersForPayer_aNumberTypedOnThePaymentScreen_stillWinsOverTheAccount() {
         awaitingPayment();
-        sender.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
-        sender.setMobileMoneyCurrency("XOF");
-        sender.setMobileMoneyMsisdn("221770000099");
+        payoutAccounts.add(sender.getId(), "XOF", "ORANGE_SEN", "221770000099");
         senegalPayerPredicts("ORANGE_SEN");
 
         MobileMoneyPayerProvidersResponse r = service.providersForPayer(bid.getId(), sender.getId(), "+221771234567");

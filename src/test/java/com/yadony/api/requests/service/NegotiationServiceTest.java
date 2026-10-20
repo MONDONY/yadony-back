@@ -2703,6 +2703,7 @@ class NegotiationServiceTest {
                 java.util.EnumSet.of(PaymentMethod.CASH, PaymentMethod.MOBILE_MONEY));
             traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
             traveler.setMobileMoneyCurrency("XAF"); // devise différente de la demande (XOF)
+            traveler.setMobileMoneyCurrencyList(java.util.List.of("XAF"));
 
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
@@ -3713,6 +3714,7 @@ class NegotiationServiceTest {
             setEntityId(traveler, travelerId);
             traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
             traveler.setMobileMoneyCurrency("XOF");
+            traveler.setMobileMoneyCurrencyList(java.util.List.of("XOF"));
 
             com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
             ann.setTravelerId(travelerId);
@@ -3764,6 +3766,7 @@ class NegotiationServiceTest {
             setEntityId(traveler, travelerId);
             traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
             traveler.setMobileMoneyCurrency("XAF");
+            traveler.setMobileMoneyCurrencyList(java.util.List.of("XAF"));
 
             com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
             ann.setTravelerId(travelerId);
@@ -3814,6 +3817,7 @@ class NegotiationServiceTest {
             setEntityId(traveler, travelerId);
             traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
             traveler.setMobileMoneyCurrency("EUR");
+            traveler.setMobileMoneyCurrencyList(java.util.List.of("EUR"));
 
             com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
             ann.setTravelerId(travelerId);

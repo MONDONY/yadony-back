@@ -240,7 +240,8 @@ public class TripRecurrenceService {
             wanted.add(PaymentMethod.CASH);
         }
         Set<PaymentMethod> paymentMethods = com.yadony.api.payments.currency.AnnouncementPaymentRails
-                .offerable(wanted, rec.getCurrency(), user.hasActiveStripeConnect(), user.hasActiveMobileMoney());
+                .offerable(wanted, rec.getCurrency(), user.hasActiveStripeConnect(),
+                        user.canReceiveMobileMoney(rec.getCurrency()));
         if (paymentMethods.isEmpty()) {
             paymentMethods = EnumSet.of(PaymentMethod.CASH);
         }

@@ -1261,6 +1261,7 @@ class BidServiceTest {
             UserEntity traveler = buildTraveler();
             traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
             traveler.setMobileMoneyCurrency("XOF");
+            traveler.setMobileMoneyCurrencyList(java.util.List.of("XOF"));
             return traveler;
         }
 
@@ -1374,6 +1375,7 @@ class BidServiceTest {
             UserEntity traveler = buildTraveler();
             traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
             traveler.setMobileMoneyCurrency("XAF"); // compte activé zone CEMAC
+            traveler.setMobileMoneyCurrencyList(java.util.List.of("XAF"));
             AnnouncementEntity a = xofAnnouncement(traveler); // trajet publié en XOF (zone UEMOA)
             when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
 
@@ -1433,6 +1435,7 @@ class BidServiceTest {
             UserEntity traveler = buildTraveler();
             traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
             traveler.setMobileMoneyCurrency("EUR");
+            traveler.setMobileMoneyCurrencyList(java.util.List.of("EUR"));
             AnnouncementEntity a = buildAnnouncement();
             a.setTravelerId(traveler.getId());
             a.setAcceptedPaymentMethods(

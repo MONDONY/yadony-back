@@ -27,9 +27,9 @@ public final class AnnouncementPaymentRails {
     /**
      * @param currency               code devise libre (repli EUR)
      * @param travelerHasConnect     compte Stripe Connect actif
-     * @param travelerHasMobileMoney compte de versement mobile money actif
-     *                               ({@code UserEntity#hasActiveMobileMoney()}, un champ déjà chargé :
-     *                               aucune requête supplémentaire sur le fil de recherche)
+     * @param travelerHasMobileMoney compte de versement mobile money actif dans {@code currency}
+     *                               ({@code UserEntity#canReceiveMobileMoney(currency)}, des champs déjà
+     *                               chargés : aucune requête supplémentaire sur le fil de recherche)
      * @return jamais vide (l'espèce est toujours présente)
      */
     public static Set<PaymentMethod> availableFor(String currency, boolean travelerHasConnect,

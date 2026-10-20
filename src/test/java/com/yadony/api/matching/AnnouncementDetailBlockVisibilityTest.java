@@ -205,6 +205,7 @@ class AnnouncementDetailBlockVisibilityTest {
         UserEntity t = new UserEntity();
         ReflectionTestUtils.setField(t, "id", TRAVELER_ID);
         t.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
+        t.setMobileMoneyCurrencyList(List.of("XOF"));
         return t;
     }
 
@@ -213,6 +214,19 @@ class AnnouncementDetailBlockVisibilityTest {
         trip.setCurrency(currency);
         trip.setAcceptedPaymentMethods(Set.of(PaymentMethod.MOBILE_MONEY));
         return trip;
+    }
+
+    @Test
+    @DisplayName("voyageur au compte de versement en XAF seulement → pas de mobile money sur son trajet XOF")
+    void mobileMoneyTrip_travelerWithAnAccountInAnotherCurrency_offersNoMobileMoney() {
+        UserEntity traveler = travelerWithMobileMoney();
+        traveler.setMobileMoneyCurrencyList(List.of("XAF"));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(mobileMoneyTrip("XOF")));
+        when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+
+        AnnouncementDetailResponse result = announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, null);
+
+        assertThat(result.availablePaymentMethods()).doesNotContain(PaymentMethod.MOBILE_MONEY);
     }
 
     @Test
