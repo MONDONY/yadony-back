@@ -12,4 +12,4 @@ routes:
   - path: /announcements/trips
     label: Mes trajets
 ---
-Vous êtes sur Demandes, la liste des demandes d'expéditeurs reçues sur vos trajets, rangées en « À traiter », « Acceptées » et « Terminées ». Dans « À traiter », touchez « Accepter » ou « Refuser » directement sur la carte, ou ouvrez la demande pour vérifier le colis avant de décider. Si votre solde ne couvre pas les frais de service d'un paiement en espèces, l'app propose « Recharger mon portefeuille » ou « Payer par carte ». La recherche retrouve une demande par expéditeur ou numéro de suivi.
+Vous êtes sur Demandes : les demandes d'expéditeurs sur vos trajets, en « À traiter », « Acceptées » et « Terminées ». Une pastille « Trajet : Ville → Ville » peut filtrer la liste sur un trajet ; sa croix revient à toutes les demandes. Dans « À traiter », touchez « Accepter » ou « Refuser » sur la carte, ou ouvrez la demande pour vérifier le colis. Si votre solde ne couvre pas les frais de service en espèces, l'app propose « Recharger mon portefeuille » ou « Payer par carte ». La recherche trouve une demande par expéditeur ou numéro de suivi.

@@ -12,4 +12,4 @@ routes:
   - path: /announcements/trips
     label: My trips
 ---
-You are on your trip's page: its details, then how many people have seen it. The tiles open "Requests" to review and "Parcels" on board and, depending on the trip's status, let you "Edit", "Reschedule", open the "Poster", "Cancel" or "Delete". Once parcels are picked up, tap "Arrived at destination", then "Notify recipients". If this trip isn't yours, Yadony opens its sender view instead, with "Make a request".
+You are on your trip's page: its details, then its views. The "Requests" tile, always active, opens Activity › Requests on "To review", filtered on this trip; "Parcels" lists parcels on board. Depending on the trip's status: "Edit", "Reschedule", "Poster", "Cancel" or "Delete". Once parcels are picked up, tap "Arrived at destination", then "Notify recipients". If this trip isn't yours, Yadony opens its sender view, with "Make a request".
