@@ -241,6 +241,8 @@ class AdminAlertServiceTest {
     void graviteDe_classeChaqueFamilleDeCode() {
         assertThat(AdminAlertService.graviteDe("SUPPORT_TICKET_CREATED"))
                 .isEqualTo(AdminAlertService.Gravite.INFO);
+        assertThat(AdminAlertService.graviteDe("APP_REPORT_CREATED"))
+                .isEqualTo(AdminAlertService.Gravite.INFO);
         assertThat(AdminAlertService.graviteDe("SENTRY_ISSUE_CREATED"))
                 .isEqualTo(AdminAlertService.Gravite.AVERTISSEMENT);
         assertThat(AdminAlertService.graviteDe("PHOTO_PURGE_FAILING"))
@@ -355,6 +357,26 @@ class AdminAlertServiceTest {
     }
 
     @Test
+    void raise_signalementDeBug_arriveSurTelegramSansIssueSentry() {
+        RestClient.RequestBodySpec bodySpec = mock(RestClient.RequestBodySpec.class);
+        AdminAlertService service = serviceAvecTelegram(bodySpec);
+
+        try (MockedStatic<Sentry> sentryMock = mockStatic(Sentry.class)) {
+            sentryMock.when(() -> Sentry.withScope(any(ScopeCallback.class))).thenAnswer(inv -> null);
+
+            service.raise("APP_REPORT_CREATED", "Nouveau signalement de bug sur /home : le badge",
+                    Map.of("ecran", "/home"));
+
+            ArgumentCaptor<Map> capteur = ArgumentCaptor.forClass(Map.class);
+            verify(bodySpec).body(capteur.capture());
+            assertThat((String) capteur.getValue().get("text"))
+                    .contains("🐞").contains("Nouveau signalement de bug").contains("/home");
+            // Le scarabée a déjà créé l'issue Sentry de l'app : pas de seconde issue côté back.
+            sentryMock.verify(() -> Sentry.withScope(any(ScopeCallback.class)), never());
+        }
+    }
+
+    @Test
     void raise_incident_envoieUneNotificationSonore() {
         RestClient.RequestBodySpec bodySpec = mock(RestClient.RequestBodySpec.class);
         AdminAlertService service = serviceAvecTelegram(bodySpec);
@@ -375,6 +397,7 @@ class AdminAlertServiceTest {
         attendus.put("KYC_IDENTITY_CANCELED", "🪪");
         attendus.put("SENTRY_ISSUE_UNRESOLVED", "🐛");
         attendus.put("SUPPORT_TICKET_CREATED", "💬");
+        attendus.put("APP_REPORT_CREATED", "🐞");
         attendus.put("STRIPE_ACCOUNT_DEAUTHORIZED", "🏦");
         attendus.put("STRIPE_CAPABILITY_LOST", "🏦");
         attendus.put("STRIPE_CHARGEBACK_OPENED", "⚠️");

@@ -48,6 +48,7 @@ class ReportServiceTest {
     @Mock PackageRequestRepository packageRequestRepository;
     @Mock StorageService storageService;
     @Mock AuditService auditService;
+    @Mock com.yadony.api.common.stripe.AdminAlertService adminAlertService;
     @Mock com.yadony.api.messaging.ConversationRepository conversationRepository;
 
     private UserEntity reporter;
@@ -56,7 +57,7 @@ class ReportServiceTest {
     private ReportService service() {
         return new ReportService(reportRepository, photoRepository, userRepository,
                 announcementRepository, bidRepository, ratingRepository, packageRequestRepository,
-                conversationRepository, storageService, auditService);
+                conversationRepository, storageService, auditService, adminAlertService);
     }
 
     @BeforeEach
@@ -153,6 +154,129 @@ class ReportServiceTest {
 
         assertThat(report.getReason()).isEqualTo(ReportReason.SCREEN_BUG);
         assertThat(report.getScreenRoute()).isEqualTo("/profile");
+    }
+
+    /** Sentry ne relaie que la 1re issue d'un groupe : chaque bug signalé alerte donc lui-même. */
+    @Test
+    void createReport_bugDeLApp_leveUneAlerteTelegramParSignalement() throws Exception {
+        stubUser();
+        when(reportRepository.save(any())).thenAnswer(inv -> {
+            ReportEntity r = inv.getArgument(0);
+            setId(r, UUID.randomUUID());
+            return r;
+        });
+
+        service().createReport("uid-1", ReportTargetType.APP, null, ReportReason.SCREEN_BUG,
+                "Le badge   passe\nsous le bouton", List.of(), "/home");
+        service().createReport("uid-1", ReportTargetType.APP, null, ReportReason.SCREEN_BUG,
+                "Autre souci", List.of(), "/home");
+
+        org.mockito.ArgumentCaptor<String> detail = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.ArgumentCaptor<Map<String, Object>> context = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(adminAlertService, times(2)).raise(eq("APP_REPORT_CREATED"), detail.capture(), context.capture());
+        assertThat(detail.getAllValues().get(0))
+                .isEqualTo("Nouveau signalement de bug sur /home : Le badge passe sous le bouton");
+        assertThat(context.getAllValues().get(0))
+                .containsEntry("motif", "SCREEN_BUG").containsEntry("ecran", "/home")
+                .containsEntry("captures", 0).containsEntry("userId", reporterId)
+                .containsKey("reportId");
+    }
+
+    @Test
+    void createReport_descriptionLongue_estTronqueeDansLAlerte() throws Exception {
+        stubUser();
+        when(reportRepository.save(any())).thenAnswer(inv -> {
+            ReportEntity r = inv.getArgument(0);
+            setId(r, UUID.randomUUID());
+            return r;
+        });
+
+        service().createReport("uid-1", ReportTargetType.APP, null, ReportReason.APP_BUG,
+                "x".repeat(900), List.of());
+
+        org.mockito.ArgumentCaptor<String> detail = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(adminAlertService).raise(eq("APP_REPORT_CREATED"), detail.capture(), any());
+        assertThat(detail.getValue()).endsWith("…").hasSizeLessThan(260);
+    }
+
+    /** Écran et description viennent du client : aucune fausse ligne dans l'alerte ni dans le journal. */
+    @Test
+    void createReport_routeEtDescriptionAvecSautsDeLigne_restentSurUneLigne() throws Exception {
+        stubUser();
+        when(reportRepository.save(any())).thenAnswer(inv -> {
+            ReportEntity r = inv.getArgument(0);
+            setId(r, UUID.randomUUID());
+            return r;
+        });
+
+        service().createReport("uid-1", ReportTargetType.APP, null, ReportReason.SCREEN_BUG,
+                "ligne1\r\nCode : FAUX\u2028ligne3\u0000", List.of(), "/home\nCode : STRIPE_PAYOUT_FAILED\r");
+
+        org.mockito.ArgumentCaptor<String> detail = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.ArgumentCaptor<Map<String, Object>> context = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(adminAlertService).raise(eq("APP_REPORT_CREATED"), detail.capture(), context.capture());
+        assertThat(detail.getValue()).doesNotContain("\n", "\r", "\u2028", "\u0000");
+        assertThat(String.valueOf(context.getValue().get("ecran"))).doesNotContain("\n", "\r");
+        assertThat(ReportService.oneLine(null)).isEmpty();
+        assertThat(ReportService.oneLine("  a \t b \u0085 c ")).isEqualTo("a b c");
+    }
+
+    /** Les signalements de modération (utilisateur, annonce…) ont leur propre file dans l'admin. */
+    @Test
+    void createReport_signalementDeModeration_neLevePasDAlerteTelegram() throws Exception {
+        stubUser();
+        when(userRepository.existsById(any())).thenReturn(true);
+        when(reportRepository.save(any())).thenAnswer(inv -> {
+            ReportEntity r = inv.getArgument(0);
+            setId(r, UUID.randomUUID());
+            return r;
+        });
+
+        service().createReport("uid-1", ReportTargetType.USER, UUID.randomUUID(),
+                ReportReason.HARASSMENT, null, List.of());
+
+        verify(adminAlertService, never()).raise(any(), any(), any());
+    }
+
+    /** Un bot Telegram injoignable ne doit jamais empêcher un utilisateur de signaler un bug. */
+    @Test
+    void createReport_alerteEnEchec_nEmpecheJamaisLeSignalement() throws Exception {
+        stubUser();
+        when(reportRepository.save(any())).thenAnswer(inv -> {
+            ReportEntity r = inv.getArgument(0);
+            setId(r, UUID.randomUUID());
+            return r;
+        });
+        org.mockito.Mockito.doThrow(new IllegalStateException("telegram down"))
+                .when(adminAlertService).raise(any(), any(), any());
+
+        ReportEntity report = service().createReport("uid-1", ReportTargetType.APP, null,
+                ReportReason.SCREEN_BUG, "x", List.of(), "/home");
+
+        assertThat(report.getId()).isNotNull();
+    }
+
+    /** Dans une vraie transaction, l'alerte attend le commit : un signalement annulé n'alerte pas. */
+    @Test
+    void createReport_dansUneTransaction_alerteSeulementApresLeCommit() throws Exception {
+        stubUser();
+        when(reportRepository.save(any())).thenAnswer(inv -> {
+            ReportEntity r = inv.getArgument(0);
+            setId(r, UUID.randomUUID());
+            return r;
+        });
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        try {
+            service().createReport("uid-1", ReportTargetType.APP, null, ReportReason.SCREEN_BUG,
+                    "x", List.of(), "/home");
+            verify(adminAlertService, never()).raise(any(), any(), any());
+
+            org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
+            verify(adminAlertService).raise(eq("APP_REPORT_CREATED"), any(), any());
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     @Test

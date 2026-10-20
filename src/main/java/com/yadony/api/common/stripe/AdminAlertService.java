@@ -48,6 +48,9 @@ public class AdminAlertService {
 
     private static final Set<String> CODES_INFO = Set.of(
             "SUPPORT_TICKET_CREATED",
+            // Signalement de bug de l'app (scarabée, bug, paiement) : déjà une issue Sentry côté
+            // app, mais Sentry ne relaie que la 1re d'un groupe. Ici, une alerte par signalement.
+            "APP_REPORT_CREATED",
             "STRIPE_CHARGEBACK_CLOSED",
             "KYC_IDENTITY_CANCELED");
 
@@ -245,6 +248,7 @@ public class AdminAlertService {
         if (code.startsWith("KYC_")) return "🪪";
         if (code.startsWith("SENTRY_ISSUE_")) return "🐛";
         if (code.startsWith("SUPPORT_TICKET_")) return "💬";
+        if (code.startsWith("APP_REPORT_")) return "🐞";
         if (code.equals("STRIPE_ACCOUNT_DEAUTHORIZED") || code.equals("STRIPE_CAPABILITY_LOST")) return "🏦";
         if (code.contains("CHARGEBACK") || code.contains("FRAUD")) return "⚠️";
         if (code.contains("REFUND")) return "💸";
@@ -273,6 +277,7 @@ public class AdminAlertService {
             case "SENTRY_ISSUE_CREATED" -> "Nouvelle erreur Sentry";
             case "SENTRY_ISSUE_UNRESOLVED" -> "Régression Sentry (erreur redevenue active)";
             case "SUPPORT_TICKET_CREATED" -> "Nouveau ticket support";
+            case "APP_REPORT_CREATED" -> "Nouveau signalement de bug";
             case "EXCHANGE_RATE_SYNC_FAILED" -> "Synchronisation des taux de change échouée";
             case "EXCHANGE_RATE_SYNC_REJECTED" -> "Taux de change refusés (variation anormale)";
             default -> "Alerte système";
