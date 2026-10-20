@@ -500,6 +500,63 @@ class MobileMoneyPayoutAccountServiceTest {
         assertNothingWritten();
     }
 
+    // ── Retrait de tous les comptes (ancien DELETE /account, tâche 4) ───────
+
+    @Test
+    void removeAll_softDeletesEveryLiveAccount_resyncsOnce_andAuditsEach() {
+        MobileMoneyPayoutAccountEntity civ = existing("ORANGE_CIV", "CI", CIV_ORANGE_NUMBER);
+        MobileMoneyPayoutAccountEntity sen = existing("ORANGE_SEN", "SN", SEN_ORANGE_NUMBER);
+        when(accounts.active(userId)).thenReturn(List.of(civ, sen));
+
+        newService(false).removeAll(userId);
+
+        assertThat(civ.getDeletedAt()).isNotNull();
+        assertThat(sen.getDeletedAt()).isNotNull();
+        InOrder order = inOrder(userRepository, repository, accounts);
+        order.verify(userRepository).findByIdForUpdate(userId);
+        order.verify(repository).save(civ);
+        order.verify(repository).save(sen);
+        order.verify(accounts).syncSummary(user);
+        order.verify(userRepository).save(user);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> payloads = ArgumentCaptor.forClass(Map.class);
+        verify(audit, org.mockito.Mockito.times(2))
+                .log(eq("USER"), eq(userId), eq("MM_PAYOUT_ACCOUNT_REMOVED"), eq(userId), payloads.capture());
+        assertThat(payloads.getAllValues()).extracting(p -> p.get("provider")).containsExactly("ORANGE_CIV", "ORANGE_SEN");
+        payloads.getAllValues().forEach(p -> assertNoClearNumber(p, CIV_ORANGE_NUMBER, SEN_ORANGE_NUMBER));
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    void removeAll_whenOneAccountIsLocked_is409_andRemovesNothing() {
+        MobileMoneyPayoutAccountEntity civ = existing("ORANGE_CIV", "CI", CIV_ORANGE_NUMBER);
+        MobileMoneyPayoutAccountEntity sen = existing("ORANGE_SEN", "SN", SEN_ORANGE_NUMBER);
+        when(accounts.active(userId)).thenReturn(List.of(civ, sen));
+        when(accounts.pendingPayouts(userId, "ORANGE_CIV")).thenReturn(0);
+        when(accounts.pendingPayouts(userId, "ORANGE_SEN")).thenReturn(2);
+
+        YadonyBusinessException e = thrown(() -> service.removeAll(userId));
+
+        assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(e.getErrorCode()).isEqualTo("mobile-money-account-locked");
+        assertThat(e.getProperties()).containsEntry("pendingPayouts", 2);
+        assertThat(civ.getDeletedAt()).isNull();
+        assertThat(sen.getDeletedAt()).isNull();
+        assertNothingWritten();
+    }
+
+    @Test
+    void removeAll_withoutLiveAccount_onlyResyncsTheSummary() {
+        when(accounts.active(userId)).thenReturn(List.of());
+
+        service.removeAll(userId);
+
+        verify(accounts).syncSummary(user);
+        verify(userRepository).save(user);
+        verify(repository, never()).save(any());
+        verify(audit, never()).log(anyString(), any(), anyString(), any(), anyMap());
+    }
+
     // ── Upsert (ancien contrat, tâche 4) ────────────────────────────────────
 
     @Test

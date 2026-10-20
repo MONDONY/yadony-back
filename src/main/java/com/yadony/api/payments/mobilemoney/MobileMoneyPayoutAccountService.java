@@ -155,6 +155,32 @@ public class MobileMoneyPayoutAccountService {
         repository.save(account);
         accounts.syncSummary(user);
         userRepository.save(user);
+        auditRemoval(userId, account);
+    }
+
+    /**
+     * Ancien contrat {@code DELETE /payments/mobile-money/account} : retire (soft delete) tous les
+     * comptes vivants. Tout ou rien : si l'un est verrouillé, 409 {@code mobile-money-account-locked}
+     * et aucun n'est retiré. Permis même si pawaPay est coupé, comme {@link #remove}.
+     */
+    @Transactional
+    public void removeAll(UUID userId) {
+        Messages m = messagesResolver.forRequest();
+        UserEntity user = lockUser(userId);
+        List<MobileMoneyPayoutAccountEntity> live = accounts.active(userId);
+        for (MobileMoneyPayoutAccountEntity account : live) {
+            requireUnlocked(userId, account, m);
+        }
+        for (MobileMoneyPayoutAccountEntity account : live) {
+            account.softDelete();
+            repository.save(account);
+        }
+        accounts.syncSummary(user);
+        userRepository.save(user);
+        live.forEach(account -> auditRemoval(userId, account));
+    }
+
+    private void auditRemoval(UUID userId, MobileMoneyPayoutAccountEntity account) {
         audit.log("USER", userId, REMOVED, userId, Map.of("accountId", account.getId(),
                 "provider", account.getProvider(), "country", account.getCountry(),
                 "currency", account.getCurrency(), "msisdnMasked", account.getMsisdnMasked()));
@@ -295,7 +321,10 @@ public class MobileMoneyPayoutAccountService {
                 catalogue.currency().toUpperCase(Locale.ROOT));
     }
 
-    /** Libellé métier d'un numéro reconnu mais inexploitable pour le versement. */
+    /**
+     * Libellé métier d'un numéro reconnu mais inexploitable pour le versement. Partagé avec
+     * {@link MobileMoneyAccountService} (catalogue de l'ancien contrat) : une seule copie.
+     */
     static String reasonDetail(Messages m, PawapayProviderResolver.UnsupportedNumberException e) {
         return switch (e.reason()) {
             case NO_PROVIDER -> m.get("problem.mobile-money-account.no-provider");
