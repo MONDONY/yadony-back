@@ -9,7 +9,7 @@ questions:
   - How do I scan a parcel's QR code?
   - How do I notify the recipient?
 routes:
-  - path: /tracking/scan
-    label: Scan a parcel
+  - path: /tracking
+    label: Validate a step
 ---
-You are on your trip's parcels (titled "Parcels" or "Requests"): accepted, ongoing and closed requests, filtered by "All", "Active" and "Closed", with a search by name or tracking number. The "To review" button shows up when requests are waiting for your reply, and "Scan QR code" opens the scanner to confirm a step. Tap a parcel to open its details.
+You are on your trip's parcels (titled "Parcels" or "Requests"): accepted, ongoing and closed requests, filtered by "All", "Active" and "Closed", with a search by name or tracking number. The "To review" button shows up when requests are waiting for your reply, and "Scan QR code" opens the Tracking tab in "Validate a step" mode, on this trip; going back brings you here. Tap a parcel to open its details.
