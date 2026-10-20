@@ -70,6 +70,65 @@ class MobileMoneyPayoutAccountsTest {
         assertThat(accounts.accepts(userId, null, "XOF")).isFalse();
     }
 
+    // ── Libellés et refus du payeur ──────────────────────────────────────────────────────────
+
+    @Test
+    void acceptedLabels_areTheCurrencyAccountsLabels_deduplicatedAndOldestFirst() {
+        given(account("WAVE_SEN", "SN", "XOF", "+221770000001", CIV_VERIFIED, false),
+                account("ORANGE_SEN", "SN", "XOF", "+221770000002", CIV_VERIFIED, false),
+                account("MTN_MOMO_CMR", "CM", "XAF", "+237670000003", CMR_VERIFIED, false));
+
+        assertThat(accounts.acceptedLabels(userId, "XOF")).containsExactly("Wave", "Orange Money");
+        assertThat(accounts.acceptedLabels(userId, "XAF")).containsExactly("MTN MoMo");
+        assertThat(accounts.acceptedLabels(userId, "EUR")).isEmpty();
+        assertThat(accounts.acceptedLabels(userId, null)).isEmpty();
+    }
+
+    @Test
+    void acceptedLabels_sameBrandInTwoCountries_isSuffixedWithTheCountry() {
+        given(account("ORANGE_CIV", "CI", "XOF", "+2250700000001", CIV_VERIFIED, false),
+                account("ORANGE_SEN", "SN", "XOF", "+221770000002", CIV_VERIFIED, false),
+                account("WAVE_SEN", "SN", "XOF", "+221770000004", CIV_VERIFIED, false));
+
+        assertThat(accounts.acceptedLabels(userId, "XOF"))
+                .containsExactly("Orange Money (CI)", "Orange Money (SN)", "Wave");
+    }
+
+    @Test
+    void payerRefusal_isEmptyWhenTheExactCodeHasAnAccount() {
+        given(account("ORANGE_SEN", "SN", "XOF", "+221770000001", CIV_VERIFIED, false));
+
+        assertThat(accounts.payerRefusal(userId, "orange_sen", "Orange Money", "SN", "XOF")).isEmpty();
+    }
+
+    @Test
+    void payerRefusal_withoutAnyAccountInTheCurrency_saysNoNetwork() {
+        given(account("ORANGE_SEN", "SN", "XOF", "+221770000001", CIV_VERIFIED, false));
+
+        assertThat(accounts.payerRefusal(userId, "ORANGE_SEN", "Orange Money", "SN", "XAF"))
+                .contains("Ce voyageur n'accepte aucun réseau mobile money pour le moment.");
+    }
+
+    @Test
+    void payerRefusal_otherBrand_namesTheRejectedAndAcceptedNetworks() {
+        given(account("ORANGE_SEN", "SN", "XOF", "+221770000001", CIV_VERIFIED, false));
+
+        assertThat(accounts.payerRefusal(userId, "WAVE_SEN", "Wave", "SN", "XOF"))
+                .contains("Ce voyageur n'accepte pas Wave. Réseaux acceptés : Orange Money.");
+    }
+
+    @Test
+    void payerRefusal_sameBrandOtherCountry_namesBothCountries() {
+        given(account("ORANGE_SEN", "SN", "XOF", "+221770000001", CIV_VERIFIED, false),
+                account("WAVE_SEN", "SN", "XOF", "+221770000002", CIV_VERIFIED, false));
+
+        assertThat(accounts.payerRefusal(userId, "ORANGE_CIV", "Orange Money", "ci", "XOF"))
+                .contains("Ce voyageur n'accepte pas Orange Money (CI). Réseaux acceptés : Orange Money (SN), Wave.");
+        // Pays inconnu du payeur : pas de suffixe sur le refusé, mais les comptes restent désambiguïsés.
+        assertThat(accounts.payerRefusal(userId, "ORANGE_CIV", "Orange Money", null, "XOF"))
+                .contains("Ce voyageur n'accepte pas Orange Money. Réseaux acceptés : Orange Money (SN), Wave.");
+    }
+
     // ── Routage du versement ─────────────────────────────────────────────────────────────────
 
     @Test

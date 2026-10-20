@@ -24,38 +24,6 @@ class MobileMoneyNetworksTest {
 
     @Test
     void acceptedCodes_ignoresABlankSingleProvider() {
-        UserEntity t = travelerWith(null, "   ");
-        assertThat(MobileMoneyNetworks.acceptedCodes(t)).isEmpty();
-        assertThat(MobileMoneyNetworks.acceptedLabels(t)).isEmpty();
-        assertThat(MobileMoneyNetworks.acceptsBrand(t, "ORANGE_SEN")).isFalse();
-    }
-
-    @Test
-    void acceptedBrands_areDeduplicatedAndOrdered() {
-        assertThat(MobileMoneyNetworks.acceptedBrands(travelerWith("ORANGE_CIV,WAVE_CIV,ORANGE_SEN", null)))
-                .containsExactly("ORANGE", "WAVE");
-    }
-
-    @Test
-    void acceptedLabels_areHumanReadable_andDeduplicated() {
-        assertThat(MobileMoneyNetworks.acceptedLabels(travelerWith("ORANGE_CIV,WAVE_CIV,ORANGE_SEN", null)))
-                .containsExactly("Orange Money", "Wave");
-    }
-
-    @Test
-    void acceptsBrand_comparesBrands_notCountries() {
-        UserEntity t = travelerWith("ORANGE_CIV,WAVE_CIV", "ORANGE_CIV");
-        assertThat(MobileMoneyNetworks.acceptsBrand(t, "ORANGE_SEN")).isTrue();
-        assertThat(MobileMoneyNetworks.acceptsBrand(t, "wave_sen")).isTrue();
-        assertThat(MobileMoneyNetworks.acceptsBrand(t, "MTN_CIV")).isFalse();
-        assertThat(MobileMoneyNetworks.acceptsBrand(t, null)).isFalse();
-    }
-
-    @Test
-    void helpers_tolerateAUserWithoutAnyProvider() {
-        UserEntity none = travelerWith(null, null);
-        assertThat(MobileMoneyNetworks.acceptedBrands(none)).isEmpty();
-        assertThat(MobileMoneyNetworks.acceptedLabels(none)).isEmpty();
-        assertThat(MobileMoneyNetworks.acceptsBrand(none, "ORANGE_SEN")).isFalse();
+        assertThat(MobileMoneyNetworks.acceptedCodes(travelerWith(null, "   "))).isEmpty();
     }
 }

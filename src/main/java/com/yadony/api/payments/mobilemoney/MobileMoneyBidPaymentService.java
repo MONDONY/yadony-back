@@ -48,7 +48,6 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -106,6 +105,7 @@ public class MobileMoneyBidPaymentService {
     private final PromoService promoService;
     private final CommissionVoucherService voucherService;
     private final PawapayProperties props;
+    private final MobileMoneyPayoutAccounts payoutAccounts;
 
     /**
      * Transaction INDÉPENDANTE, réservée à l'entrée d'audit d'un dépôt refusé —
@@ -134,7 +134,8 @@ public class MobileMoneyBidPaymentService {
                                         FirebaseContactService firebaseContact, AuditService audit,
                                         ApplicationEventPublisher events,
                                         PromoService promoService, CommissionVoucherService voucherService,
-                                        PlatformTransactionManager transactionManager, PawapayProperties props) {
+                                        PlatformTransactionManager transactionManager, PawapayProperties props,
+                                        MobileMoneyPayoutAccounts payoutAccounts) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -149,6 +150,7 @@ public class MobileMoneyBidPaymentService {
         this.promoService = promoService;
         this.voucherService = voucherService;
         this.props = props;
+        this.payoutAccounts = payoutAccounts;
         this.independentAuditTransaction = new TransactionTemplate(transactionManager);
         this.independentAuditTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -317,17 +319,15 @@ public class MobileMoneyBidPaymentService {
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
             throw payerUnsupported(payerReason(e, payment.getCurrency()));
         }
-        // Couplage (décision produit) : l'expéditeur ne paie qu'avec une marque acceptée par le
-        // voyageur, qui sera versé sur ce même réseau. Vérifié ici pour l'ancien client (prédit)
-        // comme pour le nouveau (choisi) : le catalogue payeur ne filtre que l'affichage.
+        // Couplage (décision produit) : l'expéditeur ne paie que sur un opérateur (code exact, pays
+        // compris) où le voyageur a un compte de versement dans la devise du colis : il sera versé
+        // sur ce même réseau. Vérifié ici pour l'ancien client (prédit) comme pour le nouveau
+        // (choisi) : le catalogue payeur ne filtre que l'affichage.
         UserEntity traveler = travelerOf(bid);
-        if (!MobileMoneyNetworks.acceptsBrand(traveler, resolved.provider())) {
-            List<String> acceptedLabels = MobileMoneyNetworks.acceptedLabels(traveler);
-            throw payerUnsupported(acceptedLabels.isEmpty()
-                    ? "Ce voyageur n'accepte aucun réseau mobile money pour le moment."
-                    : "Ce voyageur n'accepte pas " + resolved.providerLabel() + ". Réseaux acceptés : "
-                            + String.join(", ", acceptedLabels) + ".");
-        }
+        payoutAccounts.payerRefusal(traveler.getId(), resolved.provider(), resolved.providerLabel(),
+                resolved.countryAlpha2(), payment.getCurrency()).ifPresent(detail -> {
+            throw payerUnsupported(detail);
+        });
         PawapayProviderConfig.Limits deposit = resolved.config().deposit();
         if (deposit.minAmount() != null && payment.getAmount().compareTo(deposit.minAmount()) < 0
                 || deposit.maxAmount() != null && payment.getAmount().compareTo(deposit.maxAmount()) > 0) {
@@ -441,8 +441,8 @@ public class MobileMoneyBidPaymentService {
 
     /**
      * Réseaux avec lesquels l'expéditeur peut payer : catalogue DEPOSIT de son numéro (fourni, sinon
-     * son compte mobile money actif dans la devise, sinon celui du bid, sinon Firebase), dans la devise du colis, restreint aux marques acceptées par
-     * le voyageur. Lecture seule : le numéro examiné n'est pas écrit sur le bid, seule l'initiation
+     * son compte mobile money actif dans la devise, sinon celui du bid, sinon Firebase), dans la devise du colis, restreint aux opérateurs (code exact) où
+     * le voyageur a un compte de versement dans cette devise. Lecture seule : le numéro examiné n'est pas écrit sur le bid, seule l'initiation
      * le fait. Liste vide = aucun réseau commun (200, l'app l'explique).
      */
     @Transactional(readOnly = true)
@@ -464,16 +464,16 @@ public class MobileMoneyBidPaymentService {
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
             throw payerUnsupported(payerReason(e, payment.getCurrency()));
         }
-        Set<String> accepted = MobileMoneyNetworks.acceptedBrands(traveler);
         List<MobileMoneyProvidersResponse.ProviderOption> options = catalogue.options().stream()
-                .filter(o -> accepted.contains(PawapayProviders.brand(o.provider())))
+                .filter(o -> payoutAccounts.accepts(traveler.getId(), o.provider(), payment.getCurrency()))
                 .map(o -> new MobileMoneyProvidersResponse.ProviderOption(o.provider(), PawapayProviders.label(o.provider()),
                         o.provider().equalsIgnoreCase(catalogue.detected())))
                 .toList();
         String detected = options.stream().filter(MobileMoneyProvidersResponse.ProviderOption::detected)
                 .map(MobileMoneyProvidersResponse.ProviderOption::code).findFirst().orElse(null);
         return new MobileMoneyPayerProvidersResponse(catalogue.countryAlpha2(), catalogue.currency(), Msisdn.mask(catalogue.msisdn()),
-                detected, options, MobileMoneyNetworks.acceptedLabels(traveler), traveler.getFirstName());
+                detected, options, payoutAccounts.acceptedLabels(traveler.getId(), payment.getCurrency()),
+                traveler.getFirstName());
     }
 
     // ── Séquestre ───────────────────────────────────────────────────────────

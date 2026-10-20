@@ -27,6 +27,8 @@ import com.yadony.api.payments.pawapay.PawapayProviders;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import com.yadony.api.payments.pawapay.PawapayText;
 import com.yadony.api.requests.NegotiationMobileMoneyPort;
+import com.yadony.api.requests.entity.NegotiationThreadEntity;
+import com.yadony.api.requests.repository.NegotiationThreadRepository;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -76,6 +78,8 @@ public class MobileMoneyNegotiationPaymentService {
     private final AuditService audit;
     private final ApplicationEventPublisher events;
     private final PawapayProperties props;
+    private final MobileMoneyPayoutAccounts payoutAccounts;
+    private final NegotiationThreadRepository threads;
     private final TransactionTemplate independentAuditTransaction;
 
     /** Même motif que {@link MobileMoneyBidPaymentService#adminAlert} : optionnel, jamais dans le constructeur. */
@@ -86,7 +90,9 @@ public class MobileMoneyNegotiationPaymentService {
                                                 PawapayOperationService operations, PawapaySubmissionService submission,
                                                 PawapayProviderResolver providers, FirebaseContactService firebaseContact,
                                                 AuditService audit, ApplicationEventPublisher events,
-                                                PlatformTransactionManager transactionManager, PawapayProperties props) {
+                                                PlatformTransactionManager transactionManager, PawapayProperties props,
+                                                MobileMoneyPayoutAccounts payoutAccounts,
+                                                NegotiationThreadRepository threads) {
         this.paymentRepository = paymentRepository;
         this.userRepository = userRepository;
         this.operations = operations;
@@ -96,6 +102,8 @@ public class MobileMoneyNegotiationPaymentService {
         this.audit = audit;
         this.events = events;
         this.props = props;
+        this.payoutAccounts = payoutAccounts;
+        this.threads = threads;
         this.independentAuditTransaction = new TransactionTemplate(transactionManager);
         this.independentAuditTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -222,6 +230,14 @@ public class MobileMoneyNegotiationPaymentService {
                 case PROVIDER_NOT_AVAILABLE -> "Réseau " + e.providerLabel() + " indisponible pour ce numéro.";
             });
         }
+        // Couplage : l'expéditeur ne paie que sur un opérateur (code exact) où le voyageur du fil a un
+        // compte de versement dans la devise du paiement, sinon son versement n'aurait nulle part où partir.
+        UUID travelerId = threads.findById(threadId).map(NegotiationThreadEntity::getTravelerId)
+                .orElseThrow(() -> notFound("negotiation-not-found", "Négociation introuvable"));
+        payoutAccounts.payerRefusal(travelerId, resolved.provider(), resolved.providerLabel(),
+                resolved.countryAlpha2(), payment.getCurrency()).ifPresent(detail -> {
+            throw payerUnsupported(detail);
+        });
         var limits = resolved.config().deposit();
         if (limits.minAmount() != null && payment.getAmount().compareTo(limits.minAmount()) < 0
                 || limits.maxAmount() != null && payment.getAmount().compareTo(limits.maxAmount()) > 0) {

@@ -2,8 +2,11 @@ package com.yadony.api.payments.mobilemoney;
 
 import com.yadony.api.auth.MobileMoneyPayoutStatus;
 import com.yadony.api.auth.UserEntity;
+import com.yadony.api.payments.pawapay.PawapayProviders;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
@@ -48,6 +51,53 @@ public class MobileMoneyPayoutAccounts {
             return false;
         }
         return activeIn(userId, currency).stream().anyMatch(a -> providerCode.equalsIgnoreCase(a.getProvider()));
+    }
+
+    /**
+     * Libellés des réseaux où le voyageur a un compte dans cette devise (« Orange Money », « Wave »),
+     * dédoublonnés, le plus ancien compte d'abord. Une même marque présente dans deux pays est
+     * suffixée du code pays (« Orange Money (SN) », « Orange Money (CI) »).
+     */
+    public List<String> acceptedLabels(UUID userId, String currency) {
+        return labelsOf(activeIn(userId, currency), null);
+    }
+
+    /**
+     * Motif du refus d'un dépôt payé sur {@code providerCode} : vide si le voyageur a un compte de ce
+     * code exact dans la devise du paiement, sinon le détail du 422 du payeur. Quand le voyageur a la
+     * même marque dans un autre pays, les deux pays sont nommés pour que le message ne se contredise pas.
+     */
+    public Optional<String> payerRefusal(UUID userId, String providerCode, String providerLabel,
+                                         String countryAlpha2, String currency) {
+        if (accepts(userId, providerCode, currency)) {
+            return Optional.empty();
+        }
+        List<MobileMoneyPayoutAccountEntity> accounts = activeIn(userId, currency);
+        if (accounts.isEmpty()) {
+            return Optional.of("Ce voyageur n'accepte aucun réseau mobile money pour le moment.");
+        }
+        String brand = PawapayProviders.brand(providerCode);
+        boolean sameBrandElsewhere = brand != null
+                && accounts.stream().anyMatch(a -> brand.equals(PawapayProviders.brand(a.getProvider())));
+        String rejected = sameBrandElsewhere && countryAlpha2 != null
+                ? providerLabel + " (" + countryAlpha2.toUpperCase(Locale.ROOT) + ")" : providerLabel;
+        return Optional.of("Ce voyageur n'accepte pas " + rejected + ". Réseaux acceptés : "
+                + String.join(", ", labelsOf(accounts, sameBrandElsewhere ? brand : null)) + ".");
+    }
+
+    /**
+     * @param alwaysSuffixBrand marque dont le pays est toujours précisé (celle du dépôt refusé), ou null.
+     */
+    private static List<String> labelsOf(List<MobileMoneyPayoutAccountEntity> accounts, String alwaysSuffixBrand) {
+        return accounts.stream().map(a -> {
+            String brand = PawapayProviders.brand(a.getProvider());
+            long countries = accounts.stream()
+                    .filter(o -> Objects.equals(brand, PawapayProviders.brand(o.getProvider())))
+                    .map(o -> o.getCountry().toUpperCase(Locale.ROOT)).distinct().count();
+            String label = PawapayProviders.label(a.getProvider());
+            return countries > 1 || brand != null && brand.equals(alwaysSuffixBrand)
+                    ? label + " (" + a.getCountry().toUpperCase(Locale.ROOT) + ")" : label;
+        }).distinct().toList();
     }
 
     /**
