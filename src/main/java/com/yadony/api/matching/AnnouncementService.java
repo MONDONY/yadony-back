@@ -194,6 +194,8 @@ public class AnnouncementService {
     /** Masquage mutuel des comptes bloqués, cf. {@link BlockVisibility}. */
     private final BlockVisibility blockVisibility;
     private final AnnouncementViewService announcementViewService;
+    /** Réseaux mobile money du voyageur affichés sur la fiche d'un trajet (implémenté dans {@code payments/}). */
+    private final TravelerPayoutNetworksPort travelerPayoutNetworks;
 
     @Value("${yadony.kyc.enforce:true}")
     private boolean enforceKyc;
@@ -220,7 +222,8 @@ public class AnnouncementService {
             NegotiationThreadRepository negotiationThreadRepository,
             NotificationDispatcher notificationDispatcher,
             BlockVisibility blockVisibility,
-            AnnouncementViewService announcementViewService
+            AnnouncementViewService announcementViewService,
+            TravelerPayoutNetworksPort travelerPayoutNetworks
     ) {
         this.announcementRepository = announcementRepository;
         this.bidRepository = bidRepository;
@@ -241,6 +244,7 @@ public class AnnouncementService {
         this.notificationDispatcher = notificationDispatcher;
         this.blockVisibility = blockVisibility;
         this.announcementViewService = announcementViewService;
+        this.travelerPayoutNetworks = travelerPayoutNetworks;
     }
 
     // La clé porte la taille de page en plus du numéro : l'app compte les résultats
@@ -1143,6 +1147,13 @@ public class AnnouncementService {
         );
         if (viewerId != null && viewerId.equals(announcement.getTravelerId())) {
             detail = detail.withCurrencyEditable(!isCurrencyLocked(id));
+        }
+
+        // Réseaux où le voyageur reçoit en mobile money, seulement quand ce rail est réellement
+        // offert sur le trajet : l'app les affiche pour que le payeur choisisse un réseau accepté.
+        if (detail.availablePaymentMethods().contains(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY)) {
+            detail = detail.withMobileMoneyNetworks(
+                    travelerPayoutNetworks.acceptedNetworks(announcement.getTravelerId(), announcement.getCurrency()));
         }
 
         // Même repère de lecture que le fil (Tâche 10) : équivalents « environ » dans

@@ -104,7 +104,7 @@ class AnnouncementServiceAddressTest {
                 mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class),
                 mock(com.yadony.api.notifications.NotificationDispatcher.class),
                 mock(com.yadony.api.common.BlockVisibility.class),
-                mock(AnnouncementViewService.class));
+                mock(AnnouncementViewService.class), mock(TravelerPayoutNetworksPort.class));
     }
 
     private static final String TRAVELER_UID = "firebase-uid-123";

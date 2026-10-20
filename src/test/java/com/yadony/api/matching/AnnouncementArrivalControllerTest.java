@@ -14,6 +14,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.yadony.api.matching.TravelerPayoutNetworksPort.PayoutNetwork;
 import java.util.List;
 import java.util.UUID;
 
@@ -25,8 +26,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -188,5 +191,39 @@ class AnnouncementArrivalControllerTest {
         UUID announcementId = UUID.randomUUID();
         mockMvc.perform(post("/announcements/" + announcementId + "/mark-arrived"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void getDetail_exposesTheAcceptedMobileMoneyNetworks_withoutAnyNumber() throws Exception {
+        UUID announcementId = UUID.randomUUID();
+        when(announcementService.getAnnouncementDetail(eq(announcementId), anyString()))
+                .thenReturn(detailWithInstructions(announcementId, null).withMobileMoneyNetworks(List.of(
+                        new PayoutNetwork("ORANGE_CIV", "Orange Money", "ORANGE", "CI"),
+                        new PayoutNetwork("ORANGE_SEN", "Orange Money", "ORANGE", "SN"))));
+
+        mockMvc.perform(get("/announcements/" + announcementId)
+                        .with(authentication(traveler("uid-viewer-networks"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.acceptedMobileMoneyNetworks.length()").value(2))
+                .andExpect(jsonPath("$.acceptedMobileMoneyNetworks[0].code").value("ORANGE_CIV"))
+                .andExpect(jsonPath("$.acceptedMobileMoneyNetworks[0].label").value("Orange Money"))
+                .andExpect(jsonPath("$.acceptedMobileMoneyNetworks[0].brand").value("ORANGE"))
+                .andExpect(jsonPath("$.acceptedMobileMoneyNetworks[0].country").value("CI"))
+                .andExpect(jsonPath("$.acceptedMobileMoneyNetworks[1].code").value("ORANGE_SEN"))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsStringIgnoringCase("msisdn"))));
+    }
+
+    @Test
+    void getDetail_withoutNetworks_servesAnEmptyArray_neverNull() throws Exception {
+        UUID announcementId = UUID.randomUUID();
+        when(announcementService.getAnnouncementDetail(eq(announcementId), anyString()))
+                .thenReturn(detailWithInstructions(announcementId, null));
+
+        mockMvc.perform(get("/announcements/" + announcementId)
+                        .with(authentication(traveler("uid-viewer-no-networks"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.acceptedMobileMoneyNetworks").isArray())
+                .andExpect(jsonPath("$.acceptedMobileMoneyNetworks.length()").value(0));
     }
 }
