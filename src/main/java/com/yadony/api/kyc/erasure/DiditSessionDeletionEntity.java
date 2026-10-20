@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * Session Didit à effacer chez Didit après la suppression d'un compte (V344). Écrite dans la
+ * Session Didit à effacer chez Didit après la suppression d'un compte (V345). Écrite dans la
  * transaction de la finalisation ; voir {@link DiditSessionErasureService}.
  */
 @Entity
