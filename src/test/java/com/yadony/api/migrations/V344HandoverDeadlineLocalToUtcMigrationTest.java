@@ -54,7 +54,7 @@ class V344HandoverDeadlineLocalToUtcMigrationTest {
 
         user = seedUser();
         UUID request = seedPackageRequest();
-        UUID recurrence = seedRecurrence(2);
+        // Une récurrence par occurrence : (source_recurrence_id, departure_date) est unique.
 
         // Trajet dédié de Paris : départ 20:30 locale, limite écrite « 20:30 » (heure murale).
         dedicatedParis = trip("Europe/Paris", "2026-10-19", "20:30", "2026-10-19 20:30", "ACTIVE",
@@ -80,12 +80,12 @@ class V344HandoverDeadlineLocalToUtcMigrationTest {
                 null, null, 0, false);
         // Récurrence (délai de remise 2 j) : départ 25/10 14:00, limite 23/10 14:00 locale (CEST).
         recurrenceWithLead = trip("Europe/Paris", "2026-10-25", "14:00", "2026-10-23 14:00", "ACTIVE",
-                null, recurrence, 0, false);
+                null, seedRecurrence(2), 0, false);
         // Repli sur le départ lui-même (25/10 14:00, heure d'hiver CET depuis 03:00 ce jour-là).
         recurrenceFallbackOnDeparture = trip("Europe/Paris", "2026-10-25", "14:00", "2026-10-25 14:00", "DRAFT",
-                null, recurrence, 0, false);
+                null, seedRecurrence(2), 0, false);
         recurrenceEditedInApp = trip("Europe/Paris", "2026-10-25", "14:00", "2026-10-24 09:15", "ACTIVE",
-                null, recurrence, 0, false);
+                null, seedRecurrence(2), 0, false);
 
         flywayUpTo("344").migrate();
     }

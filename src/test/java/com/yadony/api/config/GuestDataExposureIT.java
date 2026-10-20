@@ -204,6 +204,9 @@ class GuestDataExposureIT {
             "priceGridItems", "reservedKg", "surplusEligible", "surplusPublished",
             "handoverDeadline", "isFavorite", "urgent", "currency", "negotiable",
             "availablePaymentMethods",
+            // Fuseau IANA de la ville de départ (PROD-1R) : déduit de la ville, déjà publique ;
+            // sert seulement à afficher la date limite à l'heure locale du départ.
+            "departureTimezone",
             // Réseaux mobile money acceptés par le voyageur (code opérateur, libellé, marque, pays) :
             // ce que l'expéditeur doit savoir pour choisir de payer, jamais un numéro ni un compte.
             "acceptedMobileMoneyNetworks", "code", "brand", "country",
