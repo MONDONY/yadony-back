@@ -236,6 +236,19 @@ class StripeCustomerServiceTest {
     }
 
     @Test
+    void fermeChezStripeMaisMiseAJourLocaleEchoue_alerte() throws Exception {
+        when(userRepository.clearStripeAccount(USER_ID, ACCOUNT)).thenThrow(new IllegalStateException("db"));
+
+        assertThat(service.closeConnectAccount(USER_ID, ACCOUNT))
+                .isEqualTo(StripeCustomerService.ConnectCleanup.DELETED);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> context = ArgumentCaptor.forClass(Map.class);
+        verify(adminAlertService).raise(eq(StripeCustomerService.ALERT_CODE), anyString(), context.capture());
+        assertThat(context.getValue()).containsEntry("reason", "LOCAL_UPDATE_FAILED");
+    }
+
+    @Test
     void nonZeroBalances_toleranceAuxChampsAbsents() {
         assertThat(StripeCustomerService.nonZeroBalances(null)).isEmpty();
         assertThat(StripeCustomerService.nonZeroBalances(new Balance())).isEmpty();

@@ -130,14 +130,23 @@ public class StripeCustomerService {
         }
 
         ConnectCleanup closed = outcome;
-        ownTransaction.executeWithoutResult(status -> {
-            userRepository.clearStripeAccount(userId, accountId);
-            Map<String, Object> payload = new HashMap<>();
-            payload.put("stripeAccountId", accountId);
-            payload.put("outcome", closed.name());
-            payload.put("transferInFlight", transferInFlight);
-            auditService.log("USER", userId, "STRIPE_CONNECT_ACCOUNT_CLOSED", null, payload);
-        });
+        try {
+            ownTransaction.executeWithoutResult(status -> {
+                userRepository.clearStripeAccount(userId, accountId);
+                Map<String, Object> payload = new HashMap<>();
+                payload.put("stripeAccountId", accountId);
+                payload.put("outcome", closed.name());
+                payload.put("transferInFlight", transferInFlight);
+                auditService.log("USER", userId, "STRIPE_CONNECT_ACCOUNT_CLOSED", null, payload);
+            });
+        } catch (RuntimeException e) {
+            // Le compte est déjà fermé chez Stripe et l'événement ne sera pas rejoué : sans alerte,
+            // l'utilisateur garderait en silence un identifiant de compte mort.
+            adminAlertService.raise(ALERT_CODE,
+                    "Compte Stripe Connect fermé (" + closed + ") mais utilisateur non mis à jour ("
+                            + e.getClass().getSimpleName() + ") : vider stripe_account_id à la main.",
+                    context(userId, accountId, "LOCAL_UPDATE_FAILED", List.of()));
+        }
         return closed;
     }
 
