@@ -52,15 +52,6 @@ class MobileMoneyNetworksTest {
     }
 
     @Test
-    void providerForBrand_returnsTheTravelersCodeOfThatBrand() {
-        UserEntity t = travelerWith("ORANGE_CIV,WAVE_CIV", "ORANGE_CIV");
-        assertThat(MobileMoneyNetworks.providerForBrand(t, "WAVE")).contains("WAVE_CIV");
-        assertThat(MobileMoneyNetworks.providerForBrand(t, "MTN")).isEmpty();
-        assertThat(MobileMoneyNetworks.providerForBrand(t, null)).isEmpty();
-        assertThat(MobileMoneyNetworks.providerForBrand(travelerWith(null, "ORANGE_CIV"), "ORANGE")).contains("ORANGE_CIV");
-    }
-
-    @Test
     void helpers_tolerateAUserWithoutAnyProvider() {
         UserEntity none = travelerWith(null, null);
         assertThat(MobileMoneyNetworks.acceptedBrands(none)).isEmpty();

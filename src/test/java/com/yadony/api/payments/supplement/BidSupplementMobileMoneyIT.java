@@ -18,6 +18,8 @@ import com.yadony.api.payments.PaymentRail;
 import com.yadony.api.payments.PaymentStatus;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
+import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutAccountEntity;
+import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutAccountRepository;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
 import com.yadony.api.payments.pawapay.PawapayClient;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
@@ -65,6 +67,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -120,6 +123,7 @@ class BidSupplementMobileMoneyIT {
     @Autowired PawapayOperationRepository operationRepository;
     @Autowired ApplicationEventPublisher publisher;
     @Autowired UserRepository userRepository;
+    @Autowired MobileMoneyPayoutAccountRepository accountRepository;
     @Autowired EntityManager entityManager;
     @Autowired TransactionTemplate tx;
     @Autowired JdbcTemplate jdbc;
@@ -227,8 +231,10 @@ class BidSupplementMobileMoneyIT {
                 p.traveler.getId(), p.sender.getId(), new BigDecimal("50000"), "XOF", true)));
 
         awaitStatus(supplementId, "PAYOUT_PENDING");
+        // Le statut passe à PAYOUT_PENDING (réservation) AVANT l'appel pawaPay, fait de façon asynchrone :
+        // sans attente, la vérification précédait parfois l'appel sous charge.
         ArgumentCaptor<PawapayPayoutRequest> payout = ArgumentCaptor.forClass(PawapayPayoutRequest.class);
-        verify(client, times(1)).initiatePayout(payout.capture());
+        verify(client, timeout(10_000).times(1)).initiatePayout(payout.capture());
         assertThat(payout.getValue().phoneNumber()).isEqualTo(PRINCIPAL_PAYEE);
         assertThat(payout.getValue().amount()).isEqualByComparingTo("13000");
         UUID payoutId = payout.getValue().payoutId();
@@ -370,7 +376,15 @@ class BidSupplementMobileMoneyIT {
             user.setMobileMoneyProviderList(List.of("ORANGE_SEN"));
             user.setMobileMoneyCountry("SN");
         }
-        return userRepository.saveAndFlush(user);
+        UserEntity saved = userRepository.saveAndFlush(user);
+        if (traveler) {
+            // Le compte de versement vit dans sa table ; le résumé de l'utilisateur n'en est que le reflet.
+            MobileMoneyPayoutAccountEntity account = new MobileMoneyPayoutAccountEntity(saved.getId(), "ORANGE_SEN", "SN",
+                    "XOF", "221770000002", "+221 •••• 02", java.time.Instant.now());
+            account.setMigrated(true);
+            accountRepository.saveAndFlush(account);
+        }
+        return saved;
     }
 
     private UUID persistAnnouncement(UUID travelerId) {

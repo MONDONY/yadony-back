@@ -1,20 +1,18 @@
 package com.yadony.api.payments.supplement;
 
 import com.yadony.api.admin.AdminAlertEscalator;
-import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.disputes.DisputeRepository;
 import com.yadony.api.disputes.DisputeTypes;
 import com.yadony.api.payments.PaymentRail;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.hold.PayoutHoldPolicy;
-import com.yadony.api.payments.mobilemoney.MobileMoneyNetworks;
+import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutAccounts;
 import com.yadony.api.payments.pawapay.PawapayClient;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayOperationService;
 import com.yadony.api.payments.pawapay.PawapayOperationStatus;
-import com.yadony.api.payments.pawapay.PawapayProviders;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
 import org.slf4j.Logger;
@@ -31,7 +29,9 @@ import java.util.UUID;
  * CONFIRMATION du versement principal du colis ({@code PaymentReleasedEvent} mobile money, publié
  * par {@code MobileMoneyPayoutOutcomeListener} sur le payout principal {@code COMPLETED}). Même
  * destination que le versement principal : le numéro, l'opérateur et le pays du payout principal
- * abouti ; à défaut, le compte de versement du voyageur, sur le réseau du dépôt du supplément.
+ * abouti ; à défaut, le compte de versement du voyageur du même code pawaPay que le dépôt du
+ * supplément, sinon le compte repris par la migration, dans la devise du supplément
+ * ({@link MobileMoneyPayoutAccounts#destinationFor}, règle du versement principal).
  *
  * <p>Réservation {@code PAID → PAYOUT_PENDING} en transaction courte, payout pawaPay
  * ({@code BID_SUPPLEMENT}, voyageur en {@code user_id}) hors transaction, puis {@code PAID_OUT} à la
@@ -48,6 +48,7 @@ public class BidSupplementMobileMoneyPayouts {
     private final BidSupplementMobileMoneyLedger ledger;
     private final BidSupplementRepository supplements;
     private final UserRepository users;
+    private final MobileMoneyPayoutAccounts accounts;
     private final PaymentRepository payments;
     private final PawapayOperationService operations;
     private final PawapaySubmissionService submission;
@@ -58,7 +59,8 @@ public class BidSupplementMobileMoneyPayouts {
     private final BidSupplementProperties properties;
 
     public BidSupplementMobileMoneyPayouts(BidSupplementMobileMoneyLedger ledger, BidSupplementRepository supplements,
-                                           UserRepository users, PaymentRepository payments,
+                                           UserRepository users, MobileMoneyPayoutAccounts accounts,
+                                           PaymentRepository payments,
                                            PawapayOperationService operations, PawapaySubmissionService submission,
                                            PayoutHoldPolicy holdPolicy, DisputeRepository disputes,
                                            AdminAlertEscalator alerts, PawapayClient client,
@@ -66,6 +68,7 @@ public class BidSupplementMobileMoneyPayouts {
         this.ledger = ledger;
         this.supplements = supplements;
         this.users = users;
+        this.accounts = accounts;
         this.payments = payments;
         this.operations = operations;
         this.submission = submission;
@@ -163,7 +166,14 @@ public class BidSupplementMobileMoneyPayouts {
                     context(id, s.getBidId(), Map.of("deadOperations", dead)));
             return Optional.empty();
         }
-        Destination destination = destination(s.getBidId(), id, s.getTravelerId());
+        Optional<Destination> found = destination(s.getBidId(), id, s.getTravelerId(), s.getCurrency());
+        if (found.isEmpty()) {
+            // Aucun compte du code du dépôt ni compte repris dans cette devise : on ne verse jamais
+            // sur un autre réseau, le supplément reste payé.
+            alertBlocked(s, "NO_MOBILE_MONEY_ACCOUNT");
+            return Optional.empty();
+        }
+        Destination destination = found.get();
         String outOfLimits = payoutLimitViolation(destination.provider(), s.getNetAmount());
         if (outOfLimits != null) {
             alerts.raiseOnce("SUPP_MM_PAYOUT_LIMITS_" + id,
@@ -240,8 +250,14 @@ public class BidSupplementMobileMoneyPayouts {
                             "failureCode", String.valueOf(op.getFailureCode()))));
             return false;
         }
-        ledger.auditOnly(id, "BID_SUPPLEMENT_PAYOUT_SUBMITTED", Map.of("operationId", op.getId().toString(),
-                "provider", op.getProvider(), "msisdnMasked", op.getMsisdnMasked()));
+        Map<String, Object> audit = new LinkedHashMap<>();
+        audit.put("operationId", op.getId().toString());
+        audit.put("provider", op.getProvider());
+        audit.put("msisdnMasked", op.getMsisdnMasked());
+        if (destination.accountId() != null) {
+            audit.put("accountId", destination.accountId().toString());
+        }
+        ledger.auditOnly(id, "BID_SUPPLEMENT_PAYOUT_SUBMITTED", audit);
         log.info("Payout mobile money {} soumis pour le supplément {}", op.getId(), id);
         return true;
     }
@@ -254,30 +270,28 @@ public class BidSupplementMobileMoneyPayouts {
         return true;
     }
 
-    record Destination(String msisdn, String provider, String country) {
+    /** {@code accountId} : compte de versement choisi (absent quand on reprend le payout principal). */
+    record Destination(String msisdn, String provider, String country, UUID accountId) {
     }
 
     /**
      * Destination du versement principal abouti du colis (même numéro, même opérateur) ; à défaut,
-     * le compte de versement du voyageur, sur le réseau du dépôt du supplément s'il l'accepte (règle
-     * de {@code MobileMoneyPayoutInitiator}).
+     * le compte de versement du voyageur du même code que le dépôt du supplément, sinon le compte
+     * repris par la migration (son numéro et son propre code), dans la devise du supplément.
      */
-    Destination destination(UUID bidId, UUID supplementId, UUID travelerId) {
+    Optional<Destination> destination(UUID bidId, UUID supplementId, UUID travelerId, String currency) {
         Optional<PawapayOperationEntity> principal = payments.findForBid(bidId)
                 .filter(p -> p.getRail() == PaymentRail.PAWAPAY)
                 .flatMap(p -> operations.findLive(p.getId(), PawapayOperationKind.PAYOUT))
                 .filter(op -> op.getStatus() == PawapayOperationStatus.COMPLETED);
         if (principal.isPresent()) {
             PawapayOperationEntity op = principal.get();
-            return new Destination(op.getMsisdn(), op.getProvider(), op.getCountry());
+            return Optional.of(new Destination(op.getMsisdn(), op.getProvider(), op.getCountry(), null));
         }
-        UserEntity traveler = users.findById(travelerId)
-                .orElseThrow(() -> new IllegalStateException("Voyageur introuvable : " + travelerId));
-        String depositBrand = operations.findLiveForSupplement(supplementId, PawapayOperationKind.DEPOSIT)
-                .map(PawapayOperationEntity::getProvider).map(PawapayProviders::brand).orElse(null);
-        String provider = MobileMoneyNetworks.providerForBrand(traveler, depositBrand)
-                .orElse(traveler.getMobileMoneyProvider());
-        return new Destination(traveler.getMobileMoneyMsisdn(), provider, traveler.getMobileMoneyCountry());
+        String depositProvider = operations.findLiveForSupplement(supplementId, PawapayOperationKind.DEPOSIT)
+                .map(PawapayOperationEntity::getProvider).orElse(null);
+        return accounts.destinationFor(travelerId, depositProvider, currency)
+                .map(d -> new Destination(d.msisdn(), d.provider(), d.country(), d.accountId()));
     }
 
     /** Raison de retenir le versement, ou {@code null} : mêmes gardes que le versement principal. */

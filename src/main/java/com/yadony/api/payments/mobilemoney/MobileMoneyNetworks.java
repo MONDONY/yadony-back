@@ -4,7 +4,6 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.payments.pawapay.PawapayProviders;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -50,13 +49,5 @@ public final class MobileMoneyNetworks {
     public static boolean acceptsBrand(UserEntity traveler, String providerCode) {
         String brand = PawapayProviders.brand(providerCode);
         return brand != null && acceptedBrands(traveler).contains(brand);
-    }
-
-    /** Code accepté de cette marque, s'il existe : c'est lui qui reçoit le versement. */
-    public static Optional<String> providerForBrand(UserEntity traveler, String brand) {
-        if (brand == null) {
-            return Optional.empty();
-        }
-        return acceptedCodes(traveler).stream().filter(c -> brand.equalsIgnoreCase(PawapayProviders.brand(c))).findFirst();
     }
 }

@@ -4,15 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.yadony.api.admin.AdminAlertEscalator;
-import com.yadony.api.auth.MobileMoneyPayoutStatus;
-import com.yadony.api.auth.UserEntity;
-import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.PaymentEntity;
@@ -23,6 +21,7 @@ import com.yadony.api.payments.pawapay.PawapayOperationService;
 import com.yadony.api.payments.pawapay.PawapayOperationStatus;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -31,7 +30,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -41,7 +39,7 @@ import org.springframework.transaction.TransactionDefinition;
 @ExtendWith(MockitoExtension.class)
 class MobileMoneyPayoutInitiatorTest {
 
-    @Mock UserRepository userRepository;
+    @Mock MobileMoneyPayoutAccountRepository accountRepository;
     @Mock PawapayOperationService operations;
     @Mock PawapaySubmissionService submission;
     @Mock AdminAlertService adminAlert;
@@ -53,32 +51,39 @@ class MobileMoneyPayoutInitiatorTest {
     // que audit.log(...) est bien appelé (voir MobileMoneyBidPaymentServiceTest, même pattern).
     @Mock PlatformTransactionManager transactionManager;
     @Mock com.yadony.api.payments.hold.PayoutHoldPolicy holdPolicy;
-    @InjectMocks MobileMoneyPayoutInitiator initiator;
 
+    private MobileMoneyPayoutInitiator initiator;
     private PaymentEntity payment;
-    private UserEntity traveler;
+    private final UUID travelerId = UUID.randomUUID();
     private final UUID bidId = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
+        // Le routage du versement est celui, réel, de MobileMoneyPayoutAccounts (sur un dépôt simulé) :
+        // ces tests prouvent le choix du compte, pas seulement l'appel d'un collaborateur.
+        initiator = new MobileMoneyPayoutInitiator(new MobileMoneyPayoutAccounts(accountRepository), operations,
+                submission, adminAlert, alerts, audit, transactionManager, holdPolicy);
         payment = new PaymentEntity();
         ReflectionTestUtils.setField(payment, "id", UUID.randomUUID());
         payment.setRail(PaymentRail.PAWAPAY);
         payment.setAmount(new BigDecimal("16800"));
         payment.setCommissionAmount(new BigDecimal("1800"));
         payment.setCurrency("XOF");
-        traveler = new UserEntity();
-        ReflectionTestUtils.setField(traveler, "id", UUID.randomUUID());
-        traveler.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
-        traveler.setMobileMoneyMsisdn("221771234567");
-        traveler.setMobileMoneyProvider("ORANGE_SEN");
-        traveler.setMobileMoneyCountry("SN");
-        // release() vérifie la devise du compte (parité avec acceptBid) : sans cette ligne, les
-        // autres tests de cette classe échoueraient tous sur ce garde-fou.
-        traveler.setMobileMoneyCurrency("XOF");
-        // lenient : orphanAlertType_fitsInAdminAlertsTypeColumn n'appelle jamais release(), donc
-        // jamais ce stub — Mockito STRICT_STUBS le signalerait sinon en UnnecessaryStubbing.
-        org.mockito.Mockito.lenient().when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+    }
+
+    private MobileMoneyPayoutAccountEntity account(String provider, String country, String currency, String msisdn,
+                                                   boolean migrated) {
+        MobileMoneyPayoutAccountEntity a = new MobileMoneyPayoutAccountEntity(travelerId, provider, country, currency,
+                msisdn, "masked", Instant.parse("2026-03-04T10:11:12Z"));
+        a.setMigrated(migrated);
+        ReflectionTestUtils.setField(a, "id", UUID.randomUUID());
+        return a;
+    }
+
+    /** lenient : certains tests s'arrêtent avant la lecture des comptes (gel, litige). */
+    private void givenAccounts(MobileMoneyPayoutAccountEntity... live) {
+        lenient().when(accountRepository.findByUserIdAndDeletedAtIsNullOrderByCreatedAtAsc(travelerId))
+                .thenReturn(List.of(live));
     }
 
     private PawapayOperationEntity payout(PawapayOperationStatus status) {
@@ -95,30 +100,96 @@ class MobileMoneyPayoutInitiatorTest {
         return o;
     }
 
+    private void givenDeposit(String provider) {
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit(provider)));
+    }
+
     @Test
     void release_submitsNetToTravelerAccount_andAudits() {
+        MobileMoneyPayoutAccountEntity sen = account("ORANGE_SEN", "SN", "XOF", "221771234567", false);
+        givenAccounts(sen);
+        givenDeposit("ORANGE_SEN");
         when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
         PawapayOperationEntity accepted = payout(PawapayOperationStatus.ACCEPTED);
         when(submission.submitPayout(payment.getId(), "221771234567", "ORANGE_SEN", "SN", new BigDecimal("15000"), "XOF", "bid-" + bidId))
                 .thenReturn(accepted);
 
-        PawapayOperationEntity op = initiator.release(payment, bidId, traveler.getId(), new BigDecimal("15000"), "delivery");
+        PawapayOperationEntity op = initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "delivery");
 
         assertThat(op).isSameAs(accepted);
         // Jamais de mutation de l'entité gérée après le claim de l'appelant : le statut en
         // mémoire reste celui du POJO d'entrée (PENDING par défaut), release() n'y touche pas.
         assertThat(payment.getStatus()).isEqualTo(com.yadony.api.payments.PaymentStatus.PENDING);
-        verify(audit).log(eq("PAYMENT"), eq(payment.getId()), eq("ESCROW_RELEASED_MOBILE_MONEY"), eq(bidId), any());
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(audit).log(eq("PAYMENT"), eq(payment.getId()), eq("ESCROW_RELEASED_MOBILE_MONEY"), eq(bidId), payload.capture());
+        assertThat(payload.getValue()).containsEntry("provider", "ORANGE_SEN")
+                .containsEntry("accountId", sen.getId().toString())
+                .containsEntry("msisdnMasked", accepted.getMsisdnMasked());
+        assertThat(payload.getValue().values()).as("le numéro n'apparaît jamais en clair dans l'audit")
+                .noneMatch(v -> String.valueOf(v).contains("221771234567"));
+    }
+
+    /** Review Focus 2 : même marque, deux pays. Le dépôt SEN est versé sur le compte sénégalais. */
+    @Test
+    void release_depositOrangeSen_paysOutOnTheSenegaleseAccount_notTheIvorianOne() {
+        givenAccounts(account("ORANGE_CIV", "CI", "XOF", "2250700000001", false),
+                account("ORANGE_SEN", "SN", "XOF", "221771234567", false));
+        givenDeposit("ORANGE_SEN");
+        when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
+        when(submission.submitPayout(payment.getId(), "221771234567", "ORANGE_SEN", "SN", new BigDecimal("15000"), "XOF", "bid-" + bidId))
+                .thenReturn(payout(PawapayOperationStatus.ACCEPTED));
+
+        initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "delivery");
+
+        verify(submission).submitPayout(payment.getId(), "221771234567", "ORANGE_SEN", "SN", new BigDecimal("15000"), "XOF", "bid-" + bidId);
+    }
+
+    /**
+     * Review Focus 1 : voyageur hérité (un numéro Orange, « MTN accepté ») et colis MTN payé avant la
+     * bascule. Le seul compte est le compte repris (Orange) : le versement part sur SON numéro et SON
+     * code, jamais sur MTN vers un numéro Orange.
+     */
+    @Test
+    void release_inheritedTravelerWithMtnDeposit_paysOutOnTheMigratedAccountsOwnNumberAndCode() {
+        MobileMoneyPayoutAccountEntity orange = account("ORANGE_CIV", "CI", "XOF", "2250700000001", true);
+        givenAccounts(orange);
+        givenDeposit("MTN_MOMO_CIV");
+        when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
+        when(submission.submitPayout(payment.getId(), "2250700000001", "ORANGE_CIV", "CI", new BigDecimal("15000"), "XOF", "bid-" + bidId))
+                .thenReturn(payout(PawapayOperationStatus.ACCEPTED));
+
+        initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "delivery");
+
+        verify(submission).submitPayout(payment.getId(), "2250700000001", "ORANGE_CIV", "CI", new BigDecimal("15000"), "XOF", "bid-" + bidId);
+        verify(submission, never()).submitPayout(any(), any(), eq("MTN_MOMO_CIV"), any(), any(), any(), any());
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(audit).log(eq("PAYMENT"), eq(payment.getId()), eq("ESCROW_RELEASED_MOBILE_MONEY"), eq(bidId), payload.capture());
+        assertThat(payload.getValue()).containsEntry("provider", "ORANGE_CIV")
+                .containsEntry("accountId", orange.getId().toString());
+    }
+
+    @Test
+    void release_withoutAnyDeposit_usesTheMigratedAccount() {
+        givenAccounts(account("ORANGE_SEN", "SN", "XOF", "221771234567", true));
+        when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
+        when(submission.submitPayout(any(), any(), eq("ORANGE_SEN"), any(), any(), any(), any())).thenReturn(payout(PawapayOperationStatus.ACCEPTED));
+
+        initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "delivery");
+
+        verify(submission).submitPayout(any(), eq("221771234567"), eq("ORANGE_SEN"), eq("SN"), any(), any(), any());
     }
 
     /** L'audit d'un versement accepté part dans SA PROPRE transaction. */
     @Test
     void release_auditOfAcceptedPayout_usesItsOwnTransaction() {
+        givenAccounts(account("ORANGE_SEN", "SN", "XOF", "221771234567", false));
+        givenDeposit("ORANGE_SEN");
         when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
         PawapayOperationEntity accepted = payout(PawapayOperationStatus.ACCEPTED);
         when(submission.submitPayout(any(), any(), any(), any(), any(), any(), any())).thenReturn(accepted);
 
-        initiator.release(payment, bidId, traveler.getId(), new BigDecimal("15000"), "delivery");
+        initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "delivery");
 
         ArgumentCaptor<TransactionDefinition> definition = ArgumentCaptor.forClass(TransactionDefinition.class);
         verify(transactionManager).getTransaction(definition.capture());
@@ -127,33 +198,49 @@ class MobileMoneyPayoutInitiatorTest {
     }
 
     @Test
-    void release_withoutActiveAccount_alertsAndThrows() {
-        traveler.setMobileMoneyStatus(MobileMoneyPayoutStatus.DISABLED);
-        assertThatThrownBy(() -> initiator.release(payment, bidId, traveler.getId(), new BigDecimal("15000"), "delivery"))
+    void release_withoutAnyAccount_alertsAndThrows() {
+        givenAccounts();
+        assertThatThrownBy(() -> initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "delivery"))
+                .isInstanceOf(IllegalStateException.class);
+        verify(adminAlert).raise(eq("PAWAPAY_PAYOUT_NO_ACCOUNT"), any(), any());
+        verify(submission, never()).submitPayout(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    /** Compte dans une autre devise que celle du paiement : traité comme « compte absent ». */
+    @Test
+    void release_currencyMismatch_alertsAndThrows() {
+        givenAccounts(account("ORANGE_SEN", "SN", "GHS", "221771234567", true));
+        givenDeposit("ORANGE_SEN");
+        assertThatThrownBy(() -> initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "delivery"))
                 .isInstanceOf(IllegalStateException.class);
         verify(adminAlert).raise(eq("PAWAPAY_PAYOUT_NO_ACCOUNT"), any(), any());
         verify(submission, never()).submitPayout(any(), any(), any(), any(), any(), any(), any());
     }
 
     /**
-     * Compte actif mais dans une devise différente de celle du paiement : traité comme « compte
-     * absent » — même règle ({@code UserEntity#canReceiveMobileMoney}) qu'à l'acceptation.
+     * Compte d'un autre code que le dépôt, non repris par la migration : aucune destination (jamais
+     * un versement sur un autre réseau), alerte et exception, sans appel pawaPay.
      */
     @Test
-    void release_currencyMismatch_alertsAndThrows() {
-        traveler.setMobileMoneyCurrency("GHS");
-        assertThatThrownBy(() -> initiator.release(payment, bidId, traveler.getId(), new BigDecimal("15000"), "delivery"))
-                .isInstanceOf(IllegalStateException.class);
+    void release_noAccountOfTheDepositCode_andNoMigratedOne_alertsAndThrowsWithoutPawapayCall() {
+        givenAccounts(account("ORANGE_CIV", "CI", "XOF", "2250700000001", false));
+        givenDeposit("ORANGE_SEN");
+        assertThatThrownBy(() -> initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "delivery"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageNotContaining("2250700000001");
         verify(adminAlert).raise(eq("PAWAPAY_PAYOUT_NO_ACCOUNT"), any(), any());
         verify(submission, never()).submitPayout(any(), any(), any(), any(), any(), any(), any());
+        verify(audit, never()).log(any(), any(), any(), any(), any());
     }
 
     @Test
     void release_findsAnOrphanLivePayout_andDoesNotSubmitAgain() {
+        givenAccounts(account("ORANGE_SEN", "SN", "XOF", "221771234567", false));
+        givenDeposit("ORANGE_SEN");
         PawapayOperationEntity live = payout(PawapayOperationStatus.ACCEPTED);
         when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.of(live));
 
-        PawapayOperationEntity op = initiator.release(payment, bidId, traveler.getId(), new BigDecimal("15000"), "delivery");
+        PawapayOperationEntity op = initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "delivery");
 
         assertThat(op).isSameAs(live);
         verify(submission, never()).submitPayout(any(), any(), any(), any(), any(), any(), any());
@@ -169,11 +256,13 @@ class MobileMoneyPayoutInitiatorTest {
      */
     @Test
     void release_orphanAlert_goesThroughDedupedEscalator_onEveryRelance() {
+        givenAccounts(account("ORANGE_SEN", "SN", "XOF", "221771234567", false));
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit("ORANGE_SEN")));
         PawapayOperationEntity live = payout(PawapayOperationStatus.ACCEPTED);
         when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.of(live));
 
-        initiator.release(payment, bidId, traveler.getId(), new BigDecimal("15000"), "delivery");
-        initiator.release(payment, bidId, traveler.getId(), new BigDecimal("15000"), "admin-relance");
+        initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "delivery");
+        initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "admin-relance");
 
         verify(alerts, times(2)).raiseOnce(eq("MM_PAYOUT_ORPHAN_" + payment.getId()), any(), any());
         verify(adminAlert, never()).raise(any(), any(), any());
@@ -188,60 +277,15 @@ class MobileMoneyPayoutInitiatorTest {
 
     @Test
     void release_rejectedByPawapay_alertsAndThrows() {
+        givenAccounts(account("ORANGE_SEN", "SN", "XOF", "221771234567", true));
         when(operations.findLive(any(), any())).thenReturn(Optional.empty());
         PawapayOperationEntity rejected = payout(PawapayOperationStatus.SUBMIT_REJECTED);
         rejected.setFailureCode("INSUFFICIENT_BALANCE");
         when(submission.submitPayout(any(), any(), any(), any(), any(), any(), any())).thenReturn(rejected);
 
-        assertThatThrownBy(() -> initiator.release(payment, bidId, traveler.getId(), new BigDecimal("15000"), "delivery"))
+        assertThatThrownBy(() -> initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "delivery"))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("INSUFFICIENT_BALANCE");
         verify(adminAlert).raise(eq("PAWAPAY_PAYOUT_REJECTED"), any(), any());
         verify(audit, never()).log(any(), any(), any(), any(), any());
-    }
-
-    @Test
-    void release_paysOutOnTheDepositsBrand_whenTheTravelerAcceptsIt() {
-        traveler.setMobileMoneyProviderList(List.of("ORANGE_SEN", "WAVE_SEN"));
-        when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
-        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit("WAVE_CIV")));
-        PawapayOperationEntity accepted = payout(PawapayOperationStatus.ACCEPTED);
-        when(submission.submitPayout(payment.getId(), "221771234567", "WAVE_SEN", "SN", new BigDecimal("15000"), "XOF", "bid-" + bidId))
-                .thenReturn(accepted);
-        assertThat(initiator.release(payment, bidId, traveler.getId(), new BigDecimal("15000"), "delivery")).isSameAs(accepted);
-        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
-        verify(audit).log(eq("PAYMENT"), eq(payment.getId()), eq("ESCROW_RELEASED_MOBILE_MONEY"), eq(bidId), payload.capture());
-        assertThat(payload.getValue()).containsEntry("provider", "WAVE_SEN");
-    }
-
-    @Test
-    void release_fallsBackToTheDefaultProvider_whenTheDepositsBrandIsNotAccepted() {
-        traveler.setMobileMoneyProviderList(List.of("ORANGE_SEN", "WAVE_SEN"));
-        when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
-        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit("MTN_CIV")));
-        when(submission.submitPayout(payment.getId(), "221771234567", "ORANGE_SEN", "SN", new BigDecimal("15000"), "XOF", "bid-" + bidId))
-                .thenReturn(payout(PawapayOperationStatus.ACCEPTED));
-        initiator.release(payment, bidId, traveler.getId(), new BigDecimal("15000"), "delivery");
-        verify(submission).submitPayout(any(), any(), eq("ORANGE_SEN"), any(), any(), any(), any());
-    }
-
-    @Test
-    void release_withoutAnyDeposit_usesTheDefaultProvider() {
-        traveler.setMobileMoneyProviderList(List.of("ORANGE_SEN", "WAVE_SEN"));
-        when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
-        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
-        when(submission.submitPayout(any(), any(), eq("ORANGE_SEN"), any(), any(), any(), any())).thenReturn(payout(PawapayOperationStatus.ACCEPTED));
-        initiator.release(payment, bidId, traveler.getId(), new BigDecimal("15000"), "delivery");
-        verify(submission).submitPayout(any(), any(), eq("ORANGE_SEN"), any(), any(), any(), any());
-    }
-
-    /** Compte activé avant V255 : pas de liste, l'unique opérateur reçoit quoi qu'ait payé l'expéditeur. */
-    @Test
-    void release_legacyTraveler_paysOutOnItsSingleProvider() {
-        traveler.setMobileMoneyProviders(null);
-        when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
-        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit("WAVE_SEN")));
-        when(submission.submitPayout(any(), any(), eq("ORANGE_SEN"), any(), any(), any(), any())).thenReturn(payout(PawapayOperationStatus.ACCEPTED));
-        initiator.release(payment, bidId, traveler.getId(), new BigDecimal("15000"), "delivery");
-        verify(submission).submitPayout(any(), any(), eq("ORANGE_SEN"), any(), any(), any(), any());
     }
 }
