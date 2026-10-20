@@ -1196,7 +1196,8 @@ public class NegotiationService {
 
     // ── Mobile money : dépôt à l'accord ──────────────────────────────────
 
-    public record PreparedDeposit(UUID threadId, UUID paymentId, BigDecimal gross, String currency, LocalDateTime expiresAt) {}
+    public record PreparedDeposit(UUID threadId, UUID paymentId, UUID travelerId, BigDecimal gross, String currency,
+                                  LocalDateTime expiresAt) {}
 
     /**
      * Issue du balayage d'expiration d'un fil AWAITING_DEPOSIT échu : ramené à payer, laissé tel
@@ -1260,7 +1261,7 @@ public class NegotiationService {
             threadId, request.getSenderId(), thread.getTravelerId(), thread.getCurrentPriceEur(), rate, thread.getCurrency(),
             thread.getCommissionGridId(), gridQuote != null ? gridQuote.commission() : null);
         if (alreadyPending) {
-            return new PreparedDeposit(threadId, pending.paymentId(), pending.gross(), thread.getCurrency(), thread.getDepositExpiresAt());
+            return new PreparedDeposit(threadId, pending.paymentId(), thread.getTravelerId(), pending.gross(), thread.getCurrency(), thread.getDepositExpiresAt());
         }
         if (gridQuote != null && !gridQuote.promoEffective()) {
             // Code invalide, ou sans effet (le minimum annule le gain) : effacé du fil, sinon
@@ -1278,7 +1279,7 @@ public class NegotiationService {
                 "currency", thread.getCurrency(), "expiresAt", pending.expiresAt().toString()));
         eventPublisher.publishEvent(new NegotiationDepositPendingEvent(threadId, request.getId(), request.getSenderId(),
             thread.getTravelerId(), pending.gross(), thread.getCurrency(), pending.expiresAt()));
-        return new PreparedDeposit(threadId, pending.paymentId(), pending.gross(), thread.getCurrency(), pending.expiresAt());
+        return new PreparedDeposit(threadId, pending.paymentId(), thread.getTravelerId(), pending.gross(), thread.getCurrency(), pending.expiresAt());
     }
 
     /**

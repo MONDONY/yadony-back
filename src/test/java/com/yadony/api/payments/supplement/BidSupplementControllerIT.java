@@ -1,5 +1,6 @@
 package com.yadony.api.payments.supplement;
 
+import com.yadony.api.payments.pawapay.ValidationHint;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.dto.BidSupplementResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPayerProvidersResponse;
@@ -242,7 +243,7 @@ class BidSupplementControllerIT {
         return new MobileMoneyPaymentStatusResponse(bidId, "ACCEPTED", paymentStatus,
                 java.time.LocalDateTime.parse("2026-10-19T12:00:00"), new BigDecimal("13700"), "XOF",
                 new MobileMoneyPaymentStatusResponse.OperationView(UUID.randomUUID(), "ACCEPTED", "WAVE_SEN", "Wave",
-                        "+221 •••• 01", "https://pay.wave.com/x", null, null));
+                        "+221 •••• 01", "https://pay.wave.com/x", null, null, null, null, ValidationHint.GENERIC));
     }
 
     @Test

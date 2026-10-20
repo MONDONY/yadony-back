@@ -1,5 +1,7 @@
 package com.yadony.api.payments.mobilemoney;
 
+import com.yadony.api.payments.pawapay.PawapayValidationHints;
+import com.yadony.api.common.i18n.TestMessages;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -102,6 +104,10 @@ class MobileMoneyBidPaymentServiceTest {
         return new MobileMoneyBidPricing.Quote(price, false);
     }
 
+    private static MobileMoneyOperationViews views() {
+        return new MobileMoneyOperationViews(TestMessages.resolver(), new PawapayValidationHints(Map.of("ORANGE_CIV", "SMS_LINK")));
+    }
+
     private static PawapayProperties enabledProps() {
         return new PawapayProperties(true, "https://x", "t", false, 30, "https://api.test",
                 "yadony://bids/%s/mobile-money/awaiting",
@@ -113,7 +119,7 @@ class MobileMoneyBidPaymentServiceTest {
     void setUp() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
                 operations, submission, new PawapayProviderResolver(client), pricing, firebaseContact, audit, events,
-                promoService, voucherService, transactionManager, enabledProps());
+                promoService, voucherService, transactionManager, enabledProps(), views());
         traveler = new UserEntity();
         ReflectionTestUtils.setField(traveler, "id", UUID.randomUUID());
         traveler.setFirebaseUid("t-uid");
@@ -423,7 +429,7 @@ class MobileMoneyBidPaymentServiceTest {
     }
 
     @Test
-    void initiateDeposit_submitRejected_is422WithReason() {
+    void initiateDeposit_submitRejected_detailIsTranslated() {
         bid.setStatus(BidStatus.AWAITING_PAYMENT);
         bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
         PaymentEntity payment = pendingPayment();
@@ -433,12 +439,14 @@ class MobileMoneyBidPaymentServiceTest {
         when(client.predictProvider(any())).thenReturn(Optional.of(new PawapayProviderPrediction("SEN", "ORANGE_SEN", "221771234567")));
         when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", OK, OK)));
         PawapayOperationEntity rejected = op(payment.getId(), PawapayOperationStatus.SUBMIT_REJECTED);
+        rejected.setFailureCode("INSUFFICIENT_BALANCE");
         rejected.setFailureMessage("Provider down");
         when(submission.submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(rejected);
 
         assertThatThrownBy(() -> service.initiateDeposit(bid.getId(), sender.getId(), null))
                 .isInstanceOf(YadonyBusinessException.class)
-                .hasMessageContaining("Provider down")
+                .hasMessage("Solde insuffisant sur votre compte mobile money.")
+                .hasMessageNotContaining("Provider down")
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-deposit-rejected");
     }
 
@@ -540,7 +548,7 @@ class MobileMoneyBidPaymentServiceTest {
     void acceptBid_railDisabled_is422_beforeAnyRepositoryAccess() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
                 operations, submission, new PawapayProviderResolver(client), pricing, firebaseContact, audit, events,
-                promoService, voucherService, transactionManager, disabledProps());
+                promoService, voucherService, transactionManager, disabledProps(), views());
 
         assertThatThrownBy(() -> service.acceptBid(bid.getId(), traveler.getId()))
                 .isInstanceOf(YadonyBusinessException.class)
@@ -564,7 +572,7 @@ class MobileMoneyBidPaymentServiceTest {
     void initiateDeposit_railDisabled_blocksOnlyANewSubmission() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
                 operations, submission, new PawapayProviderResolver(client), pricing, firebaseContact, audit, events,
-                promoService, voucherService, transactionManager, disabledProps());
+                promoService, voucherService, transactionManager, disabledProps(), views());
         bid.setStatus(BidStatus.AWAITING_PAYMENT);
         bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
         PaymentEntity payment = pendingPayment();
@@ -588,7 +596,7 @@ class MobileMoneyBidPaymentServiceTest {
     void initiateDeposit_railDisabled_stillReturnsAnAlreadyLiveDeposit() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
                 operations, submission, new PawapayProviderResolver(client), pricing, firebaseContact, audit, events,
-                promoService, voucherService, transactionManager, disabledProps());
+                promoService, voucherService, transactionManager, disabledProps(), views());
         bid.setStatus(BidStatus.AWAITING_PAYMENT);
         bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
         PaymentEntity payment = pendingPayment();
@@ -687,7 +695,7 @@ class MobileMoneyBidPaymentServiceTest {
         return new MobileMoneyBidPaymentService(bidRepository, announcementRepository,
                 userRepository, paymentRepository, operations, submission, new PawapayProviderResolver(client),
                 new MobileMoneyBidPricing(gridItems, rates, gridService), firebaseContact, audit, events,
-                promoService, voucherService, transactionManager, enabledProps());
+                promoService, voucherService, transactionManager, enabledProps(), views());
     }
 
     /**
@@ -1232,7 +1240,7 @@ class MobileMoneyBidPaymentServiceTest {
     void providersForPayer_railDisabled_is422_afterTheGates() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
                 operations, submission, new PawapayProviderResolver(client), pricing, firebaseContact, audit, events,
-                promoService, voucherService, transactionManager, disabledProps());
+                promoService, voucherService, transactionManager, disabledProps(), views());
         awaitingPayment();
 
         assertThatThrownBy(() -> service.providersForPayer(bid.getId(), sender.getId(), null))

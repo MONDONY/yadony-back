@@ -25,6 +25,7 @@ import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.events.MobileMoneyDepositFailedEvent;
 import com.yadony.api.payments.events.MobileMoneyPaymentConfirmedEvent;
 import com.yadony.api.payments.events.MobileMoneyPaymentExpiredEvent;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyAcceptedOperatorsResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPayerProvidersResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
@@ -106,6 +107,7 @@ public class MobileMoneyBidPaymentService {
     private final PromoService promoService;
     private final CommissionVoucherService voucherService;
     private final PawapayProperties props;
+    private final MobileMoneyOperationViews views;
 
     /**
      * Transaction INDÉPENDANTE, réservée à l'entrée d'audit d'un dépôt refusé —
@@ -127,6 +129,14 @@ public class MobileMoneyBidPaymentService {
     @Autowired(required = false)
     private AdminAlertService adminAlert;
 
+    /**
+     * Catalogue des opérateurs acceptés par le voyageur. Injecté par champ (comme
+     * {@link #adminAlert}) pour ne pas alourdir le constructeur, dont dépendent les tests unitaires
+     * de l'acceptation et de l'initiation, qui n'en ont pas besoin.
+     */
+    @Autowired
+    private MobileMoneyAcceptedOperatorsService acceptedOperators;
+
     public MobileMoneyBidPaymentService(BidRepository bidRepository, AnnouncementRepository announcementRepository,
                                         UserRepository userRepository, PaymentRepository paymentRepository,
                                         PawapayOperationService operations, PawapaySubmissionService submission,
@@ -134,7 +144,8 @@ public class MobileMoneyBidPaymentService {
                                         FirebaseContactService firebaseContact, AuditService audit,
                                         ApplicationEventPublisher events,
                                         PromoService promoService, CommissionVoucherService voucherService,
-                                        PlatformTransactionManager transactionManager, PawapayProperties props) {
+                                        PlatformTransactionManager transactionManager, PawapayProperties props,
+                                        MobileMoneyOperationViews views) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -149,6 +160,7 @@ public class MobileMoneyBidPaymentService {
         this.promoService = promoService;
         this.voucherService = voucherService;
         this.props = props;
+        this.views = views;
         this.independentAuditTransaction = new TransactionTemplate(transactionManager);
         this.independentAuditTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -322,11 +334,7 @@ public class MobileMoneyBidPaymentService {
         // comme pour le nouveau (choisi) : le catalogue payeur ne filtre que l'affichage.
         UserEntity traveler = travelerOf(bid);
         if (!MobileMoneyNetworks.acceptsBrand(traveler, resolved.provider())) {
-            List<String> acceptedLabels = MobileMoneyNetworks.acceptedLabels(traveler);
-            throw payerUnsupported(acceptedLabels.isEmpty()
-                    ? "Ce voyageur n'accepte aucun réseau mobile money pour le moment."
-                    : "Ce voyageur n'accepte pas " + resolved.providerLabel() + ". Réseaux acceptés : "
-                            + String.join(", ", acceptedLabels) + ".");
+            throw payerUnsupported(MobileMoneyNetworks.notAcceptedDetail(traveler, resolved.providerLabel()));
         }
         PawapayProviderConfig.Limits deposit = resolved.config().deposit();
         if (deposit.minAmount() != null && payment.getAmount().compareTo(deposit.minAmount()) < 0
@@ -359,8 +367,7 @@ public class MobileMoneyBidPaymentService {
                         "msisdnMasked", op.getMsisdnMasked(), "status", op.getStatus().name())));
         if (op.getStatus() == PawapayOperationStatus.SUBMIT_REJECTED) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-deposit-rejected",
-                    "Deposit Rejected", "Paiement refusé par l'opérateur : "
-                    + (op.getFailureMessage() != null ? op.getFailureMessage() : op.getFailureCode()));
+                    "Deposit Rejected", views.rejectedDetail(op));
         }
         return status(bid, null, Optional.of(payment), Optional.of(op));
     }
@@ -435,6 +442,30 @@ public class MobileMoneyBidPaymentService {
             case COUNTRY_UNKNOWN -> "Pays non reconnu pour ce numéro.";
             case PROVIDER_NOT_AVAILABLE -> "Réseau " + e.providerLabel() + " indisponible pour ce numéro.";
         };
+    }
+
+    // ── Opérateurs acceptés par le voyageur ─────────────────────────────────
+
+    /**
+     * Opérateurs avec lesquels l'expéditeur peut payer ce colis, sans numéro payeur. Aucune garde sur
+     * le statut du paiement : sert aussi au supplément d'un colis déjà payé. Devise du paiement
+     * pawaPay s'il existe, sinon celle de l'annonce. Liste vide = aucun réseau commun (200).
+     */
+    @Transactional(readOnly = true)
+    public MobileMoneyAcceptedOperatorsResponse acceptedOperators(UUID bidId, UUID senderId) {
+        BidEntity bid = bidRepository.findById(bidId).orElseThrow(() -> notFound("bid-not-found", "Demande introuvable"));
+        if (!bid.getSenderId().equals(senderId)) {
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden", "Vous n'êtes pas l'expéditeur de ce colis");
+        }
+        AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
+                .orElseThrow(() -> notFound("announcement-not-found", "Annonce introuvable"));
+        String currency = paymentRepository.findByBidId(bidId)
+                .filter(p -> p.getRail() == PaymentRail.PAWAPAY)
+                .map(PaymentEntity::getCurrency)
+                .orElse(announcement.getCurrency());
+        UserEntity traveler = userRepository.findById(announcement.getTravelerId())
+                .orElseThrow(() -> notFound("user-not-found", "Voyageur introuvable"));
+        return acceptedOperators.forTraveler(traveler, currency);
     }
 
     // ── Catalogue du payeur ─────────────────────────────────────────────────
@@ -832,9 +863,7 @@ public class MobileMoneyBidPaymentService {
     private MobileMoneyPaymentStatusResponse status(BidEntity bid, AnnouncementEntity announcement,
                                                     Optional<PaymentEntity> payment,
                                                     Optional<PawapayOperationEntity> deposit) {
-        MobileMoneyPaymentStatusResponse.OperationView view = deposit.map(o -> new MobileMoneyPaymentStatusResponse.OperationView(
-                o.getId(), o.getStatus().name(), o.getProvider(), PawapayProviders.label(o.getProvider()), o.getMsisdnMasked(),
-                o.getAuthorizationUrl(), o.getFailureCode(), o.getFailureMessage())).orElse(null);
+        MobileMoneyPaymentStatusResponse.OperationView view = deposit.map(views::view).orElse(null);
         return new MobileMoneyPaymentStatusResponse(bid.getId(), bid.getStatus().name(),
                 payment.map(p -> p.getStatus().name()).orElse(null), bid.getAwaitingPaymentExpiresAt(),
                 payment.map(PaymentEntity::getAmount).orElse(null),

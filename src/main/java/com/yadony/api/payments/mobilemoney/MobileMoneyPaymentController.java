@@ -2,6 +2,7 @@ package com.yadony.api.payments.mobilemoney;
 
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyAcceptedOperatorsResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyInitiateRequest;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPayerProvidersResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
@@ -54,6 +55,13 @@ public class MobileMoneyPaymentController {
     public MobileMoneyPayerProvidersResponse providers(@AuthenticationPrincipal String firebaseUid, @PathVariable UUID bidId,
                                                        @RequestBody(required = false) MobileMoneyProvidersRequest body) {
         return service.providersForPayer(bidId, callerId(firebaseUid), body == null ? null : body.phoneNumber());
+    }
+
+    /** Opérateurs que le voyageur accepte, dans la devise du colis : l'expéditeur choisit son réseau avant de payer. */
+    @GetMapping("/{bidId}/mobile-money/accepted-operators")
+    @PreAuthorize("hasRole('SENDER')")
+    public MobileMoneyAcceptedOperatorsResponse acceptedOperators(@AuthenticationPrincipal String firebaseUid, @PathVariable UUID bidId) {
+        return service.acceptedOperators(bidId, callerId(firebaseUid));
     }
 
     @GetMapping("/{bidId}/mobile-money/status")

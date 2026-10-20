@@ -13,6 +13,7 @@ import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.dto.BidSupplementResponse;
 import com.yadony.api.payments.PaymentBusy;
 import com.yadony.api.payments.mobilemoney.MobileMoneyNetworks;
+import com.yadony.api.payments.mobilemoney.MobileMoneyOperationViews;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPayerProvidersResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
@@ -69,12 +70,14 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
     private final PawapayProperties pawapay;
     private final StorageService storage;
     private final BidSupplementWindow window;
+    private final MobileMoneyOperationViews views;
 
     public BidSupplementMobileMoneyRail(BidSupplementMobileMoneyLedger ledger, BidSupplementRepository supplements,
                                         BidRepository bids, AnnouncementRepository announcements, UserRepository users,
                                         PawapayOperationService operations, PawapaySubmissionService submission,
                                         PawapayProviderResolver providers, PawapayProperties pawapay,
-                                        StorageService storage, BidSupplementWindow window) {
+                                        StorageService storage, BidSupplementWindow window,
+                                        MobileMoneyOperationViews views) {
         this.ledger = ledger;
         this.supplements = supplements;
         this.bids = bids;
@@ -86,6 +89,7 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
         this.pawapay = pawapay;
         this.storage = storage;
         this.window = window;
+        this.views = views;
     }
 
     @Override
@@ -158,11 +162,7 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
         }
         // Même couplage que le colis : l'expéditeur paie avec une marque que le voyageur accepte.
         if (!MobileMoneyNetworks.acceptsBrand(traveler, resolved.provider())) {
-            List<String> acceptedLabels = MobileMoneyNetworks.acceptedLabels(traveler);
-            throw payerUnsupported(acceptedLabels.isEmpty()
-                    ? "Ce voyageur n'accepte aucun réseau mobile money pour le moment."
-                    : "Ce voyageur n'accepte pas " + resolved.providerLabel() + ". Réseaux acceptés : "
-                            + String.join(", ", acceptedLabels) + ".");
+            throw payerUnsupported(MobileMoneyNetworks.notAcceptedDetail(traveler, resolved.providerLabel()));
         }
         PawapayProviderConfig.Limits limits = resolved.config().deposit();
         if (limits != null && (limits.minAmount() != null && claim.gross().compareTo(limits.minAmount()) < 0
@@ -195,8 +195,7 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
                 "msisdnMasked", op.getMsisdnMasked(), "operationStatus", op.getStatus().name()));
         if (op.getStatus() == PawapayOperationStatus.SUBMIT_REJECTED) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-deposit-rejected",
-                    "Deposit Rejected", "Paiement refusé par l'opérateur : "
-                    + (op.getFailureMessage() != null ? op.getFailureMessage() : op.getFailureCode()));
+                    "Deposit Rejected", views.rejectedDetail(op));
         }
         log.info("Dépôt mobile money {} soumis pour le supplément {}", op.getId(), supplementId);
         return status(supplementId);
@@ -313,9 +312,7 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
         String bidStatus = bids.findById(s.getBidId()).map(b -> b.getStatus().name()).orElse(null);
         MobileMoneyPaymentStatusResponse.OperationView view = operations
                 .findLatestForSupplement(s.getId(), PawapayOperationKind.DEPOSIT)
-                .map(o -> new MobileMoneyPaymentStatusResponse.OperationView(o.getId(), o.getStatus().name(),
-                        o.getProvider(), PawapayProviders.label(o.getProvider()), o.getMsisdnMasked(),
-                        o.getAuthorizationUrl(), o.getFailureCode(), o.getFailureMessage()))
+                .map(views::view)
                 .orElse(null);
         return new MobileMoneyPaymentStatusResponse(s.getBidId(), bidStatus, paymentStatus(s),
                 s.getExpiresAt(), s.getGrossAmount(), s.getCurrency(), view);

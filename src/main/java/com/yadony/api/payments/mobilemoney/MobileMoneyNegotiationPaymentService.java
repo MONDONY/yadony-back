@@ -23,7 +23,6 @@ import com.yadony.api.payments.pawapay.PawapayOperationService;
 import com.yadony.api.payments.pawapay.PawapayOperationStatus;
 import com.yadony.api.payments.pawapay.PawapayProperties;
 import com.yadony.api.payments.pawapay.PawapayProviderResolver;
-import com.yadony.api.payments.pawapay.PawapayProviders;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import com.yadony.api.payments.pawapay.PawapayText;
 import com.yadony.api.requests.NegotiationMobileMoneyPort;
@@ -76,6 +75,7 @@ public class MobileMoneyNegotiationPaymentService {
     private final AuditService audit;
     private final ApplicationEventPublisher events;
     private final PawapayProperties props;
+    private final MobileMoneyOperationViews views;
     private final TransactionTemplate independentAuditTransaction;
 
     /** Même motif que {@link MobileMoneyBidPaymentService#adminAlert} : optionnel, jamais dans le constructeur. */
@@ -86,7 +86,8 @@ public class MobileMoneyNegotiationPaymentService {
                                                 PawapayOperationService operations, PawapaySubmissionService submission,
                                                 PawapayProviderResolver providers, FirebaseContactService firebaseContact,
                                                 AuditService audit, ApplicationEventPublisher events,
-                                                PlatformTransactionManager transactionManager, PawapayProperties props) {
+                                                PlatformTransactionManager transactionManager, PawapayProperties props,
+                                                MobileMoneyOperationViews views) {
         this.paymentRepository = paymentRepository;
         this.userRepository = userRepository;
         this.operations = operations;
@@ -96,6 +97,7 @@ public class MobileMoneyNegotiationPaymentService {
         this.audit = audit;
         this.events = events;
         this.props = props;
+        this.views = views;
         this.independentAuditTransaction = new TransactionTemplate(transactionManager);
         this.independentAuditTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -189,7 +191,7 @@ public class MobileMoneyNegotiationPaymentService {
 
     @Transactional
     public MobileMoneyNegotiationStatusResponse initiateDeposit(UUID threadId, UUID senderId, String phoneOverride,
-                                                                LocalDateTime deadline) {
+                                                                String provider, UUID travelerId, LocalDateTime deadline) {
         PaymentEntity payment = paymentRepository.findByNegotiationThreadIdForUpdate(threadId)
                 .filter(p -> p.getRail() == PaymentRail.PAWAPAY)
                 .orElseThrow(() -> notFound("mobile-money-payment-not-found", "Aucun paiement mobile money pour cette négociation"));
@@ -211,7 +213,7 @@ public class MobileMoneyNegotiationPaymentService {
         String msisdn = resolvePayerMsisdn(senderId, phoneOverride, payment.getCurrency());
         PawapayProviderResolver.Resolved resolved;
         try {
-            resolved = providers.resolve(msisdn, PawapayOperationKind.DEPOSIT, payment.getCurrency(),
+            resolved = providers.resolve(msisdn, PawapayOperationKind.DEPOSIT, payment.getCurrency(), provider,
                     "l'initiation du deposit pour la négociation " + threadId);
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
             throw payerUnsupported(switch (e.reason()) {
@@ -221,6 +223,14 @@ public class MobileMoneyNegotiationPaymentService {
                 case COUNTRY_UNKNOWN -> "Pays non reconnu pour ce numéro.";
                 case PROVIDER_NOT_AVAILABLE -> "Réseau " + e.providerLabel() + " indisponible pour ce numéro.";
             });
+        }
+        // Couplage (décision produit), comme pour le colis : l'expéditeur ne paie qu'avec une marque
+        // acceptée par le voyageur du fil. Vérifié pour l'ancien client (prédit) comme pour le
+        // nouveau (choisi).
+        UserEntity traveler = userRepository.findById(travelerId)
+                .orElseThrow(() -> notFound("user-not-found", "Voyageur introuvable"));
+        if (!MobileMoneyNetworks.acceptsBrand(traveler, resolved.provider())) {
+            throw payerUnsupported(MobileMoneyNetworks.notAcceptedDetail(traveler, resolved.providerLabel()));
         }
         var limits = resolved.config().deposit();
         if (limits.minAmount() != null && payment.getAmount().compareTo(limits.minAmount()) < 0
@@ -241,8 +251,7 @@ public class MobileMoneyNegotiationPaymentService {
                         "msisdnMasked", op.getMsisdnMasked(), "status", op.getStatus().name())));
         if (op.getStatus() == PawapayOperationStatus.SUBMIT_REJECTED) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-deposit-rejected",
-                    "Deposit Rejected", "Paiement refusé par l'opérateur : "
-                    + (op.getFailureMessage() != null ? op.getFailureMessage() : op.getFailureCode()));
+                    "Deposit Rejected", views.rejectedDetail(op));
         }
         return status(threadId, deadline, Optional.of(payment), Optional.of(op));
     }
@@ -287,9 +296,7 @@ public class MobileMoneyNegotiationPaymentService {
 
     private MobileMoneyNegotiationStatusResponse status(UUID threadId, LocalDateTime deadline, Optional<PaymentEntity> payment,
                                                         Optional<PawapayOperationEntity> deposit) {
-        var view = deposit.map(o -> new MobileMoneyPaymentStatusResponse.OperationView(
-                o.getId(), o.getStatus().name(), o.getProvider(), PawapayProviders.label(o.getProvider()),
-                o.getMsisdnMasked(), o.getAuthorizationUrl(), o.getFailureCode(), o.getFailureMessage())).orElse(null);
+        var view = deposit.map(views::view).orElse(null);
         return new MobileMoneyNegotiationStatusResponse(threadId, payment.map(p -> p.getStatus().name()).orElse(null), deadline,
                 payment.map(PaymentEntity::getAmount).orElse(null), payment.map(PaymentEntity::getCurrency).orElse(null), view);
     }
