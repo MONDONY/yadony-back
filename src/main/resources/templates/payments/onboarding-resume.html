@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="fr" th:lang="${lang}" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <!-- L'adresse de la reprise porte un jeton : il ne part vers aucun autre site. -->
+  <meta name="referrer" content="no-referrer">
+  <title th:text="${title} + ' - Yadony'">Yadony</title>
+  <!-- Polices, couleurs et composants communs : fragments/public-page.html. -->
+  <th:block th:replace="~{fragments/public-page :: head}"></th:block>
+  <style>
+    .page { min-height: 70vh; align-content: center; }
+    .badge {
+      width: 56px; height: 56px; border-radius: 50%;
+      display: grid; place-items: center;
+      background: var(--blue-soft); color: var(--blue);
+      font-size: 26px; font-weight: 800; line-height: 1;
+    }
+    .badge.ok { background: var(--success-soft); color: var(--success); }
+  </style>
+</head>
+<body>
+<main class="page">
+  <div th:replace="~{fragments/public-page :: brand}"></div>
+
+  <section class="hero">
+    <span class="badge" th:classappend="${state == 'done' or state == 'complete'} ? 'ok'" aria-hidden="true"
+          th:text="${state == 'done' or state == 'complete'} ? '✓' : '!'">✓</span>
+    <h1 th:text="${title}">Informations envoyées</h1>
+    <p th:text="${body}">Stripe vérifie vos informations. Vous pouvez revenir dans l'application Yadony.</p>
+  </section>
+
+  <div class="actions">
+    <a class="btn btn-primary" th:href="${appUrl}" href="https://yadony.com" rel="noopener" th:text="${cta}">Ouvrir Yadony</a>
+  </div>
+</main>
+</body>
+</html>

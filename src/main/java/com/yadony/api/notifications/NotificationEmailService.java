@@ -9,6 +9,7 @@ import com.yadony.api.emailotp.ResendEmailService;
 import com.yadony.api.notifications.NotificationEmailPolicy.Kind;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Service;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -45,6 +47,7 @@ public class NotificationEmailService {
     private final NotificationPrefsService prefsService;
     private final ResendEmailService emailService;
     private final MessagesResolver messagesResolver;
+    private final Map<String, NotificationEmailLink> links;
     private final Clock clock;
     private final Cache<String, AtomicInteger> sentToday =
             Caffeine.newBuilder().maximumSize(200_000).expireAfterWrite(Duration.ofHours(26)).build();
@@ -55,21 +58,33 @@ public class NotificationEmailService {
                                     FirebaseContactService firebaseContactService,
                                     NotificationPrefsService prefsService,
                                     ResendEmailService emailService,
-                                    MessagesResolver messagesResolver) {
+                                    MessagesResolver messagesResolver,
+                                    ObjectProvider<NotificationEmailLink> emailLinks) {
         this(enabled, userRepository, firebaseContactService, prefsService, emailService,
-                messagesResolver, Clock.systemUTC());
+                messagesResolver, emailLinks.orderedStream().toList(), Clock.systemUTC());
     }
 
     NotificationEmailService(boolean enabled, UserRepository userRepository,
                              FirebaseContactService firebaseContactService,
                              NotificationPrefsService prefsService, ResendEmailService emailService,
                              MessagesResolver messagesResolver, Clock clock) {
+        this(enabled, userRepository, firebaseContactService, prefsService, emailService,
+                messagesResolver, List.of(), clock);
+    }
+
+    NotificationEmailService(boolean enabled, UserRepository userRepository,
+                             FirebaseContactService firebaseContactService,
+                             NotificationPrefsService prefsService, ResendEmailService emailService,
+                             MessagesResolver messagesResolver, List<NotificationEmailLink> emailLinks,
+                             Clock clock) {
         this.enabled = enabled;
         this.userRepository = userRepository;
         this.firebaseContactService = firebaseContactService;
         this.prefsService = prefsService;
         this.emailService = emailService;
         this.messagesResolver = messagesResolver;
+        this.links = emailLinks.stream()
+                .collect(java.util.stream.Collectors.toUnmodifiableMap(NotificationEmailLink::type, l -> l));
         this.clock = clock;
     }
 
@@ -97,10 +112,33 @@ public class NotificationEmailService {
             if (target.isEmpty() || !withinDailyCap(userId, target.get().kind())) {
                 return;
             }
-            emailService.sendNotification(target.get().email(), target.get().kind(), type,
-                    title, body, messagesResolver.forUser(userId));
+            Optional<NotificationEmailLink.Cta> cta = ctaFor(userId, type);
+            if (cta.isPresent()) {
+                emailService.sendNotification(target.get().email(), target.get().kind(), type,
+                        title, body, cta.get(), messagesResolver.forUser(userId));
+            } else {
+                emailService.sendNotification(target.get().email(), target.get().kind(), type,
+                        title, body, messagesResolver.forUser(userId));
+            }
         } catch (RuntimeException e) {
             log.warn("[Mail] E-mail {} non envoyé à {} : {}", type, userId, e.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * Bouton propre au type, s'il en a un. Un lien qui échoue retombe sur le bouton par
+     * défaut : le push est déjà remplacé, l'e-mail doit partir quoi qu'il arrive.
+     */
+    private Optional<NotificationEmailLink.Cta> ctaFor(UUID userId, String type) {
+        NotificationEmailLink link = links.get(type);
+        if (link == null) {
+            return Optional.empty();
+        }
+        try {
+            return link.ctaFor(userId);
+        } catch (RuntimeException e) {
+            log.warn("[Mail] Lien propre de {} indisponible : {}", type, e.getClass().getSimpleName());
+            return Optional.empty();
         }
     }
 
