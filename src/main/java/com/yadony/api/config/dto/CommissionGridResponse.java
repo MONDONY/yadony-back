@@ -20,13 +20,19 @@ import java.util.UUID;
  * <p>Les deux clés sont toujours présentes, même à {@code null} : {@code default-property-inclusion:
  * NON_NULL} les omettrait, et un client qui lit {@code json['current']} doit pouvoir distinguer « pas de
  * grille » d'une réponse mal formée.
+ *
+ * <p>{@code legacyRate} est le taux que le back applique à un objet SANS grille (bid, fil ou demande d'avant les
+ * paliers, {@code commission_grid_id} NULL) : {@code commission_rate} de {@code platform_settings}, la même source
+ * que {@code CommissionRateResolver.globalRate()}. Distinct de la 1re tranche que sert
+ * {@code /config/commission-rate} sous grille. Toujours rempli, grille ou non.
  */
 @JsonInclude(JsonInclude.Include.ALWAYS)
-public record CommissionGridResponse(GridView current, GridView next) {
+public record CommissionGridResponse(GridView current, GridView next, BigDecimal legacyRate) {
 
-    public static CommissionGridResponse of(Optional<CommissionGrid> current, Optional<CommissionGrid> next) {
+    public static CommissionGridResponse of(Optional<CommissionGrid> current, Optional<CommissionGrid> next,
+                                            BigDecimal legacyRate) {
         return new CommissionGridResponse(current.map(GridView::from).orElse(null),
-                next.map(GridView::from).orElse(null));
+                next.map(GridView::from).orElse(null), legacyRate);
     }
 
     /**
