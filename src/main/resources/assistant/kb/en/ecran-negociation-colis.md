@@ -7,7 +7,7 @@ screens:
 questions:
   - How do I negotiate the price of a shipment?
   - How do I pay for my shipment?
-  - How do I pay the commission in cash?
+  - How do I pay the service fee in cash?
 routes:
   - path: /negotiations
     label: Price discussions

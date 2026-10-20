@@ -7,9 +7,9 @@ screens:
 questions:
   - Comment négocier le prix d'un envoi ?
   - Comment accepter une offre ?
-  - Comment payer la commission en espèces ?
+  - Comment régler les frais de service en espèces ?
 routes:
   - path: /negotiations
     label: Discussions de prix
 ---
-Vous êtes dans une discussion de prix sur une demande de colis, entre l'expéditeur et un voyageur. Quand c'est votre tour, touchez « Accepter » (le montant y figure), « Contre-offre » ou « Rejeter » ; « Relancer » rappelle l'autre personne quand c'est possible. Après accord, le bas de l'écran montre l'étape suivante : le voyageur choisit « Lier un trajet à cette offre » ou « Créer un trajet dédié », l'expéditeur touche « Compléter & payer », et en espèces le voyageur touche « Régler la commission ». Le menu ⋯ propose « Mettre fin à la négociation ».
+Vous êtes dans une discussion de prix sur une demande de colis, entre l'expéditeur et un voyageur. Quand c'est votre tour, touchez « Accepter » (le montant y figure), « Contre-offre » ou « Rejeter » ; « Relancer » rappelle l'autre personne quand c'est possible. Après accord, le bas de l'écran montre l'étape suivante : le voyageur choisit « Lier un trajet à cette offre » ou « Créer un trajet dédié », l'expéditeur touche « Compléter & payer », et en espèces le voyageur touche « Régler les frais de service ». Le menu ⋯ propose « Mettre fin à la négociation ».
