@@ -47,6 +47,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -107,6 +108,7 @@ public class MobileMoneyBidPaymentService {
     private final PromoService promoService;
     private final CommissionVoucherService voucherService;
     private final PawapayProperties props;
+    private final MobileMoneyPayoutAccounts payoutAccounts;
     private final MobileMoneyOperationViews views;
 
     /**
@@ -145,7 +147,7 @@ public class MobileMoneyBidPaymentService {
                                         ApplicationEventPublisher events,
                                         PromoService promoService, CommissionVoucherService voucherService,
                                         PlatformTransactionManager transactionManager, PawapayProperties props,
-                                        MobileMoneyOperationViews views) {
+                                        MobileMoneyPayoutAccounts payoutAccounts, MobileMoneyOperationViews views) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -160,6 +162,7 @@ public class MobileMoneyBidPaymentService {
         this.promoService = promoService;
         this.voucherService = voucherService;
         this.props = props;
+        this.payoutAccounts = payoutAccounts;
         this.views = views;
         this.independentAuditTransaction = new TransactionTemplate(transactionManager);
         this.independentAuditTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -213,7 +216,9 @@ public class MobileMoneyBidPaymentService {
         if (!traveler.canReceiveMobileMoney(announcement.getCurrency())) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-currency-mismatch",
                     "Mobile Money Currency Mismatch",
-                    "Votre compte de versement est en " + traveler.getMobileMoneyCurrency()
+                    (traveler.getMobileMoneyCurrencyList().size() > 1
+                            ? "Vos comptes de versement sont en " : "Votre compte de versement est en ")
+                            + String.join(", ", traveler.getMobileMoneyCurrencyList())
                             + ", ce trajet est en " + announcement.getCurrency() + ".");
         }
         if (AnnouncementStatus.OUT_OF_MARKET.contains(announcement.getStatus())) {
@@ -329,13 +334,15 @@ public class MobileMoneyBidPaymentService {
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
             throw payerUnsupported(payerReason(e, payment.getCurrency()));
         }
-        // Couplage (décision produit) : l'expéditeur ne paie qu'avec une marque acceptée par le
-        // voyageur, qui sera versé sur ce même réseau. Vérifié ici pour l'ancien client (prédit)
-        // comme pour le nouveau (choisi) : le catalogue payeur ne filtre que l'affichage.
+        // Couplage (décision produit) : l'expéditeur ne paie que sur un opérateur (code exact, pays
+        // compris) où le voyageur a un compte de versement dans la devise du colis : il sera versé
+        // sur ce même réseau. Vérifié ici pour l'ancien client (prédit) comme pour le nouveau
+        // (choisi) : le catalogue payeur ne filtre que l'affichage.
         UserEntity traveler = travelerOf(bid);
-        if (!MobileMoneyNetworks.acceptsBrand(traveler, resolved.provider())) {
-            throw payerUnsupported(MobileMoneyNetworks.notAcceptedDetail(traveler, resolved.providerLabel()));
-        }
+        payoutAccounts.payerRefusal(traveler.getId(), resolved.provider(), resolved.providerLabel(),
+                resolved.countryAlpha2(), payment.getCurrency()).ifPresent(detail -> {
+            throw payerUnsupported(detail);
+        });
         PawapayProviderConfig.Limits deposit = resolved.config().deposit();
         if (deposit.minAmount() != null && payment.getAmount().compareTo(deposit.minAmount()) < 0
                 || deposit.maxAmount() != null && payment.getAmount().compareTo(deposit.maxAmount()) > 0) {
@@ -384,9 +391,9 @@ public class MobileMoneyBidPaymentService {
         // Le compte mobile money vérifié de l'expéditeur passe avant le numéro pré-rempli à la
         // demande : ce dernier est souvent le téléphone du compte, étranger, et pawaPay le refuse
         // (Sentry FLUTTER-DE). Un numéro saisi sur l'écran de paiement reste prioritaire.
-        String accountMsisdn = sender.map(u -> u.mobileMoneyPayerMsisdn(currency)).orElse(null);
-        if (accountMsisdn != null) {
-            return accountMsisdn;
+        Optional<String> accountMsisdn = payoutAccounts.payerMsisdnIn(bid.getSenderId(), currency);
+        if (accountMsisdn.isPresent()) {
+            return accountMsisdn.get();
         }
         if (bid.getMobileMoneyPhone() != null) {
             return bid.getMobileMoneyPhone();
@@ -472,8 +479,8 @@ public class MobileMoneyBidPaymentService {
 
     /**
      * Réseaux avec lesquels l'expéditeur peut payer : catalogue DEPOSIT de son numéro (fourni, sinon
-     * son compte mobile money actif dans la devise, sinon celui du bid, sinon Firebase), dans la devise du colis, restreint aux marques acceptées par
-     * le voyageur. Lecture seule : le numéro examiné n'est pas écrit sur le bid, seule l'initiation
+     * son compte mobile money actif dans la devise, sinon celui du bid, sinon Firebase), dans la devise du colis, restreint aux opérateurs (code exact) où
+     * le voyageur a un compte de versement dans cette devise. Lecture seule : le numéro examiné n'est pas écrit sur le bid, seule l'initiation
      * le fait. Liste vide = aucun réseau commun (200, l'app l'explique).
      */
     @Transactional(readOnly = true)
@@ -495,16 +502,17 @@ public class MobileMoneyBidPaymentService {
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
             throw payerUnsupported(payerReason(e, payment.getCurrency()));
         }
-        Set<String> accepted = MobileMoneyNetworks.acceptedBrands(traveler);
+        Set<String> accepted = payoutAccounts.acceptedCodes(traveler.getId(), payment.getCurrency());
         List<MobileMoneyProvidersResponse.ProviderOption> options = catalogue.options().stream()
-                .filter(o -> accepted.contains(PawapayProviders.brand(o.provider())))
+                .filter(o -> accepted.contains(o.provider().toUpperCase(Locale.ROOT)))
                 .map(o -> new MobileMoneyProvidersResponse.ProviderOption(o.provider(), PawapayProviders.label(o.provider()),
                         o.provider().equalsIgnoreCase(catalogue.detected())))
                 .toList();
         String detected = options.stream().filter(MobileMoneyProvidersResponse.ProviderOption::detected)
                 .map(MobileMoneyProvidersResponse.ProviderOption::code).findFirst().orElse(null);
         return new MobileMoneyPayerProvidersResponse(catalogue.countryAlpha2(), catalogue.currency(), Msisdn.mask(catalogue.msisdn()),
-                detected, options, MobileMoneyNetworks.acceptedLabels(traveler), traveler.getFirstName());
+                detected, options, payoutAccounts.acceptedLabels(traveler.getId(), payment.getCurrency()),
+                traveler.getFirstName());
     }
 
     // ── Séquestre ───────────────────────────────────────────────────────────

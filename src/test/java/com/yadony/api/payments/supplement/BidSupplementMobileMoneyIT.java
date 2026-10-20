@@ -18,6 +18,9 @@ import com.yadony.api.payments.PaymentRail;
 import com.yadony.api.payments.PaymentStatus;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.events.PaymentReleasedEvent;
+import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutAccountEntity;
+import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutAccountRepository;
+import com.yadony.api.payments.mobilemoney.PayoutAccountFixtures;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
 import com.yadony.api.payments.pawapay.PawapayClient;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
@@ -65,6 +68,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -83,7 +87,9 @@ import static org.mockito.Mockito.when;
 class BidSupplementMobileMoneyIT {
 
     private static final String PAYER = "221770000001";
+    /** Numéro figé dans le payout principal : périmé, il ne doit JAMAIS servir au supplément. */
     private static final String PRINCIPAL_PAYEE = "221770000099";
+    private static final String ACCOUNT_MSISDN = "221770000002";
 
     private static EmbeddedPostgres postgres;
 
@@ -120,6 +126,7 @@ class BidSupplementMobileMoneyIT {
     @Autowired PawapayOperationRepository operationRepository;
     @Autowired ApplicationEventPublisher publisher;
     @Autowired UserRepository userRepository;
+    @Autowired MobileMoneyPayoutAccountRepository accountRepository;
     @Autowired EntityManager entityManager;
     @Autowired TransactionTemplate tx;
     @Autowired JdbcTemplate jdbc;
@@ -218,7 +225,7 @@ class BidSupplementMobileMoneyIT {
     }
 
     @Test
-    void versementApresLePayoutPrincipal_versLaMemeDestination_puisVerse() throws Exception {
+    void versementApresLePayoutPrincipal_versLeCompteDuCodeDuDepot_puisVerse() throws Exception {
         Parties p = parties();
         UUID supplementId = payDeposit(p);
         UUID paymentId = persistReleasedPrincipal(p.bidId);
@@ -228,9 +235,12 @@ class BidSupplementMobileMoneyIT {
                 p.traveler.getId(), p.sender.getId(), new BigDecimal("50000"), "XOF", true)));
 
         awaitStatus(supplementId, "PAYOUT_PENDING");
+        // Le statut passe à PAYOUT_PENDING (réservation) AVANT l'appel pawaPay, fait de façon asynchrone :
+        // sans attente, la vérification précédait parfois l'appel sous charge.
         ArgumentCaptor<PawapayPayoutRequest> payout = ArgumentCaptor.forClass(PawapayPayoutRequest.class);
-        verify(client, times(1)).initiatePayout(payout.capture());
-        assertThat(payout.getValue().phoneNumber()).isEqualTo(PRINCIPAL_PAYEE);
+        verify(client, timeout(10_000).times(1)).initiatePayout(payout.capture());
+        // Le compte du code du dépôt du supplément (celui que le verrou protège), pas le numéro figé du principal.
+        assertThat(payout.getValue().phoneNumber()).isEqualTo(ACCOUNT_MSISDN).isNotEqualTo(PRINCIPAL_PAYEE);
         assertThat(payout.getValue().amount()).isEqualByComparingTo("13000");
         UUID payoutId = payout.getValue().payoutId();
         Map<String, Object> row = jdbc.queryForMap("SELECT purpose, payment_id, user_id FROM pawapay_operations "
@@ -378,13 +388,22 @@ class BidSupplementMobileMoneyIT {
         if (traveler) {
             user.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
             user.setMobileMoneyCurrency("XOF");
-            user.setMobileMoneyMsisdn("221770000002");
+            user.setMobileMoneyCurrencyList(java.util.List.of("XOF"));
+            user.setMobileMoneyMsisdn(ACCOUNT_MSISDN);
             user.setMobileMoneyMsisdnMasked("+221 •••• 02");
             user.setMobileMoneyProvider("ORANGE_SEN");
             user.setMobileMoneyProviderList(List.of("ORANGE_SEN"));
             user.setMobileMoneyCountry("SN");
         }
-        return userRepository.saveAndFlush(user);
+        UserEntity saved = userRepository.saveAndFlush(user);
+        if (traveler) {
+            // Le compte de versement vit dans sa table ; le résumé de l'utilisateur n'en est que le reflet.
+            MobileMoneyPayoutAccountEntity account = new MobileMoneyPayoutAccountEntity(saved.getId(), "ORANGE_SEN", "SN",
+                    "XOF", ACCOUNT_MSISDN, "+221 •••• 02", java.time.Instant.now());
+            PayoutAccountFixtures.setMigrated(account, true);
+            accountRepository.saveAndFlush(account);
+        }
+        return saved;
     }
 
     private UUID persistAnnouncement(UUID travelerId) {

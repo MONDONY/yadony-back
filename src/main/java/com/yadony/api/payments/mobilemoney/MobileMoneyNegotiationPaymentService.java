@@ -75,6 +75,7 @@ public class MobileMoneyNegotiationPaymentService {
     private final AuditService audit;
     private final ApplicationEventPublisher events;
     private final PawapayProperties props;
+    private final MobileMoneyPayoutAccounts payoutAccounts;
     private final MobileMoneyOperationViews views;
     private final TransactionTemplate independentAuditTransaction;
 
@@ -87,6 +88,7 @@ public class MobileMoneyNegotiationPaymentService {
                                                 PawapayProviderResolver providers, FirebaseContactService firebaseContact,
                                                 AuditService audit, ApplicationEventPublisher events,
                                                 PlatformTransactionManager transactionManager, PawapayProperties props,
+                                                MobileMoneyPayoutAccounts payoutAccounts,
                                                 MobileMoneyOperationViews views) {
         this.paymentRepository = paymentRepository;
         this.userRepository = userRepository;
@@ -97,6 +99,7 @@ public class MobileMoneyNegotiationPaymentService {
         this.audit = audit;
         this.events = events;
         this.props = props;
+        this.payoutAccounts = payoutAccounts;
         this.views = views;
         this.independentAuditTransaction = new TransactionTemplate(transactionManager);
         this.independentAuditTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -224,14 +227,14 @@ public class MobileMoneyNegotiationPaymentService {
                 case PROVIDER_NOT_AVAILABLE -> "Réseau " + e.providerLabel() + " indisponible pour ce numéro.";
             });
         }
-        // Couplage (décision produit), comme pour le colis : l'expéditeur ne paie qu'avec une marque
-        // acceptée par le voyageur du fil. Vérifié pour l'ancien client (prédit) comme pour le
-        // nouveau (choisi).
-        UserEntity traveler = userRepository.findById(travelerId)
-                .orElseThrow(() -> notFound("user-not-found", "Voyageur introuvable"));
-        if (!MobileMoneyNetworks.acceptsBrand(traveler, resolved.provider())) {
-            throw payerUnsupported(MobileMoneyNetworks.notAcceptedDetail(traveler, resolved.providerLabel()));
-        }
+        // Couplage (décision produit), comme pour le colis : l'expéditeur ne paie que sur un opérateur
+        // (code exact) où le voyageur du fil a un compte de versement dans la devise du paiement, sinon
+        // son versement n'aurait nulle part où partir. Vérifié pour l'ancien client (prédit) comme pour
+        // le nouveau (choisi).
+        payoutAccounts.payerRefusal(travelerId, resolved.provider(), resolved.providerLabel(),
+                resolved.countryAlpha2(), payment.getCurrency()).ifPresent(detail -> {
+            throw payerUnsupported(detail);
+        });
         var limits = resolved.config().deposit();
         if (limits.minAmount() != null && payment.getAmount().compareTo(limits.minAmount()) < 0
                 || limits.maxAmount() != null && payment.getAmount().compareTo(limits.maxAmount()) > 0) {
@@ -264,13 +267,13 @@ public class MobileMoneyNegotiationPaymentService {
                 throw payerUnsupported("Numéro de téléphone invalide.");
             }
         }
-        Optional<UserEntity> sender = userRepository.findById(senderId);
-        // Même ordre que MobileMoneyBidPaymentService : compte mobile money vérifié d'abord,
-        // le téléphone du compte est souvent étranger (Sentry FLUTTER-DE).
-        String accountMsisdn = sender.map(u -> u.mobileMoneyPayerMsisdn(currency)).orElse(null);
-        if (accountMsisdn != null) {
-            return accountMsisdn;
+        // Même ordre que MobileMoneyBidPaymentService : compte mobile money vérifié d'abord (celui
+        // de la devise du paiement), le téléphone du compte est souvent étranger (Sentry FLUTTER-DE).
+        Optional<String> accountMsisdn = payoutAccounts.payerMsisdnIn(senderId, currency);
+        if (accountMsisdn.isPresent()) {
+            return accountMsisdn.get();
         }
+        Optional<UserEntity> sender = userRepository.findById(senderId);
         String firebasePhone = sender
                 .map(u -> firebaseContact.getContact(u.getFirebaseUid()).phoneNumber()).orElse(null);
         if (firebasePhone == null || firebasePhone.isBlank()) {

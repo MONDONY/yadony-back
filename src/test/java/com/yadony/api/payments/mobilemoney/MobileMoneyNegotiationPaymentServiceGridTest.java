@@ -68,7 +68,7 @@ class MobileMoneyNegotiationPaymentServiceGridTest {
                 "yadony://negotiations/%s/mobile-money/awaiting", "yadony://payments/wallet",
                 new PawapayProperties.BalanceMin(null, null));
         service = new MobileMoneyNegotiationPaymentService(paymentRepository, userRepository, operations, submission,
-                providers, firebaseContact, audit, events, transactionManager, props, new MobileMoneyOperationViews(TestMessages.resolver(), new PawapayValidationHints(Map.of("ORANGE_CIV", "SMS_LINK"))));
+                providers, firebaseContact, audit, events, transactionManager, props, new InMemoryPayoutAccounts(), new MobileMoneyOperationViews(TestMessages.resolver(), new PawapayValidationHints(Map.of("ORANGE_CIV", "SMS_LINK"))));
     }
 
     private PaymentEntity payment(PaymentStatus status, String amount, String commission) {

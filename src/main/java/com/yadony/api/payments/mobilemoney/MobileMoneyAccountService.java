@@ -4,12 +4,12 @@ import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.MobileMoneyPayoutStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
-import com.yadony.api.common.AuditService;
 import com.yadony.api.common.Msisdn;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.i18n.Messages;
 import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyAccountResponse;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPayoutAccountsResponse.AccountView;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
 import com.yadony.api.payments.pawapay.PawapayErrors;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
@@ -17,10 +17,8 @@ import com.yadony.api.payments.pawapay.PawapayProperties;
 import com.yadony.api.payments.pawapay.PawapayProviderResolver;
 import com.yadony.api.payments.pawapay.PawapayProviders;
 import com.yadony.api.payments.pawapay.dto.PawapayProviderConfig;
-import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -30,15 +28,19 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Compte de versement mobile money : numéro fourni par l'appelant TOUJOURS prioritaire s'il
- * est renseigné (il peut légitimement différer du numéro du compte Firebase — numéro d'un
- * proche, opérateur distinct…), sinon numéro du compte Firebase (déjà vérifié par OTP).
- * Opérateur prédit par pawaPay ; devise du compte = devise de l'opérateur du numéro,
- * indépendante de la devise du portefeuille. La compatibilité avec un colis (peut différer
- * de la devise du compte de versement) est vérifiée au versement, pas ici (voir
- * {@code MobileMoneyBidPaymentService}, {@code canReceiveMobileMoney}). Risque accepté :
- * un numéro fourni n'est pas vérifié par OTP, une session compromise pourrait donc rediriger
- * les versements futurs — voir la javadoc de {@link #activate} pour les garde-fous en place.
+ * Ancien contrat du compte de versement mobile money ({@code /payments/mobile-money/account}), servi
+ * tant que l'app n'est pas à jour, par-dessus la table des comptes de versement (un compte par code
+ * opérateur pawaPay) : toute écriture passe par {@link MobileMoneyPayoutAccountService} (verrou,
+ * validation partagée, audit), et le résumé porté par {@link UserEntity} n'est recalculé que par
+ * {@link MobileMoneyPayoutAccounts#syncSummary}. Ce service n'écrit jamais lui-même les colonnes
+ * {@code users.mobile_money_*}.
+ *
+ * <p>Numéro fourni par l'appelant TOUJOURS prioritaire s'il est renseigné (il peut légitimement
+ * différer du numéro du compte Firebase : numéro d'un proche, opérateur distinct…), sinon numéro du
+ * compte Firebase (déjà vérifié par OTP). Risque accepté : un numéro fourni n'est pas vérifié par
+ * OTP, une session compromise pourrait donc rediriger les versements futurs ; garde-fous : provenance
+ * tracée dans l'audit ({@code source}), numéro jamais rendu qu'en forme masquée, retrait et
+ * changement de numéro verrouillés tant qu'un colis attend son versement.
  */
 @Service
 public class MobileMoneyAccountService {
@@ -48,21 +50,22 @@ public class MobileMoneyAccountService {
     private final UserRepository userRepository;
     private final FirebaseContactService firebaseContact;
     private final PawapayProviderResolver providers;
-    private final AuditService audit;
+    private final MobileMoneyPayoutAccountService payoutAccounts;
     private final PawapayProperties props;
     private final MessagesResolver messagesResolver;
 
     public MobileMoneyAccountService(UserRepository userRepository, FirebaseContactService firebaseContact,
-                                     PawapayProviderResolver providers, AuditService audit, PawapayProperties props,
-                                     MessagesResolver messagesResolver) {
+                                     PawapayProviderResolver providers, MobileMoneyPayoutAccountService payoutAccounts,
+                                     PawapayProperties props, MessagesResolver messagesResolver) {
         this.userRepository = userRepository;
         this.firebaseContact = firebaseContact;
         this.providers = providers;
-        this.audit = audit;
+        this.payoutAccounts = payoutAccounts;
         this.props = props;
         this.messagesResolver = messagesResolver;
     }
 
+    /** Résumé porté par l'utilisateur (compte le plus ancien, tous les codes). */
     @Transactional(readOnly = true)
     public MobileMoneyAccountResponse get(UUID userId) {
         return toResponse(userRepository.findById(userId).orElseThrow(() -> notFound(userId)));
@@ -75,75 +78,49 @@ public class MobileMoneyAccountService {
     }
 
     /**
-     * Active le versement mobile money. Le numéro FOURNI par l'appelant est TOUJOURS prioritaire
-     * dès qu'il est renseigné (normalisé par {@link Msisdn#normalize}, 422 {@code mobile-money-invalid-phone}
-     * s'il est invalide), même si le compte Firebase a déjà un téléphone : il peut légitimement
-     * différer. Sans numéro fourni, le téléphone Firebase (vérifié par OTP) ; sans aucun numéro,
-     * 422 {@code mobile-money-phone-required}.
+     * Crée le compte de versement d'UN code, ou remplace son numéro s'il existe déjà
+     * ({@link MobileMoneyPayoutAccountService#upsert}, verrou appliqué : 409
+     * {@code mobile-money-account-locked}). Numéro : fourni (normalisé, 422
+     * {@code mobile-money-invalid-phone} s'il est invalide), sinon téléphone Firebase, sinon 422
+     * {@code mobile-money-phone-required}.
      *
-     * <p>Réseaux : {@code providers} vide ou nul, l'opérateur prédit est seul accepté (ancien
-     * contrat). Sinon chaque code doit figurer dans le catalogue du numéro pour SA devise
-     * (celle de l'opérateur prédit ; devise du compte = devise de l'opérateur du numéro,
-     * indépendante de la devise du portefeuille — la compatibilité avec un colis est vérifiée
-     * au versement, {@code canReceiveMobileMoney}) (422 {@code mobile-money-account-unsupported}
-     * nommant le réseau), la liste est enregistrée dans l'ordre du catalogue, et
-     * {@code mobile_money_provider} vaut le détecté s'il est coché, sinon le premier coché.
-     *
-     * <p><b>Risque accepté</b> : un numéro fourni n'est PAS vérifié par OTP, une session compromise
-     * pourrait rediriger les versements futurs. Garde-fous : provenance tracée dans l'audit
-     * ({@code source}), numéro jamais rendu qu'en forme masquée. À renforcer par OTP dès que la
-     * vérification par SMS sera disponible.
+     * <p>Code visé : sans {@code providers}, l'opérateur que pawaPay prédit pour le numéro. Avec
+     * {@code providers}, chaque code doit figurer au catalogue PAYOUT du numéro (422
+     * {@code mobile-money-account-unsupported} nommant le réseau) et seul le code de repli est
+     * visé : le détecté s'il est coché, sinon le premier coché dans l'ordre du catalogue ; les autres
+     * codes cochés ne créent rien (chaque compte a désormais son propre numéro). La réponse résume ce
+     * compte-là.
      */
     @Transactional
     public MobileMoneyAccountResponse activate(UUID userId, String providedPhone, List<String> providers) {
         if (!props.enabled()) {
             throw PawapayErrors.disabled();
         }
-        // Verrou pessimiste : sans lui, deux activations concurrentes pourraient toutes
-        // deux lire l'état initial et écrire deux fois (règle projet #17).
-        UserEntity user = userRepository.findByIdForUpdate(userId).orElseThrow(() -> notFound(userId));
+        UserEntity user = userRepository.findById(userId).orElseThrow(() -> notFound(userId));
         PhoneSource phone = resolvePhone(user, providedPhone, false);
         if ("provided".equals(phone.source())) {
             log.info("Activation mobile money pour {} avec un numéro saisi (peut différer du numéro Firebase)", userId);
         }
-        Messages m = messagesResolver.forRequest();
         List<String> wanted = cleanCodes(providers);
-        if (wanted.isEmpty()) {
-            PawapayProviderResolver.Resolved resolved;
-            try {
-                resolved = this.providers.resolve(phone.phone(), PawapayOperationKind.PAYOUT, null,
-                        "l'activation mobile money de " + userId);
-            } catch (PawapayProviderResolver.UnsupportedNumberException e) {
-                throw unsupported(userId, reasonDetail(m, e));
-            }
-            apply(user, resolved.msisdn(), resolved.countryAlpha2(), resolved.config().currency(),
-                    resolved.provider(), List.of(resolved.provider()));
-        } else {
+        String code = null;
+        if (!wanted.isEmpty()) {
+            Messages m = messagesResolver.forRequest();
+            requireWellFormed(m, userId, wanted);
             PawapayProviderResolver.Catalogue catalogue = catalogueOrUnsupported(userId, phone.phone(), m);
-            List<String> accepted = selectAccepted(m, userId, catalogue, wanted);
-            apply(user, catalogue.msisdn(), catalogue.countryAlpha2(), catalogue.currency(),
-                    fallbackProvider(catalogue, accepted), accepted);
+            code = fallbackProvider(catalogue, selectAccepted(m, userId, catalogue, wanted));
         }
-        userRepository.save(user);
-        // Payload d'audit : masqué + source + réseaux, jamais le numéro en clair.
-        audit.log("USER", userId, "MM_ACCOUNT_ACTIVATED", userId,
-                Map.of("provider", user.getMobileMoneyProvider(), "providers", user.getMobileMoneyProviders(),
-                        "msisdnMasked", user.getMobileMoneyMsisdnMasked(),
-                        "currency", user.getMobileMoneyCurrency(), "source", phone.source()));
-        return toResponse(user);
+        return toResponse(payoutAccounts.upsert(userId, phone.phone(), code, phone.source()));
     }
 
     /**
-     * Désactive le versement. Suppression LOGIQUE uniquement : le numéro et les
-     * métadonnées restent en base pour une réactivation en un geste, seul le statut change.
+     * Retire tous les comptes de versement ({@link MobileMoneyPayoutAccountService#removeAll}, tout
+     * ou rien : 409 {@code mobile-money-account-locked} si l'un est verrouillé). Suppression LOGIQUE ;
+     * le résumé repasse {@code DISABLED}.
      */
     @Transactional
     public MobileMoneyAccountResponse disable(UUID userId) {
-        UserEntity user = userRepository.findByIdForUpdate(userId).orElseThrow(() -> notFound(userId));
-        user.setMobileMoneyStatus(MobileMoneyPayoutStatus.DISABLED);
-        userRepository.save(user);
-        audit.log("USER", userId, "MM_ACCOUNT_DISABLED", userId, Map.of());
-        return toResponse(user);
+        payoutAccounts.removeAll(userId);
+        return toResponse(userRepository.findById(userId).orElseThrow(() -> notFound(userId)));
     }
 
     /**
@@ -162,32 +139,12 @@ public class MobileMoneyAccountService {
     }
 
     /**
-     * Remplace les réseaux acceptés sans ressaisir le numéro. Compte {@code ACTIVE} obligatoire,
-     * liste non vide, chaque code dans le catalogue du numéro enregistré. Le statut ne change pas.
+     * Ancien {@code PUT /account/providers} : les réseaux acceptés n'existent plus (un compte par
+     * code, chacun avec son numéro). 422 {@code mobile-money-update-app}, rien n'est lu ni écrit.
      */
-    @Transactional
-    public MobileMoneyAccountResponse updateProviders(UUID userId, List<String> providers) {
-        if (!props.enabled()) {
-            throw PawapayErrors.disabled();
-        }
-        UserEntity user = userRepository.findByIdForUpdate(userId).orElseThrow(() -> notFound(userId));
-        Messages m = messagesResolver.forRequest();
-        if (user.getMobileMoneyStatus() != MobileMoneyPayoutStatus.ACTIVE
-                || user.getMobileMoneyMsisdn() == null || user.getMobileMoneyMsisdn().isBlank()) {
-            throw unsupported(userId, m.get("problem.mobile-money-account.activate-first"));
-        }
-        List<String> wanted = cleanCodes(providers);
-        if (wanted.isEmpty()) {
-            throw unsupported(userId, m.get("problem.mobile-money-account.choose-network"));
-        }
-        PawapayProviderResolver.Catalogue catalogue = catalogueOrUnsupported(userId, user.getMobileMoneyMsisdn(), m);
-        List<String> accepted = selectAccepted(m, userId, catalogue, wanted);
-        user.setMobileMoneyProviderList(accepted);
-        user.setMobileMoneyProvider(fallbackProvider(catalogue, accepted));
-        userRepository.save(user);
-        audit.log("USER", userId, "MM_ACCOUNT_PROVIDERS_UPDATED", userId,
-                Map.of("providers", user.getMobileMoneyProviders(), "provider", user.getMobileMoneyProvider()));
-        return toResponse(user);
+    public MobileMoneyAccountResponse updateProviders() {
+        throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-update-app",
+                "Mobile Money Update App", messagesResolver.forRequest().get("problem.mobile-money-account.update-app"));
     }
 
     /** Numéro retenu et sa provenance ({@code provided}, {@code stored}, {@code firebase}) pour l'audit. */
@@ -219,25 +176,12 @@ public class MobileMoneyAccountService {
         return new PhoneSource(firebasePhone, "firebase");
     }
 
-    /** Libellé métier d'un numéro reconnu mais inexploitable pour le versement. */
-    private static String reasonDetail(Messages m, PawapayProviderResolver.UnsupportedNumberException e) {
-        return switch (e.reason()) {
-            case NO_PROVIDER -> m.get("problem.mobile-money-account.no-provider");
-            case OPERATION_CLOSED -> m.get("problem.mobile-money-account.operation-closed", e.providerLabel());
-            // Ne devrait plus se produire à l'activation (aucune devise n'est plus imposée au
-            // résolveur) : gardé pour un appel futur qui en passerait une explicitement.
-            case CURRENCY_MISMATCH -> m.get("problem.mobile-money-account.currency-mismatch", e.providerCurrency());
-            case COUNTRY_UNKNOWN -> m.get("problem.mobile-money.country-unknown");
-            case PROVIDER_NOT_AVAILABLE -> m.get("problem.mobile-money.network-unavailable", e.providerLabel());
-        };
-    }
-
     private PawapayProviderResolver.Catalogue catalogueOrUnsupported(UUID userId, String phone, Messages m) {
         try {
             return providers.catalogue(phone, PawapayOperationKind.PAYOUT, null,
                     "le catalogue mobile money de " + userId);
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
-            throw unsupported(userId, reasonDetail(m, e));
+            throw unsupported(userId, MobileMoneyPayoutAccountService.reasonDetail(m, e));
         }
     }
 
@@ -250,17 +194,22 @@ public class MobileMoneyAccountService {
                 .filter(s -> !s.isEmpty()).distinct().toList();
     }
 
-    /** Vérifie chaque code contre le catalogue et rend les acceptés dans l'ordre du catalogue. */
-    private static List<String> selectAccepted(Messages m, UUID userId, PawapayProviderResolver.Catalogue catalogue,
-                                               List<String> wanted) {
-        // Revue finale, point 3 (Minor 2) : un code mal formé (retour à la ligne, ponctuation...)
-        // ne doit jamais être échoué tel quel dans un detail ou un log. Validé AVANT toute
-        // recherche dans le catalogue, avec un message qui ne le répète jamais.
+    /**
+     * Revue finale, point 3 (Minor 2) : un code mal formé (retour à la ligne, ponctuation...) ne doit
+     * jamais être échoué tel quel dans un detail ou un log. Validé AVANT tout appel pawaPay, avec un
+     * message qui ne le répète jamais.
+     */
+    private static void requireWellFormed(Messages m, UUID userId, List<String> wanted) {
         for (String code : wanted) {
             if (!PawapayProviders.isWellFormed(code)) {
                 throw unsupported(userId, m.get("problem.mobile-money-account.invalid-network-code"));
             }
         }
+    }
+
+    /** Vérifie chaque code contre le catalogue et rend les acceptés dans l'ordre du catalogue. */
+    private static List<String> selectAccepted(Messages m, UUID userId, PawapayProviderResolver.Catalogue catalogue,
+                                               List<String> wanted) {
         List<String> available = catalogue.options().stream().map(PawapayProviderConfig::provider).toList();
         for (String code : wanted) {
             if (!available.contains(code)) {
@@ -275,16 +224,14 @@ public class MobileMoneyAccountService {
         return catalogue.detected() != null && accepted.contains(catalogue.detected()) ? catalogue.detected() : accepted.get(0);
     }
 
-    private static void apply(UserEntity user, String msisdn, String country, String currency,
-                              String fallbackProvider, List<String> accepted) {
-        user.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
-        user.setMobileMoneyMsisdn(msisdn);
-        user.setMobileMoneyMsisdnMasked(Msisdn.mask(msisdn));
-        user.setMobileMoneyProvider(fallbackProvider);
-        user.setMobileMoneyProviderList(accepted);
-        user.setMobileMoneyCountry(country);
-        user.setMobileMoneyCurrency(currency.toUpperCase(Locale.ROOT));
-        user.setMobileMoneyVerifiedAt(Instant.now());
+    /**
+     * Réponse de {@code POST} : le compte visé, seul (son numéro masqué, son code, sa devise). Chaque
+     * code ayant désormais son propre numéro, la liste des réseaux n'en porte qu'un.
+     */
+    private static MobileMoneyAccountResponse toResponse(AccountView a) {
+        return new MobileMoneyAccountResponse(MobileMoneyPayoutStatus.ACTIVE.name(), a.msisdnMasked(), a.provider(),
+                a.providerLabel(), a.country(), a.currency(), a.verifiedAt(),
+                List.of(new MobileMoneyAccountResponse.ProviderView(a.provider(), a.providerLabel())));
     }
 
     static MobileMoneyAccountResponse toResponse(UserEntity u) {

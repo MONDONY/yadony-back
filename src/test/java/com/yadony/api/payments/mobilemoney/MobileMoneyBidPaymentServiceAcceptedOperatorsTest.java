@@ -51,7 +51,7 @@ class MobileMoneyBidPaymentServiceAcceptedOperatorsTest {
         paymentRepository = mock(PaymentRepository.class);
         acceptedOperators = mock(MobileMoneyAcceptedOperatorsService.class);
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
-                null, null, null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null, null, null);
         ReflectionTestUtils.setField(service, "acceptedOperators", acceptedOperators);
 
         traveler = new UserEntity();

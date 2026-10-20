@@ -70,10 +70,20 @@ public class PawapayProviderResolver {
      * Tous les opérateurs utilisables par un numéro pour une opération et une devise : ceux du pays
      * prédit, ouverts à l'opération, dans la devise attendue, l'opérateur prédit en tête. {@code detected}
      * est nul quand l'opérateur prédit n'est pas dans {@code options} (fermé pour l'opération, autre
-     * devise) alors que d'autres réseaux du pays restent possibles.
+     * devise) alors que d'autres réseaux du pays restent possibles. {@code predicted} est l'opérateur
+     * prédit par pawaPay tel quel, même exclu de {@code options} : c'est lui qui dit à quel réseau le
+     * numéro appartient (un compte de versement ne doit jamais être ouvert pour un autre réseau, même
+     * quand le prédit est fermé au versement).
      */
     public record Catalogue(String countryAlpha2, String currency, String msisdn, String detected,
-                            List<PawapayProviderConfig> options) {
+                            List<PawapayProviderConfig> options, String predicted) {
+
+        /** Catalogue dont le prédit est le détecté (doubles de test, appelants historiques). */
+        public Catalogue(String countryAlpha2, String currency, String msisdn, String detected,
+                         List<PawapayProviderConfig> options) {
+            this(countryAlpha2, currency, msisdn, detected, options, detected);
+        }
+
         public Optional<PawapayProviderConfig> option(String provider) {
             if (provider == null) {
                 return Optional.empty();
@@ -172,7 +182,8 @@ public class PawapayProviderResolver {
         if (country == null) {
             throw new UnsupportedNumberException(Reason.COUNTRY_UNKNOWN, prediction.provider(), null);
         }
-        return new Catalogue(country, expected.toUpperCase(Locale.ROOT), msisdn, detected, List.copyOf(options));
+        return new Catalogue(country, expected.toUpperCase(Locale.ROOT), msisdn, detected, List.copyOf(options),
+                prediction.provider());
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────

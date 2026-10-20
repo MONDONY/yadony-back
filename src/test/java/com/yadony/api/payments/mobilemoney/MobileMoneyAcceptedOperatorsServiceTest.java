@@ -27,13 +27,15 @@ class MobileMoneyAcceptedOperatorsServiceTest {
 
     private MobileMoneyCountriesService countries;
     private UserRepository userRepository;
+    private InMemoryPayoutAccounts payoutAccounts;
     private MobileMoneyAcceptedOperatorsService service;
 
     @BeforeEach
     void setUp() {
         countries = mock(MobileMoneyCountriesService.class);
         userRepository = mock(UserRepository.class);
-        service = new MobileMoneyAcceptedOperatorsService(countries, userRepository);
+        payoutAccounts = new InMemoryPayoutAccounts();
+        service = new MobileMoneyAcceptedOperatorsService(countries, userRepository, payoutAccounts);
         when(countries.countries(PawapayOperationKind.DEPOSIT)).thenReturn(new MobileMoneyCountriesResponse(List.of(
                 country("CI", "XOF", op("ORANGE_CIV", "ORANGE"), op("MTN_MOMO_CIV", "MTN"), op("MOOV_CIV", "MOOV")),
                 country("SN", "XOF", op("ORANGE_SEN", "ORANGE")),
@@ -48,49 +50,61 @@ class MobileMoneyAcceptedOperatorsServiceTest {
         return new OperatorOption(code, code, brand, ValidationHint.GENERIC, BigDecimal.ONE, BigDecimal.TEN);
     }
 
-    private static UserEntity traveler(String firstName, String... providers) {
+    /** Voyageur avec un compte de versement par code, tous dans {@code currency}. */
+    private UserEntity traveler(String firstName, String currency, String... providers) {
         UserEntity t = new UserEntity();
+        ReflectionTestUtils.setField(t, "id", UUID.randomUUID());
         t.setFirstName(firstName);
-        t.setMobileMoneyProviderList(List.of(providers));
+        payoutAccounts.give(t.getId(), currency, providers);
         return t;
     }
 
     @Test
-    void forTraveler_keepsAcceptedBrandsInCurrency() {
-        MobileMoneyAcceptedOperatorsResponse r = service.forTraveler(traveler("Aminata", "ORANGE_CIV", "MTN_MOMO_CIV"), "XOF");
+    void forTraveler_keepsTheExactCodesOfTheAccountsInCurrency() {
+        MobileMoneyAcceptedOperatorsResponse r = service.forTraveler(traveler("Aminata", "XOF", "ORANGE_CIV", "MTN_MOMO_CIV"), "XOF");
 
-        // ORANGE_SEN passe (même marque Orange, même devise) ; MTN_MOMO_CMR est en XAF ; MOOV_CIV non accepté.
-        assertThat(r.providers()).containsExactly("ORANGE_CIV", "MTN_MOMO_CIV", "ORANGE_SEN");
+        // Code exact : ORANGE_SEN (même marque, même devise) n'est pas listé ; MOOV_CIV sans compte non plus.
+        assertThat(r.providers()).containsExactly("ORANGE_CIV", "MTN_MOMO_CIV");
         assertThat(r.currency()).isEqualTo("XOF");
     }
 
     @Test
+    void forTraveler_accountOrangeSenOnly_orangeCivIsNotListed() {
+        MobileMoneyAcceptedOperatorsResponse r = service.forTraveler(traveler("Aminata", "XOF", "ORANGE_SEN"), "XOF");
+
+        assertThat(r.providers()).containsExactly("ORANGE_SEN").doesNotContain("ORANGE_CIV");
+    }
+
+    @Test
     void forTraveler_otherCurrency_keepsOnlyThatCurrency() {
-        assertThat(service.forTraveler(traveler("Aminata", "MTN_MOMO_CIV"), "XAF").providers()).containsExactly("MTN_MOMO_CMR");
+        UserEntity t = traveler("Aminata", "XAF", "MTN_MOMO_CMR");
+
+        assertThat(service.forTraveler(t, "XAF").providers()).containsExactly("MTN_MOMO_CMR");
+        // Un compte XAF n'ouvre aucun opérateur d'un trajet en XOF, même de la même marque (MTN_MOMO_CIV).
+        assertThat(service.forTraveler(t, "XOF").providers()).isEmpty();
     }
 
     @Test
     void forTraveler_noneAccepted_returnsEmpty() {
-        MobileMoneyAcceptedOperatorsResponse r = service.forTraveler(traveler("Aminata", "AIRTEL_COG"), "XOF");
+        MobileMoneyAcceptedOperatorsResponse r = service.forTraveler(traveler("Aminata", "XOF", "AIRTEL_COG"), "XOF");
         assertThat(r.providers()).isEmpty();
-        assertThat(service.forTraveler(traveler("Aminata"), "XOF").providers()).isEmpty();
+        assertThat(service.forTraveler(traveler("Aminata", "XOF"), "XOF").providers()).isEmpty();
     }
 
     @Test
     void forTraveler_nullCurrency_returnsEmpty() {
-        assertThat(service.forTraveler(traveler("Aminata", "ORANGE_CIV"), null).providers()).isEmpty();
+        assertThat(service.forTraveler(traveler("Aminata", "XOF", "ORANGE_CIV"), null).providers()).isEmpty();
     }
 
     @Test
     void forTraveler_firstNameExposed() {
-        assertThat(service.forTraveler(traveler("Aminata", "ORANGE_CIV"), "XOF").travelerFirstName()).isEqualTo("Aminata");
+        assertThat(service.forTraveler(traveler("Aminata", "XOF", "ORANGE_CIV"), "XOF").travelerFirstName()).isEqualTo("Aminata");
     }
 
     @Test
     void forTraveler_byId_loadsTheTraveler() {
-        UUID id = UUID.randomUUID();
-        UserEntity t = traveler("Moussa", "MOOV_CIV");
-        ReflectionTestUtils.setField(t, "id", id);
+        UserEntity t = traveler("Moussa", "XOF", "MOOV_CIV");
+        UUID id = t.getId();
         when(userRepository.findById(id)).thenReturn(Optional.of(t));
 
         MobileMoneyAcceptedOperatorsResponse r = service.forTraveler(id, "XOF");
@@ -114,7 +128,7 @@ class MobileMoneyAcceptedOperatorsServiceTest {
         when(countries.countries(PawapayOperationKind.DEPOSIT)).thenThrow(
                 new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "mobile-money-provider-unavailable", "Bad Gateway", "pawaPay"));
 
-        assertThatThrownBy(() -> service.forTraveler(traveler("Aminata", "ORANGE_CIV"), "XOF"))
+        assertThatThrownBy(() -> service.forTraveler(traveler("Aminata", "XOF", "ORANGE_CIV"), "XOF"))
                 .isInstanceOfSatisfying(YadonyBusinessException.class,
                         e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY));
     }

@@ -194,6 +194,8 @@ public class AnnouncementService {
     /** Masquage mutuel des comptes bloqués, cf. {@link BlockVisibility}. */
     private final BlockVisibility blockVisibility;
     private final AnnouncementViewService announcementViewService;
+    /** Réseaux mobile money du voyageur affichés sur la fiche d'un trajet (implémenté dans {@code payments/}). */
+    private final TravelerPayoutNetworksPort travelerPayoutNetworks;
 
     @Value("${yadony.kyc.enforce:true}")
     private boolean enforceKyc;
@@ -220,7 +222,8 @@ public class AnnouncementService {
             NegotiationThreadRepository negotiationThreadRepository,
             NotificationDispatcher notificationDispatcher,
             BlockVisibility blockVisibility,
-            AnnouncementViewService announcementViewService
+            AnnouncementViewService announcementViewService,
+            TravelerPayoutNetworksPort travelerPayoutNetworks
     ) {
         this.announcementRepository = announcementRepository;
         this.bidRepository = bidRepository;
@@ -241,6 +244,7 @@ public class AnnouncementService {
         this.notificationDispatcher = notificationDispatcher;
         this.blockVisibility = blockVisibility;
         this.announcementViewService = announcementViewService;
+        this.travelerPayoutNetworks = travelerPayoutNetworks;
     }
 
     // La clé porte la taille de page en plus du numéro : l'app compte les résultats
@@ -1133,7 +1137,7 @@ public class AnnouncementService {
                 com.yadony.api.payments.currency.AnnouncementPaymentRails.offerable(
                         announcement.getAcceptedPaymentMethods(), announcement.getCurrency(),
                         traveler != null && traveler.hasActiveStripeConnect(),
-                        traveler != null && traveler.hasActiveMobileMoney()),
+                        traveler != null && traveler.canReceiveMobileMoney(announcement.getCurrency())),
                 // Convertis joints juste en dessous (withConvertedPrices).
                 null, null, null,
                 viewerId != null && viewerId.equals(announcement.getTravelerId())
@@ -1143,6 +1147,13 @@ public class AnnouncementService {
         );
         if (viewerId != null && viewerId.equals(announcement.getTravelerId())) {
             detail = detail.withCurrencyEditable(!isCurrencyLocked(id));
+        }
+
+        // Réseaux où le voyageur reçoit en mobile money, seulement quand ce rail est réellement
+        // offert sur le trajet : l'app les affiche pour que le payeur choisisse un réseau accepté.
+        if (detail.availablePaymentMethods().contains(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY)) {
+            detail = detail.withMobileMoneyNetworks(
+                    travelerPayoutNetworks.acceptedNetworks(announcement.getTravelerId(), announcement.getCurrency()));
         }
 
         // Même repère de lecture que le fil (Tâche 10) : équivalents « environ » dans
@@ -1434,7 +1445,7 @@ public class AnnouncementService {
                 com.yadony.api.payments.currency.AnnouncementPaymentRails.offerable(
                         saved.getAcceptedPaymentMethods(), saved.getCurrency(),
                         user.hasActiveStripeConnect(),
-                        user.hasActiveMobileMoney()),
+                        user.canReceiveMobileMoney(saved.getCurrency())),
                 // Retour d'écriture : le lecteur est le propriétaire, qui lit dans la
                 // devise de sa propre annonce — rien à convertir.
                 null, null, null,
@@ -2155,7 +2166,8 @@ public class AnnouncementService {
     private AnnouncementResponse toResponse(AnnouncementEntity entity, CardCounts counts) {
         UserEntity traveler = userRepository.findById(entity.getTravelerId()).orElse(null);
         boolean travelerHasConnect = traveler != null && traveler.hasActiveStripeConnect();
-        boolean travelerHasMobileMoney = traveler != null && traveler.hasActiveMobileMoney();
+        // Compte de versement dans la devise du trajet : un compte XOF ne reçoit pas un trajet XAF.
+        boolean travelerHasMobileMoney = traveler != null && traveler.canReceiveMobileMoney(entity.getCurrency());
         // Le choix explicite du voyageur borne aussi : un trajet déclaré « espèces
         // uniquement » n'annonçait pas moins la carte dès que le compte Connect était actif,
         // et l'expéditeur se heurtait à card-not-accepted au moment de la demande.

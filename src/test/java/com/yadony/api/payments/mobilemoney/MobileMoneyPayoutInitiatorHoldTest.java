@@ -1,9 +1,6 @@
 package com.yadony.api.payments.mobilemoney;
 
 import com.yadony.api.admin.AdminAlertEscalator;
-import com.yadony.api.auth.MobileMoneyPayoutStatus;
-import com.yadony.api.auth.UserEntity;
-import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.PaymentEntity;
@@ -24,6 +21,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -46,7 +45,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class MobileMoneyPayoutInitiatorHoldTest {
 
-    @Mock UserRepository userRepository;
+    @Mock MobileMoneyPayoutAccountRepository accountRepository;
     @Mock PawapayOperationService operations;
     @Mock PawapaySubmissionService submission;
     @Mock AdminAlertService adminAlert;
@@ -57,12 +56,12 @@ class MobileMoneyPayoutInitiatorHoldTest {
 
     private MobileMoneyPayoutInitiator initiator;
     private PaymentEntity payment;
-    private UserEntity traveler;
+    private final UUID travelerId = UUID.randomUUID();
     private final UUID bidId = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
-        initiator = new MobileMoneyPayoutInitiator(userRepository, operations, submission, adminAlert, alerts, audit,
+        initiator = new MobileMoneyPayoutInitiator(new MobileMoneyPayoutAccounts(accountRepository), operations, submission, adminAlert, alerts, audit,
                 transactionManager, holdPolicy);
         payment = new PaymentEntity();
         ReflectionTestUtils.setField(payment, "id", UUID.randomUUID());
@@ -70,14 +69,12 @@ class MobileMoneyPayoutInitiatorHoldTest {
         payment.setAmount(new BigDecimal("16800"));
         payment.setCommissionAmount(new BigDecimal("1800"));
         payment.setCurrency("XOF");
-        traveler = new UserEntity();
-        ReflectionTestUtils.setField(traveler, "id", UUID.randomUUID());
-        traveler.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
-        traveler.setMobileMoneyMsisdn("221771234567");
-        traveler.setMobileMoneyProvider("ORANGE_SEN");
-        traveler.setMobileMoneyCountry("SN");
-        traveler.setMobileMoneyCurrency("XOF");
-        lenient().when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+        MobileMoneyPayoutAccountEntity account = new MobileMoneyPayoutAccountEntity(travelerId, "ORANGE_SEN", "SN", "XOF",
+                "221771234567", "masked", Instant.parse("2026-03-04T10:11:12Z"));
+        PayoutAccountFixtures.setMigrated(account, true);
+        ReflectionTestUtils.setField(account, "id", UUID.randomUUID());
+        lenient().when(accountRepository.findByUserIdAndDeletedAtIsNullOrderByCreatedAtAsc(travelerId))
+                .thenReturn(List.of(account));
     }
 
     private PawapayOperationEntity accepted() {
@@ -89,9 +86,9 @@ class MobileMoneyPayoutInitiatorHoldTest {
 
     @Test
     void voyageurGele_sansDerogation_refuseAvantToutAppelPawapay() {
-        when(holdPolicy.isHeld(traveler.getId())).thenReturn(true);
+        when(holdPolicy.isHeld(travelerId)).thenReturn(true);
 
-        assertThatThrownBy(() -> initiator.release(payment, bidId, traveler.getId(), new BigDecimal("15000"), "delivery"))
+        assertThatThrownBy(() -> initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "delivery"))
                 .isInstanceOf(PayoutHeldException.class)
                 .isInstanceOf(IllegalStateException.class);
 
@@ -102,7 +99,7 @@ class MobileMoneyPayoutInitiatorHoldTest {
     void paiementDispute_sansDerogation_refuse() {
         payment.setDisputed(true);
 
-        assertThatThrownBy(() -> initiator.release(payment, bidId, traveler.getId(), new BigDecimal("15000"), "admin-retry", false))
+        assertThatThrownBy(() -> initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "admin-retry", false))
                 .isInstanceOf(PayoutHeldException.class);
 
         verifyNoInteractions(operations, submission);
@@ -110,26 +107,26 @@ class MobileMoneyPayoutInitiatorHoldTest {
 
     @Test
     void voyageurGele_avecDerogationExplicite_verse() {
-        lenient().when(holdPolicy.isHeld(traveler.getId())).thenReturn(true);
+        lenient().when(holdPolicy.isHeld(travelerId)).thenReturn(true);
         payment.setDisputed(true);
         when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
         PawapayOperationEntity op = accepted();
         when(submission.submitPayout(eq(payment.getId()), anyString(), anyString(), anyString(), any(), anyString(), anyString()))
                 .thenReturn(op);
 
-        assertThat(initiator.release(payment, bidId, traveler.getId(), new BigDecimal("15000"), "admin-force-release", true))
+        assertThat(initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "admin-force-release", true))
                 .isSameAs(op);
         verify(holdPolicy, never()).isHeld(any());
     }
 
     @Test
     void voyageurNonGele_verseCommeAvant() {
-        when(holdPolicy.isHeld(traveler.getId())).thenReturn(false);
+        when(holdPolicy.isHeld(travelerId)).thenReturn(false);
         when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
         PawapayOperationEntity op = accepted();
         when(submission.submitPayout(eq(payment.getId()), anyString(), anyString(), anyString(), any(), anyString(), anyString()))
                 .thenReturn(op);
 
-        assertThat(initiator.release(payment, bidId, traveler.getId(), new BigDecimal("15000"), "delivery")).isSameAs(op);
+        assertThat(initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "delivery")).isSameAs(op);
     }
 }

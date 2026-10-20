@@ -12,8 +12,8 @@ import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.dto.BidSupplementResponse;
 import com.yadony.api.payments.PaymentBusy;
-import com.yadony.api.payments.mobilemoney.MobileMoneyNetworks;
 import com.yadony.api.payments.mobilemoney.MobileMoneyOperationViews;
+import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutAccounts;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPayerProvidersResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
@@ -36,6 +36,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -70,6 +71,7 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
     private final PawapayProperties pawapay;
     private final StorageService storage;
     private final BidSupplementWindow window;
+    private final MobileMoneyPayoutAccounts payoutAccounts;
     private final MobileMoneyOperationViews views;
 
     public BidSupplementMobileMoneyRail(BidSupplementMobileMoneyLedger ledger, BidSupplementRepository supplements,
@@ -77,7 +79,7 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
                                         PawapayOperationService operations, PawapaySubmissionService submission,
                                         PawapayProviderResolver providers, PawapayProperties pawapay,
                                         StorageService storage, BidSupplementWindow window,
-                                        MobileMoneyOperationViews views) {
+                                        MobileMoneyPayoutAccounts payoutAccounts, MobileMoneyOperationViews views) {
         this.ledger = ledger;
         this.supplements = supplements;
         this.bids = bids;
@@ -89,6 +91,7 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
         this.pawapay = pawapay;
         this.storage = storage;
         this.window = window;
+        this.payoutAccounts = payoutAccounts;
         this.views = views;
     }
 
@@ -160,10 +163,12 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
             throw payerUnsupported(payerReason(e, claim.currency()));
         }
-        // Même couplage que le colis : l'expéditeur paie avec une marque que le voyageur accepte.
-        if (!MobileMoneyNetworks.acceptsBrand(traveler, resolved.provider())) {
-            throw payerUnsupported(MobileMoneyNetworks.notAcceptedDetail(traveler, resolved.providerLabel()));
-        }
+        // Même couplage que le colis : l'expéditeur paie sur un opérateur (code exact) où le voyageur
+        // a un compte de versement dans la devise du supplément.
+        payoutAccounts.payerRefusal(traveler.getId(), resolved.provider(), resolved.providerLabel(),
+                resolved.countryAlpha2(), claim.currency()).ifPresent(detail -> {
+            throw payerUnsupported(detail);
+        });
         PawapayProviderConfig.Limits limits = resolved.config().deposit();
         if (limits != null && (limits.minAmount() != null && claim.gross().compareTo(limits.minAmount()) < 0
                 || limits.maxAmount() != null && claim.gross().compareTo(limits.maxAmount()) > 0)) {
@@ -214,7 +219,7 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
      * Numéro payeur : saisi sur l'écran de paiement, sinon le compte mobile money vérifié de
      * l'expéditeur dans la devise, sinon le numéro qui a payé le colis.
      */
-    private static String payerMsisdn(UserEntity sender, BidEntity bid, String phoneOverride, String currency) {
+    private String payerMsisdn(UserEntity sender, BidEntity bid, String phoneOverride, String currency) {
         if (phoneOverride != null && !phoneOverride.isBlank()) {
             try {
                 return Msisdn.normalize(phoneOverride);
@@ -222,9 +227,9 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
                 throw payerUnsupported("Numéro de téléphone invalide.");
             }
         }
-        String account = sender.mobileMoneyPayerMsisdn(currency);
-        if (account != null) {
-            return account;
+        Optional<String> account = payoutAccounts.payerMsisdnIn(sender.getId(), currency);
+        if (account.isPresent()) {
+            return account.get();
         }
         if (bid.getMobileMoneyPhone() != null && !bid.getMobileMoneyPhone().isBlank()) {
             return bid.getMobileMoneyPhone();
@@ -270,16 +275,17 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
             throw payerUnsupported(payerReason(e, s.getCurrency()));
         }
-        Set<String> accepted = MobileMoneyNetworks.acceptedBrands(traveler);
+        Set<String> accepted = payoutAccounts.acceptedCodes(traveler.getId(), s.getCurrency());
         List<MobileMoneyProvidersResponse.ProviderOption> options = catalogue.options().stream()
-                .filter(o -> accepted.contains(PawapayProviders.brand(o.provider())))
+                .filter(o -> accepted.contains(o.provider().toUpperCase(Locale.ROOT)))
                 .map(o -> new MobileMoneyProvidersResponse.ProviderOption(o.provider(),
                         PawapayProviders.label(o.provider()), o.provider().equalsIgnoreCase(catalogue.detected())))
                 .toList();
         String detected = options.stream().filter(MobileMoneyProvidersResponse.ProviderOption::detected)
                 .map(MobileMoneyProvidersResponse.ProviderOption::code).findFirst().orElse(null);
         return new MobileMoneyPayerProvidersResponse(catalogue.countryAlpha2(), catalogue.currency(),
-                Msisdn.mask(catalogue.msisdn()), detected, options, MobileMoneyNetworks.acceptedLabels(traveler),
+                Msisdn.mask(catalogue.msisdn()), detected, options,
+                payoutAccounts.acceptedLabels(traveler.getId(), s.getCurrency()),
                 traveler.getFirstName());
     }
 

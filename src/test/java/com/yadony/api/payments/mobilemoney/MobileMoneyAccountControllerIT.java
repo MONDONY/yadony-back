@@ -7,11 +7,13 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyAccountResponse;
 import java.time.Instant;
 import java.util.List;
@@ -22,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -107,11 +110,34 @@ class MobileMoneyAccountControllerIT {
         mockMvc.perform(get("/payments/mobile-money/account")).andExpect(status().is4xxClientError());
     }
 
+    /**
+     * L'app à jour ne l'appelle plus : la route reste servie (ancienne app) mais répond 422
+     * {@code mobile-money-update-app}, corps ignoré ; le message vient du service.
+     */
     @Test
-    void putProviders_passesTheListToService() throws Exception {
-        when(service.updateProviders(USER_ID, List.of("ORANGE_SEN", "WAVE_SEN"))).thenReturn(active());
+    void putProviders_is422UpdateApp_whateverTheBody() throws Exception {
+        when(service.updateProviders()).thenThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                "mobile-money-update-app", "Mobile Money Update App",
+                "Mettez à jour l'application pour gérer vos comptes de versement."));
         mockMvc.perform(put("/payments/mobile-money/account/providers").with(authentication(traveler()))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"providers\":[\"ORANGE_SEN\",\"WAVE_SEN\"]}"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.providers[1].code").value("WAVE_SEN"));
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("mobile-money-update-app"));
+        mockMvc.perform(put("/payments/mobile-money/account/providers").with(authentication(traveler())))
+                .andExpect(status().isUnprocessableEntity());
+    }
+
+    /** Remplacement du numéro d'un compte dont un colis attend son versement : 409 propagé tel quel. */
+    @Test
+    void activate_onALockedAccount_is409Locked() throws Exception {
+        when(service.activate(USER_ID, "+221 77 345 67 89", null)).thenThrow(new YadonyBusinessException(
+                HttpStatus.CONFLICT, "mobile-money-account-locked", "Mobile Money Account Locked",
+                "1 colis attend encore son versement sur ce compte.", java.util.Map.of("pendingPayouts", 1)));
+        mockMvc.perform(post("/payments/mobile-money/account").with(authentication(traveler()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"phoneNumber\":\"+221 77 345 67 89\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("mobile-money-account-locked"))
+                .andExpect(jsonPath("$.pendingPayouts").value(1));
     }
 }

@@ -13,6 +13,6 @@ Par carte, l'argent est sécurisé à l'acceptation et bloqué chez Yadony ; le 
 3. Virement en cours : Stripe a lancé le virement, avec une date d'arrivée prévue.
 4. Arrivé sur votre banque : vous recevez une notification avec le montant.
 Si le virement échoue (compte fermé, IBAN refusé), vous êtes prévenu : mettez à jour votre compte bancaire avec « Changer de compte bancaire ».
-Par mobile money, le versement part sur votre compte mobile money à la livraison confirmée. En espèces, vous êtes payé en main propre à la remise du colis, et seuls les frais de service Yadony passent par l'app.
+Par mobile money, le versement part à la livraison confirmée sur votre compte du même opérateur et du même pays que le paiement. En espèces, vous êtes payé en main propre à la remise du colis, et seuls les frais de service Yadony passent par l'app.
 Un supplément de prix payé par carte ou mobile money est versé en même temps que le paiement du colis.
 En cas de litige, le paiement reste gelé le temps de l'examen par l'équipe Yadony.

@@ -4,7 +4,6 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyAccountResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyActivateRequest;
-import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersUpdateRequest;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -18,7 +17,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Compte de versement mobile money du voyageur. Le numéro fourni dans le corps de
+ * Ancien contrat du compte de versement mobile money du voyageur, servi tant que l'app n'est pas à
+ * jour (le nouveau contrat est {@link MobileMoneyPayoutAccountsController}). Le numéro fourni dans le corps de
  * {@link #activate} est TOUJOURS prioritaire s'il est renseigné, même si le compte Firebase de
  * l'appelant a déjà un téléphone (il peut légitimement différer) ; sans corps, ou avec un corps
  * sans numéro, le téléphone Firebase (déjà vérifié par OTP) est utilisé. Voir la javadoc de
@@ -58,11 +58,14 @@ public class MobileMoneyAccountController {
         return service.disable(callerId(firebaseUid));
     }
 
-    /** Remplace les réseaux acceptés du compte actif, sans ressaisir le numéro. */
+    /**
+     * Ancienne route des réseaux acceptés, retirée : 422 {@code mobile-money-update-app} (corps
+     * ignoré), voir {@link MobileMoneyAccountService#updateProviders}.
+     */
     @PutMapping("/providers")
-    public MobileMoneyAccountResponse updateProviders(@AuthenticationPrincipal String firebaseUid,
-                                                      @RequestBody MobileMoneyProvidersUpdateRequest body) {
-        return service.updateProviders(callerId(firebaseUid), body == null ? null : body.providers());
+    public MobileMoneyAccountResponse updateProviders(@AuthenticationPrincipal String firebaseUid) {
+        callerId(firebaseUid);
+        return service.updateProviders();
     }
 
     // Le principal est l'UID Firebase (String), posé par FirebaseTokenFilter.

@@ -11,6 +11,10 @@ import com.yadony.api.payments.PaymentEntity;
 import com.yadony.api.payments.PaymentRail;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.hold.PayoutHoldPolicy;
+import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutAccountEntity;
+import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutAccountRepository;
+import com.yadony.api.payments.mobilemoney.PayoutAccountFixtures;
+import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutAccounts;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayOperationService;
@@ -19,11 +23,13 @@ import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -50,6 +56,7 @@ class BidSupplementMobileMoneyPayoutsTest {
     @Mock BidSupplementMobileMoneyLedger ledger;
     @Mock BidSupplementRepository supplements;
     @Mock UserRepository users;
+    @Mock MobileMoneyPayoutAccountRepository accountRepository;
     @Mock PaymentRepository payments;
     @Mock PawapayOperationService operations;
     @Mock PawapaySubmissionService submission;
@@ -67,7 +74,8 @@ class BidSupplementMobileMoneyPayoutsTest {
 
     @BeforeEach
     void setUp() {
-        payouts = new BidSupplementMobileMoneyPayouts(ledger, supplements, users, payments, operations, submission,
+        payouts = new BidSupplementMobileMoneyPayouts(ledger, supplements, users,
+                new MobileMoneyPayoutAccounts(accountRepository), payments, operations, submission,
                 holdPolicy, disputes, alerts, client, properties);
         lenient().when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", config("ORANGE_SEN", null, null),
                 "WAVE_SEN", config("WAVE_SEN", null, null)));
@@ -75,10 +83,13 @@ class BidSupplementMobileMoneyPayoutsTest {
         setId(traveler, UUID.randomUUID());
         traveler.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
         traveler.setMobileMoneyCurrency("XOF");
+        traveler.setMobileMoneyCurrencyList(java.util.List.of("XOF"));
         traveler.setMobileMoneyMsisdn("221770000002");
         traveler.setMobileMoneyProvider("ORANGE_SEN");
         traveler.setMobileMoneyProviderList(List.of("ORANGE_SEN", "WAVE_SEN"));
         traveler.setMobileMoneyCountry("SN");
+        givenAccounts(account("ORANGE_SEN", "SN", "221770000002", true),
+                account("WAVE_SEN", "SN", "221770000003", false));
         s = new BidSupplementEntity();
         setId(s, UUID.randomUUID());
         s.setBidId(UUID.randomUUID());
@@ -101,6 +112,19 @@ class BidSupplementMobileMoneyPayoutsTest {
         lenient().when(operations.findLiveForSupplement(s.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
     }
 
+    private MobileMoneyPayoutAccountEntity account(String provider, String country, String msisdn, boolean migrated) {
+        MobileMoneyPayoutAccountEntity a = new MobileMoneyPayoutAccountEntity(traveler.getId(), provider, country, "XOF",
+                msisdn, "masked", Instant.parse("2026-03-04T10:11:12Z"));
+        PayoutAccountFixtures.setMigrated(a, migrated);
+        setId(a, UUID.randomUUID());
+        return a;
+    }
+
+    private void givenAccounts(MobileMoneyPayoutAccountEntity... live) {
+        lenient().when(accountRepository.findByUserIdAndDeletedAtIsNullOrderByCreatedAtAsc(traveler.getId()))
+                .thenReturn(List.of(live));
+    }
+
     private static com.yadony.api.payments.pawapay.dto.PawapayProviderConfig config(String provider, String min,
                                                                                    String max) {
         com.yadony.api.payments.pawapay.dto.PawapayProviderConfig.Limits limits =
@@ -117,15 +141,23 @@ class BidSupplementMobileMoneyPayoutsTest {
         return op;
     }
 
+    /**
+     * Le principal est passé par WAVE (numéro ...099) mais le supplément a été payé en ORANGE : le verrou
+     * protège le compte ORANGE, c'est lui qui reçoit, jamais le numéro figé du principal.
+     */
     @Test
-    void versement_memeDestinationQueLePrincipal_netDuSupplement() {
+    void versement_compteDuCodeDuDepotDuSupplement_pasLeNumeroFigeDuPrincipal() {
         PawapayOperationEntity principalPayout = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.PAYOUT,
                 principal.getId(), null, new BigDecimal("50000"), "XOF", "WAVE_SEN", "SN", "221770000099");
         principalPayout.setStatus(PawapayOperationStatus.COMPLETED);
-        when(operations.findLive(principal.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.of(principalPayout));
+        lenient().when(operations.findLive(principal.getId(), PawapayOperationKind.PAYOUT))
+                .thenReturn(Optional.of(principalPayout));
+        when(operations.findLiveForSupplement(s.getId(), PawapayOperationKind.DEPOSIT))
+                .thenReturn(Optional.of(op(PawapayOperationKind.DEPOSIT, PawapayOperationStatus.COMPLETED,
+                        "221770000001", "ORANGE_SEN")));
         PawapayOperationEntity submitted = op(PawapayOperationKind.PAYOUT, PawapayOperationStatus.ACCEPTED,
-                "221770000099", "WAVE_SEN");
-        when(submission.submitSupplementPayout(s.getId(), traveler.getId(), "221770000099", "WAVE_SEN", "SN",
+                "221770000002", "ORANGE_SEN");
+        when(submission.submitSupplementPayout(s.getId(), traveler.getId(), "221770000002", "ORANGE_SEN", "SN",
                 new BigDecimal("13000"), "XOF", "supp-" + s.getId())).thenReturn(submitted);
 
         assertThat(payouts.payout(s.getId())).isTrue();
@@ -134,19 +166,139 @@ class BidSupplementMobileMoneyPayoutsTest {
         verify(ledger, never()).revertPayout(any(), any());
     }
 
+    private void givenCompletedPrincipalPayout(String provider, String msisdn) {
+        PawapayOperationEntity principalPayout = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.PAYOUT,
+                principal.getId(), null, new BigDecimal("50000"), "XOF", provider, "SN", msisdn);
+        principalPayout.setStatus(PawapayOperationStatus.COMPLETED);
+        when(operations.findLive(principal.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.of(principalPayout));
+    }
+
+    /** Sans dépôt lisible : le compte vivant qui porte encore le code ET le numéro du principal est repris. */
     @Test
-    void versement_sansPayoutPrincipalLisible_compteDuVoyageurSurLeReseauDuDepot() {
-        when(operations.findLive(principal.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
+    void versement_sansDepotLisible_compteQuiPorteEncoreLeCodeEtLeNumeroDuPrincipal() {
+        MobileMoneyPayoutAccountEntity wave = account("WAVE_SEN", "SN", "221770000099", false);
+        givenAccounts(account("ORANGE_SEN", "SN", "221770000002", true), wave);
+        givenCompletedPrincipalPayout("WAVE_SEN", "221770000099");
+        when(submission.submitSupplementPayout(any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(op(PawapayOperationKind.PAYOUT, PawapayOperationStatus.ACCEPTED, "221770000099", "WAVE_SEN"));
+
+        assertThat(payouts.payout(s.getId())).isTrue();
+
+        verify(submission).submitSupplementPayout(s.getId(), traveler.getId(), "221770000099", "WAVE_SEN", "SN",
+                new BigDecimal("13000"), "XOF", "supp-" + s.getId());
+        ArgumentCaptor<Map<String, Object>> audit = ArgumentCaptor.forClass(Map.class);
+        verify(ledger).auditOnly(eq(s.getId()), eq("BID_SUPPLEMENT_PAYOUT_SUBMITTED"), audit.capture());
+        assertThat(audit.getValue()).containsEntry("accountId", wave.getId().toString());
+    }
+
+    /** Le compte du principal a changé de numéro depuis : son ancien numéro n'est jamais réutilisé. */
+    @Test
+    void versement_sansDepotLisible_numeroDuPrincipalChange_pasDeReutilisationDeLAncienNumero() {
+        givenAccounts(account("WAVE_SEN", "SN", "221770000555", false));
+        givenCompletedPrincipalPayout("WAVE_SEN", "221770000099");
+
+        assertThat(payouts.payout(s.getId())).isFalse();
+
+        verify(submission, never()).submitSupplementPayout(any(), any(), eq("221770000099"), any(), any(), any(), any(),
+                any());
+        verify(alerts).raiseOnce(eq("SUPP_PAYOUT_BLOCKED_" + s.getId()), anyString(), anyMap());
+        verify(ledger, never()).beginPayout(any());
+    }
+
+    @Test
+    void destination_toString_neMontrePasLeNumero() {
+        String text = new BidSupplementMobileMoneyPayouts.Destination("221770000002", "ORANGE_SEN", "SN", UUID.randomUUID())
+                .toString();
+        assertThat(text).doesNotContain("221770000002").contains("ORANGE_SEN");
+    }
+
+    @Test
+    void versement_sansPayoutPrincipalLisible_compteDuMemeCodeQueLeDepot() {
         when(operations.findLiveForSupplement(s.getId(), PawapayOperationKind.DEPOSIT))
                 .thenReturn(Optional.of(op(PawapayOperationKind.DEPOSIT, PawapayOperationStatus.COMPLETED,
                         "221770000001", "WAVE_SEN")));
         when(submission.submitSupplementPayout(any(), any(), any(), any(), any(), any(), any(), any()))
-                .thenReturn(op(PawapayOperationKind.PAYOUT, PawapayOperationStatus.ACCEPTED, "221770000002", "WAVE_SEN"));
+                .thenReturn(op(PawapayOperationKind.PAYOUT, PawapayOperationStatus.ACCEPTED, "221770000003", "WAVE_SEN"));
 
         payouts.payout(s.getId());
 
-        verify(submission).submitSupplementPayout(s.getId(), traveler.getId(), "221770000002", "WAVE_SEN", "SN",
+        verify(submission).submitSupplementPayout(s.getId(), traveler.getId(), "221770000003", "WAVE_SEN", "SN",
                 new BigDecimal("13000"), "XOF", "supp-" + s.getId());
+    }
+
+    /** Review Focus 2 : même marque, deux pays. Le dépôt SEN est versé sur le compte sénégalais. */
+    @Test
+    void versement_deuxPaysDeLaMemeMarque_compteDuPaysDuDepot_etAuditAvecAccountId() {
+        MobileMoneyPayoutAccountEntity civ = account("ORANGE_CIV", "CI", "2250700000001", false);
+        MobileMoneyPayoutAccountEntity sen = account("ORANGE_SEN", "SN", "221770000002", false);
+        givenAccounts(civ, sen);
+        when(operations.findLiveForSupplement(s.getId(), PawapayOperationKind.DEPOSIT))
+                .thenReturn(Optional.of(op(PawapayOperationKind.DEPOSIT, PawapayOperationStatus.COMPLETED,
+                        "221770000001", "ORANGE_SEN")));
+        when(submission.submitSupplementPayout(any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(op(PawapayOperationKind.PAYOUT, PawapayOperationStatus.ACCEPTED, "221770000002", "ORANGE_SEN"));
+
+        assertThat(payouts.payout(s.getId())).isTrue();
+
+        verify(submission).submitSupplementPayout(s.getId(), traveler.getId(), "221770000002", "ORANGE_SEN", "SN",
+                new BigDecimal("13000"), "XOF", "supp-" + s.getId());
+        ArgumentCaptor<Map<String, Object>> audit = ArgumentCaptor.forClass(Map.class);
+        verify(ledger).auditOnly(eq(s.getId()), eq("BID_SUPPLEMENT_PAYOUT_SUBMITTED"), audit.capture());
+        assertThat(audit.getValue()).containsEntry("provider", "ORANGE_SEN")
+                .containsEntry("accountId", sen.getId().toString());
+        assertThat(audit.getValue().values()).noneMatch(v -> String.valueOf(v).contains("221770000002"));
+    }
+
+    /**
+     * Review Focus 1 : voyageur hérité, dépôt du supplément sur MTN. Le seul compte est le compte repris
+     * (Orange) : le versement part sur son numéro et son code, jamais sur MTN vers un numéro Orange.
+     */
+    @Test
+    void versement_voyageurHerite_depotAutreReseau_compteRepris_sonNumeroEtSonCode() {
+        MobileMoneyPayoutAccountEntity orange = account("ORANGE_SEN", "SN", "221770000002", true);
+        givenAccounts(orange);
+        when(operations.findLiveForSupplement(s.getId(), PawapayOperationKind.DEPOSIT))
+                .thenReturn(Optional.of(op(PawapayOperationKind.DEPOSIT, PawapayOperationStatus.COMPLETED,
+                        "221770000001", "MTN_MOMO_SEN")));
+        when(submission.submitSupplementPayout(any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(op(PawapayOperationKind.PAYOUT, PawapayOperationStatus.ACCEPTED, "221770000002", "ORANGE_SEN"));
+
+        assertThat(payouts.payout(s.getId())).isTrue();
+
+        verify(submission).submitSupplementPayout(s.getId(), traveler.getId(), "221770000002", "ORANGE_SEN", "SN",
+                new BigDecimal("13000"), "XOF", "supp-" + s.getId());
+        verify(submission, never()).submitSupplementPayout(any(), any(), any(), eq("MTN_MOMO_SEN"), any(), any(), any(),
+                any());
+    }
+
+    /** Aucun compte du code du dépôt ni compte repris : retenu, alerte, aucune réservation ni appel pawaPay. */
+    @Test
+    void versement_aucuneDestination_restePaye_alerte_sansAppelPawapay() {
+        givenAccounts(account("ORANGE_CIV", "CI", "2250700000001", false));
+        when(operations.findLiveForSupplement(s.getId(), PawapayOperationKind.DEPOSIT))
+                .thenReturn(Optional.of(op(PawapayOperationKind.DEPOSIT, PawapayOperationStatus.COMPLETED,
+                        "221770000001", "ORANGE_SEN")));
+
+        assertThat(payouts.payout(s.getId())).isFalse();
+
+        verify(alerts).raiseOnce(eq("SUPP_PAYOUT_BLOCKED_" + s.getId()), anyString(), anyMap());
+        verify(ledger, never()).beginPayout(any());
+        verifyNoInteractions(submission);
+    }
+
+    @Test
+    void reprise_aucuneDestination_retourAPaye_sansAppelPawapay() {
+        s.setStatus(BidSupplementStatus.PAYOUT_PENDING);
+        givenAccounts(account("ORANGE_CIV", "CI", "2250700000001", false));
+        when(ledger.pendingPayout(s.getId())).thenReturn(Optional.of(claim));
+        when(operations.findLiveForSupplement(s.getId(), PawapayOperationKind.DEPOSIT))
+                .thenReturn(Optional.of(op(PawapayOperationKind.DEPOSIT, PawapayOperationStatus.COMPLETED,
+                        "221770000001", "ORANGE_SEN")));
+
+        assertThat(payouts.resume(s.getId())).isFalse();
+
+        verify(ledger).revertPayout(s.getId(), "PAYOUT_GUARD");
+        verifyNoInteractions(submission);
     }
 
     @Test
@@ -161,6 +313,7 @@ class BidSupplementMobileMoneyPayoutsTest {
 
         when(disputes.existsByBidIdAndStatusAndTypeStartingWith(any(), any(), any())).thenReturn(false);
         traveler.setMobileMoneyCurrency("XAF");
+        traveler.setMobileMoneyCurrencyList(java.util.List.of("XAF"));
         assertThat(payouts.payout(s.getId())).isFalse();
 
         verify(alerts, org.mockito.Mockito.times(3)).raiseOnce(eq("SUPP_PAYOUT_BLOCKED_" + s.getId()), anyString(),

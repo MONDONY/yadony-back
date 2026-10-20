@@ -10,6 +10,9 @@ import com.yadony.api.config.YadonyConfigProperties;
 import com.yadony.api.favorites.FavoriteRepository;
 import com.yadony.api.matching.dto.AnnouncementDetailResponse;
 import com.yadony.api.notifications.NotificationDispatcher;
+import com.yadony.api.auth.MobileMoneyPayoutStatus;
+import com.yadony.api.matching.TravelerPayoutNetworksPort.PayoutNetwork;
+import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.currency.ExchangeRateService;
 import com.yadony.api.requests.repository.NegotiationThreadRepository;
@@ -26,7 +29,9 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -34,6 +39,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -61,6 +67,7 @@ class AnnouncementDetailBlockVisibilityTest {
     @Mock private PriceGridService priceGridService;
     @Mock private StorageService storageService;
     @Mock private BlockVisibility blockVisibility;
+    @Mock private TravelerPayoutNetworksPort payoutNetworksPort;
 
     private AnnouncementService announcementService;
 
@@ -82,7 +89,7 @@ class AnnouncementDetailBlockVisibilityTest {
                 mock(PackageRequestRepository.class),
                 mock(NegotiationThreadRepository.class),
                 mock(NotificationDispatcher.class),
-                blockVisibility, mock(AnnouncementViewService.class));
+                blockVisibility, mock(AnnouncementViewService.class), payoutNetworksPort);
     }
 
     private AnnouncementEntity activeAnnouncement() {
@@ -190,5 +197,93 @@ class AnnouncementDetailBlockVisibilityTest {
         AnnouncementDetailResponse result = announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, "uid-owner");
 
         assertThat(result.remainingReschedules()).isEqualTo(1);
+    }
+
+    // ── Réseaux mobile money acceptés ────────────────────────────────────────────────────────
+
+    private UserEntity travelerWithMobileMoney() {
+        UserEntity t = new UserEntity();
+        ReflectionTestUtils.setField(t, "id", TRAVELER_ID);
+        t.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
+        t.setMobileMoneyCurrencyList(List.of("XOF"));
+        return t;
+    }
+
+    private AnnouncementEntity mobileMoneyTrip(String currency) {
+        AnnouncementEntity trip = activeAnnouncement();
+        trip.setCurrency(currency);
+        trip.setAcceptedPaymentMethods(Set.of(PaymentMethod.MOBILE_MONEY));
+        return trip;
+    }
+
+    @Test
+    @DisplayName("voyageur au compte de versement en XAF seulement → pas de mobile money sur son trajet XOF")
+    void mobileMoneyTrip_travelerWithAnAccountInAnotherCurrency_offersNoMobileMoney() {
+        UserEntity traveler = travelerWithMobileMoney();
+        traveler.setMobileMoneyCurrencyList(List.of("XAF"));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(mobileMoneyTrip("XOF")));
+        when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+
+        AnnouncementDetailResponse result = announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, null);
+
+        assertThat(result.availablePaymentMethods()).doesNotContain(PaymentMethod.MOBILE_MONEY);
+    }
+
+    @Test
+    @DisplayName("trajet XOF payable en mobile money → réseaux du voyageur, dans l'ordre d'ajout")
+    void mobileMoneyTrip_listsTheTravelerNetworks() {
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(mobileMoneyTrip("XOF")));
+        when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(travelerWithMobileMoney()));
+        when(payoutNetworksPort.acceptedNetworks(TRAVELER_ID, "XOF")).thenReturn(List.of(
+                new PayoutNetwork("ORANGE_CIV", "Orange Money", "ORANGE", "CI"),
+                new PayoutNetwork("ORANGE_SEN", "Orange Money", "ORANGE", "SN")));
+
+        AnnouncementDetailResponse result = announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, null);
+
+        assertThat(result.availablePaymentMethods()).contains(PaymentMethod.MOBILE_MONEY);
+        assertThat(result.acceptedMobileMoneyNetworks()).containsExactly(
+                new PayoutNetwork("ORANGE_CIV", "Orange Money", "ORANGE", "CI"),
+                new PayoutNetwork("ORANGE_SEN", "Orange Money", "ORANGE", "SN"));
+    }
+
+    @Test
+    @DisplayName("mobile money indisponible (devise EUR) → liste vide, port jamais interrogé")
+    void eurTrip_hasNoNetworks() {
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(mobileMoneyTrip("EUR")));
+        when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(travelerWithMobileMoney()));
+
+        AnnouncementDetailResponse result = announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, null);
+
+        assertThat(result.availablePaymentMethods()).doesNotContain(PaymentMethod.MOBILE_MONEY);
+        assertThat(result.acceptedMobileMoneyNetworks()).isNotNull().isEmpty();
+        verifyNoInteractions(payoutNetworksPort);
+    }
+
+    @Test
+    @DisplayName("voyageur sans compte actif → liste vide, jamais null")
+    void travelerWithoutAccount_hasNoNetworks() {
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(mobileMoneyTrip("XOF")));
+        when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(new UserEntity()));
+
+        AnnouncementDetailResponse result = announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, null);
+
+        assertThat(result.acceptedMobileMoneyNetworks()).isNotNull().isEmpty();
+        verifyNoInteractions(payoutNetworksPort);
+    }
+
+    @Test
+    @DisplayName("les copies withCurrencyEditable et withConvertedPrices gardent les réseaux")
+    void copies_carryTheNetworks() {
+        var networks = List.of(new PayoutNetwork("MTN_MOMO_CMR", "MTN MoMo", "MTN", "CM"));
+        AnnouncementDetailResponse base = new AnnouncementDetailResponse(
+                ANNOUNCEMENT_ID, TRAVELER_ID, "Paris", "Douala", null, null, null, null, null, null, null, null,
+                null, null, null, null, "ACTIVE", 0L, 0L, null, null, List.of(), List.of(), List.of(), null, false,
+                null, null, null, List.of(), null, false, false, null, "XAF", null, false, Set.of(), null, null,
+                null, null, null, null, null, networks);
+
+        assertThat(base.withCurrencyEditable(true).acceptedMobileMoneyNetworks()).isEqualTo(networks);
+        assertThat(base.withConvertedPrices(null, null, "EUR", List.of()).acceptedMobileMoneyNetworks())
+                .isEqualTo(networks);
+        assertThat(base.withMobileMoneyNetworks(List.of()).acceptedMobileMoneyNetworks()).isEmpty();
     }
 }

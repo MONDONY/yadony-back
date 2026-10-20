@@ -4,7 +4,6 @@ import com.yadony.api.payments.mobilemoney.MobileMoneyOperationViews;
 import java.util.Map;
 import com.yadony.api.payments.pawapay.PawapayValidationHints;
 import com.yadony.api.common.i18n.TestMessages;
-import com.yadony.api.auth.MobileMoneyPayoutStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.StorageService;
@@ -14,6 +13,7 @@ import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
+import com.yadony.api.payments.mobilemoney.InMemoryPayoutAccounts;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPayerProvidersResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyPaymentStatusResponse;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
@@ -74,6 +74,7 @@ class BidSupplementMobileMoneyRailTest {
     @Mock PawapayProviderResolver providers;
     @Mock StorageService storage;
 
+    private final InMemoryPayoutAccounts payoutAccounts = new InMemoryPayoutAccounts();
     private UserEntity sender;
     private UserEntity traveler;
     private BidEntity bid;
@@ -82,7 +83,7 @@ class BidSupplementMobileMoneyRailTest {
     private BidSupplementMobileMoneyRail rail(boolean enabled) {
         return new BidSupplementMobileMoneyRail(ledger, supplements, bids, announcements, users, operations, submission,
                 providers, BidSupplementMobileMoneyLedgerTest.pawapay(enabled), storage,
-                new BidSupplementWindow(new BidSupplementProperties(), Clock.fixed(NOW, ZoneOffset.UTC)),
+                new BidSupplementWindow(new BidSupplementProperties(), Clock.fixed(NOW, ZoneOffset.UTC)), payoutAccounts,
                 new MobileMoneyOperationViews(TestMessages.resolver(), new PawapayValidationHints(Map.of())));
     }
 
@@ -91,7 +92,7 @@ class BidSupplementMobileMoneyRailTest {
         sender = user("uid-sender");
         traveler = user("uid-traveler");
         traveler.setFirstName("Awa");
-        traveler.setMobileMoneyProviderList(List.of("ORANGE_SEN", "WAVE_SEN"));
+        payoutAccounts.give(traveler.getId(), "XOF", "ORANGE_SEN", "WAVE_SEN");
         AnnouncementEntity announcement = new AnnouncementEntity();
         setId(announcement, UUID.randomUUID());
         announcement.setTravelerId(traveler.getId());
@@ -210,9 +211,8 @@ class BidSupplementMobileMoneyRailTest {
 
     @Test
     void initiation_compteMobileMoneyDeLExpediteur_prioritaire() {
-        sender.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
-        sender.setMobileMoneyCurrency("XOF");
-        sender.setMobileMoneyMsisdn("221770000777");
+        payoutAccounts.add(sender.getId(), "XAF", "MTN_MOMO_CMR", "237670000777");
+        payoutAccounts.add(sender.getId(), "XOF", "ORANGE_SEN", "221770000777");
         when(operations.findLiveForSupplement(s.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
         when(providers.resolve(eq("221770000777"), any(), any(), any(), anyString()))
                 .thenReturn(resolved("ORANGE_SEN", "PROVIDER_AUTH", null, null));
@@ -266,11 +266,39 @@ class BidSupplementMobileMoneyRailTest {
                 });
         assertCode(() -> rail(true).initiate(bid.getId(), s.getId(), "uid-sender", null, null),
                 "mobile-money-amount-out-of-range");
-        traveler.setMobileMoneyProviderList(List.of());
+        payoutAccounts.give(traveler.getId(), "XOF");
         when(providers.resolve(any(), any(), any(), any(), anyString()))
                 .thenReturn(resolved("ORANGE_SEN", "PROVIDER_AUTH", null, null));
         assertCode(() -> rail(true).initiate(bid.getId(), s.getId(), "uid-sender", null, null),
                 "mobile-money-payer-unsupported");
+        verifyNoInteractions(submission);
+    }
+
+    /** Code exact : le voyageur n'a Orange qu'en Côte d'Ivoire, le payeur sénégalais Orange est refusé. */
+    @Test
+    void initiation_memeMarqueDansUnAutrePays_422_nommantLesDeuxPays() {
+        when(operations.findLiveForSupplement(s.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
+        payoutAccounts.give(traveler.getId(), "XOF", "ORANGE_CIV");
+        when(providers.resolve(any(), any(), any(), any(), anyString()))
+                .thenReturn(resolved("ORANGE_SEN", "PROVIDER_AUTH", null, null));
+
+        assertThatThrownBy(() -> rail(true).initiate(bid.getId(), s.getId(), "uid-sender", null, null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .hasMessage("Ce voyageur n'accepte pas Orange Money (SN). Réseaux acceptés : Orange Money (CI).");
+        verifyNoInteractions(submission);
+    }
+
+    /** Un compte d'une autre devise que celle du supplément ne compte pas. */
+    @Test
+    void initiation_compteDansUneAutreDevise_422_aucunReseau() {
+        when(operations.findLiveForSupplement(s.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
+        payoutAccounts.give(traveler.getId(), "XAF", "ORANGE_SEN");
+        when(providers.resolve(any(), any(), any(), any(), anyString()))
+                .thenReturn(resolved("ORANGE_SEN", "PROVIDER_AUTH", null, null));
+
+        assertThatThrownBy(() -> rail(true).initiate(bid.getId(), s.getId(), "uid-sender", null, null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .hasMessage("Ce voyageur n'accepte aucun réseau mobile money pour le moment.");
         verifyNoInteractions(submission);
     }
 
@@ -411,6 +439,35 @@ class BidSupplementMobileMoneyRailTest {
         assertThat(r.detected()).isEqualTo("ORANGE_SEN");
         assertThat(r.travelerFirstName()).isEqualTo("Awa");
         assertThat(r.msisdnMasked()).doesNotContain("0000001");
+    }
+
+    @Test
+    void catalogue_codeExactSeulement_etLibellesSuffixesQuandLaMarqueEstDansDeuxPays() {
+        payoutAccounts.give(traveler.getId(), "XOF", "ORANGE_CIV", "ORANGE_SEN");
+        PawapayProviderConfig orangeSen = resolved("ORANGE_SEN", "PROVIDER_AUTH", null, null).config();
+        PawapayProviderConfig orangeCiv = resolved("ORANGE_CIV", "PROVIDER_AUTH", null, null).config();
+        PawapayProviderConfig wave = resolved("WAVE_SEN", "PROVIDER_AUTH", null, null).config();
+        when(providers.catalogue(eq(PAYER), eq(PawapayOperationKind.DEPOSIT), eq("XOF"), anyString()))
+                .thenReturn(new PawapayProviderResolver.Catalogue("SN", "XOF", PAYER, "ORANGE_SEN", List.of(orangeSen, orangeCiv, wave)));
+
+        MobileMoneyPayerProvidersResponse r = rail(true).providersForPayer(bid.getId(), s.getId(), "uid-sender", null);
+
+        assertThat(r.providers()).extracting(o -> o.code()).containsExactly("ORANGE_SEN", "ORANGE_CIV");
+        assertThat(r.travelerAccepts()).containsExactly("Orange Money (CI)", "Orange Money (SN)");
+    }
+
+    @Test
+    void catalogue_marqueAcceptee_dansUnAutrePaysSeulement_aucuneOption() {
+        payoutAccounts.give(traveler.getId(), "XOF", "ORANGE_CIV");
+        PawapayProviderConfig orangeSen = resolved("ORANGE_SEN", "PROVIDER_AUTH", null, null).config();
+        when(providers.catalogue(eq(PAYER), eq(PawapayOperationKind.DEPOSIT), eq("XOF"), anyString()))
+                .thenReturn(new PawapayProviderResolver.Catalogue("SN", "XOF", PAYER, "ORANGE_SEN", List.of(orangeSen)));
+
+        MobileMoneyPayerProvidersResponse r = rail(true).providersForPayer(bid.getId(), s.getId(), "uid-sender", null);
+
+        assertThat(r.providers()).isEmpty();
+        assertThat(r.detected()).isNull();
+        assertThat(r.travelerAccepts()).containsExactly("Orange Money");
     }
 
     @Test

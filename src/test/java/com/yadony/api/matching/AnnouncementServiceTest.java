@@ -94,6 +94,7 @@ class AnnouncementServiceTest {
     @Mock private com.yadony.api.notifications.NotificationDispatcher notificationDispatcher;
     @Mock private com.yadony.api.common.BlockVisibility blockVisibility;
     @Mock private AnnouncementViewService announcementViewService;
+    @Mock private TravelerPayoutNetworksPort travelerPayoutNetworksPort;
 
     private AnnouncementService announcementService;
 
@@ -113,7 +114,7 @@ class AnnouncementServiceTest {
                 com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                 priceGridService, flagService,
                 storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, realMapper, packageRequestRepository,
-                negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService);
+                negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService, travelerPayoutNetworksPort);
     }
 
     private static final String FIREBASE_UID = "uid-traveler-001";
@@ -3146,7 +3147,7 @@ class AnnouncementServiceTest {
                     com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                     priceGridService, flagService,
                     storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, mapperWithLimits, packageRequestRepository,
-                    negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService);
+                    negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService, travelerPayoutNetworksPort);
 
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             // le nouveau count (hors DRAFT) renvoie 1 => sous la limite (2) => création OK
@@ -3513,7 +3514,7 @@ class AnnouncementServiceTest {
                     com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                     priceGridService, flagService,
                     storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, mapperWithLimits, packageRequestRepository,
-                    negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService);
+                    negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService, travelerPayoutNetworksPort);
 
             AnnouncementEntity draft = draftEntityOwnedBy(user);
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
@@ -3729,7 +3730,7 @@ class AnnouncementServiceTest {
                     com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(false),
                     priceGridService, flagService,
                     storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, mapper,
-                    packageRequestRepository, negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService);
+                    packageRequestRepository, negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService, travelerPayoutNetworksPort);
         }
 
         @Test

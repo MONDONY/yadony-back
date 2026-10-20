@@ -138,6 +138,7 @@ class NegotiationServiceMobileMoneyTest {
         // Compte de versement actif en XOF : source unique via UserEntity#canReceiveMobileMoney.
         traveler.setMobileMoneyStatus(MobileMoneyPayoutStatus.ACTIVE);
         traveler.setMobileMoneyCurrency("XOF");
+        traveler.setMobileMoneyCurrencyList(java.util.List.of("XOF"));
         lenient().when(userRepository.findById(travelerId)).thenReturn(Optional.of(traveler));
     }
 

@@ -206,7 +206,7 @@ public class AnnouncementSpecification {
      * <pre>
      * espèces      = acceptées par le trajet
      * carte        = acceptée ET devise qui l'autorise ET voyageur Stripe Connect actif
-     * mobile money = accepté ET devise qui l'autorise ET compte de versement actif
+     * mobile money = accepté ET devise qui l'autorise ET compte de versement actif dans la devise du trajet
      * </pre>
      * Évalué dans la requête, avant la pagination : la page et {@code totalElements} ne
      * comptent que les trajets retenus. Toute évolution d'{@code offerable} doit être
@@ -226,8 +226,7 @@ public class AnnouncementSpecification {
                     case MOBILE_MONEY -> cb.and(
                             accepts(root, cb, PaymentMethod.MOBILE_MONEY),
                             currencyAllows(root, cb, PaymentMethod.MOBILE_MONEY),
-                            travelerMatches(root, query, cb, "mobileMoneyStatus",
-                                    MobileMoneyPayoutStatus.ACTIVE));
+                            travelerReceivesMobileMoneyIn(root, query, cb));
                     default -> null; // moyens retirés : jamais offerts
                 };
                 if (offered != null) {
@@ -267,6 +266,24 @@ public class AnnouncementSpecification {
         Subquery<UUID> sq = query.subquery(UUID.class);
         Root<UserEntity> user = sq.from(UserEntity.class);
         sq.select(user.<UUID>get("id")).where(cb.equal(user.get(attribute), value));
+        return root.get("travelerId").in(sq);
+    }
+
+    /**
+     * Pendant SQL de {@code UserEntity#canReceiveMobileMoney(currency du trajet)} : voyageur
+     * {@code ACTIVE} dont la liste CSV {@code mobile_money_currencies} (écrite sans espace par
+     * {@code MobileMoneyPayoutAccounts#syncSummary}) contient la devise du trajet.
+     */
+    private static Predicate travelerReceivesMobileMoneyIn(Root<AnnouncementEntity> root,
+                                                           jakarta.persistence.criteria.CriteriaQuery<?> query,
+                                                           CriteriaBuilder cb) {
+        Subquery<UUID> sq = query.subquery(UUID.class);
+        Root<UserEntity> user = sq.from(UserEntity.class);
+        Expression<String> currencies = cb.concat(cb.concat(",", cb.upper(user.get("mobileMoneyCurrencies"))), ",");
+        Expression<String> tripCurrency = cb.concat(cb.concat("%,", cb.upper(root.get("currency"))), ",%");
+        sq.select(user.<UUID>get("id")).where(
+                cb.equal(user.get("mobileMoneyStatus"), MobileMoneyPayoutStatus.ACTIVE),
+                cb.like(currencies, tripCurrency));
         return root.get("travelerId").in(sq);
     }
 

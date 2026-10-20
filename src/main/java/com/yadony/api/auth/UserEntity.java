@@ -234,6 +234,14 @@ public class UserEntity extends BaseEntity {
     @Column(name = "mobile_money_providers", length = 255)
     private String mobileMoneyProviders;
 
+    /**
+     * Devises couvertes par les comptes de versement actifs, ISO 4217 séparés par des virgules (V343).
+     * Résumé tenu à jour par le service des comptes, lu sans jointure comme {@code mobileMoneyStatus} ;
+     * nul tant qu'aucun compte n'a été migré ou ajouté (repli sur {@code mobileMoneyCurrency}).
+     */
+    @Column(name = "mobile_money_currencies", length = 64)
+    private String mobileMoneyCurrencies;
+
     @Column(name = "stripe_account_created_at")
     private Instant stripeAccountCreatedAt;
 
@@ -563,17 +571,11 @@ public class UserEntity extends BaseEntity {
      * réactivé dans une autre devise entre deux portails doit être refusé partout pareil.
      */
     public boolean canReceiveMobileMoney(String currency) {
-        return hasActiveMobileMoney() && mobileMoneyCurrency != null && mobileMoneyCurrency.equalsIgnoreCase(currency);
-    }
-
-    /**
-     * Numéro de son compte mobile money à utiliser pour PAYER dans cette devise, ou null.
-     * Le compte a été vérifié auprès de l'opérateur à son activation : c'est le numéro le
-     * plus sûr pour un dépôt, avant le numéro saisi à la demande ou le téléphone du compte
-     * (souvent étranger, par exemple +33, et refusé par pawaPay — Sentry FLUTTER-DE).
-     */
-    public String mobileMoneyPayerMsisdn(String currency) {
-        return canReceiveMobileMoney(currency) ? mobileMoneyMsisdn : null;
+        // Liste des devises des comptes vivants, tenue par MobileMoneyPayoutAccounts#syncSummary
+        // et posée par V343 pour tout compte repris ; un ACTIVE sans compte complet y est passé
+        // DISABLED. Aucun repli sur mobile_money_currency (le seul compte le plus ancien).
+        return hasActiveMobileMoney() && currency != null
+                && getMobileMoneyCurrencyList().stream().anyMatch(currency::equalsIgnoreCase);
     }
 
     public MobileMoneyPayoutStatus getMobileMoneyStatus() { return mobileMoneyStatus; }
@@ -605,6 +607,19 @@ public class UserEntity extends BaseEntity {
     /** Remplace la liste ; {@code null} ou vide efface la colonne. */
     public void setMobileMoneyProviderList(List<String> providers) {
         this.mobileMoneyProviders = providers == null || providers.isEmpty() ? null : String.join(",", providers);
+    }
+
+    /** Devises des comptes de versement actifs ; liste vide quand la colonne est nulle ou blanche. */
+    public List<String> getMobileMoneyCurrencyList() {
+        if (mobileMoneyCurrencies == null || mobileMoneyCurrencies.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(mobileMoneyCurrencies.split(",")).map(String::trim).filter(c -> !c.isEmpty()).toList();
+    }
+
+    /** Remplace la liste ; {@code null} ou vide efface la colonne. */
+    public void setMobileMoneyCurrencyList(List<String> currencies) {
+        this.mobileMoneyCurrencies = currencies == null || currencies.isEmpty() ? null : String.join(",", currencies);
     }
 
     public Instant getStripeAccountCreatedAt() { return stripeAccountCreatedAt; }
