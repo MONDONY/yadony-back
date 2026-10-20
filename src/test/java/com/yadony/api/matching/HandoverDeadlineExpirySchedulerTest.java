@@ -75,8 +75,8 @@ class HandoverDeadlineExpirySchedulerTest {
         ReflectionTestUtils.setField(announcement, "id", ANNOUNCEMENT_ID);
         announcement.setTravelerId(TRAVELER_ID);
         announcement.setTimezone("Europe/Paris");
-        // 11:30 heure de Paris = 09:30 UTC : passée à NOW.
-        announcement.setHandoverDeadline(LocalDateTime.of(2026, 10, 9, 11, 30));
+        // Date limite stockée en UTC (PROD-1R) : 09:30 UTC, passée à NOW.
+        announcement.setHandoverDeadline(LocalDateTime.of(2026, 10, 9, 9, 30));
         lenient().when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
         lenient().when(cacheManager.getCache(any())).thenReturn(cache);
     }
@@ -166,18 +166,32 @@ class HandoverDeadlineExpirySchedulerTest {
     @DisplayName("Fuseau, report et absence de date limite")
     class Deadline {
 
-        @Test
-        @DisplayName("la date limite est lue dans le fuseau du trajet : 11:30 à Abidjan (UTC) n'est pas encore passée à 10:00 UTC")
-        void deadlineUsesTripTimezone() {
-            announcement.setTimezone("Africa/Abidjan");
+        @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"Europe/Paris", "America/Toronto", "Africa/Abidjan"})
+        @DisplayName("PROD-1R : limite 18:30 UTC, rien n'expire à 16:33Z, quel que soit le fuseau du trajet")
+        void prod1rNothingExpiresBeforeTheUtcDeadline(String timezone) {
+            announcement.setTimezone(timezone);
+            announcement.setHandoverDeadline(LocalDateTime.of(2026, 10, 19, 18, 30));
             BidEntity bid = bid(BidStatus.PENDING, PaymentMethod.CASH);
             candidates(bid);
 
-            assertThat(scheduler.expireAt(NOW)).isZero();
+            assertThat(scheduler.expireAt(Instant.parse("2026-10-19T16:33:00Z"))).isZero();
 
             assertThat(bid.getStatus()).isEqualTo(BidStatus.PENDING);
             verifyNoInteractions(eventPublisher, auditService);
             verify(cache, never()).clear();
+        }
+
+        @Test
+        @DisplayName("PROD-1R : la même demande expire à 18:31Z")
+        void prod1rExpiresOnceTheUtcDeadlineIsPassed() {
+            announcement.setHandoverDeadline(LocalDateTime.of(2026, 10, 19, 18, 30));
+            BidEntity bid = bid(BidStatus.PENDING, PaymentMethod.CASH);
+            candidates(bid);
+
+            assertThat(scheduler.expireAt(Instant.parse("2026-10-19T18:31:00Z"))).isEqualTo(1);
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.EXPIRED);
         }
 
         @Test
@@ -207,8 +221,8 @@ class HandoverDeadlineExpirySchedulerTest {
         }
 
         @Test
-        @DisplayName("la requête est bornée à now + 14 h (plus grand fuseau en avance sur UTC)")
-        void queryUpperBoundCoversEveryZone() {
+        @DisplayName("la requête est bornée à now en UTC (date limite stockée en UTC)")
+        void queryUpperBoundIsNowUtc() {
             when(bidRepository.findIdsForHandoverDeadlineExpiry(any(), any())).thenReturn(List.of());
 
             scheduler.expireAt(NOW);
@@ -216,7 +230,7 @@ class HandoverDeadlineExpirySchedulerTest {
             ArgumentCaptor<LocalDateTime> bound = ArgumentCaptor.forClass(LocalDateTime.class);
             verify(bidRepository).findIdsForHandoverDeadlineExpiry(eq(HandoverDeadlineRules.EXPIRABLE_STATUSES),
                     bound.capture());
-            assertThat(bound.getValue()).isEqualTo(LocalDateTime.of(2026, 10, 10, 0, 0));
+            assertThat(bound.getValue()).isEqualTo(LocalDateTime.of(2026, 10, 9, 10, 0));
         }
     }
 

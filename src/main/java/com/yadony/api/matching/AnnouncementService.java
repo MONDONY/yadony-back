@@ -798,7 +798,7 @@ public class AnnouncementService {
         }
 
         validateHandoverDeadline(request.handoverDeadline(),
-                request.departureDate(), request.departureTime());
+                request.departureDate(), request.departureTime(), announcement.getTimezone());
         assertNotAlreadyDeparted(request.departureDate(), request.departureTime(),
                 request.handoverDeadline(), TripTimezones.zoneOf(announcement.getTimezone()),
                 Instant.now());
@@ -1144,7 +1144,7 @@ public class AnnouncementService {
                         ? TripRescheduleRules.remaining(announcement) : null,
                 announcement.getDepartureCountryCode(),
                 announcement.getArrivalCountryCode()
-        );
+        ).withDepartureTimezone(announcement.getTimezone());
         if (viewerId != null && viewerId.equals(announcement.getTravelerId())) {
             detail = detail.withCurrencyEditable(!isCurrencyLocked(id));
         }
@@ -1266,8 +1266,6 @@ public class AnnouncementService {
             );
         }
 
-        validateHandoverDeadline(request.handoverDeadline(),
-                request.departureDate(), request.departureTime());
         ArrivalRules.validate(request.departureDate(), request.departureTime(),
                 request.arrivalDate(), request.arrivalTime());
 
@@ -1287,6 +1285,10 @@ public class AnnouncementService {
                 request.departureCity(), departureCountryCode,
                 announcement.getDepartureCity(), announcement.getDepartureCountryCode(),
                 announcement.getTimezone(), TripTimezones.Lookup.of(announcementRepository));
+        // Départ (heure murale) ramené en UTC dans le fuseau à jour avant de le comparer à la
+        // date limite UTC (YADONY-FLUTTER-PROD-1R).
+        validateHandoverDeadline(request.handoverDeadline(),
+                request.departureDate(), request.departureTime(), timezone);
         announcement.setDepartureCity(request.departureCity());
         announcement.setTimezone(timezone);
         announcement.setArrivalCity(request.arrivalCity());
@@ -1452,7 +1454,7 @@ public class AnnouncementService {
                 TripRescheduleRules.remaining(saved),
                 saved.getDepartureCountryCode(),
                 saved.getArrivalCountryCode()
-        );
+        ).withDepartureTimezone(saved.getTimezone());
     }
 
     /**
@@ -2241,7 +2243,8 @@ public class AnnouncementService {
                         : counts != null
                         ? counts.tripLegs().getOrDefault(entity.getTripGroupId(), 0L).intValue()
                         : (int) announcementRepository.countByTripGroupId(entity.getTripGroupId()),
-                entity.getSeriesId()
+                entity.getSeriesId(),
+                entity.getTimezone()
         );
     }
 
@@ -2258,7 +2261,11 @@ public class AnnouncementService {
             org.springframework.data.domain.Sort.by("departureDate").ascending());
         var active = announcementRepository.findByTravelerIdAndStatus(travelerId, AnnouncementStatus.ACTIVE, pageable).getContent();
         var full   = announcementRepository.findByTravelerIdAndStatus(travelerId, AnnouncementStatus.FULL, pageable).getContent();
+        // Fiche voyageur : un trajet dont la date limite de dépôt est passée n'accepte plus de
+        // demande, il n'y est plus proposé (même règle que la recherche, PROD-1R).
+        Instant now = Instant.now();
         return java.util.stream.Stream.concat(active.stream(), full.stream())
+            .filter(a -> !a.isHandoverDeadlinePassed(now))
             .map(a -> new com.yadony.api.matching.dto.TravelerAnnouncementResponse(
                 a.getId(), a.getDepartureCity(), a.getArrivalCity(),
                 a.getDepartureDate(), a.getPricePerKg(), a.getAvailableKg(), a.getStatus().name(),
@@ -2394,23 +2401,18 @@ public class AnnouncementService {
     }
 
     /**
-     * Valide la date limite de dépôt saisie à la création/édition d'un trajet.
-     * Règles : non nulle et <= départ (date+heure si présente, sinon fin du
-     * jour de départ — on ne remet pas un colis après le départ du voyageur).
-     *
-     * Il n'y a plus de borne basse : le trajet accepte les colis dès sa
-     * publication, et jusqu'à cette date limite.
-     */
-    /**
      * Refuse un trajet publié avec un départ ou une date limite de dépôt déjà passés.
      * Le contrôle de date seule laissait passer un départ du jour à une heure écoulée :
      * le trajet passait COMPLETED quelques secondes après sa publication et l'expéditeur
      * alerté restait bloqué au paiement (409 announcement-not-active, FLUTTER-NR).
-     * Les heures sont des heures murales du fuseau du trajet.
+     *
+     * <p>Le départ (date + heure) est une heure murale du fuseau du trajet ; la date limite
+     * de dépôt est stockée en UTC (YADONY-FLUTTER-PROD-1R : la lire dans le fuseau de Paris
+     * refusait à tort une limite dans moins de deux heures).
      */
     static void assertNotAlreadyDeparted(LocalDate departureDate,
                                          LocalTime departureTime,
-                                         LocalDateTime handoverDeadline,
+                                         LocalDateTime utcHandoverDeadline,
                                          ZoneId zone,
                                          Instant now) {
         if (departureDate != null && departureTime != null
@@ -2419,24 +2421,41 @@ public class AnnouncementService {
                     "departure-time-passed", "Heure de départ passée",
                     "L'heure de départ de ce trajet est déjà passée");
         }
-        if (handoverDeadline != null && !handoverDeadline.atZone(zone).toInstant().isAfter(now)) {
+        if (utcHandoverDeadline != null
+                && !HandoverDeadlineRules.deadlineInstant(utcHandoverDeadline).isAfter(now)) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "handover-deadline-in-past", "Date limite passée",
                     "La date limite de dépôt est déjà passée");
         }
     }
 
-    static void validateHandoverDeadline(LocalDateTime deadline,
+    /**
+     * Valide la date limite de dépôt saisie à la création/édition d'un trajet.
+     * Règles : non nulle et <= départ (date+heure si présente, sinon fin du
+     * jour de départ — on ne remet pas un colis après le départ du voyageur).
+     * Il n'y a plus de borne basse : le trajet accepte les colis dès sa
+     * publication, et jusqu'à cette date limite.
+     *
+     * <p>La date limite est en UTC, le départ en heure murale du fuseau {@code timezone} du
+     * trajet : le départ est ramené en UTC avant la comparaison (YADONY-FLUTTER-PROD-1R).
+     * Comparer les deux valeurs brutes décalait la borne du décalage horaire (Toronto :
+     * une limite légitime à 20:00 locale, 00:00 UTC le lendemain, était refusée).
+     */
+    static void validateHandoverDeadline(LocalDateTime utcDeadline,
                                           LocalDate departureDate,
-                                          LocalTime departureTime) {
-        if (deadline == null) {
+                                          LocalTime departureTime,
+                                          String timezone) {
+        if (utcDeadline == null) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "handover-deadline-required", "Date limite requise",
                     "La date limite de dépôt est obligatoire");
         }
-        LocalDateTime departureBound = departureTime != null
+        LocalDateTime localBound = departureTime != null
                 ? departureDate.atTime(departureTime)
                 : departureDate.atTime(LocalTime.MAX);
+        LocalDateTime departureBound = localBound.atZone(TripTimezones.zoneOf(timezone))
+                .withZoneSameInstant(java.time.ZoneOffset.UTC).toLocalDateTime();
+        LocalDateTime deadline = utcDeadline;
         if (deadline.isAfter(departureBound)) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "handover-after-departure", "Date limite après le départ",

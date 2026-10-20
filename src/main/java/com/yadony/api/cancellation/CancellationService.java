@@ -446,7 +446,7 @@ public class CancellationService {
         if (bid.getStatus() != BidStatus.ACCEPTED) {
             throw new IllegalStateException("Le bid doit être en statut ACCEPTED.");
         }
-        if (!handoverDeadlinePassed(bid, announcement)) {
+        if (!handoverDeadlinePassed(bid)) {
             throw new IllegalStateException("Vous ne pouvez signaler qu'après l'heure de remise prévue.");
         }
         if (cancellationRepository.existsByBidIdAndNoShowStatusIn(bidId,
@@ -477,20 +477,18 @@ public class CancellationService {
     }
 
     /**
-     * La date limite de remise du colis est-elle passée ? {@code handoverDeadline} est une heure
-     * murale du fuseau du trajet : la comparer à {@code LocalDateTime.now()} (UTC sur le
-     * serveur) ouvrait le signalement deux heures trop tard pour un trajet parti de Paris en
-     * été, soit une heure APRÈS le passage du job no-show (échéance + 1 h) : ni le voyageur ni
-     * l'expéditeur ne pouvaient signaler avant que le job ne tranche (FLUTTER-QR). Même règle
-     * que {@code NoShowScheduler} ({@link HandoverDeadlineRules#deadlineInstant}).
+     * La date limite de remise du colis est-elle passée ? {@code handoverDeadline} est stockée
+     * en UTC (copiée du trajet) et comparée en UTC, comme dans {@code NoShowScheduler}
+     * ({@link HandoverDeadlineRules#deadlineInstant}). La lire comme une heure murale du fuseau
+     * du trajet ouvrait le signalement deux heures trop tôt à Paris en été
+     * (YADONY-FLUTTER-PROD-1R) : le fuseau du trajet n'entre plus dans le calcul.
      */
-    static boolean handoverDeadlinePassed(BidEntity bid, AnnouncementEntity announcement) {
+    static boolean handoverDeadlinePassed(BidEntity bid) {
         LocalDateTime deadline = bid.getHandoverDeadline();
         if (deadline == null) {
             return false;
         }
-        String timezone = announcement != null ? announcement.getTimezone() : null;
-        return !Instant.now().isBefore(HandoverDeadlineRules.deadlineInstant(deadline, timezone));
+        return !Instant.now().isBefore(HandoverDeadlineRules.deadlineInstant(deadline));
     }
 
     /**
@@ -510,8 +508,7 @@ public class CancellationService {
         if (bid.getStatus() != BidStatus.ACCEPTED) {
             throw new IllegalStateException("Le bid doit être en statut ACCEPTED.");
         }
-        AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId()).orElse(null);
-        if (!handoverDeadlinePassed(bid, announcement)) {
+        if (!handoverDeadlinePassed(bid)) {
             throw new IllegalStateException("Vous ne pouvez signaler qu'après l'heure de remise prévue.");
         }
         auditService.log("BID", bidId, "TRAVELER_NO_SHOW_REPORTED", senderId,

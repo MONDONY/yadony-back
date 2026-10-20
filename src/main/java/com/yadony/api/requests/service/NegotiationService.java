@@ -949,6 +949,23 @@ public class NegotiationService {
     }
 
     /**
+     * Date limite de dépôt d'un trajet dédié : l'heure de départ (ou 23:59 sans heure),
+     * saisie en heure murale de la ville de départ, ramenée en <b>UTC</b> comme toute date
+     * limite (YADONY-FLUTTER-PROD-1R). Écrite en heure locale, elle était relue comme de
+     * l'UTC et fermait le dépôt deux heures trop tard à Paris en été (V344 recale l'existant).
+     */
+    static java.time.LocalDateTime dedicatedHandoverDeadline(java.time.LocalDate departureDate,
+                                                             java.time.LocalTime departureTime,
+                                                             String timezone) {
+        java.time.LocalTime handoverEnd =
+            departureTime != null ? departureTime : java.time.LocalTime.of(23, 59);
+        return java.time.LocalDateTime.of(departureDate, handoverEnd)
+                .atZone(com.yadony.api.matching.TripTimezones.zoneOf(timezone))
+                .withZoneSameInstant(java.time.ZoneOffset.UTC)
+                .toLocalDateTime();
+    }
+
+    /**
      * Construit (sans sauvegarder) l'AnnouncementEntity d'un trajet dédié à un
      * seul package_request : corridor, poids et prix dérivés et verrouillés,
      * capacité réservée intégralement au sender jusqu'à openSurplus(). Partagée
@@ -983,9 +1000,8 @@ public class NegotiationService {
         com.yadony.api.matching.ArrivalRules.validate(req.departureDate(), req.departureTime(),
                 req.arrivalDate(), req.arrivalTime());
         ann.setArrivalDate(req.arrivalDate());
-        java.time.LocalTime handoverEnd =
-            req.departureTime() != null ? req.departureTime() : java.time.LocalTime.of(23, 59);
-        ann.setHandoverDeadline(java.time.LocalDateTime.of(req.departureDate(), handoverEnd));
+        ann.setHandoverDeadline(dedicatedHandoverDeadline(
+                req.departureDate(), req.departureTime(), ann.getTimezone()));
         ann.setPickupAddressLabel(req.pickupAddress().label());
         ann.setPickupLat(BigDecimal.valueOf(req.pickupAddress().lat()));
         ann.setPickupLng(BigDecimal.valueOf(req.pickupAddress().lng()));

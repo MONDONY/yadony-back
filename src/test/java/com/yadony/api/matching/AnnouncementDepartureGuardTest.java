@@ -84,4 +84,91 @@ class AnnouncementDepartureGuardTest {
                 null, null, null, LOME, NOW))
                 .doesNotThrowAnyException();
     }
+
+    // ─── PROD-1R : date limite stockée en UTC ─────────────────────────────────────
+
+    /**
+     * Trajet de Paris publié à 12:31Z (14:31 à Paris) avec une limite dans 1 h : 13:31 UTC.
+     * L'ancienne lecture en heure de Paris la plaçait à 11:31Z, déjà passée : refus à tort
+     * de {@code handover-deadline-in-past}.
+     */
+    @Test
+    void prod1r_deadlineInOneHourUtc_parisTrip_isAccepted() {
+        assertThatCode(() -> AnnouncementService.assertNotAlreadyDeparted(
+                TODAY.plusDays(1), LocalTime.of(10, 0), TODAY.atTime(13, 31, 44), PARIS, NOW))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void prod1r_deadlineOneMinuteAgoUtc_isRejectedWhateverTheZone() {
+        LocalDateTime oneMinuteAgo = TODAY.atTime(12, 30, 44);
+        for (ZoneId zone : new ZoneId[]{PARIS, LOME, ZoneId.of("America/Toronto")}) {
+            assertThatThrownBy(() -> AnnouncementService.assertNotAlreadyDeparted(
+                    TODAY.plusDays(1), LocalTime.of(10, 0), oneMinuteAgo, zone, NOW))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e ->
+                            org.assertj.core.api.Assertions.assertThat(e.getErrorCode())
+                                    .isEqualTo("handover-deadline-in-past"));
+        }
+    }
+
+    // ─── validateHandoverDeadline : départ ramené en UTC ─────────────────────────
+
+    /**
+     * Toronto (UTC-4 en octobre), départ 22:00 locale = 02:00 UTC le lendemain. Une limite à
+     * 20:00 locale (00:00 UTC le lendemain) est légitime : la comparaison brute avec 22:00 la
+     * refusait en {@code handover-after-departure}.
+     */
+    @Test
+    void validate_toronto_deadlineBeforeDepartureInUtc_isAccepted() {
+        LocalDate dep = LocalDate.of(2026, 10, 19);
+        assertThatCode(() -> AnnouncementService.validateHandoverDeadline(
+                LocalDateTime.of(2026, 10, 20, 0, 0), dep, LocalTime.of(22, 0), "America/Toronto"))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> AnnouncementService.validateHandoverDeadline(
+                LocalDateTime.of(2026, 10, 20, 2, 0), dep, LocalTime.of(22, 0), "America/Toronto"))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void validate_toronto_deadlineAfterDepartureInUtc_isRejected() {
+        assertThatThrownBy(() -> AnnouncementService.validateHandoverDeadline(
+                LocalDateTime.of(2026, 10, 20, 2, 1), LocalDate.of(2026, 10, 19), LocalTime.of(22, 0),
+                "America/Toronto"))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e ->
+                        org.assertj.core.api.Assertions.assertThat(e.getErrorCode())
+                                .isEqualTo("handover-after-departure"));
+    }
+
+    /** Paris (UTC+2) : départ 20:30 locale = 18:30 UTC ; une limite à 19:00 UTC est après. */
+    @Test
+    void validate_paris_deadlineComparedToDepartureInUtc() {
+        LocalDate dep = LocalDate.of(2026, 10, 19);
+        assertThatCode(() -> AnnouncementService.validateHandoverDeadline(
+                LocalDateTime.of(2026, 10, 19, 18, 30), dep, LocalTime.of(20, 30), "Europe/Paris"))
+                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> AnnouncementService.validateHandoverDeadline(
+                LocalDateTime.of(2026, 10, 19, 19, 0), dep, LocalTime.of(20, 30), "Europe/Paris"))
+                .isInstanceOf(YadonyBusinessException.class);
+    }
+
+    @Test
+    void validate_withoutDepartureTime_boundIsEndOfLocalDay() {
+        // Fin du jour à Paris (23:59:59.999 locale) = 21:59:59.999 UTC en octobre.
+        LocalDate dep = LocalDate.of(2026, 10, 19);
+        assertThatCode(() -> AnnouncementService.validateHandoverDeadline(
+                LocalDateTime.of(2026, 10, 19, 21, 59), dep, null, "Europe/Paris"))
+                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> AnnouncementService.validateHandoverDeadline(
+                LocalDateTime.of(2026, 10, 19, 22, 0), dep, null, "Europe/Paris"))
+                .isInstanceOf(YadonyBusinessException.class);
+    }
+
+    @Test
+    void validate_missingDeadline_isRequired() {
+        assertThatThrownBy(() -> AnnouncementService.validateHandoverDeadline(
+                null, LocalDate.of(2026, 10, 19), null, "Europe/Paris"))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e ->
+                        org.assertj.core.api.Assertions.assertThat(e.getErrorCode())
+                                .isEqualTo("handover-deadline-required"));
+    }
 }

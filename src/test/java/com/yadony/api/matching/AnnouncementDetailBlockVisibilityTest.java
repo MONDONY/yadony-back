@@ -260,13 +260,16 @@ class AnnouncementDetailBlockVisibilityTest {
     }
 
     @Test
-    @DisplayName("voyageur sans compte actif → liste vide, jamais null")
+    @DisplayName("voyageur sans compte actif → liste vide, jamais null ; fuseau de départ exposé (PROD-1R)")
     void travelerWithoutAccount_hasNoNetworks() {
-        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(mobileMoneyTrip("XOF")));
+        AnnouncementEntity trip = mobileMoneyTrip("XOF");
+        trip.setTimezone("Africa/Abidjan");
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(trip));
         when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(new UserEntity()));
 
         AnnouncementDetailResponse result = announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, null);
 
+        assertThat(result.departureTimezone()).isEqualTo("Africa/Abidjan");
         assertThat(result.acceptedMobileMoneyNetworks()).isNotNull().isEmpty();
         verifyNoInteractions(payoutNetworksPort);
     }
@@ -279,9 +282,14 @@ class AnnouncementDetailBlockVisibilityTest {
                 ANNOUNCEMENT_ID, TRAVELER_ID, "Paris", "Douala", null, null, null, null, null, null, null, null,
                 null, null, null, null, "ACTIVE", 0L, 0L, null, null, List.of(), List.of(), List.of(), null, false,
                 null, null, null, List.of(), null, false, false, null, "XAF", null, false, Set.of(), null, null,
-                null, null, null, null, null, networks);
+                null, null, null, null, null, networks, "Africa/Douala");
 
         assertThat(base.withCurrencyEditable(true).acceptedMobileMoneyNetworks()).isEqualTo(networks);
+        // PROD-1R : le fuseau de départ survit à toutes les copies.
+        assertThat(base.withCurrencyEditable(true).departureTimezone()).isEqualTo("Africa/Douala");
+        assertThat(base.withConvertedPrices(null, null, "EUR", List.of()).departureTimezone()).isEqualTo("Africa/Douala");
+        assertThat(base.withMobileMoneyNetworks(List.of()).departureTimezone()).isEqualTo("Africa/Douala");
+        assertThat(base.withDepartureTimezone("America/Toronto").departureTimezone()).isEqualTo("America/Toronto");
         assertThat(base.withConvertedPrices(null, null, "EUR", List.of()).acceptedMobileMoneyNetworks())
                 .isEqualTo(networks);
         assertThat(base.withMobileMoneyNetworks(List.of()).acceptedMobileMoneyNetworks()).isEmpty();

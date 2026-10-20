@@ -13,3 +13,4 @@ From the Activity tab, the "I'm traveling" tile also offers "Post a trip" while 
 You first accept your commitments as a traveler: carry the parcel yourself, respect the date and itinerary, scan the QR at handover and delivery, accept only authorized content.
 Your identity must be verified.
 Then fill in the departure and arrival city, date, time, mode of transport, capacity, price, accepted payment methods, handover place and drop-off deadline, then publish or save as a draft.
+The drop-off deadline is shown in the departure city's local time. After it, nobody can make a request on your trip anymore.

@@ -93,7 +93,14 @@ public record AnnouncementDetailResponse(
          * d'abord. Vide, jamais null, quand le mobile money n'est pas offert sur ce trajet. Jamais
          * de numéro.
          */
-        List<PayoutNetwork> acceptedMobileMoneyNetworks
+        List<PayoutNetwork> acceptedMobileMoneyNetworks,
+        /**
+         * Fuseau IANA de la ville de départ (ex. « Europe/Paris »), YADONY-FLUTTER-PROD-1R.
+         * Les dates/heures {@code LocalDateTime} (dont {@code handoverDeadline}) sont en UTC :
+         * le client s'en sert pour les afficher à l'heure de la ville de départ. Champ ajouté,
+         * optionnel pour les anciens clients.
+         */
+        String departureTimezone
 ) {
     public AnnouncementDetailResponse {
         acceptedMobileMoneyNetworks = acceptedMobileMoneyNetworks == null ? List.of() : acceptedMobileMoneyNetworks;
@@ -123,7 +130,7 @@ public record AnnouncementDetailResponse(
                 createdAt, updatedAt, pricingMode, priceGridItems, reservedKg, surplusEligible,
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
-                remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable, List.of());
+                remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable, List.of(), null);
     }
 
     /** Ancienne arité, sans {@code currencyEditable} (null) : appelants qui ne le calculent pas. */
@@ -150,7 +157,7 @@ public record AnnouncementDetailResponse(
                 createdAt, updatedAt, pricingMode, priceGridItems, reservedKg, surplusEligible,
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
-                remainingReschedules, departureCountryCode, arrivalCountryCode, null, List.of());
+                remainingReschedules, departureCountryCode, arrivalCountryCode, null, List.of(), null);
     }
 
     /** Copie portant {@code currencyEditable}, posé pour le seul voyageur propriétaire. */
@@ -164,7 +171,7 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                acceptedMobileMoneyNetworks);
+                acceptedMobileMoneyNetworks, departureTimezone);
     }
 
     /** Copie enrichie des équivalents convertis — même pattern que le fil de recherche. */
@@ -181,7 +188,7 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                acceptedMobileMoneyNetworks);
+                acceptedMobileMoneyNetworks, departureTimezone);
     }
 
     /** Copie portant les réseaux mobile money acceptés ; {@code null} devient la liste vide. */
@@ -195,6 +202,20 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                networks == null ? List.of() : networks);
+                networks == null ? List.of() : networks, departureTimezone);
+    }
+
+    /** Copie portant le fuseau IANA de la ville de départ (YADONY-FLUTTER-PROD-1R). */
+    public AnnouncementDetailResponse withDepartureTimezone(String departureTimezone) {
+        return new AnnouncementDetailResponse(
+                id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime, arrivalDate,
+                pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay,
+                transportMode, stopsCount, status, bidsCount, confirmedParcelCount, traveler, description,
+                acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, cashAccepted,
+                createdAt, updatedAt, pricingMode, priceGridItems, reservedKg, surplusEligible,
+                surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
+                availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
+                remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
+                acceptedMobileMoneyNetworks, departureTimezone);
     }
 }

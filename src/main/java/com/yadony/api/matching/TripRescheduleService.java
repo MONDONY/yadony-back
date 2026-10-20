@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -165,9 +166,10 @@ public class TripRescheduleService {
                     "Invalid Departure Date", "La nouvelle date de départ doit être dans le futur");
         }
         AnnouncementService.validateHandoverDeadline(request.handoverDeadline(),
-                request.departureDate(), request.departureTime());
-        // Une limite déjà passée ouvrirait le signalement d'absence dès le report.
-        if (!request.handoverDeadline().isAfter(TripRescheduleRules.nowAt(announcement))) {
+                request.departureDate(), request.departureTime(), announcement.getTimezone());
+        // Une limite déjà passée ouvrirait le signalement d'absence dès le report. Limite en
+        // UTC, comparée à l'instant présent (YADONY-FLUTTER-PROD-1R).
+        if (!HandoverDeadlineRules.deadlineInstant(request.handoverDeadline()).isAfter(Instant.now())) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "handover-deadline-past",
                     "Handover Deadline Past", "La date limite de remise doit être dans le futur");
         }

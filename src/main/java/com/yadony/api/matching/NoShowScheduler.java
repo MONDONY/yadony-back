@@ -12,10 +12,6 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 /**
  * Story 9.6 — remise non effectuée à l'échéance (date limite + 1 h de grâce), sans scan ni
@@ -34,14 +30,11 @@ public class NoShowScheduler {
     static final Duration NO_SHOW_GRACE = Duration.ofHours(1);
 
     private final BidRepository bidRepository;
-    private final AnnouncementRepository announcementRepository;
     private final NoShowService noShowService;
 
     public NoShowScheduler(BidRepository bidRepository,
-                           AnnouncementRepository announcementRepository,
                            NoShowService noShowService) {
         this.bidRepository = bidRepository;
-        this.announcementRepository = announcementRepository;
         this.noShowService = noShowService;
     }
 
@@ -54,22 +47,17 @@ public class NoShowScheduler {
     /**
      * Un passage à l'instant {@code now}.
      *
-     * <p>{@code bid.handoverDeadline} est une heure murale du fuseau du trajet. La requête
-     * la comparait à une heure UTC : selon le corridor, le no-show partait une à deux heures
-     * trop tôt ou trop tard. Elle sert désormais de filtre large (borne élargie du plus grand
-     * décalage en avance sur UTC, 14 h) et la décision exacte se prend ici, trajet par trajet,
-     * dans son fuseau ({@link HandoverDeadlineRules#deadlineInstant}).
+     * <p>{@code bid.handoverDeadline} est stockée en UTC (copiée du trajet). La lire comme
+     * une heure murale du fuseau du trajet déclarait l'absence deux heures trop tôt à Paris
+     * en été (YADONY-FLUTTER-PROD-1R) : la requête et la décision comparent désormais en UTC
+     * ({@link HandoverDeadlineRules#deadlineInstant}).
      */
     void detectNoShowsAt(Instant now) {
-        LocalDateTime broadCutoff = LocalDateTime.ofInstant(now.minus(NO_SHOW_GRACE), ZoneOffset.UTC)
-                .plusHours(HandoverDeadlineRules.MAX_ZONE_AHEAD_HOURS);
-        List<BidEntity> candidates = bidRepository.findNoShowBids(broadCutoff);
-        Map<UUID, AnnouncementEntity> announcements = announcementRepository.findAllById(
-                        candidates.stream().map(BidEntity::getAnnouncementId).distinct().toList())
-                .stream().collect(Collectors.toMap(AnnouncementEntity::getId, Function.identity()));
+        LocalDateTime cutoff = LocalDateTime.ofInstant(now.minus(NO_SHOW_GRACE), ZoneOffset.UTC);
+        List<BidEntity> candidates = bidRepository.findNoShowBids(cutoff);
 
         List<BidEntity> noShowBids = candidates.stream()
-                .filter(b -> isPastGrace(b, announcements.get(b.getAnnouncementId()), now))
+                .filter(b -> isPastGrace(b, now))
                 .toList();
 
         log.debug("No-show scheduler: {} bids to process ({} candidates)", noShowBids.size(), candidates.size());
@@ -89,14 +77,13 @@ public class NoShowScheduler {
         }
     }
 
-    /** Date limite du colis (fuseau du trajet) + 1 h de grâce, strictement dépassée. */
-    static boolean isPastGrace(BidEntity bid, AnnouncementEntity announcement, Instant now) {
+    /** Date limite du colis (UTC) + 1 h de grâce, strictement dépassée. */
+    static boolean isPastGrace(BidEntity bid, Instant now) {
         if (bid.getHandoverDeadline() == null) {
             // La requête exclut déjà ce cas ; défensif, on s'en remet à elle.
             return true;
         }
-        String timezone = announcement != null ? announcement.getTimezone() : null;
-        Instant deadline = HandoverDeadlineRules.deadlineInstant(bid.getHandoverDeadline(), timezone);
+        Instant deadline = HandoverDeadlineRules.deadlineInstant(bid.getHandoverDeadline());
         return deadline.plus(NO_SHOW_GRACE).isBefore(now);
     }
 }

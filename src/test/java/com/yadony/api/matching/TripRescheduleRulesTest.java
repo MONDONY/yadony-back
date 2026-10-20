@@ -36,13 +36,39 @@ class TripRescheduleRulesTest {
     }
 
     @Test
-    void handedOverParcel_decidesUntilTheDeparture_endOfDayWithoutTime() {
-        LocalDate date = LocalDate.now().plusDays(3);
+    void handedOverParcel_decidesUntilTheDeparture_endOfDayWithoutTime_inUtc() {
+        LocalDate date = LocalDate.of(2026, 10, 25);
+        AnnouncementEntity abidjan = trip(date, LocalTime.of(22, 0));
+        abidjan.setTimezone("Africa/Abidjan");
+        AnnouncementEntity abidjanNoTime = trip(date, null);
+        abidjanNoTime.setTimezone("Africa/Abidjan");
 
-        assertThat(TripRescheduleRules.decisionDeadline(bid(BidStatus.HANDED_OVER, UUID.randomUUID()),
-                trip(date, LocalTime.of(22, 0)))).isEqualTo(date.atTime(22, 0));
-        assertThat(TripRescheduleRules.decisionDeadline(bid(BidStatus.HANDED_OVER, UUID.randomUUID()),
-                trip(date, null))).isEqualTo(date.atTime(23, 59));
+        assertThat(TripRescheduleRules.decisionDeadline(bid(BidStatus.HANDED_OVER, UUID.randomUUID()), abidjan))
+                .isEqualTo(date.atTime(22, 0));
+        assertThat(TripRescheduleRules.decisionDeadline(bid(BidStatus.HANDED_OVER, UUID.randomUUID()), abidjanNoTime))
+                .isEqualTo(date.atTime(23, 59));
+    }
+
+    /** PROD-1R : départ 22:00 heure de Toronto (UTC-4 en octobre) = 02:00 UTC le lendemain. */
+    @Test
+    void handedOverParcel_departureConvertedToUtc_toronto() {
+        AnnouncementEntity toronto = trip(LocalDate.of(2026, 10, 19), LocalTime.of(22, 0));
+        toronto.setTimezone("America/Toronto");
+
+        assertThat(TripRescheduleRules.decisionDeadline(bid(BidStatus.HANDED_OVER, UUID.randomUUID()), toronto))
+                .isEqualTo(LocalDateTime.of(2026, 10, 20, 2, 0));
+    }
+
+    /** PROD-1R : colis accepté, limite 18:30 UTC (20:30 à Paris) ; la décision reste ouverte à 16:33Z. */
+    @Test
+    void acceptedParcel_decisionOpenComparedInUtc() {
+        BidEntity bid = bid(BidStatus.ACCEPTED, UUID.randomUUID());
+        bid.setHandoverDeadline(LocalDateTime.of(2026, 10, 19, 18, 30));
+        AnnouncementEntity paris = trip(LocalDate.of(2026, 10, 20), LocalTime.NOON);
+        paris.setTimezone("Europe/Paris");
+
+        assertThat(TripRescheduleRules.decisionOpen(bid, paris, java.time.Instant.parse("2026-10-19T16:33:00Z"))).isTrue();
+        assertThat(TripRescheduleRules.decisionOpen(bid, paris, java.time.Instant.parse("2026-10-19T18:31:00Z"))).isFalse();
     }
 
     @Test

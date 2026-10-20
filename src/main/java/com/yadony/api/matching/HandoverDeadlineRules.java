@@ -5,6 +5,7 @@ import org.springframework.http.HttpStatus;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.EnumSet;
 import java.util.Set;
 
@@ -18,8 +19,8 @@ import java.util.Set;
  * engage de l'argent ou fait avancer une demande non encore acceptée appelle désormais
  * {@link #assertNotPassed}, et {@link HandoverDeadlineExpiryScheduler} éteint ce qui reste.
  *
- * <p>Le calcul lui-même vit dans {@link AnnouncementEntity#isHandoverDeadlinePassed} (fuseau
- * du trajet). Sans date limite (annonces antérieures à V207), rien n'est jamais bloqué.
+ * <p>Le calcul lui-même vit dans {@link AnnouncementEntity#isHandoverDeadlinePassed} : la date
+ * limite est stockée en UTC et comparée en UTC (YADONY-FLUTTER-PROD-1R). Sans date limite (annonces antérieures à V207), rien n'est jamais bloqué.
  * Chaque étape d'un voyage à plusieurs étapes est une annonce à part entière, avec sa propre
  * date limite : la règle s'applique étape par étape.
  */
@@ -43,22 +44,16 @@ public final class HandoverDeadlineRules {
             BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.AWAITING_PAYMENT,
             BidStatus.NEGOTIATING);
 
-    /**
-     * Plus grand décalage horaire en avance sur UTC (UTC+14). La date limite est une heure
-     * murale du fuseau du trajet : une requête en UTC qui prend {@code now + 14 h} comme borne
-     * ne manque aucun trajet, le tri fin se fait ensuite trajet par trajet.
-     */
-    static final long MAX_ZONE_AHEAD_HOURS = 14;
-
     private HandoverDeadlineRules() {}
 
     /**
-     * Instant réel d'une date limite de dépôt : heure murale du fuseau du trajet
-     * ({@link TripTimezones#zoneOf}, Europe/Paris si absent ou invalide), jamais de l'UTC.
-     * Même règle que {@link AnnouncementEntity#isHandoverDeadlinePassed}.
+     * Instant réel d'une date limite de dépôt. {@code handoverDeadline} est stockée en UTC
+     * (convention du projet pour tout {@code LocalDateTime}) : aucun fuseau de trajet n'entre
+     * dans le calcul. Le fuseau du trajet ne sert qu'à afficher cette heure dans la ville de
+     * départ. Même règle que {@link AnnouncementEntity#isHandoverDeadlinePassed}.
      */
-    public static Instant deadlineInstant(LocalDateTime wallClockDeadline, String timezone) {
-        return wallClockDeadline.atZone(TripTimezones.zoneOf(timezone)).toInstant();
+    public static Instant deadlineInstant(LocalDateTime utcDeadline) {
+        return utcDeadline.toInstant(ZoneOffset.UTC);
     }
 
     public static void assertNotPassed(AnnouncementEntity announcement) {
