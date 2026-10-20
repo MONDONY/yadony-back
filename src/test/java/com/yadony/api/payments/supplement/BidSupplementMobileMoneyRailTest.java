@@ -1,5 +1,9 @@
 package com.yadony.api.payments.supplement;
 
+import com.yadony.api.payments.mobilemoney.MobileMoneyOperationViews;
+import java.util.Map;
+import com.yadony.api.payments.pawapay.PawapayValidationHints;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.auth.MobileMoneyPayoutStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
@@ -80,7 +84,8 @@ class BidSupplementMobileMoneyRailTest {
     private BidSupplementMobileMoneyRail rail(boolean enabled) {
         return new BidSupplementMobileMoneyRail(ledger, supplements, bids, announcements, users, operations, submission,
                 providers, BidSupplementMobileMoneyLedgerTest.pawapay(enabled), storage,
-                new BidSupplementWindow(new BidSupplementProperties(), Clock.fixed(NOW, ZoneOffset.UTC)), payoutAccounts);
+                new BidSupplementWindow(new BidSupplementProperties(), Clock.fixed(NOW, ZoneOffset.UTC)), payoutAccounts,
+                new MobileMoneyOperationViews(TestMessages.resolver(), new PawapayValidationHints(Map.of())));
     }
 
     @BeforeEach
@@ -256,8 +261,11 @@ class BidSupplementMobileMoneyRailTest {
         when(providers.resolve(any(), any(), any(), any(), anyString()))
                 .thenReturn(resolved("MTN_MOMO_CIV", "PROVIDER_AUTH", null, null))
                 .thenReturn(resolved("ORANGE_SEN", "PROVIDER_AUTH", "100", "5000"));
-        assertCode(() -> rail(true).initiate(bid.getId(), s.getId(), "uid-sender", null, null),
-                "mobile-money-payer-unsupported");
+        assertThatThrownBy(() -> rail(true).initiate(bid.getId(), s.getId(), "uid-sender", null, null))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo("mobile-money-payer-unsupported");
+                    assertThat(e.getMessage()).startsWith("Ce voyageur n'accepte pas ").contains("Réseaux acceptés : ");
+                });
         assertCode(() -> rail(true).initiate(bid.getId(), s.getId(), "uid-sender", null, null),
                 "mobile-money-amount-out-of-range");
         payoutAccounts.give(traveler.getId(), "XOF");
@@ -343,6 +351,37 @@ class BidSupplementMobileMoneyRailTest {
                 "mobile-money-provider-unavailable");
         assertCode(() -> rail(true).initiate(bid.getId(), s.getId(), "uid-sender", null, null),
                 "mobile-money-deposit-rejected");
+    }
+
+    @Test
+    void initiation_refusOperateur_detailTraduit() {
+        when(operations.findLiveForSupplement(s.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
+        when(providers.resolve(any(), any(), any(), any(), anyString()))
+                .thenReturn(resolved("ORANGE_SEN", "PROVIDER_AUTH", null, null));
+        PawapayOperationEntity rejected = deposit(PawapayOperationStatus.SUBMIT_REJECTED);
+        rejected.setFailureCode("PAYER_LIMIT_REACHED");
+        rejected.setFailureMessage("Message brut pawaPay");
+        when(submission.submitSupplementDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(rejected);
+
+        assertThatThrownBy(() -> rail(true).initiate(bid.getId(), s.getId(), "uid-sender", null, null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .hasMessage("Votre opérateur a refusé : plafond de paiement atteint.")
+                .hasMessageNotContaining("Message brut");
+    }
+
+    @Test
+    void statut_depotEchoue_exposeMotifTraduit() {
+        PawapayOperationEntity failed = deposit(PawapayOperationStatus.FAILED);
+        failed.setFailureCode("INSUFFICIENT_BALANCE");
+        when(operations.findLatestForSupplement(s.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(failed));
+
+        var deposit = rail(true).status(bid.getId(), s.getId(), "uid-sender").deposit();
+
+        assertThat(deposit.failureReasonCode()).isEqualTo("insufficient-balance");
+        assertThat(deposit.failureReason()).isEqualTo("Solde insuffisant sur votre compte mobile money.");
+        assertThat(deposit.failureMessage()).isEqualTo(deposit.failureReason());
+        assertThat(deposit.failureCode()).isEqualTo("INSUFFICIENT_BALANCE");
     }
 
     // ── Statut ───────────────────────────────────────────────────────────────

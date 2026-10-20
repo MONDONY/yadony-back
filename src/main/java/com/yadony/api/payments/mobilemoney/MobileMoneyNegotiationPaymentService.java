@@ -23,12 +23,9 @@ import com.yadony.api.payments.pawapay.PawapayOperationService;
 import com.yadony.api.payments.pawapay.PawapayOperationStatus;
 import com.yadony.api.payments.pawapay.PawapayProperties;
 import com.yadony.api.payments.pawapay.PawapayProviderResolver;
-import com.yadony.api.payments.pawapay.PawapayProviders;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import com.yadony.api.payments.pawapay.PawapayText;
 import com.yadony.api.requests.NegotiationMobileMoneyPort;
-import com.yadony.api.requests.entity.NegotiationThreadEntity;
-import com.yadony.api.requests.repository.NegotiationThreadRepository;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -79,7 +76,7 @@ public class MobileMoneyNegotiationPaymentService {
     private final ApplicationEventPublisher events;
     private final PawapayProperties props;
     private final MobileMoneyPayoutAccounts payoutAccounts;
-    private final NegotiationThreadRepository threads;
+    private final MobileMoneyOperationViews views;
     private final TransactionTemplate independentAuditTransaction;
 
     /** Même motif que {@link MobileMoneyBidPaymentService#adminAlert} : optionnel, jamais dans le constructeur. */
@@ -92,7 +89,7 @@ public class MobileMoneyNegotiationPaymentService {
                                                 AuditService audit, ApplicationEventPublisher events,
                                                 PlatformTransactionManager transactionManager, PawapayProperties props,
                                                 MobileMoneyPayoutAccounts payoutAccounts,
-                                                NegotiationThreadRepository threads) {
+                                                MobileMoneyOperationViews views) {
         this.paymentRepository = paymentRepository;
         this.userRepository = userRepository;
         this.operations = operations;
@@ -103,7 +100,7 @@ public class MobileMoneyNegotiationPaymentService {
         this.events = events;
         this.props = props;
         this.payoutAccounts = payoutAccounts;
-        this.threads = threads;
+        this.views = views;
         this.independentAuditTransaction = new TransactionTemplate(transactionManager);
         this.independentAuditTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -197,7 +194,7 @@ public class MobileMoneyNegotiationPaymentService {
 
     @Transactional
     public MobileMoneyNegotiationStatusResponse initiateDeposit(UUID threadId, UUID senderId, String phoneOverride,
-                                                                LocalDateTime deadline) {
+                                                                String provider, UUID travelerId, LocalDateTime deadline) {
         PaymentEntity payment = paymentRepository.findByNegotiationThreadIdForUpdate(threadId)
                 .filter(p -> p.getRail() == PaymentRail.PAWAPAY)
                 .orElseThrow(() -> notFound("mobile-money-payment-not-found", "Aucun paiement mobile money pour cette négociation"));
@@ -219,7 +216,7 @@ public class MobileMoneyNegotiationPaymentService {
         String msisdn = resolvePayerMsisdn(senderId, phoneOverride, payment.getCurrency());
         PawapayProviderResolver.Resolved resolved;
         try {
-            resolved = providers.resolve(msisdn, PawapayOperationKind.DEPOSIT, payment.getCurrency(),
+            resolved = providers.resolve(msisdn, PawapayOperationKind.DEPOSIT, payment.getCurrency(), provider,
                     "l'initiation du deposit pour la négociation " + threadId);
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
             throw payerUnsupported(switch (e.reason()) {
@@ -230,10 +227,10 @@ public class MobileMoneyNegotiationPaymentService {
                 case PROVIDER_NOT_AVAILABLE -> "Réseau " + e.providerLabel() + " indisponible pour ce numéro.";
             });
         }
-        // Couplage : l'expéditeur ne paie que sur un opérateur (code exact) où le voyageur du fil a un
-        // compte de versement dans la devise du paiement, sinon son versement n'aurait nulle part où partir.
-        UUID travelerId = threads.findById(threadId).map(NegotiationThreadEntity::getTravelerId)
-                .orElseThrow(() -> notFound("negotiation-not-found", "Négociation introuvable"));
+        // Couplage (décision produit), comme pour le colis : l'expéditeur ne paie que sur un opérateur
+        // (code exact) où le voyageur du fil a un compte de versement dans la devise du paiement, sinon
+        // son versement n'aurait nulle part où partir. Vérifié pour l'ancien client (prédit) comme pour
+        // le nouveau (choisi).
         payoutAccounts.payerRefusal(travelerId, resolved.provider(), resolved.providerLabel(),
                 resolved.countryAlpha2(), payment.getCurrency()).ifPresent(detail -> {
             throw payerUnsupported(detail);
@@ -257,8 +254,7 @@ public class MobileMoneyNegotiationPaymentService {
                         "msisdnMasked", op.getMsisdnMasked(), "status", op.getStatus().name())));
         if (op.getStatus() == PawapayOperationStatus.SUBMIT_REJECTED) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-deposit-rejected",
-                    "Deposit Rejected", "Paiement refusé par l'opérateur : "
-                    + (op.getFailureMessage() != null ? op.getFailureMessage() : op.getFailureCode()));
+                    "Deposit Rejected", views.rejectedDetail(op));
         }
         return status(threadId, deadline, Optional.of(payment), Optional.of(op));
     }
@@ -303,9 +299,7 @@ public class MobileMoneyNegotiationPaymentService {
 
     private MobileMoneyNegotiationStatusResponse status(UUID threadId, LocalDateTime deadline, Optional<PaymentEntity> payment,
                                                         Optional<PawapayOperationEntity> deposit) {
-        var view = deposit.map(o -> new MobileMoneyPaymentStatusResponse.OperationView(
-                o.getId(), o.getStatus().name(), o.getProvider(), PawapayProviders.label(o.getProvider()),
-                o.getMsisdnMasked(), o.getAuthorizationUrl(), o.getFailureCode(), o.getFailureMessage())).orElse(null);
+        var view = deposit.map(views::view).orElse(null);
         return new MobileMoneyNegotiationStatusResponse(threadId, payment.map(p -> p.getStatus().name()).orElse(null), deadline,
                 payment.map(PaymentEntity::getAmount).orElse(null), payment.map(PaymentEntity::getCurrency).orElse(null), view);
     }

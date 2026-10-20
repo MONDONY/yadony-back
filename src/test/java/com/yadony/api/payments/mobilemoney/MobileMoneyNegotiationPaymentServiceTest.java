@@ -1,10 +1,12 @@
 package com.yadony.api.payments.mobilemoney;
 
+import com.yadony.api.payments.pawapay.PawapayValidationHints;
+import com.yadony.api.common.i18n.TestMessages;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.lenient;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -45,9 +47,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import com.yadony.api.requests.entity.NegotiationThreadEntity;
-import com.yadony.api.requests.repository.NegotiationThreadRepository;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.HttpStatus;
 import org.springframework.transaction.PlatformTransactionManager;
 
 @ExtendWith(MockitoExtension.class)
@@ -63,7 +64,6 @@ class MobileMoneyNegotiationPaymentServiceTest {
     @Mock AuditService audit;
     @Mock ApplicationEventPublisher events;
     @Mock PlatformTransactionManager transactionManager;
-    @Mock NegotiationThreadRepository threads;
     final InMemoryPayoutAccounts payoutAccounts = new InMemoryPayoutAccounts();
 
     MobileMoneyNegotiationPaymentService service;
@@ -79,12 +79,9 @@ class MobileMoneyNegotiationPaymentServiceTest {
                 "https://api-staging.yadony.com", "yadony://bids/%s/mobile-money/awaiting",
                 "yadony://negotiations/%s/mobile-money/awaiting", "yadony://payments/wallet", new PawapayProperties.BalanceMin(null, null));
         service = new MobileMoneyNegotiationPaymentService(paymentRepository, userRepository, operations, submission,
-                providers, firebaseContact, audit, events, transactionManager, props, payoutAccounts, threads);
+                providers, firebaseContact, audit, events, transactionManager, props, payoutAccounts, views());
         // Le voyageur du fil a un compte Orange et Wave au Sénégal : le couplage laisse passer ces deux codes.
         payoutAccounts.give(travelerId, "XOF", "ORANGE_SEN", "WAVE_SEN");
-        NegotiationThreadEntity thread = new NegotiationThreadEntity();
-        thread.setTravelerId(travelerId);
-        lenient().when(threads.findById(threadId)).thenReturn(Optional.of(thread));
     }
 
     /** Même props, avec un résolveur RÉEL adossé à {@link #client} mocké — seule façon de faire lever
@@ -93,12 +90,16 @@ class MobileMoneyNegotiationPaymentServiceTest {
      * {@code MobileMoneyBidPaymentServiceTest}, qui procède de même. */
     private MobileMoneyNegotiationPaymentService serviceWithRealResolver() {
         return new MobileMoneyNegotiationPaymentService(paymentRepository, userRepository, operations, submission,
-                new PawapayProviderResolver(client), firebaseContact, audit, events, transactionManager, props, payoutAccounts, threads);
+                new PawapayProviderResolver(client), firebaseContact, audit, events, transactionManager, props, payoutAccounts, views());
     }
 
     private MobileMoneyNegotiationPaymentService serviceWithProps(PawapayProperties p) {
         return new MobileMoneyNegotiationPaymentService(paymentRepository, userRepository, operations, submission,
-                providers, firebaseContact, audit, events, transactionManager, p, payoutAccounts, threads);
+                providers, firebaseContact, audit, events, transactionManager, p, payoutAccounts, views());
+    }
+
+    private static MobileMoneyOperationViews views() {
+        return new MobileMoneyOperationViews(TestMessages.resolver(), new PawapayValidationHints(Map.of("ORANGE_CIV", "SMS_LINK")));
     }
 
     private static PawapayProperties disabledProps() {
@@ -407,22 +408,107 @@ class MobileMoneyNegotiationPaymentServiceTest {
         return new PawapayProviderResolver.Resolved("ORANGE_SEN", "SN", "221771234567", config);
     }
 
+    /** Comptes de versement XOF du voyageur du fil ({@link #travelerId}) : un par code exact. */
+    private void acceptingTraveler(String... providerCodes) {
+        payoutAccounts.give(travelerId, "XOF", providerCodes);
+    }
+
     @Test
     void initiateDeposit_pendingPayment_submitsDepositWithThreadReference() {
         PaymentEntity p = payment(PaymentStatus.PENDING);
         when(paymentRepository.findByNegotiationThreadIdForUpdate(threadId)).thenReturn(Optional.of(p));
         when(operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
-        when(providers.resolve(eq("221771234567"), eq(PawapayOperationKind.DEPOSIT), eq("XOF"), any())).thenReturn(resolved());
+        when(providers.resolve(eq("221771234567"), eq(PawapayOperationKind.DEPOSIT), eq("XOF"), any(), any())).thenReturn(resolved());
+        acceptingTraveler("ORANGE_SEN", "WAVE_SEN");
         PawapayOperationEntity op = operation(p.getId(), PawapayOperationStatus.ACCEPTED, new BigDecimal("33000"));
         when(submission.submitDeposit(eq(p.getId()), eq("221771234567"), eq("ORANGE_SEN"), eq("SN"),
                 eq(new BigDecimal("33000")), eq("XOF"), eq("thread-" + threadId), any(), any())).thenReturn(op);
 
-        var response = service.initiateDeposit(threadId, senderId, "+221 77 123 45 67", LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
+        var response = service.initiateDeposit(threadId, senderId, "+221 77 123 45 67", null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
 
         assertThat(response.threadId()).isEqualTo(threadId);
         assertThat(response.paymentStatus()).isEqualTo("PENDING");
         assertThat(response.deposit().status()).isEqualTo("ACCEPTED");
         verify(audit).log(eq("PAYMENT"), eq(p.getId()), eq("NEGOTIATION_DEPOSIT_INITIATED"), eq(senderId), any());
+    }
+
+    @Test
+    void initiateDeposit_providerChosen_isSubmitted() {
+        PaymentEntity p = payment(PaymentStatus.PENDING);
+        when(paymentRepository.findByNegotiationThreadIdForUpdate(threadId)).thenReturn(Optional.of(p));
+        when(operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
+        var config = new PawapayProviderConfig("MTN_MOMO_CIV", "CIV", "XOF",
+                new PawapayProviderConfig.Limits(new BigDecimal("100"), new BigDecimal("1000000"), null, null), null);
+        when(providers.resolve(eq("221771234567"), eq(PawapayOperationKind.DEPOSIT), eq("XOF"), eq("MTN_MOMO_CIV"), any()))
+                .thenReturn(new PawapayProviderResolver.Resolved("MTN_MOMO_CIV", "CI", "221771234567", config));
+        acceptingTraveler("ORANGE_CIV", "MTN_MOMO_CIV");
+        PawapayOperationEntity op = operation(p.getId(), PawapayOperationStatus.ACCEPTED, new BigDecimal("33000"));
+        when(submission.submitDeposit(eq(p.getId()), eq("221771234567"), eq("MTN_MOMO_CIV"), eq("CI"),
+                eq(new BigDecimal("33000")), eq("XOF"), eq("thread-" + threadId), any(), any())).thenReturn(op);
+
+        service.initiateDeposit(threadId, senderId, "+221771234567", "MTN_MOMO_CIV", travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
+
+        verify(submission).submitDeposit(eq(p.getId()), eq("221771234567"), eq("MTN_MOMO_CIV"), eq("CI"),
+                eq(new BigDecimal("33000")), eq("XOF"), eq("thread-" + threadId), any(), any());
+    }
+
+    @Test
+    void initiateDeposit_providerNotAcceptedByTraveler_422() {
+        PaymentEntity p = payment(PaymentStatus.PENDING);
+        when(paymentRepository.findByNegotiationThreadIdForUpdate(threadId)).thenReturn(Optional.of(p));
+        when(operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
+        var config = new PawapayProviderConfig("MTN_MOMO_CIV", "CIV", "XOF",
+                new PawapayProviderConfig.Limits(new BigDecimal("100"), new BigDecimal("1000000"), null, null), null);
+        when(providers.resolve(eq("221771234567"), eq(PawapayOperationKind.DEPOSIT), eq("XOF"), eq("MTN_MOMO_CIV"), any()))
+                .thenReturn(new PawapayProviderResolver.Resolved("MTN_MOMO_CIV", "CI", "221771234567", config));
+        acceptingTraveler("ORANGE_CIV");
+
+        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, "+221771234567", "MTN_MOMO_CIV", travelerId,
+                LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    YadonyBusinessException b = (YadonyBusinessException) e;
+                    assertThat(b.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(b.getErrorCode()).isEqualTo("mobile-money-payer-unsupported");
+                    assertThat(b.getMessage()).contains("n'accepte pas MTN").contains("Orange Money");
+                });
+        verify(submission, never()).submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void initiateDeposit_noProvider_usesPredicted() {
+        PaymentEntity p = payment(PaymentStatus.PENDING);
+        when(paymentRepository.findByNegotiationThreadIdForUpdate(threadId)).thenReturn(Optional.of(p));
+        when(operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
+        when(providers.resolve(eq("221771234567"), eq(PawapayOperationKind.DEPOSIT), eq("XOF"), isNull(), any()))
+                .thenReturn(resolved());
+        acceptingTraveler("ORANGE_SEN");
+        when(submission.submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(operation(p.getId(), PawapayOperationStatus.ACCEPTED, new BigDecimal("33000")));
+
+        service.initiateDeposit(threadId, senderId, "+221771234567", null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
+
+        verify(submission).submitDeposit(eq(p.getId()), eq("221771234567"), eq("ORANGE_SEN"), eq("SN"), any(), eq("XOF"), any(), any(), any());
+    }
+
+    @Test
+    void initiateDeposit_checksTheTravelerPassedByTheThread_notAnotherOne() {
+        // Le voyageur du fil arrive en argument (PreparedDeposit.travelerId) : un autre voyageur,
+        // sans compte, n'hérite pas des comptes de {@link #travelerId}.
+        PaymentEntity p = payment(PaymentStatus.PENDING);
+        when(paymentRepository.findByNegotiationThreadIdForUpdate(threadId)).thenReturn(Optional.of(p));
+        when(operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
+        when(providers.resolve(eq("221771234567"), eq(PawapayOperationKind.DEPOSIT), eq("XOF"), any(), any())).thenReturn(resolved());
+
+        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, "+221771234567", null, UUID.randomUUID(),
+                LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    YadonyBusinessException b = (YadonyBusinessException) e;
+                    assertThat(b.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(b.getMessage()).isEqualTo("Ce voyageur n'accepte aucun réseau mobile money pour le moment.");
+                });
+        verify(submission, never()).submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -432,7 +518,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         PawapayOperationEntity live = operation(p.getId(), PawapayOperationStatus.ACCEPTED, new BigDecimal("33000"));
         when(operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(live));
 
-        service.initiateDeposit(threadId, senderId, "+221771234567", LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
+        service.initiateDeposit(threadId, senderId, "+221771234567", null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
 
         verify(submission, never()).submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
@@ -442,7 +528,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         PaymentEntity p = payment(PaymentStatus.PENDING);
         when(paymentRepository.findByNegotiationThreadIdForUpdate(threadId)).thenReturn(Optional.of(p));
 
-        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, "+221771234567", LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1)))
+        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, "+221771234567", null, travelerId, LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1)))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-payment-expired"));
     }
@@ -454,7 +540,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         when(operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
         when(userRepository.findById(senderId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, null, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
+        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, null, null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-phone-required"));
     }
@@ -465,7 +551,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
     void initiateDeposit_noPayment_is404() {
         when(paymentRepository.findByNegotiationThreadIdForUpdate(threadId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, null, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
+        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, null, null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-payment-not-found"));
     }
@@ -475,7 +561,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         PaymentEntity p = payment(PaymentStatus.ESCROW);
         when(paymentRepository.findByNegotiationThreadIdForUpdate(threadId)).thenReturn(Optional.of(p));
 
-        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, null, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
+        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, null, null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-payment-not-pending"));
     }
@@ -492,7 +578,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         when(paymentRepository.findByNegotiationThreadIdForUpdate(threadId)).thenReturn(Optional.of(p));
         when(operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> svc.initiateDeposit(threadId, senderId, "+221771234567", LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
+        assertThatThrownBy(() -> svc.initiateDeposit(threadId, senderId, "+221771234567", null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-disabled"));
         verifyNoInteractions(submission, providers);
@@ -509,7 +595,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         PawapayOperationEntity live = operation(p.getId(), PawapayOperationStatus.ACCEPTED, new BigDecimal("33000"));
         when(operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(live));
 
-        var r = svc.initiateDeposit(threadId, senderId, "+221771234567", LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
+        var r = svc.initiateDeposit(threadId, senderId, "+221771234567", null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
 
         assertThat(r.deposit().status()).isEqualTo("ACCEPTED");
         verifyNoInteractions(submission, providers);
@@ -525,7 +611,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         when(operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
         when(client.predictProvider("221771234567")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> svc.initiateDeposit(threadId, senderId, "+221771234567", LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
+        assertThatThrownBy(() -> svc.initiateDeposit(threadId, senderId, "+221771234567", null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> {
                     YadonyBusinessException b = (YadonyBusinessException) e;
@@ -551,7 +637,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
         when(client.predictProvider("221770000099")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> svc.initiateDeposit(threadId, senderId, null, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
+        assertThatThrownBy(() -> svc.initiateDeposit(threadId, senderId, null, null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
                         .isEqualTo("mobile-money-payer-unsupported"));
@@ -570,7 +656,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         var ok = new PawapayProviderConfig.Limits(new BigDecimal("100"), new BigDecimal("1500000"), "PROVIDER_AUTH", "OPERATIONAL");
         when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", closed, ok)));
 
-        assertThatThrownBy(() -> svc.initiateDeposit(threadId, senderId, "+221771234567", LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
+        assertThatThrownBy(() -> svc.initiateDeposit(threadId, senderId, "+221771234567", null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> {
                     YadonyBusinessException b = (YadonyBusinessException) e;
@@ -590,7 +676,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         var ok = new PawapayProviderConfig.Limits(new BigDecimal("100"), new BigDecimal("1500000"), "PROVIDER_AUTH", "OPERATIONAL");
         when(client.activeConfiguration()).thenReturn(Map.of("MTN_MOMO_CMR", new PawapayProviderConfig("MTN_MOMO_CMR", "CMR", "XAF", ok, ok)));
 
-        assertThatThrownBy(() -> svc.initiateDeposit(threadId, senderId, "+221771234567", LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
+        assertThatThrownBy(() -> svc.initiateDeposit(threadId, senderId, "+221771234567", null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> {
                     YadonyBusinessException b = (YadonyBusinessException) e;
@@ -611,7 +697,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         var ok = new PawapayProviderConfig.Limits(new BigDecimal("100"), new BigDecimal("1500000"), "PROVIDER_AUTH", "OPERATIONAL");
         when(client.activeConfiguration()).thenReturn(Map.of("ORANGE_SEN", new PawapayProviderConfig("ORANGE_SEN", "ZZZ", "XOF", ok, ok)));
 
-        assertThatThrownBy(() -> svc.initiateDeposit(threadId, senderId, "+221771234567", LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
+        assertThatThrownBy(() -> svc.initiateDeposit(threadId, senderId, "+221771234567", null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-payer-unsupported"));
         verify(submission, never()).submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any());
@@ -627,10 +713,11 @@ class MobileMoneyNegotiationPaymentServiceTest {
         // Plafond deposit de l'opérateur (10 000) sous le montant du paiement (33 000).
         var capped = new PawapayProviderConfig.Limits(new BigDecimal("100"), new BigDecimal("10000"), null, null);
         var config = new PawapayProviderConfig("ORANGE_SEN", "SEN", "XOF", capped, null);
-        when(providers.resolve(eq("221771234567"), eq(PawapayOperationKind.DEPOSIT), eq("XOF"), any()))
+        when(providers.resolve(eq("221771234567"), eq(PawapayOperationKind.DEPOSIT), eq("XOF"), any(), any()))
                 .thenReturn(new PawapayProviderResolver.Resolved("ORANGE_SEN", "SN", "221771234567", config));
+        acceptingTraveler("ORANGE_SEN", "WAVE_SEN");
 
-        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, "+221771234567", LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
+        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, "+221771234567", null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> {
                     YadonyBusinessException b = (YadonyBusinessException) e;
@@ -649,12 +736,13 @@ class MobileMoneyNegotiationPaymentServiceTest {
         when(operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
         var redirect = new PawapayProviderConfig.Limits(new BigDecimal("100"), new BigDecimal("1500000"), PawapayProviders.REDIRECT_AUTH, "OPERATIONAL");
         var config = new PawapayProviderConfig("WAVE_SEN", "SEN", "XOF", redirect, null);
-        when(providers.resolve(eq("221771234567"), eq(PawapayOperationKind.DEPOSIT), eq("XOF"), any()))
+        when(providers.resolve(eq("221771234567"), eq(PawapayOperationKind.DEPOSIT), eq("XOF"), any(), any()))
                 .thenReturn(new PawapayProviderResolver.Resolved("WAVE_SEN", "SN", "221771234567", config));
+        acceptingTraveler("ORANGE_SEN", "WAVE_SEN");
         when(submission.submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(operation(p.getId(), PawapayOperationStatus.ACCEPTED, new BigDecimal("33000")));
 
-        service.initiateDeposit(threadId, senderId, "+221771234567", LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
+        service.initiateDeposit(threadId, senderId, "+221771234567", null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
 
         verify(submission).submitDeposit(eq(p.getId()), eq("221771234567"), eq("WAVE_SEN"), eq("SN"), eq(new BigDecimal("33000")), eq("XOF"),
                 eq("thread-" + threadId),
@@ -670,7 +758,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         when(paymentRepository.findByNegotiationThreadIdForUpdate(threadId)).thenReturn(Optional.of(p));
         when(operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, "pas un numéro", LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
+        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, "pas un numéro", null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> {
                     YadonyBusinessException b = (YadonyBusinessException) e;
@@ -690,7 +778,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
         when(firebaseContact.getContact("s-uid")).thenReturn(new FirebaseContactService.Contact("12", null));
 
-        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, null, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
+        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, null, null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-payer-unsupported"));
         verifyNoInteractions(providers);
@@ -699,18 +787,21 @@ class MobileMoneyNegotiationPaymentServiceTest {
     // ── initiateDeposit — refus pawaPay ────────────────────────────────────
 
     @Test
-    void initiateDeposit_submitRejected_is422WithReason() {
+    void initiateDeposit_submitRejected_detailIsTranslated() {
         PaymentEntity p = payment(PaymentStatus.PENDING);
         when(paymentRepository.findByNegotiationThreadIdForUpdate(threadId)).thenReturn(Optional.of(p));
         when(operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
-        when(providers.resolve(eq("221771234567"), eq(PawapayOperationKind.DEPOSIT), eq("XOF"), any())).thenReturn(resolved());
+        when(providers.resolve(eq("221771234567"), eq(PawapayOperationKind.DEPOSIT), eq("XOF"), any(), any())).thenReturn(resolved());
+        acceptingTraveler("ORANGE_SEN", "WAVE_SEN");
         PawapayOperationEntity rejected = operation(p.getId(), PawapayOperationStatus.SUBMIT_REJECTED, new BigDecimal("33000"));
+        rejected.setFailureCode("INSUFFICIENT_BALANCE");
         rejected.setFailureMessage("Provider down");
         when(submission.submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(rejected);
 
-        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, "+221771234567", LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
+        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, "+221771234567", null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
                 .isInstanceOf(YadonyBusinessException.class)
-                .hasMessageContaining("Provider down")
+                .hasMessage("Solde insuffisant sur votre compte mobile money.")
+                .hasMessageNotContaining("Provider down")
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-deposit-rejected"));
     }
 
@@ -721,7 +812,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         when(operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.empty());
         var limits = new PawapayProviderConfig.Limits(new BigDecimal("100"), new BigDecimal("1000000"), null, null);
         var config = new PawapayProviderConfig(provider, "XXX", "XOF", limits, null);
-        when(providers.resolve(eq("221771234567"), eq(PawapayOperationKind.DEPOSIT), eq("XOF"), any()))
+        when(providers.resolve(eq("221771234567"), eq(PawapayOperationKind.DEPOSIT), eq("XOF"), any(), any()))
                 .thenReturn(new PawapayProviderResolver.Resolved(provider, country, "221771234567", config));
     }
 
@@ -731,7 +822,7 @@ class MobileMoneyNegotiationPaymentServiceTest {
         payoutAccounts.give(travelerId, "XOF", "ORANGE_SEN");
         resolvingTo(p, "ORANGE_CIV", "CI");
 
-        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, "+221771234567", LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
+        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, "+221771234567", null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> {
                     YadonyBusinessException b = (YadonyBusinessException) e;
@@ -748,21 +839,9 @@ class MobileMoneyNegotiationPaymentServiceTest {
         payoutAccounts.give(travelerId, "XAF", "MTN_MOMO_CMR");
         resolvingTo(p, "ORANGE_SEN", "SN");
 
-        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, "+221771234567", LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
+        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, "+221771234567", null, travelerId, LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
                 .isInstanceOf(YadonyBusinessException.class)
                 .hasMessage("Ce voyageur n'accepte aucun réseau mobile money pour le moment.");
-        verify(submission, never()).submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any());
-    }
-
-    @Test
-    void initiateDeposit_threadGone_is404_neverSubmits() {
-        PaymentEntity p = payment(PaymentStatus.PENDING);
-        resolvingTo(p, "ORANGE_SEN", "SN");
-        when(threads.findById(threadId)).thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> service.initiateDeposit(threadId, senderId, "+221771234567", LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20)))
-                .isInstanceOf(YadonyBusinessException.class)
-                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("negotiation-not-found"));
         verify(submission, never()).submitDeposit(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 

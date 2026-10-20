@@ -2,7 +2,9 @@ package com.yadony.api.requests.controller;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.payments.mobilemoney.MobileMoneyAcceptedOperatorsService;
 import com.yadony.api.payments.mobilemoney.MobileMoneyNegotiationPaymentService;
+import com.yadony.api.payments.mobilemoney.dto.MobileMoneyAcceptedOperatorsResponse;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyNegotiationStatusResponse;
 import com.yadony.api.requests.entity.NegotiationThreadEntity;
 import com.yadony.api.requests.entity.NegotiationThreadStatus;
@@ -29,6 +31,7 @@ import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -49,10 +52,12 @@ class NegotiationControllerMobileMoneyIT {
 
     @MockBean private NegotiationService service;
     @MockBean private MobileMoneyNegotiationPaymentService mobileMoney;
+    @MockBean private MobileMoneyAcceptedOperatorsService acceptedOperators;
     @MockBean private com.yadony.api.payments.PaymentService paymentService;
     @MockBean private UserRepository userRepository;
 
     private static final UUID SENDER_UUID = UUID.randomUUID();
+    private static final UUID TRAVELER_UUID = UUID.randomUUID();
 
     @BeforeEach
     void setupAuth() {
@@ -75,8 +80,8 @@ class NegotiationControllerMobileMoneyIT {
         UUID threadId = UUID.randomUUID();
         LocalDateTime expiresAt = LocalDateTime.now().plusMinutes(30);
         when(service.prepareMobileMoneyDeposit(SENDER_UUID, threadId))
-                .thenReturn(new NegotiationService.PreparedDeposit(threadId, UUID.randomUUID(), new BigDecimal("33000"), "XOF", expiresAt));
-        when(mobileMoney.initiateDeposit(eq(threadId), eq(SENDER_UUID), eq("+221771234567"), eq(expiresAt)))
+                .thenReturn(new NegotiationService.PreparedDeposit(threadId, UUID.randomUUID(), TRAVELER_UUID, new BigDecimal("33000"), "XOF", expiresAt));
+        when(mobileMoney.initiateDeposit(eq(threadId), eq(SENDER_UUID), eq("+221771234567"), isNull(), eq(TRAVELER_UUID), eq(expiresAt)))
                 .thenReturn(new MobileMoneyNegotiationStatusResponse(threadId, "PENDING", expiresAt, new BigDecimal("33000"), "XOF", null));
 
         mockMvc.perform(post("/negotiations/" + threadId + "/mobile-money/initiate")
@@ -90,7 +95,25 @@ class NegotiationControllerMobileMoneyIT {
 
         var order = inOrder(service, mobileMoney);
         order.verify(service).prepareMobileMoneyDeposit(SENDER_UUID, threadId);
-        order.verify(mobileMoney).initiateDeposit(threadId, SENDER_UUID, "+221771234567", expiresAt);
+        order.verify(mobileMoney).initiateDeposit(threadId, SENDER_UUID, "+221771234567", null, TRAVELER_UUID, expiresAt);
+    }
+
+    @Test
+    void initiate_withProvider_passesItThrough() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        LocalDateTime expiresAt = LocalDateTime.now().plusMinutes(30);
+        when(service.prepareMobileMoneyDeposit(SENDER_UUID, threadId))
+                .thenReturn(new NegotiationService.PreparedDeposit(threadId, UUID.randomUUID(), TRAVELER_UUID, new BigDecimal("33000"), "XOF", expiresAt));
+        when(mobileMoney.initiateDeposit(eq(threadId), eq(SENDER_UUID), eq("+221771234567"), eq("MTN_MOMO_CIV"), eq(TRAVELER_UUID), eq(expiresAt)))
+                .thenReturn(new MobileMoneyNegotiationStatusResponse(threadId, "PENDING", expiresAt, new BigDecimal("33000"), "XOF", null));
+
+        mockMvc.perform(post("/negotiations/" + threadId + "/mobile-money/initiate")
+                .with(authentication(authAs("uid-sender", "SENDER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"phoneNumber\":\"+221771234567\",\"provider\":\"MTN_MOMO_CIV\"}"))
+            .andExpect(status().isCreated());
+
+        verify(mobileMoney).initiateDeposit(threadId, SENDER_UUID, "+221771234567", "MTN_MOMO_CIV", TRAVELER_UUID, expiresAt);
     }
 
     @Test
@@ -104,7 +127,7 @@ class NegotiationControllerMobileMoneyIT {
             .andExpect(status().isUnprocessableEntity())
             .andExpect(content().contentType("application/problem+json"))
             .andExpect(jsonPath("$.code").value("payment-method/not-in-available-set"));
-        verify(mobileMoney, never()).initiateDeposit(any(), any(), any(), any());
+        verify(mobileMoney, never()).initiateDeposit(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -136,6 +159,44 @@ class NegotiationControllerMobileMoneyIT {
     @Test
     void initiate_asTraveler_is403() throws Exception {
         mockMvc.perform(post("/negotiations/" + UUID.randomUUID() + "/mobile-money/initiate")
+                .with(authentication(authAs("uid-sender", "TRAVELER"))))
+            .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void acceptedOperators_thread_returns200() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        NegotiationThreadEntity thread = new NegotiationThreadEntity();
+        thread.setTravelerId(travelerId);
+        thread.setCurrency("XOF");
+        when(service.requireParticipantThread(SENDER_UUID, threadId)).thenReturn(thread);
+        when(acceptedOperators.forTraveler(travelerId, "XOF"))
+                .thenReturn(new MobileMoneyAcceptedOperatorsResponse("XOF", "Aminata", List.of("ORANGE_CIV", "MTN_MOMO_CIV")));
+
+        mockMvc.perform(get("/negotiations/" + threadId + "/mobile-money/accepted-operators")
+                .with(authentication(authAs("uid-sender", "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.currency").value("XOF"))
+            .andExpect(jsonPath("$.travelerFirstName").value("Aminata"))
+            .andExpect(jsonPath("$.providers[0]").value("ORANGE_CIV"));
+    }
+
+    @Test
+    void acceptedOperators_notParticipant_isRefusedBeforeCatalogue() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        when(service.requireParticipantThread(SENDER_UUID, threadId))
+                .thenThrow(new ResponseStatusException(HttpStatus.FORBIDDEN, "forbidden"));
+
+        mockMvc.perform(get("/negotiations/" + threadId + "/mobile-money/accepted-operators")
+                .with(authentication(authAs("uid-sender", "SENDER"))))
+            .andExpect(status().isForbidden());
+        verify(acceptedOperators, never()).forTraveler(any(UUID.class), any());
+    }
+
+    @Test
+    void acceptedOperators_asTraveler_is403() throws Exception {
+        mockMvc.perform(get("/negotiations/" + UUID.randomUUID() + "/mobile-money/accepted-operators")
                 .with(authentication(authAs("uid-sender", "TRAVELER"))))
             .andExpect(status().isForbidden());
     }
