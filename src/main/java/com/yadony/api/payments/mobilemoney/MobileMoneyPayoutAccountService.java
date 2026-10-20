@@ -256,7 +256,8 @@ public class MobileMoneyPayoutAccountService {
     // même code se suivent au lieu de se croiser (règle projet #17).
     private UserEntity lockUser(UUID userId) {
         return userRepository.findByIdForUpdate(userId).orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Utilisateur introuvable : " + userId));
+                HttpStatus.NOT_FOUND, "user-not-found", "User Not Found",
+                messagesResolver.forRequest().get("problem.user.not-found")));
     }
 
     private static String normalizePhone(String phoneNumber, Messages m) {

@@ -3,6 +3,7 @@ package com.yadony.api.payments.mobilemoney;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.lenient;
 
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.TravelerPayoutNetworksPort.PayoutNetwork;
 import java.time.Instant;
 import java.util.List;
@@ -26,7 +27,7 @@ class TravelerPayoutNetworksAdapterTest {
 
     @BeforeEach
     void setUp() {
-        adapter = new TravelerPayoutNetworksAdapter(new MobileMoneyPayoutAccounts(repository));
+        adapter = new TravelerPayoutNetworksAdapter(new MobileMoneyPayoutAccounts(repository, TestMessages.resolver()));
         lenient().when(repository.findByUserIdAndDeletedAtIsNullOrderByCreatedAtAsc(travelerId)).thenReturn(List.of(
                 account("ORANGE_CIV", "CI", "XOF", "+2250700000001"),
                 account("ORANGE_SEN", "SN", "XOF", "+221770000002"),

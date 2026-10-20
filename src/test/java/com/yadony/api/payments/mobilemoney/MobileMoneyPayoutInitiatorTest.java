@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.PaymentEntity;
 import com.yadony.api.payments.PaymentRail;
@@ -61,7 +62,7 @@ class MobileMoneyPayoutInitiatorTest {
     void setUp() {
         // Le routage du versement est celui, réel, de MobileMoneyPayoutAccounts (sur un dépôt simulé) :
         // ces tests prouvent le choix du compte, pas seulement l'appel d'un collaborateur.
-        initiator = new MobileMoneyPayoutInitiator(new MobileMoneyPayoutAccounts(accountRepository), operations,
+        initiator = new MobileMoneyPayoutInitiator(new MobileMoneyPayoutAccounts(accountRepository, TestMessages.resolver()), operations,
                 submission, adminAlert, alerts, audit, transactionManager, holdPolicy);
         payment = new PaymentEntity();
         ReflectionTestUtils.setField(payment, "id", UUID.randomUUID());

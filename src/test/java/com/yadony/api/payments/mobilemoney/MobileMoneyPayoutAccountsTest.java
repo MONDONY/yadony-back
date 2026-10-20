@@ -8,10 +8,12 @@ import static org.mockito.Mockito.when;
 
 import com.yadony.api.auth.MobileMoneyPayoutStatus;
 import com.yadony.api.auth.UserEntity;
+import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutAccounts.PayoutDestination;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,9 +32,14 @@ class MobileMoneyPayoutAccountsTest {
     private MobileMoneyPayoutAccounts accounts;
     private final UUID userId = UUID.randomUUID();
 
+    @AfterEach
+    void clearRequest() {
+        TestMessages.clearRequest();
+    }
+
     @BeforeEach
     void setUp() {
-        accounts = new MobileMoneyPayoutAccounts(repository);
+        accounts = new MobileMoneyPayoutAccounts(repository, TestMessages.resolver());
     }
 
     private static MobileMoneyPayoutAccountEntity account(String provider, String country, String currency,
@@ -129,6 +136,18 @@ class MobileMoneyPayoutAccountsTest {
         // Pays inconnu du payeur : pas de suffixe sur le refusé, mais les comptes restent désambiguïsés.
         assertThat(accounts.payerRefusal(userId, "ORANGE_CIV", "Orange Money", null, "XOF"))
                 .contains("Ce voyageur n'accepte pas Orange Money. Réseaux acceptés : Orange Money (SN), Wave.");
+    }
+
+    @Test
+    void payerRefusal_isTranslatedWithTheRequestLanguage() {
+        TestMessages.requestWithAcceptLanguage("en");
+        given(account("ORANGE_SEN", "SN", "XOF", "+221770000001", CIV_VERIFIED, false),
+                account("WAVE_SEN", "SN", "XOF", "+221770000002", CIV_VERIFIED, false));
+
+        assertThat(accounts.payerRefusal(userId, "MTN_MOMO_SEN", "MTN MoMo", "SN", "XOF"))
+                .contains("This traveler does not accept MTN MoMo. Accepted networks: Orange Money, Wave.");
+        assertThat(accounts.payerRefusal(userId, "ORANGE_SEN", "Orange Money", "SN", "XAF"))
+                .contains("This traveler does not accept any mobile money network at the moment.");
     }
 
     // ── Routage du versement ─────────────────────────────────────────────────────────────────
