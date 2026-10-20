@@ -1,8 +1,11 @@
 package com.yadony.api.signalements;
 
 import com.yadony.api.auth.UserEntity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.media.MediaPurpose;
@@ -14,6 +17,8 @@ import com.yadony.api.ratings.RatingRepository;
 import com.yadony.api.requests.repository.PackageRequestRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -33,6 +38,8 @@ import java.util.stream.Collectors;
 @Service
 public class ReportService {
 
+    private static final Logger log = LoggerFactory.getLogger(ReportService.class);
+
     /** 5 = la capture automatique du scarabée + 4 captures choisies par l'utilisateur. */
     static final int MAX_PHOTOS = 5;
     static final int SCREEN_ROUTE_MAX_LENGTH = 200;
@@ -51,6 +58,7 @@ public class ReportService {
     private final ConversationRepository conversationRepository;
     private final StorageService storageService;
     private final AuditService auditService;
+    private final AdminAlertService adminAlertService;
 
     public ReportService(ReportRepository reportRepository,
                          ReportPhotoRepository photoRepository,
@@ -61,7 +69,8 @@ public class ReportService {
                          PackageRequestRepository packageRequestRepository,
                          ConversationRepository conversationRepository,
                          StorageService storageService,
-                         AuditService auditService) {
+                         AuditService auditService,
+                         AdminAlertService adminAlertService) {
         this.reportRepository = reportRepository;
         this.photoRepository = photoRepository;
         this.userRepository = userRepository;
@@ -72,6 +81,7 @@ public class ReportService {
         this.conversationRepository = conversationRepository;
         this.storageService = storageService;
         this.auditService = auditService;
+        this.adminAlertService = adminAlertService;
     }
 
     /** Upload d'une capture d'écran sous reports/{userId}/ ; renvoie la clé S3. */
@@ -192,8 +202,55 @@ public class ReportService {
             details.put("messageId", targetMessageId);
         }
         auditService.log("REPORT", report.getId(), "REPORT_CREATED", reporter.getId(), Map.copyOf(details));
+        if (targetType == ReportTargetType.APP) {
+            alertAdminAfterCommit(report, reporter.getId(), keys.size());
+        }
 
         return report;
+    }
+
+    /** Longueur de la description reprise dans l'alerte : le détail complet reste dans l'admin. */
+    static final int ALERT_DESCRIPTION_MAX = 200;
+
+    /**
+     * Un bug signalé depuis l'app prévient le salon Telegram. Sentry ne le fait qu'à la création
+     * d'une issue : les 29 signalements suivants d'un même écran (30 en deux jours sur
+     * {@code /home}) n'arrivaient nulle part. L'alerte part après le commit, hors du chemin
+     * critique : un bot injoignable ne doit jamais empêcher un signalement.
+     */
+    private void alertAdminAfterCommit(ReportEntity report, UUID reporterId, int photoCount) {
+        Runnable alert = () -> {
+            try {
+                String route = report.getScreenRoute();
+                String description = report.getDescription() == null ? ""
+                        : report.getDescription().strip().replaceAll("\\s+", " ");
+                if (description.length() > ALERT_DESCRIPTION_MAX) {
+                    description = description.substring(0, ALERT_DESCRIPTION_MAX) + "…";
+                }
+                Map<String, Object> context = new java.util.LinkedHashMap<>();
+                context.put("reportId", report.getId());
+                context.put("motif", report.getReason().name());
+                if (route != null && !route.isBlank()) context.put("ecran", route);
+                context.put("captures", photoCount);
+                context.put("userId", reporterId);
+                adminAlertService.raise("APP_REPORT_CREATED",
+                        "Nouveau signalement de bug" + (route == null || route.isBlank() ? "" : " sur " + route)
+                                + (description.isEmpty() ? "" : " : " + description),
+                        context);
+            } catch (RuntimeException e) {
+                log.warn("Alerte du signalement {} non envoyée : {}", report.getId(), e.getMessage());
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    alert.run();
+                }
+            });
+        } else {
+            alert.run();
+        }
     }
 
     /**
