@@ -6,6 +6,6 @@ routes:
   - path: /payments/mobile-money/account
     label: Mobile money payout
 ---
-To pay, choose Mobile money, the operator and the paying number, then confirm the PIN request on your phone: after the traveler accepts, you have 30 minutes. Yadony holds the money until delivery.
+To pay, choose your country, the operator (only those the traveler accepts are offered) and the paying number, yours or a relative's, then confirm the request you receive (SMS with a link, or secret code): after the traveler accepts, you have 30 minutes. Yadony holds the money until delivery.
 To get paid, open Profile › Money › Mobile money payout, enter the number (it can differ from your Yadony number) and tick the accepted networks.
 Mobile money is offered for trips in XOF or XAF, and the traveler is paid at delivery on the same network the sender chose.
