@@ -9,7 +9,7 @@ import java.util.UUID;
  * Dernier report du trajet d'un colis, servi dans {@link BidResponse}.
  *
  * @param decisionPending  l'expéditeur peut encore garder son colis ou se retirer
- * @param decisionDeadline jusqu'à quand (heure locale du trajet) ; sans réponse, le colis reste
+ * @param decisionDeadline jusqu'à quand, en UTC (affiché à l'heure locale par l'app) ; sans réponse, le colis reste
  */
 public record TripRescheduleInfo(
         UUID id,

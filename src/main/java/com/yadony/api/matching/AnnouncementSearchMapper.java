@@ -134,7 +134,8 @@ public class AnnouncementSearchMapper {
                 // lecteur identifie (favoris), comme documente sur le DTO.
                 null, null, null,
                 // Audience : posée par AnnouncementService pour les seuls trajets du lecteur.
-                null
+                null,
+                entity.getTimezone()
         );
     }
 
@@ -204,7 +205,8 @@ public class AnnouncementSearchMapper {
                 // lecteur identifie (favoris), comme documente sur le DTO.
                 null, null, null,
                 // Audience : posée par AnnouncementService pour les seuls trajets du lecteur.
-                null
+                null,
+                entity.getTimezone()
         );
     }
 

@@ -67,5 +67,12 @@ public record AnnouncementResponse(
         /** Nombre d'étapes encore présentes dans le voyage ; null hors voyage. */
         Integer tripLegCount,
         /** Trajet récurrent par dates précises (V319) : série commune, null hors série. */
-        UUID seriesId
+        UUID seriesId,
+        /**
+         * Fuseau IANA de la ville de départ (ex. « Europe/Paris »), YADONY-FLUTTER-PROD-1R.
+         * Les dates/heures {@code LocalDateTime} (dont {@code handoverDeadline}) sont en UTC :
+         * le client s'en sert pour les afficher à l'heure de la ville de départ. Champ ajouté,
+         * optionnel pour les anciens clients.
+         */
+        String departureTimezone
 ) {}

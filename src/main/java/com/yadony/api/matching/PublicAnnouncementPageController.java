@@ -461,10 +461,16 @@ public class PublicAnnouncementPageController {
         }
     }
 
-    private String formatDeadline(AnnouncementEntity announcement) {
+    /**
+     * Date limite affichée à l'heure de la ville de départ : stockée en UTC
+     * (YADONY-FLUTTER-PROD-1R), elle s'affichait telle quelle, deux heures trop tôt pour Paris.
+     */
+    static String formatDeadline(AnnouncementEntity announcement) {
         return announcement.getHandoverDeadline() == null
                 ? null
-                : announcement.getHandoverDeadline().format(DEADLINE_FMT);
+                : HandoverDeadlineRules.deadlineInstant(announcement.getHandoverDeadline())
+                        .atZone(TripTimezones.zoneOf(announcement.getTimezone()))
+                        .format(DEADLINE_FMT);
     }
 
     private String formatDecimal(BigDecimal value) {

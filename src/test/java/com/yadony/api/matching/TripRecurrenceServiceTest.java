@@ -171,7 +171,7 @@ class TripRecurrenceServiceTest {
         assertThat(req.description()).isEqualTo("Fragile bienvenu");
         assertThat(req.refusedTypes()).containsExactly("Téléphone & électronique");
         assertThat(req.pricingMode()).isEqualTo(PricingMode.MIXED);
-        assertThat(req.handoverDeadline()).isEqualTo(req.departureDate().atTime(LocalTime.of(14, 0)).minusDays(2));
+        assertThat(req.handoverDeadline()).isEqualTo(parisToUtc(req.departureDate().atTime(LocalTime.of(14, 0))).minusDays(2));
     }
 
     @Test
@@ -200,7 +200,7 @@ class TripRecurrenceServiceTest {
         ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
         verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
         assertThat(cap.getValue().handoverDeadline())
-                .isEqualTo(cap.getValue().departureDate().atTime(LocalTime.of(14, 0)));
+                .isEqualTo(parisToUtc(cap.getValue().departureDate().atTime(LocalTime.of(14, 0))));
     }
 
     // B : un délai de remise long combiné à un départ proche produisait une limite déjà
@@ -220,7 +220,7 @@ class TripRecurrenceServiceTest {
         verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
         assertThat(cap.getValue().departureDate()).isEqualTo(tomorrow);
         assertThat(cap.getValue().handoverDeadline())
-                .isEqualTo(cap.getValue().departureDate().atTime(LocalTime.of(14, 0)));
+                .isEqualTo(parisToUtc(cap.getValue().departureDate().atTime(LocalTime.of(14, 0))));
     }
 
     @Test
@@ -719,5 +719,14 @@ class TripRecurrenceServiceTest {
                 new AddressDto("12 rue de la Paix", 48.86, 2.33),
                 new AddressDto("Aéroport CDG", 49.01, 2.55),
                 LocalTime.of(14, 0), LocalTime.of(18, 30), false, weekdays, horizon, active);
+    }
+
+    /**
+     * Fuseau du trajet introuvable dans les mocks : repli Europe/Paris. La date limite générée
+     * est stockée en UTC (YADONY-FLUTTER-PROD-1R), le départ reste en heure murale.
+     */
+    private static java.time.LocalDateTime parisToUtc(java.time.LocalDateTime parisWallClock) {
+        return parisWallClock.atZone(java.time.ZoneId.of("Europe/Paris"))
+                .withZoneSameInstant(java.time.ZoneOffset.UTC).toLocalDateTime();
     }
 }

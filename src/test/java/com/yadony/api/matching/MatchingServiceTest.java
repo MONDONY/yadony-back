@@ -30,6 +30,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -69,6 +70,47 @@ class MatchingServiceTest {
         sender.setLastName("Dupont");
         setField(sender, "averageRating", BigDecimal.valueOf(4.5));
         setField(sender, "totalShipments", 8);
+    }
+
+    /** PROD-1R : un trajet dont le dépôt est clos ne sert plus de base aux suggestions. */
+    @Nested
+    @DisplayName("trajets au dépôt clos")
+    class HandoverDeadlineFilter {
+
+        @Test
+        void findMatchingRequests_ignoreUnTrajetDontLaDateLimiteEstPassee() {
+            activeAnnouncement.setHandoverDeadline(
+                    java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1));
+            when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
+                    .thenReturn(List.of(activeAnnouncement));
+
+            assertThat(matchingService.findMatchingRequests(TRAVELER_ID)).isEmpty();
+            verifyNoInteractions(packageRequestRepository);
+        }
+
+        @Test
+        void findBestMatchByRequestId_ignoreUnTrajetDontLaDateLimiteEstPassee() {
+            activeAnnouncement.setHandoverDeadline(
+                    java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1));
+            when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
+                    .thenReturn(List.of(activeAnnouncement));
+
+            assertThat(matchingService.findBestMatchByRequestId(TRAVELER_ID)).isEmpty();
+            verifyNoInteractions(packageRequestRepository);
+        }
+
+        @Test
+        void openForDeposit_garde_lesTrajetsSansLimiteOuALimiteAVenirEnUtc() {
+            AnnouncementEntity noDeadline = new AnnouncementEntity();
+            AnnouncementEntity inOneHour = new AnnouncementEntity();
+            inOneHour.setTimezone("Europe/Paris");
+            inOneHour.setHandoverDeadline(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusHours(1));
+            AnnouncementEntity passed = new AnnouncementEntity();
+            passed.setHandoverDeadline(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusSeconds(5));
+
+            assertThat(MatchingService.openForDeposit(List.of(noDeadline, inOneHour, passed)))
+                    .containsExactly(noDeadline, inOneHour);
+        }
     }
 
     @Nested

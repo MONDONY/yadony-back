@@ -79,7 +79,14 @@ public record AnnouncementSearchResponse(
         /** Personnes qui ont vu ce trajet. Renseigné pour son seul voyageur : {@code null} pour
          *  tout autre lecteur, qui ne doit jamais connaître l'audience d'un trajet tiers. Voir
          *  {@link #withUniqueViewerCount}. */
-        Long uniqueViewerCount
+        Long uniqueViewerCount,
+        /**
+         * Fuseau IANA de la ville de départ (ex. « Europe/Paris »), YADONY-FLUTTER-PROD-1R.
+         * Les dates/heures {@code LocalDateTime} (dont {@code handoverDeadline}) sont en UTC :
+         * le client s'en sert pour les afficher à l'heure de la ville de départ. Champ ajouté,
+         * optionnel pour les anciens clients.
+         */
+        String departureTimezone
 ) {
     /**
      * Copie enrichie des prix convertis dans la devise du lecteur. Utilisé par
@@ -95,7 +102,8 @@ public record AnnouncementSearchResponse(
                 transportMode, stopsCount, status, bidsCount, traveler, description, acceptedContentTypes, refusedTypes,
                 acceptedPaymentMethods, capacityUnit, createdAt, updatedAt, pricingMode, priceGridItems,
                 handoverDeadline, isFavorite, urgent, currency, negotiable, availablePaymentMethods,
-                convertedPricePerKg, convertedCurrency, pricePerKgDisplayConverted, uniqueViewerCount);
+                convertedPricePerKg, convertedCurrency, pricePerKgDisplayConverted, uniqueViewerCount,
+                departureTimezone);
     }
 
     /**
@@ -109,6 +117,7 @@ public record AnnouncementSearchResponse(
                 transportMode, stopsCount, status, bidsCount, traveler, description, acceptedContentTypes, refusedTypes,
                 acceptedPaymentMethods, capacityUnit, createdAt, updatedAt, pricingMode, priceGridItems,
                 handoverDeadline, isFavorite, urgent, currency, negotiable, availablePaymentMethods,
-                convertedPricePerKg, convertedCurrency, pricePerKgDisplayConverted, uniqueViewerCount);
+                convertedPricePerKg, convertedCurrency, pricePerKgDisplayConverted, uniqueViewerCount,
+                departureTimezone);
     }
 }

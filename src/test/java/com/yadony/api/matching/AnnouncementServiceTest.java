@@ -3835,6 +3835,30 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("PROD-1R : un trajet au dépôt clos (UTC) n'apparaît plus sur la fiche voyageur")
+        void getTravelerAnnouncements_hidesTripsWhoseHandoverDeadlinePassed() {
+            UUID travelerId = UUID.randomUUID();
+            UserEntity traveler = buildTraveler();
+            setId(traveler, travelerId);
+            AnnouncementEntity closed = buildAnnouncement(traveler);
+            closed.setStatus(AnnouncementStatus.ACTIVE);
+            closed.setHandoverDeadline(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1));
+            AnnouncementEntity open = buildAnnouncement(traveler);
+            open.setStatus(AnnouncementStatus.FULL);
+            open.setTimezone("Europe/Paris");
+            open.setHandoverDeadline(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusHours(1));
+
+            when(announcementRepository.findByTravelerIdAndStatus(eq(travelerId), eq(AnnouncementStatus.ACTIVE), any()))
+                    .thenReturn(new PageImpl<>(List.of(closed)));
+            when(announcementRepository.findByTravelerIdAndStatus(eq(travelerId), eq(AnnouncementStatus.FULL), any()))
+                    .thenReturn(new PageImpl<>(List.of(open)));
+
+            var result = announcementService.getTravelerAnnouncements(null, travelerId);
+
+            assertThat(result).extracting(r -> r.status()).containsExactly("FULL");
+        }
+
+        @Test
         @DisplayName("expose la devise de l'annonce, pas toujours EUR")
         void getTravelerAnnouncements_exposesCurrency() {
             UUID travelerId = UUID.randomUUID();

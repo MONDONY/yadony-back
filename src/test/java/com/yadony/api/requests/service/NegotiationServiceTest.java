@@ -2690,6 +2690,11 @@ class NegotiationServiceTest {
             assertThat(savedAnn.getHandoverDeadline()).isNotNull();
             assertThat(savedAnn.getHandoverDeadline().toLocalDate())
                 .isEqualTo(savedAnn.getDepartureDate());
+            // PROD-1R : départ 08:00 heure murale du trajet, date limite écrite en UTC.
+            assertThat(savedAnn.getHandoverDeadline())
+                .isEqualTo(savedAnn.getDepartureDate().atTime(8, 0)
+                    .atZone(java.time.ZoneId.of(savedAnn.getTimezone()))
+                    .withZoneSameInstant(java.time.ZoneOffset.UTC).toLocalDateTime());
 
             verify(eventPublisher).publishEvent(any(com.yadony.api.requests.event.NegotiationAwaitingPaymentEvent.class));
         }
@@ -6374,6 +6379,47 @@ class NegotiationServiceTest {
                     .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
                     .satisfies(e -> assertThat(((org.springframework.web.server.ResponseStatusException) e).getReason())
                             .isEqualTo("announcement/not-active"));
+        }
+    }
+
+    /** PROD-1R : la date limite d'un trajet dédié est écrite en UTC, plus en heure murale. */
+    @Nested
+    @DisplayName("dedicatedHandoverDeadline — date limite d'un trajet dédié en UTC")
+    class DedicatedHandoverDeadlineUtc {
+
+        @Test
+        @DisplayName("Paris en été : départ 20:30 locale → 18:30 UTC")
+        void parisSummer() {
+            assertThat(NegotiationService.dedicatedHandoverDeadline(
+                    LocalDate.of(2026, 10, 19), java.time.LocalTime.of(20, 30), "Europe/Paris"))
+                .isEqualTo(java.time.LocalDateTime.of(2026, 10, 19, 18, 30));
+        }
+
+        @Test
+        @DisplayName("Toronto (UTC-4) : départ 22:00 locale → 02:00 UTC le lendemain")
+        void toronto() {
+            assertThat(NegotiationService.dedicatedHandoverDeadline(
+                    LocalDate.of(2026, 10, 19), java.time.LocalTime.of(22, 0), "America/Toronto"))
+                .isEqualTo(java.time.LocalDateTime.of(2026, 10, 20, 2, 0));
+        }
+
+        @Test
+        @DisplayName("Dakar (UTC+0), sans heure : 23:59 locale = 23:59 UTC")
+        void dakarWithoutTime() {
+            assertThat(NegotiationService.dedicatedHandoverDeadline(
+                    LocalDate.of(2026, 10, 19), null, "Africa/Dakar"))
+                .isEqualTo(java.time.LocalDateTime.of(2026, 10, 19, 23, 59));
+        }
+
+        @Test
+        @DisplayName("la date limite écrite n'est pas close avant l'heure : 18:30Z ouverte à 16:33Z")
+        void notClosedEarly() {
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setTimezone("Europe/Paris");
+            ann.setHandoverDeadline(NegotiationService.dedicatedHandoverDeadline(
+                    LocalDate.of(2026, 10, 19), java.time.LocalTime.of(20, 30), "Europe/Paris"));
+            assertThat(NegotiationService.isTripHandoverOver(ann, java.time.Instant.parse("2026-10-19T16:33:00Z"))).isFalse();
+            assertThat(NegotiationService.isTripHandoverOver(ann, java.time.Instant.parse("2026-10-19T18:31:00Z"))).isTrue();
         }
     }
 }

@@ -226,7 +226,7 @@ class RescheduleDecisionServiceTest {
 
     @Test
     void decide_afterTheNewHandoverDeadline_isClosed() {
-        bid.setHandoverDeadline(LocalDateTime.now().minusHours(1));
+        bid.setHandoverDeadline(LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
 
         assertThatThrownBy(() -> service.decide("uid-sender", bidId, RescheduleDecision.WITHDRAW))
                 .isInstanceOfSatisfying(YadonyBusinessException.class,
