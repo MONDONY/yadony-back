@@ -319,6 +319,14 @@ public class PriceGridService {
      * par {@link CommissionRateResolver} à partir du voyageur (override éventuel) et de la config
      * {@code yadony.commission.rate} — SOURCE UNIQUE du pourcentage de commission.
      */
+    /**
+     * Vrai quand {@link #displayPrice} sert le prix du voyageur hors frais (grille de commission en
+     * vigueur) : tout affichage de ce prix doit alors mentionner les frais de service à part.
+     */
+    public boolean displaysPriceBeforeServiceFee() {
+        return commissionGridService.current().isPresent();
+    }
+
     BigDecimal displayPrice(BigDecimal netPrice, UUID travelerId) {
         if (commissionGridService.current().isPresent()) {
             return netPrice;

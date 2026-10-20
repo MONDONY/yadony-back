@@ -110,7 +110,23 @@ class ConfigControllerCommissionGridIT {
                 .andExpect(jsonPath("$.current").value(nullValue()))
                 .andExpect(jsonPath("$.next").value(nullValue()))
                 // Les clés restent présentes : l'app distingue « pas de grille » d'une réponse mal formée.
-                .andExpect(content().string("{\"current\":null,\"next\":null}"));
+                // legacyRate est toujours rempli : le taux des objets sans grille.
+                .andExpect(jsonPath("$.legacyRate").value(settings.commissionRate().doubleValue()));
+        // Forme existante intacte, champ ajouté en fin.
+        String body = mockMvc.perform(get("/config/commission-grid")).andReturn().getResponse().getContentAsString();
+        org.junit.jupiter.api.Assertions.assertTrue(
+                body.startsWith("{\"current\":null,\"next\":null,\"legacyRate\":"), body);
+    }
+
+    @Test
+    void commissionGrid_withCurrentGrid_legacyRateIsPlatformRateNotFirstTier() throws Exception {
+        schedule(null, "0.07");
+
+        mockMvc.perform(get("/config/commission-grid"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.current.tiers[0].rate").value(0.07))
+                .andExpect(jsonPath("$.legacyRate").value(settings.commissionRate().doubleValue()))
+                .andExpect(jsonPath("$.legacyRate").value(org.hamcrest.Matchers.not(0.07)));
     }
 
     @Test

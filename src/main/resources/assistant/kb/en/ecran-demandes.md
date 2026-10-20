@@ -1,7 +1,7 @@
 ---
 id: ecran-demandes
 title: The Requests screen
-keywords: requests screen, what is this screen for, received requests, sender requests, accept a request, decline a request, to review
+keywords: commission, service fee, requests screen, what is this screen for, received requests, sender requests, accept a request, decline a request, to review
 screens:
   - /demandes
 questions:

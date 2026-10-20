@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
@@ -37,6 +38,7 @@ class PublicAnnouncementPageControllerIntegrationTest {
     @Autowired MockMvc mockMvc;
     @Autowired AnnouncementRepository announcementRepository;
     @Autowired AnnouncementPriceGridItemRepository gridItemRepository;
+    @MockitoSpyBean PriceGridService priceGridService;
 
     private void persistGridItem(UUID announcementId, String label, String net, int position) {
         AnnouncementPriceGridItemEntity item = new AnnouncementPriceGridItemEntity();
@@ -350,6 +352,35 @@ class PublicAnnouncementPageControllerIntegrationTest {
                 .andExpect(content().string(
                         org.hamcrest.Matchers.not(
                                 org.hamcrest.Matchers.containsString(">8<"))));
+    }
+
+    /** Sans grille de commission, le prix affiché comprend déjà les frais : aucune mention à part. */
+    @Test
+    void noCommissionGrid_noSeparateServiceFeeMention() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(model().attribute("serviceFeeExtra", false))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.not(
+                                org.hamcrest.Matchers.containsString("+ frais de service Yadony"))));
+    }
+
+    /**
+     * Grille de commission en vigueur (spec §5.3) : le prix affiché est celui du voyageur,
+     * la page doit annoncer les frais de service à part.
+     */
+    @Test
+    void commissionGridActive_mentionsTheServiceFeeNextToThePrice() throws Exception {
+        org.mockito.Mockito.doReturn(true).when(priceGridService).displaysPriceBeforeServiceFee();
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(model().attribute("serviceFeeExtra", true))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("+ frais de service Yadony")));
     }
 
     /**
