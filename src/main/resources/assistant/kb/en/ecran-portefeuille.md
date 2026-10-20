@@ -1,7 +1,7 @@
 ---
 id: ecran-portefeuille
 title: The My wallet screen
-keywords: wallet screen, what is this screen for, my balance, yadony balance, wallet history, active wallet, wallet currency
+keywords: commission, service fee, wallet screen, what is this screen for, my balance, yadony balance, wallet history, active wallet, wallet currency
 screens:
   - /payments/wallet
 questions:
@@ -12,4 +12,4 @@ routes:
   - path: /payments/money
     label: My money
 ---
-You are on My wallet: your balance pays the Yadony commission on requests paid in cash, not for sending a parcel. Tap "Top up" to add funds, "Refund" to get back a refundable balance and "Requests" to follow your refunds; the "History" lists every transaction. The "Active wallet" card ("Change" button) switches from one currency to another without converting anything. The "How it works" icon sums it all up.
+You are on My wallet: your balance pays the Yadony service fee on requests paid in cash, not for sending a parcel. Tap "Top up" to add funds, "Refund" to get back a refundable balance and "Requests" to follow your refunds; the "History" lists every transaction. The "Active wallet" card ("Change" button) switches from one currency to another without converting anything. The "How it works" icon sums it all up.

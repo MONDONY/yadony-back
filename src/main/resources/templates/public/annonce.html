@@ -123,6 +123,14 @@
       <p class="price-alt" th:if="${cheapestGridPrice != null and pricePerKg != null}">
         et <span th:text="${pricePerKg}">8</span><span th:text="${currency}">€</span> par kilo
       </p>
+      <!--
+        Grille de commission en vigueur : les prix ci-dessus sont ceux du
+        voyageur, hors frais de service (le total exact est montré dans l'app
+        avant toute validation).
+      -->
+      <p class="price-alt" th:if="${serviceFeeExtra and (cheapestGridPrice != null or pricePerKg != null)}">
+        + frais de service Yadony
+      </p>
 
       <!--
         Pas de redirection automatique : sur un navigateur sans l'application

@@ -58,10 +58,14 @@ public class ConfigController {
         return ResponseEntity.ok(new CommissionRateResponse(rate));
     }
 
-    /** Grille de commission en vigueur et grille programmée (spec §5.4). Public comme tout {@code /config/**}. */
+    /**
+     * Grille de commission en vigueur et grille programmée (spec §5.4), plus {@code legacyRate} : le taux
+     * des objets sans grille, {@code commission_rate} (jamais la 1re tranche). Public comme tout {@code /config/**}.
+     */
     @GetMapping("/commission-grid")
     public ResponseEntity<CommissionGridResponse> getCommissionGrid() {
-        return ResponseEntity.ok(CommissionGridResponse.of(commissionGrids.current(), commissionGrids.scheduled()));
+        return ResponseEntity.ok(CommissionGridResponse.of(commissionGrids.current(), commissionGrids.scheduled(),
+                settings.commissionRate()));
     }
 
     /**
