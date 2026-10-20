@@ -162,11 +162,7 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
         }
         // Même couplage que le colis : l'expéditeur paie avec une marque que le voyageur accepte.
         if (!MobileMoneyNetworks.acceptsBrand(traveler, resolved.provider())) {
-            List<String> acceptedLabels = MobileMoneyNetworks.acceptedLabels(traveler);
-            throw payerUnsupported(acceptedLabels.isEmpty()
-                    ? "Ce voyageur n'accepte aucun réseau mobile money pour le moment."
-                    : "Ce voyageur n'accepte pas " + resolved.providerLabel() + ". Réseaux acceptés : "
-                            + String.join(", ", acceptedLabels) + ".");
+            throw payerUnsupported(MobileMoneyNetworks.notAcceptedDetail(traveler, resolved.providerLabel()));
         }
         PawapayProviderConfig.Limits limits = resolved.config().deposit();
         if (limits != null && (limits.minAmount() != null && claim.gross().compareTo(limits.minAmount()) < 0

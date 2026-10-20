@@ -259,8 +259,11 @@ class BidSupplementMobileMoneyRailTest {
         when(providers.resolve(any(), any(), any(), any(), anyString()))
                 .thenReturn(resolved("MTN_MOMO_CIV", "PROVIDER_AUTH", null, null))
                 .thenReturn(resolved("ORANGE_SEN", "PROVIDER_AUTH", "100", "5000"));
-        assertCode(() -> rail(true).initiate(bid.getId(), s.getId(), "uid-sender", null, null),
-                "mobile-money-payer-unsupported");
+        assertThatThrownBy(() -> rail(true).initiate(bid.getId(), s.getId(), "uid-sender", null, null))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo("mobile-money-payer-unsupported");
+                    assertThat(e.getMessage()).startsWith("Ce voyageur n'accepte pas ").contains("Réseaux acceptés : ");
+                });
         assertCode(() -> rail(true).initiate(bid.getId(), s.getId(), "uid-sender", null, null),
                 "mobile-money-amount-out-of-range");
         traveler.setMobileMoneyProviderList(List.of());
