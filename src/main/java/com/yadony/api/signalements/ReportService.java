@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.StorageKeys;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
@@ -169,7 +170,7 @@ public class ReportService {
         }
         String ownPrefix = PHOTO_PREFIX + reporter.getId() + "/";
         for (String key : keys) {
-            if (key == null || !key.startsWith(ownPrefix)) {
+            if (!StorageKeys.isOwnedKey(key, ownPrefix)) {
                 throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "photo-not-owned",
                         "Forbidden", "Une des captures ne vous appartient pas");
             }

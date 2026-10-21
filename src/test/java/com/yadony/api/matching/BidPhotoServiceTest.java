@@ -118,6 +118,23 @@ class BidPhotoServiceTest {
                         .isEqualTo("invalid-photo-key"));
     }
 
+    // Audit sécu 21/10 : le préfixe du propriétaire ne suffit pas, un segment « .. » en sort.
+    @Test
+    void attachPhotos_dotSegmentsEscapingOwnerPrefix_throws422() {
+        for (String key : List.of("bids/" + SENDER + "/../../package_requests/" + java.util.UUID.randomUUID() + "/1.jpg",
+                    "bids/" + SENDER + "/./1.jpg",
+                    "bids/" + SENDER + "//1.jpg",
+                    "bids/" + SENDER + "/..\\1.jpg",
+                    "bids/" + SENDER + "/")) {
+            assertThatThrownBy(() -> service.attachPhotos(BID, SENDER, List.of(key)))
+                    .as(key)
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("invalid-photo-key"));
+        }
+        verify(photoRepository, never()).saveAll(any());
+    }
+
     @Test
     void activePhotos_mapsToPresignedUrls() {
         BidPhotoEntity row = new BidPhotoEntity(BID, "bids/s/1.jpg", 0);

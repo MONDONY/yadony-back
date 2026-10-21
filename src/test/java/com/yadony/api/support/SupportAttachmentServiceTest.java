@@ -86,6 +86,16 @@ class SupportAttachmentServiceTest {
                 .hasMessageContaining("piece jointe");
     }
 
+    // Audit sécu 21/10 : le préfixe seul laissait passer support/{moi}/../../<autrui>.
+    @Test
+    void rejectsAKeyThatEscapesTheUserPrefixWithDotSegments() {
+        List<String> keys = List.of("support/" + userId + "/../" + UUID.randomUUID() + "/1_a.jpg");
+
+        assertThatThrownBy(() -> service.requireOwnedKeys(keys, service.userPrefix(userId)))
+                .isInstanceOf(YadonyBusinessException.class)
+                .hasMessageContaining("piece jointe");
+    }
+
     @Test
     void rejectsMoreThanFourAttachments() {
         List<String> keys = List.of(

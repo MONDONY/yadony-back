@@ -1,6 +1,7 @@
 # Checklist Passage en Production — yadony Backend
 
-> **Dernière mise à jour : 08/10/2026.**
+> **Dernière mise à jour : 21/10/2026** (section 11 : audit de sécurité du 21/10, rotation du jeton Telegram et de la clé Google).
+> **Mise à jour précédente : 08/10/2026.**
 > **Mise en prod prévue le samedi 10/10/2026 : lire d'abord la [section 9](#9-mise-en-prod-du-samedi-10102026--ce-qui-change-depuis-le-0710)**
 > (tag d'image à reprendre, migrations jusqu'à **V299**, pool de connexions, contrôles de tenue en charge),
 > puis dérouler la section 8 dans l'ordre.
@@ -1791,3 +1792,48 @@ Chaque route est publique dans `SecurityConfig` et authentifiée par le contrôl
 - Seuil de pertinence `min-score` 6,5 (score BM25 brut) : « kyc », « password » ou « mon colis » seuls ne trouvent pas de fiche. À recalibrer sur les questions réelles (événement PostHog `assistant_answer_received`, propriété `answered`).
 - Ne jamais passer `org.apache.hc` en DEBUG : les en-têtes, dont la clé, partiraient dans les logs.
 - Ajouter un fournisseur dans l'admin oblige à mettre à jour la liste de l'article 3.12 de la politique de confidentialité (yadony-web).
+
+## 11. Audit de sécurité du 21/10/2026 : correctifs et rotation de clés
+
+> Rapport complet hors dépôt : `~/security-audit-skill/yadony-back/run-1/REPORT.md`. Les correctifs ci-dessous partent avec la prochaine image du back ; aucune migration, aucune variable nouvelle.
+
+### 11.1 Ce qui part en production
+
+- **Back #635 (contrôles d'accès)** et **app #732** (messages d'erreur) :
+  - `POST /negotiations/{id}/initiate-payment` réservé à l'expéditeur du fil (403 pour le voyageur, avant tout appel Stripe).
+  - Acceptation d'une demande espèces : seulement si elle est `PENDING` (409 `bid-not-pending`, avant tout débit). Une commission carte débitée pendant le 3DS d'une demande annulée, refusée ou expirée est remboursée (confirm-acceptance et webhook `payment_intent.succeeded`), jamais celle d'une demande déjà acceptée.
+  - `POST /auth/register` ne réactive plus un compte supprimé qui a des rôles ou est banni (403 `account-reactivation-denied`, ligne `USER_REACTIVATION_DENIED` dans `audit_log`).
+- **Back (lot stockage et journalisation, cette PR)** :
+  - Clés R2 envoyées par l'app (photos de colis, de demande, captures de signalement, pièces jointes du support) : refus de `..`, `.`, segments vides, `\` et caractères de contrôle (`common/StorageKeys`). `StorageService` refuse en dernier recours toute clé à segment `..` avant lecture, présignature, copie ou suppression (422 `invalid-object-key`).
+  - Plus aucune URL contenant un secret dans les journaux : erreurs Telegram et Google Geocoding résumées par `common/HttpErrorSummary` (statut HTTP ou type d'erreur, jamais le message qui reprend l'URL).
+
+### 11.2 Rotation du jeton Telegram et de la clé Google (à faire par le propriétaire)
+
+Jusqu'à ce correctif, un échec d'envoi Telegram ou un délai dépassé du Geocoding écrivait l'URL complète dans les journaux et dans Sentry Logs : `https://api.telegram.org/bot<JETON>/sendMessage` et `...geocode/json?...&key=<CLÉ>`. Ces deux secrets sont à considérer comme exposés. Ils existent séparément dans les environnements GitHub `production` et `staging` de `MONDONY/yadony-back`.
+
+**Ordre conseillé : déployer d'abord l'image qui contient le correctif, puis changer les clés.** Changées avant, les nouvelles clés pourraient fuiter de la même façon au premier incident.
+
+- [ ] Constat (facultatif, pour savoir s'il y a eu fuite) : Sentry › Logs, projets back staging et prod, rechercher `api.telegram.org/bot` puis `maps.googleapis.com/maps/api/geocode`. Faire de même dans les journaux Docker des VPS si besoin. Ne coller aucune ligne trouvée dans un ticket ou un message.
+- [ ] Back déployé en prod avec #635 et ce lot (même procédure que 10.3).
+
+**Jeton du bot Telegram**
+
+- [ ] Telegram › `@BotFather` › `/mybots` › choisir le bot des alertes › **API Token** › **Revoke current token**. L'ancien jeton cesse de fonctionner immédiatement : les alertes sont muettes jusqu'au redéploiement.
+- [ ] Poser le nouveau jeton sans l'afficher ni le coller ailleurs :
+      `gh secret set TELEGRAM_BOT_TOKEN -R MONDONY/yadony-back --env production` (la commande demande la valeur), puis la même chose avec `--env staging` si staging utilise le même bot. Un bot distinct pour staging : le révoquer et le remplacer de la même manière.
+- [ ] Redéployer le back (prod : `deploy-prod.yml` avec la même image ; staging : `gh workflow run deploy-staging.yml`). Le jeton n'est lu qu'au démarrage du conteneur.
+- [ ] Contrôle : déclencher une alerte de test (admin › bouton de test des alertes s'il est disponible, sinon attendre la prochaine alerte réelle) et vérifier qu'elle arrive dans le groupe.
+
+**Clé Google Places / Geocoding (`GOOGLE_PLACES_API_KEY`)**
+
+- [ ] Console Google Cloud, projet `yadony-prod` › APIs & Services › Credentials › repérer la clé utilisée par le back (restreinte à Places API (New) + Geocoding API, voir `docs-claude/docs/runbooks/configuration-google-prod.md` §2). Créer une **nouvelle** clé avec exactement les mêmes restrictions d'API (relire avec `gcloud services api-keys describe <UID> --project yadony-prod --format=json`, attention au piège d'`api-keys update` qui remplace la liste des cibles).
+- [ ] `gh secret set GOOGLE_PLACES_API_KEY -R MONDONY/yadony-back --env production` (valeur demandée par la commande). Staging a sa propre clé (posée le 23/05) : la remplacer aussi, avec `--env staging`.
+- [ ] Redéployer le back (prod puis staging).
+- [ ] Contrôle : dans l'app, champ d'adresse d'un trajet ou d'une demande → les suggestions s'affichent ; « utiliser ma position » renvoie une adresse (c'est le Geocoding). Sentry : aucun `google-request-denied`.
+- [ ] Seulement après ce contrôle : **supprimer l'ancienne clé** dans la console Google (une clé seulement désactivée reste utilisable une fois réactivée).
+
+### 11.3 Contrôles après la mise en prod
+
+- [ ] Sentry back prod : aucune nouvelle issue `invalid-object-key`, `bid-not-pending` ou `account-reactivation-denied` en volume (quelques-unes isolées = tentatives ou vieux clients, normal).
+- [ ] Une demande espèces acceptée par le voyageur passe toujours (commission débitée une seule fois) ; une demande annulée par l'expéditeur pendant le 3DS du voyageur est refusée et la commission rendue (Stripe › Paiements › remboursement sur le PaymentIntent de commission).
+- [ ] Ajout d'une photo à une demande d'envoi, à un colis et à un signalement depuis l'app : fonctionne comme avant.

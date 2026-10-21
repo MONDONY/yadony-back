@@ -205,6 +205,37 @@ class AdminAlertServiceTest {
                     .doesNotThrowAnyException();
         }
     }
+
+    // Audit sécu 21/10 : le message d'une RestClientException reprend l'URI, qui porte le
+    // jeton du bot ; il partait tel quel dans le journal warn, donc dans Sentry Logs.
+    @Test
+    void raise_whenTelegramCallFails_logLineNeverCarriesTheBotToken() {
+        RestClient restClient = mock(RestClient.class);
+        RestClient.RequestBodyUriSpec uriSpec = mock(RestClient.RequestBodyUriSpec.class);
+        RestClient.RequestBodySpec bodySpec = mock(RestClient.RequestBodySpec.class);
+
+        when(restClient.post()).thenReturn(uriSpec);
+        when(uriSpec.uri(anyString(), eq("bot-token-123"))).thenReturn(bodySpec);
+        when(bodySpec.contentType(any())).thenReturn(bodySpec);
+        when(bodySpec.body(any(Map.class))).thenReturn(bodySpec);
+        when(bodySpec.retrieve()).thenThrow(new org.springframework.web.client.ResourceAccessException(
+                "I/O error on POST request for \"https://api.telegram.org/botbot-token-123/sendMessage\""));
+
+        AdminAlertService withConfig = new AdminAlertService(restClient, "bot-token-123", "-100999", "staging");
+        ListAppender<ILoggingEvent> appender = brancherAppender();
+        try (MockedStatic<Sentry> sentryMock = mockStatic(Sentry.class)) {
+            sentryMock.when(() -> Sentry.withScope(any(ScopeCallback.class))).thenAnswer(inv -> null);
+
+            withConfig.raise("TEST_CODE", "detail", Map.of());
+
+            assertThat(appender.list)
+                    .anySatisfy(ev -> assertThat(ev.getFormattedMessage()).contains("Telegram alert failed"));
+            assertThat(appender.list)
+                    .allSatisfy(ev -> assertThat(ev.getFormattedMessage()).doesNotContain("bot-token-123"));
+        } finally {
+            debrancherAppender(appender);
+        }
+    }
     // --- Gravite par code : c'est elle qui decide du niveau de log, donc de la
     // metrique logback_events_total{level="error"} sur laquelle repose la regle
     // Grafana « Pic d'erreurs serveur ». ---

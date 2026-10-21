@@ -296,6 +296,48 @@ class GoogleAddressServiceTest {
         assertThat(result.get().lng()).isEqualTo(-17.447);
     }
 
+    // Audit sécu 21/10 : le message d'une erreur RestTemplate reprend l'URL, donc la clé API.
+    @Test
+    void reverse_httpError_isTranslatedWithoutTheUrlOrKey() {
+        when(restTemplate.getForObject(contains("geocode"), eq(Map.class)))
+            .thenThrow(HttpClientErrorException.create(
+                "403 on GET request for \"https://maps.googleapis.com/maps/api/geocode/json?key=test-key\"",
+                HttpStatus.FORBIDDEN, "Forbidden", HttpHeaders.EMPTY, new byte[0], null));
+
+        assertThatThrownBy(() -> service.reverse(14.693, -17.447))
+            .isInstanceOf(YadonyBusinessException.class)
+            .satisfies(e -> {
+                YadonyBusinessException ex = (YadonyBusinessException) e;
+                assertThat(ex.getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY);
+                assertThat(ex.getErrorCode()).isEqualTo("google-request-denied");
+                assertThat(ex.getMessage()).doesNotContain("test-key");
+            });
+    }
+
+    @Test
+    void reverse_timeout_logLineNeverCarriesTheKey() {
+        ch.qos.logback.classic.Logger logger =
+            (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(GoogleAddressService.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+            new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            when(restTemplate.getForObject(contains("geocode"), eq(Map.class)))
+                .thenThrow(new ResourceAccessException(
+                    "I/O error on GET request for \"https://maps.googleapis.com/maps/api/geocode/json?key=test-key\""));
+
+            assertThatThrownBy(() -> service.reverse(14.693, -17.447))
+                .isInstanceOf(YadonyBusinessException.class);
+
+            assertThat(appender.list).isNotEmpty();
+            assertThat(appender.list).allSatisfy(ev ->
+                assertThat(ev.getFormattedMessage()).doesNotContain("test-key"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
     @Test
     void reverse_noResult_returnsEmpty() {
         when(restTemplate.getForObject(contains("geocode"), eq(Map.class)))

@@ -286,6 +286,7 @@ public class StorageService {
      * remonte : une panne R2 ne doit pas passer pour une photo expirée.
      */
     public java.util.Optional<byte[]> downloadBytes(String objectKey) {
+        requireNoTraversal(objectKey);
         try {
             return java.util.Optional.of(s3Client.getObjectAsBytes(GetObjectRequest.builder()
                     .bucket(bucket)
@@ -332,6 +333,7 @@ public class StorageService {
      * Generate a presigned URL for temporary read access (default: 1 hour).
      */
     public String generatePresignedUrl(String objectKey, Duration expiry) {
+        requireNoTraversal(objectKey);
         GetObjectPresignRequest presignRequest = GetObjectPresignRequest.builder()
                 .signatureDuration(expiry)
                 .getObjectRequest(GetObjectRequest.builder()
@@ -349,6 +351,7 @@ public class StorageService {
      * demande (lifecycle/cleanup indépendants). Renvoie la nouvelle clé.
      */
     public String copyObject(String sourceKey, String destPrefix) {
+        requireNoTraversal(sourceKey);
         String ext = sourceKey.contains(".") ? sourceKey.substring(sourceKey.lastIndexOf('.')) : ".jpg";
         String destKey = destPrefix + Instant.now().toEpochMilli() + "_" + UUID.randomUUID() + ext;
         long t0 = System.currentTimeMillis();
@@ -370,6 +373,7 @@ public class StorageService {
      * Delete a file from S3 (RGPD deletion).
      */
     public void deleteFile(String objectKey) {
+        requireNoTraversal(objectKey);
         s3Client.deleteObject(DeleteObjectRequest.builder()
                 .bucket(bucket)
                 .key(objectKey)
@@ -517,6 +521,19 @@ public class StorageService {
                 throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                         "INVALID_FILE_TYPE", "Invalid File Type", "File content does not match declared type");
             }
+        }
+    }
+
+    /**
+     * Dernier rempart avant R2 : le SDK transmet la clé sans normaliser ses segments, et ce
+     * que R2 fait d'un {@code ..} échappe à l'application. Une clé fautive vient forcément
+     * d'un contrôle d'écriture manquant : on refuse plutôt que de lire, copier ou supprimer
+     * l'objet d'autrui.
+     */
+    private static void requireNoTraversal(String objectKey) {
+        if (StorageKeys.hasTraversal(objectKey)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "invalid-object-key", "Invalid Object Key", "Clé de stockage invalide");
         }
     }
 
