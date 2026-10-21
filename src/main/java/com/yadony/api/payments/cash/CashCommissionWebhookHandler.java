@@ -2,7 +2,6 @@ package com.yadony.api.payments.cash;
 
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.matching.BidRepository;
-import com.yadony.api.matching.BidStatus;
 import com.yadony.api.payments.cash.event.CommissionMethodDetachedEvent;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Event;
@@ -25,15 +24,6 @@ public class CashCommissionWebhookHandler {
     private static final Logger log = LoggerFactory.getLogger(CashCommissionWebhookHandler.class);
     private static final String COMMISSION_PURPOSE_KEY = "commission_purpose";
     private static final String COMMISSION_PURPOSE_VALUE = "cash_bid";
-
-    /**
-     * Bids morts avant toute acceptation. Leur écouteur d'annulation
-     * ({@link BidCancelledCommissionRefundListener}) est déjà passé et n'a rien remboursé,
-     * la commission n'étant pas encore {@code CHARGED} : un débit 3DS qui aboutit après
-     * coup doit donc être rendu ici, sinon le voyageur paie pour un colis qui n'existe plus.
-     */
-    private static final Set<BidStatus> DEAD_BEFORE_ACCEPTANCE = EnumSet.of(
-            BidStatus.CANCELLED, BidStatus.REJECTED, BidStatus.EXPIRED, BidStatus.NEGOTIATION_CLOSED);
 
     /** Statuts de commission déjà réglés : un webhook tardif ne doit pas les réécrire. */
     private static final Set<CommissionStatus> SETTLED = EnumSet.of(
@@ -98,7 +88,10 @@ public class CashCommissionWebhookHandler {
                 bid.setCommissionPaymentIntentId(pi.getId());
                 bidRepo.save(bid);
                 log.info("Commission CHARGED via webhook for bid {}", bidIdStr);
-                if (DEAD_BEFORE_ACCEPTANCE.contains(bid.getStatus())) {
+                // Bid mort avant acceptation : son écouteur d'annulation
+                // (BidCancelledCommissionRefundListener) est déjà passé sans rien rendre, la
+                // commission n'étant pas encore CHARGED. Le débit 3DS tardif est rendu ici.
+                if (CashCommissionService.DEAD_BEFORE_ACCEPTANCE.contains(bid.getStatus())) {
                     log.warn("Commission charged on bid {} already {}: refunding", bidIdStr, bid.getStatus());
                     cashCommissionService.refundCommission(bid);
                 }

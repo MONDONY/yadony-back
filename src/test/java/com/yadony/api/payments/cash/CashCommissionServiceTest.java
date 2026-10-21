@@ -785,25 +785,41 @@ class CashCommissionServiceTest {
         }
 
         @Test
-        void negotiatingBid_alreadyCharged_refundsAndNeverAccepts() {
+        void negotiatingBid_alreadyCharged_neitherAcceptsNorRefunds() {
             bid.setStatus(BidStatus.NEGOTIATING);
             bid.setCommissionStatus(CommissionStatus.CHARGED);
-            Refund mockRefund = new Refund();
-            mockRefund.setId("re_neg");
-            mockRefund.setStatus("succeeded");
 
             try (MockedStatic<PaymentIntent> pi = mockStatic(PaymentIntent.class);
                  MockedStatic<Refund> refund = mockStatic(Refund.class)) {
-                refund.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
-                        .thenReturn(mockRefund);
-
                 ConfirmAcceptanceResponse resp = service.confirmCommissionAcceptance(bid.getId(), travelerId);
 
                 assertThat(resp.accepted()).isFalse();
                 assertThat(bid.getStatus()).isEqualTo(BidStatus.NEGOTIATING);
-                assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
+                assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
                 pi.verifyNoInteractions();
+                refund.verifyNoInteractions();
                 verify(events, never()).publishEvent(any(BidAcceptedEvent.class));
+            }
+        }
+
+        // Régression (revue de sécurité) : rejouer confirm-acceptance après la remise ne doit
+        // jamais rembourser la commission due au titre d'un colis accepté.
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.EnumSource(value = BidStatus.class,
+                names = {"HANDED_OVER", "IN_TRANSIT", "ARRIVED", "COMPLETED", "NO_SHOW", "PARCEL_REFUSED"})
+        void replayAfterAcceptance_neverRefundsCommission(BidStatus afterAcceptance) {
+            bid.setStatus(afterAcceptance);
+            bid.setCommissionStatus(CommissionStatus.CHARGED);
+
+            try (MockedStatic<PaymentIntent> pi = mockStatic(PaymentIntent.class);
+                 MockedStatic<Refund> refund = mockStatic(Refund.class)) {
+                ConfirmAcceptanceResponse resp = service.confirmCommissionAcceptance(bid.getId(), travelerId);
+
+                assertThat(resp.accepted()).isFalse();
+                assertThat(bid.getStatus()).isEqualTo(afterAcceptance);
+                assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
+                pi.verifyNoInteractions();
+                refund.verifyNoInteractions();
             }
         }
 
