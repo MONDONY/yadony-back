@@ -114,7 +114,10 @@ class AnnouncementServiceTest {
                 com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                 priceGridService, flagService,
                 storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, realMapper, packageRequestRepository,
-                negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService, travelerPayoutNetworksPort);
+                negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService, travelerPayoutNetworksPort,
+                new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0),
+                new com.yadony.api.matching.ranking.TripScoreCalculator(
+                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0)));
     }
 
     private static final String FIREBASE_UID = "uid-traveler-001";
@@ -2853,7 +2856,8 @@ class AnnouncementServiceTest {
          * multiplier par le taux du lecteur (facteur strictement positif) préserve
          * l'ordre, donc trier sur le pivot équivaut à trier sur le prix converti. Le
          * contrat vérifié ici : le Pageable transmis au repository porte bien
-         * pro-d'abord, puis le pivot, puis l'id en départage — jamais le brut
+         * le pivot (sans pro-d'abord depuis le classement par score), le départage
+         * GP Pro, puis l'id — jamais le brut
          * {@code pricePerKg} multidevise.
          */
         @Test
@@ -2877,8 +2881,8 @@ class AnnouncementServiceTest {
             java.util.List<org.springframework.data.domain.Sort.Order> orders =
                     sort.stream().toList();
             assertThat(orders).extracting(org.springframework.data.domain.Sort.Order::getProperty)
-                    .containsExactly("travelerIsPro", "pricePerKgEur", "travelerIsGpPro", "id");
-            org.springframework.data.domain.Sort.Order pivot = orders.get(1);
+                    .containsExactly("pricePerKgEur", "travelerIsGpPro", "id");
+            org.springframework.data.domain.Sort.Order pivot = orders.get(0);
             assertThat(pivot.isAscending()).isTrue();
             // Pas de NullHandling : refusé par Spring Data sur une requête Criteria,
             // et le pivot est non null par construction (price_per_kg NOT NULL V3).
@@ -3147,7 +3151,10 @@ class AnnouncementServiceTest {
                     com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                     priceGridService, flagService,
                     storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, mapperWithLimits, packageRequestRepository,
-                    negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService, travelerPayoutNetworksPort);
+                    negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService, travelerPayoutNetworksPort,
+                new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0),
+                new com.yadony.api.matching.ranking.TripScoreCalculator(
+                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0)));
 
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             // le nouveau count (hors DRAFT) renvoie 1 => sous la limite (2) => création OK
@@ -3514,7 +3521,10 @@ class AnnouncementServiceTest {
                     com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3),
                     priceGridService, flagService,
                     storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, mapperWithLimits, packageRequestRepository,
-                    negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService, travelerPayoutNetworksPort);
+                    negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService, travelerPayoutNetworksPort,
+                new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0),
+                new com.yadony.api.matching.ranking.TripScoreCalculator(
+                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0)));
 
             AnnouncementEntity draft = draftEntityOwnedBy(user);
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
@@ -3730,7 +3740,10 @@ class AnnouncementServiceTest {
                     com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(false),
                     priceGridService, flagService,
                     storageService, favoriteRepository, activeCurrencyResolver, exchangeRateService, mapper,
-                    packageRequestRepository, negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService, travelerPayoutNetworksPort);
+                    packageRequestRepository, negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService, travelerPayoutNetworksPort,
+                new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0),
+                new com.yadony.api.matching.ranking.TripScoreCalculator(
+                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0)));
         }
 
         @Test

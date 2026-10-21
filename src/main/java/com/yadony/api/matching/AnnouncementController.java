@@ -82,7 +82,8 @@ public class AnnouncementController {
             @RequestParam(required = false) Double userLat,
             @RequestParam(required = false) Double userLng,
             @RequestParam(required = false) Double radiusKm,
-            @RequestParam(defaultValue = "date") String sortBy,
+            // score (défaut) : classement interne ; date, price : tri manuel dans chaque bloc.
+            @RequestParam(defaultValue = "score") String sortBy,
             @RequestParam(defaultValue = "asc") String sortDir,
             Pageable pageable
     ) {
