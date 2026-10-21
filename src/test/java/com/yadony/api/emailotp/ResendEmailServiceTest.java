@@ -28,7 +28,7 @@ import static org.mockito.Mockito.*;
 class ResendEmailServiceTest {
 
     /** Logo servi par yadony-web (public/logos/). */
-    private static final String LOGO_URL = "https://yadony.com/logos/logo-yadony.png";
+    private static final String LOGO_URL = "https://yadony.com/logos/logo-yadony-mail.png";
     /** Ancienne adresse du logo : 404 sur yadony.com, l'image arrivait cassée. */
     private static final String BROKEN_LOGO_URL = "https://yadony.com/logo.png";
 
