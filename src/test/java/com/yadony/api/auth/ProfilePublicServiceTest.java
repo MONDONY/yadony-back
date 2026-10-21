@@ -47,7 +47,6 @@ class ProfilePublicServiceTest {
     @Mock private StorageService storageService;
     @Mock private BlockVisibility blockVisibility;
     @Mock private FirebaseContactService firebaseContact;
-    @Mock private ReliabilityService reliabilityService;
 
     private ProfilePublicService profilePublicService;
 
@@ -65,7 +64,7 @@ class ProfilePublicServiceTest {
     void setUp() throws Exception {
         profilePublicService = new ProfilePublicService(userRepository, ratingService,
                 userBusinessPrefsRepository, storageService, blockVisibility, TestMessages.resolver(),
-                firebaseContact, reliabilityService);
+                firebaseContact);
         org.mockito.Mockito.lenient().when(firebaseContact.getContact(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new FirebaseContactService.Contact(null, null));
         user = new UserEntity();
@@ -263,20 +262,6 @@ class ProfilePublicServiceTest {
         assertThat((user.getSenderCancellationCount() + user.getSenderHandoverIncidentCount())).isEqualTo(3);
         var json = com.fasterxml.jackson.databind.json.JsonMapper.builder().findAndAddModules().build().valueToTree(profile);
         assertThat(json.has("senderIncidentCount")).isFalse();
-    }
-
-    @Test
-    @DisplayName("FLUTTER-NV : taux de fiabilité servi par ReliabilityService")
-    void getProfilePublic_reliabilityPercent() {
-        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
-        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID)))
-                .thenReturn(stubRatingSummary());
-        when(reliabilityService.reliabilityPercent(user)).thenReturn(92);
-        user.setSenderCancellationCount(1);
-
-        var profile = profilePublicService.getProfilePublic(USER_ID, VIEWER_ID);
-
-        assertThat(profile.reliabilityPercent()).isEqualTo(92);
     }
 
     private static void setFieldQuiet(Object target, String name, Object value) {
