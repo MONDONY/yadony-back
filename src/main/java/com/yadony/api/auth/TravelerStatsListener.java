@@ -74,6 +74,10 @@ public class TravelerStatsListener {
             return;
         }
 
+        // Compteur d'envois réussis : un colis livré = un incrément, indépendamment de
+        // total_trips_counted (plusieurs colis sur un même trajet comptent chacun).
+        countDelivery(bid, event.getTravelerId());
+
         Optional<AnnouncementEntity> announcementOpt = announcementRepository.findById(bid.getAnnouncementId());
         if (announcementOpt.isEmpty()) {
             log.warn("DeliveryConfirmedEvent for bidId={} references unknown announcementId={} — skipping",
@@ -133,5 +137,23 @@ public class TravelerStatsListener {
 
         log.info("total_trips incremented for traveler={} (announcement={}, bid={}, newTotal={})",
                 traveler.getId(), announcement.getId(), bid.getId(), newTotal);
+    }
+
+    /** Incrémente users.total_deliveries une seule fois par bid (drapeau bids.delivery_counted). */
+    private void countDelivery(BidEntity bid, java.util.UUID travelerId) {
+        if (bid.isDeliveryCounted()) {
+            return;
+        }
+        Optional<UserEntity> travelerOpt = userRepository.findById(travelerId);
+        if (travelerOpt.isEmpty()) {
+            log.error("DeliveryConfirmedEvent: traveler {} not found for bidId={} — total_deliveries not incremented",
+                    travelerId, bid.getId());
+            return;
+        }
+        UserEntity traveler = travelerOpt.get();
+        traveler.setTotalDeliveries(traveler.getTotalDeliveries() + 1);
+        userRepository.save(traveler);
+        bid.setDeliveryCounted(true);
+        bidRepository.save(bid);
     }
 }

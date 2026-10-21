@@ -21,6 +21,11 @@ import java.util.UUID;
 @Where(clause = "deleted_at IS NULL")
 public class BidEntity extends BaseEntity {
 
+    // Colis déjà compté dans users.total_deliveries du voyageur (idempotence du compteur).
+    @org.hibernate.annotations.ColumnDefault("false")
+    @Column(name = "delivery_counted", nullable = false)
+    private boolean deliveryCounted = false;
+
     @Column(name = "announcement_id", nullable = false)
     private UUID announcementId;
 
@@ -557,4 +562,7 @@ public class BidEntity extends BaseEntity {
 
     public String getMobileMoneyCountryCode() { return mobileMoneyCountryCode; }
     public void setMobileMoneyCountryCode(String mobileMoneyCountryCode) { this.mobileMoneyCountryCode = mobileMoneyCountryCode; }
+
+    public boolean isDeliveryCounted() { return deliveryCounted; }
+    public void setDeliveryCounted(boolean deliveryCounted) { this.deliveryCounted = deliveryCounted; }
 }

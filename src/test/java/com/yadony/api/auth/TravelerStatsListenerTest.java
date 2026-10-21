@@ -62,6 +62,8 @@ class TravelerStatsListenerTest {
         setEntityId(bid, bidId);
         bid.setAnnouncementId(announcementId);
         bid.setStatus(BidStatus.COMPLETED);
+        // Les tests historiques portent sur total_trips : le colis est déjà compté.
+        bid.setDeliveryCounted(true);
         return bid;
     }
 
@@ -252,5 +254,66 @@ class TravelerStatsListenerTest {
         listener.onDeliveryConfirmed(new DeliveryConfirmedEvent(bidId, UUID.randomUUID(), travelerId));
 
         verify(tripsSummaryCache, never()).evict(any());
+    }
+
+    @Test
+    void onDeliveryConfirmed_incrementsTotalDeliveries_once() {
+        UUID bidId = UUID.randomUUID();
+        UUID announcementId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        BidEntity bid = completedBid(bidId, announcementId);
+        bid.setDeliveryCounted(false);
+        AnnouncementEntity ann = announcement(announcementId, true);
+        UserEntity user = traveler(travelerId, 3);
+
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(ann));
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(user));
+
+        DeliveryConfirmedEvent event = new DeliveryConfirmedEvent(bidId, UUID.randomUUID(), travelerId);
+        listener.onDeliveryConfirmed(event);
+        listener.onDeliveryConfirmed(event);
+
+        assertThat(user.getTotalDeliveries()).isEqualTo(1);
+        assertThat(bid.isDeliveryCounted()).isTrue();
+        // total_trips reste inchangé : le trajet était déjà compté.
+        assertThat(user.getTotalTrips()).isEqualTo(3);
+        verify(bidRepository).save(bid);
+    }
+
+    @Test
+    void onDeliveryConfirmed_countsDeliveryAndTrip_independently() {
+        UUID bidId = UUID.randomUUID();
+        UUID announcementId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        BidEntity bid = completedBid(bidId, announcementId);
+        bid.setDeliveryCounted(false);
+        AnnouncementEntity ann = announcement(announcementId, false);
+        UserEntity user = traveler(travelerId, 0);
+
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(ann));
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(user));
+
+        listener.onDeliveryConfirmed(new DeliveryConfirmedEvent(bidId, UUID.randomUUID(), travelerId));
+
+        assertThat(user.getTotalDeliveries()).isEqualTo(1);
+        assertThat(user.getTotalTrips()).isEqualTo(1);
+    }
+
+    @Test
+    void onDeliveryConfirmed_notCompleted_noIncrement() {
+        UUID bidId = UUID.randomUUID();
+        UUID travelerId = UUID.randomUUID();
+        BidEntity bid = completedBid(bidId, UUID.randomUUID());
+        bid.setDeliveryCounted(false);
+        bid.setStatus(BidStatus.ACCEPTED);
+
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+
+        listener.onDeliveryConfirmed(new DeliveryConfirmedEvent(bidId, UUID.randomUUID(), travelerId));
+
+        assertThat(bid.isDeliveryCounted()).isFalse();
+        verify(userRepository, never()).save(any());
     }
 }
