@@ -1,5 +1,6 @@
 package com.yadony.api.common.stripe;
 
+import com.yadony.api.common.HttpErrorSummary;
 import io.sentry.Sentry;
 import io.sentry.SentryLevel;
 import org.slf4j.Logger;
@@ -226,7 +227,8 @@ public class AdminAlertService {
                         .retrieve()
                         .toBodilessEntity();
             } catch (RestClientException e) {
-                log.warn("Telegram alert failed for {}: {}", code, e.getMessage());
+                // Jamais e.getMessage() : il reprend l'URI, qui porte le jeton du bot.
+                log.warn("Telegram alert failed for {}: {}", code, HttpErrorSummary.of(e));
             }
         });
     }

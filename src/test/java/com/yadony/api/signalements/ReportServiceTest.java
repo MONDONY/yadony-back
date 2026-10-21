@@ -482,6 +482,21 @@ class ReportServiceTest {
                 .isEqualTo(HttpStatus.FORBIDDEN);
     }
 
+    // Audit sécu 21/10 : ces clés sont recopiées plus tard dans le support (réponse admin),
+    // une clé qui sort de reports/{moi}/ par « .. » doit être refusée dès le signalement.
+    @Test
+    void createReport_photoKeyEscapingOwnPrefix_throws403() {
+        stubUser();
+        List<String> traversal = List.of("reports/" + reporterId + "/../../tracking/" + UUID.randomUUID() + "/x.jpg");
+
+        assertThatThrownBy(() -> service().createReport("uid-1", ReportTargetType.APP, null,
+                ReportReason.APP_BUG, null, traversal))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+        verify(reportRepository, never()).save(any());
+    }
+
     @Test
     void createReport_attachesEachPhoto() throws Exception {
         stubUser();

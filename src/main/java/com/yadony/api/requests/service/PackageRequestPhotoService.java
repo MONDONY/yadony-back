@@ -1,5 +1,6 @@
 package com.yadony.api.requests.service;
 
+import com.yadony.api.common.StorageKeys;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.requests.dto.PackageRequestPhotoResponse;
@@ -64,7 +65,7 @@ public class PackageRequestPhotoService {
         List<PackageRequestPhotoEntity> rows = new ArrayList<>();
         int position = 0;
         for (String key : photoKeys) {
-            if (key == null || !key.startsWith(ownerPrefix)) {
+            if (!StorageKeys.isOwnedKey(key, ownerPrefix)) {
                 throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                         "invalid-photo-key", "Invalid Photo Key",
                         "Clé photo invalide");

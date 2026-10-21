@@ -72,4 +72,23 @@ class StorageServiceCopyObjectTest {
         assertThatThrownBy(() -> storageService.copyObject("package_requests/s/1.jpg", "bids/s/"))
                 .isInstanceOf(RuntimeException.class);
     }
+
+    // Audit sécu 21/10 : dernier rempart avant R2, même pour une clé déjà en base.
+    @Test
+    @DisplayName("clé à segment « .. » : refusée avant tout appel R2 (copie, suppression, lecture, présignature)")
+    void traversalKey_neverReachesR2() {
+        String traversal = "bids/sender/../../tracking/victim/1.jpg";
+
+        for (Runnable call : java.util.List.<Runnable>of(
+                () -> storageService.copyObject(traversal, "bids/sender/"),
+                () -> storageService.deleteFile(traversal),
+                () -> storageService.downloadBytes(traversal),
+                () -> storageService.generatePresignedUrl(traversal, java.time.Duration.ofMinutes(5)))) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(call::run)
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("invalid-object-key"));
+        }
+        org.mockito.Mockito.verifyNoInteractions(s3Client, s3Presigner);
+    }
 }

@@ -2,6 +2,7 @@ package com.yadony.api.address;
 
 import com.yadony.api.address.dto.AutocompleteSuggestion;
 import com.yadony.api.address.dto.PlaceDetailsResponse;
+import com.yadony.api.common.HttpErrorSummary;
 import com.yadony.api.common.YadonyBusinessException;
 import com.github.benmanes.caffeine.cache.Cache;
 import org.slf4j.Logger;
@@ -384,9 +385,14 @@ public class GoogleAddressService {
             }
             return body;
         } catch (ResourceAccessException e) {
-            log.error("Geocoding API timeout: {}", e.getMessage());
+            // Jamais e.getMessage() : il reprend l'URL, qui porte la clé API en paramètre.
+            log.error("Geocoding API timeout: {}", HttpErrorSummary.of(e));
             throw new YadonyBusinessException(HttpStatus.GATEWAY_TIMEOUT, "google-timeout",
                 "Gateway Timeout", "Google API timeout");
+        } catch (org.springframework.web.client.RestClientResponseException e) {
+            // Une erreur HTTP non rattrapée remonterait au GlobalExceptionHandler avec un
+            // message qui contient l'URL, donc la clé : on la traduit ici, sans ce message.
+            throw mapPlacesHttpError(e.getStatusCode(), "geocode", e.getResponseBodyAsString());
         }
     }
 

@@ -1,5 +1,6 @@
 package com.yadony.api.support;
 
+import com.yadony.api.common.StorageKeys;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.common.media.MediaPurpose;
 import com.yadony.api.common.YadonyBusinessException;
@@ -63,8 +64,10 @@ public class SupportAttachmentService {
      * a ses propres objets (independants du cycle de vie de reports/), et ils tombent
      * sous {@code support/{userId}/}, que la finalisation de compte purge (RGPD).
      *
-     * <p>Les cles sources ne viennent JAMAIS du client : l'appelant les lit en base
-     * (photos d'un signalement), ce qui dispense du controle de prefixe.
+     * <p>L'appelant lit les cles en base (photos d'un signalement), mais elles y ont ete
+     * ecrites a partir de la requete du signaleur : {@code ReportService} les valide a
+     * l'ecriture, et {@code StorageService.copyObject} refuse en dernier recours toute cle
+     * a segment {@code ..}.
      */
     public List<String> copyIntoUserPrefix(UUID userId, List<String> sourceKeys) {
         if (sourceKeys == null || sourceKeys.isEmpty()) {
@@ -88,7 +91,7 @@ public class SupportAttachmentService {
                     "Un message accepte au maximum " + MAX_ATTACHMENTS_PER_MESSAGE + " images.");
         }
         for (String key : keys) {
-            if (key == null || !key.startsWith(expectedPrefix)) {
+            if (!StorageKeys.isOwnedKey(key, expectedPrefix)) {
                 throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                         "support-attachment-not-owned", "Piece jointe invalide",
                         "Une piece jointe ne vous appartient pas.");

@@ -94,6 +94,23 @@ class PackageRequestPhotoServiceTest {
                         .isEqualTo("invalid-photo-key"));
     }
 
+    // Audit sécu 21/10 : le préfixe du propriétaire ne suffit pas, un segment « .. » en sort.
+    @Test
+    void replacePhotos_dotSegmentsEscapingOwnerPrefix_throws422() {
+        for (String key : List.of("package_requests/" + SENDER + "/../../bids/" + java.util.UUID.randomUUID() + "/1.jpg",
+                    "package_requests/" + SENDER + "/./1.jpg",
+                    "package_requests/" + SENDER + "//1.jpg",
+                    "package_requests/" + SENDER + "/..\\1.jpg",
+                    "package_requests/" + SENDER + "/")) {
+            assertThatThrownBy(() -> service.replacePhotos(REQ, SENDER, List.of(key)))
+                    .as(key)
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("invalid-photo-key"));
+        }
+        verify(photoRepository, never()).saveAll(any());
+    }
+
     @Test
     void objectKeys_returnsOrderedRawKeys() {
         when(photoRepository.findByPackageRequestIdOrderByPositionAsc(REQ))
