@@ -2367,6 +2367,23 @@ public class NegotiationService {
         return threadRepo.findById(threadId).map(NegotiationThreadEntity::getCommissionGridId).orElse(null);
     }
 
+    /**
+     * Réserve une action à l'expéditeur du fil. Tout compte porte SENDER et TRAVELER : le
+     * {@code hasRole('SENDER')} du contrôleur ne distingue pas les deux côtés, et
+     * {@link #getById} accepte aussi le voyageur. Même code d'erreur que
+     * {@code prepareMobileMoneyDeposit} et {@code finalizeInternal}.
+     */
+    @Transactional(readOnly = true)
+    public void assertThreadSender(UUID callerId, UUID threadId) {
+        UUID requestId = threadRepo.findPackageRequestIdById(threadId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "thread/not-found"));
+        PackageRequestEntity request = requestRepo.findById(requestId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "request/not-found"));
+        if (!callerId.equals(request.getSenderId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "negotiation/not-thread-participant");
+        }
+    }
+
     @Transactional
     public NegotiationThreadResponse getById(UUID callerId, UUID threadId) {
         NegotiationThreadEntity thread = threadRepo.findById(threadId)

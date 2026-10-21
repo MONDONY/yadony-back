@@ -243,9 +243,13 @@ class AuthServiceTest {
          * téléphone, doit continuer de fonctionner exactement comme avant.
          */
         @Test
-        @DisplayName("branche réactivation + token téléphone → réactivation inchangée")
+        @DisplayName("branche réactivation + token téléphone → ligne invitée réactivée")
         void register_reactivation_nonAnonymousToken_stillWorks() {
+            // Seule réactivation légitime : une ligne invitée (sans rôle) soft-deletée par
+            // GuestClaimService. Une ligne avec rôles est un compte finalisé, voir les refus
+            // ci-dessous.
             UserEntity softDeleted = buildUser();
+            softDeleted.getRoles().clear();
             when(userRepository.findByFirebaseUidIncludingDeleted(FIREBASE_UID))
                     .thenReturn(Optional.of(softDeleted));
 
@@ -264,6 +268,52 @@ class AuthServiceTest {
             verify(userRepository).reactivateByFirebaseUid(FIREBASE_UID, UserStatus.ACTIVE.name());
             assertThat(reactivated.getRoles()).containsExactlyInAnyOrder(Role.SENDER, Role.TRAVELER);
             verify(auditService).log(eq("USER"), any(), eq("USER_REACTIVATED"), any(), any());
+        }
+
+        /**
+         * Régression : un compte finalisé (suppression RGPD ou admin pour FRAUD/ABUSE) garde
+         * ses rôles et passe BANNED. Avec un jeton encore valide, /auth/register le remettait
+         * ACTIVE avec SENDER+TRAVELER, contre la règle « compte finalisé non restaurable ».
+         */
+        @Test
+        @DisplayName("ligne finalisée (rôles conservés, BANNED) → 403, jamais réactivée")
+        void register_finalizedAccountWithRoles_isDenied() {
+            UserEntity finalized = buildUser();
+            finalized.setStatus(UserStatus.BANNED);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.empty());
+            when(userRepository.findByFirebaseUidIncludingDeleted(FIREBASE_UID))
+                    .thenReturn(Optional.of(finalized));
+
+            RegisterRequest req = new RegisterRequest(PHONE, null, Set.of("SENDER"));
+            assertThatThrownBy(() -> authService.register(FIREBASE_UID, mockPhoneToken(), req))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        assertThat(((YadonyBusinessException) e).getErrorCode())
+                                .isEqualTo("account-reactivation-denied");
+                        assertThat(((YadonyBusinessException) e).getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                    });
+
+            verify(userRepository, never()).reactivateByFirebaseUid(any(), any());
+            verify(userRepository, never()).save(any());
+            verify(auditService).log(eq("USER"), any(), eq("USER_REACTIVATION_DENIED"), any(), any());
+        }
+
+        @Test
+        @DisplayName("ligne supprimée sans rôle mais BANNED → 403")
+        void register_bannedRowWithoutRoles_isDenied() {
+            UserEntity banned = buildUser();
+            banned.getRoles().clear();
+            banned.setStatus(UserStatus.BANNED);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.empty());
+            when(userRepository.findByFirebaseUidIncludingDeleted(FIREBASE_UID))
+                    .thenReturn(Optional.of(banned));
+
+            RegisterRequest req = new RegisterRequest(PHONE, null, Set.of("SENDER"));
+            assertThatThrownBy(() -> authService.register(FIREBASE_UID, mockPhoneToken(), req))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("account-reactivation-denied"));
+            verify(userRepository, never()).reactivateByFirebaseUid(any(), any());
         }
 
         @Test
@@ -1316,7 +1366,7 @@ class AuthServiceTest {
     @DisplayName("register reactivation assigne toujours SENDER+TRAVELER, quels que soient request.roles")
     void register_reactivation_assignsSenderAndTravelerRoles() {
         UserEntity deleted = buildUser();
-        deleted.getRoles().add(Role.TRAVELER);
+        deleted.getRoles().clear(); // ligne invitée : seul cas réactivable
         when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.empty());
         when(userRepository.findByFirebaseUidIncludingDeleted(FIREBASE_UID)).thenReturn(Optional.of(deleted));
 

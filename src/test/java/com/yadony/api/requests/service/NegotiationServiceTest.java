@@ -1824,6 +1824,41 @@ class NegotiationServiceTest {
                 .hasMessageContaining("not-thread-participant");
         }
 
+        @Test
+        @DisplayName("assertThreadSender — l'expéditeur du fil passe")
+        void assertThreadSender_sender_passes() {
+            UUID THREAD_ID = UUID.randomUUID();
+            when(threadRepo.findPackageRequestIdById(THREAD_ID)).thenReturn(java.util.Optional.of(REQUEST_ID));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+
+            org.assertj.core.api.Assertions.assertThatCode(() -> service.assertThreadSender(SENDER_ID, THREAD_ID))
+                .doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("assertThreadSender — le voyageur du fil est refusé (403)")
+        void assertThreadSender_traveler_throws403() {
+            UUID THREAD_ID = UUID.randomUUID();
+            when(threadRepo.findPackageRequestIdById(THREAD_ID)).thenReturn(java.util.Optional.of(REQUEST_ID));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+
+            assertThatThrownBy(() -> service.assertThreadSender(TRAVELER_ID, THREAD_ID))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("not-thread-participant")
+                .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(403));
+        }
+
+        @Test
+        @DisplayName("assertThreadSender — fil inconnu → 404")
+        void assertThreadSender_unknownThread_throws404() {
+            UUID THREAD_ID = UUID.randomUUID();
+            when(threadRepo.findPackageRequestIdById(THREAD_ID)).thenReturn(java.util.Optional.empty());
+
+            assertThatThrownBy(() -> service.assertThreadSender(SENDER_ID, THREAD_ID))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("thread/not-found");
+        }
+
         private NegotiationThreadEntity threadFor(UUID threadId) {
             var thread = new NegotiationThreadEntity();
             thread.setPackageRequestId(REQUEST_ID);

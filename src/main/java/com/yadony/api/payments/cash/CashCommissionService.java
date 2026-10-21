@@ -84,6 +84,14 @@ public class CashCommissionService {
 
     // String status values stored on NegotiationThreadEntity (decoupled from the
     // payments/cash enums). Names mirror CommissionStatus / CommissionChargedVia.
+    /**
+     * Demandes mortes avant toute acceptation : une commission débitée pendant le 3DS leur est
+     * rendue. Hors de cet ensemble (acceptée, remise, livrée…), la commission est due et ne doit
+     * jamais être remboursée par un confirm-acceptance ou un webhook rejoué.
+     */
+    static final java.util.Set<BidStatus> DEAD_BEFORE_ACCEPTANCE = java.util.EnumSet.of(
+            BidStatus.CANCELLED, BidStatus.REJECTED, BidStatus.EXPIRED, BidStatus.NEGOTIATION_CLOSED);
+
     private static final String NEGO_COMMISSION_CHARGED = CommissionStatus.CHARGED.name();
     private static final String NEGO_COMMISSION_REQUIRES_3DS = CommissionStatus.REQUIRES_3DS.name();
     private static final String NEGO_COMMISSION_FAILED = CommissionStatus.FAILED.name();
@@ -1057,6 +1065,16 @@ public class CashCommissionService {
                 && bid.getCommissionStatus() == CommissionStatus.CHARGED) {
             return AcceptBidResponse.accepted();
         }
+        // Seul un bid en attente de réponse s'accepte (même règle que BidService pour un bid
+        // non carte). findByIdForUpdate ne filtre que deleted_at : sans cette garde, le
+        // voyageur forçait en ACCEPTED un bid annulé par l'expéditeur, refusé, expiré ou
+        // encore en négociation, et récupérait le téléphone de l'expéditeur. Posée avant tout
+        // débit, comme les gardes suivantes.
+        if (bid.getStatus() != BidStatus.PENDING) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT,
+                    "bid-not-pending", "Bid Not Pending",
+                    "Cette demande n'attend plus de réponse");
+        }
         // Lot B (correction 2, round 2) : garde posée AVANT tout débit (wallet ou carte) —
         // une annonce retirée par la modération ne doit plus jamais transformer un bid en
         // ACCEPTED. Posée ici, pas seulement dans finalizeBidAcceptance (qui protège
@@ -1151,6 +1169,9 @@ public class CashCommissionService {
             throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
                     "forbidden", "Forbidden", "Ce trajet ne vous appartient pas");
         }
+        if (bid.getStatus() != BidStatus.PENDING) {
+            return refuseNoLongerPending(bid);
+        }
         if (bid.getCommissionStatus() == CommissionStatus.CHARGED) {
             // Pose CARD si absent (idempotent — un bid CHARGED via PI a toujours une carte)
             if (bid.getCommissionChargedVia() == null && bid.getCommissionPaymentIntentId() != null) {
@@ -1176,6 +1197,43 @@ public class CashCommissionService {
         } catch (StripeException e) {
             return ConfirmAcceptanceResponse.fail("Erreur Stripe : " + e.getMessage());
         }
+    }
+
+    /**
+     * Le bid a quitté PENDING pendant l'attente 3DS (annulé par l'expéditeur, expiré…) : il ne
+     * doit jamais être finalisé en ACCEPTED. Si la commission carte a abouti entre-temps, elle est
+     * remboursée, sinon le voyageur paierait une commission sans colis : le remboursement à
+     * l'annulation ({@code BidCancelledCommissionRefundListener}) ne voit que les bids CHARGED,
+     * et la commission ne l'était pas encore au moment de l'annulation.
+     *
+     * <p>Seulement pour une demande morte ({@link #DEAD_BEFORE_ACCEPTANCE}) : une demande déjà
+     * acceptée puis remise ou livrée doit sa commission, et rejouer confirm-acceptance ne doit
+     * jamais la rembourser.
+     */
+    private ConfirmAcceptanceResponse refuseNoLongerPending(BidEntity bid) {
+        if (!DEAD_BEFORE_ACCEPTANCE.contains(bid.getStatus())) {
+            log.warn("confirm-acceptance replayed on bid {} in status {}: no-op", bid.getId(), bid.getStatus());
+            return ConfirmAcceptanceResponse.fail("Cette demande n'attend plus de réponse.");
+        }
+        if (bid.getCommissionStatus() != CommissionStatus.CHARGED
+                && bid.getCommissionPaymentIntentId() != null) {
+            try {
+                PaymentIntent pi = stripeCashGateway.retrievePaymentIntent(bid.getCommissionPaymentIntentId());
+                if ("succeeded".equals(pi.getStatus())) {
+                    bid.setCommissionStatus(CommissionStatus.CHARGED);
+                    bid.setCommissionChargedVia(CommissionChargedVia.CARD);
+                    bidRepo.save(bid);
+                }
+            } catch (StripeException e) {
+                return ConfirmAcceptanceResponse.fail("Erreur Stripe : " + e.getMessage());
+            }
+        }
+        if (bid.getCommissionStatus() == CommissionStatus.CHARGED
+                && bid.getCommissionPaymentIntentId() != null) {
+            refundCommission(bid);
+        }
+        log.warn("confirm-acceptance refused on bid {} in status {}", bid.getId(), bid.getStatus());
+        return ConfirmAcceptanceResponse.fail("Cette demande n'attend plus de réponse.");
     }
 
     /**

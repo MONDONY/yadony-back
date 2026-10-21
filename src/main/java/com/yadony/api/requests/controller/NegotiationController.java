@@ -253,6 +253,9 @@ public class NegotiationController {
             @PathVariable UUID id,
             @RequestParam(required = false) String promoCode) {
         UUID senderId = requireUserId();
+        // Le payeur est l'expéditeur du fil, jamais le voyageur : sans ce contrôle, le
+        // voyageur créait, remplaçait ou annulait le PaymentIntent de l'expéditeur.
+        service.assertThreadSender(senderId, id);
         var thread = service.getById(senderId, id);
         // Defensive: only allowed if thread status = AWAITING_PAYMENT
         if (thread.status() != com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_PAYMENT) {

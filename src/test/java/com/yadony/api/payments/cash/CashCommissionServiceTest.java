@@ -736,6 +736,93 @@ class CashCommissionServiceTest {
             }
         }
 
+        // Régression : l'expéditeur annule pendant l'attente 3DS, puis le PaymentIntent
+        // aboutit. Le bid ne doit pas ressusciter en ACCEPTED, et la commission débitée
+        // est remboursée (le remboursement à l'annulation ne voyait pas encore CHARGED).
+        @Test
+        void cancelledDuring3ds_piSucceeded_refundsCommissionAndNeverAccepts() {
+            bid.setStatus(BidStatus.CANCELLED);
+            PaymentIntent mockPi = new PaymentIntent();
+            mockPi.setStatus("succeeded");
+            Refund mockRefund = new Refund();
+            mockRefund.setId("re_cancel");
+            mockRefund.setStatus("succeeded");
+
+            try (MockedStatic<PaymentIntent> pi = mockStatic(PaymentIntent.class);
+                 MockedStatic<Refund> refund = mockStatic(Refund.class)) {
+                pi.when(() -> PaymentIntent.retrieve("pi_xyz")).thenReturn(mockPi);
+                refund.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
+                        .thenReturn(mockRefund);
+
+                ConfirmAcceptanceResponse resp = service.confirmCommissionAcceptance(bid.getId(), travelerId);
+
+                assertThat(resp.accepted()).isFalse();
+                assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
+                assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
+                refund.verify(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)));
+                verify(events, never()).publishEvent(any(BidAcceptedEvent.class));
+            }
+        }
+
+        @Test
+        void cancelledDuring3ds_piNotSucceeded_failsWithoutRefund() {
+            bid.setStatus(BidStatus.CANCELLED);
+            PaymentIntent mockPi = new PaymentIntent();
+            mockPi.setStatus("requires_action");
+
+            try (MockedStatic<PaymentIntent> pi = mockStatic(PaymentIntent.class);
+                 MockedStatic<Refund> refund = mockStatic(Refund.class)) {
+                pi.when(() -> PaymentIntent.retrieve("pi_xyz")).thenReturn(mockPi);
+
+                ConfirmAcceptanceResponse resp = service.confirmCommissionAcceptance(bid.getId(), travelerId);
+
+                assertThat(resp.accepted()).isFalse();
+                assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
+                assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.REQUIRES_3DS);
+                refund.verifyNoInteractions();
+                verify(events, never()).publishEvent(any(BidAcceptedEvent.class));
+            }
+        }
+
+        @Test
+        void negotiatingBid_alreadyCharged_neitherAcceptsNorRefunds() {
+            bid.setStatus(BidStatus.NEGOTIATING);
+            bid.setCommissionStatus(CommissionStatus.CHARGED);
+
+            try (MockedStatic<PaymentIntent> pi = mockStatic(PaymentIntent.class);
+                 MockedStatic<Refund> refund = mockStatic(Refund.class)) {
+                ConfirmAcceptanceResponse resp = service.confirmCommissionAcceptance(bid.getId(), travelerId);
+
+                assertThat(resp.accepted()).isFalse();
+                assertThat(bid.getStatus()).isEqualTo(BidStatus.NEGOTIATING);
+                assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
+                pi.verifyNoInteractions();
+                refund.verifyNoInteractions();
+                verify(events, never()).publishEvent(any(BidAcceptedEvent.class));
+            }
+        }
+
+        // Régression (revue de sécurité) : rejouer confirm-acceptance après la remise ne doit
+        // jamais rembourser la commission due au titre d'un colis accepté.
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.EnumSource(value = BidStatus.class,
+                names = {"HANDED_OVER", "IN_TRANSIT", "ARRIVED", "COMPLETED", "NO_SHOW", "PARCEL_REFUSED"})
+        void replayAfterAcceptance_neverRefundsCommission(BidStatus afterAcceptance) {
+            bid.setStatus(afterAcceptance);
+            bid.setCommissionStatus(CommissionStatus.CHARGED);
+
+            try (MockedStatic<PaymentIntent> pi = mockStatic(PaymentIntent.class);
+                 MockedStatic<Refund> refund = mockStatic(Refund.class)) {
+                ConfirmAcceptanceResponse resp = service.confirmCommissionAcceptance(bid.getId(), travelerId);
+
+                assertThat(resp.accepted()).isFalse();
+                assertThat(bid.getStatus()).isEqualTo(afterAcceptance);
+                assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
+                pi.verifyNoInteractions();
+                refund.verifyNoInteractions();
+            }
+        }
+
         @Test
         void finalizesWhenCommissionChargedButBidNotYetAccepted() {
             bid.setCommissionStatus(CommissionStatus.CHARGED);
@@ -2275,6 +2362,33 @@ class CashCommissionServiceTest {
                     com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST))
                     .isInstanceOf(
                             com.yadony.api.payments.cash.exception.InvalidPaymentMethodForAnnouncementException.class);
+        }
+
+        // Régression : findByIdForUpdate ne filtre que deleted_at. Sans garde de statut, le
+        // voyageur forçait en ACCEPTED un bid annulé, refusé, expiré ou encore en négociation
+        // (téléphone de l'expéditeur exposé). Le refus doit partir avant tout débit.
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.EnumSource(value = BidStatus.class,
+                names = {"CANCELLED", "REJECTED", "EXPIRED", "NEGOTIATING", "AWAITING_PAYMENT"})
+        void rejectsBidThatIsNotPending_beforeAnyDebit(BidStatus status) {
+            UUID travelerId = UUID.randomUUID();
+            UUID announcementId = UUID.randomUUID();
+            BidEntity bid = cashBid(announcementId, new BigDecimal("5"));
+            bid.setStatus(status);
+            AnnouncementEntity ann = cashAnnouncement(announcementId, travelerId, new BigDecimal("20"));
+            when(bidRepo.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+            when(announcementRepo.findByIdForUpdate(announcementId)).thenReturn(Optional.of(ann));
+
+            assertThatThrownBy(() -> service.acceptCashBid(bid.getId(), travelerId,
+                    com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("bid-not-pending");
+                        assertThat(((YadonyBusinessException) e).getStatus())
+                                .isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+                    });
+            assertThat(bid.getStatus()).isEqualTo(status);
+            org.mockito.Mockito.verifyNoInteractions(walletService, promoService, events);
         }
 
         @Test

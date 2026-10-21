@@ -99,7 +99,7 @@ class CancellationNoShowTest {
         void refuseUnCompteQuiNEstPasLeVoyageurDuBid() {
             // Régression : le rôle TRAVELER est attribué à tout compte, il ne prouvait pas la
             // participation au bid. N'importe qui pouvait déclarer l'expéditeur d'un autre absent.
-            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now().minusHours(1));
+            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
             when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
             UUID intrus = UUID.randomUUID();
 
@@ -124,7 +124,7 @@ class CancellationNoShowTest {
 
         @Test
         void annonceIntrouvable_404() {
-            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now().minusHours(1));
+            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
             when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.empty());
 
@@ -137,7 +137,7 @@ class CancellationNoShowTest {
 
         @Test
         void journaliseLaDeclarationDansLAudit() {
-            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now().minusHours(1));
+            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
             when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
             when(cancellationRepository.existsByBidIdAndNoShowStatusIn(any(), any())).thenReturn(false);
             when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -153,7 +153,7 @@ class CancellationNoShowTest {
         @Test
         void allowsStripeBid() {
             // Produit : le signalement « expéditeur absent » couvre désormais cash ET Stripe.
-            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now().minusHours(1));
+            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
             bid.setPaymentMethod(PaymentMethod.STRIPE);
             when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
             when(cancellationRepository.existsByBidIdAndNoShowStatusIn(any(), any())).thenReturn(false);
@@ -169,7 +169,7 @@ class CancellationNoShowTest {
 
         @Test
         void previentLExpediteurApresCommit() {
-            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now().minusHours(1));
+            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
             when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
             when(cancellationRepository.existsByBidIdAndNoShowStatusIn(any(), any())).thenReturn(false);
             when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -187,7 +187,7 @@ class CancellationNoShowTest {
 
         @Test
         void declarationDejaTranchee_409PlutotQuUneViolationDUnicite() {
-            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now().minusHours(1));
+            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
             when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
             when(cancellationRepository.existsByBidIdAndNoShowStatusIn(any(), any())).thenReturn(false);
             CancellationEntity rejected = new CancellationEntity();
@@ -206,7 +206,7 @@ class CancellationNoShowTest {
 
         @Test
         void failsWhenBidNotAccepted() {
-            BidEntity bid = cashBid(BidStatus.PENDING, LocalDateTime.now().minusHours(1));
+            BidEntity bid = cashBid(BidStatus.PENDING, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
             when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
 
             assertThatThrownBy(() -> service.reportSenderNoShow(BID_ID, TRAVELER_ID))
@@ -216,7 +216,7 @@ class CancellationNoShowTest {
 
         @Test
         void failsBeforeHandoverDeadline() {
-            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now().plusHours(6));
+            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).plusHours(6));
             when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
 
             assertThatThrownBy(() -> service.reportSenderNoShow(BID_ID, TRAVELER_ID))
@@ -226,7 +226,7 @@ class CancellationNoShowTest {
 
         @Test
         void failsWhenCancellationAlreadyPending() {
-            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now().minusHours(1));
+            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
             when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
             when(cancellationRepository.existsByBidIdAndNoShowStatusIn(BID_ID,
                     List.of(CancellationStatus.PENDING_CONFIRMATION, CancellationStatus.CONFIRMED)))
@@ -239,7 +239,7 @@ class CancellationNoShowTest {
 
         @Test
         void createsPendingCancellationWithContestationDeadline() {
-            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now().minusHours(1));
+            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
             when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
             when(cancellationRepository.existsByBidIdAndNoShowStatusIn(any(), any())).thenReturn(false);
             when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -337,7 +337,7 @@ class CancellationNoShowTest {
             c.setNoShowStatus(CancellationStatus.PENDING_CONFIRMATION);
 
             when(bidRepository.findById(BID_ID)).thenReturn(
-                    Optional.of(cashBid(BidStatus.ACCEPTED, LocalDateTime.now().minusHours(1))));
+                    Optional.of(cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1))));
             when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.of(c));
             when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -350,7 +350,7 @@ class CancellationNoShowTest {
         @Test
         void senderOverload_nonOwnerForbidden() {
             when(bidRepository.findById(BID_ID)).thenReturn(
-                    Optional.of(cashBid(BidStatus.ACCEPTED, LocalDateTime.now().minusHours(1))));
+                    Optional.of(cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1))));
 
             assertThatThrownBy(() -> service.confirmSenderNoShow(BID_ID, UUID.randomUUID()))
                     .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
@@ -372,7 +372,7 @@ class CancellationNoShowTest {
             c.setContestationDeadline(java.time.OffsetDateTime.now().plusHours(10));
 
             when(bidRepository.findById(BID_ID))
-                    .thenReturn(Optional.of(cashBid(BidStatus.ACCEPTED, LocalDateTime.now().minusHours(1))));
+                    .thenReturn(Optional.of(cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1))));
             when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.of(c));
             when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(announcementRepository.findById(ANNOUNCEMENT_ID))
@@ -391,7 +391,7 @@ class CancellationNoShowTest {
 
         @Test
         void failsAfterDeadline() {
-            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now().minusHours(1));
+            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
             when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
 
             CancellationEntity c = new CancellationEntity();
@@ -408,7 +408,7 @@ class CancellationNoShowTest {
 
         @Test
         void failsIfDeadlineIsNull() {
-            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now().minusHours(1));
+            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
             when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
 
             CancellationEntity c = new CancellationEntity();
@@ -426,7 +426,7 @@ class CancellationNoShowTest {
         @Test
         void failsWhenCallerIsNotSender() {
             UUID otherUserId = UUID.randomUUID();
-            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now().minusHours(1));
+            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
             // SENDER_ID is set in cashBid(); otherUserId != SENDER_ID
             when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
 
@@ -444,7 +444,7 @@ class CancellationNoShowTest {
             c.setContestationDeadline(java.time.OffsetDateTime.now().plusHours(10));
 
             when(bidRepository.findById(BID_ID))
-                    .thenReturn(Optional.of(cashBid(BidStatus.ACCEPTED, LocalDateTime.now().minusHours(1))));
+                    .thenReturn(Optional.of(cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1))));
             when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.of(c));
             when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(announcementRepository.findById(ANNOUNCEMENT_ID))

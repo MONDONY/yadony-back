@@ -13,6 +13,8 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.EnumSet;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -23,16 +25,23 @@ public class CashCommissionWebhookHandler {
     private static final String COMMISSION_PURPOSE_KEY = "commission_purpose";
     private static final String COMMISSION_PURPOSE_VALUE = "cash_bid";
 
+    /** Statuts de commission déjà réglés : un webhook tardif ne doit pas les réécrire. */
+    private static final Set<CommissionStatus> SETTLED = EnumSet.of(
+            CommissionStatus.CHARGED, CommissionStatus.REFUNDED, CommissionStatus.REFUND_FAILED);
+
     private final UserRepository userRepo;
     private final BidRepository bidRepo;
     private final ApplicationEventPublisher events;
+    private final CashCommissionService cashCommissionService;
 
     public CashCommissionWebhookHandler(UserRepository userRepo,
                                         BidRepository bidRepo,
-                                        ApplicationEventPublisher events) {
+                                        ApplicationEventPublisher events,
+                                        CashCommissionService cashCommissionService) {
         this.userRepo = userRepo;
         this.bidRepo = bidRepo;
         this.events = events;
+        this.cashCommissionService = cashCommissionService;
     }
 
     public void handleSetupIntentSucceeded(Event event) {
@@ -73,12 +82,19 @@ public class CashCommissionWebhookHandler {
             String bidIdStr = pi.getMetadata().get("bid_id");
             if (bidIdStr == null) return;
             bidRepo.findById(UUID.fromString(bidIdStr)).ifPresent(bid -> {
-                if (bid.getCommissionStatus() == CommissionStatus.CHARGED) return;
+                if (SETTLED.contains(bid.getCommissionStatus())) return;
                 bid.setCommissionStatus(CommissionStatus.CHARGED);
                 bid.setCommissionChargedVia(com.yadony.api.payments.cash.CommissionChargedVia.CARD);
                 bid.setCommissionPaymentIntentId(pi.getId());
                 bidRepo.save(bid);
                 log.info("Commission CHARGED via webhook for bid {}", bidIdStr);
+                // Bid mort avant acceptation : son écouteur d'annulation
+                // (BidCancelledCommissionRefundListener) est déjà passé sans rien rendre, la
+                // commission n'étant pas encore CHARGED. Le débit 3DS tardif est rendu ici.
+                if (CashCommissionService.DEAD_BEFORE_ACCEPTANCE.contains(bid.getStatus())) {
+                    log.warn("Commission charged on bid {} already {}: refunding", bidIdStr, bid.getStatus());
+                    cashCommissionService.refundCommission(bid);
+                }
             });
         });
     }
