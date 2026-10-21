@@ -655,6 +655,47 @@ class NegotiationControllerIT {
     }
 
     @Test
+    void post_initiatePayment_byThreadTraveler_returns403_andNeverTouchesStripe() throws Exception {
+        // Tout compte porte SENDER et TRAVELER : le voyageur du fil passe le @PreAuthorize.
+        // Le contrôle d'expéditeur doit l'arrêter avant toute création ou annulation de PI.
+        UUID threadId = UUID.randomUUID();
+        org.mockito.Mockito.doThrow(new ResponseStatusException(
+                org.springframework.http.HttpStatus.FORBIDDEN, "negotiation/not-thread-participant"))
+            .when(service).assertThreadSender(TRAVELER_UUID, threadId);
+
+        mockMvc.perform(post("/negotiations/{id}/initiate-payment", threadId)
+                .param("promoCode", "WELCOME6")
+                .with(authentication(authAs("uid-traveler", "SENDER"))))
+            .andExpect(status().isForbidden());
+
+        verify(paymentService, org.mockito.Mockito.never()).createNegotiationEscrow(
+                any(), any(), any(), any(), any(), any(), any(), any());
+        verify(service, org.mockito.Mockito.never()).recordAppliedPromo(any(), any(), any());
+        verify(service, org.mockito.Mockito.never()).getById(any(), any());
+    }
+
+    @Test
+    void post_initiatePayment_bySender_checksSenderBeforeEscrow() throws Exception {
+        UUID threadId = UUID.randomUUID();
+        when(service.getById(eq(SENDER_UUID), eq(threadId)))
+            .thenReturn(fakeThread(threadId, NegotiationThreadStatus.AWAITING_PAYMENT, null));
+        when(paymentService.createNegotiationEscrow(any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenReturn(new com.yadony.api.payments.dto.PaymentResponse(
+                UUID.randomUUID(), null, "pi_test_secret",
+                new java.math.BigDecimal("33.60"), new java.math.BigDecimal("3.60"),
+                "PENDING", "pi_test_id"));
+
+        mockMvc.perform(post("/negotiations/{id}/initiate-payment", threadId)
+                .with(authentication(authAs("uid-sender", "SENDER"))))
+            .andExpect(status().isOk());
+
+        var inOrder = org.mockito.Mockito.inOrder(service, paymentService);
+        inOrder.verify(service).assertThreadSender(SENDER_UUID, threadId);
+        inOrder.verify(paymentService).createNegotiationEscrow(
+                eq(threadId), eq(SENDER_UUID), eq(TRAVELER_UUID), any(), any(), any(), any(), any());
+    }
+
+    @Test
     void post_initiatePayment_withPromoCode_persistsAppliedPromoOnThread() throws Exception {
         UUID threadId = UUID.randomUUID();
         NegotiationThreadResponse awaitingPaymentThread = new NegotiationThreadResponse(

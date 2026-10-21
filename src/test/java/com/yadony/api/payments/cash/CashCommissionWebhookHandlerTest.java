@@ -4,6 +4,7 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.matching.BidStatus;
 import com.yadony.api.payments.cash.event.CommissionMethodDetachedEvent;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Event;
@@ -14,6 +15,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
@@ -35,12 +38,13 @@ class CashCommissionWebhookHandlerTest {
     @Mock private UserRepository userRepo;
     @Mock private BidRepository bidRepo;
     @Mock private ApplicationEventPublisher events;
+    @Mock private CashCommissionService cashCommissionService;
 
     private CashCommissionWebhookHandler handler;
 
     @BeforeEach
     void setUp() {
-        handler = new CashCommissionWebhookHandler(userRepo, bidRepo, events);
+        handler = new CashCommissionWebhookHandler(userRepo, bidRepo, events, cashCommissionService);
     }
 
     // ===================== handleSetupIntentSucceeded =====================
@@ -184,6 +188,62 @@ class CashCommissionWebhookHandlerTest {
             handler.handlePaymentIntentSucceeded(event);
 
             verify(bidRepo, never()).save(any());
+        }
+
+        @ParameterizedTest
+        @EnumSource(value = CommissionStatus.class, names = {"REFUNDED", "REFUND_FAILED"})
+        void neverRewritesAnAlreadyRefundedCommission(CommissionStatus settled) {
+            BidEntity bid = commissionBid(BidStatus.CANCELLED, settled);
+
+            handler.handlePaymentIntentSucceeded(eventFor(commissionPi(bid)));
+
+            assertThat(bid.getCommissionStatus()).isEqualTo(settled);
+            verify(bidRepo, never()).save(any());
+            verifyNoInteractions(cashCommissionService);
+        }
+
+        @ParameterizedTest
+        @EnumSource(value = BidStatus.class, names = {"CANCELLED", "REJECTED", "EXPIRED", "NEGOTIATION_CLOSED"})
+        void refundsCommissionWhenBidDiedDuring3ds(BidStatus dead) {
+            BidEntity bid = commissionBid(dead, CommissionStatus.REQUIRES_3DS);
+
+            handler.handlePaymentIntentSucceeded(eventFor(commissionPi(bid)));
+
+            var inOrder = inOrder(bidRepo, cashCommissionService);
+            inOrder.verify(bidRepo).save(bid);
+            inOrder.verify(cashCommissionService).refundCommission(bid);
+            assertThat(bid.getCommissionPaymentIntentId()).isEqualTo("pi_late");
+        }
+
+        @ParameterizedTest
+        @EnumSource(value = BidStatus.class, names = {"PENDING", "ACCEPTED", "NEGOTIATING"})
+        void keepsCommissionWhenBidIsStillAlive(BidStatus alive) {
+            BidEntity bid = commissionBid(alive, CommissionStatus.REQUIRES_3DS);
+
+            handler.handlePaymentIntentSucceeded(eventFor(commissionPi(bid)));
+
+            assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
+            verifyNoInteractions(cashCommissionService);
+        }
+
+        private BidEntity commissionBid(BidStatus status, CommissionStatus commission) {
+            BidEntity bid = new BidEntity();
+            UUID bidId = UUID.randomUUID();
+            ReflectionTestUtils.setField(bid, "id", bidId);
+            bid.setStatus(status);
+            bid.setCommissionStatus(commission);
+            when(bidRepo.findById(bidId)).thenReturn(Optional.of(bid));
+            return bid;
+        }
+
+        private PaymentIntent commissionPi(BidEntity bid) {
+            PaymentIntent pi = new PaymentIntent();
+            pi.setId("pi_late");
+            Map<String, String> meta = new HashMap<>();
+            meta.put("commission_purpose", "cash_bid");
+            meta.put("bid_id", bid.getId().toString());
+            pi.setMetadata(meta);
+            return pi;
         }
     }
 

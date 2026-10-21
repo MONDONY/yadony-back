@@ -114,6 +114,23 @@ public class AuthService {
         // @Where filter (em.merge() would SELECT with the filter, find nothing, attempt INSERT → constraint violation)
         Optional<UserEntity> deleted = userRepository.findByFirebaseUidIncludingDeleted(firebaseUid);
         if (deleted.isPresent()) {
+            // Seule une ligne invitée (sans rôle, soft-deletée par GuestClaimService) se
+            // réactive. Une ligne avec rôles est un vrai compte finalisé par
+            // AccountFinalizationService : suppression RGPD ou suppression admin (FRAUD,
+            // ABUSE…), déclarée non restaurable. Le compte Firebase est supprimé à la
+            // finalisation, donc un utilisateur qui revient obtient un nouvel UID ; on ne
+            // retombe ici que sur un jeton encore valide (≤ 1 h, pas de checkRevoked) ou un
+            // compte Firebase dont la suppression a échoué. Même règle que
+            // GuestUserProvisioner#reactivateIfSoftDeleted.
+            if (!deleted.get().getRoles().isEmpty() || deleted.get().getStatus() == UserStatus.BANNED) {
+                auditService.log("USER", deleted.get().getId(), "USER_REACTIVATION_DENIED", deleted.get().getId(),
+                        Map.of("firebaseUid", firebaseUid));
+                throw new YadonyBusinessException(
+                        HttpStatus.FORBIDDEN,
+                        "account-reactivation-denied",
+                        "Compte supprimé",
+                        "Ce compte a été supprimé ou banni et ne peut pas être réactivé.");
+            }
             userRepository.reactivateByFirebaseUid(firebaseUid, UserStatus.ACTIVE.name());
             UserEntity reactivated = userRepository.findByFirebaseUid(firebaseUid).orElseThrow();
             reactivated.setRoles(new java.util.HashSet<>(Set.of(Role.SENDER, Role.TRAVELER)));

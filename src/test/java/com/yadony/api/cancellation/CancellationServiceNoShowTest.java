@@ -99,7 +99,7 @@ class CancellationServiceNoShowTest {
     @Test
     void stripeBidAcceptedAfterHandover_createsPendingCancellation() {
         BidEntity stripeBid = bid(BidStatus.ACCEPTED, PaymentMethod.STRIPE,
-                LocalDateTime.now().minusHours(1));
+                LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
         when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(stripeBid));
         when(cancellationRepository.existsByBidIdAndNoShowStatusIn(any(), any())).thenReturn(false);
         when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -120,7 +120,7 @@ class CancellationServiceNoShowTest {
     @Test
     void handedOverBid_throws() {
         BidEntity handedOver = bid(BidStatus.HANDED_OVER, PaymentMethod.STRIPE,
-                LocalDateTime.now().minusHours(1));
+                LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
         when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(handedOver));
 
         assertThatThrownBy(() -> service.reportSenderNoShow(BID_ID, TRAVELER_ID))
@@ -132,7 +132,7 @@ class CancellationServiceNoShowTest {
     @Test
     void handoverDeadlineInFuture_throws() {
         BidEntity future = bid(BidStatus.ACCEPTED, PaymentMethod.STRIPE,
-                LocalDateTime.now().plusHours(6));
+                LocalDateTime.now(java.time.ZoneOffset.UTC).plusHours(6));
         when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(future));
 
         assertThatThrownBy(() -> service.reportSenderNoShow(BID_ID, TRAVELER_ID))
@@ -144,7 +144,7 @@ class CancellationServiceNoShowTest {
     @Test
     void cancellationAlreadyInProgress_throws() {
         BidEntity accepted = bid(BidStatus.ACCEPTED, PaymentMethod.STRIPE,
-                LocalDateTime.now().minusHours(1));
+                LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
         when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(accepted));
         when(cancellationRepository.existsByBidIdAndNoShowStatusIn(BID_ID,
                 List.of(CancellationStatus.PENDING_CONFIRMATION, CancellationStatus.CONFIRMED)))
@@ -161,7 +161,7 @@ class CancellationServiceNoShowTest {
     @Test
     void reportTravelerNoShow_happyPath_logsAuditAndPublishesEvent() {
         BidEntity accepted = bid(BidStatus.ACCEPTED, PaymentMethod.STRIPE,
-                LocalDateTime.now().minusHours(1));
+                LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
         when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(accepted));
 
         service.reportTravelerNoShow(BID_ID, SENDER_ID);
@@ -191,7 +191,7 @@ class CancellationServiceNoShowTest {
     @Test
     void reportTravelerNoShow_ownershipMismatch_throwsForbidden() {
         BidEntity accepted = bid(BidStatus.ACCEPTED, PaymentMethod.STRIPE,
-                LocalDateTime.now().minusHours(1));
+                LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
         when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(accepted));
 
         UUID intruder = UUID.randomUUID();
@@ -206,7 +206,7 @@ class CancellationServiceNoShowTest {
     @Test
     void reportTravelerNoShow_handedOverBid_throws() {
         BidEntity handedOver = bid(BidStatus.HANDED_OVER, PaymentMethod.STRIPE,
-                LocalDateTime.now().minusHours(1));
+                LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
         when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(handedOver));
 
         assertThatThrownBy(() -> service.reportTravelerNoShow(BID_ID, SENDER_ID))
@@ -219,7 +219,7 @@ class CancellationServiceNoShowTest {
     @Test
     void reportTravelerNoShow_handoverDeadlineInFuture_throws() {
         BidEntity future = bid(BidStatus.ACCEPTED, PaymentMethod.STRIPE,
-                LocalDateTime.now().plusHours(6));
+                LocalDateTime.now(java.time.ZoneOffset.UTC).plusHours(6));
         when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(future));
 
         assertThatThrownBy(() -> service.reportTravelerNoShow(BID_ID, SENDER_ID))
