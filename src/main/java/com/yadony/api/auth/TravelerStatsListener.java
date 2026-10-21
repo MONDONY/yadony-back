@@ -139,21 +139,24 @@ public class TravelerStatsListener {
                 traveler.getId(), announcement.getId(), bid.getId(), newTotal);
     }
 
-    /** Incrémente users.total_deliveries une seule fois par bid (drapeau bids.delivery_counted). */
+    /**
+     * Incrémente users.total_deliveries une seule fois par bid, par deux UPDATE atomiques :
+     * le drapeau {@code bids.delivery_counted} d'abord (seul celui qui le pose compte), puis
+     * le compteur. Exécuté avant toute lecture du voyageur : la suite (total_trips) relit
+     * donc une entité à jour et ne réécrit jamais une valeur périmée de total_deliveries.
+     */
     private void countDelivery(BidEntity bid, java.util.UUID travelerId) {
         if (bid.isDeliveryCounted()) {
             return;
         }
-        Optional<UserEntity> travelerOpt = userRepository.findById(travelerId);
-        if (travelerOpt.isEmpty()) {
-            log.error("DeliveryConfirmedEvent: traveler {} not found for bidId={} — total_deliveries not incremented",
-                    travelerId, bid.getId());
+        if (bidRepository.markDeliveryCounted(bid.getId()) != 1) {
+            // Déjà compté par une autre transaction (événement rejoué ou concurrent).
             return;
         }
-        UserEntity traveler = travelerOpt.get();
-        traveler.setTotalDeliveries(traveler.getTotalDeliveries() + 1);
-        userRepository.save(traveler);
-        bid.setDeliveryCounted(true);
-        bidRepository.save(bid);
+        if (userRepository.incrementTotalDeliveries(travelerId) != 1) {
+            // Drapeau posé malgré tout : pas de nouvelle tentative sans fin, comme pour total_trips.
+            log.error("DeliveryConfirmedEvent: traveler {} not found for bidId={} — total_deliveries not incremented",
+                    travelerId, bid.getId());
+        }
     }
 }

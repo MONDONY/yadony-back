@@ -165,4 +165,45 @@ class TravelerStatsListenerIT {
         assertThat(reloadedUser.getTotalTrips()).isEqualTo(7);
         assertThat(reloadedAnn.isTotalTripsCounted()).isFalse();
     }
+
+    @Test
+    void total_deliveries_counted_once_per_bid_and_not_clobbered_by_total_trips_save() {
+        UserEntity traveler = persistTraveler(3);
+        long versionBefore = traveler.getVersion();
+        AnnouncementEntity ann = persistAnnouncement(traveler.getId());
+        BidEntity bid1 = persistCompletedBid(ann.getId(), UUID.randomUUID());
+        BidEntity bid2 = persistCompletedBid(ann.getId(), UUID.randomUUID());
+
+        // bid1 : premier colis du trajet, compte la livraison ET le trajet (le voyageur est
+        // relu puis sauvegardé pour total_trips, après l'UPDATE de total_deliveries).
+        // bid1 rejoué : rien. bid2 : livraison seule, le trajet est déjà compté.
+        for (BidEntity bid : new BidEntity[]{bid1, bid1, bid2}) {
+            transactionTemplate.executeWithoutResult(status ->
+                    eventPublisher.publishEvent(new DeliveryConfirmedEvent(
+                            bid.getId(), bid.getSenderId(), traveler.getId())));
+        }
+
+        UserEntity reloaded = userRepository.findById(traveler.getId()).orElseThrow();
+        assertThat(reloaded.getTotalDeliveries()).isEqualTo(2);
+        assertThat(reloaded.getTotalTrips()).isEqualTo(4);
+        // update versioned : la version suit chaque incrément atomique.
+        assertThat(reloaded.getVersion()).isGreaterThan(versionBefore);
+        assertThat(bidRepository.findById(bid1.getId()).orElseThrow().isDeliveryCounted()).isTrue();
+        assertThat(bidRepository.findById(bid2.getId()).orElseThrow().isDeliveryCounted()).isTrue();
+    }
+
+    @Test
+    void mark_delivery_counted_and_increment_are_atomic_updates() {
+        UserEntity traveler = persistTraveler(0);
+        AnnouncementEntity ann = persistAnnouncement(traveler.getId());
+        BidEntity bid = persistCompletedBid(ann.getId(), UUID.randomUUID());
+
+        Integer first = transactionTemplate.execute(s -> bidRepository.markDeliveryCounted(bid.getId()));
+        Integer second = transactionTemplate.execute(s -> bidRepository.markDeliveryCounted(bid.getId()));
+        Integer missing = transactionTemplate.execute(s -> userRepository.incrementTotalDeliveries(UUID.randomUUID()));
+
+        assertThat(first).isEqualTo(1);
+        assertThat(second).isZero();
+        assertThat(missing).isZero();
+    }
 }
