@@ -455,25 +455,29 @@ public class AnnouncementService {
         Set<UUID> lookedUp = new HashSet<>();
         Sort byDeparture = Sort.by(Sort.Direction.ASC, "departureDate").and(Sort.by(Sort.Direction.ASC, "id"));
         List<AnnouncementEntity> pageEntities;
-        List<AnnouncementEntity> exactLoaded;
+        List<RankingRow> pageRows = List.of();
+        List<RankingRow> exactRows;
         long total;
         if (SORT_SCORE.equals(mode)) {
             // Score calculé en mémoire sur au plus maxCandidates exactes (maxCandidatesWithoutCity
             // sans aucune ville), lues par date de départ (réservables d'abord avec includeFull),
-            // puis la page est découpée.
+            // puis la page est découpée. Les candidats sont des lignes légères (projection) :
+            // seules les annonces de la page sont ensuite chargées en entités.
             int max = hasCity ? rankingProperties.maxCandidates() : rankingProperties.maxCandidatesWithoutCity();
-            Page<AnnouncementEntity> candidates = filters.includeFull()
-                    ? announcementRepository.findAll(
+            List<RankingRow> candidates = filters.includeFull()
+                    ? announcementRepository.findRankingRows(
                             exactSpec.and(AnnouncementSpecification.bookableFirstThen(byDeparture)),
                             PageRequest.of(0, max))
-                    : announcementRepository.findAll(exactSpec, PageRequest.of(0, max, byDeparture));
-            total = candidates.getTotalElements();
-            List<AnnouncementEntity> ranked = new java.util.ArrayList<>(candidates.getContent());
+                    : announcementRepository.findRankingRows(exactSpec, PageRequest.of(0, max, byDeparture));
+            // Même total qu'une page Spring : COUNT seulement quand le plafond est atteint.
+            total = candidates.size() < max ? candidates.size() : announcementRepository.count(exactSpec);
+            List<RankingRow> ranked = new java.util.ArrayList<>(candidates);
             lookupTravelers(ranked, travelers, lookedUp);
-            Comparator<AnnouncementEntity> byScore = byScoreDesc(rankingScores(ranked, travelers, today));
+            Comparator<RankingRow> byScore = byScoreDesc(rankingScores(ranked, travelers, today));
             ranked.sort(filters.includeFull() ? fullLast().thenComparing(byScore) : byScore);
-            pageEntities = slice(ranked, pageable);
-            exactLoaded = ranked;
+            pageRows = slice(ranked, pageable);
+            pageEntities = null;
+            exactRows = ranked;
         } else {
             // Tri par prix inclus : le pivot EUR (price_per_kg_eur) ordonne la liste
             // multidevise en SQL. Multiplier par le taux du lecteur préserve l'ordre
@@ -489,7 +493,7 @@ public class AnnouncementService {
                             PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), sort));
             total = page.getTotalElements();
             pageEntities = page.getContent();
-            exactLoaded = pageEntities;
+            exactRows = pageEntities.stream().map(RankingRow::of).toList();
         }
         Long bookable = filters.includeFull()
                 ? announcementRepository.count(exactSpec.and(AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE)))
@@ -497,29 +501,36 @@ public class AnnouncementService {
 
         // ── Bloc 2 ────────────────────────────────────────────────────────────
         long bookableExact = bookable != null ? bookable : total;
-        List<AnnouncementEntity> similarEntities = List.of();
+        List<RankingRow> similarRows = List.of();
         Map<UUID, List<UnmetCriterion>> unmetById = new HashMap<>();
         if (!counterCall && pageable.getPageNumber() == 0 && hasCity
                 && bookableExact < rankingProperties.exactThreshold()) {
             // Exactes réservables à écarter du bloc 2 : déjà lues si toutes sont en mémoire,
             // sinon relues (moins de exactThreshold lignes).
-            Set<UUID> exactIds = exactLoaded.stream()
-                    .filter(a -> a.getStatus() == AnnouncementStatus.ACTIVE)
-                    .map(AnnouncementEntity::getId)
+            Set<UUID> exactIds = exactRows.stream()
+                    .filter(a -> a.status() == AnnouncementStatus.ACTIVE)
+                    .map(RankingRow::id)
                     .collect(Collectors.toSet());
             if (exactIds.size() != bookableExact) {
-                exactIds = announcementRepository.findAll(
+                exactIds = announcementRepository.findRankingRows(
                                 exactSpec.and(AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE)),
                                 PageRequest.of(0, rankingProperties.exactThreshold()))
-                        .getContent().stream().map(AnnouncementEntity::getId).collect(Collectors.toSet());
+                        .stream().map(RankingRow::id).collect(Collectors.toSet());
             }
-            similarEntities = similarTrips(strict, exactIds, criteria, mode, sortDir, today,
+            similarRows = similarTrips(strict, exactIds, criteria, mode, sortDir, today,
                     travelers, lookedUp, unmetById);
         }
 
+        // Entités complètes : seulement la page affichée et le bloc 2, en une requête.
+        Map<UUID, AnnouncementEntity> loaded = loadEntities(pageRows, similarRows);
+        if (pageEntities == null) {
+            pageEntities = inOrder(pageRows, loaded);
+        }
+        List<AnnouncementEntity> similarEntities = inOrder(similarRows, loaded);
+
         List<AnnouncementEntity> toMap = new java.util.ArrayList<>(pageEntities);
         toMap.addAll(similarEntities);
-        lookupTravelers(toMap, travelers, lookedUp);
+        lookupTravelers(toMap.stream().map(RankingRow::of).toList(), travelers, lookedUp);
         List<AnnouncementSearchResponse> mapped = mapAnnouncements(toMap, favIds, viewerCurrency, viewerId, travelers);
         List<AnnouncementSearchResponse> content = new java.util.ArrayList<>(mapped.subList(0, pageEntities.size()));
         List<SimilarAnnouncementResponse> similar = new java.util.ArrayList<>(similarEntities.size());
@@ -545,45 +556,71 @@ public class AnnouncementService {
      * Bloc 2 : trajets réservables du socle strict, hors exactes, qui ratent au moins un
      * critère souple. Un trajet sans écart détecté n'y entre jamais (aucune annonce du bloc 2
      * sans explication). Remplit {@code unmetById} avec les écarts des trajets retenus.
+     * Le vivier est lu en lignes légères ; les types de contenu ne sont lus que si la
+     * recherche filtre dessus.
      */
-    private List<AnnouncementEntity> similarTrips(Specification<AnnouncementEntity> strict, Set<UUID> exactIds,
-                                                  SearchCriteria criteria, String mode, String sortDir,
-                                                  LocalDate today, Map<UUID, UserEntity> travelers,
-                                                  Set<UUID> lookedUp, Map<UUID, List<UnmetCriterion>> unmetById) {
+    private List<RankingRow> similarTrips(Specification<AnnouncementEntity> strict, Set<UUID> exactIds,
+                                          SearchCriteria criteria, String mode, String sortDir,
+                                          LocalDate today, Map<UUID, UserEntity> travelers,
+                                          Set<UUID> lookedUp, Map<UUID, List<UnmetCriterion>> unmetById) {
         Sort byDeparture = Sort.by(Sort.Direction.ASC, "departureDate").and(Sort.by(Sort.Direction.ASC, "id"));
-        List<AnnouncementEntity> pool = new java.util.ArrayList<>(announcementRepository.findAll(
+        List<RankingRow> pool = new java.util.ArrayList<>(announcementRepository.findRankingRows(
                 // Jamais un trajet déjà parti, même encore ACTIVE : les dates souples sont
                 // relâchées, pas le passé.
                 AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE).and(strict)
                         .and(AnnouncementSpecification.departureDateFrom(today)),
-                PageRequest.of(0, rankingProperties.maxCandidates(), byDeparture)).getContent());
-        pool.removeIf(a -> exactIds.contains(a.getId()));
+                PageRequest.of(0, rankingProperties.maxCandidates(), byDeparture)));
+        pool.removeIf(a -> exactIds.contains(a.id()));
         lookupTravelers(pool, travelers, lookedUp);
-        for (AnnouncementEntity a : pool) {
-            UserEntity t = travelers.get(a.getTravelerId());
-            List<UnmetCriterion> misses = SearchCriteriaMatcher.unmet(a,
+        boolean contentTypeFilter = criteria.contentType() != null && !criteria.contentType().isBlank();
+        Map<UUID, List<String>> contentTypes = contentTypeFilter && !pool.isEmpty()
+                ? announcementRepository.findAcceptedContentTypes(pool.stream().map(RankingRow::id).toList())
+                : Map.of();
+        for (RankingRow a : pool) {
+            UserEntity t = travelers.get(a.travelerId());
+            List<UnmetCriterion> misses = SearchCriteriaMatcher.unmet(
+                    a.facts(contentTypes.getOrDefault(a.id(), List.of())),
                     t == null ? null : t.getAverageRating(),
                     // Même drapeau que AnnouncementSpecification.gpProOnly (users.gp_pro).
                     t != null && t.isGpPro(),
                     criteria);
             if (!misses.isEmpty()) {
-                unmetById.put(a.getId(), misses);
+                unmetById.put(a.id(), misses);
             }
         }
-        pool.removeIf(a -> !unmetById.containsKey(a.getId()));
-        Comparator<AnnouncementEntity> within = SORT_SCORE.equals(mode)
+        pool.removeIf(a -> !unmetById.containsKey(a.id()));
+        Comparator<RankingRow> within = SORT_SCORE.equals(mode)
                 ? byScoreDesc(rankingScores(pool, travelers, today))
                 : manualOrder(mode, sortDir);
-        pool.sort(Comparator.<AnnouncementEntity>comparingInt(a -> unmetById.get(a.getId()).size())
+        pool.sort(Comparator.<RankingRow>comparingInt(a -> unmetById.get(a.id()).size())
                 .thenComparing(within));
         return pool.subList(0, Math.min(pool.size(), rankingProperties.similarMax()));
     }
 
+    /** Charge en une requête les entités des lignes affichées (page puis bloc 2). */
+    private Map<UUID, AnnouncementEntity> loadEntities(List<RankingRow> pageRows, List<RankingRow> similarRows) {
+        List<UUID> ids = new java.util.ArrayList<>(pageRows.size() + similarRows.size());
+        pageRows.forEach(r -> ids.add(r.id()));
+        similarRows.forEach(r -> ids.add(r.id()));
+        Map<UUID, AnnouncementEntity> byId = new HashMap<>();
+        if (!ids.isEmpty()) {
+            for (AnnouncementEntity a : announcementRepository.findAllById(ids)) {
+                byId.put(a.getId(), a);
+            }
+        }
+        return byId;
+    }
+
+    /** Entités dans l'ordre des lignes ; une annonce disparue entre-temps est simplement omise. */
+    private static List<AnnouncementEntity> inOrder(List<RankingRow> rows, Map<UUID, AnnouncementEntity> loaded) {
+        return rows.stream().map(r -> loaded.get(r.id())).filter(java.util.Objects::nonNull).toList();
+    }
+
     /** Charge en une requête les voyageurs pas encore cherchés (introuvables compris). */
-    private void lookupTravelers(List<AnnouncementEntity> entities, Map<UUID, UserEntity> travelers,
+    private void lookupTravelers(List<RankingRow> rows, Map<UUID, UserEntity> travelers,
                                  Set<UUID> lookedUp) {
-        List<UUID> missing = entities.stream()
-                .map(AnnouncementEntity::getTravelerId)
+        List<UUID> missing = rows.stream()
+                .map(RankingRow::travelerId)
                 .filter(id -> id != null && !lookedUp.contains(id))
                 .distinct()
                 .toList();
@@ -597,56 +634,56 @@ public class AnnouncementService {
     }
 
     /** Score interne par annonce : jamais exposé, sert uniquement à ordonner. */
-    private Map<UUID, Double> rankingScores(List<AnnouncementEntity> entities, Map<UUID, UserEntity> travelers,
+    private Map<UUID, Double> rankingScores(List<RankingRow> rows, Map<UUID, UserEntity> travelers,
                                             LocalDate today) {
         Map<UUID, Double> scores = new HashMap<>();
-        for (AnnouncementEntity a : entities) {
-            scores.put(a.getId(), rankingScore(a, travelers.get(a.getTravelerId()), today));
+        for (RankingRow a : rows) {
+            scores.put(a.id(), rankingScore(a, travelers.get(a.travelerId()), today));
         }
         return scores;
     }
 
-    private double rankingScore(AnnouncementEntity a, UserEntity traveler, LocalDate today) {
+    private double rankingScore(RankingRow a, UserEntity traveler, LocalDate today) {
         TripScoreCalculator.TravelerQuality quality = traveler == null
                 ? new TripScoreCalculator.TravelerQuality(0, 0, 0, null, 0)
                 : new TripScoreCalculator.TravelerQuality(traveler.getCancellationCount(), traveler.getNoShowCount(),
                         traveler.getTotalDeliveries(), traveler.getAverageRating(), traveler.getRatingCount());
-        Set<PaymentMethod> methods = a.getAcceptedPaymentMethods();
+        Set<PaymentMethod> methods = a.acceptedPaymentMethods();
         boolean online = methods != null
                 && (methods.contains(PaymentMethod.STRIPE) || methods.contains(PaymentMethod.MOBILE_MONEY));
-        long daysToDeparture = a.getDepartureDate() == null ? 0
-                : java.time.temporal.ChronoUnit.DAYS.between(today, a.getDepartureDate());
-        long ageDays = a.getCreatedAt() == null ? 0
-                : java.time.temporal.ChronoUnit.DAYS.between(a.getCreatedAt().toLocalDate(), today);
+        long daysToDeparture = a.departureDate() == null ? 0
+                : java.time.temporal.ChronoUnit.DAYS.between(today, a.departureDate());
+        long ageDays = a.createdAt() == null ? 0
+                : java.time.temporal.ChronoUnit.DAYS.between(a.createdAt().toLocalDate(), today);
         return tripScoreCalculator.score(quality, online, daysToDeparture, ageDays);
     }
 
     /** Score décroissant, id en départage : ordre total stable sous pagination. */
-    private static Comparator<AnnouncementEntity> byScoreDesc(Map<UUID, Double> scores) {
-        return Comparator.<AnnouncementEntity>comparingDouble(a -> scores.getOrDefault(a.getId(), 0.0))
+    private static Comparator<RankingRow> byScoreDesc(Map<UUID, Double> scores) {
+        return Comparator.<RankingRow>comparingDouble(a -> scores.getOrDefault(a.id(), 0.0))
                 .reversed()
-                .thenComparing(AnnouncementEntity::getId, Comparator.nullsLast(Comparator.naturalOrder()));
+                .thenComparing(RankingRow::id, Comparator.nullsLast(Comparator.naturalOrder()));
     }
 
     /** Trajets complets après les réservables (FLUTTER-JH). */
-    private static Comparator<AnnouncementEntity> fullLast() {
-        return Comparator.comparingInt(a -> a.getStatus() == AnnouncementStatus.FULL ? 1 : 0);
+    private static Comparator<RankingRow> fullLast() {
+        return Comparator.comparingInt(a -> a.status() == AnnouncementStatus.FULL ? 1 : 0);
     }
 
     /**
      * Tri manuel en mémoire du bloc 2, pendant de {@link #buildSort} (pivot EUR pour le prix) :
      * même départage GP Pro d'abord quelle que soit la direction, puis id.
      */
-    private static Comparator<AnnouncementEntity> manualOrder(String mode, String sortDir) {
+    private static Comparator<RankingRow> manualOrder(String mode, String sortDir) {
         boolean desc = "desc".equalsIgnoreCase(sortDir);
-        Comparator<AnnouncementEntity> primary = "price".equals(mode)
-                ? Comparator.comparing(AnnouncementEntity::getPricePerKgEur, Comparator.nullsLast(
+        Comparator<RankingRow> primary = "price".equals(mode)
+                ? Comparator.comparing(RankingRow::pricePerKgEur, Comparator.nullsLast(
                         desc ? Comparator.<BigDecimal>reverseOrder() : Comparator.<BigDecimal>naturalOrder()))
-                : Comparator.comparing(AnnouncementEntity::getDepartureDate, Comparator.nullsLast(
+                : Comparator.comparing(RankingRow::departureDate, Comparator.nullsLast(
                         desc ? Comparator.<LocalDate>reverseOrder() : Comparator.<LocalDate>naturalOrder()));
         return primary
-                .thenComparing(AnnouncementEntity::isTravelerIsGpPro, Comparator.reverseOrder())
-                .thenComparing(AnnouncementEntity::getId, Comparator.nullsLast(Comparator.naturalOrder()));
+                .thenComparing(RankingRow::gpPro, Comparator.reverseOrder())
+                .thenComparing(RankingRow::id, Comparator.nullsLast(Comparator.naturalOrder()));
     }
 
     private static <T> List<T> slice(List<T> all, Pageable pageable) {

@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity, UUID>,
+public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity, UUID>, AnnouncementRankingQueries,
         JpaSpecificationExecutor<AnnouncementEntity> {
 
     Page<AnnouncementEntity> findByTravelerId(UUID travelerId, Pageable pageable);

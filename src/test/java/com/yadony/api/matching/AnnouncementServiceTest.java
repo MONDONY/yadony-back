@@ -2538,9 +2538,10 @@ class AnnouncementServiceTest {
             traveler.setFirstName(null);
             traveler.setLastName("Keita");
             AnnouncementEntity ann = buildAnnouncement(traveler);
-            Page<AnnouncementEntity> page = new PageImpl<>(List.of(ann));
-
-            when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class))).thenReturn(page);
+            // Tri par défaut (score) : candidats en lignes légères, puis entité de la page.
+            when(announcementRepository.findRankingRows(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
+                    .thenReturn(List.of(RankingRow.of(ann)));
+            when(announcementRepository.findAllById(any())).thenReturn(List.of(ann));
             stubBatchSearch(traveler, 0L);
 
             Page<?> result = announcementService.searchAnnouncements(

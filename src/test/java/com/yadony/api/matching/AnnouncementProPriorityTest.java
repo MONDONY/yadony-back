@@ -231,9 +231,11 @@ class AnnouncementProPriorityTest {
         AnnouncementEntity better = buildAnnouncement(strong);
         setId(better, UUID.randomUUID());
 
-        when(announcementRepository.findAll(
+        // Tri par score : candidats en lignes légères, puis entités de la page seules.
+        when(announcementRepository.findRankingRows(
                 ArgumentMatchers.<Specification<AnnouncementEntity>>any(), ArgumentMatchers.any(Pageable.class)))
-                .thenReturn(new PageImpl<>(List.of(pro, better)));
+                .thenReturn(List.of(RankingRow.of(pro), RankingRow.of(better)));
+        when(announcementRepository.findAllById(ArgumentMatchers.any())).thenReturn(List.of(pro, better));
         when(userRepository.findAllById(anyCollection())).thenReturn(List.of(weakPro, strong));
         when(bidRepository.countVisibleByAnnouncementIds(anyCollection())).thenReturn(List.of());
 

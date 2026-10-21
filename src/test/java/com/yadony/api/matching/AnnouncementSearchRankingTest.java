@@ -93,6 +93,13 @@ class AnnouncementSearchRankingTest {
     private AnnouncementService service;
     private TripScoreCalculator scoreCalculator;
     private final Map<UUID, UserEntity> users = new HashMap<>();
+    /** Annonces créées par le test : servies par {@code findAllById} (chargement de la page). */
+    private final Map<UUID, AnnouncementEntity> announcements = new HashMap<>();
+    /** Lectures de candidats ({@code findAll} ou {@code findRankingRows}), dans l'ordre des appels. */
+    private final List<Read> reads = new ArrayList<>();
+
+    private record Read(Specification<AnnouncementEntity> spec, Pageable pageable, boolean rows) {
+    }
     private static final LocalDate TODAY = LocalDate.now(ZoneOffset.UTC);
 
     @BeforeEach
@@ -101,6 +108,7 @@ class AnnouncementSearchRankingTest {
         lenient().when(exchangeRateService.convert(any(), any(), any())).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(storageService.avatarUrl(any())).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(bidRepository.countVisibleByAnnouncementIds(anyCollection())).thenReturn(List.of());
+        stubFindAllById();
         lenient().when(userRepository.findAllById(any())).thenAnswer(inv -> {
             Iterable<UUID> ids = inv.getArgument(0);
             return StreamSupport.stream(ids.spliterator(), false)
@@ -193,6 +201,7 @@ class AnnouncementSearchRankingTest {
         a.setDeliveryAddressLabel("DSS");
         a.setDeliveryLat(BigDecimal.valueOf(14.739));
         a.setDeliveryLng(BigDecimal.valueOf(-17.490));
+        announcements.put(a.getId(), a);
         return a;
     }
 
@@ -204,14 +213,48 @@ class AnnouncementSearchRankingTest {
         return out;
     }
 
+    private void stubFindAllById() {
+        lenient().when(announcementRepository.findAllById(any())).thenAnswer(inv -> {
+            Iterable<UUID> ids = inv.getArgument(0);
+            return StreamSupport.stream(ids.spliterator(), false)
+                    .map(announcements::get).filter(java.util.Objects::nonNull).toList();
+        });
+    }
+
+    /** Change l'id d'une annonce déjà créée en gardant le registre à jour. */
+    private void reId(AnnouncementEntity a, UUID id) {
+        announcements.remove(a.getId());
+        setId(a, id);
+        announcements.put(id, a);
+    }
+
     @SafeVarargs
     private void stubFindAll(List<AnnouncementEntity>... pages) {
-        var stub = when(announcementRepository.findAll(
-                ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)));
-        var chained = stub.thenReturn(new PageImpl<>(pages[0]));
-        for (int i = 1; i < pages.length; i++) {
-            chained = chained.thenReturn(new PageImpl<>(pages[i]));
-        }
+        stubReads(java.util.Arrays.stream(pages).map(p -> (Page<AnnouncementEntity>) new PageImpl<>(p)).toList());
+    }
+
+    /**
+     * Sert les lectures de candidats dans l'ordre des appels, qu'elles passent par
+     * {@code findAll} (page SQL des tris manuels et du compteur) ou par {@code findRankingRows}
+     * (projection du score et du vivier du bloc 2). La dernière réponse se répète, comme
+     * {@code thenReturn}.
+     */
+    private void stubReads(List<Page<AnnouncementEntity>> pages) {
+        java.util.concurrent.atomic.AtomicInteger next = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.function.Supplier<Page<AnnouncementEntity>> nextPage =
+                () -> pages.get(Math.min(next.getAndIncrement(), pages.size() - 1));
+        lenient().when(announcementRepository.findAll(
+                ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
+                .thenAnswer(inv -> {
+                    reads.add(new Read(inv.getArgument(0), inv.getArgument(1), false));
+                    return nextPage.get();
+                });
+        lenient().when(announcementRepository.findRankingRows(
+                ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
+                .thenAnswer(inv -> {
+                    reads.add(new Read(inv.getArgument(0), inv.getArgument(1), true));
+                    return nextPage.get().getContent().stream().map(RankingRow::of).toList();
+                });
     }
 
     /** Paramètres de recherche, null = absent. */
@@ -243,12 +286,10 @@ class AnnouncementSearchRankingTest {
         return page.similarAnnouncements().stream().map(s -> s.announcement().id()).toList();
     }
 
-    /** Toutes les Specifications transmises à {@code findAll}, dans l'ordre des appels. */
+    /** Toutes les Specifications des lectures de candidats, dans l'ordre des appels. */
     private List<Specification<AnnouncementEntity>> capturedSpecs(int calls) {
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<Specification<AnnouncementEntity>> captor = ArgumentCaptor.forClass(Specification.class);
-        verify(announcementRepository, times(calls)).findAll(captor.capture(), any(Pageable.class));
-        return captor.getAllValues();
+        assertThat(reads).hasSize(calls);
+        return reads.stream().map(Read::spec).toList();
     }
 
     /** Exécute une Specification sur des mocks Criteria pour savoir quels filtres elle porte. */
@@ -282,7 +323,7 @@ class AnnouncementSearchRankingTest {
         assertThat(ids(page)).containsExactly(laterGreat.getId(), soonBad.getId());
         assertThat(page.getTotalElements()).isEqualTo(2);
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
-        verify(announcementRepository).findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), pageable.capture());
+        verify(announcementRepository).findRankingRows(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), pageable.capture());
         // Sans aucune ville : plafond maxCandidatesWithoutCity (300), pas maxCandidates.
         assertThat(pageable.getValue().getPageSize()).isEqualTo(300);
         assertThat(pageable.getValue().getSort().getOrderFor("departureDate")).isNotNull();
@@ -298,7 +339,7 @@ class AnnouncementSearchRankingTest {
         q.run();
 
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
-        verify(announcementRepository).findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), pageable.capture());
+        verify(announcementRepository).findRankingRows(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), pageable.capture());
         assertThat(pageable.getValue().getPageSize()).isEqualTo(1000);
     }
 
@@ -369,8 +410,7 @@ class AnnouncementSearchRankingTest {
 
         assertThat(page.getContent()).hasSize(7);
         assertThat(page.similarAnnouncements()).isEmpty();
-        verify(announcementRepository, times(1)).findAll(
-                ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class));
+        assertThat(reads).hasSize(1);
     }
 
     @Test
@@ -385,8 +425,7 @@ class AnnouncementSearchRankingTest {
 
         assertThat(page.getContent()).hasSize(1);
         assertThat(page.similarAnnouncements()).isEmpty();
-        verify(announcementRepository, times(1)).findAll(
-                ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class));
+        assertThat(reads).hasSize(1);
     }
 
     @Test
@@ -431,8 +470,7 @@ class AnnouncementSearchRankingTest {
         q.to = TODAY.plusDays(10);
 
         assertThat(q.run().similarAnnouncements()).isEmpty();
-        verify(announcementRepository, times(1)).findAll(
-                ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class));
+        assertThat(reads).hasSize(1);
     }
 
     @Test
@@ -531,10 +569,9 @@ class AnnouncementSearchRankingTest {
 
         assertThat(ids(page)).containsExactly(exact.getId());
         assertThat(similarIds(page)).containsExactly(cheap.getId(), dear.getId());
-        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
-        verify(announcementRepository, times(2)).findAll(
-                ArgumentMatchers.<Specification<AnnouncementEntity>>any(), pageable.capture());
-        assertThat(pageable.getAllValues().get(0).getSort()).extracting(o -> o.getProperty())
+        // Page exacte triée en SQL, puis vivier du bloc 2 en lignes légères.
+        assertThat(reads).extracting(Read::rows).containsExactly(false, true);
+        assertThat(reads.get(0).pageable().getSort()).extracting(o -> o.getProperty())
                 .containsExactly("pricePerKgEur", "travelerIsGpPro", "id");
     }
 
@@ -562,11 +599,10 @@ class AnnouncementSearchRankingTest {
         AnnouncementEntity e3 = trip(t, 11);
         AnnouncementEntity offDate = trip(t, 30);
         // Page de taille 2 : e3 n'est pas sur la page.
-        when(announcementRepository.findAll(
-                ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
-                .thenReturn(new PageImpl<>(List.of(e1, e2), PageRequest.of(0, 2), 3))
-                .thenReturn(new PageImpl<>(List.of(e1, e2, e3)))
-                .thenReturn(new PageImpl<>(List.of(e1, e2, e3, offDate)));
+        stubReads(List.of(
+                new PageImpl<>(List.of(e1, e2), PageRequest.of(0, 2), 3),
+                new PageImpl<>(List.of(e1, e2, e3)),
+                new PageImpl<>(List.of(e1, e2, e3, offDate))));
         Q q = new Q();
         q.sortBy = "date";
         q.to = TODAY.plusDays(12);
@@ -746,11 +782,12 @@ class AnnouncementSearchRankingTest {
     void manualSort_similarBlock_gpProTieBreak() {
         for (String dir : List.of("asc", "desc")) {
             org.mockito.Mockito.reset(announcementRepository);
+            stubFindAllById();
             UserEntity t = traveler();
             AnnouncementEntity plain = trip(t, 30);
-            setId(plain, new UUID(0, 1));
+            reId(plain, new UUID(0, 1));
             AnnouncementEntity gpPro = trip(t, 30);
-            setId(gpPro, new UUID(0, 2));
+            reId(gpPro, new UUID(0, 2));
             gpPro.setTravelerIsGpPro(true);
             stubFindAll(List.of(), List.of(plain, gpPro));
             Q q = new Q();
