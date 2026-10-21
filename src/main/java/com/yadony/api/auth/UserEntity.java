@@ -341,6 +341,11 @@ public class UserEntity extends BaseEntity {
     @Column(name = "gp_pro_revoked_reason", length = 1000)
     private String gpProRevokedReason;
 
+    // Nombre d'envois (colis) livrés avec succès par le voyageur ; sert au classement des annonces.
+    @org.hibernate.annotations.ColumnDefault("0")
+    @Column(name = "total_deliveries", nullable = false)
+    private int totalDeliveries = 0;
+
     @Column(name = "total_trips", nullable = false)
     private int totalTrips = 0;
 
@@ -511,16 +516,11 @@ public class UserEntity extends BaseEntity {
     public int getSenderHandoverIncidentCount() { return senderHandoverIncidentCount; }
     public void setSenderHandoverIncidentCount(int senderHandoverIncidentCount) { this.senderHandoverIncidentCount = senderHandoverIncidentCount; }
 
+    public int getTotalDeliveries() { return totalDeliveries; }
+    public void setTotalDeliveries(int totalDeliveries) { this.totalDeliveries = totalDeliveries; }
+
     public int getSenderCancellationCount() { return senderCancellationCount; }
     public void setSenderCancellationCount(int senderCancellationCount) { this.senderCancellationCount = senderCancellationCount; }
-
-    /**
-     * Fiabilité expéditeur montrée aux voyageurs : annulations après acceptation (avant
-     * ou après remise) et absences au rendez-vous de remise confirmées.
-     */
-    public int senderReliabilityIncidentCount() {
-        return senderCancellationCount + senderHandoverIncidentCount;
-    }
 
     public boolean isPublishingSuspended() { return publishingSuspended; }
     public void setPublishingSuspended(boolean publishingSuspended) { this.publishingSuspended = publishingSuspended; }

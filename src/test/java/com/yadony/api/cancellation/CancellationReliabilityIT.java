@@ -122,7 +122,7 @@ class CancellationReliabilityIT {
     }
 
     @Test
-    void senderCancelsAcceptedCashParcel_commissionRefunded_andSenderCounterShownToTravelers() throws Exception {
+    void senderCancelsAcceptedCashParcel_commissionRefunded_andIncidentCountedButNotExposed() throws Exception {
         UserEntity traveler = persistUser();
         UserEntity sender = persistUser();
         openWallet(traveler.getId());
@@ -136,9 +136,13 @@ class CancellationReliabilityIT {
         assertThat(userRepository.findById(sender.getId()).orElseThrow().getSenderCancellationCount()).isEqualTo(1);
         assertThat(userRepository.findById(traveler.getId()).orElseThrow().getCancellationCount()).isZero();
 
+        // L'incident est bien compté en base (signal interne), mais plus servi aux clients.
+        UserEntity reloadedSender = userRepository.findById(sender.getId()).orElseThrow();
+        assertThat(reloadedSender.getSenderCancellationCount() + reloadedSender.getSenderHandoverIncidentCount())
+                .isEqualTo(1);
         mockMvc.perform(get("/users/{id}/profile-public", sender.getId()).with(authentication(as(traveler))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.senderIncidentCount").value(1));
+                .andExpect(jsonPath("$.senderIncidentCount").doesNotExist());
     }
 
     @Test
@@ -149,7 +153,7 @@ class CancellationReliabilityIT {
 
         mockMvc.perform(put("/bids/{id}/cancel", bidId).with(authentication(as(sender))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.senderIncidentCount").value(0));
+                .andExpect(jsonPath("$.senderIncidentCount").doesNotExist());
 
         assertThat(userRepository.findById(sender.getId()).orElseThrow().getSenderCancellationCount()).isZero();
     }

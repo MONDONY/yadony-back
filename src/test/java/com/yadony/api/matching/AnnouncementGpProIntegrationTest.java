@@ -98,8 +98,12 @@ class AnnouncementGpProIntegrationTest {
                 .containsExactly(cheap.getId(), mid.getId(), midPlain.getId(), dear.getId());
     }
 
+    /**
+     * Le bloc « pro payant d'abord » n'existe plus (spec classement-annonces) : à tri par date,
+     * le trajet du voyageur Pro qui part plus tard passe après celui qui part plus tôt.
+     */
     @Test
-    void paidProBlockStillFirst() {
+    void paidProNoLongerOutranksDateOrder() {
         UserEntity plain = persistUser(false);
         UserEntity gp = persistUser(true);
         AnnouncementEntity paidPro = persistAnnouncement(plain, 20, "5.00", false);
@@ -107,7 +111,7 @@ class AnnouncementGpProIntegrationTest {
         announcementRepository.save(paidPro);
         AnnouncementEntity gpSoon = persistAnnouncement(gp, 10, "5.00", true);
 
-        assertThat(ids(search("date", "asc", null))).containsExactly(paidPro.getId(), gpSoon.getId());
+        assertThat(ids(search("date", "asc", null))).containsExactly(gpSoon.getId(), paidPro.getId());
     }
 
     @Test

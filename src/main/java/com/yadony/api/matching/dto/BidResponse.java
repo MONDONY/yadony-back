@@ -130,10 +130,6 @@ public record BidResponse(
          * ({@link com.yadony.api.matching.ContactWindow}). Identique pour les deux parties. Ne
          * dit rien du numéro : sa révélation garde sa propre règle ({@code *PhoneAvailable}). */
         boolean contactWindowOpen,
-        /** Fiabilité de l'expéditeur, vue par le voyageur qui juge la demande (FLUTTER-E0/E6) :
-         * annulations après acceptation et absences au rendez-vous de remise confirmées.
-         * Null si l'expéditeur est introuvable. */
-        Integer senderIncidentCount,
         /** Colis chez le voyageur (HANDED_OVER, IN_TRANSIT, ARRIVED) dont le code de retrait
          * a été effacé (trop d'essais faux) ou a expiré. Servi aux deux parties, le code
          * lui-même restant réservé à l'expéditeur : l'expéditeur le régénère

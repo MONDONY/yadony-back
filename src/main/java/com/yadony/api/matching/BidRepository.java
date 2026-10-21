@@ -947,4 +947,14 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     @Query(value = "SELECT refusal_photo_url FROM bids WHERE refusal_photo_url LIKE CONCAT(:prefix, '%') "
             + "OR refusal_photo_url LIKE CONCAT('%/', :prefix, '%')", nativeQuery = true)
     List<String> findRefusalPhotoValuesMatchingIncludingDeleted(@Param("prefix") String prefix);
+
+    /**
+     * Pose {@code delivery_counted} de façon atomique : seule la première transaction qui
+     * passe de false à true reçoit 1, toute autre (événement rejoué, confirmation
+     * concurrente) reçoit 0 et ne compte pas le colis une seconde fois.
+     * Contexte vidé après coup : le bid déjà chargé (drapeau périmé) n'est jamais réécrit.
+     */
+    @org.springframework.data.jpa.repository.Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update BidEntity b set b.deliveryCounted = true where b.id = :id and b.deliveryCounted = false")
+    int markDeliveryCounted(@Param("id") UUID id);
 }

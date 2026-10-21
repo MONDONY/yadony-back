@@ -318,6 +318,18 @@ yadony:
   delivery-no-show:
     min-wait-minutes: ${YADONY_DELIVERY_NO_SHOW_MIN_WAIT_MINUTES:120}
     hold-days: ${YADONY_DELIVERY_NO_SHOW_HOLD_DAYS:7}
+  # Classement des annonces de trajet (poids du score de confiance, voir spec classement-annonces).
+  ranking:
+    weights:
+      reliability: ${YADONY_RANKING_WEIGHT_RELIABILITY:30}
+      rating: ${YADONY_RANKING_WEIGHT_RATING:25}
+      deliveries: ${YADONY_RANKING_WEIGHT_DELIVERIES:20}
+      freshness: ${YADONY_RANKING_WEIGHT_FRESHNESS:15}
+      online-payment: ${YADONY_RANKING_WEIGHT_ONLINE_PAYMENT:10}
+    exact-threshold: ${YADONY_RANKING_EXACT_THRESHOLD:7}
+    similar-max: ${YADONY_RANKING_SIMILAR_MAX:20}
+    max-candidates: ${YADONY_RANKING_MAX_CANDIDATES:1000}
+    max-candidates-without-city: ${YADONY_RANKING_MAX_CANDIDATES_WITHOUT_CITY:300}
   urgency:
     threshold-days: ${YADONY_URGENCY_THRESHOLD_DAYS:3}
   exchange-rates:

@@ -38,18 +38,15 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 /**
- * Couvre la mise en avant des voyageurs PRO dans {@link AnnouncementService#searchAnnouncements},
- * absente de {@link AnnouncementServiceTest} avant ce lot (Task 1 — SDD
- * 2026-08-27-lot4-mise-en-avant-pro).
- *
- * <p>Le seul test d'ordre préexistant ({@code searchAnnouncements_sortByPriceAsc_...}) fait
- * partager le même voyageur — donc le même {@code travelerIsPro} — à ses trois annonces : il
- * prouve la conversion multidevise, jamais la priorité PRO. Chaque test ci-dessous mélange au
- * contraire des annonces de statut PRO différent, choisies pour qu'un tri ignorant ce statut
- * produirait un ordre différent de celui attendu — voir la javadoc de chaque test.
+ * Fin de la mise en avant « pro d'abord » dans {@link AnnouncementService#searchAnnouncements}
+ * (spec 2026-10-21-classement-annonces). Le lot 4 (SDD 2026-08-27-lot4-mise-en-avant-pro)
+ * plaçait {@code travelerIsPro DESC} en tête de tout tri ; cette clé disparaît : le tri
+ * manuel (date, prix) mène directement, et le tri par défaut suit le score interne, où le
+ * statut Pro ne donne aucune avance. Ces tests remplacent ceux qui prouvaient l'ancienne
+ * priorité, avec les mêmes discriminants retournés.
  */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("AnnouncementService.searchAnnouncements — mise en avant des voyageurs PRO")
+@DisplayName("AnnouncementService.searchAnnouncements — plus de priorité aux voyageurs PRO")
 class AnnouncementProPriorityTest {
 
     @Mock private AnnouncementRepository announcementRepository;
@@ -97,7 +94,10 @@ class AnnouncementProPriorityTest {
                 packageRequestRepository, negotiationThreadRepository, notificationDispatcher,
                 org.mockito.Mockito.mock(com.yadony.api.common.BlockVisibility.class),
                 org.mockito.Mockito.mock(AnnouncementViewService.class),
-                org.mockito.Mockito.mock(TravelerPayoutNetworksPort.class));
+                org.mockito.Mockito.mock(TravelerPayoutNetworksPort.class),
+                new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0),
+                new com.yadony.api.matching.ranking.TripScoreCalculator(
+                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)));
     }
 
     private static void setId(Object entity, UUID id) {
@@ -154,24 +154,17 @@ class AnnouncementProPriorityTest {
                 sortBy, sortDir, PageRequest.of(0, 10), null, null);
     }
 
-    // ─── Branche "prix" (Sort SQL sur le pivot EUR depuis V235) ───────────────
+    // ─── Tri manuel : plus de clé travelerIsPro dans le Sort SQL ─────────────
 
     /**
-     * Le tri par prix n'est plus un comparateur en mémoire : il est délégué au SQL
-     * sur le pivot EUR ({@code price_per_kg_eur}). L'invariant PRO de ce fichier se
-     * vérifie donc au même endroit que la branche date : le {@link Sort} réellement
-     * transmis au repository doit mettre {@code travelerIsPro DESC} en PREMIER,
-     * avant le critère demandé — retirer la priorité PRO de {@code buildSort}
-     * ferait échouer cette assertion. Le pivot est en second, l'id en départage
-     * pour un ordre total stable sous pagination.
-     *
-     * <p>La preuve d'ordre multidevise (payer 100 EUR classé après 5 EUR mais
-     * avant 5000 XOF) n'a plus sa place en mock : multiplier le pivot par le taux
-     * du lecteur préserve l'ordre, c'est la base qui trie.
+     * Le tri par prix reste délégué au SQL sur le pivot EUR ; le {@link Sort} transmis au
+     * repository commence désormais par ce pivot. Remettre la priorité PRO dans
+     * {@code buildSort} ferait réapparaître {@code travelerIsPro} en tête et échouer
+     * l'assertion.
      */
     @Test
-    @DisplayName("tri par prix : le Sort SQL garde la priorité PRO en tête, pivot EUR ensuite, id en départage")
-    void searchAnnouncements_sortByPrice_keepsProPriorityFirstInSqlSort() {
+    @DisplayName("tri par prix : le Sort SQL commence par le pivot EUR, sans travelerIsPro")
+    void searchAnnouncements_sortByPrice_noLongerPutsProFirst() {
         UserEntity traveler = buildTraveler();
         AnnouncementEntity ann = buildAnnouncement(traveler);
         setId(ann, UUID.randomUUID());
@@ -187,26 +180,14 @@ class AnnouncementProPriorityTest {
 
         List<Sort.Order> orders = pageableCaptor.getValue().getSort().stream().toList();
         assertThat(orders).extracting(Sort.Order::getProperty)
-                .containsExactly("travelerIsPro", "pricePerKgEur", "travelerIsGpPro", "id");
-        assertThat(orders.get(0).getDirection()).isEqualTo(Sort.Direction.DESC);
-        assertThat(orders.get(1).isAscending()).isTrue();
+                .containsExactly("pricePerKgEur", "travelerIsGpPro", "id");
+        assertThat(orders.get(0).isAscending()).isTrue();
     }
 
-    // ─── Branche "date" (Sort SQL construit par buildSort, privée) ────────────
-
-    /**
-     * Le tri par date étant le défaut exécuté en SQL, {@code buildSort} n'est pas accessible
-     * directement (privée, jamais rendue visible pour ce test) : on capture donc le
-     * {@link Pageable} réellement transmis au repository et on inspecte son {@link Sort}.
-     *
-     * <p><b>Discriminant :</b> si {@code Sort.by(DESC, "travelerIsPro")} était retiré de
-     * {@code buildSort}, le premier ordre du {@code Sort} capturé serait {@code departureDate}
-     * ASC (le critère secondaire seul), pas {@code travelerIsPro} DESC — l'assertion sur
-     * {@code orders.get(0)} échouerait.
-     */
+    /** Même contrat pour le tri par date : le critère choisi mène, le GP Pro ne fait que départager. */
     @Test
-    @DisplayName("tri par date (défaut, exécuté en base) → le Sort transmis au repository place travelerIsPro DESC avant le critère secondaire")
-    void searchAnnouncements_defaultDateSort_buildsSqlSortWithTravelerIsProFirst() {
+    @DisplayName("tri par date : le Sort SQL commence par departureDate, sans travelerIsPro")
+    void searchAnnouncements_sortByDate_noLongerPutsProFirst() {
         UserEntity traveler = buildTraveler();
         AnnouncementEntity ann = buildAnnouncement(traveler);
         setId(ann, UUID.randomUUID());
@@ -221,12 +202,44 @@ class AnnouncementProPriorityTest {
         search("date", "asc");
 
         List<Sort.Order> orders = pageableCaptor.getValue().getSort().stream().toList();
-
         assertThat(orders).extracting(Sort.Order::getProperty)
-                .containsExactly("travelerIsPro", "departureDate", "travelerIsGpPro", "id");
-        assertThat(orders.get(0).getDirection()).isEqualTo(Sort.Direction.DESC);
-        assertThat(orders.get(1).getDirection()).isEqualTo(Sort.Direction.ASC);
-        assertThat(orders.get(2).getDirection()).isEqualTo(Sort.Direction.DESC);
-        assertThat(orders.get(3).getDirection()).isEqualTo(Sort.Direction.ASC);
+                .containsExactly("departureDate", "travelerIsGpPro", "id");
+        assertThat(orders.get(0).getDirection()).isEqualTo(Sort.Direction.ASC);
+        assertThat(orders.get(1).getDirection()).isEqualTo(Sort.Direction.DESC);
+        assertThat(orders.get(2).getDirection()).isEqualTo(Sort.Direction.ASC);
+    }
+
+    /**
+     * Tri par défaut (score) : un trajet {@code travelerIsPro} d'un voyageur peu fiable passe
+     * APRÈS le trajet mieux classé d'un voyageur non Pro. Discriminant : la base renvoie le
+     * trajet Pro en premier ; l'ancienne priorité PRO l'aurait gardé en tête.
+     */
+    @Test
+    @DisplayName("tri par défaut : travelerIsPro ne devance plus un trajet mieux classé")
+    void searchAnnouncements_defaultScore_proDoesNotOutrankBetterScore() {
+        UserEntity weakPro = buildTraveler();
+        weakPro.setCancellationCount(4);
+        weakPro.setNoShowCount(2);
+        UserEntity strong = buildTraveler();
+        setId(strong, UUID.randomUUID());
+        strong.setTotalDeliveries(60);
+        strong.setAverageRating(new BigDecimal("4.9"));
+        strong.setRatingCount(30);
+        AnnouncementEntity pro = buildAnnouncement(weakPro);
+        setId(pro, UUID.randomUUID());
+        pro.setTravelerIsPro(true);
+        AnnouncementEntity better = buildAnnouncement(strong);
+        setId(better, UUID.randomUUID());
+
+        when(announcementRepository.findAll(
+                ArgumentMatchers.<Specification<AnnouncementEntity>>any(), ArgumentMatchers.any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(pro, better)));
+        when(userRepository.findAllById(anyCollection())).thenReturn(List.of(weakPro, strong));
+        when(bidRepository.countVisibleByAnnouncementIds(anyCollection())).thenReturn(List.of());
+
+        Page<AnnouncementSearchResponse> page = search(null, "asc");
+
+        assertThat(page.getContent()).extracting(AnnouncementSearchResponse::id)
+                .containsExactly(better.getId(), pro.getId());
     }
 }

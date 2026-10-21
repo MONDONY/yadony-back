@@ -118,7 +118,6 @@ public class ProfilePublicService {
                 residenceCountry,
                 measuredResponseMinutes,
                 lastSeenDaysAgo,
-                user.senderReliabilityIncidentCount(),
                 reliabilityService.reliabilityPercent(user)
         );
     }

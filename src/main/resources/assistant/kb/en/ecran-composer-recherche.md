@@ -1,7 +1,7 @@
 ---
 id: ecran-composer-recherche
 title: The Search filters screen
-keywords: filters screen, what is this screen for, search filters, cities, dates, stops, payment methods
+keywords: other listings, does not match exactly, filters screen, what is this screen for, search filters, cities, dates, stops, payment methods
 screens:
   - /recherche/composer
 questions:

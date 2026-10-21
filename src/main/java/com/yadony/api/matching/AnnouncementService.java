@@ -26,7 +26,14 @@ import com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse;
 import com.yadony.api.matching.dto.AnnouncementRequest;
 import com.yadony.api.matching.dto.AnnouncementResponse;
 import com.yadony.api.matching.dto.AnnouncementSearchResponse;
+import com.yadony.api.matching.dto.SimilarAnnouncementResponse;
 import com.yadony.api.matching.dto.TravelerProfileDto;
+import com.yadony.api.matching.dto.UnmetCriterionDto;
+import com.yadony.api.matching.ranking.SearchCriteria;
+import com.yadony.api.matching.ranking.SearchCriteriaMatcher;
+import com.yadony.api.matching.ranking.TripRankingProperties;
+import com.yadony.api.matching.ranking.TripScoreCalculator;
+import com.yadony.api.matching.ranking.UnmetCriterion;
 import com.yadony.api.matching.events.AnnouncementDeletedEvent;
 import com.yadony.api.matching.events.TripActivityChangedEvent;
 import com.yadony.api.matching.events.ArrivalInstructionsUpdatedEvent;
@@ -196,6 +203,9 @@ public class AnnouncementService {
     private final AnnouncementViewService announcementViewService;
     /** Réseaux mobile money du voyageur affichés sur la fiche d'un trajet (implémenté dans {@code payments/}). */
     private final TravelerPayoutNetworksPort travelerPayoutNetworks;
+    /** Classement de la recherche de trajets (seuils, plafonds) et score caché du voyageur. */
+    private final TripRankingProperties rankingProperties;
+    private final TripScoreCalculator tripScoreCalculator;
 
     @Value("${yadony.kyc.enforce:true}")
     private boolean enforceKyc;
@@ -223,7 +233,9 @@ public class AnnouncementService {
             NotificationDispatcher notificationDispatcher,
             BlockVisibility blockVisibility,
             AnnouncementViewService announcementViewService,
-            TravelerPayoutNetworksPort travelerPayoutNetworks
+            TravelerPayoutNetworksPort travelerPayoutNetworks,
+            TripRankingProperties rankingProperties,
+            TripScoreCalculator tripScoreCalculator
     ) {
         this.announcementRepository = announcementRepository;
         this.bidRepository = bidRepository;
@@ -245,6 +257,8 @@ public class AnnouncementService {
         this.blockVisibility = blockVisibility;
         this.announcementViewService = announcementViewService;
         this.travelerPayoutNetworks = travelerPayoutNetworks;
+        this.rankingProperties = rankingProperties;
+        this.tripScoreCalculator = tripScoreCalculator;
     }
 
     // La clé porte la taille de page en plus du numéro : l'app compte les résultats
@@ -269,7 +283,39 @@ public class AnnouncementService {
                 sortBy, sortDir, pageable, viewerFirebaseUid, urgent, AnnouncementSearchExtras.NONE);
     }
 
-    /** Recherche avec les filtres ajoutés depuis (escales FLUTTER-GD, moyens de paiement FLUTTER-G0). */
+    /**
+     * Recherche avec les filtres ajoutés depuis (escales FLUTTER-GD, moyens de paiement FLUTTER-G0),
+     * servie en deux blocs (spec 2026-10-21-classement-annonces).
+     *
+     * <p><b>Filtres stricts</b>, jamais relâchés : villes, {@code kycVerifiedOnly}, prix max,
+     * escales, moyens de paiement, plus la visibilité (statut, public ou surplus ouvert, date
+     * limite de remise, comptes bloqués). <b>Filtres souples</b> : dates (et {@code urgent}),
+     * kilos, mode de transport, note minimale, type de contenu, rayon, week-end, GP Pro.
+     *
+     * <p><b>Bloc 1</b> (le contenu paginé) : strict + souple, ordonné par le score interne du
+     * voyageur ({@code sortBy=score}, aussi pour toute valeur inconnue) ou par le tri manuel
+     * ({@code date}, {@code price}). Avec {@code includeFull}, les trajets complets viennent
+     * après les réservables, chacun des deux groupes ordonné de la même façon.
+     *
+     * <p>Sans ville de départ ni d'arrivée, le tri par score lit au plus
+     * {@code maxCandidatesWithoutCity} candidats au lieu de {@code maxCandidates}.
+     *
+     * <p><b>Appel compteur</b> ({@code size <= 1}, ce que fait l'app pour afficher le nombre de
+     * résultats) : ni score ni bloc 2. La recherche prend le chemin SQL simple (tri par date
+     * quand {@code sortBy} vaut score ou est absent, sinon le tri manuel demandé) : une ligne
+     * lue et un COUNT, aucun chargement de candidats ni de voyageurs en masse.
+     * {@code totalElements} et {@code bookableElements} restent exacts ;
+     * {@code similarAnnouncements} est toujours vide.
+     *
+     * <p><b>Bloc 2</b> ({@link TripSearchPage#similarAnnouncements()}) : seulement sur la
+     * première page d'une recherche de plus d'une ligne ({@code size > 1}), avec au moins une
+     * ville, et quand moins de {@code exactThreshold} trajets
+     * réservables respectent toute la recherche. Trajets réservables du socle strict qui ratent
+     * au moins un critère souple, chacun avec ses écarts ; moins d'écarts d'abord, puis le même
+     * ordre que le bloc 1 ; plafonné à {@code similarMax}.
+     *
+     * <p>Le score ne sort jamais de cette classe : ni DTO, ni log, ni réponse.
+     */
     @Transactional(readOnly = true)
     @Cacheable(value = "announcements-search", key = "#departureCity + '_' + #arrivalCity + '_' + #departureDateFrom + '_' + #departureDateTo + '_' + #minAvailableKg + '_' + #maxAvailableKg + '_' + #maxPricePerKg + '_' + #minRating + '_' + #gpProOnly + '_' + #weekendOnly + '_' + #transportMode + '_' + #kycVerifiedOnly + '_' + #contentType + '_' + #userLat + '_' + #userLng + '_' + #radiusKm + '_' + #sortBy + '_' + #sortDir + '_' + #pageable.pageNumber + '_' + #pageable.pageSize + '_' + #viewerFirebaseUid + '_' + #urgent + '_' + #extras?.cacheKey()")
     public Page<AnnouncementSearchResponse> searchAnnouncements(
@@ -283,6 +329,7 @@ public class AnnouncementService {
             String sortBy, String sortDir, Pageable pageable,
             String viewerFirebaseUid, Boolean urgent, AnnouncementSearchExtras extras) {
         AnnouncementSearchExtras filters = extras != null ? extras : AnnouncementSearchExtras.NONE;
+        LocalDate today = LocalDate.now(java.time.ZoneOffset.UTC);
 
         // Confidentialité v2 — exclure (dans les deux sens) les voyageurs en relation
         // de blocage avec le viewer. Le firebaseUid est intégré à la clé de cache pour
@@ -294,85 +341,99 @@ public class AnnouncementService {
                         .orElse(null);
         String viewerCurrency = activeCurrencyResolver.resolveDisplay(viewerId);
 
-        // FLUTTER-JH : les trajets complets à venir s'affichent après les réservables,
-        // seulement quand l'app le demande (includeFull). Les filtres qui suivent
-        // s'appliquent aux deux statuts ; le statut seul les distingue au comptage.
-        Specification<AnnouncementEntity> statusSpec = filters.includeFull()
-                ? AnnouncementSpecification.bookableOrUpcomingFull(LocalDate.now(java.time.ZoneOffset.UTC))
-                : AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE);
-        Specification<AnnouncementEntity> spec = statusSpec
-                .and(AnnouncementSpecification.publicOrOpenSurplus())
+        // ── Socle strict : commun aux deux blocs, jamais relâché ──────────────
+        Specification<AnnouncementEntity> strict = AnnouncementSpecification.publicOrOpenSurplus()
                 .and(AnnouncementSpecification.handoverDeadlineNotPassed(
                         java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)));
-
         if (viewerId != null)
-            spec = spec.and(AnnouncementSpecification.notBlockedBy(viewerId));
-
-        if (departureCity != null && !departureCity.isBlank())
-            spec = spec.and(AnnouncementSpecification.hasDepartureCity(departureCity));
-        if (arrivalCity != null && !arrivalCity.isBlank())
-            spec = spec.and(AnnouncementSpecification.hasArrivalCity(arrivalCity));
-        // urgent=true restreint la fenêtre de départ à [today, today+seuil] (UTC) ;
-        // combiné à un filtre de date explicite, on applique l'intersection des deux bornes.
-        LocalDate effectiveFrom = departureDateFrom;
-        LocalDate effectiveTo = departureDateTo;
-        if (Boolean.TRUE.equals(urgent)) {
-            LocalDate today = LocalDate.now(java.time.ZoneOffset.UTC);
-            LocalDate urgentTo = today.plusDays(settings.urgencyThresholdDays());
-            effectiveFrom = (effectiveFrom == null || effectiveFrom.isBefore(today)) ? today : effectiveFrom;
-            effectiveTo = (effectiveTo == null || effectiveTo.isAfter(urgentTo)) ? urgentTo : effectiveTo;
+            strict = strict.and(AnnouncementSpecification.notBlockedBy(viewerId));
+        boolean hasCity = false;
+        if (departureCity != null && !departureCity.isBlank()) {
+            strict = strict.and(AnnouncementSpecification.hasDepartureCity(departureCity));
+            hasCity = true;
         }
-
-        if (effectiveFrom != null)
-            spec = spec.and(AnnouncementSpecification.departureDateFrom(effectiveFrom));
-        if (effectiveTo != null)
-            spec = spec.and(AnnouncementSpecification.departureDateTo(effectiveTo));
-        if (minAvailableKg != null)
-            spec = spec.and(AnnouncementSpecification.minAvailableKg(minAvailableKg));
-        if (maxAvailableKg != null)
-            spec = spec.and(AnnouncementSpecification.maxAvailableKg(maxAvailableKg));
+        if (arrivalCity != null && !arrivalCity.isBlank()) {
+            strict = strict.and(AnnouncementSpecification.hasArrivalCity(arrivalCity));
+            hasCity = true;
+        }
         if (maxPricePerKg != null) {
             // La borne est saisie dans la devise ACTIVE du lecteur (celle dans laquelle il
             // lit les prix convertis du fil) ; on la ramène au pivot EUR pour comparer une
             // liste multidevise sur une échelle commune. Anonyme → EUR (repli du resolver).
-            spec = spec.and(AnnouncementSpecification.maxPricePerKgEur(
+            strict = strict.and(AnnouncementSpecification.maxPricePerKgEur(
                     exchangeRateService.toEurPivot(maxPricePerKg, viewerCurrency)));
         }
+        if (Boolean.TRUE.equals(kycVerifiedOnly))
+            strict = strict.and(AnnouncementSpecification.kycVerifiedOnly());
+        Integer stopsBound = TripStops.searchBound(filters.maxStops());
+        if (stopsBound != null)
+            strict = strict.and(AnnouncementSpecification.maxStops(stopsBound));
+        if (!filters.paymentMethods().isEmpty())
+            strict = strict.and(AnnouncementSpecification.offersAnyPaymentMethod(filters.paymentMethods()));
+
+        // ── Critères souples : filtres SQL du bloc 1, écarts expliqués au bloc 2 ──
+        Specification<AnnouncementEntity> exact = strict;
+        // urgent=true restreint la fenêtre de départ à [today, today+seuil] (UTC) ;
+        // combiné à un filtre de date explicite, on applique l'intersection des deux bornes.
+        LocalDate effectiveFrom = departureDateFrom;
+        LocalDate effectiveTo = departureDateTo;
+        LocalDate urgentTo = null;
+        if (Boolean.TRUE.equals(urgent)) {
+            urgentTo = today.plusDays(settings.urgencyThresholdDays());
+            effectiveFrom = (effectiveFrom == null || effectiveFrom.isBefore(today)) ? today : effectiveFrom;
+            effectiveTo = (effectiveTo == null || effectiveTo.isAfter(urgentTo)) ? urgentTo : effectiveTo;
+        }
+        if (effectiveFrom != null)
+            exact = exact.and(AnnouncementSpecification.departureDateFrom(effectiveFrom));
+        if (effectiveTo != null)
+            exact = exact.and(AnnouncementSpecification.departureDateTo(effectiveTo));
+        if (minAvailableKg != null)
+            exact = exact.and(AnnouncementSpecification.minAvailableKg(minAvailableKg));
+        if (maxAvailableKg != null)
+            exact = exact.and(AnnouncementSpecification.maxAvailableKg(maxAvailableKg));
         if (Boolean.TRUE.equals(weekendOnly))
-            spec = spec.and(AnnouncementSpecification.weekendOnly());
+            exact = exact.and(AnnouncementSpecification.weekendOnly());
         if (minRating != null)
-            spec = spec.and(AnnouncementSpecification.minRating(minRating));
+            exact = exact.and(AnnouncementSpecification.minRating(minRating));
         if (Boolean.TRUE.equals(gpProOnly))
-            spec = spec.and(AnnouncementSpecification.gpProOnly());
+            exact = exact.and(AnnouncementSpecification.gpProOnly());
         if (transportMode != null && !transportMode.isBlank()) {
             try {
                 TransportMode mode = TransportMode.valueOf(transportMode.toUpperCase());
-                spec = spec.and(AnnouncementSpecification.hasTransportMode(mode));
+                exact = exact.and(AnnouncementSpecification.hasTransportMode(mode));
             } catch (IllegalArgumentException ignored) {
                 // invalid enum value → ignore filter, don't crash
             }
         }
-        if (Boolean.TRUE.equals(kycVerifiedOnly))
-            spec = spec.and(AnnouncementSpecification.kycVerifiedOnly());
         if (contentType != null && !contentType.isBlank())
-            spec = spec.and(AnnouncementSpecification.hasAcceptedContentType(contentType));
-        Integer stopsBound = TripStops.searchBound(filters.maxStops());
-        if (stopsBound != null)
-            spec = spec.and(AnnouncementSpecification.maxStops(stopsBound));
-        if (!filters.paymentMethods().isEmpty())
-            spec = spec.and(AnnouncementSpecification.offersAnyPaymentMethod(filters.paymentMethods()));
-
+            exact = exact.and(AnnouncementSpecification.hasAcceptedContentType(contentType));
         // Radius filter: only active when ALL 3 params provided
+        Set<UUID> radiusIds = null;
         if (userLat != null && userLng != null && radiusKm != null && radiusKm > 0) {
             List<UUID> idsInRadius = announcementRepository.findIdsWithinPickupRadius(
                             userLat, userLng, radiusKm)
                     .stream()
                     .map(UUID::fromString)
                     .toList();
-            spec = spec
+            radiusIds = new HashSet<>(idsInRadius);
+            exact = exact
                     .and(AnnouncementSpecification.hasPickupCoordinates())
                     .and(AnnouncementSpecification.idIn(idsInRadius));
         }
+        // Mêmes valeurs que les filtres SQL ci-dessus. Les dates restent celles saisies : la
+        // fenêtre d'urgence est portée à part (urgentTo), sinon un trajet hors fenêtre serait
+        // signalé deux fois (DATE et URGENT). L'union des deux contrôles vaut l'intersection SQL.
+        SearchCriteria criteria = new SearchCriteria(departureDateFrom, departureDateTo,
+                minAvailableKg, maxAvailableKg, transportMode, minRating, contentType, radiusIds,
+                Boolean.TRUE.equals(weekendOnly), Boolean.TRUE.equals(urgent), urgentTo,
+                Boolean.TRUE.equals(gpProOnly));
+
+        // FLUTTER-JH : les trajets complets à venir s'affichent après les réservables,
+        // seulement quand l'app le demande (includeFull). Le statut seul les distingue.
+        Specification<AnnouncementEntity> statusSpec = filters.includeFull()
+                ? AnnouncementSpecification.bookableOrUpcomingFull(today)
+                : AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE);
+        Specification<AnnouncementEntity> exactSpec = statusSpec.and(exact);
 
         // Batch-load favorite trip IDs for the caller (single query, no N+1).
         // Anonymous callers (viewerId == null) get isFavorite=false for all results.
@@ -383,43 +444,227 @@ public class AnnouncementService {
             favIds = Set.of();
         }
 
-        // Tri par prix inclus : le pivot EUR (price_per_kg_eur) ordonne la liste
-        // multidevise en SQL. Multiplier par le taux du lecteur préserve l'ordre
-        // (facteur strictement positif), donc trier sur le pivot équivaut à trier
-        // sur le prix converti dans sa devise — sans charger tout le fil en mémoire.
-        Sort sort = buildSort(sortBy, sortDir);
-        if (filters.includeFull()) {
-            // Tri porté par la spécification (réservables d'abord) : Pageable non trié.
-            Specification<AnnouncementEntity> filtered = spec;
-            Page<AnnouncementEntity> page = announcementRepository.findAll(
-                    filtered.and(AnnouncementSpecification.bookableFirstThen(sort)),
-                    PageRequest.of(pageable.getPageNumber(), pageable.getPageSize()));
-            long bookable = announcementRepository.count(
-                    filtered.and(AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE)));
-            List<AnnouncementSearchResponse> content = mapAnnouncements(page.getContent(), favIds, viewerCurrency, viewerId);
-            return new TripSearchPage<>(content, pageable, page.getTotalElements(), bookable);
+        // ── Bloc 1 ────────────────────────────────────────────────────────────
+        // Appel compteur (size <= 1) : chemin SQL simple, sans score ni bloc 2.
+        boolean counterCall = pageable.getPageSize() <= 1;
+        String mode = rankingMode(sortBy);
+        if (counterCall && SORT_SCORE.equals(mode)) {
+            mode = "date";
         }
-        Pageable sortedPageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), sort);
-        Page<AnnouncementEntity> page = announcementRepository.findAll(spec, sortedPageable);
-        List<AnnouncementSearchResponse> content = mapAnnouncements(page.getContent(), favIds, viewerCurrency, viewerId);
+        Map<UUID, UserEntity> travelers = new HashMap<>();
+        Set<UUID> lookedUp = new HashSet<>();
+        Sort byDeparture = Sort.by(Sort.Direction.ASC, "departureDate").and(Sort.by(Sort.Direction.ASC, "id"));
+        List<AnnouncementEntity> pageEntities;
+        List<AnnouncementEntity> exactLoaded;
+        long total;
+        if (SORT_SCORE.equals(mode)) {
+            // Score calculé en mémoire sur au plus maxCandidates exactes (maxCandidatesWithoutCity
+            // sans aucune ville), lues par date de départ (réservables d'abord avec includeFull),
+            // puis la page est découpée.
+            int max = hasCity ? rankingProperties.maxCandidates() : rankingProperties.maxCandidatesWithoutCity();
+            Page<AnnouncementEntity> candidates = filters.includeFull()
+                    ? announcementRepository.findAll(
+                            exactSpec.and(AnnouncementSpecification.bookableFirstThen(byDeparture)),
+                            PageRequest.of(0, max))
+                    : announcementRepository.findAll(exactSpec, PageRequest.of(0, max, byDeparture));
+            total = candidates.getTotalElements();
+            List<AnnouncementEntity> ranked = new java.util.ArrayList<>(candidates.getContent());
+            lookupTravelers(ranked, travelers, lookedUp);
+            Comparator<AnnouncementEntity> byScore = byScoreDesc(rankingScores(ranked, travelers, today));
+            ranked.sort(filters.includeFull() ? fullLast().thenComparing(byScore) : byScore);
+            pageEntities = slice(ranked, pageable);
+            exactLoaded = ranked;
+        } else {
+            // Tri par prix inclus : le pivot EUR (price_per_kg_eur) ordonne la liste
+            // multidevise en SQL. Multiplier par le taux du lecteur préserve l'ordre
+            // (facteur strictement positif), donc trier sur le pivot équivaut à trier
+            // sur le prix converti dans sa devise — sans charger tout le fil en mémoire.
+            Sort sort = buildSort(mode, sortDir);
+            Page<AnnouncementEntity> page = filters.includeFull()
+                    // Tri porté par la spécification (réservables d'abord) : Pageable non trié.
+                    ? announcementRepository.findAll(
+                            exactSpec.and(AnnouncementSpecification.bookableFirstThen(sort)),
+                            PageRequest.of(pageable.getPageNumber(), pageable.getPageSize()))
+                    : announcementRepository.findAll(exactSpec,
+                            PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), sort));
+            total = page.getTotalElements();
+            pageEntities = page.getContent();
+            exactLoaded = pageEntities;
+        }
+        Long bookable = filters.includeFull()
+                ? announcementRepository.count(exactSpec.and(AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE)))
+                : null;
 
-        return new org.springframework.data.domain.PageImpl<>(content, pageable, page.getTotalElements());
+        // ── Bloc 2 ────────────────────────────────────────────────────────────
+        long bookableExact = bookable != null ? bookable : total;
+        List<AnnouncementEntity> similarEntities = List.of();
+        Map<UUID, List<UnmetCriterion>> unmetById = new HashMap<>();
+        if (!counterCall && pageable.getPageNumber() == 0 && hasCity
+                && bookableExact < rankingProperties.exactThreshold()) {
+            // Exactes réservables à écarter du bloc 2 : déjà lues si toutes sont en mémoire,
+            // sinon relues (moins de exactThreshold lignes).
+            Set<UUID> exactIds = exactLoaded.stream()
+                    .filter(a -> a.getStatus() == AnnouncementStatus.ACTIVE)
+                    .map(AnnouncementEntity::getId)
+                    .collect(Collectors.toSet());
+            if (exactIds.size() != bookableExact) {
+                exactIds = announcementRepository.findAll(
+                                exactSpec.and(AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE)),
+                                PageRequest.of(0, rankingProperties.exactThreshold()))
+                        .getContent().stream().map(AnnouncementEntity::getId).collect(Collectors.toSet());
+            }
+            similarEntities = similarTrips(strict, exactIds, criteria, mode, sortDir, today,
+                    travelers, lookedUp, unmetById);
+        }
+
+        List<AnnouncementEntity> toMap = new java.util.ArrayList<>(pageEntities);
+        toMap.addAll(similarEntities);
+        lookupTravelers(toMap, travelers, lookedUp);
+        List<AnnouncementSearchResponse> mapped = mapAnnouncements(toMap, favIds, viewerCurrency, viewerId, travelers);
+        List<AnnouncementSearchResponse> content = new java.util.ArrayList<>(mapped.subList(0, pageEntities.size()));
+        List<SimilarAnnouncementResponse> similar = new java.util.ArrayList<>(similarEntities.size());
+        for (int i = 0; i < similarEntities.size(); i++) {
+            List<UnmetCriterionDto> unmet = unmetById.get(similarEntities.get(i).getId()).stream()
+                    .map(UnmetCriterionDto::from)
+                    .toList();
+            similar.add(new SimilarAnnouncementResponse(mapped.get(pageEntities.size() + i), unmet));
+        }
+        return new TripSearchPage<>(content, pageable, total, bookable, similar);
+    }
+
+    private static final String SORT_SCORE = "score";
+
+    /** {@code date} et {@code price} sont des tris manuels ; toute autre valeur (ou null) = score. */
+    private static String rankingMode(String sortBy) {
+        if ("date".equalsIgnoreCase(sortBy)) return "date";
+        if ("price".equalsIgnoreCase(sortBy)) return "price";
+        return SORT_SCORE;
+    }
+
+    /**
+     * Bloc 2 : trajets réservables du socle strict, hors exactes, qui ratent au moins un
+     * critère souple. Un trajet sans écart détecté n'y entre jamais (aucune annonce du bloc 2
+     * sans explication). Remplit {@code unmetById} avec les écarts des trajets retenus.
+     */
+    private List<AnnouncementEntity> similarTrips(Specification<AnnouncementEntity> strict, Set<UUID> exactIds,
+                                                  SearchCriteria criteria, String mode, String sortDir,
+                                                  LocalDate today, Map<UUID, UserEntity> travelers,
+                                                  Set<UUID> lookedUp, Map<UUID, List<UnmetCriterion>> unmetById) {
+        Sort byDeparture = Sort.by(Sort.Direction.ASC, "departureDate").and(Sort.by(Sort.Direction.ASC, "id"));
+        List<AnnouncementEntity> pool = new java.util.ArrayList<>(announcementRepository.findAll(
+                // Jamais un trajet déjà parti, même encore ACTIVE : les dates souples sont
+                // relâchées, pas le passé.
+                AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE).and(strict)
+                        .and(AnnouncementSpecification.departureDateFrom(today)),
+                PageRequest.of(0, rankingProperties.maxCandidates(), byDeparture)).getContent());
+        pool.removeIf(a -> exactIds.contains(a.getId()));
+        lookupTravelers(pool, travelers, lookedUp);
+        for (AnnouncementEntity a : pool) {
+            UserEntity t = travelers.get(a.getTravelerId());
+            List<UnmetCriterion> misses = SearchCriteriaMatcher.unmet(a,
+                    t == null ? null : t.getAverageRating(),
+                    // Même drapeau que AnnouncementSpecification.gpProOnly (users.gp_pro).
+                    t != null && t.isGpPro(),
+                    criteria);
+            if (!misses.isEmpty()) {
+                unmetById.put(a.getId(), misses);
+            }
+        }
+        pool.removeIf(a -> !unmetById.containsKey(a.getId()));
+        Comparator<AnnouncementEntity> within = SORT_SCORE.equals(mode)
+                ? byScoreDesc(rankingScores(pool, travelers, today))
+                : manualOrder(mode, sortDir);
+        pool.sort(Comparator.<AnnouncementEntity>comparingInt(a -> unmetById.get(a.getId()).size())
+                .thenComparing(within));
+        return pool.subList(0, Math.min(pool.size(), rankingProperties.similarMax()));
+    }
+
+    /** Charge en une requête les voyageurs pas encore cherchés (introuvables compris). */
+    private void lookupTravelers(List<AnnouncementEntity> entities, Map<UUID, UserEntity> travelers,
+                                 Set<UUID> lookedUp) {
+        List<UUID> missing = entities.stream()
+                .map(AnnouncementEntity::getTravelerId)
+                .filter(id -> id != null && !lookedUp.contains(id))
+                .distinct()
+                .toList();
+        if (missing.isEmpty()) {
+            return;
+        }
+        lookedUp.addAll(missing);
+        for (UserEntity u : userRepository.findAllById(missing)) {
+            travelers.putIfAbsent(u.getId(), u);
+        }
+    }
+
+    /** Score interne par annonce : jamais exposé, sert uniquement à ordonner. */
+    private Map<UUID, Double> rankingScores(List<AnnouncementEntity> entities, Map<UUID, UserEntity> travelers,
+                                            LocalDate today) {
+        Map<UUID, Double> scores = new HashMap<>();
+        for (AnnouncementEntity a : entities) {
+            scores.put(a.getId(), rankingScore(a, travelers.get(a.getTravelerId()), today));
+        }
+        return scores;
+    }
+
+    private double rankingScore(AnnouncementEntity a, UserEntity traveler, LocalDate today) {
+        TripScoreCalculator.TravelerQuality quality = traveler == null
+                ? new TripScoreCalculator.TravelerQuality(0, 0, 0, null, 0)
+                : new TripScoreCalculator.TravelerQuality(traveler.getCancellationCount(), traveler.getNoShowCount(),
+                        traveler.getTotalDeliveries(), traveler.getAverageRating(), traveler.getRatingCount());
+        Set<PaymentMethod> methods = a.getAcceptedPaymentMethods();
+        boolean online = methods != null
+                && (methods.contains(PaymentMethod.STRIPE) || methods.contains(PaymentMethod.MOBILE_MONEY));
+        long daysToDeparture = a.getDepartureDate() == null ? 0
+                : java.time.temporal.ChronoUnit.DAYS.between(today, a.getDepartureDate());
+        long ageDays = a.getCreatedAt() == null ? 0
+                : java.time.temporal.ChronoUnit.DAYS.between(a.getCreatedAt().toLocalDate(), today);
+        return tripScoreCalculator.score(quality, online, daysToDeparture, ageDays);
+    }
+
+    /** Score décroissant, id en départage : ordre total stable sous pagination. */
+    private static Comparator<AnnouncementEntity> byScoreDesc(Map<UUID, Double> scores) {
+        return Comparator.<AnnouncementEntity>comparingDouble(a -> scores.getOrDefault(a.getId(), 0.0))
+                .reversed()
+                .thenComparing(AnnouncementEntity::getId, Comparator.nullsLast(Comparator.naturalOrder()));
+    }
+
+    /** Trajets complets après les réservables (FLUTTER-JH). */
+    private static Comparator<AnnouncementEntity> fullLast() {
+        return Comparator.comparingInt(a -> a.getStatus() == AnnouncementStatus.FULL ? 1 : 0);
+    }
+
+    /**
+     * Tri manuel en mémoire du bloc 2, pendant de {@link #buildSort} (pivot EUR pour le prix) :
+     * même départage GP Pro d'abord quelle que soit la direction, puis id.
+     */
+    private static Comparator<AnnouncementEntity> manualOrder(String mode, String sortDir) {
+        boolean desc = "desc".equalsIgnoreCase(sortDir);
+        Comparator<AnnouncementEntity> primary = "price".equals(mode)
+                ? Comparator.comparing(AnnouncementEntity::getPricePerKgEur, Comparator.nullsLast(
+                        desc ? Comparator.<BigDecimal>reverseOrder() : Comparator.<BigDecimal>naturalOrder()))
+                : Comparator.comparing(AnnouncementEntity::getDepartureDate, Comparator.nullsLast(
+                        desc ? Comparator.<LocalDate>reverseOrder() : Comparator.<LocalDate>naturalOrder()));
+        return primary
+                .thenComparing(AnnouncementEntity::isTravelerIsGpPro, Comparator.reverseOrder())
+                .thenComparing(AnnouncementEntity::getId, Comparator.nullsLast(Comparator.naturalOrder()));
+    }
+
+    private static <T> List<T> slice(List<T> all, Pageable pageable) {
+        int from = (int) Math.min(pageable.getOffset(), all.size());
+        int to = (int) Math.min(pageable.getOffset() + pageable.getPageSize(), all.size());
+        return all.subList(from, to);
     }
 
     /**
      * Batch-loads related data (travelers, bid counts, grid items) for a page of entities,
      * maps each to {@link AnnouncementSearchResponse}, then enriches the response with the
-     * price equivalent converted into {@code viewerCurrency} (Tâche 10). Shared by both
-     * branches of {@link #searchAnnouncements} (tri par prix en mémoire vs. tri en base).
+     * price equivalent converted into {@code viewerCurrency} (Tâche 10). Les voyageurs sont
+     * déjà chargés par {@link #searchAnnouncements} (une seule requête pour les deux blocs).
      */
     private List<AnnouncementSearchResponse> mapAnnouncements(List<AnnouncementEntity> entities,
                                                                 Set<UUID> favIds, String viewerCurrency,
-                                                                UUID viewerId) {
+                                                                UUID viewerId, Map<UUID, UserEntity> userMap) {
         List<UUID> announcementIds = entities.stream().map(AnnouncementEntity::getId).toList();
-        List<UUID> travelerIds = entities.stream().map(AnnouncementEntity::getTravelerId).distinct().toList();
-
-        Map<UUID, UserEntity> userMap = userRepository.findAllById(travelerIds).stream()
-                .collect(Collectors.toMap(UserEntity::getId, u -> u, (a2, b2) -> a2));
 
         Map<UUID, Long> bidCountMap = announcementIds.isEmpty() ? Map.of() :
                 bidRepository.countVisibleByAnnouncementIds(announcementIds).stream()
@@ -509,7 +754,8 @@ public class AnnouncementService {
 
     private Sort buildSort(String sortBy, String sortDir) {
         Sort.Direction direction = "desc".equalsIgnoreCase(sortDir) ? Sort.Direction.DESC : Sort.Direction.ASC;
-        Sort proFirst = Sort.by(Sort.Direction.DESC, "travelerIsPro");
+        // Tri manuel : plus de clé « pro d'abord » (travelerIsPro), le critère choisi passe
+        // en tête (spec classement-annonces). Le départage GP Pro, lui, reste.
         Sort gpTie = Sort.by(Sort.Direction.DESC, "travelerIsGpPro");
         Sort secondary = switch (sortBy != null ? sortBy : "date") {
             // Pivot EUR, jamais le brut : seul lui ordonne un fil multidevise.
@@ -526,7 +772,7 @@ public class AnnouncementService {
             default -> Sort.by(direction, "departureDate").and(gpTie)
                     .and(Sort.by(Sort.Direction.ASC, "id"));
         };
-        return proFirst.and(secondary);
+        return secondary;
     }
 
     /**

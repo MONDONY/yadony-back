@@ -74,6 +74,10 @@ public class TravelerStatsListener {
             return;
         }
 
+        // Compteur d'envois réussis : un colis livré = un incrément, indépendamment de
+        // total_trips_counted (plusieurs colis sur un même trajet comptent chacun).
+        countDelivery(bid, event.getTravelerId());
+
         Optional<AnnouncementEntity> announcementOpt = announcementRepository.findById(bid.getAnnouncementId());
         if (announcementOpt.isEmpty()) {
             log.warn("DeliveryConfirmedEvent for bidId={} references unknown announcementId={} — skipping",
@@ -133,5 +137,26 @@ public class TravelerStatsListener {
 
         log.info("total_trips incremented for traveler={} (announcement={}, bid={}, newTotal={})",
                 traveler.getId(), announcement.getId(), bid.getId(), newTotal);
+    }
+
+    /**
+     * Incrémente users.total_deliveries une seule fois par bid, par deux UPDATE atomiques :
+     * le drapeau {@code bids.delivery_counted} d'abord (seul celui qui le pose compte), puis
+     * le compteur. Exécuté avant toute lecture du voyageur : la suite (total_trips) relit
+     * donc une entité à jour et ne réécrit jamais une valeur périmée de total_deliveries.
+     */
+    private void countDelivery(BidEntity bid, java.util.UUID travelerId) {
+        if (bid.isDeliveryCounted()) {
+            return;
+        }
+        if (bidRepository.markDeliveryCounted(bid.getId()) != 1) {
+            // Déjà compté par une autre transaction (événement rejoué ou concurrent).
+            return;
+        }
+        if (userRepository.incrementTotalDeliveries(travelerId) != 1) {
+            // Drapeau posé malgré tout : pas de nouvelle tentative sans fin, comme pour total_trips.
+            log.error("DeliveryConfirmedEvent: traveler {} not found for bidId={} — total_deliveries not incremented",
+                    travelerId, bid.getId());
+        }
     }
 }

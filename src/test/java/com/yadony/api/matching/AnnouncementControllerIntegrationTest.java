@@ -141,7 +141,8 @@ class AnnouncementControllerIntegrationTest {
         seedAnnouncementForTravelerWithDate(traveler.getId(), LocalDate.now().plusDays(1));
         seedAnnouncementForTravelerWithDate(traveler.getId(), LocalDate.now().plusDays(10));
 
-        // Tri par défaut = date ASC : le trajet urgent (départ+1j) apparaît avant le non-urgent (départ+10j).
+        // Tri par défaut = score : à voyageur égal, le départ le plus proche (fraîcheur) passe
+        // devant ; le trajet urgent (départ+1j) apparaît avant le non-urgent (départ+10j).
         mockMvc.perform(get("/announcements")
                         .with(authentication(authenticatedAs("uid-test-traveler-urgent-flag"))))
                 .andExpect(status().isOk())

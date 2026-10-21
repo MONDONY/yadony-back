@@ -492,4 +492,18 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     @Query(value = "SELECT avatar_url FROM users WHERE avatar_url LIKE CONCAT(:prefix, '%') "
             + "OR avatar_url LIKE CONCAT('%/', :prefix, '%')", nativeQuery = true)
     List<String> findAvatarValuesMatchingIncludingDeleted(@Param("prefix") String prefix);
+
+    /**
+     * Incrémente {@code total_deliveries} en base, sans lecture préalable : deux livraisons
+     * confirmées en même temps pour le même voyageur comptent toutes les deux (plus de
+     * conflit {@code @Version} sur un lire-puis-écrire). {@code versioned} incrémente aussi
+     * la colonne {@code version}, pour qu'une écriture concurrente d'une copie périmée du
+     * voyageur échoue au lieu d'écraser le compteur. Contexte vidé après coup : le voyageur
+     * relu ensuite porte la valeur à jour.
+     *
+     * @return 1 si le voyageur existe (non supprimé), 0 sinon
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update versioned UserEntity u set u.totalDeliveries = u.totalDeliveries + 1 where u.id = :id")
+    int incrementTotalDeliveries(@Param("id") UUID id);
 }

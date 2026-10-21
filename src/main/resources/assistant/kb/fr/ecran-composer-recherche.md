@@ -1,7 +1,7 @@
 ---
 id: ecran-composer-recherche
 title: L'écran Filtrer la recherche
-keywords: écran filtrer, à quoi sert cet écran, filtres de recherche, recherche en une phrase, villes, dates, escales, moyens de paiement
+keywords: autres annonces, ne correspond pas exactement, écran filtrer, à quoi sert cet écran, filtres de recherche, recherche en une phrase, villes, dates, escales, moyens de paiement
 screens:
   - /recherche/composer
 questions:
