@@ -137,7 +137,8 @@ class CancellationReliabilityIT {
         assertThat(userRepository.findById(traveler.getId()).orElseThrow().getCancellationCount()).isZero();
 
         // L'incident est bien compté en base (signal interne), mais plus servi aux clients.
-        assertThat(userRepository.findById(sender.getId()).orElseThrow().senderReliabilityIncidentCount())
+        UserEntity reloadedSender = userRepository.findById(sender.getId()).orElseThrow();
+        assertThat(reloadedSender.getSenderCancellationCount() + reloadedSender.getSenderHandoverIncidentCount())
                 .isEqualTo(1);
         mockMvc.perform(get("/users/{id}/profile-public", sender.getId()).with(authentication(as(traveler))))
                 .andExpect(status().isOk())

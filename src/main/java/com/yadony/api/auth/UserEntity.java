@@ -522,14 +522,6 @@ public class UserEntity extends BaseEntity {
     public int getSenderCancellationCount() { return senderCancellationCount; }
     public void setSenderCancellationCount(int senderCancellationCount) { this.senderCancellationCount = senderCancellationCount; }
 
-    /**
-     * Fiabilité expéditeur montrée aux voyageurs : annulations après acceptation (avant
-     * ou après remise) et absences au rendez-vous de remise confirmées.
-     */
-    public int senderReliabilityIncidentCount() {
-        return senderCancellationCount + senderHandoverIncidentCount;
-    }
-
     public boolean isPublishingSuspended() { return publishingSuspended; }
     public void setPublishingSuspended(boolean publishingSuspended) { this.publishingSuspended = publishingSuspended; }
 

@@ -260,7 +260,7 @@ class ProfilePublicServiceTest {
         var profile = profilePublicService.getProfilePublic(USER_ID, VIEWER_ID);
 
         // Signal interne conservé (classement), jamais sérialisé vers les clients.
-        assertThat(user.senderReliabilityIncidentCount()).isEqualTo(3);
+        assertThat((user.getSenderCancellationCount() + user.getSenderHandoverIncidentCount())).isEqualTo(3);
         var json = com.fasterxml.jackson.databind.json.JsonMapper.builder().findAndAddModules().build().valueToTree(profile);
         assertThat(json.has("senderIncidentCount")).isFalse();
     }

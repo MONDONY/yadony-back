@@ -114,7 +114,7 @@ class BidCancellationReputationListenerTest {
 
         assertThat(sender.getSenderCancellationCount()).isEqualTo(1);
         assertThat(sender.getCancellationCount()).isZero();
-        assertThat(sender.senderReliabilityIncidentCount()).isEqualTo(1);
+        assertThat((sender.getSenderCancellationCount() + sender.getSenderHandoverIncidentCount())).isEqualTo(1);
         verify(auditService).log(eq("USER"), eq(ACTOR_ID), eq("SENDER_CANCELLATION_COUNTED"), eq(ACTOR_ID), any());
     }
 

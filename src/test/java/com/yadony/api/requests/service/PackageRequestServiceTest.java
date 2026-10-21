@@ -2288,7 +2288,7 @@ class PackageRequestServiceTest {
             var senderJson = com.fasterxml.jackson.databind.json.JsonMapper.builder().findAndAddModules().build().valueToTree(page.getContent().get(0).sender());
             assertThat(senderJson.has("incidentCount")).isFalse();
             assertThat(senderJson.has("senderIncidentCount")).isFalse();
-            assertThat(sender.senderReliabilityIncidentCount()).isEqualTo(3);
+            assertThat((sender.getSenderCancellationCount() + sender.getSenderHandoverIncidentCount())).isEqualTo(3);
         }
 
         @Test @DisplayName("sender sans avatarUrl → SenderPublicProfile.avatarUrl null")
