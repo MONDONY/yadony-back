@@ -808,7 +808,8 @@ public class AuthService {
                 user.getOnboardingSeenAt() == null ? null : user.getOnboardingSeenAt().toString(),
                 user.getPreferredLanguage().code(),
                 user.isMessagingMuted(Instant.now()) ? user.getMessagingMutedUntil().toString() : null,
-                recetteMode.appliesTo(user)
+                recetteMode.appliesTo(user),
+                user.isGpPro()
         );
     }
 

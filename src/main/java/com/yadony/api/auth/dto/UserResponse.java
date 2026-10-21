@@ -20,6 +20,10 @@ import java.util.UUID;
  *        {@code yadony.recette.enabled} vraie et compte désigné testeur par un administrateur.
  *        L'app lève alors ses propres verrous d'affichage ; le serveur reste seul juge.
  *        Toujours faux en production. Absent chez un ancien back : l'app retombe sur faux.
+ * @param gpPro le compte est un voyageur régulier GP Pro (accordé par l'équipe). Le client en tire la
+ *        couleur de la coche d'identité (argent) sur l'onglet Moi, comme sur les autres écrans qui la
+ *        reçoivent déjà ({@code TravelerProfileDto}, {@code BidResponse}). Absent chez un ancien back :
+ *        l'app retombe sur faux.
  */
 public record UserResponse(
     UUID id,
@@ -49,7 +53,8 @@ public record UserResponse(
     String onboardingSeenAt,
     String preferredLanguage,
     String messagingMutedUntil,
-    boolean recetteMode
+    boolean recetteMode,
+    boolean gpPro
 ) {
     /** Forme d'avant le mode recette (FLUTTER-FA/FB) : mode fermé. */
     public UserResponse(UUID id, String username, String phoneNumber, String email, String firstName,
@@ -63,6 +68,6 @@ public record UserResponse(
         this(id, username, phoneNumber, email, firstName, lastName, birthDate, city, roles, kycStatus,
                 status, totalTrips, totalShipments, isProAccount, stripeAccountStatus, country, bio,
                 languages, avatarUrl, averageRating, admin, residenceStreet, residenceLine2,
-                residencePostalCode, onboardingSeenAt, preferredLanguage, messagingMutedUntil, false);
+                residencePostalCode, onboardingSeenAt, preferredLanguage, messagingMutedUntil, false, false);
     }
 }
