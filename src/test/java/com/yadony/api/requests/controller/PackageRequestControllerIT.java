@@ -138,6 +138,7 @@ class PackageRequestControllerIT {
                 .content(objectMapper.writeValueAsString(validRequest())))
             .andExpect(status().isCreated())
             .andExpect(jsonPath("$.id").value(newId.toString()))
+            .andExpect(jsonPath("$.senderIncidentCount").doesNotExist())
             .andExpect(jsonPath("$.status").value("OPEN"));
     }
 
@@ -232,7 +233,7 @@ class PackageRequestControllerIT {
             "vetements",
             new BigDecimal("25"), true, null, "10e", "Plateau",
             new PackageRequestSearchResponse.SenderPublicProfile(
-                UUID.randomUUID(), "Sender", 4.5, 12, true, false, null, 0),
+                UUID.randomUUID(), "Sender", 4.5, 12, true, false, null),
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE)
         , List.of(), false, false, null, null, null, "EUR",
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.CASH),
@@ -262,7 +263,7 @@ class PackageRequestControllerIT {
             "vetements",
             new BigDecimal("25"), false, null, "10e", "Plateau",
             new PackageRequestSearchResponse.SenderPublicProfile(
-                UUID.randomUUID(), "Sender", 4.5, 12, true, false, null, 0),
+                UUID.randomUUID(), "Sender", 4.5, 12, true, false, null),
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE)
         , List.of(), false, false, null, null, null, "EUR",
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.CASH),
@@ -291,7 +292,7 @@ class PackageRequestControllerIT {
             "vetements",
             new BigDecimal("25"), true, null, "10e", "Plateau",
             new PackageRequestSearchResponse.SenderPublicProfile(
-                UUID.randomUUID(), "Sender", 4.5, 12, true, false, null, 0),
+                UUID.randomUUID(), "Sender", 4.5, 12, true, false, null),
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE)
         , List.of(), false, false, null, null, null, "EUR",
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.CASH),
@@ -598,7 +599,7 @@ class PackageRequestControllerIT {
             "vetements",
             new BigDecimal("25"), true, null, "10e", "Plateau",
             new PackageRequestSearchResponse.SenderPublicProfile(
-                UUID.randomUUID(), "Sender", 4.5, 12, true, false, null, 0),
+                UUID.randomUUID(), "Sender", 4.5, 12, true, false, null),
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE)
         , List.of(), false, true, null, null, null, "EUR",
             java.util.Set.of(com.yadony.api.payments.cash.PaymentMethod.CASH),

@@ -1882,7 +1882,6 @@ public class BidService {
                 recipientDeclined,
                 replacementRequestedAt(recipientLink),
                 ContactWindow.isOpen(bid, contactGraceDays, LocalDateTime.now(ZoneOffset.UTC)),
-                sender != null ? sender.senderReliabilityIncidentCount() : null,
                 PickupCodes.renewalNeeded(bid, LocalDateTime.now(ZoneOffset.UTC)),
                 supplementView.supplement(),
                 supplementView.requestAllowed(),

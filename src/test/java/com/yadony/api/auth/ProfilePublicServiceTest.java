@@ -249,20 +249,24 @@ class ProfilePublicServiceTest {
     }
 
     @Test
-    @DisplayName("fiabilité expéditeur : annulations après acceptation + incidents de remise (FLUTTER-E0/E6)")
-    void getProfilePublic_senderIncidentCount() {
+    @DisplayName("fiabilité expéditeur : le compteur d'incidents n'est plus servi, mais reste compté sur l'utilisateur")
+    void getProfilePublic_senderIncidentCount_notExposed() throws Exception {
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
         when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID)))
                 .thenReturn(stubRatingSummary());
-        assertThat(profilePublicService.getProfilePublic(USER_ID, VIEWER_ID).senderIncidentCount()).isZero();
-
         user.setSenderCancellationCount(2);
         user.setSenderHandoverIncidentCount(1);
-        assertThat(profilePublicService.getProfilePublic(USER_ID, VIEWER_ID).senderIncidentCount()).isEqualTo(3);
+
+        var profile = profilePublicService.getProfilePublic(USER_ID, VIEWER_ID);
+
+        // Signal interne conservé (classement), jamais sérialisé vers les clients.
+        assertThat(user.senderReliabilityIncidentCount()).isEqualTo(3);
+        var json = com.fasterxml.jackson.databind.json.JsonMapper.builder().findAndAddModules().build().valueToTree(profile);
+        assertThat(json.has("senderIncidentCount")).isFalse();
     }
 
     @Test
-    @DisplayName("FLUTTER-NV : taux de fiabilité servi par ReliabilityService, compteur historique gardé")
+    @DisplayName("FLUTTER-NV : taux de fiabilité servi par ReliabilityService")
     void getProfilePublic_reliabilityPercent() {
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
         when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID)))
@@ -273,7 +277,6 @@ class ProfilePublicServiceTest {
         var profile = profilePublicService.getProfilePublic(USER_ID, VIEWER_ID);
 
         assertThat(profile.reliabilityPercent()).isEqualTo(92);
-        assertThat(profile.senderIncidentCount()).isEqualTo(1);
     }
 
     private static void setFieldQuiet(Object target, String name, Object value) {

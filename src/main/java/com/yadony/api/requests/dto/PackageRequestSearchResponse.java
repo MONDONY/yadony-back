@@ -193,12 +193,8 @@ public record PackageRequestSearchResponse(
                 uniqueViewerCount, myNegotiation, commissionGridId);
     }
 
-    /**
-     * @param incidentCount fiabilité de l'expéditeur (FLUTTER-E0/E6) : annulations après
-     *                      acceptation et absences au rendez-vous de remise confirmées
-     */
     public record SenderPublicProfile(UUID id, String displayName, double averageRating, int totalRatings,
-                                      boolean kycVerified, boolean gpPro, String avatarUrl, int incidentCount) {
+                                      boolean kycVerified, boolean gpPro, String avatarUrl) {
     }
 
     /** Copie enrichie de l'équivalent converti — même pattern que {@code AnnouncementSearchResponse}. */

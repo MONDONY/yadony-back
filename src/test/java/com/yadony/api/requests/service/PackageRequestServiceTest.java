@@ -779,8 +779,8 @@ class PackageRequestServiceTest {
             assertThat(resp.viewerThreadStatus()).isEqualTo("OPEN");
         }
 
-        @Test @DisplayName("voyageur → fiabilité de l'expéditeur jointe ; propriétaire → null (FLUTTER-E0/E6)")
-        void getById_senderIncidentCount_onlyForOtherViewers() {
+        @Test @DisplayName("la fiabilité de l'expéditeur n'est plus servie, ni au voyageur ni au propriétaire")
+        void getById_senderIncidentCount_notExposed() throws Exception {
             PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
             when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
             com.yadony.api.auth.UserEntity owner = new com.yadony.api.auth.UserEntity();
@@ -789,8 +789,11 @@ class PackageRequestServiceTest {
             // lenient : getById relit aussi le lecteur (capacités de paiement).
             org.mockito.Mockito.lenient().when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(owner));
 
-            assertThat(service.getById(UUID.randomUUID(), entity.getId()).senderIncidentCount()).isEqualTo(2);
-            assertThat(service.getById(SENDER_ID, entity.getId()).senderIncidentCount()).isNull();
+            var mapper = com.fasterxml.jackson.databind.json.JsonMapper.builder().findAndAddModules().build();
+            assertThat(mapper.valueToTree(service.getById(UUID.randomUUID(), entity.getId()))
+                .has("senderIncidentCount")).isFalse();
+            assertThat(mapper.valueToTree(service.getById(SENDER_ID, entity.getId()))
+                .has("senderIncidentCount")).isFalse();
         }
 
         @Test @DisplayName("grille figée : commissionGridId reprend celle de la demande, null sans grille")
@@ -2267,8 +2270,8 @@ class PackageRequestServiceTest {
             assertThat(result.sender().avatarUrl()).isEqualTo("https://cdn.example.com/sender.jpg");
         }
 
-        @Test @DisplayName("fiabilité de l'expéditeur exposée dans SenderPublicProfile (FLUTTER-E0/E6)")
-        void search_senderIncidentCount_isMapped() {
+        @Test @DisplayName("la fiabilité de l'expéditeur n'est plus exposée dans SenderPublicProfile")
+        void search_senderIncidentCount_notExposed() throws Exception {
             sender.setSenderCancellationCount(2);
             sender.setSenderHandoverIncidentCount(1);
             PackageRequestEntity entity = buildEntity();
@@ -2282,7 +2285,10 @@ class PackageRequestServiceTest {
 
             var page = service.search(null, org.springframework.data.domain.PageRequest.of(0, 10), SENDER_ID);
 
-            assertThat(page.getContent().get(0).sender().incidentCount()).isEqualTo(3);
+            var senderJson = com.fasterxml.jackson.databind.json.JsonMapper.builder().findAndAddModules().build().valueToTree(page.getContent().get(0).sender());
+            assertThat(senderJson.has("incidentCount")).isFalse();
+            assertThat(senderJson.has("senderIncidentCount")).isFalse();
+            assertThat(sender.senderReliabilityIncidentCount()).isEqualTo(3);
         }
 
         @Test @DisplayName("sender sans avatarUrl → SenderPublicProfile.avatarUrl null")

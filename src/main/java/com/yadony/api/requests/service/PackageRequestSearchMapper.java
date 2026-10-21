@@ -126,8 +126,7 @@ public class PackageRequestSearchMapper {
         var senderProfile = new PackageRequestSearchResponse.SenderPublicProfile(
                 entity.getSenderId(), displayName, averageRating, totalRatings, kycVerified,
                 sender != null && sender.isGpPro(),
-                storageService.avatarUrl(sender != null ? sender.getAvatarUrl() : null),
-                sender != null ? sender.senderReliabilityIncidentCount() : 0
+                storageService.avatarUrl(sender != null ? sender.getAvatarUrl() : null)
         );
         var depCity = cityMap.get(entity.getDepartureCity() != null ? entity.getDepartureCity().toLowerCase() : "");
         var arrCity = cityMap.get(entity.getArrivalCity() != null ? entity.getArrivalCity().toLowerCase() : "");

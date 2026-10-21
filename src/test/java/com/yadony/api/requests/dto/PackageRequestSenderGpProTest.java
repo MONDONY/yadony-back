@@ -13,11 +13,11 @@ class PackageRequestSenderGpProTest {
     @Test
     void packageRequestSenderExposesGpPro() {
         var profile = new PackageRequestSearchResponse.SenderPublicProfile(
-                UUID.randomUUID(), "Fatou S.", 4.9, 12, true, true, null, 0);
+                UUID.randomUUID(), "Fatou S.", 4.9, 12, true, true, null);
         JsonNode json = new ObjectMapper().valueToTree(profile);
 
         assertThat(json.get("gpPro").asBoolean()).isTrue();
         assertThat(new ObjectMapper().valueToTree(new PackageRequestSearchResponse.SenderPublicProfile(
-                UUID.randomUUID(), "X", 0, 0, false, false, null, 0)).get("gpPro").asBoolean()).isFalse();
+                UUID.randomUUID(), "X", 0, 0, false, false, null)).get("gpPro").asBoolean()).isFalse();
     }
 }
