@@ -20,15 +20,6 @@ public final class SearchCriteriaMatcher {
     private SearchCriteriaMatcher() {
     }
 
-    /**
-     * Variante sans l'information « voyageur Pro » : un critère {@code kiloProOnly} est alors
-     * considéré non respecté. Préférer {@link #unmet(AnnouncementEntity, BigDecimal, boolean, SearchCriteria)}.
-     */
-    public static List<UnmetCriterion> unmet(AnnouncementEntity a, BigDecimal travelerAverageRating,
-                                             SearchCriteria c) {
-        return unmet(a, travelerAverageRating, false, c);
-    }
-
     /** Liste vide = le trajet respecte tous les critères souples. */
     public static List<UnmetCriterion> unmet(AnnouncementEntity a, BigDecimal travelerAverageRating,
                                              boolean travelerIsPro, SearchCriteria c) {

@@ -165,6 +165,13 @@ class SearchCriteriaMatcherTest {
     }
 
     @Test
+    void kiloProOnly_proTraveler_isNotUnmet() {
+        SearchCriteria c = new SearchCriteria(null, null, null, null, null, null, null,
+                null, false, false, null, true);
+        assertThat(SearchCriteriaMatcher.unmet(trip(), null, true, c)).isEmpty();
+    }
+
+    @Test
     void multipleMisses_returnsAll() {
         SearchCriteria c = new SearchCriteria(LocalDate.of(2026, 11, 13), null, new BigDecimal("50"), null,
                 "CAR", null, null, null, true, false, null, false);
