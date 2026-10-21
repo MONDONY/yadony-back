@@ -30,29 +30,8 @@ public record ProfilePublicResponse(
         /** Temps de réponse mesuré (médiane, minutes) sur 90 jours ; null sous 3 décisions. */
         Integer measuredResponseMinutes,
         /** Jours depuis la dernière ouverture de l'app (0 = aujourd'hui) ; null si masquée ou inconnue. */
-        Integer lastSeenDaysAgo,
-        /**
-         * Taux de fiabilité, en % entier (FLUTTER-NV) : envois menés à bien sur envois engagés
-         * tranchés, en tant qu'expéditeur et voyageur. {@code null} (absent du JSON) sous
-         * {@link com.yadony.api.auth.ReliabilityScore#MIN_ENGAGED_SHIPMENTS} envois engagés.
-         * Définition complète : {@link com.yadony.api.auth.ReliabilityScore}.
-         */
-        Integer reliabilityPercent
+        Integer lastSeenDaysAgo
 ) {
-    /** Arité précédente, sans {@code reliabilityPercent}. */
-    public ProfilePublicResponse(String userId, String displayName, String avatarUrl,
-                                 boolean kycVerified, boolean isProAccount, boolean isKiloPro, boolean gpPro,
-                                 int completedBidsCount, BigDecimal averageRating, int ratingCount,
-                                 String memberSince, List<String> badges, String contactMode,
-                                 Integer responseDelayHours, String bio, List<String> languages,
-                                 boolean phoneVerified, boolean emailVerified, String residenceCountry,
-                                 Integer measuredResponseMinutes, Integer lastSeenDaysAgo) {
-        this(userId, displayName, avatarUrl, kycVerified, isProAccount, isKiloPro, gpPro,
-                completedBidsCount, averageRating, ratingCount, memberSince, badges, contactMode,
-                responseDelayHours, bio, languages, phoneVerified, emailVerified, residenceCountry,
-                measuredResponseMinutes, lastSeenDaysAgo, null);
-    }
-
     public ProfilePublicResponse(String userId, String displayName, String avatarUrl,
                                  boolean kycVerified, boolean isProAccount, boolean isKiloPro, boolean gpPro,
                                  int completedBidsCount, BigDecimal averageRating, int ratingCount,
@@ -60,6 +39,6 @@ public record ProfilePublicResponse(
                                  Integer responseDelayHours, String bio, List<String> languages) {
         this(userId, displayName, avatarUrl, kycVerified, isProAccount, isKiloPro, gpPro,
                 completedBidsCount, averageRating, ratingCount, memberSince, badges, contactMode,
-                responseDelayHours, bio, languages, false, false, null, null, null, null);
+                responseDelayHours, bio, languages, false, false, null, null, null);
     }
 }
