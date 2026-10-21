@@ -105,9 +105,9 @@ class AnnouncementServiceAddressTest {
                 mock(com.yadony.api.notifications.NotificationDispatcher.class),
                 mock(com.yadony.api.common.BlockVisibility.class),
                 mock(AnnouncementViewService.class), mock(TravelerPayoutNetworksPort.class),
-                new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0),
+                new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0),
                 new com.yadony.api.matching.ranking.TripScoreCalculator(
-                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0)));
+                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)));
     }
 
     private static final String TRAVELER_UID = "firebase-uid-123";

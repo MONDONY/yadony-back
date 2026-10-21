@@ -95,9 +95,9 @@ class AnnouncementProPriorityTest {
                 org.mockito.Mockito.mock(com.yadony.api.common.BlockVisibility.class),
                 org.mockito.Mockito.mock(AnnouncementViewService.class),
                 org.mockito.Mockito.mock(TravelerPayoutNetworksPort.class),
-                new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0),
+                new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0),
                 new com.yadony.api.matching.ranking.TripScoreCalculator(
-                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0)));
+                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)));
     }
 
     private static void setId(Object entity, UUID id) {

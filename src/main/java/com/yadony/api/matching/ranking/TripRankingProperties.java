@@ -10,15 +10,20 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param exactThreshold  seuil de la correspondance exacte (7 par défaut).
  * @param similarMax      nombre maximal d'annonces « similaires » renvoyées (20 par défaut).
  * @param maxCandidates   plafond de candidats chargés avant classement (1000 par défaut).
+ * @param maxCandidatesWithoutCity plafond de candidats d'une recherche sans ville de départ ni
+ *                        d'arrivée, triée par score (300 par défaut) : le fil entier n'est pas
+ *                        borné par un trajet, on en lit moins.
  */
 @ConfigurationProperties(prefix = "yadony.ranking")
-public record TripRankingProperties(@DefaultValue Weights weights, int exactThreshold, int similarMax, int maxCandidates) {
+public record TripRankingProperties(@DefaultValue Weights weights, int exactThreshold, int similarMax, int maxCandidates,
+                                    int maxCandidatesWithoutCity) {
 
     public TripRankingProperties {
         if (weights == null) weights = new Weights(30, 25, 20, 15, 10);
         if (exactThreshold <= 0) exactThreshold = 7;
         if (similarMax <= 0) similarMax = 20;
         if (maxCandidates <= 0) maxCandidates = 1000;
+        if (maxCandidatesWithoutCity <= 0) maxCandidatesWithoutCity = 300;
     }
 
     /**

@@ -15,9 +15,10 @@ import java.util.List;
  * (null, omis du JSON) sans {@code includeFull} : la réponse reste identique à l'ancienne.
  *
  * <p>{@code similarAnnouncements} : annonces du même trajet qui ratent au moins un critère
- * souple, chacune avec la liste de ses écarts. Seulement sur la première page et quand le
- * bloc 1 compte peu d'annonces ; absent (null, omis du JSON) sinon, pour que l'ancienne app
- * et l'appel compteur ({@code size=1}) lisent la même réponse qu'avant.
+ * souple, chacune avec la liste de ses écarts. Seulement sur la première page, avec au moins
+ * une ville, une taille de page supérieure à 1 et quand le bloc 1 compte peu d'annonces
+ * réservables ; absent (null, omis du JSON) sinon. L'appel compteur ({@code size <= 1}) ne le
+ * reçoit donc jamais : il garde le chemin SQL simple (aucun score) et la même réponse qu'avant.
  */
 public record TripSearchPageResponse<T>(
         List<T> content,

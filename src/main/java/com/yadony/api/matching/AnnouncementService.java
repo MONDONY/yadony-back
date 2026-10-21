@@ -297,8 +297,19 @@ public class AnnouncementService {
      * ({@code date}, {@code price}). Avec {@code includeFull}, les trajets complets viennent
      * après les réservables, chacun des deux groupes ordonné de la même façon.
      *
+     * <p>Sans ville de départ ni d'arrivée, le tri par score lit au plus
+     * {@code maxCandidatesWithoutCity} candidats au lieu de {@code maxCandidates}.
+     *
+     * <p><b>Appel compteur</b> ({@code size <= 1}, ce que fait l'app pour afficher le nombre de
+     * résultats) : ni score ni bloc 2. La recherche prend le chemin SQL simple (tri par date
+     * quand {@code sortBy} vaut score ou est absent, sinon le tri manuel demandé) : une ligne
+     * lue et un COUNT, aucun chargement de candidats ni de voyageurs en masse.
+     * {@code totalElements} et {@code bookableElements} restent exacts ;
+     * {@code similarAnnouncements} est toujours vide.
+     *
      * <p><b>Bloc 2</b> ({@link TripSearchPage#similarAnnouncements()}) : seulement sur la
-     * première page, avec au moins une ville, et quand moins de {@code exactThreshold} trajets
+     * première page d'une recherche de plus d'une ligne ({@code size > 1}), avec au moins une
+     * ville, et quand moins de {@code exactThreshold} trajets
      * réservables respectent toute la recherche. Trajets réservables du socle strict qui ratent
      * au moins un critère souple, chacun avec ses écarts ; moins d'écarts d'abord, puis le même
      * ordre que le bloc 1 ; plafonné à {@code similarMax}.
@@ -434,7 +445,12 @@ public class AnnouncementService {
         }
 
         // ── Bloc 1 ────────────────────────────────────────────────────────────
+        // Appel compteur (size <= 1) : chemin SQL simple, sans score ni bloc 2.
+        boolean counterCall = pageable.getPageSize() <= 1;
         String mode = rankingMode(sortBy);
+        if (counterCall && SORT_SCORE.equals(mode)) {
+            mode = "date";
+        }
         Map<UUID, UserEntity> travelers = new HashMap<>();
         Set<UUID> lookedUp = new HashSet<>();
         Sort byDeparture = Sort.by(Sort.Direction.ASC, "departureDate").and(Sort.by(Sort.Direction.ASC, "id"));
@@ -442,9 +458,10 @@ public class AnnouncementService {
         List<AnnouncementEntity> exactLoaded;
         long total;
         if (SORT_SCORE.equals(mode)) {
-            // Score calculé en mémoire sur au plus maxCandidates exactes, lues par date de
-            // départ (réservables d'abord avec includeFull), puis la page est découpée.
-            int max = rankingProperties.maxCandidates();
+            // Score calculé en mémoire sur au plus maxCandidates exactes (maxCandidatesWithoutCity
+            // sans aucune ville), lues par date de départ (réservables d'abord avec includeFull),
+            // puis la page est découpée.
+            int max = hasCity ? rankingProperties.maxCandidates() : rankingProperties.maxCandidatesWithoutCity();
             Page<AnnouncementEntity> candidates = filters.includeFull()
                     ? announcementRepository.findAll(
                             exactSpec.and(AnnouncementSpecification.bookableFirstThen(byDeparture)),
@@ -482,7 +499,8 @@ public class AnnouncementService {
         long bookableExact = bookable != null ? bookable : total;
         List<AnnouncementEntity> similarEntities = List.of();
         Map<UUID, List<UnmetCriterion>> unmetById = new HashMap<>();
-        if (pageable.getPageNumber() == 0 && hasCity && bookableExact < rankingProperties.exactThreshold()) {
+        if (!counterCall && pageable.getPageNumber() == 0 && hasCity
+                && bookableExact < rankingProperties.exactThreshold()) {
             // Exactes réservables à écarter du bloc 2 : déjà lues si toutes sont en mémoire,
             // sinon relues (moins de exactThreshold lignes).
             Set<UUID> exactIds = exactLoaded.stream()
@@ -534,7 +552,10 @@ public class AnnouncementService {
                                                   Set<UUID> lookedUp, Map<UUID, List<UnmetCriterion>> unmetById) {
         Sort byDeparture = Sort.by(Sort.Direction.ASC, "departureDate").and(Sort.by(Sort.Direction.ASC, "id"));
         List<AnnouncementEntity> pool = new java.util.ArrayList<>(announcementRepository.findAll(
-                AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE).and(strict),
+                // Jamais un trajet déjà parti, même encore ACTIVE : les dates souples sont
+                // relâchées, pas le passé.
+                AnnouncementSpecification.hasStatus(AnnouncementStatus.ACTIVE).and(strict)
+                        .and(AnnouncementSpecification.departureDateFrom(today)),
                 PageRequest.of(0, rankingProperties.maxCandidates(), byDeparture)).getContent());
         pool.removeIf(a -> exactIds.contains(a.getId()));
         lookupTravelers(pool, travelers, lookedUp);
@@ -612,7 +633,10 @@ public class AnnouncementService {
         return Comparator.comparingInt(a -> a.getStatus() == AnnouncementStatus.FULL ? 1 : 0);
     }
 
-    /** Tri manuel en mémoire du bloc 2, pendant de {@link #buildSort} (pivot EUR pour le prix). */
+    /**
+     * Tri manuel en mémoire du bloc 2, pendant de {@link #buildSort} (pivot EUR pour le prix) :
+     * même départage GP Pro d'abord quelle que soit la direction, puis id.
+     */
     private static Comparator<AnnouncementEntity> manualOrder(String mode, String sortDir) {
         boolean desc = "desc".equalsIgnoreCase(sortDir);
         Comparator<AnnouncementEntity> primary = "price".equals(mode)
@@ -620,7 +644,9 @@ public class AnnouncementService {
                         desc ? Comparator.<BigDecimal>reverseOrder() : Comparator.<BigDecimal>naturalOrder()))
                 : Comparator.comparing(AnnouncementEntity::getDepartureDate, Comparator.nullsLast(
                         desc ? Comparator.<LocalDate>reverseOrder() : Comparator.<LocalDate>naturalOrder()));
-        return primary.thenComparing(AnnouncementEntity::getId, Comparator.nullsLast(Comparator.naturalOrder()));
+        return primary
+                .thenComparing(AnnouncementEntity::isTravelerIsGpPro, Comparator.reverseOrder())
+                .thenComparing(AnnouncementEntity::getId, Comparator.nullsLast(Comparator.naturalOrder()));
     }
 
     private static <T> List<T> slice(List<T> all, Pageable pageable) {

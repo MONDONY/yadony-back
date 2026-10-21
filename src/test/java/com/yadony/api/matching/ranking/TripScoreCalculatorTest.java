@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test;
 class TripScoreCalculatorTest {
 
     private static TripScoreCalculator calc(Weights w) {
-        return new TripScoreCalculator(new TripRankingProperties(w, 7, 20, 1000));
+        return new TripScoreCalculator(new TripRankingProperties(w, 7, 20, 1000, 300));
     }
 
     private final TripScoreCalculator calculator = calc(new Weights(30, 25, 20, 15, 10));
@@ -24,7 +24,7 @@ class TripScoreCalculatorTest {
     void veteran_awa_scoresHigh() {
         // Simulation validée : ~95,0 (tolérance ±1)
         double s = calculator.score(q(0, 0, 45, "4.9", 60), true, 5, 2);
-        assertThat(s).isBetween(85.0, 96.0);
+        assertThat(s).isCloseTo(95.0, within(1.0));
     }
 
     @Test

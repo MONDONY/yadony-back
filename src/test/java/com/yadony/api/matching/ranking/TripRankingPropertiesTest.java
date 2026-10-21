@@ -28,6 +28,7 @@ class TripRankingPropertiesTest {
         assertThat(defaults.exactThreshold()).isEqualTo(7);
         assertThat(defaults.similarMax()).isEqualTo(20);
         assertThat(defaults.maxCandidates()).isEqualTo(1000);
+        assertThat(defaults.maxCandidatesWithoutCity()).isEqualTo(300);
         assertThat(defaults.weightSum()).isEqualTo(100.0);
     }
 
@@ -35,8 +36,10 @@ class TripRankingPropertiesTest {
     void bind_overridesValues() {
         TripRankingProperties p = bind(Map.of(
                 "yadony.ranking.weights.reliability", "40",
-                "yadony.ranking.similar-max", "5"));
+                "yadony.ranking.similar-max", "5",
+                "yadony.ranking.max-candidates-without-city", "150"));
         assertThat(p.weights().reliability()).isEqualTo(40);
+        assertThat(p.maxCandidatesWithoutCity()).isEqualTo(150);
         assertThat(p.weights().rating()).isEqualTo(25);
         assertThat(p.similarMax()).isEqualTo(5);
     }

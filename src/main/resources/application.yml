@@ -329,6 +329,7 @@ yadony:
     exact-threshold: ${YADONY_RANKING_EXACT_THRESHOLD:7}
     similar-max: ${YADONY_RANKING_SIMILAR_MAX:20}
     max-candidates: ${YADONY_RANKING_MAX_CANDIDATES:1000}
+    max-candidates-without-city: ${YADONY_RANKING_MAX_CANDIDATES_WITHOUT_CITY:300}
   urgency:
     threshold-days: ${YADONY_URGENCY_THRESHOLD_DAYS:3}
   exchange-rates:

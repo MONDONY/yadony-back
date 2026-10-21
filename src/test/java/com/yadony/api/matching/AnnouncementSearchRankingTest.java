@@ -91,6 +91,7 @@ class AnnouncementSearchRankingTest {
     @Mock private com.yadony.api.notifications.NotificationDispatcher notificationDispatcher;
 
     private AnnouncementService service;
+    private TripScoreCalculator scoreCalculator;
     private final Map<UUID, UserEntity> users = new HashMap<>();
     private static final LocalDate TODAY = LocalDate.now(ZoneOffset.UTC);
 
@@ -110,7 +111,8 @@ class AnnouncementSearchRankingTest {
         AnnouncementSearchMapper realMapper = new AnnouncementSearchMapper(
                 userRepository, bidRepository, priceGridService, storageService,
                 com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3));
-        TripRankingProperties props = new TripRankingProperties(null, 0, 0, 0);
+        TripRankingProperties props = new TripRankingProperties(null, 0, 0, 0, 0);
+        scoreCalculator = org.mockito.Mockito.spy(new TripScoreCalculator(props));
         service = new AnnouncementService(
                 announcementRepository, bidRepository, userRepository,
                 auditService, eventPublisher, config,
@@ -121,7 +123,7 @@ class AnnouncementSearchRankingTest {
                 mock(com.yadony.api.common.BlockVisibility.class),
                 mock(AnnouncementViewService.class),
                 mock(TravelerPayoutNetworksPort.class),
-                props, new TripScoreCalculator(props));
+                props, scoreCalculator);
     }
 
     // ─── Fabriques ────────────────────────────────────────────────────────────
@@ -281,9 +283,23 @@ class AnnouncementSearchRankingTest {
         assertThat(page.getTotalElements()).isEqualTo(2);
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
         verify(announcementRepository).findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), pageable.capture());
-        assertThat(pageable.getValue().getPageSize()).isEqualTo(1000);
+        // Sans aucune ville : plafond maxCandidatesWithoutCity (300), pas maxCandidates.
+        assertThat(pageable.getValue().getPageSize()).isEqualTo(300);
         assertThat(pageable.getValue().getSort().getOrderFor("departureDate")).isNotNull();
         assertThat(pageable.getValue().getSort().getOrderFor("travelerIsPro")).isNull();
+    }
+
+    @Test
+    @DisplayName("score avec une ville : plafond maxCandidates (1000)")
+    void scoreWithCity_usesMaxCandidates() {
+        stubFindAll(trips(traveler(), 7, 11));
+        Q q = new Q();
+
+        q.run();
+
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+        verify(announcementRepository).findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), pageable.capture());
+        assertThat(pageable.getValue().getPageSize()).isEqualTo(1000);
     }
 
     @Test
@@ -445,7 +461,8 @@ class AnnouncementSearchRankingTest {
 
         Probe pool = Probe.of(capturedSpecs(2).get(1));
         verify(pool.cb(), atLeastOnce()).equal(any(Expression.class), eq(KycStatus.VERIFIED));
-        verify(pool.root(), never()).get("departureDate");
+        // Date saisie relâchée : seule reste la borne « pas encore parti » (aujourd'hui).
+        verify(pool.cb(), never()).greaterThanOrEqualTo(any(Expression.class), eq(TODAY.plusDays(10)));
         Probe exact = Probe.of(capturedSpecs(2).get(0));
         verify(exact.root(), atLeastOnce()).get("departureDate");
     }
@@ -542,21 +559,22 @@ class AnnouncementSearchRankingTest {
         UserEntity t = traveler();
         AnnouncementEntity e1 = trip(t, 11);
         AnnouncementEntity e2 = trip(t, 11);
+        AnnouncementEntity e3 = trip(t, 11);
         AnnouncementEntity offDate = trip(t, 30);
-        // Page de taille 1 (appel compteur) : e2 n'est pas sur la page.
+        // Page de taille 2 : e3 n'est pas sur la page.
         when(announcementRepository.findAll(
                 ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
-                .thenReturn(new PageImpl<>(List.of(e1), PageRequest.of(0, 1), 2))
-                .thenReturn(new PageImpl<>(List.of(e1, e2)))
-                .thenReturn(new PageImpl<>(List.of(e1, e2, offDate)));
+                .thenReturn(new PageImpl<>(List.of(e1, e2), PageRequest.of(0, 2), 3))
+                .thenReturn(new PageImpl<>(List.of(e1, e2, e3)))
+                .thenReturn(new PageImpl<>(List.of(e1, e2, e3, offDate)));
         Q q = new Q();
         q.sortBy = "date";
         q.to = TODAY.plusDays(12);
-        q.pageable = PageRequest.of(0, 1);
+        q.pageable = PageRequest.of(0, 2);
 
         TripSearchPage<AnnouncementSearchResponse> page = q.run();
 
-        assertThat(page.getTotalElements()).isEqualTo(2);
+        assertThat(page.getTotalElements()).isEqualTo(3);
         assertThat(similarIds(page)).containsExactly(offDate.getId());
     }
 
@@ -629,5 +647,118 @@ class AnnouncementSearchRankingTest {
         q.arr = null;
 
         assertThat(q.run().bookableElements()).isNull();
+    }
+
+    // ─── Appel compteur (size <= 1) ───────────────────────────────────────────
+
+    @Test
+    @DisplayName("appel compteur size=1 : chemin SQL simple, ni score ni bloc 2, total exact")
+    void counterCall_sizeOne_skipsScoringAndSimilarBlock() {
+        UserEntity t = traveler();
+        AnnouncementEntity e1 = trip(t, 11);
+        when(announcementRepository.findAll(
+                ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(e1), PageRequest.of(0, 1), 3));
+        Q q = new Q();
+        q.to = TODAY.plusDays(12);
+        q.pageable = PageRequest.of(0, 1);
+
+        TripSearchPage<AnnouncementSearchResponse> page = q.run();
+
+        assertThat(page.getTotalElements()).isEqualTo(3);
+        assertThat(ids(page)).containsExactly(e1.getId());
+        assertThat(page.similarAnnouncements()).isEmpty();
+        assertThat(page.bookableElements()).isNull();
+        // Une seule lecture, de la taille demandée, triée par date en SQL.
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+        verify(announcementRepository, times(1)).findAll(
+                ArgumentMatchers.<Specification<AnnouncementEntity>>any(), pageable.capture());
+        assertThat(pageable.getValue().getPageSize()).isEqualTo(1);
+        assertThat(pageable.getValue().getSort()).extracting(o -> o.getProperty())
+                .containsExactly("departureDate", "travelerIsGpPro", "id");
+        verify(scoreCalculator, never()).score(any(), ArgumentMatchers.anyBoolean(),
+                ArgumentMatchers.anyLong(), ArgumentMatchers.anyLong());
+        // Seul le voyageur de la ligne servie est lu, jamais un lot de candidats.
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Iterable<UUID>> travelerIds = ArgumentCaptor.forClass(Iterable.class);
+        verify(userRepository, atLeastOnce()).findAllById(travelerIds.capture());
+        assertThat(travelerIds.getAllValues()).allSatisfy(ids -> assertThat(ids).hasSizeLessThanOrEqualTo(1));
+    }
+
+    @Test
+    @DisplayName("appel compteur size=1 avec includeFull : bookableElements et total exacts, pas de bloc 2")
+    void counterCall_includeFull_keepsBookableCount() {
+        AnnouncementEntity e1 = trip(traveler(), 11);
+        when(announcementRepository.findAll(
+                ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(e1), PageRequest.of(0, 1), 4));
+        when(announcementRepository.count(ArgumentMatchers.<Specification<AnnouncementEntity>>any())).thenReturn(2L);
+        Q q = new Q();
+        q.includeFull = true;
+        q.pageable = PageRequest.of(0, 1);
+
+        TripSearchPage<AnnouncementSearchResponse> page = q.run();
+
+        assertThat(page.getTotalElements()).isEqualTo(4);
+        assertThat(page.bookableElements()).isEqualTo(2L);
+        assertThat(page.similarAnnouncements()).isEmpty();
+        verify(announcementRepository, times(1)).findAll(
+                ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class));
+        verify(scoreCalculator, never()).score(any(), ArgumentMatchers.anyBoolean(),
+                ArgumentMatchers.anyLong(), ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    @DisplayName("appel compteur size=1 avec tri par prix : le tri manuel demandé est gardé")
+    void counterCall_keepsManualSort() {
+        stubFindAll(List.of());
+        Q q = new Q();
+        q.sortBy = "price";
+        q.pageable = PageRequest.of(0, 1);
+
+        q.run();
+
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+        verify(announcementRepository, times(1)).findAll(
+                ArgumentMatchers.<Specification<AnnouncementEntity>>any(), pageable.capture());
+        assertThat(pageable.getValue().getSort().getOrderFor("pricePerKgEur")).isNotNull();
+    }
+
+    // ─── Bloc 2 : trajets déjà partis ─────────────────────────────────────────
+
+    @Test
+    @DisplayName("le vivier du bloc 2 exclut les trajets déjà partis (départ >= aujourd'hui UTC)")
+    void similarBlock_excludesDepartedTrips() {
+        stubFindAll(List.of(), List.of());
+        Q q = new Q();
+        q.to = TODAY.plusDays(10);
+
+        q.run();
+
+        Probe pool = Probe.of(capturedSpecs(2).get(1));
+        verify(pool.cb()).greaterThanOrEqualTo(any(Expression.class), eq(TODAY));
+    }
+
+    // ─── Bloc 2 : départage GP Pro du tri manuel ──────────────────────────────
+
+    @Test
+    @DisplayName("tri manuel du bloc 2 : à date égale, le voyageur GP Pro passe avant (asc et desc)")
+    void manualSort_similarBlock_gpProTieBreak() {
+        for (String dir : List.of("asc", "desc")) {
+            org.mockito.Mockito.reset(announcementRepository);
+            UserEntity t = traveler();
+            AnnouncementEntity plain = trip(t, 30);
+            setId(plain, new UUID(0, 1));
+            AnnouncementEntity gpPro = trip(t, 30);
+            setId(gpPro, new UUID(0, 2));
+            gpPro.setTravelerIsGpPro(true);
+            stubFindAll(List.of(), List.of(plain, gpPro));
+            Q q = new Q();
+            q.sortBy = "date";
+            q.sortDir = dir;
+            q.to = TODAY.plusDays(12);
+
+            assertThat(similarIds(q.run())).as(dir).containsExactly(gpPro.getId(), plain.getId());
+        }
     }
 }

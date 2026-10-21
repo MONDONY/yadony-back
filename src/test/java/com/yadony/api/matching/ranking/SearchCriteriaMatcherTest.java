@@ -83,7 +83,18 @@ class SearchCriteriaMatcherTest {
     void availableKg_max() {
         SearchCriteria c = new SearchCriteria(null, null, null, new BigDecimal("6"), null, null, null,
                 null, false, false, null, false);
-        assertThat(codes(SearchCriteriaMatcher.unmet(trip(), null, false, c))).containsExactly("AVAILABLE_KG");
+        assertThat(SearchCriteriaMatcher.unmet(trip(), null, false, c))
+                .containsExactly(new UnmetCriterion("MAX_AVAILABLE_KG", "6", "10"));
+    }
+
+    @Test
+    void availableKg_kgFreeStillFailsMax_withMaxCode() {
+        AnnouncementEntity a = trip();
+        a.setCapacityUnit(CapacityUnit.KG_FREE);
+        a.setAvailableKg(new BigDecimal("30"));
+        SearchCriteria max = new SearchCriteria(null, null, null, new BigDecimal("23"), null, null, null,
+                null, false, false, null, false);
+        assertThat(codes(SearchCriteriaMatcher.unmet(a, null, false, max))).containsExactly("MAX_AVAILABLE_KG");
     }
 
     @Test

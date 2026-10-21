@@ -215,10 +215,14 @@ class AnnouncementSearchRankingIT {
         LocalDate today = LocalDate.now();
         trip(traveler, today.plusDays(10));
         trip(traveler, today.plusDays(11));
+        // Hors dates : candidat du bloc 2 pour une vraie recherche, jamais pour le compteur.
+        trip(traveler, today.plusDays(30));
 
         JsonNode page = search(today.plusDays(9).toString(), today.plusDays(12).toString(), "&page=0&size=1");
 
         assertThat(page.get("totalElements").asLong()).isEqualTo(2);
         assertThat(page.get("content")).hasSize(1);
+        assertThat(page.path("similarAnnouncements").isMissingNode() || page.get("similarAnnouncements").isNull())
+                .isTrue();
     }
 }

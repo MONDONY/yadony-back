@@ -33,13 +33,15 @@ public final class SearchCriteriaMatcher {
             out.add(new UnmetCriterion("DATE", c.dateTo().toString(), date.toString()));
         }
 
-        // AVAILABLE_KG : le kilo libre passe toujours la borne basse, jamais exempté de la haute
+        // AVAILABLE_KG (borne basse) : le kilo libre la passe toujours.
+        // MAX_AVAILABLE_KG (borne haute) : jamais d'exemption, code distinct pour que l'app
+        // sache quelle borne est ratée.
         BigDecimal kg = a.getAvailableKg();
         if (c.minAvailableKg() != null && a.getCapacityUnit() != CapacityUnit.KG_FREE
                 && kg.compareTo(c.minAvailableKg()) < 0) {
             out.add(new UnmetCriterion("AVAILABLE_KG", plain(c.minAvailableKg()), plain(kg)));
         } else if (c.maxAvailableKg() != null && kg.compareTo(c.maxAvailableKg()) > 0) {
-            out.add(new UnmetCriterion("AVAILABLE_KG", plain(c.maxAvailableKg()), plain(kg)));
+            out.add(new UnmetCriterion("MAX_AVAILABLE_KG", plain(c.maxAvailableKg()), plain(kg)));
         }
 
         // TRANSPORT_MODE : valeur invalide ignorée, comme dans la recherche SQL
