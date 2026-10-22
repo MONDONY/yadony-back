@@ -54,14 +54,18 @@ public class AdminAccountService {
     private final FirebaseAuth firebaseAuth;
     private final AuditService auditService;
     private final AdminAuthService adminAuthService;
+    private final AdminSessionRevocationCheck sessionRevocationCheck;
+
     public AdminAccountService(AdminUserRepository adminUserRepository,
                                 @Nullable FirebaseAuth firebaseAuth,
                                 AuditService auditService,
-                                AdminAuthService adminAuthService) {
+                                AdminAuthService adminAuthService,
+                                AdminSessionRevocationCheck sessionRevocationCheck) {
         this.adminUserRepository = adminUserRepository;
         this.firebaseAuth = firebaseAuth;
         this.auditService = auditService;
         this.adminAuthService = adminAuthService;
+        this.sessionRevocationCheck = sessionRevocationCheck;
     }
 
     // -------------------------------------------------------------------------
@@ -429,6 +433,8 @@ public class AdminAccountService {
     private void revokeRefreshTokens(String firebaseUid) {
         try {
             requireFirebase().revokeRefreshTokens(firebaseUid);
+            // Les jetons déjà vérifiés ne doivent pas survivre 60 s de plus à la révocation.
+            sessionRevocationCheck.forgetVerifiedSessions();
         } catch (FirebaseAuthException e) {
             log.error("Firebase refresh-token revocation failed for uid={}", firebaseUid);
             throw new RefreshTokenRevocationPartialException();

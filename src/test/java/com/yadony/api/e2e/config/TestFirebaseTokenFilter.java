@@ -39,7 +39,8 @@ public class TestFirebaseTokenFilter extends FirebaseTokenFilter {
     public TestFirebaseTokenFilter(UserLinkerService userLinkerService,
                                    ObjectMapper objectMapper,
                                    AdminAuthService adminAuthService) {
-        super(userLinkerService, objectMapper, adminAuthService, TestMessages.resolver(), false, "", "e2e");
+        super(userLinkerService, objectMapper, adminAuthService, TestMessages.resolver(),
+                new com.yadony.api.admin.account.AdminSessionRevocationCheck(), false, "", "e2e");
     }
 
     @Override

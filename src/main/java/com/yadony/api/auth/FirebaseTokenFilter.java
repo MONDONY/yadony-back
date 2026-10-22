@@ -5,6 +5,7 @@ import com.yadony.api.admin.account.AdminAuthorities;
 import com.yadony.api.admin.account.AdminPermission;
 import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.account.AdminRole;
+import com.yadony.api.admin.account.AdminSessionRevocationCheck;
 import com.yadony.api.common.FirebaseSignInProvider;
 import com.yadony.api.common.RequestCorrelationFilter;
 import com.yadony.api.common.ServiceBusyProblem;
@@ -54,6 +55,7 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
     private final ObjectMapper objectMapper;
     private final AdminAuthService adminAuthService;
     private final MessagesResolver messagesResolver;
+    private final AdminSessionRevocationCheck adminSessionRevocationCheck;
     private final boolean devAuthBypassEnabled;
     /** Jeton de bypass — fourni via secret, aucune valeur par défaut. Vide = bypass inerte. */
     private final String devBypassToken;
@@ -63,6 +65,7 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
                                ObjectMapper objectMapper,
                                AdminAuthService adminAuthService,
                                MessagesResolver messagesResolver,
+                               AdminSessionRevocationCheck adminSessionRevocationCheck,
                                @Value("${yadony.dev.auth-bypass:false}") boolean devAuthBypassEnabled,
                                @Value("${yadony.dev.bypass-token:}") String devBypassToken,
                                @Value("${spring.profiles.active:}") String activeProfile) {
@@ -70,6 +73,7 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
         this.objectMapper = objectMapper;
         this.adminAuthService = adminAuthService;
         this.messagesResolver = messagesResolver;
+        this.adminSessionRevocationCheck = adminSessionRevocationCheck;
         this.devBypassToken = devBypassToken != null ? devBypassToken.trim() : "";
         this.activeProfile = activeProfile != null ? activeProfile.trim() : "";
         // Fail-closed : le bypass n'est réellement actif que hors prod ET avec un jeton non vide.
@@ -154,6 +158,22 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
         boolean adminRoute = isAdminOnlyRoute(request);
         if (adminOpt.isPresent() && adminRoute) {
             AdminAuthorities admin = adminOpt.get();
+            // Back-office seulement : un jeton émis avant une révocation (réinitialisation du
+            // mot de passe, compte désactivé) n'y entre plus. L'app mobile n'y est pas soumise :
+            // ce contrôle interroge Firebase, son résultat n'est gardé que 60 s.
+            AdminSessionRevocationCheck.Result session = adminSessionRevocationCheck.check(token);
+            if (session == AdminSessionRevocationCheck.Result.REVOKED) {
+                SecurityContextHolder.clearContext();
+                writeProblem(response, HttpStatus.UNAUTHORIZED, "ADMIN_SESSION_REVOKED",
+                        "Session admin révoquée, reconnectez-vous");
+                return true;
+            }
+            if (session == AdminSessionRevocationCheck.Result.UNAVAILABLE) {
+                SecurityContextHolder.clearContext();
+                writeProblem(response, HttpStatus.SERVICE_UNAVAILABLE, "ADMIN_SESSION_CHECK_UNAVAILABLE",
+                        "Vérification de session indisponible, réessayez");
+                return true;
+            }
             if (admin.mustChangePassword() && !isPasswordChangeAllowed(request)) {
                 writeForbidden(response, "PASSWORD_CHANGE_REQUIRED", "Password change required");
                 return true;
@@ -296,14 +316,19 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
     }
 
     private void writeForbidden(HttpServletResponse response, String code, String detail) throws IOException {
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, detail);
+        writeProblem(response, HttpStatus.FORBIDDEN, code, detail);
+    }
+
+    private void writeProblem(HttpServletResponse response, HttpStatus status, String code, String detail)
+            throws IOException {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail);
         problem.setType(URI.create("https://yadony.app/errors/access-denied"));
         problem.setTitle("Access Denied");
         if (code != null) {
             problem.setProperty("code", code);
         }
 
-        response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+        response.setStatus(status.value());
         response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
         objectMapper.writeValue(response.getWriter(), problem);
     }
