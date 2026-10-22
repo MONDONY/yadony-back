@@ -6,6 +6,6 @@ routes:
   - path: /favoris
     label: Saved items
 ---
-For a trip, open it and tap the save button in its details. For a request, tap the save button on its card. Tap again to remove it.
+For a trip, open it and tap the save button in its details. For a request, tap the save button on its card, or the bookmark at the top of its details. Tap again to remove it.
 Find them with the saved-items button of the Search tab, in "Saved", which separates a Trips tab and a Requests tab.
 Saved items stay accessible even when you are not signed in.
