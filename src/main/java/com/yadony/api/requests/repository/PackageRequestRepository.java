@@ -21,6 +21,16 @@ public interface PackageRequestRepository
 
     Page<PackageRequestEntity> findBySenderIdOrderByCreatedAtDesc(UUID senderId, Pageable pageable);
 
+    /** Demandes ouvertes d'un expéditeur, les plus récemment créées d'abord (section « En cours » de son profil). */
+    @Query("""
+        SELECT p FROM PackageRequestEntity p
+        WHERE p.senderId = :senderId AND p.status IN :statuses
+        ORDER BY COALESCE(p.disclaimerSignedAt, p.createdAt) DESC
+    """)
+    List<PackageRequestEntity> findOpenBySenderId(@Param("senderId") UUID senderId,
+                                                  @Param("statuses") java.util.Collection<PackageRequestStatus> statuses,
+                                                  Pageable pageable);
+
     long countBySenderIdAndStatusIn(UUID senderId, List<PackageRequestStatus> statuses);
 
     /** Brouillons d'un expéditeur — plafonné par yadony.limits.drafts (free/PRO). */
