@@ -250,6 +250,18 @@ class ResendEmailServiceTest {
     }
 
     @Test
+    @DisplayName("sendNotification — le bouton mène à l'écran de la notification (lien universel), pas à l'accueil du site")
+    void notificationEmail_buttonOpensTheScreen() {
+        String url = "https://yadony.com/ouvrir?type=BID_ACCEPTED&bidId=0b9d1f3e-5a4c-4e8b-9a77-1c2d3e4f5a6b";
+        service.sendNotification("user@example.com", com.yadony.api.notifications.NotificationEmailPolicy.Kind.RECAP,
+                "BID_ACCEPTED", "Réservation acceptée", "b", url, TestMessages.fr());
+
+        Map<String, Object> payload = lastPayload();
+        assertThat((String) payload.get("html")).contains("Ouvrir Yadony").contains(url.replace("&", "&amp;"));
+        assertThat((String) payload.get("text")).contains(url);
+    }
+
+    @Test
     @DisplayName("sendNotification — un reçu part toujours : pas de ligne pour couper, version anglaise")
     void notificationEmail_receiptInEnglish() {
         service.sendNotification("user@example.com", com.yadony.api.notifications.NotificationEmailPolicy.Kind.RECEIPT,

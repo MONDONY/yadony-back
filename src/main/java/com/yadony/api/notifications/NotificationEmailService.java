@@ -118,7 +118,7 @@ public class NotificationEmailService {
                         title, body, cta.get(), messagesResolver.forUser(userId));
             } else {
                 emailService.sendNotification(target.get().email(), target.get().kind(), type,
-                        title, body, messagesResolver.forUser(userId));
+                        title, body, NotificationOpenLink.urlFor(type, data), messagesResolver.forUser(userId));
             }
         } catch (RuntimeException e) {
             log.warn("[Mail] E-mail {} non envoyé à {} : {}", type, userId, e.getClass().getSimpleName());
