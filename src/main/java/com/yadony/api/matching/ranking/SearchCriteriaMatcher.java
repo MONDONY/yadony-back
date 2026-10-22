@@ -23,8 +23,16 @@ public final class SearchCriteriaMatcher {
     /** Liste vide = le trajet respecte tous les critères souples. */
     public static List<UnmetCriterion> unmet(AnnouncementEntity a, BigDecimal travelerAverageRating,
                                              boolean travelerIsPro, SearchCriteria c) {
+        return unmet(new TripFacts(a.getId(), a.getDepartureDate(), a.getAvailableKg(), a.getCapacityUnit(),
+                        a.getTransportMode(), a.getAcceptedContentTypes()),
+                travelerAverageRating, travelerIsPro, c);
+    }
+
+    /** Même évaluation sur les seuls faits lus (projection légère, sans entité chargée). */
+    public static List<UnmetCriterion> unmet(TripFacts a, BigDecimal travelerAverageRating,
+                                             boolean travelerIsPro, SearchCriteria c) {
         List<UnmetCriterion> out = new ArrayList<>();
-        LocalDate date = a.getDepartureDate();
+        LocalDate date = a.departureDate();
 
         // DATE : bornes inclusives, comme departureDateFrom / departureDateTo
         if (c.dateFrom() != null && date.isBefore(c.dateFrom())) {
@@ -36,8 +44,8 @@ public final class SearchCriteriaMatcher {
         // AVAILABLE_KG (borne basse) : le kilo libre la passe toujours.
         // MAX_AVAILABLE_KG (borne haute) : jamais d'exemption, code distinct pour que l'app
         // sache quelle borne est ratée.
-        BigDecimal kg = a.getAvailableKg();
-        if (c.minAvailableKg() != null && a.getCapacityUnit() != CapacityUnit.KG_FREE
+        BigDecimal kg = a.availableKg();
+        if (c.minAvailableKg() != null && a.capacityUnit() != CapacityUnit.KG_FREE
                 && kg.compareTo(c.minAvailableKg()) < 0) {
             out.add(new UnmetCriterion("AVAILABLE_KG", plain(c.minAvailableKg()), plain(kg)));
         } else if (c.maxAvailableKg() != null && kg.compareTo(c.maxAvailableKg()) > 0) {
@@ -47,9 +55,9 @@ public final class SearchCriteriaMatcher {
         // TRANSPORT_MODE : valeur invalide ignorée, comme dans la recherche SQL
         if (c.transportMode() != null && !c.transportMode().isBlank()) {
             TransportMode wanted = parseMode(c.transportMode());
-            if (wanted != null && wanted != a.getTransportMode()) {
+            if (wanted != null && wanted != a.transportMode()) {
                 out.add(new UnmetCriterion("TRANSPORT_MODE", wanted.name(),
-                        a.getTransportMode() == null ? "" : a.getTransportMode().name()));
+                        a.transportMode() == null ? "" : a.transportMode().name()));
             }
         }
 
@@ -62,14 +70,14 @@ public final class SearchCriteriaMatcher {
 
         // CONTENT_TYPE : appartenance à acceptedContentTypes
         if (c.contentType() != null && !c.contentType().isBlank()) {
-            List<String> accepted = a.getAcceptedContentTypes() == null ? List.of() : a.getAcceptedContentTypes();
+            List<String> accepted = a.acceptedContentTypes() == null ? List.of() : a.acceptedContentTypes();
             if (!accepted.contains(c.contentType())) {
                 out.add(new UnmetCriterion("CONTENT_TYPE", c.contentType(), String.join(", ", accepted)));
             }
         }
 
         // RADIUS : null = pas de filtre
-        if (c.idsInRadius() != null && !c.idsInRadius().contains(a.getId())) {
+        if (c.idsInRadius() != null && !c.idsInRadius().contains(a.id())) {
             out.add(new UnmetCriterion("RADIUS", "", ""));
         }
 
