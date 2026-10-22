@@ -51,6 +51,9 @@ class AdminAccountServiceTest {
     @Mock
     private AdminAuthService adminAuthService;
 
+    @Mock
+    private AdminSessionRevocationCheck sessionRevocationCheck;
+
     @InjectMocks
     private AdminAccountService adminAccountService;
 
@@ -333,6 +336,8 @@ class AdminAccountServiceTest {
         );
         verify(adminAuthService).evictByFirebaseUid("uid-reset");
         verify(firebaseAuth).revokeRefreshTokens("uid-reset");
+        // Audit sécu 21/10 : un jeton vérifié il y a moins de 60 s ne survit pas à la révocation.
+        verify(sessionRevocationCheck).forgetVerifiedSessions();
         verify(adminUserRepository).saveAndFlush(entity);
     }
 

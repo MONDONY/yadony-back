@@ -49,6 +49,7 @@ class FirebaseTokenFilterTest {
     @Mock private FilterChain filterChain;
     @Mock private FirebaseAuth mockFirebaseAuth;
     @Mock private FirebaseToken mockToken;
+    @Mock private com.yadony.api.admin.account.AdminSessionRevocationCheck sessionCheck;
 
     private static final String FIREBASE_UID = "uid-test-001";
 
@@ -57,7 +58,7 @@ class FirebaseTokenFilterTest {
         when(adminAuthService.resolve(any())).thenReturn(Optional.empty());
         // Default: request is not an admin route
         when(request.getRequestURI()).thenReturn("/api/some-path");
-        return new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService, TestMessages.resolver(), false, "", "test");
+        return new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService, TestMessages.resolver(), sessionCheck, false, "", "test");
     }
 
     private UserEntity makeUser(UserStatus status) {
@@ -229,7 +230,7 @@ class FirebaseTokenFilterTest {
 
     private FirebaseTokenFilter unstubbedFilter() {
         return new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService,
-                TestMessages.resolver(), false, "", "test");
+                TestMessages.resolver(), sessionCheck, false, "", "test");
     }
 
     /** Exception levée par Spring Data quand Hikari n'a pas de connexion à donner. */
@@ -309,7 +310,7 @@ class FirebaseTokenFilterTest {
     @DisplayName("bypass activé en profil prod → refuse de démarrer (backdoor interdit)")
     void bypassInProd_failsFast() {
         org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class, () ->
-                new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService, TestMessages.resolver(),
+                new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService, TestMessages.resolver(), sessionCheck,
                         true, "some-token", "prod"));
     }
 
@@ -320,7 +321,7 @@ class FirebaseTokenFilterTest {
         when(request.getRemoteAddr()).thenReturn("127.0.0.1");
 
         var filter = new FirebaseTokenFilter(userLinkerService, new ObjectMapper(),
-                adminAuthService, TestMessages.resolver(), true, "secret-dev-token", "dev");
+                adminAuthService, TestMessages.resolver(), sessionCheck, true, "secret-dev-token", "dev");
         filter.doFilterInternal(request, response, filterChain);
 
         var auth = SecurityContextHolder.getContext().getAuthentication();
@@ -337,7 +338,7 @@ class FirebaseTokenFilterTest {
         when(request.getRemoteAddr()).thenReturn("203.0.113.5");
 
         var filter = new FirebaseTokenFilter(userLinkerService, new ObjectMapper(),
-                adminAuthService, TestMessages.resolver(), true, "secret-dev-token", "dev");
+                adminAuthService, TestMessages.resolver(), sessionCheck, true, "secret-dev-token", "dev");
         try (MockedStatic<FirebaseApp> staticApp = mockStatic(FirebaseApp.class)) {
             staticApp.when(FirebaseApp::getApps).thenReturn(List.of());
             filter.doFilterInternal(request, response, filterChain);
@@ -353,13 +354,91 @@ class FirebaseTokenFilterTest {
         when(request.getHeader("Authorization")).thenReturn("Bearer whatever");
 
         var filter = new FirebaseTokenFilter(userLinkerService, new ObjectMapper(),
-                adminAuthService, TestMessages.resolver(), true, "", "dev");
+                adminAuthService, TestMessages.resolver(), sessionCheck, true, "", "dev");
         try (MockedStatic<FirebaseApp> staticApp = mockStatic(FirebaseApp.class)) {
             staticApp.when(FirebaseApp::getApps).thenReturn(List.of());
             filter.doFilterInternal(request, response, filterChain);
         }
 
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    // ── Révocation des sessions admin (audit sécu 21/10) ─────────────────────
+
+    private StringWriter runAdminRoute(String uri, com.yadony.api.admin.account.AdminSessionRevocationCheck.Result session)
+            throws Exception {
+        when(request.getHeader("Authorization")).thenReturn("Bearer fake-token");
+        when(request.getRequestURI()).thenReturn(uri);
+        lenient().when(request.getContextPath()).thenReturn("/api/v1");
+        when(adminAuthService.resolve(FIREBASE_UID)).thenReturn(Optional.of(
+                new AdminAuthorities(AdminRole.ADMIN, Set.of(), false, "admin@yadony.com", UUID.randomUUID())));
+        when(sessionCheck.check("fake-token")).thenReturn(session);
+        StringWriter body = new StringWriter();
+        lenient().when(response.getWriter()).thenReturn(new PrintWriter(body));
+
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class);
+             MockedStatic<FirebaseApp> staticApp = mockStatic(FirebaseApp.class)) {
+            staticApp.when(FirebaseApp::getApps).thenReturn(List.of(mock(FirebaseApp.class)));
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockFirebaseAuth);
+            mockFirebaseToken();
+
+            new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService, TestMessages.resolver(),
+                    sessionCheck, false, "", "test").doFilterInternal(request, response, filterChain);
+        }
+        return body;
+    }
+
+    @Test
+    @DisplayName("Route admin + jeton émis avant une révocation → 401 ADMIN_SESSION_REVOKED")
+    void revokedAdminSession_isRejectedWith401() throws Exception {
+        StringWriter body = runAdminRoute("/api/v1/admin/me/change-password",
+                com.yadony.api.admin.account.AdminSessionRevocationCheck.Result.REVOKED);
+
+        verify(response).setStatus(401);
+        verify(filterChain, never()).doFilter(any(), any());
+        assertThat(body.toString()).contains("ADMIN_SESSION_REVOKED");
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    @Test
+    @DisplayName("Route admin + Firebase injoignable pour la révocation → 503, jamais d'accès")
+    void unavailableRevocationCheck_failsClosed() throws Exception {
+        StringWriter body = runAdminRoute("/api/v1/admin/users",
+                com.yadony.api.admin.account.AdminSessionRevocationCheck.Result.UNAVAILABLE);
+
+        verify(response).setStatus(503);
+        verify(filterChain, never()).doFilter(any(), any());
+        assertThat(body.toString()).contains("ADMIN_SESSION_CHECK_UNAVAILABLE");
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    @Test
+    @DisplayName("Route admin + session valide → passe avec un AdminPrincipal")
+    void validAdminSession_passes() throws Exception {
+        runAdminRoute("/api/v1/admin/users",
+                com.yadony.api.admin.account.AdminSessionRevocationCheck.Result.VALID);
+
+        verify(filterChain).doFilter(request, response);
+        assertThat(SecurityContextHolder.getContext().getAuthentication().getPrincipal())
+                .isInstanceOf(com.yadony.api.admin.account.AdminPrincipal.class);
+    }
+
+    @Test
+    @DisplayName("Hors back-office : aucun appel de révocation (l'app mobile n'interroge pas Firebase)")
+    void nonAdminRoute_neverChecksRevocation() throws Exception {
+        FirebaseTokenFilter filter = buildFilter();
+        when(request.getHeader("Authorization")).thenReturn("Bearer fake-token");
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class);
+             MockedStatic<FirebaseApp> staticApp = mockStatic(FirebaseApp.class)) {
+            staticApp.when(FirebaseApp::getApps).thenReturn(List.of(mock(FirebaseApp.class)));
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockFirebaseAuth);
+            mockFirebaseToken();
+            lenient().when(userLinkerService.resolveAndLink(any(), any())).thenReturn(Optional.empty());
+
+            filter.doFilterInternal(request, response, filterChain);
+        }
+
+        verifyNoInteractions(sessionCheck);
     }
 
     // ── mustChangePassword — enforcement route côté filtre ──────────────────
@@ -389,7 +468,7 @@ class FirebaseTokenFilterTest {
             staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockFirebaseAuth);
             mockFirebaseToken();
 
-            new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService, TestMessages.resolver(), false, "", "test")
+            new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService, TestMessages.resolver(), sessionCheck, false, "", "test")
                     .doFilterInternal(request, response, filterChain);
         }
 
@@ -412,7 +491,7 @@ class FirebaseTokenFilterTest {
             staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockFirebaseAuth);
             mockFirebaseToken();
 
-            new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService, TestMessages.resolver(), false, "", "test")
+            new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService, TestMessages.resolver(), sessionCheck, false, "", "test")
                     .doFilterInternal(request, response, filterChain);
         }
 
@@ -435,7 +514,7 @@ class FirebaseTokenFilterTest {
             staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockFirebaseAuth);
             mockFirebaseToken();
 
-            new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService, TestMessages.resolver(), false, "", "test")
+            new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService, TestMessages.resolver(), sessionCheck, false, "", "test")
                     .doFilterInternal(request, response, filterChain);
         }
 
@@ -458,7 +537,7 @@ class FirebaseTokenFilterTest {
             staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockFirebaseAuth);
             mockFirebaseToken();
 
-            new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService, TestMessages.resolver(), false, "", "test")
+            new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService, TestMessages.resolver(), sessionCheck, false, "", "test")
                     .doFilterInternal(request, response, filterChain);
         }
 
@@ -478,7 +557,7 @@ class FirebaseTokenFilterTest {
             staticApp.when(FirebaseApp::getApps).thenReturn(List.of(mock(FirebaseApp.class)));
             staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockFirebaseAuth);
             mockFirebaseToken();
-            new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService, TestMessages.resolver(), false, "", "test")
+            new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService, TestMessages.resolver(), sessionCheck, false, "", "test")
                     .doFilterInternal(request, response, filterChain);
         }
     }

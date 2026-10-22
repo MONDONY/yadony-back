@@ -59,6 +59,7 @@ class AdminSecurityIT {
     @Mock private FilterChain filterChain;
     @Mock private FirebaseAuth mockFirebaseAuth;
     @Mock private FirebaseToken mockToken;
+    @Mock private com.yadony.api.admin.account.AdminSessionRevocationCheck sessionCheck;
 
     private static final String SUPPORT_UID = "uid-support-001";
     private static final String DISABLED_UID = "uid-disabled-001";
@@ -74,7 +75,7 @@ class AdminSecurityIT {
     // -------------------------------------------------------------------------
 
     private FirebaseTokenFilter buildFilter() {
-        return new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService, TestMessages.resolver(), false, "", "test");
+        return new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService, TestMessages.resolver(), sessionCheck, false, "", "test");
     }
 
     /**

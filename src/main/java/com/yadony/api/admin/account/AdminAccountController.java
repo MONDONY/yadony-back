@@ -154,17 +154,40 @@ public class AdminAccountController {
     /**
      * Allows any authenticated admin to change their own password.
      * Does NOT require ADMIN_MANAGE — available to all admin roles.
+     *
+     * <p>Exige une connexion récente ({@link #RECENT_LOGIN}) : le front ne prouve le mot de
+     * passe actuel que par sa réauthentification Firebase, qui renouvelle {@code auth_time}.
+     * Un jeton plus ancien, par exemple volé, ne peut donc pas fixer un nouveau mot de passe.
      */
     @PostMapping("/me/change-password")
     @PreAuthorize("isAuthenticated()")
     public void changePassword(@RequestBody ChangePasswordRequest req, Authentication auth) {
         UUID actorId = extractActorId(auth);
+        requireRecentLogin(auth);
         adminAccountService.changeOwnPassword(actorId, req.newPassword(), actorId);
     }
 
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
+
+    static final java.time.Duration RECENT_LOGIN = java.time.Duration.ofMinutes(5);
+
+    private static void requireRecentLogin(Authentication auth) {
+        Object authTime = auth.getCredentials() instanceof com.google.firebase.auth.FirebaseToken token
+                ? token.getClaims().get("auth_time")
+                : null;
+        boolean recent = authTime instanceof Number seconds
+                && java.time.Instant.ofEpochSecond(seconds.longValue())
+                        .isAfter(java.time.Instant.now().minus(RECENT_LOGIN));
+        if (!recent) {
+            throw new com.yadony.api.common.YadonyBusinessException(
+                    HttpStatus.FORBIDDEN,
+                    "ADMIN_RECENT_LOGIN_REQUIRED",
+                    "Recent login required",
+                    "Reconnectez-vous pour changer votre mot de passe");
+        }
+    }
 
     private UUID extractActorId(Authentication auth) {
         if (auth.getPrincipal() instanceof AdminPrincipal p) {

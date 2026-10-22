@@ -353,7 +353,7 @@ class AdminAccountControllerIT {
         mockMvc.perform(post("/admin/me/change-password")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req))
-                        .with(authentication(adminAuth())))
+                        .with(authentication(loggedInSecondsAgo(adminAuth(), 30))))
                 .andExpect(status().isOk());
 
         verify(adminAccountService).changeOwnPassword(any(), eq("NewPass!2024Xx"), any());
@@ -367,7 +367,7 @@ class AdminAccountControllerIT {
         mockMvc.perform(post("/admin/me/change-password")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req))
-                        .with(authentication(supportAuth())))
+                        .with(authentication(loggedInSecondsAgo(supportAuth(), 30))))
                 .andExpect(status().isOk());
     }
 
@@ -379,7 +379,43 @@ class AdminAccountControllerIT {
         mockMvc.perform(post("/admin/me/change-password")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req))
-                        .with(authentication(superAdminAuth())))
+                        .with(authentication(loggedInSecondsAgo(superAdminAuth(), 30))))
                 .andExpect(status().isOk());
+    }
+
+    // Audit sécu 21/10 : un jeton ancien (par exemple volé) ne fixe plus le mot de passe.
+    @Test
+    @DisplayName("POST /admin/me/change-password avec une connexion de plus de 5 min → 403 ADMIN_RECENT_LOGIN_REQUIRED")
+    void changePassword_staleLogin_returns403() throws Exception {
+        mockMvc.perform(post("/admin/me/change-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new ChangePasswordRequest("NewPass!2024Xx")))
+                        .with(authentication(loggedInSecondsAgo(adminAuth(), 6 * 60))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ADMIN_RECENT_LOGIN_REQUIRED"));
+
+        org.mockito.Mockito.verifyNoInteractions(adminAccountService);
+    }
+
+    @Test
+    @DisplayName("POST /admin/me/change-password sans jeton Firebase (auth_time inconnu) → 403")
+    void changePassword_withoutFirebaseToken_returns403() throws Exception {
+        mockMvc.perform(post("/admin/me/change-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new ChangePasswordRequest("NewPass!2024Xx")))
+                        .with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+
+        org.mockito.Mockito.verifyNoInteractions(adminAccountService);
+    }
+
+    /** Même principal, avec le jeton Firebase posé par le filtre en credentials. */
+    private static UsernamePasswordAuthenticationToken loggedInSecondsAgo(
+            UsernamePasswordAuthenticationToken base, long secondsAgo) {
+        com.google.firebase.auth.FirebaseToken token =
+                org.mockito.Mockito.mock(com.google.firebase.auth.FirebaseToken.class);
+        org.mockito.Mockito.when(token.getClaims()).thenReturn(java.util.Map.of(
+                "auth_time", java.time.Instant.now().minusSeconds(secondsAgo).getEpochSecond()));
+        return new UsernamePasswordAuthenticationToken(base.getPrincipal(), token, base.getAuthorities());
     }
 }
