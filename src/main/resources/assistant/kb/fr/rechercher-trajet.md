@@ -7,7 +7,7 @@ routes:
     label: Rechercher un trajet
 ---
 L'onglet Rechercher montre les voyageurs disponibles quand vous choisissez « J'envoie un colis », et les colis à transporter quand vous choisissez « Je voyage ».
-Filtrez par villes de départ et d'arrivée, date, note, kilos, prix, taille du colis, urgence ou « Près de moi », ou décrivez votre besoin en une phrase, par exemple « 20 kilos à Bamako en mars ».
+Filtrez par villes de départ et d'arrivée, date, note, kilos, prix, taille du colis, urgence ou « Près de moi ». Les réglages moins courants (contenu, transport, note, escales, paiement) sont dans « Plus de filtres ».
 La carte montre les annonces autour de vous.
 Si rien ne correspond, créez une alerte pour être prévenu dès qu'un trajet apparaît.
 Les villes de départ et d'arrivée restent strictes. Quand moins de 7 trajets correspondent à tous vos critères, un second bloc « Autres annonces sur ce trajet » apparaît : ce sont des trajets sur le même parcours qui ne respectent pas au moins un critère (date, urgence, kilos, mode de transport, note minimale, type de contenu, rayon, week-end, GP Pro). Chaque annonce indique pourquoi, par exemple « Départ le 12/11 au lieu du 10/11 » ou « 5 kg disponibles au lieu de 8 ». Les filtres voyageurs vérifiés, prix maximal par kilo, escales et moyens de paiement restent stricts.
