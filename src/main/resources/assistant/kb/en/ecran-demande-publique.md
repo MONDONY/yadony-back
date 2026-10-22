@@ -12,4 +12,4 @@ routes:
   - path: /negotiations
     label: Price discussions
 ---
-You are viewing a sender's request: trip, desired date ("Flexible date" when the sender set none: any upcoming departure suits them), weight, content, budget and "Accepted payment methods". Negotiable price: "Propose my trip"; fixed price: "Take this parcel". With an offer in progress: "View my negotiation" or "View my proposal". A card-only request requires card payments activated. Top icons: bookmark (save) and share (poster, while the request is open). "Report this request" is at the bottom of the page.
+You are viewing a sender's request: trip, desired date ("Flexible date" when the sender set none: any upcoming departure suits them), weight, content, budget and "Accepted payment methods". Negotiable price: "Propose my trip" (in three steps: trip, price, message); fixed price: "Take this parcel". With an offer in progress: "View my negotiation" or "View my proposal". A card-only request requires card payments activated. Top icons: bookmark (save) and share (poster, while the request is open). "Report this request" is at the bottom of the page.
