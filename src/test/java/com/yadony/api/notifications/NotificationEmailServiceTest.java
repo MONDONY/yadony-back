@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -59,7 +60,19 @@ class NotificationEmailServiceTest {
         service(true).send(userId, "PAYMENT_RELEASED", "Paiement versé", "Vos gains arrivent.", Map.of());
 
         verify(resend).sendNotification(eq("awa@exemple.com"), eq(Kind.RECEIPT), eq("PAYMENT_RELEASED"),
-                eq("Paiement versé"), eq("Vos gains arrivent."), any());
+                eq("Paiement versé"), eq("Vos gains arrivent."),
+                eq("https://yadony.com/ouvrir?type=PAYMENT_RELEASED"), any());
+    }
+
+    @Test
+    void button_opensTheScreenOfTheNotification() {
+        UUID bidId = UUID.randomUUID();
+
+        service(true).send(userId, "BID_ACCEPTED", "Réservation acceptée", "b", Map.of("bidId", bidId.toString()));
+
+        verify(resend).sendNotification(eq("awa@exemple.com"), eq(Kind.RECAP), eq("BID_ACCEPTED"),
+                eq("Réservation acceptée"), eq("b"),
+                eq("https://yadony.com/ouvrir?type=BID_ACCEPTED&bidId=" + bidId), any());
     }
 
     @Test
@@ -69,7 +82,7 @@ class NotificationEmailServiceTest {
         when(contacts.getContact("uid-awa")).thenReturn(new FirebaseContactService.Contact("+33600000000", null));
         service(true).send(userId, "PAYMENT_RELEASED", "t", "b", Map.of());
 
-        verify(resend, never()).sendNotification(anyString(), any(), anyString(), anyString(), anyString(), any());
+        verify(resend, never()).sendNotification(anyString(), any(), anyString(), anyString(), anyString(), nullable(String.class), any());
     }
 
     @Test
@@ -78,7 +91,7 @@ class NotificationEmailServiceTest {
 
         service(true).send(userId, "BID_ACCEPTED", "Réservation acceptée", "b", Map.of());
 
-        verify(resend, never()).sendNotification(anyString(), any(), anyString(), anyString(), anyString(), any());
+        verify(resend, never()).sendNotification(anyString(), any(), anyString(), anyString(), anyString(), nullable(String.class), any());
     }
 
     /** Au-delà du plafond, les familles coupables restent dans l'app ; un reçu part toujours. */
@@ -91,9 +104,9 @@ class NotificationEmailServiceTest {
         }
 
         verify(resend, times(NotificationEmailService.DAILY_CAP))
-                .sendNotification(anyString(), eq(Kind.RECAP), anyString(), anyString(), anyString(), any());
+                .sendNotification(anyString(), eq(Kind.RECAP), anyString(), anyString(), anyString(), nullable(String.class), any());
         verify(resend, times(NotificationEmailService.DAILY_CAP + 2))
-                .sendNotification(anyString(), eq(Kind.RECEIPT), anyString(), anyString(), anyString(), any());
+                .sendNotification(anyString(), eq(Kind.RECEIPT), anyString(), anyString(), anyString(), nullable(String.class), any());
     }
 
     @Test
@@ -143,7 +156,9 @@ class NotificationEmailServiceTest {
                 .send(userId, "STRIPE_ONBOARDING_INCOMPLETE", "t", "b", Map.of());
 
         verify(resend, times(3)).sendNotification(eq("awa@exemple.com"), eq(Kind.ACCOUNT),
-                eq("STRIPE_ONBOARDING_INCOMPLETE"), eq("t"), eq("b"), any(com.yadony.api.common.i18n.Messages.class));
+                eq("STRIPE_ONBOARDING_INCOMPLETE"), eq("t"), eq("b"),
+                eq("https://yadony.com/ouvrir?type=STRIPE_ONBOARDING_INCOMPLETE"),
+                any(com.yadony.api.common.i18n.Messages.class));
         verify(resend, never()).sendNotification(anyString(), any(), anyString(), anyString(), anyString(),
                 any(NotificationEmailLink.Cta.class), any());
     }

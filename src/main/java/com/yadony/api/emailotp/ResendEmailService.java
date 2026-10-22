@@ -157,7 +157,17 @@ public class ResendEmailService {
      */
     public void sendNotification(String to, NotificationEmailPolicy.Kind kind, String type,
                                  String title, String body, Messages m) {
-        sendNotification(to, kind, type, title, body, null, m);
+        sendNotification(to, kind, type, title, body, (NotificationEmailLink.Cta) null, null, m);
+    }
+
+    /**
+     * Variante avec le lien « Ouvrir dans l'app » de la notification
+     * ({@link com.yadony.api.notifications.NotificationOpenLink}) : le bouton ouvre l'écran
+     * concerné au lieu de la page d'accueil du site. {@code openUrl} nul = page d'accueil.
+     */
+    public void sendNotification(String to, NotificationEmailPolicy.Kind kind, String type,
+                                 String title, String body, String openUrl, Messages m) {
+        sendNotification(to, kind, type, title, body, (NotificationEmailLink.Cta) null, openUrl, m);
     }
 
     /**
@@ -167,6 +177,12 @@ public class ResendEmailService {
      */
     public void sendNotification(String to, NotificationEmailPolicy.Kind kind, String type,
                                  String title, String body, NotificationEmailLink.Cta cta, Messages m) {
+        sendNotification(to, kind, type, title, body, cta, null, m);
+    }
+
+    private void sendNotification(String to, NotificationEmailPolicy.Kind kind, String type,
+                                  String title, String body, NotificationEmailLink.Cta cta,
+                                  String openUrl, Messages m) {
         try {
             if (!emailSendingConfigured) {
                 return;
@@ -181,7 +197,7 @@ public class ResendEmailService {
                     detail = detail + " " + m.get("email.notif.type." + type + ".detail");
                 }
             }
-            String ctaUrl = cta != null ? cta.url() : APP_URL;
+            String ctaUrl = cta != null ? cta.url() : (openUrl != null ? openUrl : APP_URL);
             String ctaLabel = m.get(cta != null ? cta.labelKey() : "email.notif.cta");
             String text = String.join("\n\n", title, body == null ? "" : body, detail,
                     ctaLabel + " : " + ctaUrl);
