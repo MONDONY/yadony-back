@@ -1,6 +1,7 @@
 package com.yadony.api.admin.dto;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -22,14 +23,16 @@ public record AdminBidListItemResponse(
     /** Devise de netEur, celle de l'annonce (code ISO en majuscules). */
     String currency,
     /** Numéro de suivi (DON-…), affiché par la recherche globale de l'admin. */
-    String trackingNumber
-) {
-    /** Forme d'avant le numéro de suivi. */
-    public AdminBidListItemResponse(UUID id, String status, UUID announcementId, String senderName,
-                                    String travelerName, String corridor, BigDecimal weightKg,
-                                    BigDecimal netEur, String paymentMethod, LocalDateTime createdAt,
-                                    String commissionStatus, String currency) {
-        this(id, status, announcementId, senderName, travelerName, corridor, weightKg, netEur,
-                paymentMethod, createdAt, commissionStatus, currency, null);
-    }
-}
+    String trackingNumber,
+    UUID senderId,
+    /** Voyageur de l'annonce. */
+    UUID travelerId,
+    String recipientName,
+    /** Date de départ de l'annonce. */
+    LocalDate departureDate,
+    LocalDateTime updatedAt,
+    /** Alerte la plus urgente (DISPUTE_OPEN, NO_SHOW, PAYMENT_PENDING, LATE), absente sinon. */
+    String alert,
+    /** Catégorie de contenu du colis (colonne « Colis » de l'admin), absente si non renseignée. */
+    String contentCategory
+) { }

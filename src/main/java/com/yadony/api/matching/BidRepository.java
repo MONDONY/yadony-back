@@ -1,5 +1,7 @@
 package com.yadony.api.matching;
 
+import com.yadony.api.admin.AdminBidQuery;
+import com.yadony.api.admin.AdminBidSql;
 import com.yadony.api.matching.dto.AnnouncementRevenueRow;
 import com.yadony.api.payments.cash.CommissionStatus;
 import com.yadony.api.payments.cash.PaymentMethod;
@@ -11,6 +13,7 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
@@ -804,33 +807,201 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
             @Param("candidateIds") List<UUID> candidateIds,
             @Param("activeStatuses") List<BidStatus> activeStatuses);
 
-    @Query(value = """
-        SELECT b.* FROM bids b
-        WHERE b.deleted_at IS NULL
-          AND (CAST(:status AS VARCHAR) IS NULL OR b.status = :status)
-          AND (CAST(:announcementId AS VARCHAR) IS NULL OR b.announcement_id = CAST(:announcementId AS UUID))
-          AND (CAST(:q AS VARCHAR) IS NULL OR b.tracking_number ILIKE '%' || :q || '%' OR CAST(b.id AS VARCHAR) = LOWER(:q))
-          AND (CAST(:from AS TIMESTAMP) IS NULL OR b.created_at >= CAST(:from AS TIMESTAMP))
-          AND (CAST(:to AS TIMESTAMP) IS NULL OR b.created_at <= CAST(:to AS TIMESTAMP))
-        ORDER BY b.created_at DESC
-        """,
-        countQuery = """
-        SELECT COUNT(*) FROM bids b
-        WHERE b.deleted_at IS NULL
-          AND (CAST(:status AS VARCHAR) IS NULL OR b.status = :status)
-          AND (CAST(:announcementId AS VARCHAR) IS NULL OR b.announcement_id = CAST(:announcementId AS UUID))
-          AND (CAST(:q AS VARCHAR) IS NULL OR b.tracking_number ILIKE '%' || :q || '%' OR CAST(b.id AS VARCHAR) = LOWER(:q))
-          AND (CAST(:from AS TIMESTAMP) IS NULL OR b.created_at >= CAST(:from AS TIMESTAMP))
-          AND (CAST(:to AS TIMESTAMP) IS NULL OR b.created_at <= CAST(:to AS TIMESTAMP))
-        """,
+    /**
+     * Liste des colis de l'admin : vue rapide, recherche par jetons et identifiants, filtres et tri
+     * selon la vue. Fragments et paramètres décrits dans {@link AdminBidSql} ; appeler de préférence
+     * {@link #searchAdmin(AdminBidQuery, Pageable)} avec un {@code Pageable} non trié.
+     */
+    @Query(value = "SELECT b.* FROM" + AdminBidSql.FROM_JOIN
+            + " WHERE " + AdminBidSql.FILTER_PREDICATE
+            + " AND " + AdminBidSql.VIEW_PREDICATE
+            + " AND " + AdminBidSql.SEARCH_PREDICATE
+            + " ORDER BY " + AdminBidSql.ORDER_BY,
+        countQuery = "SELECT COUNT(*) FROM" + AdminBidSql.FROM_JOIN
+            + " WHERE " + AdminBidSql.FILTER_PREDICATE
+            + " AND " + AdminBidSql.VIEW_PREDICATE
+            + " AND " + AdminBidSql.SEARCH_PREDICATE,
         nativeQuery = true)
-    Page<BidEntity> findAdminFiltered(
+    Page<BidEntity> searchAdmin(
+            @Param("view") String view,
             @Param("status") String status,
             @Param("announcementId") String announcementId,
-            @Param("q") String q,
-            @Param("from") java.time.LocalDateTime from,
-            @Param("to") java.time.LocalDateTime to,
+            @Param("t1") String t1,
+            @Param("t2") String t2,
+            @Param("t3") String t3,
+            @Param("t4") String t4,
+            @Param("idTerm") String idTerm,
+            @Param("scope") String scope,
+            @Param("phoneSuffix") String phoneSuffix,
+            @Param("paymentMethod") String paymentMethod,
+            @Param("content") String content,
+            @Param("alertRank") Integer alertRank,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to,
+            @Param("now") LocalDateTime now,
+            @Param("lateBefore") LocalDate lateBefore,
             Pageable pageable);
+
+    /** {@link #searchAdmin} avec les paramètres déjà normalisés par {@link AdminBidQuery#of}. */
+    default Page<BidEntity> searchAdmin(AdminBidQuery query, Pageable pageable) {
+        return searchAdmin(query.view().name(), query.status(), query.announcementId(),
+                query.token(0), query.token(1), query.token(2), query.token(3),
+                query.idTerm() != null ? query.idTerm().toString() : null,
+                query.scope().name(), query.phoneSuffix(), query.paymentMethod(), query.content(),
+                query.alertRank(), query.from(), query.to(), query.now(), query.lateBefore(), pageable);
+    }
+
+    /**
+     * Nombres par vue et par alerte, avec la recherche et les filtres de {@link #searchAdmin} (sauf
+     * vue, statut et alerte, qui ne s'appliquent pas) : une seule requête, mêmes fragments SQL.
+     */
+    @Query(value = AdminBidSql.COUNTS_SELECT + "FROM" + AdminBidSql.FROM_JOIN
+            + " WHERE " + AdminBidSql.FILTER_PREDICATE
+            + " AND " + AdminBidSql.SEARCH_PREDICATE,
+        nativeQuery = true)
+    AdminCountsRow countAdmin(
+            @Param("status") String status,
+            @Param("announcementId") String announcementId,
+            @Param("t1") String t1,
+            @Param("t2") String t2,
+            @Param("t3") String t3,
+            @Param("t4") String t4,
+            @Param("idTerm") String idTerm,
+            @Param("scope") String scope,
+            @Param("phoneSuffix") String phoneSuffix,
+            @Param("paymentMethod") String paymentMethod,
+            @Param("content") String content,
+            @Param("alertRank") Integer alertRank,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to,
+            @Param("now") LocalDateTime now,
+            @Param("lateBefore") LocalDate lateBefore);
+
+    /** {@link #countAdmin} avec les paramètres normalisés par {@link AdminBidQuery#of} ; vue, statut et alerte ignorés. */
+    default AdminCountsRow countAdmin(AdminBidQuery query) {
+        return countAdmin(null, query.announcementId(),
+                query.token(0), query.token(1), query.token(2), query.token(3),
+                query.idTerm() != null ? query.idTerm().toString() : null,
+                query.scope().name(), query.phoneSuffix(), query.paymentMethod(), query.content(),
+                null, query.from(), query.to(), query.now(), query.lateBefore());
+    }
+
+    /** Projection de {@link #countAdmin} : une ligne, jamais nulle (COALESCE). */
+    interface AdminCountsRow {
+        Long getTodo();
+
+        Long getActive();
+
+        Long getRecent();
+
+        Long getCompleted();
+
+        Long getClosed();
+
+        Long getAll();
+
+        Long getDisputeOpen();
+
+        Long getNoShow();
+
+        Long getPaymentPending();
+
+        Long getLate();
+    }
+
+    /**
+     * Rang d'alerte ({@link AdminBidSql#ALERT_RANK}) des colis donnés. Seuls les colis en alerte ont
+     * une ligne : un identifiant absent du résultat n'a aucune alerte (rang 0). Une liste vide ne
+     * part pas en base ({@code IN ()} n'est pas du SQL valide).
+     */
+    default List<AlertRankRow> alertRanks(Collection<UUID> ids, LocalDateTime now, LocalDate lateBefore) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return alertRanksNative(ids, now, lateBefore);
+    }
+
+    /** Requête de {@link #alertRanks} ; {@code ids} non vide. */
+    @Query(value = "SELECT CAST(b.id AS VARCHAR) AS \"bidIdText\", " + AdminBidSql.ALERT_RANK + " AS \"rank\""
+            + " FROM" + AdminBidSql.FROM_JOIN
+            + " WHERE b.id IN (:ids) AND " + AdminBidSql.ALERT_RANK + " > 0",
+        nativeQuery = true)
+    List<AlertRankRow> alertRanksNative(@Param("ids") Collection<UUID> ids,
+                                        @Param("now") LocalDateTime now,
+                                        @Param("lateBefore") LocalDate lateBefore);
+
+    /** Projection de {@link #alertRanks} : rang de 1 à 4, voir {@code AdminBidAlert.ofRank}. */
+    interface AlertRankRow {
+        /** Identifiant en texte : H2 rend un UUID natif en octets, que la projection ne sait pas convertir. */
+        String getBidIdText();
+
+        Integer getRank();
+
+        default UUID getBidId() {
+            return UUID.fromString(getBidIdText());
+        }
+    }
+
+    // --- Suggestions de recherche de l'admin (GET /admin/bids/suggest) : voir AdminBidSql.SUGGEST_* ---
+
+    @Query(value = AdminBidSql.SUGGEST_SENDERS, nativeQuery = true)
+    List<PersonCountRow> suggestSenders(@Param("t1") String t1, @Param("t2") String t2,
+                                        @Param("t3") String t3, @Param("t4") String t4);
+
+    @Query(value = AdminBidSql.SUGGEST_TRAVELERS, nativeQuery = true)
+    List<PersonCountRow> suggestTravelers(@Param("t1") String t1, @Param("t2") String t2,
+                                          @Param("t3") String t3, @Param("t4") String t4);
+
+    @Query(value = AdminBidSql.SUGGEST_RECIPIENTS, nativeQuery = true)
+    List<RecipientCountRow> suggestRecipients(@Param("t1") String t1, @Param("t2") String t2,
+                                              @Param("t3") String t3, @Param("t4") String t4);
+
+    @Query(value = AdminBidSql.SUGGEST_TRIPS, nativeQuery = true)
+    List<TripCountRow> suggestTrips(@Param("t1") String t1, @Param("t2") String t2,
+                                    @Param("t3") String t3, @Param("t4") String t4);
+
+    @Query(value = AdminBidSql.SUGGEST_PARCELS, nativeQuery = true)
+    List<ParcelSuggestRow> suggestParcels(@Param("t1") String t1, @Param("t2") String t2,
+                                          @Param("t3") String t3, @Param("t4") String t4);
+
+    /** Utilisateur et nombre de ses colis ; identifiant en texte (H2 rend un UUID natif en octets). */
+    interface PersonCountRow {
+        String getIdText();
+
+        Long getTotal();
+
+        default UUID getId() {
+            return UUID.fromString(getIdText());
+        }
+    }
+
+    interface RecipientCountRow {
+        String getName();
+
+        Long getTotal();
+    }
+
+    interface TripCountRow {
+        String getDepartureCity();
+
+        String getArrivalCity();
+
+        Long getTotal();
+    }
+
+    interface ParcelSuggestRow {
+        String getBidIdText();
+
+        String getTrackingNumber();
+
+        String getStatus();
+
+        String getContent();
+
+        default UUID getBidId() {
+            return UUID.fromString(getBidIdText());
+        }
+    }
 
     /**
      * Expéditeurs "fidèles" : ceux ayant déjà eu un bid ACCEPTED avec ce voyageur

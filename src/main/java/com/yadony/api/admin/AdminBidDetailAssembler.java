@@ -10,6 +10,7 @@ import com.yadony.api.cancellation.CancellationEntity;
 import com.yadony.api.cancellation.CancellationRepository;
 import com.yadony.api.common.AuditLogEntity;
 import com.yadony.api.common.AuditLogRepository;
+import com.yadony.api.common.BaseEntity;
 import com.yadony.api.common.MatchingTextUtil;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.disputes.DisputeEntity;
@@ -136,7 +137,8 @@ public class AdminBidDetailAssembler {
             AdminBidDetailResponse.Links links,
             Boolean confirmationCodePresent,
             List<String> photoUrls,
-            AdminBidDetailResponse.Milestones milestones) {
+            AdminBidDetailResponse.Milestones milestones,
+            AdminBidDetailResponse.Incidents incidents) {
     }
 
     public Extras extras(BidEntity bid, AnnouncementEntity ann, Access access) {
@@ -147,8 +149,10 @@ public class AdminBidDetailAssembler {
         Map<String, FirebaseContactService.Contact> contacts = access.users() ? contactsOf(users.values()) : Map.of();
 
         PaymentEntity payment = access.payments() ? paymentOf(bid).orElse(null) : null;
-        DisputeEntity dispute = access.disputes() ? latest(disputeRepo.findByBidIdIn(List.of(bid.getId()))) : null;
-        CancellationEntity cancellation = latest(cancellationsOf(bid.getId()));
+        List<DisputeEntity> disputes = access.disputes() ? disputeRepo.findByBidIdIn(List.of(bid.getId())) : List.of();
+        List<CancellationEntity> cancellations = cancellationsOf(bid.getId());
+        DisputeEntity dispute = latest(disputes);
+        CancellationEntity cancellation = latest(cancellations);
         String conversationId = access.moderation()
                 ? conversationOf(bid.getId()).map(ConversationEntity::getFirestoreConversationId).orElse(null)
                 : null;
@@ -172,7 +176,26 @@ public class AdminBidDetailAssembler {
                 photoUrls(bid.getId()),
                 new AdminBidDetailResponse.Milestones(
                         bid.getHandoverLocation(), bid.getHandoverDeadline(), bid.getArrivedAt(),
-                        bid.getDeliveredAt(), bid.getNoShowAt(), bid.getReturnedAt()));
+                        bid.getDeliveredAt(), bid.getNoShowAt(), bid.getReturnedAt()),
+                access.disputes() ? incidents(disputes, cancellations) : null);
+    }
+
+    /** Litiges et annulations, le plus récent d'abord. */
+    private static AdminBidDetailResponse.Incidents incidents(List<DisputeEntity> disputes,
+                                                              List<CancellationEntity> cancellations) {
+        Comparator<BaseEntity> newestFirst = Comparator.comparing(
+                BaseEntity::getCreatedAt, Comparator.nullsFirst(Comparator.naturalOrder())).reversed();
+        return new AdminBidDetailResponse.Incidents(
+                disputes.stream().sorted(newestFirst)
+                        .map(d -> new AdminBidDetailResponse.Dispute(d.getId(), d.getType(), d.getStatus(),
+                                d.getCreatedAt(), utc(d.getResolvedAt()), d.getResolutionType()))
+                        .toList(),
+                cancellations.stream().sorted(newestFirst)
+                        .map(c -> new AdminBidDetailResponse.Cancellation(c.getId(),
+                                c.getScope() != null ? c.getScope().name() : null,
+                                c.getNoShowStatus() != null ? c.getNoShowStatus().name() : null,
+                                c.getReason(), c.getCreatedAt()))
+                        .toList());
     }
 
     // ── Chronologie ─────────────────────────────────────────────────────────────
@@ -215,7 +238,9 @@ public class AdminBidDetailAssembler {
             entries.add(new AdminBidTimelineResponse.Entry(
                     e.getScannedAt(), "SCAN",
                     e.getEventType() != null ? e.getEventType().name() : "SCAN",
-                    e.getGpsLabel(), signed(e.getPhotoUrl()), e.getGpsLat(), e.getGpsLon(),
+                    e.getGpsLabel(),
+                    // Photo purgée (rétention) : la clé n'existe plus, aucune URL à signer.
+                    e.getPhotoPurgedAt() != null ? null : signed(e.getPhotoUrl()), e.getGpsLat(), e.getGpsLon(),
                     "TRACKING", null, null));
         }
 
@@ -353,12 +378,21 @@ public class AdminBidDetailAssembler {
 
     /** Photo de scan : la base garde une clé de stockage, jamais une URL publique. */
     private String signed(String key) {
+        return sign(storageService, key);
+    }
+
+    /**
+     * Signe une clé de stockage pour l'admin ({@link #PHOTO_TTL}). Partagé avec les photos par étape.
+     * Une clé vide ou non signable donne null ; seul le type de l'erreur est journalisé, jamais la clé
+     * ni l'URL (une erreur de stockage peut citer l'URL signée).
+     */
+    static String sign(StorageService storage, String key) {
         if (key == null || key.isBlank()) return null;
         if (key.startsWith("http")) return key;
         try {
-            return storageService.generatePresignedUrl(key, PHOTO_TTL);
+            return storage.generatePresignedUrl(key, PHOTO_TTL);
         } catch (RuntimeException e) {
-            log.warn("Photo de scan illisible : {}", e.toString());
+            log.warn("Photo de scan illisible : {}", e.getClass().getSimpleName());
             return null;
         }
     }
@@ -399,9 +433,9 @@ public class AdminBidDetailAssembler {
         return list.stream().filter(Objects::nonNull).collect(Collectors.toSet());
     }
 
-    private static <T extends com.yadony.api.common.BaseEntity> T latest(List<T> list) {
+    private static <T extends BaseEntity> T latest(List<T> list) {
         return list.stream()
-                .max(Comparator.comparing(com.yadony.api.common.BaseEntity::getCreatedAt,
+                .max(Comparator.comparing(BaseEntity::getCreatedAt,
                         Comparator.nullsFirst(Comparator.naturalOrder())))
                 .orElse(null);
     }

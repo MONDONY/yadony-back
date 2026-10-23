@@ -17,10 +17,14 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class AdminBidsControllerTest {
+
+    private static final java.time.Clock CLOCK = java.time.Clock.fixed(
+            java.time.Instant.parse("2026-10-23T12:00:00Z"), java.time.ZoneOffset.UTC);
 
     @Mock BidRepository bidRepo;
     @Mock AnnouncementRepository announcementRepo;
@@ -29,17 +33,17 @@ class AdminBidsControllerTest {
     @Mock com.yadony.api.matching.BidGridItemRepository bidGridItemRepo;
 
     private AdminBidsController controller() {
-        return new AdminBidsController(bidRepo, announcementRepo, userRepo, bidGridItemRepo, assembler);
+        return new AdminBidsController(bidRepo, announcementRepo, userRepo, bidGridItemRepo, assembler, mock(AdminBidPhotoAssembler.class), CLOCK);
     }
 
     @Test
     void listBids_returnsPage() {
         Page<BidEntity> page = new PageImpl<>(List.of());
-        when(bidRepo.findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), any())).thenReturn(page);
+        when(bidRepo.searchAdmin(any(AdminBidQuery.class), any())).thenReturn(page);
         // empty page → annIds is empty → findAllById called with empty collection
         when(announcementRepo.findAllById(any())).thenReturn(List.of());
         // userRepo.findAllById not called — empty page → no userIds to resolve
-        ResponseEntity<?> resp = controller().listBids(null, null, null, null, null, 0, 20);
+        ResponseEntity<?> resp = controller().listBids(null, null, null, null, null, null, null, null, null, null, 0, 20, null);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody()).isNotNull();
     }
@@ -50,10 +54,10 @@ class AdminBidsControllerTest {
         bid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
         bid.setCommissionStatus(com.yadony.api.payments.cash.CommissionStatus.PENDING);
         Page<BidEntity> page = new PageImpl<>(List.of(bid));
-        when(bidRepo.findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), any())).thenReturn(page);
+        when(bidRepo.searchAdmin(any(AdminBidQuery.class), any())).thenReturn(page);
         when(announcementRepo.findAllById(any())).thenReturn(List.of());
 
-        ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, 0, 20);
+        ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, null, null, null, null, null, 0, 20, null);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody().getContent().get(0).commissionStatus()).isEqualTo("PENDING");
@@ -66,10 +70,10 @@ class AdminBidsControllerTest {
         bid.setCurrency("xof");
         bid.setNegotiatedNetEur(new java.math.BigDecimal("6000.00"));
         Page<BidEntity> page = new PageImpl<>(List.of(bid));
-        when(bidRepo.findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), any())).thenReturn(page);
+        when(bidRepo.searchAdmin(any(AdminBidQuery.class), any())).thenReturn(page);
         when(announcementRepo.findAllById(any())).thenReturn(List.of());
 
-        ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, 0, 20);
+        ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, null, null, null, null, null, 0, 20, null);
 
         assertThat(resp.getBody().getContent().get(0).currency()).isEqualTo("XOF");
         assertThat(resp.getBody().getContent().get(0).netEur()).isEqualByComparingTo("6000.00");
@@ -96,12 +100,12 @@ class AdminBidsControllerTest {
         item.setBidId(bidId);
         item.setUnitPriceNetSnapshot(new java.math.BigDecimal("2500"));
         item.setQuantity(2);
-        when(bidRepo.findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), any()))
+        when(bidRepo.searchAdmin(any(AdminBidQuery.class), any()))
                 .thenReturn(new PageImpl<>(List.of(bid)));
         when(announcementRepo.findAllById(any())).thenReturn(List.of(ann));
         when(bidGridItemRepo.findByBidIdIn(any())).thenReturn(List.of(item));
 
-        ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, 0, 20);
+        ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, null, null, null, null, null, 0, 20, null);
 
         // 3 kg × 5 000 + 2 × 2 500 = 20 000 F CFA
         assertThat(resp.getBody().getContent().get(0).netEur()).isEqualByComparingTo("20000");
@@ -111,11 +115,11 @@ class AdminBidsControllerTest {
     void list_leavesTheNetEmptyWhenNothingIsPriced() {
         BidEntity bid = new BidEntity();
         bid.setCurrency("EUR");
-        when(bidRepo.findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), any()))
+        when(bidRepo.searchAdmin(any(AdminBidQuery.class), any()))
                 .thenReturn(new PageImpl<>(List.of(bid)));
         when(announcementRepo.findAllById(any())).thenReturn(List.of());
 
-        ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, 0, 20);
+        ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, null, null, null, null, null, 0, 20, null);
 
         assertThat(resp.getBody().getContent().get(0).netEur()).isNull();
     }
@@ -170,7 +174,7 @@ class AdminBidsControllerTest {
         when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
         var links = new AdminBidDetailResponse.Links(null, null, null, "fs-1", null);
         when(assembler.extras(eq(bid), eq(ann), any())).thenReturn(new AdminBidDetailAssembler.Extras(
-                null, null, null, null, null, links, true, List.of("https://r2.test/p?sig=1"), null));
+                null, null, null, null, null, links, true, List.of("https://r2.test/p?sig=1"), null, null));
 
         AdminBidDetailResponse body = controller().getBid(bidId, null).getBody();
 

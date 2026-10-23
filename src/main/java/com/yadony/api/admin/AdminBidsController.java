@@ -6,6 +6,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.MatchingTextUtil;
 import com.yadony.api.matching.*;
+import com.yadony.api.payments.cash.PaymentMethod;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -16,6 +17,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -29,34 +31,44 @@ public class AdminBidsController {
     private final UserRepository userRepo;
     private final com.yadony.api.matching.BidGridItemRepository bidGridItemRepo;
     private final AdminBidDetailAssembler detailAssembler;
+    private final AdminBidPhotoAssembler photoAssembler;
+    private final Clock clock;
 
     public AdminBidsController(BidRepository bidRepo, AnnouncementRepository announcementRepo,
             UserRepository userRepo,
             com.yadony.api.matching.BidGridItemRepository bidGridItemRepo,
-            AdminBidDetailAssembler detailAssembler) {
+            AdminBidDetailAssembler detailAssembler, AdminBidPhotoAssembler photoAssembler, Clock clock) {
         this.bidRepo = bidRepo;
         this.announcementRepo = announcementRepo;
         this.userRepo = userRepo;
         this.bidGridItemRepo = bidGridItemRepo;
         this.detailAssembler = detailAssembler;
+        this.photoAssembler = photoAssembler;
+        this.clock = clock;
     }
 
     @GetMapping("/admin/bids")
     public ResponseEntity<Page<AdminBidListItemResponse>> listBids(
+            @RequestParam(required = false) AdminBidView view,
             @RequestParam(required = false) BidStatus status,
             @RequestParam(required = false) UUID announcementId,
             @RequestParam(required = false) String query,
+            @RequestParam(required = false) AdminBidScope scope,
+            @RequestParam(required = false) PaymentMethod paymentMethod,
+            @RequestParam(required = false) String content,
+            @RequestParam(required = false) AdminBidAlert alert,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dateFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dateTo,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "20") int size,
+            Authentication authentication) {
 
-        Page<BidEntity> bidsPage = bidRepo.findAdminFiltered(
-                status != null ? status.name() : null,
-                announcementId != null ? announcementId.toString() : null,
-                query,
-                dateFrom,
-                dateTo,
+        // Le téléphone du destinataire n'est cherchable qu'avec USER_VIEW (jamais affiché en clair).
+        boolean withRecipientPhone = AdminBidDetailAssembler.Access.of(authentication).users();
+        LocalDateTime now = LocalDateTime.now(clock);
+        Page<BidEntity> bidsPage = bidRepo.searchAdmin(
+                AdminBidQuery.of(view, status, announcementId, query, scope, withRecipientPhone,
+                        paymentMethod, content, alert, dateFrom, dateTo, now),
                 PageRequest.of(page, size));
 
         // Batch load announcements to avoid N+1
@@ -79,10 +91,82 @@ public class AdminBidsController {
 
         Map<UUID, java.math.BigDecimal> gridNetByBid = gridNetByBid(
                 bidsPage.stream().map(BidEntity::getId).filter(java.util.Objects::nonNull).toList());
+        // Alerte de la page : calculée en SQL (une seule règle), jamais recalculée ici.
+        Map<UUID, String> alerts = new HashMap<>();
+        bidRepo.alertRanks(bidsPage.stream().map(BidEntity::getId).filter(Objects::nonNull).toList(),
+                now, AdminBidQuery.lateBefore(now))
+                .forEach(r -> AdminBidAlert.ofRank(r.getRank()).ifPresent(a -> alerts.put(r.getBidId(), a.name())));
         Page<AdminBidListItemResponse> result = bidsPage.map(b ->
                 toBidListItem(b, annMap.get(b.getAnnouncementId()), userNames,
-                        b.getId() != null ? gridNetByBid.get(b.getId()) : null));
+                        b.getId() != null ? gridNetByBid.get(b.getId()) : null,
+                        b.getId() != null ? alerts.get(b.getId()) : null));
         return ResponseEntity.ok(result);
+    }
+
+    /** Nombres par vue : mêmes recherche et filtres que la liste, hors vue, statut, alerte et pagination. */
+    @GetMapping("/admin/bids/counts")
+    public ResponseEntity<AdminBidCountsResponse> countBids(
+            @RequestParam(required = false) UUID announcementId,
+            @RequestParam(required = false) String query,
+            @RequestParam(required = false) AdminBidScope scope,
+            @RequestParam(required = false) PaymentMethod paymentMethod,
+            @RequestParam(required = false) String content,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dateFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dateTo,
+            Authentication authentication) {
+        boolean withRecipientPhone = AdminBidDetailAssembler.Access.of(authentication).users();
+        BidRepository.AdminCountsRow row = bidRepo.countAdmin(
+                AdminBidQuery.of(null, null, announcementId, query, scope, withRecipientPhone,
+                        paymentMethod, content, null, dateFrom, dateTo, LocalDateTime.now(clock)));
+        return ResponseEntity.ok(AdminBidCountsResponse.of(row));
+    }
+
+    /**
+     * Suggestions de la barre de recherche : cinq propositions au plus par groupe (expéditeurs,
+     * voyageurs, destinataires, trajets, colis), mêmes colonnes repliées que la liste. Sous deux
+     * caractères : groupes vides. Aucun téléphone dans la réponse.
+     */
+    @GetMapping("/admin/bids/suggest")
+    public ResponseEntity<AdminBidSuggestResponse> suggest(@RequestParam(required = false) String q) {
+        if (q == null || q.strip().length() < MIN_SUGGEST_CHARS) {
+            return ResponseEntity.ok(AdminBidSuggestResponse.empty());
+        }
+        List<String> t = AdminBidQuery.tokensOf(q);
+        String t1 = at(t, 0), t2 = at(t, 1), t3 = at(t, 2), t4 = at(t, 3);
+
+        List<BidRepository.PersonCountRow> senders = bidRepo.suggestSenders(t1, t2, t3, t4);
+        List<BidRepository.PersonCountRow> travelers = bidRepo.suggestTravelers(t1, t2, t3, t4);
+        Set<UUID> ids = new HashSet<>();
+        senders.forEach(r -> ids.add(r.getId()));
+        travelers.forEach(r -> ids.add(r.getId()));
+        Map<UUID, String> names = loadUserNames(ids);
+
+        return ResponseEntity.ok(new AdminBidSuggestResponse(
+                senders.stream().map(r -> person(r, names)).toList(),
+                travelers.stream().map(r -> person(r, names)).toList(),
+                bidRepo.suggestRecipients(t1, t2, t3, t4).stream()
+                        .map(r -> new AdminBidSuggestResponse.Recipient(r.getName(), n(r.getTotal()))).toList(),
+                bidRepo.suggestTrips(t1, t2, t3, t4).stream()
+                        .map(r -> new AdminBidSuggestResponse.Trip(
+                                MatchingTextUtil.corridorLabel(r.getDepartureCity(), r.getArrivalCity()),
+                                r.getDepartureCity(), r.getArrivalCity(), n(r.getTotal()))).toList(),
+                bidRepo.suggestParcels(t1, t2, t3, t4).stream()
+                        .map(r -> new AdminBidSuggestResponse.Parcel(
+                                r.getBidId(), r.getTrackingNumber(), r.getStatus(), r.getContent())).toList()));
+    }
+
+    private static final int MIN_SUGGEST_CHARS = 2;
+
+    private static String at(List<String> tokens, int i) {
+        return i < tokens.size() ? tokens.get(i) : null;
+    }
+
+    private static long n(Long value) {
+        return value == null ? 0 : value;
+    }
+
+    private static AdminBidSuggestResponse.Person person(BidRepository.PersonCountRow r, Map<UUID, String> names) {
+        return new AdminBidSuggestResponse.Person(r.getId(), names.get(r.getId()), n(r.getTotal()));
     }
 
     @GetMapping("/admin/bids/{id}")
@@ -99,7 +183,12 @@ public class AdminBidsController {
         if (ann != null && ann.getTravelerId() != null) userIds.add(ann.getTravelerId());
         Map<UUID, String> userNames = loadUserNames(userIds);
 
-        return ResponseEntity.ok(toBidDetail(bid, ann, userNames, AdminBidDetailAssembler.Access.of(authentication)));
+        // Alerte : même règle SQL que la liste, pour ce seul colis.
+        LocalDateTime now = LocalDateTime.now(clock);
+        String alert = bidRepo.alertRanks(List.of(id), now, AdminBidQuery.lateBefore(now)).stream()
+                .findFirst().flatMap(r -> AdminBidAlert.ofRank(r.getRank())).map(Enum::name).orElse(null);
+
+        return ResponseEntity.ok(toBidDetail(bid, ann, userNames, AdminBidDetailAssembler.Access.of(authentication), alert));
     }
 
     @GetMapping("/admin/bids/{id}/timeline")
@@ -114,6 +203,16 @@ public class AdminBidsController {
                 AdminBidDetailAssembler.Access.of(authentication));
 
         return ResponseEntity.ok(new AdminBidTimelineResponse(id, entries));
+    }
+
+    /** Photos du colis par étape, URL signées à la demande ; images de conversation sous conditions. */
+    @GetMapping("/admin/bids/{id}/photos")
+    public ResponseEntity<AdminBidPhotosResponse> getPhotos(@PathVariable UUID id, Authentication authentication) {
+        BidEntity bid = bidRepo.findById(id)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Colis introuvable"));
+        return ResponseEntity.ok(new AdminBidPhotosResponse(id,
+                photoAssembler.photos(bid, AdminBidDetailAssembler.Access.of(authentication))));
     }
 
     @GetMapping("/admin/announcements")
@@ -171,7 +270,7 @@ public class AdminBidsController {
     }
 
     private AdminBidListItemResponse toBidListItem(BidEntity b, AnnouncementEntity ann,
-            Map<UUID, String> userNames, java.math.BigDecimal gridNet) {
+            Map<UUID, String> userNames, java.math.BigDecimal gridNet, String alert) {
         String senderName = b.getSenderId() != null ? userNames.get(b.getSenderId()) : null;
         String travelerName = ann != null && ann.getTravelerId() != null
                 ? userNames.get(ann.getTravelerId()) : null;
@@ -184,14 +283,16 @@ public class AdminBidsController {
                 b.getId(), b.getStatus().name(), b.getAnnouncementId(),
                 senderName, travelerName, corridor,
                 b.getWeightKg(), AdminBidAmounts.netOf(b, ann, gridNet),
-                paymentMethod, b.getCreatedAt(), commissionStatus, currency, b.getTrackingNumber());
+                paymentMethod, b.getCreatedAt(), commissionStatus, currency, b.getTrackingNumber(),
+                b.getSenderId(), ann != null ? ann.getTravelerId() : null, b.getRecipientName(),
+                ann != null ? ann.getDepartureDate() : null, b.getUpdatedAt(), alert, b.getContentCategory());
     }
 
     private AdminBidDetailResponse toBidDetail(BidEntity b, AnnouncementEntity ann,
-            Map<UUID, String> userNames, AdminBidDetailAssembler.Access access) {
+            Map<UUID, String> userNames, AdminBidDetailAssembler.Access access, String alert) {
         java.math.BigDecimal gridNet = b.getId() != null
                 ? gridNetByBid(List.of(b.getId())).get(b.getId()) : null;
-        AdminBidListItemResponse item = toBidListItem(b, ann, userNames, gridNet);
+        AdminBidListItemResponse item = toBidListItem(b, ann, userNames, gridNet, null);
         AdminBidDetailAssembler.Extras x = detailAssembler.extras(b, ann, access);
         return new AdminBidDetailResponse(
                 item.id(), item.status(), item.announcementId(),
@@ -201,7 +302,7 @@ public class AdminBidsController {
                 b.getTrackingNumber(), b.getCommissionRate(), b.getRefusalReason(),
                 item.currency(),
                 b.getDescription(), x.trip(), x.sender(), x.traveler(), x.recipient(), x.money(), x.links(),
-                x.confirmationCodePresent(), x.photoUrls(), x.milestones());
+                x.confirmationCodePresent(), x.photoUrls(), x.milestones(), x.incidents(), alert);
     }
 
     private AdminAnnouncementListItemResponse toAnnouncementListItem(AnnouncementEntity a,

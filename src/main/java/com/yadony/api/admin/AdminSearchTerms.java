@@ -1,5 +1,7 @@
 package com.yadony.api.admin;
 
+import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
@@ -36,5 +38,66 @@ public final class AdminSearchTerms {
         }
         String needle = query.toLowerCase(Locale.ROOT).replace("%", "").replace("_", "").strip();
         return needle.isEmpty() ? null : "%" + needle + "%";
+    }
+
+    /**
+     * Accents français repliés ; même table que le {@code TRANSLATE} SQL (lettre pour lettre). Les
+     * majuscules accentuées y figurent aussi : le SQL ne dépend ainsi pas de la locale de la base
+     * (lc_ctype) pour le {@code LOWER} des majuscules accentuées.
+     */
+    public static final String ACCENT_FROM = "àâäáãåçéèêëíìîïñóòôöõúùûüýÿœ" + "ÀÂÄÁÃÅÇÉÈÊËÍÌÎÏÑÓÒÔÖÕÚÙÛÜÝŸŒ";
+    public static final String ACCENT_TO = "aaaaaaceeeeiiiinooooouuuuyyo" + "aaaaaaceeeeiiiinooooouuuuyyo";
+
+    /** Minuscules, accents repliés, apostrophes (droite et typographique) retirées, espaces réduits ; null reste null. */
+    public static String fold(String input) {
+        if (input == null) {
+            return null;
+        }
+        StringBuilder folded = new StringBuilder(input.length());
+        for (char c : input.toLowerCase(Locale.ROOT).toCharArray()) {
+            if (c == '\'' || c == '\u2019') {
+                continue; // « N'Diaye » se trouve par « ndiaye » ; même retrait en SQL (REPLACE imbriqués)
+            }
+            int index = ACCENT_FROM.indexOf(c);
+            folded.append(index >= 0 ? ACCENT_TO.charAt(index) : c);
+        }
+        return folded.toString().replaceAll("\\s+", " ").strip();
+    }
+
+    /** Jetons repliés de la saisie, sans {@code %}, {@code _} ni barre oblique inverse (échappement de LIKE), limités à {@code max}. */
+    public static List<String> tokens(String query, int max) {
+        String folded = fold(query);
+        if (folded == null) {
+            return List.of();
+        }
+        return Arrays.stream(folded.replace("%", "").replace("_", "").replace("\\", "").split(" "))
+                .filter(token -> !token.isEmpty())
+                .limit(max)
+                .toList();
+    }
+
+    /** Nombre minimal de chiffres d'une recherche par téléphone : en dessous, la saisie ne cible pas un numéro. */
+    public static final int MIN_PHONE_DIGITS = 8;
+
+    /**
+     * Chiffres d'une saisie qui est un numéro de téléphone, sans zéros de tête, ou null. La saisie,
+     * une fois retirés espaces, {@code +}, {@code -}, {@code .}, {@code (} et {@code )}, ne doit
+     * contenir que des chiffres, au moins {@value #MIN_PHONE_DIGITS} une fois les zéros de tête
+     * retirés (« 06 12 34 56 78 » trouve donc « +33612345678 »). Le téléphone stocké doit
+     * <em>se terminer</em> par ce suffixe, et la saisie doit couvrir tout le numéro à l'indicatif
+     * pays près (au plus {@code AdminBidSql.PHONE_MAX_UNTYPED_DIGITS} chiffres de tête non saisis,
+     * vérifié en SQL) : jamais de recherche par milieu ni par préfixe, qui
+     * permettrait de reconstituer chiffre par chiffre un numéro affiché masqué.
+     */
+    public static String phoneSuffix(String query) {
+        if (query == null) {
+            return null;
+        }
+        String digits = query.replaceAll("[\\s+\\-.()]", "");
+        if (digits.isEmpty() || !digits.chars().allMatch(c -> c >= '0' && c <= '9')) {
+            return null;
+        }
+        String suffix = digits.replaceFirst("^0+", "");
+        return suffix.length() < MIN_PHONE_DIGITS ? null : suffix;
     }
 }

@@ -126,7 +126,7 @@ class AdminBidsControllerIT {
                 Instant.parse("2026-10-06T19:00:00Z"), null, null, false);
         when(assembler.extras(any(), any(), any())).thenReturn(new AdminBidDetailAssembler.Extras(
                 trip, null, traveler, new AdminBidDetailResponse.Recipient("Fatou", "•••• 1122"), money,
-                new AdminBidDetailResponse.Links(null, null, null, "fs-42", null), true, List.of(), null));
+                new AdminBidDetailResponse.Links(null, null, null, "fs-42", null), true, List.of(), null, null));
 
         mockMvc.perform(get("/admin/bids/{id}", BID).with(authentication(as(AdminRole.SUPPORT))))
                 .andExpect(status().isOk())
@@ -203,7 +203,7 @@ class AdminBidsControllerIT {
     void detail_bidViewSeul_droitsFinsTransmisVides() throws Exception {
         when(bidRepo.findById(BID)).thenReturn(Optional.of(bid()));
         when(assembler.extras(any(), any(), any())).thenReturn(new AdminBidDetailAssembler.Extras(
-                null, null, null, null, null, null, false, List.of(), null));
+                null, null, null, null, null, null, false, List.of(), null, null));
         when(assembler.timeline(any(), any())).thenReturn(List.of());
         var auth = new UsernamePasswordAuthenticationToken(
                 new AdminPrincipal(ADMIN_ID, "a@yadony.test", AdminRole.SUPPORT, false, "uid"), null,
@@ -224,7 +224,7 @@ class AdminBidsControllerIT {
     void detail_support_droitsFinsDuRole() throws Exception {
         when(bidRepo.findById(BID)).thenReturn(Optional.of(bid()));
         when(assembler.extras(any(), any(), any())).thenReturn(new AdminBidDetailAssembler.Extras(
-                null, null, null, null, null, null, false, List.of(), null));
+                null, null, null, null, null, null, false, List.of(), null, null));
 
         mockMvc.perform(get("/admin/bids/{id}", BID).with(authentication(as(AdminRole.SUPPORT))))
                 .andExpect(status().isOk());
@@ -232,5 +232,42 @@ class AdminBidsControllerIT {
         // SUPPORT : paiement, utilisateurs, litiges, modération, mais pas AUDIT_VIEW (PAYMENT_VIEW suffit).
         org.mockito.Mockito.verify(assembler).extras(any(), any(),
                 org.mockito.ArgumentMatchers.eq(new AdminBidDetailAssembler.Access(true, true, true, true, true)));
+    }
+
+    @Test
+    void detail_incidents_jsonShape() throws Exception {
+        when(bidRepo.findById(BID)).thenReturn(Optional.of(bid()));
+        UUID disputeId = UUID.randomUUID();
+        var incidents = new AdminBidDetailResponse.Incidents(
+                List.of(new AdminBidDetailResponse.Dispute(disputeId, "DAMAGED", "RESOLVED",
+                        LocalDateTime.of(2026, 10, 6, 18, 0), LocalDateTime.of(2026, 10, 7, 9, 0), "REFUND")),
+                List.of(new AdminBidDetailResponse.Cancellation(UUID.randomUUID(), "HANDOVER", "CONFIRMED", "Imprévu",
+                        LocalDateTime.of(2026, 10, 8, 9, 0))));
+        when(assembler.extras(any(), any(), any())).thenReturn(new AdminBidDetailAssembler.Extras(
+                null, null, null, null, null, null, false, List.of(), null, incidents));
+
+        mockMvc.perform(get("/admin/bids/{id}", BID).with(authentication(as(AdminRole.SUPPORT))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.incidents.disputes[0].id").value(disputeId.toString()))
+                .andExpect(jsonPath("$.incidents.disputes[0].type").value("DAMAGED"))
+                .andExpect(jsonPath("$.incidents.disputes[0].status").value("RESOLVED"))
+                .andExpect(jsonPath("$.incidents.disputes[0].resolutionType").value("REFUND"))
+                .andExpect(jsonPath("$.incidents.disputes[0].createdAt").exists())
+                .andExpect(jsonPath("$.incidents.disputes[0].resolvedAt").exists())
+                .andExpect(jsonPath("$.incidents.cancellations[0].scope").value("HANDOVER"))
+                .andExpect(jsonPath("$.incidents.cancellations[0].noShowStatus").value("CONFIRMED"))
+                .andExpect(jsonPath("$.incidents.cancellations[0].reason").value("Imprévu"))
+                .andExpect(jsonPath("$.alert").doesNotExist());
+    }
+
+    @Test
+    void detail_withoutDisputeView_noIncidentsKey() throws Exception {
+        when(bidRepo.findById(BID)).thenReturn(Optional.of(bid()));
+        when(assembler.extras(any(), any(), any())).thenReturn(new AdminBidDetailAssembler.Extras(
+                null, null, null, null, null, null, false, List.of(), null, null));
+
+        mockMvc.perform(get("/admin/bids/{id}", BID).with(authentication(as(AdminRole.SUPPORT))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.incidents").doesNotExist());
     }
 }
