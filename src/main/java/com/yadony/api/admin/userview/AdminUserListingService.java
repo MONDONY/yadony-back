@@ -9,6 +9,13 @@ import com.yadony.api.admin.userview.dto.AdminUserCancellationRow;
 import com.yadony.api.admin.userview.dto.AdminUserDisputeRow;
 import com.yadony.api.admin.userview.dto.AdminUserRatingRow;
 import com.yadony.api.admin.userview.dto.AdminUserReportRow;
+import com.yadony.api.admin.userview.dto.AdminUserAuditRow;
+import com.yadony.api.admin.account.AdminUserEntity;
+import com.yadony.api.admin.account.AdminUserRepository;
+import com.yadony.api.auth.UserEntity;
+import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.AuditLogEntity;
+import com.yadony.api.common.AuditLogRepository;
 import com.yadony.api.admin.userview.dto.AdminUserRequestRow;
 import com.yadony.api.requests.entity.NegotiationThreadEntity;
 import com.yadony.api.requests.entity.PackageRequestEntity;
@@ -44,6 +51,9 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.Objects;
+import java.util.Set;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -58,6 +68,8 @@ public class AdminUserListingService {
 
     public static final int DEFAULT_PAGE_SIZE = 20;
     public static final int MAX_PAGE_SIZE = 100;
+    /** Type d'entité sous lequel les gestes sur un compte sont tracés (auditService.log("USER", ...)). */
+    static final String AUDIT_ENTITY_TYPE = "USER";
 
     private final BidRepository bidRepository;
     private final AnnouncementRepository announcementRepository;
@@ -68,6 +80,9 @@ public class AdminUserListingService {
     private final CancellationRepository cancellationRepository;
     private final ReportRepository reportRepository;
     private final RatingRepository ratingRepository;
+    private final AuditLogRepository auditLogRepository;
+    private final AdminUserRepository adminUserRepository;
+    private final UserRepository userRepository;
     private final PackageRequestRepository packageRequestRepository;
     private final NegotiationThreadRepository negotiationThreadRepository;
 
@@ -80,8 +95,14 @@ public class AdminUserListingService {
                                    CancellationRepository cancellationRepository,
                                    ReportRepository reportRepository,
                                    RatingRepository ratingRepository,
+                                   AuditLogRepository auditLogRepository,
+                                   AdminUserRepository adminUserRepository,
+                                   UserRepository userRepository,
                                    PackageRequestRepository packageRequestRepository,
                                    NegotiationThreadRepository negotiationThreadRepository) {
+        this.auditLogRepository = auditLogRepository;
+        this.adminUserRepository = adminUserRepository;
+        this.userRepository = userRepository;
         this.packageRequestRepository = packageRequestRepository;
         this.negotiationThreadRepository = negotiationThreadRepository;
         this.reportRepository = reportRepository;
@@ -179,6 +200,33 @@ public class AdminUserListingService {
                 r.getDesiredDate() == null ? null : r.getDesiredDate().atStartOfDay().toInstant(ZoneOffset.UTC),
                 toInstant(r.getCreatedAt()),
                 openCounts.getOrDefault(r.getId(), 0L).intValue()));
+    }
+
+    /**
+     * Gestes tracés sur l'entité {@value #AUDIT_ENTITY_TYPE} de l'utilisateur (suspension, bannissement,
+     * commission, suppression...), du plus récent au plus ancien. Noms d'acteur résolus en deux requêtes
+     * pour toute la page : les administrateurs vivent dans {@code admin_users} (nom = e-mail), l'utilisateur
+     * lui-même (action automatique) dans {@code users}. Adresse IP jamais exposée.
+     */
+    public Page<AdminUserAuditRow> audit(UUID userId, int page, int size) {
+        Page<AuditLogEntity> found = auditLogRepository
+                .findByEntityTypeAndEntityIdOrderByCreatedAtDescIdDesc(AUDIT_ENTITY_TYPE, userId, pageable(page, size));
+        Set<UUID> actorIds = found.getContent().stream().map(AuditLogEntity::getActorId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<UUID, String> names = new HashMap<>();
+        if (!actorIds.isEmpty()) {
+            for (UserEntity u : userRepository.findAllById(actorIds)) names.put(u.getId(), MatchingTextUtil.buildName(u));
+            // Un administrateur l'emporte : son identifiant ne peut pas désigner un utilisateur, mais on tranche.
+            for (AdminUserEntity a : adminUserRepository.findAllById(actorIds)) names.put(a.getId(), a.getEmail());
+        }
+        return found.map(e -> new AdminUserAuditRow(e.getId(), e.getAction(),
+                e.getActorId() == null ? null : names.get(e.getActorId()), e.getActorId(),
+                reasonOf(e.getPayload()), toInstant(e.getCreatedAt())));
+    }
+
+    private static String reasonOf(Map<String, Object> payload) {
+        if (payload == null || !(payload.get("reason") instanceof String reason) || reason.isBlank()) return null;
+        return reason;
     }
 
     static String disputeRoleOf(DisputeEntity d, UUID userId) {

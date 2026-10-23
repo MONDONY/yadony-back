@@ -11,6 +11,7 @@ import com.yadony.api.admin.userview.dto.AdminUserDisputeRow;
 import com.yadony.api.admin.userview.dto.AdminUserPaymentRow;
 import com.yadony.api.admin.userview.dto.AdminUserRatingRow;
 import com.yadony.api.admin.userview.dto.AdminUserReportRow;
+import com.yadony.api.admin.userview.dto.AdminUserAuditRow;
 import com.yadony.api.admin.userview.dto.AdminUserRequestRow;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
@@ -120,6 +121,20 @@ public class AdminUserViewController {
                                               @RequestParam(defaultValue = "20") int size) {
         requireUser(userId);
         return listingService.requests(userId, page, size);
+    }
+
+    /**
+     * Journal des gestes tracés sur le compte. Limite assumée : seuls les gestes enregistrés sur l'entité
+     * USER y figurent (suspension, bannissement, commission, suppression...) ; les gestes KYC, portefeuille,
+     * avis et signalements ont leurs propres historiques dans leurs onglets.
+     */
+    @GetMapping("/audit")
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('AUDIT_VIEW')")
+    public Page<AdminUserAuditRow> audit(@PathVariable UUID userId,
+                                         @RequestParam(defaultValue = "0") int page,
+                                         @RequestParam(defaultValue = "20") int size) {
+        requireUser(userId);
+        return listingService.audit(userId, page, size);
     }
 
     @GetMapping("/overview")
