@@ -58,14 +58,47 @@ public final class AdminBidSql {
             + "      AND COALESCE(a.arrival_date, a.departure_date) < CAST(:lateBefore AS DATE) THEN 4"
             + " ELSE 0 END)";
 
+    /** Prédicat de chaque vue (hors {@code ALL}) : seule définition, la liste et les nombres la partagent. */
+    public static final String TODO_VIEW = "(" + ALERT_RANK + " > 0)";
+    public static final String ACTIVE_VIEW = "(b.status IN " + ACTIVE_STATUSES + ")";
+    public static final String RECENT_VIEW = "(b.status = 'COMPLETED'"
+            + " AND b.delivered_at >= " + NOW + " - INTERVAL '" + RECENT_DELIVERY_HOURS + "' HOUR)";
+    public static final String COMPLETED_VIEW = "(b.status = 'COMPLETED')";
+    public static final String CLOSED_VIEW = "(b.status IN " + CLOSED_STATUSES + ")";
+
     /** Vue rapide {@code :view} (nom de {@link AdminBidView}). */
     public static final String VIEW_PREDICATE = "(:view = 'ALL'"
-            + " OR (:view = 'TODO' AND " + ALERT_RANK + " > 0)"
-            + " OR (:view = 'ACTIVE' AND b.status IN " + ACTIVE_STATUSES + ")"
-            + " OR (:view = 'RECENT' AND b.status = 'COMPLETED'"
-            + "     AND b.delivered_at >= " + NOW + " - INTERVAL '" + RECENT_DELIVERY_HOURS + "' HOUR)"
-            + " OR (:view = 'COMPLETED' AND b.status = 'COMPLETED')"
-            + " OR (:view = 'CLOSED' AND b.status IN " + CLOSED_STATUSES + "))";
+            + " OR (:view = 'TODO' AND " + TODO_VIEW + ")"
+            + " OR (:view = 'ACTIVE' AND " + ACTIVE_VIEW + ")"
+            + " OR (:view = 'RECENT' AND " + RECENT_VIEW + ")"
+            + " OR (:view = 'COMPLETED' AND " + COMPLETED_VIEW + ")"
+            + " OR (:view = 'CLOSED' AND " + CLOSED_VIEW + "))";
+
+    /**
+     * Nombres par vue et par alerte en un aller-retour (agrégation conditionnelle). Les colonnes
+     * suivent {@code BidRepository.AdminCountsRow}. {@code COALESCE} : sans ligne, {@code SUM} vaut NULL.
+     * Une alerte par colis (la plus urgente) : les quatre alertes somment à {@code todo}.
+     */
+    public static final String COUNTS_SELECT = "SELECT "
+            + "COALESCE(SUM(CASE WHEN " + TODO_VIEW + " THEN 1 ELSE 0 END), 0)"
+            + " AS \"todo\", "
+            + "COALESCE(SUM(CASE WHEN " + ACTIVE_VIEW + " THEN 1 ELSE 0 END), 0)"
+            + " AS \"active\", "
+            + "COALESCE(SUM(CASE WHEN " + RECENT_VIEW + " THEN 1 ELSE 0 END), 0)"
+            + " AS \"recent\", "
+            + "COALESCE(SUM(CASE WHEN " + COMPLETED_VIEW + " THEN 1 ELSE 0 END), 0)"
+            + " AS \"completed\", "
+            + "COALESCE(SUM(CASE WHEN " + CLOSED_VIEW + " THEN 1 ELSE 0 END), 0)"
+            + " AS \"closed\", "
+            + "COUNT(*) AS \"all\", "
+            + "COALESCE(SUM(CASE WHEN " + ALERT_RANK + " = 1" + " THEN 1 ELSE 0 END), 0)"
+            + " AS \"disputeOpen\", "
+            + "COALESCE(SUM(CASE WHEN " + ALERT_RANK + " = 2" + " THEN 1 ELSE 0 END), 0)"
+            + " AS \"noShow\", "
+            + "COALESCE(SUM(CASE WHEN " + ALERT_RANK + " = 3" + " THEN 1 ELSE 0 END), 0)"
+            + " AS \"paymentPending\", "
+            + "COALESCE(SUM(CASE WHEN " + ALERT_RANK + " = 4" + " THEN 1 ELSE 0 END), 0)"
+            + " AS \"late\" ";
 
     /** Repli d'une colonne : minuscules puis accents, même table que {@link AdminSearchTerms#fold}. */
     private static final String FOLD_OPEN = "TRANSLATE(LOWER(";

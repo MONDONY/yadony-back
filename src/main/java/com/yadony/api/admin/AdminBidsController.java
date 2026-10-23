@@ -101,6 +101,24 @@ public class AdminBidsController {
         return ResponseEntity.ok(result);
     }
 
+    /** Nombres par vue : mêmes recherche et filtres que la liste, hors vue, statut, alerte et pagination. */
+    @GetMapping("/admin/bids/counts")
+    public ResponseEntity<AdminBidCountsResponse> countBids(
+            @RequestParam(required = false) UUID announcementId,
+            @RequestParam(required = false) String query,
+            @RequestParam(required = false) AdminBidScope scope,
+            @RequestParam(required = false) PaymentMethod paymentMethod,
+            @RequestParam(required = false) String content,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dateFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dateTo,
+            Authentication authentication) {
+        boolean withRecipientPhone = AdminBidDetailAssembler.Access.of(authentication).users();
+        BidRepository.AdminCountsRow row = bidRepo.countAdmin(
+                AdminBidQuery.of(null, null, announcementId, query, scope, withRecipientPhone,
+                        paymentMethod, content, null, dateFrom, dateTo, LocalDateTime.now(clock)));
+        return ResponseEntity.ok(AdminBidCountsResponse.of(row));
+    }
+
     @GetMapping("/admin/bids/{id}")
     public ResponseEntity<AdminBidDetailResponse> getBid(@PathVariable UUID id, Authentication authentication) {
         BidEntity bid = bidRepo.findById(id)

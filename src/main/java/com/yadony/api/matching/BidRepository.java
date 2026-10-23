@@ -852,6 +852,64 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     }
 
     /**
+     * Nombres par vue et par alerte, avec la recherche et les filtres de {@link #searchAdmin} (sauf
+     * vue, statut et alerte, qui ne s'appliquent pas) : une seule requête, mêmes fragments SQL.
+     */
+    @Query(value = AdminBidSql.COUNTS_SELECT + "FROM" + AdminBidSql.FROM_JOIN
+            + " WHERE " + AdminBidSql.FILTER_PREDICATE
+            + " AND " + AdminBidSql.SEARCH_PREDICATE,
+        nativeQuery = true)
+    AdminCountsRow countAdmin(
+            @Param("status") String status,
+            @Param("announcementId") String announcementId,
+            @Param("t1") String t1,
+            @Param("t2") String t2,
+            @Param("t3") String t3,
+            @Param("t4") String t4,
+            @Param("idTerm") String idTerm,
+            @Param("scope") String scope,
+            @Param("phones") boolean phones,
+            @Param("paymentMethod") String paymentMethod,
+            @Param("content") String content,
+            @Param("alertRank") Integer alertRank,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to,
+            @Param("now") LocalDateTime now,
+            @Param("lateBefore") LocalDate lateBefore);
+
+    /** {@link #countAdmin} avec les paramètres normalisés par {@link AdminBidQuery#of} ; vue, statut et alerte ignorés. */
+    default AdminCountsRow countAdmin(AdminBidQuery query) {
+        return countAdmin(null, query.announcementId(),
+                query.token(0), query.token(1), query.token(2), query.token(3),
+                query.idTerm() != null ? query.idTerm().toString() : null,
+                query.scope().name(), query.withRecipientPhone(), query.paymentMethod(), query.content(),
+                null, query.from(), query.to(), query.now(), query.lateBefore());
+    }
+
+    /** Projection de {@link #countAdmin} : une ligne, jamais nulle (COALESCE). */
+    interface AdminCountsRow {
+        Long getTodo();
+
+        Long getActive();
+
+        Long getRecent();
+
+        Long getCompleted();
+
+        Long getClosed();
+
+        Long getAll();
+
+        Long getDisputeOpen();
+
+        Long getNoShow();
+
+        Long getPaymentPending();
+
+        Long getLate();
+    }
+
+    /**
      * Rang d'alerte ({@link AdminBidSql#ALERT_RANK}) des colis donnés. Seuls les colis en alerte ont
      * une ligne : un identifiant absent du résultat n'a aucune alerte (rang 0). Une liste vide ne
      * part pas en base ({@code IN ()} n'est pas du SQL valide).

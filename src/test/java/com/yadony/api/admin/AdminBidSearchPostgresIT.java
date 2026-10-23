@@ -206,5 +206,19 @@ class AdminBidSearchPostgresIT {
         assertThat(ids(query(AdminBidView.TODO, null, AdminBidScope.ALL, false)))
                 .containsSubsequence(noShow.getId(), unpaid.getId())
                 .doesNotContain(calm.getId());
+
+        // Nombres par vue (agrégation conditionnelle) sur PostgreSQL, restreints à ce trajet.
+        BidRepository.AdminCountsRow counts = bidRepository.countAdmin(AdminBidQuery.of(null, null, a.getId(), null,
+                AdminBidScope.ALL, true, null, null, null, null, null, NOW));
+        assertThat(counts.getAll()).isEqualTo(3);
+        assertThat(counts.getTodo()).isEqualTo(2);
+        assertThat(counts.getDisputeOpen()).isEqualTo(1);
+        assertThat(counts.getPaymentPending()).isEqualTo(1);
+        assertThat(counts.getClosed()).isEqualTo(1);
+        assertThat(counts.getActive()).isEqualTo(2);
+        BidRepository.AdminCountsRow none = bidRepository.countAdmin(AdminBidQuery.of(null, null, UUID.randomUUID(),
+                null, AdminBidScope.ALL, false, null, null, null, null, null, NOW));
+        assertThat(none.getAll()).isZero();
+        assertThat(none.getTodo()).isZero();
     }
 }
