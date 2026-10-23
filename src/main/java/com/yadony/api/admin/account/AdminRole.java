@@ -7,7 +7,7 @@ import java.util.Set;
  * Admin roles enum with permission mapping (Task 2).
  * - SUPER_ADMIN: all permissions
  * - ADMIN: all except ADMIN_MANAGE
- * - SUPPORT: limited read + action permissions (18 total)
+ * - SUPPORT: limited read + action permissions (15 total)
  */
 public enum AdminRole {
     SUPER_ADMIN,
@@ -27,12 +27,8 @@ public enum AdminRole {
             case SUPPORT -> EnumSet.of(
                     AdminPermission.METRICS_VIEW,
                     AdminPermission.USER_VIEW,
-                    AdminPermission.USER_SUSPEND,
-                    AdminPermission.USER_BAN,
+                    // Le support ne suspend, ne bannit ni ne coupe la messagerie.
                     AdminPermission.USER_KYC,
-                    // Lot C : le support peut deja bannir, geste bien plus severe — couper
-                    // la messagerie en est l'alternative proportionnee.
-                    AdminPermission.USER_MESSAGE_MUTE,
                     AdminPermission.PAYMENT_VIEW,
                     AdminPermission.BID_VIEW,
                     AdminPermission.DISPUTE_VIEW,

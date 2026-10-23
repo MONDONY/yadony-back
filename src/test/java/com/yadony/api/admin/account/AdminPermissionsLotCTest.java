@@ -42,9 +42,10 @@ class AdminPermissionsLotCTest {
     }
 
     @Test
-    void support_canMuteMessagingSinceItAlreadyBans() {
+    void support_cannotSuspendBanNorMuteMessaging() {
         Set<AdminPermission> perms = AdminPermissions.effective(AdminRole.SUPPORT, Map.of());
-        assertThat(perms).contains(AdminPermission.USER_BAN, AdminPermission.USER_MESSAGE_MUTE);
+        assertThat(perms).doesNotContain(AdminPermission.USER_SUSPEND,
+                AdminPermission.USER_BAN, AdminPermission.USER_MESSAGE_MUTE);
     }
 
     @Test

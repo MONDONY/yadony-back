@@ -50,21 +50,20 @@ class AdminPermissionsTest {
     }
 
     @Test
-    @DisplayName("AdminRole.SUPPORT.permissions() contains exactly 18 specific permissions")
-    // 16 depuis le Lot C : USER_MESSAGE_MUTE accordee au support sur decision du
-    // proprietaire du produit (il peut deja bannir, geste bien plus severe).
-    // 18 avec la messagerie support : SUPPORT_TICKET_VIEW + SUPPORT_TICKET_MANAGE.
-    void testSupportHasExactly18Permissions() {
+    @DisplayName("AdminRole.SUPPORT.permissions() contains exactly 15 specific permissions")
+    // 15 : le support ne suspend, ne bannit ni ne coupe la messagerie (decision du proprietaire).
+    void testSupportHasExactly15Permissions() {
         Set<AdminPermission> perms = AdminRole.SUPPORT.permissions();
 
-        assertEquals(18, perms.size(),
-                "SUPPORT should have exactly 18 permissions");
+        assertEquals(15, perms.size(),
+                "SUPPORT should have exactly 15 permissions");
 
         // Verify exact set
         assertTrue(perms.contains(AdminPermission.METRICS_VIEW));
         assertTrue(perms.contains(AdminPermission.USER_VIEW));
-        assertTrue(perms.contains(AdminPermission.USER_SUSPEND));
-        assertTrue(perms.contains(AdminPermission.USER_BAN));
+        assertFalse(perms.contains(AdminPermission.USER_SUSPEND));
+        assertFalse(perms.contains(AdminPermission.USER_BAN));
+        assertFalse(perms.contains(AdminPermission.USER_MESSAGE_MUTE));
         assertTrue(perms.contains(AdminPermission.USER_KYC));
         assertTrue(perms.contains(AdminPermission.PAYMENT_VIEW));
         assertTrue(perms.contains(AdminPermission.BID_VIEW));
@@ -78,7 +77,6 @@ class AdminPermissionsTest {
         assertTrue(perms.contains(AdminPermission.RATING_MODERATE));
         // Lot C : le support modere les avis mais ne les efface pas definitivement.
         assertFalse(perms.contains(AdminPermission.RATING_DELETE));
-        assertTrue(perms.contains(AdminPermission.USER_MESSAGE_MUTE));
         // Messagerie support : le role SUPPORT lit ET traite les tickets.
         assertTrue(perms.contains(AdminPermission.SUPPORT_TICKET_VIEW));
         assertTrue(perms.contains(AdminPermission.SUPPORT_TICKET_MANAGE));
