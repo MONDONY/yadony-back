@@ -41,6 +41,8 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -132,6 +134,7 @@ class BidAmendmentServiceIT {
     @Autowired JdbcTemplate jdbc;
     @Autowired ObjectMapper objectMapper;
     @Autowired ApplicationEvents events;
+    @Autowired CacheManager cacheManager;
 
     private UserEntity traveler;
     private UserEntity sender;
@@ -198,11 +201,20 @@ class BidAmendmentServiceIT {
     }
 
     @RepeatedTest(3)
-    @DisplayName("course aux derniers kilos : deux colis, une seule modification, availableKg à 0")
+    @DisplayName("course aux derniers kilos (trajet avec grille) : deux colis, une seule modification, availableKg à 0")
     void create_concurrentLastKilos_secondGets409() throws Exception {
-        // La grille garde le trajet « modifiable » même à 0 kg : le perdant passe l'éligibilité et
-        // bute vraiment sur la capacité, sous le verrou de l'annonce.
-        UUID annId = persistAnnouncement("3.00", true);
+        assertLastKilosRace(true);
+    }
+
+    @RepeatedTest(3)
+    @DisplayName("course aux derniers kilos (trajet sans grille) : le perdant reçoit aussi 409 capacité")
+    void create_concurrentLastKilos_noGrid_secondGets409Capacity() throws Exception {
+        // Sans grille, à 0 kg le trajet n'a « rien à ajouter » : la capacité doit pourtant primer.
+        assertLastKilosRace(false);
+    }
+
+    private void assertLastKilosRace(boolean withGrid) throws Exception {
+        UUID annId = persistAnnouncement("3.00", withGrid);
         UUID bidA = persistAcceptedBid(annId, sender.getId());
         UserEntity otherSender = persistUser();
         UUID bidB = persistAcceptedBid(annId, otherSender.getId());
@@ -218,8 +230,9 @@ class BidAmendmentServiceIT {
         b.join(30_000);
 
         assertThat(created).hasSize(1);
+        // Deux colis différents : l'index « une ouverte par colis » ne joue pas, seule la capacité départage.
         assertThat(errors).singleElement().isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
-            assertThat(e.getErrorCode()).isIn("amendment-capacity-unavailable", "amendment-already-open");
+            assertThat(e.getErrorCode()).isEqualTo("amendment-capacity-unavailable");
             assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
         });
         assertThat(availableKg(annId)).isEqualByComparingTo("0.00");
@@ -255,6 +268,94 @@ class BidAmendmentServiceIT {
                         e -> assertThat(e.getErrorCode()).isEqualTo("amendment-capacity-unavailable"));
         assertThat(availableKg(annId)).isEqualByComparingTo("2.00");
         assertThat(amendmentCount(bidId)).isZero();
+    }
+
+    @Test
+    @DisplayName("trajet sans grille à 0 kg : création et devis de kilos en 409 capacité, pas en 422")
+    void create_noGridAllKilosTaken_409CapacityNotNotEligible() {
+        UUID annId = persistAnnouncement("3.00", false);
+        UUID bidId = persistAcceptedBid(annId, sender.getId());
+        UserEntity otherSender = persistUser();
+        UUID otherBid = persistAcceptedBid(annId, otherSender.getId());
+        service.create(bidId, sender.getFirebaseUid(), kg("3"));
+
+        assertThatThrownBy(() -> service.create(otherBid, otherSender.getFirebaseUid(), kg("1")))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo("amendment-capacity-unavailable");
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                });
+        assertThatThrownBy(() -> service.quote(otherBid, otherSender.getFirebaseUid(),
+                new AmendmentQuoteRequest(new BigDecimal("1"), null)))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("amendment-capacity-unavailable"));
+        // Sans kilos demandés, il n'y a vraiment rien à ajouter.
+        assertThatThrownBy(() -> service.options(otherBid, otherSender.getFirebaseUid()))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("amendment-not-eligible"));
+        // La priorité de la capacité ne contourne pas les autres refus : le voyageur reste refusé.
+        assertThatThrownBy(() -> service.create(otherBid, traveler.getFirebaseUid(), kg("1")))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("amendment-not-eligible"));
+        assertThat(amendmentCount(otherBid)).isZero();
+    }
+
+    @Test
+    @DisplayName("cache de recherche vidé après commit quand les kilos libres changent, et seulement alors")
+    void capacityChange_evictsSearchCacheAfterCommit() {
+        Cache search = cacheManager.getCache("announcements-search");
+        assertThat(search).isNotNull();
+        UUID annId = persistAnnouncement("6.00", true);
+        UUID bidId = persistAcceptedBid(annId, sender.getId());
+
+        // Articles seuls : aucun kilo ne bouge, le cache reste.
+        search.put("page", "avant");
+        UUID itemsOnly = service.create(bidId, sender.getFirebaseUid(), new CreateAmendmentRequest(null,
+                List.of(new AmendmentLineRequest(gridItemId(annId), 1)), PaymentMethod.CASH)).amendment().id();
+        assertThat(search.get("page")).isNotNull();
+        service.cancel(bidId, itemsOnly, sender.getFirebaseUid());
+        assertThat(search.get("page")).as("rien n'était réservé, rien n'est rendu").isNotNull();
+
+        // Création refusée (capacité) : transaction annulée, le cache reste.
+        assertThatThrownBy(() -> service.create(bidId, sender.getFirebaseUid(), kg("7")))
+                .isInstanceOf(YadonyBusinessException.class);
+        assertThat(search.get("page")).isNotNull();
+
+        UUID id = service.create(bidId, sender.getFirebaseUid(), kg("3")).amendment().id();
+        assertThat(search.get("page")).as("réservation").isNull();
+
+        search.put("page", "avant");
+        service.decline(bidId, id, traveler.getFirebaseUid());
+        assertThat(search.get("page")).as("refus : kilos rendus").isNull();
+
+        UUID cancelled = service.create(bidId, sender.getFirebaseUid(), kg("1")).amendment().id();
+        search.put("page", "avant");
+        service.cancel(bidId, cancelled, sender.getFirebaseUid());
+        assertThat(search.get("page")).as("annulation : kilos rendus").isNull();
+
+        UUID expiring = service.create(bidId, sender.getFirebaseUid(), kg("1")).amendment().id();
+        lapse(expiring);
+        search.put("page", "avant");
+        assertThat(service.expire(expiring)).isTrue();
+        assertThat(search.get("page")).as("expiration : kilos rendus").isNull();
+    }
+
+    @Test
+    @DisplayName("dates servies en UTC avec leur décalage (OffsetDateTime), vue et options")
+    void views_datesCarryUtcOffset() throws Exception {
+        UUID annId = persistAnnouncement("6.00", false);
+        UUID bidId = persistAcceptedBid(annId, sender.getId());
+
+        AmendmentOptionsResponse options = service.options(bidId, sender.getFirebaseUid());
+        assertThat(options.expiresAt().getOffset()).isEqualTo(java.time.ZoneOffset.UTC);
+
+        BidAmendmentResponse view = service.create(bidId, sender.getFirebaseUid(), kg("1")).amendment();
+        assertThat(view.expiresAt().getOffset()).isEqualTo(java.time.ZoneOffset.UTC);
+        // Même instant que l'échéance des options, à quelques millisecondes près (calculées l'une après l'autre).
+        assertThat(java.time.Duration.between(options.expiresAt(), view.expiresAt()).abs())
+                .isLessThan(java.time.Duration.ofMinutes(1));
+        assertThat(view.paymentExpiresAt()).isNull();
+        String json = objectMapper.writeValueAsString(view);
+        assertThat(objectMapper.readTree(json).get("expiresAt").asText()).matches(".*(Z|\\+00:00)$");
     }
 
     @Test
