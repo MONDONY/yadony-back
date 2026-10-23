@@ -7,6 +7,8 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.auth.UserStatus;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -18,6 +20,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -55,7 +58,7 @@ class AdminUserViewControllerIT {
     }
 
     private static UsernamePasswordAuthenticationToken token(AdminRole role,
-                                                             java.util.List<SimpleGrantedAuthority> all) {
+                                                             List<SimpleGrantedAuthority> all) {
         var principal = new AdminPrincipal(ADMIN_ID, "admin@yadony.com", role, false, "uid");
         return new UsernamePasswordAuthenticationToken(principal, null, all);
     }
@@ -161,5 +164,35 @@ class AdminUserViewControllerIT {
                 .andExpect(jsonPath("$.kpis.reportsSent").doesNotExist())
                 .andExpect(jsonPath("$.kpis.reportsPending").doesNotExist())
                 .andExpect(jsonPath("$.kpis.ratingCount").value(0));
+    }
+
+    private enum Domain {
+        BID_VIEW("parcelsInProgress", "activeTrips"),
+        PAYMENT_VIEW("heldByCurrency"),
+        DISPUTE_VIEW("openDisputes", "totalDisputes"),
+        REPORT_VIEW("reportsReceived", "reportsSent", "reportsPending");
+
+        final List<String> fields;
+
+        Domain(String... fields) {
+            this.fields = List.of(fields);
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(Domain.class)
+    void overview_singleDomainPermission_unlocksOnlyItsOwnFields(Domain domain) throws Exception {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(newUser()));
+
+        var result = mockMvc.perform(get("/admin/users/{id}/overview", USER_ID)
+                .with(authentication(authWith(AdminRole.SUPPORT, "USER_VIEW", domain.name()))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kpis.ratingCount").value(0));
+        for (Domain other : Domain.values()) {
+            for (String field : other.fields) {
+                var matcher = jsonPath("$.kpis." + field);
+                result.andExpect(other == domain ? matcher.exists() : matcher.doesNotExist());
+            }
+        }
     }
 }

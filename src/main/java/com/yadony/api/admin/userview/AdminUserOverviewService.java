@@ -1,5 +1,6 @@
 package com.yadony.api.admin.userview;
 
+import com.yadony.api.admin.account.AdminPermission;
 import com.yadony.api.admin.userview.dto.AdminUserOverviewResponse;
 import com.yadony.api.admin.userview.dto.AdminUserOverviewResponse.Kpis;
 import com.yadony.api.auth.UserEntity;
@@ -17,10 +18,10 @@ public class AdminUserOverviewService {
     public static final Duration RECENT_DELIVERY_WINDOW = Duration.ofDays(3);
 
     public AdminUserOverviewResponse overview(UserEntity user, Set<String> authorities) {
-        boolean bids = authorities.contains("BID_VIEW");
-        boolean payments = authorities.contains("PAYMENT_VIEW");
-        boolean disputes = authorities.contains("DISPUTE_VIEW");
-        boolean reports = authorities.contains("REPORT_VIEW");
+        boolean bids = has(authorities, AdminPermission.BID_VIEW);
+        boolean payments = has(authorities, AdminPermission.PAYMENT_VIEW);
+        boolean disputes = has(authorities, AdminPermission.DISPUTE_VIEW);
+        boolean reports = has(authorities, AdminPermission.REPORT_VIEW);
 
         Kpis kpis = new Kpis(
                 bids ? 0 : null,
@@ -34,5 +35,9 @@ public class AdminUserOverviewService {
                 user.getAverageRating() == null ? null : user.getAverageRating().doubleValue(),
                 user.getRatingCount());
         return new AdminUserOverviewResponse(kpis, List.of(), List.of());
+    }
+
+    private static boolean has(Set<String> authorities, AdminPermission permission) {
+        return authorities.contains(permission.name());
     }
 }
