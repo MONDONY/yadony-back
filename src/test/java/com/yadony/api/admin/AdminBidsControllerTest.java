@@ -22,6 +22,9 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class AdminBidsControllerTest {
 
+    private static final java.time.Clock CLOCK = java.time.Clock.fixed(
+            java.time.Instant.parse("2026-10-23T12:00:00Z"), java.time.ZoneOffset.UTC);
+
     @Mock BidRepository bidRepo;
     @Mock AnnouncementRepository announcementRepo;
     @Mock AdminBidDetailAssembler assembler;
@@ -29,7 +32,7 @@ class AdminBidsControllerTest {
     @Mock com.yadony.api.matching.BidGridItemRepository bidGridItemRepo;
 
     private AdminBidsController controller() {
-        return new AdminBidsController(bidRepo, announcementRepo, userRepo, bidGridItemRepo, assembler);
+        return new AdminBidsController(bidRepo, announcementRepo, userRepo, bidGridItemRepo, assembler, CLOCK);
     }
 
     @Test
@@ -39,7 +42,7 @@ class AdminBidsControllerTest {
         // empty page → annIds is empty → findAllById called with empty collection
         when(announcementRepo.findAllById(any())).thenReturn(List.of());
         // userRepo.findAllById not called — empty page → no userIds to resolve
-        ResponseEntity<?> resp = controller().listBids(null, null, null, null, null, 0, 20);
+        ResponseEntity<?> resp = controller().listBids(null, null, null, null, null, null, null, null, null, null, 0, 20, null);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody()).isNotNull();
     }
@@ -53,7 +56,7 @@ class AdminBidsControllerTest {
         when(bidRepo.searchAdmin(any(AdminBidQuery.class), any())).thenReturn(page);
         when(announcementRepo.findAllById(any())).thenReturn(List.of());
 
-        ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, 0, 20);
+        ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, null, null, null, null, null, 0, 20, null);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody().getContent().get(0).commissionStatus()).isEqualTo("PENDING");
@@ -69,7 +72,7 @@ class AdminBidsControllerTest {
         when(bidRepo.searchAdmin(any(AdminBidQuery.class), any())).thenReturn(page);
         when(announcementRepo.findAllById(any())).thenReturn(List.of());
 
-        ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, 0, 20);
+        ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, null, null, null, null, null, 0, 20, null);
 
         assertThat(resp.getBody().getContent().get(0).currency()).isEqualTo("XOF");
         assertThat(resp.getBody().getContent().get(0).netEur()).isEqualByComparingTo("6000.00");
@@ -101,7 +104,7 @@ class AdminBidsControllerTest {
         when(announcementRepo.findAllById(any())).thenReturn(List.of(ann));
         when(bidGridItemRepo.findByBidIdIn(any())).thenReturn(List.of(item));
 
-        ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, 0, 20);
+        ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, null, null, null, null, null, 0, 20, null);
 
         // 3 kg × 5 000 + 2 × 2 500 = 20 000 F CFA
         assertThat(resp.getBody().getContent().get(0).netEur()).isEqualByComparingTo("20000");
@@ -115,7 +118,7 @@ class AdminBidsControllerTest {
                 .thenReturn(new PageImpl<>(List.of(bid)));
         when(announcementRepo.findAllById(any())).thenReturn(List.of());
 
-        ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, 0, 20);
+        ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, null, null, null, null, null, 0, 20, null);
 
         assertThat(resp.getBody().getContent().get(0).netEur()).isNull();
     }
