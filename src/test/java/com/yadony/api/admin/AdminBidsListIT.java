@@ -205,6 +205,20 @@ class AdminBidsListIT {
     }
 
     @Test
+    void list_exposesContentCategory() throws Exception {
+        bid(BidStatus.ACCEPTED, b -> b.setContentCategory("Vêtements"));
+        mockMvc.perform(list(as(AdminRole.ADMIN)))
+                .andExpect(jsonPath("$.content[0].contentCategory").value("Vêtements"));
+    }
+
+    @Test
+    void list_contentCategoryAbsentWhenNotFilled() throws Exception {
+        bid(BidStatus.ACCEPTED);
+        mockMvc.perform(list(as(AdminRole.ADMIN)))
+                .andExpect(jsonPath("$.content[0].contentCategory").doesNotExist());
+    }
+
+    @Test
     void list_recipientNameAbsentWhenNotFilled() throws Exception {
         bid(BidStatus.ACCEPTED);
         mockMvc.perform(list(as(AdminRole.ADMIN)))

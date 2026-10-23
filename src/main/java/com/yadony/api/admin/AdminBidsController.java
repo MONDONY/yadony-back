@@ -285,7 +285,7 @@ public class AdminBidsController {
                 b.getWeightKg(), AdminBidAmounts.netOf(b, ann, gridNet),
                 paymentMethod, b.getCreatedAt(), commissionStatus, currency, b.getTrackingNumber(),
                 b.getSenderId(), ann != null ? ann.getTravelerId() : null, b.getRecipientName(),
-                ann != null ? ann.getDepartureDate() : null, b.getUpdatedAt(), alert);
+                ann != null ? ann.getDepartureDate() : null, b.getUpdatedAt(), alert, b.getContentCategory());
     }
 
     private AdminBidDetailResponse toBidDetail(BidEntity b, AnnouncementEntity ann,

@@ -32,5 +32,7 @@ public record AdminBidListItemResponse(
     LocalDate departureDate,
     LocalDateTime updatedAt,
     /** Alerte la plus urgente (DISPUTE_OPEN, NO_SHOW, PAYMENT_PENDING, LATE), absente sinon. */
-    String alert
+    String alert,
+    /** Catégorie de contenu du colis (colonne « Colis » de l'admin), absente si non renseignée. */
+    String contentCategory
 ) { }
