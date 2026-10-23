@@ -62,6 +62,7 @@ public class AdminUserOverviewService {
     private final AdminPaymentInsights paymentInsights;
     private final DisputeRepository disputeRepository;
     private final ReportRepository reportRepository;
+    private final AdminUserTimelineAssembler timelineAssembler;
     private Clock clock = Clock.systemUTC();
 
     public AdminUserOverviewService(BidRepository bidRepository,
@@ -69,7 +70,9 @@ public class AdminUserOverviewService {
                                     AdminUserListingService listingService,
                                     AdminPaymentInsights paymentInsights,
                                     DisputeRepository disputeRepository,
-                                    ReportRepository reportRepository) {
+                                    ReportRepository reportRepository,
+                                    AdminUserTimelineAssembler timelineAssembler) {
+        this.timelineAssembler = timelineAssembler;
         this.reportRepository = reportRepository;
         this.disputeRepository = disputeRepository;
         this.paymentInsights = paymentInsights;
@@ -102,7 +105,8 @@ public class AdminUserOverviewService {
                 reports ? (int) reportRepository.countReceivedPending(userId) : null,
                 user.getAverageRating() == null ? null : user.getAverageRating().doubleValue(),
                 user.getRatingCount());
-        return new AdminUserOverviewResponse(kpis, bids ? inProgress(userId) : null, List.of());
+        return new AdminUserOverviewResponse(kpis, bids ? inProgress(userId) : null,
+                timelineAssembler.build(userId, authorities, clock.instant()));
     }
 
     /** Argent retenu en tant que voyageur bénéficiaire, une ligne par devise (jamais additionnées). */

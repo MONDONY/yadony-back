@@ -34,6 +34,17 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
         """)
     Page<BidEntity> findAdminByParty(@Param("userId") UUID userId, Pageable pageable);
 
+    /**
+     * Frise d'activité : les colis de l'utilisateur dont l'activité est la plus récente (livraison, sinon
+     * dernière mise à jour). Appeler avec un {@code Pageable} non trié et borné.
+     */
+    @Query("""
+        SELECT b FROM BidEntity b LEFT JOIN AnnouncementEntity a ON b.announcementId = a.id
+        WHERE b.senderId = :userId OR a.travelerId = :userId
+        ORDER BY COALESCE(b.deliveredAt, b.updatedAt) DESC, b.id DESC
+        """)
+    List<BidEntity> findAdminRecentActivityByParty(@Param("userId") UUID userId, Pageable pageable);
+
     /** Colis « en cours » (statuts donnés) ou livrés (COMPLETED, deliveredAt non nul) depuis {@code deliveredSince}. */
     @Query("""
         SELECT b FROM BidEntity b LEFT JOIN AnnouncementEntity a ON b.announcementId = a.id
