@@ -8,6 +8,7 @@ import com.yadony.api.admin.userview.dto.AdminUserOverviewResponse;
 import com.yadony.api.admin.userview.dto.AdminUserOverviewResponse.Kpis;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.disputes.DisputeRepository;
+import com.yadony.api.signalements.ReportRepository;
 import com.yadony.api.disputes.DisputeTypes;
 import com.yadony.api.admin.userview.dto.AdminUserOverviewResponse.InProgressItem;
 import com.yadony.api.admin.userview.dto.AdminUserParcelRow;
@@ -60,13 +61,16 @@ public class AdminUserOverviewService {
     private final AdminUserListingService listingService;
     private final AdminPaymentInsights paymentInsights;
     private final DisputeRepository disputeRepository;
+    private final ReportRepository reportRepository;
     private Clock clock = Clock.systemUTC();
 
     public AdminUserOverviewService(BidRepository bidRepository,
                                     AnnouncementRepository announcementRepository,
                                     AdminUserListingService listingService,
                                     AdminPaymentInsights paymentInsights,
-                                    DisputeRepository disputeRepository) {
+                                    DisputeRepository disputeRepository,
+                                    ReportRepository reportRepository) {
+        this.reportRepository = reportRepository;
         this.disputeRepository = disputeRepository;
         this.paymentInsights = paymentInsights;
         this.bidRepository = bidRepository;
@@ -93,9 +97,9 @@ public class AdminUserOverviewService {
                 payments ? heldByCurrency(userId) : null,
                 disputes ? (int) disputeRepository.countByPartyAndStatus(userId, DisputeTypes.STATUS_OPEN) : null,
                 disputes ? (int) disputeRepository.countByPartyAndStatus(userId, null) : null,
-                reports ? 0 : null,
-                reports ? 0 : null,
-                reports ? 0 : null,
+                reports ? (int) reportRepository.countReceivedByUser(userId) : null,
+                reports ? (int) reportRepository.countByReporterId(userId) : null,
+                reports ? (int) reportRepository.countReceivedPending(userId) : null,
                 user.getAverageRating() == null ? null : user.getAverageRating().doubleValue(),
                 user.getRatingCount());
         return new AdminUserOverviewResponse(kpis, bids ? inProgress(userId) : null, List.of());

@@ -151,4 +151,45 @@ public interface ReportRepository extends JpaRepository<ReportEntity, UUID> {
      * « Issu du signalement ».
      */
     List<ReportEntity> findBySupportTicketIdIn(java.util.Collection<UUID> supportTicketIds);
+
+    /**
+     * Signalements visant directement ce compte (cible USER ; ceux sur ses annonces, colis,
+     * messages ou avis sont hors périmètre v1), du plus récent au plus ancien.
+     * Le tri est porté par la requête : passer un {@code Pageable} non trié.
+     */
+    @Query(value = """
+            SELECT r FROM ReportEntity r
+            WHERE r.targetType = com.yadony.api.signalements.ReportTargetType.USER AND r.targetId = :userId
+            ORDER BY r.createdAt DESC, r.id DESC
+            """,
+            countQuery = """
+            SELECT COUNT(r) FROM ReportEntity r
+            WHERE r.targetType = com.yadony.api.signalements.ReportTargetType.USER AND r.targetId = :userId
+            """)
+    Page<ReportEntity> findAdminReceivedByUser(@Param("userId") UUID userId, Pageable pageable);
+
+    /** Signalements écrits par ce compte, du plus récent au plus ancien (passer un {@code Pageable} non trié). */
+    @Query(value = """
+            SELECT r FROM ReportEntity r WHERE r.reporterId = :userId
+            ORDER BY r.createdAt DESC, r.id DESC
+            """,
+            countQuery = "SELECT COUNT(r) FROM ReportEntity r WHERE r.reporterId = :userId")
+    Page<ReportEntity> findAdminSentByUser(@Param("userId") UUID userId, Pageable pageable);
+
+    /** Signalements ouverts visant directement ce compte. */
+    @Query("""
+            SELECT COUNT(r) FROM ReportEntity r
+            WHERE r.targetType = com.yadony.api.signalements.ReportTargetType.USER AND r.targetId = :userId
+              AND r.status = com.yadony.api.signalements.ReportStatus.OPEN
+            """)
+    long countReceivedPending(@Param("userId") UUID userId);
+
+    /** Tous les signalements visant directement ce compte. */
+    @Query("""
+            SELECT COUNT(r) FROM ReportEntity r
+            WHERE r.targetType = com.yadony.api.signalements.ReportTargetType.USER AND r.targetId = :userId
+            """)
+    long countReceivedByUser(@Param("userId") UUID userId);
+
+    long countByReporterId(UUID reporterId);
 }

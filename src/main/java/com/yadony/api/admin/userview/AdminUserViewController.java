@@ -9,6 +9,8 @@ import com.yadony.api.admin.userview.dto.AdminUserParcelRow;
 import com.yadony.api.admin.userview.dto.AdminUserCancellationRow;
 import com.yadony.api.admin.userview.dto.AdminUserDisputeRow;
 import com.yadony.api.admin.userview.dto.AdminUserPaymentRow;
+import com.yadony.api.admin.userview.dto.AdminUserRatingRow;
+import com.yadony.api.admin.userview.dto.AdminUserReportRow;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -84,6 +86,30 @@ public class AdminUserViewController {
                                                         @RequestParam(defaultValue = "20") int size) {
         requireUser(userId);
         return listingService.cancellations(userId, page, size);
+    }
+
+    @GetMapping("/reports")
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('REPORT_VIEW')")
+    public Page<AdminUserReportRow> reports(@PathVariable UUID userId,
+                                            @RequestParam(required = false) String direction,
+                                            @RequestParam(defaultValue = "0") int page,
+                                            @RequestParam(defaultValue = "20") int size) {
+        requireUser(userId);
+        boolean received = "RECEIVED".equals(direction);
+        if (!received && !"SENT".equals(direction)) {
+            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "invalid-direction", "Bad Request",
+                    "direction doit valoir RECEIVED ou SENT");
+        }
+        return listingService.reports(userId, received, page, size);
+    }
+
+    @GetMapping("/ratings")
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('RATING_MODERATE')")
+    public Page<AdminUserRatingRow> ratings(@PathVariable UUID userId,
+                                            @RequestParam(defaultValue = "0") int page,
+                                            @RequestParam(defaultValue = "20") int size) {
+        requireUser(userId);
+        return listingService.ratings(userId, page, size);
     }
 
     @GetMapping("/overview")

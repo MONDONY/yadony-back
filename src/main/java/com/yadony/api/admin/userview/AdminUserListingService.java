@@ -7,6 +7,10 @@ import com.yadony.api.admin.dto.AdminWalletResponse;
 import com.yadony.api.admin.userview.dto.AdminUserPaymentRow;
 import com.yadony.api.admin.userview.dto.AdminUserCancellationRow;
 import com.yadony.api.admin.userview.dto.AdminUserDisputeRow;
+import com.yadony.api.admin.userview.dto.AdminUserRatingRow;
+import com.yadony.api.admin.userview.dto.AdminUserReportRow;
+import com.yadony.api.ratings.RatingRepository;
+import com.yadony.api.signalements.ReportRepository;
 import com.yadony.api.cancellation.CancellationRepository;
 import com.yadony.api.disputes.DisputeEntity;
 import com.yadony.api.disputes.DisputeRepository;
@@ -16,6 +20,7 @@ import com.yadony.api.admin.dto.AdminAnnouncementListItemResponse;
 import com.yadony.api.admin.userview.dto.AdminUserOverviewResponse.MoneyAmount;
 import com.yadony.api.admin.userview.dto.AdminUserParcelRow;
 import com.yadony.api.common.MatchingTextUtil;
+import com.yadony.api.signalements.ReportEntity;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
@@ -56,6 +61,8 @@ public class AdminUserListingService {
     private final PayoutHoldPolicy holdPolicy;
     private final DisputeRepository disputeRepository;
     private final CancellationRepository cancellationRepository;
+    private final ReportRepository reportRepository;
+    private final RatingRepository ratingRepository;
 
     public AdminUserListingService(BidRepository bidRepository,
                                    AnnouncementRepository announcementRepository,
@@ -63,7 +70,11 @@ public class AdminUserListingService {
                                    AdminPaymentInsights paymentInsights,
                                    PayoutHoldPolicy holdPolicy,
                                    DisputeRepository disputeRepository,
-                                   CancellationRepository cancellationRepository) {
+                                   CancellationRepository cancellationRepository,
+                                   ReportRepository reportRepository,
+                                   RatingRepository ratingRepository) {
+        this.reportRepository = reportRepository;
+        this.ratingRepository = ratingRepository;
         this.disputeRepository = disputeRepository;
         this.cancellationRepository = cancellationRepository;
         this.paymentInsights = paymentInsights;
@@ -115,6 +126,26 @@ public class AdminUserListingService {
         return cancellationRepository.findAdminByParty(userId, pageable(page, size)).map(c ->
                 new AdminUserCancellationRow(c.getId(), c.getBidId(), c.getReason(), c.getScope().name(),
                         c.getNoShowStatus().name(), userId.equals(c.getCancelledBy()), toInstant(c.getCreatedAt())));
+    }
+
+    /** Signalements reçus (cible USER uniquement, périmètre v1) ou envoyés par l'utilisateur. */
+    public Page<AdminUserReportRow> reports(UUID userId, boolean received, int page, int size) {
+        Pageable pageable = pageable(page, size);
+        Page<ReportEntity> found = received
+                ? reportRepository.findAdminReceivedByUser(userId, pageable)
+                : reportRepository.findAdminSentByUser(userId, pageable);
+        String direction = received ? "RECEIVED" : "SENT";
+        return found.map(r -> new AdminUserReportRow(r.getId(), direction, r.getTargetType().name(),
+                r.getReason() == null ? null : r.getReason().name(), r.getStatus().name(),
+                toInstant(r.getCreatedAt())));
+    }
+
+    /** Avis reçus par l'utilisateur, du plus récent au plus ancien. */
+    public Page<AdminUserRatingRow> ratings(UUID userId, int page, int size) {
+        return ratingRepository.findByRatedUserId(userId, pageable(page, size,
+                        Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by(Sort.Direction.DESC, "id"))))
+                .map(r -> new AdminUserRatingRow(r.getId(), r.getBidId(), r.getStars(), r.getComment(),
+                        r.isFlagged(), toInstant(r.getCreatedAt())));
     }
 
     static String disputeRoleOf(DisputeEntity d, UUID userId) {
