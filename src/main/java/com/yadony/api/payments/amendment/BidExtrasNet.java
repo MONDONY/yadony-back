@@ -12,8 +12,8 @@ import java.util.UUID;
  * nouvel ajout ({@link com.yadony.api.common.commission.IncrementalCommission}).
  *
  * <p>Somme du net du supplément de prix payé et non remboursé ({@link BidSupplementStatus#PAID_STATES})
- * et du net des modifications de colis acceptées et non remboursées (acceptées, donc
- * {@code acceptedAt} renseigné, et ni {@code REFUND_PENDING} ni {@code REFUNDED}).
+ * et du net des modifications de colis acquises ({@link BidAmendmentStatus#SECURED} : acceptées, en
+ * cours de versement ou versées). Une modification close après acceptation ou remboursée n'est pas comptée.
  */
 @Component
 public class BidExtrasNet {
@@ -29,6 +29,6 @@ public class BidExtrasNet {
     /** Somme des nets payés et non remboursés du colis, 0 s'il n'y en a aucun. */
     public BigDecimal paidExtrasNet(UUID bidId) {
         return supplements.sumNetByBidIdAndStatusIn(bidId, BidSupplementStatus.PAID_STATES)
-                .add(amendments.sumAcceptedNetByBidIdAndStatusNotIn(bidId, BidAmendmentStatus.REFUNDED_STATES));
+                .add(amendments.sumNetByBidIdAndStatusIn(bidId, BidAmendmentStatus.SECURED));
     }
 }

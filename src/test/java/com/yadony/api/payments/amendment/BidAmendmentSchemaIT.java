@@ -145,6 +145,22 @@ class BidAmendmentSchemaIT {
     }
 
     @Test
+    @DisplayName("les kilos retirés de l'annonce ne dépassent pas les kilos demandés")
+    void capacityReservedCannotExceedAddedWeight() {
+        jdbc.execute("SET LOCAL session_replication_role = replica");
+        assertThatThrownBy(() -> insertWeights("1.00", "1.50"))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasMessageContaining("chk_bid_amendments_capacity");
+        assertThatThrownBy(() -> insertWeights("1.00", "-0.50"))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasMessageContaining("chk_bid_amendments_capacity");
+        // Égal (kilos réservés), zéro (kilos rendus ou articles seuls) : acceptés.
+        assertThatCode(() -> insertWeights("1.50", "1.50")).doesNotThrowAnyException();
+        assertThatCode(() -> insertWeights("1.50", "0")).doesNotThrowAnyException();
+        assertThatCode(() -> insertWeights("0", "0")).doesNotThrowAnyException();
+    }
+
+    @Test
     @DisplayName("une opération pawaPay BID_AMENDMENT exige l'identifiant de la modification")
     void pawapayPurposeRequiresAmendmentId() {
         jdbc.execute("SET LOCAL session_replication_role = replica");
@@ -193,15 +209,17 @@ class BidAmendmentSchemaIT {
     }
 
     @Test
-    @DisplayName("la somme des nets ne compte que les modifications acceptées et non remboursées du colis")
-    void sumAcceptedNet_countsOnlyAcceptedNotRefunded() {
+    @DisplayName("la somme des nets ne compte que les modifications acquises (acceptée, versement, versée) du colis")
+    void sumNet_countsOnlySecuredStatuses() {
         jdbc.execute("SET LOCAL session_replication_role = replica");
         UUID bid = UUID.randomUUID();
         UUID other = UUID.randomUUID();
         insertAccepted(bid, "ACCEPTED", "20.00", true);
         insertAccepted(bid, "PAID_OUT", "5.50", true);
         insertAccepted(bid, "PAYOUT_PENDING", "1.00", true);
-        // Refusée ou remboursée : exclue, même acceptée un temps.
+        // Remboursée ou close après acceptation (accepted_at renseigné) : exclue.
+        insertAccepted(bid, "CANCELLED", "6.00", true);
+        insertAccepted(bid, "EXPIRED", "4.00", true);
         insertAccepted(bid, "REFUNDED", "7.00", true);
         insertAccepted(bid, "REFUND_PENDING", "8.00", true);
         // Jamais acceptée : exclue.
@@ -210,13 +228,13 @@ class BidAmendmentSchemaIT {
         // Autre colis.
         insertAccepted(other, "ACCEPTED", "3.00", true);
 
-        assertThat(amendments.sumAcceptedNetByBidIdAndStatusNotIn(bid, BidAmendmentStatus.REFUNDED_STATES))
+        assertThat(amendments.sumNetByBidIdAndStatusIn(bid, BidAmendmentStatus.SECURED))
                 .isEqualByComparingTo("26.50");
-        assertThat(amendments.sumAcceptedNetByBidIdAndStatusNotIn(other, BidAmendmentStatus.REFUNDED_STATES))
+        assertThat(amendments.sumNetByBidIdAndStatusIn(other, BidAmendmentStatus.SECURED))
                 .isEqualByComparingTo("3.00");
-        assertThat(amendments.sumAcceptedNetByBidIdAndStatusNotIn(UUID.randomUUID(), BidAmendmentStatus.REFUNDED_STATES))
+        assertThat(amendments.sumNetByBidIdAndStatusIn(UUID.randomUUID(), BidAmendmentStatus.SECURED))
                 .isEqualByComparingTo(BigDecimal.ZERO);
-        assertThat(amendments.countByBidIdAndAcceptedAtNotNull(bid)).isEqualTo(5);
+        assertThat(amendments.countByBidIdAndAcceptedAtNotNull(bid)).isEqualTo(7);
     }
 
     @Test
@@ -303,6 +321,16 @@ class BidAmendmentSchemaIT {
                     CASE WHEN ? THEN now() END)
                 """, UUID.randomUUID(), bidId, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), status, net,
                 net, accepted));
+    }
+
+    private void insertWeights(String added, String reserved) {
+        guarded(() -> jdbc.update("""
+                INSERT INTO bid_amendments (id, bid_id, announcement_id, traveler_id, sender_id, rail, status,
+                    currency, added_weight_kg, capacity_reserved_kg, net_amount, commission_amount, gross_amount,
+                    expires_at)
+                VALUES (?, ?, ?, ?, ?, 'STRIPE', 'PROPOSED', 'EUR', ?::numeric, ?::numeric, 10, 1, 11, now())
+                """, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                added, reserved));
     }
 
     private void insertAmounts(String net, String commission, String gross) {

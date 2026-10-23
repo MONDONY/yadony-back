@@ -32,17 +32,17 @@ class BidExtrasNetTest {
     void paidExtrasNet_sumsSupplementsInPaidStates() {
         when(supplements.sumNetByBidIdAndStatusIn(bidId, BidSupplementStatus.PAID_STATES))
                 .thenReturn(new BigDecimal("23.50"));
-        when(amendments.sumAcceptedNetByBidIdAndStatusNotIn(bidId, BidAmendmentStatus.REFUNDED_STATES))
+        when(amendments.sumNetByBidIdAndStatusIn(bidId, BidAmendmentStatus.SECURED))
                 .thenReturn(BigDecimal.ZERO);
 
         assertThat(extrasNet.paidExtrasNet(bidId)).isEqualByComparingTo("23.50");
     }
 
     @Test
-    void paidExtrasNet_sumsAcceptedAmendmentsNotRefunded() {
+    void paidExtrasNet_sumsSecuredAmendments() {
         when(supplements.sumNetByBidIdAndStatusIn(bidId, BidSupplementStatus.PAID_STATES))
                 .thenReturn(BigDecimal.ZERO);
-        when(amendments.sumAcceptedNetByBidIdAndStatusNotIn(bidId, BidAmendmentStatus.REFUNDED_STATES))
+        when(amendments.sumNetByBidIdAndStatusIn(bidId, BidAmendmentStatus.SECURED))
                 .thenReturn(new BigDecimal("40.00"));
 
         assertThat(extrasNet.paidExtrasNet(bidId)).isEqualByComparingTo("40.00");
@@ -52,7 +52,7 @@ class BidExtrasNetTest {
     void paidExtrasNet_addsSupplementAndAmendments() {
         when(supplements.sumNetByBidIdAndStatusIn(bidId, BidSupplementStatus.PAID_STATES))
                 .thenReturn(new BigDecimal("23.50"));
-        when(amendments.sumAcceptedNetByBidIdAndStatusNotIn(bidId, BidAmendmentStatus.REFUNDED_STATES))
+        when(amendments.sumNetByBidIdAndStatusIn(bidId, BidAmendmentStatus.SECURED))
                 .thenReturn(new BigDecimal("40.25"));
 
         assertThat(extrasNet.paidExtrasNet(bidId)).isEqualByComparingTo("63.75");
@@ -62,7 +62,7 @@ class BidExtrasNetTest {
     void paidExtrasNet_nothingPaid_isZero() {
         when(supplements.sumNetByBidIdAndStatusIn(bidId, BidSupplementStatus.PAID_STATES))
                 .thenReturn(BigDecimal.ZERO);
-        when(amendments.sumAcceptedNetByBidIdAndStatusNotIn(bidId, BidAmendmentStatus.REFUNDED_STATES))
+        when(amendments.sumNetByBidIdAndStatusIn(bidId, BidAmendmentStatus.SECURED))
                 .thenReturn(BigDecimal.ZERO);
 
         assertThat(extrasNet.paidExtrasNet(bidId)).isEqualByComparingTo("0");
