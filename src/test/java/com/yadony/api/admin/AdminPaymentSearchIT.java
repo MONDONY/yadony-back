@@ -194,6 +194,10 @@ class AdminPaymentSearchIT {
         assertThat(search("_")).isEmpty();
         assertThat(search("'")).isEmpty();
         assertThat(search("% _")).isEmpty();
+        assertThat(search("@")).isEmpty();
+        assertThat(search("@@")).isEmpty();
+        assertThat(search("@ @")).isEmpty();
+        assertThat(search("@" + tag + "snd")).containsExactly(p.getId());
         assertThat(search(tag + " aicha awa diallo inconnuzz")).containsExactly(p.getId());
         assertThat(search("inconnuzz " + tag + " aicha awa diallo")).isEmpty();
     }
@@ -210,10 +214,16 @@ class AdminPaymentSearchIT {
     void telephoneDUneOperation_jamaisCherche() {
         PaymentEntity p = payment(bid(trip, null), "33.00");
         operation(p.getId());
+        PaymentEntity sixtySeven = payment(bid(trip, null), "67.00");
+        operation(sixtySeven.getId());
 
         for (String q : List.of("221771234567", "+221771234567", "771234567", "67", "+221 •••• 67", "•••• 67")) {
             assertThat(search(q)).as(q).doesNotContain(p.getId());
         }
+        // « 67 » n'est lu que comme montant : des paiements du test, seul celui de 67,00 sort.
+        assertThat(search("67")).filteredOn(id -> id.equals(p.getId()) || id.equals(sixtySeven.getId()))
+                .containsExactly(sixtySeven.getId());
+        assertThat(search("+221 •••• 67")).doesNotContain(sixtySeven.getId());
     }
 
     @Test

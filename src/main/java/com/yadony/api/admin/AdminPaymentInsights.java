@@ -310,7 +310,11 @@ public class AdminPaymentInsights {
      */
     private static void appendSearch(StringBuilder sql, MapSqlParameterSource params, String query) {
         sql.append(" AND ").append(AdminPaymentSql.SEARCH_PREDICATE);
-        List<String> tokens = AdminBidQuery.tokensOf(query.replace("@", ""));
+        List<String> tokens = AdminSearchTerms.tokens(query.replace("@", ""), AdminBidQuery.MAX_TOKENS);
+        if (tokens.isEmpty()) {
+            // Saisie non vide (« @ », « % », « ' ») sans jeton utilisable : aucun texte ne correspond, jamais tous.
+            tokens = List.of(AdminBidQuery.NO_MATCH_TOKEN);
+        }
         for (int i = 0; i < AdminBidQuery.MAX_TOKENS; i++) {
             params.addValue("t" + (i + 1), i < tokens.size() ? tokens.get(i) : null);
         }
