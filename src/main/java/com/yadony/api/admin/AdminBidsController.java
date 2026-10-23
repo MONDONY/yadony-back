@@ -17,6 +17,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -51,12 +52,9 @@ public class AdminBidsController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
 
-        Page<BidEntity> bidsPage = bidRepo.findAdminFiltered(
-                status != null ? status.name() : null,
-                announcementId != null ? announcementId.toString() : null,
-                query,
-                dateFrom,
-                dateTo,
+        Page<BidEntity> bidsPage = bidRepo.searchAdmin(
+                AdminBidQuery.of(AdminBidView.ALL, status, announcementId, query, AdminBidScope.ALL, false,
+                        null, null, null, dateFrom, dateTo, LocalDateTime.now(ZoneOffset.UTC)),
                 PageRequest.of(page, size));
 
         // Batch load announcements to avoid N+1

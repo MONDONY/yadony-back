@@ -35,7 +35,7 @@ class AdminBidsControllerTest {
     @Test
     void listBids_returnsPage() {
         Page<BidEntity> page = new PageImpl<>(List.of());
-        when(bidRepo.findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), any())).thenReturn(page);
+        when(bidRepo.searchAdmin(any(AdminBidQuery.class), any())).thenReturn(page);
         // empty page → annIds is empty → findAllById called with empty collection
         when(announcementRepo.findAllById(any())).thenReturn(List.of());
         // userRepo.findAllById not called — empty page → no userIds to resolve
@@ -50,7 +50,7 @@ class AdminBidsControllerTest {
         bid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
         bid.setCommissionStatus(com.yadony.api.payments.cash.CommissionStatus.PENDING);
         Page<BidEntity> page = new PageImpl<>(List.of(bid));
-        when(bidRepo.findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), any())).thenReturn(page);
+        when(bidRepo.searchAdmin(any(AdminBidQuery.class), any())).thenReturn(page);
         when(announcementRepo.findAllById(any())).thenReturn(List.of());
 
         ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, 0, 20);
@@ -66,7 +66,7 @@ class AdminBidsControllerTest {
         bid.setCurrency("xof");
         bid.setNegotiatedNetEur(new java.math.BigDecimal("6000.00"));
         Page<BidEntity> page = new PageImpl<>(List.of(bid));
-        when(bidRepo.findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), any())).thenReturn(page);
+        when(bidRepo.searchAdmin(any(AdminBidQuery.class), any())).thenReturn(page);
         when(announcementRepo.findAllById(any())).thenReturn(List.of());
 
         ResponseEntity<Page<AdminBidListItemResponse>> resp = controller().listBids(null, null, null, null, null, 0, 20);
@@ -96,7 +96,7 @@ class AdminBidsControllerTest {
         item.setBidId(bidId);
         item.setUnitPriceNetSnapshot(new java.math.BigDecimal("2500"));
         item.setQuantity(2);
-        when(bidRepo.findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), any()))
+        when(bidRepo.searchAdmin(any(AdminBidQuery.class), any()))
                 .thenReturn(new PageImpl<>(List.of(bid)));
         when(announcementRepo.findAllById(any())).thenReturn(List.of(ann));
         when(bidGridItemRepo.findByBidIdIn(any())).thenReturn(List.of(item));
@@ -111,7 +111,7 @@ class AdminBidsControllerTest {
     void list_leavesTheNetEmptyWhenNothingIsPriced() {
         BidEntity bid = new BidEntity();
         bid.setCurrency("EUR");
-        when(bidRepo.findAdminFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), any()))
+        when(bidRepo.searchAdmin(any(AdminBidQuery.class), any()))
                 .thenReturn(new PageImpl<>(List.of(bid)));
         when(announcementRepo.findAllById(any())).thenReturn(List.of());
 
