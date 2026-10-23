@@ -12,4 +12,4 @@ routes:
   - path: /corridor-alerts
     label: My alerts
 ---
-You are on the Search tab. Choose "I'm sending a parcel" to see available travelers, or "I'm traveling" to see parcels to carry, on the map or as a list. Tap the search bar to pick cities and filters, the "+" button to send a parcel or publish a trip, and the bookmark for your saved items. If no one travels on your route, the screen offers to create an alert.
+Search tab: "I'm sending a parcel" lists travelers, "I'm traveling" lists parcels to carry. The map is full screen: tap a price to see the trip, then the summary card to open it. "List" shows the results, "Map" goes back. The location button turns on "Near me" (5 to 200 km radius, changeable or removable with the "Radius" chip). The search bar sets cities and filters, "+" publishes, the bookmark opens your favorites.
