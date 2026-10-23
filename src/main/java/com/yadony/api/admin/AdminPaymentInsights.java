@@ -1,6 +1,8 @@
 package com.yadony.api.admin;
 
 import com.yadony.api.admin.dto.AdminPaymentInsight;
+import com.yadony.api.admin.dto.AdminPaymentListItemResponse;
+import com.yadony.api.payments.hold.PayoutHoldStatus;
 import com.yadony.api.admin.dto.AdminWalletResponse;
 import com.yadony.api.payments.PaymentEntity;
 import com.yadony.api.payments.PaymentRail;
@@ -46,6 +48,16 @@ public class AdminPaymentInsights {
     /** Plafond de l'export CSV : au-delà, l'admin resserre la période. */
     public static final int EXPORT_MAX_ROWS = 10_000;
 
+    /** Le voyageur bénéficiaire d'un paiement : annonce du colis (direct ou lié au fil), ou voyageur du fil. */
+    private static final String BENEFICIARY_OF_P = """
+            SELECT a.traveler_id FROM bids b JOIN announcements a ON a.id = b.announcement_id
+             WHERE b.id = p.bid_id
+                OR (p.bid_id IS NULL AND p.negotiation_thread_id IS NOT NULL
+                    AND b.linked_negotiation_thread_id = p.negotiation_thread_id)
+            UNION
+            SELECT t.traveler_id FROM negotiation_threads t WHERE t.id = p.negotiation_thread_id
+            """;
+
     /** Les parties d'un paiement, colis classique ou fil de négociation (colis lié compris). */
     private static final String PARTIES_OF_P = """
             SELECT b.sender_id FROM bids b
@@ -53,16 +65,10 @@ public class AdminPaymentInsights {
                 OR (p.bid_id IS NULL AND p.negotiation_thread_id IS NOT NULL
                     AND b.linked_negotiation_thread_id = p.negotiation_thread_id)
             UNION
-            SELECT a.traveler_id FROM bids b JOIN announcements a ON a.id = b.announcement_id
-             WHERE b.id = p.bid_id
-                OR (p.bid_id IS NULL AND p.negotiation_thread_id IS NOT NULL
-                    AND b.linked_negotiation_thread_id = p.negotiation_thread_id)
-            UNION
             SELECT r.sender_id FROM negotiation_threads t JOIN package_requests r ON r.id = t.package_request_id
              WHERE t.id = p.negotiation_thread_id
             UNION
-            SELECT t.traveler_id FROM negotiation_threads t WHERE t.id = p.negotiation_thread_id
-            """;
+            """ + BENEFICIARY_OF_P;
 
     private final NamedParameterJdbcTemplate jdbc;
     private final PaymentRepository paymentRepository;
@@ -89,6 +95,71 @@ public class AdminPaymentInsights {
                         + " ORDER BY p.created_at DESC, p.id DESC LIMIT :limit OFFSET :offset",
                 params, (rs, i) -> UUID.fromString(rs.getString(1)));
         return new PageImpl<>(load(ids), pageable, total == null ? 0 : total);
+    }
+
+    /** Paiements dont l'utilisateur est une des parties (payeur ou voyageur), du plus récent au plus ancien. */
+    public Page<AdminPaymentListItemResponse> searchByUser(UUID userId, Pageable pageable) {
+        MapSqlParameterSource params = new MapSqlParameterSource("userId", userId);
+        String where = "WHERE p.deleted_at IS NULL AND :userId IN (" + PARTIES_OF_P + ")";
+        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM payments p " + where, params, Long.class);
+        params.addValue("limit", pageable.getPageSize());
+        params.addValue("offset", pageable.getOffset());
+        List<UUID> ids = jdbc.query("SELECT CAST(p.id AS VARCHAR(36)) FROM payments p " + where
+                        + " ORDER BY p.created_at DESC, p.id DESC LIMIT :limit OFFSET :offset",
+                params, (rs, i) -> UUID.fromString(rs.getString(1)));
+        return new PageImpl<>(toItems(load(ids)), pageable, total == null ? 0 : total);
+    }
+
+    private List<AdminPaymentListItemResponse> toItems(List<PaymentEntity> payments) {
+        Map<UUID, AdminPaymentInsight> context = insightsOf(payments);
+        return payments.stream().map(p -> {
+            AdminPaymentInsight insight = context.get(p.getId());
+            UUID travelerId = insight != null && insight.traveler() != null ? insight.traveler().id() : null;
+            return AdminPaymentListItemResponse.from(p, travelerId, PayoutHoldStatus.NONE).withInsight(insight);
+        }).toList();
+    }
+
+    /**
+     * Frise d'un voyageur : paiements dont il est le bénéficiaire, du dernier événement (création ou
+     * versement retenu) le plus récent au plus ancien, au plus {@code limit}. Avec {@code since} non nul,
+     * seuls les paiements créés ou retenus depuis cet instant (UTC) ; sinon les plus récents sans borne de date.
+     */
+    public List<AdminPaymentListItemResponse> recentByBeneficiary(UUID travelerId, LocalDateTime since, int limit) {
+        MapSqlParameterSource params = new MapSqlParameterSource("userId", travelerId);
+        params.addValue("limit", limit);
+        String window = "";
+        if (since != null) {
+            params.addValue("since", Timestamp.from(since.toInstant(java.time.ZoneOffset.UTC)));
+            window = " AND (p.created_at >= :since OR p.payout_held_at >= :since)";
+        }
+        List<UUID> ids = jdbc.query("SELECT CAST(p.id AS VARCHAR(36)) FROM payments p "
+                        + "WHERE p.deleted_at IS NULL AND :userId IN (" + BENEFICIARY_OF_P + ")" + window
+                        + " ORDER BY CASE WHEN p.payout_held_at IS NOT NULL AND p.payout_held_at > p.created_at"
+                        + " THEN p.payout_held_at ELSE p.created_at END DESC, p.id DESC LIMIT :limit",
+                params, (rs, i) -> UUID.fromString(rs.getString(1)));
+        return toItems(load(ids));
+    }
+
+    /**
+     * Argent retenu (séquestre avec versement gelé, comme le filtre {@code held}) dont l'utilisateur est le
+     * voyageur bénéficiaire : une ligne par devise, jamais additionnées entre devises. Le montant est le montant
+     * BRUT du paiement (commission incluse), comme le filtre {@code held} de la liste des transactions.
+     */
+    public Map<String, BigDecimal> heldAmountByCurrencyOfBeneficiary(UUID travelerId) {
+        Map<String, BigDecimal> result = new java.util.TreeMap<>();
+        jdbc.query("""
+                SELECT UPPER(p.currency) AS currency, SUM(p.amount) AS total
+                FROM payments p
+                WHERE p.deleted_at IS NULL AND p.status = 'ESCROW' AND p.payout_held_at IS NOT NULL
+                  AND :userId IN (
+                """ + BENEFICIARY_OF_P + """
+                  )
+                GROUP BY UPPER(p.currency)
+                """, new MapSqlParameterSource("userId", travelerId),
+                rs -> {
+                    result.put(rs.getString("currency"), rs.getBigDecimal("total"));
+                });
+        return result;
     }
 
     /** Paiements de l'export, dans l'ordre de la liste, au plus {@link #EXPORT_MAX_ROWS}. */

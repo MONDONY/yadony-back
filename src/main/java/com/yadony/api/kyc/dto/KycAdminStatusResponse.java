@@ -13,9 +13,9 @@ import java.util.UUID;
  * et {@code selfie_url} ont été supprimées par {@code V46__kyc_cleanup.sql} — Stripe est la
  * seule source de vérité des pièces.
  *
- * <p>Pas d'historique non plus : {@code uq_kyc_user_id} impose une seule ligne par
- * utilisateur, chaque nouvelle session écrasant l'identifiant précédent. Cette vue décrit
- * donc la <em>session courante</em>.
+ * <p>{@code uq_kyc_user_id} impose une seule ligne par utilisateur, chaque nouvelle session
+ * écrasant l'identifiant précédent : les champs de session décrivent la <em>session courante</em>.
+ * Les sessions passées ne subsistent que dans {@code history} (entrées d'audit de la ligne).
  *
  * @param stripeUnavailable {@code true} uniquement si l'appel au fournisseur a échoué — jamais
  *                          quand il n'y a simplement aucune session à interroger.

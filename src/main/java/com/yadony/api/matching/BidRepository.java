@@ -19,6 +19,72 @@ import java.util.UUID;
 
 public interface BidRepository extends JpaRepository<BidEntity, UUID> {
 
+    /**
+     * Fiche admin d'un utilisateur : colis où il est expéditeur OU voyageur (voyageur = celui de
+     * l'annonce). Aucun filtre {@code deletedBy*} : ces drapeaux ne concernent que l'utilisateur.
+     */
+    @Query(value = """
+        SELECT b FROM BidEntity b LEFT JOIN AnnouncementEntity a ON b.announcementId = a.id
+        WHERE (b.senderId = :userId OR a.travelerId = :userId) AND b.status NOT IN :hidden
+        ORDER BY b.createdAt DESC, b.id DESC
+        """,
+        countQuery = """
+        SELECT COUNT(b) FROM BidEntity b LEFT JOIN AnnouncementEntity a ON b.announcementId = a.id
+        WHERE (b.senderId = :userId OR a.travelerId = :userId) AND b.status NOT IN :hidden
+        """)
+    Page<BidEntity> findAdminByParty(@Param("userId") UUID userId,
+                                     @Param("hidden") Collection<BidStatus> hidden, Pageable pageable);
+
+    /**
+     * Frise d'activité : les colis de l'utilisateur dont l'activité est la plus récente (livraison, sinon
+     * dernière mise à jour). Appeler avec un {@code Pageable} non trié et borné.
+     */
+    @Query("""
+        SELECT b FROM BidEntity b LEFT JOIN AnnouncementEntity a ON b.announcementId = a.id
+        WHERE (b.senderId = :userId OR a.travelerId = :userId) AND b.status NOT IN :hidden
+        ORDER BY COALESCE(b.deliveredAt, b.updatedAt) DESC, b.id DESC
+        """)
+    List<BidEntity> findAdminRecentActivityByParty(@Param("userId") UUID userId,
+                                                   @Param("hidden") Collection<BidStatus> hidden, Pageable pageable);
+
+    /**
+     * Frise d'activité : colis de l'utilisateur créés, livrés, mis à jour ou pris en charge (scan DEPART) depuis
+     * {@code since}, du plus récent au plus ancien. Appeler avec un {@code Pageable} non trié et borné.
+     */
+    @Query("""
+        SELECT b FROM BidEntity b LEFT JOIN AnnouncementEntity a ON b.announcementId = a.id
+        WHERE (b.senderId = :userId OR a.travelerId = :userId) AND b.status NOT IN :hidden
+          AND (b.createdAt >= :since OR b.deliveredAt >= :since OR b.updatedAt >= :since
+               OR EXISTS (SELECT 1 FROM TrackingEventEntity t WHERE t.bidId = b.id
+                          AND t.eventType = com.yadony.api.tracking.TrackingEventType.DEPART
+                          AND t.scannedAt >= :since))
+        ORDER BY COALESCE(b.deliveredAt, b.updatedAt) DESC, b.id DESC
+        """)
+    List<BidEntity> findAdminActivitySinceByParty(@Param("userId") UUID userId,
+                                                  @Param("since") LocalDateTime since,
+                                                  @Param("hidden") Collection<BidStatus> hidden, Pageable pageable);
+
+    /** Colis « en cours » (statuts donnés) ou livrés (COMPLETED, deliveredAt non nul) depuis {@code deliveredSince}. */
+    @Query("""
+        SELECT b FROM BidEntity b LEFT JOIN AnnouncementEntity a ON b.announcementId = a.id
+        WHERE (b.senderId = :userId OR a.travelerId = :userId)
+          AND (b.status IN :statuses
+               OR (b.status = com.yadony.api.matching.BidStatus.COMPLETED
+                   AND b.deliveredAt IS NOT NULL AND b.deliveredAt >= :deliveredSince))
+        ORDER BY b.updatedAt DESC, b.id DESC
+        """)
+    List<BidEntity> findAdminInProgressByParty(@Param("userId") UUID userId,
+                                               @Param("statuses") Collection<BidStatus> statuses,
+                                               @Param("deliveredSince") LocalDateTime deliveredSince,
+                                               Pageable pageable);
+
+    @Query("""
+        SELECT COUNT(b) FROM BidEntity b LEFT JOIN AnnouncementEntity a ON b.announcementId = a.id
+        WHERE (b.senderId = :userId OR a.travelerId = :userId) AND b.status IN :statuses
+        """)
+    long countAdminByPartyAndStatusIn(@Param("userId") UUID userId,
+                                      @Param("statuses") Collection<BidStatus> statuses);
+
     long countByAnnouncementId(UUID announcementId);
 
     /**

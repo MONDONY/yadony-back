@@ -69,6 +69,21 @@ public interface CancellationRepository extends JpaRepository<CancellationEntity
            "AND c.noShowStatus = 'CONFIRMED'")
     int markUnclaimed(@Param("id") UUID id, @Param("at") OffsetDateTime at);
 
+    /**
+     * Fiche admin d'un utilisateur : annulations et absences qu'il a déclarées ou dont il est une partie
+     * du colis (expéditeur du colis ou voyageur de l'annonce), de la plus récente à la plus ancienne.
+     */
+    @Query(value = """
+        SELECT c FROM CancellationEntity c, BidEntity b LEFT JOIN AnnouncementEntity a ON b.announcementId = a.id
+        WHERE c.bidId = b.id AND (c.cancelledBy = :userId OR b.senderId = :userId OR a.travelerId = :userId)
+        ORDER BY c.createdAt DESC, c.id DESC
+        """,
+        countQuery = """
+        SELECT COUNT(c) FROM CancellationEntity c, BidEntity b LEFT JOIN AnnouncementEntity a ON b.announcementId = a.id
+        WHERE c.bidId = b.id AND (c.cancelledBy = :userId OR b.senderId = :userId OR a.travelerId = :userId)
+        """)
+    Page<CancellationEntity> findAdminByParty(@Param("userId") UUID userId, Pageable pageable);
+
     /** File admin des no-shows (GET /admin/cancellations) : motifs, portées et statuts explicites. */
     @Query("SELECT c FROM CancellationEntity c WHERE c.reason IN :reasons " +
            "AND c.scope IN :scopes AND c.noShowStatus IN :statuses")

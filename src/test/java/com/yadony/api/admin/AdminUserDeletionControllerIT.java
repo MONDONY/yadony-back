@@ -183,7 +183,7 @@ class AdminUserDeletionControllerIT {
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
 
         mockMvc.perform(post("/admin/users/{userId}/unsuspend", USER_ID)
-                        .with(authentication(auth(AdminRole.SUPPORT))))
+                        .with(authentication(auth(AdminRole.ADMIN))))
                 .andExpect(status().isConflict())
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
                         .content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
@@ -203,10 +203,20 @@ class AdminUserDeletionControllerIT {
         when(firebaseContact.getContact(any())).thenReturn(FirebaseContactService.Contact.EMPTY);
 
         mockMvc.perform(post("/admin/users/{userId}/unsuspend", USER_ID)
-                        .with(authentication(auth(AdminRole.SUPPORT))))
+                        .with(authentication(auth(AdminRole.ADMIN))))
                 .andExpect(status().isOk());
 
         org.assertj.core.api.Assertions.assertThat(user.getStatus())
                 .isEqualTo(com.yadony.api.auth.UserStatus.ACTIVE);
+    }
+
+    @Test
+    @DisplayName("POST unsuspend — rôle SUPPORT : 403, il ne suspend ni ne bannit plus")
+    void unsuspend_support_returns403() throws Exception {
+        mockMvc.perform(post("/admin/users/{userId}/unsuspend", USER_ID)
+                        .with(authentication(auth(AdminRole.SUPPORT))))
+                .andExpect(status().isForbidden());
+
+        verify(userRepository, never()).save(any());
     }
 }

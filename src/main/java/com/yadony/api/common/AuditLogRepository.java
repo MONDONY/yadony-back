@@ -42,6 +42,13 @@ public interface AuditLogRepository extends JpaRepository<AuditLogEntity, Long> 
     );
 
     /**
+     * Gestes tracés sur une entité, du plus récent au plus ancien, départagés par identifiant pour que
+     * la pagination reste stable. Servi par l'index {@code (entity_type, entity_id)} de V7.
+     */
+    Page<AuditLogEntity> findByEntityTypeAndEntityIdOrderByCreatedAtDescIdDesc(
+            String entityType, UUID entityId, Pageable pageable);
+
+    /**
      * Historique d'une verification d'identite, du plus recent au plus ancien. Deux
      * identifiants : la ligne KYC, et l'utilisateur, que {@code KycService.abandonSession}
      * utilise comme entite de sa trace.

@@ -198,8 +198,9 @@ public class AdminUserController {
                 adminId(authentication)));
     }
 
-    // Lot B — Coupure de messagerie. SUPPORT REÇOIT USER_MESSAGE_MUTE (arbitrage produit du
-    // Lot C : il peut déjà bannir, geste bien plus sévère). Voir AdminRole.SUPPORT.
+    // Lot B — Coupure de messagerie. SUPPORT ne détient plus USER_SUSPEND, USER_BAN ni
+    // USER_MESSAGE_MUTE (retirés pour la fiche utilisateur de l'admin) : ces gestes sont réservés
+    // à ADMIN. Voir AdminRole.SUPPORT.
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('USER_MESSAGE_MUTE')")
     @PostMapping("/{userId}/mute-messaging")
     public AdminUserDetailResponse muteMessaging(@PathVariable UUID userId,

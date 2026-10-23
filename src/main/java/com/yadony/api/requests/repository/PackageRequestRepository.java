@@ -21,6 +21,9 @@ public interface PackageRequestRepository
 
     Page<PackageRequestEntity> findBySenderIdOrderByCreatedAtDesc(UUID senderId, Pageable pageable);
 
+    /** Même liste avec départage par identifiant : pagination stable à dates égales (fiche admin). */
+    Page<PackageRequestEntity> findBySenderIdOrderByCreatedAtDescIdDesc(UUID senderId, Pageable pageable);
+
     /** Demandes ouvertes d'un expéditeur, les plus récemment créées d'abord (section « En cours » de son profil). */
     @Query("""
         SELECT p FROM PackageRequestEntity p
