@@ -35,6 +35,13 @@ public record AdminBidQuery(
 
     public static final int MAX_TOKENS = 4;
 
+    /**
+     * Jeton qui ne se trouve dans aucun texte : la recherche SQL compare à des champs passés en
+     * minuscules, un jeton en majuscules n'y est jamais. Il remplace une saisie faite seulement de
+     * {@code %} ou {@code _}, qui sinon perdrait tous ses jetons et ramènerait tous les colis.
+     */
+    public static final String NO_MATCH_TOKEN = "NOMATCH";
+
     public AdminBidQuery {
         tokens = List.copyOf(tokens);
     }
@@ -53,7 +60,7 @@ public record AdminBidQuery(
                 view != null ? view : AdminBidView.ALL,
                 status != null ? status.name() : null,
                 announcementId != null ? announcementId.toString() : null,
-                AdminSearchTerms.tokens(query, MAX_TOKENS),
+                tokensOf(query),
                 AdminSearchTerms.uuid(query),
                 scope != null ? scope : AdminBidScope.ALL,
                 withRecipientPhone,
@@ -63,6 +70,15 @@ public record AdminBidQuery(
                 from,
                 to,
                 now);
+    }
+
+    /** Jetons de la saisie ; une saisie non vide sans aucun jeton (que des % ou _) ne trouve rien. */
+    private static List<String> tokensOf(String query) {
+        List<String> tokens = AdminSearchTerms.tokens(query, MAX_TOKENS);
+        if (tokens.isEmpty() && query != null && !query.isBlank()) {
+            return List.of(NO_MATCH_TOKEN);
+        }
+        return tokens;
     }
 
     /** Le jeton {@code index} (0 à 3), ou null s'il n'y en a pas autant. */

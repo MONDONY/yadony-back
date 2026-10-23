@@ -231,9 +231,10 @@ class AdminBidSearchIT {
         BidEntity wanted = bid(mine, sender, BidStatus.PENDING);
         BidEntity notWanted = bid(other, sender, BidStatus.PENDING);
 
-        List<UUID> found = ids(q().query("KOUYATE").scope(AdminBidScope.TRAVELER));
-
-        assertThat(found).contains(wanted.getId()).doesNotContain(notWanted.getId());
+        // Chaque requête reste dans le périmètre d'une annonce du test : la base H2 est partagée.
+        assertThat(ids(q().on(mine).query("KOUYATE").scope(AdminBidScope.TRAVELER))).containsExactly(wanted.getId());
+        assertThat(ids(q().on(other).query("KOUYATE").scope(AdminBidScope.TRAVELER))).isEmpty();
+        assertThat(ids(q().on(other).query("TRAORE").scope(AdminBidScope.TRAVELER))).containsExactly(notWanted.getId());
     }
 
     @Test
@@ -312,14 +313,20 @@ class AdminBidSearchIT {
     }
 
     @Test
-    void search_percentAndUnderscore_areLiteralText() {
+    void search_percentAndUnderscore_areNeverWildcards() {
         AnnouncementEntity a = trip();
         bid(a, sender, BidStatus.PENDING, b -> b.setRecipientName("xqzay"));
         BidEntity literal = bid(a, sender, BidStatus.PENDING, b -> b.setRecipientName("xqzy"));
 
-        // En motif, « xqz_y » et « xqz%y » trouveraient aussi « xqzay » : ce sont des textes.
+        // Retirés de la saisie : en motif, « xqz_y » et « xqz%y » trouveraient aussi « xqzay ».
         assertThat(ids(q().on(a).query("xqz_y"))).containsExactly(literal.getId());
         assertThat(ids(q().on(a).query("xqz%y"))).containsExactly(literal.getId());
+        // Une saisie faite seulement de % ou _ ne devient pas « tout » : elle ne trouve rien.
+        assertThat(ids(q().on(a).query("%"))).isEmpty();
+        assertThat(ids(q().on(a).query("_"))).isEmpty();
+        assertThat(ids(q().on(a).query(" % _ "))).isEmpty();
+        // Une saisie vide, elle, ne filtre pas.
+        assertThat(ids(q().on(a).query("  "))).hasSize(2);
     }
 
     @Test
@@ -465,11 +472,15 @@ class AdminBidSearchIT {
         BidEntity sameDay = bid(arrivesToday, sender, BidStatus.IN_TRANSIT);
         BidEntity graceDay = bid(arrivedYesterday, sender, BidStatus.IN_TRANSIT);
 
-        List<UUID> todo = ids(q().view(AdminBidView.TODO));
-
-        assertThat(todo).contains(lateInTransit.getId(), lateHandedOver.getId(), lateByDeparture.getId())
-                .doesNotContain(arrivedStatus.getId(), delivered.getId(), sameDay.getId(), graceDay.getId());
-        assertThat(ranks(lateInTransit, sameDay)).containsExactly(Map.entry(lateInTransit.getId(), 4));
+        // Une requête par annonce du test : la base H2 partagée contient d'autres colis en retard.
+        assertThat(ids(q().on(arrivedTwoDaysAgo).view(AdminBidView.TODO)))
+                .containsExactlyInAnyOrder(lateInTransit.getId(), lateHandedOver.getId());
+        assertThat(ids(q().on(noArrivalDate).view(AdminBidView.TODO))).containsExactly(lateByDeparture.getId());
+        assertThat(ids(q().on(arrivesToday).view(AdminBidView.TODO))).isEmpty();
+        assertThat(ids(q().on(arrivedYesterday).view(AdminBidView.TODO))).isEmpty();
+        assertThat(ranks(lateInTransit, lateHandedOver, lateByDeparture, arrivedStatus, delivered, sameDay, graceDay))
+                .containsOnly(Map.entry(lateInTransit.getId(), 4), Map.entry(lateHandedOver.getId(), 4),
+                        Map.entry(lateByDeparture.getId(), 4));
     }
 
     @Test
@@ -593,6 +604,11 @@ class AdminBidSearchIT {
         // Un seul passage dans « À traiter » malgré deux litiges et le no-show.
         assertThat(ids(q().on(a).view(AdminBidView.TODO))).containsOnlyOnce(both.getId());
         assertThat(total(q().on(a).view(AdminBidView.TODO))).isEqualTo(3);
+    }
+
+    @Test
+    void alertRanks_emptyIds_returnsEmpty() {
+        assertThat(bidRepository.alertRanks(List.of(), NOW_UTC, AdminBidQuery.lateBefore(NOW_UTC))).isEmpty();
     }
 
     /** Choix documenté : un colis sans alerte n'a pas de ligne (pas de rang 0 renvoyé). */

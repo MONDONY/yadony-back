@@ -201,6 +201,8 @@ class AdminBidSearchPostgresIT {
                 .containsExactlyInAnyOrder(
                         org.assertj.core.groups.Tuple.tuple(noShow.getId(), 1),
                         org.assertj.core.groups.Tuple.tuple(unpaid.getId(), 3));
+        assertThat(bidRepository.alertRanks(List.of(), NOW, AdminBidQuery.lateBefore(NOW))).isEmpty();
+        assertThat(ids(query(AdminBidView.ALL, "%", AdminBidScope.ALL, false))).isEmpty();
         assertThat(ids(query(AdminBidView.TODO, null, AdminBidScope.ALL, false)))
                 .containsSubsequence(noShow.getId(), unpaid.getId())
                 .doesNotContain(calm.getId());

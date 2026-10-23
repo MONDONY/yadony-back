@@ -853,15 +853,24 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
 
     /**
      * Rang d'alerte ({@link AdminBidSql#ALERT_RANK}) des colis donnés. Seuls les colis en alerte ont
-     * une ligne : un identifiant absent du résultat n'a aucune alerte (rang 0).
+     * une ligne : un identifiant absent du résultat n'a aucune alerte (rang 0). Une liste vide ne
+     * part pas en base ({@code IN ()} n'est pas du SQL valide).
      */
+    default List<AlertRankRow> alertRanks(Collection<UUID> ids, LocalDateTime now, LocalDate lateBefore) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return alertRanksNative(ids, now, lateBefore);
+    }
+
+    /** Requête de {@link #alertRanks} ; {@code ids} non vide. */
     @Query(value = "SELECT CAST(b.id AS VARCHAR) AS \"bidIdText\", " + AdminBidSql.ALERT_RANK + " AS \"rank\""
             + " FROM" + AdminBidSql.FROM_JOIN
             + " WHERE b.id IN (:ids) AND " + AdminBidSql.ALERT_RANK + " > 0",
         nativeQuery = true)
-    List<AlertRankRow> alertRanks(@Param("ids") Collection<UUID> ids,
-                                  @Param("now") LocalDateTime now,
-                                  @Param("lateBefore") LocalDate lateBefore);
+    List<AlertRankRow> alertRanksNative(@Param("ids") Collection<UUID> ids,
+                                        @Param("now") LocalDateTime now,
+                                        @Param("lateBefore") LocalDate lateBefore);
 
     /** Projection de {@link #alertRanks} : rang de 1 à 4, voir {@code AdminBidAlert.ofRank}. */
     interface AlertRankRow {
