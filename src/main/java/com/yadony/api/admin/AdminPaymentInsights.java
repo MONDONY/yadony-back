@@ -129,7 +129,7 @@ public class AdminPaymentInsights {
         params.addValue("limit", limit);
         String window = "";
         if (since != null) {
-            params.addValue("since", Timestamp.valueOf(since));
+            params.addValue("since", Timestamp.from(since.toInstant(java.time.ZoneOffset.UTC)));
             window = " AND (p.created_at >= :since OR p.payout_held_at >= :since)";
         }
         List<UUID> ids = jdbc.query("SELECT CAST(p.id AS VARCHAR(36)) FROM payments p "
@@ -142,7 +142,8 @@ public class AdminPaymentInsights {
 
     /**
      * Argent retenu (séquestre avec versement gelé, comme le filtre {@code held}) dont l'utilisateur est le
-     * voyageur bénéficiaire : une ligne par devise, montants bruts en BigDecimal, jamais additionnés entre devises.
+     * voyageur bénéficiaire : une ligne par devise, jamais additionnées entre devises. Le montant est le montant
+     * BRUT du paiement (commission incluse), comme le filtre {@code held} de la liste des transactions.
      */
     public Map<String, BigDecimal> heldAmountByCurrencyOfBeneficiary(UUID travelerId) {
         Map<String, BigDecimal> result = new java.util.TreeMap<>();

@@ -141,6 +141,7 @@ public class AdminUserTimelineAssembler {
         List<TimelineEntry> out = new ArrayList<>();
         for (AdminPaymentListItemResponse p : payments) {
             String detail = formatAmount(p.amountCents(), p.currency());
+            // Daté de la création du paiement : capturedAt n'est pas exposé par AdminPaymentListItemResponse.
             // Comparaison tolérante : un statut inconnu ne doit jamais faire échouer la synthèse.
             if ("ESCROW".equals(p.status()) || "RELEASED".equals(p.status())) {
                 add(out, "PAYMENT", "Paiement reçu", detail, AdminUserListingService.toInstant(p.createdAt()), "PAYMENT", p.id());

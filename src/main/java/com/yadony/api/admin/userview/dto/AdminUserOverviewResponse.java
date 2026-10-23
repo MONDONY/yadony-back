@@ -17,6 +17,7 @@ public record AdminUserOverviewResponse(
     public record Kpis(
             Integer parcelsInProgress,
             Integer activeTrips,
+            /** Montant BRUT des paiements retenus (commission incluse), comme le filtre « retenus » de la liste des transactions. */
             List<MoneyAmount> heldByCurrency,
             Integer openDisputes,
             Integer totalDisputes,

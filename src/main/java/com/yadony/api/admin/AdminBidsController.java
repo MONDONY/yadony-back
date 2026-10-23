@@ -164,10 +164,6 @@ public class AdminBidsController {
 
     // --- mapping helpers ---
 
-    static java.math.BigDecimal netOf(BidEntity b, AnnouncementEntity ann, java.math.BigDecimal gridNet) {
-        return AdminBidAmounts.netOf(b, ann, gridNet);
-    }
-
     /** Somme des articles de grille par bid, en une requête pour toute la page. */
     private Map<UUID, java.math.BigDecimal> gridNetByBid(java.util.Collection<UUID> bidIds) {
         if (bidIds.isEmpty()) return Map.of();
@@ -187,7 +183,7 @@ public class AdminBidsController {
         return new AdminBidListItemResponse(
                 b.getId(), b.getStatus().name(), b.getAnnouncementId(),
                 senderName, travelerName, corridor,
-                b.getWeightKg(), netOf(b, ann, gridNet),
+                b.getWeightKg(), AdminBidAmounts.netOf(b, ann, gridNet),
                 paymentMethod, b.getCreatedAt(), commissionStatus, currency, b.getTrackingNumber());
     }
 
