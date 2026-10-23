@@ -15,8 +15,10 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -43,11 +45,14 @@ public class BidAmendmentPricing {
      * @param addedKg kilos ajoutés, nul ou 0 si seulement des articles.
      * @param items   articles de la grille du trajet, nul ou vide si seulement des kilos.
      * @throws YadonyBusinessException 422 {@code amendment-item-unknown} si un article n'appartient pas au
-     *         trajet, 422 {@code amendment-empty} si le net est nul, 422 {@code amendment-not-eligible} si des
-     *         kilos sont demandés sur un trajet sans prix au kilo.
+     *         trajet, 422 {@code amendment-item-duplicate} si un article revient sur deux lignes, 422
+     *         {@code amendment-empty} si le net est nul, 422 {@code amendment-not-eligible} si des kilos sont
+     *         demandés sur un trajet sans prix au kilo, 400 {@code validation} pour des kilos négatifs ou une
+     *         quantité inférieure à 1 (revérifiés ici : le devis ne passe pas toujours par la validation du DTO).
      */
     public BidAmendmentQuote quote(BidEntity bid, AnnouncementEntity announcement, BigDecimal addedKg,
                                    List<AmendmentLineRequest> items) {
+        requireWellFormed(addedKg, items);
         SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(bid.getCurrency());
         BigDecimal net = BigDecimal.ZERO;
 
@@ -84,6 +89,33 @@ public class BidAmendmentPricing {
                 extrasNet.dueNet(bid, announcement), net);
         return new BidAmendmentQuote(net, r.commission(), net.add(r.commission()), r.rateSnapshot(), r.gridId(),
                 List.copyOf(lines));
+    }
+
+    /**
+     * Kilos positifs, quantités d'au moins 1, chaque article une seule fois : un même article sur deux lignes
+     * contournerait le plafond de quantité par ligne ({@code @Max(20)}).
+     */
+    private static void requireWellFormed(BigDecimal addedKg, List<AmendmentLineRequest> items) {
+        if (addedKg != null && addedKg.signum() < 0) {
+            throw invalid("Les kilos ajoutés ne peuvent pas être négatifs");
+        }
+        if (items == null) {
+            return;
+        }
+        Set<UUID> seen = new HashSet<>();
+        for (AmendmentLineRequest line : items) {
+            if (line == null || line.gridItemId() == null || line.quantity() < 1) {
+                throw invalid("Chaque article demande un identifiant et une quantité d'au moins 1");
+            }
+            if (!seen.add(line.gridItemId())) {
+                throw unprocessable("amendment-item-duplicate", "Amendment Item Duplicate",
+                        "Un même article ne peut figurer qu'une fois dans la demande");
+            }
+        }
+    }
+
+    private static YadonyBusinessException invalid(String detail) {
+        return new YadonyBusinessException(HttpStatus.BAD_REQUEST, "validation", "Validation Failed", detail);
     }
 
     private static YadonyBusinessException unprocessable(String code, String title, String detail) {

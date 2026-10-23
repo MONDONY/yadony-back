@@ -327,7 +327,7 @@ public class PriceGridService {
         return commissionGridService.current().isPresent();
     }
 
-    BigDecimal displayPrice(BigDecimal netPrice, UUID travelerId) {
+    public BigDecimal displayPrice(BigDecimal netPrice, UUID travelerId) {
         if (commissionGridService.current().isPresent()) {
             return netPrice;
         }

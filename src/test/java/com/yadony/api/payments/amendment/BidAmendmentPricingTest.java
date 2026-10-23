@@ -141,6 +141,46 @@ class BidAmendmentPricingTest {
     }
 
     @Test
+    void quote_duplicateGridItem_422() {
+        // Un même article en deux lignes contournerait le plafond de quantité par ligne.
+        BidEntity bid = gridBid("2.00", "EUR");
+
+        assertThatThrownBy(() -> pricing.quote(bid, announcement, null,
+                List.of(new AmendmentLineRequest(PHONE_ID, 1), new AmendmentLineRequest(PHONE_ID, 2))))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(e.getErrorCode()).isEqualTo("amendment-item-duplicate");
+                });
+    }
+
+    @Test
+    void quote_quantityBelowOne_rejectedEvenWithoutDtoValidation() {
+        BidEntity bid = gridBid("2.00", "EUR");
+
+        // Une quantité négative ferait baisser le net des autres lignes.
+        assertThatThrownBy(() -> pricing.quote(bid, announcement, new BigDecimal("3"),
+                List.of(new AmendmentLineRequest(PHONE_ID, -1))))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(e.getErrorCode()).isEqualTo("validation");
+                });
+        assertThatThrownBy(() -> pricing.quote(bid, announcement, new BigDecimal("3"),
+                List.of(new AmendmentLineRequest(PHONE_ID, 0))))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("validation"));
+    }
+
+    @Test
+    void quote_negativeKg_rejected() {
+        BidEntity bid = gridBid("2.00", "EUR");
+
+        assertThatThrownBy(() -> pricing.quote(bid, announcement, new BigDecimal("-1"),
+                List.of(new AmendmentLineRequest(PHONE_ID, 3))))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("validation"));
+    }
+
+    @Test
     void quote_nothingAdded_422Empty() {
         BidEntity bid = gridBid("2.00", "EUR");
 

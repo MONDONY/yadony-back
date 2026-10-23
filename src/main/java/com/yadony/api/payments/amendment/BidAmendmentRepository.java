@@ -22,6 +22,10 @@ public interface BidAmendmentRepository extends JpaRepository<BidAmendmentEntity
     @Query("SELECT a FROM BidAmendmentEntity a WHERE a.id = :id AND a.bidId = :bidId")
     Optional<BidAmendmentEntity> findByIdAndBidIdForUpdate(@Param("id") UUID id, @Param("bidId") UUID bidId);
 
+    /** Colis d'une modification, sans la charger : elle est relue verrouillée après le verrou du colis. */
+    @Query("SELECT a.bidId FROM BidAmendmentEntity a WHERE a.id = :id")
+    Optional<UUID> findBidIdById(@Param("id") UUID id);
+
     Optional<BidAmendmentEntity> findFirstByBidIdAndStatusIn(UUID bidId, Collection<BidAmendmentStatus> statuses);
 
     /** Modifications d'un colis, de la plus récente à la plus ancienne. */
