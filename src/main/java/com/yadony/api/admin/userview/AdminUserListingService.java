@@ -9,6 +9,11 @@ import com.yadony.api.admin.userview.dto.AdminUserCancellationRow;
 import com.yadony.api.admin.userview.dto.AdminUserDisputeRow;
 import com.yadony.api.admin.userview.dto.AdminUserRatingRow;
 import com.yadony.api.admin.userview.dto.AdminUserReportRow;
+import com.yadony.api.admin.userview.dto.AdminUserRequestRow;
+import com.yadony.api.requests.entity.NegotiationThreadEntity;
+import com.yadony.api.requests.entity.PackageRequestEntity;
+import com.yadony.api.requests.repository.NegotiationThreadRepository;
+import com.yadony.api.requests.repository.PackageRequestRepository;
 import com.yadony.api.ratings.RatingRepository;
 import com.yadony.api.signalements.ReportRepository;
 import com.yadony.api.cancellation.CancellationRepository;
@@ -63,6 +68,8 @@ public class AdminUserListingService {
     private final CancellationRepository cancellationRepository;
     private final ReportRepository reportRepository;
     private final RatingRepository ratingRepository;
+    private final PackageRequestRepository packageRequestRepository;
+    private final NegotiationThreadRepository negotiationThreadRepository;
 
     public AdminUserListingService(BidRepository bidRepository,
                                    AnnouncementRepository announcementRepository,
@@ -72,7 +79,11 @@ public class AdminUserListingService {
                                    DisputeRepository disputeRepository,
                                    CancellationRepository cancellationRepository,
                                    ReportRepository reportRepository,
-                                   RatingRepository ratingRepository) {
+                                   RatingRepository ratingRepository,
+                                   PackageRequestRepository packageRequestRepository,
+                                   NegotiationThreadRepository negotiationThreadRepository) {
+        this.packageRequestRepository = packageRequestRepository;
+        this.negotiationThreadRepository = negotiationThreadRepository;
         this.reportRepository = reportRepository;
         this.ratingRepository = ratingRepository;
         this.disputeRepository = disputeRepository;
@@ -146,6 +157,28 @@ public class AdminUserListingService {
                         Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by(Sort.Direction.DESC, "id"))))
                 .map(r -> new AdminUserRatingRow(r.getId(), r.getBidId(), r.getStars(), r.getComment(),
                         r.isFlagged(), toInstant(r.getCreatedAt())));
+    }
+
+    /**
+     * Demandes d'envoi publiées par l'utilisateur, de la plus récente à la plus ancienne (départage par
+     * identifiant). Négociations ouvertes comptées en une seule requête pour toute la page.
+     */
+    public Page<AdminUserRequestRow> requests(UUID userId, int page, int size) {
+        Page<PackageRequestEntity> found = packageRequestRepository
+                .findBySenderIdOrderByCreatedAtDescIdDesc(userId, pageable(page, size));
+        List<UUID> ids = found.getContent().stream().map(PackageRequestEntity::getId).toList();
+        Map<UUID, Long> openCounts = ids.isEmpty() ? Map.of()
+                : negotiationThreadRepository.findByPackageRequestIdIn(ids).stream()
+                        .filter(t -> t.getStatus().isActive())
+                        .collect(Collectors.groupingBy(NegotiationThreadEntity::getPackageRequestId,
+                                Collectors.counting()));
+        return found.map(r -> new AdminUserRequestRow(r.getId(),
+                MatchingTextUtil.corridorLabel(r.getDepartureCity(), r.getArrivalCity()),
+                r.getStatus().name(),
+                r.getWeightKg() == null ? null : r.getWeightKg().doubleValue(),
+                r.getDesiredDate() == null ? null : r.getDesiredDate().atStartOfDay().toInstant(ZoneOffset.UTC),
+                toInstant(r.getCreatedAt()),
+                openCounts.getOrDefault(r.getId(), 0L).intValue()));
     }
 
     static String disputeRoleOf(DisputeEntity d, UUID userId) {

@@ -11,6 +11,7 @@ import com.yadony.api.admin.userview.dto.AdminUserDisputeRow;
 import com.yadony.api.admin.userview.dto.AdminUserPaymentRow;
 import com.yadony.api.admin.userview.dto.AdminUserRatingRow;
 import com.yadony.api.admin.userview.dto.AdminUserReportRow;
+import com.yadony.api.admin.userview.dto.AdminUserRequestRow;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -110,6 +111,15 @@ public class AdminUserViewController {
                                             @RequestParam(defaultValue = "20") int size) {
         requireUser(userId);
         return listingService.ratings(userId, page, size);
+    }
+
+    @GetMapping("/requests")
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('BID_VIEW')")
+    public Page<AdminUserRequestRow> requests(@PathVariable UUID userId,
+                                              @RequestParam(defaultValue = "0") int page,
+                                              @RequestParam(defaultValue = "20") int size) {
+        requireUser(userId);
+        return listingService.requests(userId, page, size);
     }
 
     @GetMapping("/overview")
