@@ -43,7 +43,7 @@ import java.util.stream.Collectors;
 public class AdminPaymentInsights {
 
     /** Un paiement PENDING plus vieux que ça est un checkout abandonné. */
-    static final Duration ABANDONED_AFTER = Duration.ofHours(24);
+    static final Duration ABANDONED_AFTER = Duration.ofHours(AdminPaymentSql.ABANDONED_AFTER_HOURS);
 
     /** Plafond de l'export CSV : au-delà, l'admin resserre la période. */
     public static final int EXPORT_MAX_ROWS = 10_000;
@@ -84,17 +84,40 @@ public class AdminPaymentInsights {
 
     // ── Recherche ───────────────────────────────────────────────────────────────
 
-    /** Page de paiements correspondant au filtre, du plus récent au plus ancien. */
-    public Page<PaymentEntity> search(AdminPaymentFilter filter, Pageable pageable) {
+    /**
+     * Page de paiements correspondant au filtre, dans l'ordre de la vue ({@link AdminPaymentSql#ORDER_BY}) :
+     * « À surveiller » par alerte la plus urgente puis plus ancien d'abord, sinon plus récent d'abord.
+     * {@code now} (UTC) fixe les seuils d'âge (séquestre de 48 h, versés récemment, checkout abandonné).
+     */
+    public Page<PaymentEntity> search(AdminPaymentFilter filter, LocalDateTime now, Pageable pageable) {
         MapSqlParameterSource params = new MapSqlParameterSource();
-        String where = where(filter, params);
-        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM payments p " + where, params, Long.class);
+        String where = where(filter, params, now);
+        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM" + AdminPaymentSql.FROM_JOIN + where, params, Long.class);
         params.addValue("limit", pageable.getPageSize());
         params.addValue("offset", pageable.getOffset());
-        List<UUID> ids = jdbc.query("SELECT CAST(p.id AS VARCHAR(36)) FROM payments p " + where
-                        + " ORDER BY p.created_at DESC, p.id DESC LIMIT :limit OFFSET :offset",
+        List<UUID> ids = jdbc.query("SELECT CAST(p.id AS VARCHAR(36)) FROM" + AdminPaymentSql.FROM_JOIN + where
+                        + " ORDER BY " + AdminPaymentSql.ORDER_BY + " LIMIT :limit OFFSET :offset",
                 params, (rs, i) -> UUID.fromString(rs.getString(1)));
         return new PageImpl<>(load(ids), pageable, total == null ? 0 : total);
+    }
+
+    /**
+     * Rang d'alerte exclusif ({@link AdminPaymentSql#ALERT_RANK}, 0 = aucune) de chaque paiement, en un
+     * aller-retour ; voir {@link AdminPaymentAlert#ofRank}.
+     */
+    public Map<UUID, Integer> alertRanks(Collection<UUID> paymentIds, LocalDateTime now) {
+        if (paymentIds.isEmpty()) {
+            return Map.of();
+        }
+        MapSqlParameterSource params = new MapSqlParameterSource("ids", new ArrayList<>(paymentIds));
+        params.addValue("now", Timestamp.valueOf(now));
+        Map<UUID, Integer> ranks = new HashMap<>();
+        jdbc.query("SELECT CAST(p.id AS VARCHAR(36)) AS pid, " + AdminPaymentSql.ALERT_RANK + " AS alert_rank FROM"
+                        + AdminPaymentSql.FROM_JOIN + "WHERE p.id IN (:ids)", params,
+                rs -> {
+                    ranks.put(UUID.fromString(rs.getString("pid")), rs.getInt("alert_rank"));
+                });
+        return ranks;
     }
 
     /** Paiements dont l'utilisateur est une des parties (payeur ou voyageur), du plus récent au plus ancien. */
@@ -163,19 +186,19 @@ public class AdminPaymentInsights {
     }
 
     /** Paiements de l'export, dans l'ordre de la liste, au plus {@link #EXPORT_MAX_ROWS}. */
-    public List<PaymentEntity> exportRows(AdminPaymentFilter filter) {
+    public List<PaymentEntity> exportRows(AdminPaymentFilter filter, LocalDateTime now) {
         MapSqlParameterSource params = new MapSqlParameterSource("limit", EXPORT_MAX_ROWS);
-        String where = where(filter, params);
-        List<UUID> ids = jdbc.query("SELECT CAST(p.id AS VARCHAR(36)) FROM payments p " + where
-                        + " ORDER BY p.created_at DESC, p.id DESC LIMIT :limit",
+        String where = where(filter, params, now);
+        List<UUID> ids = jdbc.query("SELECT CAST(p.id AS VARCHAR(36)) FROM" + AdminPaymentSql.FROM_JOIN + where
+                        + " ORDER BY " + AdminPaymentSql.ORDER_BY + " LIMIT :limit",
                 params, (rs, i) -> UUID.fromString(rs.getString(1)));
         return load(ids);
     }
 
     /** Totaux du périmètre filtré, une ligne par devise (on n'additionne jamais des XOF et des EUR). */
-    public List<CurrencyTotals> totals(AdminPaymentFilter filter) {
+    public List<CurrencyTotals> totals(AdminPaymentFilter filter, LocalDateTime now) {
         MapSqlParameterSource params = new MapSqlParameterSource();
-        String where = where(filter, params);
+        String where = where(filter, params, now);
         return jdbc.query("""
                 SELECT UPPER(p.currency) AS currency,
                        COUNT(*) AS n,
@@ -184,8 +207,7 @@ public class AdminPaymentInsights {
                        SUM(COALESCE(p.refunded_amount, 0)) AS refunded,
                        SUM(CASE WHEN p.status IN ('ESCROW', 'RELEASED') THEN p.commission_amount ELSE 0 END) AS commission,
                        SUM(CASE WHEN p.status = 'PENDING' THEN 1 ELSE 0 END) AS pending
-                FROM payments p
-                """ + where + " GROUP BY UPPER(p.currency) ORDER BY UPPER(p.currency)",
+                FROM""" + AdminPaymentSql.FROM_JOIN + where + " GROUP BY UPPER(p.currency) ORDER BY UPPER(p.currency)",
                 params, (rs, i) -> new CurrencyTotals(
                         rs.getString("currency"),
                         rs.getLong("n"),
@@ -208,7 +230,15 @@ public class AdminPaymentInsights {
                                  long refundedCents, long commissionCents, long pendingCount) {
     }
 
-    private String where(AdminPaymentFilter f, MapSqlParameterSource params) {
+    /**
+     * {@code WHERE} commun à la liste, aux totaux et à l'export, sur les alias de
+     * {@link AdminPaymentSql#FROM_JOIN} (colis, parties et trajet effectifs). Lie toujours {@code :now}
+     * et {@code :view}, que {@link AdminPaymentSql#ORDER_BY} lit aussi.
+     */
+    private String where(AdminPaymentFilter f, MapSqlParameterSource params, LocalDateTime now) {
+        AdminPaymentView view = f.view() == null ? AdminPaymentView.ALL : f.view();
+        params.addValue("now", Timestamp.valueOf(now));
+        params.addValue("view", view.name());
         StringBuilder sql = new StringBuilder("WHERE p.deleted_at IS NULL");
         if (f.status() != null) {
             sql.append(" AND p.status = :status");
@@ -231,11 +261,40 @@ public class AdminPaymentInsights {
             params.addValue("currency", f.currency());
         }
         if (f.held()) {
-            sql.append(" AND p.status = 'ESCROW' AND p.payout_held_at IS NOT NULL");
+            sql.append(" AND ").append(AdminPaymentSql.HELD_PREDICATE);
         }
         if (f.hideAbandoned()) {
             sql.append(" AND NOT (p.status = 'PENDING' AND p.created_at < :abandonedBefore)");
-            params.addValue("abandonedBefore", Timestamp.valueOf(abandonedBefore()));
+            params.addValue("abandonedBefore", Timestamp.valueOf(now.minus(ABANDONED_AFTER)));
+        }
+        if (view != AdminPaymentView.ALL) {
+            sql.append(" AND ").append(AdminPaymentSql.VIEW_PREDICATE);
+        }
+        if (f.alert() != null) {
+            sql.append(" AND ").append(AdminPaymentSql.ALERT_FILTER);
+            params.addValue("alert", f.alert().name());
+        }
+        if (f.partyId() != null) {
+            sql.append(" AND (").append(AdminPaymentSql.EFF_SENDER_ID).append(" = :partyId OR ")
+                    .append(AdminPaymentSql.EFF_TRAVELER_ID).append(" = :partyId)");
+            params.addValue("partyId", f.partyId());
+        }
+        if (f.announcementId() != null) {
+            sql.append(" AND ").append(AdminPaymentSql.EFF_ANNOUNCEMENT_ID).append(" = :announcementId");
+            params.addValue("announcementId", f.announcementId());
+        }
+        if (f.bidId() != null) {
+            sql.append(" AND ").append(AdminPaymentSql.EFF_BID_ID).append(" = :bidId");
+            params.addValue("bidId", f.bidId());
+        }
+        // Bornes en centimes, incluses ; p.amount est en unités (2 décimales), comme AdminWalletResponse.toCents.
+        if (f.amountMin() != null) {
+            sql.append(" AND p.amount >= :amountMin");
+            params.addValue("amountMin", BigDecimal.valueOf(f.amountMin(), 2));
+        }
+        if (f.amountMax() != null) {
+            sql.append(" AND p.amount <= :amountMax");
+            params.addValue("amountMax", BigDecimal.valueOf(f.amountMax(), 2));
         }
         if (f.query() != null) {
             appendSearch(sql, params, f.query());

@@ -11,7 +11,7 @@ package com.yadony.api.admin;
  * (fil de négociation), {@code r} (demande d'envoi), {@code s} (expéditeur effectif), {@code tr}
  * (voyageur effectif).
  *
- * <p>Paramètres nommés : {@code :now} (UTC), {@code :view}, {@code :abandonedBefore}. Les
+ * <p>Paramètres nommés : {@code :now} (UTC), {@code :view}, {@code :alert}, {@code :abandonedBefore}. Les
  * paramètres facultatifs passent par {@code CAST(:p AS …)}.
  */
 public final class AdminPaymentSql {

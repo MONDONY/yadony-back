@@ -113,7 +113,7 @@ class AdminPaymentControllerHoldTest {
         controller = new AdminPaymentController(paymentRepository, adminAlertRepository, auditService,
                 bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
                 payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
-                transactionManager, holdPolicy, insights, timeline, escrowCapture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), new com.yadony.api.payments.ReleaseNetCalculator(null));
+                transactionManager, holdPolicy, insights, timeline, escrowCapture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), new com.yadony.api.payments.ReleaseNetCalculator(null), java.time.Clock.systemUTC());
         AnnouncementEntity a = new AnnouncementEntity();
         ReflectionTestUtils.setField(a, "id", UUID.randomUUID());
         a.setTravelerId(travelerId);
@@ -395,14 +395,14 @@ class AdminPaymentControllerHoldTest {
     void list_heldTrue_filtreEtExposeLeGelDuBeneficiaire() {
         LocalDateTime heldAt = LocalDateTime.now().minusHours(2);
         payment.setPayoutHeldAt(heldAt);
-        when(insights.search(org.mockito.ArgumentMatchers.argThat(f -> f != null && f.held()), any()))
+        when(insights.search(org.mockito.ArgumentMatchers.argThat(f -> f != null && f.held()), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(payment)));
         when(paymentRepository.findBeneficiaries(List.of(payment.getId())))
                 .thenReturn(List.<Object[]>of(new Object[]{payment.getId(), travelerId}));
         when(holdPolicy.statusesOf(List.of(travelerId))).thenReturn(Map.of(travelerId,
                 new PayoutHoldStatus(heldAt, List.of(PayoutHoldReason.KYC_REVOKED))));
 
-        var body = controller.list(null, null, null, null, null, true, null, null, 0, 20).getBody();
+        var body = controller.list(null, null, null, null, null, true, null, null, null, null, null, null, null, null, null, 0, 20).getBody();
 
         AdminPaymentListItemResponse item = body.getContent().get(0);
         assertThat(item.payoutHeldAt()).isEqualTo(heldAt);
@@ -413,13 +413,13 @@ class AdminPaymentControllerHoldTest {
 
     @Test
     void list_sansFiltreHeld_beneficiaireNonGele() {
-        when(insights.search(org.mockito.ArgumentMatchers.argThat(f -> f != null && !f.held()), any()))
+        when(insights.search(org.mockito.ArgumentMatchers.argThat(f -> f != null && !f.held()), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(payment)));
         when(paymentRepository.findBeneficiaries(List.of(payment.getId())))
                 .thenReturn(List.<Object[]>of(new Object[]{payment.getId(), travelerId}));
         when(holdPolicy.statusesOf(List.of(travelerId))).thenReturn(Map.of());
 
-        AdminPaymentListItemResponse item = controller.list(null, null, null, null, null, null, null, null, 0, 20)
+        AdminPaymentListItemResponse item = controller.list(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, 0, 20)
                 .getBody().getContent().get(0);
 
         assertThat(item.beneficiaryHeld()).isFalse();

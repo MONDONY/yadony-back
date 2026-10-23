@@ -182,18 +182,18 @@ class AdminPaymentInsightsIT {
         persistPayment(persistBid(ann.getId(), sender.getId(), null).getId(), null, "XOF", "6600.00", "600.00", PaymentStatus.PENDING);
 
         List<AdminPaymentInsights.CurrencyTotals> totals =
-                insights.totals(AdminPaymentFilter.of(null, null, null, null, null, null, tag + "snd", null));
+                insights.totals(AdminPaymentFilter.of(null, null, null, null, null, null, tag + "snd", null), LocalDateTime.now(ZoneOffset.UTC));
 
         assertThat(totals).containsExactly(
                 new AdminPaymentInsights.CurrencyTotals("EUR", 2, 5000, 3000, 400, 800, 0),
                 new AdminPaymentInsights.CurrencyTotals("XOF", 1, 0, 0, 0, 0, 1));
-        assertThat(insights.exportRows(AdminPaymentFilter.of(null, null, null, null, "eur", null, tag + "snd", null)))
+        assertThat(insights.exportRows(AdminPaymentFilter.of(null, null, null, null, "eur", null, tag + "snd", null), LocalDateTime.now(ZoneOffset.UTC)))
                 .hasSize(2);
     }
 
     private List<UUID> search(String q, boolean hideAbandoned) {
         return insights.search(AdminPaymentFilter.of(null, null, null, null, null, null, q, hideAbandoned),
-                PageRequest.of(0, 50)).getContent().stream().map(PaymentEntity::getId).toList();
+                LocalDateTime.now(ZoneOffset.UTC), PageRequest.of(0, 50)).getContent().stream().map(PaymentEntity::getId).toList();
     }
 
     private UserEntity persistUser(String username, String firstName, String lastName) {
