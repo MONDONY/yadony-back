@@ -113,7 +113,8 @@ class AdminPaymentControllerHoldTest {
         controller = new AdminPaymentController(paymentRepository, adminAlertRepository, auditService,
                 bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
                 payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
-                transactionManager, holdPolicy, insights, timeline, escrowCapture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), new com.yadony.api.payments.ReleaseNetCalculator(null), java.time.Clock.systemUTC());
+                transactionManager, holdPolicy, insights, timeline, escrowCapture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), new com.yadony.api.payments.ReleaseNetCalculator(null), java.time.Clock.systemUTC(),
+                com.yadony.api.admin.AdminPaymentLinksTestSupport.none());
         AnnouncementEntity a = new AnnouncementEntity();
         ReflectionTestUtils.setField(a, "id", UUID.randomUUID());
         a.setTravelerId(travelerId);
@@ -433,7 +434,7 @@ class AdminPaymentControllerHoldTest {
         LocalDateTime heldAt = LocalDateTime.now();
         payment.setPayoutHeldAt(heldAt);
 
-        AdminPaymentDetailResponse d = controller.getById(payment.getId()).getBody();
+        AdminPaymentDetailResponse d = controller.getById(payment.getId(), null).getBody();
 
         assertThat(d.payoutHeldAt()).isEqualTo(heldAt);
         assertThat(d.beneficiaryHeld()).isTrue();

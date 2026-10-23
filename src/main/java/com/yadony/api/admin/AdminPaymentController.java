@@ -145,6 +145,8 @@ public class AdminPaymentController {
     private final TransactionTemplate shortTransaction;
     /** Heure de référence (UTC) des vues et des alertes de la liste : remplacée par une horloge fixe en test. */
     private final Clock clock;
+    /** Ajouts de la fiche (alerte, liens, alertes ouvertes, litige bancaire), filtrés par permission. */
+    private final AdminPaymentLinks paymentLinks;
 
     public AdminPaymentController(PaymentRepository paymentRepository,
                                   AdminAlertRepository adminAlertRepository,
@@ -167,8 +169,10 @@ public class AdminPaymentController {
                                   StripeReleaseExecutor releaseExecutor,
                                   com.yadony.api.disputes.DisputeRepository disputeRepository,
                                   com.yadony.api.payments.ReleaseNetCalculator netCalculator,
-                                  Clock clock) {
+                                  Clock clock,
+                                  AdminPaymentLinks paymentLinks) {
         this.clock = clock;
+        this.paymentLinks = paymentLinks;
         this.netCalculator = netCalculator;
         this.escrowCapture = escrowCapture;
         this.releaseExecutor = releaseExecutor;
@@ -368,11 +372,15 @@ public class AdminPaymentController {
 
     @PreAuthorize("hasAuthority('PAYMENT_VIEW')")
     @GetMapping("/{id}")
-    public ResponseEntity<AdminPaymentDetailResponse> getById(@PathVariable UUID id) {
+    public ResponseEntity<AdminPaymentDetailResponse> getById(@PathVariable UUID id, Authentication authentication) {
         PaymentEntity p = paymentRepository.findById(id)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "payment-not-found", "Not Found", "Paiement introuvable"));
-        return ResponseEntity.ok(detail(p));
+        // Alerte, n° de suivi, liens, alertes ouvertes et litige bancaire : chaque identifiant n'est rendu que
+        // si l'admin a la permission de sa destination (AdminPaymentLinks), sinon il est absent du JSON.
+        AdminPaymentLinks.Result sheet = paymentLinks.of(p, LocalDateTime.now(clock), authentication);
+        return ResponseEntity.ok(detail(p).withSheet(sheet.alert(), sheet.trackingNumber(), sheet.links(),
+                sheet.openAlerts(), sheet.chargeback()));
     }
 
     /**

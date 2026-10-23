@@ -57,6 +57,17 @@ public class AdminAlertController {
         return ResponseEntity.ok(result);
     }
 
+    /** Une alerte, pour le lien « voir l'alerte » d'une autre fiche (paiement…). */
+    @PreAuthorize("hasAuthority('ALERT_VIEW')")
+    @GetMapping("/{id}")
+    public ResponseEntity<AdminAlertResponse> get(@PathVariable UUID id) {
+        return alertRepo.findById(id)
+                .map(AdminAlertResponse::from)
+                .map(ResponseEntity::ok)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "alert-not-found", "Not Found", "Alerte introuvable"));
+    }
+
     /**
      * Lignes ACTUELLEMENT en faute pour une alerte de cohérence de l'argent : la règle est
      * ré-exécutée maintenant (lecture seule), pour que l'admin voie quels paiements, colis ou

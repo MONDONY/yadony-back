@@ -85,7 +85,8 @@ class AdminPaymentControllerTest {
         controller = new AdminPaymentController(paymentRepository, adminAlertRepository, auditService,
                 bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
                 payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
-                transactionManager, holdPolicy, insights, timeline, escrowCapture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), new com.yadony.api.payments.ReleaseNetCalculator(null), java.time.Clock.systemUTC());
+                transactionManager, holdPolicy, insights, timeline, escrowCapture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), new com.yadony.api.payments.ReleaseNetCalculator(null), java.time.Clock.systemUTC(),
+                com.yadony.api.admin.AdminPaymentLinksTestSupport.none());
     }
 
     /**
@@ -182,7 +183,8 @@ class AdminPaymentControllerTest {
                 com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository,
                         mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null),
                 mock(com.yadony.api.disputes.DisputeRepository.class),
-                new com.yadony.api.payments.ReleaseNetCalculator(vouchers), java.time.Clock.systemUTC());
+                new com.yadony.api.payments.ReleaseNetCalculator(vouchers), java.time.Clock.systemUTC(),
+                com.yadony.api.admin.AdminPaymentLinksTestSupport.none());
 
         try (MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
             ArgumentCaptor<TransferCreateParams> captor = ArgumentCaptor.forClass(TransferCreateParams.class);
@@ -209,7 +211,8 @@ class AdminPaymentControllerTest {
                 com.yadony.api.payments.ReleaseTestSupport.executor(intents, paymentRepository,
                         mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null),
                 mock(com.yadony.api.disputes.DisputeRepository.class),
-                new com.yadony.api.payments.ReleaseNetCalculator(null), java.time.Clock.systemUTC());
+                new com.yadony.api.payments.ReleaseNetCalculator(null), java.time.Clock.systemUTC(),
+                com.yadony.api.admin.AdminPaymentLinksTestSupport.none());
 
         try (MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
             trStatic.when(() -> Transfer.create(any(TransferCreateParams.class), any(com.stripe.net.RequestOptions.class)))
@@ -275,7 +278,8 @@ class AdminPaymentControllerTest {
         return new AdminPaymentController(paymentRepository, adminAlertRepository, auditService,
                 bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
                 payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
-                transactionManager, holdPolicy, insights, timeline, capture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), new com.yadony.api.payments.ReleaseNetCalculator(null), java.time.Clock.systemUTC());
+                transactionManager, holdPolicy, insights, timeline, capture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), new com.yadony.api.payments.ReleaseNetCalculator(null), java.time.Clock.systemUTC(),
+                com.yadony.api.admin.AdminPaymentLinksTestSupport.none());
     }
 
     @Test
@@ -744,6 +748,6 @@ class AdminPaymentControllerTest {
         when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
         when(insights.insightOf(p)).thenReturn(insight(bidId));
 
-        assertThat(controller.getById(paymentId).getBody().insight().arrivalCity()).isEqualTo("Abidjan");
+        assertThat(controller.getById(paymentId, null).getBody().insight().arrivalCity()).isEqualTo("Abidjan");
     }
 }

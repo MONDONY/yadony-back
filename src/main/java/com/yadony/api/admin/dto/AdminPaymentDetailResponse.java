@@ -4,6 +4,7 @@ import com.yadony.api.payments.PaymentEntity;
 import com.yadony.api.payments.hold.PayoutHoldStatus;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
@@ -54,8 +55,46 @@ public record AdminPaymentDetailResponse(
          */
         java.time.Instant capturedAt,
         /** Fil de négociation du paiement ({@code bid_id} nul tant que le colis n'est pas matérialisé). */
-        UUID negotiationThreadId
+        UUID negotiationThreadId,
+        /** Alerte la plus urgente du paiement ({@code AdminPaymentAlert}, rang exclusif) ; absente si aucune. */
+        String alert,
+        /** N° de suivi du colis direct ou lié au fil ; absent si inconnu. */
+        String trackingNumber,
+        /**
+         * Identifiants des fiches liées, chacun présent seulement si l'admin détient la permission de sa
+         * destination ; absent tout entier quand aucun ne l'est (jamais d'objet vide).
+         */
+        Links links,
+        /** Alertes non résolues citant le paiement (ALERT_VIEW), plus récentes d'abord ; absentes sans le droit. */
+        List<OpenAlert> openAlerts,
+        /** Litige bancaire le plus récent du paiement ; absent s'il n'y en a pas. */
+        Chargeback chargeback
 ) {
+    /**
+     * Fiches liées : {@code announcementId}/{@code packageRequestId} (BID_VIEW), {@code disputeId},
+     * {@code disputeStatus}, {@code cancellationId} (DISPUTE_VIEW), {@code conversationId} (MODERATION_VIEW,
+     * identifiant Firestore), {@code chargebackId} (PAYMENT_VIEW).
+     */
+    public record Links(UUID announcementId, UUID disputeId, String disputeStatus, UUID cancellationId,
+                        String conversationId, UUID chargebackId, UUID packageRequestId) {
+    }
+
+    /**
+     * Aucun identifiant visible : le bloc est omis plutôt que rendu vide. Méthode statique : un getter
+     * d'instance du record serait sérialisé par Jackson.
+     */
+    private static boolean noLink(Links l) {
+        return l == null || (l.announcementId() == null && l.disputeId() == null && l.disputeStatus() == null
+                && l.cancellationId() == null && l.conversationId() == null && l.chargebackId() == null
+                && l.packageRequestId() == null);
+    }
+
+    public record OpenAlert(UUID id, String type, String severity) {
+    }
+
+    public record Chargeback(UUID id, String status, String reason, String outcome, LocalDateTime openedAt) {
+    }
+
     /** Paiement sans opération pawaPay (rail STRIPE). */
     public static AdminPaymentDetailResponse from(PaymentEntity p) {
         return from(p, null, null, null);
@@ -92,7 +131,8 @@ public record AdminPaymentDetailResponse(
                 h.primaryReason() != null ? h.primaryReason().name() : null,
                 null,
                 p.getCapturedAt(),
-                p.getNegotiationThreadId()
+                p.getNegotiationThreadId(),
+                null, null, null, null, null
         );
     }
 
@@ -100,6 +140,16 @@ public record AdminPaymentDetailResponse(
         return new AdminPaymentDetailResponse(id, bidId, status, method, amountCents, commissionCents, currency,
                 createdAt, refundedCents, stripePaymentIntentId, escrowReleasedAt, disputed, rail, pawapayDepositId,
                 pawapayPayoutId, pawapayRefundId, travelerId, payoutHeldAt, beneficiaryHeld, beneficiaryHoldReason,
-                value, capturedAt, negotiationThreadId);
+                value, capturedAt, negotiationThreadId, alert, trackingNumber, links, openAlerts, chargeback);
+    }
+
+    /** Ajouts de la fiche ({@code GET /admin/payments/{id}}), déjà filtrés par permission. */
+    public AdminPaymentDetailResponse withSheet(String alertValue, String trackingValue, Links linksValue,
+                                                List<OpenAlert> openAlertsValue, Chargeback chargebackValue) {
+        return new AdminPaymentDetailResponse(id, bidId, status, method, amountCents, commissionCents, currency,
+                createdAt, refundedCents, stripePaymentIntentId, escrowReleasedAt, disputed, rail, pawapayDepositId,
+                pawapayPayoutId, pawapayRefundId, travelerId, payoutHeldAt, beneficiaryHeld, beneficiaryHoldReason,
+                insight, capturedAt, negotiationThreadId, alertValue, trackingValue,
+                noLink(linksValue) ? null : linksValue, openAlertsValue, chargebackValue);
     }
 }

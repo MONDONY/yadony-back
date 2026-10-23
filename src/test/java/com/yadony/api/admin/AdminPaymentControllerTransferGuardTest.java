@@ -77,7 +77,8 @@ class AdminPaymentControllerTransferGuardTest {
         controller = new AdminPaymentController(paymentRepository, adminAlertRepository, auditService,
                 bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
                 payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
-                transactionManager, holdPolicy, insights, timeline, escrowCapture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, transferLookup, auditService, eventPublisher, null), disputeRepository, new com.yadony.api.payments.ReleaseNetCalculator(null), java.time.Clock.systemUTC());
+                transactionManager, holdPolicy, insights, timeline, escrowCapture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, transferLookup, auditService, eventPublisher, null), disputeRepository, new com.yadony.api.payments.ReleaseNetCalculator(null), java.time.Clock.systemUTC(),
+                com.yadony.api.admin.AdminPaymentLinksTestSupport.none());
         payment = new PaymentEntity();
         payment.setNegotiationThreadId(threadId);
         payment.setStripePaymentIntentId("pi_1");
