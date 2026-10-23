@@ -5,6 +5,7 @@ import com.yadony.api.admin.dto.AdminPaymentCountsResponse;
 import com.yadony.api.admin.dto.AdminPaymentDetailResponse;
 import com.yadony.api.admin.dto.AdminPaymentInsight;
 import com.yadony.api.admin.dto.AdminPaymentListItemResponse;
+import com.yadony.api.admin.dto.AdminPaymentSuggestResponse;
 import com.yadony.api.admin.dto.PayoutReleaseRequest;
 import com.yadony.api.auth.StripeAccountStatus;
 import com.yadony.api.auth.UserEntity;
@@ -277,6 +278,17 @@ public class AdminPaymentController {
         return ResponseEntity.ok(insights.counts(filterOf(null, dateFrom, dateTo, method, currency, held, q,
                 hideAbandoned, null, null, partyId, announcementId, bidId, amountMin, amountMax),
                 LocalDateTime.now(clock)));
+    }
+
+    /**
+     * Suggestions de la barre de recherche : cinq propositions au plus par groupe (expéditeurs, voyageurs,
+     * trajets, colis) et {@code exactPaymentId} si la saisie identifie exactement un paiement. Sous deux
+     * caractères : groupes vides, aucune requête.
+     */
+    @PreAuthorize("hasAuthority('PAYMENT_VIEW')")
+    @GetMapping("/suggest")
+    public ResponseEntity<AdminPaymentSuggestResponse> suggest(@RequestParam(required = false) String q) {
+        return ResponseEntity.ok(insights.suggest(q, LocalDateTime.now(clock)));
     }
 
     /** Totaux par devise du périmètre filtré (mêmes filtres que la liste). */

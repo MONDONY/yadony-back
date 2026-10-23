@@ -130,6 +130,30 @@ public final class AdminPaymentSql {
 
     private static final String ID_TERM = "LOWER(CAST(:idTerm AS VARCHAR))";
 
+    /** {@code :idTerm} est un identifiant exact du paiement (voir {@link #SEARCH_PREDICATE}). */
+    private static final String ID_PREDICATE = "(CAST(:idTerm AS VARCHAR) IS NOT NULL AND ("
+            + "     CAST(p.id AS VARCHAR) = " + ID_TERM
+            + "     OR CAST(" + EFF_BID_ID + " AS VARCHAR) = " + ID_TERM
+            + "     OR CAST(p.negotiation_thread_id AS VARCHAR) = " + ID_TERM
+            + "     OR CAST(" + EFF_ANNOUNCEMENT_ID + " AS VARCHAR) = " + ID_TERM
+            + "     OR EXISTS (SELECT 1 FROM pawapay_operations o WHERE o.payment_id = p.id"
+            + "                AND CAST(o.id AS VARCHAR) = " + ID_TERM + ")"
+            + "     OR EXISTS (SELECT 1 FROM chargebacks c WHERE c.deleted_at IS NULL"
+            + "                AND (c.payment_id = p.id OR (c.payment_id IS NULL AND c.bid_id = " + EFF_BID_ID + "))"
+            + "                AND CAST(c.id AS VARCHAR) = " + ID_TERM + ")))";
+
+    /** {@code :refTerm} est une référence exacte du paiement (voir {@link #SEARCH_PREDICATE}). */
+    private static final String REF_PREDICATE = "(p.stripe_payment_intent_id = CAST(:refTerm AS VARCHAR)"
+            + " OR p.stripe_charge_id = CAST(:refTerm AS VARCHAR)"
+            + " OR EXISTS (SELECT 1 FROM pawapay_operations o WHERE o.payment_id = p.id"
+            + "            AND o.provider_transaction_id = CAST(:refTerm AS VARCHAR)))";
+
+    /**
+     * Identifiant ou référence exacts seulement (sans jeton ni montant) : la recherche de
+     * {@code exactPaymentId} des suggestions réutilise ainsi la définition de la liste.
+     */
+    public static final String EXACT_PREDICATE = "(" + ID_PREDICATE + " OR " + REF_PREDICATE + ")";
+
     /**
      * Recherche libre, en OU : chaque jeton non nul ({@code :t1} à {@code :t4}, déjà repliés, sans {@code %}
      * ni {@code _}) se trouve dans {@link #HAYSTACK} ; ou {@code :amountCents} est le montant du paiement ;
@@ -142,20 +166,7 @@ public final class AdminPaymentSql {
     public static final String SEARCH_PREDICATE = "(("
             + token("t1") + " AND " + token("t2") + " AND " + token("t3") + " AND " + token("t4") + ")"
             + " OR (CAST(:amountCents AS BIGINT) IS NOT NULL AND ROUND(p.amount * 100) = CAST(:amountCents AS BIGINT))"
-            + " OR (CAST(:idTerm AS VARCHAR) IS NOT NULL AND ("
-            + "     CAST(p.id AS VARCHAR) = " + ID_TERM
-            + "     OR CAST(" + EFF_BID_ID + " AS VARCHAR) = " + ID_TERM
-            + "     OR CAST(p.negotiation_thread_id AS VARCHAR) = " + ID_TERM
-            + "     OR CAST(" + EFF_ANNOUNCEMENT_ID + " AS VARCHAR) = " + ID_TERM
-            + "     OR EXISTS (SELECT 1 FROM pawapay_operations o WHERE o.payment_id = p.id"
-            + "                AND CAST(o.id AS VARCHAR) = " + ID_TERM + ")"
-            + "     OR EXISTS (SELECT 1 FROM chargebacks c WHERE c.deleted_at IS NULL"
-            + "                AND (c.payment_id = p.id OR (c.payment_id IS NULL AND c.bid_id = " + EFF_BID_ID + "))"
-            + "                AND CAST(c.id AS VARCHAR) = " + ID_TERM + ")))"
-            + " OR p.stripe_payment_intent_id = CAST(:refTerm AS VARCHAR)"
-            + " OR p.stripe_charge_id = CAST(:refTerm AS VARCHAR)"
-            + " OR EXISTS (SELECT 1 FROM pawapay_operations o WHERE o.payment_id = p.id"
-            + "            AND o.provider_transaction_id = CAST(:refTerm AS VARCHAR)))";
+            + " OR " + EXACT_PREDICATE + ")";
 
     /** Checkout abandonné (seule définition) : {@code :abandonedBefore} = {@code now - ABANDONED_AFTER_HOURS}. */
     public static final String ABANDONED_PREDICATE = "(p.status = 'PENDING'"
@@ -187,4 +198,73 @@ public final class AdminPaymentSql {
             + sum(CHARGEBACK_OPEN_PREDICATE, "chargebackOpen") + ", "
             + sum(MM_FAILED_PREDICATE, "mmFailed") + ", "
             + sum(ESCROW_J48_PREDICATE, "escrowJ48") + " ";
+
+    // ------------------------------------------------------------ suggestions de recherche
+
+    /** Nombre maximal de propositions par groupe de {@code GET /admin/payments/suggest}. */
+    public static final int SUGGEST_LIMIT = 5;
+
+    /** Chaque jeton non nul ({@code :t1} à {@code :t4}) se trouve dans la colonne repliée {@code x.hay}. */
+    private static final String HAY_TOKENS = "((CAST(:t1 AS VARCHAR) IS NULL OR x.hay LIKE '%' || CAST(:t1 AS VARCHAR) || '%')"
+            + " AND (CAST(:t2 AS VARCHAR) IS NULL OR x.hay LIKE '%' || CAST(:t2 AS VARCHAR) || '%')"
+            + " AND (CAST(:t3 AS VARCHAR) IS NULL OR x.hay LIKE '%' || CAST(:t3 AS VARCHAR) || '%')"
+            + " AND (CAST(:t4 AS VARCHAR) IS NULL OR x.hay LIKE '%' || CAST(:t4 AS VARCHAR) || '%'))";
+
+    /**
+     * Paiements comptés par les suggestions : non supprimés, checkouts abandonnés exclus
+     * ({@code :abandonedBefore}). Les vues et filtres de la liste ne s'appliquent pas.
+     */
+    private static final String SUGGEST_PAYMENT_FILTER = "p.deleted_at IS NULL AND NOT " + ABANDONED_PREDICATE;
+
+    private static String suggestPeople(String alias, String first, String last, String username) {
+        return "SELECT x.uid AS \"idText\", COUNT(*) AS \"total\" FROM ("
+                + "SELECT CAST(" + alias + ".id AS VARCHAR) AS uid, "
+                + AdminBidSql.FOLD_OPEN + "CONCAT_WS(' ', " + first + ", " + last + ", " + username + ")"
+                + AdminBidSql.FOLD_CLOSE + " AS hay"
+                + " FROM" + FROM_JOIN + "WHERE " + SUGGEST_PAYMENT_FILTER
+                + " AND " + alias + ".id IS NOT NULL AND " + alias + ".deleted_at IS NULL) x"
+                + " WHERE " + HAY_TOKENS
+                + " GROUP BY x.uid ORDER BY COUNT(*) DESC, MIN(x.hay), x.uid LIMIT " + SUGGEST_LIMIT;
+    }
+
+    /** Expéditeurs effectifs (comptes non supprimés) dont le nom correspond, avec leur nombre de paiements. */
+    public static final String SUGGEST_SENDERS = suggestPeople("s",
+            "s.first_name", "s.last_name", "s.username");
+
+    /** Voyageurs effectifs (comptes non supprimés) dont le nom correspond, avec leur nombre de paiements. */
+    public static final String SUGGEST_TRAVELERS = suggestPeople("tr",
+            "tr.first_name", "tr.last_name", "tr.username");
+
+    /**
+     * Trajets groupés par couple (départ, arrivée) REPLIÉ ; les villes montrées sont les plus petites des
+     * valeurs d'origine. Chaque jeton doit se trouver dans l'une des deux villes.
+     */
+    public static final String SUGGEST_TRIPS = "SELECT MIN(x.dep) AS \"departureCity\", MIN(x.arr) AS \"arrivalCity\","
+            + " COUNT(*) AS \"total\" FROM ("
+            + "SELECT " + EFF_DEPARTURE + " AS dep, " + EFF_ARRIVAL + " AS arr, "
+            + AdminBidSql.FOLD_OPEN + EFF_DEPARTURE + AdminBidSql.FOLD_CLOSE + " AS fdep, "
+            + AdminBidSql.FOLD_OPEN + EFF_ARRIVAL + AdminBidSql.FOLD_CLOSE + " AS farr, "
+            + AdminBidSql.FOLD_OPEN + "CONCAT_WS(' ', " + EFF_DEPARTURE + ", " + EFF_ARRIVAL + ")"
+            + AdminBidSql.FOLD_CLOSE + " AS hay"
+            + " FROM" + FROM_JOIN + "WHERE " + SUGGEST_PAYMENT_FILTER
+            + " AND " + EFF_DEPARTURE + " IS NOT NULL AND " + EFF_ARRIVAL + " IS NOT NULL) x"
+            + " WHERE " + HAY_TOKENS
+            + " GROUP BY x.fdep, x.farr ORDER BY COUNT(*) DESC, x.fdep, x.farr LIMIT " + SUGGEST_LIMIT;
+
+    /** Paiements dont le numéro de suivi effectif correspond, les plus récents d'abord. */
+    public static final String SUGGEST_PARCELS = "SELECT x.pid AS \"paymentIdText\", x.tracking AS \"trackingNumber\","
+            + " x.status AS \"status\", x.amount AS \"amount\", x.currency AS \"currency\" FROM ("
+            + "SELECT CAST(p.id AS VARCHAR) AS pid, " + EFF_TRACKING + " AS tracking, p.status AS status,"
+            + " p.amount AS amount, p.currency AS currency, p.created_at AS created, "
+            + AdminBidSql.FOLD_OPEN + EFF_TRACKING + AdminBidSql.FOLD_CLOSE + " AS hay"
+            + " FROM" + FROM_JOIN + "WHERE " + SUGGEST_PAYMENT_FILTER + " AND " + EFF_TRACKING + " IS NOT NULL) x"
+            + " WHERE " + HAY_TOKENS
+            + " ORDER BY x.created DESC, x.pid DESC LIMIT " + SUGGEST_LIMIT;
+
+    /**
+     * Paiements identifiés exactement par {@code :idTerm} / {@code :refTerm} ({@link #EXACT_PREDICATE}) : deux
+     * lignes au plus, car un identifiant qui en désigne plusieurs est ambigu.
+     */
+    public static final String SUGGEST_EXACT = "SELECT CAST(p.id AS VARCHAR) FROM" + FROM_JOIN
+            + "WHERE p.deleted_at IS NULL AND " + EXACT_PREDICATE + " ORDER BY p.id LIMIT 2";
 }

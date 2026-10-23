@@ -3,6 +3,8 @@ package com.yadony.api.admin;
 import com.yadony.api.admin.dto.AdminPaymentCountsResponse;
 import com.yadony.api.admin.dto.AdminPaymentInsight;
 import com.yadony.api.admin.dto.AdminPaymentListItemResponse;
+import com.yadony.api.admin.dto.AdminPaymentSuggestResponse;
+import com.yadony.api.common.MatchingTextUtil;
 import com.yadony.api.payments.hold.PayoutHoldStatus;
 import com.yadony.api.admin.dto.AdminWalletResponse;
 import com.yadony.api.payments.PaymentEntity;
@@ -331,19 +333,88 @@ public class AdminPaymentInsights {
      */
     private static void appendSearch(StringBuilder sql, MapSqlParameterSource params, String query) {
         sql.append(" AND ").append(AdminPaymentSql.SEARCH_PREDICATE);
+        addTokens(params, query);
+        OptionalLong amount = AdminSearchTerms.amountCents(query);
+        params.addValue("amountCents", amount.isPresent() ? amount.getAsLong() : null);
+        addExactTerms(params, query);
+    }
+
+    /**
+     * Lie {@code :t1} à {@code :t4} : jetons repliés (le {@code @} d'un pseudo retiré), nuls au-delà. Une saisie
+     * sans jeton utilisable (« @ », « % », « ' ») ne trouve rien, jamais tout.
+     */
+    private static void addTokens(MapSqlParameterSource params, String query) {
         List<String> tokens = AdminSearchTerms.tokens(query.replace("@", ""), AdminBidQuery.MAX_TOKENS);
         if (tokens.isEmpty()) {
-            // Saisie non vide (« @ », « % », « ' ») sans jeton utilisable : aucun texte ne correspond, jamais tous.
             tokens = List.of(AdminBidQuery.NO_MATCH_TOKEN);
         }
         for (int i = 0; i < AdminBidQuery.MAX_TOKENS; i++) {
             params.addValue("t" + (i + 1), i < tokens.size() ? tokens.get(i) : null);
         }
-        OptionalLong amount = AdminSearchTerms.amountCents(query);
-        params.addValue("amountCents", amount.isPresent() ? amount.getAsLong() : null);
+    }
+
+    /** Lie {@code :idTerm} (UUID en minuscules, ou null) et {@code :refTerm} (saisie brute). */
+    private static void addExactTerms(MapSqlParameterSource params, String query) {
         UUID id = AdminSearchTerms.uuid(query);
         params.addValue("idTerm", id == null ? null : id.toString());
         params.addValue("refTerm", query);
+    }
+
+    // ── Suggestions ─────────────────────────────────────────────────────────────
+
+    /** Saisie minimale (après espaces) pour lancer des suggestions. */
+    public static final int MIN_SUGGEST_CHARS = 2;
+
+    /**
+     * Suggestions de la barre de recherche ({@code GET /admin/payments/suggest}) : cinq propositions au plus par
+     * groupe, mêmes colonnes repliées que la liste. Elles ignorent les vues et filtres, ne comptent ni les
+     * checkouts abandonnés ni les comptes supprimés, et ne contiennent aucun téléphone. {@code exactPaymentId}
+     * n'est posé que si la saisie identifie EXACTEMENT un paiement ({@link AdminPaymentSql#EXACT_PREDICATE}).
+     */
+    public AdminPaymentSuggestResponse suggest(String query, LocalDateTime now) {
+        String q = query == null ? "" : query.strip();
+        if (q.length() < MIN_SUGGEST_CHARS) {
+            return AdminPaymentSuggestResponse.empty();
+        }
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        addTokens(params, q);
+        params.addValue("abandonedBefore", Timestamp.valueOf(now.minus(ABANDONED_AFTER)));
+
+        List<PersonRow> senders = people(AdminPaymentSql.SUGGEST_SENDERS, params);
+        List<PersonRow> travelers = people(AdminPaymentSql.SUGGEST_TRAVELERS, params);
+        Set<UUID> ids = new LinkedHashSet<>();
+        senders.forEach(r -> ids.add(r.id()));
+        travelers.forEach(r -> ids.add(r.id()));
+        Map<UUID, String> names = namesOf(ids);
+
+        List<AdminPaymentSuggestResponse.Trip> trips = jdbc.query(AdminPaymentSql.SUGGEST_TRIPS, params,
+                (rs, i) -> new AdminPaymentSuggestResponse.Trip(
+                        MatchingTextUtil.corridorLabel(rs.getString("departureCity"), rs.getString("arrivalCity")),
+                        rs.getString("departureCity"), rs.getString("arrivalCity"), rs.getLong("total")));
+        List<AdminPaymentSuggestResponse.Parcel> parcels = jdbc.query(AdminPaymentSql.SUGGEST_PARCELS, params,
+                (rs, i) -> new AdminPaymentSuggestResponse.Parcel(UUID.fromString(rs.getString("paymentIdText")),
+                        rs.getString("trackingNumber"), rs.getString("status"),
+                        cents(rs.getBigDecimal("amount")), rs.getString("currency")));
+
+        return new AdminPaymentSuggestResponse(exactPaymentId(q),
+                senders.stream().map(r -> new AdminPaymentSuggestResponse.Person(r.id(), names.get(r.id()), r.count())).toList(),
+                travelers.stream().map(r -> new AdminPaymentSuggestResponse.Person(r.id(), names.get(r.id()), r.count())).toList(),
+                trips, parcels);
+    }
+
+    private record PersonRow(UUID id, long count) {
+    }
+
+    private List<PersonRow> people(String sql, MapSqlParameterSource params) {
+        return jdbc.query(sql, params, (rs, i) -> new PersonRow(UUID.fromString(rs.getString("idText")), rs.getLong("total")));
+    }
+
+    /** L'unique paiement que la saisie désigne exactement (UUID, référence), ou null si aucun ou plusieurs. */
+    private UUID exactPaymentId(String query) {
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        addExactTerms(params, query);
+        List<String> hits = jdbc.query(AdminPaymentSql.SUGGEST_EXACT, params, (rs, i) -> rs.getString(1));
+        return hits.size() == 1 ? UUID.fromString(hits.get(0)) : null;
     }
 
     private List<PaymentEntity> load(List<UUID> orderedIds) {
