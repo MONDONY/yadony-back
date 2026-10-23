@@ -104,6 +104,14 @@ public class PawapayOperationEntity {
     @Column(name = "bid_supplement_id", updatable = false)
     private UUID bidSupplementId;
 
+    /**
+     * Modification de colis payée, versée ou remboursée par cette opération (purpose
+     * {@code BID_AMENDMENT}, V347). Jamais avec {@code payment_id}, pour les mêmes raisons que
+     * {@link #bidSupplementId}.
+     */
+    @Column(name = "bid_amendment_id", updatable = false)
+    private UUID bidAmendmentId;
+
     /** Pour un REFUND : le DEPOSIT d'origine. */
     @Column(name = "related_operation_id")
     private UUID relatedOperationId;
@@ -174,6 +182,16 @@ public class PawapayOperationEntity {
         return op;
     }
 
+    /** Opération d'une modification de colis : purpose {@code BID_AMENDMENT}, jamais de paiement de colis. */
+    public static PawapayOperationEntity forAmendment(UUID id, PawapayOperationKind kind, UUID userId,
+                                                      UUID bidAmendmentId, UUID relatedOperationId, BigDecimal amount,
+                                                      String currency, String provider, String country, String msisdn) {
+        PawapayOperationEntity op = new PawapayOperationEntity(id, kind, PawapayOperationPurpose.BID_AMENDMENT, userId,
+                null, relatedOperationId, amount, currency, provider, country, msisdn);
+        op.bidAmendmentId = bidAmendmentId;
+        return op;
+    }
+
     @PrePersist
     void onCreate() {
         createdAt = LocalDateTime.now(ZoneOffset.UTC);
@@ -201,6 +219,7 @@ public class PawapayOperationEntity {
     public PawapayOperationPurpose getPurpose() { return purpose; }
     public UUID getUserId() { return userId; }
     public UUID getBidSupplementId() { return bidSupplementId; }
+    public UUID getBidAmendmentId() { return bidAmendmentId; }
     public boolean isTopupGuard() { return topupGuard; }
     public String getAuthorizationUrl() { return authorizationUrl; }
     public String getProviderTransactionId() { return providerTransactionId; }
