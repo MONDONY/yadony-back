@@ -54,4 +54,13 @@ public enum WalletTransactionType {
      * avec {@code payment_ref = "supplement-refund-<id>"}.
      */
     SUPPLEMENT_COMMISSION_DEDUCTED
+    ,
+    /**
+     * Commission d'une modification de colis payée en espèces, prélevée au voyageur quand il l'accepte
+     * ({@code payment_ref = "amendment-<id>"}, {@code bid_id} du colis). Distincte de
+     * {@link #COMMISSION_DEDUCTED} et de {@link #SUPPLEMENT_COMMISSION_DEDUCTED} : chacune garde sa
+     * ligne unique et son remboursement ne touche jamais les autres. Recrédit en {@link #REFUND} avec
+     * {@code payment_ref = "amendment-refund-<id>"}.
+     */
+    AMENDMENT_COMMISSION_DEDUCTED
 }

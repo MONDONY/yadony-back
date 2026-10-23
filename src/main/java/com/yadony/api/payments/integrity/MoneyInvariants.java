@@ -58,8 +58,8 @@ public final class MoneyInvariants {
                     SELECT 'SIGNE_INCOHERENT_AVEC_TYPE', t.id, t.user_id, t.currency, t.amount
                     FROM wallet_transactions t
                     WHERE (t.type IN ('TOP_UP','REFUND','REFERRAL_REWARD','ADMIN_CREDIT','TOP_UP_CODE') AND t.amount <= 0)
-                       OR (t.type IN ('BID_PAYMENT','COMMISSION_DEDUCTED','ADMIN_REFUND_OUT','SELF_REFUND_OUT','FORFEITED_ON_DELETION','ADMIN_DEBIT','SUPPLEMENT_COMMISSION_DEDUCTED') AND t.amount > 0)
-                       OR (t.type IN ('BID_PAYMENT','ADMIN_REFUND_OUT','SELF_REFUND_OUT','FORFEITED_ON_DELETION','ADMIN_DEBIT','SUPPLEMENT_COMMISSION_DEDUCTED') AND t.amount = 0)
+                       OR (t.type IN ('BID_PAYMENT','COMMISSION_DEDUCTED','ADMIN_REFUND_OUT','SELF_REFUND_OUT','FORFEITED_ON_DELETION','ADMIN_DEBIT','SUPPLEMENT_COMMISSION_DEDUCTED','AMENDMENT_COMMISSION_DEDUCTED') AND t.amount > 0)
+                       OR (t.type IN ('BID_PAYMENT','ADMIN_REFUND_OUT','SELF_REFUND_OUT','FORFEITED_ON_DELETION','ADMIN_DEBIT','SUPPLEMENT_COMMISSION_DEDUCTED','AMENDMENT_COMMISSION_DEDUCTED') AND t.amount = 0)
                     UNION ALL
                     SELECT 'AJUSTEMENT_ADMIN_SANS_AUTEUR', t.id, t.user_id, t.currency, t.amount
                     FROM wallet_transactions t
@@ -226,6 +226,17 @@ public final class MoneyInvariants {
                     SELECT 'SUPPLEMENT_RECREDIT_DOUBLE', t.payment_ref || ':' || t.currency, COUNT(*)
                     FROM wallet_transactions t
                     WHERE t.type = 'REFUND' AND t.payment_ref LIKE 'supplement-refund-%'
+                    GROUP BY t.payment_ref, t.currency HAVING COUNT(*) > 1
+                    UNION ALL
+                    -- Modification de colis espèces : même garde, une ligne de commission et un recrédit par devise.
+                    SELECT 'AMENDMENT_COMMISSION_DOUBLE', t.payment_ref || ':' || t.currency, COUNT(*)
+                    FROM wallet_transactions t
+                    WHERE t.type = 'AMENDMENT_COMMISSION_DEDUCTED'
+                    GROUP BY t.payment_ref, t.currency HAVING COUNT(*) > 1
+                    UNION ALL
+                    SELECT 'AMENDMENT_RECREDIT_DOUBLE', t.payment_ref || ':' || t.currency, COUNT(*)
+                    FROM wallet_transactions t
+                    WHERE t.type = 'REFUND' AND t.payment_ref LIKE 'amendment-refund-%'
                     GROUP BY t.payment_ref, t.currency HAVING COUNT(*) > 1
                     UNION ALL
                     SELECT 'COMMISSION_PI_PARTAGE', b.commission_payment_intent_id::text, COUNT(*)
@@ -397,7 +408,7 @@ public final class MoneyInvariants {
                     UNION ALL
                     SELECT 'COMMISSION_LEDGER_VS_BID', t.id, t.currency, b.currency
                     FROM wallet_transactions t JOIN bids b ON b.id = t.bid_id
-                    WHERE t.type IN ('COMMISSION_DEDUCTED', 'SUPPLEMENT_COMMISSION_DEDUCTED') AND t.currency <> b.currency
+                    WHERE t.type IN ('COMMISSION_DEDUCTED', 'SUPPLEMENT_COMMISSION_DEDUCTED', 'AMENDMENT_COMMISSION_DEDUCTED') AND t.currency <> b.currency
                       AND (t.source_currency IS NULL OR t.source_currency <> b.currency)
                     UNION ALL
                     SELECT 'SUPPLEMENT_VS_BID', s.id, s.currency, b.currency
