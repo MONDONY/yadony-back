@@ -7,7 +7,6 @@ import com.yadony.api.common.commission.CommissionReductions;
 import com.yadony.api.common.commission.CommissionTier;
 import com.yadony.api.common.commission.IncrementalCommission;
 import com.yadony.api.matching.AnnouncementEntity;
-import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidGridItemRepository;
 import com.yadony.api.payments.amendment.BidExtrasNet;
@@ -54,7 +53,6 @@ class BidSupplementPricingTest {
     @Mock CommissionGridService gridService;
     @Mock CommissionRateResolver rateResolver;
     @Mock BidGridItemRepository gridItems;
-    @Mock AnnouncementRepository announcements;
     @Mock BidExtrasNet extrasNet;
 
     private BidSupplementPricing pricing;
@@ -63,7 +61,7 @@ class BidSupplementPricingTest {
     @BeforeEach
     void setUp() {
         pricing = new BidSupplementPricing(
-                new IncrementalCommission(gridService, rateResolver, announcements), extrasNet, gridItems);
+                new IncrementalCommission(gridService, rateResolver), extrasNet, gridItems);
         lenient().when(extrasNet.paidExtrasNet(any())).thenReturn(BigDecimal.ZERO);
         lenient().when(gridService.require(GRID_7_6_5.id())).thenReturn(GRID_7_6_5);
         lenient().when(gridItems.findByBidId(any())).thenReturn(List.of());
