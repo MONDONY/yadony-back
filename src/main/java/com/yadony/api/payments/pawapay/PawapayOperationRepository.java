@@ -6,7 +6,6 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -120,8 +119,6 @@ public interface PawapayOperationRepository extends JpaRepository<PawapayOperati
         """)
     List<PawapayOpenOperation> findOpenForReconciliation(@Param("statuses") Collection<PawapayOperationStatus> statuses,
                                                           @Param("before") LocalDateTime before, Pageable pageable);
-
-    Page<PawapayOperationEntity> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
     /**
      * Point de transition unique (callback ET poller) : un seul gagnant, jamais de départ

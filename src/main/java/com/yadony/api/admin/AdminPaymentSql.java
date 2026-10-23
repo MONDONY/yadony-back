@@ -38,18 +38,26 @@ public final class AdminPaymentSql {
     public static final String EFF_DEPARTURE = "COALESCE(a.departure_city, la.departure_city, r.departure_city)";
     public static final String EFF_ARRIVAL = "COALESCE(a.arrival_city, la.arrival_city, r.arrival_city)";
 
-    public static final String FROM_JOIN = " payments p"
+    /**
+     * Contexte d'un paiement {@code p} : colis direct {@code b} et son trajet {@code a}, fil {@code t} et sa
+     * demande {@code r}, colis lié au fil {@code lb} et son trajet {@code la}. Seule définition, partagée par
+     * {@link #FROM_JOIN} et par la liste mobile money ({@link AdminFinanceSql}).
+     */
+    public static final String PAYMENT_CONTEXT_JOIN = ""
             + " LEFT JOIN bids b ON b.id = p.bid_id"
             + " LEFT JOIN announcements a ON a.id = b.announcement_id"
             + " LEFT JOIN negotiation_threads t ON t.id = p.negotiation_thread_id"
             + " LEFT JOIN package_requests r ON r.id = t.package_request_id"
             + " LEFT JOIN bids lb ON p.bid_id IS NULL AND p.negotiation_thread_id IS NOT NULL"
             + "                   AND lb.linked_negotiation_thread_id = p.negotiation_thread_id"
-            + " LEFT JOIN announcements la ON la.id = lb.announcement_id"
+            + " LEFT JOIN announcements la ON la.id = lb.announcement_id";
+
+    public static final String FROM_JOIN = " payments p" + PAYMENT_CONTEXT_JOIN
             + " LEFT JOIN users s ON s.id = " + EFF_SENDER_ID
             + " LEFT JOIN users tr ON tr.id = " + EFF_TRAVELER_ID + " ";
 
-    private static final String OP_FAILED = "('FAILED', 'SUBMIT_REJECTED')";
+    /** Statuts morts d'une opération pawaPay ({@code PawapayOperationStatus.DEAD}). */
+    public static final String OP_FAILED = "('FAILED', 'SUBMIT_REJECTED')";
 
     public static final String HELD_PREDICATE = "(p.status = 'ESCROW' AND p.payout_held_at IS NOT NULL)";
 
@@ -57,12 +65,20 @@ public final class AdminPaymentSql {
             + " WHERE c.status = 'OPEN' AND c.deleted_at IS NULL"
             + " AND (c.payment_id = p.id OR (c.payment_id IS NULL AND c.bid_id = " + EFF_BID_ID + ")))";
 
+    /**
+     * L'opération {@code o} est un versement ou un remboursement mobile money d'un paiement, en échec, sans
+     * opération plus récente non échouée du même type pour le même paiement. Seule définition : l'alerte
+     * {@link #MM_FAILED_PREDICATE} du paiement et le nombre {@code attention} de la liste mobile money la partagent.
+     */
+    public static final String MM_FAILED_OPERATION = "(o.payment_id IS NOT NULL"
+            + " AND o.kind IN ('PAYOUT', 'REFUND') AND o.status IN " + OP_FAILED
+            + " AND NOT EXISTS (SELECT 1 FROM pawapay_operations o2"
+            + "     WHERE o2.payment_id = o.payment_id AND o2.kind = o.kind AND o2.created_at > o.created_at"
+            + "     AND o2.status NOT IN " + OP_FAILED + "))";
+
     /** Versement ou remboursement mobile money en échec, sans opération plus récente non échouée du même type. */
     public static final String MM_FAILED_PREDICATE = "EXISTS (SELECT 1 FROM pawapay_operations o"
-            + " WHERE o.payment_id = p.id AND o.kind IN ('PAYOUT', 'REFUND') AND o.status IN " + OP_FAILED
-            + " AND NOT EXISTS (SELECT 1 FROM pawapay_operations o2"
-            + "     WHERE o2.payment_id = p.id AND o2.kind = o.kind AND o2.created_at > o.created_at"
-            + "     AND o2.status NOT IN " + OP_FAILED + "))";
+            + " WHERE o.payment_id = p.id AND " + MM_FAILED_OPERATION + ")";
 
     public static final String ESCROW_J48_PREDICATE = "(p.status = 'ESCROW'"
             + " AND p.created_at < " + NOW + " - INTERVAL '" + ESCROW_TIMEOUT_HOURS + "' HOUR)";

@@ -12,9 +12,9 @@ import com.yadony.api.payments.cash.CommissionChargedVia;
 import com.yadony.api.payments.cash.CommissionStatus;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
-import com.yadony.api.payments.pawapay.PawapayOperationRepository;
 import com.yadony.api.payments.pawapay.PawapayOperationStatus;
 import com.yadony.api.payments.wallet.WalletAccountEntity;
+import com.yadony.api.admin.dto.AdminMobileMoneyResponse;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.mockito.ArgumentCaptor;
@@ -70,7 +70,7 @@ class AdminFinanceControllerIT {
 
     @MockitoBean WalletAccountRepository walletRepository;
     @MockitoBean BidRepository bidRepository;
-    @MockitoBean PawapayOperationRepository pawapayOperationRepository;
+    @MockitoBean AdminFinanceListings financeListings;
     @MockitoBean PaymentRepository paymentRepository;
 
     private static final UUID USER_ID = UUID.randomUUID();
@@ -205,8 +205,8 @@ class AdminFinanceControllerIT {
     @Test
     @DisplayName("GET /admin/mobile-money-payments — operations pawaPay, montant en centimes, numero masque")
     void mobileMoney_listsOperations_masked() throws Exception {
-        when(pawapayOperationRepository.findAllByOrderByCreatedAtDesc(any(Pageable.class)))
-                .thenReturn(new PageImpl<>(List.of(operation()), PageRequest.of(0, 20), 1));
+        when(financeListings.mobileMoney(any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(AdminMobileMoneyResponse.from(operation())), PageRequest.of(0, 20), 1));
 
         String body = mockMvc.perform(get("/admin/mobile-money-payments").with(authentication(supportAuth())))
                 .andExpect(status().isOk())
@@ -226,7 +226,7 @@ class AdminFinanceControllerIT {
     void mobileMoney_requiresPaymentView() throws Exception {
         mockMvc.perform(get("/admin/mobile-money-payments").with(authentication(withoutPaymentView())))
                 .andExpect(status().isForbidden());
-        verify(pawapayOperationRepository, never()).findAllByOrderByCreatedAtDesc(any(Pageable.class));
+        verify(financeListings, never()).mobileMoney(any(), any(), any(), any(), any(Pageable.class));
     }
 
     // ── Pagination ───────────────────────────────────────────────────────────

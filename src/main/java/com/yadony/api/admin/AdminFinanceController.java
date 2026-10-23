@@ -1,6 +1,7 @@
 package com.yadony.api.admin;
 
 import com.yadony.api.admin.dto.AdminMobileMoneyCommissionsResponse;
+import com.yadony.api.admin.dto.AdminMobileMoneyCountsResponse;
 import com.yadony.api.payments.PaymentRepository;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -9,7 +10,7 @@ import com.yadony.api.admin.dto.AdminCashCommissionResponse;
 import com.yadony.api.admin.dto.AdminMobileMoneyResponse;
 import com.yadony.api.admin.dto.AdminWalletResponse;
 import com.yadony.api.matching.BidRepository;
-import com.yadony.api.payments.pawapay.PawapayOperationRepository;
+import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -46,17 +47,17 @@ public class AdminFinanceController {
 
     private final WalletAccountRepository walletRepository;
     private final BidRepository bidRepository;
-    private final PawapayOperationRepository pawapayOperationRepository;
     private final PaymentRepository paymentRepository;
+    private final AdminFinanceListings listings;
 
     public AdminFinanceController(WalletAccountRepository walletRepository,
                                   BidRepository bidRepository,
-                                  PawapayOperationRepository pawapayOperationRepository,
-                                  PaymentRepository paymentRepository) {
+                                  PaymentRepository paymentRepository,
+                                  AdminFinanceListings listings) {
         this.walletRepository = walletRepository;
         this.bidRepository = bidRepository;
-        this.pawapayOperationRepository = pawapayOperationRepository;
         this.paymentRepository = paymentRepository;
+        this.listings = listings;
     }
 
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
@@ -75,14 +76,31 @@ public class AdminFinanceController {
     }
 
     /**
-     * Liste des opérations pawaPay (deposit/payout/refund), plus récentes d'abord.
-     * Même onglet Transactions, même garde {@code PAYMENT_VIEW} que les deux vues ci-dessus.
+     * Liste des opérations pawaPay (deposit/payout/refund), plus récentes d'abord, avec la personne concernée,
+     * le colis, le trajet et la relance possible. Vue ({@code ALL} par défaut, {@code FAILED}, {@code OPEN},
+     * {@code DONE}), type, fournisseur et recherche {@code q} facultatifs ; une valeur inconnue de {@code view}
+     * ou {@code kind} répond 400. Même onglet Transactions, même garde {@code PAYMENT_VIEW} que les vues ci-dessus.
      */
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
     @GetMapping("/mobile-money-payments")
-    public Page<AdminMobileMoneyResponse> mobileMoneyPayments(@RequestParam(defaultValue = "0") int page,
-                                                              @RequestParam(defaultValue = "20") int size) {
-        return pawapayOperationRepository.findAllByOrderByCreatedAtDesc(pageable(page, size)).map(AdminMobileMoneyResponse::from);
+    public Page<AdminMobileMoneyResponse> mobileMoneyPayments(
+            @RequestParam(required = false) AdminMobileMoneyView view,
+            @RequestParam(required = false) PawapayOperationKind kind,
+            @RequestParam(required = false) String provider,
+            @RequestParam(required = false) String q,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return listings.mobileMoney(view, kind, provider, q, pageable(page, size));
+    }
+
+    /** Nombres par vue de la liste mobile money : mêmes {@code kind}, {@code provider} et {@code q}, sans vue. */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
+    @GetMapping("/mobile-money-payments/counts")
+    public AdminMobileMoneyCountsResponse mobileMoneyCounts(
+            @RequestParam(required = false) PawapayOperationKind kind,
+            @RequestParam(required = false) String provider,
+            @RequestParam(required = false) String q) {
+        return listings.mobileMoneyCounts(kind, provider, q);
     }
 
     /**
