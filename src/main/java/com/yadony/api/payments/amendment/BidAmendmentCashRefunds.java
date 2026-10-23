@@ -1,0 +1,158 @@
+package com.yadony.api.payments.amendment;
+
+import com.stripe.exception.IdempotencyException;
+import com.stripe.exception.StripeException;
+import com.yadony.api.admin.AdminAlertEscalator;
+import com.yadony.api.payments.cash.CommissionChargedVia;
+import com.yadony.api.payments.cash.CommissionStatus;
+import com.yadony.api.payments.supplement.BidSupplementRail;
+import com.yadony.api.payments.supplement.StripeSupplementGateway;
+import com.yadony.api.payments.supplement.StripeSupplementGateway.PaymentIntentView;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * Commission d'une modification espèces qui n'a pas abouti ou dont le colis s'arrête : toujours rendue au
+ * voyageur. Appelé hors transaction (appel Stripe possible), par {@link BidAmendmentCashListener} après le commit
+ * de la clôture, et par la fin de colis / « pas apportée » (B6) :
+ * <ul>
+ *   <li>commission prélevée sur le solde : recréditée ({@link BidAmendmentCashLedger#refundWallet}), en
+ *       {@code REFUND} avec {@code payment_ref = "amendment-refund-<id>"} ;</li>
+ *   <li>commission prélevée sur la carte : Refund Stripe intégral, clé {@code amendment_commission_refund_<id>}
+ *       (un Refund déjà créé est retrouvé) ;</li>
+ *   <li>PaymentIntent de commission encore en 3DS : annulée, pour qu'elle ne puisse plus aboutir ; si elle a
+ *       abouti entre-temps, la commission est enregistrée puis rendue ;</li>
+ *   <li>modification acceptée sans rien à rendre (commission nulle) : simplement passée à {@code REFUNDED}.</li>
+ * </ul>
+ * Une modification acceptée dont la commission est rendue passe à {@code REFUNDED} ({@code refundedAt} posé,
+ * {@code BidAmendmentRefundedEvent} avec {@code commissionOnly = true}). Un échec laisse la commission
+ * {@code CHARGED} : le filet réessaie avec la même clé, une alerte admin part une seule fois.
+ */
+@Component
+public class BidAmendmentCashRefunds {
+
+    private static final Logger log = LoggerFactory.getLogger(BidAmendmentCashRefunds.class);
+
+    private final BidAmendmentCashLedger ledger;
+    private final StripeSupplementGateway gateway;
+    private final AdminAlertEscalator alerts;
+
+    public BidAmendmentCashRefunds(BidAmendmentCashLedger ledger, StripeSupplementGateway gateway,
+                                   AdminAlertEscalator alerts) {
+        this.ledger = ledger;
+        this.gateway = gateway;
+        this.alerts = alerts;
+    }
+
+    /**
+     * Défait ce qui reste de la commission d'une modification terminée. Idempotent, et sans effet sur une
+     * modification encore ouverte ({@code PROPOSED}, {@code COMMISSION_PENDING}…). À n'appeler QUE quand la
+     * modification n'a plus d'avenir : refusée, échue, annulée, ou acceptée dont le colis s'arrête (fin de colis,
+     * « pas apportée ») : une modification {@code ACCEPTED} passe alors à {@code REFUNDED}.
+     *
+     * @return vrai si la commission a été rendue, la PaymentIntent annulée ou la modification close par cet appel.
+     */
+    public boolean settle(UUID amendmentId) {
+        BidAmendmentEntity a = ledger.find(amendmentId).orElse(null);
+        if (a == null || a.getRail() != BidSupplementRail.CASH
+                || !BidAmendmentCashLedger.SETTLEABLE.contains(a.getStatus())) {
+            return false;
+        }
+        CommissionStatus commission = a.getCommissionStatus();
+        boolean done = false;
+        if (commission == CommissionStatus.CHARGED) {
+            done = a.getCommissionChargedVia() == CommissionChargedVia.WALLET
+                    ? ledger.refundWallet(amendmentId) : refundCard(amendmentId);
+        } else if ((commission == CommissionStatus.REQUIRES_3DS || commission == null)
+                && a.getCommissionPaymentIntentId() != null) {
+            return abandon(amendmentId, a.getCommissionPaymentIntentId());
+        }
+        // Acceptée sans plus rien à rendre (commission nulle, ou déjà rendue chez Stripe avant nous) : elle n'est
+        // plus acquise pour autant.
+        return done || (a.getStatus() == BidAmendmentStatus.ACCEPTED && ledger.closeAccepted(amendmentId));
+    }
+
+    /** Annule la PaymentIntent de commission restée en 3DS ; si elle a abouti, la commission est rendue. */
+    private boolean abandon(UUID amendmentId, String paymentIntentId) {
+        try {
+            gateway.cancelPaymentIntent(paymentIntentId);
+            return ledger.commissionFailed(amendmentId, paymentIntentId, "abandoned");
+        } catch (StripeException cancelRefused) {
+            // Annulation refusée : le plus souvent parce que la 3DS vient d'aboutir.
+            try {
+                PaymentIntentView pi = gateway.retrievePaymentIntent(paymentIntentId);
+                if (pi.succeeded()) {
+                    // Commission tardive sur une modification close : enregistrée ; son remboursement part de
+                    // l'événement publié par le registre (un seul chemin de remboursement).
+                    return ledger.commissionCharged(amendmentId, pi.id(), "cancel-refused")
+                            == BidAmendmentCashLedger.ChargeOutcome.LATE_REFUND;
+                }
+                if (pi.canceled()) {
+                    return ledger.commissionFailed(amendmentId, paymentIntentId, "canceled");
+                }
+                log.warn("Commission {} de la modification {} non annulée (statut {}) : le filet réessaiera",
+                        paymentIntentId, amendmentId, pi.status());
+            } catch (StripeException retrieveError) {
+                log.error("Commission {} de la modification {} : annulation et relecture en échec", paymentIntentId,
+                        amendmentId, retrieveError);
+            }
+            return false;
+        }
+    }
+
+    private boolean refundCard(UUID amendmentId) {
+        BidAmendmentCashLedger.CardRefundClaim claim = ledger.cardRefundClaim(amendmentId).orElse(null);
+        if (claim == null) {
+            return false;
+        }
+        try {
+            String refundId = gateway.findRefund(claim.paymentIntentId(), "bid_amendment_id",
+                    amendmentId.toString()).orElse(null);
+            if (refundId == null) {
+                refundId = gateway.createRefund(claim.paymentIntentId(),
+                        Map.of("bid_amendment_id", amendmentId.toString(),
+                                "commission_purpose", BidAmendmentCashRail.COMMISSION_PURPOSE,
+                                "amendment_bid_id", claim.bidId().toString()),
+                        refundKey(amendmentId));
+            }
+            boolean done = ledger.cardRefunded(amendmentId, refundId, "refund", true);
+            log.info("Commission de la modification {} rendue au voyageur {} (Refund {})", amendmentId,
+                    claim.travelerId(), refundId);
+            return done;
+        } catch (Exception e) {
+            boolean stillCharged = ledger.find(amendmentId)
+                    .map(a -> a.getCommissionStatus() == CommissionStatus.CHARGED).orElse(false);
+            if (!stillCharged) {
+                // Un remboursement concurrent (événement et filet, webhook charge.refunded) a abouti.
+                log.info("Commission de la modification {} déjà soldée par un autre passage ({})", amendmentId,
+                        e.getMessage());
+                return false;
+            }
+            if (e instanceof IdempotencyException) {
+                // Même clé encore en vol chez Stripe (deux passages simultanés) : on réessaiera plus tard.
+                log.info("Remboursement de la commission de la modification {} en cours ailleurs : réessai au filet",
+                        amendmentId);
+                return false;
+            }
+            log.error("Remboursement de la commission de la modification {} en échec", amendmentId, e);
+            boolean raised = alerts.raiseOnce("AMEND_COMM_REFUND_FAIL_" + amendmentId,
+                    "Commission de la modification espèces " + amendmentId + " non rendue : " + e.getMessage(),
+                    Map.of("amendmentId", amendmentId.toString(), "bidId", claim.bidId().toString(),
+                            "error", String.valueOf(e.getMessage())));
+            if (raised) {
+                // Une trace par incident, pas une à chaque passage du filet.
+                ledger.auditOnly(amendmentId, "BID_AMENDMENT_COMMISSION_REFUND_ERROR",
+                        Map.of("error", String.valueOf(e.getMessage())));
+            }
+            return false;
+        }
+    }
+
+    static String refundKey(UUID amendmentId) {
+        return "amendment_commission_refund_" + amendmentId;
+    }
+}

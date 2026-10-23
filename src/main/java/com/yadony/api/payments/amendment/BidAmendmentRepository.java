@@ -26,6 +26,9 @@ public interface BidAmendmentRepository extends JpaRepository<BidAmendmentEntity
     @Query("SELECT a.bidId FROM BidAmendmentEntity a WHERE a.id = :id")
     Optional<UUID> findBidIdById(@Param("id") UUID id);
 
+    /** Modification espèces dont {@code commissionPaymentIntentId} est la PaymentIntent de commission. */
+    Optional<BidAmendmentEntity> findByCommissionPaymentIntentId(String commissionPaymentIntentId);
+
     Optional<BidAmendmentEntity> findFirstByBidIdAndStatusIn(UUID bidId, Collection<BidAmendmentStatus> statuses);
 
     /** Modifications d'un colis, de la plus récente à la plus ancienne. */
