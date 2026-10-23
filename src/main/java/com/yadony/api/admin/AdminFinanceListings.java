@@ -1,10 +1,15 @@
 package com.yadony.api.admin;
 
+import com.yadony.api.admin.dto.AdminCashCommissionCountsResponse;
+import com.yadony.api.admin.dto.AdminCashCommissionResponse;
 import com.yadony.api.admin.dto.AdminMobileMoneyCountsResponse;
 import com.yadony.api.admin.dto.AdminMobileMoneyResponse;
+import com.yadony.api.admin.dto.AdminWalletResponse;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.MatchingTextUtil;
+import com.yadony.api.payments.cash.CommissionChargedVia;
+import com.yadony.api.payments.cash.CommissionStatus;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayOperationRepository;
@@ -16,9 +21,13 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.Calendar;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TimeZone;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -115,6 +124,115 @@ public class AdminFinanceListings {
         return where.toString();
     }
 
+    // ── Portefeuilles ───────────────────────────────────────────────────────────
+
+    /**
+     * Portefeuilles, dernier mouvement d'abord : recherche {@code q} (prénom, nom, pseudo ou UUID du titulaire),
+     * devise, signe du solde et titulaire {@code partyId}. Le nom du titulaire est résolu en SQL ; un compte
+     * supprimé laisse son portefeuille listé, sans nom.
+     */
+    @Transactional(readOnly = true)
+    public Page<AdminWalletResponse> wallets(String q, String currency, AdminWalletBalanceSign balanceSign,
+                                             UUID partyId, Pageable pageable) {
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("currency", currency == null || currency.isBlank() ? null : currency.strip())
+                .addValue("balanceSign", balanceSign == null ? null : balanceSign.name())
+                .addValue("partyId", partyId == null ? null : partyId.toString());
+        StringBuilder where = new StringBuilder(" WHERE ").append(AdminFinanceSql.WALLET_FILTERS);
+        String query = q == null ? null : q.strip();
+        if (query != null && !query.isEmpty()) {
+            where.append(" AND ").append(AdminFinanceSql.WALLET_SEARCH_PREDICATE);
+            addSearchTerms(params, query);
+        }
+        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM" + AdminFinanceSql.WALLET_FROM + where, params,
+                Long.class);
+        if (total == null || total == 0) {
+            return new PageImpl<>(List.of(), pageable, 0);
+        }
+        params.addValue("limit", pageable.getPageSize()).addValue("offset", pageable.getOffset());
+        List<AdminWalletResponse> content = jdbc.query(AdminFinanceSql.WALLET_SELECT + "FROM"
+                        + AdminFinanceSql.WALLET_FROM + where + AdminFinanceSql.WALLET_ORDER_BY
+                        + " LIMIT :limit OFFSET :offset", params,
+                (rs, i) -> new AdminWalletResponse(
+                        uuid(rs.getString("walletId")),
+                        uuid(rs.getString("userId")),
+                        AdminWalletResponse.toCents(rs.getBigDecimal("balance")),
+                        rs.getString("currency"),
+                        utc(rs, "updatedAt"),
+                        AdminPaymentInsights.nameLabel(rs.getString("firstName"), rs.getString("lastName"),
+                                rs.getString("username"))));
+        return new PageImpl<>(content, pageable, total);
+    }
+
+    // ── Commissions cash ────────────────────────────────────────────────────────
+
+    /**
+     * Commissions sur règlement en espèces (colis {@code CASH} dont la commission a un statut), plus récentes
+     * d'abord : vue (absente = {@code ALL}), statut exact, recherche {@code q} (suivi, voyageur, trajet) et
+     * voyageur {@code partyId}. Suivi, trajet et voyageur résolus en SQL ; un voyageur supprimé garde son
+     * identifiant, sans nom.
+     */
+    @Transactional(readOnly = true)
+    public Page<AdminCashCommissionResponse> cashCommissions(AdminCashCommissionView view, CommissionStatus status,
+                                                             String q, UUID partyId, Pageable pageable) {
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("view", (view != null ? view : AdminCashCommissionView.ALL).name())
+                .addValue("status", status == null ? null : status.name());
+        String where = cashWhere(q, partyId, params) + " AND " + AdminFinanceSql.CASH_VIEW_FILTERS;
+        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM" + AdminFinanceSql.CASH_FROM + where, params,
+                Long.class);
+        if (total == null || total == 0) {
+            return new PageImpl<>(List.of(), pageable, 0);
+        }
+        params.addValue("limit", pageable.getPageSize()).addValue("offset", pageable.getOffset());
+        List<AdminCashCommissionResponse> content = jdbc.query(AdminFinanceSql.CASH_SELECT + "FROM"
+                        + AdminFinanceSql.CASH_FROM + where + AdminFinanceSql.CASH_ORDER_BY
+                        + " LIMIT :limit OFFSET :offset", params,
+                (rs, i) -> {
+                    Long[] amounts = AdminCashCommissionResponse.amountsOf(rs.getBigDecimal("gross"),
+                            rs.getBigDecimal("net"));
+                    String departure = rs.getString("departureCity");
+                    String arrival = rs.getString("arrivalCity");
+                    String chargedVia = rs.getString("chargedVia");
+                    return new AdminCashCommissionResponse(
+                            uuid(rs.getString("bidId")),
+                            amounts[0],
+                            amounts[1],
+                            rs.getString("currency"),
+                            CommissionStatus.valueOf(rs.getString("commissionStatus")),
+                            chargedVia == null ? null : CommissionChargedVia.valueOf(chargedVia),
+                            rs.getInt("retryCount"),
+                            utc(rs, "createdAt"),
+                            rs.getString("trackingNumber"),
+                            departure != null && arrival != null
+                                    ? MatchingTextUtil.corridorLabel(departure, arrival) : null,
+                            uuid(rs.getString("travelerId")),
+                            AdminPaymentInsights.nameLabel(rs.getString("firstName"), rs.getString("lastName"),
+                                    rs.getString("username")));
+                });
+        return new PageImpl<>(content, pageable, total);
+    }
+
+    /** Nombres « à traiter » et « toutes », sur les mêmes {@code q} et {@code partyId} que la liste, sans vue. */
+    @Transactional(readOnly = true)
+    public AdminCashCommissionCountsResponse cashCommissionCounts(String q, UUID partyId) {
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        String where = cashWhere(q, partyId, params);
+        return jdbc.queryForObject(AdminFinanceSql.CASH_COUNTS_SELECT + "FROM" + AdminFinanceSql.CASH_FROM + where,
+                params, (rs, i) -> new AdminCashCommissionCountsResponse(rs.getLong("attention"), rs.getLong("all")));
+    }
+
+    private static String cashWhere(String q, UUID partyId, MapSqlParameterSource params) {
+        params.addValue("partyId", partyId == null ? null : partyId.toString());
+        StringBuilder where = new StringBuilder(" WHERE ").append(AdminFinanceSql.CASH_SCOPE);
+        String query = q == null ? null : q.strip();
+        if (query != null && !query.isEmpty()) {
+            where.append(" AND ").append(AdminFinanceSql.CASH_SEARCH_PREDICATE);
+            addSearchTerms(params, query);
+        }
+        return where.toString();
+    }
+
     /**
      * Lie {@code :t1} à {@code :t4} (jetons repliés, le {@code @} d'un pseudo retiré ; une saisie sans jeton
      * utilisable ne trouve rien par le texte, voir {@link AdminBidQuery#NO_MATCH_TOKEN}), {@code :idTerm} (UUID
@@ -140,6 +258,12 @@ public class AdminFinanceListings {
         return new AdminMobileMoneyResponse.Context(r.personId(), known ? names.get(r.personId()) : null,
                 known ? r.role() : null, r.bidId(), r.trackingNumber(), corridor, r.walletRefundRequestId(),
                 r.retryable());
+    }
+
+    /** Instant UTC d'une colonne {@code timestamp}, relu comme Hibernate ({@code jdbc.time_zone = UTC}). */
+    private static LocalDateTime utc(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
+        java.sql.Timestamp value = rs.getTimestamp(column, Calendar.getInstance(TimeZone.getTimeZone(ZoneOffset.UTC)));
+        return value == null ? null : value.toLocalDateTime();
     }
 
     private static UUID uuid(String value) {

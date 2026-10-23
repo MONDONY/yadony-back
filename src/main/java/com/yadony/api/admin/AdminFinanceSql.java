@@ -114,9 +114,15 @@ public final class AdminFinanceSql {
             + " u.first_name, u.last_name, u.username, " + MM_DEPARTURE + ", " + MM_ARRIVAL + ","
             + " REPLACE(o.provider, '_', ''))" + AdminBidSql.FOLD_CLOSE;
 
-    private static String token(String param) {
-        return "(CAST(:" + param + " AS VARCHAR) IS NULL OR " + MM_HAYSTACK
+    private static String token(String haystack, String param) {
+        return "(CAST(:" + param + " AS VARCHAR) IS NULL OR " + haystack
                 + " LIKE '%' || CAST(:" + param + " AS VARCHAR) || '%')";
+    }
+
+    /** Les quatre jetons repliés {@code :t1} à {@code :t4} se trouvent tous dans {@code haystack}. */
+    private static String allTokens(String haystack) {
+        return "(" + token(haystack, "t1") + " AND " + token(haystack, "t2") + " AND " + token(haystack, "t3")
+                + " AND " + token(haystack, "t4") + ")";
     }
 
     private static final String ID_TERM = "LOWER(CAST(:idTerm AS VARCHAR))";
@@ -126,8 +132,7 @@ public final class AdminFinanceSql {
      * replié ; ou {@code :idTerm} est l'identifiant exact de l'opération, de son paiement ou de son colis ; ou
      * {@code :refTerm} est l'identifiant fournisseur de l'opération (casse ignorée).
      */
-    public static final String MM_SEARCH_PREDICATE = "(("
-            + token("t1") + " AND " + token("t2") + " AND " + token("t3") + " AND " + token("t4") + ")"
+    public static final String MM_SEARCH_PREDICATE = "(" + allTokens(MM_HAYSTACK)
             + " OR (CAST(:idTerm AS VARCHAR) IS NOT NULL AND ("
             + "     CAST(o.id AS VARCHAR) = " + ID_TERM
             + "     OR CAST(o.payment_id AS VARCHAR) = " + ID_TERM
@@ -163,4 +168,86 @@ public final class AdminFinanceSql {
             + sum(MM_DONE_VIEW, "done") + ", "
             + "COUNT(*) AS \"all\", "
             + sum(AdminPaymentSql.MM_FAILED_OPERATION, "attention") + " ";
+
+    // ── Portefeuilles ───────────────────────────────────────────────────────────
+
+    /**
+     * Portefeuille {@code w} et son titulaire {@code u} (jointure externe, compte supprimé écarté : le
+     * portefeuille reste listé, sans nom). Paramètres nommés : {@code :currency}, {@code :balanceSign},
+     * {@code :partyId}, et pour la recherche {@code :t1} à {@code :t4}, {@code :idTerm}.
+     */
+    public static final String WALLET_FROM = " wallet_accounts w"
+            + " LEFT JOIN users u ON u.id = w.user_id AND u.deleted_at IS NULL ";
+
+    private static final String BALANCE_SIGN = "CAST(:balanceSign AS VARCHAR)";
+
+    /** Portefeuilles non supprimés, devise (casse ignorée), signe du solde et titulaire (UUID minuscule). */
+    public static final String WALLET_FILTERS = "w.deleted_at IS NULL"
+            + " AND (CAST(:currency AS VARCHAR) IS NULL OR UPPER(w.currency) = UPPER(CAST(:currency AS VARCHAR)))"
+            + " AND (" + BALANCE_SIGN + " IS NULL"
+            + "   OR (" + BALANCE_SIGN + " = 'POSITIVE' AND w.balance > 0)"
+            + "   OR (" + BALANCE_SIGN + " = 'NEGATIVE' AND w.balance < 0)"
+            + "   OR (" + BALANCE_SIGN + " = 'ZERO' AND w.balance = 0))"
+            + " AND (CAST(:partyId AS VARCHAR) IS NULL OR CAST(w.user_id AS VARCHAR) = CAST(:partyId AS VARCHAR))";
+
+    /** Texte replié du titulaire : prénom, nom et pseudo. */
+    private static final String WALLET_HAYSTACK = AdminBidSql.FOLD_OPEN
+            + "CONCAT_WS(' ', u.first_name, u.last_name, u.username)" + AdminBidSql.FOLD_CLOSE;
+
+    /** Jetons dans le nom du titulaire, ou {@code :idTerm} est l'UUID du titulaire. */
+    public static final String WALLET_SEARCH_PREDICATE = "(" + allTokens(WALLET_HAYSTACK)
+            + " OR (CAST(:idTerm AS VARCHAR) IS NOT NULL"
+            + "     AND CAST(w.user_id AS VARCHAR) = LOWER(CAST(:idTerm AS VARCHAR))))";
+
+    public static final String WALLET_SELECT = "SELECT CAST(w.id AS VARCHAR(36)) AS \"walletId\","
+            + " CAST(w.user_id AS VARCHAR(36)) AS \"userId\", w.balance AS \"balance\","
+            + " w.currency AS \"currency\", w.updated_at AS \"updatedAt\","
+            + " u.first_name AS \"firstName\", u.last_name AS \"lastName\", u.username AS \"username\" ";
+
+    public static final String WALLET_ORDER_BY = " ORDER BY w.updated_at DESC, w.id DESC";
+
+    // ── Commissions cash ────────────────────────────────────────────────────────
+
+    /**
+     * Colis {@code b}, son trajet {@code a} et le voyageur {@code u} (compte supprimé écarté : l'identifiant
+     * reste dans {@code a.traveler_id}, le nom disparaît). Paramètres nommés : {@code :view}, {@code :status},
+     * {@code :partyId}, et pour la recherche {@code :t1} à {@code :t4}.
+     */
+    public static final String CASH_FROM = " bids b"
+            + " LEFT JOIN announcements a ON a.id = b.announcement_id"
+            + " LEFT JOIN users u ON u.id = a.traveler_id AND u.deleted_at IS NULL ";
+
+    /** Périmètre : colis réglés en espèces dont la commission a un statut, du voyageur {@code :partyId} si posé. */
+    public static final String CASH_SCOPE = "b.deleted_at IS NULL AND b.payment_method = 'CASH'"
+            + " AND b.commission_status IS NOT NULL"
+            + " AND (CAST(:partyId AS VARCHAR) IS NULL OR CAST(a.traveler_id AS VARCHAR) = CAST(:partyId AS VARCHAR))";
+
+    /** Commissions à traiter : prélèvement échoué, 3DS à finir, remboursement échoué. */
+    public static final String CASH_ATTENTION = "(b.commission_status IN ('FAILED', 'REQUIRES_3DS', 'REFUND_FAILED'))";
+
+    /** Statut exact {@code :status} et vue {@code :view} ({@code ALL} ou {@code ATTENTION}). */
+    public static final String CASH_VIEW_FILTERS = "(CAST(:status AS VARCHAR) IS NULL"
+            + "   OR b.commission_status = CAST(:status AS VARCHAR))"
+            + " AND (CAST(:view AS VARCHAR) = 'ALL' OR (CAST(:view AS VARCHAR) = 'ATTENTION' AND " + CASH_ATTENTION + "))";
+
+    /** Texte replié : n° de suivi, nom du voyageur, villes du trajet. */
+    private static final String CASH_HAYSTACK = AdminBidSql.FOLD_OPEN + "CONCAT_WS(' ', b.tracking_number,"
+            + " u.first_name, u.last_name, u.username, a.departure_city, a.arrival_city)" + AdminBidSql.FOLD_CLOSE;
+
+    public static final String CASH_SEARCH_PREDICATE = allTokens(CASH_HAYSTACK);
+
+    public static final String CASH_SELECT = "SELECT CAST(b.id AS VARCHAR(36)) AS \"bidId\","
+            + " b.negotiated_gross_eur AS \"gross\", b.negotiated_net_eur AS \"net\","
+            + " b.currency AS \"currency\", b.commission_status AS \"commissionStatus\","
+            + " b.commission_charged_via AS \"chargedVia\", b.commission_retry_count AS \"retryCount\","
+            + " b.created_at AS \"createdAt\", b.tracking_number AS \"trackingNumber\","
+            + " a.departure_city AS \"departureCity\", a.arrival_city AS \"arrivalCity\","
+            + " CAST(a.traveler_id AS VARCHAR(36)) AS \"travelerId\","
+            + " u.first_name AS \"firstName\", u.last_name AS \"lastName\", u.username AS \"username\" ";
+
+    public static final String CASH_ORDER_BY = " ORDER BY b.created_at DESC, b.id DESC";
+
+    /** Nombres sur {@link #CASH_SCOPE} (+ recherche), sans vue ni statut. */
+    public static final String CASH_COUNTS_SELECT = "SELECT " + sum(CASH_ATTENTION, "attention") + ", "
+            + "COUNT(*) AS \"all\" ";
 }

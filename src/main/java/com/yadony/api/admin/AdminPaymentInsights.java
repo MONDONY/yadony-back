@@ -558,14 +558,17 @@ public class AdminPaymentInsights {
         Map<UUID, String> names = new HashMap<>();
         jdbc.query("SELECT CAST(id AS VARCHAR(36)) AS id, first_name, last_name, username FROM users WHERE id IN (:ids)",
                 new MapSqlParameterSource("ids", new ArrayList<>(userIds)), rs -> {
-                    String full = (Objects.toString(rs.getString("first_name"), "") + " "
-                            + Objects.toString(rs.getString("last_name"), "")).strip();
-                    String username = rs.getString("username");
-                    String label = full.isEmpty() ? (username == null ? null : "@" + username)
-                            : (username == null ? full : full + " (@" + username + ")");
-                    names.put(UUID.fromString(rs.getString("id")), label);
+                    names.put(UUID.fromString(rs.getString("id")),
+                            nameLabel(rs.getString("first_name"), rs.getString("last_name"), rs.getString("username")));
                 });
         return names;
+    }
+
+    /** « Prénom Nom (@pseudo) », ou ce qui en existe ; null si rien. Partagé avec les listes finance. */
+    static String nameLabel(String firstName, String lastName, String username) {
+        String full = (Objects.toString(firstName, "") + " " + Objects.toString(lastName, "")).strip();
+        return full.isEmpty() ? (username == null ? null : "@" + username)
+                : (username == null ? full : full + " (@" + username + ")");
     }
 
     private static UUID uuid(String value) {

@@ -6,16 +6,14 @@ import com.yadony.api.payments.dto.MobileMoneyCommissionMonthRow;
 import com.yadony.api.payments.dto.MobileMoneyCommissionRow;
 import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.account.AdminRole;
+import com.yadony.api.admin.dto.AdminCashCommissionResponse;
 import com.yadony.api.admin.dto.AdminMobileMoneyResponse;
-import com.yadony.api.matching.BidEntity;
-import com.yadony.api.matching.BidRepository;
+import com.yadony.api.admin.dto.AdminWalletResponse;
 import com.yadony.api.payments.cash.CommissionChargedVia;
 import com.yadony.api.payments.cash.CommissionStatus;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayOperationStatus;
-import com.yadony.api.payments.wallet.WalletAccountEntity;
-import com.yadony.api.payments.wallet.WalletAccountRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.Test;
@@ -29,7 +27,6 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
@@ -68,8 +65,6 @@ class AdminFinanceControllerIT {
 
     @Autowired MockMvc mockMvc;
 
-    @MockitoBean WalletAccountRepository walletRepository;
-    @MockitoBean BidRepository bidRepository;
     @MockitoBean AdminFinanceListings financeListings;
     @MockitoBean PaymentRepository paymentRepository;
 
@@ -94,27 +89,18 @@ class AdminFinanceControllerIT {
                 List.of(new SimpleGrantedAuthority("ROLE_ADMIN")));
     }
 
-    private static WalletAccountEntity wallet() {
-        WalletAccountEntity entity = new WalletAccountEntity();
-        ReflectionTestUtils.setField(entity, "id", UUID.randomUUID());
-        ReflectionTestUtils.setField(entity, "userId", USER_ID);
-        ReflectionTestUtils.setField(entity, "balance", new BigDecimal("12.34"));
-        ReflectionTestUtils.setField(entity, "currency", "EUR");
-        ReflectionTestUtils.setField(entity, "updatedAt", WHEN);
-        return entity;
+    private static AdminWalletResponse wallet() {
+        // Solde stocké en unités (12.34), exposé en centimes par la liste.
+        return new AdminWalletResponse(UUID.randomUUID(), USER_ID, AdminWalletResponse.toCents(new BigDecimal("12.34")),
+                "EUR", WHEN, null);
     }
 
-    private static BidEntity cashBid() {
-        BidEntity bid = new BidEntity();
-        ReflectionTestUtils.setField(bid, "id", BID_ID);
-        bid.setNegotiatedGrossEur(new BigDecimal("100.00"));
-        bid.setNegotiatedNetEur(new BigDecimal("88.00"));
-        bid.setCommissionStatus(CommissionStatus.CHARGED);
-        bid.setCommissionChargedVia(CommissionChargedVia.WALLET);
-        bid.setCommissionRetryCount(2);
-        ReflectionTestUtils.setField(bid, "currency", "EUR");
-        ReflectionTestUtils.setField(bid, "createdAt", WHEN);
-        return bid;
+    /** Colis en espèces tel que la liste le rend : brut et net négociés, ou inconnus (null, null). */
+    private static AdminCashCommissionResponse cashBid(CommissionStatus status, CommissionChargedVia via, int retries,
+                                                       BigDecimal gross, BigDecimal net) {
+        Long[] amounts = AdminCashCommissionResponse.amountsOf(gross, net);
+        return new AdminCashCommissionResponse(BID_ID, amounts[0], amounts[1], "EUR", status, via, retries, WHEN,
+                null, null, null, null);
     }
 
     /** Tâche 18 — une opération pawaPay COMPLETED, telle que rendue par {@code AdminMobileMoneyResponse}. */
@@ -135,8 +121,8 @@ class AdminFinanceControllerIT {
         mockMvc.perform(get("/admin/cash-commissions").with(authentication(withoutPaymentView())))
                 .andExpect(status().isForbidden());
 
-        verify(walletRepository, never()).findAll(any(Pageable.class));
-        verify(bidRepository, never()).findCashCommissions(any(Pageable.class));
+        verify(financeListings, never()).wallets(any(), any(), any(), any(), any(Pageable.class));
+        verify(financeListings, never()).cashCommissions(any(), any(), any(), any(), any(Pageable.class));
     }
 
     // ── Wallets ──────────────────────────────────────────────────────────────
@@ -144,7 +130,7 @@ class AdminFinanceControllerIT {
     @Test
     @DisplayName("GET /admin/wallets — le solde passe des unites aux centimes")
     void wallets_convertUnitsToCents() throws Exception {
-        when(walletRepository.findAll(any(Pageable.class)))
+        when(financeListings.wallets(any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(wallet()), PageRequest.of(0, 20), 1));
 
         mockMvc.perform(get("/admin/wallets").with(authentication(supportAuth())))
@@ -162,8 +148,9 @@ class AdminFinanceControllerIT {
     @Test
     @DisplayName("GET /admin/cash-commissions — la commission est deduite de brut - net")
     void cashCommissions_deriveCommissionFromGrossMinusNet() throws Exception {
-        when(bidRepository.findCashCommissions(any(Pageable.class)))
-                .thenReturn(new PageImpl<>(List.of(cashBid()), PageRequest.of(0, 20), 1));
+        when(financeListings.cashCommissions(any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(cashBid(CommissionStatus.CHARGED, CommissionChargedVia.WALLET, 2,
+                        new BigDecimal("100.00"), new BigDecimal("88.00"))), PageRequest.of(0, 20), 1));
 
         mockMvc.perform(get("/admin/cash-commissions").with(authentication(supportAuth())))
                 .andExpect(status().isOk())
@@ -184,13 +171,9 @@ class AdminFinanceControllerIT {
         // commission depuis kgNet + gridNet sans jamais renseigner brut ni net. Exposer 0 se
         // lirait « aucune commission prelevee » — faux : elle l'a bien ete, c'est son montant
         // que cette vue ne sait pas reconstituer. Absent est la seule reponse honnete.
-        BidEntity bare = new BidEntity();
-        ReflectionTestUtils.setField(bare, "id", BID_ID);
-        bare.setCommissionStatus(CommissionStatus.PENDING);
-        ReflectionTestUtils.setField(bare, "currency", "EUR");
-        ReflectionTestUtils.setField(bare, "createdAt", WHEN);
-        when(bidRepository.findCashCommissions(any(Pageable.class)))
-                .thenReturn(new PageImpl<>(List.of(bare), PageRequest.of(0, 20), 1));
+        when(financeListings.cashCommissions(any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(cashBid(CommissionStatus.PENDING, null, 0, null, null)),
+                        PageRequest.of(0, 20), 1));
 
         mockMvc.perform(get("/admin/cash-commissions").with(authentication(supportAuth())))
                 .andExpect(status().isOk())
@@ -309,9 +292,9 @@ class AdminFinanceControllerIT {
     }
 
     @Test
-    @DisplayName("La pagination demandee est celle transmise au depot")
+    @DisplayName("La pagination demandee est celle transmise a la lecture")
     void paginationIsForwarded() throws Exception {
-        when(walletRepository.findAll(any(Pageable.class)))
+        when(financeListings.wallets(any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(), PageRequest.of(2, 5), 0));
 
         mockMvc.perform(get("/admin/wallets")
@@ -319,6 +302,6 @@ class AdminFinanceControllerIT {
                         .with(authentication(supportAuth())))
                 .andExpect(status().isOk());
 
-        verify(walletRepository).findAll(PageRequest.of(2, 5));
+        verify(financeListings).wallets(null, null, null, null, PageRequest.of(2, 5));
     }
 }
