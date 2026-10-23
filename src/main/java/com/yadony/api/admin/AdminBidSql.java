@@ -100,10 +100,13 @@ public final class AdminBidSql {
             + "COALESCE(SUM(CASE WHEN " + ALERT_RANK + " = 4" + " THEN 1 ELSE 0 END), 0)"
             + " AS \"late\" ";
 
-    /** Repli d'une colonne : minuscules puis accents, même table que {@link AdminSearchTerms#fold}. */
-    private static final String FOLD_OPEN = "TRANSLATE(LOWER(";
+    /**
+     * Repli d'une colonne : minuscules, accents puis apostrophes (REPLACE imbriqués, compatible H2 et
+     * PostgreSQL), même règle que {@link AdminSearchTerms#fold}.
+     */
+    private static final String FOLD_OPEN = "REPLACE(REPLACE(TRANSLATE(LOWER(";
     private static final String FOLD_CLOSE =
-            "), '" + AdminSearchTerms.ACCENT_FROM + "', '" + AdminSearchTerms.ACCENT_TO + "')";
+            "), '" + AdminSearchTerms.ACCENT_FROM + "', '" + AdminSearchTerms.ACCENT_TO + "'), '''', ''), '\u2019', '')";
 
     /** Téléphone du destinataire réduit à ses chiffres (séparateurs usuels retirés). */
     private static final String RECIPIENT_PHONE_DIGITS = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE("

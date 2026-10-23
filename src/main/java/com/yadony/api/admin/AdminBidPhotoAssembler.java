@@ -4,13 +4,16 @@ import com.yadony.api.admin.dto.AdminBidPhotosResponse;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.disputes.DisputeRepository;
 import com.yadony.api.matching.BidEntity;
-import com.yadony.api.matching.BidPhotoService;
+import com.yadony.api.matching.BidPhotoEntity;
+import com.yadony.api.matching.BidPhotoRepository;
+import com.yadony.api.matching.BidPhotoStatus;
 import com.yadony.api.messaging.MessagingImageEntity;
 import com.yadony.api.messaging.MessagingImageRepository;
 import com.yadony.api.messaging.ConversationEntity;
 import com.yadony.api.messaging.ConversationRepository;
 import com.yadony.api.tracking.TrackingEventEntity;
 import com.yadony.api.tracking.TrackingEventRepository;
+import com.yadony.api.tracking.TrackingEventType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -36,17 +39,17 @@ public class AdminBidPhotoAssembler {
 
     private static final String DISPUTE_IMAGE_LABEL = "Image de la conversation";
 
-    private final BidPhotoService photoService;
+    private final BidPhotoRepository photoRepo;
     private final TrackingEventRepository trackingRepo;
     private final ConversationRepository conversationRepo;
     private final MessagingImageRepository imageRepo;
     private final DisputeRepository disputeRepo;
     private final StorageService storageService;
 
-    public AdminBidPhotoAssembler(BidPhotoService photoService, TrackingEventRepository trackingRepo,
+    public AdminBidPhotoAssembler(BidPhotoRepository photoRepo, TrackingEventRepository trackingRepo,
                                   ConversationRepository conversationRepo, MessagingImageRepository imageRepo,
                                   DisputeRepository disputeRepo, StorageService storageService) {
-        this.photoService = photoService;
+        this.photoRepo = photoRepo;
         this.trackingRepo = trackingRepo;
         this.conversationRepo = conversationRepo;
         this.imageRepo = imageRepo;
@@ -69,11 +72,16 @@ public class AdminBidPhotoAssembler {
 
     private List<Staged> creation(BidEntity bid) {
         try {
-            // Ordre des photos CREATION non déterminé : elles partagent la même date (celle du colis).
-            // Le service signe lui-même les URL ; la table ne porte pas de date par photo : celle du colis.
-            return photoService.activePhotos(bid.getId()).stream()
-                    .map(p -> staged(Stage.CREATION, p.id().toString(), "BID_PHOTO", bid.getCreatedAt(), p.url(), null))
-                    .toList();
+            // Photos ACTIVE par position ; la table ne porte pas de date par photo : celle du colis.
+            // Signature photo par photo : une clé qui échoue est ignorée, les autres restent.
+            List<Staged> out = new ArrayList<>();
+            for (BidPhotoEntity p : photoRepo.findByBidIdAndStatusOrderByPositionAsc(bid.getId(), BidPhotoStatus.ACTIVE)) {
+                String url = AdminBidDetailAssembler.sign(storageService, p.getObjectKey());
+                if (url != null) {
+                    out.add(staged(Stage.CREATION, p.getId().toString(), "BID_PHOTO", bid.getCreatedAt(), url, null));
+                }
+            }
+            return out;
         } catch (RuntimeException e) {
             log.warn("Photos du colis {} illisibles : {}", bid.getId(), e.getClass().getSimpleName());
             return List.of();
@@ -83,13 +91,25 @@ public class AdminBidPhotoAssembler {
     private List<Staged> scans(BidEntity bid) {
         List<Staged> out = new ArrayList<>();
         for (TrackingEventEntity e : trackingRepo.findByBidIdOrderByScannedAtAsc(bid.getId())) {
-            if (e.getEventType() == null || e.getPhotoPurgedAt() != null) continue;
+            Stage stage = stageOf(e.getEventType());
+            if (stage == null || e.getPhotoPurgedAt() != null) continue;
             String url = AdminBidDetailAssembler.sign(storageService, e.getPhotoUrl());
             if (url == null) continue;
-            out.add(staged(Stage.valueOf(e.getEventType().name()), String.valueOf(e.getId()),
+            out.add(staged(stage, String.valueOf(e.getId()),
                     e.getEventType().name(), e.getScannedAt(), url, e.getGpsLabel()));
         }
         return out;
+    }
+
+    /** Étape d'un scan ; null (ignoré, jamais une 500) pour une valeur absente ou inconnue. */
+    private static Stage stageOf(TrackingEventType type) {
+        if (type == null) return null;
+        return switch (type) {
+            case DEPART -> Stage.DEPART;
+            case TRANSIT -> Stage.TRANSIT;
+            case ARRIVEE -> Stage.ARRIVEE;
+            default -> null;
+        };
     }
 
     /**

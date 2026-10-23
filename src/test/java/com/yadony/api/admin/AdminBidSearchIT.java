@@ -248,6 +248,29 @@ class AdminBidSearchIT {
     }
 
     @Test
+    void search_apostropheAndUppercaseAccents_areFolded() {
+        AnnouncementEntity a = trip();
+        BidEntity apostrophe = bid(a, sender, BidStatus.PENDING, b -> b.setRecipientName("N'Diaye"));
+        BidEntity typographic = bid(a, sender, BidStatus.PENDING, b -> b.setRecipientName("N’Doye"));
+        BidEntity upper = bid(a, sender, BidStatus.PENDING, b -> b.setRecipientName("ÉRIC ÀÇÑ"));
+        bid(a, sender, BidStatus.PENDING, b -> b.setRecipientName("Khady Ba"));
+
+        assertThat(ids(q().on(a).query("ndiaye"))).containsExactly(apostrophe.getId());
+        assertThat(ids(q().on(a).query("N'Diaye"))).containsExactly(apostrophe.getId());
+        assertThat(ids(q().on(a).query("ndoye"))).containsExactly(typographic.getId());
+        assertThat(ids(q().on(a).query("eric acn"))).containsExactly(upper.getId());
+    }
+
+    @Test
+    void search_backslash_isNeverALikeEscape() {
+        AnnouncementEntity a = trip();
+        BidEntity wanted = bid(a, sender, BidStatus.PENDING, b -> b.setRecipientName("abc"));
+
+        assertThat(ids(q().on(a).query("a\\bc"))).containsExactly(wanted.getId());
+        assertThat(ids(q().on(a).query("\\"))).isEmpty();
+    }
+
+    @Test
     void search_byTripCities_twoWordsBothRequired() {
         AnnouncementEntity a = trip();
         BidEntity parcel = bid(a, sender, BidStatus.PENDING);

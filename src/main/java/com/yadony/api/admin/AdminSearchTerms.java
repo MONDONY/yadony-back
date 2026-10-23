@@ -40,38 +40,40 @@ public final class AdminSearchTerms {
         return needle.isEmpty() ? null : "%" + needle + "%";
     }
 
-    /** Accents français repliés ; même table que le {@code TRANSLATE} SQL (lettre pour lettre). */
-    public static final String ACCENT_FROM = "àâäáãåçéèêëíìîïñóòôöõúùûüýÿœ";
-    public static final String ACCENT_TO = "aaaaaaceeeeiiiinooooouuuuyyo";
+    /**
+     * Accents français repliés ; même table que le {@code TRANSLATE} SQL (lettre pour lettre). Les
+     * majuscules accentuées y figurent aussi : le SQL ne dépend ainsi pas de la locale de la base
+     * (lc_ctype) pour le {@code LOWER} des majuscules accentuées.
+     */
+    public static final String ACCENT_FROM = "àâäáãåçéèêëíìîïñóòôöõúùûüýÿœ" + "ÀÂÄÁÃÅÇÉÈÊËÍÌÎÏÑÓÒÔÖÕÚÙÛÜÝŸŒ";
+    public static final String ACCENT_TO = "aaaaaaceeeeiiiinooooouuuuyyo" + "aaaaaaceeeeiiiinooooouuuuyyo";
 
-    /** Minuscules, accents repliés, espaces multiples réduits ; null reste null. */
+    /** Minuscules, accents repliés, apostrophes (droite et typographique) retirées, espaces réduits ; null reste null. */
     public static String fold(String input) {
         if (input == null) {
             return null;
         }
         StringBuilder folded = new StringBuilder(input.length());
         for (char c : input.toLowerCase(Locale.ROOT).toCharArray()) {
+            if (c == '\'' || c == '\u2019') {
+                continue; // « N'Diaye » se trouve par « ndiaye » ; même retrait en SQL (REPLACE imbriqués)
+            }
             int index = ACCENT_FROM.indexOf(c);
             folded.append(index >= 0 ? ACCENT_TO.charAt(index) : c);
         }
         return folded.toString().replaceAll("\\s+", " ").strip();
     }
 
-    /** Jetons repliés de la saisie, sans {@code %} ni {@code _}, limités à {@code max}. */
+    /** Jetons repliés de la saisie, sans {@code %}, {@code _} ni barre oblique inverse (échappement de LIKE), limités à {@code max}. */
     public static List<String> tokens(String query, int max) {
         String folded = fold(query);
         if (folded == null) {
             return List.of();
         }
-        return Arrays.stream(folded.replace("%", "").replace("_", "").split(" "))
+        return Arrays.stream(folded.replace("%", "").replace("_", "").replace("\\", "").split(" "))
                 .filter(token -> !token.isEmpty())
                 .limit(max)
                 .toList();
-    }
-
-    /** {@code %jeton%} pour un jeton déjà replié. */
-    public static String likeFolded(String token) {
-        return "%" + token + "%";
     }
 
     /** Nombre minimal de chiffres d'une recherche par téléphone : en dessous, la saisie ne cible pas un numéro. */

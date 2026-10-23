@@ -15,7 +15,6 @@ import java.util.UUID;
  *
  * @param tokens jetons repliés de la saisie (au plus {@link #MAX_TOKENS}), tous exigés
  * @param idTerm la saisie si c'est un UUID canonique (colis, trajet, paiement ou litige), sinon null
- * @param withRecipientPhone le téléphone du destinataire est cherchable (droit {@code USER_VIEW})
  * @param phoneSuffix chiffres à retrouver en fin du téléphone du destinataire (voir
  *        {@link AdminSearchTerms#phoneSuffix}), ou null : saisie qui n'est pas un numéro valide, ou droit absent
  * @param now horloge de la requête (UTC), d'où découlent les fenêtres d'alerte et de la vue « récents »
@@ -27,7 +26,6 @@ public record AdminBidQuery(
         List<String> tokens,
         UUID idTerm,
         AdminBidScope scope,
-        boolean withRecipientPhone,
         String phoneSuffix,
         String paymentMethod,
         String content,
@@ -59,7 +57,7 @@ public record AdminBidQuery(
         String foldedContent = AdminSearchTerms.fold(content);
         if (foldedContent != null) {
             // Texte, pas motif : mêmes règles que les jetons.
-            foldedContent = foldedContent.replace("%", "").replace("_", "").strip();
+            foldedContent = foldedContent.replace("%", "").replace("_", "").replace("\\", "").strip();
         }
         return new AdminBidQuery(
                 view != null ? view : AdminBidView.ALL,
@@ -68,7 +66,6 @@ public record AdminBidQuery(
                 tokensOf(query),
                 AdminSearchTerms.uuid(query),
                 scope != null ? scope : AdminBidScope.ALL,
-                withRecipientPhone,
                 withRecipientPhone ? AdminSearchTerms.phoneSuffix(query) : null,
                 paymentMethod != null ? paymentMethod.name() : null,
                 foldedContent == null || foldedContent.isEmpty() ? null : foldedContent,

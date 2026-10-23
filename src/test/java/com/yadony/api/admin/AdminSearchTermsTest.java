@@ -61,8 +61,23 @@ class AdminSearchTermsTest {
     }
 
     @Test
-    void likeFolded_wrapsWithPercent() {
-        assertThat(AdminSearchTerms.likeFolded("dakar")).isEqualTo("%dakar%");
+    void fold_uppercaseAccents_doNotDependOnLocale() {
+        // Les majuscules accentuées figurent dans la table : le SQL n'a pas besoin du LOWER de la base.
+        assertThat(AdminSearchTerms.ACCENT_FROM).hasSameSizeAs(AdminSearchTerms.ACCENT_TO);
+        assertThat(AdminSearchTerms.ACCENT_FROM).contains("ÉÈÊËÀÂÄÁÃÅÇÍÌÎÏÑÓÒÔÖÕÚÙÛÜÝŸŒ".split(""));
+        assertThat(AdminSearchTerms.fold("ÉRIC ÀÇÑ")).isEqualTo("eric acn");
+    }
+
+    @Test
+    void fold_removesApostrophes() {
+        assertThat(AdminSearchTerms.fold("N'Diaye")).isEqualTo("ndiaye");
+        assertThat(AdminSearchTerms.fold("N’Diaye")).isEqualTo("ndiaye");
+    }
+
+    @Test
+    void tokens_stripBackslash() {
+        assertThat(AdminSearchTerms.tokens("a\\b", 4)).containsExactly("ab");
+        assertThat(AdminSearchTerms.tokens("\\", 4)).isEmpty();
     }
 
     @Test

@@ -7,8 +7,9 @@ import com.yadony.api.admin.dto.AdminBidPhotosResponse.Photo;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.disputes.DisputeRepository;
 import com.yadony.api.matching.BidEntity;
-import com.yadony.api.matching.BidPhotoService;
-import com.yadony.api.matching.dto.BidPhotoResponse;
+import com.yadony.api.matching.BidPhotoEntity;
+import com.yadony.api.matching.BidPhotoRepository;
+import com.yadony.api.matching.BidPhotoStatus;
 import com.yadony.api.messaging.ConversationEntity;
 import com.yadony.api.messaging.ConversationRepository;
 import com.yadony.api.messaging.MessagingImageEntity;
@@ -44,7 +45,7 @@ import static org.springframework.test.util.ReflectionTestUtils.setField;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class AdminBidPhotoAssemblerTest {
 
-    @Mock BidPhotoService photoService;
+    @Mock BidPhotoRepository photoRepo;
     @Mock TrackingEventRepository trackingRepo;
     @Mock ConversationRepository conversationRepo;
     @Mock MessagingImageRepository imageRepo;
@@ -62,14 +63,14 @@ class AdminBidPhotoAssemblerTest {
 
     @BeforeEach
     void setUp() {
-        assembler = new AdminBidPhotoAssembler(photoService, trackingRepo, conversationRepo, imageRepo,
+        assembler = new AdminBidPhotoAssembler(photoRepo, trackingRepo, conversationRepo, imageRepo,
                 disputeRepo, storageService);
         bid = new BidEntity();
         setField(bid, "id", BID);
         setField(bid, "createdAt", T0);
         setField(bid, "updatedAt", T0.plusDays(3));
 
-        when(photoService.activePhotos(BID)).thenReturn(List.of());
+        when(photoRepo.findByBidIdAndStatusOrderByPositionAsc(BID, BidPhotoStatus.ACTIVE)).thenReturn(List.of());
         when(trackingRepo.findByBidIdOrderByScannedAtAsc(BID)).thenReturn(List.of());
         when(conversationRepo.findByBidId(BID)).thenReturn(Optional.empty());
         when(disputeRepo.existsByBidId(BID)).thenReturn(false);
@@ -97,6 +98,12 @@ class AdminBidPhotoAssemblerTest {
         return e;
     }
 
+    private static BidPhotoEntity bidPhoto(UUID id, String key, int position) {
+        BidPhotoEntity e = new BidPhotoEntity(BID, key, position);
+        setField(e, "id", id);
+        return e;
+    }
+
     private void withDisputeConversation(MessagingImageEntity... images) {
         ConversationEntity c = new ConversationEntity(BID, UUID.randomUUID(), UUID.randomUUID(), "fs-1");
         setField(c, "id", CONV);
@@ -116,7 +123,8 @@ class AdminBidPhotoAssemblerTest {
     @Test
     void photos_creation_fromBidPhotos() {
         UUID p = UUID.randomUUID();
-        when(photoService.activePhotos(BID)).thenReturn(List.of(new BidPhotoResponse(p, "https://signed.test/bids/1")));
+        when(photoRepo.findByBidIdAndStatusOrderByPositionAsc(BID, BidPhotoStatus.ACTIVE))
+                .thenReturn(List.of(bidPhoto(p, "bids/1", 0)));
 
         List<Photo> photos = assembler.photos(bid, AdminBidDetailAssembler.Access.ALL);
 
@@ -126,6 +134,21 @@ class AdminBidPhotoAssemblerTest {
             assertThat(ph.at()).isEqualTo(T0);
             assertThat(ph.url()).isEqualTo("https://signed.test/bids/1");
         });
+    }
+
+    @Test
+    void photos_creation_oneUnsignableKey_keepsTheOthers() {
+        UUID a = UUID.randomUUID();
+        UUID c = UUID.randomUUID();
+        when(photoRepo.findByBidIdAndStatusOrderByPositionAsc(BID, BidPhotoStatus.ACTIVE)).thenReturn(List.of(
+                bidPhoto(a, "bids/a.jpg", 0), bidPhoto(UUID.randomUUID(), "bids/broken.jpg", 1),
+                bidPhoto(c, "bids/c.jpg", 2)));
+        when(storageService.generatePresignedUrl(eq("bids/broken.jpg"), any()))
+                .thenThrow(new IllegalStateException("signing failed"));
+
+        List<Photo> photos = assembler.photos(bid, AdminBidDetailAssembler.Access.ALL);
+
+        assertThat(photos).extracting(Photo::id).containsExactly(a.toString(), c.toString());
     }
 
     @Test
@@ -155,7 +178,8 @@ class AdminBidPhotoAssemblerTest {
                 scan(TrackingEventType.TRANSIT, T0.plusHours(5), "k/transit2.jpg", null),
                 scan(TrackingEventType.DEPART, T0.plusHours(9), "k/depart.jpg", null),
                 scan(TrackingEventType.TRANSIT, T0.plusHours(2), "k/transit1.jpg", null)));
-        when(photoService.activePhotos(BID)).thenReturn(List.of(new BidPhotoResponse(UUID.randomUUID(), "u")));
+        when(photoRepo.findByBidIdAndStatusOrderByPositionAsc(BID, BidPhotoStatus.ACTIVE))
+                .thenReturn(List.of(bidPhoto(UUID.randomUUID(), "u", 0)));
 
         List<Photo> photos = assembler.photos(bid, AdminBidDetailAssembler.Access.ALL);
 
@@ -259,7 +283,7 @@ class AdminBidPhotoAssemblerTest {
 
     @Test
     void photos_storageDown_returnsPartialList() {
-        when(photoService.activePhotos(BID)).thenThrow(new IllegalStateException("storage down"));
+        when(photoRepo.findByBidIdAndStatusOrderByPositionAsc(BID, BidPhotoStatus.ACTIVE)).thenThrow(new IllegalStateException("storage down"));
         when(trackingRepo.findByBidIdOrderByScannedAtAsc(BID)).thenReturn(List.of(
                 scan(TrackingEventType.DEPART, T0, "k/depart.jpg", null)));
 
@@ -273,7 +297,7 @@ class AdminBidPhotoAssemblerTest {
         String signed = "https://r2.test/k/bad.jpg?X-Amz-Signature=deadbeef";
         when(storageService.generatePresignedUrl(eq("k/bad.jpg"), any()))
                 .thenThrow(new IllegalStateException("echec " + signed));
-        when(photoService.activePhotos(BID)).thenThrow(new IllegalStateException("echec " + signed));
+        when(photoRepo.findByBidIdAndStatusOrderByPositionAsc(BID, BidPhotoStatus.ACTIVE)).thenThrow(new IllegalStateException("echec " + signed));
         when(trackingRepo.findByBidIdOrderByScannedAtAsc(BID)).thenReturn(List.of(
                 scan(TrackingEventType.DEPART, T0, "k/bad.jpg", null)));
 

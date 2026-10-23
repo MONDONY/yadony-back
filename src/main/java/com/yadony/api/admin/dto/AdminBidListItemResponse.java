@@ -33,23 +33,4 @@ public record AdminBidListItemResponse(
     LocalDateTime updatedAt,
     /** Alerte la plus urgente (DISPUTE_OPEN, NO_SHOW, PAYMENT_PENDING, LATE), absente sinon. */
     String alert
-) {
-    /** Forme d'avant les champs de la liste réorganisée. */
-    public AdminBidListItemResponse(UUID id, String status, UUID announcementId, String senderName,
-                                    String travelerName, String corridor, BigDecimal weightKg,
-                                    BigDecimal netEur, String paymentMethod, LocalDateTime createdAt,
-                                    String commissionStatus, String currency, String trackingNumber) {
-        this(id, status, announcementId, senderName, travelerName, corridor, weightKg, netEur,
-                paymentMethod, createdAt, commissionStatus, currency, trackingNumber,
-                null, null, null, null, null, null);
-    }
-
-    /** Forme d'avant le numéro de suivi. */
-    public AdminBidListItemResponse(UUID id, String status, UUID announcementId, String senderName,
-                                    String travelerName, String corridor, BigDecimal weightKg,
-                                    BigDecimal netEur, String paymentMethod, LocalDateTime createdAt,
-                                    String commissionStatus, String currency) {
-        this(id, status, announcementId, senderName, travelerName, corridor, weightKg, netEur,
-                paymentMethod, createdAt, commissionStatus, currency, null);
-    }
-}
+) { }

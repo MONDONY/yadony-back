@@ -177,6 +177,23 @@ class AdminBidSearchPostgresIT {
     }
 
     @Test
+    void uppercaseAccentsAndApostrophes_areFoldedOnPostgres() {
+        UserEntity traveler = user("Mamadou", "Kouyaté");
+        UserEntity sender = user("Aïcha", "Diallo");
+        AnnouncementEntity a = trip(traveler);
+        BidEntity upper = bid(a, sender, BidStatus.PENDING);
+        BidEntity apostrophe = bid(a, sender, BidStatus.PENDING);
+        jdbc.update("update bids set recipient_name = ? where id = ?", "ÉRIC", upper.getId());
+        jdbc.update("update bids set recipient_name = ? where id = ?", "N'Diaye", apostrophe.getId());
+
+        assertThat(ids(query(AdminBidView.ALL, "eric", AdminBidScope.RECIPIENT, false))).containsExactly(upper.getId());
+        assertThat(ids(query(AdminBidView.ALL, "ndiaye", AdminBidScope.RECIPIENT, false)))
+                .containsExactly(apostrophe.getId());
+        assertThat(ids(query(AdminBidView.ALL, "N’Diaye", AdminBidScope.RECIPIENT, false)))
+                .containsExactly(apostrophe.getId());
+    }
+
+    @Test
     void idSearchAndAlertRanks_runOnPostgres() {
         UserEntity traveler = user("Mamadou", "Kouyaté");
         UserEntity sender = user("Aïcha", "Diallo");
