@@ -50,7 +50,14 @@ public record AdminBidDetailResponse(
     Boolean confirmationCodePresent,
     /** URL présignées (durée courte) des photos actives du colis. */
     List<String> photoUrls,
-    Milestones milestones
+    Milestones milestones,
+    /**
+     * Litiges et annulations du colis, du plus récent au plus ancien. Absent sans DISPUTE_VIEW ;
+     * présent avec deux listes vides quand rien n'est arrivé.
+     */
+    Incidents incidents,
+    /** Alerte la plus urgente (DISPUTE_OPEN, NO_SHOW, PAYMENT_PENDING, LATE), la même règle que la liste. */
+    String alert
 ) {
 
     /** Trajet : l'annonce du voyageur à laquelle le colis est rattaché. */
@@ -130,5 +137,24 @@ public record AdminBidDetailResponse(
         LocalDateTime deliveredAt,
         LocalDateTime noShowAt,
         LocalDateTime returnedAt
+    ) {}
+
+    public record Incidents(List<Dispute> disputes, List<Cancellation> cancellations) {}
+
+    public record Dispute(
+        UUID id,
+        String type,
+        String status,
+        LocalDateTime createdAt,
+        LocalDateTime resolvedAt,
+        String resolutionType
+    ) {}
+
+    public record Cancellation(
+        UUID id,
+        String scope,
+        String noShowStatus,
+        String reason,
+        LocalDateTime createdAt
     ) {}
 }

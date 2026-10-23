@@ -136,7 +136,8 @@ public class AdminBidDetailAssembler {
             AdminBidDetailResponse.Links links,
             Boolean confirmationCodePresent,
             List<String> photoUrls,
-            AdminBidDetailResponse.Milestones milestones) {
+            AdminBidDetailResponse.Milestones milestones,
+            AdminBidDetailResponse.Incidents incidents) {
     }
 
     public Extras extras(BidEntity bid, AnnouncementEntity ann, Access access) {
@@ -147,8 +148,10 @@ public class AdminBidDetailAssembler {
         Map<String, FirebaseContactService.Contact> contacts = access.users() ? contactsOf(users.values()) : Map.of();
 
         PaymentEntity payment = access.payments() ? paymentOf(bid).orElse(null) : null;
-        DisputeEntity dispute = access.disputes() ? latest(disputeRepo.findByBidIdIn(List.of(bid.getId()))) : null;
-        CancellationEntity cancellation = latest(cancellationsOf(bid.getId()));
+        List<DisputeEntity> disputes = access.disputes() ? disputeRepo.findByBidIdIn(List.of(bid.getId())) : List.of();
+        List<CancellationEntity> cancellations = cancellationsOf(bid.getId());
+        DisputeEntity dispute = latest(disputes);
+        CancellationEntity cancellation = latest(cancellations);
         String conversationId = access.moderation()
                 ? conversationOf(bid.getId()).map(ConversationEntity::getFirestoreConversationId).orElse(null)
                 : null;
@@ -172,7 +175,26 @@ public class AdminBidDetailAssembler {
                 photoUrls(bid.getId()),
                 new AdminBidDetailResponse.Milestones(
                         bid.getHandoverLocation(), bid.getHandoverDeadline(), bid.getArrivedAt(),
-                        bid.getDeliveredAt(), bid.getNoShowAt(), bid.getReturnedAt()));
+                        bid.getDeliveredAt(), bid.getNoShowAt(), bid.getReturnedAt()),
+                access.disputes() ? incidents(disputes, cancellations) : null);
+    }
+
+    /** Litiges et annulations, le plus récent d'abord. */
+    private static AdminBidDetailResponse.Incidents incidents(List<DisputeEntity> disputes,
+                                                              List<CancellationEntity> cancellations) {
+        Comparator<com.yadony.api.common.BaseEntity> newestFirst = Comparator.comparing(
+                com.yadony.api.common.BaseEntity::getCreatedAt, Comparator.nullsFirst(Comparator.naturalOrder())).reversed();
+        return new AdminBidDetailResponse.Incidents(
+                disputes.stream().sorted(newestFirst)
+                        .map(d -> new AdminBidDetailResponse.Dispute(d.getId(), d.getType(), d.getStatus(),
+                                d.getCreatedAt(), utc(d.getResolvedAt()), d.getResolutionType()))
+                        .toList(),
+                cancellations.stream().sorted(newestFirst)
+                        .map(c -> new AdminBidDetailResponse.Cancellation(c.getId(),
+                                c.getScope() != null ? c.getScope().name() : null,
+                                c.getNoShowStatus() != null ? c.getNoShowStatus().name() : null,
+                                c.getReason(), c.getCreatedAt()))
+                        .toList());
     }
 
     // ── Chronologie ─────────────────────────────────────────────────────────────
@@ -215,7 +237,9 @@ public class AdminBidDetailAssembler {
             entries.add(new AdminBidTimelineResponse.Entry(
                     e.getScannedAt(), "SCAN",
                     e.getEventType() != null ? e.getEventType().name() : "SCAN",
-                    e.getGpsLabel(), signed(e.getPhotoUrl()), e.getGpsLat(), e.getGpsLon(),
+                    e.getGpsLabel(),
+                    // Photo purgée (rétention) : la clé n'existe plus, aucune URL à signer.
+                    e.getPhotoPurgedAt() != null ? null : signed(e.getPhotoUrl()), e.getGpsLat(), e.getGpsLon(),
                     "TRACKING", null, null));
         }
 

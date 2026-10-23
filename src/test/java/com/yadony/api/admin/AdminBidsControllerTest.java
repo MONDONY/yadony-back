@@ -173,7 +173,7 @@ class AdminBidsControllerTest {
         when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
         var links = new AdminBidDetailResponse.Links(null, null, null, "fs-1", null);
         when(assembler.extras(eq(bid), eq(ann), any())).thenReturn(new AdminBidDetailAssembler.Extras(
-                null, null, null, null, null, links, true, List.of("https://r2.test/p?sig=1"), null));
+                null, null, null, null, null, links, true, List.of("https://r2.test/p?sig=1"), null, null));
 
         AdminBidDetailResponse body = controller().getBid(bidId, null).getBody();
 

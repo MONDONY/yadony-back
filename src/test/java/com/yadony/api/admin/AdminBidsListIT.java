@@ -184,6 +184,27 @@ class AdminBidsListIT {
     }
 
     @Test
+    void detail_alert_sameRuleAsList() throws Exception {
+        BidEntity withDispute = bid(BidStatus.NO_SHOW);
+        openDispute(withDispute);
+        BidEntity calm = bid(BidStatus.ACCEPTED);
+        var auth = authWith(AdminPermission.BID_VIEW, AdminPermission.DISPUTE_VIEW);
+
+        mockMvc.perform(list(as(AdminRole.ADMIN)))
+                .andExpect(jsonPath("$.content[?(@.id=='" + withDispute.getId() + "')].alert").value("DISPUTE_OPEN"));
+        mockMvc.perform(get("/admin/bids/{id}", withDispute.getId()).with(authentication(auth)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.alert").value("DISPUTE_OPEN"))
+                .andExpect(jsonPath("$.incidents.disputes.length()").value(1))
+                .andExpect(jsonPath("$.incidents.disputes[0].status").value("OPEN"))
+                .andExpect(jsonPath("$.incidents.cancellations.length()").value(0));
+        mockMvc.perform(get("/admin/bids/{id}", calm.getId()).with(authentication(auth)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.alert").doesNotExist())
+                .andExpect(jsonPath("$.incidents.disputes.length()").value(0));
+    }
+
+    @Test
     void list_recipientNameAbsentWhenNotFilled() throws Exception {
         bid(BidStatus.ACCEPTED);
         mockMvc.perform(list(as(AdminRole.ADMIN)))

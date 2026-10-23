@@ -181,7 +181,12 @@ public class AdminBidsController {
         if (ann != null && ann.getTravelerId() != null) userIds.add(ann.getTravelerId());
         Map<UUID, String> userNames = loadUserNames(userIds);
 
-        return ResponseEntity.ok(toBidDetail(bid, ann, userNames, AdminBidDetailAssembler.Access.of(authentication)));
+        // Alerte : même règle SQL que la liste, pour ce seul colis.
+        LocalDateTime now = LocalDateTime.now(clock);
+        String alert = bidRepo.alertRanks(List.of(id), now, AdminBidQuery.lateBefore(now)).stream()
+                .findFirst().flatMap(r -> AdminBidAlert.ofRank(r.getRank())).map(Enum::name).orElse(null);
+
+        return ResponseEntity.ok(toBidDetail(bid, ann, userNames, AdminBidDetailAssembler.Access.of(authentication), alert));
     }
 
     @GetMapping("/admin/bids/{id}/timeline")
@@ -272,7 +277,7 @@ public class AdminBidsController {
     }
 
     private AdminBidDetailResponse toBidDetail(BidEntity b, AnnouncementEntity ann,
-            Map<UUID, String> userNames, AdminBidDetailAssembler.Access access) {
+            Map<UUID, String> userNames, AdminBidDetailAssembler.Access access, String alert) {
         java.math.BigDecimal gridNet = b.getId() != null
                 ? gridNetByBid(List.of(b.getId())).get(b.getId()) : null;
         AdminBidListItemResponse item = toBidListItem(b, ann, userNames, gridNet, null);
@@ -285,7 +290,7 @@ public class AdminBidsController {
                 b.getTrackingNumber(), b.getCommissionRate(), b.getRefusalReason(),
                 item.currency(),
                 b.getDescription(), x.trip(), x.sender(), x.traveler(), x.recipient(), x.money(), x.links(),
-                x.confirmationCodePresent(), x.photoUrls(), x.milestones());
+                x.confirmationCodePresent(), x.photoUrls(), x.milestones(), x.incidents(), alert);
     }
 
     private AdminAnnouncementListItemResponse toAnnouncementListItem(AnnouncementEntity a,

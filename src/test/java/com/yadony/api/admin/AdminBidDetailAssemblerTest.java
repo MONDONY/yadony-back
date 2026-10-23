@@ -493,4 +493,115 @@ class AdminBidDetailAssemblerTest {
         assertThat(entries.get(1).label()).isEqualTo("COMMISSION_CHARGED_WALLET");
         assertThat(entries.get(1).kind()).isEqualTo("PAYMENT");
     }
+
+    // ── Incidents et photos purgées ─────────────────────────────────────────
+
+    private static DisputeEntity dispute(String status, String type, LocalDateTime createdAt) {
+        DisputeEntity d = new DisputeEntity();
+        setField(d, "id", UUID.randomUUID());
+        setField(d, "createdAt", createdAt);
+        setField(d, "status", status);
+        setField(d, "type", type);
+        return d;
+    }
+
+    private static CancellationEntity cancellation(com.yadony.api.cancellation.CancellationScope scope, LocalDateTime createdAt) {
+        CancellationEntity c = new CancellationEntity();
+        setField(c, "id", UUID.randomUUID());
+        setField(c, "createdAt", createdAt);
+        setField(c, "scope", scope);
+        setField(c, "reason", "Imprévu");
+        return c;
+    }
+
+    @Test
+    void extras_incidents_listsDisputesAndCancellations_withDisputeView() {
+        DisputeEntity d = dispute("RESOLVED", "DAMAGED", T0);
+        setField(d, "resolvedAt", OffsetDateTime.of(2026, 10, 7, 10, 0, 0, 0, ZoneOffset.ofHours(2)));
+        setField(d, "resolutionType", "REFUND");
+        when(disputeRepo.findByBidIdIn(List.of(BID))).thenReturn(List.of(d));
+        CancellationEntity c = cancellation(com.yadony.api.cancellation.CancellationScope.HANDOVER, T0.plusDays(1));
+        when(cancellationRepo.findAllByBidId(BID)).thenReturn(List.of(c));
+
+        AdminBidDetailResponse.Incidents inc = assembler.extras(bid, ann, AdminBidDetailAssembler.Access.ALL).incidents();
+
+        assertThat(inc.disputes()).hasSize(1);
+        AdminBidDetailResponse.Dispute dto = inc.disputes().get(0);
+        assertThat(dto.id()).isEqualTo(d.getId());
+        assertThat(dto.type()).isEqualTo("DAMAGED");
+        assertThat(dto.status()).isEqualTo("RESOLVED");
+        assertThat(dto.createdAt()).isEqualTo(T0);
+        assertThat(dto.resolvedAt()).isEqualTo(LocalDateTime.of(2026, 10, 7, 8, 0));
+        assertThat(dto.resolutionType()).isEqualTo("REFUND");
+        assertThat(inc.cancellations()).hasSize(1);
+        AdminBidDetailResponse.Cancellation cdto = inc.cancellations().get(0);
+        assertThat(cdto.id()).isEqualTo(c.getId());
+        assertThat(cdto.scope()).isEqualTo("HANDOVER");
+        assertThat(cdto.noShowStatus()).isEqualTo("CONFIRMED");
+        assertThat(cdto.reason()).isEqualTo("Imprévu");
+        assertThat(cdto.createdAt()).isEqualTo(T0.plusDays(1));
+    }
+
+    @Test
+    void extras_incidents_absent_withoutDisputeView() {
+        when(disputeRepo.findByBidIdIn(List.of(BID))).thenReturn(List.of(dispute("OPEN", "LOST", T0)));
+        var noDispute = new AdminBidDetailAssembler.Access(true, true, false, true, true);
+
+        assertThat(assembler.extras(bid, ann, noDispute).incidents()).isNull();
+    }
+
+    @Test
+    void extras_incidents_orderedNewestFirst() {
+        DisputeEntity old = dispute("RESOLVED", "A", T0);
+        DisputeEntity recent = dispute("OPEN", "B", T0.plusDays(2));
+        DisputeEntity mid = dispute("RESOLVED", "C", T0.plusDays(1));
+        when(disputeRepo.findByBidIdIn(List.of(BID))).thenReturn(List.of(old, recent, mid));
+        CancellationEntity c1 = cancellation(com.yadony.api.cancellation.CancellationScope.HANDOVER, T0);
+        CancellationEntity c2 = cancellation(com.yadony.api.cancellation.CancellationScope.HANDOVER, T0.plusDays(3));
+        CancellationEntity deleted = cancellation(com.yadony.api.cancellation.CancellationScope.HANDOVER, T0.plusDays(9));
+        setField(deleted, "deletedAt", T0);
+        when(cancellationRepo.findAllByBidId(BID)).thenReturn(List.of(c1, deleted, c2));
+
+        AdminBidDetailResponse.Incidents inc = assembler.extras(bid, ann, AdminBidDetailAssembler.Access.ALL).incidents();
+
+        assertThat(inc.disputes()).extracting(AdminBidDetailResponse.Dispute::type).containsExactly("B", "C", "A");
+        assertThat(inc.cancellations()).extracting(AdminBidDetailResponse.Cancellation::id)
+                .containsExactly(c2.getId(), c1.getId());
+    }
+
+    @Test
+    void extras_incidents_emptyLists_whenNone() {
+        AdminBidDetailResponse.Incidents inc = assembler.extras(bid, ann, AdminBidDetailAssembler.Access.ALL).incidents();
+
+        assertThat(inc).isNotNull();
+        assertThat(inc.disputes()).isEmpty();
+        assertThat(inc.cancellations()).isEmpty();
+    }
+
+    @Test
+    void timeline_purgedScanPhoto_hasNoUrl() {
+        TrackingEventEntity depart = new TrackingEventEntity();
+        setField(depart, "eventType", TrackingEventType.DEPART);
+        setField(depart, "scannedAt", T0.plusDays(1));
+        setField(depart, "photoUrl", "tracking/purged.jpg");
+        setField(depart, "photoPurgedAt", T0.plusDays(5));
+        when(trackingRepo.findByBidIdOrderByScannedAtAsc(BID)).thenReturn(List.of(depart));
+        when(storageService.generatePresignedUrl(any(), any())).thenReturn("https://r2/signed");
+
+        assertThat(assembler.timeline(bid, AdminBidDetailAssembler.Access.ALL).get(1).photoUrl()).isNull();
+        verify(storageService, never()).generatePresignedUrl(any(), any());
+    }
+
+    @Test
+    void timeline_unpurgedScanPhoto_stillSigned() {
+        TrackingEventEntity depart = new TrackingEventEntity();
+        setField(depart, "eventType", TrackingEventType.DEPART);
+        setField(depart, "scannedAt", T0.plusDays(1));
+        setField(depart, "photoUrl", "tracking/ok.jpg");
+        when(trackingRepo.findByBidIdOrderByScannedAtAsc(BID)).thenReturn(List.of(depart));
+        when(storageService.generatePresignedUrl(eq("tracking/ok.jpg"), any())).thenReturn("https://r2/signed");
+
+        assertThat(assembler.timeline(bid, AdminBidDetailAssembler.Access.ALL).get(1).photoUrl())
+                .isEqualTo("https://r2/signed");
+    }
 }
