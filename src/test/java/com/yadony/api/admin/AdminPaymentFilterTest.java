@@ -88,10 +88,11 @@ class AdminPaymentFilterTest {
                         AdminPaymentSql.MM_FAILED_PREDICATE, AdminPaymentSql.ESCROW_J48_PREDICATE)
                 .doesNotContain("ALERT_RANK");
         assertThat(AdminPaymentSql.COUNTS_SELECT)
-                .contains("SUM(CASE WHEN " + AdminPaymentSql.ESCROW_J48_PREDICATE + " THEN 1")
-                .contains("SUM(CASE WHEN " + AdminPaymentSql.HELD_PREDICATE + " THEN 1")
-                .contains("SUM(CASE WHEN " + AdminPaymentSql.CHARGEBACK_OPEN_PREDICATE + " THEN 1")
-                .contains("SUM(CASE WHEN " + AdminPaymentSql.MM_FAILED_PREDICATE + " THEN 1")
-                .doesNotContain(AdminPaymentSql.ALERT_RANK + " = ");
+                .contains(" AND " + AdminPaymentSql.ESCROW_J48_PREDICATE + " THEN 1")
+                .contains(" AND " + AdminPaymentSql.HELD_PREDICATE + " THEN 1")
+                .contains(" AND " + AdminPaymentSql.CHARGEBACK_OPEN_PREDICATE + " THEN 1")
+                .contains(" AND " + AdminPaymentSql.MM_FAILED_PREDICATE + " THEN 1")
+                .doesNotContain(AdminPaymentSql.ALERT_RANK + " = ")
+                .contains(AdminPaymentSql.ABANDONED_PREDICATE);
     }
 }

@@ -1,5 +1,6 @@
 package com.yadony.api.admin;
 
+import com.yadony.api.admin.dto.AdminPaymentCountsResponse;
 import com.yadony.api.admin.dto.AdminPaymentInsight;
 import com.yadony.api.admin.dto.AdminPaymentListItemResponse;
 import com.yadony.api.payments.hold.PayoutHoldStatus;
@@ -195,6 +196,26 @@ public class AdminPaymentInsights {
         return load(ids);
     }
 
+    /**
+     * Nombres par vue et par alerte du périmètre du filtre, en un aller-retour ({@link AdminPaymentSql#COUNTS_SELECT}).
+     * {@code view}, {@code alert} et {@code status} du filtre sont ignorés ; {@code hideAbandoned} retire les
+     * checkouts abandonnés de tous les nombres sauf {@code abandoned}, qui les compte toujours.
+     */
+    public AdminPaymentCountsResponse counts(AdminPaymentFilter filter, LocalDateTime now) {
+        AdminPaymentFilter perimeter = new AdminPaymentFilter(null, filter.from(), filter.to(), filter.rail(),
+                filter.currency(), filter.held(), filter.query(), false, AdminPaymentView.ALL, null,
+                filter.partyId(), filter.announcementId(), filter.bidId(), filter.amountMin(), filter.amountMax());
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        String where = where(perimeter, params, now);
+        params.addValue("hideAbandoned", filter.hideAbandoned());
+        params.addValue("abandonedBefore", Timestamp.valueOf(now.minus(ABANDONED_AFTER)));
+        return jdbc.queryForObject(AdminPaymentSql.COUNTS_SELECT + "FROM" + AdminPaymentSql.FROM_JOIN + where, params,
+                (rs, i) -> new AdminPaymentCountsResponse(rs.getLong(1), rs.getLong(2), rs.getLong(3), rs.getLong(4),
+                        rs.getLong(5), rs.getLong(6), rs.getLong(7),
+                        new AdminPaymentCountsResponse.Alerts(rs.getLong(8), rs.getLong(9), rs.getLong(10),
+                                rs.getLong(11))));
+    }
+
     /** Totaux du périmètre filtré, une ligne par devise (on n'additionne jamais des XOF et des EUR). */
     public List<CurrencyTotals> totals(AdminPaymentFilter filter, LocalDateTime now) {
         MapSqlParameterSource params = new MapSqlParameterSource();
@@ -264,7 +285,7 @@ public class AdminPaymentInsights {
             sql.append(" AND ").append(AdminPaymentSql.HELD_PREDICATE);
         }
         if (f.hideAbandoned()) {
-            sql.append(" AND NOT (p.status = 'PENDING' AND p.created_at < :abandonedBefore)");
+            sql.append(" AND NOT ").append(AdminPaymentSql.ABANDONED_PREDICATE);
             params.addValue("abandonedBefore", Timestamp.valueOf(now.minus(ABANDONED_AFTER)));
         }
         if (view != AdminPaymentView.ALL) {

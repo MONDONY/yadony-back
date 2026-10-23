@@ -157,15 +157,23 @@ public final class AdminPaymentSql {
             + " OR EXISTS (SELECT 1 FROM pawapay_operations o WHERE o.payment_id = p.id"
             + "            AND o.provider_transaction_id = CAST(:refTerm AS VARCHAR)))";
 
+    /** Checkout abandonné (seule définition) : {@code :abandonedBefore} = {@code now - ABANDONED_AFTER_HOURS}. */
+    public static final String ABANDONED_PREDICATE = "(p.status = 'PENDING'"
+            + " AND p.created_at < CAST(:abandonedBefore AS TIMESTAMP))";
+
+    /** Un paiement compte dans les nombres sauf s'il est abandonné et que {@code :hideAbandoned} les masque. */
+    private static final String COUNTED = "NOT (CAST(:hideAbandoned AS BOOLEAN) AND " + ABANDONED_PREDICATE + ")";
+
     private static String sum(String predicate, String alias) {
-        return "COALESCE(SUM(CASE WHEN " + predicate + " THEN 1 ELSE 0 END), 0) AS \"" + alias + "\"";
+        return "COALESCE(SUM(CASE WHEN " + COUNTED + " AND " + predicate + " THEN 1 ELSE 0 END), 0) AS \"" + alias + "\"";
     }
 
     /**
-     * Nombres par vue et par alerte en un aller-retour. Les colonnes d'alerte comptent
-     * chacune avec le prédicat BRUT de l'alerte (non exclusif, elles peuvent se recouper) ;
-     * {@code attention} = paiements ayant au moins une alerte. {@code abandoned} compte les checkouts
-     * abandonnés ({@code :abandonedBefore}) même quand le filtre les masque.
+     * Nombres par vue et par alerte en un aller-retour, sur le {@code WHERE} de la liste SANS {@code view},
+     * {@code alert}, {@code status} ni {@code hideAbandoned}. Les colonnes d'alerte comptent chacune avec le
+     * prédicat BRUT de l'alerte (non exclusif, elles peuvent se recouper) ; {@code attention} = paiements ayant
+     * au moins une alerte. {@code :hideAbandoned} (booléen) écarte les checkouts abandonnés de TOUTES les colonnes
+     * sauf {@code abandoned}, qui les compte toujours ({@code :abandonedBefore}).
      */
     public static final String COUNTS_SELECT = "SELECT "
             + sum(ATTENTION_VIEW, "attention") + ", "
@@ -173,8 +181,8 @@ public final class AdminPaymentSql {
             + sum(RELEASED_RECENT_VIEW, "releasedRecent") + ", "
             + sum(REFUNDED_VIEW, "refunded") + ", "
             + sum(FAILED_VIEW, "failed") + ", "
-            + "COUNT(*) AS \"all\", "
-            + sum("p.status = 'PENDING' AND p.created_at < CAST(:abandonedBefore AS TIMESTAMP)", "abandoned") + ", "
+            + sum("1 = 1", "all") + ", "
+            + "COALESCE(SUM(CASE WHEN " + ABANDONED_PREDICATE + " THEN 1 ELSE 0 END), 0) AS \"abandoned\", "
             + sum(HELD_PREDICATE, "held") + ", "
             + sum(CHARGEBACK_OPEN_PREDICATE, "chargebackOpen") + ", "
             + sum(MM_FAILED_PREDICATE, "mmFailed") + ", "

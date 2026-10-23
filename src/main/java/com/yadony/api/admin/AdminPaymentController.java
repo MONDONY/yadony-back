@@ -1,6 +1,7 @@
 package com.yadony.api.admin;
 
 import com.yadony.api.admin.dto.AdminChargebackResponse;
+import com.yadony.api.admin.dto.AdminPaymentCountsResponse;
 import com.yadony.api.admin.dto.AdminPaymentDetailResponse;
 import com.yadony.api.admin.dto.AdminPaymentInsight;
 import com.yadony.api.admin.dto.AdminPaymentListItemResponse;
@@ -252,6 +253,30 @@ public class AdminPaymentController {
         return AdminPaymentFilter.of(status, dateFrom, dateTo, method, currency, held, q, hideAbandoned,
                 view == null ? null : view.name(), alert == null ? null : alert.name(),
                 partyId, announcementId, bidId, amountMin, amountMax);
+    }
+
+    /**
+     * Nombres par vue et par alerte : mêmes paramètres que la liste, hors {@code view}, {@code alert},
+     * {@code status}, {@code page} et {@code size}.
+     */
+    @PreAuthorize("hasAuthority('PAYMENT_VIEW')")
+    @GetMapping("/counts")
+    public ResponseEntity<AdminPaymentCountsResponse> counts(
+            @RequestParam(required = false) String method,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dateFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dateTo,
+            @RequestParam(required = false) String currency,
+            @RequestParam(required = false) Boolean held,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) Boolean hideAbandoned,
+            @RequestParam(required = false) UUID partyId,
+            @RequestParam(required = false) UUID announcementId,
+            @RequestParam(required = false) UUID bidId,
+            @RequestParam(required = false) Long amountMin,
+            @RequestParam(required = false) Long amountMax) {
+        return ResponseEntity.ok(insights.counts(filterOf(null, dateFrom, dateTo, method, currency, held, q,
+                hideAbandoned, null, null, partyId, announcementId, bidId, amountMin, amountMax),
+                LocalDateTime.now(clock)));
     }
 
     /** Totaux par devise du périmètre filtré (mêmes filtres que la liste). */
