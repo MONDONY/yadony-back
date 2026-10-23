@@ -7,6 +7,8 @@ import com.yadony.api.admin.userview.dto.AdminUserOverviewResponse.MoneyAmount;
 import com.yadony.api.admin.userview.dto.AdminUserOverviewResponse;
 import com.yadony.api.admin.userview.dto.AdminUserOverviewResponse.Kpis;
 import com.yadony.api.auth.UserEntity;
+import com.yadony.api.disputes.DisputeRepository;
+import com.yadony.api.disputes.DisputeTypes;
 import com.yadony.api.admin.userview.dto.AdminUserOverviewResponse.InProgressItem;
 import com.yadony.api.admin.userview.dto.AdminUserParcelRow;
 import com.yadony.api.common.MatchingTextUtil;
@@ -57,12 +59,15 @@ public class AdminUserOverviewService {
     private final AnnouncementRepository announcementRepository;
     private final AdminUserListingService listingService;
     private final AdminPaymentInsights paymentInsights;
+    private final DisputeRepository disputeRepository;
     private Clock clock = Clock.systemUTC();
 
     public AdminUserOverviewService(BidRepository bidRepository,
                                     AnnouncementRepository announcementRepository,
                                     AdminUserListingService listingService,
-                                    AdminPaymentInsights paymentInsights) {
+                                    AdminPaymentInsights paymentInsights,
+                                    DisputeRepository disputeRepository) {
+        this.disputeRepository = disputeRepository;
         this.paymentInsights = paymentInsights;
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
@@ -86,8 +91,8 @@ public class AdminUserOverviewService {
                 bids ? (int) bidRepository.countAdminByPartyAndStatusIn(userId, IN_PROGRESS_PARCEL_STATUSES) : null,
                 bids ? (int) announcementRepository.countByTravelerIdAndStatusIn(userId, ACTIVE_TRIP_STATUSES) : null,
                 payments ? heldByCurrency(userId) : null,
-                disputes ? 0 : null,
-                disputes ? 0 : null,
+                disputes ? (int) disputeRepository.countByPartyAndStatus(userId, DisputeTypes.STATUS_OPEN) : null,
+                disputes ? (int) disputeRepository.countByPartyAndStatus(userId, null) : null,
                 reports ? 0 : null,
                 reports ? 0 : null,
                 reports ? 0 : null,

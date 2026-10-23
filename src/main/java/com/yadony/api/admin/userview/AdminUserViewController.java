@@ -6,6 +6,8 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.admin.dto.AdminAnnouncementListItemResponse;
 import com.yadony.api.admin.userview.dto.AdminUserParcelRow;
+import com.yadony.api.admin.userview.dto.AdminUserCancellationRow;
+import com.yadony.api.admin.userview.dto.AdminUserDisputeRow;
 import com.yadony.api.admin.userview.dto.AdminUserPaymentRow;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
@@ -64,6 +66,24 @@ public class AdminUserViewController {
                                               @RequestParam(defaultValue = "20") int size) {
         requireUser(userId);
         return listingService.payments(userId, page, size);
+    }
+
+    @GetMapping("/disputes")
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('DISPUTE_VIEW')")
+    public Page<AdminUserDisputeRow> disputes(@PathVariable UUID userId,
+                                              @RequestParam(defaultValue = "0") int page,
+                                              @RequestParam(defaultValue = "20") int size) {
+        requireUser(userId);
+        return listingService.disputes(userId, page, size);
+    }
+
+    @GetMapping("/cancellations")
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('DISPUTE_VIEW')")
+    public Page<AdminUserCancellationRow> cancellations(@PathVariable UUID userId,
+                                                        @RequestParam(defaultValue = "0") int page,
+                                                        @RequestParam(defaultValue = "20") int size) {
+        requireUser(userId);
+        return listingService.cancellations(userId, page, size);
     }
 
     @GetMapping("/overview")

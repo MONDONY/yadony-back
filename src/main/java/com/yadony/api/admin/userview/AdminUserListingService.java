@@ -5,6 +5,11 @@ import com.yadony.api.admin.AdminPaymentInsights;
 import com.yadony.api.admin.dto.AdminPaymentListItemResponse;
 import com.yadony.api.admin.dto.AdminWalletResponse;
 import com.yadony.api.admin.userview.dto.AdminUserPaymentRow;
+import com.yadony.api.admin.userview.dto.AdminUserCancellationRow;
+import com.yadony.api.admin.userview.dto.AdminUserDisputeRow;
+import com.yadony.api.cancellation.CancellationRepository;
+import com.yadony.api.disputes.DisputeEntity;
+import com.yadony.api.disputes.DisputeRepository;
 import com.yadony.api.payments.hold.PayoutHoldPolicy;
 import com.yadony.api.payments.hold.PayoutHoldStatus;
 import com.yadony.api.admin.dto.AdminAnnouncementListItemResponse;
@@ -49,12 +54,18 @@ public class AdminUserListingService {
     private final BidGridItemRepository gridItemRepository;
     private final AdminPaymentInsights paymentInsights;
     private final PayoutHoldPolicy holdPolicy;
+    private final DisputeRepository disputeRepository;
+    private final CancellationRepository cancellationRepository;
 
     public AdminUserListingService(BidRepository bidRepository,
                                    AnnouncementRepository announcementRepository,
                                    BidGridItemRepository gridItemRepository,
                                    AdminPaymentInsights paymentInsights,
-                                   PayoutHoldPolicy holdPolicy) {
+                                   PayoutHoldPolicy holdPolicy,
+                                   DisputeRepository disputeRepository,
+                                   CancellationRepository cancellationRepository) {
+        this.disputeRepository = disputeRepository;
+        this.cancellationRepository = cancellationRepository;
         this.paymentInsights = paymentInsights;
         this.holdPolicy = holdPolicy;
         this.bidRepository = bidRepository;
@@ -89,6 +100,27 @@ public class AdminUserListingService {
                     p.currency(), p.createdAt(), p.payoutHeldAt(), hold != null && hold.held(),
                     beneficiary ? "BENEFICIARY" : "PAYER");
         });
+    }
+
+    /** Litiges où l'utilisateur est expéditeur, voyageur ou déclarant, du plus récent au plus ancien. */
+    public Page<AdminUserDisputeRow> disputes(UUID userId, int page, int size) {
+        return disputeRepository.findAdminByParty(userId, pageable(page, size)).map(d -> new AdminUserDisputeRow(
+                d.getId(), d.getBidId(), d.getType(), d.getStatus(), disputeRoleOf(d, userId),
+                toInstant(d.getCreatedAt()),
+                d.getResolvedAt() == null ? null : d.getResolvedAt().toInstant()));
+    }
+
+    /** Annulations et absences déclarées ou subies par l'utilisateur. */
+    public Page<AdminUserCancellationRow> cancellations(UUID userId, int page, int size) {
+        return cancellationRepository.findAdminByParty(userId, pageable(page, size)).map(c ->
+                new AdminUserCancellationRow(c.getId(), c.getBidId(), c.getReason(), c.getScope().name(),
+                        c.getNoShowStatus().name(), userId.equals(c.getCancelledBy()), toInstant(c.getCreatedAt())));
+    }
+
+    static String disputeRoleOf(DisputeEntity d, UUID userId) {
+        if (userId.equals(d.getSenderId())) return "SENDER";
+        if (userId.equals(d.getTravelerId())) return "TRAVELER";
+        return "REPORTER";
     }
 
     /** Lignes de colis ; annonces et articles de grille de toute la liste résolus en une requête chacun. */
