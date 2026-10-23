@@ -31,17 +31,19 @@ public class AdminBidsController {
     private final UserRepository userRepo;
     private final com.yadony.api.matching.BidGridItemRepository bidGridItemRepo;
     private final AdminBidDetailAssembler detailAssembler;
+    private final AdminBidPhotoAssembler photoAssembler;
     private final Clock clock;
 
     public AdminBidsController(BidRepository bidRepo, AnnouncementRepository announcementRepo,
             UserRepository userRepo,
             com.yadony.api.matching.BidGridItemRepository bidGridItemRepo,
-            AdminBidDetailAssembler detailAssembler, Clock clock) {
+            AdminBidDetailAssembler detailAssembler, AdminBidPhotoAssembler photoAssembler, Clock clock) {
         this.bidRepo = bidRepo;
         this.announcementRepo = announcementRepo;
         this.userRepo = userRepo;
         this.bidGridItemRepo = bidGridItemRepo;
         this.detailAssembler = detailAssembler;
+        this.photoAssembler = photoAssembler;
         this.clock = clock;
     }
 
@@ -201,6 +203,16 @@ public class AdminBidsController {
                 AdminBidDetailAssembler.Access.of(authentication));
 
         return ResponseEntity.ok(new AdminBidTimelineResponse(id, entries));
+    }
+
+    /** Photos du colis par étape, URL signées à la demande ; images de conversation sous conditions. */
+    @GetMapping("/admin/bids/{id}/photos")
+    public ResponseEntity<AdminBidPhotosResponse> getPhotos(@PathVariable UUID id, Authentication authentication) {
+        BidEntity bid = bidRepo.findById(id)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Colis introuvable"));
+        return ResponseEntity.ok(new AdminBidPhotosResponse(id,
+                photoAssembler.photos(bid, AdminBidDetailAssembler.Access.of(authentication))));
     }
 
     @GetMapping("/admin/announcements")

@@ -17,6 +17,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -32,7 +33,7 @@ class AdminBidsControllerTest {
     @Mock com.yadony.api.matching.BidGridItemRepository bidGridItemRepo;
 
     private AdminBidsController controller() {
-        return new AdminBidsController(bidRepo, announcementRepo, userRepo, bidGridItemRepo, assembler, CLOCK);
+        return new AdminBidsController(bidRepo, announcementRepo, userRepo, bidGridItemRepo, assembler, mock(AdminBidPhotoAssembler.class), CLOCK);
     }
 
     @Test

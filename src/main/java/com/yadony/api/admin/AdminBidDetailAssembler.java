@@ -377,12 +377,21 @@ public class AdminBidDetailAssembler {
 
     /** Photo de scan : la base garde une clé de stockage, jamais une URL publique. */
     private String signed(String key) {
+        return sign(storageService, key);
+    }
+
+    /**
+     * Signe une clé de stockage pour l'admin ({@link #PHOTO_TTL}). Partagé avec les photos par étape.
+     * Une clé vide ou non signable donne null ; seul le type de l'erreur est journalisé, jamais la clé
+     * ni l'URL (une erreur de stockage peut citer l'URL signée).
+     */
+    static String sign(StorageService storage, String key) {
         if (key == null || key.isBlank()) return null;
         if (key.startsWith("http")) return key;
         try {
-            return storageService.generatePresignedUrl(key, PHOTO_TTL);
+            return storage.generatePresignedUrl(key, PHOTO_TTL);
         } catch (RuntimeException e) {
-            log.warn("Photo de scan illisible : {}", e.toString());
+            log.warn("Photo de scan illisible : {}", e.getClass().getSimpleName());
             return null;
         }
     }
