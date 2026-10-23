@@ -670,7 +670,8 @@ class AdminPaymentControllerTest {
         p.setRail(com.yadony.api.payments.PaymentRail.STRIPE);
         p.setCurrency("EUR");
         when(insights.search(any(), any(), any())).thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(p)));
-        when(insights.insightsOf(java.util.List.of(p))).thenReturn(java.util.Map.of(paymentId, insight(bidId)));
+        when(insights.contextsOf(eq(java.util.List.of(p)), any())).thenReturn(java.util.Map.of(paymentId,
+                new AdminPaymentInsights.Context(insight(bidId), "DON-1", null)));
 
         var item = controller.list(null, null, null, null, null, null, "  awa ", true, null, null, null, null, null, null, null, 0, 20)
                 .getBody().getContent().get(0);

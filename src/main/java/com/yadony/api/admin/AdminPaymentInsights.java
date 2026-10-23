@@ -338,6 +338,25 @@ public class AdminPaymentInsights {
 
     /** Contexte de chaque paiement, en deux requêtes quel que soit le nombre de paiements. */
     public Map<UUID, AdminPaymentInsight> insightsOf(Collection<PaymentEntity> payments) {
+        return insightsOf(payments, LocalDateTime.now(ZoneOffset.UTC));
+    }
+
+    /** Comme {@link #insightsOf(Collection)}, le seuil d'abandon étant mesuré à {@code now} (UTC). */
+    public Map<UUID, AdminPaymentInsight> insightsOf(Collection<PaymentEntity> payments, LocalDateTime now) {
+        Map<UUID, AdminPaymentInsight> result = new HashMap<>();
+        contextsOf(payments, now).forEach((id, c) -> result.put(id, c.insight()));
+        return result;
+    }
+
+    /**
+     * Contexte d'une ligne de la liste : le contexte du paiement, plus le n° de suivi du colis (direct ou lié
+     * au fil) et l'annonce du trajet ; {@code null} pour ce qui est inconnu (négociation sans colis).
+     */
+    public record Context(AdminPaymentInsight insight, String trackingNumber, UUID announcementId) {
+    }
+
+    /** Contexte enrichi de chaque paiement, dans les mêmes deux requêtes que {@link #insightsOf}. */
+    public Map<UUID, Context> contextsOf(Collection<PaymentEntity> payments, LocalDateTime now) {
         List<UUID> ids = payments.stream().map(PaymentEntity::getId).filter(Objects::nonNull).toList();
         if (ids.isEmpty()) {
             return Map.of();
@@ -349,11 +368,11 @@ public class AdminPaymentInsights {
             if (l.travelerId() != null) partyIds.add(l.travelerId());
         });
         Map<UUID, String> names = namesOf(partyIds);
-        Map<UUID, AdminPaymentInsight> result = new HashMap<>();
+        Map<UUID, Context> result = new HashMap<>();
         for (PaymentEntity p : payments) {
             if (p.getId() == null) continue;
             Links l = links.getOrDefault(p.getId(), Links.EMPTY);
-            result.put(p.getId(), insight(p, l, names));
+            result.put(p.getId(), new Context(insight(p, l, names, now), l.trackingNumber(), l.announcementId()));
         }
         return result;
     }
@@ -362,7 +381,7 @@ public class AdminPaymentInsights {
         return insightsOf(List.of(payment)).get(payment.getId());
     }
 
-    private AdminPaymentInsight insight(PaymentEntity p, Links l, Map<UUID, String> names) {
+    private AdminPaymentInsight insight(PaymentEntity p, Links l, Map<UUID, String> names, LocalDateTime now) {
         long net = AdminWalletResponse.toCents(p.getAmount()) - AdminWalletResponse.toCents(p.getCommissionAmount());
         return new AdminPaymentInsight(
                 p.getNegotiationThreadId() != null && p.getBidId() == null ? "NEGOTIATION" : "BID",
@@ -373,7 +392,7 @@ public class AdminPaymentInsights {
                 l.departureCity(),
                 l.arrivalCity(),
                 l.bidStatus(),
-                isAbandoned(p),
+                isAbandoned(p, now),
                 net,
                 p.getCapturedAt(),
                 p.getFxExchangeRate(),
@@ -381,13 +400,9 @@ public class AdminPaymentInsights {
                 stripeDashboardUrl(p));
     }
 
-    static boolean isAbandoned(PaymentEntity p) {
+    static boolean isAbandoned(PaymentEntity p, LocalDateTime now) {
         return p.getStatus() == PaymentStatus.PENDING && p.getCreatedAt() != null
-                && p.getCreatedAt().isBefore(abandonedBefore());
-    }
-
-    private static LocalDateTime abandonedBefore() {
-        return LocalDateTime.now(ZoneOffset.UTC).minus(ABANDONED_AFTER);
+                && p.getCreatedAt().isBefore(now.minus(ABANDONED_AFTER));
     }
 
     String stripeDashboardUrl(PaymentEntity p) {
@@ -403,8 +418,8 @@ public class AdminPaymentInsights {
     }
 
     private record Links(UUID bidId, UUID senderId, UUID travelerId, String departureCity, String arrivalCity,
-                         String bidStatus) {
-        static final Links EMPTY = new Links(null, null, null, null, null, null);
+                         String bidStatus, UUID announcementId, String trackingNumber) {
+        static final Links EMPTY = new Links(null, null, null, null, null, null, null, null);
     }
 
     /**
@@ -420,7 +435,9 @@ public class AdminPaymentInsights {
                        CAST(COALESCE(a.traveler_id, la.traveler_id, t.traveler_id) AS VARCHAR(36)) AS traveler_id,
                        COALESCE(a.departure_city, la.departure_city, r.departure_city) AS departure_city,
                        COALESCE(a.arrival_city, la.arrival_city, r.arrival_city) AS arrival_city,
-                       COALESCE(b.status, lb.status) AS bid_status
+                       COALESCE(b.status, lb.status) AS bid_status,
+                       CAST(COALESCE(a.id, la.id) AS VARCHAR(36)) AS announcement_id,
+                       COALESCE(b.tracking_number, lb.tracking_number) AS tracking_number
                 FROM payments p
                 LEFT JOIN bids b ON b.id = p.bid_id
                 LEFT JOIN announcements a ON a.id = b.announcement_id
@@ -435,7 +452,8 @@ public class AdminPaymentInsights {
             // Un fil ne matérialise qu'un colis ; en cas de doublon, la première ligne suffit.
             result.putIfAbsent(pid, new Links(uuid(rs.getString("bid_id")), uuid(rs.getString("sender_id")),
                     uuid(rs.getString("traveler_id")), rs.getString("departure_city"),
-                    rs.getString("arrival_city"), rs.getString("bid_status")));
+                    rs.getString("arrival_city"), rs.getString("bid_status"),
+                    uuid(rs.getString("announcement_id")), rs.getString("tracking_number")));
         });
         return result;
     }

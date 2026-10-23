@@ -217,17 +217,26 @@ public class AdminPaymentController {
         // qu'une. Le même filtre sert aux totaux et à l'export.
         AdminPaymentFilter filter = filterOf(status, dateFrom, dateTo, method, currency, held, q, hideAbandoned,
                 view, alert, partyId, announcementId, bidId, amountMin, amountMax);
-        Page<PaymentEntity> raw = insights.search(filter, LocalDateTime.now(clock), PageRequest.of(page, size));
+        LocalDateTime now = LocalDateTime.now(clock);
+        Page<PaymentEntity> raw = insights.search(filter, now, PageRequest.of(page, size));
         Map<UUID, UUID> beneficiaries = beneficiariesOf(raw.getContent());
         Map<UUID, PayoutHoldStatus> holds = beneficiaries.isEmpty()
                 ? Map.of()
                 : holdPolicy.statusesOf(List.copyOf(new java.util.LinkedHashSet<>(beneficiaries.values())));
-        Map<UUID, AdminPaymentInsight> context = insights.insightsOf(raw.getContent());
+        Map<UUID, AdminPaymentInsights.Context> context = insights.contextsOf(raw.getContent(), now);
+        // Étiquette exclusive de la ligne (la plus urgente), un seul aller-retour pour la page.
+        Map<UUID, Integer> ranks = insights.alertRanks(
+                raw.getContent().stream().map(PaymentEntity::getId).filter(java.util.Objects::nonNull).toList(), now);
         return ResponseEntity.ok(raw.map(p -> {
             UUID travelerId = p.getId() == null ? null : beneficiaries.get(p.getId());
             PayoutHoldStatus hold = (travelerId == null || holds == null) ? null : holds.get(travelerId);
+            AdminPaymentInsights.Context c = p.getId() == null ? null : context.get(p.getId());
+            String alertCode = p.getId() == null ? null : AdminPaymentAlert.ofRank(ranks.getOrDefault(p.getId(), 0))
+                    .map(AdminPaymentAlert::name).orElse(null);
             return AdminPaymentListItemResponse.from(p, travelerId, holdOrNone(hold))
-                    .withInsight(p.getId() == null ? null : context.get(p.getId()));
+                    .withInsight(c == null ? null : c.insight())
+                    .withListFields(alertCode, c == null ? null : c.trackingNumber(),
+                            c == null ? null : c.announcementId());
         }));
     }
 
