@@ -76,7 +76,7 @@ public interface CancellationRepository extends JpaRepository<CancellationEntity
     @Query(value = """
         SELECT c FROM CancellationEntity c, BidEntity b LEFT JOIN AnnouncementEntity a ON b.announcementId = a.id
         WHERE c.bidId = b.id AND (c.cancelledBy = :userId OR b.senderId = :userId OR a.travelerId = :userId)
-        ORDER BY c.createdAt DESC
+        ORDER BY c.createdAt DESC, c.id DESC
         """,
         countQuery = """
         SELECT COUNT(c) FROM CancellationEntity c, BidEntity b LEFT JOIN AnnouncementEntity a ON b.announcementId = a.id

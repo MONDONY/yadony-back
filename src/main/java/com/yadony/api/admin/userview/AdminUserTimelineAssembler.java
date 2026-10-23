@@ -12,6 +12,7 @@ import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.matching.BidStatus;
 import com.yadony.api.signalements.ReportEntity;
 import com.yadony.api.signalements.ReportRepository;
 import com.yadony.api.tracking.TrackingEventEntity;
@@ -108,9 +109,9 @@ public class AdminUserTimelineAssembler {
     /** Colis : tout ce qui a bougé dans la fenêtre (borné) plus les derniers colis actifs (pour compléter). */
     private List<TimelineEntry> parcelEvents(UUID userId, LocalDateTime since) {
         Map<UUID, BidEntity> bids = new LinkedHashMap<>();
-        bidRepository.findAdminActivitySinceByParty(userId, since, PageRequest.of(0, RECENT_CAP))
+        bidRepository.findAdminActivitySinceByParty(userId, since, BidStatus.NEGOTIATION_STATUSES, PageRequest.of(0, RECENT_CAP))
                 .forEach(b -> bids.putIfAbsent(b.getId(), b));
-        bidRepository.findAdminRecentActivityByParty(userId, PageRequest.of(0, MIN_SIZE))
+        bidRepository.findAdminRecentActivityByParty(userId, BidStatus.NEGOTIATION_STATUSES, PageRequest.of(0, MIN_SIZE))
                 .forEach(b -> bids.putIfAbsent(b.getId(), b));
         if (bids.isEmpty()) return List.of();
         Map<UUID, AnnouncementEntity> announcements = announcementRepository

@@ -1,6 +1,6 @@
 package com.yadony.api.admin.userview.dto;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.UUID;
 
 /**
@@ -16,8 +16,8 @@ public record AdminUserPaymentRow(
         long amountCents,
         long commissionCents,
         String currency,
-        LocalDateTime createdAt,
-        LocalDateTime payoutHeldAt,
+        Instant createdAt,
+        Instant payoutHeldAt,
         boolean beneficiaryHeld,
         String role
 ) {}

@@ -49,7 +49,7 @@ public interface DisputeRepository extends JpaRepository<DisputeEntity, UUID> {
 
     /** Fiche admin d'un utilisateur : litiges où il est expéditeur, voyageur ou déclarant, du plus récent au plus ancien. */
     @Query(value = "SELECT d FROM DisputeEntity d WHERE d.senderId = :userId OR d.travelerId = :userId "
-            + "OR d.reporterId = :userId ORDER BY d.createdAt DESC",
+            + "OR d.reporterId = :userId ORDER BY d.createdAt DESC, d.id DESC",
             countQuery = "SELECT COUNT(d) FROM DisputeEntity d WHERE d.senderId = :userId "
                     + "OR d.travelerId = :userId OR d.reporterId = :userId")
     Page<DisputeEntity> findAdminByParty(@Param("userId") UUID userId, Pageable pageable);

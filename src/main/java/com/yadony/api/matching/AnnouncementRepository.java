@@ -169,7 +169,7 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
           AND (a.status IN :statuses
                OR (a.status = com.yadony.api.matching.AnnouncementStatus.COMPLETED
                    AND a.updatedAt >= :completedSince))
-        ORDER BY a.updatedAt DESC
+        ORDER BY a.updatedAt DESC, a.id DESC
         """)
     List<AnnouncementEntity> findAdminRecentByTraveler(
             @Param("travelerId") UUID travelerId,

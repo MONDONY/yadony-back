@@ -204,6 +204,25 @@ class AdminUserPaymentsIT {
                 .andExpect(jsonPath("$.content[?(@.id=='" + viaThread.getId() + "')].role").value("BENEFICIARY"));
     }
 
+    /** Valeur JDBC brute qu'Hibernate (jdbc.time_zone=UTC) relit comme {@code utc}, quel que soit le fuseau de la JVM. */
+    private static LocalDateTime shifted(LocalDateTime utc) {
+        return utc.atZone(java.time.ZoneId.systemDefault()).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+    }
+
+    @Test
+    void payments_datesAreInstantsWithTrailingZ() throws Exception {
+        PaymentEntity held = payment(bid(announcement(traveler), sender).getId(), null, "EUR", "30.00",
+                PaymentStatus.ESCROW, true);
+        jdbc.update("UPDATE payments SET created_at = ?, payout_held_at = ? WHERE id = ?",
+                shifted(LocalDateTime.of(2026, 10, 20, 8, 30, 0)), shifted(LocalDateTime.of(2026, 10, 21, 9, 15, 0)),
+                held.getId());
+
+        mockMvc.perform(get("/admin/users/{id}/payments", traveler.getId()).with(authentication(fullAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].createdAt").value("2026-10-20T08:30:00Z"))
+                .andExpect(jsonPath("$.content[0].payoutHeldAt").value("2026-10-21T09:15:00Z"));
+    }
+
     @Test
     void payments_xofAmountIsNominalCentsLikeAdminPaymentsList() throws Exception {
         PaymentEntity xof = payment(bid(announcement(traveler), sender).getId(), null, "XOF", "6000",

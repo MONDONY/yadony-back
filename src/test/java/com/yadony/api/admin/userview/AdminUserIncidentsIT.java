@@ -39,7 +39,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
@@ -61,7 +60,7 @@ class AdminUserIncidentsIT {
     @Autowired BidRepository bidRepository;
     @Autowired DisputeRepository disputeRepository;
     @Autowired CancellationRepository cancellationRepository;
-        @Autowired JdbcTemplate jdbc;
+    @Autowired JdbcTemplate jdbc;
 
     private UserEntity traveler;
     private UserEntity sender;
@@ -202,6 +201,44 @@ class AdminUserIncidentsIT {
         mockMvc.perform(get("/admin/users/{id}/disputes?size=100000", traveler.getId())
                         .with(authentication(fullAuth())))
                 .andExpect(jsonPath("$.size").value(100));
+    }
+
+    @Test
+    void disputes_orderIsStableWhenCreatedAtIsEqual() throws Exception {
+        for (int i = 0; i < 5; i++) {
+            dispute(bid(announcement(traveler), sender), sender, traveler, null, DisputeTypes.STATUS_OPEN);
+        }
+        jdbc.update("UPDATE disputes SET created_at = ? WHERE traveler_id = ?",
+                LocalDateTime.of(2026, 10, 1, 10, 0), traveler.getId());
+
+        assertStablePagination("/admin/users/{id}/disputes", 5);
+    }
+
+    @Test
+    void cancellations_orderIsStableWhenCreatedAtIsEqual() throws Exception {
+        for (int i = 0; i < 5; i++) {
+            cancellation(bid(announcement(traveler), sender), sender, CancellationScope.HANDOVER);
+        }
+        jdbc.update("UPDATE cancellations SET created_at = ? WHERE cancelled_by = ?",
+                LocalDateTime.of(2026, 10, 1, 10, 0), sender.getId());
+
+        assertStablePagination("/admin/users/{id}/cancellations", 5);
+    }
+
+    private java.util.List<String> idsOf(String url, Object... vars) throws Exception {
+        String body = mockMvc.perform(get(url, vars).with(authentication(fullAuth())))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        return com.jayway.jsonpath.JsonPath.read(body, "$.content[*].id");
+    }
+
+    private void assertStablePagination(String path, int total) throws Exception {
+        java.util.List<String> all = idsOf(path + "?size=100", traveler.getId());
+        java.util.List<String> paged = new ArrayList<>();
+        for (int page = 0; page * 2 < total; page++) {
+            paged.addAll(idsOf(path + "?page=" + page + "&size=2", traveler.getId()));
+        }
+        org.assertj.core.api.Assertions.assertThat(all).hasSize(total).doesNotHaveDuplicates();
+        org.assertj.core.api.Assertions.assertThat(paged).containsExactlyElementsOf(all);
     }
 
     @Test

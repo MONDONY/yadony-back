@@ -309,6 +309,64 @@ class AdminUserParcelsIT {
                 .andExpect(jsonPath("$.content[0].corridor").isNotEmpty());
     }
 
+    private java.util.List<String> idsOf(String url, Object... vars) throws Exception {
+        String body = mockMvc.perform(get(url, vars).with(authentication(fullAuth())))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        return com.jayway.jsonpath.JsonPath.read(body, "$.content[*].id");
+    }
+
+    /** Lit toutes les pages de 2 et vérifie qu'elles recomposent exactement la page unique (aucun doublon ni trou). */
+    private void assertStablePagination(String path, UUID userId, int total) throws Exception {
+        java.util.List<String> all = idsOf(path + "?size=100", userId);
+        java.util.List<String> paged = new ArrayList<>();
+        for (int page = 0; page * 2 < total; page++) paged.addAll(idsOf(path + "?page=" + page + "&size=2", userId));
+        org.assertj.core.api.Assertions.assertThat(all).hasSize(total).doesNotHaveDuplicates();
+        org.assertj.core.api.Assertions.assertThat(paged).containsExactlyElementsOf(all);
+    }
+
+    @Test
+    void parcels_excludeNegotiationThreadsFromListAndCount() throws Exception {
+        AnnouncementEntity trip = announcement(traveler, AnnouncementStatus.ACTIVE, null);
+        BidEntity real = bid(trip, sender, BidStatus.PENDING, null, null);
+        bid(trip, sender, BidStatus.NEGOTIATING, null, null);
+        bid(trip, sender, BidStatus.NEGOTIATION_CLOSED, null, null);
+
+        mockMvc.perform(get("/admin/users/{id}/parcels", traveler.getId()).with(authentication(fullAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(real.getId().toString()));
+    }
+
+    @Test
+    void parcels_orderIsStableWhenCreatedAtIsEqual() throws Exception {
+        AnnouncementEntity trip = announcement(traveler, AnnouncementStatus.ACTIVE, null);
+        for (int i = 0; i < 5; i++) bid(trip, sender, BidStatus.PENDING, null, null);
+        jdbc.update("update bids set created_at = ? where announcement_id = ?", ts(NOW), trip.getId());
+
+        assertStablePagination("/admin/users/{id}/parcels", traveler.getId(), 5);
+    }
+
+    @Test
+    void trips_orderIsStableWhenCreatedAtIsEqual() throws Exception {
+        for (int i = 0; i < 5; i++) announcement(traveler, AnnouncementStatus.ACTIVE, null);
+        jdbc.update("update announcements set created_at = ? where traveler_id = ?", ts(NOW), traveler.getId());
+
+        assertStablePagination("/admin/users/{id}/trips", traveler.getId(), 5);
+    }
+
+    @Test
+    void softDeletedUser_returns404OnOverviewAndParcels() throws Exception {
+        jdbc.update("update users set deleted_at = ? where id = ?", ts(NOW), traveler.getId());
+
+        overview(traveler.getId())
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("user-not-found"));
+        mockMvc.perform(get("/admin/users/{id}/parcels", traveler.getId()).with(authentication(fullAuth())))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("user-not-found"));
+    }
+
     @Test
     void parcels_unknownUser_returns404() throws Exception {
         mockMvc.perform(get("/admin/users/{id}/parcels", UUID.randomUUID())

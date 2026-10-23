@@ -300,6 +300,25 @@ class AdminUserTimelineIT {
     }
 
     @Test
+    void timeline_ignoresNegotiationThreads() {
+        AnnouncementEntity trip = announcement(traveler);
+        for (BidStatus st : List.of(BidStatus.NEGOTIATING, BidStatus.NEGOTIATION_CLOSED)) {
+            BidEntity b = new BidEntity();
+            b.setAnnouncementId(trip.getId());
+            b.setSenderId(sender.getId());
+            b.setWeightKg(new BigDecimal("3.00"));
+            b.setStatus(st);
+            b.setCurrency("EUR");
+            b.setTrackingNumber("YD-" + UUID.randomUUID().toString().substring(0, 8));
+            b = bidRepository.save(b);
+            jdbc.update("UPDATE bids SET created_at = ?, updated_at = ? WHERE id = ?",
+                    ts(ago(Duration.ofHours(1))), ts(ago(Duration.ofHours(1))), b.getId());
+        }
+
+        assertThat(build(traveler)).isEmpty();
+    }
+
+    @Test
     void timeline_newUserIsEmpty() {
         assertThat(build(saveUser())).isEmpty();
     }

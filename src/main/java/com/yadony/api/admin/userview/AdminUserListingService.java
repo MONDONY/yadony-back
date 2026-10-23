@@ -38,6 +38,7 @@ import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidGridItemRepository;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.matching.BidStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -117,15 +118,14 @@ public class AdminUserListingService {
     }
 
     public Page<AdminUserParcelRow> parcels(UUID userId, int page, int size) {
-        Page<BidEntity> bids = bidRepository.findAdminByParty(userId, pageable(page, size));
+        Page<BidEntity> bids = bidRepository.findAdminByParty(userId, BidStatus.NEGOTIATION_STATUSES, pageable(page, size));
         List<AdminUserParcelRow> rows = toRows(bids.getContent(), userId);
         return new PageImpl<>(rows, bids.getPageable(), bids.getTotalElements());
     }
 
     public Page<AdminAnnouncementListItemResponse> trips(UUID userId, int page, int size) {
         return announcementRepository.findByTravelerId(userId, pageable(page, size,
-                        Sort.by(
-                                Sort.Direction.DESC, "createdAt")))
+                        Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by(Sort.Direction.DESC, "id"))))
                 .map(a -> AdminAnnouncementListItemResponse.of(a, null, null));
     }
 
@@ -140,7 +140,7 @@ public class AdminUserListingService {
             boolean beneficiary = userId.equals(p.travelerId());
             return new AdminUserPaymentRow(p.id(), p.bidId(), p.status(), p.method(),
                     p.amountCents(), p.commissionCents(),
-                    p.currency(), p.createdAt(), p.payoutHeldAt(), hold != null && hold.held(),
+                    p.currency(), toInstant(p.createdAt()), toInstant(p.payoutHeldAt()), hold != null && hold.held(),
                     beneficiary ? "BENEFICIARY" : "PAYER");
         });
     }
