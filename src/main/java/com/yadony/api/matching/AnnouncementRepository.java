@@ -162,6 +162,21 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
     /** Étapes de plusieurs voyages en une requête (pages de « Mes trajets », back-office). */
     List<AnnouncementEntity> findByTripGroupIdIn(java.util.Collection<UUID> tripGroupIds);
 
+    /** Trajets actifs (statuts donnés) ou terminés depuis {@code completedSince}, les plus récents d'abord. */
+    @Query("""
+        SELECT a FROM AnnouncementEntity a
+        WHERE a.travelerId = :travelerId
+          AND (a.status IN :statuses
+               OR (a.status = com.yadony.api.matching.AnnouncementStatus.COMPLETED
+                   AND a.updatedAt >= :completedSince))
+        ORDER BY a.updatedAt DESC
+        """)
+    List<AnnouncementEntity> findAdminRecentByTraveler(
+            @Param("travelerId") UUID travelerId,
+            @Param("statuses") java.util.Collection<AnnouncementStatus> statuses,
+            @Param("completedSince") java.time.LocalDateTime completedSince,
+            Pageable pageable);
+
     long countByTravelerIdAndStatusIn(
             UUID travelerId, java.util.Collection<AnnouncementStatus> statuses);
 
