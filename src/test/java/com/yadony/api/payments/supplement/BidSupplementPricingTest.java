@@ -9,6 +9,7 @@ import com.yadony.api.common.commission.IncrementalCommission;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidGridItemRepository;
+import com.yadony.api.payments.amendment.BidAmendmentRepository;
 import com.yadony.api.payments.amendment.BidExtrasNet;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -53,7 +54,8 @@ class BidSupplementPricingTest {
     @Mock CommissionGridService gridService;
     @Mock CommissionRateResolver rateResolver;
     @Mock BidGridItemRepository gridItems;
-    @Mock BidExtrasNet extrasNet;
+    @Mock BidSupplementRepository supplements;
+    @Mock BidAmendmentRepository amendments;
 
     private BidSupplementPricing pricing;
     private AnnouncementEntity announcement;
@@ -61,8 +63,10 @@ class BidSupplementPricingTest {
     @BeforeEach
     void setUp() {
         pricing = new BidSupplementPricing(
-                new IncrementalCommission(gridService, rateResolver), extrasNet, gridItems);
-        lenient().when(extrasNet.paidExtrasNet(any())).thenReturn(BigDecimal.ZERO);
+                new IncrementalCommission(gridService, rateResolver),
+                new BidExtrasNet(supplements, amendments, gridItems));
+        lenient().when(supplements.sumNetByBidIdAndStatusIn(any(), any())).thenReturn(BigDecimal.ZERO);
+        lenient().when(amendments.sumNetByBidIdAndStatusIn(any(), any())).thenReturn(BigDecimal.ZERO);
         lenient().when(gridService.require(GRID_7_6_5.id())).thenReturn(GRID_7_6_5);
         lenient().when(gridItems.findByBidId(any())).thenReturn(List.of());
         announcement = new AnnouncementEntity();
@@ -169,7 +173,7 @@ class BidSupplementPricingTest {
         // N = 10 € + 20 € déjà payés = 30 € : C(30) = 2,10 ; C(50) = 3,50 → 1,40 € (et non 1,10 €).
         BidEntity bid = gridBid("2.00", "EUR");
         when(rateResolver.reductions(any(), any(), isNull(), isNull(), any())).thenReturn(CommissionReductions.NONE);
-        when(extrasNet.paidExtrasNet(bid.getId())).thenReturn(new BigDecimal("20.00"));
+        when(supplements.sumNetByBidIdAndStatusIn(eq(bid.getId()), any())).thenReturn(new BigDecimal("20.00"));
 
         assertThat(pricing.quote(bid, announcement, new BigDecimal("20")).commission()).isEqualByComparingTo("1.40");
     }
