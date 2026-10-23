@@ -1970,6 +1970,131 @@ class AnnouncementServiceTest {
         }
     }
 
+    // ─── YADONY-BACK-STAGING-1D : mode de prix enregistré à la modification ─────
+
+    @Nested
+    @DisplayName("updateAnnouncement() — mode de prix (YADONY-BACK-STAGING-1D)")
+    class PricingModeUpdateTests {
+
+        private AnnouncementRequest withMode(PricingMode mode, BigDecimal pricePerKg) {
+            LocalDate departure = LocalDate.now().plusDays(15);
+            return new AnnouncementRequest(
+                    "Paris", "Dakar", departure,
+                    null, null,
+                    new AddressDto("CDG", 49.009, 2.547),
+                    new AddressDto("DSS", 14.693, -17.447),
+                    BigDecimal.valueOf(10), pricePerKg,
+                    TransportMode.PLANE,
+                    null, null, null, null, null, mode,
+                    null, null,
+                    departure.atTime(18, 0),
+                    null, null, null, null);
+        }
+
+        private AnnouncementEntity stubDraft(PricingMode current, BigDecimal currentPrice) {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            a.setStatus(AnnouncementStatus.DRAFT);
+            a.setPricingMode(current);
+            a.setPricePerKg(currentPrice);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            lenient().when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            return a;
+        }
+
+        @Test
+        @DisplayName("brouillon KG → grille avec prix 0 : le mode est enregistré (la base n'a plus un KG à 0) et la grille du profil est copiée")
+        void kgToMixed_persistsModeAndSnapshotsGrid() {
+            AnnouncementEntity a = stubDraft(PricingMode.KG, BigDecimal.valueOf(5));
+
+            announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID,
+                    withMode(PricingMode.MIXED, BigDecimal.ZERO));
+
+            assertThat(a.getPricingMode()).isEqualTo(PricingMode.MIXED);
+            assertThat(a.getPricePerKg()).isEqualByComparingTo("0");
+            verify(priceGridService).snapshotToAnnouncement(eq(a.getTravelerId()), eq(a.getId()), any());
+        }
+
+        @Test
+        @DisplayName("KG → grille sans grille dans le profil : 422 price-grid-empty propagé, jamais un 500")
+        void kgToMixed_emptyProfileGrid_propagates422() {
+            stubDraft(PricingMode.KG, BigDecimal.valueOf(5));
+            doThrow(new org.springframework.web.server.ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "price-grid-empty: au moins 1 article requis pour le mode MIXED"))
+                    .when(priceGridService).snapshotToAnnouncement(any(), any(), any());
+
+            assertThatThrownBy(() -> announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID,
+                    withMode(PricingMode.MIXED, BigDecimal.ZERO)))
+                    .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                    .hasMessageContaining("price-grid-empty");
+        }
+
+        @Test
+        @DisplayName("grille → KG avec un prix : le mode repasse en KG, aucune copie de grille")
+        void mixedToKg_persistsMode() {
+            AnnouncementEntity a = stubDraft(PricingMode.MIXED, BigDecimal.ZERO);
+
+            announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID,
+                    withMode(PricingMode.KG, BigDecimal.valueOf(6)));
+
+            assertThat(a.getPricingMode()).isEqualTo(PricingMode.KG);
+            assertThat(a.getPricePerKg()).isEqualByComparingTo("6");
+            verify(priceGridService, never()).snapshotToAnnouncement(any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("grille → grille : mode inchangé, la grille figée n'est pas recopiée")
+        void mixedToMixed_keepsGridUntouched() {
+            AnnouncementEntity a = stubDraft(PricingMode.MIXED, BigDecimal.ZERO);
+
+            announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID,
+                    withMode(PricingMode.MIXED, BigDecimal.ZERO));
+
+            assertThat(a.getPricingMode()).isEqualTo(PricingMode.MIXED);
+            verify(priceGridService, never()).snapshotToAnnouncement(any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("mode absent de la demande : le mode du trajet est conservé")
+        void absentMode_keepsCurrentMode() {
+            AnnouncementEntity a = stubDraft(PricingMode.MIXED, BigDecimal.ZERO);
+
+            announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID,
+                    withMode(null, BigDecimal.ZERO));
+
+            assertThat(a.getPricingMode()).isEqualTo(PricingMode.MIXED);
+        }
+
+        @Test
+        @DisplayName("mode KG avec un prix à 0 : 422 invalid-price, rien n'est enregistré")
+        void kgWithZeroPrice_is422() {
+            stubDraft(PricingMode.KG, BigDecimal.valueOf(5));
+
+            assertYadonyError(() -> announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID,
+                    withMode(PricingMode.KG, BigDecimal.ZERO)), "invalid-price");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("changement de devise en grille → grille : la grille figée est reconvertie")
+        void mixedToMixed_withCurrencyChange_convertsGrid() {
+            AnnouncementEntity a = stubDraft(PricingMode.MIXED, BigDecimal.ZERO);
+            a.setCurrency("EUR");
+            LocalDate departure = LocalDate.now().plusDays(15);
+            AnnouncementRequest req = new AnnouncementRequest(
+                    "Paris", "Dakar", departure, null, null,
+                    new AddressDto("CDG", 49.009, 2.547), new AddressDto("DSS", 14.693, -17.447),
+                    BigDecimal.valueOf(10), BigDecimal.ZERO, TransportMode.PLANE,
+                    null, null, null, null, null, PricingMode.MIXED, null, null,
+                    departure.atTime(18, 0), null, null, "XOF", null);
+
+            announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID, req);
+
+            verify(priceGridService).convertAnnouncementGridCurrency(eq(ANNOUNCEMENT_ID), any(), eq("EUR"), eq("XOF"));
+        }
+    }
+
     // ─── FLUTTER-KV : devise d'un trajet modifiable ─────────────────────────────
 
     @Nested
