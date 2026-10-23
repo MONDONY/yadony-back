@@ -6,8 +6,6 @@ import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementPriceGridItemEntity;
 import com.yadony.api.matching.AnnouncementPriceGridItemRepository;
 import com.yadony.api.matching.BidEntity;
-import com.yadony.api.matching.BidGridItemRepository;
-import com.yadony.api.matching.BidNetTotal;
 import com.yadony.api.payments.amendment.dto.AmendmentLineRequest;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import org.springframework.http.HttpStatus;
@@ -24,23 +22,20 @@ import java.util.UUID;
 /**
  * Prix d'une modification : le net vaut {@code kilos × prix au kilo publié du trajet} (jamais le net négocié)
  * plus les articles de grille de CE trajet. L'expéditeur ne paie que la différence de commission
- * ({@link IncrementalCommission}, grille figée du colis) sur le net déjà dû : {@link BidNetTotal} plus le net
- * des ajouts déjà acquis ({@link BidExtrasNet}). Lecture pure : rien n'est consommé.
+ * ({@link IncrementalCommission}, grille figée du colis) sur le net déjà dû : {@link BidExtrasNet#dueNet} (principal
+ * plus ajouts déjà acquis). Lecture pure : rien n'est consommé.
  */
 @Component
 public class BidAmendmentPricing {
 
     private final IncrementalCommission incrementalCommission;
     private final BidExtrasNet extrasNet;
-    private final BidGridItemRepository bidGridItems;
     private final AnnouncementPriceGridItemRepository announcementGridItems;
 
     public BidAmendmentPricing(IncrementalCommission incrementalCommission, BidExtrasNet extrasNet,
-                               BidGridItemRepository bidGridItems,
                                AnnouncementPriceGridItemRepository announcementGridItems) {
         this.incrementalCommission = incrementalCommission;
         this.extrasNet = extrasNet;
-        this.bidGridItems = bidGridItems;
         this.announcementGridItems = announcementGridItems;
     }
 
@@ -85,10 +80,8 @@ public class BidAmendmentPricing {
             throw unprocessable("amendment-empty", "Amendment Empty", "La modification n'ajoute rien au colis");
         }
 
-        BigDecimal base = BidNetTotal.compute(bid, announcement,
-                        bid.getNegotiatedNetEur() != null ? List.of() : bidGridItems.findByBidId(bid.getId()))
-                .add(extrasNet.paidExtrasNet(bid.getId()));
-        IncrementalCommission.Result r = incrementalCommission.compute(bid, announcement.getTravelerId(), base, net);
+        IncrementalCommission.Result r = incrementalCommission.compute(bid, announcement.getTravelerId(),
+                extrasNet.dueNet(bid, announcement), net);
         return new BidAmendmentQuote(net, r.commission(), net.add(r.commission()), r.rateSnapshot(), r.gridId(),
                 List.copyOf(lines));
     }
