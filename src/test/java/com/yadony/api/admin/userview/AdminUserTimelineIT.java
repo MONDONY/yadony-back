@@ -305,6 +305,101 @@ class AdminUserTimelineIT {
     }
 
     @Test
+    void timeline_singlePermissionLeaksNoTextFromOtherDomains() throws Exception {
+        BidEntity b = bid(traveler, ago(Duration.ofHours(5)));
+        payment(b, "50.00", "EUR", PaymentStatus.ESCROW, ago(Duration.ofHours(2)));
+        dispute(b, ago(Duration.ofHours(4)));
+        report(ago(Duration.ofHours(3)));
+
+        assertNoText(assembler.build(traveler.getId(), Set.of("BID_VIEW"), NOW),
+                "EUR", "XOF", "Litige", "Paiement", "Versement", "Signalement", "contestée");
+        assertNoText(assembler.build(traveler.getId(), Set.of("PAYMENT_VIEW"), NOW),
+                "Colis", "Litige", "Signalement", "Paris", "Dakar");
+        assertNoText(assembler.build(traveler.getId(), Set.of("DISPUTE_VIEW"), NOW),
+                "EUR", "Colis", "Paiement", "Versement", "Signalement", "Paris");
+        assertNoText(assembler.build(traveler.getId(), Set.of("REPORT_VIEW"), NOW),
+                "EUR", "Colis", "Litige", "Paiement", "Versement", "Paris");
+
+        String json = mockMvc.perform(get("/admin/users/{id}/overview", traveler.getId())
+                        .with(authentication(authWith("USER_VIEW", "BID_VIEW"))))
+                .andReturn().getResponse().getContentAsString();
+        for (String w : List.of("EUR", "Litige", "Paiement", "Versement", "Signalement")) {
+            assertThat(json.substring(json.indexOf("\"timeline\""))).doesNotContain(w);
+        }
+    }
+
+    private static void assertNoText(List<TimelineEntry> entries, String... forbidden) {
+        assertThat(entries).isNotEmpty();
+        for (TimelineEntry e : entries) {
+            String text = e.title() + " " + e.detail();
+            for (String w : forbidden) assertThat(text).doesNotContain(w);
+        }
+    }
+
+    @Test
+    void timeline_capsAtHundredNewest() {
+        List<ReportEntity> reports = new ArrayList<>();
+        for (int i = 1; i <= 120; i++) reports.add(report(ago(Duration.ofMinutes(i))));
+
+        List<TimelineEntry> timeline = build(traveler);
+
+        assertThat(timeline).hasSize(100);
+        assertThat(timeline).extracting(TimelineEntry::refId)
+                .containsExactlyElementsOf(reports.subList(0, 100).stream().map(ReportEntity::getId).toList());
+    }
+
+    @Test
+    void timeline_eventExactlyAt72hBoundaryIsIncluded() {
+        for (int i = 0; i < 10; i++) report(ago(Duration.ofMinutes(10 + i)));
+        ReportEntity onBoundary = report(ago(Duration.ofHours(72)));
+        ReportEntity justOutside = report(ago(Duration.ofHours(72).plusSeconds(1)));
+
+        assertThat(build(traveler)).extracting(TimelineEntry::refId)
+                .contains(onBoundary.getId()).doesNotContain(justOutside.getId());
+    }
+
+    @Test
+    void timeline_oldPaymentHeldRecentlyIsKeptAmongManyNewerPayments() {
+        BidEntity b = bid(traveler, ago(Duration.ofDays(30)));
+        PaymentEntity old = payment(b, "20.00", "EUR", PaymentStatus.ESCROW, ago(Duration.ofHours(100)));
+        jdbc.update("UPDATE payments SET payout_held_at = ? WHERE id = ?", ts(ago(Duration.ofMinutes(30))), old.getId());
+        for (int i = 0; i < 110; i++) {
+            payment(bid(traveler, ago(Duration.ofDays(30))), "5.00", "EUR", PaymentStatus.ESCROW,
+                    ago(Duration.ofHours(2).plusMinutes(i)));
+        }
+
+        List<TimelineEntry> timeline = build(traveler);
+
+        assertThat(timeline).hasSize(100);
+        assertThat(timeline.get(0).title()).isEqualTo("Versement retenu");
+        assertThat(timeline.get(0).refId()).isEqualTo(old.getId());
+    }
+
+    @Test
+    void timeline_oldDisputeResolvedRecentlyIsKept() {
+        BidEntity b = bid(traveler, ago(Duration.ofDays(30)));
+        DisputeEntity d = dispute(b, ago(Duration.ofDays(20)));
+        jdbc.update("UPDATE disputes SET status = 'RESOLVED', resolved_at = ? WHERE id = ?",
+                java.sql.Timestamp.from(ago(Duration.ofHours(1))), d.getId());
+        for (int i = 0; i < 12; i++) dispute(b, ago(Duration.ofHours(3).plusMinutes(i)));
+
+        List<TimelineEntry> timeline = build(traveler);
+
+        assertThat(timeline.get(0).title()).isEqualTo("Litige résolu");
+        assertThat(timeline.get(0).refId()).isEqualTo(d.getId());
+        assertThat(timeline.get(0).detail()).isEqualTo("Absence de l'expéditeur contestée");
+        assertThat(timeline.get(0).detail()).doesNotContain("SENDER_NO_SHOW");
+    }
+
+    @Test
+    void timeline_toleratesUnknownPaymentStatusAndOldBidActivity() {
+        BidEntity b = bid(traveler, ago(Duration.ofDays(40)));
+        payment(b, "7.00", "EUR", PaymentStatus.FAILED, ago(Duration.ofHours(1)));
+
+        assertThat(build(traveler)).extracting(TimelineEntry::title).containsExactly("Colis créé");
+    }
+
+    @Test
     void overview_includesTimeline() throws Exception {
         report(ago(Duration.ofHours(3)));
         mockMvc.perform(get("/admin/users/{id}/overview", traveler.getId())

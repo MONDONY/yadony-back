@@ -107,14 +107,37 @@ public class AdminPaymentInsights {
         List<UUID> ids = jdbc.query("SELECT CAST(p.id AS VARCHAR(36)) FROM payments p " + where
                         + " ORDER BY p.created_at DESC, p.id DESC LIMIT :limit OFFSET :offset",
                 params, (rs, i) -> UUID.fromString(rs.getString(1)));
-        List<PaymentEntity> payments = load(ids);
+        return new PageImpl<>(toItems(load(ids)), pageable, total == null ? 0 : total);
+    }
+
+    private List<AdminPaymentListItemResponse> toItems(List<PaymentEntity> payments) {
         Map<UUID, AdminPaymentInsight> context = insightsOf(payments);
-        List<AdminPaymentListItemResponse> items = payments.stream().map(p -> {
+        return payments.stream().map(p -> {
             AdminPaymentInsight insight = context.get(p.getId());
             UUID travelerId = insight != null && insight.traveler() != null ? insight.traveler().id() : null;
             return AdminPaymentListItemResponse.from(p, travelerId, PayoutHoldStatus.NONE).withInsight(insight);
         }).toList();
-        return new PageImpl<>(items, pageable, total == null ? 0 : total);
+    }
+
+    /**
+     * Frise d'un voyageur : paiements dont il est le bénéficiaire, du dernier événement (création ou
+     * versement retenu) le plus récent au plus ancien, au plus {@code limit}. Avec {@code since} non nul,
+     * seuls les paiements créés ou retenus depuis cet instant (UTC) ; sinon les plus récents sans borne de date.
+     */
+    public List<AdminPaymentListItemResponse> recentByBeneficiary(UUID travelerId, LocalDateTime since, int limit) {
+        MapSqlParameterSource params = new MapSqlParameterSource("userId", travelerId);
+        params.addValue("limit", limit);
+        String window = "";
+        if (since != null) {
+            params.addValue("since", Timestamp.valueOf(since));
+            window = " AND (p.created_at >= :since OR p.payout_held_at >= :since)";
+        }
+        List<UUID> ids = jdbc.query("SELECT CAST(p.id AS VARCHAR(36)) FROM payments p "
+                        + "WHERE p.deleted_at IS NULL AND :userId IN (" + BENEFICIARY_OF_P + ")" + window
+                        + " ORDER BY CASE WHEN p.payout_held_at IS NOT NULL AND p.payout_held_at > p.created_at"
+                        + " THEN p.payout_held_at ELSE p.created_at END DESC, p.id DESC LIMIT :limit",
+                params, (rs, i) -> UUID.fromString(rs.getString(1)));
+        return toItems(load(ids));
     }
 
     /**

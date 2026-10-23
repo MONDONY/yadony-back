@@ -45,6 +45,22 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
         """)
     List<BidEntity> findAdminRecentActivityByParty(@Param("userId") UUID userId, Pageable pageable);
 
+    /**
+     * Frise d'activité : colis de l'utilisateur créés, livrés, mis à jour ou pris en charge (scan DEPART) depuis
+     * {@code since}, du plus récent au plus ancien. Appeler avec un {@code Pageable} non trié et borné.
+     */
+    @Query("""
+        SELECT b FROM BidEntity b LEFT JOIN AnnouncementEntity a ON b.announcementId = a.id
+        WHERE (b.senderId = :userId OR a.travelerId = :userId)
+          AND (b.createdAt >= :since OR b.deliveredAt >= :since OR b.updatedAt >= :since
+               OR EXISTS (SELECT 1 FROM TrackingEventEntity t WHERE t.bidId = b.id
+                          AND t.eventType = com.yadony.api.tracking.TrackingEventType.DEPART
+                          AND t.scannedAt >= :since))
+        ORDER BY COALESCE(b.deliveredAt, b.updatedAt) DESC, b.id DESC
+        """)
+    List<BidEntity> findAdminActivitySinceByParty(@Param("userId") UUID userId,
+                                                  @Param("since") LocalDateTime since, Pageable pageable);
+
     /** Colis « en cours » (statuts donnés) ou livrés (COMPLETED, deliveredAt non nul) depuis {@code deliveredSince}. */
     @Query("""
         SELECT b FROM BidEntity b LEFT JOIN AnnouncementEntity a ON b.announcementId = a.id

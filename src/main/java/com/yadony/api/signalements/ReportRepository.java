@@ -103,6 +103,16 @@ public interface ReportRepository extends JpaRepository<ReportEntity, UUID> {
     /** Nombre de signalements d'un statut donné sur une cible. */
     long countByStatusAndTargetTypeAndTargetId(ReportStatus status, ReportTargetType targetType, UUID targetId);
 
+    /** Frise : signalements USER reçus depuis {@code since}, du plus récent au plus ancien (Pageable borné, non trié). */
+    @Query("""
+            SELECT r FROM ReportEntity r
+            WHERE r.targetType = com.yadony.api.signalements.ReportTargetType.USER AND r.targetId = :userId
+              AND r.createdAt >= :since
+            ORDER BY r.createdAt DESC, r.id DESC
+            """)
+    List<ReportEntity> findAdminReceivedSince(@Param("userId") UUID userId,
+                                              @Param("since") java.time.LocalDateTime since, Pageable pageable);
+
     /** Signalements écrits par ce compte, pour un statut donné. */
     List<ReportEntity> findByStatusAndReporterId(ReportStatus status, UUID reporterId);
 
