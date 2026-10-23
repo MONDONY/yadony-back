@@ -153,8 +153,9 @@ public final class AdminFinanceSql {
 
     /**
      * Nombres par vue en un aller-retour, sur le {@code WHERE} de la liste sans {@code view}. {@code attention}
-     * compte les opérations de {@link AdminPaymentSql#MM_FAILED_OPERATION} (échecs de versement ou de
-     * remboursement d'un paiement, non remplacés).
+     * compte, PAR OPÉRATION, celles de {@link AdminPaymentSql#MM_FAILED_OPERATION} (échecs de versement ou de
+     * remboursement d'un paiement, non remplacés) : un paiement à deux versements morts successifs compte 2, le
+     * nombre peut donc dépasser {@code alerts.mmFailed} des paiements, qui compte des paiements.
      */
     public static final String MM_COUNTS_SELECT = "SELECT "
             + sum(MM_FAILED_VIEW, "failed") + ", "

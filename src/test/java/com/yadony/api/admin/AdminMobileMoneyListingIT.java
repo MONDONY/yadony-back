@@ -105,7 +105,7 @@ class AdminMobileMoneyListingIT {
 
     @BeforeEach
     void setUp() {
-        provider = "MM" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase(Locale.ROOT);
+        provider = "MM" + letters(12).toUpperCase(Locale.ROOT);
         minutes = 0;
         sender = persistUser("Aïcha", "N'Diaye");
         traveler = persistUser("Awa", "Diallo");
@@ -493,6 +493,19 @@ class AdminMobileMoneyListingIT {
 
     // ── Outils ──────────────────────────────────────────────────────────────────
 
+    /**
+     * Suffixe aléatoire fait des seules lettres {@code g} à {@code v} : jamais un chiffre (une saisie de
+     * téléphone comme « 67 » ne le trouve pas par hasard), jamais {@code a}, {@code e}, {@code x} ni {@code y}
+     * (aucun nom, aucune ville ni aucun préfixe {@code qx} des recherches du test ne s'y glisse).
+     */
+    private static String letters(int length) {
+        StringBuilder out = new StringBuilder(length);
+        for (char c : UUID.randomUUID().toString().replace("-", "").substring(0, length).toCharArray()) {
+            out.append((char) ('g' + Character.digit(c, 16)));
+        }
+        return out.toString();
+    }
+
     private List<UUID> ids(AdminMobileMoneyView view, PawapayOperationKind kind, String q) {
         return listings.mobileMoney(view, kind, provider, q, PageRequest.of(0, 100)).getContent().stream()
                 .map(AdminMobileMoneyResponse::id).toList();
@@ -609,7 +622,7 @@ class AdminMobileMoneyListingIT {
     private UserEntity persistUser(String firstName, String lastName) {
         UserEntity u = new UserEntity();
         u.setFirebaseUid("uid-" + UUID.randomUUID());
-        u.setUsername("mm" + UUID.randomUUID().toString().substring(0, 8));
+        u.setUsername("mm" + letters(8));
         u.setFirstName(firstName);
         u.setLastName(lastName);
         u.setStatus(UserStatus.ACTIVE);
