@@ -82,4 +82,27 @@ public final class AdminSearchTerms {
         String digits = s.replaceAll("\\D", "");
         return digits.length() < 4 ? null : digits;
     }
+
+    /** Nombre minimal de chiffres d'une recherche par téléphone : en dessous, la saisie ne cible pas un numéro. */
+    public static final int MIN_PHONE_DIGITS = 8;
+
+    /**
+     * Chiffres d'une saisie qui est un numéro de téléphone, sans zéros de tête, ou null. La saisie,
+     * une fois retirés espaces, {@code +}, {@code -}, {@code .}, {@code (} et {@code )}, ne doit
+     * contenir que des chiffres, au moins {@value #MIN_PHONE_DIGITS} une fois les zéros de tête
+     * retirés (« 06 12 34 56 78 » trouve donc « +33612345678 »). Le téléphone stocké doit
+     * <em>se terminer</em> par ce suffixe : jamais de recherche par milieu ni par préfixe, qui
+     * permettrait de reconstituer chiffre par chiffre un numéro affiché masqué.
+     */
+    public static String phoneSuffix(String query) {
+        if (query == null) {
+            return null;
+        }
+        String digits = query.replaceAll("[\\s+\\-.()]", "");
+        if (digits.isEmpty() || !digits.chars().allMatch(c -> c >= '0' && c <= '9')) {
+            return null;
+        }
+        String suffix = digits.replaceFirst("^0+", "");
+        return suffix.length() < MIN_PHONE_DIGITS ? null : suffix;
+    }
 }

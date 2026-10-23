@@ -299,4 +299,21 @@ class AdminBidsCountsIT {
         mockMvc.perform(counts(as(AdminRole.ADMIN), "query", "+221771234567"))
                 .andExpect(jsonPath("$.all").value(1));
     }
+
+    @Test
+    void counts_phone_followsSuffixRule_andMatchesList() throws Exception {
+        bid(BidStatus.ACCEPTED, b -> b.setRecipientPhone("+33612345678"));
+        bid(BidStatus.PENDING, b -> b.setRecipientPhone("+33699999999"));
+
+        // Suffixe d'au moins huit chiffres, forme nationale comprise : un colis, comme dans la liste.
+        for (String q : new String[] {"0612345678", "+33 6 12 34 56 78", "12345678"}) {
+            assertThat(json(counts(as(AdminRole.ADMIN), "query", q)).get("all").asLong()).isEqualTo(1);
+            assertThat(listTotal("ALL", "query", q)).isEqualTo(1);
+        }
+        // Sous-chaîne, préfixe ou moins de huit chiffres : rien, ni dans les nombres ni dans la liste.
+        for (String q : new String[] {"345", "+3361", "33612345", "6123456"}) {
+            assertThat(json(counts(as(AdminRole.ADMIN), "query", q)).get("all").asLong()).isZero();
+            assertThat(listTotal("ALL", "query", q)).isZero();
+        }
+    }
 }

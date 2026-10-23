@@ -10,7 +10,7 @@ package com.yadony.api.admin;
  * {@code t} (voyageur), posés par {@link #FROM_JOIN}.
  *
  * <p>Paramètres nommés : {@code :view}, {@code :status}, {@code :announcementId}, {@code :t1} à
- * {@code :t4}, {@code :idTerm}, {@code :scope}, {@code :phones}, {@code :paymentMethod},
+ * {@code :t4}, {@code :idTerm}, {@code :scope}, {@code :phoneSuffix}, {@code :paymentMethod},
  * {@code :content}, {@code :alertRank}, {@code :from}, {@code :to}, {@code :now},
  * {@code :lateBefore}. Les paramètres facultatifs passent par {@code CAST(:p AS …)} : PostgreSQL
  * ne sait pas typer un paramètre lié à null sans lui.
@@ -105,40 +105,49 @@ public final class AdminBidSql {
     private static final String FOLD_CLOSE =
             "), '" + AdminSearchTerms.ACCENT_FROM + "', '" + AdminSearchTerms.ACCENT_TO + "')";
 
-    /**
-     * Téléphone du destinataire réduit à ses chiffres (séparateurs usuels retirés), précédé d'un
-     * {@code +} : « +221771234567 » comme « 771234567 » s'y trouvent.
-     */
-    private static final String RECIPIENT_PHONE_DIGITS = "'+' || REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE("
+    /** Téléphone du destinataire réduit à ses chiffres (séparateurs usuels retirés). */
+    private static final String RECIPIENT_PHONE_DIGITS = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE("
             + "b.recipient_phone, '+', ''), ' ', ''), '-', ''), '.', ''), '(', ''), ')', '')";
 
     /**
      * Texte replié des champs que {@code :scope} autorise, séparés par une espace : un jeton (sans
-     * espace) ne peut donc pas chevaucher deux champs. Le téléphone du destinataire n'y entre que
-     * si {@code :phones} est vrai, sous sa forme saisie et réduite à « + » suivi des chiffres.
+     * espace) ne peut donc pas chevaucher deux champs. Le téléphone du destinataire n'y entre
+     * jamais : sa recherche par sous-chaîne permettrait de reconstituer un numéro affiché masqué
+     * (voir {@link #RECIPIENT_PHONE_PREDICATE}).
      */
     private static final String HAYSTACK = FOLD_OPEN + "CONCAT_WS(' ',"
             + " CASE WHEN :scope IN ('ALL', 'TRACKING') THEN b.tracking_number END,"
             + " CASE WHEN :scope IN ('ALL', 'SENDER') THEN CONCAT_WS(' ', s.first_name, s.last_name, s.username) END,"
             + " CASE WHEN :scope IN ('ALL', 'TRAVELER') THEN CONCAT_WS(' ', t.first_name, t.last_name, t.username) END,"
             + " CASE WHEN :scope IN ('ALL', 'RECIPIENT') THEN b.recipient_name END,"
-            + " CASE WHEN :scope IN ('ALL', 'RECIPIENT') AND :phones = TRUE"
-            + "      THEN CONCAT_WS(' ', b.recipient_phone, " + RECIPIENT_PHONE_DIGITS + ") END,"
             + " CASE WHEN :scope IN ('ALL', 'TRIP') THEN CONCAT_WS(' ', a.departure_city, a.arrival_city) END)"
             + FOLD_CLOSE;
+
+    /**
+     * Téléphone du destinataire : seulement si {@code :phoneSuffix} est posé (droit {@code USER_VIEW}
+     * et saisie entièrement numérique d'au moins huit chiffres, voir
+     * {@link AdminSearchTerms#phoneSuffix}) et que le périmètre couvre le destinataire. Les chiffres
+     * du numéro stocké doivent se <em>terminer</em> par ceux saisis ({@code :phoneSuffix} ne porte que
+     * des chiffres : aucun joker à échapper). Pas de préfixe ni de milieu.
+     */
+    private static final String RECIPIENT_PHONE_PREDICATE = "(CAST(:phoneSuffix AS VARCHAR) IS NOT NULL"
+            + " AND :scope IN ('ALL', 'RECIPIENT')"
+            + " AND " + RECIPIENT_PHONE_DIGITS + " LIKE '%' || CAST(:phoneSuffix AS VARCHAR))";
 
     private static final String ID_TERM = "LOWER(CAST(:idTerm AS VARCHAR))";
 
     /**
      * Recherche : chaque jeton non nul ({@code :t1} à {@code :t4}, déjà repliés et sans {@code %} ni
      * {@code _}) doit se trouver dans un champ du périmètre ; ou bien {@code :idTerm} est
-     * l'identifiant exact du colis, de son trajet, de son paiement ou d'un de ses litiges.
+     * l'identifiant exact du colis, de son trajet, de son paiement ou d'un de ses litiges ; ou bien
+     * la saisie est un numéro qui termine le téléphone du destinataire ({@link #RECIPIENT_PHONE_PREDICATE}).
      */
     public static final String SEARCH_PREDICATE = "(("
             + "(CAST(:t1 AS VARCHAR) IS NULL OR " + HAYSTACK + " LIKE '%' || CAST(:t1 AS VARCHAR) || '%')"
             + " AND (CAST(:t2 AS VARCHAR) IS NULL OR " + HAYSTACK + " LIKE '%' || CAST(:t2 AS VARCHAR) || '%')"
             + " AND (CAST(:t3 AS VARCHAR) IS NULL OR " + HAYSTACK + " LIKE '%' || CAST(:t3 AS VARCHAR) || '%')"
             + " AND (CAST(:t4 AS VARCHAR) IS NULL OR " + HAYSTACK + " LIKE '%' || CAST(:t4 AS VARCHAR) || '%'))"
+            + " OR " + RECIPIENT_PHONE_PREDICATE
             + " OR (CAST(:idTerm AS VARCHAR) IS NOT NULL AND ("
             + "     CAST(b.id AS VARCHAR) = " + ID_TERM
             + "     OR CAST(b.announcement_id AS VARCHAR) = " + ID_TERM

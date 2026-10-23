@@ -832,7 +832,7 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
             @Param("t4") String t4,
             @Param("idTerm") String idTerm,
             @Param("scope") String scope,
-            @Param("phones") boolean phones,
+            @Param("phoneSuffix") String phoneSuffix,
             @Param("paymentMethod") String paymentMethod,
             @Param("content") String content,
             @Param("alertRank") Integer alertRank,
@@ -847,7 +847,7 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
         return searchAdmin(query.view().name(), query.status(), query.announcementId(),
                 query.token(0), query.token(1), query.token(2), query.token(3),
                 query.idTerm() != null ? query.idTerm().toString() : null,
-                query.scope().name(), query.withRecipientPhone(), query.paymentMethod(), query.content(),
+                query.scope().name(), query.phoneSuffix(), query.paymentMethod(), query.content(),
                 query.alertRank(), query.from(), query.to(), query.now(), query.lateBefore(), pageable);
     }
 
@@ -868,7 +868,7 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
             @Param("t4") String t4,
             @Param("idTerm") String idTerm,
             @Param("scope") String scope,
-            @Param("phones") boolean phones,
+            @Param("phoneSuffix") String phoneSuffix,
             @Param("paymentMethod") String paymentMethod,
             @Param("content") String content,
             @Param("alertRank") Integer alertRank,
@@ -882,7 +882,7 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
         return countAdmin(null, query.announcementId(),
                 query.token(0), query.token(1), query.token(2), query.token(3),
                 query.idTerm() != null ? query.idTerm().toString() : null,
-                query.scope().name(), query.withRecipientPhone(), query.paymentMethod(), query.content(),
+                query.scope().name(), query.phoneSuffix(), query.paymentMethod(), query.content(),
                 null, query.from(), query.to(), query.now(), query.lateBefore());
     }
 

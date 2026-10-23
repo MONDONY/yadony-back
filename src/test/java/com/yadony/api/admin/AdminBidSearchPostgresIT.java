@@ -165,8 +165,13 @@ class AdminBidSearchPostgresIT {
                 AdminBidScope.ALL, true, PaymentMethod.CASH, "VETEMENT", AdminBidAlert.LATE,
                 NOW.minusDays(1), NOW.plusDays(1), NOW))).containsExactly(late.getId());
         assertThat(ids(query(AdminBidView.TODO, "kouyate", AdminBidScope.TRAVELER, false))).contains(late.getId());
+        // Téléphone du destinataire : suffixe d'au moins huit chiffres, avec le droit seulement.
         assertThat(ids(query(AdminBidView.ALL, "+221771234567", AdminBidScope.RECIPIENT, true))).contains(late.getId());
+        assertThat(ids(query(AdminBidView.ALL, "771234567", AdminBidScope.ALL, true))).contains(late.getId());
         assertThat(ids(query(AdminBidView.ALL, "771234567", AdminBidScope.RECIPIENT, false))).doesNotContain(late.getId());
+        assertThat(ids(query(AdminBidView.ALL, "1234", AdminBidScope.RECIPIENT, true))).doesNotContain(late.getId());
+        assertThat(ids(query(AdminBidView.ALL, "+22177123", AdminBidScope.RECIPIENT, true))).doesNotContain(late.getId());
+        assertThat(ids(query(AdminBidView.ALL, "771234567", AdminBidScope.SENDER, true))).doesNotContain(late.getId());
     }
 
     @Test

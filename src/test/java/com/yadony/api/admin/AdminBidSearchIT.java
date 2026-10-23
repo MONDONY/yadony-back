@@ -330,15 +330,72 @@ class AdminBidSearchIT {
     }
 
     @Test
-    void search_recipientPhone_onlyWhenPhonesAllowed() {
+    void search_recipientPhone_suffixOfEightDigits_whenAllowed() {
         AnnouncementEntity a = trip();
         BidEntity parcel = bid(a, sender, BidStatus.PENDING, b -> b.setRecipientPhone("+221 77 123-45.67"));
+        bid(a, sender, BidStatus.PENDING, b -> b.setRecipientPhone("+221 77 999 99 99"));
 
-        assertThat(ids(q().on(a).query("771234567").scope(AdminBidScope.RECIPIENT).phones(false))).isEmpty();
         assertThat(ids(q().on(a).query("771234567").scope(AdminBidScope.RECIPIENT).phones(true)))
                 .containsExactly(parcel.getId());
-        assertThat(ids(q().on(a).query("+221771234567").phones(true))).containsExactly(parcel.getId());
+        assertThat(ids(q().on(a).query("+221 77 123 45 67").phones(true))).containsExactly(parcel.getId());
+        // Huit chiffres exactement : le suffixe minimal.
+        assertThat(ids(q().on(a).query("71234567").phones(true))).containsExactly(parcel.getId());
+        // Sept chiffres : refusé même avec le droit.
+        assertThat(ids(q().on(a).query("1234567").phones(true))).isEmpty();
+    }
+
+    @Test
+    void search_recipientPhone_nationalFormat_matchesInternationalStored() {
+        AnnouncementEntity a = trip();
+        BidEntity parcel = bid(a, sender, BidStatus.PENDING, b -> b.setRecipientPhone("+33612345678"));
+
+        assertThat(ids(q().on(a).query("06 12 34 56 78").phones(true))).containsExactly(parcel.getId());
+        assertThat(ids(q().on(a).query("0612345678").scope(AdminBidScope.RECIPIENT).phones(true)))
+                .containsExactly(parcel.getId());
+    }
+
+    @Test
+    void search_recipientPhone_substringOrPrefix_neverMatches() {
+        AnnouncementEntity a = trip();
+        bid(a, sender, BidStatus.PENDING, b -> b.setRecipientPhone("+33612345678"));
+
+        assertThat(ids(q().on(a).query("345").phones(true))).isEmpty();
+        assertThat(ids(q().on(a).query("+3361").phones(true))).isEmpty();
+        // Préfixe d'au moins 8 chiffres, milieu de 8 chiffres : ni l'un ni l'autre.
+        assertThat(ids(q().on(a).query("33612345").phones(true))).isEmpty();
+        assertThat(ids(q().on(a).query("61234567").phones(true))).isEmpty();
+        assertThat(ids(q().on(a).query("36123456").phones(true))).isEmpty();
+    }
+
+    @Test
+    void search_recipientPhone_notAllowed_neverMatches() {
+        AnnouncementEntity a = trip();
+        bid(a, sender, BidStatus.PENDING, b -> b.setRecipientPhone("+221 77 123-45.67"));
+
+        assertThat(ids(q().on(a).query("771234567").scope(AdminBidScope.RECIPIENT).phones(false))).isEmpty();
+        assertThat(ids(q().on(a).query("+221771234567").phones(false))).isEmpty();
         assertThat(ids(q().on(a).query("771234567").phones(false))).isEmpty();
+    }
+
+    @Test
+    void search_recipientPhone_scopeSender_doesNotMatch() {
+        AnnouncementEntity a = trip();
+        bid(a, sender, BidStatus.PENDING, b -> b.setRecipientPhone("+33612345678"));
+
+        assertThat(ids(q().on(a).query("612345678").scope(AdminBidScope.SENDER).phones(true))).isEmpty();
+        assertThat(ids(q().on(a).query("612345678").scope(AdminBidScope.TRACKING).phones(true))).isEmpty();
+    }
+
+    @Test
+    void search_recipientPhone_mixedWithText_isNotAPhoneSearch() {
+        AnnouncementEntity a = trip();
+        bid(a, sender, BidStatus.PENDING, b -> {
+            b.setRecipientName("Ndèye");
+            b.setRecipientPhone("+33612345678");
+        });
+
+        // Le numéro ne fait plus partie du texte replié : mêlé à un mot, il ne trouve rien.
+        assertThat(ids(q().on(a).query("ndeye 612345678").phones(true))).isEmpty();
     }
 
     // ---------------------------------------------------------------- filtres

@@ -71,4 +71,28 @@ class AdminSearchTermsTest {
         assertThat(AdminSearchTerms.digitsOnly("12")).isNull();
         assertThat(AdminSearchTerms.digitsOnly(null)).isNull();
     }
+
+    @Test
+    void phoneSuffix_requiresAtLeastEightDigits() {
+        assertThat(AdminSearchTerms.phoneSuffix("1234567")).isNull();
+        assertThat(AdminSearchTerms.phoneSuffix("12345678")).isEqualTo("12345678");
+        assertThat(AdminSearchTerms.phoneSuffix(null)).isNull();
+        assertThat(AdminSearchTerms.phoneSuffix("   ")).isNull();
+        // Les zéros de tête ne comptent pas dans les huit chiffres.
+        assertThat(AdminSearchTerms.phoneSuffix("0012345")).isNull();
+    }
+
+    @Test
+    void phoneSuffix_stripsFormattingAndLeadingZeros() {
+        assertThat(AdminSearchTerms.phoneSuffix("06 12 34 56 78")).isEqualTo("612345678");
+        assertThat(AdminSearchTerms.phoneSuffix("+33 6 12 34 56 78")).isEqualTo("33612345678");
+        assertThat(AdminSearchTerms.phoneSuffix("(0)6.12-34-56-78")).isEqualTo("612345678");
+    }
+
+    @Test
+    void phoneSuffix_rejectsMixedText() {
+        assertThat(AdminSearchTerms.phoneSuffix("06 12 abc")).isNull();
+        assertThat(AdminSearchTerms.phoneSuffix("0612345678 diallo")).isNull();
+        assertThat(AdminSearchTerms.phoneSuffix("06%12345678")).isNull();
+    }
 }
