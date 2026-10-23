@@ -942,6 +942,67 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
         }
     }
 
+    // --- Suggestions de recherche de l'admin (GET /admin/bids/suggest) : voir AdminBidSql.SUGGEST_* ---
+
+    @Query(value = AdminBidSql.SUGGEST_SENDERS, nativeQuery = true)
+    List<PersonCountRow> suggestSenders(@Param("t1") String t1, @Param("t2") String t2,
+                                        @Param("t3") String t3, @Param("t4") String t4);
+
+    @Query(value = AdminBidSql.SUGGEST_TRAVELERS, nativeQuery = true)
+    List<PersonCountRow> suggestTravelers(@Param("t1") String t1, @Param("t2") String t2,
+                                          @Param("t3") String t3, @Param("t4") String t4);
+
+    @Query(value = AdminBidSql.SUGGEST_RECIPIENTS, nativeQuery = true)
+    List<RecipientCountRow> suggestRecipients(@Param("t1") String t1, @Param("t2") String t2,
+                                              @Param("t3") String t3, @Param("t4") String t4);
+
+    @Query(value = AdminBidSql.SUGGEST_TRIPS, nativeQuery = true)
+    List<TripCountRow> suggestTrips(@Param("t1") String t1, @Param("t2") String t2,
+                                    @Param("t3") String t3, @Param("t4") String t4);
+
+    @Query(value = AdminBidSql.SUGGEST_PARCELS, nativeQuery = true)
+    List<ParcelSuggestRow> suggestParcels(@Param("t1") String t1, @Param("t2") String t2,
+                                          @Param("t3") String t3, @Param("t4") String t4);
+
+    /** Utilisateur et nombre de ses colis ; identifiant en texte (H2 rend un UUID natif en octets). */
+    interface PersonCountRow {
+        String getIdText();
+
+        Long getTotal();
+
+        default UUID getId() {
+            return UUID.fromString(getIdText());
+        }
+    }
+
+    interface RecipientCountRow {
+        String getName();
+
+        Long getTotal();
+    }
+
+    interface TripCountRow {
+        String getDepartureCity();
+
+        String getArrivalCity();
+
+        Long getTotal();
+    }
+
+    interface ParcelSuggestRow {
+        String getBidIdText();
+
+        String getTrackingNumber();
+
+        String getStatus();
+
+        String getContent();
+
+        default UUID getBidId() {
+            return UUID.fromString(getBidIdText());
+        }
+    }
+
     /**
      * Expéditeurs "fidèles" : ceux ayant déjà eu un bid ACCEPTED avec ce voyageur
      * sur exactement ce corridor (ville de départ + ville d'arrivée). Utilisé par

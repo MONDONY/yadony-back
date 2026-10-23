@@ -119,6 +119,54 @@ public class AdminBidsController {
         return ResponseEntity.ok(AdminBidCountsResponse.of(row));
     }
 
+    /**
+     * Suggestions de la barre de recherche : cinq propositions au plus par groupe (expéditeurs,
+     * voyageurs, destinataires, trajets, colis), mêmes colonnes repliées que la liste. Sous deux
+     * caractères : groupes vides. Aucun téléphone dans la réponse.
+     */
+    @GetMapping("/admin/bids/suggest")
+    public ResponseEntity<AdminBidSuggestResponse> suggest(@RequestParam(required = false) String q) {
+        if (q == null || q.strip().length() < MIN_SUGGEST_CHARS) {
+            return ResponseEntity.ok(AdminBidSuggestResponse.empty());
+        }
+        List<String> t = AdminBidQuery.tokensOf(q);
+        String t1 = at(t, 0), t2 = at(t, 1), t3 = at(t, 2), t4 = at(t, 3);
+
+        List<BidRepository.PersonCountRow> senders = bidRepo.suggestSenders(t1, t2, t3, t4);
+        List<BidRepository.PersonCountRow> travelers = bidRepo.suggestTravelers(t1, t2, t3, t4);
+        Set<UUID> ids = new HashSet<>();
+        senders.forEach(r -> ids.add(r.getId()));
+        travelers.forEach(r -> ids.add(r.getId()));
+        Map<UUID, String> names = loadUserNames(ids);
+
+        return ResponseEntity.ok(new AdminBidSuggestResponse(
+                senders.stream().map(r -> person(r, names)).toList(),
+                travelers.stream().map(r -> person(r, names)).toList(),
+                bidRepo.suggestRecipients(t1, t2, t3, t4).stream()
+                        .map(r -> new AdminBidSuggestResponse.Recipient(r.getName(), n(r.getTotal()))).toList(),
+                bidRepo.suggestTrips(t1, t2, t3, t4).stream()
+                        .map(r -> new AdminBidSuggestResponse.Trip(
+                                MatchingTextUtil.corridorLabel(r.getDepartureCity(), r.getArrivalCity()),
+                                r.getDepartureCity(), r.getArrivalCity(), n(r.getTotal()))).toList(),
+                bidRepo.suggestParcels(t1, t2, t3, t4).stream()
+                        .map(r -> new AdminBidSuggestResponse.Parcel(
+                                r.getBidId(), r.getTrackingNumber(), r.getStatus(), r.getContent())).toList()));
+    }
+
+    private static final int MIN_SUGGEST_CHARS = 2;
+
+    private static String at(List<String> tokens, int i) {
+        return i < tokens.size() ? tokens.get(i) : null;
+    }
+
+    private static long n(Long value) {
+        return value == null ? 0 : value;
+    }
+
+    private static AdminBidSuggestResponse.Person person(BidRepository.PersonCountRow r, Map<UUID, String> names) {
+        return new AdminBidSuggestResponse.Person(r.getId(), names.get(r.getId()), n(r.getTotal()));
+    }
+
     @GetMapping("/admin/bids/{id}")
     public ResponseEntity<AdminBidDetailResponse> getBid(@PathVariable UUID id, Authentication authentication) {
         BidEntity bid = bidRepo.findById(id)

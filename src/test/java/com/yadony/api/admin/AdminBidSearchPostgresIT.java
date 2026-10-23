@@ -228,4 +228,31 @@ class AdminBidSearchPostgresIT {
         assertThat(none.getAll()).isZero();
         assertThat(none.getTodo()).isZero();
     }
+
+    @Test
+    void suggestions_runOnPostgres() {
+        String tag = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        UserEntity traveler = user("Mamadou", "Trav" + tag);
+        UserEntity sender = user("Aïcha", "Send" + tag);
+        UserEntity gone = user("Parti", "Send" + tag);
+        AnnouncementEntity a = trip(traveler);
+        bid(a, sender, BidStatus.IN_TRANSIT);
+        bid(a, sender, BidStatus.PENDING);
+        bid(a, gone, BidStatus.PENDING);
+        bid(a, sender, BidStatus.NEGOTIATING);
+        jdbc.update("update users set deleted_at = ? where id = ?", NOW, gone.getId());
+
+        List<BidRepository.PersonCountRow> senders = bidRepository.suggestSenders("send" + tag, null, null, null);
+        assertThat(senders).extracting(BidRepository.PersonCountRow::getId, BidRepository.PersonCountRow::getTotal)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(sender.getId(), 2L));
+        assertThat(bidRepository.suggestSenders("aicha", "send" + tag, null, null)).hasSize(1);
+        assertThat(bidRepository.suggestTravelers("trav" + tag, null, null, null))
+                .extracting(BidRepository.PersonCountRow::getId).containsExactly(traveler.getId());
+        assertThat(bidRepository.suggestRecipients("ndeye", "sow", null, null))
+                .extracting(BidRepository.RecipientCountRow::getName).contains("Ndèye Sow");
+        assertThat(bidRepository.suggestTrips("paris", "dakar", null, null)).isNotEmpty();
+        assertThat(bidRepository.suggestTrips("paris", "absent" + tag, null, null)).isEmpty();
+        assertThat(bidRepository.suggestParcels("yd", null, null, null)).hasSizeLessThanOrEqualTo(5);
+        assertThat(bidRepository.suggestParcels("NOMATCH", null, null, null)).isEmpty();
+    }
 }

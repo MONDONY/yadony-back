@@ -77,7 +77,7 @@ public record AdminBidQuery(
     }
 
     /** Jetons de la saisie ; une saisie non vide sans aucun jeton (que des % ou _) ne trouve rien. */
-    private static List<String> tokensOf(String query) {
+    static List<String> tokensOf(String query) {
         List<String> tokens = AdminSearchTerms.tokens(query, MAX_TOKENS);
         if (tokens.isEmpty() && query != null && !query.isBlank()) {
             return List.of(NO_MATCH_TOKEN);

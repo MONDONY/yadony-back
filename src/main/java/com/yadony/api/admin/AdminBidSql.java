@@ -35,7 +35,7 @@ public final class AdminBidSql {
     private static final String NOW = "CAST(:now AS TIMESTAMP)";
 
     /** Fils de négociation : jamais des colis (voir {@code BidStatus.NEGOTIATION_STATUSES}). */
-    private static final String NEGOTIATION_STATUSES = "('NEGOTIATING', 'NEGOTIATION_CLOSED')";
+    public static final String NEGOTIATION_STATUSES = "('NEGOTIATING', 'NEGOTIATION_CLOSED')";
     private static final String ACTIVE_STATUSES = "('AWAITING_PAYMENT', 'PENDING', 'PAYMENT_ESCROWED',"
             + " 'ACCEPTED', 'HANDED_OVER', 'IN_TRANSIT', 'ARRIVED')";
     private static final String CLOSED_STATUSES = "('REJECTED', 'CANCELLED', 'EXPIRED', 'PARCEL_REFUSED', 'NO_SHOW')";
@@ -181,4 +181,67 @@ public final class AdminBidSql {
     public static final String ORDER_BY = "CASE WHEN :view = 'TODO' THEN " + ALERT_RANK + " END ASC,"
             + " CASE WHEN :view = 'TODO' THEN b.created_at END ASC,"
             + " b.created_at DESC, b.id DESC";
+
+    // ------------------------------------------------------------ suggestions de recherche
+
+    /** Nombre maximal de propositions par groupe de {@code GET /admin/bids/suggest}. */
+    public static final int SUGGEST_LIMIT = 5;
+
+    /**
+     * Chaque jeton non nul ({@code :t1} à {@code :t4}) doit se trouver dans la colonne repliée
+     * {@code x.hay} des sous-requêtes de suggestion (constante : une annotation n'accepte pas d'appel).
+     */
+    private static final String HAY_TOKENS = "((CAST(:t1 AS VARCHAR) IS NULL OR x.hay LIKE '%' || CAST(:t1 AS VARCHAR) || '%')"
+            + " AND (CAST(:t2 AS VARCHAR) IS NULL OR x.hay LIKE '%' || CAST(:t2 AS VARCHAR) || '%')"
+            + " AND (CAST(:t3 AS VARCHAR) IS NULL OR x.hay LIKE '%' || CAST(:t3 AS VARCHAR) || '%')"
+            + " AND (CAST(:t4 AS VARCHAR) IS NULL OR x.hay LIKE '%' || CAST(:t4 AS VARCHAR) || '%'))";
+
+    /** Colis comptés par les suggestions : non supprimés, fils de négociation exclus. */
+    private static final String SUGGEST_BID_FILTER = "b.deleted_at IS NULL AND b.status NOT IN " + NEGOTIATION_STATUSES;
+
+    /** Expéditeurs (comptes non supprimés) dont le nom correspond, avec leur nombre de colis. */
+    public static final String SUGGEST_SENDERS = "SELECT x.uid AS \"idText\", COUNT(*) AS \"total\" FROM ("
+            + "SELECT CAST(s.id AS VARCHAR) AS uid, "
+            + FOLD_OPEN + "CONCAT_WS(' ', s.first_name, s.last_name, s.username)" + FOLD_CLOSE + " AS hay"
+            + " FROM bids b JOIN users s ON s.id = b.sender_id AND s.deleted_at IS NULL"
+            + " WHERE " + SUGGEST_BID_FILTER + ") x"
+            + " WHERE " + HAY_TOKENS
+            + " GROUP BY x.uid ORDER BY COUNT(*) DESC, MIN(x.hay), x.uid LIMIT " + SUGGEST_LIMIT;
+
+    /** Voyageurs (comptes non supprimés) du trajet des colis, avec leur nombre de colis. */
+    public static final String SUGGEST_TRAVELERS = "SELECT x.uid AS \"idText\", COUNT(*) AS \"total\" FROM ("
+            + "SELECT CAST(t.id AS VARCHAR) AS uid, "
+            + FOLD_OPEN + "CONCAT_WS(' ', t.first_name, t.last_name, t.username)" + FOLD_CLOSE + " AS hay"
+            + " FROM bids b JOIN announcements a ON a.id = b.announcement_id AND a.deleted_at IS NULL"
+            + " JOIN users t ON t.id = a.traveler_id AND t.deleted_at IS NULL"
+            + " WHERE " + SUGGEST_BID_FILTER + ") x"
+            + " WHERE " + HAY_TOKENS
+            + " GROUP BY x.uid ORDER BY COUNT(*) DESC, MIN(x.hay), x.uid LIMIT " + SUGGEST_LIMIT;
+
+    /** Destinataires groupés par nom replié ; le nom montré est le plus petit des noms d'origine. */
+    public static final String SUGGEST_RECIPIENTS = "SELECT MIN(x.name) AS \"name\", COUNT(*) AS \"total\" FROM ("
+            + "SELECT b.recipient_name AS name, " + FOLD_OPEN + "b.recipient_name" + FOLD_CLOSE + " AS hay"
+            + " FROM bids b WHERE " + SUGGEST_BID_FILTER + " AND b.recipient_name IS NOT NULL) x"
+            + " WHERE " + HAY_TOKENS
+            + " GROUP BY x.hay ORDER BY COUNT(*) DESC, x.hay LIMIT " + SUGGEST_LIMIT;
+
+    /** Trajets groupés par (départ, arrivée) ; chaque jeton doit se trouver dans l'une des deux villes. */
+    public static final String SUGGEST_TRIPS = "SELECT x.dep AS \"departureCity\", x.arr AS \"arrivalCity\","
+            + " COUNT(*) AS \"total\" FROM ("
+            + "SELECT a.departure_city AS dep, a.arrival_city AS arr, "
+            + FOLD_OPEN + "CONCAT_WS(' ', a.departure_city, a.arrival_city)" + FOLD_CLOSE + " AS hay"
+            + " FROM bids b JOIN announcements a ON a.id = b.announcement_id AND a.deleted_at IS NULL"
+            + " WHERE " + SUGGEST_BID_FILTER + ") x"
+            + " WHERE " + HAY_TOKENS
+            + " GROUP BY x.dep, x.arr ORDER BY COUNT(*) DESC, x.dep, x.arr LIMIT " + SUGGEST_LIMIT;
+
+    /** Colis dont le numéro de suivi correspond, les plus récents d'abord. */
+    public static final String SUGGEST_PARCELS = "SELECT x.bid_id AS \"bidIdText\", x.tracking AS \"trackingNumber\","
+            + " x.status AS \"status\", x.content AS \"content\" FROM ("
+            + "SELECT CAST(b.id AS VARCHAR) AS bid_id, b.tracking_number AS tracking, b.status AS status,"
+            + " b.content_category AS content, b.created_at AS created, "
+            + FOLD_OPEN + "b.tracking_number" + FOLD_CLOSE + " AS hay"
+            + " FROM bids b WHERE " + SUGGEST_BID_FILTER + " AND b.tracking_number IS NOT NULL) x"
+            + " WHERE " + HAY_TOKENS
+            + " ORDER BY x.created DESC, x.bid_id DESC LIMIT " + SUGGEST_LIMIT;
 }
