@@ -27,6 +27,7 @@ public record AdminUserOverviewResponse(
             Integer ratingCount
     ) {}
 
+    /** {@code amountCents} est dans la plus petite unité de {@code currency} (EUR 2 décimales, XOF 0). */
     public record MoneyAmount(String currency, long amountCents) {}
 
     /** {@code kind} vaut {@code PARCEL} ou {@code TRIP}. */

@@ -1,6 +1,8 @@
 package com.yadony.api.admin;
 
 import com.yadony.api.admin.dto.AdminPaymentInsight;
+import com.yadony.api.admin.dto.AdminPaymentListItemResponse;
+import com.yadony.api.payments.hold.PayoutHoldStatus;
 import com.yadony.api.admin.dto.AdminWalletResponse;
 import com.yadony.api.payments.PaymentEntity;
 import com.yadony.api.payments.PaymentRail;
@@ -89,6 +91,51 @@ public class AdminPaymentInsights {
                         + " ORDER BY p.created_at DESC, p.id DESC LIMIT :limit OFFSET :offset",
                 params, (rs, i) -> UUID.fromString(rs.getString(1)));
         return new PageImpl<>(load(ids), pageable, total == null ? 0 : total);
+    }
+
+    /** Paiements dont l'utilisateur est une des parties (payeur ou voyageur), du plus récent au plus ancien. */
+    public Page<AdminPaymentListItemResponse> searchByUser(UUID userId, Pageable pageable) {
+        MapSqlParameterSource params = new MapSqlParameterSource("userId", userId);
+        String where = "WHERE p.deleted_at IS NULL AND :userId IN (" + PARTIES_OF_P + ")";
+        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM payments p " + where, params, Long.class);
+        params.addValue("limit", pageable.getPageSize());
+        params.addValue("offset", pageable.getOffset());
+        List<UUID> ids = jdbc.query("SELECT CAST(p.id AS VARCHAR(36)) FROM payments p " + where
+                        + " ORDER BY p.created_at DESC, p.id DESC LIMIT :limit OFFSET :offset",
+                params, (rs, i) -> UUID.fromString(rs.getString(1)));
+        List<PaymentEntity> payments = load(ids);
+        Map<UUID, AdminPaymentInsight> context = insightsOf(payments);
+        List<AdminPaymentListItemResponse> items = payments.stream().map(p -> {
+            AdminPaymentInsight insight = context.get(p.getId());
+            UUID travelerId = insight != null && insight.traveler() != null ? insight.traveler().id() : null;
+            return AdminPaymentListItemResponse.from(p, travelerId, PayoutHoldStatus.NONE).withInsight(insight);
+        }).toList();
+        return new PageImpl<>(items, pageable, total == null ? 0 : total);
+    }
+
+    /**
+     * Argent retenu (séquestre avec versement gelé, comme le filtre {@code held}) dont l'utilisateur est le
+     * voyageur bénéficiaire : une ligne par devise, montants bruts en BigDecimal, jamais additionnés entre devises.
+     */
+    public Map<String, BigDecimal> heldAmountByCurrencyOfBeneficiary(UUID travelerId) {
+        Map<String, BigDecimal> result = new java.util.TreeMap<>();
+        jdbc.query("""
+                SELECT UPPER(p.currency) AS currency, SUM(p.amount) AS total
+                FROM payments p
+                WHERE p.deleted_at IS NULL AND p.status = 'ESCROW' AND p.payout_held_at IS NOT NULL
+                  AND :userId IN (
+                    SELECT a.traveler_id FROM bids b JOIN announcements a ON a.id = b.announcement_id
+                     WHERE b.id = p.bid_id
+                        OR (p.bid_id IS NULL AND p.negotiation_thread_id IS NOT NULL
+                            AND b.linked_negotiation_thread_id = p.negotiation_thread_id)
+                    UNION
+                    SELECT t.traveler_id FROM negotiation_threads t WHERE t.id = p.negotiation_thread_id)
+                GROUP BY UPPER(p.currency)
+                """, new MapSqlParameterSource("userId", travelerId),
+                rs -> {
+                    result.put(rs.getString("currency"), rs.getBigDecimal("total"));
+                });
+        return result;
     }
 
     /** Paiements de l'export, dans l'ordre de la liste, au plus {@link #EXPORT_MAX_ROWS}. */

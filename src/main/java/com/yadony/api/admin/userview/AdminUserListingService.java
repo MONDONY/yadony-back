@@ -1,6 +1,11 @@
 package com.yadony.api.admin.userview;
 
 import com.yadony.api.admin.AdminBidAmounts;
+import com.yadony.api.admin.AdminPaymentInsights;
+import com.yadony.api.admin.dto.AdminPaymentListItemResponse;
+import com.yadony.api.admin.userview.dto.AdminUserPaymentRow;
+import com.yadony.api.payments.hold.PayoutHoldPolicy;
+import com.yadony.api.payments.hold.PayoutHoldStatus;
 import com.yadony.api.admin.dto.AdminAnnouncementListItemResponse;
 import com.yadony.api.admin.userview.dto.AdminUserOverviewResponse.MoneyAmount;
 import com.yadony.api.admin.userview.dto.AdminUserParcelRow;
@@ -43,10 +48,16 @@ public class AdminUserListingService {
     private final BidRepository bidRepository;
     private final AnnouncementRepository announcementRepository;
     private final BidGridItemRepository gridItemRepository;
+    private final AdminPaymentInsights paymentInsights;
+    private final PayoutHoldPolicy holdPolicy;
 
     public AdminUserListingService(BidRepository bidRepository,
                                    AnnouncementRepository announcementRepository,
-                                   BidGridItemRepository gridItemRepository) {
+                                   BidGridItemRepository gridItemRepository,
+                                   AdminPaymentInsights paymentInsights,
+                                   PayoutHoldPolicy holdPolicy) {
+        this.paymentInsights = paymentInsights;
+        this.holdPolicy = holdPolicy;
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.gridItemRepository = gridItemRepository;
@@ -63,6 +74,32 @@ public class AdminUserListingService {
                         Sort.by(
                                 Sort.Direction.DESC, "createdAt")))
                 .map(a -> AdminAnnouncementListItemResponse.of(a, null, null));
+    }
+
+    /** Paiements dont l'utilisateur est payeur ou voyageur bénéficiaire. */
+    public Page<AdminUserPaymentRow> payments(UUID userId, int page, int size) {
+        Page<AdminPaymentListItemResponse> found = paymentInsights.searchByUser(userId, pageable(page, size));
+        List<UUID> beneficiaries = found.getContent().stream()
+                .map(AdminPaymentListItemResponse::travelerId).filter(java.util.Objects::nonNull).distinct().toList();
+        Map<UUID, PayoutHoldStatus> holds = beneficiaries.isEmpty() ? Map.of() : holdPolicy.statusesOf(beneficiaries);
+        return found.map(p -> {
+            PayoutHoldStatus hold = p.travelerId() == null ? null : holds.get(p.travelerId());
+            boolean beneficiary = userId.equals(p.travelerId());
+            return new AdminUserPaymentRow(p.id(), p.bidId(), p.status(), p.method(),
+                    minorUnits(p.amountCents(), p.currency()), minorUnits(p.commissionCents(), p.currency()),
+                    p.currency(), p.createdAt(), p.payoutHeldAt(), hold != null && hold.held(),
+                    beneficiary ? "BENEFICIARY" : "PAYER");
+        });
+    }
+
+    /** Convertit des centièmes (toCents) vers la plus petite unité de la devise (XOF : 0 décimale). */
+    static long minorUnits(long hundredths, String currency) {
+        return toMinorUnits(BigDecimal.valueOf(hundredths, 2), currency);
+    }
+
+    static long toMinorUnits(BigDecimal amount, String currency) {
+        int minor = SupportedCurrency.fromCodeOrDefault(currency).minorUnit();
+        return amount.setScale(minor, RoundingMode.HALF_UP).movePointRight(minor).longValue();
     }
 
     /** Lignes de colis ; annonces et articles de grille de toute la liste résolus en une requête chacun. */

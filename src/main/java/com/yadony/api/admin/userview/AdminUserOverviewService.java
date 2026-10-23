@@ -1,6 +1,8 @@
 package com.yadony.api.admin.userview;
 
+import com.yadony.api.admin.AdminPaymentInsights;
 import com.yadony.api.admin.account.AdminPermission;
+import com.yadony.api.admin.userview.dto.AdminUserOverviewResponse.MoneyAmount;
 import com.yadony.api.admin.userview.dto.AdminUserOverviewResponse;
 import com.yadony.api.admin.userview.dto.AdminUserOverviewResponse.Kpis;
 import com.yadony.api.auth.UserEntity;
@@ -53,11 +55,14 @@ public class AdminUserOverviewService {
     private final BidRepository bidRepository;
     private final AnnouncementRepository announcementRepository;
     private final AdminUserListingService listingService;
+    private final AdminPaymentInsights paymentInsights;
     private Clock clock = Clock.systemUTC();
 
     public AdminUserOverviewService(BidRepository bidRepository,
                                     AnnouncementRepository announcementRepository,
-                                    AdminUserListingService listingService) {
+                                    AdminUserListingService listingService,
+                                    AdminPaymentInsights paymentInsights) {
+        this.paymentInsights = paymentInsights;
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.listingService = listingService;
@@ -79,7 +84,7 @@ public class AdminUserOverviewService {
         Kpis kpis = new Kpis(
                 bids ? (int) bidRepository.countAdminByPartyAndStatusIn(userId, IN_PROGRESS_PARCEL_STATUSES) : null,
                 bids ? (int) announcementRepository.countByTravelerIdAndStatusIn(userId, ACTIVE_TRIP_STATUSES) : null,
-                payments ? List.of() : null,
+                payments ? heldByCurrency(userId) : null,
                 disputes ? 0 : null,
                 disputes ? 0 : null,
                 reports ? 0 : null,
@@ -88,6 +93,13 @@ public class AdminUserOverviewService {
                 user.getAverageRating() == null ? null : user.getAverageRating().doubleValue(),
                 user.getRatingCount());
         return new AdminUserOverviewResponse(kpis, bids ? inProgress(userId) : null, List.of());
+    }
+
+    /** Argent retenu en tant que voyageur bénéficiaire, une ligne par devise (jamais additionnées). */
+    List<MoneyAmount> heldByCurrency(UUID travelerId) {
+        return paymentInsights.heldAmountByCurrencyOfBeneficiary(travelerId).entrySet().stream()
+                .map(e -> new MoneyAmount(e.getKey(), AdminUserListingService.toMinorUnits(e.getValue(), e.getKey())))
+                .toList();
     }
 
     /** Colis en cours et livrés depuis moins de 72 h, plus trajets actifs ou terminés récemment. */

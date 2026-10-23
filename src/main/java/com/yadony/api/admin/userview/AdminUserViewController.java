@@ -6,6 +6,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.admin.dto.AdminAnnouncementListItemResponse;
 import com.yadony.api.admin.userview.dto.AdminUserParcelRow;
+import com.yadony.api.admin.userview.dto.AdminUserPaymentRow;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -54,6 +55,15 @@ public class AdminUserViewController {
                                                          @RequestParam(defaultValue = "20") int size) {
         requireUser(userId);
         return listingService.trips(userId, page, size);
+    }
+
+    @GetMapping("/payments")
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
+    public Page<AdminUserPaymentRow> payments(@PathVariable UUID userId,
+                                              @RequestParam(defaultValue = "0") int page,
+                                              @RequestParam(defaultValue = "20") int size) {
+        requireUser(userId);
+        return listingService.payments(userId, page, size);
     }
 
     @GetMapping("/overview")
