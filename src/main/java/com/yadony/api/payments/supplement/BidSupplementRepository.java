@@ -37,6 +37,12 @@ public interface BidSupplementRepository extends JpaRepository<BidSupplementEnti
     Optional<BidSupplementEntity> findByBidIdAndStatusInForUpdate(@Param("bidId") UUID bidId,
                                                                   @Param("statuses") Collection<BidSupplementStatus> statuses);
 
+    /** Somme des nets des suppléments du colis dans l'un des {@code statuses} (0 si aucun). */
+    @Query("SELECT COALESCE(SUM(s.netAmount), 0) FROM BidSupplementEntity s "
+            + "WHERE s.bidId = :bidId AND s.status IN :statuses")
+    java.math.BigDecimal sumNetByBidIdAndStatusIn(@Param("bidId") UUID bidId,
+                                                  @Param("statuses") Collection<BidSupplementStatus> statuses);
+
     boolean existsByBidIdAndStatusIn(UUID bidId, Collection<BidSupplementStatus> statuses);
 
     long countByBidId(UUID bidId);
