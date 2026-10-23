@@ -27,7 +27,7 @@ public record AdminUserOverviewResponse(
             Integer ratingCount
     ) {}
 
-    /** {@code amountCents} est dans la plus petite unité de {@code currency} (EUR 2 décimales, XOF 0). */
+    /** {@code amountCents} est en centièmes (montant x 100) pour toutes les devises, XOF compris, comme les autres DTO admin. */
     public record MoneyAmount(String currency, long amountCents) {}
 
     /** {@code kind} vaut {@code PARCEL} ou {@code TRIP}. */

@@ -362,7 +362,7 @@ class AdminUserParcelsIT {
     }
 
     @Test
-    void parcels_amount_xofHasNoMinorUnit() throws Exception {
+    void parcels_amount_xofIsAlsoNominalCents() throws Exception {
         AnnouncementEntity trip = announcement(traveler, AnnouncementStatus.ACTIVE, null);
         BidEntity b = bid(trip, sender, BidStatus.PENDING, null, null);
         jdbc.update("update bids set currency = 'XOF', negotiated_net_eur = ? where id = ?",
@@ -371,7 +371,7 @@ class AdminUserParcelsIT {
         mockMvc.perform(get("/admin/users/{id}/parcels", traveler.getId())
                         .with(authentication(fullAuth())))
                 .andExpect(jsonPath("$.content[0].amount.currency").value("XOF"))
-                .andExpect(jsonPath("$.content[0].amount.amountCents").value(5000));
+                .andExpect(jsonPath("$.content[0].amount.amountCents").value(500000));
     }
 
     @Test

@@ -48,6 +48,16 @@ public class AdminPaymentInsights {
     /** Plafond de l'export CSV : au-delà, l'admin resserre la période. */
     public static final int EXPORT_MAX_ROWS = 10_000;
 
+    /** Le voyageur bénéficiaire d'un paiement : annonce du colis (direct ou lié au fil), ou voyageur du fil. */
+    private static final String BENEFICIARY_OF_P = """
+            SELECT a.traveler_id FROM bids b JOIN announcements a ON a.id = b.announcement_id
+             WHERE b.id = p.bid_id
+                OR (p.bid_id IS NULL AND p.negotiation_thread_id IS NOT NULL
+                    AND b.linked_negotiation_thread_id = p.negotiation_thread_id)
+            UNION
+            SELECT t.traveler_id FROM negotiation_threads t WHERE t.id = p.negotiation_thread_id
+            """;
+
     /** Les parties d'un paiement, colis classique ou fil de négociation (colis lié compris). */
     private static final String PARTIES_OF_P = """
             SELECT b.sender_id FROM bids b
@@ -55,16 +65,10 @@ public class AdminPaymentInsights {
                 OR (p.bid_id IS NULL AND p.negotiation_thread_id IS NOT NULL
                     AND b.linked_negotiation_thread_id = p.negotiation_thread_id)
             UNION
-            SELECT a.traveler_id FROM bids b JOIN announcements a ON a.id = b.announcement_id
-             WHERE b.id = p.bid_id
-                OR (p.bid_id IS NULL AND p.negotiation_thread_id IS NOT NULL
-                    AND b.linked_negotiation_thread_id = p.negotiation_thread_id)
-            UNION
             SELECT r.sender_id FROM negotiation_threads t JOIN package_requests r ON r.id = t.package_request_id
              WHERE t.id = p.negotiation_thread_id
             UNION
-            SELECT t.traveler_id FROM negotiation_threads t WHERE t.id = p.negotiation_thread_id
-            """;
+            """ + BENEFICIARY_OF_P;
 
     private final NamedParameterJdbcTemplate jdbc;
     private final PaymentRepository paymentRepository;
@@ -124,12 +128,8 @@ public class AdminPaymentInsights {
                 FROM payments p
                 WHERE p.deleted_at IS NULL AND p.status = 'ESCROW' AND p.payout_held_at IS NOT NULL
                   AND :userId IN (
-                    SELECT a.traveler_id FROM bids b JOIN announcements a ON a.id = b.announcement_id
-                     WHERE b.id = p.bid_id
-                        OR (p.bid_id IS NULL AND p.negotiation_thread_id IS NOT NULL
-                            AND b.linked_negotiation_thread_id = p.negotiation_thread_id)
-                    UNION
-                    SELECT t.traveler_id FROM negotiation_threads t WHERE t.id = p.negotiation_thread_id)
+                """ + BENEFICIARY_OF_P + """
+                  )
                 GROUP BY UPPER(p.currency)
                 """, new MapSqlParameterSource("userId", travelerId),
                 rs -> {

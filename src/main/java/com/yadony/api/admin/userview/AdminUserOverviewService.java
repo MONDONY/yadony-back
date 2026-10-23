@@ -1,6 +1,7 @@
 package com.yadony.api.admin.userview;
 
 import com.yadony.api.admin.AdminPaymentInsights;
+import com.yadony.api.admin.dto.AdminWalletResponse;
 import com.yadony.api.admin.account.AdminPermission;
 import com.yadony.api.admin.userview.dto.AdminUserOverviewResponse.MoneyAmount;
 import com.yadony.api.admin.userview.dto.AdminUserOverviewResponse;
@@ -98,7 +99,7 @@ public class AdminUserOverviewService {
     /** Argent retenu en tant que voyageur bénéficiaire, une ligne par devise (jamais additionnées). */
     List<MoneyAmount> heldByCurrency(UUID travelerId) {
         return paymentInsights.heldAmountByCurrencyOfBeneficiary(travelerId).entrySet().stream()
-                .map(e -> new MoneyAmount(e.getKey(), AdminUserListingService.toMinorUnits(e.getValue(), e.getKey())))
+                .map(e -> new MoneyAmount(e.getKey(), AdminWalletResponse.toCents(e.getValue())))
                 .toList();
     }
 

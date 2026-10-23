@@ -3,6 +3,7 @@ package com.yadony.api.admin.userview;
 import com.yadony.api.admin.AdminBidAmounts;
 import com.yadony.api.admin.AdminPaymentInsights;
 import com.yadony.api.admin.dto.AdminPaymentListItemResponse;
+import com.yadony.api.admin.dto.AdminWalletResponse;
 import com.yadony.api.admin.userview.dto.AdminUserPaymentRow;
 import com.yadony.api.payments.hold.PayoutHoldPolicy;
 import com.yadony.api.payments.hold.PayoutHoldStatus;
@@ -15,7 +16,6 @@ import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidGridItemRepository;
 import com.yadony.api.matching.BidRepository;
-import com.yadony.api.payments.currency.SupportedCurrency;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -25,7 +25,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -86,20 +85,10 @@ public class AdminUserListingService {
             PayoutHoldStatus hold = p.travelerId() == null ? null : holds.get(p.travelerId());
             boolean beneficiary = userId.equals(p.travelerId());
             return new AdminUserPaymentRow(p.id(), p.bidId(), p.status(), p.method(),
-                    minorUnits(p.amountCents(), p.currency()), minorUnits(p.commissionCents(), p.currency()),
+                    p.amountCents(), p.commissionCents(),
                     p.currency(), p.createdAt(), p.payoutHeldAt(), hold != null && hold.held(),
                     beneficiary ? "BENEFICIARY" : "PAYER");
         });
-    }
-
-    /** Convertit des centièmes (toCents) vers la plus petite unité de la devise (XOF : 0 décimale). */
-    static long minorUnits(long hundredths, String currency) {
-        return toMinorUnits(BigDecimal.valueOf(hundredths, 2), currency);
-    }
-
-    static long toMinorUnits(BigDecimal amount, String currency) {
-        int minor = SupportedCurrency.fromCodeOrDefault(currency).minorUnit();
-        return amount.setScale(minor, RoundingMode.HALF_UP).movePointRight(minor).longValue();
     }
 
     /** Lignes de colis ; annonces et articles de grille de toute la liste résolus en une requête chacun. */
@@ -128,13 +117,12 @@ public class AdminUserListingService {
         return t == null ? null : t.toInstant(ZoneOffset.UTC);
     }
 
-    /** Net voyageur du colis dans la plus petite unité de sa devise (0 décimale pour le CFA) ; null si inconnu. */
+    /** Net voyageur du colis en centièmes (montant x 100, toutes devises comme le reste de l'admin) ; null si inconnu. */
     private static MoneyAmount amountOf(BidEntity b, AnnouncementEntity a, BigDecimal gridNet) {
         BigDecimal net = AdminBidAmounts.netOf(b, a, gridNet);
         if (net == null) return null;
         String currency = b.getCurrency() != null ? b.getCurrency().toUpperCase(Locale.ROOT) : null;
-        int minor = SupportedCurrency.fromCodeOrDefault(currency).minorUnit();
-        return new MoneyAmount(currency, net.setScale(minor, RoundingMode.HALF_UP).movePointRight(minor).longValue());
+        return new MoneyAmount(currency, AdminWalletResponse.toCents(net));
     }
 
     private Map<UUID, BigDecimal> gridNetByBid(Collection<UUID> bidIds) {

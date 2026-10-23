@@ -5,7 +5,8 @@ import java.util.UUID;
 
 /**
  * Une ligne de l'onglet « Paiements » : {@code role} vaut {@code PAYER} ou {@code BENEFICIARY}.
- * Les montants sont dans la plus petite unité de la devise (EUR 2 décimales, XOF 0).
+ * {@code amountCents} et {@code commissionCents} sont des centièmes (montant x 100) pour toutes les devises,
+ * XOF compris, comme les autres DTO admin.
  */
 public record AdminUserPaymentRow(
         UUID id,

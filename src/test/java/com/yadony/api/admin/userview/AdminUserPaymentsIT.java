@@ -205,6 +205,31 @@ class AdminUserPaymentsIT {
     }
 
     @Test
+    void payments_xofAmountIsNominalCentsLikeAdminPaymentsList() throws Exception {
+        PaymentEntity xof = payment(bid(announcement(traveler), sender).getId(), null, "XOF", "6000",
+                PaymentStatus.RELEASED, false);
+
+        mockMvc.perform(get("/admin/users/{id}/payments", traveler.getId()).with(authentication(fullAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].amountCents").value(600000));
+        mockMvc.perform(get("/admin/payments").param("q", xof.getId().toString())
+                        .with(authentication(fullAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].amountCents").value(600000));
+    }
+
+    @Test
+    void overview_heldByCurrency_countsHeldPaymentLinkedOnlyThroughThread() throws Exception {
+        payment(null, thread(sender, traveler).getId(), "EUR", "12.00", PaymentStatus.ESCROW, true);
+
+        overview(traveler, fullAuth())
+                .andExpect(jsonPath("$.kpis.heldByCurrency.length()").value(1))
+                .andExpect(jsonPath("$.kpis.heldByCurrency[0].amountCents").value(1200));
+        overview(sender, fullAuth())
+                .andExpect(jsonPath("$.kpis.heldByCurrency.length()").value(0));
+    }
+
+    @Test
     void payments_isPaginated() throws Exception {
         for (int i = 0; i < 3; i++) {
             payment(bid(announcement(traveler), sender).getId(), null, "EUR", "10.00", PaymentStatus.RELEASED, false);
@@ -230,7 +255,7 @@ class AdminUserPaymentsIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.kpis.heldByCurrency.length()").value(2))
                 .andExpect(jsonPath("$.kpis.heldByCurrency[?(@.currency=='EUR')].amountCents").value(1500))
-                .andExpect(jsonPath("$.kpis.heldByCurrency[?(@.currency=='XOF')].amountCents").value(6000));
+                .andExpect(jsonPath("$.kpis.heldByCurrency[?(@.currency=='XOF')].amountCents").value(600000));
     }
 
     @Test
