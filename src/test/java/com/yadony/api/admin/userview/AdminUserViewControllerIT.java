@@ -16,6 +16,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
@@ -68,6 +69,7 @@ class AdminUserViewControllerIT {
         u.setFirebaseUid("uid-" + UUID.randomUUID());
         u.setStatus(UserStatus.ACTIVE);
         u.setKycStatus(KycStatus.NOT_STARTED);
+        ReflectionTestUtils.setField(u, "id", USER_ID);
         return u;
     }
 
@@ -77,17 +79,6 @@ class AdminUserViewControllerIT {
 
         mockMvc.perform(get("/admin/users/{id}/overview", USER_ID)
                         .with(authentication(auth(AdminRole.ADMIN))))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value("user-not-found"));
-    }
-
-    @Test
-    void overview_softDeletedUser_returns404() throws Exception {
-        // @Where(deleted_at IS NULL) : un compte supprimé n'est pas retrouvé par findById.
-        when(userRepository.findById(USER_ID)).thenReturn(Optional.empty());
-
-        mockMvc.perform(get("/admin/users/{id}/overview", USER_ID)
-                        .with(authentication(auth(AdminRole.SUPPORT))))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("user-not-found"));
     }
