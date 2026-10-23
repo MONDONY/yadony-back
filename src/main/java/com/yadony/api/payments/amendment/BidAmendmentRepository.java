@@ -31,14 +31,14 @@ public interface BidAmendmentRepository extends JpaRepository<BidAmendmentEntity
     long countByBidIdAndAcceptedAtNotNull(UUID bidId);
 
     /**
-     * Somme des nets des modifications acceptées du colis (0 si aucune) qui n'ont pas été remboursées :
-     * {@code acceptedAt} renseigné et statut hors {@code excluded} ({@code REFUND_PENDING},
-     * {@code REFUNDED}).
+     * Somme des nets des modifications du colis dans l'un des {@code statuses} (0 si aucune). Liste
+     * positive : une modification close après acceptation ({@code CANCELLED}, {@code EXPIRED}...) ou
+     * remboursée n'est jamais comptée, même avec {@code accepted_at} renseigné.
      */
     @Query("SELECT COALESCE(SUM(a.netAmount), 0) FROM BidAmendmentEntity a "
-            + "WHERE a.bidId = :bidId AND a.acceptedAt IS NOT NULL AND a.status NOT IN :excluded")
-    java.math.BigDecimal sumAcceptedNetByBidIdAndStatusNotIn(@Param("bidId") UUID bidId,
-                                                             @Param("excluded") Collection<BidAmendmentStatus> excluded);
+            + "WHERE a.bidId = :bidId AND a.status IN :statuses")
+    java.math.BigDecimal sumNetByBidIdAndStatusIn(@Param("bidId") UUID bidId,
+                                                  @Param("statuses") Collection<BidAmendmentStatus> statuses);
 
     /** Préchargement des listes de colis : une requête par lot. */
     List<BidAmendmentEntity> findByBidIdIn(Collection<UUID> bidIds);

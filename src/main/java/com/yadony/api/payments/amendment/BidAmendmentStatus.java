@@ -28,9 +28,6 @@ public enum BidAmendmentStatus {
     /** Acceptée par le voyageur et non remboursée : compte dans les totaux et la commission différentielle. */
     public static final Set<BidAmendmentStatus> SECURED = EnumSet.of(ACCEPTED, PAYOUT_PENDING, PAID_OUT);
 
-    /** Remboursée ou en cours de remboursement : sort des totaux même si elle avait été acceptée. */
-    public static final Set<BidAmendmentStatus> REFUNDED_STATES = EnumSet.of(REFUND_PENDING, REFUNDED);
-
     public boolean isOpen() {
         return OPEN.contains(this);
     }

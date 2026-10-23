@@ -56,6 +56,9 @@ CREATE TABLE bid_amendments (
                AND gross_amount = net_amount + commission_amount),
     CONSTRAINT chk_bid_amendments_weight
         CHECK (added_weight_kg >= 0),
+    -- Les kilos retirés de l'annonce ne dépassent jamais les kilos demandés (0 une fois rendus).
+    CONSTRAINT chk_bid_amendments_capacity
+        CHECK (capacity_reserved_kg >= 0 AND capacity_reserved_kg <= added_weight_kg),
     CONSTRAINT chk_bid_amendments_commission_via
         CHECK (commission_charged_via IS NULL OR commission_charged_via IN ('WALLET', 'CARD')),
     CONSTRAINT chk_bid_amendments_commission_status
