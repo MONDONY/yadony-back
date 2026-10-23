@@ -6,6 +6,8 @@ import com.yadony.api.payments.currency.SupportedCurrency;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 /** Conversion d'une modification en {@link BidAmendmentResponse}, règle de visibilité comprise. */
@@ -38,8 +40,8 @@ public final class BidAmendmentViews {
                 a.getGrossAmount(),
                 forSender ? null : a.getNetAmount(),
                 forSender ? null : a.getCommissionAmount(),
-                a.getExpiresAt(),
-                a.getPaymentExpiresAt(),
+                utc(a.getExpiresAt()),
+                utc(a.getPaymentExpiresAt()),
                 a.getClosedReason() == null ? null : a.getClosedReason().name(),
                 blocksHandover(a, window.now(), window),
                 forSender || a.getCommissionStatus() == null ? null : a.getCommissionStatus().name(),
@@ -54,6 +56,11 @@ public final class BidAmendmentViews {
     static boolean blocksHandover(BidAmendmentEntity a, LocalDateTime now, BidAmendmentWindow window) {
         LocalDateTime until = window.openUntil(a);
         return until != null && until.isAfter(now);
+    }
+
+    /** Date stockée en UTC (colonne {@code TIMESTAMP}), servie avec son décalage : l'app la convertit en heure locale. */
+    public static OffsetDateTime utc(LocalDateTime value) {
+        return value == null ? null : value.atOffset(ZoneOffset.UTC);
     }
 
     /**

@@ -177,6 +177,20 @@ class BidAmendmentEligibilityTest {
     }
 
     @Test
+    void blockingReason_ignoringNothingToAdd_letsCapacityAnswer() {
+        // Kilos demandés au-delà des kilos libres : la capacité répond (409), pas « rien à ajouter ».
+        announcement.setAvailableKg(BigDecimal.ZERO);
+
+        assertThat(eligibility.blockingReason(bid, announcement, traveler, SENDER, true)).isEmpty();
+        // Les autres refus restent : fenêtre fermée, mauvais appelant.
+        assertThat(eligibility.blockingReason(bid, announcement, traveler, UUID.randomUUID(), true))
+                .contains("amendment-not-eligible");
+        when(window.deadline(bid, announcement)).thenReturn(Optional.empty());
+        assertThat(eligibility.blockingReason(bid, announcement, traveler, SENDER, true))
+                .contains("amendment-not-eligible");
+    }
+
+    @Test
     void blockingReason_noFreeKgButGrid_isAllowed() {
         announcement.setAvailableKg(BigDecimal.ZERO);
         when(gridItems.existsByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(true);

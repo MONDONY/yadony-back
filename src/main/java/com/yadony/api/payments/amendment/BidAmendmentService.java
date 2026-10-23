@@ -131,7 +131,7 @@ public class BidAmendmentService {
         AnnouncementEntity announcement = announcements.findById(bid.getAnnouncementId())
                 .orElseThrow(BidAmendmentService::announcementNotFound);
         UserEntity traveler = traveler(announcement);
-        requireEligible(bid, announcement, traveler, sender);
+        requireEligible(bid, announcement, traveler, sender, null);
         List<String> methods = availableRails(bid, announcement, traveler).stream().map(Enum::name).toList();
         if (methods.isEmpty()) {
             throw BidAmendmentEligibility.exceptionFor("amendment-rail-unavailable");
@@ -151,7 +151,7 @@ public class BidAmendmentService {
                         : priceGrid.displayPrice(announcement.getPricePerKg(), travelerId),
                 gridItems,
                 methods,
-                window.deadline(bid, announcement).orElse(null),
+                BidAmendmentViews.utc(window.deadline(bid, announcement).orElse(null)),
                 minNet(currency),
                 maxNet(currency));
     }
@@ -166,8 +166,9 @@ public class BidAmendmentService {
         BidEntity bid = bid(bidId);
         AnnouncementEntity announcement = announcements.findById(bid.getAnnouncementId())
                 .orElseThrow(BidAmendmentService::announcementNotFound);
-        requireEligible(bid, announcement, traveler(announcement), sender);
-        BidAmendmentQuote q = price(bid, announcement, normalizeKg(request.addedKg()), request.items());
+        BigDecimal addedKg = normalizeKg(request.addedKg());
+        requireEligible(bid, announcement, traveler(announcement), sender, addedKg);
+        BidAmendmentQuote q = price(bid, announcement, addedKg, request.items());
         return new AmendmentQuoteResponse(q.gross(), currency(bid).name());
     }
 
@@ -186,7 +187,8 @@ public class BidAmendmentService {
         BidEntity bid = bid(bidId);
         AnnouncementEntity announcement = lockAnnouncement(bid).orElseThrow(BidAmendmentService::announcementNotFound);
         UserEntity traveler = traveler(announcement);
-        requireEligible(bid, announcement, traveler, sender);
+        BigDecimal addedKg = normalizeKg(request.addedKg());
+        requireEligible(bid, announcement, traveler, sender, addedKg);
 
         PaymentMethod method = request.paymentMethod();
         BidAmendmentRailHandler handler = method == null
@@ -195,7 +197,6 @@ public class BidAmendmentService {
         if (handler == null) {
             throw BidAmendmentEligibility.exceptionFor("amendment-rail-unavailable");
         }
-        BigDecimal addedKg = normalizeKg(request.addedKg());
         BidAmendmentQuote q = price(bid, announcement, addedKg, request.items());
         LocalDateTime expiresAt = window.deadline(bid, announcement)
                 .orElseThrow(() -> BidAmendmentEligibility.exceptionFor("amendment-not-eligible"));
@@ -423,9 +424,15 @@ public class BidAmendmentService {
         }
     }
 
+    /**
+     * Refus d'éligibilité, s'il y en a un. Quand {@code addedKg} dépasse les kilos libres, la règle « rien à
+     * ajouter » est ignorée : la capacité ({@link #price}) répond alors 409 {@code amendment-capacity-unavailable},
+     * même sur un trajet sans grille dont le dernier kilo vient d'être pris.
+     */
     private void requireEligible(BidEntity bid, AnnouncementEntity announcement, UserEntity traveler,
-                                 UserEntity sender) {
-        eligibility.blockingReason(bid, announcement, traveler, sender.getId()).ifPresent(code -> {
+                                 UserEntity sender, BigDecimal addedKg) {
+        boolean exceedsCapacity = addedKg != null && !BidAmendmentCapacity.isAvailable(announcement, addedKg);
+        eligibility.blockingReason(bid, announcement, traveler, sender.getId(), exceedsCapacity).ifPresent(code -> {
             throw BidAmendmentEligibility.exceptionFor(code);
         });
     }

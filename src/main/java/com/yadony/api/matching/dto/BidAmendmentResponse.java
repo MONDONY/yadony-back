@@ -1,13 +1,14 @@
 package com.yadony.api.matching.dto;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
 /**
  * Modification d'un colis accepté (kilos ou articles de grille ajoutés par l'expéditeur), servie par les
- * routes {@code /bids/{bidId}/amendments}. Montants dans la devise du colis, dates en UTC.
+ * routes {@code /bids/{bidId}/amendments}. Montants dans la devise du colis, dates en UTC avec leur décalage
+ * ({@code OffsetDateTime}, comme {@link BidSupplementResponse}).
  *
  * <p>SÉCURITÉ (règle métier) : l'expéditeur ne reçoit que le BRUT. {@code netAmount},
  * {@code commissionAmount}, {@code commissionStatus} et le net de chaque article sont nuls pour lui : avec
@@ -36,8 +37,8 @@ public record BidAmendmentResponse(
         BigDecimal grossAmount,
         BigDecimal netAmount,
         BigDecimal commissionAmount,
-        LocalDateTime expiresAt,
-        LocalDateTime paymentExpiresAt,
+        OffsetDateTime expiresAt,
+        OffsetDateTime paymentExpiresAt,
         String closedReason,
         boolean blocksHandover,
         String commissionStatus,

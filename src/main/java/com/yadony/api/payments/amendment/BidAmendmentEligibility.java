@@ -76,6 +76,18 @@ public class BidAmendmentEligibility {
      */
     public Optional<String> blockingReason(BidEntity bid, AnnouncementEntity announcement, UserEntity traveler,
                                            UUID callerId) {
+        return blockingReason(bid, announcement, traveler, callerId, false);
+    }
+
+    /**
+     * {@link #blockingReason(BidEntity, AnnouncementEntity, UserEntity, UUID)}, sans la règle « rien à ajouter »
+     * quand {@code ignoreNothingToAdd} est vrai. La création et le devis s'en servent quand les kilos demandés
+     * dépassent les kilos libres : l'expéditeur apprend alors que la capacité manque (409
+     * {@code amendment-capacity-unavailable}), et non que son colis n'est pas modifiable. C'est le cas du
+     * perdant d'une course aux derniers kilos sur un trajet sans grille.
+     */
+    public Optional<String> blockingReason(BidEntity bid, AnnouncementEntity announcement, UserEntity traveler,
+                                           UUID callerId, boolean ignoreNothingToAdd) {
         if (!properties.isEnabled()) {
             return Optional.of("amendment-disabled");
         }
@@ -94,7 +106,8 @@ public class BidAmendmentEligibility {
         if (amendments.countByBidIdAndAcceptedAtNotNull(bid.getId()) >= properties.getMaxAcceptedPerBid()) {
             return Optional.of("amendment-limit-reached");
         }
-        if (window.deadline(bid, announcement).isEmpty() || !hasSomethingToAdd(announcement)) {
+        if (window.deadline(bid, announcement).isEmpty()
+                || (!ignoreNothingToAdd && !hasSomethingToAdd(announcement))) {
             return Optional.of("amendment-not-eligible");
         }
         if (offerableRails(bid, announcement, traveler).isEmpty()) {
