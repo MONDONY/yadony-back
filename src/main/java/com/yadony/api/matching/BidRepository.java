@@ -739,36 +739,6 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
             @Param("to") java.time.LocalDateTime to,
             @Param("excludedStatuses") java.util.Collection<BidStatus> excludedStatuses);
 
-    /**
-     * Returns past completed bookings for a sender, with traveler info and how many trips
-     * that sender has done with each traveler. Used by the rebooking feature.
-     */
-    @Query(value = """
-        SELECT
-            b.id                                               AS bid_id,
-            a.traveler_id                                      AS traveler_id,
-            u.first_name || ' ' || u.last_name                AS traveler_name,
-            CASE WHEN u.is_pro_account THEN 'PRO' ELSE NULL END AS traveler_badge,
-            a.departure_city                                   AS departure_city,
-            a.arrival_city                                     AS arrival_city,
-            a.departure_date                                   AS last_trip_date,
-            COUNT(b2.id) OVER (PARTITION BY a2.traveler_id)    AS completed_trips
-        FROM bids b
-        JOIN announcements a  ON b.announcement_id = a.id AND a.deleted_at IS NULL
-        JOIN users u          ON a.traveler_id = u.id
-        JOIN bids b2          ON b2.sender_id = b.sender_id
-                             AND b2.status = 'COMPLETED'
-                             AND b2.deleted_at IS NULL
-        JOIN announcements a2 ON b2.announcement_id = a2.id
-                             AND a2.traveler_id = a.traveler_id
-                             AND a2.deleted_at IS NULL
-        WHERE b.sender_id = :senderId
-          AND b.status = 'COMPLETED'
-          AND b.deleted_at IS NULL
-        ORDER BY a.departure_date DESC
-        """, nativeQuery = true)
-    List<Object[]> findPastBookingsBySender(@Param("senderId") UUID senderId);
-
     List<BidEntity> findByCommissionStatusAndUpdatedAtBefore(
             CommissionStatus commissionStatus, LocalDateTime before);
 
