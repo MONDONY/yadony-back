@@ -1,5 +1,6 @@
 package com.yadony.api.admin.userview;
 
+import com.yadony.api.admin.AdminBidAmounts;
 import com.yadony.api.admin.dto.AdminAnnouncementListItemResponse;
 import com.yadony.api.admin.userview.dto.AdminUserOverviewResponse.MoneyAmount;
 import com.yadony.api.admin.userview.dto.AdminUserParcelRow;
@@ -7,12 +8,14 @@ import com.yadony.api.common.MatchingTextUtil;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
-import com.yadony.api.matching.BidGridItemEntity;
 import com.yadony.api.matching.BidGridItemRepository;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,7 +25,6 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -53,13 +55,13 @@ public class AdminUserListingService {
     public Page<AdminUserParcelRow> parcels(UUID userId, int page, int size) {
         Page<BidEntity> bids = bidRepository.findAdminByParty(userId, pageable(page, size));
         List<AdminUserParcelRow> rows = toRows(bids.getContent(), userId);
-        return new org.springframework.data.domain.PageImpl<>(rows, bids.getPageable(), bids.getTotalElements());
+        return new PageImpl<>(rows, bids.getPageable(), bids.getTotalElements());
     }
 
     public Page<AdminAnnouncementListItemResponse> trips(UUID userId, int page, int size) {
         return announcementRepository.findByTravelerId(userId, pageable(page, size,
-                        org.springframework.data.domain.Sort.by(
-                                org.springframework.data.domain.Sort.Direction.DESC, "createdAt")))
+                        Sort.by(
+                                Sort.Direction.DESC, "createdAt")))
                 .map(a -> AdminAnnouncementListItemResponse.of(a, null, null));
     }
 
@@ -89,34 +91,24 @@ public class AdminUserListingService {
         return t == null ? null : t.toInstant(ZoneOffset.UTC);
     }
 
-    /** Net voyageur du colis (accord négocié, sinon barème), dans la devise du colis ; null si inconnu. */
+    /** Net voyageur du colis dans la plus petite unité de sa devise (0 décimale pour le CFA) ; null si inconnu. */
     private static MoneyAmount amountOf(BidEntity b, AnnouncementEntity a, BigDecimal gridNet) {
-        BigDecimal net = b.getNegotiatedNetEur();
-        if (net == null) {
-            BigDecimal kg = (b.getWeightKg() != null && a != null && a.getPricePerKg() != null)
-                    ? b.getWeightKg().multiply(a.getPricePerKg()) : BigDecimal.ZERO;
-            BigDecimal total = kg.add(gridNet != null ? gridNet : BigDecimal.ZERO);
-            net = total.signum() > 0 ? total : null;
-        }
+        BigDecimal net = AdminBidAmounts.netOf(b, a, gridNet);
         if (net == null) return null;
         String currency = b.getCurrency() != null ? b.getCurrency().toUpperCase(Locale.ROOT) : null;
-        return new MoneyAmount(currency, net.movePointRight(2).setScale(0, RoundingMode.HALF_UP).longValue());
+        int minor = SupportedCurrency.fromCodeOrDefault(currency).minorUnit();
+        return new MoneyAmount(currency, net.setScale(minor, RoundingMode.HALF_UP).movePointRight(minor).longValue());
     }
 
     private Map<UUID, BigDecimal> gridNetByBid(Collection<UUID> bidIds) {
-        Map<UUID, BigDecimal> totals = new HashMap<>();
-        for (BidGridItemEntity item : gridItemRepository.findByBidIdIn(bidIds)) {
-            BigDecimal line = item.getUnitPriceNetSnapshot().multiply(BigDecimal.valueOf(item.getQuantity()));
-            totals.merge(item.getBidId(), line, BigDecimal::add);
-        }
-        return totals;
+        return AdminBidAmounts.gridNetByBid(gridItemRepository.findByBidIdIn(bidIds));
     }
 
     private static Pageable pageable(int page, int size) {
-        return pageable(page, size, org.springframework.data.domain.Sort.unsorted());
+        return pageable(page, size, Sort.unsorted());
     }
 
-    private static Pageable pageable(int page, int size, org.springframework.data.domain.Sort sort) {
+    private static Pageable pageable(int page, int size, Sort sort) {
         int safeSize = size <= 0 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_PAGE_SIZE);
         return PageRequest.of(Math.max(page, 0), safeSize, sort);
     }

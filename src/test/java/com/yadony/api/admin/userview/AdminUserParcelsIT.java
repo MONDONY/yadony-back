@@ -56,6 +56,7 @@ class AdminUserParcelsIT {
     @Autowired AnnouncementRepository announcementRepository;
     @Autowired BidRepository bidRepository;
     @Autowired JdbcTemplate jdbc;
+    @Autowired com.yadony.api.matching.BidGridItemRepository gridItemRepository;
     @Autowired AdminUserOverviewService overviewService;
 
     private UserEntity traveler;
@@ -316,4 +317,71 @@ class AdminUserParcelsIT {
                 .andExpect(jsonPath("$.code").value("user-not-found"));
     }
 
+
+    @Test
+    void overview_inProgress_completedTripInsideWindowAppears() throws Exception {
+        AnnouncementEntity inside = announcement(traveler, AnnouncementStatus.COMPLETED,
+                NOW.minus(Duration.ofHours(71).plusMinutes(59)));
+        announcement(traveler, AnnouncementStatus.COMPLETED, NOW.minus(Duration.ofHours(72).plusMinutes(1)));
+
+        overview(traveler.getId())
+                .andExpect(jsonPath("$.inProgress.length()").value(1))
+                .andExpect(jsonPath("$.inProgress[0].kind").value("TRIP"))
+                .andExpect(jsonPath("$.inProgress[0].id").value(inside.getId().toString()))
+                .andExpect(jsonPath("$.kpis.activeTrips").value(0));
+    }
+
+    @Test
+    void overview_inProgress_completedTripOutsideWindowIsExcluded() throws Exception {
+        announcement(traveler, AnnouncementStatus.COMPLETED, NOW.minus(Duration.ofDays(9)));
+
+        overview(traveler.getId()).andExpect(jsonPath("$.inProgress").isEmpty());
+    }
+
+    @Test
+    void parcels_amount_negotiatedNetAndPerKgPlusGrid() throws Exception {
+        AnnouncementEntity trip = announcement(traveler, AnnouncementStatus.ACTIVE, null);
+        BidEntity negotiated = bid(trip, sender, BidStatus.PENDING, null, null);
+        jdbc.update("update bids set negotiated_net_eur = ? where id = ?", new BigDecimal("12.34"), negotiated.getId());
+        BidEntity perKg = bid(trip, sender, BidStatus.ACCEPTED, null, null); // 3 kg x 8.00 = 24.00
+        com.yadony.api.matching.BidGridItemEntity item = new com.yadony.api.matching.BidGridItemEntity();
+        item.setBidId(perKg.getId());
+        item.setAnnouncementGridItemId(UUID.randomUUID());
+        item.setLabelSnapshot("Sac");
+        item.setUnitPriceNetSnapshot(new BigDecimal("1.50"));
+        item.setQuantity(2);
+        gridItemRepository.save(item);
+
+        mockMvc.perform(get("/admin/users/{id}/parcels", traveler.getId())
+                        .with(authentication(fullAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[?(@.id=='" + negotiated.getId() + "')].amount.amountCents").value(1234))
+                .andExpect(jsonPath("$.content[?(@.id=='" + negotiated.getId() + "')].amount.currency").value("EUR"))
+                // 24.00 + 2 x 1.50 = 27.00 -> 2700
+                .andExpect(jsonPath("$.content[?(@.id=='" + perKg.getId() + "')].amount.amountCents").value(2700));
+    }
+
+    @Test
+    void parcels_amount_xofHasNoMinorUnit() throws Exception {
+        AnnouncementEntity trip = announcement(traveler, AnnouncementStatus.ACTIVE, null);
+        BidEntity b = bid(trip, sender, BidStatus.PENDING, null, null);
+        jdbc.update("update bids set currency = 'XOF', negotiated_net_eur = ? where id = ?",
+                new BigDecimal("5000"), b.getId());
+
+        mockMvc.perform(get("/admin/users/{id}/parcels", traveler.getId())
+                        .with(authentication(fullAuth())))
+                .andExpect(jsonPath("$.content[0].amount.currency").value("XOF"))
+                .andExpect(jsonPath("$.content[0].amount.amountCents").value(5000));
+    }
+
+    @Test
+    void trips_andOverview_unknownUser_return404() throws Exception {
+        UUID unknown = UUID.randomUUID();
+        mockMvc.perform(get("/admin/users/{id}/trips", unknown).with(authentication(fullAuth())))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("user-not-found"));
+        mockMvc.perform(get("/admin/users/{id}/overview", unknown).with(authentication(fullAuth())))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("user-not-found"));
+    }
 }
