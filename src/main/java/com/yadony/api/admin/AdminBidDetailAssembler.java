@@ -10,6 +10,7 @@ import com.yadony.api.cancellation.CancellationEntity;
 import com.yadony.api.cancellation.CancellationRepository;
 import com.yadony.api.common.AuditLogEntity;
 import com.yadony.api.common.AuditLogRepository;
+import com.yadony.api.common.BaseEntity;
 import com.yadony.api.common.MatchingTextUtil;
 import com.yadony.api.common.StorageService;
 import com.yadony.api.disputes.DisputeEntity;
@@ -182,8 +183,8 @@ public class AdminBidDetailAssembler {
     /** Litiges et annulations, le plus récent d'abord. */
     private static AdminBidDetailResponse.Incidents incidents(List<DisputeEntity> disputes,
                                                               List<CancellationEntity> cancellations) {
-        Comparator<com.yadony.api.common.BaseEntity> newestFirst = Comparator.comparing(
-                com.yadony.api.common.BaseEntity::getCreatedAt, Comparator.nullsFirst(Comparator.naturalOrder())).reversed();
+        Comparator<BaseEntity> newestFirst = Comparator.comparing(
+                BaseEntity::getCreatedAt, Comparator.nullsFirst(Comparator.naturalOrder())).reversed();
         return new AdminBidDetailResponse.Incidents(
                 disputes.stream().sorted(newestFirst)
                         .map(d -> new AdminBidDetailResponse.Dispute(d.getId(), d.getType(), d.getStatus(),
@@ -432,9 +433,9 @@ public class AdminBidDetailAssembler {
         return list.stream().filter(Objects::nonNull).collect(Collectors.toSet());
     }
 
-    private static <T extends com.yadony.api.common.BaseEntity> T latest(List<T> list) {
+    private static <T extends BaseEntity> T latest(List<T> list) {
         return list.stream()
-                .max(Comparator.comparing(com.yadony.api.common.BaseEntity::getCreatedAt,
+                .max(Comparator.comparing(BaseEntity::getCreatedAt,
                         Comparator.nullsFirst(Comparator.naturalOrder())))
                 .orElse(null);
     }

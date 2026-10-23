@@ -225,15 +225,21 @@ public final class AdminBidSql {
             + " WHERE " + HAY_TOKENS
             + " GROUP BY x.hay ORDER BY COUNT(*) DESC, x.hay LIMIT " + SUGGEST_LIMIT;
 
-    /** Trajets groupés par (départ, arrivée) ; chaque jeton doit se trouver dans l'une des deux villes. */
-    public static final String SUGGEST_TRIPS = "SELECT x.dep AS \"departureCity\", x.arr AS \"arrivalCity\","
+    /**
+     * Trajets groupés par couple (départ, arrivée) REPLIÉ (« Paris » et « paris » forment un seul trajet) ;
+     * les villes montrées sont les plus petites des valeurs d'origine. Chaque jeton doit se trouver
+     * dans l'une des deux villes.
+     */
+    public static final String SUGGEST_TRIPS = "SELECT MIN(x.dep) AS \"departureCity\", MIN(x.arr) AS \"arrivalCity\","
             + " COUNT(*) AS \"total\" FROM ("
             + "SELECT a.departure_city AS dep, a.arrival_city AS arr, "
+            + FOLD_OPEN + "a.departure_city" + FOLD_CLOSE + " AS fdep, "
+            + FOLD_OPEN + "a.arrival_city" + FOLD_CLOSE + " AS farr, "
             + FOLD_OPEN + "CONCAT_WS(' ', a.departure_city, a.arrival_city)" + FOLD_CLOSE + " AS hay"
             + " FROM bids b JOIN announcements a ON a.id = b.announcement_id AND a.deleted_at IS NULL"
             + " WHERE " + SUGGEST_BID_FILTER + ") x"
             + " WHERE " + HAY_TOKENS
-            + " GROUP BY x.dep, x.arr ORDER BY COUNT(*) DESC, x.dep, x.arr LIMIT " + SUGGEST_LIMIT;
+            + " GROUP BY x.fdep, x.farr ORDER BY COUNT(*) DESC, x.fdep, x.farr LIMIT " + SUGGEST_LIMIT;
 
     /** Colis dont le numéro de suivi correspond, les plus récents d'abord. */
     public static final String SUGGEST_PARCELS = "SELECT x.bid_id AS \"bidIdText\", x.tracking AS \"trackingNumber\","

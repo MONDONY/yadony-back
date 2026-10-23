@@ -40,7 +40,9 @@ public record AdminBidQuery(
 
     /**
      * Jeton qui ne se trouve dans aucun texte : la recherche SQL compare à des champs passés en
-     * minuscules, un jeton en majuscules n'y est jamais. Il remplace une saisie faite seulement de
+     * minuscules, un jeton en majuscules n'y est jamais. Cette garantie repose sur le {@code LOWER()} SQL
+     * appliqué aux colonnes (voir {@code AdminBidSql.FOLD_OPEN}) : si un côté cessait d'être mis en
+     * minuscules, le sentinelle pourrait de nouveau correspondre. Il remplace une saisie faite seulement de
      * {@code %} ou {@code _}, qui sinon perdrait tous ses jetons et ramènerait tous les colis.
      */
     public static final String NO_MATCH_TOKEN = "NOMATCH";

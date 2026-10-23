@@ -81,12 +81,6 @@ class AdminBidsSuggestIT {
         trip = announcement();
     }
 
-    private UserEntity saveUser(String firstName, String lastName, java.util.function.Consumer<UserEntity> c) {
-        UserEntity u = saveUser(firstName, lastName);
-        c.accept(u);
-        return userRepository.save(u);
-    }
-
     private AnnouncementEntity tripOf(UserEntity who, String from, String to) {
         AnnouncementEntity a = announcement();
         a.setTravelerId(who.getId());
@@ -105,25 +99,22 @@ class AdminBidsSuggestIT {
 
     // ---------------------------------------------------------------- helpers
 
-    private static UsernamePasswordAuthenticationToken as(AdminRole role) {
-        List<GrantedAuthority> authorities = new ArrayList<>();
-        authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
-        for (AdminPermission p : role.permissions()) {
-            authorities.add(new SimpleGrantedAuthority(p.name()));
-        }
-        return new UsernamePasswordAuthenticationToken(
-                new AdminPrincipal(UUID.randomUUID(), "a@yadony.test", role, false, "uid-" + role), null, authorities);
-    }
-
-    private static UsernamePasswordAuthenticationToken authWith(AdminPermission... permissions) {
+    private static UsernamePasswordAuthenticationToken principal(AdminRole role, Iterable<AdminPermission> permissions) {
         List<GrantedAuthority> authorities = new ArrayList<>();
         authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
         for (AdminPermission p : permissions) {
             authorities.add(new SimpleGrantedAuthority(p.name()));
         }
         return new UsernamePasswordAuthenticationToken(
-                new AdminPrincipal(UUID.randomUUID(), "s@yadony.test", AdminRole.SUPPORT, false, "uid-s"),
-                null, authorities);
+                new AdminPrincipal(UUID.randomUUID(), "a@yadony.test", role, false, "uid-" + role), null, authorities);
+    }
+
+    private static UsernamePasswordAuthenticationToken as(AdminRole role) {
+        return principal(role, role.permissions());
+    }
+
+    private static UsernamePasswordAuthenticationToken authWith(AdminPermission... permissions) {
+        return principal(AdminRole.SUPPORT, List.of(permissions));
     }
 
     private UserEntity saveUser(String firstName, String lastName) {
@@ -332,16 +323,60 @@ class AdminBidsSuggestIT {
 
     @Test
     void suggest_doesNotLeakPhones() throws Exception {
-        bid(BidStatus.PENDING, b -> {
-            b.setRecipientName("Rec" + token);
-            b.setRecipientPhone("+221771234567");
+        BidEntity b = bid(BidStatus.PENDING, x -> {
+            x.setRecipientName("Rec" + token);
+            x.setRecipientPhone("+221771234567");
+            x.setContentCategory("Vêtements");
         });
-        for (String q : new String[] {token, "+221771234567" }) {
-            String body = mockMvc.perform(get("/admin/bids/suggest").with(authentication(as(AdminRole.ADMIN))).param("q", q))
-                    .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
-            assertThat(body).doesNotContain("771234567").doesNotContainIgnoringCase("phone");
+        Set<String> personKeys = Set.of("id", "name", "count");
+        Set<String> recipientKeys = Set.of("name", "count");
+        Set<String> tripKeys = Set.of("label", "departureCity", "arrivalCity", "count");
+        Set<String> parcelKeys = Set.of("bidId", "trackingNumber", "status", "content");
+        for (String q : new String[] {token, "+221771234567", b.getTrackingNumber()}) {
+            JsonNode r = suggest(q);
+            assertThat(keysOf(r.get("senders"))).isSubsetOf(personKeys);
+            assertThat(keysOf(r.get("travelers"))).isSubsetOf(personKeys);
+            assertThat(keysOf(r.get("recipients"))).isSubsetOf(recipientKeys);
+            assertThat(keysOf(r.get("trips"))).isSubsetOf(tripKeys);
+            assertThat(keysOf(r.get("parcels"))).isSubsetOf(parcelKeys);
+            assertThat(r.toString()).doesNotContain("771234567");
         }
+        assertThat(keysOf(suggest(token).get("recipients"))).isNotEmpty();
         assertThat(suggest("+221771234567").get("recipients")).isEmpty();
+    }
+
+    private static Set<String> keysOf(JsonNode group) {
+        Set<String> keys = new HashSet<>();
+        group.forEach(item -> item.fieldNames().forEachRemaining(keys::add));
+        return keys;
+    }
+
+    @Test
+    void suggest_tripsGroupedOnFoldedCities() throws Exception {
+        String arrival = "Kaolack" + token;
+        AnnouncementEntity upper = tripOf(traveler, "Paris", arrival);
+        AnnouncementEntity lower = tripOf(traveler, "paris", arrival);
+        bidOf(upper, sender, BidStatus.PENDING, b -> { });
+        bidOf(upper, sender, BidStatus.ACCEPTED, b -> { });
+        bidOf(lower, sender, BidStatus.PENDING, b -> { });
+        JsonNode trips = suggest(arrival).get("trips");
+        assertThat(trips).hasSize(1);
+        assertThat(trips.get(0).get("count").asLong()).isEqualTo(3);
+        assertThat(trips.get(0).get("departureCity").asText()).isEqualToIgnoringCase("Paris");
+        assertThat(trips.get(0).get("arrivalCity").asText()).isEqualTo(arrival);
+    }
+
+    @Test
+    void suggest_limitsToFive_travelersTripsAndParcels() throws Exception {
+        for (int i = 0; i < 7; i++) {
+            final String tracking = "YD" + token.substring(0, 8) + i; // colonne limitée à 12 caractères
+            UserEntity t = saveUser("Voy" + i, "Lt" + token);
+            AnnouncementEntity a = tripOf(t, "Dep" + token, "Arr" + token + i);
+            bidOf(a, sender, BidStatus.PENDING, b -> b.setTrackingNumber(tracking));
+        }
+        assertThat(suggest("Lt" + token).get("travelers")).hasSize(5);
+        assertThat(suggest("Dep" + token).get("trips")).hasSize(5);
+        assertThat(suggest("YD" + token.substring(0, 8)).get("parcels")).hasSize(5);
     }
 
     private JsonNode json(MockHttpServletRequestBuilder req) throws Exception {
