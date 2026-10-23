@@ -11,7 +11,8 @@ package com.yadony.api.admin;
  * (fil de négociation), {@code r} (demande d'envoi), {@code s} (expéditeur effectif), {@code tr}
  * (voyageur effectif).
  *
- * <p>Paramètres nommés : {@code :now} (UTC), {@code :view}, {@code :alert}, {@code :abandonedBefore}. Les
+ * <p>Paramètres nommés : {@code :now} (UTC), {@code :view}, {@code :alert}, {@code :abandonedBefore}, et pour
+ * la recherche {@code :t1} à {@code :t4}, {@code :amountCents}, {@code :idTerm}, {@code :refTerm}. Les
  * paramètres facultatifs passent par {@code CAST(:p AS …)}.
  */
 public final class AdminPaymentSql {
@@ -111,6 +112,50 @@ public final class AdminPaymentSql {
             + " CASE WHEN :view = 'ATTENTION' THEN p.created_at END ASC,"
             + " CASE WHEN :view = 'ATTENTION' THEN p.id END ASC,"
             + " p.created_at DESC, p.id DESC";
+
+    /**
+     * Texte replié ({@link AdminBidSql#FOLD_OPEN}, même règle que {@link AdminSearchTerms#fold}) où cherchent
+     * les jetons : n° de suivi, prénom, nom et pseudo de l'expéditeur et du voyageur effectifs, villes de
+     * départ et d'arrivée, séparés par une espace (un jeton ne chevauche pas deux champs). Aucun téléphone
+     * n'y entre : celui du mobile money est chiffré et seulement affiché masqué.
+     */
+    private static final String HAYSTACK = AdminBidSql.FOLD_OPEN + "CONCAT_WS(' ', " + EFF_TRACKING + ","
+            + " s.first_name, s.last_name, s.username, tr.first_name, tr.last_name, tr.username, "
+            + EFF_DEPARTURE + ", " + EFF_ARRIVAL + ")" + AdminBidSql.FOLD_CLOSE;
+
+    private static String token(String param) {
+        return "(CAST(:" + param + " AS VARCHAR) IS NULL OR " + HAYSTACK
+                + " LIKE '%' || CAST(:" + param + " AS VARCHAR) || '%')";
+    }
+
+    private static final String ID_TERM = "LOWER(CAST(:idTerm AS VARCHAR))";
+
+    /**
+     * Recherche libre, en OU : chaque jeton non nul ({@code :t1} à {@code :t4}, déjà repliés, sans {@code %}
+     * ni {@code _}) se trouve dans {@link #HAYSTACK} ; ou {@code :amountCents} est le montant du paiement ;
+     * ou {@code :idTerm} est l'identifiant exact du paiement, de son colis (direct ou lié au fil), de son fil
+     * de négociation, du trajet du colis, d'une de ses opérations pawaPay ou d'un de ses litiges bancaires
+     * (par paiement, ou par colis quand le litige n'a pas de paiement) ; ou {@code :refTerm} est sa
+     * référence Stripe ({@code pi_…}, {@code ch_…}) ou l'identifiant fournisseur d'une de ses opérations
+     * pawaPay. Les UUID se comparent en texte minuscule (PostgreSQL et H2).
+     */
+    public static final String SEARCH_PREDICATE = "(("
+            + token("t1") + " AND " + token("t2") + " AND " + token("t3") + " AND " + token("t4") + ")"
+            + " OR (CAST(:amountCents AS BIGINT) IS NOT NULL AND ROUND(p.amount * 100) = CAST(:amountCents AS BIGINT))"
+            + " OR (CAST(:idTerm AS VARCHAR) IS NOT NULL AND ("
+            + "     CAST(p.id AS VARCHAR) = " + ID_TERM
+            + "     OR CAST(" + EFF_BID_ID + " AS VARCHAR) = " + ID_TERM
+            + "     OR CAST(p.negotiation_thread_id AS VARCHAR) = " + ID_TERM
+            + "     OR CAST(" + EFF_ANNOUNCEMENT_ID + " AS VARCHAR) = " + ID_TERM
+            + "     OR EXISTS (SELECT 1 FROM pawapay_operations o WHERE o.payment_id = p.id"
+            + "                AND CAST(o.id AS VARCHAR) = " + ID_TERM + ")"
+            + "     OR EXISTS (SELECT 1 FROM chargebacks c WHERE c.deleted_at IS NULL"
+            + "                AND (c.payment_id = p.id OR (c.payment_id IS NULL AND c.bid_id = " + EFF_BID_ID + "))"
+            + "                AND CAST(c.id AS VARCHAR) = " + ID_TERM + ")))"
+            + " OR p.stripe_payment_intent_id = CAST(:refTerm AS VARCHAR)"
+            + " OR p.stripe_charge_id = CAST(:refTerm AS VARCHAR)"
+            + " OR EXISTS (SELECT 1 FROM pawapay_operations o WHERE o.payment_id = p.id"
+            + "            AND o.provider_transaction_id = CAST(:refTerm AS VARCHAR)))";
 
     private static String sum(String predicate, String alias) {
         return "COALESCE(SUM(CASE WHEN " + predicate + " THEN 1 ELSE 0 END), 0) AS \"" + alias + "\"";

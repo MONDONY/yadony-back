@@ -26,9 +26,9 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
@@ -303,48 +303,22 @@ public class AdminPaymentInsights {
     }
 
     /**
-     * Identifiant → paiement, colis (direct ou lié à la négociation) ou fil ; {@code pi_}/{@code ch_}
-     * → référence Stripe ; {@code DON-} → numéro de suivi du colis ; sinon nom, prénom ou pseudo de
-     * l'expéditeur ou du voyageur.
+     * Recherche libre ({@link AdminPaymentSql#SEARCH_PREDICATE}) : jetons repliés (quatre au plus, le
+     * {@code @} d'un pseudo retiré ; une saisie sans jeton utilisable ne trouve rien, voir
+     * {@link AdminBidQuery#NO_MATCH_TOKEN}), montant, identifiant UUID exact, référence exacte. Tous les
+     * paramètres sont liés, à null s'ils ne s'appliquent pas : le SQL les type par {@code CAST}.
      */
     private static void appendSearch(StringBuilder sql, MapSqlParameterSource params, String query) {
-        UUID uuid = parseUuid(query);
-        if (uuid != null) {
-            sql.append(" ").append("""
-                    AND (p.id = :qId OR p.bid_id = :qId OR p.negotiation_thread_id = :qId
-                          OR EXISTS (SELECT 1 FROM bids lb WHERE lb.id = :qId AND p.negotiation_thread_id IS NOT NULL
-                                     AND lb.linked_negotiation_thread_id = p.negotiation_thread_id))""");
-            params.addValue("qId", uuid);
-            return;
+        sql.append(" AND ").append(AdminPaymentSql.SEARCH_PREDICATE);
+        List<String> tokens = AdminBidQuery.tokensOf(query.replace("@", ""));
+        for (int i = 0; i < AdminBidQuery.MAX_TOKENS; i++) {
+            params.addValue("t" + (i + 1), i < tokens.size() ? tokens.get(i) : null);
         }
-        if (query.startsWith("pi_") || query.startsWith("ch_") || query.startsWith("mm_")) {
-            sql.append(" AND (p.stripe_payment_intent_id = :qRef OR p.stripe_charge_id = :qRef)");
-            params.addValue("qRef", query);
-            return;
-        }
-        if (query.regionMatches(true, 0, "DON-", 0, 4)) {
-            // Numéro de suivi : paiement direct du colis, ou fil de négociation qui l'a produit.
-            sql.append(" ").append("""
-                    AND EXISTS (SELECT 1 FROM bids tb WHERE UPPER(tb.tracking_number) LIKE :qTrack
-                                AND (tb.id = p.bid_id OR (p.negotiation_thread_id IS NOT NULL
-                                     AND tb.linked_negotiation_thread_id = p.negotiation_thread_id)))""");
-            params.addValue("qTrack", "%" + query.toUpperCase(Locale.ROOT).replace("%", "").replace("_", "") + "%");
-            return;
-        }
-        // % et _ retirés : la saisie est un nom, pas un motif LIKE.
-        String needle = query.toLowerCase(Locale.ROOT).replace("%", "").replace("_", "").replace("@", "").strip();
-        sql.append(" AND EXISTS (SELECT 1 FROM users u WHERE u.id IN (").append(PARTIES_OF_P).append("""
-                ) AND (LOWER(u.username) LIKE :qLike
-                       OR LOWER(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))) LIKE :qLike))""");
-        params.addValue("qLike", "%" + needle + "%");
-    }
-
-    private static UUID parseUuid(String value) {
-        try {
-            return value.length() == 36 ? UUID.fromString(value) : null;
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
+        OptionalLong amount = AdminSearchTerms.amountCents(query);
+        params.addValue("amountCents", amount.isPresent() ? amount.getAsLong() : null);
+        UUID id = AdminSearchTerms.uuid(query);
+        params.addValue("idTerm", id == null ? null : id.toString());
+        params.addValue("refTerm", query);
     }
 
     private List<PaymentEntity> load(List<UUID> orderedIds) {

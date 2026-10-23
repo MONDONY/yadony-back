@@ -10,8 +10,8 @@ import java.util.UUID;
  *
  * @param rail           {@code STRIPE} ou {@code PAWAPAY} (filtre « Méthode »)
  * @param held           seulement les versements retenus (séquestre + {@code payout_held_at})
- * @param query          recherche libre : identifiant (paiement, colis, négociation), référence
- *                       Stripe ({@code pi_…}, {@code ch_…}) ou nom / pseudo d'une des parties
+ * @param query          recherche libre, voir {@link AdminPaymentSql#SEARCH_PREDICATE} : jetons (suivi,
+ *                       parties, villes), montant, identifiant exact, référence Stripe ou pawaPay
  * @param hideAbandoned  masque les checkouts jamais terminés (PENDING depuis plus de 24 h)
  * @param view           vue rapide ({@link AdminPaymentView#ALL} par défaut)
  * @param alert          seulement les paiements portant cette alerte (prédicat brut : une alerte moins urgente reste filtrable)
