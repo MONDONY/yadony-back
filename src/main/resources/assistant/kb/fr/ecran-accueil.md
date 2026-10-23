@@ -12,4 +12,4 @@ routes:
   - path: /corridor-alerts
     label: Mes alertes
 ---
-Vous êtes sur l'onglet Rechercher. Choisissez « J'envoie un colis » pour voir les voyageurs disponibles, ou « Je voyage » pour voir les colis à transporter, sur la carte ou en liste. Touchez la barre de recherche pour choisir les villes et les filtres, le bouton « + » pour envoyer un colis ou publier un trajet, et le marque-page pour vos favoris. Si personne ne passe sur votre trajet, l'écran vous propose de créer une alerte.
+Onglet Rechercher : « J'envoie un colis » liste les voyageurs, « Je voyage » les colis à transporter. La carte est plein écran : touchez un prix pour voir le trajet, puis la carte-résumé pour ouvrir la fiche. « Liste » affiche les résultats, « Carte » revient. Le bouton de localisation active « Près de moi » (rayon de 5 à 200 km, modifiable ou retirable avec la puce « Rayon »). La barre de recherche règle villes et filtres, « + » publie, le marque-page ouvre vos favoris.
