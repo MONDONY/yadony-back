@@ -3,6 +3,8 @@ package com.yadony.api.admin;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.OptionalLong;
+import java.util.regex.Pattern;
 import java.util.UUID;
 
 /**
@@ -99,5 +101,26 @@ public final class AdminSearchTerms {
         }
         String suffix = digits.replaceFirst("^0+", "");
         return suffix.length() < MIN_PHONE_DIGITS ? null : suffix;
+    }
+
+    private static final Pattern AMOUNT = Pattern.compile("(\\d{1,13})(?:[.,](\\d{1,2}))?");
+    private static final Pattern AMOUNT_NOISE =
+            Pattern.compile("[\\s\\u00a0\\u202f\u20ac$]|cfa|xof|xaf|f", Pattern.CASE_INSENSITIVE);
+
+    /**
+     * Montant saisi en centimes : entier ou décimal (virgule ou point, deux décimales au plus), après
+     * retrait des espaces (insécables compris) et des symboles {@code € $ F CFA XOF XAF}. Tout le reste
+     * (lettres, signe, trois décimales) donne vide : la saisie n'est alors pas un montant.
+     */
+    public static OptionalLong amountCents(String input) {
+        if (input == null) {
+            return OptionalLong.empty();
+        }
+        var matcher = AMOUNT.matcher(AMOUNT_NOISE.matcher(input).replaceAll(""));
+        if (!matcher.matches()) {
+            return OptionalLong.empty();
+        }
+        String decimals = matcher.group(2) == null ? "00" : (matcher.group(2) + "0").substring(0, 2);
+        return OptionalLong.of(Long.parseLong(matcher.group(1)) * 100 + Long.parseLong(decimals));
     }
 }

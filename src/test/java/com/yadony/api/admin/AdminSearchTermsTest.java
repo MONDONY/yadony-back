@@ -103,4 +103,26 @@ class AdminSearchTermsTest {
         assertThat(AdminSearchTerms.phoneSuffix("0612345678 diallo")).isNull();
         assertThat(AdminSearchTerms.phoneSuffix("06%12345678")).isNull();
     }
+
+    @Test
+    void amountCents_accepteEntiersDecimauxEtSymboles() {
+        assertThat(AdminSearchTerms.amountCents("120")).hasValue(12000);
+        assertThat(AdminSearchTerms.amountCents("120,00")).hasValue(12000);
+        assertThat(AdminSearchTerms.amountCents("120.5")).hasValue(12050);
+        assertThat(AdminSearchTerms.amountCents("1 200,50 \u20ac")).hasValue(120050);
+        assertThat(AdminSearchTerms.amountCents("1\u00a0200,50")).hasValue(120050);
+        assertThat(AdminSearchTerms.amountCents("120 000 F")).hasValue(12000000);
+        assertThat(AdminSearchTerms.amountCents("50 CFA")).hasValue(5000);
+        assertThat(AdminSearchTerms.amountCents("50 xof")).hasValue(5000);
+    }
+
+    @Test
+    void amountCents_refuseLeResteSansDeviner() {
+        assertThat(AdminSearchTerms.amountCents("12,345")).isEmpty();
+        assertThat(AdminSearchTerms.amountCents("abc")).isEmpty();
+        assertThat(AdminSearchTerms.amountCents("")).isEmpty();
+        assertThat(AdminSearchTerms.amountCents(null)).isEmpty();
+        assertThat(AdminSearchTerms.amountCents("pi_3Q8")).isEmpty();
+        assertThat(AdminSearchTerms.amountCents("-5")).isEmpty();
+    }
 }
