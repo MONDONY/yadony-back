@@ -82,9 +82,10 @@ public class BidSupplementWindow {
 
     /**
      * Départ du trajet : heure réelle si elle est connue, sinon le lendemain de la date de départ
-     * dans le fuseau du trajet (même repli que {@code CancellationGuard.hasDeparted}).
+     * dans le fuseau du trajet (même repli que {@code CancellationGuard.hasDeparted}). Partagé avec la
+     * fenêtre d'une modification de colis ({@code BidAmendmentWindow}).
      */
-    private static Instant departure(AnnouncementEntity announcement) {
+    public static Instant departure(AnnouncementEntity announcement) {
         if (announcement == null) {
             return null;
         }

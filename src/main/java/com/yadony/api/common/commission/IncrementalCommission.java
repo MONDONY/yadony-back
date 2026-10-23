@@ -1,7 +1,6 @@
 package com.yadony.api.common.commission;
 
 import com.yadony.api.common.CommissionRateResolver;
-import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import org.springframework.stereotype.Component;
@@ -36,32 +35,18 @@ public class IncrementalCommission {
 
     private final CommissionGridService gridService;
     private final CommissionRateResolver rateResolver;
-    private final AnnouncementRepository announcements;
 
-    public IncrementalCommission(CommissionGridService gridService, CommissionRateResolver rateResolver,
-                                 AnnouncementRepository announcements) {
+    public IncrementalCommission(CommissionGridService gridService, CommissionRateResolver rateResolver) {
         this.gridService = gridService;
         this.rateResolver = rateResolver;
-        this.announcements = announcements;
     }
 
     /**
-     * Le voyageur est lu sur le trajet du colis. Quand l'appelant a déjà le trajet en main, utiliser
-     * {@link #compute(BidEntity, UUID, BigDecimal, BigDecimal)}.
-     *
-     * @param baseNet  net déjà dû sur le colis (principal et ajouts déjà payés).
-     * @param extraNet net ajouté, ramené à l'unité mineure de la devise du colis.
+     * @param travelerId voyageur du trajet du colis (taux spécial et bon de parrainage du couple).
+     * @param baseNet    net déjà dû sur le colis (principal et ajouts déjà payés).
+     * @param extraNet   net ajouté, ramené à l'unité mineure de la devise du colis.
      * @throws IllegalArgumentException si ce net est nul ou négatif à l'unité mineure.
      */
-    public Result compute(BidEntity bid, BigDecimal baseNet, BigDecimal extraNet) {
-        requirePositive(bid, extraNet);
-        UUID travelerId = announcements.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new IllegalStateException("Trajet introuvable pour le colis " + bid.getId()))
-                .getTravelerId();
-        return compute(bid, travelerId, baseNet, extraNet);
-    }
-
-    /** Même calcul, avec le voyageur déjà connu de l'appelant (pas de lecture du trajet). */
     public Result compute(BidEntity bid, UUID travelerId, BigDecimal baseNet, BigDecimal extraNet) {
         SupportedCurrency currency = requirePositive(bid, extraNet);
         BigDecimal extra = extraNet.setScale(currency.minorUnit(), RoundingMode.HALF_UP);

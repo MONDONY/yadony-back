@@ -1,8 +1,6 @@
 package com.yadony.api.common.commission;
 
 import com.yadony.api.common.CommissionRateResolver;
-import com.yadony.api.matching.AnnouncementEntity;
-import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,7 +13,6 @@ import java.lang.reflect.Field;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,28 +40,25 @@ class IncrementalCommissionTest {
 
     private static final UUID TRAVELER = UUID.randomUUID();
     private static final UUID SENDER = UUID.randomUUID();
-    private static final UUID ANNOUNCEMENT_ID = UUID.randomUUID();
 
     @Mock CommissionGridService gridService;
     @Mock CommissionRateResolver rateResolver;
-    @Mock AnnouncementRepository announcements;
 
     private IncrementalCommission incremental;
 
     @BeforeEach
     void setUp() {
-        incremental = new IncrementalCommission(gridService, rateResolver, announcements);
+        incremental = new IncrementalCommission(gridService, rateResolver);
     }
 
     @Test
     void compute_gridBid_isDifferenceOfCommissions() {
-        stubTraveler();
         when(gridService.require(GRID.id())).thenReturn(GRID);
         when(rateResolver.reductions(eq(TRAVELER), eq(SENDER), isNull(), isNull(), any()))
                 .thenReturn(CommissionReductions.NONE);
         BidEntity bid = gridBid("EUR");
 
-        IncrementalCommission.Result r = incremental.compute(bid, new BigDecimal("54.00"), new BigDecimal("23.50"));
+        IncrementalCommission.Result r = incremental.compute(bid, TRAVELER, new BigDecimal("54.00"), new BigDecimal("23.50"));
 
         BigDecimal expected = CommissionCalculator.compute(new BigDecimal("77.50"), SupportedCurrency.EUR, GRID,
                         CommissionReductions.NONE).commission()
@@ -79,13 +73,12 @@ class IncrementalCommissionTest {
 
     @Test
     void compute_minimumNotChargedTwice() {
-        stubTraveler();
         when(gridService.require(GRID.id())).thenReturn(GRID);
         when(rateResolver.reductions(any(), any(), isNull(), isNull(), any())).thenReturn(CommissionReductions.NONE);
         BidEntity bid = gridBid("EUR");
 
         // Base 10 € : 7 % = 0,70 € relevé au minimum de 1,00 €. Extra 1 € : C(11) = 0,77 → toujours 1,00 €.
-        IncrementalCommission.Result r = incremental.compute(bid, new BigDecimal("10"), new BigDecimal("1"));
+        IncrementalCommission.Result r = incremental.compute(bid, TRAVELER, new BigDecimal("10"), new BigDecimal("1"));
 
         BigDecimal minimum = CommissionCalculator.compute(new BigDecimal("10"), SupportedCurrency.EUR, GRID,
                 CommissionReductions.NONE).commission();
@@ -96,11 +89,10 @@ class IncrementalCommissionTest {
 
     @Test
     void compute_legacyBid_usesStoredRate() {
-        stubTraveler();
         BidEntity bid = bid("EUR");
         bid.setCommissionRate(new BigDecimal("0.12"));
 
-        IncrementalCommission.Result r = incremental.compute(bid, new BigDecimal("40"), new BigDecimal("10"));
+        IncrementalCommission.Result r = incremental.compute(bid, TRAVELER, new BigDecimal("40"), new BigDecimal("10"));
 
         assertThat(r.commission()).isEqualByComparingTo("1.20");
         assertThat(r.gridId()).isNull();
@@ -110,14 +102,13 @@ class IncrementalCommissionTest {
 
     @Test
     void compute_negotiatedBid_usesFrozenReductionsWithoutResolver() {
-        stubTraveler();
         when(gridService.require(GRID.id())).thenReturn(GRID);
         BidEntity bid = gridBid("EUR");
         bid.setNegotiatedNetEur(new BigDecimal("50.00"));
         bid.setCommissionOverrideRate(new BigDecimal("0.03"));
 
         // C(50) = min(3,50 ; 1,50) = 1,50 ; C(60) = 1,80 → 0,30 €.
-        IncrementalCommission.Result r = incremental.compute(bid, new BigDecimal("50"), new BigDecimal("10"));
+        IncrementalCommission.Result r = incremental.compute(bid, TRAVELER, new BigDecimal("50"), new BigDecimal("10"));
 
         assertThat(r.commission()).isEqualByComparingTo("0.30");
         verify(rateResolver, never()).reductions(any(), any(), any(), any(), any());
@@ -127,18 +118,12 @@ class IncrementalCommissionTest {
     void compute_negativeOrZeroExtra_throws() {
         BidEntity bid = gridBid("EUR");
 
-        assertThatThrownBy(() -> incremental.compute(bid, new BigDecimal("54"), BigDecimal.ZERO))
+        assertThatThrownBy(() -> incremental.compute(bid, TRAVELER, new BigDecimal("54"), BigDecimal.ZERO))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> incremental.compute(bid, new BigDecimal("54"), new BigDecimal("-3")))
+        assertThatThrownBy(() -> incremental.compute(bid, TRAVELER, new BigDecimal("54"), new BigDecimal("-3")))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> incremental.compute(bid, new BigDecimal("54"), new BigDecimal("0.004")))
+        assertThatThrownBy(() -> incremental.compute(bid, TRAVELER, new BigDecimal("54"), new BigDecimal("0.004")))
                 .isInstanceOf(IllegalArgumentException.class);
-    }
-
-    private void stubTraveler() {
-        AnnouncementEntity a = new AnnouncementEntity();
-        a.setTravelerId(TRAVELER);
-        when(announcements.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
     }
 
     private static BidEntity gridBid(String currency) {
@@ -151,7 +136,6 @@ class IncrementalCommissionTest {
         BidEntity bid = new BidEntity();
         setId(bid, UUID.randomUUID());
         bid.setSenderId(SENDER);
-        bid.setAnnouncementId(ANNOUNCEMENT_ID);
         bid.setCurrency(currency);
         return bid;
     }
