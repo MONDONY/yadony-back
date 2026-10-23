@@ -59,4 +59,35 @@ public class BidAmendmentWindow {
         }
         return deadline.isBefore(now.plus(properties.getMinResponseWindow())) ? Optional.empty() : Optional.of(deadline);
     }
+
+    /**
+     * Fin de l'étape en cours d'une modification ouverte : au-delà, elle ne retient plus la remise et le
+     * filet la clôt. Source unique de la vue ({@code blocksHandover}) et de l'expiration.
+     * <ul>
+     *   <li>{@code AUTHORIZATION_PENDING} : création + {@code authorizationWindow} (3DS de la carte) ;</li>
+     *   <li>{@code PROPOSED} : {@code expiresAt} (réponse du voyageur) ;</li>
+     *   <li>{@code COMMISSION_PENDING} : réponse du voyageur ({@code respondedAt}) +
+     *       {@code commissionConfirmWindow} ; à défaut de {@code respondedAt}, {@code expiresAt} ;</li>
+     *   <li>{@code PAYMENT_PENDING} : {@code paymentExpiresAt} (dépôt de l'expéditeur), à défaut {@code expiresAt}.</li>
+     * </ul>
+     *
+     * @return null si la modification n'est pas ouverte.
+     */
+    public LocalDateTime openUntil(BidAmendmentEntity a) {
+        return switch (a.getStatus()) {
+            case AUTHORIZATION_PENDING -> a.getCreatedAt() == null ? a.getExpiresAt()
+                    : a.getCreatedAt().plus(properties.getAuthorizationWindow());
+            case PROPOSED -> a.getExpiresAt();
+            case COMMISSION_PENDING -> a.getRespondedAt() == null ? a.getExpiresAt()
+                    : a.getRespondedAt().plus(properties.getCommissionConfirmWindow());
+            case PAYMENT_PENDING -> a.getPaymentExpiresAt() == null ? a.getExpiresAt() : a.getPaymentExpiresAt();
+            default -> null;
+        };
+    }
+
+    /** L'étape en cours est-elle échue ({@link #openUntil} atteint) ? Faux pour une modification close. */
+    public boolean isLapsed(BidAmendmentEntity a) {
+        LocalDateTime until = openUntil(a);
+        return until != null && !until.isAfter(now());
+    }
 }
