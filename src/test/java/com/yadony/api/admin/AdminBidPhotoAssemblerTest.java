@@ -167,14 +167,14 @@ class AdminBidPhotoAssemblerTest {
 
     @Test
     void photos_refusal_included() {
-        bid.setRefusalPhotoUrl("refusals/r.jpg");
+        bid.setRefusalPhotoUrl("tracking/" + BID + "/r.jpg");
 
         List<Photo> photos = assembler.photos(bid, AdminBidDetailAssembler.Access.ALL);
 
         assertThat(photos).singleElement().satisfies(ph -> {
             assertThat(ph.stage()).isEqualTo("REFUSAL");
             assertThat(ph.at()).isEqualTo(T0.plusDays(3));
-            assertThat(ph.url()).isEqualTo("https://signed.test/refusals/r.jpg");
+            assertThat(ph.url()).isEqualTo("https://signed.test/tracking/" + BID + "/r.jpg");
         });
     }
 
@@ -185,25 +185,45 @@ class AdminBidPhotoAssemblerTest {
     }
 
     @Test
-    void photos_dispute_requiresModerationAndDisputeAndExistingDispute() {
+    void photos_refusal_foreignValuesAreNeverSigned() {
+        for (String bad : List.of("http://evil.test/x.jpg", "https://r2.test/tracking/" + BID + "/x.jpg",
+                "kyc/" + UUID.randomUUID() + "/id.jpg", "../x", "tracking/" + BID + "/../../kyc/u/id.jpg",
+                "tracking/" + UUID.randomUUID() + "/x.jpg", "tracking/" + BID + "\\x.jpg")) {
+            bid.setRefusalPhotoUrl(bad);
+            assertThat(assembler.photos(bid, AdminBidDetailAssembler.Access.ALL)).as(bad).isEmpty();
+        }
+        verify(storageService, never()).generatePresignedUrl(any(), any());
+    }
+
+    @Test
+    void photos_dispute_withAllConditions_included() {
         withDisputeConversation(image("messaging/i1.jpg", false, T0));
 
-        // Cas 1 : sans MODERATION_VIEW.
-        assertThat(assembler.photos(bid, new AdminBidDetailAssembler.Access(true, true, true, false, true))).isEmpty();
-        // Cas 2 : sans DISPUTE_VIEW.
-        assertThat(assembler.photos(bid, new AdminBidDetailAssembler.Access(true, true, false, true, true))).isEmpty();
-        // Cas 3 : les deux droits, mais aucun litige sur le colis.
-        when(disputeRepo.existsByBidId(BID)).thenReturn(false);
-        assertThat(assembler.photos(bid, AdminBidDetailAssembler.Access.ALL)).isEmpty();
-        verify(imageRepo, never()).findByConversationId(any());
-
-        // Cas positif : tout réuni.
-        when(disputeRepo.existsByBidId(BID)).thenReturn(true);
         assertThat(assembler.photos(bid, AdminBidDetailAssembler.Access.ALL)).singleElement().satisfies(ph -> {
             assertThat(ph.stage()).isEqualTo("DISPUTE");
             assertThat(ph.label()).isEqualTo("Image de la conversation");
             assertThat(ph.url()).isEqualTo("https://signed.test/messaging/i1.jpg");
         });
+    }
+
+    @Test
+    void photos_dispute_withoutModerationView_excluded() {
+        withDisputeConversation(image("messaging/i1.jpg", false, T0));
+        assertThat(assembler.photos(bid, new AdminBidDetailAssembler.Access(true, true, true, false, true))).isEmpty();
+    }
+
+    @Test
+    void photos_dispute_withoutDisputeView_excluded() {
+        withDisputeConversation(image("messaging/i1.jpg", false, T0));
+        assertThat(assembler.photos(bid, new AdminBidDetailAssembler.Access(true, true, false, true, true))).isEmpty();
+    }
+
+    @Test
+    void photos_dispute_noDisputeOnBid_excluded() {
+        withDisputeConversation(image("messaging/i1.jpg", false, T0));
+        when(disputeRepo.existsByBidId(BID)).thenReturn(false);
+        assertThat(assembler.photos(bid, AdminBidDetailAssembler.Access.ALL)).isEmpty();
+        verify(imageRepo, never()).findByConversationId(any());
     }
 
     @Test

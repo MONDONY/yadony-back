@@ -8,6 +8,12 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.auth.UserStatus;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.disputes.DisputeEntity;
+import com.yadony.api.disputes.DisputeRepository;
+import com.yadony.api.messaging.ConversationEntity;
+import com.yadony.api.messaging.ConversationRepository;
+import com.yadony.api.messaging.MessagingImageEntity;
+import com.yadony.api.messaging.MessagingImageRepository;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.AnnouncementStatus;
@@ -63,6 +69,9 @@ class AdminBidPhotosIT {
     @Autowired AnnouncementRepository announcementRepository;
     @Autowired BidRepository bidRepository;
     @Autowired TrackingEventRepository trackingRepository;
+    @Autowired DisputeRepository disputeRepository;
+    @Autowired ConversationRepository conversationRepository;
+    @Autowired MessagingImageRepository imageRepository;
     @MockitoBean StorageService storageService;
 
     private BidEntity bid;
@@ -152,7 +161,7 @@ class AdminBidPhotosIT {
         scan(TrackingEventType.TRANSIT, t.plusHours(2), "tracking/" + bid.getId() + "/transit.jpg", null);
         scan(TrackingEventType.DEPART, t, "tracking/" + bid.getId() + "/depart.jpg", "Paris CDG");
         scan(TrackingEventType.ARRIVEE, t.plusHours(4), null, "Dakar");
-        bid.setRefusalPhotoUrl("refusals/" + bid.getId() + ".jpg");
+        bid.setRefusalPhotoUrl("tracking/" + bid.getId() + "/refus.jpg");
         bidRepository.save(bid);
 
         mockMvc.perform(get("/admin/bids/{id}/photos", bid.getId())
@@ -169,5 +178,67 @@ class AdminBidPhotosIT {
                 .andExpect(jsonPath("$.photos[1].gpsLabel").doesNotExist())
                 .andExpect(jsonPath("$.photos[2].stage").value("REFUSAL"))
                 .andExpect(jsonPath("$.photos[2].at").exists());
+    }
+
+    private void conversationWithImage(boolean purged, boolean withDispute) {
+        ConversationEntity c = conversationRepository.save(
+                new ConversationEntity(bid.getId(), bid.getSenderId(), UUID.randomUUID(), "fs-" + UUID.randomUUID()));
+        MessagingImageEntity img = new MessagingImageEntity(c.getId(), bid.getId(), "m-" + UUID.randomUUID(),
+                bid.getSenderId(), "messaging/" + bid.getId() + "/img.jpg", "messaging/" + bid.getId() + "/thumb.jpg");
+        if (purged) img.markPurged(LocalDateTime.now());
+        imageRepository.save(img);
+        if (withDispute) {
+            DisputeEntity d = new DisputeEntity();
+            d.setBidId(bid.getId());
+            d.setStatus("OPEN");
+            disputeRepository.save(d);
+        }
+    }
+
+    private org.springframework.test.web.servlet.ResultActions photos(AdminPermission... permissions) throws Exception {
+        return mockMvc.perform(get("/admin/bids/{id}/photos", bid.getId()).with(authentication(admin(permissions))))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void photos_disputeImages_visibleWithAllThreePermissions() throws Exception {
+        conversationWithImage(false, true);
+        photos(AdminPermission.BID_VIEW, AdminPermission.MODERATION_VIEW, AdminPermission.DISPUTE_VIEW)
+                .andExpect(jsonPath("$.photos.length()").value(1))
+                .andExpect(jsonPath("$.photos[0].stage").value("DISPUTE"))
+                .andExpect(jsonPath("$.photos[0].label").value("Image de la conversation"));
+    }
+
+    @Test
+    void photos_disputeImages_hiddenWithBidViewOnly() throws Exception {
+        conversationWithImage(false, true);
+        photos(AdminPermission.BID_VIEW).andExpect(jsonPath("$.photos.length()").value(0));
+    }
+
+    @Test
+    void photos_disputeImages_hiddenWithoutDisputeView() throws Exception {
+        conversationWithImage(false, true);
+        photos(AdminPermission.BID_VIEW, AdminPermission.MODERATION_VIEW)
+                .andExpect(jsonPath("$.photos.length()").value(0));
+    }
+
+    @Test
+    void photos_disputeImages_hiddenWhenNoDisputeOnBid() throws Exception {
+        conversationWithImage(false, false);
+        photos(AdminPermission.BID_VIEW, AdminPermission.MODERATION_VIEW, AdminPermission.DISPUTE_VIEW)
+                .andExpect(jsonPath("$.photos.length()").value(0));
+    }
+
+    @Test
+    void photos_purgedImageScanAndBlankRefusal_absent() throws Exception {
+        conversationWithImage(true, true);
+        scan(TrackingEventType.DEPART, LocalDateTime.of(2026, 10, 6, 18, 0), "tracking/" + bid.getId() + "/p.jpg", null);
+        TrackingEventEntity purgedScan = trackingRepository.findByBidIdOrderByScannedAtAsc(bid.getId()).get(0);
+        purgedScan.markPhotoPurged(LocalDateTime.now());
+        trackingRepository.save(purgedScan);
+        bid.setRefusalPhotoUrl("");
+        bidRepository.save(bid);
+        photos(AdminPermission.BID_VIEW, AdminPermission.MODERATION_VIEW, AdminPermission.DISPUTE_VIEW)
+                .andExpect(jsonPath("$.photos.length()").value(0));
     }
 }

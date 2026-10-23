@@ -69,6 +69,7 @@ public class AdminBidPhotoAssembler {
 
     private List<Staged> creation(BidEntity bid) {
         try {
+            // Ordre des photos CREATION non déterminé : elles partagent la même date (celle du colis).
             // Le service signe lui-même les URL ; la table ne porte pas de date par photo : celle du colis.
             return photoService.activePhotos(bid.getId()).stream()
                     .map(p -> staged(Stage.CREATION, p.id().toString(), "BID_PHOTO", bid.getCreatedAt(), p.url(), null))
@@ -91,10 +92,28 @@ public class AdminBidPhotoAssembler {
         return out;
     }
 
+    /**
+     * Photo de refus. {@code refusalPhotoUrl} est une chaîne libre envoyée par le voyageur (aucune
+     * validation à l'écriture) : on ne signe que la clé téléversée par l'app pour CE colis
+     * ({@code tracking/<bidId>/...}), jamais une URL ni la clé d'un autre dossier (ex. KYC).
+     * Date : la date de refus n'est pas stockée, on prend la dernière mise à jour du colis
+     * (approximation : le refus fait passer le colis en PARCEL_REFUSED, sa dernière écriture courante).
+     */
     private List<Staged> refusal(BidEntity bid) {
-        String url = AdminBidDetailAssembler.sign(storageService, bid.getRefusalPhotoUrl());
+        String key = bid.getRefusalPhotoUrl();
+        if (key == null || key.isBlank()) return List.of();
+        if (!isOwnRefusalKey(bid.getId(), key)) {
+            log.warn("Photo de refus du colis {} ignorée : clé hors du dossier du colis", bid.getId());
+            return List.of();
+        }
+        String url = AdminBidDetailAssembler.sign(storageService, key);
         return url == null ? List.of()
                 : List.of(staged(Stage.REFUSAL, "refusal", "REFUSAL", bid.getUpdatedAt(), url, null));
+    }
+
+    private static boolean isOwnRefusalKey(java.util.UUID bidId, String key) {
+        return key.startsWith("tracking/" + bidId + "/")
+                && !key.contains("..") && !key.contains("\\") && !key.contains("://");
     }
 
     /** Images de la conversation : seulement quand un litige existe sur le colis, et jamais les purgées. */
