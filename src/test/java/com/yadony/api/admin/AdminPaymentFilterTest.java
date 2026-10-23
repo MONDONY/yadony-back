@@ -77,4 +77,21 @@ class AdminPaymentFilterTest {
         assertThat(AdminPaymentSql.FROM_JOIN).contains(" p", " b ", " lb ", " a ", " la ", " t ", " r ", " s ",
                 " tr ");
     }
+
+    @Test
+    void sql_alertesBrutesDefiniesUneSeuleFois() {
+        assertThat(AdminPaymentSql.ALERT_RANK)
+                .contains(AdminPaymentSql.HELD_PREDICATE, AdminPaymentSql.CHARGEBACK_OPEN_PREDICATE,
+                        AdminPaymentSql.MM_FAILED_PREDICATE, AdminPaymentSql.ESCROW_J48_PREDICATE);
+        assertThat(AdminPaymentSql.ALERT_FILTER)
+                .contains(AdminPaymentSql.HELD_PREDICATE, AdminPaymentSql.CHARGEBACK_OPEN_PREDICATE,
+                        AdminPaymentSql.MM_FAILED_PREDICATE, AdminPaymentSql.ESCROW_J48_PREDICATE)
+                .doesNotContain("ALERT_RANK");
+        assertThat(AdminPaymentSql.COUNTS_SELECT)
+                .contains("SUM(CASE WHEN " + AdminPaymentSql.ESCROW_J48_PREDICATE + " THEN 1")
+                .contains("SUM(CASE WHEN " + AdminPaymentSql.HELD_PREDICATE + " THEN 1")
+                .contains("SUM(CASE WHEN " + AdminPaymentSql.CHARGEBACK_OPEN_PREDICATE + " THEN 1")
+                .contains("SUM(CASE WHEN " + AdminPaymentSql.MM_FAILED_PREDICATE + " THEN 1")
+                .doesNotContain(AdminPaymentSql.ALERT_RANK + " = ");
+    }
 }

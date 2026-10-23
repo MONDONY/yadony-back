@@ -14,7 +14,7 @@ import java.util.UUID;
  *                       Stripe ({@code pi_…}, {@code ch_…}) ou nom / pseudo d'une des parties
  * @param hideAbandoned  masque les checkouts jamais terminés (PENDING depuis plus de 24 h)
  * @param view           vue rapide ({@link AdminPaymentView#ALL} par défaut)
- * @param alert          seulement les paiements dont l'alerte la plus urgente est celle-ci
+ * @param alert          seulement les paiements portant cette alerte (prédicat brut : une alerte moins urgente reste filtrable)
  * @param partyId        expéditeur OU voyageur du paiement
  * @param announcementId trajet du colis du paiement
  * @param bidId          colis direct ou lié à la négociation

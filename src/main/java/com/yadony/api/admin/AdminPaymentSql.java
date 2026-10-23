@@ -50,26 +50,27 @@ public final class AdminPaymentSql {
 
     private static final String OP_FAILED = "('FAILED', 'SUBMIT_REJECTED')";
 
-    private static final String HELD_PREDICATE = "(p.status = 'ESCROW' AND p.payout_held_at IS NOT NULL)";
+    public static final String HELD_PREDICATE = "(p.status = 'ESCROW' AND p.payout_held_at IS NOT NULL)";
 
-    private static final String CHARGEBACK_OPEN_PREDICATE = "EXISTS (SELECT 1 FROM chargebacks c"
+    public static final String CHARGEBACK_OPEN_PREDICATE = "EXISTS (SELECT 1 FROM chargebacks c"
             + " WHERE c.status = 'OPEN' AND c.deleted_at IS NULL"
             + " AND (c.payment_id = p.id OR (c.payment_id IS NULL AND c.bid_id = " + EFF_BID_ID + ")))";
 
     /** Versement ou remboursement mobile money en échec, sans opération plus récente non échouée du même type. */
-    private static final String MM_FAILED_PREDICATE = "EXISTS (SELECT 1 FROM pawapay_operations o"
+    public static final String MM_FAILED_PREDICATE = "EXISTS (SELECT 1 FROM pawapay_operations o"
             + " WHERE o.payment_id = p.id AND o.kind IN ('PAYOUT', 'REFUND') AND o.status IN " + OP_FAILED
             + " AND NOT EXISTS (SELECT 1 FROM pawapay_operations o2"
             + "     WHERE o2.payment_id = p.id AND o2.kind = o.kind AND o2.created_at > o.created_at"
             + "     AND o2.status NOT IN " + OP_FAILED + "))";
 
-    private static final String ESCROW_J48_PREDICATE = "(p.status = 'ESCROW'"
+    public static final String ESCROW_J48_PREDICATE = "(p.status = 'ESCROW'"
             + " AND p.created_at < " + NOW + " - INTERVAL '" + ESCROW_TIMEOUT_HOURS + "' HOUR)";
 
     /**
-     * Rang d'alerte du paiement, le plus urgent l'emporte : 1 versement retenu, 2 litige bancaire
+     * Rang d'alerte EXCLUSIF du paiement (étiquette de ligne, tri, vue {@code ATTENTION}), le plus urgent
+     * l'emporte : 1 versement retenu, 2 litige bancaire
      * ouvert, 3 mobile money en échec, 4 séquestre de plus de {@value #ESCROW_TIMEOUT_HOURS} h ; 0 sinon.
-     * Seule définition de l'alerte : liste, tri, nombres, étiquette de ligne et vue d'ensemble la réutilisent.
+     * Construit à partir des prédicats bruts ci-dessus, qui restent la seule définition de chaque alerte.
      */
     public static final String ALERT_RANK = "(CASE"
             + " WHEN " + HELD_PREDICATE + " THEN 1"
@@ -77,6 +78,16 @@ public final class AdminPaymentSql {
             + " WHEN " + MM_FAILED_PREDICATE + " THEN 3"
             + " WHEN " + ESCROW_J48_PREDICATE + " THEN 4"
             + " ELSE 0 END)";
+
+    /**
+     * Filtre {@code :alert} (nom de {@link AdminPaymentAlert}, ou null) sur le prédicat BRUT de l'alerte,
+     * non exclusif : un séquestre retenu de plus de 48 h est aussi {@code ESCROW_J48}.
+     */
+    public static final String ALERT_FILTER = "(CAST(:alert AS VARCHAR) IS NULL"
+            + " OR (:alert = 'HELD' AND " + HELD_PREDICATE + ")"
+            + " OR (:alert = 'CHARGEBACK_OPEN' AND " + CHARGEBACK_OPEN_PREDICATE + ")"
+            + " OR (:alert = 'MM_FAILED' AND " + MM_FAILED_PREDICATE + ")"
+            + " OR (:alert = 'ESCROW_J48' AND " + ESCROW_J48_PREDICATE + "))";
 
     /** Prédicat de chaque vue (hors {@code ALL}) : seule définition, la liste et les nombres la partagent. */
     public static final String ATTENTION_VIEW = "(" + ALERT_RANK + " > 0)";
@@ -106,8 +117,9 @@ public final class AdminPaymentSql {
     }
 
     /**
-     * Nombres par vue et par alerte en un aller-retour. Une alerte par paiement (la plus urgente) :
-     * les quatre alertes somment à {@code attention}. {@code abandoned} compte les checkouts
+     * Nombres par vue et par alerte en un aller-retour. Les colonnes d'alerte comptent
+     * chacune avec le prédicat BRUT de l'alerte (non exclusif, elles peuvent se recouper) ;
+     * {@code attention} = paiements ayant au moins une alerte. {@code abandoned} compte les checkouts
      * abandonnés ({@code :abandonedBefore}) même quand le filtre les masque.
      */
     public static final String COUNTS_SELECT = "SELECT "
@@ -118,8 +130,8 @@ public final class AdminPaymentSql {
             + sum(FAILED_VIEW, "failed") + ", "
             + "COUNT(*) AS \"all\", "
             + sum("p.status = 'PENDING' AND p.created_at < CAST(:abandonedBefore AS TIMESTAMP)", "abandoned") + ", "
-            + sum(ALERT_RANK + " = 1", "held") + ", "
-            + sum(ALERT_RANK + " = 2", "chargebackOpen") + ", "
-            + sum(ALERT_RANK + " = 3", "mmFailed") + ", "
-            + sum(ALERT_RANK + " = 4", "escrowJ48") + " ";
+            + sum(HELD_PREDICATE, "held") + ", "
+            + sum(CHARGEBACK_OPEN_PREDICATE, "chargebackOpen") + ", "
+            + sum(MM_FAILED_PREDICATE, "mmFailed") + ", "
+            + sum(ESCROW_J48_PREDICATE, "escrowJ48") + " ";
 }
