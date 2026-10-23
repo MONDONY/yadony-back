@@ -31,7 +31,16 @@ public interface StripeSupplementGateway {
             throws StripeException;
 
     /** Remboursement non échoué de ce PaymentIntent portant {@code bid_supplement_id = supplementId}. */
-    Optional<String> findRefund(String paymentIntentId, String supplementId) throws StripeException;
+    default Optional<String> findRefund(String paymentIntentId, String supplementId) throws StripeException {
+        return findRefund(paymentIntentId, "bid_supplement_id", supplementId);
+    }
+
+    /**
+     * Remboursement non échoué de ce PaymentIntent portant la métadonnée {@code metadataKey = metadataValue}
+     * ({@code bid_supplement_id}, {@code bid_amendment_id}) : retrouve celui d'un passage précédent.
+     */
+    Optional<String> findRefund(String paymentIntentId, String metadataKey, String metadataValue)
+            throws StripeException;
 
     /** Remboursement intégral du PaymentIntent. */
     String createRefund(String paymentIntentId, Map<String, String> metadata, String idempotencyKey)

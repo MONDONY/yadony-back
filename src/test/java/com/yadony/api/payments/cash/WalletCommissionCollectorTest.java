@@ -366,4 +366,45 @@ class WalletCommissionCollectorTest {
                 .isInstanceOf(IllegalStateException.class);
         verifyNoInteractions(exchangeRateService);
     }
+    // ── Commission de la modification d'un colis espèces (B5) ────────────────
+
+    @Test
+    void executeForAmendment_deuxPortefeuilles_typeDedieRefEtCleParPortefeuille() {
+        balances("600", "5.00");
+        when(exchangeRateService.convert(new BigDecimal("450"), "XOF", "EUR")).thenReturn(new BigDecimal("0.686"));
+        when(exchangeRateService.convert(new BigDecimal("1050"), "XOF", "EUR")).thenReturn(new BigDecimal("1.60"));
+        UUID amendment = UUID.randomUUID();
+
+        CommissionSplit s = collector.plan(traveler, "XOF", "EUR", new BigDecimal("1050"));
+        collector.executeForAmendment(s, traveler, bid, amendment);
+
+        verify(walletService).debit(traveler, "XOF", new BigDecimal("600"),
+                com.yadony.api.payments.wallet.WalletTransactionType.AMENDMENT_COMMISSION_DEDUCTED, bid,
+                "amendment-" + amendment, "amendment-commission-" + amendment, null, null, null);
+        verify(walletService).debit(eq(traveler), eq("EUR"), eq(new BigDecimal("0.69")),
+                eq(com.yadony.api.payments.wallet.WalletTransactionType.AMENDMENT_COMMISSION_DEDUCTED), eq(bid),
+                eq("amendment-" + amendment), eq("amendment-commission-" + amendment + "-active"), eq("XOF"),
+                eq(new BigDecimal("450")), any());
+        // Jamais le type de la commission principale ni celui du supplément (INV-09).
+        verify(walletService, never()).debit(any(), any(), any(),
+                eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), any(UUID.class));
+        verify(walletService, never()).debit(any(), any(), any(),
+                eq(com.yadony.api.payments.wallet.WalletTransactionType.SUPPLEMENT_COMMISSION_DEDUCTED),
+                any(UUID.class), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void executeForAmendment_nonCouverte_aucunDebit() {
+        when(walletService.getBalanceForUpdate(traveler, "EUR")).thenReturn(new BigDecimal("0.50"));
+        CommissionSplit s = collector.plan(traveler, "EUR", "EUR", new BigDecimal("1.10"));
+
+        assertThatThrownBy(() -> collector.executeForAmendment(s, traveler, bid, UUID.randomUUID()))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void amendmentPaymentRef_prefixeDedie() {
+        UUID id = UUID.randomUUID();
+        assertThat(WalletCommissionCollector.amendmentPaymentRef(id)).isEqualTo("amendment-" + id);
+    }
 }

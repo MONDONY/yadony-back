@@ -130,6 +130,27 @@ class StripeSupplementGatewayImplTest {
     }
 
     @Test
+    void refund_rechercheParMetadonneeAuChoix_modificationDeColis() throws Exception {
+        Refund supplementRefund = mock(Refund.class);
+        when(supplementRefund.getMetadata()).thenReturn(Map.of("bid_supplement_id", "x1"));
+        when(supplementRefund.getId()).thenReturn("re_supplement");
+        Refund amendmentRefund = mock(Refund.class);
+        when(amendmentRefund.getMetadata()).thenReturn(Map.of("bid_amendment_id", "x1"));
+        when(amendmentRefund.getStatus()).thenReturn("succeeded");
+        when(amendmentRefund.getId()).thenReturn("re_amendment");
+        RefundCollection page = mock(RefundCollection.class);
+        when(page.getData()).thenReturn(List.of(supplementRefund, amendmentRefund));
+        try (MockedStatic<Refund> refunds = mockStatic(Refund.class)) {
+            refunds.when(() -> Refund.list(any(RefundListParams.class))).thenReturn(page);
+
+            assertThat(gateway.findRefund("pi_1", "bid_amendment_id", "x1")).contains("re_amendment");
+            assertThat(gateway.findRefund("pi_1", "bid_amendment_id", "absent")).isEmpty();
+            // La recherche historique garde la clé du supplément : le Refund d'une modification n'en fait pas partie.
+            assertThat(gateway.findRefund("pi_1", "x1")).contains("re_supplement");
+        }
+    }
+
+    @Test
     void dernierRefundNonEchoue_etEtatDeLaCharge() throws Exception {
         Refund failed = mock(Refund.class);
         when(failed.getStatus()).thenReturn("failed");

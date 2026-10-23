@@ -180,23 +180,43 @@ public class WalletCommissionCollector {
      * Aucune ligne à zéro : une commission nulle ne débite rien.
      */
     public void executeForSupplement(CommissionSplit s, UUID travelerId, UUID bidId, UUID supplementId) {
-        requireCovered(s);
-        String paymentRef = supplementPaymentRef(supplementId);
-        String key = "supplement-commission-" + supplementId;
-        if (s.fromBidWallet().signum() > 0) {
-            walletService.debit(travelerId, s.bidCurrency(), s.fromBidWallet(),
-                    WalletTransactionType.SUPPLEMENT_COMMISSION_DEDUCTED, bidId, paymentRef, key, null, null, null);
-        }
-        if (s.remainingBid().signum() > 0 && s.remainingActive().signum() > 0) {
-            walletService.debit(travelerId, s.activeCurrency(), s.remainingActive(),
-                    WalletTransactionType.SUPPLEMENT_COMMISSION_DEDUCTED, bidId, paymentRef, key + "-active",
-                    s.bidCurrency(), s.remainingBid(), s.appliedRate());
-        }
+        executeForExtra(s, travelerId, bidId, WalletTransactionType.SUPPLEMENT_COMMISSION_DEDUCTED,
+                supplementPaymentRef(supplementId), "supplement-commission-" + supplementId);
+    }
+
+    /**
+     * Commission d'une modification de colis payée en espèces, prélevée au voyageur quand il l'accepte :
+     * comme {@link #executeForSupplement}, en {@code AMENDMENT_COMMISSION_DEDUCTED},
+     * {@code payment_ref = "amendment-<id>"} et clés {@code amendment-commission-<id>} (puis
+     * {@code …-active} pour le complément).
+     */
+    public void executeForAmendment(CommissionSplit s, UUID travelerId, UUID bidId, UUID amendmentId) {
+        executeForExtra(s, travelerId, bidId, WalletTransactionType.AMENDMENT_COMMISSION_DEDUCTED,
+                amendmentPaymentRef(amendmentId), "amendment-commission-" + amendmentId);
     }
 
     /** {@code payment_ref} des lignes de commission d'un supplément (lecture pour le recrédit). */
     public static String supplementPaymentRef(UUID supplementId) {
         return "supplement-" + supplementId;
+    }
+
+    /** {@code payment_ref} des lignes de commission d'une modification (lecture pour le recrédit). */
+    public static String amendmentPaymentRef(UUID amendmentId) {
+        return "amendment-" + amendmentId;
+    }
+
+    /** Débit d'une commission annexe (supplément, modification) : un type, une référence et une clé propres. */
+    private void executeForExtra(CommissionSplit s, UUID travelerId, UUID bidId, WalletTransactionType type,
+                                 String paymentRef, String key) {
+        requireCovered(s);
+        if (s.fromBidWallet().signum() > 0) {
+            walletService.debit(travelerId, s.bidCurrency(), s.fromBidWallet(), type, bidId, paymentRef, key,
+                    null, null, null);
+        }
+        if (s.remainingBid().signum() > 0 && s.remainingActive().signum() > 0) {
+            walletService.debit(travelerId, s.activeCurrency(), s.remainingActive(), type, bidId, paymentRef,
+                    key + "-active", s.bidCurrency(), s.remainingBid(), s.appliedRate());
+        }
     }
 
     /** Solde débitable sous verrou : zéro si la devise est gelée (jamais verrouillée alors). */

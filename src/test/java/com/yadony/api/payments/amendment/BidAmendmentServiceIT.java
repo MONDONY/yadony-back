@@ -44,6 +44,8 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.context.annotation.Bean;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
@@ -103,11 +105,16 @@ class BidAmendmentServiceIT {
         registry.add("spring.flyway.enabled", () -> true);
     }
 
-    /** Rail espèces bouchonné tant que B5 n'est pas livré : PROPOSED à la création, acceptée à l'acceptation. */
+    /**
+     * Rail espèces bouchonné : PROPOSED à la création, acceptée à l'acceptation, sans commission. Prioritaire sur
+     * le vrai rail espèces ({@link BidAmendmentCashRail}, B5) : ce test ne couvre que le cycle de vie du service,
+     * le rail espèces a le sien ({@code BidAmendmentCashRailIT}).
+     */
     @TestConfiguration
     static class StubCashRailConfig {
 
         @Bean
+        @Order(Ordered.HIGHEST_PRECEDENCE)
         BidAmendmentRailHandler stubCashRail(ObjectProvider<BidAmendmentService> service,
                                              BidAmendmentItemRepository items, BidAmendmentWindow window) {
             return new BidAmendmentRailHandler() {
