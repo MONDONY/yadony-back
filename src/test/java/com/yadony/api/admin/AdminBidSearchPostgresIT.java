@@ -169,6 +169,8 @@ class AdminBidSearchPostgresIT {
         assertThat(ids(query(AdminBidView.ALL, "+221771234567", AdminBidScope.RECIPIENT, true))).contains(late.getId());
         assertThat(ids(query(AdminBidView.ALL, "771234567", AdminBidScope.ALL, true))).contains(late.getId());
         assertThat(ids(query(AdminBidView.ALL, "771234567", AdminBidScope.RECIPIENT, false))).doesNotContain(late.getId());
+        // R3 : quatre chiffres de tête non saisis sur douze (suffixe de 8) -> rien.
+        assertThat(ids(query(AdminBidView.ALL, "71234567", AdminBidScope.RECIPIENT, true))).doesNotContain(late.getId());
         assertThat(ids(query(AdminBidView.ALL, "1234", AdminBidScope.RECIPIENT, true))).doesNotContain(late.getId());
         assertThat(ids(query(AdminBidView.ALL, "+22177123", AdminBidScope.RECIPIENT, true))).doesNotContain(late.getId());
         assertThat(ids(query(AdminBidView.ALL, "771234567", AdminBidScope.SENDER, true))).doesNotContain(late.getId());

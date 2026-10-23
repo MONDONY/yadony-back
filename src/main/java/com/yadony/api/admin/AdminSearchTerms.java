@@ -74,15 +74,6 @@ public final class AdminSearchTerms {
         return "%" + token + "%";
     }
 
-    /** Les chiffres seuls de la saisie, ou null s'il y en a moins de 4. */
-    public static String digitsOnly(String s) {
-        if (s == null) {
-            return null;
-        }
-        String digits = s.replaceAll("\\D", "");
-        return digits.length() < 4 ? null : digits;
-    }
-
     /** Nombre minimal de chiffres d'une recherche par téléphone : en dessous, la saisie ne cible pas un numéro. */
     public static final int MIN_PHONE_DIGITS = 8;
 
@@ -91,7 +82,9 @@ public final class AdminSearchTerms {
      * une fois retirés espaces, {@code +}, {@code -}, {@code .}, {@code (} et {@code )}, ne doit
      * contenir que des chiffres, au moins {@value #MIN_PHONE_DIGITS} une fois les zéros de tête
      * retirés (« 06 12 34 56 78 » trouve donc « +33612345678 »). Le téléphone stocké doit
-     * <em>se terminer</em> par ce suffixe : jamais de recherche par milieu ni par préfixe, qui
+     * <em>se terminer</em> par ce suffixe, et la saisie doit couvrir tout le numéro à l'indicatif
+     * pays près (au plus {@code AdminBidSql.PHONE_MAX_UNTYPED_DIGITS} chiffres de tête non saisis,
+     * vérifié en SQL) : jamais de recherche par milieu ni par préfixe, qui
      * permettrait de reconstituer chiffre par chiffre un numéro affiché masqué.
      */
     public static String phoneSuffix(String query) {

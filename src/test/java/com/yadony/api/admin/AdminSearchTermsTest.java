@@ -66,13 +66,6 @@ class AdminSearchTermsTest {
     }
 
     @Test
-    void digitsOnly_keepsDigits() {
-        assertThat(AdminSearchTerms.digitsOnly("+33 6 12-34")).isEqualTo("3361234");
-        assertThat(AdminSearchTerms.digitsOnly("12")).isNull();
-        assertThat(AdminSearchTerms.digitsOnly(null)).isNull();
-    }
-
-    @Test
     void phoneSuffix_requiresAtLeastEightDigits() {
         assertThat(AdminSearchTerms.phoneSuffix("1234567")).isNull();
         assertThat(AdminSearchTerms.phoneSuffix("12345678")).isEqualTo("12345678");

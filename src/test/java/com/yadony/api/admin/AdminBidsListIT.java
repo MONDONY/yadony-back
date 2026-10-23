@@ -243,10 +243,6 @@ class AdminBidsListIT {
         mockMvc.perform(list(as(AdminRole.ADMIN), "query", phone))
                 .andExpect(jsonPath("$.content.length()").value(1))
                 .andExpect(jsonPath("$.content[0].id").value(b.getId().toString()));
-        // Un fragment (sous-chaîne de moins de huit chiffres) ne révèle rien du numéro masqué.
-        mockMvc.perform(list(as(AdminRole.ADMIN), "query", digits.substring(2, 6)))
-                .andExpect(jsonPath("$.content[*].id").value(org.hamcrest.Matchers.not(
-                        org.hamcrest.Matchers.hasItem(b.getId().toString()))));
         var body = mockMvc.perform(get("/admin/bids/" + b.getId()).with(authentication(as(AdminRole.ADMIN))))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         org.assertj.core.api.Assertions.assertThat(body).doesNotContain(digits);

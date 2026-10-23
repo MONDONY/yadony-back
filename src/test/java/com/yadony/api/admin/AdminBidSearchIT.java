@@ -338,10 +338,35 @@ class AdminBidSearchIT {
         assertThat(ids(q().on(a).query("771234567").scope(AdminBidScope.RECIPIENT).phones(true)))
                 .containsExactly(parcel.getId());
         assertThat(ids(q().on(a).query("+221 77 123 45 67").phones(true))).containsExactly(parcel.getId());
-        // Huit chiffres exactement : le suffixe minimal.
-        assertThat(ids(q().on(a).query("71234567").phones(true))).containsExactly(parcel.getId());
+        // Huit chiffres sur un numéro de douze : quatre chiffres de tête non saisis, plus qu'un indicatif.
+        assertThat(ids(q().on(a).query("71234567").phones(true))).isEmpty();
         // Sept chiffres : refusé même avec le droit.
         assertThat(ids(q().on(a).query("1234567").phones(true))).isEmpty();
+    }
+
+    @Test
+    void search_recipientPhone_mustCoverWholeNumber_countryCodeApart() {
+        AnnouncementEntity a = trip();
+        BidEntity parcel = bid(a, sender, BidStatus.PENDING, b -> b.setRecipientPhone("+33612345678"));
+
+        for (String typed : new String[] {"612345678", "0612345678", "33612345678", "+33 6 12 34 56 78"}) {
+            assertThat(ids(q().on(a).query(typed).phones(true))).as(typed).containsExactly(parcel.getId());
+        }
+        // Stocké de douze chiffres : trois chiffres de tête non saisis passent, quatre non.
+        BidEntity longer = bid(a, sender, BidStatus.PENDING, b -> b.setRecipientPhone("+221771234567"));
+        assertThat(ids(q().on(a).query("771234567").phones(true))).containsExactly(longer.getId());
+        assertThat(ids(q().on(a).query("71234567").phones(true))).isEmpty();
+    }
+
+    @Test
+    void search_numericTrackingNumber_stillFound_withOrWithoutPhoneRight() {
+        AnnouncementEntity a = trip();
+        BidEntity parcel = bid(a, sender, BidStatus.PENDING, b -> b.setTrackingNumber("98765432101"));
+
+        // La branche jeton n'est pas altérée par la branche téléphone, avec ou sans USER_VIEW.
+        assertThat(ids(q().on(a).query("98765432101").phones(true))).containsExactly(parcel.getId());
+        assertThat(ids(q().on(a).query("98765432101").phones(false))).containsExactly(parcel.getId());
+        assertThat(ids(q().on(a).query("987654321").phones(false))).containsExactly(parcel.getId());
     }
 
     @Test

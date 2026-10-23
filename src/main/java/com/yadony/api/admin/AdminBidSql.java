@@ -128,11 +128,19 @@ public final class AdminBidSql {
      * et saisie entièrement numérique d'au moins huit chiffres, voir
      * {@link AdminSearchTerms#phoneSuffix}) et que le périmètre couvre le destinataire. Les chiffres
      * du numéro stocké doivent se <em>terminer</em> par ceux saisis ({@code :phoneSuffix} ne porte que
-     * des chiffres : aucun joker à échapper). Pas de préfixe ni de milieu.
+     * des chiffres : aucun joker à échapper) ET la saisie doit couvrir tout le numéro, à l'indicatif
+     * pays près : au plus {@value #PHONE_MAX_UNTYPED_DIGITS} chiffres de tête non saisis. Sans cet
+     * écart borné, les quatre derniers chiffres affichés laisseraient sonder les chiffres masqués.
+     * Pas de préfixe ni de milieu.
      */
+    /** Chiffres de tête que la saisie peut omettre : l'indicatif pays (un à trois chiffres). */
+    public static final int PHONE_MAX_UNTYPED_DIGITS = 3;
+
     private static final String RECIPIENT_PHONE_PREDICATE = "(CAST(:phoneSuffix AS VARCHAR) IS NOT NULL"
             + " AND :scope IN ('ALL', 'RECIPIENT')"
-            + " AND " + RECIPIENT_PHONE_DIGITS + " LIKE '%' || CAST(:phoneSuffix AS VARCHAR))";
+            + " AND " + RECIPIENT_PHONE_DIGITS + " LIKE '%' || CAST(:phoneSuffix AS VARCHAR)"
+            + " AND LENGTH(" + RECIPIENT_PHONE_DIGITS + ") - LENGTH(CAST(:phoneSuffix AS VARCHAR))"
+            + "     <= " + PHONE_MAX_UNTYPED_DIGITS + ")";
 
     private static final String ID_TERM = "LOWER(CAST(:idTerm AS VARCHAR))";
 

@@ -310,6 +310,12 @@ class AdminBidsCountsIT {
             assertThat(json(counts(as(AdminRole.ADMIN), "query", q)).get("all").asLong()).isEqualTo(1);
             assertThat(listTotal("ALL", "query", q)).isEqualTo(1);
         }
+        // Quatre chiffres de tête non saisis sur un numéro de douze : rien non plus.
+        bid(BidStatus.ACCEPTED, b -> b.setRecipientPhone("+221771234567"));
+        assertThat(json(counts(as(AdminRole.ADMIN), "query", "71234567")).get("all").asLong()).isZero();
+        assertThat(listTotal("ALL", "query", "71234567")).isZero();
+        assertThat(json(counts(as(AdminRole.ADMIN), "query", "771234567")).get("all").asLong()).isEqualTo(1);
+        assertThat(listTotal("ALL", "query", "771234567")).isEqualTo(1);
         // Sous-chaîne, préfixe ou moins de huit chiffres : rien, ni dans les nombres ni dans la liste.
         for (String q : new String[] {"345", "+3361", "33612345", "6123456"}) {
             assertThat(json(counts(as(AdminRole.ADMIN), "query", q)).get("all").asLong()).isZero();
