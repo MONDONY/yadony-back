@@ -53,6 +53,13 @@ class UserEntityDisplayNameTest {
     }
 
     @Test
+    @DisplayName("espaces autour du prénom et du nom → retirés (jamais d'initiale vide)")
+    void surroundingSpaces_areTrimmed() {
+        assertThat(user("  Seydou ", " Sow").publicDisplayName()).isEqualTo("Seydou S.");
+        assertThat(user(" Awa ", null).publicDisplayName()).isEqualTo("Awa");
+    }
+
+    @Test
     @DisplayName("ne rend jamais null")
     void neverReturnsNull() {
         assertThat(user(null, null).publicDisplayName()).isNotNull();

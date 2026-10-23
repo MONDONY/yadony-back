@@ -443,11 +443,13 @@ public class UserEntity extends BaseEntity {
      * « Masquer mon numéro ».
      */
     public String publicDisplayName() {
+        // Espaces retirés : « " Sow" » donnait une initiale vide (« Seydou  . »). La requête de
+        // « Mes abonnements » applique la même règle en SQL, un test les garde alignées.
         if (firstName != null && !firstName.isBlank()) {
             if (lastName != null && !lastName.isBlank()) {
-                return firstName + " " + lastName.charAt(0) + ".";
+                return firstName.trim() + " " + lastName.trim().charAt(0) + ".";
             }
-            return firstName;
+            return firstName.trim();
         }
         return username;
     }
