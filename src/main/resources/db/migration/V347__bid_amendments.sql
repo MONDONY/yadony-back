@@ -38,6 +38,9 @@ CREATE TABLE bid_amendments (
     stripe_charge_id              VARCHAR(255)  NULL,
     stripe_transfer_id            VARCHAR(255)  NULL,
     stripe_refund_id              VARCHAR(255)  NULL,
+    -- Remboursement demandé pendant un versement carte en cours (PAYOUT_PENDING) : si le Transfer n'est jamais parti,
+    -- la modification est remboursée au lieu de revenir à ACCEPTED.
+    refund_requested_at           TIMESTAMP     NULL,
     -- Autorisation d'une modification close rendue à l'expéditeur (PaymentIntent annulée, ou déjà annulée) : le
     -- filet ne relit plus Stripe pour elle.
     authorization_released_at     TIMESTAMP     NULL,

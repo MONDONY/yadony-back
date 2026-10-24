@@ -123,6 +123,13 @@ public class BidAmendmentEntity extends BaseEntity {
     @Column(name = "stripe_refund_id", length = 255)
     private String stripeRefundId;
 
+    /**
+     * Remboursement demandé (fin du colis, principal remboursé) pendant un versement en cours ({@code PAYOUT_PENDING}) :
+     * si le Transfer n'est jamais parti, la modification est remboursée au lieu de revenir à {@code ACCEPTED}.
+     */
+    @Column(name = "refund_requested_at")
+    private LocalDateTime refundRequestedAt;
+
     /** Autorisation carte d'une modification close rendue (PaymentIntent annulée) : le filet ne la relit plus. */
     @Column(name = "authorization_released_at")
     private LocalDateTime authorizationReleasedAt;
@@ -204,6 +211,8 @@ public class BidAmendmentEntity extends BaseEntity {
     public void setStripeTransferId(String stripeTransferId) { this.stripeTransferId = stripeTransferId; }
     public String getStripeRefundId() { return stripeRefundId; }
     public void setStripeRefundId(String stripeRefundId) { this.stripeRefundId = stripeRefundId; }
+    public LocalDateTime getRefundRequestedAt() { return refundRequestedAt; }
+    public void setRefundRequestedAt(LocalDateTime refundRequestedAt) { this.refundRequestedAt = refundRequestedAt; }
     public LocalDateTime getAuthorizationReleasedAt() { return authorizationReleasedAt; }
     public void setAuthorizationReleasedAt(LocalDateTime authorizationReleasedAt) { this.authorizationReleasedAt = authorizationReleasedAt; }
     public LocalDateTime getReleaseAttemptedAt() { return releaseAttemptedAt; }

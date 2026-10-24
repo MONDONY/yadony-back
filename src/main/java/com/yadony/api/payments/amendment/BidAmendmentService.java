@@ -502,8 +502,10 @@ public class BidAmendmentService {
      *   <li>ouverte : {@code CANCELLED} ({@code BID_ENDED}), rail prévenu ({@code onClosed} : autorisation carte
      *       annulée) ; un dépôt mobile money en vol ({@code mayExpire} faux) est laissé à son issue, le filet repasse ;</li>
      *   <li>acquise et non versée ({@code ACCEPTED}) : remboursée par son rail ({@link #refundSecured}) ;</li>
-     *   <li>carte ou mobile money déjà versée, ou en cours de versement : inchangée, mais le remboursement est demandé
-     *       au rail, qui alerte l'administration sans rien inverser ({@code AMEND_REFUND_PAID_OUT_}) ;</li>
+     *   <li>carte ou mobile money en cours de versement ({@code PAYOUT_PENDING}) : demande mémorisée
+     *       ({@code refundRequestedAt}) ; si le Transfer n'est jamais parti, le rail la rembourse, sinon il alerte ;</li>
+     *   <li>carte ou mobile money déjà versée : inchangée, mais le remboursement est demandé au rail, qui alerte
+     *       l'administration sans rien inverser ({@code AMEND_REFUND_PAID_OUT_}) ;</li>
      *   <li>remboursement déjà demandé : inchangée (l'alerte « non soldée » du filet la signale si elle traîne).</li>
      * </ul>
      * Dans tous les cas, les kilos encore retirés du trajet sont rendus.
@@ -525,9 +527,16 @@ public class BidAmendmentService {
             } else if (a.getStatus() == BidAmendmentStatus.ACCEPTED) {
                 refundSecured(a, bid, reason);
                 changed = true;
-            } else if (a.getRail() != BidSupplementRail.CASH && (a.getStatus() == BidAmendmentStatus.PAYOUT_PENDING
-                    || a.getStatus() == BidAmendmentStatus.PAID_OUT)) {
-                // Déjà versée (ou en cours) : statut inchangé, le rail alerte l'administration (pas d'inversion).
+            } else if (a.getRail() != BidSupplementRail.CASH && a.getStatus() == BidAmendmentStatus.PAYOUT_PENDING) {
+                // Versement en cours : son issue tranche. Transfer jamais parti → remboursée ; parti → alerte admin.
+                if (a.getRefundRequestedAt() == null) {
+                    a.setRefundRequestedAt(window.now());
+                    amendments.save(a);
+                    audit(a, "BID_AMENDMENT_REFUND_REQUESTED_DURING_PAYOUT", null,
+                            Map.of("bidStatus", bid.getStatus().name(), "endReason", reason));
+                }
+            } else if (a.getRail() != BidSupplementRail.CASH && a.getStatus() == BidAmendmentStatus.PAID_OUT) {
+                // Déjà versée : statut inchangé, le rail alerte l'administration (pas d'inversion).
                 events.publishEvent(new BidAmendmentRefundRequestedEvent(a.getId(), bid.getId(), a.getRail(), reason));
             }
             if (a.getCapacityReservedKg() != null && a.getCapacityReservedKg().signum() > 0) {

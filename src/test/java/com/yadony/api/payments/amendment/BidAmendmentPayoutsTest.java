@@ -74,7 +74,7 @@ class BidAmendmentPayoutsTest {
         a.setStripePaymentIntentId("pi_1");
         a.setStripeChargeId("ch_1");
         claim = new BidAmendmentCardLedger.PayoutClaim(a.getId(), a.getBidId(), traveler.getId(),
-                new BigDecimal("30.00"), "EUR", "ch_1", "pi_1");
+                new BigDecimal("30.00"), "EUR", "ch_1", "pi_1", false);
         when(amendments.findById(a.getId())).thenReturn(Optional.of(a));
         when(users.findById(traveler.getId())).thenReturn(Optional.of(traveler));
         when(gateway.retrieveCharge("ch_1")).thenReturn(new ChargeView(false, 0L));
@@ -164,10 +164,11 @@ class BidAmendmentPayoutsTest {
     // ── Échecs ───────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("Transfer refusé par Stripe : retour à ACCEPTED, alerte, aucune exception")
-    void transferFails_revertsAndAlerts() throws Exception {
+    @DisplayName("Transfer refusé par Stripe (4xx, rien n'est créé) : retour à ACCEPTED, alerte, aucune exception")
+    void transferRefused4xx_revertsAndAlerts() throws Exception {
         when(gateway.createTransfer(anyLong(), anyString(), anyString(), anyString(), anyString(), anyMap(),
-                anyString())).thenThrow(new ApiConnectionException("stripe indisponible"));
+                anyString())).thenThrow(new com.stripe.exception.InvalidRequestException("solde insuffisant", null,
+                "req_1", "balance_insufficient", 400, null));
 
         assertThatCode(() -> assertThat(payouts.payout(a.getId())).isFalse()).doesNotThrowAnyException();
 
@@ -225,7 +226,7 @@ class BidAmendmentPayoutsTest {
     }
 
     @Test
-    @DisplayName("reprise alors que le compte Connect n'est plus prêt : aucun Transfer, retour à ACCEPTED, alerte")
+    @DisplayName("reprise alors que le compte Connect n'est plus prêt : aucun Transfer, retour à ACCEPTED, alerte BLOCKED")
     void resume_accountGone_revertsAndAlerts() throws Exception {
         when(ledger.pendingPayout(a.getId())).thenReturn(Optional.of(claim));
         traveler.setStripeAccountStatus(StripeAccountStatus.DISABLED);
@@ -235,14 +236,14 @@ class BidAmendmentPayoutsTest {
         verify(gateway, never()).createTransfer(anyLong(), anyString(), any(), any(), anyString(), anyMap(),
                 anyString());
         verify(ledger).revertPayout(eq(a.getId()), anyString());
-        verify(alerts).raiseOnce(eq("AMEND_TRANSFER_FAILED_" + a.getId()), anyString(), anyMap());
+        verify(alerts).raiseOnce(eq("AMEND_PAYOUT_BLOCKED_" + a.getId()), anyString(), anyMap());
     }
 
     @Test
     @DisplayName("reprise sans charge connue : aucun Transfer à l'aveugle, retour à ACCEPTED, alerte")
     void resume_noCharge_revertsAndAlerts() throws Exception {
         when(ledger.pendingPayout(a.getId())).thenReturn(Optional.of(new BidAmendmentCardLedger.PayoutClaim(a.getId(),
-                a.getBidId(), traveler.getId(), new BigDecimal("30.00"), "EUR", null, "pi_1")));
+                a.getBidId(), traveler.getId(), new BigDecimal("30.00"), "EUR", null, "pi_1", false)));
 
         assertThat(payouts.resume(a.getId())).isFalse();
 
@@ -263,6 +264,81 @@ class BidAmendmentPayoutsTest {
         assertThatCode(() -> payouts.payoutForBid(a.getBidId())).doesNotThrowAnyException();
 
         verify(ledger).completePayout(a.getId(), "tr_1", "ch_1");
+    }
+
+    @Test
+    @DisplayName("Transfer à l'issue inconnue (coupure réseau) : reste PAYOUT_PENDING, jamais ACCEPTED, alerte")
+    void transferUncertain_staysPendingAndAlerts() throws Exception {
+        when(gateway.createTransfer(anyLong(), anyString(), anyString(), anyString(), anyString(), anyMap(),
+                anyString())).thenThrow(new ApiConnectionException("délai dépassé"));
+
+        assertThatCode(() -> assertThat(payouts.payout(a.getId())).isFalse()).doesNotThrowAnyException();
+
+        verify(ledger, never()).revertPayout(any(), any());
+        verify(alerts).raiseOnce(eq("AMEND_TRANSFER_UNKNOWN_" + a.getId()), anyString(), anyMap());
+    }
+
+    @Test
+    @DisplayName("Transfer en erreur 5xx : issue inconnue, reste PAYOUT_PENDING")
+    void transferServerError_staysPending() throws Exception {
+        when(gateway.createTransfer(anyLong(), anyString(), anyString(), anyString(), anyString(), anyMap(),
+                anyString())).thenThrow(new com.stripe.exception.ApiException("boom", "req_2", null, 500, null));
+
+        assertThat(payouts.payout(a.getId())).isFalse();
+
+        verify(ledger, never()).revertPayout(any(), any());
+        verify(alerts).raiseOnce(eq("AMEND_TRANSFER_UNKNOWN_" + a.getId()), anyString(), anyMap());
+    }
+
+    @Test
+    @DisplayName("recherche du Transfer impossible : aucun envoi, reste PAYOUT_PENDING (un essai précédent a pu partir)")
+    void lookupFails_staysPending() throws Exception {
+        when(gateway.findTransferByGroup("amendment_" + a.getId())).thenThrow(new ApiConnectionException("réseau"));
+
+        assertThat(payouts.payout(a.getId())).isFalse();
+
+        verify(gateway, never()).createTransfer(anyLong(), anyString(), anyString(), anyString(), anyString(),
+                anyMap(), anyString());
+        verify(ledger, never()).revertPayout(any(), any());
+        verify(alerts).raiseOnce(eq("AMEND_TRANSFER_UNKNOWN_" + a.getId()), anyString(), anyMap());
+    }
+
+    @Test
+    @DisplayName("reprise : retenue posée depuis la réservation et aucun Transfer → aucun envoi, ACCEPTED, alerte BLOCKED")
+    void resume_heldAfterClaim_doesNotTransfer() throws Exception {
+        when(ledger.pendingPayout(a.getId())).thenReturn(Optional.of(claim));
+        when(holdPolicy.isHeld(traveler.getId())).thenReturn(true);
+
+        assertThat(payouts.resume(a.getId())).isFalse();
+
+        verify(gateway, never()).createTransfer(anyLong(), anyString(), anyString(), anyString(), anyString(),
+                anyMap(), anyString());
+        verify(ledger).revertPayout(eq(a.getId()), anyString());
+        verify(alerts).raiseOnce(eq("AMEND_PAYOUT_BLOCKED_" + a.getId()), anyString(), anyMap());
+    }
+
+    @Test
+    @DisplayName("reprise : remboursement demandé pendant le versement et aucun Transfer → aucun envoi, rendu au registre")
+    void resume_refundRequested_noTransfer_reverts() throws Exception {
+        when(ledger.pendingPayout(a.getId())).thenReturn(Optional.of(new BidAmendmentCardLedger.PayoutClaim(a.getId(),
+                a.getBidId(), traveler.getId(), new BigDecimal("30.00"), "EUR", "ch_1", "pi_1", true)));
+
+        assertThat(payouts.resume(a.getId())).isFalse();
+
+        verify(gateway, never()).createTransfer(anyLong(), anyString(), anyString(), anyString(), anyString(),
+                anyMap(), anyString());
+        verify(ledger).revertPayout(eq(a.getId()), anyString());
+    }
+
+    @Test
+    @DisplayName("modification dont le remboursement est demandé : jamais versée, sans alerte")
+    void payout_refundRequested_ignored() {
+        a.setRefundRequestedAt(java.time.LocalDateTime.now());
+
+        assertThat(payouts.payout(a.getId())).isFalse();
+
+        verify(ledger, never()).beginPayout(any());
+        verifyNoInteractions(alerts);
     }
 
     private void assertBlocked(String reason) {

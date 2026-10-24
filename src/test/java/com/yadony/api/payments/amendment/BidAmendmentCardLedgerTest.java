@@ -372,7 +372,7 @@ class BidAmendmentCardLedgerTest {
     }
 
     @Test
-    @DisplayName("versement enregistré : PAID_OUT, Transfer et date posés, voyageur prévenu ; rejeu sans effet")
+    @DisplayName("versement enregistré : PAID_OUT, Transfer et date posés ; rejeu sans effet")
     void completePayout_once() {
         a.setStatus(BidAmendmentStatus.PAYOUT_PENDING);
         a.setNetAmount(new BigDecimal("30.00"));
@@ -384,23 +384,70 @@ class BidAmendmentCardLedgerTest {
         assertThat(a.getStatus()).isEqualTo(BidAmendmentStatus.PAID_OUT);
         assertThat(a.getStripeTransferId()).isEqualTo("tr_1");
         assertThat(a.getPaidOutAt()).isNotNull();
-        verify(events, org.mockito.Mockito.times(1)).publishEvent(any(
-                com.yadony.api.payments.amendment.events.BidAmendmentPaidOutEvent.class));
     }
 
     @Test
     @DisplayName("remboursement demandé d'une modification déjà versée (ou en cours de versement) : AFTER_PAYOUT")
     void beginRefund_paidOut_afterPayout() {
         a.setStripeChargeId("ch_1");
-        for (BidAmendmentStatus paid : java.util.List.of(BidAmendmentStatus.PAYOUT_PENDING,
-                BidAmendmentStatus.PAID_OUT)) {
-            a.setStatus(paid);
+        a.setStatus(BidAmendmentStatus.PAID_OUT);
 
-            BidAmendmentCardLedger.RefundClaim claim = ledger.beginRefund(a.getId());
+        BidAmendmentCardLedger.RefundClaim claim = ledger.beginRefund(a.getId());
 
-            assertThat(claim.decision()).as(paid.name()).isEqualTo(BidAmendmentCardLedger.RefundDecision.AFTER_PAYOUT);
-            assertThat(claim.bidId()).isEqualTo(bid.getId());
-            assertThat(a.getStatus()).as("statut inchangé").isEqualTo(paid);
-        }
+        assertThat(claim.decision()).isEqualTo(BidAmendmentCardLedger.RefundDecision.AFTER_PAYOUT);
+        assertThat(claim.bidId()).isEqualTo(bid.getId());
+        assertThat(a.getStatus()).as("statut inchangé").isEqualTo(BidAmendmentStatus.PAID_OUT);
+
+        // Versement en cours : l'issue du Transfer tranche (marqueur refundRequestedAt), pas d'alerte prématurée.
+        a.setStatus(BidAmendmentStatus.PAYOUT_PENDING);
+        assertThat(ledger.beginRefund(a.getId()).decision()).isEqualTo(BidAmendmentCardLedger.RefundDecision.NOTHING);
+    }
+
+    @Test
+    @DisplayName("Transfer jamais parti alors qu'un remboursement a été demandé : REFUND_PENDING et remboursement demandé")
+    void revertPayout_refundRequested_goesRefundPending() {
+        a.setStatus(BidAmendmentStatus.PAYOUT_PENDING);
+        a.setRefundRequestedAt(LocalDateTime.now(ZoneOffset.UTC));
+
+        ledger.revertPayout(a.getId(), "aucun Transfer");
+
+        assertThat(a.getStatus()).isEqualTo(BidAmendmentStatus.REFUND_PENDING);
+        assertThat(a.getClosedReason()).isEqualTo(BidAmendmentClosedReason.BID_ENDED);
+        verify(events).publishEvent(any(BidAmendmentRefundRequestedEvent.class));
+        verify(auditService).log(eq(BidAmendmentService.ENTITY), eq(a.getId()), eq("BID_AMENDMENT_REFUND_REQUESTED"),
+                any(), anyMap());
+    }
+
+    @Test
+    @DisplayName("modification acquise marquée « remboursement demandé » : jamais réservée pour un versement")
+    void beginPayout_refundRequested_refuses() {
+        a.setStatus(BidAmendmentStatus.ACCEPTED);
+        a.setRefundRequestedAt(LocalDateTime.now(ZoneOffset.UTC));
+
+        assertThat(ledger.beginPayout(a.getId())).isEmpty();
+        assertThat(a.getStatus()).isEqualTo(BidAmendmentStatus.ACCEPTED);
+    }
+
+    @Test
+    @DisplayName("Transfer parti alors qu'un remboursement a été demandé : PAID_OUT, alerte « déjà versée » à l'admin")
+    void completePayout_refundRequested_alertsPaidOut() {
+        a.setStatus(BidAmendmentStatus.PAYOUT_PENDING);
+        a.setNetAmount(new BigDecimal("30.00"));
+        a.setRefundRequestedAt(LocalDateTime.now(ZoneOffset.UTC));
+
+        assertThat(ledger.completePayout(a.getId(), "tr_1", "ch_1")).isTrue();
+
+        assertThat(a.getStatus()).isEqualTo(BidAmendmentStatus.PAID_OUT);
+        verify(alerts).raiseOnce(eq("AMEND_REFUND_PAID_OUT_" + a.getId()), anyString(), anyMap());
+    }
+
+    @Test
+    @DisplayName("réservation : la claim porte le marqueur « remboursement demandé »")
+    void pendingPayout_carriesRefundRequested() {
+        a.setStatus(BidAmendmentStatus.PAYOUT_PENDING);
+        a.setRefundRequestedAt(LocalDateTime.now(ZoneOffset.UTC));
+
+        assertThat(ledger.pendingPayout(a.getId())).get()
+                .satisfies(c -> assertThat(c.refundRequested()).isTrue());
     }
 }

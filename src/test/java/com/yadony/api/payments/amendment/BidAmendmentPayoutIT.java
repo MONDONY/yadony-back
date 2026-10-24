@@ -17,7 +17,6 @@ import com.yadony.api.matching.TransportMode;
 import com.yadony.api.payments.StripeTransferLookup;
 import com.yadony.api.payments.amendment.dto.AmendmentAcceptRequest;
 import com.yadony.api.payments.amendment.dto.CreateAmendmentRequest;
-import com.yadony.api.payments.amendment.events.BidAmendmentPaidOutEvent;
 import com.yadony.api.payments.cash.CommissionChargedVia;
 import com.yadony.api.payments.cash.CommissionStatus;
 import com.yadony.api.payments.cash.PaymentMethod;
@@ -40,8 +39,6 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.context.event.ApplicationEvents;
-import org.springframework.test.context.event.RecordApplicationEvents;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
@@ -63,6 +60,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -74,7 +72,6 @@ import static org.mockito.Mockito.when;
  */
 @SpringBootTest(properties = "yadony.bid-amendment.enabled=true")
 @ActiveProfiles("e2e")
-@RecordApplicationEvents
 @DisplayName("BidAmendmentPayouts : versement du net d'une modification carte (PostgreSQL)")
 class BidAmendmentPayoutIT {
 
@@ -117,7 +114,6 @@ class BidAmendmentPayoutIT {
     @Autowired TransactionTemplate tx;
     @Autowired JdbcTemplate jdbc;
     @Autowired ApplicationEventPublisher publisher;
-    @Autowired ApplicationEvents events;
 
     // ── Déclencheurs ─────────────────────────────────────────────────────────
 
@@ -137,11 +133,6 @@ class BidAmendmentPayoutIT {
         assertThat(column(id, "stripe_transfer_id")).isEqualTo("tr_rel");
         assertThat(column(id, "paid_out_at")).isNotNull();
         assertThat(auditActions(id)).containsOnlyOnce("BID_AMENDMENT_PAID_OUT");
-        assertThat(events.stream(BidAmendmentPaidOutEvent.class)).singleElement().satisfies(e -> {
-            assertThat(e.amendmentId()).isEqualTo(id);
-            assertThat(e.travelerId()).isEqualTo(p.traveler.getId());
-            assertThat(e.netAmount()).isEqualByComparingTo("30.00");
-        });
     }
 
     @Test
@@ -249,6 +240,107 @@ class BidAmendmentPayoutIT {
         verify(alerts, timeout(5000)).raiseOnce(eq("AMEND_REFUND_PAID_OUT_" + id), anyString(), anyMap());
         verify(gateway, never()).createRefund(anyString(), anyMap(), anyString());
         assertThat(column(id, "status")).isEqualTo("PAID_OUT");
+    }
+
+    // ── Issue incertaine du Transfer, remboursement demandé pendant le versement ──
+
+    @Test
+    @DisplayName("Transfer à l'issue inconnue (délai dépassé) : reste PAYOUT_PENDING, l'admin remboursant le principal "
+            + "ne rembourse pas la modification")
+    void payoutTimeout_staysPending_notRefundable() throws Exception {
+        Parties p = parties(PaymentMethod.STRIPE);
+        String piId = pi();
+        UUID id = timedOutPayout(p, piId, "ch_to");
+
+        assertThat(column(id, "status")).isEqualTo("PAYOUT_PENDING");
+        service.onPrincipalRefunded(p.bidId);
+
+        verify(gateway, after(1500).never()).createRefund(anyString(), anyMap(), anyString());
+        assertThat(column(id, "status")).isEqualTo("PAYOUT_PENDING");
+        assertThat(column(id, "refund_requested_at")).as("demande mémorisée").isNotNull();
+    }
+
+    @Test
+    @DisplayName("Transfer refusé par Stripe (4xx) : retour à ACCEPTED, le filet réessaiera")
+    void payoutRefused4xx_backToAccepted() throws Exception {
+        Parties p = parties(PaymentMethod.STRIPE);
+        UUID id = acceptedCard(p, pi(), "ch_4xx");
+        when(gateway.retrieveCharge("ch_4xx")).thenReturn(new ChargeView(false, 0L));
+        when(gateway.findTransferByGroup(anyString())).thenReturn(Optional.empty());
+        when(gateway.createTransfer(anyLong(), anyString(), anyString(), eq("ch_4xx"), anyString(), anyMap(),
+                anyString())).thenThrow(new com.stripe.exception.InvalidRequestException("refusé", null, "req_4",
+                "balance_insufficient", 400, null));
+
+        release(p);
+
+        verify(alerts, timeout(5000)).raiseOnce(eq("AMEND_TRANSFER_FAILED_" + id), anyString(), anyMap());
+        awaitColumn(id, "status", "ACCEPTED");
+    }
+
+    @Test
+    @DisplayName("colis livré, principal remboursé par l'admin pendant un versement jamais parti : l'expéditeur est "
+            + "remboursé de la modification")
+    void refundRequestedDuringPayout_transferNeverMade_refundsSender() throws Exception {
+        Parties p = parties(PaymentMethod.STRIPE);
+        String piId = pi();
+        UUID id = timedOutPayout(p, piId, "ch_nm");
+        service.onPrincipalRefunded(p.bidId);
+        when(gateway.findTransferByGroup("amendment_" + id)).thenReturn(Optional.empty());
+        when(gateway.findRefund(piId, id.toString())).thenReturn(Optional.empty());
+        when(gateway.createRefund(eq(piId), anyMap(), anyString())).thenReturn("re_nm");
+        jdbc.update("UPDATE bid_amendments SET updated_at = updated_at - interval '20 minutes' WHERE id = ?", id);
+
+        job.run();
+
+        verify(gateway, timeout(5000)).createRefund(eq(piId), anyMap(), eq("amendment-refund-" + id));
+        assertThat(column(id, "status")).isEqualTo("REFUND_PENDING");
+        verify(gateway, times(1)).createTransfer(anyLong(), anyString(), anyString(), eq("ch_nm"), anyString(),
+                anyMap(), anyString());
+    }
+
+    @Test
+    @DisplayName("colis livré, principal remboursé par l'admin pendant un versement finalement parti : PAID_OUT, alerte")
+    void refundRequestedDuringPayout_transferMade_alertsPaidOut() throws Exception {
+        Parties p = parties(PaymentMethod.STRIPE);
+        UUID id = timedOutPayout(p, pi(), "ch_tm");
+        service.onPrincipalRefunded(p.bidId);
+        when(gateway.findTransferByGroup("amendment_" + id)).thenReturn(Optional.of("tr_late_" + id));
+        jdbc.update("UPDATE bid_amendments SET updated_at = updated_at - interval '20 minutes' WHERE id = ?", id);
+
+        job.run();
+
+        assertThat(column(id, "status")).isEqualTo("PAID_OUT");
+        verify(alerts).raiseOnce(eq("AMEND_REFUND_PAID_OUT_" + id), anyString(), anyMap());
+        verify(gateway, never()).createRefund(anyString(), anyMap(), anyString());
+    }
+
+    @Test
+    @DisplayName("vérification B6 : REFUND_PENDING sur un colis livré depuis plus de 3 jours est signalé « non soldée »")
+    void unsettledAlert_coversRefundPendingOnCompletedBid() throws Exception {
+        Parties p = parties(PaymentMethod.STRIPE);
+        UUID id = acceptedCard(p, pi(), "ch_us");
+        jdbc.update("UPDATE bids SET status = 'COMPLETED', updated_at = updated_at - interval '4 days' WHERE id = ?",
+                p.bidId);
+        jdbc.update("UPDATE bid_amendments SET status = 'REFUND_PENDING' WHERE id = ?", id);
+
+        List<UUID> found = amendmentRepository.findIdsUnsettledAfterBidEnd(
+                BidAmendmentReconciliationJob.UNSETTLED_ONLINE, BidAmendmentReconciliationJob.ENDED_BIDS,
+                BidAmendmentService.TERMINAL_UNDELIVERED, BidAmendmentReconciliationJob.UNSETTLED_ALERT_PREFIX,
+                utcNow().minusDays(3), org.springframework.data.domain.PageRequest.of(0, 1000));
+
+        assertThat(found).contains(id);
+    }
+
+    /** Colis livré, principal versé ; le Transfer de la modification part en délai dépassé : PAYOUT_PENDING. */
+    private UUID timedOutPayout(Parties p, String piId, String chargeId) throws Exception {
+        UUID id = acceptedCard(p, piId, chargeId);
+        when(gateway.retrieveCharge(chargeId)).thenReturn(new ChargeView(false, 0L));
+        when(gateway.findTransferByGroup(anyString())).thenReturn(Optional.empty());
+        when(gateway.createTransfer(anyLong(), anyString(), anyString(), eq(chargeId), anyString(), anyMap(),
+                anyString())).thenThrow(new com.stripe.exception.ApiConnectionException("délai dépassé"));
+        release(p);
+        verify(alerts, timeout(5000)).raiseOnce(eq("AMEND_TRANSFER_UNKNOWN_" + id), anyString(), anyMap());
+        return id;
     }
 
     // ── Filet ────────────────────────────────────────────────────────────────

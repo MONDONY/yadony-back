@@ -1,5 +1,14 @@
 package com.yadony.api.payments.amendment;
 
+import com.stripe.exception.ApiConnectionException;
+import com.stripe.exception.ApiException;
+import com.stripe.exception.AuthenticationException;
+import com.stripe.exception.CardException;
+import com.stripe.exception.IdempotencyException;
+import com.stripe.exception.InvalidRequestException;
+import com.stripe.exception.PermissionException;
+import com.stripe.exception.RateLimitException;
+import com.stripe.exception.StripeException;
 import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
@@ -27,8 +36,9 @@ import java.util.UUID;
  * <p>Déclenché par {@link BidAmendmentPayoutListener} (versement du principal, ou livraison d'un principal espèces) et
  * par le filet ({@link BidAmendmentReconciliationJob}). Réservation {@code ACCEPTED → PAYOUT_PENDING} dans une
  * transaction courte, appel Stripe hors transaction (clé {@code amendment-transfer-<id>}), puis {@code PAID_OUT}.
- * Échec Stripe : retour à {@code ACCEPTED} et alerte ; Transfer parti mais enregistrement en échec : reste
- * {@code PAYOUT_PENDING} (alerte), le filet reprend. Une reprise cherche d'abord le Transfer du groupe : la clé
+ * Refus définitif de Stripe (4xx) ou arrêt avant l'appel : retour à {@code ACCEPTED} et alerte ; issue inconnue
+ * (coupure, délai, 5xx) ou Transfer parti mais enregistrement en échec : reste {@code PAYOUT_PENDING} (alerte), le
+ * filet reprend. Une reprise cherche d'abord le Transfer du groupe : la clé
  * d'idempotence Stripe n'est valable que 24 h.
  *
  * <p>Jamais coupé par le drapeau {@code bid-amendment.enabled} : une modification déjà acquise est toujours versée.
@@ -86,58 +96,66 @@ public class BidAmendmentPayouts {
      */
     public boolean payout(UUID amendmentId) {
         BidAmendmentEntity a = amendments.findById(amendmentId).orElse(null);
-        if (a == null || a.getRail() != BidSupplementRail.STRIPE || a.getStatus() != BidAmendmentStatus.ACCEPTED) {
+        if (a == null || a.getRail() != BidSupplementRail.STRIPE || a.getStatus() != BidAmendmentStatus.ACCEPTED
+                || a.getRefundRequestedAt() != null) {
             return false;
         }
-        String blocked = blockingReason(a);
+        String blocked = blockingReason(a.getTravelerId(), a.getBidId(), a.getStripeChargeId(), a.getId());
         if (blocked != null) {
-            Map<String, Object> context = new LinkedHashMap<>();
-            context.put("amendmentId", a.getId().toString());
-            context.put("bidId", a.getBidId().toString());
-            context.put("reason", blocked);
-            alerts.raiseOnce(BLOCKED_ALERT_PREFIX + amendmentId,
-                    "Versement de la modification " + amendmentId + " retenu (" + blocked + ") : elle reste "
-                            + "acceptée, le filet réessaiera", context);
+            raiseBlocked(a.getId(), a.getBidId(), blocked, "elle reste acceptée");
             return false;
         }
-        return ledger.beginPayout(amendmentId).map(this::transfer).orElse(false);
+        return ledger.beginPayout(amendmentId).map(claim -> transfer(claim, false)).orElse(false);
     }
 
-    /** Reprise d'un versement resté {@code PAYOUT_PENDING} (filet). */
+    /**
+     * Reprise d'un versement resté {@code PAYOUT_PENDING} (filet). Sans Transfer retrouvé, les gardes sont réévaluées
+     * avant tout envoi : une retenue ou un litige posé depuis la réservation l'emporte.
+     */
     public boolean resume(UUID amendmentId) {
-        return ledger.pendingPayout(amendmentId).map(this::transfer).orElse(false);
+        return ledger.pendingPayout(amendmentId).map(claim -> transfer(claim, true)).orElse(false);
     }
 
-    private boolean transfer(BidAmendmentCardLedger.PayoutClaim claim) {
+    /**
+     * Transfer de la claim. Seule une issue certaine ramène la modification à {@code ACCEPTED} (ou à
+     * {@code REFUND_PENDING} si son remboursement a été demandé entre-temps, {@link BidAmendmentCardLedger#revertPayout}) :
+     * arrêt avant l'appel, ou refus définitif de Stripe (4xx). Une issue inconnue (coupure, délai, 5xx, limite de débit,
+     * recherche impossible) laisse {@code PAYOUT_PENDING} : le Transfer a pu partir, la modification ne doit pas
+     * redevenir remboursable. Le filet reprend par le groupe, puis par la clé d'idempotence (même motif que
+     * {@code StripeReleaseExecutor.onStripeFailure}).
+     *
+     * @param recheck reprise par le filet : gardes réévaluées si aucun Transfer n'existe.
+     */
+    private boolean transfer(BidAmendmentCardLedger.PayoutClaim claim, boolean recheck) {
         UUID id = claim.amendmentId();
         String transferId;
         try {
             transferId = gateway.findTransferByGroup(transferGroup(id)).orElse(null);
-            if (transferId == null) {
-                String destination = destination(claim.travelerId());
-                if (destination == null) {
-                    throw new IllegalStateException("compte Connect du voyageur absent ou incomplet");
-                }
-                if (claim.chargeId() == null) {
-                    throw new IllegalStateException("charge de la modification inconnue");
-                }
-                SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(claim.currency());
-                Map<String, String> metadata = new LinkedHashMap<>();
-                metadata.put("bid_amendment_id", id.toString());
-                metadata.put("amendment_bid_id", claim.bidId().toString());
-                metadata.put("source", "amendment-release");
-                transferId = gateway.createTransfer(CurrencyAmount.of(claim.net(), currency).minor(), currency.code(),
-                        destination, claim.chargeId(), transferGroup(id), metadata, "amendment-transfer-" + id);
-            }
         } catch (Exception e) {
-            // Aucun Transfer : retour à ACCEPTED, le filet réessaie.
-            log.error("Transfer de la modification {} en échec", id, e);
-            ledger.revertPayout(id, e.getMessage());
-            alerts.raiseOnce("AMEND_TRANSFER_FAILED_" + id,
-                    "Transfer de la modification " + id + " en échec : " + e.getMessage(),
-                    Map.of("amendmentId", id.toString(), "bidId", claim.bidId().toString(),
-                            "error", String.valueOf(e.getMessage())));
-            return false;
+            return uncertain(claim, "recherche du Transfer impossible", e);
+        }
+        if (transferId == null) {
+            String stop = stopBeforeCall(claim, recheck);
+            if (stop != null) {
+                ledger.revertPayout(id, stop);
+                return false;
+            }
+            try {
+                SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(claim.currency());
+                transferId = gateway.createTransfer(CurrencyAmount.of(claim.net(), currency).minor(), currency.code(),
+                        destination(claim.travelerId()), claim.chargeId(), transferGroup(id),
+                        transferMetadata(id, claim.bidId()), "amendment-transfer-" + id);
+            } catch (StripeException e) {
+                if (!definitiveRefusal(e)) {
+                    return uncertain(claim, "issue du Transfer inconnue", e);
+                }
+                log.error("Transfer de la modification {} refusé par Stripe", id, e);
+                ledger.revertPayout(id, e.getMessage());
+                raiseFailed(claim, e.getMessage());
+                return false;
+            } catch (RuntimeException e) {
+                return uncertain(claim, "issue du Transfer inconnue", e);
+            }
         }
         try {
             return ledger.completePayout(id, transferId, claim.chargeId());
@@ -154,27 +172,100 @@ public class BidAmendmentPayouts {
         }
     }
 
+    /** Métadonnées du Transfer : jamais {@code payment_id}, que {@code StripeTransferLookup} lit pour le principal. */
+    public static Map<String, String> transferMetadata(UUID amendmentId, UUID bidId) {
+        Map<String, String> metadata = new LinkedHashMap<>();
+        metadata.put("bid_amendment_id", amendmentId.toString());
+        metadata.put("amendment_bid_id", bidId.toString());
+        metadata.put("source", "amendment-release");
+        return metadata;
+    }
+
+    /** Raison de ne pas appeler Stripe (aucun Transfer n'existe), ou {@code null} ; alerte levée ici. */
+    private String stopBeforeCall(BidAmendmentCardLedger.PayoutClaim claim, boolean recheck) {
+        UUID id = claim.amendmentId();
+        if (claim.refundRequested()) {
+            log.info("Modification {} : remboursement demandé pendant le versement, aucun Transfer n'est parti", id);
+            return "REFUND_REQUESTED";
+        }
+        if (recheck) {
+            String blocked = blockingReason(claim.travelerId(), claim.bidId(), claim.chargeId(), id);
+            if (blocked != null) {
+                raiseBlocked(id, claim.bidId(), blocked, "elle redevient acceptée");
+                return blocked;
+            }
+        }
+        String missing = destination(claim.travelerId()) == null ? "compte Connect du voyageur absent ou incomplet"
+                : claim.chargeId() == null ? "charge de la modification inconnue" : null;
+        if (missing != null) {
+            raiseFailed(claim, missing);
+        }
+        return missing;
+    }
+
+    /** Issue inconnue : la modification reste {@code PAYOUT_PENDING}, alerte, le filet reprend. */
+    private boolean uncertain(BidAmendmentCardLedger.PayoutClaim claim, String what, Exception e) {
+        UUID id = claim.amendmentId();
+        log.error("Modification {} : {}, versement laissé en cours", id, what, e);
+        alerts.raiseOnce("AMEND_TRANSFER_UNKNOWN_" + id,
+                "Versement de la modification " + id + " : " + what + " (" + e.getMessage() + "). Il reste en cours, "
+                        + "le filet le reprendra (Transfer cherché par son groupe, même clé d'idempotence)",
+                Map.of("amendmentId", id.toString(), "bidId", claim.bidId().toString(),
+                        "error", String.valueOf(e.getMessage())));
+        return false;
+    }
+
+    private void raiseFailed(BidAmendmentCardLedger.PayoutClaim claim, String error) {
+        UUID id = claim.amendmentId();
+        alerts.raiseOnce("AMEND_TRANSFER_FAILED_" + id, "Transfer de la modification " + id + " en échec : " + error,
+                Map.of("amendmentId", id.toString(), "bidId", claim.bidId().toString(),
+                        "error", String.valueOf(error)));
+    }
+
+    private void raiseBlocked(UUID amendmentId, UUID bidId, String reason, String outcome) {
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put("amendmentId", amendmentId.toString());
+        context.put("bidId", bidId.toString());
+        context.put("reason", reason);
+        alerts.raiseOnce(BLOCKED_ALERT_PREFIX + amendmentId,
+                "Versement de la modification " + amendmentId + " retenu (" + reason + ") : " + outcome
+                        + ", le filet réessaiera", context);
+    }
+
+    /**
+     * Refus définitif de Stripe : rien n'a été créé (même liste que {@code StripeReleaseExecutor.definitiveRefusal}).
+     * Délai, coupure, 5xx, limite de débit, conflit d'idempotence : issue inconnue.
+     */
+    static boolean definitiveRefusal(StripeException e) {
+        if (e instanceof RateLimitException || e instanceof IdempotencyException
+                || e instanceof ApiConnectionException || e instanceof ApiException) {
+            return false;
+        }
+        return e instanceof InvalidRequestException || e instanceof CardException
+                || e instanceof AuthenticationException || e instanceof PermissionException;
+    }
+
     /**
      * Raison de retenir le versement, ou {@code null}. Mêmes gardes que le versement principal (retenue du voyageur,
      * litige admin, compte Connect complet), plus l'état de la charge de la modification : une charge contestée ou
      * partiellement remboursée n'est pas versée (pas d'inversion de Transfer, un admin tranche).
      */
-    private String blockingReason(BidAmendmentEntity a) {
-        if (holdPolicy.isHeld(a.getTravelerId())) {
+    private String blockingReason(UUID travelerId, UUID bidId, String chargeId, UUID amendmentId) {
+        if (holdPolicy.isHeld(travelerId)) {
             return "PAYOUT_HOLD";
         }
-        if (disputes.existsByBidIdAndStatusAndTypeStartingWith(a.getBidId(), DisputeTypes.STATUS_OPEN,
+        if (disputes.existsByBidIdAndStatusAndTypeStartingWith(bidId, DisputeTypes.STATUS_OPEN,
                 DisputeTypes.ADMIN_PREFIX)) {
             return "DISPUTE_OPEN";
         }
-        if (destination(a.getTravelerId()) == null) {
+        if (destination(travelerId) == null) {
             return "STRIPE_ACCOUNT_NOT_READY";
         }
-        if (a.getStripeChargeId() == null) {
+        if (chargeId == null) {
             return "CHARGE_UNKNOWN";
         }
         try {
-            ChargeView charge = gateway.retrieveCharge(a.getStripeChargeId());
+            ChargeView charge = gateway.retrieveCharge(chargeId);
             if (charge.disputed()) {
                 return "CHARGE_DISPUTED";
             }
@@ -183,7 +274,7 @@ public class BidAmendmentPayouts {
             }
             return null;
         } catch (Exception e) {
-            log.warn("Modification {} : état de la charge illisible ({})", a.getId(), e.getMessage());
+            log.warn("Modification {} : état de la charge illisible ({})", amendmentId, e.getMessage());
             return "CHARGE_CHECK_FAILED";
         }
     }
