@@ -101,10 +101,8 @@ public class BidAmendmentSummaryAdapter implements BidAmendmentSummaryPort {
         List<BidEntity> accepted = bids.stream().filter(b -> b.getStatus() == BidStatus.ACCEPTED).toList();
         Set<UUID> eligibilityBids = new HashSet<>();
         accepted.forEach(b -> eligibilityBids.add(b.getId()));
-        Set<UUID> openSupplements = new HashSet<>();
-        inChunks(List.copyOf(eligibilityBids), supplements::findByBidIdIn).stream()
-                .filter(s -> BidSupplementStatus.OPEN.contains(s.getStatus()))
-                .forEach(s -> openSupplements.add(s.getBidId()));
+        Set<UUID> openSupplements = new HashSet<>(inChunks(List.copyOf(eligibilityBids),
+                chunk -> supplements.findBidIdsByBidIdInAndStatusIn(chunk, BidSupplementStatus.OPEN)));
         Set<UUID> gridAnnouncements = new HashSet<>(inChunks(
                 accepted.stream().map(BidEntity::getAnnouncementId).filter(Objects::nonNull).distinct().toList(),
                 gridItems::findAnnouncementIdsWithItems));

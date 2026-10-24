@@ -498,12 +498,15 @@ public class CashCommissionService {
 
             return switch (pi.getStatus()) {
                 case "succeeded" -> {
+                    bid.setCashCommissionChargedAmount(commissionAmount.major());
                     bid.setCommissionStatus(CommissionStatus.CHARGED);
                     bid.setCommissionChargedVia(CommissionChargedVia.CARD);
                     bidRepo.save(bid);
                     yield AcceptBidResponse.accepted();
                 }
                 case "requires_action" -> {
+                    // Montant de la PaymentIntent, acquis si la 3DS aboutit (recordCardCharge le relit alors).
+                    bid.setCashCommissionChargedAmount(commissionAmount.major());
                     bid.setCommissionStatus(CommissionStatus.REQUIRES_3DS);
                     bidRepo.save(bid);
                     yield AcceptBidResponse.requires3ds(pi.getClientSecret(), pi.getId());
@@ -575,6 +578,8 @@ public class CashCommissionService {
             throw new InsufficientWalletBalanceException(split.activeBalance(), split.commissionInActive());
         }
         commissionCollector.executeForBid(split, travelerId, bid.getId());
+        // Dans la devise du colis, même quand une partie est convertie depuis un autre portefeuille.
+        bid.setCashCommissionChargedAmount(effectiveCommission);
         bid.setCommissionStatus(CommissionStatus.CHARGED);
         bid.setCommissionChargedVia(CommissionChargedVia.WALLET);
         bidRepo.save(bid);
@@ -587,6 +592,20 @@ public class CashCommissionService {
             audit.put("activeCurrency", split.activeCurrency());
         }
         auditService.log("payment", bid.getId(), "COMMISSION_CHARGED_WALLET", travelerId, audit);
+    }
+
+    /**
+     * Commission carte aboutie (après 3DS, confirmation ou webhook) : enregistre le montant de la PaymentIntent dans
+     * la devise du colis ({@code bids.cash_commission_charged_amount}). Sans montant lisible, garde celui posé à la
+     * création de la PaymentIntent.
+     */
+    public static void recordCardCharge(BidEntity bid, PaymentIntent pi) {
+        if (pi == null || pi.getAmount() == null) {
+            return;
+        }
+        SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(bid.getCurrency());
+        bid.setCashCommissionChargedAmount(BigDecimal.valueOf(pi.getAmount()).movePointLeft(currency.minorUnit())
+                .setScale(currency.minorUnit(), RoundingMode.HALF_UP));
     }
 
     /**
@@ -1186,6 +1205,7 @@ public class CashCommissionService {
         try {
             PaymentIntent pi = stripeCashGateway.retrievePaymentIntent(bid.getCommissionPaymentIntentId());
             if ("succeeded".equals(pi.getStatus())) {
+                recordCardCharge(bid, pi);
                 bid.setCommissionStatus(CommissionStatus.CHARGED);
                 bid.setCommissionChargedVia(CommissionChargedVia.CARD);
                 finalizeBidAcceptance(bid, announcement, announcement.getTravelerId());
@@ -1220,6 +1240,7 @@ public class CashCommissionService {
             try {
                 PaymentIntent pi = stripeCashGateway.retrievePaymentIntent(bid.getCommissionPaymentIntentId());
                 if ("succeeded".equals(pi.getStatus())) {
+                    recordCardCharge(bid, pi);
                     bid.setCommissionStatus(CommissionStatus.CHARGED);
                     bid.setCommissionChargedVia(CommissionChargedVia.CARD);
                     bidRepo.save(bid);

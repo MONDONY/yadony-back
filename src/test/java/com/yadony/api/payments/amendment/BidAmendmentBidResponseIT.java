@@ -187,7 +187,7 @@ class BidAmendmentBidResponseIT {
     }
 
     @Test
-    @DisplayName("espèces + carte, voyageur : brut du colis initial à encaisser, sa commission prélevée comptée")
+    @DisplayName("espèces + carte, colis prélevé avant V348 : commission du colis initial retombée sur brut − net")
     void bidResponse_cashPrincipalPlusCard_traveler() {
         bidId = persistAcceptedBid(annId, PaymentMethod.CASH);
         jdbc.update("UPDATE bids SET commission_status = 'CHARGED' WHERE id = ?", bidId);
@@ -205,6 +205,50 @@ class BidAmendmentBidResponseIT {
         assertThat(b.total()).isEqualByComparingTo("74.00");
         assertThat(forSender.moneyBreakdown().onlineAmount()).isEqualByComparingTo("22.40");
         assertThat(forSender.moneyBreakdown().cashAmount()).isEqualByComparingTo(principalGross);
+    }
+
+    @Test
+    @DisplayName("espèces avec bon de parrainage du voyageur : la commission réellement prélevée (moitié), pas brut − net")
+    void bidResponse_cashPrincipalWithTravelerVoucher_readsChargedAmount() {
+        bidId = persistAcceptedBid(annId, PaymentMethod.CASH);
+        BigDecimal fullCommission = bidService.getBidById(bidId, sender.getFirebaseUid()).totalSenderAmountEur()
+                .subtract(new BigDecimal("54.00"));
+        BigDecimal halved = fullCommission.divide(new BigDecimal("2"), 2, java.math.RoundingMode.HALF_UP);
+        jdbc.update("UPDATE bids SET commission_status = 'CHARGED', commission_charged_via = 'WALLET', "
+                + "cash_commission_charged_amount = ? WHERE id = ?", halved, bidId);
+        insertAmendment("CASH", "ACCEPTED", "3.00", "23.50", "3.30", "26.80", "CHARGED", now().minusHours(1));
+
+        BidMoneyBreakdown b = bidService.getBidById(bidId, traveler.getFirebaseUid()).moneyBreakdown();
+
+        assertThat(b.cashCommissionPaid()).isEqualByComparingTo(halved.add(new BigDecimal("3.30")));
+        assertThat(b.cashCommissionPaid()).isNotEqualByComparingTo(fullCommission.add(new BigDecimal("3.30")));
+    }
+
+    @Test
+    @DisplayName("espèces au plancher minimum (colis sans grille) : la commission prélevée fait foi")
+    void bidResponse_cashPrincipalAtMinimumFloor_readsChargedAmount() {
+        bidId = persistAcceptedBid(annId, PaymentMethod.CASH, new BigDecimal("0.50"));
+        jdbc.update("UPDATE bids SET commission_status = 'CHARGED', commission_charged_via = 'WALLET', "
+                + "cash_commission_charged_amount = 1.00 WHERE id = ?", bidId);
+        insertAmendment("STRIPE", "ACCEPTED", "2.00", "20.00", "2.40", "22.40", null, now().minusHours(1));
+
+        BidResponse forTraveler = bidService.getBidById(bidId, traveler.getFirebaseUid());
+
+        assertThat(forTraveler.totalNetAmountEur()).isEqualByComparingTo("5.00");
+        assertThat(forTraveler.moneyBreakdown().cashCommissionPaid()).isEqualByComparingTo("1.00");
+    }
+
+    @Test
+    @DisplayName("colis en grille pure (sans poids) : poids total = kilos acquis par modification, null sinon")
+    void bidResponse_gridOnlyBid_totalWeightCountsSecuredKilos() {
+        bidId = persistAcceptedBid(annId, PaymentMethod.STRIPE, null);
+        assertThat(bidService.getBidById(bidId, sender.getFirebaseUid()).totalWeightKg()).isNull();
+
+        insertAmendment("CASH", "ACCEPTED", "3.00", "23.50", "3.30", "26.80", "CHARGED", now().minusHours(1));
+
+        BidResponse r = bidService.getBidById(bidId, sender.getFirebaseUid());
+        assertThat(r.weightKg()).isNull();
+        assertThat(r.totalWeightKg()).isEqualByComparingTo("3.00");
     }
 
     @Test
@@ -356,13 +400,17 @@ class BidAmendmentBidResponseIT {
     }
 
     private UUID persistAcceptedBid(UUID announcementId, PaymentMethod method) {
+        return persistAcceptedBid(announcementId, method, new BigDecimal("5.40"));
+    }
+
+    private UUID persistAcceptedBid(UUID announcementId, PaymentMethod method, BigDecimal weightKg) {
         return tx.execute(status -> {
             BidEntity bid = new BidEntity();
             bid.setAnnouncementId(announcementId);
             bid.setSenderId(sender.getId());
             bid.setPaymentMethod(method);
             bid.setCurrency("EUR");
-            bid.setWeightKg(new BigDecimal("5.40"));
+            bid.setWeightKg(weightKg);
             bid.setCommissionRate(new BigDecimal("0.12"));
             bid.setStatus(BidStatus.ACCEPTED);
             bid.setQrToken("qr-" + UUID.randomUUID());

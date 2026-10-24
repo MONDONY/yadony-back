@@ -173,7 +173,7 @@ class BidAmendmentSummaryAdapterTest {
         other.setStatus(BidStatus.IN_TRANSIT);
         when(amendments.findByBidIdIn(anyList())).thenReturn(List.of(accepted));
         when(items.findByAmendmentIdIn(anyList())).thenReturn(List.of());
-        when(supplements.findByBidIdIn(anyList())).thenReturn(List.of());
+        when(supplements.findBidIdsByBidIdInAndStatusIn(anyList(), any())).thenReturn(List.of());
         when(gridItems.findAnnouncementIdsWithItems(anyList())).thenReturn(List.of());
 
         BidAmendmentSummaryPort.Prefetch prefetch = adapter.prefetch(List.of(bid, other));
@@ -190,7 +190,9 @@ class BidAmendmentSummaryAdapterTest {
         verify(supplements, never()).existsByBidIdAndStatusIn(any(), any());
         verify(gridItems, never()).existsByAnnouncementId(any());
         verify(items, never()).findByAmendmentId(any());
-        verify(supplements).findByBidIdIn(List.of(bid.getId()));
+        verify(supplements).findBidIdsByBidIdInAndStatusIn(List.of(bid.getId()),
+                com.yadony.api.payments.supplement.BidSupplementStatus.OPEN);
+        verify(supplements, never()).findByBidIdIn(any());
     }
 
     @Test
@@ -199,7 +201,7 @@ class BidAmendmentSummaryAdapterTest {
 
         verify(amendments, never()).findByBidIdIn(any());
         verify(items, never()).findByAmendmentIdIn(any());
-        verify(supplements, never()).findByBidIdIn(any());
+        verify(supplements, never()).findBidIdsByBidIdInAndStatusIn(any(), any());
         verify(gridItems, never()).findAnnouncementIdsWithItems(any());
     }
 }
