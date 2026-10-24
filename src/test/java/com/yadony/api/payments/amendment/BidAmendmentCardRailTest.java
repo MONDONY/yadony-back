@@ -443,6 +443,7 @@ class BidAmendmentCardRailTest {
 
         verify(ledger).releaseAttempted(a.getId());
         verify(ledger, never()).captured(any(), any(), any(), any());
+        verify(ledger, never()).authorizationReleased(any(), any());
     }
 
     @Test
@@ -459,6 +460,7 @@ class BidAmendmentCardRailTest {
         assertThat(rail.releaseAuthorization(a.getId())).isFalse();
 
         verify(ledger).releaseAttempted(a.getId());
+        verify(ledger, never()).authorizationReleased(any(), any());
     }
 
     @Test

@@ -860,5 +860,7 @@ class BidAmendmentCardRailIT {
 
         assertThat(column(id, "release_attempted_at")).isNotNull();
         assertThat(column(id, "updated_at")).isEqualTo(before);
+        // Un essai raté ne vaut jamais rendu : le marqueur reste nul, le filet repassera.
+        assertThat(column(id, "authorization_released_at")).isNull();
     }
 }

@@ -301,8 +301,9 @@ class BidAmendmentCardLedgerTest {
     }
 
     @Test
-    @DisplayName("prédicat unique de libération : seuls DECLINED, EXPIRED, CANCELLED (closes sans avoir été acquises)")
-    void awaitsRelease_onlyClosedUnaccepted_sameForRailAndLedger() {
+    @DisplayName("prédicat unique de libération du registre : seuls DECLINED, EXPIRED, CANCELLED (closes sans avoir été "
+            + "acquises), pour le prédicat comme pour le signal d'autorisation tardive")
+    void awaitsRelease_onlyClosedUnaccepted_sameForPredicateAndLateAuthorization() {
         // REFUND_PENDING et REFUNDED sont des modifications acquises puis rendues : leur PaymentIntent a été capturée,
         // il n'y a plus d'autorisation à libérer, seulement un remboursement.
         assertThat(BidAmendmentCardLedger.CLOSED_UNACCEPTED).containsExactlyInAnyOrder(BidAmendmentStatus.DECLINED,
