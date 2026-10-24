@@ -193,13 +193,18 @@ class BidAmendmentNotificationListenerTest {
                 BidAmendmentClosedReason.COMMISSION_NOT_CONFIRMED));
         verify(dispatcher).notifyUser(eq(travelerId), eq("Change request cancelled"),
                 eq("Commission not confirmed in time: request cancelled."), eq(data("BID_AMENDMENT_CANCELLED")));
+        // L'expéditeur attendait une réponse : il apprend que sa demande est annulée, sans montant.
+        verify(dispatcher).notifyUser(eq(senderId), eq("Modification annulée"),
+                eq("Le voyageur n'a pas pu finaliser : votre demande est annulée."),
+                eq(data("BID_AMENDMENT_CANCELLED")));
 
         listener.onClosed(new BidAmendmentClosedEvent.Cancelled(amendmentId, bidId, senderId, travelerId,
                 BidSupplementRail.PAWAPAY, BidAmendmentStatus.PAYMENT_PENDING,
                 BidAmendmentClosedReason.CANCELLED_BY_SENDER));
         verify(dispatcher).notifyUser(eq(travelerId), eq("Change request cancelled"),
                 eq("The sender cancelled their change request."), eq(data("BID_AMENDMENT_CANCELLED")));
-        verify(dispatcher, never()).notifyUser(eq(senderId), anyString(), anyString(), any());
+        verify(dispatcher, never()).notifyUser(eq(senderId), eq("Modification annulée"),
+                eq("L'acceptation n'a pas abouti : votre carte n'a pas été débitée."), any());
     }
 
     @Test

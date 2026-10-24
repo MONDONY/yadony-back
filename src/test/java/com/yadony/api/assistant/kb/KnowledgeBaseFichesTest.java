@@ -173,19 +173,27 @@ class KnowledgeBaseFichesTest {
         assertThat(firstHit(kb, "en", "How do I add kilos to my accepted parcel?")).isEqualTo("modifier-colis");
         assertThat(firstHit(kb, "en", "Can I change my parcel after it was accepted?")).isEqualTo("modifier-colis");
         KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        Map<String, List<String>> phrases = Map.of(
+                "fr", List.of("48 h", "2 modifications acceptées au plus", "2 h 15 avant le départ",
+                        "le voyageur règle la commission Yadony de la modification",
+                        "Solde insuffisant : acceptation refusée sans rien débiter, la demande reste ouverte",
+                        "carte refusée : retour en attente de réponse", "Les kilos en plus ne sont pas là",
+                        "Hors espèces, le colis et sa modification sont versés ensemble",
+                        "remboursés ensemble", "demandez au voyageur d'ajuster le prix"),
+                "en", List.of("48 hours", "at most 2 accepted changes", "2 h 15 before departure",
+                        "the traveler pays the Yadony service fee of the change",
+                        "Too little balance: acceptance refused with nothing charged, the request stays open",
+                        "declined card: back to awaiting an answer", "The extra kilos are not there",
+                        "Outside cash, the parcel and its change are paid out together",
+                        "refunded together", "ask the traveler to adjust the price"));
         for (String locale : List.of("fr", "en")) {
             KbArticle fiche = corpus.articles(locale).stream().filter(a -> a.id().equals("modifier-colis"))
                     .findFirst().orElseThrow();
-            // Règles réelles du code (BidAmendmentProperties) : délai de réponse, plafond de modifications acceptées,
-            // fenêtre minimale, fenêtre d'autorisation de la carte.
-            assertThat(fiche.body()).as(locale).contains("48").contains("2 ").contains("30");
+            // Règles réelles du code (BidAmendmentProperties, BidAmendmentCashRail, BidAmendmentWindow).
+            assertThat(fiche.body()).as(locale).contains(phrases.get(locale));
             // Route statique de l'app, déjà autorisée par d'autres fiches (pas de /bids nu).
             assertThat(fiche.routes()).extracting(KbRoute::path).containsExactly("/envois");
         }
-        assertThat(corpus.articles("fr").stream().filter(a -> a.id().equals("modifier-colis")).findFirst().orElseThrow()
-                .body()).contains("Les kilos en plus ne sont pas là").contains("ajustement de prix");
-        assertThat(corpus.articles("en").stream().filter(a -> a.id().equals("modifier-colis")).findFirst().orElseThrow()
-                .body()).contains("The extra kilos are not there").contains("price adjustment");
     }
 
     @Test
