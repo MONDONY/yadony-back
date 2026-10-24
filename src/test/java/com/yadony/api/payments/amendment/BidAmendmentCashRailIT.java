@@ -322,7 +322,9 @@ class BidAmendmentCashRailIT {
         assertThat(column(id, "commission_status")).isEqualTo("REQUIRES_3DS");
         assertThat(column(id, "commission_payment_intent_id")).isEqualTo(piId);
         ArgumentCaptor<PaymentIntentCreateParams> params = ArgumentCaptor.forClass(PaymentIntentCreateParams.class);
-        verify(gateway).createPaymentIntent(params.capture(), eq("amendment_commission_" + id + "_v1"));
+        ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+        verify(gateway).createPaymentIntent(params.capture(), key.capture());
+        assertThat(key.getValue()).startsWith("amendment_commission_" + id + "_");
         assertThat(params.getValue().getMetadata()).containsEntry("bid_amendment_id", id.toString())
                 .containsEntry("commission_purpose", "bid_amendment_commission")
                 .doesNotContainKeys("bid_id", "payment_id");
@@ -437,8 +439,8 @@ class BidAmendmentCashRailIT {
     }
 
     @Test
-    @DisplayName("carte refusée : 422 amendment-commission-card-declined, CANCELLED (COMMISSION_FAILED), kilos rendus")
-    void cardDeclined_cancelsAmendment_andReleasesKilos() throws Exception {
+    @DisplayName("carte refusée : 422, retour en PROPOSED (kilos gardés, rien débité), puis nouvel essai au solde réussi")
+    void cardDeclined_revertsToProposed_thenWalletRetryAccepts() throws Exception {
         Parties p = parties("pm_card", "EUR", "6.00");
         when(gateway.createPaymentIntent(any(), any())).thenThrow(new CardException("declined", null,
                 "card_declined", null, null, null, null, null));
@@ -450,10 +452,77 @@ class BidAmendmentCashRailIT {
                 .isInstanceOfSatisfying(YadonyBusinessException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo("amendment-commission-card-declined"));
 
-        assertThat(column(id, "status")).isEqualTo("CANCELLED");
-        assertThat(column(id, "closed_reason")).isEqualTo("COMMISSION_FAILED");
+        assertThat(column(id, "status")).as("la demande reste ouverte jusqu'à l'échéance").isEqualTo("PROPOSED");
         assertThat(column(id, "commission_status")).isEqualTo("FAILED");
-        assertThat(availableKg(p.announcementId)).isEqualByComparingTo("6.00");
+        assertThat(column(id, "responded_at")).isNull();
+        assertThat(column(id, "closed_reason")).isNull();
+        assertThat(availableKg(p.announcementId)).as("kilos toujours réservés").isEqualByComparingTo("3.00");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM wallet_transactions WHERE bid_id = ?", Integer.class,
+                p.bidId)).isZero();
+
+        topUp(p.traveler.getId(), "EUR", "10.00");
+        AmendmentAcceptResponse retry = service.accept(p.bidId, id, p.traveler.getFirebaseUid(),
+                new AmendmentAcceptRequest(null, null));
+
+        assertThat(retry.amendment().status()).isEqualTo("ACCEPTED");
+        assertThat(column(id, "commission_status")).isEqualTo("CHARGED");
+        assertThat(column(id, "commission_charged_via")).isEqualTo("WALLET");
+        assertThat(walletService.getBalance(p.traveler.getId(), "EUR")).isEqualByComparingTo("6.40");
+    }
+
+    @Test
+    @DisplayName("3DS échouée puis nouvel essai par carte : PaymentIntent neuve (clé d'idempotence neuve), acceptée")
+    void threeDsFailed_thenSecondCardAttempt_usesFreshKey_andAccepts() throws Exception {
+        Parties p = parties("pm_card", "EUR", "6.00");
+        String firstPi = pi();
+        String secondPi = pi();
+        when(gateway.createPaymentIntent(any(), any())).thenReturn(requiresAction(firstPi))
+                .thenReturn(requiresAction(secondPi));
+        when(gateway.cancelPaymentIntent(firstPi)).thenReturn(new PaymentIntentView(firstPi, "canceled", 360L, "eur",
+                null, null, List.of("card")));
+        UUID id = create(p, "3");
+        cashRail.afterAcceptCommit(service.accept(p.bidId, id, p.traveler.getFirebaseUid(),
+                new AmendmentAcceptRequest(CommissionSource.CARD, null)));
+
+        // La 3DS échoue : webhook payment_failed de la première PaymentIntent.
+        assertThat(dispatcher.dispatch(event("payment_intent.payment_failed", "{\"id\":\"" + firstPi
+                + "\",\"object\":\"payment_intent\",\"status\":\"requires_payment_method\","
+                + "\"last_payment_error\":{\"code\":\"authentication_failure\"},\"metadata\":{"
+                + "\"bid_amendment_id\":\"" + id + "\",\"commission_purpose\":\"bid_amendment_commission\"}}")))
+                .isTrue();
+
+        assertThat(column(id, "status")).isEqualTo("PROPOSED");
+        assertThat(column(id, "commission_status")).isEqualTo("FAILED");
+        assertThat(column(id, "responded_at")).isNull();
+        assertThat(availableKg(p.announcementId)).isEqualByComparingTo("3.00");
+        verify(gateway).cancelPaymentIntent(firstPi);
+
+        // Deuxième essai, même carte : nouvelle PaymentIntent.
+        Thread.sleep(5);
+        AmendmentAcceptResponse second = cashRail.afterAcceptCommit(service.accept(p.bidId, id,
+                p.traveler.getFirebaseUid(), new AmendmentAcceptRequest(CommissionSource.CARD, null)));
+
+        assertThat(second.commissionClientSecret()).isEqualTo(secondPi + "_secret");
+        assertThat(column(id, "commission_payment_intent_id")).isEqualTo(secondPi);
+        ArgumentCaptor<String> keys = ArgumentCaptor.forClass(String.class);
+        verify(gateway, org.mockito.Mockito.times(2)).createPaymentIntent(any(), keys.capture());
+        assertThat(keys.getAllValues()).doesNotHaveDuplicates();
+
+        // Un signal tardif de la première PaymentIntent n'affecte pas le second essai.
+        assertThat(dispatcher.dispatch(event("payment_intent.canceled", "{\"id\":\"" + firstPi
+                + "\",\"object\":\"payment_intent\",\"status\":\"canceled\",\"metadata\":{"
+                + "\"bid_amendment_id\":\"" + id + "\",\"commission_purpose\":\"bid_amendment_commission\"}}")))
+                .isTrue();
+        assertThat(column(id, "status")).isEqualTo("COMMISSION_PENDING");
+
+        assertThat(dispatcher.dispatch(event("payment_intent.succeeded", "{\"id\":\"" + secondPi
+                + "\",\"object\":\"payment_intent\",\"status\":\"succeeded\",\"metadata\":{"
+                + "\"bid_amendment_id\":\"" + id + "\",\"commission_purpose\":\"bid_amendment_commission\"}}")))
+                .isTrue();
+
+        assertThat(column(id, "status")).isEqualTo("ACCEPTED");
+        assertThat(column(id, "commission_status")).isEqualTo("CHARGED");
+        assertThat(column(id, "commission_payment_intent_id")).isEqualTo(secondPi);
     }
 
     @Test

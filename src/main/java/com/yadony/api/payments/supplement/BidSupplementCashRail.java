@@ -30,7 +30,6 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.util.LinkedHashMap;
-import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -138,8 +137,9 @@ public class BidSupplementCashRail implements BidSupplementRailHandler {
      * le 422 et annule la création.
      */
     private void chargeWallet(BidSupplementEntity s, String fundingCurrency) {
-        String bidCurrency = normalize(s.getCurrency());
-        String complement = complementCurrency(s.getTravelerId(), fundingCurrency);
+        String bidCurrency = WalletCommissionCollector.normalize(s.getCurrency());
+        String complement = WalletCommissionCollector.complementCurrency(activeCurrencyResolver,
+                s.getTravelerId(), fundingCurrency);
         BigDecimal commission = s.getCommissionAmount();
         CommissionSplit split = collector.plan(s.getTravelerId(), bidCurrency, complement, commission);
         if (!split.covered()) {
@@ -172,19 +172,6 @@ public class BidSupplementCashRail implements BidSupplementRailHandler {
                 "Votre solde ne couvre pas la commission de ce supplément : rechargez-le ou payez par carte",
                 split, bidCurrency, complement, commission, hasCard,
                 collector.alternatives(travelerId, bidCurrency, complement, commission));
-    }
-
-    /** Devise de complément : celle choisie (code supporté, sinon 422), la devise active sinon. */
-    private String complementCurrency(UUID travelerId, String fundingCurrency) {
-        if (fundingCurrency == null || fundingCurrency.isBlank()) {
-            return normalize(activeCurrencyResolver.resolve(travelerId));
-        }
-        String code = normalize(fundingCurrency);
-        if (SupportedCurrency.fromCode(code) == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "funding-currency-invalid",
-                    "Invalid Funding Currency", "Devise de prélèvement inconnue");
-        }
-        return code;
     }
 
     /** Après le commit de la création : la carte commission est débitée (hors verrou du colis). */
@@ -384,9 +371,5 @@ public class BidSupplementCashRail implements BidSupplementRailHandler {
     private static YadonyBusinessException notFound() {
         return new YadonyBusinessException(HttpStatus.NOT_FOUND, "supplement-not-found", "Supplement Not Found",
                 "Demande de supplément introuvable");
-    }
-
-    private static String normalize(String currency) {
-        return currency == null ? "" : currency.trim().toUpperCase(Locale.ROOT);
     }
 }

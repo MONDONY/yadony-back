@@ -9,7 +9,6 @@ public enum BidAmendmentClosedReason {
     PAYMENT_NOT_RECEIVED,
     CAPTURE_FAILED,
     COMMISSION_NOT_CONFIRMED,
-    COMMISSION_FAILED,
     NOT_BROUGHT,
     BID_ENDED
 }
