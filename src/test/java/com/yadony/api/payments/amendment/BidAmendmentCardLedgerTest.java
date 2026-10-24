@@ -290,13 +290,14 @@ class BidAmendmentCardLedgerTest {
     }
 
     @Test
-    @DisplayName("essai de rendu en échec : date posée (ordre du filet)")
+    @DisplayName("essai de rendu en échec : date posée par un UPDATE ciblé, jamais save (updatedAt intact)")
     void releaseAttempted_setsDate() {
         a.setStatus(BidAmendmentStatus.DECLINED);
 
         ledger.releaseAttempted(a.getId());
 
-        assertThat(a.getReleaseAttemptedAt()).isNotNull();
+        verify(amendments).markReleaseAttempted(eq(a.getId()), any());
+        verify(amendments, never()).save(any());
     }
 
     @Test
@@ -309,7 +310,7 @@ class BidAmendmentCardLedgerTest {
         for (BidAmendmentStatus status : BidAmendmentStatus.values()) {
             a.setStatus(status);
             boolean expected = BidAmendmentCardLedger.CLOSED_UNACCEPTED.contains(status);
-            assertThat(BidAmendmentCardRail.awaitsRelease(a)).as("rail, " + status).isEqualTo(expected);
+            assertThat(BidAmendmentCardLedger.awaitsRelease(a)).as("prédicat, " + status).isEqualTo(expected);
             if (status != BidAmendmentStatus.AUTHORIZATION_PENDING) {
                 assertThat(ledger.authorize(a.getId(), "pi_1", "requires_capture", "webhook")).get()
                         .satisfies(r -> assertThat(r.releaseAuthorization()).as("ledger, " + status)

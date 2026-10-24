@@ -120,6 +120,7 @@ class BidAmendmentCardRailIT {
     @Autowired BidAmendmentCardRail cardRail;
     @Autowired BidAmendmentReconciliationJob job;
     @Autowired BidAmendmentRepository amendmentRepository;
+    @Autowired BidAmendmentCardLedger cardLedger;
     @Autowired StripeEventDispatcher dispatcher;
     @Autowired BidService bidService;
     @Autowired UserRepository userRepository;
@@ -793,13 +794,23 @@ class BidAmendmentCardRailIT {
         UUID proposedOld = closedCard("PROPOSED", "10 minutes", null, null);
         UUID pendingOld = closedCard("AUTHORIZATION_PENDING", "10 minutes", null, null);
         UUID acceptedOld = closedCard("ACCEPTED", "10 minutes", null, null);
+        // Abandonnée à la création : aucune PaymentIntent.
+        UUID noPaymentIntent = closedCard("CANCELLED", "10 minutes", null, null);
+        jdbc.update("UPDATE bid_amendments SET stripe_payment_intent_id = NULL WHERE id = ?", noPaymentIntent);
+        // Autre rail (espèces), close depuis 10 min.
+        Parties cashParties = parties("EUR");
+        UUID otherRail = service.create(cashParties.bidId, cashParties.sender.getFirebaseUid(),
+                new CreateAmendmentRequest(new BigDecimal("1"), null, PaymentMethod.CASH)).amendment().id();
+        jdbc.update("UPDATE bid_amendments SET status = 'DECLINED', closed_reason = 'DECLINED_BY_TRAVELER', "
+                + "updated_at = updated_at - interval '10 minutes' WHERE id = ?", otherRail);
 
         java.time.LocalDateTime now = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC);
         List<UUID> found = amendmentRepository.findCardIdsAwaitingRelease(BidAmendmentCardLedger.CLOSED_UNACCEPTED,
                 now.minusDays(8), now.minusMinutes(5), org.springframework.data.domain.PageRequest.of(0, 1000));
 
         assertThat(found).contains(lost)
-                .doesNotContain(released, recent, captured, tooOld, proposedOld, pendingOld, acceptedOld);
+                .doesNotContain(released, recent, captured, tooOld, proposedOld, pendingOld, acceptedOld,
+                        noPaymentIntent, otherRail);
 
         // Le filet ne touche pas aux demandes ouvertes ou acquises, même anciennes.
         job.run();
@@ -837,5 +848,17 @@ class BidAmendmentCardRailIT {
 
         assertThat(found).contains(failing, fresh);
         assertThat(found.indexOf(fresh)).as("jamais essayée d'abord").isLessThan(found.indexOf(failing));
+    }
+
+    @Test
+    @DisplayName("essai de rendu en échec : date posée sans toucher updated_at (la fenêtre de 8 jours ne glisse pas)")
+    void releaseAttempted_keepsUpdatedAt() throws Exception {
+        UUID id = closedCard("DECLINED", "10 minutes", null, null);
+        String before = column(id, "updated_at");
+
+        cardLedger.releaseAttempted(id);
+
+        assertThat(column(id, "release_attempted_at")).isNotNull();
+        assertThat(column(id, "updated_at")).isEqualTo(before);
     }
 }

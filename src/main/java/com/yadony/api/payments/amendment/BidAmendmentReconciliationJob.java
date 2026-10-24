@@ -52,8 +52,10 @@ public class BidAmendmentReconciliationJob {
     static final Duration CARD_RELEASE_GRACE = Duration.ofMinutes(5);
 
     /**
-     * Au-delà, une autorisation non rendue n'est plus relue à chaque passage : Stripe annule de lui-même une autorisation
-     * non capturée après 7 jours, et l'alerte {@code AMEND_PI_UNCANCELED_} levée au premier échec reste à traiter.
+     * Fenêtre comptée depuis la clôture ({@code updatedAt}, que les essais ratés ne déplacent pas : ils ne posent que
+     * {@code releaseAttemptedAt}) : au-delà de 8 jours, une autorisation non rendue n'est plus relue. Stripe annule de
+     * lui-même une autorisation non capturée après 7 jours, et l'alerte {@code AMEND_PI_UNCANCELED_} levée au premier
+     * échec reste à traiter.
      */
     static final Duration CARD_RELEASE_WINDOW = Duration.ofDays(8);
 
@@ -110,18 +112,20 @@ public class BidAmendmentReconciliationJob {
     private final BidAmendmentService service;
     private final BidAmendmentCashRefunds cashRefunds;
     private final BidAmendmentCardRail cardRail;
+    private final BidAmendmentCardLedger cardLedger;
     private final BidAmendmentWindow window;
     private final BidAmendmentProperties properties;
     private final AdminAlertEscalator alerts;
 
     public BidAmendmentReconciliationJob(BidAmendmentRepository amendments, BidAmendmentService service,
                                          BidAmendmentCashRefunds cashRefunds, BidAmendmentCardRail cardRail,
-                                         BidAmendmentWindow window, BidAmendmentProperties properties,
+                                         BidAmendmentCardLedger cardLedger, BidAmendmentWindow window, BidAmendmentProperties properties,
                                          AdminAlertEscalator alerts) {
         this.amendments = amendments;
         this.service = service;
         this.cashRefunds = cashRefunds;
         this.cardRail = cardRail;
+        this.cardLedger = cardLedger;
         this.window = window;
         this.properties = properties;
         this.alerts = alerts;
@@ -199,6 +203,11 @@ public class BidAmendmentReconciliationJob {
                 }
             } catch (RuntimeException e) {
                 log.error("Autorisation carte de la modification {} : annulation en échec", id, e);
+                try {
+                    cardLedger.releaseAttempted(id);
+                } catch (RuntimeException markError) {
+                    log.error("Modification {} : essai de rendu non noté", id, markError);
+                }
                 alerts.raiseOnce("AMEND_PI_UNCANCELED_" + id,
                         "Autorisation carte de la modification close " + id + " non rendue par le filet ("
                                 + e.getMessage() + ") : nouvel essai au prochain passage",

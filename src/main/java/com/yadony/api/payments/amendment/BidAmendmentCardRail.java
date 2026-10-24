@@ -205,7 +205,7 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
                     releaseAuthorization(amendmentId);
                 }
             }
-        } else if (awaitsRelease(a)) {
+        } else if (BidAmendmentCardLedger.awaitsRelease(a)) {
             // Close avant que l'app ne confirme : l'autorisation éventuellement obtenue est rendue (idempotent).
             releaseAuthorization(amendmentId);
         }
@@ -299,7 +299,7 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
      */
     public boolean releaseAuthorization(UUID amendmentId) {
         BidAmendmentEntity a = ledger.find(amendmentId).orElse(null);
-        if (a == null || !awaitsRelease(a)) {
+        if (a == null || !BidAmendmentCardLedger.awaitsRelease(a)) {
             return false;
         }
         String piId = a.getStripePaymentIntentId();
@@ -314,9 +314,12 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
                 return true;
             }
             if (pi != null && pi.succeeded()) {
+                // Capturée entre-temps : remboursée si la capture s'enregistre ; sinon (charge illisible, capture
+                // ignorée) la ligne reste à traiter et passe en fin de lot du filet.
                 String chargeId = chargeOf(amendmentId, pi);
-                if (chargeId != null) {
-                    ledger.captured(amendmentId, piId, chargeId, "cancel-refused");
+                if (chargeId == null || ledger.captured(amendmentId, piId, chargeId, "cancel-refused")
+                        == BidAmendmentCardLedger.CaptureOutcome.IGNORED) {
+                    ledger.releaseAttempted(amendmentId);
                 }
                 return false;
             }
@@ -331,14 +334,6 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
                             "paymentIntentId", piId, "error", String.valueOf(refused.getMessage())));
         }
         return false;
-    }
-
-    /**
-     * Modification carte close, non capturée, dont l'autorisation n'a pas encore été rendue (marqueur
-     * {@code authorizationReleasedAt}) : écouteur de la clôture, filet planifié, autorisation tardive.
-     */
-    static boolean awaitsRelease(BidAmendmentEntity a) {
-        return BidAmendmentCardLedger.awaitsRelease(a);
     }
 
     /**

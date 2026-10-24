@@ -22,10 +22,11 @@ class BidAmendmentReconciliationJobTest {
     private final BidAmendmentService service = mock(BidAmendmentService.class);
     private final BidAmendmentCashRefunds cashRefunds = mock(BidAmendmentCashRefunds.class);
     private final BidAmendmentCardRail cardRail = mock(BidAmendmentCardRail.class);
+    private final BidAmendmentCardLedger cardLedger = mock(BidAmendmentCardLedger.class);
     private final AdminAlertEscalator alerts = mock(AdminAlertEscalator.class);
     private final BidAmendmentProperties properties = new BidAmendmentProperties();
     private final BidAmendmentReconciliationJob job = new BidAmendmentReconciliationJob(amendments, service,
-            cashRefunds, cardRail, new BidAmendmentWindow(properties), properties, alerts);
+            cashRefunds, cardRail, cardLedger, new BidAmendmentWindow(properties), properties, alerts);
 
     @Test
     void filetCoupe_neTournePas() {
@@ -73,6 +74,10 @@ class BidAmendmentReconciliationJobTest {
         assertThat(outcome).isEqualTo(new BidAmendmentReconciliationJob.Outcome(1, 1, 1, 1, 1, 1, 0));
         verify(cashRefunds, never()).refundStale(any(), any(), org.mockito.ArgumentMatchers.eq("pi_bad"));
         verify(cardRail).releaseAuthorization(next);
+        // Échec d'une libération : essai noté (la ligne passe en fin de lot), seulement pour elle.
+        verify(cardLedger).releaseAttempted(failing);
+        verify(cardLedger, never()).releaseAttempted(next);
+        verify(cardLedger, never()).releaseAttempted(released);
         // Échec d'une libération : alerte (le filet repassera) ; seule la libération effective est comptée.
         verify(alerts).raiseOnce(org.mockito.ArgumentMatchers.eq("AMEND_PI_UNCANCELED_" + failing),
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyMap());

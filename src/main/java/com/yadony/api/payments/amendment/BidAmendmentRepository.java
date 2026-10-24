@@ -4,6 +4,7 @@ import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -29,6 +30,14 @@ public interface BidAmendmentRepository extends JpaRepository<BidAmendmentEntity
 
     /** Modification espèces dont {@code commissionPaymentIntentId} est la PaymentIntent de commission. */
     Optional<BidAmendmentEntity> findByCommissionPaymentIntentId(String commissionPaymentIntentId);
+
+    /**
+     * Essai de rendu d'autorisation en échec ({@code releaseAttemptedAt}), sans toucher {@code updatedAt} : la fenêtre
+     * du filet ({@code findCardIdsAwaitingRelease}, {@code updatedAt > since}) ne glisse pas à chaque échec.
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("UPDATE BidAmendmentEntity a SET a.releaseAttemptedAt = :at WHERE a.id = :id")
+    int markReleaseAttempted(@Param("id") UUID id, @Param("at") LocalDateTime at);
 
     /** Modification carte dont {@code stripePaymentIntentId} est la PaymentIntent (montant bloqué puis débité). */
     Optional<BidAmendmentEntity> findByStripePaymentIntentId(String stripePaymentIntentId);

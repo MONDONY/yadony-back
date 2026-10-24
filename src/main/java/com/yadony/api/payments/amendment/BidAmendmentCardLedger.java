@@ -220,10 +220,9 @@ public class BidAmendmentCardLedger {
     /** Essai de rendu de l'autorisation en échec : la ligne passe en fin de lot du filet. */
     @Transactional
     public void releaseAttempted(UUID amendmentId) {
-        lock(amendmentId, false).filter(this::card).ifPresent(a -> {
-            a.setReleaseAttemptedAt(window.now());
-            amendments.save(a);
-        });
+        // UPDATE ciblé, jamais save : @PreUpdate déplacerait updatedAt et la fenêtre du filet glisserait sans fin.
+        lock(amendmentId, false).filter(this::card)
+                .ifPresent(a -> amendments.markReleaseAttempted(a.getId(), window.now()));
     }
 
     /**

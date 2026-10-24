@@ -430,4 +430,56 @@ class BidAmendmentCardRailTest {
 
         verify(ledger).releaseAttempted(a.getId());
     }
+
+    @Test
+    @DisplayName("PI capturée mais charge illisible : non libérée, essai noté")
+    void releaseAuthorization_capturedChargeUnreadable_recordsAttempt() throws Exception {
+        a.setStatus(BidAmendmentStatus.DECLINED);
+        when(gateway.cancelPaymentIntent("pi_1")).thenThrow(new InvalidRequestException("captured", null, "r",
+                "payment_intent_unexpected_state", 400, null));
+        when(gateway.retrievePaymentIntent("pi_1")).thenReturn(view("succeeded"));
+
+        assertThat(rail.releaseAuthorization(a.getId())).isFalse();
+
+        verify(ledger).releaseAttempted(a.getId());
+        verify(ledger, never()).captured(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("PI capturée dont l'enregistrement est ignoré : non libérée, essai noté")
+    void releaseAuthorization_captureIgnored_recordsAttempt() throws Exception {
+        a.setStatus(BidAmendmentStatus.DECLINED);
+        when(gateway.cancelPaymentIntent("pi_1")).thenThrow(new InvalidRequestException("captured", null, "r",
+                "payment_intent_unexpected_state", 400, null));
+        when(gateway.retrievePaymentIntent("pi_1")).thenReturn(new PaymentIntentView("pi_1", "succeeded", 3360L, "eur",
+                null, "ch_1", List.of("card")));
+        when(ledger.captured(a.getId(), "pi_1", "ch_1", "cancel-refused"))
+                .thenReturn(BidAmendmentCardLedger.CaptureOutcome.IGNORED);
+
+        assertThat(rail.releaseAuthorization(a.getId())).isFalse();
+
+        verify(ledger).releaseAttempted(a.getId());
+    }
+
+    @Test
+    @DisplayName("libération réussie, PI déjà annulée ou capture tardive enregistrée : aucun essai noté")
+    void releaseAuthorization_releasedOrSettled_neverRecordsAttempt() throws Exception {
+        a.setStatus(BidAmendmentStatus.DECLINED);
+        when(gateway.cancelPaymentIntent("pi_1")).thenReturn(view("canceled"));
+        rail.releaseAuthorization(a.getId());
+
+        org.mockito.Mockito.reset(gateway);
+        when(gateway.cancelPaymentIntent("pi_1")).thenThrow(new InvalidRequestException("canceled", null, "r",
+                "payment_intent_unexpected_state", 400, null));
+        when(gateway.retrievePaymentIntent("pi_1")).thenReturn(view("canceled"));
+        rail.releaseAuthorization(a.getId());
+
+        when(gateway.retrievePaymentIntent("pi_1")).thenReturn(new PaymentIntentView("pi_1", "succeeded", 3360L, "eur",
+                null, "ch_1", List.of("card")));
+        when(ledger.captured(a.getId(), "pi_1", "ch_1", "cancel-refused"))
+                .thenReturn(BidAmendmentCardLedger.CaptureOutcome.LATE_REFUND);
+        rail.releaseAuthorization(a.getId());
+
+        verify(ledger, never()).releaseAttempted(any());
+    }
 }

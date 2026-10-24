@@ -127,10 +127,14 @@ public class BidAmendmentEntity extends BaseEntity {
     @Column(name = "authorization_released_at")
     private LocalDateTime authorizationReleasedAt;
 
-    /** Essai de capture : incrémenté après une réponse 5xx de Stripe (nouvelle clé d'idempotence). */
+    /**
+     * Dernier essai du filet pour rendre l'autorisation, en échec : la ligne passe en fin de lot. Posé par un UPDATE
+     * ciblé qui ne touche pas {@code updatedAt}.
+     */
     @Column(name = "release_attempted_at")
     private LocalDateTime releaseAttemptedAt;
 
+    /** Essai de capture : incrémenté après une réponse 5xx de Stripe (nouvelle clé d'idempotence). */
     @Column(name = "capture_attempt", nullable = false)
     private int captureAttempt;
 
