@@ -40,7 +40,7 @@ public class BidAmendmentCashListener {
         }
     }
 
-    /** Commission arrivée trop tard sur une modification close. */
+    /** Commission arrivée trop tard sur une modification close, ou modification acquise dont le colis s'arrête (B6). */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void onRefundRequested(BidAmendmentRefundRequestedEvent e) {

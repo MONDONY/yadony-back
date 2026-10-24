@@ -82,6 +82,9 @@ yadony:
   # Pas d'appel Stripe ni pawaPay réel pendant les tests.
   reconciliation:
     enabled: false
+  # Filet des modifications de colis : appelé directement par ses tests (BidAmendmentLifecycleIT).
+  bid-amendment:
+    reconcile-enabled: false
   payments:
     auto-heal:
       enabled: false

@@ -4,6 +4,8 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.disputes.DisputeRepository;
+import com.yadony.api.disputes.DisputeTypes;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementPriceGridItemRepository;
 import com.yadony.api.matching.AnnouncementRepository;
@@ -23,11 +25,14 @@ import com.yadony.api.payments.amendment.dto.AmendmentQuoteResponse;
 import com.yadony.api.payments.amendment.dto.CreateAmendmentRequest;
 import com.yadony.api.payments.amendment.events.BidAmendmentAcceptedEvent;
 import com.yadony.api.payments.amendment.events.BidAmendmentClosedEvent;
+import com.yadony.api.payments.amendment.events.BidAmendmentRefundRequestedEvent;
+import com.yadony.api.payments.amendment.events.BidAmendmentReminderDueEvent;
 import com.yadony.api.payments.amendment.events.BidAmendmentRequestedEvent;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.currency.CurrencyBounds;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.supplement.BidSupplementRail;
+import com.yadony.api.payments.supplement.BidSupplementService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -35,6 +40,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -71,6 +77,9 @@ public class BidAmendmentService {
     private static final Set<BidAmendmentStatus> CANCELLABLE_BY_SENDER = EnumSet.of(
             BidAmendmentStatus.AUTHORIZATION_PENDING, BidAmendmentStatus.PROPOSED, BidAmendmentStatus.PAYMENT_PENDING);
 
+    /** Colis terminés sans livraison : ses modifications sont closes ou remboursées (même ensemble que le supplément). */
+    public static final Set<BidStatus> TERMINAL_UNDELIVERED = BidSupplementService.TERMINAL_UNDELIVERED;
+
     /** Étapes d'où un rail peut rendre la modification acquise. */
     private static final Set<BidAmendmentStatus> ACCEPTABLE = EnumSet.of(
             BidAmendmentStatus.PROPOSED, BidAmendmentStatus.COMMISSION_PENDING, BidAmendmentStatus.PAYMENT_PENDING);
@@ -90,6 +99,7 @@ public class BidAmendmentService {
     private final ObjectProvider<BidAmendmentRailHandler> handlers;
     private final AuditService auditService;
     private final ApplicationEventPublisher events;
+    private final DisputeRepository disputes;
 
     public BidAmendmentService(BidAmendmentRepository amendments, BidAmendmentItemRepository amendmentItems,
                                BidRepository bids, AnnouncementRepository announcements,
@@ -98,7 +108,7 @@ public class BidAmendmentService {
                                BidAmendmentWindow window, BidAmendmentCapacity capacity,
                                BidAmendmentProperties properties, PriceGridService priceGrid,
                                ObjectProvider<BidAmendmentRailHandler> handlers, AuditService auditService,
-                               ApplicationEventPublisher events) {
+                               ApplicationEventPublisher events, DisputeRepository disputes) {
         this.amendments = amendments;
         this.amendmentItems = amendmentItems;
         this.bids = bids;
@@ -115,6 +125,7 @@ public class BidAmendmentService {
         this.handlers = handlers;
         this.auditService = auditService;
         this.events = events;
+        this.disputes = disputes;
     }
 
     // ── Expéditeur ───────────────────────────────────────────────────────────
@@ -262,7 +273,7 @@ public class BidAmendmentService {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "amendment-payment-in-progress",
                     "Amendment Payment In Progress", "Un paiement de cette modification est en cours de traitement");
         }
-        close(a, BidAmendmentStatus.CANCELLED, BidAmendmentClosedReason.CANCELLED_BY_SENDER, sender.getId());
+        close(a, BidAmendmentStatus.CANCELLED, BidAmendmentClosedReason.CANCELLED_BY_SENDER, sender.getId(), Map.of());
         return view(a, true);
     }
 
@@ -275,7 +286,7 @@ public class BidAmendmentService {
         BidAmendmentEntity a = lockForResponse(bidId, amendmentId);
         requireAwaitingTraveler(a, traveler);
         a.setRespondedAt(window.now());
-        close(a, BidAmendmentStatus.DECLINED, BidAmendmentClosedReason.DECLINED_BY_TRAVELER, traveler.getId());
+        close(a, BidAmendmentStatus.DECLINED, BidAmendmentClosedReason.DECLINED_BY_TRAVELER, traveler.getId(), Map.of());
         return view(a, false);
     }
 
@@ -293,6 +304,57 @@ public class BidAmendmentService {
         BidAmendmentRailHandler handler = handler(a.getRail())
                 .orElseThrow(() -> BidAmendmentEligibility.exceptionFor("amendment-rail-unavailable"));
         return handler.accept(a, traveler, request);
+    }
+
+    /**
+     * « Les kilos en plus ne sont pas là » (spec §5.4 bis) : à la remise, l'expéditeur n'apporte pas ce qu'il avait
+     * ajouté. Le voyageur annule la modification acquise, le colis initial part au prix prévu. Motif
+     * {@code NOT_BROUGHT}, kilos rendus au trajet, puis l'argent de la modification est rendu par son rail, comme à
+     * la fin du colis ({@link #refundSecured}) :
+     * <ul>
+     *   <li>carte ou mobile money : {@code REFUND_PENDING}, l'expéditeur est remboursé par le rail
+     *       ({@link BidAmendmentRefundRequestedEvent}) ;</li>
+     *   <li>espèces : {@code REFUNDED} ; la commission est rendue au voyageur après le commit, par l'écouteur du
+     *       rail espèces sur {@link BidAmendmentClosedEvent.NotBrought} (une seule demande de remboursement).</li>
+     * </ul>
+     *
+     * @throws YadonyBusinessException 403 si l'appelant n'est pas le voyageur, 422 {@code invalid-bid-status} si le
+     *         colis n'est plus {@code ACCEPTED} (déjà remis), 409 {@code amendment-not-accepted} si la modification
+     *         n'est pas acquise.
+     */
+    @Transactional
+    public BidAmendmentResponse notBrought(UUID bidId, UUID amendmentId, String firebaseUid) {
+        requireEnabled();
+        UserEntity traveler = user(firebaseUid);
+        BidAmendmentEntity a = lockForResponse(bidId, amendmentId);
+        if (!traveler.getId().equals(a.getTravelerId())) {
+            throw forbidden();
+        }
+        if (bid(bidId).getStatus() != BidStatus.ACCEPTED) {
+            throw BidAmendmentEligibility.exceptionFor("invalid-bid-status");
+        }
+        if (a.getStatus() != BidAmendmentStatus.ACCEPTED) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "amendment-not-accepted", "Amendment Not Accepted",
+                    "Cette modification n'est pas acceptée");
+        }
+        BidAmendmentStatus previous = a.getStatus();
+        a.setClosedReason(BidAmendmentClosedReason.NOT_BROUGHT);
+        if (a.getRail() == BidSupplementRail.CASH) {
+            a.setStatus(BidAmendmentStatus.REFUNDED);
+            a.setRefundedAt(window.now());
+        } else {
+            a.setStatus(BidAmendmentStatus.REFUND_PENDING);
+        }
+        amendments.save(a);
+        capacity.release(a);
+        events.publishEvent(new BidAmendmentClosedEvent.NotBrought(a.getId(), bidId, a.getSenderId(),
+                a.getTravelerId(), a.getRail(), previous, BidAmendmentClosedReason.NOT_BROUGHT));
+        if (a.getRail() != BidSupplementRail.CASH) {
+            events.publishEvent(new BidAmendmentRefundRequestedEvent(a.getId(), bidId, a.getRail(),
+                    BidAmendmentClosedReason.NOT_BROUGHT.name()));
+        }
+        audit(a, "BID_AMENDMENT_NOT_BROUGHT", traveler.getId(), Map.of("previousStatus", previous.name()));
+        return view(a, false);
     }
 
     /**
@@ -328,7 +390,166 @@ public class BidAmendmentService {
         if (!a.getStatus().isOpen()) {
             return false;
         }
-        close(a, BidAmendmentStatus.CANCELLED, reason, null);
+        close(a, BidAmendmentStatus.CANCELLED, reason, null, Map.of());
+        return true;
+    }
+
+    // ── Fin du colis ─────────────────────────────────────────────────────────
+
+    /**
+     * Le colis s'est terminé sans livraison ({@link #TERMINAL_UNDELIVERED}) : ses modifications suivent l'issue du
+     * principal, et leurs kilos sont rendus au trajet une seule fois ({@link BidAmendmentCapacity#release}). N'agit
+     * que si le colis est réellement terminé : un événement qui ne le termine pas ne ferme rien. Idempotent :
+     * plusieurs événements pour la même fin n'ont qu'un effet ({@link #endUnderLocks}).
+     *
+     * <p>Transaction propre : un colis en échec ne fait pas échouer les autres colis d'un même trajet annulé.
+     *
+     * @param reason clé de la fin ({@code BID_REJECTED}, {@code CANCELLATION_CONFIRMED}…), tracée dans l'audit et la
+     *               demande de remboursement.
+     * @return vrai si une modification a changé (close, remboursement demandé, kilos rendus).
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean onBidEnded(UUID bidId, String reason) {
+        if (bidId == null || bids.lockForUpdate(bidId) == 0) {
+            return false;
+        }
+        BidEntity bid = bids.findById(bidId).orElse(null);
+        if (bid == null || !TERMINAL_UNDELIVERED.contains(bid.getStatus())) {
+            return false;
+        }
+        lockAnnouncement(bid);
+        return endUnderLocks(bid, reason);
+    }
+
+    /**
+     * Paiement principal remboursé par l'administration ({@code AdminPaymentRefundedEvent}) : les modifications du
+     * colis suivent le principal ({@link #endUnderLocks}), qu'il soit terminé ou non, sauf litige ouvert sur le
+     * colis (décision manuelle, comme le supplément). Idempotent.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean onPrincipalRefunded(UUID bidId) {
+        if (bidId == null || bids.lockForUpdate(bidId) == 0) {
+            return false;
+        }
+        BidEntity bid = bids.findById(bidId).orElse(null);
+        if (bid == null) {
+            return false;
+        }
+        if (disputes.existsByBidIdAndStatusAndTypeStartingWith(bidId, DisputeTypes.STATUS_OPEN, "")) {
+            log.info("Principal du colis {} remboursé, litige ouvert : modifications laissées en l'état", bidId);
+            return false;
+        }
+        lockAnnouncement(bid);
+        return endUnderLocks(bid, "ADMIN_REFUND");
+    }
+
+    /**
+     * Fin des modifications d'un colis, sous les verrous du colis et du trajet :
+     * <ul>
+     *   <li>ouverte : {@code CANCELLED} ({@code BID_ENDED}), rail prévenu ({@code onClosed} : autorisation carte
+     *       annulée) ; un dépôt mobile money en vol ({@code mayExpire} faux) est laissé à son issue, le filet repasse ;</li>
+     *   <li>acquise et non versée ({@code ACCEPTED}) : remboursée par son rail ({@link #refundSecured}) ;</li>
+     *   <li>déjà versée, ou remboursement déjà demandé : inchangée (l'alerte « non soldée » du filet la signale si
+     *       elle traîne).</li>
+     * </ul>
+     * Dans tous les cas, les kilos encore retirés du trajet sont rendus.
+     */
+    private boolean endUnderLocks(BidEntity bid, String reason) {
+        boolean changed = false;
+        for (BidAmendmentEntity a : amendments.findByBidIdForUpdate(bid.getId())) {
+            if (a.getStatus().isOpen()) {
+                Optional<BidAmendmentRailHandler> handler = handler(a.getRail());
+                if (a.getStatus() == BidAmendmentStatus.PAYMENT_PENDING && handler.isPresent()
+                        && !handler.get().mayExpire(a)) {
+                    log.info("Modification {} du colis terminé {} : dépôt en vol, close à son issue", a.getId(),
+                            bid.getId());
+                } else {
+                    close(a, BidAmendmentStatus.CANCELLED, BidAmendmentClosedReason.BID_ENDED, null,
+                            Map.of("bidStatus", bid.getStatus().name(), "endReason", reason));
+                    changed = true;
+                }
+            } else if (a.getStatus() == BidAmendmentStatus.ACCEPTED) {
+                refundSecured(a, bid, reason);
+                changed = true;
+            }
+            if (a.getCapacityReservedKg() != null && a.getCapacityReservedKg().signum() > 0) {
+                capacity.release(a);
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * Modification acquise dont le colis s'arrête : l'argent est rendu par son rail, après le commit.
+     * <ul>
+     *   <li>carte ou mobile money : {@code REFUND_PENDING}, l'expéditeur est remboursé par le rail
+     *       ({@link BidAmendmentRefundRequestedEvent}) ;</li>
+     *   <li>espèces : {@code REFUNDED} tout de suite (aucun argent n'est passé par l'app, les espèces se rendent avec le
+     *       colis) ; la commission du voyageur est rendue par le rail espèces sur la même demande
+     *       ({@code BidAmendmentCashRefunds#settle}, filet en cas d'échec).</li>
+     * </ul>
+     */
+    private void refundSecured(BidAmendmentEntity a, BidEntity bid, String reason) {
+        BidAmendmentStatus previous = a.getStatus();
+        a.setClosedReason(BidAmendmentClosedReason.BID_ENDED);
+        boolean cash = a.getRail() == BidSupplementRail.CASH;
+        if (cash) {
+            a.setStatus(BidAmendmentStatus.REFUNDED);
+            a.setRefundedAt(window.now());
+        } else {
+            a.setStatus(BidAmendmentStatus.REFUND_PENDING);
+        }
+        amendments.save(a);
+        events.publishEvent(new BidAmendmentRefundRequestedEvent(a.getId(), bid.getId(), a.getRail(), reason));
+        audit(a, cash ? "BID_AMENDMENT_REFUNDED" : "BID_AMENDMENT_REFUND_REQUESTED", null,
+                Map.of("previousStatus", previous.name(), "bidStatus", bid.getStatus().name(), "endReason", reason));
+        log.info("Modification {} du colis terminé {} ({}) : {}", a.getId(), bid.getId(), reason, a.getStatus());
+    }
+
+    // ── Remise et rappel ─────────────────────────────────────────────────────
+
+    /**
+     * Portail de la remise ({@link BidAmendmentHandoverGate}), colis déjà verrouillé par le scan : clôt la modification
+     * ouverte dont l'étape en cours est échue, sous les verrous du trajet puis de la modification.
+     *
+     * @return vrai si la modification n'est plus ouverte (la remise peut passer) ; faux si elle l'est encore (dépôt
+     *         mobile money en vol, ou étape pas encore échue).
+     */
+    @Transactional
+    public boolean expireForHandover(UUID bidId, UUID amendmentId) {
+        bids.findById(bidId).ifPresent(this::lockAnnouncement);
+        return amendments.findByIdAndBidIdForUpdate(amendmentId, bidId)
+                .map(a -> {
+                    expireUnderBidLock(a);
+                    return !a.getStatus().isOpen();
+                })
+                .orElse(true);
+    }
+
+    /**
+     * Rappel au voyageur, une seule fois par modification : proposée, sans rappel envoyé, échéance dans moins de
+     * {@code reminder-before}. {@code reminderSentAt} est posé dans la même transaction que l'événement
+     * ({@link BidAmendmentReminderDueEvent}, notifié en B8). Sous les verrous du colis puis de la modification.
+     *
+     * @return vrai si le rappel est parti.
+     */
+    @Transactional
+    public boolean remindTraveler(UUID amendmentId) {
+        Optional<UUID> foundBid = amendments.findBidIdById(amendmentId);
+        if (foundBid.isEmpty() || bids.lockForUpdate(foundBid.get()) == 0) {
+            return false;
+        }
+        BidAmendmentEntity a = amendments.findByIdAndBidIdForUpdate(amendmentId, foundBid.get()).orElse(null);
+        LocalDateTime now = window.now();
+        if (a == null || a.getStatus() != BidAmendmentStatus.PROPOSED || a.getReminderSentAt() != null
+                || !a.getExpiresAt().isAfter(now)
+                || a.getExpiresAt().minus(properties.getReminderBefore()).isAfter(now)) {
+            return false;
+        }
+        a.setReminderSentAt(now);
+        amendments.save(a);
+        events.publishEvent(new BidAmendmentReminderDueEvent(a.getId(), a.getBidId(), a.getTravelerId()));
         return true;
     }
 
@@ -372,17 +593,17 @@ public class BidAmendmentService {
         }
         switch (a.getStatus()) {
             case AUTHORIZATION_PENDING -> close(a, BidAmendmentStatus.CANCELLED,
-                    BidAmendmentClosedReason.AUTHORIZATION_NOT_CONFIRMED, null);
-            case PROPOSED -> close(a, BidAmendmentStatus.EXPIRED, BidAmendmentClosedReason.EXPIRED, null);
+                    BidAmendmentClosedReason.AUTHORIZATION_NOT_CONFIRMED, null, Map.of());
+            case PROPOSED -> close(a, BidAmendmentStatus.EXPIRED, BidAmendmentClosedReason.EXPIRED, null, Map.of());
             case PAYMENT_PENDING -> {
                 Optional<BidAmendmentRailHandler> handler = handler(a.getRail());
                 if (handler.isPresent() && !handler.get().mayExpire(a)) {
                     return false;
                 }
-                close(a, BidAmendmentStatus.EXPIRED, BidAmendmentClosedReason.PAYMENT_NOT_RECEIVED, null);
+                close(a, BidAmendmentStatus.EXPIRED, BidAmendmentClosedReason.PAYMENT_NOT_RECEIVED, null, Map.of());
             }
             case COMMISSION_PENDING -> close(a, BidAmendmentStatus.CANCELLED,
-                    BidAmendmentClosedReason.COMMISSION_NOT_CONFIRMED, null);
+                    BidAmendmentClosedReason.COMMISSION_NOT_CONFIRMED, null, Map.of());
             default -> {
                 return false;
             }
@@ -397,7 +618,8 @@ public class BidAmendmentService {
      * Ferme une modification ouverte : statut et motif, kilos rendus, rail prévenu, événement et audit. Les
      * kilos sont rendus avant l'événement : ses écouteurs voient la capacité à jour.
      */
-    private void close(BidAmendmentEntity a, BidAmendmentStatus to, BidAmendmentClosedReason reason, UUID actorId) {
+    private void close(BidAmendmentEntity a, BidAmendmentStatus to, BidAmendmentClosedReason reason, UUID actorId,
+                       Map<String, Object> extra) {
         BidAmendmentStatus previous = a.getStatus();
         a.setStatus(to);
         a.setClosedReason(reason);
@@ -413,8 +635,10 @@ public class BidAmendmentService {
                     a.getTravelerId(), a.getRail(), previous, reason);
             default -> throw new IllegalArgumentException("Clôture vers " + to + " non prévue");
         });
-        audit(a, "BID_AMENDMENT_" + to.name(), actorId,
-                Map.of("previousStatus", previous.name(), "closedReason", reason.name()));
+        Map<String, Object> payload = new LinkedHashMap<>(extra);
+        payload.put("previousStatus", previous.name());
+        payload.put("closedReason", reason.name());
+        audit(a, "BID_AMENDMENT_" + to.name(), actorId, payload);
     }
 
     /** Verrous colis, trajet, modification, dans cet ordre, pour répondre à une modification. */

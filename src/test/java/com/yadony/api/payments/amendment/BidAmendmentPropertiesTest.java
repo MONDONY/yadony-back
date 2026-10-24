@@ -46,6 +46,7 @@ class BidAmendmentPropertiesTest {
         assertThat(p.getMinNetEur()).isEqualByComparingTo("1");
         assertThat(p.getMaxNetEur()).isEqualByComparingTo("300");
         assertThat(p.getReconcileInterval()).isEqualTo(Duration.ofMinutes(10));
+        assertThat(p.isReconcileEnabled()).isTrue();
         assertThat(p.getMmMaxAttempts()).isEqualTo(3);
     }
 
@@ -63,6 +64,7 @@ class BidAmendmentPropertiesTest {
                 Map.entry("BID_AMENDMENT_MIN_NET_EUR", "2"),
                 Map.entry("BID_AMENDMENT_MAX_NET_EUR", "500"),
                 Map.entry("BID_AMENDMENT_RECONCILE_INTERVAL", "PT1M"),
+                Map.entry("BID_AMENDMENT_RECONCILE_ENABLED", "false"),
                 Map.entry("BID_AMENDMENT_MM_MAX_ATTEMPTS", "7")));
 
         assertThat(p.isEnabled()).isTrue();
@@ -76,6 +78,7 @@ class BidAmendmentPropertiesTest {
         assertThat(p.getMinNetEur()).isEqualByComparingTo("2");
         assertThat(p.getMaxNetEur()).isEqualByComparingTo("500");
         assertThat(p.getReconcileInterval()).isEqualTo(Duration.ofMinutes(1));
+        assertThat(p.isReconcileEnabled()).isFalse();
         assertThat(p.getMmMaxAttempts()).isEqualTo(7);
     }
 }
