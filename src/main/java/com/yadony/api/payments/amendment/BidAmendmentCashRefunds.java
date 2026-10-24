@@ -159,18 +159,15 @@ public class BidAmendmentCashRefunds {
 
     /**
      * Rend une PaymentIntent de commission aboutie qui n'a pu accepter aucune modification (essai précédent,
-     * commission déjà payée autrement, modification qui n'en attend plus) : alerte admin une seule fois, puis
-     * Refund intégral de CETTE PaymentIntent (clé propre, un Refund déjà créé est retrouvé). Un échec lève une
-     * seconde alerte : rien ne rejoue ce remboursement ensuite.
+     * commission déjà payée autrement, modification qui n'en attend plus) : Refund intégral de CETTE PaymentIntent
+     * (clé propre, un Refund déjà créé est retrouvé). L'alerte « commission hors essai » est déjà levée par le
+     * ledger au moment où il la constate (elle survit à la perte de l'événement qui mène ici) ; un échec du Refund
+     * lève une seconde alerte. Le rejeu des Refunds perdus ou échoués est celui du filet planifié (B6), à partir
+     * de l'audit {@code BID_AMENDMENT_STALE_COMMISSION}.
      *
      * @return vrai si un Refund existe désormais (créé ici ou retrouvé).
      */
     public boolean refundStale(UUID amendmentId, UUID bidId, String paymentIntentId) {
-        alerts.raiseOnce("AMEND_STALE_COMM_" + paymentIntentId,
-                "PaymentIntent de commission " + paymentIntentId + " de la modification " + amendmentId
-                        + " aboutie hors de l'essai courant : remboursement engagé",
-                Map.of("amendmentId", amendmentId.toString(), "bidId", bidId.toString(),
-                        "paymentIntentId", paymentIntentId));
         try {
             String refundId = gateway.findRefund(paymentIntentId, "bid_amendment_id", amendmentId.toString())
                     .orElse(null);

@@ -132,16 +132,21 @@ public class BidAmendmentCashLedger {
     }
 
     /**
-     * Cette PaymentIntent est-elle celle de l'essai courant ? Celle déjà enregistrée, ou, tant que l'essai attend
-     * sa commission, une PaymentIntent inconnue qui porte le numéro de l'essai courant (le webhook peut devancer
-     * l'enregistrement). Jamais une PaymentIntent inconnue sans ce numéro.
+     * Cette PaymentIntent est-elle celle qui porte la commission de l'essai courant ? Source unique, partagée avec
+     * le routeur de webhooks. Celle déjà enregistrée, tant que son essai n'a pas été déclaré échoué (après un
+     * échec, un abandon ou pendant un nouvel essai, elle reste enregistrée mais n'est plus la courante) ; ou, tant
+     * que l'essai attend sa commission, une PaymentIntent inconnue qui porte le numéro de l'essai courant (le
+     * webhook peut devancer l'enregistrement). Jamais une PaymentIntent inconnue sans ce numéro.
+     *
+     * @param attempt numéro d'essai porté par la PaymentIntent, nul si l'événement n'en porte pas (charge,
+     *                Refund, litige : seule l'égalité avec la PaymentIntent enregistrée compte alors).
      */
-    private static boolean isCurrent(BidAmendmentEntity a, String paymentIntentId, String attempt) {
+    static boolean isCurrent(BidAmendmentEntity a, String paymentIntentId, String attempt) {
         if (paymentIntentId == null) {
             return false;
         }
         if (paymentIntentId.equals(a.getCommissionPaymentIntentId())) {
-            return !retryInProgress(a);
+            return a.getCommissionStatus() != CommissionStatus.FAILED;
         }
         return a.getStatus() == BidAmendmentStatus.COMMISSION_PENDING && attempt != null
                 && attempt.equals(attemptOf(a))
@@ -248,9 +253,16 @@ public class BidAmendmentCashLedger {
 
     /** PaymentIntent de commission aboutie qui n'accepte rien : à rendre, par son identifiant, hors transaction. */
     private ChargeOutcome stale(BidAmendmentEntity a, String paymentIntentId, String source) {
+        // Audit (que le filet de B6 balaiera) et alerte levés ICI, dans la transaction : ils survivent à la perte de
+        // l'événement asynchrone qui engage le remboursement.
         audit(a, "BID_AMENDMENT_STALE_COMMISSION", null,
                 Map.of("piId", String.valueOf(paymentIntentId), "source", String.valueOf(source)));
         if (paymentIntentId != null) {
+            alerts.raiseOnce("AMEND_STALE_COMM_" + paymentIntentId,
+                    "PaymentIntent de commission " + paymentIntentId + " de la modification " + a.getId()
+                            + " aboutie hors de l'essai courant : à rembourser",
+                    Map.of("amendmentId", a.getId().toString(), "bidId", a.getBidId().toString(),
+                            "paymentIntentId", paymentIntentId, "source", String.valueOf(source)));
             events.publishEvent(new BidAmendmentStaleCommissionEvent(a.getId(), a.getBidId(), paymentIntentId));
         }
         return ChargeOutcome.STALE;

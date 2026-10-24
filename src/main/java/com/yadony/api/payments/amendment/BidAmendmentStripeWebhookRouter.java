@@ -214,8 +214,9 @@ public class BidAmendmentStripeWebhookRouter {
         return true;
     }
 
+    /** Même prédicat que le ledger : la PaymentIntent d'un essai échoué, encore enregistrée, n'est plus la courante. */
     private static boolean isCurrent(BidAmendmentEntity a, String paymentIntentId) {
-        return paymentIntentId != null && paymentIntentId.equals(a.getCommissionPaymentIntentId());
+        return BidAmendmentCashLedger.isCurrent(a, paymentIntentId, null);
     }
 
     /**
