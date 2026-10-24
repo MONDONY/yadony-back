@@ -278,8 +278,11 @@ class BidAmendmentSchemaIT {
         assertThat(amendments.findByBidIdIn(List.of(bidId))).hasSize(1);
         assertThat(amendments.countByBidIdAndAcceptedAtNotNull(bidId)).isZero();
         assertThat(amendments.findByIdAndBidIdForUpdate(saved.getId(), bidId)).isPresent();
-        assertThat(amendments.findIdsByStatusInAndExpiresAtBefore(
-                BidAmendmentStatus.OPEN, LocalDateTime.now().plusDays(3))).containsExactly(saved.getId());
+        assertThat(amendments.findByBidIdForUpdate(bidId)).singleElement()
+                .satisfies(found -> assertThat(found.getId()).isEqualTo(saved.getId()));
+        LocalDateTime later = LocalDateTime.now().plusDays(3);
+        assertThat(amendments.findIdsLapsed(later, later, later,
+                org.springframework.data.domain.PageRequest.of(0, 10))).containsExactly(saved.getId());
         assertThat(items.findByAmendmentId(saved.getId())).singleElement()
                 .satisfies(i -> assertThat(i.getQuantity()).isEqualTo(2));
     }
