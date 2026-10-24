@@ -168,12 +168,12 @@ public class BidAmendmentSummaryAdapter implements BidAmendmentSummaryPort {
     }
 
     /**
-     * Le voyageur ne voit pas une demande qui ne lui a jamais été présentée : montant carte pas encore bloqué
-     * ({@code AUTHORIZATION_PENDING}), ou close faute d'autorisation.
+     * Le voyageur ne voit pas une demande qui ne lui a jamais été présentée ({@code proposedAt} nul) : montant carte
+     * pas encore bloqué ({@code AUTHORIZATION_PENDING}), ou close avant l'autorisation (faute d'autorisation, retirée
+     * par l'expéditeur, colis terminé).
      */
     static boolean hiddenFromTraveler(BidAmendmentEntity a) {
-        return a.getStatus() == BidAmendmentStatus.AUTHORIZATION_PENDING
-                || a.getClosedReason() == BidAmendmentClosedReason.AUTHORIZATION_NOT_CONFIRMED;
+        return a.getProposedAt() == null;
     }
 
     /**

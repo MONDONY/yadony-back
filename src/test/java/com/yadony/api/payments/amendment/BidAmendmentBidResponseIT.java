@@ -351,13 +351,15 @@ class BidAmendmentBidResponseIT {
         jdbc.update("""
                 INSERT INTO bid_amendments (id, bid_id, announcement_id, traveler_id, sender_id, rail, status, currency,
                     added_weight_kg, capacity_reserved_kg, net_amount, commission_amount, gross_amount, expires_at,
-                    accepted_at, commission_status, commission_charged_via, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'EUR', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    accepted_at, commission_status, commission_charged_via, created_at, updated_at, proposed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'EUR', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, id, bidId, annId, traveler.getId(), sender.getId(), rail, status, new BigDecimal(kg),
                 secured ? new BigDecimal(kg) : BigDecimal.ZERO, new BigDecimal(net), new BigDecimal(commission),
                 new BigDecimal(gross), Timestamp.valueOf(createdAt.plusHours(48)),
                 secured ? Timestamp.valueOf(createdAt.plusMinutes(10)) : null, commissionStatus,
-                commissionStatus == null ? null : "WALLET", Timestamp.valueOf(createdAt), Timestamp.valueOf(createdAt));
+                commissionStatus == null ? null : "WALLET", Timestamp.valueOf(createdAt), Timestamp.valueOf(createdAt),
+                // Présentée au voyageur dès la création, sauf en attente d'autorisation carte.
+                "AUTHORIZATION_PENDING".equals(status) ? null : Timestamp.valueOf(createdAt));
         return id;
     }
 

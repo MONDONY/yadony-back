@@ -58,8 +58,10 @@ public interface BidAmendmentRailHandler {
     }
 
     /**
-     * La modification vient d'être close sans aboutir (refus, annulation, expiration), kilos déjà rendus : le
-     * rail défait ce qui reste ouvert chez lui (autorisation carte, commission espèces). Rien par défaut.
+     * La modification vient d'être close sans aboutir (refus, annulation, expiration), kilos déjà rendus, DANS la
+     * transaction qui la clôt (parfois celle du scan de remise, qui peut encore échouer) : aucun appel prestataire
+     * ici. Rien par défaut. L'autorisation carte est rendue après le commit, par l'écouteur du rail carte
+     * ({@code BidAmendmentCardListener}) ; la commission espèces, par celui du rail espèces.
      */
     default void onClosed(BidAmendmentEntity amendment, BidAmendmentStatus previous) {
     }

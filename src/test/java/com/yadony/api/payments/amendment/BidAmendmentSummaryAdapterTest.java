@@ -101,6 +101,9 @@ class BidAmendmentSummaryAdapterTest {
         a.setCommissionAmount(new BigDecimal("3.30"));
         a.setGrossAmount(new BigDecimal("26.80"));
         a.setExpiresAt(created.plusHours(48));
+        if (status != BidAmendmentStatus.AUTHORIZATION_PENDING) {
+            a.setProposedAt(created);
+        }
         if (status.isSecured()) {
             a.setAcceptedAt(created.plusMinutes(5));
         }
@@ -150,6 +153,26 @@ class BidAmendmentSummaryAdapterTest {
         stored.get(0).setStatus(BidAmendmentStatus.CANCELLED);
         stored.get(0).setClosedReason(BidAmendmentClosedReason.AUTHORIZATION_NOT_CONFIRMED);
         assertThat(adapter.view(bid, announcement, travelerId, null).amendments()).isEmpty();
+    }
+
+    @Test
+    void carteAnnuleeAvantAutorisation_jamaisMontreeAuVoyageur() {
+        // Annulée par l'expéditeur (ou colis terminé) depuis AUTHORIZATION_PENDING : jamais passée en PROPOSED.
+        BidAmendmentEntity a = add(BidSupplementRail.STRIPE, BidAmendmentStatus.AUTHORIZATION_PENDING, "2.00", 1);
+        a.setStatus(BidAmendmentStatus.CANCELLED);
+        a.setClosedReason(BidAmendmentClosedReason.CANCELLED_BY_SENDER);
+
+        assertThat(adapter.view(bid, announcement, travelerId, null).amendments()).isEmpty();
+        assertThat(adapter.view(bid, announcement, senderId, null).amendments())
+                .extracting(r -> r.status()).containsExactly("CANCELLED");
+
+        a.setClosedReason(BidAmendmentClosedReason.BID_ENDED);
+        assertThat(adapter.view(bid, announcement, travelerId, null).amendments()).isEmpty();
+
+        // Présentée puis close : le voyageur la voit (il y a répondu, ou elle a expiré sous ses yeux).
+        a.setProposedAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(30));
+        a.setClosedReason(BidAmendmentClosedReason.CANCELLED_BY_SENDER);
+        assertThat(adapter.view(bid, announcement, travelerId, null).amendments()).hasSize(1);
     }
 
     @Test

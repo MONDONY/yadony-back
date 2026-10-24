@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.stripe.model.Event;
 import com.yadony.api.admin.AdminAlertEscalator;
+import com.yadony.api.payments.supplement.BidSupplementRail;
 import com.yadony.api.payments.supplement.StripeSupplementGateway;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,12 +21,13 @@ import java.util.UUID;
  *
  * <ul>
  *   <li>{@code payment_intent.*} : routé par la métadonnée {@code commission_purpose = bid_amendment_commission}
- *       (commission du voyageur, rail espèces) ou {@code bid_amendment_id} (paiement de l'expéditeur, rail
- *       carte : traité par B9, avalé ici en attendant pour que le colis ne le prenne jamais pour le sien) ;</li>
+ *       (commission du voyageur, rail espèces) ou {@code bid_amendment_id} seule (montant de l'expéditeur, rail
+ *       carte : autorisation, capture, annulation) ;</li>
  *   <li>{@code charge.refunded}, {@code charge.refund.updated} et {@code charge.dispute.*} : routés par la
- *       PaymentIntent de commission enregistrée, ou à défaut par la métadonnée {@code bid_amendment_id} de la
- *       charge, du Refund ou de la PaymentIntent (relue chez Stripe pour un litige) : une PaymentIntent d'un essai
- *       précédent n'est plus enregistrée mais doit rester retrouvable.</li>
+ *       PaymentIntent enregistrée (de commission ou de la carte de l'expéditeur), ou à défaut par la métadonnée
+ *       {@code bid_amendment_id} de la charge, du Refund ou de la PaymentIntent (relue chez Stripe pour un litige),
+ *       avec {@code commission_purpose} (commission) ou {@code scope = BID_AMENDMENT} (carte) : une PaymentIntent de
+ *       commission d'un essai précédent n'est plus enregistrée mais doit rester retrouvable.</li>
  * </ul>
  * Tout le reste passe la main. Le payload brut est lu (et non l'objet désérialisé) : un écart de version d'API
  * entre Stripe et le SDK rend {@code getObject()} vide sans changer le JSON. Un rejeu n'a aucun effet : les
@@ -38,16 +40,21 @@ public class BidAmendmentStripeWebhookRouter {
 
     private final BidAmendmentCashRail cashRail;
     private final BidAmendmentCashLedger cashLedger;
+    private final BidAmendmentCardRail cardRail;
+    private final BidAmendmentCardLedger cardLedger;
     private final BidAmendmentRepository amendments;
     private final AdminAlertEscalator alerts;
     private final StripeSupplementGateway gateway;
     private final ObjectMapper mapper;
 
     public BidAmendmentStripeWebhookRouter(BidAmendmentCashRail cashRail, BidAmendmentCashLedger cashLedger,
+                                           BidAmendmentCardRail cardRail, BidAmendmentCardLedger cardLedger,
                                            BidAmendmentRepository amendments, AdminAlertEscalator alerts,
                                            StripeSupplementGateway gateway, ObjectMapper mapper) {
         this.cashRail = cashRail;
         this.cashLedger = cashLedger;
+        this.cardRail = cardRail;
+        this.cardLedger = cardLedger;
         this.amendments = amendments;
         this.alerts = alerts;
         this.gateway = gateway;
@@ -105,8 +112,9 @@ public class BidAmendmentStripeWebhookRouter {
                     pi.path("last_payment_error").path("code").asText("unknown"));
             return true;
         }
-        // Paiement carte de l'expéditeur : routé en B9. Avalé d'ici là.
-        log.debug("Webhook {} de la modification {} : rail carte non traité ici", type, amendmentId);
+        // Montant de l'expéditeur, rail carte : jamais le séquestre du colis.
+        cardRail.onPaymentIntentWebhook(type, amendmentId, pi.path("id").asText(null), pi.path("status").asText(null),
+                pi.path("latest_charge").asText(null), pi.path("last_payment_error").path("code").asText("unknown"));
         return true;
     }
 
@@ -124,12 +132,15 @@ public class BidAmendmentStripeWebhookRouter {
             return false;
         }
         BidAmendmentEntity a = found.get();
-        boolean current = isCurrent(a, piId);
         long amount = charge.path("amount").asLong(0);
         long refunded = charge.path("amount_refunded").asLong(0);
+        JsonNode refunds = charge.path("refunds").path("data");
+        String refundId = refunds.isArray() && !refunds.isEmpty() ? refunds.get(0).path("id").asText(null) : null;
+        if (card(a)) {
+            return handleCardRefunded(a, piId, amount, refunded, refundId);
+        }
+        boolean current = isCurrent(a, piId);
         if (amount > 0 && refunded >= amount) {
-            JsonNode refunds = charge.path("refunds").path("data");
-            String refundId = refunds.isArray() && !refunds.isEmpty() ? refunds.get(0).path("id").asText(null) : null;
             if (!current) {
                 cashLedger.auditOnly(a.getId(), "BID_AMENDMENT_STALE_COMMISSION_REFUND_CONFIRMED",
                         Map.of("piId", String.valueOf(piId), "refundId", String.valueOf(refundId)));
@@ -155,6 +166,31 @@ public class BidAmendmentStripeWebhookRouter {
     }
 
     /**
+     * Montant carte de l'expéditeur remboursé : intégral, la modification à rembourser passe {@code REFUNDED} (ou la
+     * capture tardive est marquée remboursée) ; intégral sur une modification encore vivante (remboursée depuis le
+     * Dashboard) : alerte, un admin décide ; partiel : alerte.
+     */
+    private boolean handleCardRefunded(BidAmendmentEntity a, String piId, long amount, long refunded,
+                                       String refundId) {
+        if (amount > 0 && refunded >= amount) {
+            if (cardLedger.refunded(a.getId(), refundId, "webhook") == BidAmendmentCardLedger.RefundOutcome.LIVE) {
+                alerts.raiseOnce("AMEND_CARD_REF_LIVE_" + a.getId(),
+                        "Montant carte de la modification " + a.getId() + " remboursé alors qu'elle est "
+                                + a.getStatus() + " : à vérifier",
+                        Map.of("amendmentId", a.getId().toString(), "bidId", a.getBidId().toString(),
+                                "status", a.getStatus().name()));
+            }
+            return true;
+        }
+        cardLedger.auditOnly(a.getId(), "BID_AMENDMENT_PARTIAL_REFUND",
+                Map.of("amountRefunded", refunded, "amount", amount, "piId", String.valueOf(piId)));
+        alerts.raiseOnce("AMEND_CARD_PARTIAL_REF_" + a.getId(),
+                "Remboursement partiel du montant carte de la modification " + a.getId() + " : à traiter à la main",
+                Map.of("amendmentId", a.getId().toString(), "amountRefunded", refunded, "amount", amount));
+        return true;
+    }
+
+    /**
      * {@code charge.refund.updated} : un Refund de commission qui échoue après coup (carte expirée, compte
      * fermé) n'a pas rendu l'argent. Pour la PaymentIntent courante, la commission passe à {@code REFUND_FAILED} ;
      * pour celle d'un essai précédent, seule l'alerte part. Les autres mises à jour sont avalées sans effet.
@@ -172,6 +208,16 @@ public class BidAmendmentStripeWebhookRouter {
             return true;
         }
         String reason = refund.path("failure_reason").asText("inconnu");
+        if (card(a)) {
+            if (cardLedger.refundFailed(a.getId(), refundId)) {
+                alerts.raiseOnce("AMEND_CARD_RFD_FAILED_" + a.getId(),
+                        "Remboursement " + refundId + " du montant carte de la modification " + a.getId()
+                                + " échoué chez Stripe (" + reason + ") : de nouveau à rembourser",
+                        Map.of("amendmentId", a.getId().toString(), "bidId", a.getBidId().toString(),
+                                "refundId", String.valueOf(refundId)));
+            }
+            return true;
+        }
         if (!isCurrent(a, piId)) {
             alerts.raiseOnce("AMEND_STALE_RFD_FAIL_" + refundId,
                     "Remboursement " + refundId + " d'une commission hors essai de la modification " + a.getId()
@@ -189,8 +235,8 @@ public class BidAmendmentStripeWebhookRouter {
     }
 
     /**
-     * Litige bancaire sur la charge d'une commission (PaymentIntent courante ou d'un essai précédent) : alerte
-     * admin, jamais {@code ChargebackService} (qui créerait un chargeback sans paiement). Pas de retenue
+     * Litige bancaire sur la charge d'une modification (montant carte, ou commission de l'essai courant ou d'un essai
+     * précédent) : alerte admin, jamais {@code ChargebackService} (qui créerait un chargeback sans paiement). Pas de retenue
      * automatique en v1. Un litige ne porte pas la métadonnée de la PaymentIntent : elle est relue chez Stripe
      * quand la base ne la connaît pas.
      */
@@ -201,13 +247,17 @@ public class BidAmendmentStripeWebhookRouter {
             return false;
         }
         BidAmendmentEntity a = found.get();
-        cashLedger.auditOnly(a.getId(), "BID_AMENDMENT_CHARGEBACK",
-                Map.of("event", type, "disputeId", dispute.path("id").asText("unknown"),
-                        "disputeStatus", dispute.path("status").asText("unknown")));
+        Map<String, Object> trace = Map.of("event", type, "disputeId", dispute.path("id").asText("unknown"),
+                "disputeStatus", dispute.path("status").asText("unknown"));
+        if (card(a)) {
+            cardLedger.auditOnly(a.getId(), "BID_AMENDMENT_CHARGEBACK", trace);
+        } else {
+            cashLedger.auditOnly(a.getId(), "BID_AMENDMENT_CHARGEBACK", trace);
+        }
         if ("charge.dispute.created".equals(type)) {
             alerts.raiseOnce("AMEND_CHARGEBACK_" + a.getId(),
-                    "Litige bancaire ouvert sur la commission de la modification " + a.getId() + " (statut "
-                            + a.getStatus() + ")",
+                    "Litige bancaire ouvert sur " + (card(a) ? "le montant carte" : "la commission")
+                            + " de la modification " + a.getId() + " (statut " + a.getStatus() + ")",
                     Map.of("amendmentId", a.getId().toString(), "bidId", a.getBidId().toString(),
                             "disputeId", dispute.path("id").asText("unknown")));
         }
@@ -227,20 +277,21 @@ public class BidAmendmentStripeWebhookRouter {
      */
     private Optional<BidAmendmentEntity> resolve(JsonNode object, String paymentIntentId, boolean readFromStripe) {
         if (paymentIntentId != null && !paymentIntentId.isBlank()) {
-            Optional<BidAmendmentEntity> registered = amendments.findByCommissionPaymentIntentId(paymentIntentId);
+            Optional<BidAmendmentEntity> registered = amendments.findByCommissionPaymentIntentId(paymentIntentId)
+                    .or(() -> amendments.findByStripePaymentIntentId(paymentIntentId));
             if (registered.isPresent()) {
                 return registered;
             }
         }
-        Optional<BidAmendmentEntity> fromMetadata = fromMetadata(
-                object.path("metadata").path("commission_purpose").asText(null),
-                object.path("metadata").path("bid_amendment_id").asText(null));
+        JsonNode metadata = object.path("metadata");
+        Optional<BidAmendmentEntity> fromMetadata = fromMetadata(metadata.path("commission_purpose").asText(null),
+                metadata.path("scope").asText(null), metadata.path("bid_amendment_id").asText(null));
         if (fromMetadata.isPresent() || !readFromStripe || paymentIntentId == null || paymentIntentId.isBlank()) {
             return fromMetadata;
         }
         try {
-            Map<String, String> metadata = gateway.retrieveMetadata(paymentIntentId);
-            return fromMetadata(metadata.get("commission_purpose"), metadata.get("bid_amendment_id"));
+            Map<String, String> read = gateway.retrieveMetadata(paymentIntentId);
+            return fromMetadata(read.get("commission_purpose"), read.get("scope"), read.get("bid_amendment_id"));
         } catch (Exception e) {
             log.warn("Événement sur la PaymentIntent {} : métadonnée illisible ({})", paymentIntentId,
                     e.getMessage());
@@ -248,15 +299,26 @@ public class BidAmendmentStripeWebhookRouter {
         }
     }
 
-    private Optional<BidAmendmentEntity> fromMetadata(String purpose, String rawAmendmentId) {
-        if (!BidAmendmentCashRail.COMMISSION_PURPOSE.equals(purpose) || rawAmendmentId == null) {
+    /**
+     * Modification désignée par la métadonnée : commission ({@code commission_purpose}) d'une modification espèces, ou
+     * montant carte ({@code scope = BID_AMENDMENT}, sans {@code commission_purpose}) d'une modification carte.
+     */
+    private Optional<BidAmendmentEntity> fromMetadata(String purpose, String scope, String rawAmendmentId) {
+        boolean commission = BidAmendmentCashRail.COMMISSION_PURPOSE.equals(purpose);
+        boolean cardAmount = purpose == null && BidAmendmentCardRail.SCOPE.equals(scope);
+        if (!(commission || cardAmount) || rawAmendmentId == null) {
             return Optional.empty();
         }
         try {
-            return amendments.findById(UUID.fromString(rawAmendmentId));
+            return amendments.findById(UUID.fromString(rawAmendmentId))
+                    .filter(a -> commission ? a.getRail() == BidSupplementRail.CASH : card(a));
         } catch (IllegalArgumentException e) {
             return Optional.empty();
         }
+    }
+
+    private static boolean card(BidAmendmentEntity a) {
+        return a.getRail() == BidSupplementRail.STRIPE;
     }
 
     private JsonNode object(Event event) {

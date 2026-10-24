@@ -15,7 +15,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Création, acceptation et confirmation de commission d'une modification, sans transaction englobante, comme
+ * Création, acceptation, confirmation de l'autorisation carte et de la commission espèces d'une modification, sans
+ * transaction englobante, comme
  * {@code BidSupplementPaymentFlow}.
  *
  * <p>Deux temps : la transaction du service (verrous du colis, du trajet puis de la modification, contrôles, état du
@@ -29,13 +30,16 @@ public class BidAmendmentPaymentFlow {
 
     private final BidAmendmentService service;
     private final BidAmendmentCashRail cashRail;
+    private final BidAmendmentCardRail cardRail;
     private final BidAmendmentProperties properties;
     private final ObjectProvider<BidAmendmentRailHandler> handlers;
 
     public BidAmendmentPaymentFlow(BidAmendmentService service, BidAmendmentCashRail cashRail,
-                                   BidAmendmentProperties properties, ObjectProvider<BidAmendmentRailHandler> handlers) {
+                                   BidAmendmentCardRail cardRail, BidAmendmentProperties properties,
+                                   ObjectProvider<BidAmendmentRailHandler> handlers) {
         this.service = service;
         this.cashRail = cashRail;
+        this.cardRail = cardRail;
         this.properties = properties;
         this.handlers = handlers;
     }
@@ -63,6 +67,19 @@ public class BidAmendmentPaymentFlow {
         }
         return TransientLockRetry.run("amendment commission confirm " + amendmentId,
                 () -> cashRail.confirmCommission(bidId, amendmentId, firebaseUid), conflict -> PaymentBusy.exception());
+    }
+
+    /**
+     * Rail carte, après la PaymentSheet de l'expéditeur : voir {@link BidAmendmentCardRail#confirmAuthorization}. Coupé
+     * drapeau éteint, comme la création qu'il termine (une demande en attente d'autorisation est close par le filet, et
+     * son autorisation rendue).
+     */
+    public BidAmendmentResponse confirmAuthorization(UUID bidId, UUID amendmentId, String firebaseUid) {
+        if (!properties.isEnabled()) {
+            throw BidAmendmentEligibility.exceptionFor("amendment-disabled");
+        }
+        return TransientLockRetry.run("amendment authorization confirm " + amendmentId,
+                () -> cardRail.confirmAuthorization(bidId, amendmentId, firebaseUid), conflict -> PaymentBusy.exception());
     }
 
     /** Composant du rail de la modification, s'il est livré. */

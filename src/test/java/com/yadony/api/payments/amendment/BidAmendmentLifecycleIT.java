@@ -1,6 +1,5 @@
 package com.yadony.api.payments.amendment;
 
-import com.stripe.exception.StripeException;
 import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.Role;
@@ -28,7 +27,6 @@ import com.yadony.api.payments.cash.CommissionChargedVia;
 import com.yadony.api.payments.cash.CommissionSource;
 import com.yadony.api.payments.cash.CommissionStatus;
 import com.yadony.api.payments.cash.PaymentMethod;
-import com.yadony.api.payments.supplement.BidSupplementRail;
 import com.yadony.api.payments.supplement.StripeSupplementGateway;
 import com.yadony.api.payments.wallet.WalletService;
 import com.yadony.api.payments.wallet.WalletTransactionType;
@@ -41,12 +39,9 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -84,8 +79,8 @@ import static org.mockito.Mockito.when;
  * (écouteur des huit événements de fin), « les kilos en plus ne sont pas là » et filet planifié (expirations,
  * rappel, colis terminés oubliés, commissions espèces à rendre, remboursements hors essai, alerte « non soldée »).
  *
- * <p>Le rail carte (B9) n'existe pas encore : un rail de test le remplace, qui annule l'autorisation à la clôture
- * ({@link StripeSupplementGateway#cancelPaymentIntent}, simulé). Le rail espèces est le vrai (B5).
+ * <p>Les rails carte (B9) et espèces (B5) sont les vrais ; Stripe est simulé. L'autorisation carte est rendue après
+ * le commit de la clôture ({@link StripeAmendmentGateway#cancelPaymentIntent}).
  */
 @SpringBootTest(properties = "yadony.bid-amendment.enabled=true")
 @ActiveProfiles("e2e")
@@ -118,50 +113,13 @@ class BidAmendmentLifecycleIT {
         registry.add("spring.flyway.enabled", () -> true);
     }
 
-    /**
-     * Rail carte bouchonné : PROPOSED à la création, acquise à l'acceptation, autorisation annulée à la clôture.
-     * Le vrai rail (B9) annulera la PaymentIntent de la même façon depuis {@link BidAmendmentRailHandler#onClosed}.
-     */
-    @TestConfiguration
-    static class StubCardRailConfig {
-
-        @Bean
-        BidAmendmentRailHandler stubCardRail(ObjectProvider<BidAmendmentService> service,
-                                             BidAmendmentItemRepository items, BidAmendmentWindow window,
-                                             StripeSupplementGateway gateway) {
-            return new BidAmendmentRailHandler() {
-                @Override
-                public BidSupplementRail rail() {
-                    return BidSupplementRail.STRIPE;
-                }
-
-                @Override
-                public AmendmentAcceptResponse accept(BidAmendmentEntity a, UserEntity traveler,
-                                                      AmendmentAcceptRequest request) {
-                    service.getObject().markAccepted(a);
-                    return new AmendmentAcceptResponse(
-                            BidAmendmentViews.of(a, items.findByAmendmentId(a.getId()), false, window), null);
-                }
-
-                @Override
-                public void onClosed(BidAmendmentEntity a, BidAmendmentStatus previous) {
-                    if (a.getStripePaymentIntentId() != null) {
-                        try {
-                            gateway.cancelPaymentIntent(a.getStripePaymentIntentId());
-                        } catch (StripeException e) {
-                            throw new IllegalStateException(e);
-                        }
-                    }
-                }
-            };
-        }
-    }
-
     @MockitoBean StripeSupplementGateway gateway;
+    @MockitoBean StripeAmendmentGateway cardGateway;
     @MockitoBean AdminAlertEscalator alerts;
     @MockitoSpyBean BidAmendmentCashRefunds cashRefunds;
 
     @Autowired BidAmendmentService service;
+    @Autowired BidAmendmentCardRail cardRail;
     @Autowired BidAmendmentProperties properties;
     @Autowired BidAmendmentReconciliationJob job;
     @Autowired TrackingService trackingService;
@@ -218,6 +176,8 @@ class BidAmendmentLifecycleIT {
         UUID id = create(p, "3", PaymentMethod.STRIPE);
         String piId = "pi_" + UUID.randomUUID().toString().replace("-", "");
         jdbc.update("UPDATE bid_amendments SET stripe_payment_intent_id = ? WHERE id = ?", piId, id);
+        when(cardGateway.cancelPaymentIntent(piId)).thenReturn(new StripeSupplementGateway.PaymentIntentView(piId,
+                "canceled", 3360L, "eur", null, null, List.of("card")));
         assertThat(availableKg(p.announcementId)).isEqualByComparingTo("3.00");
         jdbc.update("UPDATE bids SET status = 'CANCELLED' WHERE id = ?", p.bidId);
 
@@ -228,7 +188,7 @@ class BidAmendmentLifecycleIT {
                 new CancellationConfirmedEvent(p.bidId, cancellationId, CancellationReason.OTHER)));
 
         awaitColumn(id, "status", "CANCELLED");
-        verify(gateway, after(1500).times(1)).cancelPaymentIntent(piId);
+        verify(cardGateway, after(1500).times(1)).cancelPaymentIntent(piId);
         assertThat(column(id, "closed_reason")).isEqualTo("BID_ENDED");
         assertThat(availableKg(p.announcementId)).isEqualByComparingTo("6.00");
         assertThat(reservedKg(id)).isEqualByComparingTo("0");
@@ -261,7 +221,7 @@ class BidAmendmentLifecycleIT {
     void onBidEnded_acceptedCard_refundPending() throws Exception {
         Parties p = parties(true);
         UUID id = create(p, "3", PaymentMethod.STRIPE);
-        service.accept(p.bidId, id, p.traveler.getFirebaseUid(), new AmendmentAcceptRequest(null, null));
+        acceptCard(p, id);
         jdbc.update("UPDATE bids SET status = 'REJECTED' WHERE id = ?", p.bidId);
 
         assertThat(service.onBidEnded(p.bidId, "BID_REJECTED")).isTrue();
@@ -273,7 +233,7 @@ class BidAmendmentLifecycleIT {
         assertThat(events.stream(BidAmendmentRefundRequestedEvent.class)
                 .filter(e -> e.amendmentId().equals(id))).singleElement()
                 .satisfies(e -> assertThat(e.reason()).isEqualTo("BID_REJECTED"));
-        verify(gateway, never()).cancelPaymentIntent(anyString());
+        verify(cardGateway, after(500).never()).cancelPaymentIntent(anyString());
         assertThat(auditActions(id)).contains("BID_AMENDMENT_REFUND_REQUESTED");
     }
 
@@ -306,10 +266,10 @@ class BidAmendmentLifecycleIT {
 
     @Test
     @DisplayName("onPrincipalRefunded : principal remboursé par l'admin, colis en cours → la modification carte suit")
-    void onPrincipalRefunded_liveBid_refundsAmendmentToo() {
+    void onPrincipalRefunded_liveBid_refundsAmendmentToo() throws Exception {
         Parties p = parties(true);
         UUID id = create(p, "3", PaymentMethod.STRIPE);
-        service.accept(p.bidId, id, p.traveler.getFirebaseUid(), new AmendmentAcceptRequest(null, null));
+        acceptCard(p, id);
 
         assertThat(service.onPrincipalRefunded(p.bidId)).isTrue();
 
@@ -357,10 +317,10 @@ class BidAmendmentLifecycleIT {
 
     @Test
     @DisplayName("notBrought sur une modification carte : REFUND_PENDING et remboursement demandé")
-    void notBrought_acceptedCard_requestsRefund() {
+    void notBrought_acceptedCard_requestsRefund() throws Exception {
         Parties p = parties(true);
         UUID id = create(p, "3", PaymentMethod.STRIPE);
-        service.accept(p.bidId, id, p.traveler.getFirebaseUid(), new AmendmentAcceptRequest(null, null));
+        acceptCard(p, id);
 
         BidAmendmentResponse view = service.notBrought(p.bidId, id, p.traveler.getFirebaseUid());
 
@@ -554,20 +514,20 @@ class BidAmendmentLifecycleIT {
 
     @Test
     @DisplayName("filet : modification acquise ni versée ni remboursée 3 jours après la fin du colis → alerte AMENDMENT_UNSETTLED_")
-    void job_raisesUnsettledAlert() {
+    void job_raisesUnsettledAlert() throws Exception {
         Parties p = parties(true);
         UUID id = create(p, "3", PaymentMethod.STRIPE);
-        service.accept(p.bidId, id, p.traveler.getFirebaseUid(), new AmendmentAcceptRequest(null, null));
+        acceptCard(p, id);
         jdbc.update("UPDATE bids SET status = 'COMPLETED', updated_at = updated_at - interval '4 days' WHERE id = ?",
                 p.bidId);
         Parties recent = parties(true);
         UUID recentId = create(recent, "3", PaymentMethod.STRIPE);
-        service.accept(recent.bidId, recentId, recent.traveler.getFirebaseUid(), new AmendmentAcceptRequest(null, null));
+        acceptCard(recent, recentId);
         jdbc.update("UPDATE bids SET status = 'COMPLETED' WHERE id = ?", recent.bidId);
         // Déjà signalée (alerte encore ouverte) : écartée du balayage, elle ne bloque pas les nouvelles.
         Parties alerted = parties(true);
         UUID alertedId = create(alerted, "3", PaymentMethod.STRIPE);
-        service.accept(alerted.bidId, alertedId, alerted.traveler.getFirebaseUid(), new AmendmentAcceptRequest(null, null));
+        acceptCard(alerted, alertedId);
         jdbc.update("UPDATE bids SET status = 'COMPLETED', updated_at = updated_at - interval '4 days' WHERE id = ?",
                 alerted.bidId);
         jdbc.update("INSERT INTO admin_alerts (id, type, resolved, severity, created_at) VALUES (?, ?, false, 'WARN', "
@@ -600,6 +560,19 @@ class BidAmendmentLifecycleIT {
     private UUID create(Parties p, String kg, PaymentMethod method) {
         return service.create(p.bidId, p.sender.getFirebaseUid(),
                 new CreateAmendmentRequest(new BigDecimal(kg), null, method)).amendment().id();
+    }
+
+    /** Modification carte créée : montant autorisé (webhook), puis acceptée par le voyageur, capture réussie. */
+    private void acceptCard(Parties p, UUID id) throws Exception {
+        String piId = "pi_" + UUID.randomUUID().toString().replace("-", "");
+        cardRail.onPaymentIntentWebhook("payment_intent.amount_capturable_updated", id, piId, "requires_capture", null,
+                null);
+        when(cardGateway.capturePaymentIntent(piId, "amendment-capture-" + id)).thenReturn(
+                new StripeSupplementGateway.PaymentIntentView(piId, "succeeded", 3360L, "eur", null, "ch_" + id,
+                        List.of("card")));
+        AmendmentAcceptResponse accepted = cardRail.afterAcceptCommit(service.accept(p.bidId, id,
+                p.traveler.getFirebaseUid(), new AmendmentAcceptRequest(null, null)));
+        assertThat(accepted.amendment().status()).isEqualTo("ACCEPTED");
     }
 
     private void acceptWithWallet(Parties p, UUID id) {

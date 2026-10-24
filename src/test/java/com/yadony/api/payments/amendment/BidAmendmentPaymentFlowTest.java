@@ -33,6 +33,7 @@ class BidAmendmentPaymentFlowTest {
 
     private final BidAmendmentService service = mock(BidAmendmentService.class);
     private final BidAmendmentCashRail cashComponent = mock(BidAmendmentCashRail.class);
+    private final BidAmendmentCardRail cardComponent = mock(BidAmendmentCardRail.class);
     private final BidAmendmentRailHandler cardRail = mock(BidAmendmentRailHandler.class);
     private final BidAmendmentProperties properties = new BidAmendmentProperties();
     @SuppressWarnings("unchecked")
@@ -50,7 +51,7 @@ class BidAmendmentPaymentFlowTest {
         properties.setEnabled(true);
         when(cardRail.rail()).thenReturn(BidSupplementRail.STRIPE);
         when(handlers.orderedStream()).thenAnswer(inv -> Stream.of(cardRail));
-        flow = new BidAmendmentPaymentFlow(service, cashComponent, properties, handlers);
+        flow = new BidAmendmentPaymentFlow(service, cashComponent, cardComponent, properties, handlers);
     }
 
     private BidAmendmentResponse view(String rail) {
@@ -140,5 +141,30 @@ class BidAmendmentPaymentFlowTest {
         assertThatThrownBy(() -> flow.confirmCommission(bidId, id, "uid"))
                 .hasFieldOrPropertyWithValue("errorCode", "amendment-disabled");
         verifyNoInteractions(cashComponent);
+    }
+
+    @Test
+    void confirmationDeLAutorisation_delegueAuRailCarte() {
+        BidAmendmentResponse proposed = view("STRIPE");
+        when(cardComponent.confirmAuthorization(bidId, id, "uid")).thenReturn(proposed);
+
+        assertThat(flow.confirmAuthorization(bidId, id, "uid")).isSameAs(proposed);
+    }
+
+    @Test
+    void confirmationDeLAutorisation_interblocage_409PaymentBusy() {
+        when(cardComponent.confirmAuthorization(bidId, id, "uid")).thenThrow(new CannotAcquireLockException("x"));
+
+        assertThatThrownBy(() -> flow.confirmAuthorization(bidId, id, "uid"))
+                .hasFieldOrPropertyWithValue("errorCode", "payment-busy");
+    }
+
+    @Test
+    void confirmationDeLAutorisation_drapeauEteint_422AmendmentDisabled() {
+        properties.setEnabled(false);
+
+        assertThatThrownBy(() -> flow.confirmAuthorization(bidId, id, "uid"))
+                .hasFieldOrPropertyWithValue("errorCode", "amendment-disabled");
+        verifyNoInteractions(cardComponent);
     }
 }
