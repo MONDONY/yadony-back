@@ -312,4 +312,17 @@ class BidAmendmentCashRefundsTest {
                 eq(Map.of("piId", "pi_old", "error", "timeout")));
         verify(ledger, never()).auditOnly(any(), eq("BID_AMENDMENT_STALE_COMMISSION_REFUNDED"), any());
     }
+
+    @Test
+    @DisplayName("PaymentIntent hors essai : la trace d'échec ne s'écrit pas, l'alerte part quand même")
+    void stale_refundFailure_auditFails_alertStillRaised() throws Exception {
+        when(gateway.findRefund(any(), anyString(), anyString())).thenReturn(Optional.empty());
+        when(gateway.createRefund(any(), anyMap(), anyString())).thenThrow(new ApiConnectionException("timeout"));
+        org.mockito.Mockito.doThrow(new IllegalStateException("base")).when(ledger)
+                .auditOnly(any(), eq("BID_AMENDMENT_STALE_COMMISSION_REFUND_FAILED"), any());
+
+        assertThat(refunds.refundStale(a.getId(), a.getBidId(), "pi_old")).isFalse();
+
+        verify(alerts).raiseOnce(eq("AMEND_STALE_REFUND_FAIL_pi_old"), anyString(), anyMap());
+    }
 }

@@ -59,9 +59,16 @@ public class BidAmendmentReconciliationJob {
 
     /**
      * Échecs du Refund d'une même PaymentIntent hors essai ({@code BID_AMENDMENT_STALE_COMMISSION_REFUND_FAILED}) au-delà
-     * desquels le filet cesse de la rejouer : l'alerte {@code AMEND_STALE_REFUND_FAIL_} reste, à traiter à la main.
+     * desquels le filet cesse de la rejouer, une fois {@link #STALE_REFUND_GIVE_UP_AFTER} écoulé depuis le premier :
+     * l'alerte {@code AMEND_STALE_REFUND_FAIL_} reste, à traiter à la main.
      */
     static final int STALE_REFUND_MAX_FAILURES = 3;
+
+    /**
+     * Durée que les échecs doivent couvrir avant l'abandon (premier échec plus ancien que cela) : les erreurs
+     * passagères (réseau, 5xx, limite de débit Stripe) sont rejouées à chaque passage pendant au moins 24 h.
+     */
+    static final Duration STALE_REFUND_GIVE_UP_AFTER = Duration.ofHours(24);
 
     /** Préfixe de l'alerte ; avec un UUID, 56 caractères ({@code AdminAlertTypeLengthTest}). */
     static final String UNSETTLED_ALERT_PREFIX = "AMENDMENT_UNSETTLED_";
@@ -169,7 +176,7 @@ public class BidAmendmentReconciliationJob {
 
         int staleRefunded = 0;
         for (Object[] row : amendments.findStaleCommissionsWithoutRefund(now.minus(STALE_REFUND_WINDOW),
-                STALE_REFUND_MAX_FAILURES, BATCH_SIZE)) {
+                STALE_REFUND_MAX_FAILURES, now.minus(STALE_REFUND_GIVE_UP_AFTER), BATCH_SIZE)) {
             String piId = String.valueOf(row[2]);
             try {
                 // Idempotent par clé de PaymentIntent : un Refund déjà créé chez Stripe est retrouvé, rien n'est recréé.
