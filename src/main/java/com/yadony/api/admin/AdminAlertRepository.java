@@ -15,8 +15,8 @@ public interface AdminAlertRepository extends JpaRepository<AdminAlertEntity, UU
 
     /**
      * Alertes non résolues qui citent un identifiant : dans leur {@code payload} (même correspondance
-     * textuelle que {@code EscrowScheduler}) ou en suffixe de leur {@code type}
-     * ({@code ESCROW_CAPTURE_FAILED_<id>}…), les plus récentes d'abord, {@code limit} au plus.
+     * textuelle que {@code EscrowScheduler}) ou n'importe où dans leur {@code type}
+     * (le {@code LIKE} est de forme {@code %<id>%} : {@code ESCROW_CAPTURE_FAILED_<id>}…), les plus récentes d'abord, {@code limit} au plus.
      * {@code payload} est un {@code jsonb} en PostgreSQL : le {@code CAST} en texte vaut aussi sur H2.
      * {@code pattern} est construit par l'appelant à partir d'un UUID, jamais d'une saisie.
      */

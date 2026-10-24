@@ -189,7 +189,8 @@ class AdminFinanceControllerIT {
     @DisplayName("GET /admin/mobile-money-payments — operations pawaPay, montant en centimes, numero masque")
     void mobileMoney_listsOperations_masked() throws Exception {
         when(financeListings.mobileMoney(any(), any(), any(), any(), any(Pageable.class)))
-                .thenReturn(new PageImpl<>(List.of(AdminMobileMoneyResponse.from(operation())), PageRequest.of(0, 20), 1));
+                .thenReturn(new PageImpl<>(List.of(AdminMobileMoneyResponse.from(operation(),
+                        new AdminMobileMoneyResponse.Context(null, null, null, null, null, null, null, false))), PageRequest.of(0, 20), 1));
 
         String body = mockMvc.perform(get("/admin/mobile-money-payments").with(authentication(supportAuth())))
                 .andExpect(status().isOk())

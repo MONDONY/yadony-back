@@ -704,7 +704,8 @@ class AdminPaymentControllerTest {
         p.setAmount(new BigDecimal("20.00"));
         p.setCommissionAmount(new BigDecimal("0.95"));
         when(insights.exportRows(any(), any())).thenReturn(java.util.List.of(p));
-        when(insights.insightsOf(java.util.List.of(p))).thenReturn(java.util.Map.of(paymentId, insight(bidId)));
+        when(insights.contextsOf(eq(java.util.List.of(p)), any())).thenReturn(java.util.Map.of(paymentId,
+                new AdminPaymentInsights.Context(insight(bidId), "DON-77", null)));
         UUID adminId = UUID.randomUUID();
 
         ResponseEntity<byte[]> resp = controller.export(null, null, null, null, null, null, null, true, null, null, null, null, null, null, null, adminAuth(adminId));
@@ -713,7 +714,8 @@ class AdminPaymentControllerTest {
         assertThat(csv).startsWith("\uFEFF" + AdminPaymentCsv.HEADER);
         assertThat(csv).contains(paymentId + ",NEGOTIATION," + bidId)
                 .contains(",20.00,0.95,19.05,")
-                .contains(",'=Awa D.,,Lyon → Abidjan,");
+                .contains(",'=Awa D.,,Lyon → Abidjan,")
+                .contains("checkoutAbandonne,suivi\n").containsPattern(",false,DON-77\r?\n");
         assertThat(resp.getHeaders().getContentDisposition().getFilename()).startsWith("paiements_");
         verify(auditService).log(eq("EXPORT"), isNull(), eq("EXPORT_RUN"), eq(adminId),
                 org.mockito.ArgumentMatchers.argThat(m -> "payments".equals(m.get("type")) && Integer.valueOf(1).equals(m.get("rows"))));

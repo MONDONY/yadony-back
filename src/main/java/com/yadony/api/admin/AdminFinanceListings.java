@@ -330,10 +330,14 @@ public class AdminFinanceListings {
                 r.retryable());
     }
 
-    /** Instant UTC d'une colonne {@code timestamp}, relu comme Hibernate ({@code jdbc.time_zone = UTC}). */
+    /**
+     * Date UTC d'une colonne {@code timestamp} (relue comme Hibernate, {@code jdbc.time_zone = UTC}) ou
+     * {@code timestamptz} : indépendante du fuseau par défaut de la JVM, car on passe par l'instant et
+     * jamais par {@code Timestamp.toLocalDateTime()}.
+     */
     private static LocalDateTime utc(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
         java.sql.Timestamp value = rs.getTimestamp(column, Calendar.getInstance(TimeZone.getTimeZone(ZoneOffset.UTC)));
-        return value == null ? null : value.toLocalDateTime();
+        return value == null ? null : LocalDateTime.ofInstant(value.toInstant(), ZoneOffset.UTC);
     }
 
     private static UUID uuid(String value) {

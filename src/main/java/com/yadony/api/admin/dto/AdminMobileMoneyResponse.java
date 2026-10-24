@@ -38,12 +38,6 @@ public record AdminMobileMoneyResponse(
     /** Personne, colis et relance résolus par la liste ({@code AdminFinanceListings}). */
     public record Context(UUID personId, String personName, String role, UUID bidId, String trackingNumber,
                           String corridor, UUID walletRefundRequestId, boolean retryable) {
-
-        public static final Context NONE = new Context(null, null, null, null, null, null, null, false);
-    }
-
-    public static AdminMobileMoneyResponse from(PawapayOperationEntity op) {
-        return from(op, Context.NONE);
     }
 
     public static AdminMobileMoneyResponse from(PawapayOperationEntity op, Context c) {

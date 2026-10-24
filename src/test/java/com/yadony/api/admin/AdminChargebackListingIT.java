@@ -128,6 +128,35 @@ class AdminChargebackListingIT {
     }
 
     @Test
+    void dates_independantesDuFuseauParDefautDeLaJvm() {
+        BidEntity bid = persistBid(trip, null);
+        PaymentEntity payment = persistPayment(bid.getId());
+        ChargebackEntity c = chargeback(payment.getId(), bid.getId(), ChargebackStatus.WON);
+        Instant opened = Instant.parse("2026-10-20T08:15:30Z");
+        Instant resolved = Instant.parse("2026-10-21T22:45:00Z");
+        c.setOpenedAt(opened);
+        c.setResolvedAt(resolved);
+        chargebackRepository.save(c);
+
+        // Lecture de référence dans le fuseau par défaut du test, puis dans d'autres fuseaux : même résultat.
+        AdminChargebackResponse reference = only(null, tag);
+        java.util.TimeZone previous = java.util.TimeZone.getDefault();
+        try {
+            for (String zone : new String[]{"UTC", "Pacific/Auckland", "America/Los_Angeles"}) {
+                java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(zone));
+                AdminChargebackResponse r = only(null, tag);
+                assertThat(r.openedAt()).as("openedAt en %s", zone).isEqualTo(reference.openedAt());
+                assertThat(r.resolvedAt()).as("resolvedAt en %s", zone).isEqualTo(reference.resolvedAt());
+            }
+        } finally {
+            java.util.TimeZone.setDefault(previous);
+        }
+        // Écart entre les deux dates conservé : 38 h 29 min 30 s.
+        assertThat(java.time.Duration.between(reference.openedAt(), reference.resolvedAt()))
+                .isEqualTo(java.time.Duration.between(opened, resolved));
+    }
+
+    @Test
     void paiementDuColis_quandLeLitigeNePorteQueLeColis() {
         BidEntity bid = persistBid(trip, null);
         PaymentEntity payment = persistPayment(bid.getId());

@@ -151,6 +151,49 @@ class AdminPaymentControllerListIT {
     }
 
     @Test
+    void exportCsv_derniereColonneSuivi_colisDirectLieAuFilEtNegociationSansColis() throws Exception {
+        String direct = "DON-" + tag.substring(1, 7) + "D";
+        String linkedNo = "DON-" + tag.substring(1, 7) + "L";
+        PaymentEntity pd = paymentOn(persistBid(trip.getId(), null, direct).getId(), null,
+                PaymentStatus.ESCROW, "10.00", now().minusHours(3));
+        NegotiationThreadEntity linkedThread = persistThread();
+        persistBid(trip.getId(), linkedThread.getId(), linkedNo);
+        PaymentEntity pl = paymentOn(null, linkedThread.getId(), PaymentStatus.ESCROW, "10.00", now().minusHours(2));
+        PaymentEntity pn = paymentOn(null, persistThread().getId(), PaymentStatus.ESCROW, "10.00", now().minusHours(1));
+
+        String csv = mockMvc.perform(get("/admin/payments/export").with(authentication(exporter()))
+                        .param("q", tag + "snd"))
+                .andExpect(status().isOk()).andReturn().getResponse()
+                .getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+
+        String[] lines = csv.replace("\uFEFF", "").split("\r?\n");
+        // Les anciennes colonnes gardent leur ordre ; « suivi » est ajoutée à la fin.
+        assertThat(lines[0]).isEqualTo(AdminPaymentCsv.HEADER).endsWith(",checkoutAbandonne,suivi");
+        assertThat(lines[0]).startsWith("id,type,colis,negociation,statut,rail,devise,montant,commission,"
+                + "netVoyageur,rembourse,expediteur,voyageur,trajet,stripePaymentIntentId,creeLe,captureLe,"
+                + "libereLe,checkoutAbandonne");
+        assertThat(lines).hasSize(4);
+        assertThat(rowOf(lines, pd)).startsWith(pd.getId() + ",").endsWith(",false," + direct);
+        assertThat(rowOf(lines, pl)).endsWith(",false," + linkedNo);
+        assertThat(rowOf(lines, pn)).endsWith(",false,");
+        for (int i = 1; i < lines.length; i++) {
+            assertThat(lines[i].split(",", -1)).hasSize(lines[0].split(",", -1).length);
+        }
+    }
+
+    private static String rowOf(String[] lines, PaymentEntity p) {
+        return java.util.Arrays.stream(lines).filter(l -> l.startsWith(p.getId() + ",")).findFirst().orElseThrow();
+    }
+
+    private static UsernamePasswordAuthenticationToken exporter() {
+        return new UsernamePasswordAuthenticationToken(
+                new AdminPrincipal(UUID.randomUUID(), "f@yadony.test", AdminRole.SUPER_ADMIN, false, "uid-f"), null,
+                List.of(new SimpleGrantedAuthority("ROLE_ADMIN"),
+                        new SimpleGrantedAuthority(AdminPermission.PAYMENT_VIEW.name()),
+                        new SimpleGrantedAuthority("EXPORT_RUN")));
+    }
+
+    @Test
     void attentionView_ordersByUrgency() throws Exception {
         PaymentEntity late = paymentOn(persistBid(trip.getId(), null, null).getId(), null,
                 PaymentStatus.ESCROW, "10.00", now().minusDays(3));

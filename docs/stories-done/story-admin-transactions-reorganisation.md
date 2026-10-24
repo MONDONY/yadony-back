@@ -25,7 +25,7 @@ Les listes de la page Transactions du back-office (paiements, mobile money, port
 - `admin/AdminFinanceController.java`, `AdminChargebackController.java` — vues, recherche, `/counts`, pagination bornée des litiges ; délégation à `AdminFinanceListings`.
 - `admin/AdminAlertController.java`, `AdminAlertRepository.java` — `GET /admin/alerts/{id}`.
 - `admin/AdminAuditController.java`, `common/AuditLogRepository.java` — paramètre `entityId`.
-- `admin/AdminSearchTerms.java`, `AdminBidSql.java` — `fold`/`tokens`/`FOLD_OPEN`/`FOLD_CLOSE` rendus partagés (valeurs inchangées, page Colis intacte) ; `AdminBidDetailAssembler.java` — extraction du contrôle de permission réutilisé pour les liens.
+- `admin/AdminSearchTerms.java`, `AdminBidSql.java` — `AdminSearchTerms` gagne `amountCents` (saisie de montant) ; `fold`/`tokens` et `AdminBidSql.FOLD_OPEN`/`FOLD_CLOSE` étaient déjà publics et sont réutilisés tels quels (valeurs inchangées, page Colis intacte) ; `AdminBidDetailAssembler.java` — extraction du contrôle de permission réutilisé pour les liens.
 - `admin/metrics/AdminQueueCounter.java` — `countPendingWalletRefunds()` public (même nombre que la pastille du menu).
 - DTO existants (`AdminPaymentListItemResponse`, `AdminPaymentDetailResponse`, `AdminMobileMoneyResponse`, `AdminWalletResponse`, `AdminCashCommissionResponse`, `AdminChargebackResponse`) — champs ajoutés EN FIN, contrat existant inchangé.
 - Code mort supprimé : `BidRepository.findCashCommissions`, `PawapayOperationRepository.findAllByOrderByCreatedAtDesc`, `ChargebackRepository.findAllByOrderByOpenedAtDesc`, `ChargebackService.listAll`, `ChargebackDto`, `AdminChargebackResponse.from(entity)` et leurs tests.
@@ -61,7 +61,7 @@ Texte replié (`AdminSearchTerms.fold`, identique en Java et en SQL), au plus qu
 
 ### Listes finance
 - Mobile money : vues `FAILED`/`OPEN`/`DONE`, `kind`, `provider`, `q` ; personne (expéditeur, voyageur ou titulaire du solde), colis, n° de suivi, trajet, demande de remboursement de solde, `retryable` (miroir des gardes de relance, pour ne jamais proposer une relance que l'API refuserait).
-- Portefeuilles : `q` (nom, prénom, pseudo ou UUID du titulaire), `currency`, `balanceSign`, `partyId` ; montants en centimes, une ligne de totaux par devise.
+- Portefeuilles : `q` (nom, prénom, pseudo ou UUID du titulaire), `currency`, `balanceSign`, `partyId` ; montants en centimes.
 - Commissions cash : `view=ATTENTION` (`FAILED`, `REQUIRES_3DS`, `REFUND_FAILED`), `status`, `q`, `partyId` (voyageur).
 - Litiges bancaires : `view` `OPEN`/`WON`/`LOST`, `q` ; paiement, colis, trajet, expéditeur, voyageur, issue.
 
@@ -89,7 +89,7 @@ Aucun.
 ## Pièges et points d'attention
 - **Jointure `lb`** : un paiement de fil de négociation (`p.bid_id IS NULL`) retrouve son colis via `bids.linked_negotiation_thread_id`. Sur PostgreSQL l'index unique partiel `idx_bids_linked_thread` (V66) garantit un seul colis par fil ; il est ABSENT du schéma H2 des tests. Toute jointure sur `lb` doit donc rester sans doublon par construction (sous-requête `ORDER BY lb.id LIMIT 1` pour les litiges) et le doublon n'est prouvé que par les `*PostgresIT`.
 - **Numéro de téléphone** : `msisdn` est chiffré, `msisdn_masked` vaut `+221 •••• 67`. Aucune réponse ni recherche de la page ne doit exposer le numéro en clair (`AdminTransactionsConsistencyIT` le vérifie sur toutes les réponses).
-- **Les trois nombres « séquestre de plus de 48 h »** sont égaux sur le même jeu : la carte `escrowJ48` de la vue d'ensemble (`AdminMetricsService.countEscrowJ48`), l'alerte `ESCROW_J48_TIMEOUT` et `alerts.escrowJ48`. Même critère : statut `ESCROW`, `created_at < now - 48 h`, non supprimé. Ne jamais en changer un seul.
+- **Les trois nombres « séquestre de plus de 48 h »** sont égaux sur le même jeu : la carte `escrowJ48` de la vue d'ensemble (`AdminMetricsService.countEscrowJ48`), l'alerte `ESCROW_J48_TIMEOUT` et `alerts.escrowJ48`. Même critère : statut `ESCROW`, `created_at < now - 48 h`, non supprimé. L'égalité est PAR DÉFINITION, pas par code partagé : `AdminMetricsService.countEscrowJ48` est une requête JPQL distincte du SQL d'`AdminPaymentSql`. Ne jamais en changer un seul ; `AdminTransactionsConsistencyIT` garde l'égalité.
 - **`alerts.*` se recoupent** alors que l'étiquette de ligne est exclusive : un séquestre retenu de plus de 48 h compte dans `held` ET `escrowJ48` mais ne porte que `HELD`. Les quatre `alerts.*` peuvent donc sommer plus que `attention`. De même, `attention` du mobile money compte PAR OPÉRATION et peut dépasser `alerts.mmFailed`.
 - **Pagination des litiges** désormais bornée (`size` entre 1 et 100) : avant, aucune borne. `bidId` d'un litige est maintenant renseigné via le paiement.
 - **Méthodes de dépôt retirées** (voir ci-dessus) : tout nouvel appelant doit passer par `AdminFinanceListings`.
@@ -97,10 +97,18 @@ Aucun.
 - **Règle `cancellationId` différente** : la fiche paiement exige `DISPUTE_VIEW`, la fiche colis (`AdminBidDetailAssembler.extras`) renvoie `links.cancellationId` à tout admin `BID_VIEW`. Pré-existant, hors périmètre : **à trancher par le propriétaire**.
 - **Opérations de supplément** : un `PAYOUT` de `BID_SUPPLEMENT` est rattaché au voyageur du colis (rôle `TRAVELER`), `DEPOSIT`/`REFUND` à l'expéditeur.
 - **Tests sur H2 partagée** : les données de test utilisent des jetons ALÉATOIRES EN LETTRES SEULEMENT, sinon une recherche numérique (ex. « 67 ») trouve des UUID par hasard.
+- **Le front ne doit pas SOMMER `alerts.*`** : ils se recoupent (voir plus haut), seul `attention` est un total.
+- **`MM_FAILED` ne s'efface jamais** si un versement ou remboursement mort est réglé hors du système (par exemple Batch Disbursements) : la pastille reste tant qu'aucune opération plus récente non morte n'existe.
+- **Alertes `ESCROW_J48_TIMEOUT` créées par le planificateur** : jamais résolues automatiquement à la livraison normale ; `openAlerts` peut donc montrer une alerte périmée sur un paiement déjà versé.
+- **`announcementId` est rendu dans la LISTE des paiements** à tout détenteur de `PAYMENT_VIEW` : le front doit masquer le lien sans `BID_VIEW`.
+- **Surface nouvelle sous `PAYMENT_VIEW` seul** : noms des titulaires de portefeuille, parties des litiges, personne du mobile money, voyageur des commissions cash, suggestions avec nombres, n° de suivi. Même catégorie que `insight.sender/traveler` ; la décision (élargir ou restreindre) appartient au propriétaire.
+- **Export CSV** : colonne `suivi` ajoutée EN FIN (anciennes colonnes inchangées et dans le même ordre) ; vide pour une négociation sans colis.
+- **Dates des litiges** : `AdminFinanceListings.utc()` passe par l'instant (jamais `Timestamp.toLocalDateTime()`), donc indépendant du fuseau de la JVM, pour les colonnes `timestamp` comme `timestamptz`.
+- **À vérifier sur staging avant la prod** : latence de `/admin/payments/counts`, `/admin/finance/counts` et `/suggest` ; `SHOW lc_ctype` (repli des accents) ; nombre de paiements `MM_FAILED` et d'alertes `ESCROW_J48_TIMEOUT` non résolues dont le paiement n'est plus `ESCROW` ; carte `escrowJ48` = `alerts.escrowJ48` au même instant ; détail d'un paiement en tant que `SUPPORT` (ni `disputeId`, ni `conversationId`, ni `openAlerts`) ; ancien admin contre le nouveau back ; dernière colonne `suivi` du CSV.
 - Fiches de l'assistant IA : rien à changer (aucun parcours visible dans l'app mobile).
 
 ## Critères d'acceptation couverts
-- [x] Les vues et l'alerte unique sont calculées une fois en SQL et partagées par liste, nombres, tri, étiquette et carte `escrowJ48`.
+- [x] Les vues et l'alerte unique sont calculées une fois en SQL et partagées par liste, nombres, tri, étiquette et export ; la carte `escrowJ48` de la vue d'ensemble est une requête JPQL distincte, égale par définition.
 - [x] Chaque nombre égale la taille de la liste de sa vue (`AdminPaymentCountsIT`, `AdminTransactionsConsistencyIT`).
 - [x] Recherche accentuée/insensible à la casse, saisie `%`/`'`/`_`/`@` seule = liste vide, aucune recherche par téléphone.
 - [x] Un fil de négociation avec colis lié ne duplique pas le paiement (liste, nombres, export) ; un compte supprimé garde ses paiements et sort des suggestions.
@@ -112,7 +120,7 @@ Aucun.
 ## Tests
 - `./mvnw verify -DforkCount=2` → 13 160 tests, 0 échec, 0 erreur, 7 ignorés (BUILD SUCCESS) ; SpotBugs : aucun défaut (spotbugs:check)
 - JaCoCo : 96,32 % des lignes (52 849 / 54 870), relevé sur target/site/jacoco/jacoco.csv
-- SpotBugs : 0.
+- SpotBugs : `./mvnw spotbugs:check` sans anomalie (0).
 - Tests ajoutés : voir « Fichiers créés » ; `AdminTransactionsConsistencyIT` (+ `PostgresIT`) vérifie sur UN jeu de données la cohérence des nombres (liste, comptes, section du menu, carte `escrowJ48` de la vue d'ensemble), la bonne vue de chaque état de paiement et l'absence de téléphone en clair (liste, détail, chronologie, suggestions, export, résumé, mobile money, portefeuilles, commissions cash, litiges). Mutation de contrôle : une attente fausse sur `attention` fait échouer le test.
 
 ## Décisions techniques

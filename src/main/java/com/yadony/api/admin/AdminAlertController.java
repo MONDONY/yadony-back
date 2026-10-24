@@ -58,7 +58,7 @@ public class AdminAlertController {
     }
 
     /** Une alerte, pour le lien « voir l'alerte » d'une autre fiche (paiement…). */
-    @PreAuthorize("hasAuthority('ALERT_VIEW')")
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('ALERT_VIEW')")
     @GetMapping("/{id}")
     public ResponseEntity<AdminAlertResponse> get(@PathVariable UUID id) {
         return alertRepo.findById(id)

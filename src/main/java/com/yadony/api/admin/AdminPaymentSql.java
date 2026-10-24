@@ -4,7 +4,9 @@ package com.yadony.api.admin;
  * Fragments SQL natifs de la liste des paiements de l'admin (constantes de compilation), sur
  * PostgreSQL et sur H2 en mode PostgreSQL. Même méthode que {@link AdminBidSql} : l'alerte, les
  * vues, le tri et les colonnes « effectives » sont écrits UNE fois ici, la liste, les nombres,
- * l'export et la carte {@code escrowJ48} les réutilisent.
+ * l'export les réutilisent. La carte {@code escrowJ48} de la vue d'ensemble n'en fait PAS partie : c'est la
+ * requête JPQL distincte {@code AdminMetricsService.countEscrowJ48}, égale à {@code ESCROW_J48} par définition
+ * (même critère : {@code ESCROW}, créé il y a plus de 48 h, non supprimé), pas par code partagé.
  *
  * <p>Alias posés par {@link #FROM_JOIN} : {@code p} (payments), {@code b} (colis direct),
  * {@code lb} (colis lié au fil), {@code a}/{@code la} (trajets de {@code b}/{@code lb}), {@code t}

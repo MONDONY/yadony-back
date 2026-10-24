@@ -263,7 +263,7 @@ public class AdminPaymentController {
      * Nombres par vue et par alerte : mêmes paramètres que la liste, hors {@code view}, {@code alert},
      * {@code status}, {@code page} et {@code size}.
      */
-    @PreAuthorize("hasAuthority('PAYMENT_VIEW')")
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
     @GetMapping("/counts")
     public ResponseEntity<AdminPaymentCountsResponse> counts(
             @RequestParam(required = false) String method,
@@ -288,7 +288,7 @@ public class AdminPaymentController {
      * trajets, colis) et {@code exactPaymentId} si la saisie identifie exactement un paiement. Sous deux
      * caractères : groupes vides, aucune requête.
      */
-    @PreAuthorize("hasAuthority('PAYMENT_VIEW')")
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
     @GetMapping("/suggest")
     public ResponseEntity<AdminPaymentSuggestResponse> suggest(@RequestParam(required = false) String q) {
         return ResponseEntity.ok(insights.suggest(q, LocalDateTime.now(clock)));
@@ -345,7 +345,9 @@ public class AdminPaymentController {
         AdminPaymentFilter filter = filterOf(status, dateFrom, dateTo, method, currency, held, q, hideAbandoned,
                 view, alert, partyId, announcementId, bidId, amountMin, amountMax);
         List<PaymentEntity> rows = insights.exportRows(filter, LocalDateTime.now(clock));
-        byte[] csv = AdminPaymentCsv.write(rows, insights.insightsOf(rows));
+        LocalDateTime now = LocalDateTime.now(clock);
+        Map<UUID, AdminPaymentInsights.Context> contexts = insights.contextsOf(rows, now);
+        byte[] csv = AdminPaymentCsv.write(rows, contexts);
         auditService.log("EXPORT", null, "EXPORT_RUN", adminId, Map.of(
                 "type", "payments",
                 "rows", rows.size(),
