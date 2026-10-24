@@ -59,8 +59,12 @@ class BidAmendmentReconciliationJobTest {
                 new Object[]{"pas-un-uuid", bidId.toString(), "pi_bad"},
                 new Object[]{amendmentId.toString(), bidId.toString(), "pi_ok"}));
         when(cashRefunds.refundStale(amendmentId, bidId, "pi_ok")).thenReturn(true);
-        when(amendments.findCardIdsAwaitingRelease(any(), any(), any(), any())).thenReturn(List.of(failing, next));
-        org.mockito.Mockito.doThrow(new IllegalStateException("stripe")).when(cardRail).releaseAuthorization(failing);
+        UUID released = UUID.randomUUID();
+        when(amendments.findCardIdsAwaitingRelease(any(), any(), any(), any()))
+                .thenReturn(List.of(failing, next, released));
+        when(cardRail.releaseAuthorization(failing)).thenThrow(new IllegalStateException("stripe"));
+        when(cardRail.releaseAuthorization(next)).thenReturn(false);
+        when(cardRail.releaseAuthorization(released)).thenReturn(true);
         when(amendments.findIdsUnsettledAfterBidEnd(any(), any(), any(), any(), any(), any())).thenReturn(List.of(failing));
         when(amendments.findById(failing)).thenThrow(new IllegalStateException("base"));
 
@@ -69,5 +73,8 @@ class BidAmendmentReconciliationJobTest {
         assertThat(outcome).isEqualTo(new BidAmendmentReconciliationJob.Outcome(1, 1, 1, 1, 1, 1, 0));
         verify(cashRefunds, never()).refundStale(any(), any(), org.mockito.ArgumentMatchers.eq("pi_bad"));
         verify(cardRail).releaseAuthorization(next);
+        // Échec d'une libération : alerte (le filet repassera) ; seule la libération effective est comptée.
+        verify(alerts).raiseOnce(org.mockito.ArgumentMatchers.eq("AMEND_PI_UNCANCELED_" + failing),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyMap());
     }
 }

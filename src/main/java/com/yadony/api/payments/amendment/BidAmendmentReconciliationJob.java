@@ -194,10 +194,15 @@ public class BidAmendmentReconciliationJob {
                 now.minus(CARD_RELEASE_GRACE), batch)) {
             try {
                 // Idempotent : une PaymentIntent déjà annulée pose le marqueur sans rien changer chez Stripe.
-                cardRail.releaseAuthorization(id);
-                cardReleased++;
+                if (cardRail.releaseAuthorization(id)) {
+                    cardReleased++;
+                }
             } catch (RuntimeException e) {
                 log.error("Autorisation carte de la modification {} : annulation en échec", id, e);
+                alerts.raiseOnce("AMEND_PI_UNCANCELED_" + id,
+                        "Autorisation carte de la modification close " + id + " non rendue par le filet ("
+                                + e.getMessage() + ") : nouvel essai au prochain passage",
+                        Map.of("amendmentId", id.toString(), "error", String.valueOf(e.getMessage())));
             }
         }
 

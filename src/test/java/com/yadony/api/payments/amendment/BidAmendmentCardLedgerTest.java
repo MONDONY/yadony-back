@@ -275,4 +275,46 @@ class BidAmendmentCardLedgerTest {
         assertThat(BidAmendmentCardRail.captureKey(a.getId(), 0)).isEqualTo("amendment-capture-" + a.getId());
         assertThat(BidAmendmentCardRail.captureKey(a.getId(), 1)).isEqualTo("amendment-capture-" + a.getId() + "-r1");
     }
+
+    @Test
+    @DisplayName("autorisation sans PaymentIntent (webhook illisible) sur une demande sans PI : jamais présentée")
+    void authorize_nullPaymentIntent_neverProposes() {
+        a.setStripePaymentIntentId(null);
+
+        ledger.authorize(a.getId(), null, "requires_capture", "webhook");
+
+        verify(service, never()).markProposed(any());
+        verify(service, never()).cancelOpen(any(), any());
+        verify(service, never()).expireUnderBidLock(any());
+        assertThat(a.getStatus()).isEqualTo(BidAmendmentStatus.AUTHORIZATION_PENDING);
+    }
+
+    @Test
+    @DisplayName("essai de rendu en échec : date posée (ordre du filet)")
+    void releaseAttempted_setsDate() {
+        a.setStatus(BidAmendmentStatus.DECLINED);
+
+        ledger.releaseAttempted(a.getId());
+
+        assertThat(a.getReleaseAttemptedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("prédicat unique de libération : seuls DECLINED, EXPIRED, CANCELLED (closes sans avoir été acquises)")
+    void awaitsRelease_onlyClosedUnaccepted_sameForRailAndLedger() {
+        // REFUND_PENDING et REFUNDED sont des modifications acquises puis rendues : leur PaymentIntent a été capturée,
+        // il n'y a plus d'autorisation à libérer, seulement un remboursement.
+        assertThat(BidAmendmentCardLedger.CLOSED_UNACCEPTED).containsExactlyInAnyOrder(BidAmendmentStatus.DECLINED,
+                BidAmendmentStatus.EXPIRED, BidAmendmentStatus.CANCELLED);
+        for (BidAmendmentStatus status : BidAmendmentStatus.values()) {
+            a.setStatus(status);
+            boolean expected = BidAmendmentCardLedger.CLOSED_UNACCEPTED.contains(status);
+            assertThat(BidAmendmentCardRail.awaitsRelease(a)).as("rail, " + status).isEqualTo(expected);
+            if (status != BidAmendmentStatus.AUTHORIZATION_PENDING) {
+                assertThat(ledger.authorize(a.getId(), "pi_1", "requires_capture", "webhook")).get()
+                        .satisfies(r -> assertThat(r.releaseAuthorization()).as("ledger, " + status)
+                                .isEqualTo(expected));
+            }
+        }
+    }
 }

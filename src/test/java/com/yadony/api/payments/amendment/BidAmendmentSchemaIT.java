@@ -126,6 +126,24 @@ class BidAmendmentSchemaIT {
     }
 
     @Test
+    @DisplayName("marqueur de libération, essai de rendu et essai de capture : réservés au rail STRIPE")
+    void cardReleaseAndCaptureColumnsOnlyForStripe() {
+        jdbc.execute("SET LOCAL session_replication_role = replica");
+        for (String column : List.of("authorization_released_at = now()", "release_attempted_at = now()",
+                "capture_attempt = 1")) {
+            UUID cash = insert(UUID.randomUUID(), "CASH", "DECLINED", null);
+            assertThatThrownBy(() -> guarded(() -> jdbc.update("UPDATE bid_amendments SET " + column
+                    + " WHERE id = ?", cash)))
+                    .as(column)
+                    .isInstanceOf(DataIntegrityViolationException.class)
+                    .hasMessageContaining("chk_bid_amendments_card_fields");
+            UUID card = insert(UUID.randomUUID(), "STRIPE", "DECLINED", "pi_" + UUID.randomUUID());
+            assertThatCode(() -> guarded(() -> jdbc.update("UPDATE bid_amendments SET " + column
+                    + " WHERE id = ?", card))).as(column + " carte").doesNotThrowAnyException();
+        }
+    }
+
+    @Test
     @DisplayName("un PaymentIntent ne peut servir qu'à une seule modification")
     void stripePaymentIntentIsUnique() {
         jdbc.execute("SET LOCAL session_replication_role = replica");

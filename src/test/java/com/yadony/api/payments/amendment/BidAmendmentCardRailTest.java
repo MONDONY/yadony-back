@@ -366,4 +366,68 @@ class BidAmendmentCardRailTest {
 
         verifyNoInteractions(gateway);
     }
+
+    @Test
+    @DisplayName("annulation refusée car la PaymentIntent est déjà annulée : marqueur posé, sans alerte")
+    void releaseAuthorization_alreadyCanceled_marks() throws Exception {
+        a.setStatus(BidAmendmentStatus.DECLINED);
+        when(gateway.cancelPaymentIntent("pi_1")).thenThrow(new InvalidRequestException("canceled", null, "r",
+                "payment_intent_unexpected_state", 400, null));
+        when(gateway.retrievePaymentIntent("pi_1")).thenReturn(view("canceled"));
+
+        rail.releaseAuthorization(a.getId());
+
+        verify(ledger).authorizationReleased(a.getId(), "canceled");
+        verifyNoInteractions(alerts);
+    }
+
+    @Test
+    @DisplayName("confirmation : demande en attente à la lecture, close quand l'autorisation s'enregistre → rendue")
+    void confirmAuthorization_authorizedThenClosed_releases() throws Exception {
+        a.setStatus(BidAmendmentStatus.AUTHORIZATION_PENDING);
+        when(gateway.retrievePaymentIntent("pi_1")).thenReturn(view("requires_capture"));
+        when(ledger.authorize(a.getId(), "pi_1", "requires_capture", "confirm-authorization")).thenAnswer(inv -> {
+            a.setStatus(BidAmendmentStatus.CANCELLED);
+            return Optional.of(new BidAmendmentCardLedger.Authorization(a, true));
+        });
+        when(gateway.cancelPaymentIntent("pi_1")).thenReturn(view("canceled"));
+
+        BidAmendmentResponse view = rail.confirmAuthorization(a.getBidId(), a.getId(), "uid-s");
+
+        assertThat(view.status()).isEqualTo("CANCELLED");
+        verify(gateway).cancelPaymentIntent("pi_1");
+        verify(ledger).authorizationReleased(a.getId(), "canceled");
+    }
+
+    @Test
+    @DisplayName("releaseAuthorization rend vrai seulement quand l'autorisation est effectivement rendue")
+    void releaseAuthorization_trueOnlyWhenReleased() throws Exception {
+        a.setStatus(BidAmendmentStatus.DECLINED);
+        when(gateway.cancelPaymentIntent("pi_1")).thenReturn(view("canceled"));
+        assertThat(rail.releaseAuthorization(a.getId())).as("annulée").isTrue();
+
+        org.mockito.Mockito.reset(gateway);
+        when(gateway.cancelPaymentIntent("pi_1")).thenThrow(new InvalidRequestException("canceled", null, "r",
+                "payment_intent_unexpected_state", 400, null));
+        when(gateway.retrievePaymentIntent("pi_1")).thenReturn(view("canceled"));
+        assertThat(rail.releaseAuthorization(a.getId())).as("déjà annulée").isTrue();
+
+        when(gateway.retrievePaymentIntent("pi_1")).thenReturn(view("requires_capture"));
+        assertThat(rail.releaseAuthorization(a.getId())).as("toujours vivante").isFalse();
+
+        a.setAuthorizationReleasedAt(LocalDateTime.now(ZoneOffset.UTC));
+        assertThat(rail.releaseAuthorization(a.getId())).as("marqueur posé").isFalse();
+    }
+
+    @Test
+    @DisplayName("annulation impossible : l'essai est noté, la ligne passe en fin de lot du filet")
+    void releaseAuthorization_failure_recordsAttempt() throws Exception {
+        a.setStatus(BidAmendmentStatus.DECLINED);
+        when(gateway.cancelPaymentIntent("pi_1")).thenThrow(new ApiConnectionException("timeout"));
+        when(gateway.retrievePaymentIntent("pi_1")).thenThrow(new ApiConnectionException("timeout"));
+
+        rail.releaseAuthorization(a.getId());
+
+        verify(ledger).releaseAttempted(a.getId());
+    }
 }

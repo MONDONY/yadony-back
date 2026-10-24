@@ -293,31 +293,36 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
      * capturée est annulée, l'autorisation rendue à l'expéditeur. Déjà annulée : rien. Annulation refusée : la
      * PaymentIntent est relue ; capturée entre-temps, le montant est remboursé (capture tardive) ; encore vivante ou
      * illisible, une alerte admin part.
+     *
+     * @return vrai si l'autorisation vient d'être rendue (annulée, ou constatée déjà annulée) ; faux sinon (rien à
+     *         rendre, capture tardive, annulation impossible).
      */
-    public void releaseAuthorization(UUID amendmentId) {
+    public boolean releaseAuthorization(UUID amendmentId) {
         BidAmendmentEntity a = ledger.find(amendmentId).orElse(null);
         if (a == null || !awaitsRelease(a)) {
-            return;
+            return false;
         }
         String piId = a.getStripePaymentIntentId();
         try {
             PaymentIntentView canceled = gateway.cancelPaymentIntent(piId);
             ledger.authorizationReleased(amendmentId, canceled == null ? null : canceled.status());
+            return true;
         } catch (StripeException refused) {
             PaymentIntentView pi = retrieveOrNull(piId);
             if (pi != null && pi.canceled()) {
                 ledger.authorizationReleased(amendmentId, pi.status());
-                return;
+                return true;
             }
             if (pi != null && pi.succeeded()) {
                 String chargeId = chargeOf(amendmentId, pi);
                 if (chargeId != null) {
                     ledger.captured(amendmentId, piId, chargeId, "cancel-refused");
                 }
-                return;
+                return false;
             }
             log.error("Autorisation {} de la modification {} : annulation refusée ({})", piId, amendmentId,
                     refused.getMessage());
+            ledger.releaseAttempted(amendmentId);
             alerts.raiseOnce("AMEND_PI_UNCANCELED_" + amendmentId,
                     "Autorisation carte " + piId + " de la modification close " + amendmentId
                             + " impossible à annuler : le montant reste bloqué chez l'expéditeur (" + refused.getMessage()
@@ -325,6 +330,7 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
                     Map.of("amendmentId", amendmentId.toString(), "bidId", a.getBidId().toString(),
                             "paymentIntentId", piId, "error", String.valueOf(refused.getMessage())));
         }
+        return false;
     }
 
     /**
@@ -332,9 +338,7 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
      * {@code authorizationReleasedAt}) : écouteur de la clôture, filet planifié, autorisation tardive.
      */
     static boolean awaitsRelease(BidAmendmentEntity a) {
-        return a.getRail() == BidSupplementRail.STRIPE && !a.getStatus().isOpen() && !a.getStatus().isSecured()
-                && a.getStripePaymentIntentId() != null && a.getStripeChargeId() == null
-                && a.getAuthorizationReleasedAt() == null;
+        return BidAmendmentCardLedger.awaitsRelease(a);
     }
 
     /**

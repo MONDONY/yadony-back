@@ -41,6 +41,8 @@ CREATE TABLE bid_amendments (
     -- Autorisation d'une modification close rendue à l'expéditeur (PaymentIntent annulée, ou déjà annulée) : le
     -- filet ne relit plus Stripe pour elle.
     authorization_released_at     TIMESTAMP     NULL,
+    -- Dernier essai du filet pour rendre cette autorisation, en échec : les essais ratés passent en fin de lot.
+    release_attempted_at          TIMESTAMP     NULL,
     -- Essai de capture : incrémenté après une réponse 5xx de Stripe, pour changer de clé d'idempotence.
     capture_attempt               INTEGER       NOT NULL DEFAULT 0,
     -- Rail espèces : commission de la modification prélevée au voyageur (solde ou carte commission).
@@ -80,7 +82,8 @@ CREATE TABLE bid_amendments (
     CONSTRAINT chk_bid_amendments_card_fields
         CHECK (rail = 'STRIPE' OR (stripe_payment_intent_id IS NULL AND stripe_charge_id IS NULL
                                    AND stripe_transfer_id IS NULL AND stripe_refund_id IS NULL
-                                   AND authorization_released_at IS NULL AND capture_attempt = 0)),
+                                   AND authorization_released_at IS NULL AND release_attempted_at IS NULL
+                                   AND capture_attempt = 0)),
     -- Espèces en main propre à la remise : l'app n'encaisse rien, ne verse rien, ne rembourse rien.
     CONSTRAINT chk_bid_amendments_no_payout_cash
         CHECK (rail <> 'CASH' OR status NOT IN ('PAYMENT_PENDING', 'PAYOUT_PENDING', 'PAID_OUT', 'REFUND_PENDING'))

@@ -128,6 +128,9 @@ public class BidAmendmentEntity extends BaseEntity {
     private LocalDateTime authorizationReleasedAt;
 
     /** Essai de capture : incrémenté après une réponse 5xx de Stripe (nouvelle clé d'idempotence). */
+    @Column(name = "release_attempted_at")
+    private LocalDateTime releaseAttemptedAt;
+
     @Column(name = "capture_attempt", nullable = false)
     private int captureAttempt;
 
@@ -199,6 +202,8 @@ public class BidAmendmentEntity extends BaseEntity {
     public void setStripeRefundId(String stripeRefundId) { this.stripeRefundId = stripeRefundId; }
     public LocalDateTime getAuthorizationReleasedAt() { return authorizationReleasedAt; }
     public void setAuthorizationReleasedAt(LocalDateTime authorizationReleasedAt) { this.authorizationReleasedAt = authorizationReleasedAt; }
+    public LocalDateTime getReleaseAttemptedAt() { return releaseAttemptedAt; }
+    public void setReleaseAttemptedAt(LocalDateTime releaseAttemptedAt) { this.releaseAttemptedAt = releaseAttemptedAt; }
     public int getCaptureAttempt() { return captureAttempt; }
     public void setCaptureAttempt(int captureAttempt) { this.captureAttempt = captureAttempt; }
     public CommissionChargedVia getCommissionChargedVia() { return commissionChargedVia; }

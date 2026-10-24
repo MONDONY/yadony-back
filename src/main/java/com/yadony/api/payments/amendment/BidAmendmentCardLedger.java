@@ -44,6 +44,19 @@ public class BidAmendmentCardLedger {
     static final Set<BidAmendmentStatus> CLOSED_UNACCEPTED = EnumSet.of(BidAmendmentStatus.DECLINED,
             BidAmendmentStatus.EXPIRED, BidAmendmentStatus.CANCELLED);
 
+    /**
+     * Prédicat unique « autorisation à rendre », partagé par le rail (écouteur, confirmation), ce registre (autorisation
+     * tardive) et le filet ({@code findCardIdsAwaitingRelease}, appelé avec {@link #CLOSED_UNACCEPTED}) : modification
+     * carte close sans avoir été acquise, PaymentIntent connue, non capturée, autorisation pas encore rendue.
+     * {@code REFUND_PENDING} et {@code REFUNDED} en sont exclus : acquises puis rendues, leur PaymentIntent a été
+     * capturée, il n'y a plus d'autorisation à libérer.
+     */
+    static boolean awaitsRelease(BidAmendmentEntity a) {
+        return a.getRail() == BidSupplementRail.STRIPE && CLOSED_UNACCEPTED.contains(a.getStatus())
+                && a.getStripePaymentIntentId() != null && a.getStripeChargeId() == null
+                && a.getAuthorizationReleasedAt() == null;
+    }
+
     /** Issue de l'enregistrement d'un montant capturé. */
     public enum CaptureOutcome {
         /** Modification proposée : désormais acquise. */
@@ -169,11 +182,11 @@ public class BidAmendmentCardLedger {
         }
         if (a.getStatus() != BidAmendmentStatus.AUTHORIZATION_PENDING) {
             // Autorisation arrivée sur une demande déjà close (retirée, échue, colis terminé) : à rendre.
-            boolean late = CLOSED_UNACCEPTED.contains(a.getStatus()) && a.getStripeChargeId() == null
-                    && a.getAuthorizationReleasedAt() == null && a.getStripePaymentIntentId() != null;
-            return Optional.of(new Authorization(a, late));
+            return Optional.of(new Authorization(a, awaitsRelease(a)));
         }
-        adopt(a, paymentIntentId);
+        if (!adopt(a, paymentIntentId)) {
+            return Optional.of(new Authorization(a, false));
+        }
         if (window.isLapsed(a)) {
             log.info("Modification {} : autorisation {} arrivée après l'échéance ({}), close", a.getId(),
                     paymentIntentId, source);
@@ -202,6 +215,15 @@ public class BidAmendmentCardLedger {
                     audit(a, "BID_AMENDMENT_AUTHORIZATION_RELEASED", null, Map.of("piId",
                             String.valueOf(a.getStripePaymentIntentId()), "piStatus", String.valueOf(piStatus)));
                 });
+    }
+
+    /** Essai de rendu de l'autorisation en échec : la ligne passe en fin de lot du filet. */
+    @Transactional
+    public void releaseAttempted(UUID amendmentId) {
+        lock(amendmentId, false).filter(this::card).ifPresent(a -> {
+            a.setReleaseAttemptedAt(window.now());
+            amendments.save(a);
+        });
     }
 
     /**

@@ -119,6 +119,7 @@ class BidAmendmentCardRailIT {
     @Autowired BidAmendmentService service;
     @Autowired BidAmendmentCardRail cardRail;
     @Autowired BidAmendmentReconciliationJob job;
+    @Autowired BidAmendmentRepository amendmentRepository;
     @Autowired StripeEventDispatcher dispatcher;
     @Autowired BidService bidService;
     @Autowired UserRepository userRepository;
@@ -515,7 +516,8 @@ class BidAmendmentCardRailIT {
         ArgumentCaptor<Map<String, String>> metadata = ArgumentCaptor.forClass(Map.class);
         verify(gateway, timeout(3000).times(1)).createRefund(eq(piId), metadata.capture(),
                 eq("amendment-refund-" + id));
-        assertThat(metadata.getValue()).containsEntry("bid_amendment_id", id.toString());
+        assertThat(metadata.getValue()).containsEntry("bid_amendment_id", id.toString())
+                .containsEntry("scope", "BID_AMENDMENT");
         awaitColumn(id, "stripe_refund_id", "re_3");
         assertThat(column(id, "status")).as("REFUNDED seulement au webhook").isEqualTo("REFUND_PENDING");
 
@@ -778,5 +780,62 @@ class BidAmendmentCardRailIT {
         verify(gateway, never()).cancelPaymentIntent(releasedPi);
         verify(gateway, never()).cancelPaymentIntent(recentPi);
         verify(gateway, never()).cancelPaymentIntent(capturedPi);
+    }
+
+    @Test
+    @DisplayName("filet : seules les modifications closes, non capturées, non rendues, au-delà de la grâce et dans la fenêtre")
+    void findCardIdsAwaitingRelease_selectsOnlyClosedUnreleased() throws Exception {
+        UUID lost = closedCard("DECLINED", "10 minutes", null, null);
+        UUID released = closedCard("EXPIRED", "10 minutes", "now()", null);
+        UUID recent = closedCard("DECLINED", "0 minutes", null, null);
+        UUID captured = closedCard("CANCELLED", "10 minutes", null, "'ch_q'");
+        UUID tooOld = closedCard("DECLINED", "9 days", null, null);
+        UUID proposedOld = closedCard("PROPOSED", "10 minutes", null, null);
+        UUID pendingOld = closedCard("AUTHORIZATION_PENDING", "10 minutes", null, null);
+        UUID acceptedOld = closedCard("ACCEPTED", "10 minutes", null, null);
+
+        java.time.LocalDateTime now = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC);
+        List<UUID> found = amendmentRepository.findCardIdsAwaitingRelease(BidAmendmentCardLedger.CLOSED_UNACCEPTED,
+                now.minusDays(8), now.minusMinutes(5), org.springframework.data.domain.PageRequest.of(0, 1000));
+
+        assertThat(found).contains(lost)
+                .doesNotContain(released, recent, captured, tooOld, proposedOld, pendingOld, acceptedOld);
+
+        // Le filet ne touche pas aux demandes ouvertes ou acquises, même anciennes.
+        job.run();
+        for (UUID untouched : List.of(proposedOld, pendingOld, acceptedOld)) {
+            verify(gateway, never()).cancelPaymentIntent(column(untouched, "stripe_payment_intent_id"));
+            assertThat(column(untouched, "authorization_released_at")).isNull();
+        }
+    }
+
+    /** Modification carte proposée puis amenée par SQL au statut voulu, modifiée il y a {@code age}. */
+    private UUID closedCard(String status, String age, String releasedAt, String chargeId) throws Exception {
+        Parties p = parties("EUR");
+        String piId = pi();
+        UUID id = proposedCard(p, piId);
+        boolean open = Set.of("PROPOSED", "AUTHORIZATION_PENDING").contains(status);
+        jdbc.update("UPDATE bid_amendments SET status = ?, closed_reason = ?, authorization_released_at = "
+                + (releasedAt == null ? "NULL" : releasedAt) + ", stripe_charge_id = "
+                + (chargeId == null ? "NULL" : chargeId) + ", accepted_at = "
+                + ("ACCEPTED".equals(status) ? "now()" : "NULL")
+                + ", updated_at = updated_at - interval '" + age + "' WHERE id = ?",
+                status, open || "ACCEPTED".equals(status) ? null : "EXPIRED", id);
+        return id;
+    }
+
+    @Test
+    @DisplayName("filet : une ligne déjà essayée sans succès passe après les lignes jamais essayées (pas de famine)")
+    void findCardIdsAwaitingRelease_failedAttemptsLast() throws Exception {
+        UUID failing = closedCard("DECLINED", "20 minutes", null, null);
+        jdbc.update("UPDATE bid_amendments SET release_attempted_at = now() WHERE id = ?", failing);
+        UUID fresh = closedCard("DECLINED", "10 minutes", null, null);
+
+        java.time.LocalDateTime now = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC);
+        List<UUID> found = amendmentRepository.findCardIdsAwaitingRelease(BidAmendmentCardLedger.CLOSED_UNACCEPTED,
+                now.minusDays(8), now.minusMinutes(5), org.springframework.data.domain.PageRequest.of(0, 1000));
+
+        assertThat(found).contains(failing, fresh);
+        assertThat(found.indexOf(fresh)).as("jamais essayée d'abord").isLessThan(found.indexOf(failing));
     }
 }
