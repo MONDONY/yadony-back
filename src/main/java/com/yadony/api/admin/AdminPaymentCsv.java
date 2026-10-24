@@ -14,15 +14,16 @@ import java.util.UUID;
 final class AdminPaymentCsv {
 
     static final String HEADER = "id,type,colis,negociation,statut,rail,devise,montant,commission,netVoyageur,"
-            + "rembourse,expediteur,voyageur,trajet,stripePaymentIntentId,creeLe,captureLe,libereLe,checkoutAbandonne";
+            + "rembourse,expediteur,voyageur,trajet,stripePaymentIntentId,creeLe,captureLe,libereLe,checkoutAbandonne,suivi";
 
     private AdminPaymentCsv() {
     }
 
-    static byte[] write(List<PaymentEntity> payments, Map<UUID, AdminPaymentInsight> insights) {
+    static byte[] write(List<PaymentEntity> payments, Map<UUID, AdminPaymentInsights.Context> contexts) {
         CsvWriter csv = new CsvWriter(HEADER);
         for (PaymentEntity p : payments) {
-            AdminPaymentInsight i = insights.get(p.getId());
+            AdminPaymentInsights.Context context = contexts.get(p.getId());
+            AdminPaymentInsight i = context == null ? null : context.insight();
             BigDecimal amount = p.getAmount();
             BigDecimal commission = p.getCommissionAmount();
             csv.row(
@@ -44,7 +45,8 @@ final class AdminPaymentCsv {
                     str(p.getCreatedAt()),
                     str(p.getCapturedAt()),
                     str(p.getEscrowReleasedAt()),
-                    i == null ? "" : String.valueOf(i.abandoned()));
+                    i == null ? "" : String.valueOf(i.abandoned()),
+                    context == null ? "" : str(context.trackingNumber()));
         }
         return csv.bytes();
     }

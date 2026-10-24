@@ -127,7 +127,7 @@ public class AdminQueueCounter {
     }
 
     /** Meme definition que {@code GET /admin/wallet-refund-requests} (statut PENDING, tous canaux). */
-    long countPendingWalletRefunds() {
+    public long countPendingWalletRefunds() {
         return em.createQuery(
                         "SELECT COUNT(w) FROM WalletRefundRequestEntity w WHERE w.status = :pending", Long.class)
                 .setParameter("pending", WalletRefundRequestStatus.PENDING)

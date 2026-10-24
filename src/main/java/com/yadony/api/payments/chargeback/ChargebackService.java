@@ -8,8 +8,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.stripe.model.Event;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,11 +35,6 @@ public class ChargebackService {
         this.auditService = auditService;
         this.adminAlert = adminAlert;
         this.objectMapper = objectMapper;
-    }
-
-    public Page<ChargebackDto> listAll(Pageable pageable) {
-        return chargebackRepository.findAllByOrderByOpenedAtDesc(pageable)
-                .map(ChargebackDto::from);
     }
 
     @Transactional

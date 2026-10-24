@@ -1,16 +1,19 @@
 package com.yadony.api.admin;
 
+import com.yadony.api.admin.dto.AdminFinanceCountsResponse;
 import com.yadony.api.admin.dto.AdminMobileMoneyCommissionsResponse;
+import com.yadony.api.admin.dto.AdminMobileMoneyCountsResponse;
 import com.yadony.api.payments.PaymentRepository;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import org.springframework.format.annotation.DateTimeFormat;
+import com.yadony.api.admin.dto.AdminCashCommissionCountsResponse;
 import com.yadony.api.admin.dto.AdminCashCommissionResponse;
 import com.yadony.api.admin.dto.AdminMobileMoneyResponse;
 import com.yadony.api.admin.dto.AdminWalletResponse;
-import com.yadony.api.matching.BidRepository;
-import com.yadony.api.payments.pawapay.PawapayOperationRepository;
-import com.yadony.api.payments.wallet.WalletAccountRepository;
+import com.yadony.api.payments.cash.CommissionStatus;
+import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -44,45 +47,84 @@ public class AdminFinanceController {
     /** Borne haute de pagination : une page d'ecran, pas un export deguise. */
     private static final int MAX_PAGE_SIZE = 100;
 
-    private final WalletAccountRepository walletRepository;
-    private final BidRepository bidRepository;
-    private final PawapayOperationRepository pawapayOperationRepository;
     private final PaymentRepository paymentRepository;
+    private final AdminFinanceListings listings;
+    private final AdminFinanceCounts financeCounts;
 
-    public AdminFinanceController(WalletAccountRepository walletRepository,
-                                  BidRepository bidRepository,
-                                  PawapayOperationRepository pawapayOperationRepository,
-                                  PaymentRepository paymentRepository) {
-        this.walletRepository = walletRepository;
-        this.bidRepository = bidRepository;
-        this.pawapayOperationRepository = pawapayOperationRepository;
+    public AdminFinanceController(PaymentRepository paymentRepository, AdminFinanceListings listings,
+                                  AdminFinanceCounts financeCounts) {
         this.paymentRepository = paymentRepository;
+        this.listings = listings;
+        this.financeCounts = financeCounts;
+    }
+
+    /**
+     * Nombres « à traiter » des quatre sections Transactions (paiements, mobile money, soldes, litiges) et leur
+     * ventilation, pour les pastilles de la page.
+     */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
+    @GetMapping("/finance/counts")
+    public AdminFinanceCountsResponse financeCounts() {
+        return financeCounts.counts();
     }
 
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
     @GetMapping("/wallets")
-    public Page<AdminWalletResponse> wallets(@RequestParam(defaultValue = "0") int page,
+    public Page<AdminWalletResponse> wallets(@RequestParam(required = false) String q,
+                                             @RequestParam(required = false) String currency,
+                                             @RequestParam(required = false) AdminWalletBalanceSign balanceSign,
+                                             @RequestParam(required = false) UUID partyId,
+                                             @RequestParam(defaultValue = "0") int page,
                                              @RequestParam(defaultValue = "20") int size) {
-        return walletRepository.findAll(pageable(page, size)).map(AdminWalletResponse::from);
+        return listings.wallets(q, currency, balanceSign, partyId, pageable(page, size));
     }
 
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
     @GetMapping("/cash-commissions")
-    public Page<AdminCashCommissionResponse> cashCommissions(@RequestParam(defaultValue = "0") int page,
-                                                             @RequestParam(defaultValue = "20") int size) {
-        return bidRepository.findCashCommissions(pageable(page, size))
-                .map(AdminCashCommissionResponse::from);
+    public Page<AdminCashCommissionResponse> cashCommissions(
+            @RequestParam(required = false) AdminCashCommissionView view,
+            @RequestParam(required = false) CommissionStatus status,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) UUID partyId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return listings.cashCommissions(view, status, q, partyId, pageable(page, size));
+    }
+
+    /** Nombres « à traiter » et « toutes » des commissions cash : mêmes {@code q} et {@code partyId}, sans vue. */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
+    @GetMapping("/cash-commissions/counts")
+    public AdminCashCommissionCountsResponse cashCommissionCounts(@RequestParam(required = false) String q,
+                                                                  @RequestParam(required = false) UUID partyId) {
+        return listings.cashCommissionCounts(q, partyId);
     }
 
     /**
-     * Liste des opérations pawaPay (deposit/payout/refund), plus récentes d'abord.
-     * Même onglet Transactions, même garde {@code PAYMENT_VIEW} que les deux vues ci-dessus.
+     * Liste des opérations pawaPay (deposit/payout/refund), plus récentes d'abord, avec la personne concernée,
+     * le colis, le trajet et la relance possible. Vue ({@code ALL} par défaut, {@code FAILED}, {@code OPEN},
+     * {@code DONE}), type, fournisseur et recherche {@code q} facultatifs ; une valeur inconnue de {@code view}
+     * ou {@code kind} répond 400. Même onglet Transactions, même garde {@code PAYMENT_VIEW} que les vues ci-dessus.
      */
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
     @GetMapping("/mobile-money-payments")
-    public Page<AdminMobileMoneyResponse> mobileMoneyPayments(@RequestParam(defaultValue = "0") int page,
-                                                              @RequestParam(defaultValue = "20") int size) {
-        return pawapayOperationRepository.findAllByOrderByCreatedAtDesc(pageable(page, size)).map(AdminMobileMoneyResponse::from);
+    public Page<AdminMobileMoneyResponse> mobileMoneyPayments(
+            @RequestParam(required = false) AdminMobileMoneyView view,
+            @RequestParam(required = false) PawapayOperationKind kind,
+            @RequestParam(required = false) String provider,
+            @RequestParam(required = false) String q,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return listings.mobileMoney(view, kind, provider, q, pageable(page, size));
+    }
+
+    /** Nombres par vue de la liste mobile money : mêmes {@code kind}, {@code provider} et {@code q}, sans vue. */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
+    @GetMapping("/mobile-money-payments/counts")
+    public AdminMobileMoneyCountsResponse mobileMoneyCounts(
+            @RequestParam(required = false) PawapayOperationKind kind,
+            @RequestParam(required = false) String provider,
+            @RequestParam(required = false) String q) {
+        return listings.mobileMoneyCounts(kind, provider, q);
     }
 
     /**

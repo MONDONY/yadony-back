@@ -151,11 +151,7 @@ public class AdminBidDetailAssembler {
         PaymentEntity payment = access.payments() ? paymentOf(bid).orElse(null) : null;
         List<DisputeEntity> disputes = access.disputes() ? disputeRepo.findByBidIdIn(List.of(bid.getId())) : List.of();
         List<CancellationEntity> cancellations = cancellationsOf(bid.getId());
-        DisputeEntity dispute = latest(disputes);
-        CancellationEntity cancellation = latest(cancellations);
-        String conversationId = access.moderation()
-                ? conversationOf(bid.getId()).map(ConversationEntity::getFirestoreConversationId).orElse(null)
-                : null;
+        IncidentLinks incident = incidentLinks(bid.getId(), disputes, cancellations, access);
 
         return new Extras(
                 trip(bid, ann),
@@ -168,16 +164,54 @@ public class AdminBidDetailAssembler {
                 new AdminBidDetailResponse.Links(
                         bid.getLinkedNegotiationThreadId() != null ? bid.getLinkedNegotiationThreadId()
                                 : payment != null ? payment.getNegotiationThreadId() : null,
-                        dispute != null ? dispute.getId() : null,
-                        dispute != null ? dispute.getStatus() : null,
-                        conversationId,
-                        cancellation != null ? cancellation.getId() : null),
+                        incident.disputeId(),
+                        incident.disputeStatus(),
+                        incident.conversationId(),
+                        incident.cancellationId()),
                 bid.getConfirmationCode() != null && !bid.getConfirmationCode().isBlank(),
                 photoUrls(bid.getId()),
                 new AdminBidDetailResponse.Milestones(
                         bid.getHandoverLocation(), bid.getHandoverDeadline(), bid.getArrivedAt(),
                         bid.getDeliveredAt(), bid.getNoShowAt(), bid.getReturnedAt()),
                 access.disputes() ? incidents(disputes, cancellations) : null);
+    }
+
+    /**
+     * Destinations d'un colis : son dernier litige (et son statut), sa dernière annulation ou absence, et
+     * l'identifiant Firestore de sa conversation. {@code null} pour ce qui n'existe pas ou que l'admin ne peut
+     * pas ouvrir.
+     */
+    public record IncidentLinks(UUID disputeId, String disputeStatus, UUID cancellationId, String conversationId) {
+    }
+
+    /**
+     * Destinations d'un colis, partagées par la fiche colis et la fiche paiement (une seule définition de
+     * « dernier litige », « dernière annulation » et « conversation du colis »). Le litige et l'annulation
+     * exigent DISPUTE_VIEW, la conversation MODERATION_VIEW : sans le droit, rien n'est lu.
+     */
+    public IncidentLinks incidentLinksOf(UUID bidId, Access access) {
+        if (bidId == null) return new IncidentLinks(null, null, null, null);
+        List<DisputeEntity> disputes = access.disputes() ? disputeRepo.findByBidIdIn(List.of(bidId)) : List.of();
+        List<CancellationEntity> cancellations = access.disputes() ? cancellationsOf(bidId) : List.of();
+        return incidentLinks(bidId, disputes, cancellations, access);
+    }
+
+    /**
+     * Le plus récent de chaque liste déjà lue, et la conversation si MODERATION_VIEW. La fiche colis passe ses
+     * annulations sans condition de droit (comportement historique de sa section « Liens »).
+     */
+    private IncidentLinks incidentLinks(UUID bidId, List<DisputeEntity> disputes,
+                                        List<CancellationEntity> cancellations, Access access) {
+        DisputeEntity dispute = latest(disputes);
+        CancellationEntity cancellation = latest(cancellations);
+        String conversationId = access.moderation()
+                ? conversationOf(bidId).map(ConversationEntity::getFirestoreConversationId).orElse(null)
+                : null;
+        return new IncidentLinks(
+                dispute != null ? dispute.getId() : null,
+                dispute != null ? dispute.getStatus() : null,
+                cancellation != null ? cancellation.getId() : null,
+                conversationId);
     }
 
     /** Litiges et annulations, le plus récent d'abord. */

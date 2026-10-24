@@ -50,6 +50,33 @@ class AdminAlertControllerTest {
     }
 
     @Test
+    void get_returnsTheAlert() {
+        UUID id = UUID.randomUUID();
+        AdminAlertEntity entity = new AdminAlertEntity();
+        entity.setType("ESCROW_J48_TIMEOUT");
+        entity.setSeverity("WARN");
+        when(alertRepo.findById(id)).thenReturn(Optional.of(entity));
+
+        ResponseEntity<AdminAlertResponse> resp = controller().get(id);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody().type()).isEqualTo("ESCROW_J48_TIMEOUT");
+        assertThat(resp.getBody().severity()).isEqualTo("WARN");
+    }
+
+    @Test
+    void get_notFound_is404AlertNotFound() {
+        UUID id = UUID.randomUUID();
+        when(alertRepo.findById(id)).thenReturn(Optional.empty());
+
+        var ex = org.junit.jupiter.api.Assertions.assertThrows(
+                com.yadony.api.common.YadonyBusinessException.class, () -> controller().get(id));
+
+        assertThat(ex.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(ex.getErrorCode()).isEqualTo("alert-not-found");
+    }
+
+    @Test
     void resolve_marksResolvedAndReturns200() {
         UUID id = UUID.randomUUID();
         AdminAlertEntity entity = new AdminAlertEntity();

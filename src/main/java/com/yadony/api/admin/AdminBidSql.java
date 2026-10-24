@@ -104,8 +104,8 @@ public final class AdminBidSql {
      * Repli d'une colonne : minuscules, accents puis apostrophes (REPLACE imbriqués, compatible H2 et
      * PostgreSQL), même règle que {@link AdminSearchTerms#fold}.
      */
-    private static final String FOLD_OPEN = "REPLACE(REPLACE(TRANSLATE(LOWER(";
-    private static final String FOLD_CLOSE =
+    public static final String FOLD_OPEN = "REPLACE(REPLACE(TRANSLATE(LOWER(";
+    public static final String FOLD_CLOSE =
             "), '" + AdminSearchTerms.ACCENT_FROM + "', '" + AdminSearchTerms.ACCENT_TO + "'), '''', ''), '\u2019', '')";
 
     /** Téléphone du destinataire réduit à ses chiffres (séparateurs usuels retirés). */

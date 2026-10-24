@@ -1,7 +1,10 @@
 package com.yadony.api.admin;
 
+import com.yadony.api.admin.dto.AdminPaymentCountsResponse;
 import com.yadony.api.admin.dto.AdminPaymentInsight;
 import com.yadony.api.admin.dto.AdminPaymentListItemResponse;
+import com.yadony.api.admin.dto.AdminPaymentSuggestResponse;
+import com.yadony.api.common.MatchingTextUtil;
 import com.yadony.api.payments.hold.PayoutHoldStatus;
 import com.yadony.api.admin.dto.AdminWalletResponse;
 import com.yadony.api.payments.PaymentEntity;
@@ -26,9 +29,9 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
@@ -43,7 +46,7 @@ import java.util.stream.Collectors;
 public class AdminPaymentInsights {
 
     /** Un paiement PENDING plus vieux que ça est un checkout abandonné. */
-    static final Duration ABANDONED_AFTER = Duration.ofHours(24);
+    static final Duration ABANDONED_AFTER = Duration.ofHours(AdminPaymentSql.ABANDONED_AFTER_HOURS);
 
     /** Plafond de l'export CSV : au-delà, l'admin resserre la période. */
     public static final int EXPORT_MAX_ROWS = 10_000;
@@ -84,17 +87,40 @@ public class AdminPaymentInsights {
 
     // ── Recherche ───────────────────────────────────────────────────────────────
 
-    /** Page de paiements correspondant au filtre, du plus récent au plus ancien. */
-    public Page<PaymentEntity> search(AdminPaymentFilter filter, Pageable pageable) {
+    /**
+     * Page de paiements correspondant au filtre, dans l'ordre de la vue ({@link AdminPaymentSql#ORDER_BY}) :
+     * « À surveiller » par alerte la plus urgente puis plus ancien d'abord, sinon plus récent d'abord.
+     * {@code now} (UTC) fixe les seuils d'âge (séquestre de 48 h, versés récemment, checkout abandonné).
+     */
+    public Page<PaymentEntity> search(AdminPaymentFilter filter, LocalDateTime now, Pageable pageable) {
         MapSqlParameterSource params = new MapSqlParameterSource();
-        String where = where(filter, params);
-        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM payments p " + where, params, Long.class);
+        String where = where(filter, params, now);
+        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM" + AdminPaymentSql.FROM_JOIN + where, params, Long.class);
         params.addValue("limit", pageable.getPageSize());
         params.addValue("offset", pageable.getOffset());
-        List<UUID> ids = jdbc.query("SELECT CAST(p.id AS VARCHAR(36)) FROM payments p " + where
-                        + " ORDER BY p.created_at DESC, p.id DESC LIMIT :limit OFFSET :offset",
+        List<UUID> ids = jdbc.query("SELECT CAST(p.id AS VARCHAR(36)) FROM" + AdminPaymentSql.FROM_JOIN + where
+                        + " ORDER BY " + AdminPaymentSql.ORDER_BY + " LIMIT :limit OFFSET :offset",
                 params, (rs, i) -> UUID.fromString(rs.getString(1)));
         return new PageImpl<>(load(ids), pageable, total == null ? 0 : total);
+    }
+
+    /**
+     * Rang d'alerte exclusif ({@link AdminPaymentSql#ALERT_RANK}, 0 = aucune) de chaque paiement, en un
+     * aller-retour ; voir {@link AdminPaymentAlert#ofRank}.
+     */
+    public Map<UUID, Integer> alertRanks(Collection<UUID> paymentIds, LocalDateTime now) {
+        if (paymentIds.isEmpty()) {
+            return Map.of();
+        }
+        MapSqlParameterSource params = new MapSqlParameterSource("ids", new ArrayList<>(paymentIds));
+        params.addValue("now", Timestamp.valueOf(now));
+        Map<UUID, Integer> ranks = new HashMap<>();
+        jdbc.query("SELECT CAST(p.id AS VARCHAR(36)) AS pid, " + AdminPaymentSql.ALERT_RANK + " AS alert_rank FROM"
+                        + AdminPaymentSql.FROM_JOIN + "WHERE p.id IN (:ids)", params,
+                rs -> {
+                    ranks.put(UUID.fromString(rs.getString("pid")), rs.getInt("alert_rank"));
+                });
+        return ranks;
     }
 
     /** Paiements dont l'utilisateur est une des parties (payeur ou voyageur), du plus récent au plus ancien. */
@@ -163,19 +189,39 @@ public class AdminPaymentInsights {
     }
 
     /** Paiements de l'export, dans l'ordre de la liste, au plus {@link #EXPORT_MAX_ROWS}. */
-    public List<PaymentEntity> exportRows(AdminPaymentFilter filter) {
+    public List<PaymentEntity> exportRows(AdminPaymentFilter filter, LocalDateTime now) {
         MapSqlParameterSource params = new MapSqlParameterSource("limit", EXPORT_MAX_ROWS);
-        String where = where(filter, params);
-        List<UUID> ids = jdbc.query("SELECT CAST(p.id AS VARCHAR(36)) FROM payments p " + where
-                        + " ORDER BY p.created_at DESC, p.id DESC LIMIT :limit",
+        String where = where(filter, params, now);
+        List<UUID> ids = jdbc.query("SELECT CAST(p.id AS VARCHAR(36)) FROM" + AdminPaymentSql.FROM_JOIN + where
+                        + " ORDER BY " + AdminPaymentSql.ORDER_BY + " LIMIT :limit",
                 params, (rs, i) -> UUID.fromString(rs.getString(1)));
         return load(ids);
     }
 
-    /** Totaux du périmètre filtré, une ligne par devise (on n'additionne jamais des XOF et des EUR). */
-    public List<CurrencyTotals> totals(AdminPaymentFilter filter) {
+    /**
+     * Nombres par vue et par alerte du périmètre du filtre, en un aller-retour ({@link AdminPaymentSql#COUNTS_SELECT}).
+     * {@code view}, {@code alert} et {@code status} du filtre sont ignorés ; {@code hideAbandoned} retire les
+     * checkouts abandonnés de tous les nombres sauf {@code abandoned}, qui les compte toujours.
+     */
+    public AdminPaymentCountsResponse counts(AdminPaymentFilter filter, LocalDateTime now) {
+        AdminPaymentFilter perimeter = new AdminPaymentFilter(null, filter.from(), filter.to(), filter.rail(),
+                filter.currency(), filter.held(), filter.query(), false, AdminPaymentView.ALL, null,
+                filter.partyId(), filter.announcementId(), filter.bidId(), filter.amountMin(), filter.amountMax());
         MapSqlParameterSource params = new MapSqlParameterSource();
-        String where = where(filter, params);
+        String where = where(perimeter, params, now);
+        params.addValue("hideAbandoned", filter.hideAbandoned());
+        params.addValue("abandonedBefore", Timestamp.valueOf(now.minus(ABANDONED_AFTER)));
+        return jdbc.queryForObject(AdminPaymentSql.COUNTS_SELECT + "FROM" + AdminPaymentSql.FROM_JOIN + where, params,
+                (rs, i) -> new AdminPaymentCountsResponse(rs.getLong(1), rs.getLong(2), rs.getLong(3), rs.getLong(4),
+                        rs.getLong(5), rs.getLong(6), rs.getLong(7),
+                        new AdminPaymentCountsResponse.Alerts(rs.getLong(8), rs.getLong(9), rs.getLong(10),
+                                rs.getLong(11))));
+    }
+
+    /** Totaux du périmètre filtré, une ligne par devise (on n'additionne jamais des XOF et des EUR). */
+    public List<CurrencyTotals> totals(AdminPaymentFilter filter, LocalDateTime now) {
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        String where = where(filter, params, now);
         return jdbc.query("""
                 SELECT UPPER(p.currency) AS currency,
                        COUNT(*) AS n,
@@ -184,8 +230,7 @@ public class AdminPaymentInsights {
                        SUM(COALESCE(p.refunded_amount, 0)) AS refunded,
                        SUM(CASE WHEN p.status IN ('ESCROW', 'RELEASED') THEN p.commission_amount ELSE 0 END) AS commission,
                        SUM(CASE WHEN p.status = 'PENDING' THEN 1 ELSE 0 END) AS pending
-                FROM payments p
-                """ + where + " GROUP BY UPPER(p.currency) ORDER BY UPPER(p.currency)",
+                FROM""" + AdminPaymentSql.FROM_JOIN + where + " GROUP BY UPPER(p.currency) ORDER BY UPPER(p.currency)",
                 params, (rs, i) -> new CurrencyTotals(
                         rs.getString("currency"),
                         rs.getLong("n"),
@@ -208,7 +253,15 @@ public class AdminPaymentInsights {
                                  long refundedCents, long commissionCents, long pendingCount) {
     }
 
-    private String where(AdminPaymentFilter f, MapSqlParameterSource params) {
+    /**
+     * {@code WHERE} commun à la liste, aux totaux et à l'export, sur les alias de
+     * {@link AdminPaymentSql#FROM_JOIN} (colis, parties et trajet effectifs). Lie toujours {@code :now}
+     * et {@code :view}, que {@link AdminPaymentSql#ORDER_BY} lit aussi.
+     */
+    private String where(AdminPaymentFilter f, MapSqlParameterSource params, LocalDateTime now) {
+        AdminPaymentView view = f.view() == null ? AdminPaymentView.ALL : f.view();
+        params.addValue("now", Timestamp.valueOf(now));
+        params.addValue("view", view.name());
         StringBuilder sql = new StringBuilder("WHERE p.deleted_at IS NULL");
         if (f.status() != null) {
             sql.append(" AND p.status = :status");
@@ -231,11 +284,40 @@ public class AdminPaymentInsights {
             params.addValue("currency", f.currency());
         }
         if (f.held()) {
-            sql.append(" AND p.status = 'ESCROW' AND p.payout_held_at IS NOT NULL");
+            sql.append(" AND ").append(AdminPaymentSql.HELD_PREDICATE);
         }
         if (f.hideAbandoned()) {
-            sql.append(" AND NOT (p.status = 'PENDING' AND p.created_at < :abandonedBefore)");
-            params.addValue("abandonedBefore", Timestamp.valueOf(abandonedBefore()));
+            sql.append(" AND NOT ").append(AdminPaymentSql.ABANDONED_PREDICATE);
+            params.addValue("abandonedBefore", Timestamp.valueOf(now.minus(ABANDONED_AFTER)));
+        }
+        if (view != AdminPaymentView.ALL) {
+            sql.append(" AND ").append(AdminPaymentSql.VIEW_PREDICATE);
+        }
+        if (f.alert() != null) {
+            sql.append(" AND ").append(AdminPaymentSql.ALERT_FILTER);
+            params.addValue("alert", f.alert().name());
+        }
+        if (f.partyId() != null) {
+            sql.append(" AND (").append(AdminPaymentSql.EFF_SENDER_ID).append(" = :partyId OR ")
+                    .append(AdminPaymentSql.EFF_TRAVELER_ID).append(" = :partyId)");
+            params.addValue("partyId", f.partyId());
+        }
+        if (f.announcementId() != null) {
+            sql.append(" AND ").append(AdminPaymentSql.EFF_ANNOUNCEMENT_ID).append(" = :announcementId");
+            params.addValue("announcementId", f.announcementId());
+        }
+        if (f.bidId() != null) {
+            sql.append(" AND ").append(AdminPaymentSql.EFF_BID_ID).append(" = :bidId");
+            params.addValue("bidId", f.bidId());
+        }
+        // Bornes en centimes, incluses ; p.amount est en unités (2 décimales), comme AdminWalletResponse.toCents.
+        if (f.amountMin() != null) {
+            sql.append(" AND p.amount >= :amountMin");
+            params.addValue("amountMin", BigDecimal.valueOf(f.amountMin(), 2));
+        }
+        if (f.amountMax() != null) {
+            sql.append(" AND p.amount <= :amountMax");
+            params.addValue("amountMax", BigDecimal.valueOf(f.amountMax(), 2));
         }
         if (f.query() != null) {
             appendSearch(sql, params, f.query());
@@ -244,48 +326,95 @@ public class AdminPaymentInsights {
     }
 
     /**
-     * Identifiant → paiement, colis (direct ou lié à la négociation) ou fil ; {@code pi_}/{@code ch_}
-     * → référence Stripe ; {@code DON-} → numéro de suivi du colis ; sinon nom, prénom ou pseudo de
-     * l'expéditeur ou du voyageur.
+     * Recherche libre ({@link AdminPaymentSql#SEARCH_PREDICATE}) : jetons repliés (quatre au plus, le
+     * {@code @} d'un pseudo retiré ; une saisie sans jeton utilisable ne trouve rien, voir
+     * {@link AdminBidQuery#NO_MATCH_TOKEN}), montant, identifiant UUID exact, référence exacte. Tous les
+     * paramètres sont liés, à null s'ils ne s'appliquent pas : le SQL les type par {@code CAST}.
      */
     private static void appendSearch(StringBuilder sql, MapSqlParameterSource params, String query) {
-        UUID uuid = parseUuid(query);
-        if (uuid != null) {
-            sql.append(" ").append("""
-                    AND (p.id = :qId OR p.bid_id = :qId OR p.negotiation_thread_id = :qId
-                          OR EXISTS (SELECT 1 FROM bids lb WHERE lb.id = :qId AND p.negotiation_thread_id IS NOT NULL
-                                     AND lb.linked_negotiation_thread_id = p.negotiation_thread_id))""");
-            params.addValue("qId", uuid);
-            return;
-        }
-        if (query.startsWith("pi_") || query.startsWith("ch_") || query.startsWith("mm_")) {
-            sql.append(" AND (p.stripe_payment_intent_id = :qRef OR p.stripe_charge_id = :qRef)");
-            params.addValue("qRef", query);
-            return;
-        }
-        if (query.regionMatches(true, 0, "DON-", 0, 4)) {
-            // Numéro de suivi : paiement direct du colis, ou fil de négociation qui l'a produit.
-            sql.append(" ").append("""
-                    AND EXISTS (SELECT 1 FROM bids tb WHERE UPPER(tb.tracking_number) LIKE :qTrack
-                                AND (tb.id = p.bid_id OR (p.negotiation_thread_id IS NOT NULL
-                                     AND tb.linked_negotiation_thread_id = p.negotiation_thread_id)))""");
-            params.addValue("qTrack", "%" + query.toUpperCase(Locale.ROOT).replace("%", "").replace("_", "") + "%");
-            return;
-        }
-        // % et _ retirés : la saisie est un nom, pas un motif LIKE.
-        String needle = query.toLowerCase(Locale.ROOT).replace("%", "").replace("_", "").replace("@", "").strip();
-        sql.append(" AND EXISTS (SELECT 1 FROM users u WHERE u.id IN (").append(PARTIES_OF_P).append("""
-                ) AND (LOWER(u.username) LIKE :qLike
-                       OR LOWER(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))) LIKE :qLike))""");
-        params.addValue("qLike", "%" + needle + "%");
+        sql.append(" AND ").append(AdminPaymentSql.SEARCH_PREDICATE);
+        addTokens(params, query);
+        OptionalLong amount = AdminSearchTerms.amountCents(query);
+        params.addValue("amountCents", amount.isPresent() ? amount.getAsLong() : null);
+        addExactTerms(params, query);
     }
 
-    private static UUID parseUuid(String value) {
-        try {
-            return value.length() == 36 ? UUID.fromString(value) : null;
-        } catch (IllegalArgumentException e) {
-            return null;
+    /**
+     * Lie {@code :t1} à {@code :t4} : jetons repliés (le {@code @} d'un pseudo retiré), nuls au-delà. Une saisie
+     * sans jeton utilisable (« @ », « % », « ' ») ne trouve rien, jamais tout.
+     */
+    private static void addTokens(MapSqlParameterSource params, String query) {
+        List<String> tokens = AdminSearchTerms.tokens(query.replace("@", ""), AdminBidQuery.MAX_TOKENS);
+        if (tokens.isEmpty()) {
+            tokens = List.of(AdminBidQuery.NO_MATCH_TOKEN);
         }
+        for (int i = 0; i < AdminBidQuery.MAX_TOKENS; i++) {
+            params.addValue("t" + (i + 1), i < tokens.size() ? tokens.get(i) : null);
+        }
+    }
+
+    /** Lie {@code :idTerm} (UUID en minuscules, ou null) et {@code :refTerm} (saisie brute). */
+    private static void addExactTerms(MapSqlParameterSource params, String query) {
+        UUID id = AdminSearchTerms.uuid(query);
+        params.addValue("idTerm", id == null ? null : id.toString());
+        params.addValue("refTerm", query);
+    }
+
+    // ── Suggestions ─────────────────────────────────────────────────────────────
+
+    /** Saisie minimale (après espaces) pour lancer des suggestions. */
+    public static final int MIN_SUGGEST_CHARS = 2;
+
+    /**
+     * Suggestions de la barre de recherche ({@code GET /admin/payments/suggest}) : cinq propositions au plus par
+     * groupe, mêmes colonnes repliées que la liste. Elles ignorent les vues et filtres, ne comptent ni les
+     * checkouts abandonnés ni les comptes supprimés, et ne contiennent aucun téléphone. {@code exactPaymentId}
+     * n'est posé que si la saisie identifie EXACTEMENT un paiement ({@link AdminPaymentSql#EXACT_PREDICATE}).
+     */
+    public AdminPaymentSuggestResponse suggest(String query, LocalDateTime now) {
+        String q = query == null ? "" : query.strip();
+        if (q.length() < MIN_SUGGEST_CHARS) {
+            return AdminPaymentSuggestResponse.empty();
+        }
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        addTokens(params, q);
+        params.addValue("abandonedBefore", Timestamp.valueOf(now.minus(ABANDONED_AFTER)));
+
+        List<PersonRow> senders = people(AdminPaymentSql.SUGGEST_SENDERS, params);
+        List<PersonRow> travelers = people(AdminPaymentSql.SUGGEST_TRAVELERS, params);
+        Set<UUID> ids = new LinkedHashSet<>();
+        senders.forEach(r -> ids.add(r.id()));
+        travelers.forEach(r -> ids.add(r.id()));
+        Map<UUID, String> names = namesOf(ids);
+
+        List<AdminPaymentSuggestResponse.Trip> trips = jdbc.query(AdminPaymentSql.SUGGEST_TRIPS, params,
+                (rs, i) -> new AdminPaymentSuggestResponse.Trip(
+                        MatchingTextUtil.corridorLabel(rs.getString("departureCity"), rs.getString("arrivalCity")),
+                        rs.getString("departureCity"), rs.getString("arrivalCity"), rs.getLong("total")));
+        List<AdminPaymentSuggestResponse.Parcel> parcels = jdbc.query(AdminPaymentSql.SUGGEST_PARCELS, params,
+                (rs, i) -> new AdminPaymentSuggestResponse.Parcel(UUID.fromString(rs.getString("paymentIdText")),
+                        rs.getString("trackingNumber"), rs.getString("status"),
+                        cents(rs.getBigDecimal("amount")), rs.getString("currency")));
+
+        return new AdminPaymentSuggestResponse(exactPaymentId(q),
+                senders.stream().map(r -> new AdminPaymentSuggestResponse.Person(r.id(), names.get(r.id()), r.count())).toList(),
+                travelers.stream().map(r -> new AdminPaymentSuggestResponse.Person(r.id(), names.get(r.id()), r.count())).toList(),
+                trips, parcels);
+    }
+
+    private record PersonRow(UUID id, long count) {
+    }
+
+    private List<PersonRow> people(String sql, MapSqlParameterSource params) {
+        return jdbc.query(sql, params, (rs, i) -> new PersonRow(UUID.fromString(rs.getString("idText")), rs.getLong("total")));
+    }
+
+    /** L'unique paiement que la saisie désigne exactement (UUID, référence), ou null si aucun ou plusieurs. */
+    private UUID exactPaymentId(String query) {
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        addExactTerms(params, query);
+        List<String> hits = jdbc.query(AdminPaymentSql.SUGGEST_EXACT, params, (rs, i) -> rs.getString(1));
+        return hits.size() == 1 ? UUID.fromString(hits.get(0)) : null;
     }
 
     private List<PaymentEntity> load(List<UUID> orderedIds) {
@@ -301,6 +430,25 @@ public class AdminPaymentInsights {
 
     /** Contexte de chaque paiement, en deux requêtes quel que soit le nombre de paiements. */
     public Map<UUID, AdminPaymentInsight> insightsOf(Collection<PaymentEntity> payments) {
+        return insightsOf(payments, LocalDateTime.now(ZoneOffset.UTC));
+    }
+
+    /** Comme {@link #insightsOf(Collection)}, le seuil d'abandon étant mesuré à {@code now} (UTC). */
+    public Map<UUID, AdminPaymentInsight> insightsOf(Collection<PaymentEntity> payments, LocalDateTime now) {
+        Map<UUID, AdminPaymentInsight> result = new HashMap<>();
+        contextsOf(payments, now).forEach((id, c) -> result.put(id, c.insight()));
+        return result;
+    }
+
+    /**
+     * Contexte d'une ligne de la liste : le contexte du paiement, plus le n° de suivi du colis (direct ou lié
+     * au fil) et l'annonce du trajet ; {@code null} pour ce qui est inconnu (négociation sans colis).
+     */
+    public record Context(AdminPaymentInsight insight, String trackingNumber, UUID announcementId) {
+    }
+
+    /** Contexte enrichi de chaque paiement, dans les mêmes deux requêtes que {@link #insightsOf}. */
+    public Map<UUID, Context> contextsOf(Collection<PaymentEntity> payments, LocalDateTime now) {
         List<UUID> ids = payments.stream().map(PaymentEntity::getId).filter(Objects::nonNull).toList();
         if (ids.isEmpty()) {
             return Map.of();
@@ -312,11 +460,11 @@ public class AdminPaymentInsights {
             if (l.travelerId() != null) partyIds.add(l.travelerId());
         });
         Map<UUID, String> names = namesOf(partyIds);
-        Map<UUID, AdminPaymentInsight> result = new HashMap<>();
+        Map<UUID, Context> result = new HashMap<>();
         for (PaymentEntity p : payments) {
             if (p.getId() == null) continue;
             Links l = links.getOrDefault(p.getId(), Links.EMPTY);
-            result.put(p.getId(), insight(p, l, names));
+            result.put(p.getId(), new Context(insight(p, l, names, now), l.trackingNumber(), l.announcementId()));
         }
         return result;
     }
@@ -325,7 +473,7 @@ public class AdminPaymentInsights {
         return insightsOf(List.of(payment)).get(payment.getId());
     }
 
-    private AdminPaymentInsight insight(PaymentEntity p, Links l, Map<UUID, String> names) {
+    private AdminPaymentInsight insight(PaymentEntity p, Links l, Map<UUID, String> names, LocalDateTime now) {
         long net = AdminWalletResponse.toCents(p.getAmount()) - AdminWalletResponse.toCents(p.getCommissionAmount());
         return new AdminPaymentInsight(
                 p.getNegotiationThreadId() != null && p.getBidId() == null ? "NEGOTIATION" : "BID",
@@ -336,7 +484,7 @@ public class AdminPaymentInsights {
                 l.departureCity(),
                 l.arrivalCity(),
                 l.bidStatus(),
-                isAbandoned(p),
+                isAbandoned(p, now),
                 net,
                 p.getCapturedAt(),
                 p.getFxExchangeRate(),
@@ -344,13 +492,9 @@ public class AdminPaymentInsights {
                 stripeDashboardUrl(p));
     }
 
-    static boolean isAbandoned(PaymentEntity p) {
+    static boolean isAbandoned(PaymentEntity p, LocalDateTime now) {
         return p.getStatus() == PaymentStatus.PENDING && p.getCreatedAt() != null
-                && p.getCreatedAt().isBefore(abandonedBefore());
-    }
-
-    private static LocalDateTime abandonedBefore() {
-        return LocalDateTime.now(ZoneOffset.UTC).minus(ABANDONED_AFTER);
+                && p.getCreatedAt().isBefore(now.minus(ABANDONED_AFTER));
     }
 
     String stripeDashboardUrl(PaymentEntity p) {
@@ -366,8 +510,8 @@ public class AdminPaymentInsights {
     }
 
     private record Links(UUID bidId, UUID senderId, UUID travelerId, String departureCity, String arrivalCity,
-                         String bidStatus) {
-        static final Links EMPTY = new Links(null, null, null, null, null, null);
+                         String bidStatus, UUID announcementId, String trackingNumber) {
+        static final Links EMPTY = new Links(null, null, null, null, null, null, null, null);
     }
 
     /**
@@ -383,7 +527,9 @@ public class AdminPaymentInsights {
                        CAST(COALESCE(a.traveler_id, la.traveler_id, t.traveler_id) AS VARCHAR(36)) AS traveler_id,
                        COALESCE(a.departure_city, la.departure_city, r.departure_city) AS departure_city,
                        COALESCE(a.arrival_city, la.arrival_city, r.arrival_city) AS arrival_city,
-                       COALESCE(b.status, lb.status) AS bid_status
+                       COALESCE(b.status, lb.status) AS bid_status,
+                       CAST(COALESCE(a.id, la.id) AS VARCHAR(36)) AS announcement_id,
+                       COALESCE(b.tracking_number, lb.tracking_number) AS tracking_number
                 FROM payments p
                 LEFT JOIN bids b ON b.id = p.bid_id
                 LEFT JOIN announcements a ON a.id = b.announcement_id
@@ -398,7 +544,8 @@ public class AdminPaymentInsights {
             // Un fil ne matérialise qu'un colis ; en cas de doublon, la première ligne suffit.
             result.putIfAbsent(pid, new Links(uuid(rs.getString("bid_id")), uuid(rs.getString("sender_id")),
                     uuid(rs.getString("traveler_id")), rs.getString("departure_city"),
-                    rs.getString("arrival_city"), rs.getString("bid_status")));
+                    rs.getString("arrival_city"), rs.getString("bid_status"),
+                    uuid(rs.getString("announcement_id")), rs.getString("tracking_number")));
         });
         return result;
     }
@@ -411,14 +558,17 @@ public class AdminPaymentInsights {
         Map<UUID, String> names = new HashMap<>();
         jdbc.query("SELECT CAST(id AS VARCHAR(36)) AS id, first_name, last_name, username FROM users WHERE id IN (:ids)",
                 new MapSqlParameterSource("ids", new ArrayList<>(userIds)), rs -> {
-                    String full = (Objects.toString(rs.getString("first_name"), "") + " "
-                            + Objects.toString(rs.getString("last_name"), "")).strip();
-                    String username = rs.getString("username");
-                    String label = full.isEmpty() ? (username == null ? null : "@" + username)
-                            : (username == null ? full : full + " (@" + username + ")");
-                    names.put(UUID.fromString(rs.getString("id")), label);
+                    names.put(UUID.fromString(rs.getString("id")),
+                            nameLabel(rs.getString("first_name"), rs.getString("last_name"), rs.getString("username")));
                 });
         return names;
+    }
+
+    /** « Prénom Nom (@pseudo) », ou ce qui en existe ; null si rien. Partagé avec les listes finance. */
+    static String nameLabel(String firstName, String lastName, String username) {
+        String full = (Objects.toString(firstName, "") + " " + Objects.toString(lastName, "")).strip();
+        return full.isEmpty() ? (username == null ? null : "@" + username)
+                : (username == null ? full : full + " (@" + username + ")");
     }
 
     private static UUID uuid(String value) {

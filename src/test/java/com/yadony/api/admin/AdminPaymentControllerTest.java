@@ -85,7 +85,8 @@ class AdminPaymentControllerTest {
         controller = new AdminPaymentController(paymentRepository, adminAlertRepository, auditService,
                 bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
                 payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
-                transactionManager, holdPolicy, insights, timeline, escrowCapture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), new com.yadony.api.payments.ReleaseNetCalculator(null));
+                transactionManager, holdPolicy, insights, timeline, escrowCapture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), new com.yadony.api.payments.ReleaseNetCalculator(null), java.time.Clock.systemUTC(),
+                com.yadony.api.admin.AdminPaymentLinksTestSupport.none());
     }
 
     /**
@@ -104,10 +105,10 @@ class AdminPaymentControllerTest {
         xof.setStripePaymentIntentId("mm_" + bidId);
         xof.setAmount(new BigDecimal("6600.00"));
         xof.setCommissionAmount(new BigDecimal("600.00"));
-        when(insights.search(org.mockito.ArgumentMatchers.argThat(f -> f != null && "PAWAPAY".equals(f.rail()) && "XOF".equals(f.currency())), any()))
+        when(insights.search(org.mockito.ArgumentMatchers.argThat(f -> f != null && "PAWAPAY".equals(f.rail()) && "XOF".equals(f.currency())), any(), any()))
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(xof)));
 
-        var body = controller.list(null, "pawapay", null, null, "xof", null, null, null, 0, 20).getBody();
+        var body = controller.list(null, "pawapay", null, null, "xof", null, null, null, null, null, null, null, null, null, null, 0, 20).getBody();
 
         assertThat(body).isNotNull();
         assertThat(body.getContent()).hasSize(1);
@@ -120,12 +121,12 @@ class AdminPaymentControllerTest {
 
     @Test
     void list_sansFiltreDevise_passeNullAuDepot() {
-        when(insights.search(any(), any()))
+        when(insights.search(any(), any(), any()))
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of()));
 
-        controller.list(null, " ", null, null, "", null, null, null, 0, 20);
+        controller.list(null, " ", null, null, "", null, null, null, null, null, null, null, null, null, null, 0, 20);
 
-        verify(insights).search(org.mockito.ArgumentMatchers.argThat(f -> f.rail() == null && f.currency() == null && !f.held()), any());
+        verify(insights).search(org.mockito.ArgumentMatchers.argThat(f -> f.rail() == null && f.currency() == null && !f.held()), any(), any());
     }
 
     private PaymentEntity threadPayment(PaymentStatus status, boolean legacy, String chargeId) {
@@ -182,7 +183,8 @@ class AdminPaymentControllerTest {
                 com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository,
                         mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null),
                 mock(com.yadony.api.disputes.DisputeRepository.class),
-                new com.yadony.api.payments.ReleaseNetCalculator(vouchers));
+                new com.yadony.api.payments.ReleaseNetCalculator(vouchers), java.time.Clock.systemUTC(),
+                com.yadony.api.admin.AdminPaymentLinksTestSupport.none());
 
         try (MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
             ArgumentCaptor<TransferCreateParams> captor = ArgumentCaptor.forClass(TransferCreateParams.class);
@@ -209,7 +211,8 @@ class AdminPaymentControllerTest {
                 com.yadony.api.payments.ReleaseTestSupport.executor(intents, paymentRepository,
                         mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null),
                 mock(com.yadony.api.disputes.DisputeRepository.class),
-                new com.yadony.api.payments.ReleaseNetCalculator(null));
+                new com.yadony.api.payments.ReleaseNetCalculator(null), java.time.Clock.systemUTC(),
+                com.yadony.api.admin.AdminPaymentLinksTestSupport.none());
 
         try (MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
             trStatic.when(() -> Transfer.create(any(TransferCreateParams.class), any(com.stripe.net.RequestOptions.class)))
@@ -275,7 +278,8 @@ class AdminPaymentControllerTest {
         return new AdminPaymentController(paymentRepository, adminAlertRepository, auditService,
                 bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
                 payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
-                transactionManager, holdPolicy, insights, timeline, capture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), new com.yadony.api.payments.ReleaseNetCalculator(null));
+                transactionManager, holdPolicy, insights, timeline, capture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), new com.yadony.api.payments.ReleaseNetCalculator(null), java.time.Clock.systemUTC(),
+                com.yadony.api.admin.AdminPaymentLinksTestSupport.none());
     }
 
     @Test
@@ -669,13 +673,14 @@ class AdminPaymentControllerTest {
         org.springframework.test.util.ReflectionTestUtils.setField(p, "id", paymentId);
         p.setRail(com.yadony.api.payments.PaymentRail.STRIPE);
         p.setCurrency("EUR");
-        when(insights.search(any(), any())).thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(p)));
-        when(insights.insightsOf(java.util.List.of(p))).thenReturn(java.util.Map.of(paymentId, insight(bidId)));
+        when(insights.search(any(), any(), any())).thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(p)));
+        when(insights.contextsOf(eq(java.util.List.of(p)), any())).thenReturn(java.util.Map.of(paymentId,
+                new AdminPaymentInsights.Context(insight(bidId), "DON-1", null)));
 
-        var item = controller.list(null, null, null, null, null, null, "  awa ", true, 0, 20)
+        var item = controller.list(null, null, null, null, null, null, "  awa ", true, null, null, null, null, null, null, null, 0, 20)
                 .getBody().getContent().get(0);
 
-        verify(insights).search(org.mockito.ArgumentMatchers.argThat(f -> "awa".equals(f.query()) && f.hideAbandoned()), any());
+        verify(insights).search(org.mockito.ArgumentMatchers.argThat(f -> "awa".equals(f.query()) && f.hideAbandoned()), any(), any());
         assertThat(item.insight().kind()).isEqualTo("NEGOTIATION");
         assertThat(item.insight().bidId()).isEqualTo(bidId);
     }
@@ -683,12 +688,12 @@ class AdminPaymentControllerTest {
     @Test
     void summary_delegueAvecLeMemeFiltreQueLaListe() {
         var totals = java.util.List.of(new AdminPaymentInsights.CurrencyTotals("EUR", 3, 100, 200, 0, 30, 1));
-        when(insights.totals(any())).thenReturn(totals);
+        when(insights.totals(any(), any())).thenReturn(totals);
 
-        var body = controller.summary("escrow", "stripe", null, null, "eur", null, "pi_x", false).getBody();
+        var body = controller.summary("escrow", "stripe", null, null, "eur", null, "pi_x", false, null, null, null, null, null, null, null).getBody();
 
         assertThat(body).isEqualTo(totals);
-        verify(insights).totals(new AdminPaymentFilter("ESCROW", null, null, "STRIPE", "EUR", false, "pi_x", false));
+        verify(insights).totals(eq(new AdminPaymentFilter("ESCROW", null, null, "STRIPE", "EUR", false, "pi_x", false)), any());
     }
 
     @Test
@@ -698,17 +703,19 @@ class AdminPaymentControllerTest {
         p.setCurrency("EUR");
         p.setAmount(new BigDecimal("20.00"));
         p.setCommissionAmount(new BigDecimal("0.95"));
-        when(insights.exportRows(any())).thenReturn(java.util.List.of(p));
-        when(insights.insightsOf(java.util.List.of(p))).thenReturn(java.util.Map.of(paymentId, insight(bidId)));
+        when(insights.exportRows(any(), any())).thenReturn(java.util.List.of(p));
+        when(insights.contextsOf(eq(java.util.List.of(p)), any())).thenReturn(java.util.Map.of(paymentId,
+                new AdminPaymentInsights.Context(insight(bidId), "DON-77", null)));
         UUID adminId = UUID.randomUUID();
 
-        ResponseEntity<byte[]> resp = controller.export(null, null, null, null, null, null, null, true, adminAuth(adminId));
+        ResponseEntity<byte[]> resp = controller.export(null, null, null, null, null, null, null, true, null, null, null, null, null, null, null, adminAuth(adminId));
 
         String csv = new String(resp.getBody(), java.nio.charset.StandardCharsets.UTF_8);
         assertThat(csv).startsWith("\uFEFF" + AdminPaymentCsv.HEADER);
         assertThat(csv).contains(paymentId + ",NEGOTIATION," + bidId)
                 .contains(",20.00,0.95,19.05,")
-                .contains(",'=Awa D.,,Lyon → Abidjan,");
+                .contains(",'=Awa D.,,Lyon → Abidjan,")
+                .contains("checkoutAbandonne,suivi\n").containsPattern(",false,DON-77\r?\n");
         assertThat(resp.getHeaders().getContentDisposition().getFilename()).startsWith("paiements_");
         verify(auditService).log(eq("EXPORT"), isNull(), eq("EXPORT_RUN"), eq(adminId),
                 org.mockito.ArgumentMatchers.argThat(m -> "payments".equals(m.get("type")) && Integer.valueOf(1).equals(m.get("rows"))));
@@ -743,6 +750,6 @@ class AdminPaymentControllerTest {
         when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
         when(insights.insightOf(p)).thenReturn(insight(bidId));
 
-        assertThat(controller.getById(paymentId).getBody().insight().arrivalCity()).isEqualTo("Abidjan");
+        assertThat(controller.getById(paymentId, null).getBody().insight().arrivalCity()).isEqualTo("Abidjan");
     }
 }

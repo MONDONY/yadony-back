@@ -1,6 +1,5 @@
 package com.yadony.api.admin.dto;
 
-import com.yadony.api.matching.BidEntity;
 import com.yadony.api.payments.cash.CommissionChargedVia;
 import com.yadony.api.payments.cash.CommissionStatus;
 
@@ -27,6 +26,9 @@ import java.util.UUID;
  * complet (annonce + articles de grille), ou de stocker le montant preleve a l'acceptation :
  * c'est la vraie correction, elle merite d'etre faite deliberement.
  *
+ * <p>{@code trackingNumber}, {@code corridor} (« Paris → Dakar »), {@code travelerId} et {@code travelerName}
+ * décrivent le colis et son voyageur ; le nom est absent pour un compte supprimé, l'identifiant reste.
+ *
  * <p>{@code spring.jackson.default-property-inclusion: NON_NULL} : les champs nuls sont donc
  * ABSENTS du JSON, pas presents a null.
  */
@@ -38,20 +40,20 @@ public record AdminCashCommissionResponse(
         CommissionStatus status,
         CommissionChargedVia chargedVia,
         int retryCount,
-        LocalDateTime createdAt) {
+        LocalDateTime createdAt,
+        String trackingNumber,
+        String corridor,
+        UUID travelerId,
+        String travelerName) {
 
-    public static AdminCashCommissionResponse from(BidEntity bid) {
-        BigDecimal gross = bid.getNegotiatedGrossEur();
-        BigDecimal net = bid.getNegotiatedNetEur();
-        boolean derivable = gross != null && net != null;
-        return new AdminCashCommissionResponse(
-                bid.getId(),
-                derivable ? AdminWalletResponse.toCents(gross) : null,
-                derivable ? AdminWalletResponse.toCents(gross.subtract(net)) : null,
-                bid.getCurrency(),
-                bid.getCommissionStatus(),
-                bid.getCommissionChargedVia(),
-                bid.getCommissionRetryCount(),
-                bid.getCreatedAt());
+    /**
+     * Montants dérivés du brut et du net négociés ; {@code null} pour les deux quand l'un manque (voir plus
+     * haut : jamais zéro).
+     */
+    public static Long[] amountsOf(BigDecimal gross, BigDecimal net) {
+        if (gross == null || net == null) {
+            return new Long[] {null, null};
+        }
+        return new Long[] {AdminWalletResponse.toCents(gross), AdminWalletResponse.toCents(gross.subtract(net))};
     }
 }

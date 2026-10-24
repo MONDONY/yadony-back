@@ -142,7 +142,8 @@ class StripeOutsideTransactionIT {
                 mock(MobileMoneyPayoutInitiator.class), mock(PawapayOperationService.class),
                 mock(PawapaySubmissionService.class), mock(RefundProcessor.class), entityManager, transactionManager,
                 mock(PayoutHoldPolicy.class), mock(AdminPaymentInsights.class), mock(AdminPaymentTimeline.class),
-                escrowCapture, executor, disputeRepository, new ReleaseNetCalculator(null));
+                escrowCapture, executor, disputeRepository, new ReleaseNetCalculator(null), java.time.Clock.systemUTC(),
+                com.yadony.api.admin.AdminPaymentLinksTestSupport.none());
 
         UserEntity traveler = new UserEntity();
         traveler.setStripeAccountId("acct_traveler");

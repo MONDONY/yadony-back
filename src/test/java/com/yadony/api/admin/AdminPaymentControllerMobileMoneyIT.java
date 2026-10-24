@@ -458,7 +458,7 @@ class AdminPaymentControllerMobileMoneyIT {
      */
     @Test
     void list_method_pawapay_filtersAndReportsCorrectly() throws Exception {
-        when(adminPaymentInsights.search(org.mockito.ArgumentMatchers.argThat(f -> f != null && "PAWAPAY".equals(f.rail()) && !f.held()), any(Pageable.class)))
+        when(adminPaymentInsights.search(org.mockito.ArgumentMatchers.argThat(f -> f != null && "PAWAPAY".equals(f.rail()) && !f.held()), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(payment), PageRequest.of(0, 20), 1));
 
         mockMvc.perform(get("/admin/payments").param("method", "PAWAPAY").with(authentication(viewAdmin())))
@@ -466,7 +466,7 @@ class AdminPaymentControllerMobileMoneyIT {
                 .andExpect(jsonPath("$.content.length()").value(1))
                 .andExpect(jsonPath("$.content[0].method").value("PAWAPAY"));
 
-        verify(adminPaymentInsights).search(org.mockito.ArgumentMatchers.argThat(f -> "PAWAPAY".equals(f.rail())), any(Pageable.class));
+        verify(adminPaymentInsights).search(org.mockito.ArgumentMatchers.argThat(f -> "PAWAPAY".equals(f.rail())), any(), any(Pageable.class));
     }
 
     // ── Autorité : PAYMENT_RELEASE obligatoire sur les trois endroits qui déplacent de l'argent ──

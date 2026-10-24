@@ -1,9 +1,10 @@
 package com.yadony.api.admin;
 
-import com.yadony.api.admin.dto.AdminChargebackResponse;
+import com.yadony.api.admin.dto.AdminPaymentCountsResponse;
 import com.yadony.api.admin.dto.AdminPaymentDetailResponse;
 import com.yadony.api.admin.dto.AdminPaymentInsight;
 import com.yadony.api.admin.dto.AdminPaymentListItemResponse;
+import com.yadony.api.admin.dto.AdminPaymentSuggestResponse;
 import com.yadony.api.admin.dto.PayoutReleaseRequest;
 import com.yadony.api.auth.StripeAccountStatus;
 import com.yadony.api.auth.UserEntity;
@@ -68,6 +69,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.yadony.api.payments.currency.CurrencyAmount;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -140,6 +142,10 @@ public class AdminPaymentController {
     private final com.yadony.api.disputes.DisputeRepository disputeRepository;
     /** Transactions courtes de la libération forcée : jamais de transaction autour d'un appel Stripe. */
     private final TransactionTemplate shortTransaction;
+    /** Heure de référence (UTC) des vues et des alertes de la liste : remplacée par une horloge fixe en test. */
+    private final Clock clock;
+    /** Ajouts de la fiche (alerte, liens, alertes ouvertes, litige bancaire), filtrés par permission. */
+    private final AdminPaymentLinks paymentLinks;
 
     public AdminPaymentController(PaymentRepository paymentRepository,
                                   AdminAlertRepository adminAlertRepository,
@@ -161,7 +167,11 @@ public class AdminPaymentController {
                                   EscrowCaptureService escrowCapture,
                                   StripeReleaseExecutor releaseExecutor,
                                   com.yadony.api.disputes.DisputeRepository disputeRepository,
-                                  com.yadony.api.payments.ReleaseNetCalculator netCalculator) {
+                                  com.yadony.api.payments.ReleaseNetCalculator netCalculator,
+                                  Clock clock,
+                                  AdminPaymentLinks paymentLinks) {
+        this.clock = clock;
+        this.paymentLinks = paymentLinks;
         this.netCalculator = netCalculator;
         this.escrowCapture = escrowCapture;
         this.releaseExecutor = releaseExecutor;
@@ -198,25 +208,90 @@ public class AdminPaymentController {
             @RequestParam(required = false) Boolean held,
             @RequestParam(required = false) String q,
             @RequestParam(required = false) Boolean hideAbandoned,
+            @RequestParam(required = false) AdminPaymentView view,
+            @RequestParam(required = false) AdminPaymentAlert alert,
+            @RequestParam(required = false) UUID partyId,
+            @RequestParam(required = false) UUID announcementId,
+            @RequestParam(required = false) UUID bidId,
+            @RequestParam(required = false) Long amountMin,
+            @RequestParam(required = false) Long amountMax,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         // method filtre réellement par rail (STRIPE/PAWAPAY) ; currency sépare les devises : un
         // tableau qui mêle des EUR et des XOF n'est lisible qu'à condition de pouvoir n'en garder
         // qu'une. Le même filtre sert aux totaux et à l'export.
-        AdminPaymentFilter filter = AdminPaymentFilter.of(status, dateFrom, dateTo, method, currency, held, q,
-                hideAbandoned);
-        Page<PaymentEntity> raw = insights.search(filter, PageRequest.of(page, size));
+        AdminPaymentFilter filter = filterOf(status, dateFrom, dateTo, method, currency, held, q, hideAbandoned,
+                view, alert, partyId, announcementId, bidId, amountMin, amountMax);
+        LocalDateTime now = LocalDateTime.now(clock);
+        Page<PaymentEntity> raw = insights.search(filter, now, PageRequest.of(page, size));
         Map<UUID, UUID> beneficiaries = beneficiariesOf(raw.getContent());
         Map<UUID, PayoutHoldStatus> holds = beneficiaries.isEmpty()
                 ? Map.of()
                 : holdPolicy.statusesOf(List.copyOf(new java.util.LinkedHashSet<>(beneficiaries.values())));
-        Map<UUID, AdminPaymentInsight> context = insights.insightsOf(raw.getContent());
+        Map<UUID, AdminPaymentInsights.Context> context = insights.contextsOf(raw.getContent(), now);
+        // Étiquette exclusive de la ligne (la plus urgente), un seul aller-retour pour la page.
+        Map<UUID, Integer> ranks = insights.alertRanks(
+                raw.getContent().stream().map(PaymentEntity::getId).filter(java.util.Objects::nonNull).toList(), now);
         return ResponseEntity.ok(raw.map(p -> {
             UUID travelerId = p.getId() == null ? null : beneficiaries.get(p.getId());
             PayoutHoldStatus hold = (travelerId == null || holds == null) ? null : holds.get(travelerId);
+            AdminPaymentInsights.Context c = p.getId() == null ? null : context.get(p.getId());
+            String alertCode = p.getId() == null ? null : AdminPaymentAlert.ofRank(ranks.getOrDefault(p.getId(), 0))
+                    .map(AdminPaymentAlert::name).orElse(null);
             return AdminPaymentListItemResponse.from(p, travelerId, holdOrNone(hold))
-                    .withInsight(p.getId() == null ? null : context.get(p.getId()));
+                    .withInsight(c == null ? null : c.insight())
+                    .withListFields(alertCode, c == null ? null : c.trackingNumber(),
+                            c == null ? null : c.announcementId());
         }));
+    }
+
+    /**
+     * Filtre commun de la liste, des totaux et de l'export. {@code view} et {@code alert} arrivent typés :
+     * une valeur inconnue est refusée en 400 par la conversion Spring, avant d'atteindre ce code.
+     */
+    private static AdminPaymentFilter filterOf(String status, LocalDateTime dateFrom, LocalDateTime dateTo,
+                                               String method, String currency, Boolean held, String q,
+                                               Boolean hideAbandoned, AdminPaymentView view, AdminPaymentAlert alert,
+                                               UUID partyId, UUID announcementId, UUID bidId,
+                                               Long amountMin, Long amountMax) {
+        return AdminPaymentFilter.of(status, dateFrom, dateTo, method, currency, held, q, hideAbandoned,
+                view == null ? null : view.name(), alert == null ? null : alert.name(),
+                partyId, announcementId, bidId, amountMin, amountMax);
+    }
+
+    /**
+     * Nombres par vue et par alerte : mêmes paramètres que la liste, hors {@code view}, {@code alert},
+     * {@code status}, {@code page} et {@code size}.
+     */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
+    @GetMapping("/counts")
+    public ResponseEntity<AdminPaymentCountsResponse> counts(
+            @RequestParam(required = false) String method,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dateFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dateTo,
+            @RequestParam(required = false) String currency,
+            @RequestParam(required = false) Boolean held,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) Boolean hideAbandoned,
+            @RequestParam(required = false) UUID partyId,
+            @RequestParam(required = false) UUID announcementId,
+            @RequestParam(required = false) UUID bidId,
+            @RequestParam(required = false) Long amountMin,
+            @RequestParam(required = false) Long amountMax) {
+        return ResponseEntity.ok(insights.counts(filterOf(null, dateFrom, dateTo, method, currency, held, q,
+                hideAbandoned, null, null, partyId, announcementId, bidId, amountMin, amountMax),
+                LocalDateTime.now(clock)));
+    }
+
+    /**
+     * Suggestions de la barre de recherche : cinq propositions au plus par groupe (expéditeurs, voyageurs,
+     * trajets, colis) et {@code exactPaymentId} si la saisie identifie exactement un paiement. Sous deux
+     * caractères : groupes vides, aucune requête.
+     */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
+    @GetMapping("/suggest")
+    public ResponseEntity<AdminPaymentSuggestResponse> suggest(@RequestParam(required = false) String q) {
+        return ResponseEntity.ok(insights.suggest(q, LocalDateTime.now(clock)));
     }
 
     /** Totaux par devise du périmètre filtré (mêmes filtres que la liste). */
@@ -230,9 +305,17 @@ public class AdminPaymentController {
             @RequestParam(required = false) String currency,
             @RequestParam(required = false) Boolean held,
             @RequestParam(required = false) String q,
-            @RequestParam(required = false) Boolean hideAbandoned) {
-        return ResponseEntity.ok(insights.totals(
-                AdminPaymentFilter.of(status, dateFrom, dateTo, method, currency, held, q, hideAbandoned)));
+            @RequestParam(required = false) Boolean hideAbandoned,
+            @RequestParam(required = false) AdminPaymentView view,
+            @RequestParam(required = false) AdminPaymentAlert alert,
+            @RequestParam(required = false) UUID partyId,
+            @RequestParam(required = false) UUID announcementId,
+            @RequestParam(required = false) UUID bidId,
+            @RequestParam(required = false) Long amountMin,
+            @RequestParam(required = false) Long amountMax) {
+        return ResponseEntity.ok(insights.totals(filterOf(status, dateFrom, dateTo, method, currency, held, q,
+                hideAbandoned, view, alert, partyId, announcementId, bidId, amountMin, amountMax),
+                LocalDateTime.now(clock)));
     }
 
     /**
@@ -250,12 +333,21 @@ public class AdminPaymentController {
             @RequestParam(required = false) Boolean held,
             @RequestParam(required = false) String q,
             @RequestParam(required = false) Boolean hideAbandoned,
+            @RequestParam(required = false) AdminPaymentView view,
+            @RequestParam(required = false) AdminPaymentAlert alert,
+            @RequestParam(required = false) UUID partyId,
+            @RequestParam(required = false) UUID announcementId,
+            @RequestParam(required = false) UUID bidId,
+            @RequestParam(required = false) Long amountMin,
+            @RequestParam(required = false) Long amountMax,
             Authentication authentication) {
         UUID adminId = AdminPrincipal.requireAdminId(authentication);
-        AdminPaymentFilter filter = AdminPaymentFilter.of(status, dateFrom, dateTo, method, currency, held, q,
-                hideAbandoned);
-        List<PaymentEntity> rows = insights.exportRows(filter);
-        byte[] csv = AdminPaymentCsv.write(rows, insights.insightsOf(rows));
+        AdminPaymentFilter filter = filterOf(status, dateFrom, dateTo, method, currency, held, q, hideAbandoned,
+                view, alert, partyId, announcementId, bidId, amountMin, amountMax);
+        List<PaymentEntity> rows = insights.exportRows(filter, LocalDateTime.now(clock));
+        LocalDateTime now = LocalDateTime.now(clock);
+        Map<UUID, AdminPaymentInsights.Context> contexts = insights.contextsOf(rows, now);
+        byte[] csv = AdminPaymentCsv.write(rows, contexts);
         auditService.log("EXPORT", null, "EXPORT_RUN", adminId, Map.of(
                 "type", "payments",
                 "rows", rows.size(),
@@ -281,11 +373,15 @@ public class AdminPaymentController {
 
     @PreAuthorize("hasAuthority('PAYMENT_VIEW')")
     @GetMapping("/{id}")
-    public ResponseEntity<AdminPaymentDetailResponse> getById(@PathVariable UUID id) {
+    public ResponseEntity<AdminPaymentDetailResponse> getById(@PathVariable UUID id, Authentication authentication) {
         PaymentEntity p = paymentRepository.findById(id)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "payment-not-found", "Not Found", "Paiement introuvable"));
-        return ResponseEntity.ok(detail(p));
+        // Alerte, n° de suivi, liens, alertes ouvertes et litige bancaire : chaque identifiant n'est rendu que
+        // si l'admin a la permission de sa destination (AdminPaymentLinks), sinon il est absent du JSON.
+        AdminPaymentLinks.Result sheet = paymentLinks.of(p, LocalDateTime.now(clock), authentication);
+        return ResponseEntity.ok(detail(p).withSheet(sheet.alert(), sheet.trackingNumber(), sheet.links(),
+                sheet.openAlerts(), sheet.chargeback()));
     }
 
     /**

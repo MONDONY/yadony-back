@@ -13,6 +13,22 @@ public interface AdminAlertRepository extends JpaRepository<AdminAlertEntity, UU
 
     List<AdminAlertEntity> findByTypeAndResolved(String type, boolean resolved);
 
+    /**
+     * Alertes non résolues qui citent un identifiant : dans leur {@code payload} (même correspondance
+     * textuelle que {@code EscrowScheduler}) ou n'importe où dans leur {@code type}
+     * (le {@code LIKE} est de forme {@code %<id>%} : {@code ESCROW_CAPTURE_FAILED_<id>}…), les plus récentes d'abord, {@code limit} au plus.
+     * {@code payload} est un {@code jsonb} en PostgreSQL : le {@code CAST} en texte vaut aussi sur H2.
+     * {@code pattern} est construit par l'appelant à partir d'un UUID, jamais d'une saisie.
+     */
+    @Query(value = """
+            SELECT * FROM admin_alerts a
+            WHERE a.resolved = false
+              AND (CAST(a.payload AS VARCHAR) LIKE :pattern OR a.type LIKE :pattern)
+            ORDER BY a.created_at DESC, a.id DESC
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<AdminAlertEntity> findOpenReferencing(@Param("pattern") String pattern, @Param("limit") int limit);
+
     @Query("""
             SELECT a FROM AdminAlertEntity a
             WHERE (:type IS NULL OR a.type = :type)

@@ -1,7 +1,5 @@
 package com.yadony.api.admin.dto;
 
-import com.yadony.api.payments.wallet.WalletAccountEntity;
-
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -12,22 +10,17 @@ import java.util.UUID;
  * <p>⚠️ Le solde est stocke en UNITES ({@code BigDecimal} scale 2) et expose en CENTIMES :
  * le back-office formate a partir de centiemes entiers, et un nombre flottant JSON perdrait
  * de la precision sur des montants. La conversion vit ici, une seule fois.
+ *
+ * <p>{@code userName} (« Prénom Nom (@pseudo) ») est absent du JSON pour un compte supprimé : le portefeuille
+ * reste listé, le nom non.
  */
 public record AdminWalletResponse(
         UUID id,
         UUID userId,
         long balanceCents,
         String currency,
-        LocalDateTime updatedAt) {
-
-    public static AdminWalletResponse from(WalletAccountEntity entity) {
-        return new AdminWalletResponse(
-                entity.getId(),
-                entity.getUserId(),
-                toCents(entity.getBalance()),
-                entity.getCurrency(),
-                entity.getUpdatedAt());
-    }
+        LocalDateTime updatedAt,
+        String userName) {
 
     /**
      * Centiemes de l'unite principale — <b>pas</b> l'unite mineure de la devise.

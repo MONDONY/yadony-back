@@ -29,7 +29,13 @@ public record AdminPaymentListItemResponse(
         /** Motif principal du gel : {@code BANNED} ou {@code KYC_REVOKED} ; {@code null} si non gele. */
         String beneficiaryHoldReason,
         /** Contexte (colis ou négociation, parties, trajet, liens Stripe) ; {@code null} hors back-office. */
-        AdminPaymentInsight insight
+        AdminPaymentInsight insight,
+        /** Alerte la plus urgente ({@code HELD}, {@code CHARGEBACK_OPEN}, {@code MM_FAILED}, {@code ESCROW_J48}) ; absente sinon. */
+        String alert,
+        /** N° de suivi du colis (direct ou lié au fil) ; absent si aucun colis. */
+        String trackingNumber,
+        /** Annonce du trajet ; absente tant que le fil n'a pas de colis. */
+        UUID announcementId
 ) {
     public static AdminPaymentListItemResponse from(PaymentEntity p) {
         return from(p, null, PayoutHoldStatus.NONE);
@@ -50,12 +56,20 @@ public record AdminPaymentListItemResponse(
                 p.getPayoutHeldAt(),
                 h.held(),
                 h.primaryReason() != null ? h.primaryReason().name() : null,
-                null
+                null, null, null, null
         );
     }
 
     public AdminPaymentListItemResponse withInsight(AdminPaymentInsight value) {
         return new AdminPaymentListItemResponse(id, bidId, status, method, amountCents, commissionCents, currency,
-                createdAt, travelerId, payoutHeldAt, beneficiaryHeld, beneficiaryHoldReason, value);
+                createdAt, travelerId, payoutHeldAt, beneficiaryHeld, beneficiaryHoldReason, value,
+                alert, trackingNumber, announcementId);
+    }
+
+    /** Ajoute l'étiquette d'alerte, le n° de suivi et l'annonce (les champs ajoutés après {@code insight}). */
+    public AdminPaymentListItemResponse withListFields(String alertCode, String tracking, UUID announcement) {
+        return new AdminPaymentListItemResponse(id, bidId, status, method, amountCents, commissionCents, currency,
+                createdAt, travelerId, payoutHeldAt, beneficiaryHeld, beneficiaryHoldReason, insight,
+                alertCode, tracking, announcement);
     }
 }
