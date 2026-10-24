@@ -32,7 +32,7 @@ import java.util.UUID;
  * {@code amendment-disabled} ; l'annulation, le refus et « non apportée » restent ouverts (ils rendent l'argent ou
  * les kilos).
  *
- * <p>Les routes de l'autorisation carte ({@code confirm-authorization}) et du mobile money arrivent avec leurs rails.
+ * <p>Les routes du mobile money arrivent avec leur rail.
  */
 @RestController
 @RequestMapping("/bids/{bidId}/amendments")
@@ -65,6 +65,16 @@ public class BidAmendmentController {
     public ResponseEntity<AmendmentCreateResponse> create(@PathVariable UUID bidId,
                                                           @Valid @RequestBody CreateAmendmentRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(paymentFlow.create(bidId, firebaseUid(), request));
+    }
+
+    /**
+     * Rail carte : après la PaymentSheet ({@code clientSecret} de la création), relit la PaymentIntent ; montant bloqué,
+     * la demande est présentée au voyageur. Idempotent ; vue de l'expéditeur.
+     */
+    @PostMapping("/{amendmentId}/confirm-authorization")
+    @PreAuthorize("hasRole('SENDER')")
+    public BidAmendmentResponse confirmAuthorization(@PathVariable UUID bidId, @PathVariable UUID amendmentId) {
+        return paymentFlow.confirmAuthorization(bidId, amendmentId, firebaseUid());
     }
 
     /** L'expéditeur retire sa demande tant que le voyageur ne l'a pas acquise. */

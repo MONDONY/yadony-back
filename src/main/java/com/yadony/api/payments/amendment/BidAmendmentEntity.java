@@ -100,6 +100,13 @@ public class BidAmendmentEntity extends BaseEntity {
     @Column(name = "reminder_sent_at")
     private LocalDateTime reminderSentAt;
 
+    /**
+     * Passage en {@code PROPOSED} : à la création (espèces, mobile money) ou à l'autorisation du montant (carte).
+     * Nul : la demande n'a jamais été présentée au voyageur, qui ne la voit pas.
+     */
+    @Column(name = "proposed_at")
+    private LocalDateTime proposedAt;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "closed_reason", length = 40)
     private BidAmendmentClosedReason closedReason;
@@ -170,6 +177,8 @@ public class BidAmendmentEntity extends BaseEntity {
     public void setRefundedAt(LocalDateTime refundedAt) { this.refundedAt = refundedAt; }
     public LocalDateTime getReminderSentAt() { return reminderSentAt; }
     public void setReminderSentAt(LocalDateTime reminderSentAt) { this.reminderSentAt = reminderSentAt; }
+    public LocalDateTime getProposedAt() { return proposedAt; }
+    public void setProposedAt(LocalDateTime proposedAt) { this.proposedAt = proposedAt; }
     public BidAmendmentClosedReason getClosedReason() { return closedReason; }
     public void setClosedReason(BidAmendmentClosedReason closedReason) { this.closedReason = closedReason; }
     public String getStripePaymentIntentId() { return stripePaymentIntentId; }

@@ -29,6 +29,9 @@ CREATE TABLE bid_amendments (
     paid_out_at                   TIMESTAMP     NULL,
     refunded_at                   TIMESTAMP     NULL,
     reminder_sent_at              TIMESTAMP     NULL,
+    -- Présentée au voyageur (passage en PROPOSED) : à la création (espèces, mobile money) ou à l'autorisation
+    -- carte. Nulle : jamais présentée, le voyageur ne la voit pas.
+    proposed_at                   TIMESTAMP     NULL,
     closed_reason                 VARCHAR(40)   NULL,
     -- Rail carte : PaymentIntent en capture manuelle (autorisation à la création, capture à l'acceptation).
     stripe_payment_intent_id      VARCHAR(255)  NULL,

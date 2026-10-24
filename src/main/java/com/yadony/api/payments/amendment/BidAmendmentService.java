@@ -248,14 +248,15 @@ public class BidAmendmentService {
         capacity.reserve(a, announcement);
         List<BidAmendmentItemEntity> items = saveItems(a, q);
         a.setStatus(handler.onCreated(a, sender).status());
-        a = amendments.save(a);
-
         // Carte : la demande attend l'autorisation du montant (AUTHORIZATION_PENDING) ; le voyageur ne la
-        // verra qu'une fois le montant bloqué.
-        if (a.getStatus() == BidAmendmentStatus.PROPOSED) {
-            events.publishEvent(new BidAmendmentRequestedEvent(a.getId(), bidId, a.getSenderId(), a.getTravelerId(),
-                    a.getGrossAmount(), a.getNetAmount(), a.getCurrency(), a.getExpiresAt(),
-                    announcement.getTimezone()));
+        // verra qu'une fois le montant bloqué ({@link #markProposed}).
+        boolean proposed = a.getStatus() == BidAmendmentStatus.PROPOSED;
+        if (proposed) {
+            a.setProposedAt(window.now());
+        }
+        a = amendments.save(a);
+        if (proposed) {
+            publishRequested(a, announcement.getTimezone());
         }
         audit(a, "BID_AMENDMENT_REQUESTED", sender.getId(), Map.of("itemCount", items.size()));
         return AmendmentCreateResponse.of(BidAmendmentViews.of(a, items, true, window));
@@ -395,7 +396,33 @@ public class BidAmendmentService {
     }
 
     /**
-     * Clôt une modification ouverte parce que son colis n'est plus actif ({@code BID_ENDED}) : annulée, kilos
+     * Montant carte bloqué ({@code AUTHORIZATION_PENDING → PROPOSED}) : la demande est présentée au voyageur
+     * ({@code proposedAt}, {@link BidAmendmentRequestedEvent}). Appelé par le rail carte, sous les verrous du colis, du
+     * trajet et de la modification. Idempotent : sans effet hors de {@code AUTHORIZATION_PENDING}.
+     *
+     * @return vrai si la demande vient d'être présentée.
+     */
+    public boolean markProposed(BidAmendmentEntity a) {
+        if (a.getStatus() != BidAmendmentStatus.AUTHORIZATION_PENDING) {
+            return false;
+        }
+        a.setStatus(BidAmendmentStatus.PROPOSED);
+        a.setProposedAt(window.now());
+        amendments.save(a);
+        publishRequested(a, announcements.findById(a.getAnnouncementId()).map(AnnouncementEntity::getTimezone)
+                .orElse(null));
+        audit(a, "BID_AMENDMENT_AUTHORIZED", a.getSenderId(), Map.of());
+        return true;
+    }
+
+    private void publishRequested(BidAmendmentEntity a, String timezone) {
+        events.publishEvent(new BidAmendmentRequestedEvent(a.getId(), a.getBidId(), a.getSenderId(),
+                a.getTravelerId(), a.getGrossAmount(), a.getNetAmount(), a.getCurrency(), a.getExpiresAt(), timezone));
+    }
+
+    /**
+     * Clôt une modification ouverte sans aboutir : colis plus actif ({@code BID_ENDED}), capture carte échouée
+     * ({@code CAPTURE_FAILED}), autorisation impossible ({@code AUTHORIZATION_NOT_CONFIRMED}). Annulée, kilos
      * rendus, rail prévenu, événement publié. Appelé sous les verrous du colis, du trajet et de la modification.
      *
      * @return vrai si la modification était ouverte et a été close.

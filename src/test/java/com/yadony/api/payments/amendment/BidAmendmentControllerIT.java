@@ -116,10 +116,7 @@ class BidAmendmentControllerIT {
 
     @Test
     void routesNonLivrees_absentes() throws Exception {
-        // confirm-authorization (B9) et mobile money (B11) : pas de route sans implémentation.
-        mockMvc.perform(post("/bids/" + bidId + "/amendments/" + amendmentId + "/confirm-authorization")
-                        .with(authentication(as("uid-s", "SENDER"))))
-                .andExpect(status().is4xxClientError());
+        // Mobile money (B11) : pas de route sans implémentation.
         mockMvc.perform(post("/bids/" + bidId + "/amendments/" + amendmentId + "/mobile-money/initiate")
                         .with(authentication(as("uid-s", "SENDER"))))
                 .andExpect(status().is4xxClientError());
@@ -303,6 +300,33 @@ class BidAmendmentControllerIT {
                         .with(authentication(as("uid-t", "TRAVELER"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("ACCEPTED"));
+    }
+
+    @Test
+    void confirmationDeLAutorisation_expediteur() throws Exception {
+        when(paymentFlow.confirmAuthorization(bidId, amendmentId, "uid-s")).thenReturn(response("PROPOSED", true));
+
+        mockMvc.perform(post("/bids/" + bidId + "/amendments/" + amendmentId + "/confirm-authorization")
+                        .with(authentication(as("uid-s", "SENDER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PROPOSED"))
+                .andExpect(jsonPath("$.netAmount").doesNotExist());
+    }
+
+    @Test
+    void confirmationDeLAutorisation_refuseeAuVoyageur_etCoupeeDrapeauEteint() throws Exception {
+        mockMvc.perform(post("/bids/" + bidId + "/amendments/" + amendmentId + "/confirm-authorization")
+                        .with(authentication(as("uid-t", "TRAVELER"))))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(paymentFlow);
+
+        when(paymentFlow.confirmAuthorization(bidId, amendmentId, "uid-s"))
+                .thenThrow(BidAmendmentEligibility.exceptionFor("amendment-disabled"));
+        mockMvc.perform(post("/bids/" + bidId + "/amendments/" + amendmentId + "/confirm-authorization")
+                        .with(authentication(as("uid-s", "SENDER"))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("amendment-disabled"));
     }
 
     @Test

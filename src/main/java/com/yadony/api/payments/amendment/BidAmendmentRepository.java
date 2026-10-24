@@ -30,6 +30,9 @@ public interface BidAmendmentRepository extends JpaRepository<BidAmendmentEntity
     /** Modification espèces dont {@code commissionPaymentIntentId} est la PaymentIntent de commission. */
     Optional<BidAmendmentEntity> findByCommissionPaymentIntentId(String commissionPaymentIntentId);
 
+    /** Modification carte dont {@code stripePaymentIntentId} est la PaymentIntent (montant bloqué puis débité). */
+    Optional<BidAmendmentEntity> findByStripePaymentIntentId(String stripePaymentIntentId);
+
     Optional<BidAmendmentEntity> findFirstByBidIdAndStatusIn(UUID bidId, Collection<BidAmendmentStatus> statuses);
 
     /** Modifications d'un colis, de la plus récente à la plus ancienne. */
