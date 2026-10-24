@@ -142,6 +142,7 @@ class BidAmendmentServiceIT {
     @Autowired ObjectMapper objectMapper;
     @Autowired ApplicationEvents events;
     @Autowired CacheManager cacheManager;
+    @Autowired BidAmendmentProperties properties;
 
     private UserEntity traveler;
     private UserEntity sender;
@@ -593,6 +594,68 @@ class BidAmendmentServiceIT {
                 new AmendmentAcceptRequest(null, null)))
                 .isInstanceOfSatisfying(YadonyBusinessException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo("amendment-expired"));
+    }
+
+    // ── Drapeau éteint ──────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("drapeau éteint : options, devis, création et acceptation refusés en 422 amendment-disabled")
+    void flagOff_blocksCreationAndAcceptance() {
+        UUID annId = persistAnnouncement("6.00", false);
+        UUID bidId = persistAcceptedBid(annId, sender.getId());
+        UUID id = service.create(bidId, sender.getFirebaseUid(), kg("3")).amendment().id();
+        UUID otherBid = persistAcceptedBid(annId, sender.getId());
+
+        withFlagOff(() -> {
+            assertDisabled(() -> service.options(otherBid, sender.getFirebaseUid()));
+            assertDisabled(() -> service.quote(otherBid, sender.getFirebaseUid(),
+                    new AmendmentQuoteRequest(new BigDecimal("1"), null)));
+            assertDisabled(() -> service.create(otherBid, sender.getFirebaseUid(), kg("1")));
+            assertDisabled(() -> service.accept(bidId, id, traveler.getFirebaseUid(),
+                    new AmendmentAcceptRequest(null, null)));
+        });
+        assertThat(status(id)).isEqualTo("PROPOSED");
+        assertThat(amendmentCount(otherBid)).isZero();
+    }
+
+    @Test
+    @DisplayName("drapeau éteint : l'expéditeur peut encore annuler sa demande (kilos rendus)")
+    void cancel_flagOff_stillCancels() {
+        UUID annId = persistAnnouncement("6.00", false);
+        UUID bidId = persistAcceptedBid(annId, sender.getId());
+        UUID id = service.create(bidId, sender.getFirebaseUid(), kg("3")).amendment().id();
+
+        withFlagOff(() -> assertThat(service.cancel(bidId, id, sender.getFirebaseUid()).status())
+                .isEqualTo("CANCELLED"));
+        assertThat(availableKg(annId)).isEqualByComparingTo("6.00");
+    }
+
+    @Test
+    @DisplayName("drapeau éteint : le voyageur peut encore refuser (kilos rendus)")
+    void decline_flagOff_stillDeclines() {
+        UUID annId = persistAnnouncement("6.00", false);
+        UUID bidId = persistAcceptedBid(annId, sender.getId());
+        UUID id = service.create(bidId, sender.getFirebaseUid(), kg("3")).amendment().id();
+
+        withFlagOff(() -> assertThat(service.decline(bidId, id, traveler.getFirebaseUid()).status())
+                .isEqualTo("DECLINED"));
+        assertThat(availableKg(annId)).isEqualByComparingTo("6.00");
+    }
+
+    private void withFlagOff(Runnable body) {
+        properties.setEnabled(false);
+        try {
+            body.run();
+        } finally {
+            properties.setEnabled(true);
+        }
+    }
+
+    private static void assertDisabled(org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
+        assertThatThrownBy(call).isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo("amendment-disabled");
+            assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        });
     }
 
     // ── Expiration ──────────────────────────────────────────────────────────

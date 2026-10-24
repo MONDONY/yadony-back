@@ -46,6 +46,8 @@ final class BidResponsePrefetch {
     private final Map<UUID, List<BidPhotoResponse>> photos;
     /** Suppléments de la liste ({@link BidSupplementSummaryPort#prefetch}), null hors port. */
     private final BidSupplementSummaryPort.Prefetch supplements;
+    /** Modifications de la liste ({@link BidAmendmentSummaryPort#prefetch}), null hors port. */
+    private final BidAmendmentSummaryPort.Prefetch amendments;
     /** Taux de commission résolus pendant la conversion, par couple voyageur/expéditeur. */
     private final Map<String, BigDecimal> commissionRates = new HashMap<>();
 
@@ -54,7 +56,7 @@ final class BidResponsePrefetch {
                         Map<UUID, List<CancellationEntity>> cancellations,
                         Map<UUID, List<BidGridItemEntity>> gridItems,
                         Map<UUID, List<BidPhotoResponse>> photos) {
-        this(recipientLinks, bidRaterPairs, cancellations, gridItems, photos, null);
+        this(recipientLinks, bidRaterPairs, cancellations, gridItems, photos, null, null);
     }
 
     BidResponsePrefetch(Map<UUID, BidRecipientLinkEntity> recipientLinks,
@@ -62,8 +64,10 @@ final class BidResponsePrefetch {
                         Map<UUID, List<CancellationEntity>> cancellations,
                         Map<UUID, List<BidGridItemEntity>> gridItems,
                         Map<UUID, List<BidPhotoResponse>> photos,
-                        BidSupplementSummaryPort.Prefetch supplements) {
+                        BidSupplementSummaryPort.Prefetch supplements,
+                        BidAmendmentSummaryPort.Prefetch amendments) {
         this.supplements = supplements;
+        this.amendments = amendments;
         this.recipientLinks = recipientLinks;
         this.bidRaterPairs = bidRaterPairs;
         this.cancellations = cancellations;
@@ -89,6 +93,10 @@ final class BidResponsePrefetch {
 
     BidSupplementSummaryPort.Prefetch supplements() {
         return supplements;
+    }
+
+    BidAmendmentSummaryPort.Prefetch amendments() {
+        return amendments;
     }
 
     List<BidPhotoResponse> photos(UUID bidId) {

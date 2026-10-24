@@ -70,6 +70,7 @@ class BidSupplementServiceTest {
     @Mock ApplicationEventPublisher events;
     @Mock StorageService storage;
     @Mock com.yadony.api.disputes.DisputeRepository disputes;
+    @Mock com.yadony.api.payments.amendment.BidAmendmentRepository amendments;
 
     private final BidSupplementRailHandler cardRail = mock(BidSupplementRailHandler.class);
     private final BidSupplementProperties properties = new BidSupplementProperties();
@@ -118,7 +119,7 @@ class BidSupplementServiceTest {
     private BidSupplementService service(BidSupplementRailHandler... handlers) {
         BidSupplementWindow window = new BidSupplementWindow(properties, Clock.fixed(NOW, ZoneOffset.UTC));
         return new BidSupplementService(supplements, bids, announcements, gridItems, users, pricing, window,
-                properties, List.of(handlers), auditService, events, storage, disputes);
+                properties, List.of(handlers), auditService, events, storage, disputes, amendments);
     }
 
     private static CreateSupplementRequest request(String net) {
@@ -279,6 +280,16 @@ class BidSupplementServiceTest {
         when(supplements.existsByBidIdAndStatusIn(bid.getId(), BidSupplementStatus.ACTIVE)).thenReturn(true);
         assertError(() -> service(cardRail).create(bid.getId(), "uid-traveler", requestFor("20")),
                 HttpStatus.CONFLICT, "supplement-already-active");
+    }
+
+    @Test
+    void create_modificationDuColisOuverte_409() {
+        when(amendments.existsByBidIdAndStatusIn(bid.getId(),
+                com.yadony.api.payments.amendment.BidAmendmentStatus.OPEN)).thenReturn(true);
+        assertError(() -> service(cardRail).create(bid.getId(), "uid-traveler", requestFor("20")),
+                HttpStatus.CONFLICT, "supplement-already-active");
+        verify(supplements, never()).saveAndFlush(any());
+        verify(bids).lockForUpdate(bid.getId());
     }
 
     @Test

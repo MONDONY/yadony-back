@@ -51,6 +51,14 @@ public interface BidAmendmentRepository extends JpaRepository<BidAmendmentEntity
     /** Préchargement des listes de colis : une requête par lot. */
     List<BidAmendmentEntity> findByBidIdIn(Collection<UUID> bidIds);
 
+    /** Le colis a-t-il une modification dans l'un des {@code statuses} ? (supplément : une seule transaction ouverte). */
+    boolean existsByBidIdAndStatusIn(UUID bidId, Collection<BidAmendmentStatus> statuses);
+
+    /** Parmi {@code bidIds}, les colis qui ont une modification dans l'un des {@code statuses} : une requête par lot. */
+    @Query("SELECT DISTINCT a.bidId FROM BidAmendmentEntity a WHERE a.bidId IN :bidIds AND a.status IN :statuses")
+    List<UUID> findBidIdsByBidIdInAndStatusIn(@Param("bidIds") Collection<UUID> bidIds,
+                                              @Param("statuses") Collection<BidAmendmentStatus> statuses);
+
     /** Modifications d'un colis, verrouillées, toujours APRÈS le verrou du colis et celui du trajet (fin du colis). */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT a FROM BidAmendmentEntity a WHERE a.bidId = :bidId ORDER BY a.createdAt")

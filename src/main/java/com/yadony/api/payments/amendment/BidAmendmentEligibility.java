@@ -19,6 +19,8 @@ import java.util.EnumSet;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
+import java.util.function.LongSupplier;
 
 /**
  * Un colis peut-il recevoir une modification ? Source unique de la création et du drapeau
@@ -88,6 +90,16 @@ public class BidAmendmentEligibility {
      */
     public Optional<String> blockingReason(BidEntity bid, AnnouncementEntity announcement, UserEntity traveler,
                                            UUID callerId, boolean ignoreNothingToAdd) {
+        return blockingReason(bid, announcement, traveler, callerId, ignoreNothingToAdd, factsFor(bid, announcement));
+    }
+
+    /**
+     * Même règle, avec les lectures de {@code facts} : les listes de colis ({@code amendmentAllowed} de
+     * {@code BidResponse}) les fournissent depuis des lectures groupées, sans requête par colis. Chaque lecture
+     * n'est faite que si le contrôle précédent passe.
+     */
+    public Optional<String> blockingReason(BidEntity bid, AnnouncementEntity announcement, UserEntity traveler,
+                                           UUID callerId, boolean ignoreNothingToAdd, Facts facts) {
         if (!properties.isEnabled()) {
             return Optional.of("amendment-disabled");
         }
@@ -99,15 +111,14 @@ public class BidAmendmentEligibility {
                 || announcement.getLinkedPackageRequestId() != null) {
             return Optional.of("amendment-not-eligible");
         }
-        if (amendments.findFirstByBidIdAndStatusIn(bid.getId(), BidAmendmentStatus.OPEN).isPresent()
-                || supplements.existsByBidIdAndStatusIn(bid.getId(), BidSupplementStatus.OPEN)) {
+        if (facts.amendmentOpen().getAsBoolean() || facts.supplementOpen().getAsBoolean()) {
             return Optional.of("amendment-already-open");
         }
-        if (amendments.countByBidIdAndAcceptedAtNotNull(bid.getId()) >= properties.getMaxAcceptedPerBid()) {
+        if (facts.acceptedCount().getAsLong() >= properties.getMaxAcceptedPerBid()) {
             return Optional.of("amendment-limit-reached");
         }
         if (window.deadline(bid, announcement).isEmpty()
-                || (!ignoreNothingToAdd && !hasSomethingToAdd(announcement))) {
+                || (!ignoreNothingToAdd && !hasSomethingToAdd(announcement, facts))) {
             return Optional.of("amendment-not-eligible");
         }
         if (offerableRails(bid, announcement, traveler).isEmpty()) {
@@ -120,6 +131,27 @@ public class BidAmendmentEligibility {
         return blockingReason(bid, announcement, traveler, callerId).isEmpty();
     }
 
+    /**
+     * Lectures de l'éligibilité qui demandent la base, faites à la demande.
+     *
+     * @param amendmentOpen  une modification du colis est ouverte ({@link BidAmendmentStatus#OPEN}).
+     * @param supplementOpen un supplément du colis est ouvert ({@link BidSupplementStatus#OPEN}).
+     * @param acceptedCount  modifications du colis acceptées un jour (plafond {@code max-accepted-per-bid}).
+     * @param hasGridItems   le trajet a une grille de prix.
+     */
+    public record Facts(BooleanSupplier amendmentOpen, BooleanSupplier supplementOpen, LongSupplier acceptedCount,
+                        BooleanSupplier hasGridItems) {
+    }
+
+    /** Lectures à l'unité, sur les dépôts. */
+    public Facts factsFor(BidEntity bid, AnnouncementEntity announcement) {
+        return new Facts(
+                () -> amendments.findFirstByBidIdAndStatusIn(bid.getId(), BidAmendmentStatus.OPEN).isPresent(),
+                () -> supplements.existsByBidIdAndStatusIn(bid.getId(), BidSupplementStatus.OPEN),
+                () -> amendments.countByBidIdAndAcceptedAtNotNull(bid.getId()),
+                () -> gridItems.existsByAnnouncementId(announcement.getId()));
+    }
+
     /** Erreur HTTP d'un code de {@link #blockingReason} : 409 si une transaction est déjà ouverte, sinon 422. */
     public static YadonyBusinessException exceptionFor(String code) {
         HttpStatus status = "amendment-already-open".equals(code) ? HttpStatus.CONFLICT : HttpStatus.UNPROCESSABLE_ENTITY;
@@ -128,10 +160,10 @@ public class BidAmendmentEligibility {
     }
 
     /** Des kilos libres vendus au kilo (ou une capacité libre), ou des articles de grille. */
-    private boolean hasSomethingToAdd(AnnouncementEntity announcement) {
+    private static boolean hasSomethingToAdd(AnnouncementEntity announcement, Facts facts) {
         boolean freeKg = announcement.getPricePerKg() != null
                 && (announcement.getCapacityUnit() == CapacityUnit.KG_FREE
                 || (announcement.getAvailableKg() != null && announcement.getAvailableKg().signum() > 0));
-        return freeKg || gridItems.existsByAnnouncementId(announcement.getId());
+        return freeKg || facts.hasGridItems().getAsBoolean();
     }
 }
