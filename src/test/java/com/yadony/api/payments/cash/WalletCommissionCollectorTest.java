@@ -407,4 +407,24 @@ class WalletCommissionCollectorTest {
         UUID id = UUID.randomUUID();
         assertThat(WalletCommissionCollector.amendmentPaymentRef(id)).isEqualTo("amendment-" + id);
     }
+
+    @Test
+    void normalize_majusculesSansEspaces_videSiAbsent() {
+        assertThat(WalletCommissionCollector.normalize(" xof ")).isEqualTo("XOF");
+        assertThat(WalletCommissionCollector.normalize(null)).isEmpty();
+    }
+
+    @Test
+    void complementCurrency_devisesChoisieOuActive_422SiInconnue() {
+        com.yadony.api.payments.currency.ActiveCurrencyResolver resolver =
+                mock(com.yadony.api.payments.currency.ActiveCurrencyResolver.class);
+        when(resolver.resolve(traveler)).thenReturn("xof");
+
+        assertThat(WalletCommissionCollector.complementCurrency(resolver, traveler, null)).isEqualTo("XOF");
+        assertThat(WalletCommissionCollector.complementCurrency(resolver, traveler, "  ")).isEqualTo("XOF");
+        assertThat(WalletCommissionCollector.complementCurrency(resolver, traveler, "eur")).isEqualTo("EUR");
+        assertThatThrownBy(() -> WalletCommissionCollector.complementCurrency(resolver, traveler, "ZZZ"))
+                .isInstanceOfSatisfying(com.yadony.api.common.YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("funding-currency-invalid"));
+    }
 }

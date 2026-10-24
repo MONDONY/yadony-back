@@ -138,6 +138,27 @@ class BidAmendmentCashRailTest {
     }
 
     @Test
+    @DisplayName("nouvel essai après un refus : statut et PaymentIntent de l'essai précédent remis à zéro, clé neuve")
+    void accept_afterFailedAttempt_resetsCommissionState() throws Exception {
+        a.setCommissionStatus(CommissionStatus.FAILED);
+        a.setCommissionPaymentIntentId("pi_old");
+        a.setCommissionChargedVia(CommissionChargedVia.CARD);
+
+        rail.accept(a, traveler, new AmendmentAcceptRequest(CommissionSource.CARD, null));
+
+        assertThat(a.getStatus()).isEqualTo(BidAmendmentStatus.COMMISSION_PENDING);
+        assertThat(a.getCommissionStatus()).isNull();
+        assertThat(a.getCommissionPaymentIntentId()).isNull();
+        assertThat(a.getRespondedAt()).isNotNull();
+        String first = BidAmendmentCashRail.commissionKey(a);
+        a.setRespondedAt(a.getRespondedAt().plusSeconds(1));
+        assertThat(BidAmendmentCashRail.commissionKey(a)).as("une clé par essai").isNotEqualTo(first)
+                .startsWith("amendment_commission_" + a.getId() + "_");
+        a.setRespondedAt(null);
+        assertThat(BidAmendmentCashRail.commissionKey(a)).endsWith("_0");
+    }
+
+    @Test
     @DisplayName("afterAcceptCommit : une modification déjà acquise n'appelle pas Stripe")
     void afterAcceptCommit_notPending_returnsAsIs() {
         AmendmentAcceptResponse accepted = new AmendmentAcceptResponse(
@@ -200,7 +221,7 @@ class BidAmendmentCashRailTest {
         commissionPendingByCard();
         when(ledger.find(a.getId())).thenReturn(Optional.of(a));
         when(users.findById(traveler.getId())).thenReturn(Optional.of(traveler));
-        when(gateway.createPaymentIntent(any(), eq("amendment_commission_" + a.getId() + "_v1")))
+        when(gateway.createPaymentIntent(any(), anyString()))
                 .thenReturn(pi("succeeded"));
 
         AmendmentAcceptResponse r = rail.chargeCard(a.getId());

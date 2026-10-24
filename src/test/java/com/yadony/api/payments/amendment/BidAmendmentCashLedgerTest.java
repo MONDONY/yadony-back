@@ -1,8 +1,7 @@
 package com.yadony.api.payments.amendment;
 
+import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.common.AuditService;
-import com.yadony.api.matching.AnnouncementRepository;
-import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.payments.amendment.BidAmendmentCashLedger.ChargeOutcome;
 import com.yadony.api.payments.amendment.events.BidAmendmentRefundRequestedEvent;
@@ -44,19 +43,20 @@ class BidAmendmentCashLedgerTest {
     @Mock BidAmendmentRepository amendments;
     @Mock BidAmendmentService service;
     @Mock BidRepository bids;
-    @Mock AnnouncementRepository announcements;
     @Mock WalletService walletService;
     @Mock WalletTransactionRepository walletTransactions;
     @Mock AuditService auditService;
     @Mock ApplicationEventPublisher events;
+    @Mock AdminAlertEscalator alerts;
 
     private BidAmendmentCashLedger ledger;
     private BidAmendmentEntity a;
 
     @BeforeEach
     void setUp() {
-        ledger = new BidAmendmentCashLedger(amendments, service, bids, announcements, walletService,
-                walletTransactions, auditService, events, new BidAmendmentWindow(new BidAmendmentProperties()));
+        ledger = new BidAmendmentCashLedger(amendments, service, bids, walletService,
+                walletTransactions, auditService, events, new BidAmendmentWindow(new BidAmendmentProperties()),
+                alerts);
         a = new BidAmendmentEntity();
         BidAmendmentTestSupport.setId(a, UUID.randomUUID());
         a.setBidId(UUID.randomUUID());
@@ -68,16 +68,11 @@ class BidAmendmentCashLedgerTest {
         a.setCommissionAmount(new BigDecimal("3.60"));
     }
 
-    /** Colis puis modification, dans cet ordre ; le trajet entre les deux quand la transition peut clore. */
-    private void locked(boolean withTrip) {
+    /** Colis puis modification, dans cet ordre. */
+    private void locked() {
         when(amendments.findBidIdById(a.getId())).thenReturn(Optional.of(a.getBidId()));
         when(bids.lockForUpdate(a.getBidId())).thenReturn(1);
         when(amendments.findByIdAndBidIdForUpdate(a.getId(), a.getBidId())).thenReturn(Optional.of(a));
-        if (withTrip) {
-            BidEntity bid = new BidEntity();
-            bid.setAnnouncementId(a.getAnnouncementId());
-            when(bids.findById(a.getBidId())).thenReturn(Optional.of(bid));
-        }
     }
 
     @Test
@@ -100,39 +95,84 @@ class BidAmendmentCashLedgerTest {
     }
 
     @Test
-    @DisplayName("l'ordre des verrous est colis, trajet, modification quand la transition peut clore")
-    void commissionFailed_locksBidThenTripThenAmendment() {
-        locked(true);
+    @DisplayName("refus de la commission : PROPOSED, respondedAt remis à zéro, commission FAILED, rien de clos ni rendu")
+    void commissionFailed_revertsToProposed_withoutClosing() {
+        locked();
+        a.setRespondedAt(java.time.LocalDateTime.now());
 
         assertThat(ledger.commissionFailed(a.getId(), "pi_c", "x")).isTrue();
 
-        org.mockito.InOrder order = org.mockito.Mockito.inOrder(bids, announcements, amendments);
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(bids, amendments);
         order.verify(bids).lockForUpdate(a.getBidId());
-        order.verify(announcements).findByIdForUpdate(a.getAnnouncementId());
         order.verify(amendments).findByIdAndBidIdForUpdate(a.getId(), a.getBidId());
-        verify(service).cancelCommissionPending(a);
+        assertThat(a.getStatus()).isEqualTo(BidAmendmentStatus.PROPOSED);
+        assertThat(a.getRespondedAt()).isNull();
+        assertThat(a.getCommissionStatus()).isEqualTo(CommissionStatus.FAILED);
+        assertThat(a.getCommissionPaymentIntentId()).isEqualTo("pi_c");
+        assertThat(a.getClosedReason()).isNull();
+        verifyNoInteractions(service, walletService);
+        verify(events, never()).publishEvent(any(Object.class));
+    }
+
+    @Test
+    @DisplayName("refus sur une modification déjà close : seule la commission est marquée")
+    void commissionFailed_onClosedAmendment_marksCommissionOnly() {
+        locked();
+        a.setStatus(BidAmendmentStatus.CANCELLED);
+
+        assertThat(ledger.commissionFailed(a.getId(), null, "abandoned")).isTrue();
+
+        assertThat(a.getStatus()).isEqualTo(BidAmendmentStatus.CANCELLED);
+        assertThat(a.getCommissionStatus()).isEqualTo(CommissionStatus.FAILED);
+    }
+
+    @Test
+    @DisplayName("signal d'une ancienne PaymentIntent (essai précédent) : ignoré")
+    void commissionFailed_stalePaymentIntent_ignored() {
+        locked();
+        a.setCommissionPaymentIntentId("pi_new");
+
+        assertThat(ledger.commissionFailed(a.getId(), "pi_old", "canceled")).isFalse();
+
+        assertThat(a.getStatus()).isEqualTo(BidAmendmentStatus.COMMISSION_PENDING);
+        assertThat(a.getCommissionStatus()).isNull();
     }
 
     @Test
     @DisplayName("commission déjà prélevée, rendue ou refusée : un échec ne l'écrase jamais")
     void commissionFailed_neverOverwritesSettledCommission() {
-        locked(true);
+        locked();
         for (CommissionStatus status : List.of(CommissionStatus.CHARGED, CommissionStatus.REFUNDED,
                 CommissionStatus.REFUND_FAILED, CommissionStatus.FAILED)) {
             a.setCommissionStatus(status);
             assertThat(ledger.commissionFailed(a.getId(), "pi_c", "x")).isFalse();
             assertThat(a.getCommissionStatus()).isEqualTo(status);
         }
-        verify(service, never()).cancelCommissionPending(any());
+        assertThat(a.getStatus()).isEqualTo(BidAmendmentStatus.COMMISSION_PENDING);
 
+        a.setCommissionStatus(null);
         a.setRail(BidSupplementRail.STRIPE);
         assertThat(ledger.commissionFailed(a.getId(), "pi_c", "x")).isFalse();
     }
 
     @Test
+    @DisplayName("3DS d'un essai déclaré échoué qui aboutit finalement : la commission est payée, modification acquise")
+    void commissionCharged_onProposedAfterFailure_acceptsAmendment() {
+        locked();
+        a.setStatus(BidAmendmentStatus.PROPOSED);
+        a.setCommissionStatus(CommissionStatus.FAILED);
+        a.setCommissionPaymentIntentId("pi_c");
+
+        assertThat(ledger.commissionCharged(a.getId(), "pi_c", "webhook")).isEqualTo(ChargeOutcome.ACCEPTED);
+
+        assertThat(a.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
+        verify(service).markAccepted(a);
+    }
+
+    @Test
     @DisplayName("commission réussie : autre rail ou autre PaymentIntent ignorées, rejeu sans effet")
     void commissionCharged_guardsAndReplay() {
-        locked(false);
+        locked();
         a.setCommissionPaymentIntentId("pi_mine");
 
         assertThat(ledger.commissionCharged(a.getId(), "pi_other", "webhook")).isEqualTo(ChargeOutcome.IGNORED);
@@ -152,7 +192,7 @@ class BidAmendmentCashLedgerTest {
     @Test
     @DisplayName("webhook arrivé avant la pose de la PaymentIntent : elle est enregistrée puis la modification acquise")
     void commissionCharged_webhookBeforePaymentIntentRecorded() {
-        locked(false);
+        locked();
 
         assertThat(ledger.commissionCharged(a.getId(), "pi_c", "webhook")).isEqualTo(ChargeOutcome.ACCEPTED);
 
@@ -164,7 +204,7 @@ class BidAmendmentCashLedgerTest {
     @Test
     @DisplayName("commission arrivée sur une modification close : événement de remboursement, jamais acquise")
     void commissionCharged_onClosedAmendment_requestsRefund() {
-        locked(false);
+        locked();
         a.setStatus(BidAmendmentStatus.CANCELLED);
 
         assertThat(ledger.commissionCharged(a.getId(), "pi_c", "webhook")).isEqualTo(ChargeOutcome.LATE_REFUND);
@@ -176,7 +216,7 @@ class BidAmendmentCashLedgerTest {
     @Test
     @DisplayName("3DS : la PaymentIntent est posée une fois, le statut REQUIRES_3DS seulement en attente")
     void requiresAction_recordsPaymentIntentOnce() {
-        locked(false);
+        locked();
 
         assertThat(ledger.commissionRequiresAction(a.getId(), "pi_c").getCommissionStatus())
                 .isEqualTo(CommissionStatus.REQUIRES_3DS);
@@ -191,7 +231,7 @@ class BidAmendmentCashLedgerTest {
     @Test
     @DisplayName("recrédit du solde : refusé hors statut remboursable, hors portefeuille ou déjà rendu")
     void refundWallet_guards() {
-        locked(false);
+        locked();
         a.setCommissionChargedVia(CommissionChargedVia.WALLET);
         a.setCommissionStatus(CommissionStatus.CHARGED);
 
@@ -209,7 +249,7 @@ class BidAmendmentCashLedgerTest {
     @Test
     @DisplayName("recrédit sans ligne au grand livre : commission marquée rendue, rien de crédité")
     void refundWallet_noLedgerLines_stillClosesCommission() {
-        locked(false);
+        locked();
         a.setStatus(BidAmendmentStatus.CANCELLED);
         a.setCommissionChargedVia(CommissionChargedVia.WALLET);
         a.setCommissionStatus(CommissionStatus.CHARGED);
@@ -221,12 +261,14 @@ class BidAmendmentCashLedgerTest {
         assertThat(a.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
         assertThat(a.getStatus()).as("une modification close garde son statut").isEqualTo(BidAmendmentStatus.CANCELLED);
         verifyNoInteractions(walletService);
+        verify(alerts).raiseOnce(eq("AMEND_COMM_NO_LEDGER_" + a.getId()), org.mockito.ArgumentMatchers.anyString(),
+                anyMap());
     }
 
     @Test
     @DisplayName("recrédit : une ligne à zéro ne crédite rien")
     void refundWallet_zeroLineSkipped() {
-        locked(false);
+        locked();
         a.setStatus(BidAmendmentStatus.DECLINED);
         a.setCommissionChargedVia(CommissionChargedVia.WALLET);
         a.setCommissionStatus(CommissionStatus.CHARGED);
@@ -236,7 +278,7 @@ class BidAmendmentCashLedgerTest {
 
         assertThat(ledger.refundWallet(a.getId())).isTrue();
 
-        verifyNoInteractions(walletService);
+        verifyNoInteractions(walletService, alerts);
     }
 
     @Test
@@ -262,7 +304,7 @@ class BidAmendmentCashLedgerTest {
     @Test
     @DisplayName("remboursement constaté chez Stripe : la commission seule change, la modification vivante garde son statut")
     void cardRefunded_notSettling_keepsAmendmentStatus() {
-        locked(false);
+        locked();
         a.setStatus(BidAmendmentStatus.ACCEPTED);
         a.setCommissionStatus(CommissionStatus.CHARGED);
 
@@ -276,7 +318,7 @@ class BidAmendmentCashLedgerTest {
     @Test
     @DisplayName("Refund échoué après coup : REFUNDED → REFUND_FAILED seulement")
     void commissionRefundFailed_onlyFromRefunded() {
-        locked(false);
+        locked();
         a.setCommissionStatus(CommissionStatus.CHARGED);
         assertThat(ledger.commissionRefundFailed(a.getId(), "re_1")).isFalse();
 
@@ -288,7 +330,7 @@ class BidAmendmentCashLedgerTest {
     @Test
     @DisplayName("fin d'une acceptée sans commission à rendre : refusée si la commission est encore à rendre")
     void closeAccepted_refusedWhileCommissionStillDue() {
-        locked(false);
+        locked();
         a.setStatus(BidAmendmentStatus.ACCEPTED);
         a.setCommissionStatus(CommissionStatus.CHARGED);
         assertThat(ledger.closeAccepted(a.getId())).isFalse();

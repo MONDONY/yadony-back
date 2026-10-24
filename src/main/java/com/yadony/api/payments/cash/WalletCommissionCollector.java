@@ -1,10 +1,13 @@
 package com.yadony.api.payments.cash;
 
+import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.cash.dto.FundingAlternativeDto;
+import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.currency.ExchangeRateService;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.wallet.WalletService;
 import com.yadony.api.payments.wallet.WalletTransactionType;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -219,6 +222,23 @@ public class WalletCommissionCollector {
         }
     }
 
+    /**
+     * Devise de complément d'une commission annexe (supplément, modification) : celle choisie par le voyageur
+     * (code supporté, sinon 422 {@code funding-currency-invalid}), sa devise active sinon.
+     */
+    public static String complementCurrency(ActiveCurrencyResolver activeCurrencyResolver, UUID travelerId,
+                                            String fundingCurrency) {
+        if (fundingCurrency == null || fundingCurrency.isBlank()) {
+            return normalize(activeCurrencyResolver.resolve(travelerId));
+        }
+        String code = normalize(fundingCurrency);
+        if (SupportedCurrency.fromCode(code) == null) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "funding-currency-invalid",
+                    "Invalid Funding Currency", "Devise de prélèvement inconnue");
+        }
+        return code;
+    }
+
     /** Solde débitable sous verrou : zéro si la devise est gelée (jamais verrouillée alors). */
     private BigDecimal lockedBalance(UUID travelerId, String code) {
         if (walletService.isFrozen(travelerId, code)) {
@@ -233,7 +253,8 @@ public class WalletCommissionCollector {
         }
     }
 
-    private static String normalize(String currency) {
+    /** Code de devise comparable : sans espaces, en majuscules ({@code ""} si absent). */
+    public static String normalize(String currency) {
         return currency == null ? "" : currency.trim().toUpperCase(Locale.ROOT);
     }
 }

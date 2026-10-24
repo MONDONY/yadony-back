@@ -1,8 +1,7 @@
 package com.yadony.api.payments.amendment;
 
+import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.common.AuditService;
-import com.yadony.api.matching.AnnouncementRepository;
-import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.payments.amendment.events.BidAmendmentRefundRequestedEvent;
 import com.yadony.api.payments.amendment.events.BidAmendmentRefundedEvent;
@@ -35,9 +34,9 @@ import java.util.UUID;
  * et {@link BidAmendmentCashRefunds}, entre deux de ces transactions). Toute transition relit l'état sous verrou :
  * un rejeu (webhook, confirmation de l'app, filet) ne produit aucun second effet.
  *
- * <p>Ordre des verrous : colis, puis trajet quand la transition peut clore la modification (kilos rendus), puis
- * modification. Une action qui ne verrouille que la modification créerait un interblocage avec les chemins du
- * colis ({@code BidAmendmentService}, remise).
+ * <p>Ordre des verrous : colis, puis modification. Une action qui ne verrouille que la modification créerait un
+ * interblocage avec les chemins du colis ({@code BidAmendmentService}, remise). Aucune transition d'ici ne
+ * clôt la modification ni ne rend de kilos (un refus de carte la remet en {@code PROPOSED}).
  *
  * <p>La commission principale du colis ({@code bids.commission_*}) n'est JAMAIS touchée ici.
  */
@@ -73,26 +72,27 @@ public class BidAmendmentCashLedger {
     private final BidAmendmentRepository amendments;
     private final BidAmendmentService service;
     private final BidRepository bids;
-    private final AnnouncementRepository announcements;
     private final WalletService walletService;
     private final WalletTransactionRepository walletTransactions;
     private final AuditService auditService;
     private final ApplicationEventPublisher events;
     private final BidAmendmentWindow window;
+    private final AdminAlertEscalator alerts;
 
     public BidAmendmentCashLedger(BidAmendmentRepository amendments, BidAmendmentService service, BidRepository bids,
-                                  AnnouncementRepository announcements, WalletService walletService,
+                                  WalletService walletService,
                                   WalletTransactionRepository walletTransactions, AuditService auditService,
-                                  ApplicationEventPublisher events, BidAmendmentWindow window) {
+                                  ApplicationEventPublisher events, BidAmendmentWindow window,
+                                  AdminAlertEscalator alerts) {
         this.amendments = amendments;
         this.service = service;
         this.bids = bids;
-        this.announcements = announcements;
         this.walletService = walletService;
         this.walletTransactions = walletTransactions;
         this.auditService = auditService;
         this.events = events;
         this.window = window;
+        this.alerts = alerts;
     }
 
     /** Lecture fraîche, sans verrou. */
@@ -104,7 +104,7 @@ public class BidAmendmentCashLedger {
     /** PaymentIntent de commission en attente de la 3DS du voyageur. */
     @Transactional
     public BidAmendmentEntity commissionRequiresAction(UUID amendmentId, String paymentIntentId) {
-        BidAmendmentEntity a = lock(amendmentId, false).orElseThrow();
+        BidAmendmentEntity a = lock(amendmentId).orElseThrow();
         if (a.getCommissionPaymentIntentId() == null) {
             a.setCommissionPaymentIntentId(paymentIntentId);
         }
@@ -124,7 +124,7 @@ public class BidAmendmentCashLedger {
      */
     @Transactional
     public ChargeOutcome commissionCharged(UUID amendmentId, String paymentIntentId, String source) {
-        BidAmendmentEntity a = lock(amendmentId, false).orElse(null);
+        BidAmendmentEntity a = lock(amendmentId).orElse(null);
         if (a == null || a.getRail() != BidSupplementRail.CASH) {
             log.warn("Commission {} d'une modification inconnue ou hors rail espèces {} ({})", paymentIntentId,
                     amendmentId, source);
@@ -150,7 +150,8 @@ public class BidAmendmentCashLedger {
         Map<String, Object> extra = new LinkedHashMap<>();
         extra.put("piId", String.valueOf(paymentIntentId));
         extra.put("source", source);
-        if (a.getStatus() == BidAmendmentStatus.COMMISSION_PENDING) {
+        if (a.getStatus() == BidAmendmentStatus.COMMISSION_PENDING || a.getStatus() == BidAmendmentStatus.PROPOSED) {
+            // PROPOSED : la 3DS d'un essai déclaré échoué a finalement abouti, la commission est payée.
             audit(a, "BID_AMENDMENT_COMMISSION_CHARGED_CARD", a.getTravelerId(), extra);
             service.markAccepted(a);
             return ChargeOutcome.ACCEPTED;
@@ -164,14 +165,17 @@ public class BidAmendmentCashLedger {
 
     /**
      * Commission non prélevée : carte refusée, 3DS échouée ou abandonnée, PaymentIntent annulé. Modification en
-     * attente de sa commission : annulée ({@link BidAmendmentClosedReason#COMMISSION_FAILED}), kilos rendus,
-     * l'expéditeur prévenu par l'événement de clôture. Une commission déjà prélevée n'est jamais écrasée.
+     * attente de sa commission : elle repasse en {@code PROPOSED} ({@code respondedAt} remis à zéro, commission
+     * {@code FAILED}), kilos gardés et rien débité : le voyageur peut réessayer d'accepter, avec le portefeuille
+     * ou une autre carte, jusqu'à {@code expiresAt}. L'expéditeur n'en voit rien. Sur une modification déjà close,
+     * seule la commission est marquée. Une commission déjà prélevée n'est jamais écrasée, et un signal d'une
+     * ancienne PaymentIntent (essai précédent) est ignoré.
      *
      * @return vrai si l'état a changé.
      */
     @Transactional
     public boolean commissionFailed(UUID amendmentId, String paymentIntentId, String reason) {
-        BidAmendmentEntity a = lock(amendmentId, true).orElse(null);
+        BidAmendmentEntity a = lock(amendmentId).orElse(null);
         if (a == null || a.getRail() != BidSupplementRail.CASH) {
             return false;
         }
@@ -180,14 +184,21 @@ public class BidAmendmentCashLedger {
                 || current == CommissionStatus.REFUND_FAILED || current == CommissionStatus.FAILED) {
             return false;
         }
+        if (a.getCommissionPaymentIntentId() != null && paymentIntentId != null
+                && !a.getCommissionPaymentIntentId().equals(paymentIntentId)) {
+            return false;
+        }
         if (a.getCommissionPaymentIntentId() == null && paymentIntentId != null) {
             a.setCommissionPaymentIntentId(paymentIntentId);
         }
         a.setCommissionChargedVia(CommissionChargedVia.CARD);
         a.setCommissionStatus(CommissionStatus.FAILED);
+        if (a.getStatus() == BidAmendmentStatus.COMMISSION_PENDING) {
+            a.setStatus(BidAmendmentStatus.PROPOSED);
+            a.setRespondedAt(null);
+        }
         amendments.save(a);
         audit(a, "BID_AMENDMENT_COMMISSION_FAILED", a.getTravelerId(), Map.of("reason", String.valueOf(reason)));
-        service.cancelCommissionPending(a);
         return true;
     }
 
@@ -201,7 +212,7 @@ public class BidAmendmentCashLedger {
      */
     @Transactional
     public boolean refundWallet(UUID amendmentId) {
-        BidAmendmentEntity a = lock(amendmentId, false).orElse(null);
+        BidAmendmentEntity a = lock(amendmentId).orElse(null);
         if (a == null || a.getRail() != BidSupplementRail.CASH
                 || !SETTLEABLE.contains(a.getStatus())
                 || a.getCommissionChargedVia() != CommissionChargedVia.WALLET
@@ -222,7 +233,13 @@ public class BidAmendmentCashLedger {
                     paymentRef, key, a.getBidId());
         }
         if (lines.isEmpty()) {
+            // Commission marquée prélevée mais jamais débitée : rien à recréditer, la perte ne doit pas passer inaperçue.
             log.warn("Modification {} : commission prélevée sur le solde sans ligne au grand livre", amendmentId);
+            alerts.raiseOnce("AMEND_COMM_NO_LEDGER_" + amendmentId,
+                    "Commission de la modification " + amendmentId
+                            + " prélevée sur le solde sans ligne au grand livre : rien n'a pu être recrédité",
+                    Map.of("amendmentId", amendmentId.toString(), "bidId", a.getBidId().toString(),
+                            "travelerId", a.getTravelerId().toString()));
         }
         commissionRefunded(a, Map.of("via", "WALLET"), true);
         return true;
@@ -251,7 +268,7 @@ public class BidAmendmentCashLedger {
      */
     @Transactional
     public boolean cardRefunded(UUID amendmentId, String refundId, String source, boolean settling) {
-        BidAmendmentEntity a = lock(amendmentId, false).orElse(null);
+        BidAmendmentEntity a = lock(amendmentId).orElse(null);
         if (a == null || a.getRail() != BidSupplementRail.CASH
                 || a.getCommissionStatus() != CommissionStatus.CHARGED) {
             return false;
@@ -271,7 +288,7 @@ public class BidAmendmentCashLedger {
      */
     @Transactional
     public boolean commissionRefundFailed(UUID amendmentId, String refundId) {
-        BidAmendmentEntity a = lock(amendmentId, false).orElse(null);
+        BidAmendmentEntity a = lock(amendmentId).orElse(null);
         if (a == null || a.getRail() != BidSupplementRail.CASH
                 || a.getCommissionStatus() != CommissionStatus.REFUNDED) {
             return false;
@@ -290,7 +307,7 @@ public class BidAmendmentCashLedger {
      */
     @Transactional
     public boolean closeAccepted(UUID amendmentId) {
-        BidAmendmentEntity a = lock(amendmentId, false).orElse(null);
+        BidAmendmentEntity a = lock(amendmentId).orElse(null);
         if (a == null || a.getRail() != BidSupplementRail.CASH
                 || a.getStatus() != BidAmendmentStatus.ACCEPTED
                 || (a.getCommissionStatus() != null && a.getCommissionStatus() != CommissionStatus.REFUNDED
@@ -340,19 +357,14 @@ public class BidAmendmentCashLedger {
     }
 
     /**
-     * Verrous dans l'ordre colis, puis trajet si {@code withTrip}, puis modification. Vide si la modification est
-     * introuvable.
-     *
-     * @param withTrip vrai quand la transition peut clore la modification : rendre ses kilos exige le verrou du
-     *                 trajet, pris AVANT celui de la modification.
+     * Verrous dans l'ordre colis, puis modification (jamais la modification seule : interblocage avec les chemins
+     * du colis). Aucune de ces transitions ne rend de kilos, le verrou du trajet n'est donc pas nécessaire. Vide
+     * si la modification est introuvable.
      */
-    private Optional<BidAmendmentEntity> lock(UUID amendmentId, boolean withTrip) {
+    private Optional<BidAmendmentEntity> lock(UUID amendmentId) {
         Optional<UUID> bidId = amendments.findBidIdById(amendmentId);
         if (bidId.isEmpty() || bids.lockForUpdate(bidId.get()) == 0) {
             return Optional.empty();
-        }
-        if (withTrip) {
-            bids.findById(bidId.get()).map(BidEntity::getAnnouncementId).flatMap(announcements::findByIdForUpdate);
         }
         return amendments.findByIdAndBidIdForUpdate(amendmentId, bidId.get());
     }

@@ -30,8 +30,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
-import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -47,7 +47,11 @@ import java.util.UUID;
  *   <li>{@code CARD} : carte commission du voyageur, débitée APRÈS le commit de l'acceptation (jamais d'appel
  *       Stripe sous le verrou du colis). La modification attend en {@code COMMISSION_PENDING}, pendant
  *       {@code commissionConfirmWindow} à compter de {@code respondedAt} ; une 3DS renvoie
- *       {@code commissionClientSecret}, puis {@link #confirmCommission} (ou le webhook) la rend acquise.</li>
+ *       {@code commissionClientSecret}, puis {@link #confirmCommission} (ou le webhook) la rend acquise.
+ *       Carte refusée ou 3DS échouée : la modification repasse en {@code PROPOSED} (commission {@code FAILED},
+ *       kilos gardés) et le voyageur peut réessayer d'accepter jusqu'à {@code expiresAt}, avec le portefeuille
+ *       ou une autre carte (nouvelle PaymentIntent, clé d'idempotence neuve) ; échéance de
+ *       {@code commissionConfirmWindow} sans réponse : annulée ({@code COMMISSION_NOT_CONFIRMED}).</li>
  * </ul>
  * La commission est rendue si la modification n'aboutit pas ({@link BidAmendmentCashRefunds}). Ni bon de
  * parrainage, ni code promo, ni {@code bids.commission_*} : la commission principale du colis reste intacte. Une
@@ -106,6 +110,11 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
             service.markAccepted(a);
             return response(a, null);
         }
+        if (a.getCommissionStatus() == CommissionStatus.FAILED) {
+            // Nouvel essai après un refus de la carte ou une 3DS échouée : l'ancienne PaymentIntent n'est plus la sienne.
+            a.setCommissionStatus(null);
+            a.setCommissionPaymentIntentId(null);
+        }
         CommissionSource source = request == null || request.commissionSource() == null
                 ? CommissionSource.WALLET_FIRST : request.commissionSource();
         if (source == CommissionSource.CARD) {
@@ -131,8 +140,9 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
      * modification reste {@code PROPOSED}.
      */
     private void chargeWallet(BidAmendmentEntity a, String fundingCurrency) {
-        String bidCurrency = normalize(a.getCurrency());
-        String complement = complementCurrency(a.getTravelerId(), fundingCurrency);
+        String bidCurrency = WalletCommissionCollector.normalize(a.getCurrency());
+        String complement = WalletCommissionCollector.complementCurrency(activeCurrencyResolver,
+                a.getTravelerId(), fundingCurrency);
         BigDecimal commission = a.getCommissionAmount();
         CommissionSplit split = collector.plan(a.getTravelerId(), bidCurrency, complement, commission);
         if (!split.covered()) {
@@ -162,19 +172,6 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
                 collector.alternatives(travelerId, bidCurrency, complement, commission));
     }
 
-    /** Devise de complément : celle choisie (code supporté, sinon 422), la devise active sinon. */
-    private String complementCurrency(UUID travelerId, String fundingCurrency) {
-        if (fundingCurrency == null || fundingCurrency.isBlank()) {
-            return normalize(activeCurrencyResolver.resolve(travelerId));
-        }
-        String code = normalize(fundingCurrency);
-        if (SupportedCurrency.fromCode(code) == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "funding-currency-invalid",
-                    "Invalid Funding Currency", "Devise de prélèvement inconnue");
-        }
-        return code;
-    }
-
     /** Après le commit de l'acceptation : la carte commission est débitée (hors verrou du colis). */
     @Override
     public AmendmentAcceptResponse afterAcceptCommit(AmendmentAcceptResponse accepted) {
@@ -187,8 +184,8 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
     /**
      * Débit de la carte commission du voyageur, présent dans l'app : confirmation immédiate SANS
      * {@code off_session}, pour qu'une 3DS revienne en {@code requires_action} (et non en refus
-     * {@code authentication_required}). Clé {@code amendment_commission_<id>_v1} : une seule tentative par
-     * modification, une carte refusée la clôt. Après une erreur Stripe d'issue inconnue (502/503),
+     * {@code authentication_required}). Clé {@code amendment_commission_<id>_<essai>} ({@link #commissionKey}) : une
+     * PaymentIntent par essai. Après une erreur Stripe d'issue inconnue (502/503),
      * {@link #confirmCommission} relance cet appel avec la même clé : Stripe rend la même PaymentIntent, jamais
      * un second débit.
      */
@@ -223,7 +220,7 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
                 .build();
         PaymentIntentView pi;
         try {
-            pi = gateway.createPaymentIntent(params, commissionKey(a.getId()));
+            pi = gateway.createPaymentIntent(params, commissionKey(a));
         } catch (CardException e) {
             ledger.commissionFailed(amendmentId, null, "card-declined:" + e.getCode());
             throw cardDeclined(e.getCode());
@@ -303,6 +300,9 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
             default -> {
                 // requires_payment_method (refus ou 3DS échouée), canceled : rien n'a été prélevé.
                 ledger.commissionFailed(amendmentId, pi.id(), "status-" + status);
+                if (!pi.canceled()) {
+                    cancelQuietly(amendmentId, pi.id());
+                }
                 throw cardDeclined(null);
             }
         }
@@ -337,8 +337,14 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
         }
     }
 
-    static String commissionKey(UUID amendmentId) {
-        return "amendment_commission_" + amendmentId + "_v1";
+    /**
+     * Clé d'idempotence du débit : une par essai. {@code respondedAt} est posé à chaque acceptation par carte et
+     * remis à zéro par un échec : un nouvel essai a une clé neuve (sinon Stripe renverrait la PaymentIntent
+     * échouée du précédent), alors qu'un rejeu du même essai (502, confirmation) retrouve la même PaymentIntent.
+     */
+    static String commissionKey(BidAmendmentEntity a) {
+        long attempt = a.getRespondedAt() == null ? 0 : a.getRespondedAt().toInstant(ZoneOffset.UTC).toEpochMilli();
+        return "amendment_commission_" + a.getId() + "_" + attempt;
     }
 
     private BidAmendmentEntity reload(UUID amendmentId) {
@@ -360,15 +366,11 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
         }
         return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "amendment-commission-card-declined",
                 "Commission Card Declined",
-                "Votre carte commission a été refusée : rien n'a été prélevé et la modification est annulée", props);
+                "Votre carte commission a été refusée : rien n'a été prélevé, vous pouvez réessayer d'accepter", props);
     }
 
     private static YadonyBusinessException notFound() {
         return new YadonyBusinessException(HttpStatus.NOT_FOUND, "amendment-not-found", "Amendment Not Found",
                 "Modification introuvable");
-    }
-
-    private static String normalize(String currency) {
-        return currency == null ? "" : currency.trim().toUpperCase(Locale.ROOT);
     }
 }

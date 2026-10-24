@@ -318,21 +318,6 @@ public class BidAmendmentService {
         audit(a, "BID_AMENDMENT_ACCEPTED", a.getTravelerId(), Map.of());
     }
 
-    /**
-     * Commission du voyageur refusée (carte refusée, 3DS échouée) : la demande n'aboutira pas. Annulée
-     * ({@code COMMISSION_FAILED}), kilos rendus, rail prévenu, événement publié. Appelé par le rail espèces sous
-     * les verrous du colis, du trajet et de la modification.
-     *
-     * @return vrai si la modification attendait sa commission et a été close.
-     */
-    public boolean cancelCommissionPending(BidAmendmentEntity a) {
-        if (a.getStatus() != BidAmendmentStatus.COMMISSION_PENDING) {
-            return false;
-        }
-        close(a, BidAmendmentStatus.CANCELLED, BidAmendmentClosedReason.COMMISSION_FAILED, a.getTravelerId());
-        return true;
-    }
-
     // ── Expiration ───────────────────────────────────────────────────────────
 
     /**
