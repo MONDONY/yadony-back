@@ -260,6 +260,8 @@ class NotificationTextsTest {
         map.put("bidAmendmentExpiredForTraveler", NotificationTexts.bidAmendmentExpiredForTraveler(m, false));
         map.put("bidAmendmentExpiredForTraveler impayée", NotificationTexts.bidAmendmentExpiredForTraveler(m, true));
         map.put("bidAmendmentCancelledCaptureForSender", NotificationTexts.bidAmendmentCancelledCaptureForSender(m));
+        map.put("bidAmendmentCancelledCommissionForSender",
+                NotificationTexts.bidAmendmentCancelledCommissionForSender(m));
         map.put("bidAmendmentCancelledForTraveler", NotificationTexts.bidAmendmentCancelledForTraveler(m));
         map.put("bidAmendmentCancelledBySenderForTraveler",
                 NotificationTexts.bidAmendmentCancelledBySenderForTraveler(m));

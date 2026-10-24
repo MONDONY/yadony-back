@@ -937,6 +937,11 @@ public final class NotificationTexts {
         return amendmentText(m, "cancelled", "sender-capture-body");
     }
 
+    /** Commission du voyageur jamais confirmée : l'expéditeur, qui attendait une réponse, apprend la fin de sa demande. */
+    public static NotificationText bidAmendmentCancelledCommissionForSender(Messages m) {
+        return amendmentText(m, "cancelled", "sender-commission-body");
+    }
+
     public static NotificationText bidAmendmentCancelledForTraveler(Messages m) {
         return amendmentText(m, "cancelled", "traveler-body");
     }

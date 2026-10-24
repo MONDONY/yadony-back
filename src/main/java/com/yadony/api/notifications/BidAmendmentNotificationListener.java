@@ -97,11 +97,17 @@ public class BidAmendmentNotificationListener {
     }
 
     private void onCancelled(BidAmendmentClosedEvent.Cancelled e) {
-        boolean captureFailed = e.closedReason() == BidAmendmentClosedReason.CAPTURE_FAILED;
-        if (captureFailed) {
-            notify(e.senderId(), NotificationTexts.bidAmendmentCancelledCaptureForSender(
-                            dispatcher.messagesFor(e.senderId())),
-                    BidAmendmentNotifications.CANCELLED, e.bidId(), e.amendmentId());
+        // L'expéditeur n'est prévenu que quand sa demande lui avait été confirmée en attente d'une réponse :
+        // capture de sa carte échouée, ou commission du voyageur jamais confirmée.
+        NotificationText forSender = switch (e.closedReason()) {
+            case CAPTURE_FAILED -> NotificationTexts.bidAmendmentCancelledCaptureForSender(
+                    dispatcher.messagesFor(e.senderId()));
+            case COMMISSION_NOT_CONFIRMED -> NotificationTexts.bidAmendmentCancelledCommissionForSender(
+                    dispatcher.messagesFor(e.senderId()));
+            default -> null;
+        };
+        if (forSender != null) {
+            notify(e.senderId(), forSender, BidAmendmentNotifications.CANCELLED, e.bidId(), e.amendmentId());
         }
         if (e.previousStatus() == BidAmendmentStatus.AUTHORIZATION_PENDING) {
             // Jamais présentée au voyageur (carte encore en autorisation) : il n'a rien à apprendre.
