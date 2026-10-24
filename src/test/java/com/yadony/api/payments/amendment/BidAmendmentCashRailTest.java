@@ -519,7 +519,7 @@ class BidAmendmentCashRailTest {
 
         rail.chargeCard(a.getId());
 
-        verify(alerts).raiseOnce(eq("AMEND_COMM_PI_UNCANCELED_pi_1"), anyString(), org.mockito.ArgumentMatchers.anyMap());
+        verify(alerts).raiseOnce(eq("AMEND_COMM_PI_UNCANCEL_pi_1"), anyString(), org.mockito.ArgumentMatchers.anyMap());
         verify(gateway).createPaymentIntent(any(), anyString());
     }
 
@@ -588,11 +588,11 @@ class BidAmendmentCashRailTest {
 
         verify(ledger).commissionCharged(a.getId(), "pi_ok", "7", "cancel-refused");
         verify(ledger, never()).commissionCharged(eq(a.getId()), eq("pi_canceled"), any(), any());
-        verify(alerts).raiseOnce(eq("AMEND_COMM_PI_UNCANCELED_pi_alive"), anyString(),
+        verify(alerts).raiseOnce(eq("AMEND_COMM_PI_UNCANCEL_pi_alive"), anyString(),
                 org.mockito.ArgumentMatchers.anyMap());
-        verify(alerts).raiseOnce(eq("AMEND_COMM_PI_UNCANCELED_pi_unreadable"), anyString(),
+        verify(alerts).raiseOnce(eq("AMEND_COMM_PI_UNCANCEL_pi_unreadable"), anyString(),
                 org.mockito.ArgumentMatchers.anyMap());
-        verify(alerts, never()).raiseOnce(eq("AMEND_COMM_PI_UNCANCELED_pi_canceled"), anyString(),
+        verify(alerts, never()).raiseOnce(eq("AMEND_COMM_PI_UNCANCEL_pi_canceled"), anyString(),
                 org.mockito.ArgumentMatchers.anyMap());
     }
 
