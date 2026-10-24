@@ -34,13 +34,15 @@ class BidAmendmentStripeWebhookRouterTest {
     @Mock BidAmendmentCashLedger cashLedger;
     @Mock BidAmendmentRepository amendments;
     @Mock AdminAlertEscalator alerts;
+    @Mock com.yadony.api.payments.supplement.StripeSupplementGateway gateway;
 
     private BidAmendmentStripeWebhookRouter router;
     private BidAmendmentEntity a;
 
     @BeforeEach
     void setUp() {
-        router = new BidAmendmentStripeWebhookRouter(cashRail, cashLedger, amendments, alerts, new ObjectMapper());
+        router = new BidAmendmentStripeWebhookRouter(cashRail, cashLedger, amendments, alerts, gateway,
+                new ObjectMapper());
         a = new BidAmendmentEntity();
         BidAmendmentTestSupport.setId(a, UUID.randomUUID());
         a.setBidId(UUID.randomUUID());
@@ -57,7 +59,7 @@ class BidAmendmentStripeWebhookRouterTest {
     private String commissionPi(UUID amendmentId) {
         return "{\"id\":\"pi_c\",\"object\":\"payment_intent\",\"status\":\"succeeded\","
                 + "\"last_payment_error\":{\"code\":\"card_declined\"},\"metadata\":{\"bid_amendment_id\":\""
-                + amendmentId + "\",\"commission_purpose\":\"bid_amendment_commission\"}}";
+                + amendmentId + "\",\"commission_purpose\":\"bid_amendment_commission\",\"commission_attempt\":\"7\"}}";
     }
 
     @Test
@@ -66,8 +68,8 @@ class BidAmendmentStripeWebhookRouterTest {
         assertThat(router.handle(event("payment_intent.succeeded", commissionPi(a.getId())))).isTrue();
         assertThat(router.handle(event("payment_intent.payment_failed", commissionPi(a.getId())))).isTrue();
 
-        verify(cashRail).onCommissionWebhook("payment_intent.succeeded", a.getId(), "pi_c", "card_declined");
-        verify(cashRail).onCommissionWebhook("payment_intent.payment_failed", a.getId(), "pi_c", "card_declined");
+        verify(cashRail).onCommissionWebhook("payment_intent.succeeded", a.getId(), "pi_c", "7", "card_declined");
+        verify(cashRail).onCommissionWebhook("payment_intent.payment_failed", a.getId(), "pi_c", "7", "card_declined");
     }
 
     @Test
@@ -118,6 +120,7 @@ class BidAmendmentStripeWebhookRouterTest {
     }
 
     private void commissionLookup() {
+        a.setCommissionPaymentIntentId("pi_c");
         when(amendments.findByCommissionPaymentIntentId("pi_c")).thenReturn(Optional.of(a));
     }
 
@@ -217,6 +220,96 @@ class BidAmendmentStripeWebhookRouterTest {
                 + "\"payment_intent\":\"pi_other\",\"status\":\"failed\"}"))).isFalse();
         assertThat(router.handle(event("charge.dispute.created", "{\"id\":\"dp_o\",\"object\":\"dispute\","
                 + "\"payment_intent\":\"pi_other\"}"))).isFalse();
+        verifyNoInteractions(cashLedger, alerts);
+    }
+
+    // ── PaymentIntent d'un essai précédent : retrouvée par la métadonnée ─────
+
+    private String staleCharge(String extra) {
+        return "{\"id\":\"ch_old\",\"object\":\"charge\",\"payment_intent\":\"pi_old\"," + extra
+                + "\"metadata\":{\"bid_amendment_id\":\"" + a.getId()
+                + "\",\"commission_purpose\":\"bid_amendment_commission\"}}";
+    }
+
+    private void currentPaymentIntentIsAnother() {
+        a.setCommissionPaymentIntentId("pi_new");
+        when(amendments.findByCommissionPaymentIntentId("pi_old")).thenReturn(Optional.empty());
+        when(amendments.findById(a.getId())).thenReturn(Optional.of(a));
+    }
+
+    @Test
+    @DisplayName("charge remboursée d'un essai précédent : retrouvée par la métadonnée, tracée, la commission courante n'est pas touchée")
+    void staleCharge_refunded_auditedOnly() {
+        currentPaymentIntentIsAnother();
+
+        assertThat(router.handle(event("charge.refunded", staleCharge("\"amount\":360,\"amount_refunded\":360,"))))
+                .isTrue();
+
+        verify(cashLedger).auditOnly(eq(a.getId()), eq("BID_AMENDMENT_STALE_COMMISSION_REFUND_CONFIRMED"), anyMap());
+        verify(cashLedger, never()).cardRefunded(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyBoolean());
+        verifyNoInteractions(alerts);
+    }
+
+    @Test
+    @DisplayName("Refund échoué d'une commission d'un essai précédent : alerte, la commission courante n'est pas touchée")
+    void staleRefund_failed_alertsOnly() {
+        currentPaymentIntentIsAnother();
+
+        assertThat(router.handle(event("charge.refund.updated", "{\"id\":\"re_1\",\"object\":\"refund\","
+                + "\"payment_intent\":\"pi_old\",\"status\":\"failed\",\"failure_reason\":\"lost_or_stolen_card\","
+                + "\"metadata\":{\"bid_amendment_id\":\"" + a.getId()
+                + "\",\"commission_purpose\":\"bid_amendment_commission\"}}"))).isTrue();
+
+        verify(alerts).raiseOnce(eq("AMEND_STALE_RFD_FAIL_re_1"), anyString(), anyMap());
+        verify(cashLedger, never()).commissionRefundFailed(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    @DisplayName("litige sur la charge d'un essai précédent : métadonnée relue chez Stripe, alerte")
+    void staleDispute_metadataReadFromStripe() throws Exception {
+        currentPaymentIntentIsAnother();
+        when(gateway.retrieveMetadata("pi_old")).thenReturn(java.util.Map.of("bid_amendment_id",
+                a.getId().toString(), "commission_purpose", "bid_amendment_commission"));
+
+        assertThat(router.handle(event("charge.dispute.created", "{\"id\":\"dp_1\",\"object\":\"dispute\","
+                + "\"payment_intent\":\"pi_old\",\"status\":\"needs_response\"}"))).isTrue();
+
+        verify(cashLedger).auditOnly(eq(a.getId()), eq("BID_AMENDMENT_CHARGEBACK"), anyMap());
+        verify(alerts).raiseOnce(eq("AMEND_CHARGEBACK_" + a.getId()), anyString(), anyMap());
+    }
+
+    @Test
+    @DisplayName("litige dont la PaymentIntent n'est pas une commission, illisible ou d'un autre type : passe la main")
+    void dispute_notACommission_passesThrough() throws Exception {
+        when(amendments.findByCommissionPaymentIntentId(anyString())).thenReturn(Optional.empty());
+        when(gateway.retrieveMetadata("pi_bid")).thenReturn(java.util.Map.of("bid_id", "b1"));
+        when(gateway.retrieveMetadata("pi_down")).thenThrow(new com.stripe.exception.ApiConnectionException("timeout"));
+        when(gateway.retrieveMetadata("pi_bad")).thenReturn(java.util.Map.of("bid_amendment_id", "pas-un-uuid",
+                "commission_purpose", "bid_amendment_commission"));
+
+        for (String pi : java.util.List.of("pi_bid", "pi_down", "pi_bad")) {
+            assertThat(router.handle(event("charge.dispute.created", "{\"id\":\"dp_x\",\"object\":\"dispute\","
+                    + "\"payment_intent\":\"" + pi + "\"}"))).isFalse();
+        }
+        assertThat(router.handle(event("charge.dispute.created", "{\"id\":\"dp_y\",\"object\":\"dispute\"}")))
+                .isFalse();
+        verifyNoInteractions(cashLedger, alerts);
+    }
+
+    @Test
+    @DisplayName("charge dont la métadonnée est celle d'un autre usage ou d'une modification inconnue : passe la main")
+    void charge_foreignOrUnknownMetadata_passesThrough() {
+        when(amendments.findByCommissionPaymentIntentId("pi_old")).thenReturn(Optional.empty());
+        when(amendments.findById(a.getId())).thenReturn(Optional.empty());
+
+        assertThat(router.handle(event("charge.refunded", staleCharge("\"amount\":100,\"amount_refunded\":100,"))))
+                .isFalse();
+        assertThat(router.handle(event("charge.refunded", "{\"id\":\"ch_b\",\"object\":\"charge\","
+                + "\"payment_intent\":\"pi_old\",\"amount\":100,\"amount_refunded\":100,"
+                + "\"metadata\":{\"bid_amendment_id\":\"" + a.getId() + "\"}}"))).isFalse();
         verifyNoInteractions(cashLedger, alerts);
     }
 }

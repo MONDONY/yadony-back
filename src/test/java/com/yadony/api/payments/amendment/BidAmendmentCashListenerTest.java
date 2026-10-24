@@ -2,6 +2,7 @@ package com.yadony.api.payments.amendment;
 
 import com.yadony.api.payments.amendment.events.BidAmendmentClosedEvent;
 import com.yadony.api.payments.amendment.events.BidAmendmentRefundRequestedEvent;
+import com.yadony.api.payments.amendment.events.BidAmendmentStaleCommissionEvent;
 import com.yadony.api.payments.supplement.BidSupplementRail;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -66,5 +67,20 @@ class BidAmendmentCashListenerTest {
         doThrow(new IllegalStateException("boom")).when(refunds).settle(id);
         listener.onClosed(closed(BidSupplementRail.CASH));
         verify(refunds).settle(id);
+    }
+
+    @Test
+    void stalePaymentIntent_refundedByItsId() {
+        UUID bid = UUID.randomUUID();
+        listener.onStaleCommission(new BidAmendmentStaleCommissionEvent(id, bid, "pi_old"));
+        verify(refunds).refundStale(id, bid, "pi_old");
+    }
+
+    @Test
+    void stalePaymentIntent_failureIsLoggedNotPropagated() {
+        UUID bid = UUID.randomUUID();
+        doThrow(new IllegalStateException("boom")).when(refunds).refundStale(id, bid, "pi_old");
+        listener.onStaleCommission(new BidAmendmentStaleCommissionEvent(id, bid, "pi_old"));
+        verify(refunds).refundStale(id, bid, "pi_old");
     }
 }

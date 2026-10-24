@@ -85,7 +85,7 @@ class BidAmendmentCashRefundsTest {
     void card_refundWithDedicatedKey() throws Exception {
         chargedByCard();
         when(gateway.findRefund("pi_c", "bid_amendment_id", a.getId().toString())).thenReturn(Optional.empty());
-        when(gateway.createRefund(eq("pi_c"), anyMap(), eq("amendment_commission_refund_" + a.getId())))
+        when(gateway.createRefund(eq("pi_c"), anyMap(), eq("amendment_commission_refund_pi_c")))
                 .thenReturn("re_1");
         when(ledger.cardRefunded(a.getId(), "re_1", "refund", true)).thenReturn(true);
 
@@ -166,7 +166,7 @@ class BidAmendmentCashRefundsTest {
         found();
         a.setCommissionStatus(CommissionStatus.REQUIRES_3DS);
         a.setCommissionPaymentIntentId("pi_c");
-        when(ledger.commissionFailed(a.getId(), "pi_c", "abandoned")).thenReturn(true);
+        when(ledger.commissionFailed(a.getId(), "pi_c", null, "abandoned")).thenReturn(true);
 
         assertThat(refunds.settle(a.getId())).isTrue();
         verify(gateway).cancelPaymentIntent("pi_c");
@@ -177,7 +177,7 @@ class BidAmendmentCashRefundsTest {
     void abandon_nullStatusWithPaymentIntent() throws Exception {
         found();
         a.setCommissionPaymentIntentId("pi_c");
-        when(ledger.commissionFailed(a.getId(), "pi_c", "abandoned")).thenReturn(true);
+        when(ledger.commissionFailed(a.getId(), "pi_c", null, "abandoned")).thenReturn(true);
 
         assertThat(refunds.settle(a.getId())).isTrue();
     }
@@ -191,7 +191,7 @@ class BidAmendmentCashRefundsTest {
         when(gateway.cancelPaymentIntent("pi_c")).thenThrow(new ApiConnectionException("already succeeded"));
         when(gateway.retrievePaymentIntent("pi_c")).thenReturn(new PaymentIntentView("pi_c", "succeeded", 360L,
                 "eur", null, null, List.of("card")));
-        when(ledger.commissionCharged(a.getId(), "pi_c", "cancel-refused")).thenReturn(ChargeOutcome.LATE_REFUND);
+        when(ledger.commissionCharged(a.getId(), "pi_c", null, "cancel-refused")).thenReturn(ChargeOutcome.LATE_REFUND);
 
         assertThat(refunds.settle(a.getId())).isTrue();
     }
@@ -204,7 +204,7 @@ class BidAmendmentCashRefundsTest {
         when(gateway.cancelPaymentIntent("pi_c")).thenThrow(new ApiConnectionException("canceled"));
         when(gateway.retrievePaymentIntent("pi_c")).thenReturn(new PaymentIntentView("pi_c", "canceled", 360L,
                 "eur", null, null, List.of("card")));
-        when(ledger.commissionFailed(a.getId(), "pi_c", "canceled")).thenReturn(true);
+        when(ledger.commissionFailed(a.getId(), "pi_c", null, "canceled")).thenReturn(true);
 
         assertThat(refunds.settle(a.getId())).isTrue();
     }
@@ -220,7 +220,7 @@ class BidAmendmentCashRefundsTest {
 
         assertThat(refunds.settle(a.getId())).isFalse();
         assertThat(refunds.settle(a.getId())).isFalse();
-        verify(ledger, never()).commissionFailed(any(), any(), any());
+        verify(ledger, never()).commissionFailed(any(), any(), any(), any());
     }
 
     @Test
@@ -267,5 +267,46 @@ class BidAmendmentCashRefundsTest {
     void unknownAmendment_nothing() {
         assertThat(refunds.settle(UUID.randomUUID())).isFalse();
         verifyNoInteractions(gateway, alerts);
+    }
+
+    // ── PaymentIntent hors essai ─────────────────────────────────────────────
+
+    @Test
+    @DisplayName("PaymentIntent hors essai : alerte une fois, Refund de CETTE PaymentIntent, clé par PaymentIntent, audit")
+    void stale_refundedByPaymentIntentKey_withAlert() throws Exception {
+        when(gateway.findRefund("pi_old", "bid_amendment_id", a.getId().toString())).thenReturn(Optional.empty());
+        when(gateway.createRefund(eq("pi_old"), anyMap(), eq("amendment_commission_refund_pi_old")))
+                .thenReturn("re_stale");
+
+        assertThat(refunds.refundStale(a.getId(), a.getBidId(), "pi_old")).isTrue();
+
+        verify(alerts).raiseOnce(eq("AMEND_STALE_COMM_pi_old"), anyString(), anyMap());
+        verify(ledger).auditOnly(eq(a.getId()), eq("BID_AMENDMENT_STALE_COMMISSION_REFUNDED"), anyMap());
+    }
+
+    @Test
+    @DisplayName("PaymentIntent hors essai : Refund déjà créé retrouvé, jamais un second")
+    void stale_existingRefundFound() throws Exception {
+        when(gateway.findRefund("pi_old", "bid_amendment_id", a.getId().toString()))
+                .thenReturn(Optional.of("re_old"));
+
+        assertThat(refunds.refundStale(a.getId(), a.getBidId(), "pi_old")).isTrue();
+
+        verify(gateway, never()).createRefund(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("PaymentIntent hors essai : échec du Refund, seconde alerte (rien ne le rejoue) ; idempotence en vol sans alerte")
+    void stale_refundFailure_secondAlert_idempotencyInFlightSilent() throws Exception {
+        when(gateway.findRefund(any(), anyString(), anyString())).thenReturn(Optional.empty());
+        when(gateway.createRefund(any(), anyMap(), anyString())).thenThrow(new ApiConnectionException("timeout"))
+                .thenThrow(new IdempotencyException("in use", "req", "idempotency_key_in_use", 409));
+
+        assertThat(refunds.refundStale(a.getId(), a.getBidId(), "pi_old")).isFalse();
+        verify(alerts).raiseOnce(eq("AMEND_STALE_REFUND_FAIL_pi_old"), anyString(), anyMap());
+
+        assertThat(refunds.refundStale(a.getId(), a.getBidId(), "pi_old")).isFalse();
+        verify(alerts, times(1)).raiseOnce(eq("AMEND_STALE_REFUND_FAIL_pi_old"), anyString(), anyMap());
+        verify(ledger, never()).auditOnly(any(), any(), any());
     }
 }

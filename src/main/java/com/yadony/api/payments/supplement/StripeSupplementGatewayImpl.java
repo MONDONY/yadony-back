@@ -33,6 +33,12 @@ public class StripeSupplementGatewayImpl implements StripeSupplementGateway {
     }
 
     @Override
+    public Map<String, String> retrieveMetadata(String paymentIntentId) throws StripeException {
+        Map<String, String> metadata = PaymentIntent.retrieve(paymentIntentId).getMetadata();
+        return metadata == null ? Map.of() : metadata;
+    }
+
+    @Override
     public PaymentIntentView cancelPaymentIntent(String paymentIntentId) throws StripeException {
         PaymentIntent pi = PaymentIntent.retrieve(paymentIntentId);
         return view(pi.cancel(PaymentIntentCancelParams.builder()

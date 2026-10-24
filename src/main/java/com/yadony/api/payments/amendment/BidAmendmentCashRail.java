@@ -3,6 +3,7 @@ package com.yadony.api.payments.amendment;
 import com.stripe.exception.CardException;
 import com.stripe.exception.StripeException;
 import com.stripe.param.PaymentIntentCreateParams;
+import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
@@ -30,7 +31,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
-import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -50,7 +50,8 @@ import java.util.UUID;
  *       {@code commissionClientSecret}, puis {@link #confirmCommission} (ou le webhook) la rend acquise.
  *       Carte refusée ou 3DS échouée : la modification repasse en {@code PROPOSED} (commission {@code FAILED},
  *       kilos gardés) et le voyageur peut réessayer d'accepter jusqu'à {@code expiresAt}, avec le portefeuille
- *       ou une autre carte (nouvelle PaymentIntent, clé d'idempotence neuve) ; échéance de
+ *       ou une autre carte (nouvelle PaymentIntent, clé d'idempotence neuve, après relecture de la précédente) ;
+ *       seule la PaymentIntent de l'essai courant peut l'accepter, toute autre qui aboutit est remboursée ; échéance de
  *       {@code commissionConfirmWindow} sans réponse : annulée ({@code COMMISSION_NOT_CONFIRMED}).</li>
  * </ul>
  * La commission est rendue si la modification n'aboutit pas ({@link BidAmendmentCashRefunds}). Ni bon de
@@ -77,12 +78,14 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
     private final BidAmendmentItemRepository amendmentItems;
     private final UserRepository users;
     private final BidAmendmentWindow window;
+    private final AdminAlertEscalator alerts;
 
     public BidAmendmentCashRail(BidAmendmentService service, WalletCommissionCollector collector,
                                 ActiveCurrencyResolver activeCurrencyResolver, StripeSupplementGateway gateway,
                                 BidAmendmentCashLedger ledger, BidAmendmentCashRefunds refunds,
                                 BidAmendmentRepository amendments, BidAmendmentItemRepository amendmentItems,
-                                UserRepository users, BidAmendmentWindow window) {
+                                UserRepository users, BidAmendmentWindow window,
+                                AdminAlertEscalator alerts) {
         this.service = service;
         this.collector = collector;
         this.activeCurrencyResolver = activeCurrencyResolver;
@@ -93,6 +96,7 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
         this.amendmentItems = amendmentItems;
         this.users = users;
         this.window = window;
+        this.alerts = alerts;
     }
 
     @Override
@@ -107,13 +111,9 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
     @Override
     public AmendmentAcceptResponse accept(BidAmendmentEntity a, UserEntity traveler, AmendmentAcceptRequest request) {
         if (a.getCommissionAmount() == null || a.getCommissionAmount().signum() == 0) {
+            forgetFailedAttempt(a);
             service.markAccepted(a);
             return response(a, null);
-        }
-        if (a.getCommissionStatus() == CommissionStatus.FAILED) {
-            // Nouvel essai après un refus de la carte ou une 3DS échouée : l'ancienne PaymentIntent n'est plus la sienne.
-            a.setCommissionStatus(null);
-            a.setCommissionPaymentIntentId(null);
         }
         CommissionSource source = request == null || request.commissionSource() == null
                 ? CommissionSource.WALLET_FIRST : request.commissionSource();
@@ -121,7 +121,9 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
             if (traveler.getCommissionPaymentMethodId() == null) {
                 throw new CommissionMethodMissingException();
             }
-            // respondedAt = début de la fenêtre commissionConfirmWindow lue par l'expiration.
+            // respondedAt = début de la fenêtre commissionConfirmWindow lue par l'expiration, et numéro de l'essai.
+            // Après un essai échoué, commission_status reste FAILED et la PaymentIntent précédente reste enregistrée :
+            // chargeCard la relit avant d'en créer une neuve.
             a.setStatus(BidAmendmentStatus.COMMISSION_PENDING);
             a.setRespondedAt(window.now());
             a.setCommissionChargedVia(CommissionChargedVia.CARD);
@@ -132,6 +134,18 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
         chargeWallet(a, request == null ? null : request.fundingCurrency());
         service.markAccepted(a);
         return response(a, null);
+    }
+
+    /**
+     * Acceptée sans passer par la carte après un essai par carte échoué : la PaymentIntent de cet essai n'est plus
+     * celle de la modification (si elle aboutit tard, elle sera remboursée comme toute PaymentIntent hors essai).
+     */
+    private static void forgetFailedAttempt(BidAmendmentEntity a) {
+        if (a.getCommissionStatus() == CommissionStatus.FAILED) {
+            a.setCommissionStatus(null);
+            a.setCommissionPaymentIntentId(null);
+            a.setCommissionChargedVia(null);
+        }
     }
 
     /**
@@ -149,6 +163,7 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
             throw unfunded(a.getTravelerId(), split, bidCurrency, complement, commission);
         }
         collector.executeForAmendment(split, a.getTravelerId(), a.getBidId(), a.getId());
+        a.setCommissionPaymentIntentId(null);
         a.setCommissionChargedVia(CommissionChargedVia.WALLET);
         a.setCommissionStatus(CommissionStatus.CHARGED);
         amendments.save(a);
@@ -184,23 +199,29 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
     /**
      * Débit de la carte commission du voyageur, présent dans l'app : confirmation immédiate SANS
      * {@code off_session}, pour qu'une 3DS revienne en {@code requires_action} (et non en refus
-     * {@code authentication_required}). Clé {@code amendment_commission_<id>_<essai>} ({@link #commissionKey}) : une
-     * PaymentIntent par essai. Après une erreur Stripe d'issue inconnue (502/503),
-     * {@link #confirmCommission} relance cet appel avec la même clé : Stripe rend la même PaymentIntent, jamais
-     * un second débit.
+     * {@code authentication_required}). Une PaymentIntent par essai : clé {@code amendment_commission_<id>_<essai>}
+     * ({@link #commissionKey}) et métadonnée {@code commission_attempt}. Après un essai échoué, la PaymentIntent
+     * précédente est relue d'abord ({@link #settlePreviousAttempt}). Après une erreur Stripe d'issue inconnue
+     * (502/503), {@link #confirmCommission} relance cet appel avec la même clé : Stripe rend la même
+     * PaymentIntent, jamais un second débit.
      */
     AmendmentAcceptResponse chargeCard(UUID amendmentId) {
         BidAmendmentEntity a = ledger.find(amendmentId).orElseThrow(BidAmendmentCashRail::notFound);
+        boolean firstAttempt = a.getCommissionStatus() == null && a.getCommissionPaymentIntentId() == null;
         if (a.getStatus() != BidAmendmentStatus.COMMISSION_PENDING
-                || a.getCommissionChargedVia() != CommissionChargedVia.CARD || a.getCommissionStatus() != null
-                || a.getCommissionPaymentIntentId() != null) {
+                || a.getCommissionChargedVia() != CommissionChargedVia.CARD
+                || !(firstAttempt || a.getCommissionStatus() == CommissionStatus.FAILED)) {
             return response(a, null);
         }
+        String attempt = BidAmendmentCashLedger.attemptOf(a);
         UserEntity traveler = users.findById(a.getTravelerId()).orElseThrow();
         if (traveler.getCommissionPaymentMethodId() == null) {
             // Carte détachée entre l'acceptation et le débit.
-            ledger.commissionFailed(amendmentId, null, "no-commission-card");
+            ledger.commissionFailed(amendmentId, null, attempt, "no-commission-card");
             throw new CommissionMethodMissingException();
+        }
+        if (!firstAttempt) {
+            settlePreviousAttempt(a);
         }
         SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(a.getCurrency());
         CurrencyAmount amount = CurrencyAmount.of(a.getCommissionAmount(), currency);
@@ -215,6 +236,7 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
                 // Ni bid_id ni payment_id : aucun traitement du colis ne doit la prendre pour la sienne.
                 .putMetadata("bid_amendment_id", a.getId().toString())
                 .putMetadata("commission_purpose", COMMISSION_PURPOSE)
+                .putMetadata("commission_attempt", attempt)
                 .putMetadata("scope", SCOPE)
                 .putMetadata("amendment_bid_id", a.getBidId().toString())
                 .build();
@@ -222,7 +244,7 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
         try {
             pi = gateway.createPaymentIntent(params, commissionKey(a));
         } catch (CardException e) {
-            ledger.commissionFailed(amendmentId, null, "card-declined:" + e.getCode());
+            ledger.commissionFailed(amendmentId, null, attempt, "card-declined:" + e.getCode());
             throw cardDeclined(e.getCode());
         } catch (StripeException e) {
             // Issue inconnue : la modification reste en attente ; le webhook (ou le filet à 30 min) tranche.
@@ -233,7 +255,67 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
             throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "amendment-commission-charge-failed",
                     "Commission Charge Failed", "Le débit de la commission n'a pas pu aboutir. Veuillez réessayer.");
         }
-        return applyPaymentIntent(amendmentId, pi, "create");
+        return applyPaymentIntent(amendmentId, pi, "create", attempt);
+    }
+
+    /**
+     * Avant un nouvel essai par carte : la PaymentIntent de l'essai précédent est relue chez Stripe, jamais
+     * supposée morte. Aboutie : elle sera remboursée (l'essai continue). {@code processing} : l'argent peut encore
+     * partir, le nouvel essai est refusé (409 {@code amendment-commission-in-progress}, modification remise en
+     * {@code PROPOSED}). Sinon annulée ; si l'annulation est refusée elle est relue, et une alerte part si elle
+     * reste vivante.
+     */
+    private void settlePreviousAttempt(BidAmendmentEntity a) {
+        String previous = a.getCommissionPaymentIntentId();
+        if (previous == null) {
+            return;
+        }
+        PaymentIntentView pi = retrieve(previous);
+        if (pi.canceled()) {
+            return;
+        }
+        if (!pi.succeeded() && !"processing".equals(pi.status())) {
+            try {
+                gateway.cancelPaymentIntent(previous);
+                return;
+            } catch (StripeException refused) {
+                pi = retrieveOrNull(previous);
+                if (pi == null || !(pi.succeeded() || pi.canceled() || "processing".equals(pi.status()))) {
+                    log.error("Commission {} de la modification {} : annulation refusée, PaymentIntent encore vivante",
+                            previous, a.getId(), refused);
+                    alertUncanceled(a.getId(), previous, refused.getMessage());
+                    return;
+                }
+            }
+        }
+        if (pi.succeeded()) {
+            ledger.reportStale(a.getId(), previous, "retry-check");
+        } else if ("processing".equals(pi.status())) {
+            ledger.abortRetry(a.getId());
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "amendment-commission-in-progress",
+                    "Amendment Commission In Progress",
+                    "Un prélèvement de votre commission est encore en cours de traitement : réessayez dans quelques minutes");
+        }
+    }
+
+    private PaymentIntentView retrieve(String paymentIntentId) {
+        try {
+            return gateway.retrievePaymentIntent(paymentIntentId);
+        } catch (StripeException e) {
+            if (StripeUnavailable.isNetworkFailure(e)) {
+                throw StripeUnavailable.exception();
+            }
+            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "stripe-error", "Stripe Error",
+                    "Impossible de vérifier le paiement auprès de Stripe");
+        }
+    }
+
+    private PaymentIntentView retrieveOrNull(String paymentIntentId) {
+        try {
+            return gateway.retrievePaymentIntent(paymentIntentId);
+        } catch (StripeException e) {
+            return null;
+        }
     }
 
     /**
@@ -257,39 +339,34 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
         if (a.getStatus() != BidAmendmentStatus.COMMISSION_PENDING) {
             return response(a, null).amendment();
         }
-        if (a.getCommissionPaymentIntentId() == null) {
-            // Débit de la carte resté sans réponse (502/503) : on le relance, même clé.
-            return a.getCommissionChargedVia() == CommissionChargedVia.CARD && a.getCommissionStatus() == null
+        if (a.getCommissionPaymentIntentId() == null || BidAmendmentCashLedger.retryInProgress(a)) {
+            // Débit de la carte resté sans réponse (502/503) ou nouvel essai dont la PaymentIntent n'existe pas
+            // encore : on (re)lance le débit, même clé.
+            return a.getCommissionChargedVia() == CommissionChargedVia.CARD
+                    && (a.getCommissionStatus() == null || a.getCommissionStatus() == CommissionStatus.FAILED)
                     ? chargeCard(amendmentId).amendment() : response(a, null).amendment();
         }
-        PaymentIntentView pi;
-        try {
-            pi = gateway.retrievePaymentIntent(a.getCommissionPaymentIntentId());
-        } catch (StripeException e) {
-            if (StripeUnavailable.isNetworkFailure(e)) {
-                throw StripeUnavailable.exception();
-            }
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "stripe-error", "Stripe Error",
-                    "Impossible de vérifier le paiement auprès de Stripe");
-        }
-        return applyPaymentIntent(amendmentId, pi, "confirm").amendment();
+        PaymentIntentView pi = retrieve(a.getCommissionPaymentIntentId());
+        return applyPaymentIntent(amendmentId, pi, "confirm", BidAmendmentCashLedger.attemptOf(a)).amendment();
     }
 
     /** Issue d'une PaymentIntent de commission (débit, confirmation). */
-    private AmendmentAcceptResponse applyPaymentIntent(UUID amendmentId, PaymentIntentView pi, String source) {
+    private AmendmentAcceptResponse applyPaymentIntent(UUID amendmentId, PaymentIntentView pi, String source,
+                                                       String attempt) {
         String status = pi.status() == null ? "" : pi.status();
         switch (status) {
             case "succeeded" -> {
-                ledger.commissionCharged(amendmentId, pi.id(), source);
+                ledger.commissionCharged(amendmentId, pi.id(), attempt, source);
                 return response(reload(amendmentId), null);
             }
             case "requires_action", "requires_confirmation", "processing" -> {
-                BidAmendmentEntity a = ledger.commissionRequiresAction(amendmentId, pi.id());
+                BidAmendmentEntity a = ledger.commissionRequiresAction(amendmentId, pi.id(), attempt);
                 if (a.getStatus() != BidAmendmentStatus.COMMISSION_PENDING) {
                     // Modification close pendant le débit (annulation, colis terminé) : la PaymentIntent ne doit
-                    // plus pouvoir aboutir. Annulée tout de suite (le filet reprend en cas d'échec). Déjà acquise
-                    // (le webhook a devancé cette réponse) : rien à défaire.
+                    // plus pouvoir aboutir. Annulée tout de suite (si elle aboutit, elle sera remboursée). Déjà
+                    // acquise (le webhook a devancé cette réponse) : rien à défaire.
                     if (!a.getStatus().isSecured()) {
+                        cancelQuietly(amendmentId, pi.id(), attempt);
                         refunds.settle(amendmentId);
                     }
                     return response(reload(amendmentId), null);
@@ -298,10 +375,12 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
                 return response(a, "processing".equals(status) ? null : pi.clientSecret());
             }
             default -> {
-                // requires_payment_method (refus ou 3DS échouée), canceled : rien n'a été prélevé.
-                ledger.commissionFailed(amendmentId, pi.id(), "status-" + status);
+                // requires_payment_method (refus ou 3DS échouée), canceled : rien n'a été prélevé. La modification
+                // repasse en PROPOSED ; la PaymentIntent est annulée pour qu'un vieux client secret ne puisse
+                // plus débiter.
+                ledger.commissionFailed(amendmentId, pi.id(), attempt, "status-" + status);
                 if (!pi.canceled()) {
-                    cancelQuietly(amendmentId, pi.id());
+                    cancelQuietly(amendmentId, pi.id(), attempt);
                 }
                 throw cardDeclined(null);
             }
@@ -309,42 +388,67 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
     }
 
     /** Webhook d'une PaymentIntent de commission (routé par {@link BidAmendmentStripeWebhookRouter}). */
-    public void onCommissionWebhook(String type, UUID amendmentId, String paymentIntentId, String failureCode) {
+    public void onCommissionWebhook(String type, UUID amendmentId, String paymentIntentId, String attempt,
+                                    String failureCode) {
         switch (type) {
-            case "payment_intent.succeeded" -> ledger.commissionCharged(amendmentId, paymentIntentId, "webhook");
+            case "payment_intent.succeeded" ->
+                    ledger.commissionCharged(amendmentId, paymentIntentId, attempt, "webhook");
             case "payment_intent.payment_failed" -> {
-                // 3DS échouée : modification close ; la PaymentIntent est annulée pour qu'une nouvelle
-                // tentative depuis un vieux client secret ne puisse plus débiter.
-                if (ledger.commissionFailed(amendmentId, paymentIntentId, "payment_failed:" + failureCode)) {
-                    cancelQuietly(amendmentId, paymentIntentId);
+                // 3DS échouée : la modification repasse en PROPOSED ; la PaymentIntent est annulée pour qu'une
+                // nouvelle tentative depuis un vieux client secret ne puisse plus débiter.
+                if (ledger.commissionFailed(amendmentId, paymentIntentId, attempt, "payment_failed:" + failureCode)) {
+                    cancelQuietly(amendmentId, paymentIntentId, attempt);
                 }
             }
-            case "payment_intent.canceled" -> ledger.commissionFailed(amendmentId, paymentIntentId, "canceled");
+            case "payment_intent.canceled" ->
+                    ledger.commissionFailed(amendmentId, paymentIntentId, attempt, "canceled");
             default -> log.debug("Webhook {} de la commission de la modification {} : rien à faire", type,
                     amendmentId);
         }
     }
 
-    private void cancelQuietly(UUID amendmentId, String paymentIntentId) {
+    /**
+     * Annule la PaymentIntent d'un essai terminé. Stripe refuse d'annuler une PaymentIntent {@code succeeded} ou
+     * {@code processing} : le refus n'est jamais avalé. Elle est relue ; aboutie, elle est rendue (commission hors
+     * essai) ; encore vivante ou illisible, une alerte admin part.
+     */
+    private void cancelQuietly(UUID amendmentId, String paymentIntentId, String attempt) {
         if (paymentIntentId == null) {
             return;
         }
         try {
             gateway.cancelPaymentIntent(paymentIntentId);
-        } catch (StripeException e) {
-            log.warn("Commission {} de la modification {} : annulation après échec refusée ({})", paymentIntentId,
-                    amendmentId, e.getMessage());
+        } catch (StripeException refused) {
+            PaymentIntentView pi = retrieveOrNull(paymentIntentId);
+            if (pi != null && pi.canceled()) {
+                return;
+            }
+            if (pi != null && pi.succeeded()) {
+                ledger.commissionCharged(amendmentId, paymentIntentId, attempt, "cancel-refused");
+                return;
+            }
+            log.error("Commission {} de la modification {} : annulation refusée ({})", paymentIntentId, amendmentId,
+                    refused.getMessage());
+            alertUncanceled(amendmentId, paymentIntentId, refused.getMessage());
         }
     }
 
+    private void alertUncanceled(UUID amendmentId, String paymentIntentId, String error) {
+        alerts.raiseOnce("AMEND_COMM_PI_UNCANCELED_" + paymentIntentId,
+                "PaymentIntent de commission " + paymentIntentId + " de la modification " + amendmentId
+                        + " d'un essai terminé impossible à annuler : elle peut encore aboutir (" + error + ")",
+                Map.of("amendmentId", amendmentId.toString(), "paymentIntentId", paymentIntentId,
+                        "error", String.valueOf(error)));
+    }
+
     /**
-     * Clé d'idempotence du débit : une par essai. {@code respondedAt} est posé à chaque acceptation par carte et
-     * remis à zéro par un échec : un nouvel essai a une clé neuve (sinon Stripe renverrait la PaymentIntent
-     * échouée du précédent), alors qu'un rejeu du même essai (502, confirmation) retrouve la même PaymentIntent.
+     * Clé d'idempotence du débit : une par essai ({@link BidAmendmentCashLedger#attemptOf}, {@code respondedAt}).
+     * Un nouvel essai a une clé neuve (sinon Stripe renverrait la PaymentIntent échouée du précédent), un rejeu
+     * du même essai (502, confirmation) retrouve la même PaymentIntent.
      */
     static String commissionKey(BidAmendmentEntity a) {
-        long attempt = a.getRespondedAt() == null ? 0 : a.getRespondedAt().toInstant(ZoneOffset.UTC).toEpochMilli();
-        return "amendment_commission_" + a.getId() + "_" + attempt;
+        String attempt = BidAmendmentCashLedger.attemptOf(a);
+        return "amendment_commission_" + a.getId() + "_" + (attempt == null ? "0" : attempt);
     }
 
     private BidAmendmentEntity reload(UUID amendmentId) {
