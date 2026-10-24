@@ -18,6 +18,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -296,7 +297,7 @@ class BidAmendmentCashRefundsTest {
     }
 
     @Test
-    @DisplayName("PaymentIntent hors essai : échec du Refund, seconde alerte (rien ne le rejoue) ; idempotence en vol sans alerte")
+    @DisplayName("PaymentIntent hors essai : échec du Refund, seconde alerte et trace d'échec comptée par le filet ; idempotence en vol sans alerte ni trace")
     void stale_refundFailure_secondAlert_idempotencyInFlightSilent() throws Exception {
         when(gateway.findRefund(any(), anyString(), anyString())).thenReturn(Optional.empty());
         when(gateway.createRefund(any(), anyMap(), anyString())).thenThrow(new ApiConnectionException("timeout"))
@@ -307,6 +308,8 @@ class BidAmendmentCashRefundsTest {
 
         assertThat(refunds.refundStale(a.getId(), a.getBidId(), "pi_old")).isFalse();
         verify(alerts, times(1)).raiseOnce(eq("AMEND_STALE_REFUND_FAIL_pi_old"), anyString(), anyMap());
-        verify(ledger, never()).auditOnly(any(), any(), any());
+        verify(ledger, times(1)).auditOnly(eq(a.getId()), eq("BID_AMENDMENT_STALE_COMMISSION_REFUND_FAILED"),
+                eq(Map.of("piId", "pi_old", "error", "timeout")));
+        verify(ledger, never()).auditOnly(any(), eq("BID_AMENDMENT_STALE_COMMISSION_REFUNDED"), any());
     }
 }

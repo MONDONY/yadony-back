@@ -57,6 +57,12 @@ public class BidAmendmentReconciliationJob {
      */
     static final Duration STALE_REFUND_WINDOW = Duration.ofDays(30);
 
+    /**
+     * Échecs du Refund d'une même PaymentIntent hors essai ({@code BID_AMENDMENT_STALE_COMMISSION_REFUND_FAILED}) au-delà
+     * desquels le filet cesse de la rejouer : l'alerte {@code AMEND_STALE_REFUND_FAIL_} reste, à traiter à la main.
+     */
+    static final int STALE_REFUND_MAX_FAILURES = 3;
+
     /** Préfixe de l'alerte ; avec un UUID, 56 caractères ({@code AdminAlertTypeLengthTest}). */
     static final String UNSETTLED_ALERT_PREFIX = "AMENDMENT_UNSETTLED_";
 
@@ -79,7 +85,7 @@ public class BidAmendmentReconciliationJob {
     static {
         EnumSet<BidStatus> ended = EnumSet.of(BidStatus.COMPLETED);
         ended.addAll(BidAmendmentService.TERMINAL_UNDELIVERED);
-        ENDED_BIDS = ended;
+        ENDED_BIDS = Set.copyOf(ended);
     }
 
     private final BidAmendmentRepository amendments;
@@ -128,7 +134,7 @@ public class BidAmendmentReconciliationJob {
         }
 
         int reminded = 0;
-        for (UUID id : amendments.findIdsReminderDue(now, now.plus(properties.getReminderBefore()), batch)) {
+        for (UUID id : amendments.findIdsReminderDue(now, properties.getReminderBefore().toSeconds(), BATCH_SIZE)) {
             try {
                 if (service.remindTraveler(id)) {
                     reminded++;
@@ -162,7 +168,8 @@ public class BidAmendmentReconciliationJob {
         }
 
         int staleRefunded = 0;
-        for (Object[] row : amendments.findStaleCommissionsWithoutRefund(now.minus(STALE_REFUND_WINDOW), BATCH_SIZE)) {
+        for (Object[] row : amendments.findStaleCommissionsWithoutRefund(now.minus(STALE_REFUND_WINDOW),
+                STALE_REFUND_MAX_FAILURES, BATCH_SIZE)) {
             String piId = String.valueOf(row[2]);
             try {
                 // Idempotent par clé de PaymentIntent : un Refund déjà créé chez Stripe est retrouvé, rien n'est recréé.
@@ -177,7 +184,7 @@ public class BidAmendmentReconciliationJob {
 
         int unsettled = 0;
         for (UUID id : amendments.findIdsUnsettledAfterBidEnd(UNSETTLED_ONLINE, ENDED_BIDS,
-                BidAmendmentService.TERMINAL_UNDELIVERED, now.minus(UNSETTLED_DELAY), batch)) {
+                BidAmendmentService.TERMINAL_UNDELIVERED, UNSETTLED_ALERT_PREFIX, now.minus(UNSETTLED_DELAY), batch)) {
             try {
                 if (raiseUnsettled(id)) {
                     unsettled++;

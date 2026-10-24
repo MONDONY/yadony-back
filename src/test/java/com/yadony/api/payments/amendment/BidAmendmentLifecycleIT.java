@@ -162,6 +162,7 @@ class BidAmendmentLifecycleIT {
     @MockitoSpyBean BidAmendmentCashRefunds cashRefunds;
 
     @Autowired BidAmendmentService service;
+    @Autowired BidAmendmentProperties properties;
     @Autowired BidAmendmentReconciliationJob job;
     @Autowired TrackingService trackingService;
     @Autowired WalletService walletService;
@@ -277,6 +278,21 @@ class BidAmendmentLifecycleIT {
     }
 
     @Test
+    @DisplayName("onBidEnded : colis terminé sans modification à traiter, sortie rapide sans rien toucher")
+    void onBidEnded_nothingToEnd_returnsFalse() {
+        Parties p = parties(false);
+        UUID id = create(p, "3", PaymentMethod.CASH);
+        service.cancel(p.bidId, id, p.sender.getFirebaseUid());
+        jdbc.update("UPDATE bids SET status = 'CANCELLED' WHERE id = ?", p.bidId);
+
+        assertThat(service.onBidEnded(p.bidId, "CANCELLATION_CONFIRMED")).isFalse();
+        assertThat(service.onPrincipalRefunded(p.bidId)).isFalse();
+
+        assertThat(column(id, "status")).isEqualTo("CANCELLED");
+        assertThat(availableKg(p.announcementId)).isEqualByComparingTo("6.00");
+    }
+
+    @Test
     @DisplayName("onBidEnded : colis encore accepté, rien n'est touché")
     void onBidEnded_bidNotEnded_noop() {
         Parties p = parties(false);
@@ -356,6 +372,25 @@ class BidAmendmentLifecycleIT {
     }
 
     @Test
+    @DisplayName("notBrought drapeau éteint : rendre l'argent reste possible")
+    void notBrought_flagDisabled_stillWorks() throws Exception {
+        Parties p = parties(false);
+        topUp(p.traveler.getId(), "10.00");
+        UUID id = create(p, "3", PaymentMethod.CASH);
+        acceptWithWallet(p, id);
+        properties.setEnabled(false);
+        try {
+            BidAmendmentResponse view = service.notBrought(p.bidId, id, p.traveler.getFirebaseUid());
+
+            assertThat(view.status()).isEqualTo("REFUNDED");
+            assertThat(availableKg(p.announcementId)).isEqualByComparingTo("6.00");
+            awaitColumn(id, "commission_status", "REFUNDED");
+        } finally {
+            properties.setEnabled(true);
+        }
+    }
+
+    @Test
     @DisplayName("notBrought_afterHandover_422InvalidStatus : colis remis, rien ne change")
     void notBrought_afterHandover_422InvalidStatus() {
         Parties p = parties(false);
@@ -390,12 +425,17 @@ class BidAmendmentLifecycleIT {
     // ── Filet planifié ──────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("reminder_sentOnce : rappel au voyageur une seule fois, à reminderBefore de l'échéance")
+    @DisplayName("reminder_sentOnce : rappel au voyageur une seule fois, à reminderBefore de l'échéance, jamais pour une fenêtre courte")
     void reminder_sentOnce() {
         Parties p = parties(false);
         UUID id = create(p, "3", PaymentMethod.CASH);
         UUID farId = create(parties(false), "3", PaymentMethod.CASH);
-        jdbc.update("UPDATE bid_amendments SET expires_at = created_at + interval '1 hour' WHERE id = ?", id);
+        // Fenêtre de 48 h dont il reste 1 h : rappel dû.
+        jdbc.update("UPDATE bid_amendments SET created_at = created_at - interval '47 hours', "
+                + "expires_at = created_at + interval '1 hour' WHERE id = ?", id);
+        // Fenêtre d'1 h seulement (départ proche) : jamais de rappel, la notification de demande vient de partir.
+        UUID shortId = create(parties(false), "3", PaymentMethod.CASH);
+        jdbc.update("UPDATE bid_amendments SET expires_at = created_at + interval '1 hour' WHERE id = ?", shortId);
 
         job.run();
         job.run();
@@ -408,6 +448,8 @@ class BidAmendmentLifecycleIT {
         });
         assertThat(column(id, "reminder_sent_at")).isNotNull();
         assertThat(column(farId, "reminder_sent_at")).as("échéance encore lointaine (48 h)").isNull();
+        assertThat(column(shortId, "reminder_sent_at")).as("fenêtre plus courte que reminderBefore").isNull();
+        assertThat(service.remindTraveler(shortId)).isFalse();
         assertThat(column(id, "status")).isEqualTo("PROPOSED");
     }
 
@@ -478,6 +520,12 @@ class BidAmendmentLifecycleIT {
         insertAudit(id, p.bidId, "BID_AMENDMENT_STALE_COMMISSION", confirmed, 0);
         insertAudit(id, p.bidId, "BID_AMENDMENT_STALE_COMMISSION_REFUND_CONFIRMED", confirmed, 0);
         insertAudit(id, p.bidId, "BID_AMENDMENT_STALE_COMMISSION", tooOld, 40);
+        // Trois Refunds déjà échoués pour cette PaymentIntent : sortie du balayage (l'alerte d'échec reste).
+        String failing = "pi_fail_" + UUID.randomUUID().toString().substring(0, 8);
+        insertAudit(id, p.bidId, "BID_AMENDMENT_STALE_COMMISSION", failing, 0);
+        for (int i = 0; i < 3; i++) {
+            insertAudit(id, p.bidId, "BID_AMENDMENT_STALE_COMMISSION_REFUND_FAILED", failing, 0);
+        }
         when(gateway.findRefund(eq(lost), eq("bid_amendment_id"), eq(id.toString()))).thenReturn(Optional.empty());
         when(gateway.createRefund(eq(lost), anyMap(), eq("amendment_commission_refund_" + lost))).thenReturn("re_lost");
 
@@ -487,6 +535,7 @@ class BidAmendmentLifecycleIT {
         verify(gateway, times(1)).createRefund(eq(lost), anyMap(), eq("amendment_commission_refund_" + lost));
         verify(gateway, never()).findRefund(eq(confirmed), any(), any());
         verify(gateway, never()).findRefund(eq(tooOld), any(), any());
+        verify(gateway, never()).findRefund(eq(failing), any(), any());
         assertThat(auditActions(id)).containsOnlyOnce("BID_AMENDMENT_STALE_COMMISSION_REFUNDED");
     }
 
@@ -502,11 +551,22 @@ class BidAmendmentLifecycleIT {
         UUID recentId = create(recent, "3", PaymentMethod.STRIPE);
         service.accept(recent.bidId, recentId, recent.traveler.getFirebaseUid(), new AmendmentAcceptRequest(null, null));
         jdbc.update("UPDATE bids SET status = 'COMPLETED' WHERE id = ?", recent.bidId);
+        // Déjà signalée (alerte encore ouverte) : écartée du balayage, elle ne bloque pas les nouvelles.
+        Parties alerted = parties(true);
+        UUID alertedId = create(alerted, "3", PaymentMethod.STRIPE);
+        service.accept(alerted.bidId, alertedId, alerted.traveler.getFirebaseUid(), new AmendmentAcceptRequest(null, null));
+        jdbc.update("UPDATE bids SET status = 'COMPLETED', updated_at = updated_at - interval '4 days' WHERE id = ?",
+                alerted.bidId);
+        jdbc.update("INSERT INTO admin_alerts (id, type, resolved, severity, created_at) VALUES (?, ?, false, 'WARN', "
+                + "now() AT TIME ZONE 'UTC')", UUID.randomUUID(), "AMENDMENT_UNSETTLED_" + alertedId);
 
         job.run();
 
         verify(alerts).raiseOnce(eq("AMENDMENT_UNSETTLED_" + id), eq("WARN"), anyString(), anyMap());
         verify(alerts, never()).raiseOnce(eq("AMENDMENT_UNSETTLED_" + recentId), any(), anyString(), anyMap());
+        verify(alerts, never()).raiseOnce(eq("AMENDMENT_UNSETTLED_" + alertedId), any(), anyString(), anyMap());
+        // Une seule alerte « non soldée » dans ce passage, quelle que soit la surcharge.
+        verify(alerts, times(1)).raiseOnce(startsWith("AMENDMENT_UNSETTLED_"), any(), anyString(), anyMap());
         verify(alerts, never()).raiseOnce(startsWith("AMENDMENT_UNSETTLED_"), anyString(), anyMap());
     }
 

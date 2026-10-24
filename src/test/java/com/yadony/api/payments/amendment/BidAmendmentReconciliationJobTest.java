@@ -44,7 +44,8 @@ class BidAmendmentReconciliationJobTest {
         when(amendments.findIdsLapsed(any(), any(), any(), any())).thenReturn(List.of(failing, next));
         when(service.expire(failing)).thenThrow(new IllegalStateException("verrou"));
         when(service.expire(next)).thenReturn(true);
-        when(amendments.findIdsReminderDue(any(), any(), any())).thenReturn(List.of(failing, next));
+        when(amendments.findIdsReminderDue(any(), org.mockito.ArgumentMatchers.anyLong(), anyInt()))
+                .thenReturn(List.of(failing, next));
         when(service.remindTraveler(failing)).thenThrow(new IllegalStateException("verrou"));
         when(service.remindTraveler(next)).thenReturn(true);
         when(amendments.findBidIdsEndedWith(any(), any(), any(), any())).thenReturn(List.of(failing, next));
@@ -53,11 +54,11 @@ class BidAmendmentReconciliationJobTest {
         when(amendments.findCashIdsToSettle(any(), any(), any())).thenReturn(List.of(failing, next));
         when(cashRefunds.settle(failing)).thenThrow(new IllegalStateException("stripe"));
         when(cashRefunds.settle(next)).thenReturn(true);
-        when(amendments.findStaleCommissionsWithoutRefund(any(), anyInt())).thenReturn(List.<Object[]>of(
+        when(amendments.findStaleCommissionsWithoutRefund(any(), anyInt(), anyInt())).thenReturn(List.<Object[]>of(
                 new Object[]{"pas-un-uuid", bidId.toString(), "pi_bad"},
                 new Object[]{amendmentId.toString(), bidId.toString(), "pi_ok"}));
         when(cashRefunds.refundStale(amendmentId, bidId, "pi_ok")).thenReturn(true);
-        when(amendments.findIdsUnsettledAfterBidEnd(any(), any(), any(), any(), any())).thenReturn(List.of(failing));
+        when(amendments.findIdsUnsettledAfterBidEnd(any(), any(), any(), any(), any(), any())).thenReturn(List.of(failing));
         when(amendments.findById(failing)).thenThrow(new IllegalStateException("base"));
 
         BidAmendmentReconciliationJob.Outcome outcome = job.run();

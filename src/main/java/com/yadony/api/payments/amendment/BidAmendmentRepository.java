@@ -80,24 +80,41 @@ public interface BidAmendmentRepository extends JpaRepository<BidAmendmentEntity
     List<UUID> findIdsLapsed(@Param("now") LocalDateTime now, @Param("authorizedBefore") LocalDateTime authorizedBefore,
                              @Param("commissionBefore") LocalDateTime commissionBefore, Pageable page);
 
-    /** Filet : modifications proposées dont l'échéance tombe dans {@code ]now, remindUntil]}, sans rappel envoyé. */
-    @Query("""
-            SELECT a.id FROM BidAmendmentEntity a
-            WHERE a.status = com.yadony.api.payments.amendment.BidAmendmentStatus.PROPOSED
-              AND a.reminderSentAt IS NULL AND a.expiresAt > :now AND a.expiresAt <= :remindUntil
-            ORDER BY a.expiresAt
-            """)
-    List<UUID> findIdsReminderDue(@Param("now") LocalDateTime now, @Param("remindUntil") LocalDateTime remindUntil,
-                                  Pageable page);
+    /**
+     * Filet : modifications proposées dont l'échéance tombe dans {@code ]now, now + reminderBefore]}, sans rappel
+     * envoyé, et dont la fenêtre de réponse dépasse {@code reminderBefore} ({@code created_at < expires_at −
+     * reminderBefore}) : une demande plus courte n'est jamais rappelée, sa notification de demande vient de partir.
+     */
+    @Query(value = """
+            SELECT a.id FROM bid_amendments a
+            WHERE a.deleted_at IS NULL AND a.status = 'PROPOSED' AND a.reminder_sent_at IS NULL
+              AND a.expires_at > CAST(:now AS TIMESTAMP)
+              AND a.expires_at <= CAST(:now AS TIMESTAMP) + CAST(:reminderSeconds AS BIGINT) * INTERVAL '1 second'
+              AND a.created_at < a.expires_at - CAST(:reminderSeconds AS BIGINT) * INTERVAL '1 second'
+            ORDER BY a.expires_at
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<UUID> findIdsReminderDue(@Param("now") LocalDateTime now, @Param("reminderSeconds") long reminderSeconds,
+                                  @Param("limit") int limit);
+
+    /**
+     * Le colis a-t-il une modification que sa fin doit traiter : ouverte, acquise, ou des kilos encore retirés du
+     * trajet ? Lecture simple, sans verrou : sortie rapide de la fin de colis.
+     */
+    @Query("SELECT COUNT(a) > 0 FROM BidAmendmentEntity a WHERE a.bidId = :bidId "
+            + "AND (a.status IN :statuses OR a.capacityReservedKg > 0)")
+    boolean existsToEnd(@Param("bidId") UUID bidId, @Param("statuses") Collection<BidAmendmentStatus> statuses);
 
     /**
      * Filet : colis morts sans livraison (statut stable depuis {@code before}) qui gardent une modification dans
      * l'un des {@code statuses} ou des kilos encore retirés du trajet.
      */
     @Query("""
-            SELECT DISTINCT a.bidId FROM BidAmendmentEntity a, com.yadony.api.matching.BidEntity b
+            SELECT a.bidId FROM BidAmendmentEntity a, com.yadony.api.matching.BidEntity b
             WHERE b.id = a.bidId AND b.status IN :bidStatuses AND b.updatedAt < :before
               AND (a.status IN :statuses OR a.capacityReservedKg > 0)
+            GROUP BY a.bidId, b.updatedAt
+            ORDER BY b.updatedAt, a.bidId
             """)
     List<UUID> findBidIdsEndedWith(@Param("statuses") Collection<BidAmendmentStatus> statuses,
                                    @Param("bidStatuses") Collection<com.yadony.api.matching.BidStatus> bidStatuses,
@@ -125,7 +142,9 @@ public interface BidAmendmentRepository extends JpaRepository<BidAmendmentEntity
      * Filet : PaymentIntents de commission abouties hors de l'essai courant (audit {@code BID_AMENDMENT_STALE_COMMISSION},
      * un par rejeu de webhook) tracées depuis {@code since}, sans Refund connu ({@code ..._REFUNDED} écrit par
      * {@code refundStale}, ou {@code ..._REFUND_CONFIRMED} par le webhook {@code charge.refunded}). Une ligne par
-     * PaymentIntent : {@code [amendmentId, bidId, piId]}, en texte.
+     * PaymentIntent : {@code [amendmentId, bidId, piId]}, en texte. Une PaymentIntent dont le Refund a échoué
+     * {@code maxFailures} fois ({@code ..._REFUND_FAILED}) sort du balayage : l'alerte {@code AMEND_STALE_REFUND_FAIL_}
+     * levée au premier échec reste, à traiter à la main ; elle ne bloque plus le lot.
      */
     @Query(value = """
             SELECT DISTINCT ON (s.payload->>'piId')
@@ -140,10 +159,15 @@ public interface BidAmendmentRepository extends JpaRepository<BidAmendmentEntity
                     AND r.action IN ('BID_AMENDMENT_STALE_COMMISSION_REFUNDED',
                                      'BID_AMENDMENT_STALE_COMMISSION_REFUND_CONFIRMED')
                     AND r.payload->>'piId' = s.payload->>'piId')
+              AND (SELECT COUNT(*) FROM audit_log f
+                   WHERE f.entity_type = 'BID_AMENDMENT' AND f.entity_id = s.entity_id
+                     AND f.action = 'BID_AMENDMENT_STALE_COMMISSION_REFUND_FAILED'
+                     AND f.payload->>'piId' = s.payload->>'piId') < :maxFailures
             ORDER BY s.payload->>'piId', s.created_at
             LIMIT :limit
             """, nativeQuery = true)
-    List<Object[]> findStaleCommissionsWithoutRefund(@Param("since") LocalDateTime since, @Param("limit") int limit);
+    List<Object[]> findStaleCommissionsWithoutRefund(@Param("since") LocalDateTime since,
+                                                     @Param("maxFailures") int maxFailures, @Param("limit") int limit);
 
     /**
      * Filet : modifications acquises ni versées ni remboursées, colis terminé (statut stable) depuis avant
@@ -154,6 +178,8 @@ public interface BidAmendmentRepository extends JpaRepository<BidAmendmentEntity
      *   <li>espèces encore {@code ACCEPTED} sur un colis terminé sans livraison ({@code undeliveredStatuses}) : rien
      *       n'est à verser en espèces après une livraison, mais un colis mort ne doit plus porter de modification acquise.</li>
      * </ul>
+     * Une modification dont l'alerte {@code alertPrefix + id} est déjà ouverte est écartée : au-delà d'un lot de
+     * modifications bloquées, les nouvelles sont encore signalées.
      */
     @Query("""
             SELECT a.id FROM BidAmendmentEntity a, com.yadony.api.matching.BidEntity b
@@ -163,10 +189,13 @@ public interface BidAmendmentRepository extends JpaRepository<BidAmendmentEntity
                    OR (a.rail = com.yadony.api.payments.supplement.BidSupplementRail.CASH
                        AND a.status = com.yadony.api.payments.amendment.BidAmendmentStatus.ACCEPTED
                        AND b.status IN :undeliveredStatuses))
+              AND NOT EXISTS (SELECT 1 FROM com.yadony.api.admin.AdminAlertEntity al
+                              WHERE al.type = CONCAT(:alertPrefix, CAST(a.id AS String)) AND al.resolved = false)
             ORDER BY a.createdAt
             """)
     List<UUID> findIdsUnsettledAfterBidEnd(@Param("onlineStatuses") Collection<BidAmendmentStatus> onlineStatuses,
                                            @Param("endedStatuses") Collection<com.yadony.api.matching.BidStatus> endedStatuses,
                                            @Param("undeliveredStatuses") Collection<com.yadony.api.matching.BidStatus> undeliveredStatuses,
+                                           @Param("alertPrefix") String alertPrefix,
                                            @Param("before") LocalDateTime before, Pageable page);
 }
