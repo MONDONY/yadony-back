@@ -39,6 +39,7 @@ public class AdminAuditController {
     public ResponseEntity<Page<AdminAuditEntryResponse>> list(
             @RequestParam(required = false) String action,
             @RequestParam(required = false) String entityType,
+            @RequestParam(required = false) UUID entityId,
             @RequestParam(required = false) String actorId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
@@ -46,7 +47,7 @@ public class AdminAuditController {
             @RequestParam(defaultValue = "20") int size) {
 
         Page<com.yadony.api.common.AuditLogEntity> auditPage = auditRepo
-            .findFiltered(action, entityType, actorId, from, to,
+            .findFiltered(action, entityType, entityId == null ? null : entityId.toString(), actorId, from, to,
                 PageRequest.of(page, size));
 
         // Batch-load all actor names in a single query — avoids N+1

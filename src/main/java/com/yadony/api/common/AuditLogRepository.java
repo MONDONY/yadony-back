@@ -18,6 +18,7 @@ public interface AuditLogRepository extends JpaRepository<AuditLogEntity, Long> 
         SELECT a.* FROM audit_log a
         WHERE (CAST(:action AS VARCHAR) IS NULL OR a.action = :action)
           AND (CAST(:entityType AS VARCHAR) IS NULL OR a.entity_type = :entityType)
+          AND (CAST(:entityId AS VARCHAR) IS NULL OR a.entity_id = CAST(:entityId AS UUID))
           AND (CAST(:actorId AS VARCHAR) IS NULL OR a.actor_id = CAST(:actorId AS UUID))
           AND (CAST(:from AS TIMESTAMP) IS NULL OR a.created_at >= CAST(:from AS TIMESTAMP))
           AND (CAST(:to AS TIMESTAMP) IS NULL OR a.created_at <= CAST(:to AS TIMESTAMP))
@@ -27,6 +28,7 @@ public interface AuditLogRepository extends JpaRepository<AuditLogEntity, Long> 
         SELECT COUNT(*) FROM audit_log a
         WHERE (CAST(:action AS VARCHAR) IS NULL OR a.action = :action)
           AND (CAST(:entityType AS VARCHAR) IS NULL OR a.entity_type = :entityType)
+          AND (CAST(:entityId AS VARCHAR) IS NULL OR a.entity_id = CAST(:entityId AS UUID))
           AND (CAST(:actorId AS VARCHAR) IS NULL OR a.actor_id = CAST(:actorId AS UUID))
           AND (CAST(:from AS TIMESTAMP) IS NULL OR a.created_at >= CAST(:from AS TIMESTAMP))
           AND (CAST(:to AS TIMESTAMP) IS NULL OR a.created_at <= CAST(:to AS TIMESTAMP))
@@ -35,6 +37,7 @@ public interface AuditLogRepository extends JpaRepository<AuditLogEntity, Long> 
     Page<AuditLogEntity> findFiltered(
         @Param("action") String action,
         @Param("entityType") String entityType,
+        @Param("entityId") String entityId,
         @Param("actorId") String actorId,
         @Param("from") LocalDateTime from,
         @Param("to") LocalDateTime to,

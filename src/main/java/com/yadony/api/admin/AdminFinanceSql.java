@@ -250,4 +250,60 @@ public final class AdminFinanceSql {
     /** Nombres sur {@link #CASH_SCOPE} (+ recherche), sans vue ni statut. */
     public static final String CASH_COUNTS_SELECT = "SELECT " + sum(CASH_ATTENTION, "attention") + ", "
             + "COUNT(*) AS \"all\" ";
+
+    // ── Litiges bancaires ───────────────────────────────────────────────────────
+
+    /**
+     * Litige {@code c}, son paiement {@code cp}, son colis {@code b} (celui du litige, à défaut celui du paiement),
+     * le trajet {@code a}, l'expéditeur {@code s} et le voyageur {@code u} (comptes supprimés écartés : l'identifiant
+     * reste dans la ligne, le nom disparaît). Un paiement lié à un fil sans colis direct n'a pas de colis ici.
+     * Paramètres nommés : {@code :view}, et pour la recherche {@code :t1} à {@code :t4}.
+     */
+    public static final String CB_FROM = " chargebacks c"
+            + " LEFT JOIN payments cp ON cp.id = c.payment_id"
+            + " LEFT JOIN bids b ON b.id = COALESCE(c.bid_id, cp.bid_id)"
+            + " LEFT JOIN announcements a ON a.id = b.announcement_id"
+            + " LEFT JOIN users s ON s.id = b.sender_id AND s.deleted_at IS NULL"
+            + " LEFT JOIN users u ON u.id = a.traveler_id AND u.deleted_at IS NULL ";
+
+    /** Litiges non supprimés. */
+    public static final String CB_SCOPE = "c.deleted_at IS NULL";
+
+    /** Vue {@code :view} : {@code ALL} ou le statut exact du litige ({@code OPEN}, {@code WON}, {@code LOST}). */
+    public static final String CB_VIEW_PREDICATE = "(CAST(:view AS VARCHAR) = 'ALL'"
+            + " OR c.status = CAST(:view AS VARCHAR))";
+
+    /** Paiement du litige, à défaut celui du colis (un colis n'a qu'un paiement : index unique sur {@code bid_id}). */
+    public static final String CB_PAYMENT_ID = "COALESCE(c.payment_id, (SELECT p2.id FROM payments p2"
+            + " WHERE p2.bid_id = c.bid_id ORDER BY p2.created_at DESC, p2.id DESC LIMIT 1))";
+
+    /** Texte replié : n° de suivi, expéditeur, voyageur, villes du trajet. */
+    private static final String CB_HAYSTACK = AdminBidSql.FOLD_OPEN + "CONCAT_WS(' ', b.tracking_number,"
+            + " s.first_name, s.last_name, s.username, u.first_name, u.last_name, u.username,"
+            + " a.departure_city, a.arrival_city)" + AdminBidSql.FOLD_CLOSE;
+
+    public static final String CB_SEARCH_PREDICATE = allTokens(CB_HAYSTACK);
+
+    public static final String CB_SELECT = "SELECT CAST(c.id AS VARCHAR(36)) AS \"id\","
+            + " CAST(c.bid_id AS VARCHAR(36)) AS \"bidId\", c.amount AS \"amount\","
+            + " c.currency AS \"currency\", c.reason AS \"reason\", c.status AS \"status\","
+            + " c.opened_at AS \"openedAt\", c.outcome AS \"outcome\", c.resolved_at AS \"resolvedAt\","
+            + " CAST(" + CB_PAYMENT_ID + " AS VARCHAR(36)) AS \"paymentId\","
+            + " b.tracking_number AS \"trackingNumber\","
+            + " a.departure_city AS \"departureCity\", a.arrival_city AS \"arrivalCity\","
+            + " CAST(b.sender_id AS VARCHAR(36)) AS \"senderId\","
+            + " s.first_name AS \"senderFirstName\", s.last_name AS \"senderLastName\","
+            + " s.username AS \"senderUsername\","
+            + " CAST(a.traveler_id AS VARCHAR(36)) AS \"travelerId\","
+            + " u.first_name AS \"travelerFirstName\", u.last_name AS \"travelerLastName\","
+            + " u.username AS \"travelerUsername\" ";
+
+    public static final String CB_ORDER_BY = " ORDER BY c.opened_at DESC, c.id DESC";
+
+    /** Nombres par statut sur {@link #CB_SCOPE} (+ recherche), sans vue. */
+    public static final String CB_COUNTS_SELECT = "SELECT "
+            + sum("c.status = 'OPEN'", "open") + ", "
+            + sum("c.status = 'WON'", "won") + ", "
+            + sum("c.status = 'LOST'", "lost") + ", "
+            + "COUNT(*) AS \"all\" ";
 }

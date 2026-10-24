@@ -34,10 +34,10 @@ class AdminAuditControllerTest {
     void list_returnsPage() {
         AuditLogEntity entity = new AuditLogEntity();
         Page<AuditLogEntity> page = new PageImpl<>(List.of(entity));
-        when(auditRepo.findFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), any()))
+        when(auditRepo.findFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), any()))
             .thenReturn(page);
 
-        ResponseEntity<?> resp = controller().list(null, null, null, null, null, 0, 20);
+        ResponseEntity<?> resp = controller().list(null, null, null, null, null, null, 0, 20);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody()).isNotNull();
@@ -49,14 +49,14 @@ class AdminAuditControllerTest {
         AuditLogEntity entity = new AuditLogEntity();
         entity.setActorId(actorId);
         Page<AuditLogEntity> page = new PageImpl<>(List.of(entity));
-        when(auditRepo.findFiltered(isNull(), isNull(), eq(actorId.toString()), isNull(), isNull(), any()))
+        when(auditRepo.findFiltered(isNull(), isNull(), isNull(), eq(actorId.toString()), isNull(), isNull(), any()))
             .thenReturn(page);
         com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
         user.setFirstName("Alice");
         user.setLastName("D.");
         when(userRepo.findAllById(anyIterable())).thenReturn(List.of(user));
 
-        ResponseEntity<?> resp = controller().list(null, null, actorId.toString(), null, null, 0, 20);
+        ResponseEntity<?> resp = controller().list(null, null, null, actorId.toString(), null, null, 0, 20);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         verify(userRepo, times(1)).findAllById(any());
@@ -68,15 +68,28 @@ class AdminAuditControllerTest {
         AuditLogEntity entity = new AuditLogEntity();
         entity.setActorId(actorId);
         Page<AuditLogEntity> page = new PageImpl<>(List.of(entity));
-        when(auditRepo.findFiltered(isNull(), isNull(), eq(actorId.toString()), isNull(), isNull(), any()))
+        when(auditRepo.findFiltered(isNull(), isNull(), isNull(), eq(actorId.toString()), isNull(), isNull(), any()))
             .thenReturn(page);
         com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
         user.setFirstName("Alice");
         user.setLastName(null);
         when(userRepo.findAllById(anyIterable())).thenReturn(List.of(user));
 
-        ResponseEntity<?> resp = controller().list(null, null, actorId.toString(), null, null, 0, 20);
+        ResponseEntity<?> resp = controller().list(null, null, null, actorId.toString(), null, null, 0, 20);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+
+    @Test
+    void list_withEntityId_passesItToTheFilter() {
+        UUID entityId = UUID.randomUUID();
+        when(auditRepo.findFiltered(isNull(), eq("PAYMENT"), eq(entityId.toString()), isNull(), isNull(), isNull(),
+                any())).thenReturn(new PageImpl<>(List.of(new AuditLogEntity())));
+
+        ResponseEntity<?> resp = controller().list(null, "PAYMENT", entityId, null, null, null, 0, 20);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        verify(auditRepo).findFiltered(isNull(), eq("PAYMENT"), eq(entityId.toString()), isNull(), isNull(),
+                isNull(), any());
     }
 }

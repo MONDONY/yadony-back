@@ -167,29 +167,6 @@ class ChargebackServiceTest {
     }
 
     @Test
-    void listAll_delegatesToRepository() {
-        var pageable = org.springframework.data.domain.PageRequest.of(0, 10);
-        var cb = new ChargebackEntity();
-        cb.setStripeDisputeId("dp_list");
-        cb.setStripeChargeId("ch_list");
-        cb.setAmount(500L);
-        cb.setCurrency("eur");
-        cb.setReason("fraudulent");
-        cb.setStatus(ChargebackStatus.OPEN);
-        cb.setOpenedAt(java.time.Instant.now());
-
-        var page = new org.springframework.data.domain.PageImpl<>(java.util.List.of(cb));
-        when(chargebackRepository.findAllByOrderByOpenedAtDesc(pageable)).thenReturn(page);
-
-        var result = service.listAll(pageable);
-
-        assertThat(result.getContent()).hasSize(1);
-        assertThat(result.getContent().get(0).stripeDisputeId()).isEqualTo("dp_list");
-        assertThat(result.getContent().get(0).amount()).isEqualTo(500L);
-        assertThat(result.getContent().get(0).status()).isEqualTo(ChargebackStatus.OPEN);
-    }
-
-    @Test
     void handleFundsWithdrawn_logsAudit_whenDisputeFound() {
         String disputeId = "dp_funds_withdrawn";
         var cb = new ChargebackEntity();

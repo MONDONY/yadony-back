@@ -1,6 +1,8 @@
 package com.yadony.api.admin;
 
 import com.yadony.api.admin.dto.AdminCashCommissionCountsResponse;
+import com.yadony.api.admin.dto.AdminChargebackCountsResponse;
+import com.yadony.api.admin.dto.AdminChargebackResponse;
 import com.yadony.api.admin.dto.AdminCashCommissionResponse;
 import com.yadony.api.admin.dto.AdminMobileMoneyCountsResponse;
 import com.yadony.api.admin.dto.AdminMobileMoneyResponse;
@@ -228,6 +230,74 @@ public class AdminFinanceListings {
         String query = q == null ? null : q.strip();
         if (query != null && !query.isEmpty()) {
             where.append(" AND ").append(AdminFinanceSql.CASH_SEARCH_PREDICATE);
+            addSearchTerms(params, query);
+        }
+        return where.toString();
+    }
+
+    // ── Litiges bancaires ───────────────────────────────────────────────────────
+
+    /**
+     * Litiges bancaires, ouverts le plus récemment d'abord : vue (absente = {@code ALL}) et recherche {@code q}
+     * (suivi, expéditeur, voyageur, trajet). Paiement, colis, trajet et personnes résolus en SQL ; un compte
+     * supprimé garde son identifiant, sans nom.
+     */
+    @Transactional(readOnly = true)
+    public Page<AdminChargebackResponse> chargebacks(AdminChargebackView view, String q, Pageable pageable) {
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("view", (view != null ? view : AdminChargebackView.ALL).name());
+        String where = chargebackWhere(q, params) + " AND " + AdminFinanceSql.CB_VIEW_PREDICATE;
+        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM" + AdminFinanceSql.CB_FROM + where, params, Long.class);
+        if (total == null || total == 0) {
+            return new PageImpl<>(List.of(), pageable, 0);
+        }
+        params.addValue("limit", pageable.getPageSize()).addValue("offset", pageable.getOffset());
+        List<AdminChargebackResponse> content = jdbc.query(AdminFinanceSql.CB_SELECT + "FROM"
+                        + AdminFinanceSql.CB_FROM + where + AdminFinanceSql.CB_ORDER_BY
+                        + " LIMIT :limit OFFSET :offset", params,
+                (rs, i) -> {
+                    String departure = rs.getString("departureCity");
+                    String arrival = rs.getString("arrivalCity");
+                    String currency = rs.getString("currency");
+                    return new AdminChargebackResponse(
+                            uuid(rs.getString("id")),
+                            uuid(rs.getString("bidId")),
+                            rs.getLong("amount"),
+                            currency == null ? null : currency.toUpperCase(java.util.Locale.ROOT),
+                            rs.getString("reason"),
+                            rs.getString("status"),
+                            utc(rs, "openedAt"),
+                            uuid(rs.getString("paymentId")),
+                            rs.getString("trackingNumber"),
+                            departure != null && arrival != null
+                                    ? MatchingTextUtil.corridorLabel(departure, arrival) : null,
+                            uuid(rs.getString("senderId")),
+                            AdminPaymentInsights.nameLabel(rs.getString("senderFirstName"),
+                                    rs.getString("senderLastName"), rs.getString("senderUsername")),
+                            uuid(rs.getString("travelerId")),
+                            AdminPaymentInsights.nameLabel(rs.getString("travelerFirstName"),
+                                    rs.getString("travelerLastName"), rs.getString("travelerUsername")),
+                            rs.getString("outcome"),
+                            utc(rs, "resolvedAt"));
+                });
+        return new PageImpl<>(content, pageable, total);
+    }
+
+    /** Nombres par statut et total, sur la même recherche {@code q} que la liste, sans vue. */
+    @Transactional(readOnly = true)
+    public AdminChargebackCountsResponse chargebackCounts(String q) {
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        String where = chargebackWhere(q, params);
+        return jdbc.queryForObject(AdminFinanceSql.CB_COUNTS_SELECT + "FROM" + AdminFinanceSql.CB_FROM + where, params,
+                (rs, i) -> new AdminChargebackCountsResponse(rs.getLong("open"), rs.getLong("won"),
+                        rs.getLong("lost"), rs.getLong("all")));
+    }
+
+    private static String chargebackWhere(String q, MapSqlParameterSource params) {
+        StringBuilder where = new StringBuilder(" WHERE ").append(AdminFinanceSql.CB_SCOPE);
+        String query = q == null ? null : q.strip();
+        if (query != null && !query.isEmpty()) {
+            where.append(" AND ").append(AdminFinanceSql.CB_SEARCH_PREDICATE);
             addSearchTerms(params, query);
         }
         return where.toString();

@@ -1,6 +1,5 @@
 package com.yadony.api.payments.chargeback;
 
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -12,7 +11,6 @@ import java.util.UUID;
 
 public interface ChargebackRepository extends JpaRepository<ChargebackEntity, UUID> {
     Optional<ChargebackEntity> findByStripeDisputeId(String disputeId);
-    Page<ChargebackEntity> findAllByOrderByOpenedAtDesc(Pageable pageable);
 
     /**
      * Litiges bancaires d'un paiement, le plus récent d'abord : ceux qui portent son {@code payment_id}, et ceux

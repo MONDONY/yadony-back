@@ -1,5 +1,6 @@
 package com.yadony.api.admin;
 
+import com.yadony.api.admin.dto.AdminFinanceCountsResponse;
 import com.yadony.api.admin.dto.AdminMobileMoneyCommissionsResponse;
 import com.yadony.api.admin.dto.AdminMobileMoneyCountsResponse;
 import com.yadony.api.payments.PaymentRepository;
@@ -48,10 +49,23 @@ public class AdminFinanceController {
 
     private final PaymentRepository paymentRepository;
     private final AdminFinanceListings listings;
+    private final AdminFinanceCounts financeCounts;
 
-    public AdminFinanceController(PaymentRepository paymentRepository, AdminFinanceListings listings) {
+    public AdminFinanceController(PaymentRepository paymentRepository, AdminFinanceListings listings,
+                                  AdminFinanceCounts financeCounts) {
         this.paymentRepository = paymentRepository;
         this.listings = listings;
+        this.financeCounts = financeCounts;
+    }
+
+    /**
+     * Nombres « à traiter » des quatre sections Transactions (paiements, mobile money, soldes, litiges) et leur
+     * ventilation, pour les pastilles de la page.
+     */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
+    @GetMapping("/finance/counts")
+    public AdminFinanceCountsResponse financeCounts() {
+        return financeCounts.counts();
     }
 
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
