@@ -264,10 +264,12 @@ public class BidAmendmentService {
     /**
      * L'expéditeur retire sa demande avant qu'elle ne soit acquise. 409 {@code amendment-payment-in-progress}
      * si un dépôt mobile money est en vol ({@link BidAmendmentRailHandler#mayExpire} faux).
+     *
+     * <p>Ouvert même drapeau éteint : retirer une demande rend les kilos (et l'autorisation carte) ; seuls la création,
+     * l'acceptation et le paiement sont coupés.
      */
     @Transactional
     public BidAmendmentResponse cancel(UUID bidId, UUID amendmentId, String firebaseUid) {
-        requireEnabled();
         UserEntity sender = user(firebaseUid);
         BidAmendmentEntity a = lockForResponse(bidId, amendmentId);
         if (!sender.getId().equals(a.getSenderId())) {
@@ -288,9 +290,9 @@ public class BidAmendmentService {
 
     // ── Voyageur ─────────────────────────────────────────────────────────────
 
+    /** Refus du voyageur. Ouvert même drapeau éteint, comme l'annulation : il rend les kilos et l'argent bloqué. */
     @Transactional
     public BidAmendmentResponse decline(UUID bidId, UUID amendmentId, String firebaseUid) {
-        requireEnabled();
         UserEntity traveler = user(firebaseUid);
         BidAmendmentEntity a = lockForResponse(bidId, amendmentId);
         requireAwaitingTraveler(a, traveler);
