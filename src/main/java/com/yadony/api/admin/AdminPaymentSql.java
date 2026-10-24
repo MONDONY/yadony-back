@@ -38,6 +38,10 @@ public final class AdminPaymentSql {
     public static final String EFF_DEPARTURE = "COALESCE(a.departure_city, la.departure_city, r.departure_city)";
     public static final String EFF_ARRIVAL = "COALESCE(a.arrival_city, la.arrival_city, r.arrival_city)";
 
+    /** Colis {@code lb} lié au fil de négociation du paiement {@code p} quand celui-ci n'a pas de colis direct. */
+    public static final String LINKED_BID_CONDITION = "p.bid_id IS NULL AND p.negotiation_thread_id IS NOT NULL"
+            + " AND lb.linked_negotiation_thread_id = p.negotiation_thread_id";
+
     /**
      * Contexte d'un paiement {@code p} : colis direct {@code b} et son trajet {@code a}, fil {@code t} et sa
      * demande {@code r}, colis lié au fil {@code lb} et son trajet {@code la}. Seule définition, partagée par
@@ -48,8 +52,7 @@ public final class AdminPaymentSql {
             + " LEFT JOIN announcements a ON a.id = b.announcement_id"
             + " LEFT JOIN negotiation_threads t ON t.id = p.negotiation_thread_id"
             + " LEFT JOIN package_requests r ON r.id = t.package_request_id"
-            + " LEFT JOIN bids lb ON p.bid_id IS NULL AND p.negotiation_thread_id IS NOT NULL"
-            + "                   AND lb.linked_negotiation_thread_id = p.negotiation_thread_id"
+            + " LEFT JOIN bids lb ON " + LINKED_BID_CONDITION
             + " LEFT JOIN announcements la ON la.id = lb.announcement_id";
 
     public static final String FROM_JOIN = " payments p" + PAYMENT_CONTEXT_JOIN

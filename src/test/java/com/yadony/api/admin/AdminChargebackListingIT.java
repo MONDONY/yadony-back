@@ -23,6 +23,14 @@ import com.yadony.api.payments.PaymentStatus;
 import com.yadony.api.payments.chargeback.ChargebackEntity;
 import com.yadony.api.payments.chargeback.ChargebackRepository;
 import com.yadony.api.payments.chargeback.ChargebackStatus;
+import com.yadony.api.payments.cash.PaymentMethod;
+import com.yadony.api.requests.entity.NegotiationThreadEntity;
+import com.yadony.api.requests.entity.NegotiationThreadStatus;
+import com.yadony.api.requests.entity.PackageRequestEntity;
+import com.yadony.api.requests.entity.PackageRequestStatus;
+import com.yadony.api.requests.entity.ParcelSize;
+import com.yadony.api.requests.repository.NegotiationThreadRepository;
+import com.yadony.api.requests.repository.PackageRequestRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,6 +46,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.EnumSet;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Set;
@@ -66,6 +76,8 @@ class AdminChargebackListingIT {
     @Autowired BidRepository bidRepository;
     @Autowired PaymentRepository paymentRepository;
     @Autowired ChargebackRepository chargebackRepository;
+    @Autowired NegotiationThreadRepository negotiationThreadRepository;
+    @Autowired PackageRequestRepository packageRequestRepository;
     @Autowired JdbcTemplate jdbc;
 
     private String tag;
@@ -143,6 +155,41 @@ class AdminChargebackListingIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content[?(@.id=='" + orphan.getId() + "')].paymentId").isEmpty())
                 .andExpect(jsonPath("$.content[?(@.id=='" + orphan.getId() + "')].trackingNumber").isEmpty());
+    }
+
+    @Test
+    void paiementDeNegociation_colisLieApres_resoluParLeFil_sansDoublon() {
+        NegotiationThreadEntity thread = persistThread();
+        PaymentEntity payment = persistThreadPayment(thread.getId());
+        ChargebackEntity c = chargeback(payment.getId(), null, ChargebackStatus.OPEN);
+        // Tant que le fil n'a pas de colis : listé, sans champ de colis.
+        assertThat(listings.chargebacks(null, null, PageRequest.of(0, 100)).getContent())
+                .filteredOn(r -> r.id().equals(c.getId())).singleElement().satisfies(r -> {
+                    assertThat(r.paymentId()).isEqualTo(payment.getId());
+                    assertThat(r.trackingNumber()).isNull();
+                    assertThat(r.corridor()).isNull();
+                    assertThat(r.senderId()).isNull();
+                    assertThat(r.travelerId()).isNull();
+                });
+
+        // Le colis est créé ensuite et lié au fil.
+        BidEntity bid = persistBid(trip, "YL" + tag.substring(2, 10));
+        bid.setLinkedNegotiationThreadId(thread.getId());
+        bidRepository.save(bid);
+
+        AdminChargebackResponse r = only(null, tag);
+        assertThat(r.id()).isEqualTo(c.getId());
+        assertThat(r.bidId()).isEqualTo(bid.getId());
+        assertThat(r.paymentId()).isEqualTo(payment.getId());
+        assertThat(r.trackingNumber()).isEqualTo("YL" + tag.substring(2, 10));
+        assertThat(r.corridor()).isEqualTo("Paris → Dakar");
+        assertThat(r.senderName()).isEqualTo("Aïcha Sender" + tag + " (@s" + tag + ")");
+        assertThat(r.travelerName()).isEqualTo(tag + " Diallo (@t" + tag + ")");
+        // Trouvé par le suivi et par une ville du trajet, une seule fois dans la liste et les nombres.
+        assertThat(ids("yl" + tag.substring(2, 10))).containsExactly(c.getId());
+        assertThat(ids("dakar " + tag)).containsExactly(c.getId());
+        assertThat(listings.chargebackCounts(tag)).isEqualTo(new AdminChargebackCountsResponse(1, 0, 0, 1));
+        assertThat(listings.chargebackCounts("yl" + tag.substring(2, 10)).all()).isEqualTo(1);
     }
 
     @Test
@@ -305,9 +352,47 @@ class AdminChargebackListingIT {
         return chargebackRepository.save(c);
     }
 
+    private NegotiationThreadEntity persistThread() {
+        PackageRequestEntity colis = new PackageRequestEntity();
+        colis.setSenderId(sender.getId());
+        colis.setDepartureCity("Lyon");
+        colis.setArrivalCity("Abidjan");
+        colis.setDesiredDate(LocalDate.now().plusDays(10));
+        colis.setDateToleranceDays((short) 3);
+        colis.setWeightKg(new BigDecimal("2.50"));
+        colis.setParcelSize(ParcelSize.SMALL);
+        colis.setTransportMode(TransportMode.PLANE);
+        colis.setContentCategory("vetements");
+        colis.setStatus(PackageRequestStatus.OPEN);
+        colis.setCurrency("EUR");
+        colis.setNegotiable(true);
+        colis.setAcceptedPaymentMethods(EnumSet.of(PaymentMethod.STRIPE));
+        packageRequestRepository.save(colis);
+        NegotiationThreadEntity t = new NegotiationThreadEntity();
+        t.setPackageRequestId(colis.getId());
+        t.setTravelerId(traveler.getId());
+        t.setTravelerTravelDate(LocalDate.now().plusDays(10));
+        t.setTravelerAvailableKg(new BigDecimal("5.00"));
+        t.setStatus(NegotiationThreadStatus.ACCEPTED);
+        t.setCurrency("EUR");
+        t.setCurrentPriceEur(new BigDecimal("200.00"));
+        t.setRoundsCount((short) 1);
+        t.setLastActivityAt(LocalDateTime.now());
+        return negotiationThreadRepository.save(t);
+    }
+
+    private PaymentEntity persistThreadPayment(UUID threadId) {
+        return persistPayment(null, threadId);
+    }
+
     private PaymentEntity persistPayment(UUID bidId) {
+        return persistPayment(bidId, null);
+    }
+
+    private PaymentEntity persistPayment(UUID bidId, UUID threadId) {
         PaymentEntity p = new PaymentEntity();
         p.setBidId(bidId);
+        p.setNegotiationThreadId(threadId);
         p.setRail(PaymentRail.STRIPE);
         p.setStripePaymentIntentId("pi_" + UUID.randomUUID().toString().replace("-", ""));
         p.setCurrency("EUR");

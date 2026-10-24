@@ -1,6 +1,5 @@
 package com.yadony.api.admin;
 
-import com.yadony.api.admin.dto.AdminChargebackResponse;
 import com.yadony.api.admin.dto.AdminPaymentCountsResponse;
 import com.yadony.api.admin.dto.AdminPaymentDetailResponse;
 import com.yadony.api.admin.dto.AdminPaymentInsight;
