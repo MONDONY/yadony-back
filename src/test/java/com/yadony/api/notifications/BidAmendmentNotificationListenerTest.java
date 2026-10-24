@@ -29,6 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -195,16 +196,17 @@ class BidAmendmentNotificationListenerTest {
                 eq("Commission not confirmed in time: request cancelled."), eq(data("BID_AMENDMENT_CANCELLED")));
         // L'expéditeur attendait une réponse : il apprend que sa demande est annulée, sans montant.
         verify(dispatcher).notifyUser(eq(senderId), eq("Modification annulée"),
-                eq("Le voyageur n'a pas pu finaliser : votre demande est annulée."),
+                eq("Le voyageur n'a pas confirmé la modification : demande annulée."),
                 eq(data("BID_AMENDMENT_CANCELLED")));
 
+        // Le second appel part d'un compteur vierge : le texte envoyé plus haut à l'expéditeur ne masque pas le never().
+        clearInvocations(dispatcher);
         listener.onClosed(new BidAmendmentClosedEvent.Cancelled(amendmentId, bidId, senderId, travelerId,
                 BidSupplementRail.PAWAPAY, BidAmendmentStatus.PAYMENT_PENDING,
                 BidAmendmentClosedReason.CANCELLED_BY_SENDER));
         verify(dispatcher).notifyUser(eq(travelerId), eq("Change request cancelled"),
                 eq("The sender cancelled their change request."), eq(data("BID_AMENDMENT_CANCELLED")));
-        verify(dispatcher, never()).notifyUser(eq(senderId), eq("Modification annulée"),
-                eq("L'acceptation n'a pas abouti : votre carte n'a pas été débitée."), any());
+        verify(dispatcher, never()).notifyUser(eq(senderId), anyString(), anyString(), any());
     }
 
     @Test
