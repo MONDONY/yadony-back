@@ -187,14 +187,20 @@ public class BidAmendmentCashRefunds {
         } catch (Exception e) {
             log.error("Remboursement de la PaymentIntent de commission {} (modification {}) en échec",
                     paymentIntentId, amendmentId, e);
-            // Compté par le filet : au-delà de 3 échecs, cette PaymentIntent n'est plus rejouée (l'alerte reste).
-            ledger.auditOnly(amendmentId, "BID_AMENDMENT_STALE_COMMISSION_REFUND_FAILED",
-                    Map.of("piId", paymentIntentId, "error", String.valueOf(e.getMessage())));
+            // L'alerte d'abord : elle ne dépend jamais de l'écriture de la trace.
             alerts.raiseOnce("AMEND_STALE_REFUND_FAIL_" + paymentIntentId,
                     "Commission " + paymentIntentId + " de la modification " + amendmentId
                             + " prélevée hors de l'essai courant et NON rendue : " + e.getMessage(),
                     Map.of("amendmentId", amendmentId.toString(), "bidId", bidId.toString(),
                             "paymentIntentId", paymentIntentId, "error", String.valueOf(e.getMessage())));
+            // Comptée par le filet : 3 échecs étalés sur 24 h, et cette PaymentIntent n'est plus rejouée.
+            try {
+                ledger.auditOnly(amendmentId, "BID_AMENDMENT_STALE_COMMISSION_REFUND_FAILED",
+                        Map.of("piId", paymentIntentId, "error", String.valueOf(e.getMessage())));
+            } catch (RuntimeException auditError) {
+                log.error("Trace d'échec du remboursement de la PaymentIntent {} non écrite : rejouée sans plafond",
+                        paymentIntentId, auditError);
+            }
             return false;
         }
     }

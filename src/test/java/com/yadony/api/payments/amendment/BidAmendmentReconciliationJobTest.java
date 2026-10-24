@@ -54,7 +54,7 @@ class BidAmendmentReconciliationJobTest {
         when(amendments.findCashIdsToSettle(any(), any(), any())).thenReturn(List.of(failing, next));
         when(cashRefunds.settle(failing)).thenThrow(new IllegalStateException("stripe"));
         when(cashRefunds.settle(next)).thenReturn(true);
-        when(amendments.findStaleCommissionsWithoutRefund(any(), anyInt(), anyInt())).thenReturn(List.<Object[]>of(
+        when(amendments.findStaleCommissionsWithoutRefund(any(), anyInt(), any(), anyInt())).thenReturn(List.<Object[]>of(
                 new Object[]{"pas-un-uuid", bidId.toString(), "pi_bad"},
                 new Object[]{amendmentId.toString(), bidId.toString(), "pi_ok"}));
         when(cashRefunds.refundStale(amendmentId, bidId, "pi_ok")).thenReturn(true);

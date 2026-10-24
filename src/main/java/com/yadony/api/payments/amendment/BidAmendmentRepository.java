@@ -142,9 +142,11 @@ public interface BidAmendmentRepository extends JpaRepository<BidAmendmentEntity
      * Filet : PaymentIntents de commission abouties hors de l'essai courant (audit {@code BID_AMENDMENT_STALE_COMMISSION},
      * un par rejeu de webhook) tracées depuis {@code since}, sans Refund connu ({@code ..._REFUNDED} écrit par
      * {@code refundStale}, ou {@code ..._REFUND_CONFIRMED} par le webhook {@code charge.refunded}). Une ligne par
-     * PaymentIntent : {@code [amendmentId, bidId, piId]}, en texte. Une PaymentIntent dont le Refund a échoué
-     * {@code maxFailures} fois ({@code ..._REFUND_FAILED}) sort du balayage : l'alerte {@code AMEND_STALE_REFUND_FAIL_}
-     * levée au premier échec reste, à traiter à la main ; elle ne bloque plus le lot.
+     * PaymentIntent : {@code [amendmentId, bidId, piId]}, en texte. Une PaymentIntent sort du balayage quand ses
+     * échecs de Refund ({@code ..._REFUND_FAILED}) sont au moins {@code maxFailures} ET que le premier date d'avant
+     * {@code failuresBefore} : les échecs doivent couvrir une durée, pas seulement trois passages rapprochés (une panne
+     * Stripe d'une demi-heure ne doit pas faire abandonner). L'alerte {@code AMEND_STALE_REFUND_FAIL_} levée au premier
+     * échec reste, à traiter à la main ; la PaymentIntent ne bloque plus le lot.
      */
     @Query(value = """
             SELECT DISTINCT ON (s.payload->>'piId')
@@ -159,15 +161,19 @@ public interface BidAmendmentRepository extends JpaRepository<BidAmendmentEntity
                     AND r.action IN ('BID_AMENDMENT_STALE_COMMISSION_REFUNDED',
                                      'BID_AMENDMENT_STALE_COMMISSION_REFUND_CONFIRMED')
                     AND r.payload->>'piId' = s.payload->>'piId')
-              AND (SELECT COUNT(*) FROM audit_log f
-                   WHERE f.entity_type = 'BID_AMENDMENT' AND f.entity_id = s.entity_id
-                     AND f.action = 'BID_AMENDMENT_STALE_COMMISSION_REFUND_FAILED'
-                     AND f.payload->>'piId' = s.payload->>'piId') < :maxFailures
+              AND NOT EXISTS (
+                  SELECT 1 FROM audit_log f
+                  WHERE f.entity_type = 'BID_AMENDMENT' AND f.entity_id = s.entity_id
+                    AND f.action = 'BID_AMENDMENT_STALE_COMMISSION_REFUND_FAILED'
+                    AND f.payload->>'piId' = s.payload->>'piId'
+                  HAVING COUNT(*) >= :maxFailures AND MIN(f.created_at) < CAST(:failuresBefore AS TIMESTAMP))
             ORDER BY s.payload->>'piId', s.created_at
             LIMIT :limit
             """, nativeQuery = true)
     List<Object[]> findStaleCommissionsWithoutRefund(@Param("since") LocalDateTime since,
-                                                     @Param("maxFailures") int maxFailures, @Param("limit") int limit);
+                                                     @Param("maxFailures") int maxFailures,
+                                                     @Param("failuresBefore") LocalDateTime failuresBefore,
+                                                     @Param("limit") int limit);
 
     /**
      * Filet : modifications acquises ni versées ni remboursées, colis terminé (statut stable) depuis avant

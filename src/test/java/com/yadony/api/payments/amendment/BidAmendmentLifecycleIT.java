@@ -519,13 +519,24 @@ class BidAmendmentLifecycleIT {
         insertAudit(id, p.bidId, "BID_AMENDMENT_STALE_COMMISSION", lost, 0);
         insertAudit(id, p.bidId, "BID_AMENDMENT_STALE_COMMISSION", confirmed, 0);
         insertAudit(id, p.bidId, "BID_AMENDMENT_STALE_COMMISSION_REFUND_CONFIRMED", confirmed, 0);
-        insertAudit(id, p.bidId, "BID_AMENDMENT_STALE_COMMISSION", tooOld, 40);
-        // Trois Refunds déjà échoués pour cette PaymentIntent : sortie du balayage (l'alerte d'échec reste).
+        insertAudit(id, p.bidId, "BID_AMENDMENT_STALE_COMMISSION", tooOld, 40 * 24);
+        // Trois Refunds échoués étalés sur plus de 24 h : sortie du balayage (l'alerte d'échec reste).
         String failing = "pi_fail_" + UUID.randomUUID().toString().substring(0, 8);
-        insertAudit(id, p.bidId, "BID_AMENDMENT_STALE_COMMISSION", failing, 0);
-        for (int i = 0; i < 3; i++) {
-            insertAudit(id, p.bidId, "BID_AMENDMENT_STALE_COMMISSION_REFUND_FAILED", failing, 0);
+        insertAudit(id, p.bidId, "BID_AMENDMENT_STALE_COMMISSION", failing, 36);
+        // Marges de plusieurs heures : les horodatages SQL (UTC) et ceux liés par Hibernate peuvent différer du
+        // décalage de la JVM (voir lapse()).
+        for (int hoursAgo : new int[]{30, 12, 1}) {
+            insertAudit(id, p.bidId, "BID_AMENDMENT_STALE_COMMISSION_REFUND_FAILED", failing, hoursAgo);
         }
+        // Trois échecs rapprochés (panne Stripe d'une demi-heure) : toujours rejouée.
+        String outage = "pi_outage_" + UUID.randomUUID().toString().substring(0, 8);
+        insertAudit(id, p.bidId, "BID_AMENDMENT_STALE_COMMISSION", outage, 1);
+        for (int i = 0; i < 3; i++) {
+            insertAudit(id, p.bidId, "BID_AMENDMENT_STALE_COMMISSION_REFUND_FAILED", outage, 0);
+        }
+        when(gateway.findRefund(eq(outage), eq("bid_amendment_id"), eq(id.toString()))).thenReturn(Optional.empty());
+        when(gateway.createRefund(eq(outage), anyMap(), eq("amendment_commission_refund_" + outage)))
+                .thenReturn("re_outage");
         when(gateway.findRefund(eq(lost), eq("bid_amendment_id"), eq(id.toString()))).thenReturn(Optional.empty());
         when(gateway.createRefund(eq(lost), anyMap(), eq("amendment_commission_refund_" + lost))).thenReturn("re_lost");
 
@@ -536,7 +547,9 @@ class BidAmendmentLifecycleIT {
         verify(gateway, never()).findRefund(eq(confirmed), any(), any());
         verify(gateway, never()).findRefund(eq(tooOld), any(), any());
         verify(gateway, never()).findRefund(eq(failing), any(), any());
-        assertThat(auditActions(id)).containsOnlyOnce("BID_AMENDMENT_STALE_COMMISSION_REFUNDED");
+        verify(gateway, times(1)).createRefund(eq(outage), anyMap(), eq("amendment_commission_refund_" + outage));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM audit_log WHERE entity_id = ? "
+                + "AND action = 'BID_AMENDMENT_STALE_COMMISSION_REFUNDED'", Integer.class, id)).isEqualTo(2);
     }
 
     @Test
@@ -615,12 +628,12 @@ class BidAmendmentLifecycleIT {
                 + "AND payment_ref = ?", Integer.class, travelerId, "amendment-refund-" + amendmentId);
     }
 
-    /** Trace d'audit écrite directement, {@code daysAgo} jours dans le passé (l'audit est immuable). */
-    private void insertAudit(UUID amendmentId, UUID bidId, String action, String piId, int daysAgo) {
+    /** Trace d'audit écrite directement, {@code hoursAgo} heures dans le passé (l'audit est immuable). */
+    private void insertAudit(UUID amendmentId, UUID bidId, String action, String piId, int hoursAgo) {
         jdbc.update("INSERT INTO audit_log (entity_type, entity_id, action, payload, created_at) VALUES "
-                        + "('BID_AMENDMENT', ?, ?, CAST(? AS jsonb), (now() AT TIME ZONE 'UTC') - make_interval(days => ?))",
+                        + "('BID_AMENDMENT', ?, ?, CAST(? AS jsonb), (now() AT TIME ZONE 'UTC') - make_interval(hours => ?))",
                 amendmentId, action, "{\"bidId\":\"" + bidId + "\",\"amendmentId\":\"" + amendmentId
-                        + "\",\"piId\":\"" + piId + "\"}", daysAgo);
+                        + "\",\"piId\":\"" + piId + "\"}", hoursAgo);
     }
 
     private String column(UUID id, String column) {
