@@ -78,7 +78,16 @@ public class BidAmendmentService {
             BidAmendmentStatus.AUTHORIZATION_PENDING, BidAmendmentStatus.PROPOSED, BidAmendmentStatus.PAYMENT_PENDING);
 
     /** Colis terminés sans livraison : ses modifications sont closes ou remboursées (même ensemble que le supplément). */
-    public static final Set<BidStatus> TERMINAL_UNDELIVERED = BidSupplementService.TERMINAL_UNDELIVERED;
+    public static final Set<BidStatus> TERMINAL_UNDELIVERED = Set.copyOf(BidSupplementService.TERMINAL_UNDELIVERED);
+
+    /** Ce qu'une fin de colis traite : ouvertes ou acquises (et toute modification qui retient encore des kilos). */
+    private static final Set<BidAmendmentStatus> TO_END;
+
+    static {
+        EnumSet<BidAmendmentStatus> toEnd = EnumSet.copyOf(BidAmendmentStatus.OPEN);
+        toEnd.addAll(BidAmendmentStatus.SECURED);
+        TO_END = Set.copyOf(toEnd);
+    }
 
     /** Étapes d'où un rail peut rendre la modification acquise. */
     private static final Set<BidAmendmentStatus> ACCEPTABLE = EnumSet.of(
@@ -318,13 +327,16 @@ public class BidAmendmentService {
      *       rail espèces sur {@link BidAmendmentClosedEvent.NotBrought} (une seule demande de remboursement).</li>
      * </ul>
      *
+     * <p>Ouvert même drapeau éteint : une modification déjà acquise doit pouvoir être défaite et remboursée.
+     *
      * @throws YadonyBusinessException 403 si l'appelant n'est pas le voyageur, 422 {@code invalid-bid-status} si le
      *         colis n'est plus {@code ACCEPTED} (déjà remis), 409 {@code amendment-not-accepted} si la modification
      *         n'est pas acquise.
      */
     @Transactional
     public BidAmendmentResponse notBrought(UUID bidId, UUID amendmentId, String firebaseUid) {
-        requireEnabled();
+        // Pas de requireEnabled : rendre l'argent reste possible drapeau éteint (seuls création, acceptation et
+        // paiement sont coupés).
         UserEntity traveler = user(firebaseUid);
         BidAmendmentEntity a = lockForResponse(bidId, amendmentId);
         if (!traveler.getId().equals(a.getTravelerId())) {
@@ -414,7 +426,7 @@ public class BidAmendmentService {
             return false;
         }
         BidEntity bid = bids.findById(bidId).orElse(null);
-        if (bid == null || !TERMINAL_UNDELIVERED.contains(bid.getStatus())) {
+        if (bid == null || !TERMINAL_UNDELIVERED.contains(bid.getStatus()) || nothingToEnd(bidId)) {
             return false;
         }
         lockAnnouncement(bid);
@@ -439,8 +451,20 @@ public class BidAmendmentService {
             log.info("Principal du colis {} remboursé, litige ouvert : modifications laissées en l'état", bidId);
             return false;
         }
+        if (nothingToEnd(bidId)) {
+            return false;
+        }
         lockAnnouncement(bid);
         return endUnderLocks(bid, "ADMIN_REFUND");
+    }
+
+    /**
+     * Aucune modification à traiter (ni ouverte, ni acquise, ni kilos retenus) : la fin du colis s'arrête là, sans
+     * verrouiller le trajet. Lecture simple, cohérente sous le verrou du colis déjà pris (toute écriture sur une
+     * modification le prend d'abord). C'est le cas de presque toutes les fins de colis.
+     */
+    private boolean nothingToEnd(UUID bidId) {
+        return !amendments.existsToEnd(bidId, TO_END);
     }
 
     /**
@@ -529,7 +553,8 @@ public class BidAmendmentService {
 
     /**
      * Rappel au voyageur, une seule fois par modification : proposée, sans rappel envoyé, échéance dans moins de
-     * {@code reminder-before}. {@code reminderSentAt} est posé dans la même transaction que l'événement
+     * {@code reminder-before}, et fenêtre de réponse plus longue que {@code reminder-before} (sinon le rappel
+     * suivrait de près la notification de demande). {@code reminderSentAt} est posé dans la même transaction que l'événement
      * ({@link BidAmendmentReminderDueEvent}, notifié en B8). Sous les verrous du colis puis de la modification.
      *
      * @return vrai si le rappel est parti.
@@ -542,9 +567,10 @@ public class BidAmendmentService {
         }
         BidAmendmentEntity a = amendments.findByIdAndBidIdForUpdate(amendmentId, foundBid.get()).orElse(null);
         LocalDateTime now = window.now();
+        LocalDateTime remindFrom = a == null ? null : a.getExpiresAt().minus(properties.getReminderBefore());
         if (a == null || a.getStatus() != BidAmendmentStatus.PROPOSED || a.getReminderSentAt() != null
-                || !a.getExpiresAt().isAfter(now)
-                || a.getExpiresAt().minus(properties.getReminderBefore()).isAfter(now)) {
+                || !a.getExpiresAt().isAfter(now) || remindFrom.isAfter(now)
+                || a.getCreatedAt() == null || !a.getCreatedAt().isBefore(remindFrom)) {
             return false;
         }
         a.setReminderSentAt(now);
