@@ -245,7 +245,7 @@ class BidAmendmentCardRailTest {
     void listener_filtersAndSwallows() {
         BidAmendmentCardRail cardRail = mock(BidAmendmentCardRail.class);
         BidAmendmentCardRefunds refunds = mock(BidAmendmentCardRefunds.class);
-        BidAmendmentCardListener listener = new BidAmendmentCardListener(cardRail, refunds);
+        BidAmendmentCardListener listener = new BidAmendmentCardListener(cardRail, refunds, alerts);
         UUID id = UUID.randomUUID();
 
         listener.onClosed(new BidAmendmentClosedEvent.NotBrought(id, UUID.randomUUID(), null, null,
@@ -264,6 +264,8 @@ class BidAmendmentCardRailTest {
                 BidSupplementRail.STRIPE, "NOT_BROUGHT"));
         verify(cardRail).releaseAuthorization(id);
         verify(refunds).refund(id);
+        // Annulation perdue : alerte, le filet repassera (marqueur authorizationReleasedAt toujours nul).
+        verify(alerts).raiseOnce(eq("AMEND_PI_UNCANCELED_" + id), anyString(), anyMap());
     }
 
     @Test
@@ -279,5 +281,89 @@ class BidAmendmentCardRailTest {
         verify(ledger).auditOnly(eq(a.getId()), eq("BID_AMENDMENT_REFUND_FAILED"), anyMap());
         verify(alerts).raiseOnce(eq("AMEND_CARD_REFUND_FAIL_" + a.getId()), anyString(), anyMap());
         verify(ledger, never()).refundSubmitted(any(), any());
+    }
+
+    @Test
+    @DisplayName("webhook succeeded sans latest_charge : la charge est relue chez Stripe avant d'enregistrer")
+    void webhookSucceeded_withoutCharge_rereads() throws Exception {
+        when(gateway.retrievePaymentIntent("pi_1")).thenReturn(new PaymentIntentView("pi_1", "succeeded", 3360L, "eur",
+                null, "ch_reread", List.of("card")));
+
+        rail.onPaymentIntentWebhook("payment_intent.succeeded", a.getId(), "pi_1", "succeeded", null, null);
+
+        verify(ledger).captured(a.getId(), "pi_1", "ch_reread", "webhook");
+    }
+
+    @Test
+    @DisplayName("charge introuvable même relue : alerte, rien n'est enregistré")
+    void webhookSucceeded_chargeUnreadable_alerts() throws Exception {
+        when(gateway.retrievePaymentIntent("pi_1")).thenThrow(new ApiConnectionException("timeout"));
+
+        rail.onPaymentIntentWebhook("payment_intent.succeeded", a.getId(), "pi_1", "succeeded", null, null);
+
+        verify(ledger, never()).captured(any(), any(), any(), any());
+        verify(alerts).raiseOnce(eq("AMEND_CAPT_NO_CHARGE_" + a.getId()), anyString(), anyMap());
+    }
+
+    @Test
+    @DisplayName("capture : réponse 5xx de Stripe → essai suivant, nouvelle clé ; coupure réseau → même clé")
+    void capture_serverError_changesKey() throws Exception {
+        when(gateway.capturePaymentIntent(eq("pi_1"), anyString()))
+                .thenThrow(new com.stripe.exception.ApiException("boom", "r", null, 500, null));
+        when(gateway.retrievePaymentIntent("pi_1")).thenReturn(view("requires_capture"));
+
+        catchThrowable(() -> rail.afterAcceptCommit(prepared()));
+        verify(gateway).capturePaymentIntent("pi_1", "amendment-capture-" + a.getId());
+        verify(ledger).nextCaptureAttempt(a.getId());
+
+        a.setCaptureAttempt(1);
+        org.mockito.Mockito.reset(gateway);
+        when(gateway.capturePaymentIntent(eq("pi_1"), anyString())).thenThrow(new ApiConnectionException("timeout"));
+        when(gateway.retrievePaymentIntent("pi_1")).thenReturn(view("requires_capture"));
+        catchThrowable(() -> rail.afterAcceptCommit(prepared()));
+        verify(gateway).capturePaymentIntent("pi_1", "amendment-capture-" + a.getId() + "-r1");
+        verify(ledger, org.mockito.Mockito.times(1)).nextCaptureAttempt(a.getId());
+    }
+
+    @Test
+    @DisplayName("création : erreur hors Stripe (expéditeur introuvable) → demande abandonnée, erreur rendue")
+    void create_runtimeFailure_abandons() {
+        a.setStatus(BidAmendmentStatus.AUTHORIZATION_PENDING);
+        a.setStripePaymentIntentId(null);
+        when(users.findById(sender.getId())).thenReturn(Optional.empty());
+        AmendmentCreateResponse created = AmendmentCreateResponse.of(BidAmendmentViews.of(a, List.of(), true, window));
+
+        assertThat(catchThrowable(() -> rail.afterCreateCommit(created)))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("user-not-found"));
+        verify(ledger).abandonAuthorization(a.getId());
+    }
+
+    @Test
+    @DisplayName("autorisation tardive sur une demande close : rendue (webhook et confirmation de l'app)")
+    void lateAuthorization_released() throws Exception {
+        a.setStatus(BidAmendmentStatus.CANCELLED);
+        when(ledger.authorize(a.getId(), "pi_1", "requires_capture", "webhook"))
+                .thenReturn(Optional.of(new BidAmendmentCardLedger.Authorization(a, true)));
+        when(gateway.cancelPaymentIntent("pi_1")).thenReturn(view("canceled"));
+
+        rail.onPaymentIntentWebhook("payment_intent.amount_capturable_updated", a.getId(), "pi_1", "requires_capture",
+                null, null);
+        rail.confirmAuthorization(a.getBidId(), a.getId(), "uid-s");
+
+        verify(gateway, org.mockito.Mockito.times(2)).cancelPaymentIntent("pi_1");
+        verify(ledger, org.mockito.Mockito.times(2)).authorizationReleased(a.getId(), "canceled");
+    }
+
+    @Test
+    @DisplayName("autorisation déjà rendue (marqueur) : aucun appel Stripe")
+    void releaseAuthorization_markerSet_noStripeCall() {
+        a.setStatus(BidAmendmentStatus.EXPIRED);
+        a.setAuthorizationReleasedAt(LocalDateTime.now(ZoneOffset.UTC));
+
+        rail.releaseAuthorization(a.getId());
+        rail.confirmAuthorization(a.getBidId(), a.getId(), "uid-s");
+
+        verifyNoInteractions(gateway);
     }
 }

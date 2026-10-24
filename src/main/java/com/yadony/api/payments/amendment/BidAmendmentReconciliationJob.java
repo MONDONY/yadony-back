@@ -27,6 +27,8 @@ import java.util.UUID;
  *   <li>clôt ou rembourse les modifications d'un colis terminé sans livraison dont l'événement de fin s'est perdu
  *       (grâce de {@link #BID_ENDED_GRACE}), et rend leurs kilos ;</li>
  *   <li>rend la commission espèces d'une modification close quand la suite après commit a échoué ou s'est perdue ;</li>
+ *   <li>rend l'autorisation carte d'une modification close quand son annulation après commit a échoué ou s'est perdue
+ *       (grâce de {@link #CARD_RELEASE_GRACE}, marqueur {@code authorizationReleasedAt}) ;</li>
  *   <li>rejoue le remboursement des PaymentIntents de commission abouties hors de l'essai courant (B5), à partir de
  *       l'audit {@code BID_AMENDMENT_STALE_COMMISSION} ;</li>
  *   <li>signale à l'administration une modification acquise ni versée ni remboursée {@link #UNSETTLED_DELAY} après
@@ -45,6 +47,15 @@ public class BidAmendmentReconciliationJob {
 
     /** Un colis terminé, ou une modification espèces close, depuis moins longtemps est laissé à son événement. */
     static final Duration BID_ENDED_GRACE = Duration.ofMinutes(15);
+
+    /** Une modification carte close depuis moins longtemps est laissée à l'écouteur de sa clôture. */
+    static final Duration CARD_RELEASE_GRACE = Duration.ofMinutes(5);
+
+    /**
+     * Au-delà, une autorisation non rendue n'est plus relue à chaque passage : Stripe annule de lui-même une autorisation
+     * non capturée après 7 jours, et l'alerte {@code AMEND_PI_UNCANCELED_} levée au premier échec reste à traiter.
+     */
+    static final Duration CARD_RELEASE_WINDOW = Duration.ofDays(8);
 
     /** Délai avant l'alerte « modification non soldée » après la fin du colis. */
     static final Duration UNSETTLED_DELAY = Duration.ofDays(3);
@@ -98,16 +109,19 @@ public class BidAmendmentReconciliationJob {
     private final BidAmendmentRepository amendments;
     private final BidAmendmentService service;
     private final BidAmendmentCashRefunds cashRefunds;
+    private final BidAmendmentCardRail cardRail;
     private final BidAmendmentWindow window;
     private final BidAmendmentProperties properties;
     private final AdminAlertEscalator alerts;
 
     public BidAmendmentReconciliationJob(BidAmendmentRepository amendments, BidAmendmentService service,
-                                         BidAmendmentCashRefunds cashRefunds, BidAmendmentWindow window,
-                                         BidAmendmentProperties properties, AdminAlertEscalator alerts) {
+                                         BidAmendmentCashRefunds cashRefunds, BidAmendmentCardRail cardRail,
+                                         BidAmendmentWindow window, BidAmendmentProperties properties,
+                                         AdminAlertEscalator alerts) {
         this.amendments = amendments;
         this.service = service;
         this.cashRefunds = cashRefunds;
+        this.cardRail = cardRail;
         this.window = window;
         this.properties = properties;
         this.alerts = alerts;
@@ -121,7 +135,8 @@ public class BidAmendmentReconciliationJob {
     }
 
     /** Résultat d'un passage, pour les logs et les tests. */
-    public record Outcome(int expired, int reminded, int ended, int cashSettled, int staleRefunded, int unsettled) {
+    public record Outcome(int expired, int reminded, int ended, int cashSettled, int cardReleased, int staleRefunded,
+                          int unsettled) {
     }
 
     public Outcome run() {
@@ -174,6 +189,18 @@ public class BidAmendmentReconciliationJob {
             }
         }
 
+        int cardReleased = 0;
+        for (UUID id : amendments.findCardIdsAwaitingRelease(BidAmendmentCardLedger.CLOSED_UNACCEPTED, now.minus(CARD_RELEASE_WINDOW),
+                now.minus(CARD_RELEASE_GRACE), batch)) {
+            try {
+                // Idempotent : une PaymentIntent déjà annulée pose le marqueur sans rien changer chez Stripe.
+                cardRail.releaseAuthorization(id);
+                cardReleased++;
+            } catch (RuntimeException e) {
+                log.error("Autorisation carte de la modification {} : annulation en échec", id, e);
+            }
+        }
+
         int staleRefunded = 0;
         for (Object[] row : amendments.findStaleCommissionsWithoutRefund(now.minus(STALE_REFUND_WINDOW),
                 STALE_REFUND_MAX_FAILURES, now.minus(STALE_REFUND_GIVE_UP_AFTER), BATCH_SIZE)) {
@@ -201,8 +228,9 @@ public class BidAmendmentReconciliationJob {
             }
         }
 
-        Outcome outcome = new Outcome(expired, reminded, ended, cashSettled, staleRefunded, unsettled);
-        if (expired > 0 || reminded > 0 || ended > 0 || cashSettled > 0 || staleRefunded > 0 || unsettled > 0) {
+        Outcome outcome = new Outcome(expired, reminded, ended, cashSettled, cardReleased, staleRefunded, unsettled);
+        if (expired > 0 || reminded > 0 || ended > 0 || cashSettled > 0 || cardReleased > 0 || staleRefunded > 0
+                || unsettled > 0) {
             log.info("Filet des modifications de colis : {}", outcome);
         }
         return outcome;

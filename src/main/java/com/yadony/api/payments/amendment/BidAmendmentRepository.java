@@ -132,6 +132,22 @@ public interface BidAmendmentRepository extends JpaRepository<BidAmendmentEntity
                                    @Param("before") LocalDateTime before, Pageable page);
 
     /**
+     * Filet du rail carte : modification close sans avoir été acquise, dont la PaymentIntent n'a pas été capturée ni
+     * son autorisation rendue ({@code authorizationReleasedAt} nul), close entre {@code since} et {@code before} :
+     * l'annulation après commit ({@link BidAmendmentCardListener}) a échoué ou s'est perdue.
+     */
+    @Query("""
+            SELECT a.id FROM BidAmendmentEntity a
+            WHERE a.rail = com.yadony.api.payments.supplement.BidSupplementRail.STRIPE
+              AND a.status IN :closed AND a.stripePaymentIntentId IS NOT NULL AND a.stripeChargeId IS NULL
+              AND a.authorizationReleasedAt IS NULL AND a.updatedAt < :before AND a.updatedAt > :since
+            ORDER BY a.updatedAt
+            """)
+    List<UUID> findCardIdsAwaitingRelease(@Param("closed") Collection<BidAmendmentStatus> closed,
+                                          @Param("since") LocalDateTime since, @Param("before") LocalDateTime before,
+                                          Pageable page);
+
+    /**
      * Filet du rail espèces : modification close dont la commission reste prélevée ({@code CHARGED}) ou dont la
      * PaymentIntent de commission n'a pas été défaite (3DS en cours), inchangée depuis {@code before} : la suite
      * après commit ({@link BidAmendmentCashListener}) a échoué ou s'est perdue.

@@ -220,6 +220,7 @@ class BidAmendmentLifecycleIT {
     @DisplayName("onBidEnded_acceptedCard_refundPending : carte acquise → REFUND_PENDING, remboursement demandé au rail")
     void onBidEnded_acceptedCard_refundPending() throws Exception {
         Parties p = parties(true);
+        stubCardRefund();
         UUID id = create(p, "3", PaymentMethod.STRIPE);
         acceptCard(p, id);
         jdbc.update("UPDATE bids SET status = 'REJECTED' WHERE id = ?", p.bidId);
@@ -235,6 +236,7 @@ class BidAmendmentLifecycleIT {
                 .satisfies(e -> assertThat(e.reason()).isEqualTo("BID_REJECTED"));
         verify(cardGateway, after(500).never()).cancelPaymentIntent(anyString());
         assertThat(auditActions(id)).contains("BID_AMENDMENT_REFUND_REQUESTED");
+        awaitColumn(id, "stripe_refund_id", CARD_REFUND_ID);
     }
 
     @Test
@@ -268,6 +270,7 @@ class BidAmendmentLifecycleIT {
     @DisplayName("onPrincipalRefunded : principal remboursé par l'admin, colis en cours → la modification carte suit")
     void onPrincipalRefunded_liveBid_refundsAmendmentToo() throws Exception {
         Parties p = parties(true);
+        stubCardRefund();
         UUID id = create(p, "3", PaymentMethod.STRIPE);
         acceptCard(p, id);
 
@@ -276,6 +279,7 @@ class BidAmendmentLifecycleIT {
         assertThat(column(id, "status")).isEqualTo("REFUND_PENDING");
         assertThat(events.stream(BidAmendmentRefundRequestedEvent.class)).singleElement()
                 .satisfies(e -> assertThat(e.reason()).isEqualTo("ADMIN_REFUND"));
+        awaitColumn(id, "stripe_refund_id", CARD_REFUND_ID);
     }
 
     // ── Modification non apportée ───────────────────────────────────────────
@@ -319,6 +323,7 @@ class BidAmendmentLifecycleIT {
     @DisplayName("notBrought sur une modification carte : REFUND_PENDING et remboursement demandé")
     void notBrought_acceptedCard_requestsRefund() throws Exception {
         Parties p = parties(true);
+        stubCardRefund();
         UUID id = create(p, "3", PaymentMethod.STRIPE);
         acceptCard(p, id);
 
@@ -329,6 +334,7 @@ class BidAmendmentLifecycleIT {
         assertThat(events.stream(BidAmendmentRefundRequestedEvent.class)).singleElement()
                 .satisfies(e -> assertThat(e.reason()).isEqualTo("NOT_BROUGHT"));
         assertThat(events.stream(BidAmendmentClosedEvent.NotBrought.class)).hasSize(1);
+        awaitColumn(id, "stripe_refund_id", CARD_REFUND_ID);
     }
 
     @Test
@@ -560,6 +566,16 @@ class BidAmendmentLifecycleIT {
     private UUID create(Parties p, String kg, PaymentMethod method) {
         return service.create(p.bidId, p.sender.getFirebaseUid(),
                 new CreateAmendmentRequest(new BigDecimal(kg), null, method)).amendment().id();
+    }
+
+    private static final String CARD_REFUND_ID = "re_lifecycle";
+
+    /**
+     * Remboursement carte demandé après le commit (écouteur asynchrone) : Refund simulé, sans erreur ni trace. Le test
+     * attend son enregistrement ({@code stripe_refund_id}) avant de finir, sinon le bouchon serait remis à zéro avant.
+     */
+    private void stubCardRefund() throws Exception {
+        when(cardGateway.createRefund(anyString(), anyMap(), anyString())).thenReturn(CARD_REFUND_ID);
     }
 
     /** Modification carte créée : montant autorisé (webhook), puis acceptée par le voyageur, capture réussie. */

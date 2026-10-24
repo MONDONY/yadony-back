@@ -728,4 +728,55 @@ class BidAmendmentCardRailIT {
             return bid.getId();
         });
     }
+
+    // ── Filet : autorisation dont l'annulation après commit s'est perdue ─────
+
+    @Test
+    @DisplayName("écouteur perdu : le filet rend l'autorisation après la grâce, pose le marqueur, puis ne relit plus Stripe")
+    void job_releasesLostAuthorization_thenMarkerStopsStripeCalls() throws Exception {
+        Parties p = parties("EUR");
+        String piId = pi();
+        UUID id = proposedCard(p, piId);
+        when(gateway.cancelPaymentIntent(piId)).thenReturn(view(piId, "canceled", null));
+        // Clôture sans événement (écouteur perdu) : écrite directement, il y a 10 min.
+        jdbc.update("UPDATE bid_amendments SET status = 'DECLINED', closed_reason = 'DECLINED_BY_TRAVELER', "
+                + "updated_at = updated_at - interval '10 minutes' WHERE id = ?", id);
+
+        job.run();
+
+        verify(gateway, times(1)).cancelPaymentIntent(piId);
+        assertThat(column(id, "authorization_released_at")).isNotNull();
+        assertThat(auditActions(id)).containsOnlyOnce("BID_AMENDMENT_AUTHORIZATION_RELEASED");
+
+        jdbc.update("UPDATE bid_amendments SET updated_at = updated_at - interval '10 minutes' WHERE id = ?", id);
+        job.run();
+        verify(gateway, times(1)).cancelPaymentIntent(piId);
+    }
+
+    @Test
+    @DisplayName("filet : marqueur déjà posé, clôture trop récente ou PaymentIntent capturée → aucun appel Stripe")
+    void job_skipsReleasedRecentOrCaptured() throws Exception {
+        Parties released = parties("EUR");
+        String releasedPi = pi();
+        UUID releasedId = proposedCard(released, releasedPi);
+        jdbc.update("UPDATE bid_amendments SET status = 'EXPIRED', closed_reason = 'EXPIRED', "
+                + "authorization_released_at = now(), updated_at = updated_at - interval '10 minutes' WHERE id = ?",
+                releasedId);
+        Parties recent = parties("EUR");
+        String recentPi = pi();
+        UUID recentId = proposedCard(recent, recentPi);
+        jdbc.update("UPDATE bid_amendments SET status = 'DECLINED', closed_reason = 'DECLINED_BY_TRAVELER' "
+                + "WHERE id = ?", recentId);
+        Parties captured = parties("EUR");
+        String capturedPi = pi();
+        UUID capturedId = proposedCard(captured, capturedPi);
+        jdbc.update("UPDATE bid_amendments SET status = 'CANCELLED', closed_reason = 'CANCELLED_BY_SENDER', "
+                + "stripe_charge_id = 'ch_x', updated_at = updated_at - interval '10 minutes' WHERE id = ?", capturedId);
+
+        job.run();
+
+        verify(gateway, never()).cancelPaymentIntent(releasedPi);
+        verify(gateway, never()).cancelPaymentIntent(recentPi);
+        verify(gateway, never()).cancelPaymentIntent(capturedPi);
+    }
 }

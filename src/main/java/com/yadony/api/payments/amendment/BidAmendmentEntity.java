@@ -123,6 +123,14 @@ public class BidAmendmentEntity extends BaseEntity {
     @Column(name = "stripe_refund_id", length = 255)
     private String stripeRefundId;
 
+    /** Autorisation carte d'une modification close rendue (PaymentIntent annulée) : le filet ne la relit plus. */
+    @Column(name = "authorization_released_at")
+    private LocalDateTime authorizationReleasedAt;
+
+    /** Essai de capture : incrémenté après une réponse 5xx de Stripe (nouvelle clé d'idempotence). */
+    @Column(name = "capture_attempt", nullable = false)
+    private int captureAttempt;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "commission_charged_via", length = 10)
     private CommissionChargedVia commissionChargedVia;
@@ -189,6 +197,10 @@ public class BidAmendmentEntity extends BaseEntity {
     public void setStripeTransferId(String stripeTransferId) { this.stripeTransferId = stripeTransferId; }
     public String getStripeRefundId() { return stripeRefundId; }
     public void setStripeRefundId(String stripeRefundId) { this.stripeRefundId = stripeRefundId; }
+    public LocalDateTime getAuthorizationReleasedAt() { return authorizationReleasedAt; }
+    public void setAuthorizationReleasedAt(LocalDateTime authorizationReleasedAt) { this.authorizationReleasedAt = authorizationReleasedAt; }
+    public int getCaptureAttempt() { return captureAttempt; }
+    public void setCaptureAttempt(int captureAttempt) { this.captureAttempt = captureAttempt; }
     public CommissionChargedVia getCommissionChargedVia() { return commissionChargedVia; }
     public void setCommissionChargedVia(CommissionChargedVia commissionChargedVia) { this.commissionChargedVia = commissionChargedVia; }
     public String getCommissionPaymentIntentId() { return commissionPaymentIntentId; }

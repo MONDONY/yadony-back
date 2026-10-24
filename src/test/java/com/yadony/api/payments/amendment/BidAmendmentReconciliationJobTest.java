@@ -21,10 +21,11 @@ class BidAmendmentReconciliationJobTest {
     private final BidAmendmentRepository amendments = mock(BidAmendmentRepository.class);
     private final BidAmendmentService service = mock(BidAmendmentService.class);
     private final BidAmendmentCashRefunds cashRefunds = mock(BidAmendmentCashRefunds.class);
+    private final BidAmendmentCardRail cardRail = mock(BidAmendmentCardRail.class);
     private final AdminAlertEscalator alerts = mock(AdminAlertEscalator.class);
     private final BidAmendmentProperties properties = new BidAmendmentProperties();
     private final BidAmendmentReconciliationJob job = new BidAmendmentReconciliationJob(amendments, service,
-            cashRefunds, new BidAmendmentWindow(properties), properties, alerts);
+            cashRefunds, cardRail, new BidAmendmentWindow(properties), properties, alerts);
 
     @Test
     void filetCoupe_neTournePas() {
@@ -32,7 +33,7 @@ class BidAmendmentReconciliationJobTest {
 
         job.scheduledRun();
 
-        verifyNoInteractions(amendments, service, cashRefunds, alerts);
+        verifyNoInteractions(amendments, service, cashRefunds, cardRail, alerts);
     }
 
     @Test
@@ -58,12 +59,15 @@ class BidAmendmentReconciliationJobTest {
                 new Object[]{"pas-un-uuid", bidId.toString(), "pi_bad"},
                 new Object[]{amendmentId.toString(), bidId.toString(), "pi_ok"}));
         when(cashRefunds.refundStale(amendmentId, bidId, "pi_ok")).thenReturn(true);
+        when(amendments.findCardIdsAwaitingRelease(any(), any(), any(), any())).thenReturn(List.of(failing, next));
+        org.mockito.Mockito.doThrow(new IllegalStateException("stripe")).when(cardRail).releaseAuthorization(failing);
         when(amendments.findIdsUnsettledAfterBidEnd(any(), any(), any(), any(), any(), any())).thenReturn(List.of(failing));
         when(amendments.findById(failing)).thenThrow(new IllegalStateException("base"));
 
         BidAmendmentReconciliationJob.Outcome outcome = job.run();
 
-        assertThat(outcome).isEqualTo(new BidAmendmentReconciliationJob.Outcome(1, 1, 1, 1, 1, 0));
+        assertThat(outcome).isEqualTo(new BidAmendmentReconciliationJob.Outcome(1, 1, 1, 1, 1, 1, 0));
         verify(cashRefunds, never()).refundStale(any(), any(), org.mockito.ArgumentMatchers.eq("pi_bad"));
+        verify(cardRail).releaseAuthorization(next);
     }
 }

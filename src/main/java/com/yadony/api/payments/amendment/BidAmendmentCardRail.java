@@ -24,6 +24,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -119,6 +120,12 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
             }
             throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "amendment-payment-creation-failed",
                     "Payment Error", "Impossible de bloquer le montant de la modification. Veuillez réessayer.");
+        } catch (RuntimeException e) {
+            // Expéditeur introuvable, client Stripe impossible à préparer… : sans PaymentIntent, la demande ne pourra
+            // jamais être autorisée, elle ne doit pas bloquer le colis et ses kilos jusqu'à l'échéance.
+            log.error("Préparation de la PaymentIntent de la modification {} en échec", id, e);
+            ledger.abandonAuthorization(id);
+            throw e;
         }
         BidAmendmentEntity stored = ledger.storePaymentIntent(id, pi.id()).orElseThrow(BidAmendmentCardRail::notFound);
         if (stored.getStatus() != BidAmendmentStatus.AUTHORIZATION_PENDING) {
@@ -159,8 +166,14 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
         return "amendment-pi-" + amendmentId;
     }
 
-    static String captureKey(UUID amendmentId) {
-        return "amendment-capture-" + amendmentId;
+    /**
+     * Clé de la capture : {@code amendment-capture-<id>}, puis {@code amendment-capture-<id>-r<n>} après n réponses 5xx
+     * de Stripe (une clé rejoue sa première réponse pendant 24 h, erreur 500 comprise). Une coupure réseau garde la clé :
+     * Stripe a pu traiter la capture, la même clé rend alors son résultat.
+     */
+    static String captureKey(UUID amendmentId, int attempt) {
+        String key = "amendment-capture-" + amendmentId;
+        return attempt == 0 ? key : key + "-r" + attempt;
     }
 
     // ── Autorisation confirmée ───────────────────────────────────────────────
@@ -184,7 +197,17 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
         }
         if (a.getStatus() == BidAmendmentStatus.AUTHORIZATION_PENDING && a.getStripePaymentIntentId() != null) {
             PaymentIntentView pi = retrieve(a.getStripePaymentIntentId());
-            a = ledger.authorize(amendmentId, pi.id(), pi.status(), "confirm-authorization").orElse(a);
+            Optional<BidAmendmentCardLedger.Authorization> authorized =
+                    ledger.authorize(amendmentId, pi.id(), pi.status(), "confirm-authorization");
+            if (authorized.isPresent()) {
+                a = authorized.get().amendment();
+                if (authorized.get().releaseAuthorization()) {
+                    releaseAuthorization(amendmentId);
+                }
+            }
+        } else if (awaitsRelease(a)) {
+            // Close avant que l'app ne confirme : l'autorisation éventuellement obtenue est rendue (idempotent).
+            releaseAuthorization(amendmentId);
         }
         return view(a, true);
     }
@@ -208,7 +231,8 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
      * Après le commit de l'acceptation : capture intégrale, puis la modification est acquise sous les verrous. Capture
      * refusée par Stripe : la PaymentIntent est relue ; capturée quand même (rejeu, course), elle compte ; plus
      * capturable (expirée, annulée), la demande est annulée et le voyageur reçoit 409 {@code amendment-capture-failed}.
-     * Issue inconnue (réseau) : la demande reste proposée, le voyageur peut réessayer (même clé, même capture).
+     * Issue inconnue (réseau) : la demande reste proposée, le voyageur peut réessayer (même clé, même capture). Réponse
+     * 5xx de Stripe : l'essai suivant change de clé ({@link #captureKey}), sinon Stripe rejouerait la même erreur 24 h.
      */
     @Override
     public AmendmentAcceptResponse afterAcceptCommit(AmendmentAcceptResponse accepted) {
@@ -224,10 +248,13 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
         PaymentIntentView pi;
         StripeException refused = null;
         try {
-            pi = gateway.capturePaymentIntent(piId, captureKey(id));
+            pi = gateway.capturePaymentIntent(piId, captureKey(id, a.getCaptureAttempt()));
         } catch (StripeException e) {
             log.warn("Capture de la modification {} refusée par Stripe : {}", id, e.getMessage());
             refused = e;
+            if (e.getStatusCode() != null && e.getStatusCode() >= 500) {
+                ledger.nextCaptureAttempt(id);
+            }
             pi = retrieveOrNull(piId);
         }
         if (pi == null || (!pi.succeeded() && (BidAmendmentCardLedger.REQUIRES_CAPTURE.equals(pi.status())
@@ -240,7 +267,11 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
             throw stripeError();
         }
         if (pi.succeeded()) {
-            BidAmendmentCardLedger.CaptureOutcome outcome = ledger.captured(id, pi.id(), pi.latestCharge(), "accept");
+            String chargeId = chargeOf(id, pi);
+            if (chargeId == null) {
+                throw stripeError();
+            }
+            BidAmendmentCardLedger.CaptureOutcome outcome = ledger.captured(id, pi.id(), chargeId, "accept");
             if (outcome == BidAmendmentCardLedger.CaptureOutcome.LATE_REFUND) {
                 throw notPending();
             }
@@ -265,22 +296,24 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
      */
     public void releaseAuthorization(UUID amendmentId) {
         BidAmendmentEntity a = ledger.find(amendmentId).orElse(null);
-        if (a == null || a.getRail() != BidSupplementRail.STRIPE || a.getStatus().isOpen()
-                || a.getStripePaymentIntentId() == null || a.getStripeChargeId() != null) {
+        if (a == null || !awaitsRelease(a)) {
             return;
         }
         String piId = a.getStripePaymentIntentId();
         try {
             PaymentIntentView canceled = gateway.cancelPaymentIntent(piId);
-            ledger.auditOnly(amendmentId, "BID_AMENDMENT_AUTHORIZATION_RELEASED",
-                    Map.of("piId", piId, "piStatus", String.valueOf(canceled == null ? null : canceled.status())));
+            ledger.authorizationReleased(amendmentId, canceled == null ? null : canceled.status());
         } catch (StripeException refused) {
             PaymentIntentView pi = retrieveOrNull(piId);
             if (pi != null && pi.canceled()) {
+                ledger.authorizationReleased(amendmentId, pi.status());
                 return;
             }
             if (pi != null && pi.succeeded()) {
-                ledger.captured(amendmentId, piId, pi.latestCharge(), "cancel-refused");
+                String chargeId = chargeOf(amendmentId, pi);
+                if (chargeId != null) {
+                    ledger.captured(amendmentId, piId, chargeId, "cancel-refused");
+                }
                 return;
             }
             log.error("Autorisation {} de la modification {} : annulation refusée ({})", piId, amendmentId,
@@ -294,6 +327,36 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
         }
     }
 
+    /**
+     * Modification carte close, non capturée, dont l'autorisation n'a pas encore été rendue (marqueur
+     * {@code authorizationReleasedAt}) : écouteur de la clôture, filet planifié, autorisation tardive.
+     */
+    static boolean awaitsRelease(BidAmendmentEntity a) {
+        return a.getRail() == BidSupplementRail.STRIPE && !a.getStatus().isOpen() && !a.getStatus().isSecured()
+                && a.getStripePaymentIntentId() != null && a.getStripeChargeId() == null
+                && a.getAuthorizationReleasedAt() == null;
+    }
+
+    /**
+     * Charge d'une PaymentIntent capturée, repère du montant à rembourser ou à verser. Absente de la réponse ou du
+     * webhook : relue chez Stripe. Introuvable : alerte, rien n'est enregistré (le webhook ou le filet repasseront).
+     */
+    private String chargeOf(UUID amendmentId, PaymentIntentView pi) {
+        if (pi.latestCharge() != null && !pi.latestCharge().isBlank()) {
+            return pi.latestCharge();
+        }
+        PaymentIntentView reread = retrieveOrNull(pi.id());
+        if (reread != null && reread.latestCharge() != null && !reread.latestCharge().isBlank()) {
+            return reread.latestCharge();
+        }
+        log.error("Modification {} : PaymentIntent {} capturée sans charge lisible", amendmentId, pi.id());
+        alerts.raiseOnce("AMEND_CAPT_NO_CHARGE_" + amendmentId,
+                "Montant de la modification " + amendmentId + " capturé (" + pi.id() + ") sans charge lisible : "
+                        + "capture non enregistrée, à vérifier",
+                Map.of("amendmentId", amendmentId.toString(), "paymentIntentId", String.valueOf(pi.id())));
+        return null;
+    }
+
     // ── Webhooks ─────────────────────────────────────────────────────────────
 
     /** Webhook d'une PaymentIntent de modification (routé par {@link BidAmendmentStripeWebhookRouter}). */
@@ -301,8 +364,16 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
                                        String latestCharge, String failureCode) {
         switch (type) {
             case "payment_intent.amount_capturable_updated" ->
-                    ledger.authorize(amendmentId, paymentIntentId, status, "webhook");
-            case "payment_intent.succeeded" -> ledger.captured(amendmentId, paymentIntentId, latestCharge, "webhook");
+                    ledger.authorize(amendmentId, paymentIntentId, status, "webhook")
+                            .filter(BidAmendmentCardLedger.Authorization::releaseAuthorization)
+                            .ifPresent(late -> releaseAuthorization(amendmentId));
+            case "payment_intent.succeeded" -> {
+                String chargeId = chargeOf(amendmentId, new PaymentIntentView(paymentIntentId, status, null, null, null,
+                        latestCharge, null));
+                if (chargeId != null) {
+                    ledger.captured(amendmentId, paymentIntentId, chargeId, "webhook");
+                }
+            }
             case "payment_intent.canceled" -> ledger.paymentIntentCanceled(amendmentId, paymentIntentId);
             // Carte refusée ou 3DS échouée dans la PaymentSheet : l'expéditeur peut réessayer avec la même
             // PaymentIntent ; la demande attend jusqu'à la fin de la fenêtre d'autorisation.

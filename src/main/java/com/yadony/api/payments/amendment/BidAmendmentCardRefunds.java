@@ -42,7 +42,8 @@ public class BidAmendmentCardRefunds {
             String refundId = gateway.findRefund(claim.paymentIntentId(), amendmentId.toString()).orElse(null);
             if (refundId == null) {
                 refundId = gateway.createRefund(claim.paymentIntentId(),
-                        Map.of("bid_amendment_id", amendmentId.toString(), "amendment_bid_id", claim.bidId().toString()),
+                        Map.of("bid_amendment_id", amendmentId.toString(), "amendment_bid_id", claim.bidId().toString(),
+                                "scope", BidAmendmentCardRail.SCOPE),
                         refundKey(claim));
             }
             if (refundId == null || refundId.isBlank()) {

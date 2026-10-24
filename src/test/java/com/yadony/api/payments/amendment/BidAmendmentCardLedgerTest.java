@@ -220,4 +220,59 @@ class BidAmendmentCardLedgerTest {
         assertThat(ledger.storePaymentIntent(unknown, "pi_1")).isEmpty();
         verifyNoInteractions(service, events, alerts);
     }
+
+    @Test
+    @DisplayName("capture sans charge : ignorée, rien n'est accepté ni remboursé (l'appelant relit la PaymentIntent)")
+    void captured_withoutCharge_ignored() {
+        a.setStatus(BidAmendmentStatus.PROPOSED);
+        assertThat(ledger.captured(a.getId(), "pi_1", null, "webhook"))
+                .isEqualTo(BidAmendmentCardLedger.CaptureOutcome.IGNORED);
+        a.setStatus(BidAmendmentStatus.CANCELLED);
+        assertThat(ledger.captured(a.getId(), "pi_1", " ", "webhook"))
+                .isEqualTo(BidAmendmentCardLedger.CaptureOutcome.IGNORED);
+
+        verify(service, never()).markAccepted(any());
+        verify(events, never()).publishEvent(any(BidAmendmentRefundRequestedEvent.class));
+        assertThat(a.getStripeChargeId()).isNull();
+
+        // La charge relue arrive ensuite : la capture tardive demande bien le remboursement.
+        assertThat(ledger.captured(a.getId(), "pi_1", "ch_1", "webhook"))
+                .isEqualTo(BidAmendmentCardLedger.CaptureOutcome.LATE_REFUND);
+    }
+
+    @Test
+    @DisplayName("autorisation arrivée sur une demande close : à rendre, sauf si déjà rendue ou capturée")
+    void authorize_onClosed_signalsRelease() {
+        a.setStatus(BidAmendmentStatus.CANCELLED);
+        assertThat(ledger.authorize(a.getId(), "pi_1", "requires_capture", "webhook")).get()
+                .satisfies(r -> assertThat(r.releaseAuthorization()).isTrue());
+
+        a.setAuthorizationReleasedAt(LocalDateTime.now(ZoneOffset.UTC));
+        assertThat(ledger.authorize(a.getId(), "pi_1", "requires_capture", "webhook")).get()
+                .satisfies(r -> assertThat(r.releaseAuthorization()).isFalse());
+        a.setAuthorizationReleasedAt(null);
+        a.setStripeChargeId("ch_1");
+        assertThat(ledger.authorize(a.getId(), "pi_1", "requires_capture", "webhook")).get()
+                .satisfies(r -> assertThat(r.releaseAuthorization()).isFalse());
+        verify(service, never()).markProposed(any());
+    }
+
+    @Test
+    @DisplayName("autorisation rendue : marqueur posé une fois ; essai de capture incrémenté")
+    void authorizationReleased_andCaptureAttempt() {
+        a.setStatus(BidAmendmentStatus.DECLINED);
+
+        ledger.authorizationReleased(a.getId(), "canceled");
+        LocalDateTime first = a.getAuthorizationReleasedAt();
+        ledger.authorizationReleased(a.getId(), "canceled");
+        ledger.nextCaptureAttempt(a.getId());
+
+        assertThat(first).isNotNull();
+        assertThat(a.getAuthorizationReleasedAt()).isSameAs(first);
+        verify(auditService, org.mockito.Mockito.times(1)).log(any(), any(), eq("BID_AMENDMENT_AUTHORIZATION_RELEASED"),
+                any(), anyMap());
+        assertThat(a.getCaptureAttempt()).isEqualTo(1);
+        assertThat(BidAmendmentCardRail.captureKey(a.getId(), 0)).isEqualTo("amendment-capture-" + a.getId());
+        assertThat(BidAmendmentCardRail.captureKey(a.getId(), 1)).isEqualTo("amendment-capture-" + a.getId() + "-r1");
+    }
 }

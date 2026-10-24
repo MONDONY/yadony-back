@@ -138,53 +138,104 @@ public class BidAmendmentCardLedger {
     }
 
     /**
+     * Issue de l'enregistrement d'une autorisation.
+     *
+     * @param amendment            état relu.
+     * @param releaseAuthorization la PaymentIntent vient d'être autorisée alors que la demande était déjà close (et son
+     *                             autorisation pas encore rendue) : l'appelant doit la rendre, hors transaction.
+     */
+    public record Authorization(BidAmendmentEntity amendment, boolean releaseAuthorization) {
+    }
+
+    /**
      * Issue de l'autorisation (confirmation de l'app, webhook {@code amount_capturable_updated}). PaymentIntent
      * {@code requires_capture} : la demande est présentée au voyageur ({@link BidAmendmentService#markProposed}), sauf
-     * si l'étape d'autorisation est échue (la demande est alors close comme par le filet, l'autorisation sera rendue) ou
-     * si le colis n'est plus accepté. Sinon rien ne change. Idempotent.
+     * si l'étape d'autorisation est échue (la demande est alors close comme par le filet, l'autorisation sera rendue
+     * par l'écouteur de la clôture) ou si le colis n'est plus accepté. Demande déjà close : rien ne change ici, mais
+     * l'appelant doit rendre l'autorisation tardive ({@link Authorization#releaseAuthorization}). Idempotent.
      *
-     * @return l'état relu, vide si la modification est introuvable ou d'un autre rail.
+     * @return vide si la modification est introuvable ou d'un autre rail.
      */
     @Transactional
-    public Optional<BidAmendmentEntity> authorize(UUID amendmentId, String paymentIntentId, String piStatus,
-                                                  String source) {
-        Optional<BidAmendmentEntity> found = lock(amendmentId, true).filter(this::card);
-        if (found.isEmpty()) {
-            return found;
+    public Optional<Authorization> authorize(UUID amendmentId, String paymentIntentId, String piStatus,
+                                             String source) {
+        BidAmendmentEntity a = lock(amendmentId, true).filter(this::card).orElse(null);
+        if (a == null) {
+            return Optional.empty();
         }
-        BidAmendmentEntity a = found.get();
-        if (a.getStatus() != BidAmendmentStatus.AUTHORIZATION_PENDING || !REQUIRES_CAPTURE.equals(piStatus)
-                || !adopt(a, paymentIntentId)) {
-            return found;
+        if (!REQUIRES_CAPTURE.equals(piStatus) || (!Objects.equals(a.getStripePaymentIntentId(), paymentIntentId)
+                && a.getStripePaymentIntentId() != null)) {
+            return Optional.of(new Authorization(a, false));
         }
+        if (a.getStatus() != BidAmendmentStatus.AUTHORIZATION_PENDING) {
+            // Autorisation arrivée sur une demande déjà close (retirée, échue, colis terminé) : à rendre.
+            boolean late = CLOSED_UNACCEPTED.contains(a.getStatus()) && a.getStripeChargeId() == null
+                    && a.getAuthorizationReleasedAt() == null && a.getStripePaymentIntentId() != null;
+            return Optional.of(new Authorization(a, late));
+        }
+        adopt(a, paymentIntentId);
         if (window.isLapsed(a)) {
             log.info("Modification {} : autorisation {} arrivée après l'échéance ({}), close", a.getId(),
                     paymentIntentId, source);
             service.expireUnderBidLock(a);
-            return found;
+            return Optional.of(new Authorization(a, false));
         }
         BidEntity bid = bids.findById(a.getBidId()).orElse(null);
         if (bid == null || bid.getStatus() != BidStatus.ACCEPTED) {
             service.cancelOpen(a, BidAmendmentClosedReason.BID_ENDED);
-            return found;
+            return Optional.of(new Authorization(a, false));
         }
         service.markProposed(a);
-        return found;
+        return Optional.of(new Authorization(a, false));
+    }
+
+    /**
+     * Autorisation d'une modification close rendue (PaymentIntent annulée, ou constatée déjà annulée) : marqueur posé,
+     * le filet ne relit plus Stripe pour elle. Idempotent.
+     */
+    @Transactional
+    public void authorizationReleased(UUID amendmentId, String piStatus) {
+        lock(amendmentId, false).filter(this::card).filter(a -> a.getAuthorizationReleasedAt() == null)
+                .ifPresent(a -> {
+                    a.setAuthorizationReleasedAt(window.now());
+                    amendments.save(a);
+                    audit(a, "BID_AMENDMENT_AUTHORIZATION_RELEASED", null, Map.of("piId",
+                            String.valueOf(a.getStripePaymentIntentId()), "piStatus", String.valueOf(piStatus)));
+                });
+    }
+
+    /**
+     * Réponse 5xx de Stripe à la capture : l'essai suivant change de clé d'idempotence. Sinon Stripe rejouerait la même
+     * erreur pendant 24 h. Sans risque de double débit : une PaymentIntent ne se capture qu'une fois, une seconde
+     * capture est refusée ({@code payment_intent_unexpected_state}) et la PaymentIntent relue, déjà {@code succeeded}.
+     */
+    @Transactional
+    public void nextCaptureAttempt(UUID amendmentId) {
+        lock(amendmentId, false).filter(this::card).ifPresent(a -> {
+            a.setCaptureAttempt(a.getCaptureAttempt() + 1);
+            amendments.save(a);
+        });
     }
 
     /**
      * Montant capturé (capture de l'acceptation, webhook {@code payment_intent.succeeded}, annulation refusée car déjà
      * capturé). Modification proposée : acquise, charge enregistrée. Close entre-temps (refus, annulation, échéance) :
-     * capture tardive, la modification garde son statut clos et le remboursement est demandé une seule fois. Rejeu :
-     * aucun effet.
+     * capture tardive, la modification garde son statut clos et le remboursement est demandé une seule fois (premier
+     * enregistrement de la charge). Rejeu : aucun effet. Sans charge : ignorée, l'appelant relit la PaymentIntent.
      */
     @Transactional
     public CaptureOutcome captured(UUID amendmentId, String paymentIntentId, String chargeId, String source) {
+        if (chargeId == null || chargeId.isBlank()) {
+            // La charge est le repère d'un montant capturé (remboursement, versement) : l'appelant la relit d'abord.
+            log.error("Modification {} : capture {} enregistrée sans charge ({}), ignorée", amendmentId,
+                    paymentIntentId, source);
+            return CaptureOutcome.IGNORED;
+        }
         BidAmendmentEntity a = lock(amendmentId, true).filter(this::card).orElse(null);
         if (a == null || !adopt(a, paymentIntentId)) {
             return CaptureOutcome.IGNORED;
         }
-        boolean firstRecord = a.getStripeChargeId() == null && chargeId != null;
+        boolean firstRecord = a.getStripeChargeId() == null;
         if (firstRecord) {
             a.setStripeChargeId(chargeId);
         }
