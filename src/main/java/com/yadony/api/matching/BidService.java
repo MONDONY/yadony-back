@@ -1800,9 +1800,10 @@ public class BidService {
                 prefetch != null ? prefetch.amendments() : null);
         BidMoneyBreakdown moneyBreakdown = moneyBreakdown(bid, callerIsSender, totalNetAmountEur,
                 totalSenderAmountEur, supplementView, amendmentView);
-        java.math.BigDecimal totalWeightKg = bid.getWeightKg() != null
-                ? bid.getWeightKg().add(amendmentView.securedAddedKg())
-                : null;
+        // Colis en grille pure (weightKg nul) : les kilos acquis par une modification comptent quand même.
+        java.math.BigDecimal totalWeightKg = bid.getWeightKg() == null && amendmentView.securedAddedKg().signum() <= 0
+                ? null
+                : (bid.getWeightKg() != null ? bid.getWeightKg() : BigDecimal.ZERO).add(amendmentView.securedAddedKg());
         // SÉCURITÉ (règle métier) : l'expéditeur ne reçoit JAMAIS le net du
         // voyageur — ni le tarif/kg net, ni le total net. Seulement le brut.
         if (callerId != null && callerId.equals(bid.getSenderId())) {
@@ -1926,12 +1927,16 @@ public class BidService {
         }
         String principalMethod = BidMoneyBreakdown.methodOf(
                 bid.getPaymentMethod() != null ? bid.getPaymentMethod().name() : null);
-        // Espèces : la commission du colis initial est déjà réglée par le voyageur une fois prélevée (CHARGED) ;
-        // il encaisse le brut et garde le net.
-        BigDecimal principalCommission = BidMoneyBreakdown.METHOD_CASH.equals(principalMethod)
-                && bid.getCommissionStatus() == com.yadony.api.payments.cash.CommissionStatus.CHARGED
-                && principalNet != null && principalGross != null
-                ? principalGross.subtract(principalNet) : null;
+        // Espèces : la commission du colis initial est déjà réglée par le voyageur une fois prélevée (CHARGED). Le
+        // montant réellement prélevé (bon de parrainage du voyageur, plancher, code promo) fait foi ; brut − net
+        // seulement pour un colis prélevé avant la colonne (V348).
+        BigDecimal principalCommission = null;
+        if (BidMoneyBreakdown.METHOD_CASH.equals(principalMethod)
+                && bid.getCommissionStatus() == com.yadony.api.payments.cash.CommissionStatus.CHARGED) {
+            principalCommission = bid.getCashCommissionChargedAmount() != null
+                    ? bid.getCashCommissionChargedAmount()
+                    : principalNet != null && principalGross != null ? principalGross.subtract(principalNet) : null;
+        }
         List<BidMoneyBreakdown.Entry> entries = new java.util.ArrayList<>();
         entries.add(new BidMoneyBreakdown.Entry(BidMoneyBreakdown.KIND_PRINCIPAL, bid.getId(), principalMethod,
                 principalNet, principalGross, principalCommission, true));

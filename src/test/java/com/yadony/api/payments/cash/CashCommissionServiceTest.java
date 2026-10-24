@@ -552,6 +552,7 @@ class CashCommissionServiceTest {
 
                 assertThat(captor.getValue().getCurrency()).isEqualTo("xof");
                 assertThat(captor.getValue().getAmount()).isEqualTo(12000L);
+                assertThat(bid.getCashCommissionChargedAmount()).isEqualByComparingTo("12000");
             }
         }
 
@@ -570,6 +571,8 @@ class CashCommissionServiceTest {
                 assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
                 assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
                 assertThat(bid.getCommissionPaymentIntentId()).isEqualTo("pi_test");
+                // V348 : montant réellement prélevé (5 kg × 20 € × 12 %).
+                assertThat(bid.getCashCommissionChargedAmount()).isEqualByComparingTo("12.00");
                 verify(bidRepo).save(bid);
             }
         }
@@ -589,6 +592,8 @@ class CashCommissionServiceTest {
                 assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.REQUIRES_3DS);
                 assertThat(resp.clientSecret()).isEqualTo("pi_3ds_secret");
                 assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.REQUIRES_3DS);
+                assertThat(bid.getCashCommissionChargedAmount()).as("montant de la PaymentIntent, acquis à la 3DS")
+                        .isEqualByComparingTo("12.00");
             }
         }
 
@@ -708,6 +713,7 @@ class CashCommissionServiceTest {
         void transitionsToCHARGEDAndAcceptsWhenPISucceeded() throws StripeException {
             PaymentIntent mockPi = new PaymentIntent();
             mockPi.setStatus("succeeded");
+            mockPi.setAmount(600L); // bon de parrainage du voyageur : moitié de 12,00 €
 
             try (MockedStatic<PaymentIntent> pi = mockStatic(PaymentIntent.class)) {
                 pi.when(() -> PaymentIntent.retrieve("pi_xyz")).thenReturn(mockPi);
@@ -717,6 +723,7 @@ class CashCommissionServiceTest {
                 assertThat(resp.accepted()).isTrue();
                 assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
                 assertThat(bid.getCommissionChargedVia()).isEqualTo(CommissionChargedVia.CARD); // FIX #2
+                assertThat(bid.getCashCommissionChargedAmount()).isEqualByComparingTo("6.00");
                 assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
                 verify(bidRepo).save(bid);
                 verify(events).publishEvent(any(BidAcceptedEvent.class));
@@ -744,6 +751,7 @@ class CashCommissionServiceTest {
             bid.setStatus(BidStatus.CANCELLED);
             PaymentIntent mockPi = new PaymentIntent();
             mockPi.setStatus("succeeded");
+            mockPi.setAmount(1200L);
             Refund mockRefund = new Refund();
             mockRefund.setId("re_cancel");
             mockRefund.setStatus("succeeded");
@@ -759,6 +767,7 @@ class CashCommissionServiceTest {
                 assertThat(resp.accepted()).isFalse();
                 assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
                 assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
+                assertThat(bid.getCashCommissionChargedAmount()).isEqualByComparingTo("12.00");
                 refund.verify(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)));
                 verify(events, never()).publishEvent(any(BidAcceptedEvent.class));
             }
@@ -1737,6 +1746,7 @@ class CashCommissionServiceTest {
                     eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), eq(bid.getId()));
             assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
             assertThat(bid.getCommissionChargedVia()).isEqualTo(CommissionChargedVia.WALLET);
+            assertThat(bid.getCashCommissionChargedAmount()).isEqualByComparingTo("12.00");
             verify(bidRepo).save(bid);
             verify(auditService).log(eq("payment"), eq(bid.getId()), eq("COMMISSION_CHARGED_WALLET"),
                     eq(travelerId), any());
@@ -1773,6 +1783,8 @@ class CashCommissionServiceTest {
 
             verify(walletService).debit(eq(travelerId), eq("EUR"), eq(new BigDecimal("6.00")),
                     eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), eq(bid.getId()));
+            assertThat(bid.getCashCommissionChargedAmount()).as("prélèvement réduit, pas le brut − net")
+                    .isEqualByComparingTo("6.00");
         }
 
         @Test
@@ -1850,6 +1862,8 @@ class CashCommissionServiceTest {
             verify(walletService, never()).debit(eq(travelerId), eq("XOF"), any(), any(), any());
             assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
             assertThat(bid.getCommissionChargedVia()).isEqualTo(CommissionChargedVia.WALLET);
+            assertThat(bid.getCashCommissionChargedAmount()).as("dans la devise du colis, pas celle débitée")
+                    .isEqualByComparingTo("12.00");
         }
 
         @Test

@@ -290,6 +290,13 @@ public class BidEntity extends BaseEntity {
     private CommissionChargedVia commissionChargedVia;
 
     /** Taux de commission effectif figé à la création du paiement (snapshot). */
+    /**
+     * Commission espèces réellement prélevée au voyageur (portefeuille, carte, après 3DS), dans la devise du colis
+     * (V348). Null avant le prélèvement, et pour les colis antérieurs à la colonne.
+     */
+    @Column(name = "cash_commission_charged_amount", precision = 14, scale = 2)
+    private java.math.BigDecimal cashCommissionChargedAmount;
+
     @Column(name = "commission_rate", precision = 7, scale = 6)
     private java.math.BigDecimal commissionRate;
 
@@ -544,6 +551,9 @@ public class BidEntity extends BaseEntity {
 
     public java.math.BigDecimal getCommissionOverrideRate() { return commissionOverrideRate; }
     public void setCommissionOverrideRate(java.math.BigDecimal commissionOverrideRate) { this.commissionOverrideRate = commissionOverrideRate; }
+
+    public java.math.BigDecimal getCashCommissionChargedAmount() { return cashCommissionChargedAmount; }
+    public void setCashCommissionChargedAmount(java.math.BigDecimal cashCommissionChargedAmount) { this.cashCommissionChargedAmount = cashCommissionChargedAmount; }
 
     public java.math.BigDecimal getCommissionVoucherFactor() { return commissionVoucherFactor; }
     public void setCommissionVoucherFactor(java.math.BigDecimal commissionVoucherFactor) { this.commissionVoucherFactor = commissionVoucherFactor; }

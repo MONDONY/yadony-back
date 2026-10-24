@@ -21,6 +21,11 @@ public interface BidSupplementRepository extends JpaRepository<BidSupplementEnti
     /** Préchargement des listes de colis ({@code BidResponsePrefetch}) : une requête par lot. */
     List<BidSupplementEntity> findByBidIdIn(Collection<UUID> bidIds);
 
+    /** Parmi {@code bidIds}, les colis qui ont un supplément dans l'un des {@code statuses} : une requête par lot. */
+    @Query("SELECT DISTINCT s.bidId FROM BidSupplementEntity s WHERE s.bidId IN :bidIds AND s.status IN :statuses")
+    List<UUID> findBidIdsByBidIdInAndStatusIn(@Param("bidIds") Collection<UUID> bidIds,
+                                              @Param("statuses") Collection<BidSupplementStatus> statuses);
+
     @Query("SELECT s.bidId FROM BidSupplementEntity s WHERE s.id = :id")
     Optional<UUID> findBidIdById(@Param("id") UUID id);
 
