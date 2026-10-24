@@ -30,10 +30,13 @@ class BidAmendmentReconciliationJobTest {
     private final BidAmendmentCashRefunds cashRefunds = mock(BidAmendmentCashRefunds.class);
     private final BidAmendmentCardRail cardRail = mock(BidAmendmentCardRail.class);
     private final BidAmendmentCardLedger cardLedger = mock(BidAmendmentCardLedger.class);
+    private final BidAmendmentCardRefunds cardRefunds = mock(BidAmendmentCardRefunds.class);
+    private final BidAmendmentPayouts payouts = mock(BidAmendmentPayouts.class);
     private final AdminAlertEscalator alerts = mock(AdminAlertEscalator.class);
     private final BidAmendmentProperties properties = new BidAmendmentProperties();
     private final BidAmendmentReconciliationJob job = new BidAmendmentReconciliationJob(amendments, service,
-            cashRefunds, cardRail, cardLedger, new BidAmendmentWindow(properties), properties, alerts);
+            cashRefunds, cardRail, cardLedger, cardRefunds, payouts, new BidAmendmentWindow(properties), properties,
+            alerts);
 
     @Test
     void filetCoupe_neTournePas() {
@@ -41,7 +44,7 @@ class BidAmendmentReconciliationJobTest {
 
         job.scheduledRun();
 
-        verifyNoInteractions(amendments, service, cashRefunds, cardRail, alerts);
+        verifyNoInteractions(amendments, service, cashRefunds, cardRail, cardRefunds, payouts, alerts);
     }
 
     @Test
@@ -78,7 +81,7 @@ class BidAmendmentReconciliationJobTest {
 
         BidAmendmentReconciliationJob.Outcome outcome = job.run();
 
-        assertThat(outcome).isEqualTo(new BidAmendmentReconciliationJob.Outcome(1, 1, 1, 1, 1, 1, 0));
+        assertThat(outcome).isEqualTo(new BidAmendmentReconciliationJob.Outcome(1, 1, 1, 1, 1, 1, 0, 0, 0));
         verify(cashRefunds, never()).refundStale(any(), any(), org.mockito.ArgumentMatchers.eq("pi_bad"));
         verify(cardRail).releaseAuthorization(next);
         // Échec d'une libération : essai noté (la ligne passe en fin de lot), seulement pour elle.
@@ -107,5 +110,49 @@ class BidAmendmentReconciliationJobTest {
         verify(alerts).raiseOnce(eq("AMEND_PI_UNCANCELED_" + failing), anyString(), anyMap());
         verify(cardRail).releaseAuthorization(next);
         assertThat(outcome.get().cardReleased()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("filet carte : remboursements en suspens, versements à reprendre et versements manqués, sans arrêt du lot")
+    void filetCarte_rembourseRepriseVersementManque() {
+        UUID failing = UUID.randomUUID();
+        UUID refund = UUID.randomUUID();
+        UUID pending = UUID.randomUUID();
+        UUID missed = UUID.randomUUID();
+        when(amendments.findCardIdsToRefund(eq(BidAmendmentCardLedger.CLOSED_UNACCEPTED), any(), any()))
+                .thenReturn(List.of(failing, refund));
+        when(cardRefunds.refund(failing)).thenThrow(new IllegalStateException("stripe"));
+        when(cardRefunds.refund(refund)).thenReturn(true);
+        when(amendments.findCardIdsPayoutPendingBefore(any(), any())).thenReturn(List.of(failing, pending));
+        when(payouts.resume(failing)).thenThrow(new IllegalStateException("stripe"));
+        when(payouts.resume(pending)).thenReturn(true);
+        when(amendments.findCardIdsAwaitingMissedPayout(any(), eq(BidAmendmentPayouts.BLOCKED_ALERT_PREFIX), anyInt()))
+                .thenReturn(List.of(failing, missed));
+        when(payouts.payout(failing)).thenThrow(new IllegalStateException("stripe"));
+        when(payouts.payout(missed)).thenReturn(true);
+
+        BidAmendmentReconciliationJob.Outcome outcome = job.run();
+
+        assertThat(outcome.cardRefunded()).isEqualTo(1);
+        assertThat(outcome.paidOut()).isEqualTo(2);
+        verify(cardRefunds).refund(refund);
+        verify(payouts).resume(pending);
+        verify(payouts).payout(missed);
+    }
+
+    @Test
+    @DisplayName("filet carte : grâces de 10 min (remboursements, reprises) et de 30 min (versement manqué)")
+    void filetCarte_graces() {
+        java.time.LocalDateTime now = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC);
+        BidAmendmentWindow fixed = mock(BidAmendmentWindow.class);
+        when(fixed.now()).thenReturn(now);
+        BidAmendmentReconciliationJob atNow = new BidAmendmentReconciliationJob(amendments, service, cashRefunds,
+                cardRail, cardLedger, cardRefunds, payouts, fixed, properties, alerts);
+
+        atNow.run();
+
+        verify(amendments).findCardIdsToRefund(any(), eq(now.minusMinutes(10)), any());
+        verify(amendments).findCardIdsPayoutPendingBefore(eq(now.minusMinutes(10)), any());
+        verify(amendments).findCardIdsAwaitingMissedPayout(eq(now.minusMinutes(30)), anyString(), anyInt());
     }
 }

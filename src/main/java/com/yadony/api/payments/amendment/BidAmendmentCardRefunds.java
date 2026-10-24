@@ -14,12 +14,16 @@ import java.util.UUID;
  * demande. Réservation en transaction courte, Refund Stripe hors transaction (clé {@code amendment-refund-<id>},
  * reprise par la métadonnée {@code bid_amendment_id} au-delà de 24 h), puis Refund enregistré ; la modification ne passe
  * {@code REFUNDED} qu'à la confirmation de Stripe ({@code charge.refunded}). Échec : la modification reste à rembourser,
- * alerte admin ; le filet des remboursements carte (B10) la reprend.
+ * alerte admin ; le filet des remboursements carte (B10) la reprend. Modification déjà versée au voyageur : alerte
+ * {@code AMEND_REFUND_PAID_OUT_}, aucune action automatique (pas d'inversion de Transfer).
  */
 @Component
 public class BidAmendmentCardRefunds {
 
     private static final Logger log = LoggerFactory.getLogger(BidAmendmentCardRefunds.class);
+
+    /** Préfixe de l'alerte « remboursement demandé, déjà versée » ; avec un UUID, 58 caractères. */
+    static final String PAID_OUT_ALERT_PREFIX = "AMEND_REFUND_PAID_OUT_";
 
     private final StripeAmendmentGateway gateway;
     private final BidAmendmentCardLedger ledger;
@@ -35,6 +39,14 @@ public class BidAmendmentCardRefunds {
     /** @return vrai si un Refund est désormais demandé chez Stripe (créé ou retrouvé). */
     public boolean refund(UUID amendmentId) {
         BidAmendmentCardLedger.RefundClaim claim = ledger.beginRefund(amendmentId);
+        if (claim.decision() == BidAmendmentCardLedger.RefundDecision.AFTER_PAYOUT) {
+            // Le Transfer est parti : pas d'inversion automatique, un admin tranche.
+            alerts.raiseOnce(PAID_OUT_ALERT_PREFIX + amendmentId,
+                    "Modification " + amendmentId + " déjà versée au voyageur alors que son remboursement est demandé "
+                            + "(colis " + claim.bidId() + ") : remboursement manuel à décider",
+                    Map.of("amendmentId", amendmentId.toString(), "bidId", String.valueOf(claim.bidId())));
+            return false;
+        }
         if (claim.decision() != BidAmendmentCardLedger.RefundDecision.PROCEED) {
             return false;
         }

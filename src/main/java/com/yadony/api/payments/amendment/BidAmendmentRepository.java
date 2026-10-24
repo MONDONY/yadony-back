@@ -42,6 +42,11 @@ public interface BidAmendmentRepository extends JpaRepository<BidAmendmentEntity
     /** Modification carte dont {@code stripePaymentIntentId} est la PaymentIntent (montant bloqué puis débité). */
     Optional<BidAmendmentEntity> findByStripePaymentIntentId(String stripePaymentIntentId);
 
+    /** Modifications d'un colis sur un rail et dans un statut (versement : acquises carte non versées). */
+    List<BidAmendmentEntity> findByBidIdAndRailAndStatus(UUID bidId,
+                                                         com.yadony.api.payments.supplement.BidSupplementRail rail,
+                                                         BidAmendmentStatus status);
+
     Optional<BidAmendmentEntity> findFirstByBidIdAndStatusIn(UUID bidId, Collection<BidAmendmentStatus> statuses);
 
     /** Modifications d'un colis, de la plus récente à la plus ancienne. */
@@ -242,4 +247,63 @@ public interface BidAmendmentRepository extends JpaRepository<BidAmendmentEntity
                                            @Param("undeliveredStatuses") Collection<com.yadony.api.matching.BidStatus> undeliveredStatuses,
                                            @Param("alertPrefix") String alertPrefix,
                                            @Param("before") LocalDateTime before, Pageable page);
+
+    // ── Filet des versements et remboursements carte (B10) ───────────────────
+
+    /**
+     * Filet du rail carte, remboursements en suspens inchangés depuis {@code before} : modification {@code REFUND_PENDING}
+     * (non apportée, colis terminé), ou capture tardive d'une modification close sans avoir été acquise
+     * ({@code closed}) et pas encore remboursée. Celles dont aucun Refund n'est encore connu passent d'abord : un
+     * Refund déjà soumis qui attend son webhook ne retarde pas les autres.
+     */
+    @Query("""
+            SELECT a.id FROM BidAmendmentEntity a
+            WHERE a.rail = com.yadony.api.payments.supplement.BidSupplementRail.STRIPE
+              AND a.stripePaymentIntentId IS NOT NULL AND a.refundedAt IS NULL AND a.updatedAt < :before
+              AND (a.status = com.yadony.api.payments.amendment.BidAmendmentStatus.REFUND_PENDING
+                   OR (a.status IN :closed AND a.stripeChargeId IS NOT NULL))
+            ORDER BY CASE WHEN a.stripeRefundId IS NULL THEN 0 ELSE 1 END, a.updatedAt, a.id
+            """)
+    List<UUID> findCardIdsToRefund(@Param("closed") Collection<BidAmendmentStatus> closed,
+                                   @Param("before") LocalDateTime before, Pageable page);
+
+    /** Filet du rail carte : versements restés {@code PAYOUT_PENDING} depuis {@code before} (Transfer à retrouver). */
+    @Query("""
+            SELECT a.id FROM BidAmendmentEntity a
+            WHERE a.rail = com.yadony.api.payments.supplement.BidSupplementRail.STRIPE
+              AND a.status = com.yadony.api.payments.amendment.BidAmendmentStatus.PAYOUT_PENDING
+              AND a.updatedAt < :before
+            ORDER BY a.updatedAt, a.id
+            """)
+    List<UUID> findCardIdsPayoutPendingBefore(@Param("before") LocalDateTime before, Pageable page);
+
+    /**
+     * Filet du rail carte, versement manqué : modification acquise ({@code ACCEPTED}) et inchangée depuis
+     * {@code before}, colis livré ({@code COMPLETED}) depuis {@code before}, dont le principal est versé (paiement
+     * {@code RELEASED} et réservation Stripe {@code DONE}, ou payout pawaPay {@code COMPLETED} : donc
+     * {@code PaymentReleasedEvent} publié) ou payé en espèces (aucun versement principal n'est publié). Un partage admin
+     * d'un litige ne passe pas par ces chemins : la modification reste acquise (décision manuelle). Les modifications
+     * dont le versement est déjà retenu (alerte {@code alertPrefix + id} ouverte) passent en fin de lot : elles ne
+     * cachent jamais les autres.
+     */
+    @Query(value = """
+            SELECT a.id FROM bid_amendments a JOIN bids b ON b.id = a.bid_id
+            WHERE a.deleted_at IS NULL AND b.deleted_at IS NULL
+              AND a.rail = 'STRIPE' AND a.status = 'ACCEPTED' AND a.updated_at < :before
+              AND b.status = 'COMPLETED' AND b.updated_at < :before
+              AND (b.payment_method = 'CASH'
+                   OR EXISTS (SELECT 1 FROM payments p JOIN stripe_release_intents i ON i.payment_id = p.id
+                              WHERE p.bid_id = a.bid_id AND p.deleted_at IS NULL AND p.status = 'RELEASED'
+                                AND i.status = 'DONE')
+                   OR EXISTS (SELECT 1 FROM payments p JOIN pawapay_operations o ON o.payment_id = p.id
+                              WHERE p.bid_id = a.bid_id AND p.deleted_at IS NULL AND p.status = 'RELEASED'
+                                AND o.kind = 'PAYOUT' AND o.status = 'COMPLETED'))
+            ORDER BY EXISTS (SELECT 1 FROM admin_alerts al
+                             WHERE al.type = CAST(:alertPrefix AS VARCHAR) || CAST(a.id AS VARCHAR)
+                               AND al.resolved = false),
+                     a.updated_at, a.id
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<UUID> findCardIdsAwaitingMissedPayout(@Param("before") LocalDateTime before,
+                                               @Param("alertPrefix") String alertPrefix, @Param("limit") int limit);
 }

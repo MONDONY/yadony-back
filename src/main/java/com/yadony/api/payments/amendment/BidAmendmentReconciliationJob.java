@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 /**
  * Filet planifié des modifications de colis, toutes les {@code reconcile-interval} :
@@ -32,11 +33,14 @@ import java.util.UUID;
  *   <li>rejoue le remboursement des PaymentIntents de commission abouties hors de l'essai courant (B5), à partir de
  *       l'audit {@code BID_AMENDMENT_STALE_COMMISSION} ;</li>
  *   <li>signale à l'administration une modification acquise ni versée ni remboursée {@link #UNSETTLED_DELAY} après
- *       la fin du colis.</li>
+ *       la fin du colis ;</li>
+ *   <li>rail carte (B10) : rejoue les remboursements en suspens ({@code REFUND_PENDING}, capture tardive non rendue),
+ *       reprend les versements restés {@code PAYOUT_PENDING}, et verse les modifications acquises d'un colis livré dont
+ *       le principal est versé (ou payé en espèces) quand l'événement s'est perdu ({@link #MISSED_PAYOUT_GRACE}).</li>
  * </ol>
  * Chaque élément a sa propre transaction ; un élément en échec n'arrête pas le lot. Instance unique, pas de verrou
- * distribué (comme le filet du supplément). Les versements et remboursements carte et mobile money manqués sont
- * repris par les filets de leurs rails (B10, B11).
+ * distribué (comme le filet du supplément). Les versements et remboursements mobile money manqués sont repris par
+ * le filet de leur rail (B11).
  */
 @Component
 public class BidAmendmentReconciliationJob {
@@ -83,6 +87,15 @@ public class BidAmendmentReconciliationJob {
      */
     static final Duration STALE_REFUND_GIVE_UP_AFTER = Duration.ofHours(24);
 
+    /**
+     * Rail carte : un remboursement en suspens ou un versement {@code PAYOUT_PENDING} plus récent est laissé à son
+     * déroulement normal (écouteur, webhook).
+     */
+    static final Duration CARD_SETTLE_GRACE = Duration.ofMinutes(10);
+
+    /** Délai laissé au versement du principal (ou à la livraison espèces) avant de verser la modification à sa place. */
+    static final Duration MISSED_PAYOUT_GRACE = Duration.ofMinutes(30);
+
     /** Préfixe de l'alerte ; avec un UUID, 56 caractères ({@code AdminAlertTypeLengthTest}). */
     static final String UNSETTLED_ALERT_PREFIX = "AMENDMENT_UNSETTLED_";
 
@@ -113,19 +126,24 @@ public class BidAmendmentReconciliationJob {
     private final BidAmendmentCashRefunds cashRefunds;
     private final BidAmendmentCardRail cardRail;
     private final BidAmendmentCardLedger cardLedger;
+    private final BidAmendmentCardRefunds cardRefunds;
+    private final BidAmendmentPayouts payouts;
     private final BidAmendmentWindow window;
     private final BidAmendmentProperties properties;
     private final AdminAlertEscalator alerts;
 
     public BidAmendmentReconciliationJob(BidAmendmentRepository amendments, BidAmendmentService service,
                                          BidAmendmentCashRefunds cashRefunds, BidAmendmentCardRail cardRail,
-                                         BidAmendmentCardLedger cardLedger, BidAmendmentWindow window, BidAmendmentProperties properties,
-                                         AdminAlertEscalator alerts) {
+                                         BidAmendmentCardLedger cardLedger, BidAmendmentCardRefunds cardRefunds,
+                                         BidAmendmentPayouts payouts, BidAmendmentWindow window,
+                                         BidAmendmentProperties properties, AdminAlertEscalator alerts) {
         this.amendments = amendments;
         this.service = service;
         this.cashRefunds = cashRefunds;
         this.cardRail = cardRail;
         this.cardLedger = cardLedger;
+        this.cardRefunds = cardRefunds;
+        this.payouts = payouts;
         this.window = window;
         this.properties = properties;
         this.alerts = alerts;
@@ -140,7 +158,7 @@ public class BidAmendmentReconciliationJob {
 
     /** Résultat d'un passage, pour les logs et les tests. */
     public record Outcome(int expired, int reminded, int ended, int cashSettled, int cardReleased, int staleRefunded,
-                          int unsettled) {
+                          int unsettled, int cardRefunded, int paidOut) {
     }
 
     public Outcome run() {
@@ -242,12 +260,34 @@ public class BidAmendmentReconciliationJob {
             }
         }
 
-        Outcome outcome = new Outcome(expired, reminded, ended, cashSettled, cardReleased, staleRefunded, unsettled);
+        int cardRefunded = each(amendments.findCardIdsToRefund(BidAmendmentCardLedger.CLOSED_UNACCEPTED,
+                now.minus(CARD_SETTLE_GRACE), batch), cardRefunds::refund, "remboursement carte");
+        int paidOut = each(amendments.findCardIdsPayoutPendingBefore(now.minus(CARD_SETTLE_GRACE), batch),
+                payouts::resume, "reprise du versement");
+        paidOut += each(amendments.findCardIdsAwaitingMissedPayout(now.minus(MISSED_PAYOUT_GRACE),
+                BidAmendmentPayouts.BLOCKED_ALERT_PREFIX, BATCH_SIZE), payouts::payout, "versement manqué");
+
+        Outcome outcome = new Outcome(expired, reminded, ended, cashSettled, cardReleased, staleRefunded, unsettled,
+                cardRefunded, paidOut);
         if (expired > 0 || reminded > 0 || ended > 0 || cashSettled > 0 || cardReleased > 0 || staleRefunded > 0
-                || unsettled > 0) {
+                || unsettled > 0 || cardRefunded > 0 || paidOut > 0) {
             log.info("Filet des modifications de colis : {}", outcome);
         }
         return outcome;
+    }
+
+    private static int each(List<UUID> ids, Predicate<UUID> action, String label) {
+        int done = 0;
+        for (UUID id : ids) {
+            try {
+                if (action.test(id)) {
+                    done++;
+                }
+            } catch (RuntimeException e) {
+                log.error("Filet des modifications : {} de la modification {} en échec", label, id, e);
+            }
+        }
+        return done;
     }
 
     /** Alerte « modification non soldée », levée une fois tant qu'elle n'est pas résolue ({@link AdminAlertEscalator#raiseOnce}). */

@@ -319,4 +319,88 @@ class BidAmendmentCardLedgerTest {
             }
         }
     }
+
+    // ── Versement (B10) ──────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("réservation du versement : ACCEPTED → PAYOUT_PENDING une seule fois, rejeu sans effet")
+    void beginPayout_acceptedOnly_once() {
+        a.setStatus(BidAmendmentStatus.ACCEPTED);
+        a.setTravelerId(UUID.randomUUID());
+        a.setNetAmount(new BigDecimal("30.00"));
+        a.setStripeChargeId("ch_1");
+
+        assertThat(ledger.beginPayout(a.getId())).get().satisfies(c -> {
+            assertThat(c.net()).isEqualByComparingTo("30.00");
+            assertThat(c.chargeId()).isEqualTo("ch_1");
+        });
+        assertThat(a.getStatus()).isEqualTo(BidAmendmentStatus.PAYOUT_PENDING);
+        assertThat(ledger.beginPayout(a.getId())).as("déjà réservée").isEmpty();
+        verify(auditService).log(eq(BidAmendmentService.ENTITY), eq(a.getId()), eq("BID_AMENDMENT_PAYOUT_SUBMITTED"),
+                any(), anyMap());
+    }
+
+    @Test
+    @DisplayName("Transfer impossible : PAYOUT_PENDING → ACCEPTED, tracé ; une modification versée ne recule jamais")
+    void revertPayout_backToAccepted_onlyFromPending() {
+        a.setStatus(BidAmendmentStatus.PAYOUT_PENDING);
+
+        ledger.revertPayout(a.getId(), "stripe");
+
+        assertThat(a.getStatus()).isEqualTo(BidAmendmentStatus.ACCEPTED);
+        verify(auditService).log(eq(BidAmendmentService.ENTITY), eq(a.getId()), eq("BID_AMENDMENT_PAYOUT_FAILED"),
+                any(), anyMap());
+
+        a.setStatus(BidAmendmentStatus.PAID_OUT);
+        ledger.revertPayout(a.getId(), "rejeu");
+        assertThat(a.getStatus()).isEqualTo(BidAmendmentStatus.PAID_OUT);
+    }
+
+    @Test
+    @DisplayName("reprise du filet : seul un versement PAYOUT_PENDING est repris")
+    void pendingPayout_onlyPayoutPending() {
+        a.setStatus(BidAmendmentStatus.PAYOUT_PENDING);
+        a.setNetAmount(new BigDecimal("30.00"));
+        assertThat(ledger.pendingPayout(a.getId())).isPresent();
+
+        for (BidAmendmentStatus other : BidAmendmentStatus.values()) {
+            if (other != BidAmendmentStatus.PAYOUT_PENDING) {
+                a.setStatus(other);
+                assertThat(ledger.pendingPayout(a.getId())).as(other.name()).isEmpty();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("versement enregistré : PAID_OUT, Transfer et date posés, voyageur prévenu ; rejeu sans effet")
+    void completePayout_once() {
+        a.setStatus(BidAmendmentStatus.PAYOUT_PENDING);
+        a.setNetAmount(new BigDecimal("30.00"));
+        a.setStripeChargeId("ch_1");
+
+        assertThat(ledger.completePayout(a.getId(), "tr_1", "ch_1")).isTrue();
+        assertThat(ledger.completePayout(a.getId(), "tr_1", "ch_1")).as("rejeu").isFalse();
+
+        assertThat(a.getStatus()).isEqualTo(BidAmendmentStatus.PAID_OUT);
+        assertThat(a.getStripeTransferId()).isEqualTo("tr_1");
+        assertThat(a.getPaidOutAt()).isNotNull();
+        verify(events, org.mockito.Mockito.times(1)).publishEvent(any(
+                com.yadony.api.payments.amendment.events.BidAmendmentPaidOutEvent.class));
+    }
+
+    @Test
+    @DisplayName("remboursement demandé d'une modification déjà versée (ou en cours de versement) : AFTER_PAYOUT")
+    void beginRefund_paidOut_afterPayout() {
+        a.setStripeChargeId("ch_1");
+        for (BidAmendmentStatus paid : java.util.List.of(BidAmendmentStatus.PAYOUT_PENDING,
+                BidAmendmentStatus.PAID_OUT)) {
+            a.setStatus(paid);
+
+            BidAmendmentCardLedger.RefundClaim claim = ledger.beginRefund(a.getId());
+
+            assertThat(claim.decision()).as(paid.name()).isEqualTo(BidAmendmentCardLedger.RefundDecision.AFTER_PAYOUT);
+            assertThat(claim.bidId()).isEqualTo(bid.getId());
+            assertThat(a.getStatus()).as("statut inchangé").isEqualTo(paid);
+        }
+    }
 }

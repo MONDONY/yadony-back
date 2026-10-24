@@ -6,6 +6,7 @@ import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
+import com.yadony.api.payments.amendment.events.BidAmendmentPaidOutEvent;
 import com.yadony.api.payments.amendment.events.BidAmendmentRefundRequestedEvent;
 import com.yadony.api.payments.amendment.events.BidAmendmentRefundedEvent;
 import com.yadony.api.payments.supplement.BidSupplementRail;
@@ -82,7 +83,14 @@ public class BidAmendmentCardLedger {
     }
 
     /** Décision d'un remboursement. */
-    public enum RefundDecision { PROCEED, NOTHING }
+    public enum RefundDecision {
+        /** Argent à rendre : Refund à créer (ou à retrouver). */
+        PROCEED,
+        /** Net déjà versé au voyageur (ou Transfer en cours) : pas d'inversion automatique, un admin tranche. */
+        AFTER_PAYOUT,
+        /** Rien à rembourser. */
+        NOTHING
+    }
 
     /** Ce qu'il faut pour rembourser hors transaction. */
     public record RefundClaim(RefundDecision decision, UUID amendmentId, UUID bidId, String paymentIntentId,
@@ -326,13 +334,19 @@ public class BidAmendmentCardLedger {
 
     /**
      * Réserve le remboursement : modification en {@code REFUND_PENDING} (non apportée, colis terminé), ou capture
-     * tardive d'une modification close et pas encore remboursée.
+     * tardive d'une modification close et pas encore remboursée. Modification déjà versée ou en cours de versement :
+     * {@link RefundDecision#AFTER_PAYOUT}, statut inchangé.
      */
     @Transactional
     public RefundClaim beginRefund(UUID amendmentId) {
         BidAmendmentEntity a = lock(amendmentId, false).filter(this::card).orElse(null);
         if (a == null || a.getStripePaymentIntentId() == null || a.getRefundedAt() != null) {
             return RefundClaim.nothing();
+        }
+        if (a.getStatus() == BidAmendmentStatus.PAYOUT_PENDING || a.getStatus() == BidAmendmentStatus.PAID_OUT) {
+            // Le net est parti (ou part) chez le voyageur : pas d'inversion de Transfer automatique, un admin tranche.
+            return new RefundClaim(RefundDecision.AFTER_PAYOUT, a.getId(), a.getBidId(), a.getStripePaymentIntentId(),
+                    a.getStripeRefundId());
         }
         boolean lateCapture = CLOSED_UNACCEPTED.contains(a.getStatus()) && a.getStripeChargeId() != null;
         if (a.getStatus() != BidAmendmentStatus.REFUND_PENDING && !lateCapture) {
@@ -422,6 +436,76 @@ public class BidAmendmentCardLedger {
         amendments.save(a);
         audit(a, "BID_AMENDMENT_REFUND_FAILED", null, Map.of("refundId", String.valueOf(refundId)));
         return true;
+    }
+
+    // ── Versement (B10) ──────────────────────────────────────────────────────
+
+    /** Ce qu'il faut pour verser le net hors transaction. */
+    public record PayoutClaim(UUID amendmentId, UUID bidId, UUID travelerId, java.math.BigDecimal net,
+                              String currency, String chargeId, String paymentIntentId) {
+
+        static PayoutClaim of(BidAmendmentEntity a) {
+            return new PayoutClaim(a.getId(), a.getBidId(), a.getTravelerId(), a.getNetAmount(), a.getCurrency(),
+                    a.getStripeChargeId(), a.getStripePaymentIntentId());
+        }
+    }
+
+    /**
+     * {@code ACCEPTED → PAYOUT_PENDING} : réserve le versement, sous le verrou du colis puis de la modification. Vide si
+     * la modification n'est plus acquise et non versée (déjà versée, remboursement demandé, autre rail) : un seul
+     * versement possible, même si l'événement et le filet arrivent ensemble.
+     */
+    @Transactional
+    public Optional<PayoutClaim> beginPayout(UUID amendmentId) {
+        BidAmendmentEntity a = lock(amendmentId, false).filter(this::card).orElse(null);
+        if (a == null || a.getStatus() != BidAmendmentStatus.ACCEPTED) {
+            return Optional.empty();
+        }
+        a.setStatus(BidAmendmentStatus.PAYOUT_PENDING);
+        amendments.save(a);
+        audit(a, "BID_AMENDMENT_PAYOUT_SUBMITTED", null, Map.of());
+        return Optional.of(PayoutClaim.of(a));
+    }
+
+    /**
+     * {@code PAYOUT_PENDING → PAID_OUT} : Transfer créé (ou retrouvé). Le voyageur est prévenu
+     * ({@link BidAmendmentPaidOutEvent}). Sans effet hors de {@code PAYOUT_PENDING} (rejeu).
+     */
+    @Transactional
+    public boolean completePayout(UUID amendmentId, String transferId, String chargeId) {
+        BidAmendmentEntity a = lock(amendmentId, false).filter(this::card).orElse(null);
+        if (a == null || a.getStatus() != BidAmendmentStatus.PAYOUT_PENDING) {
+            return false;
+        }
+        a.setStatus(BidAmendmentStatus.PAID_OUT);
+        a.setStripeTransferId(transferId);
+        if (a.getStripeChargeId() == null) {
+            a.setStripeChargeId(chargeId);
+        }
+        a.setPaidOutAt(window.now());
+        amendments.save(a);
+        audit(a, "BID_AMENDMENT_PAID_OUT", null, Map.of("transferId", String.valueOf(transferId)));
+        events.publishEvent(new BidAmendmentPaidOutEvent(a.getId(), a.getBidId(), a.getTravelerId(),
+                a.getNetAmount(), a.getCurrency()));
+        return true;
+    }
+
+    /** Versement en cours ({@code PAYOUT_PENDING}), pour une reprise par le filet. Lecture, sans verrou. */
+    @Transactional(readOnly = true)
+    public Optional<PayoutClaim> pendingPayout(UUID amendmentId) {
+        return amendments.findById(amendmentId).filter(this::card)
+                .filter(a -> a.getStatus() == BidAmendmentStatus.PAYOUT_PENDING).map(PayoutClaim::of);
+    }
+
+    /** Aucun Transfer créé : {@code PAYOUT_PENDING → ACCEPTED}, le filet réessaie. */
+    @Transactional
+    public void revertPayout(UUID amendmentId, String error) {
+        lock(amendmentId, false).filter(this::card).filter(a -> a.getStatus() == BidAmendmentStatus.PAYOUT_PENDING)
+                .ifPresent(a -> {
+                    a.setStatus(BidAmendmentStatus.ACCEPTED);
+                    amendments.save(a);
+                    audit(a, "BID_AMENDMENT_PAYOUT_FAILED", null, Map.of("error", String.valueOf(error)));
+                });
     }
 
     /** Trace d'un événement sans transition (autorisation rendue, litige…). */
