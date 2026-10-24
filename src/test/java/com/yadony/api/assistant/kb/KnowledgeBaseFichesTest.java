@@ -165,6 +165,43 @@ class KnowledgeBaseFichesTest {
     }
 
     @Test
+    void modifierUnColisAccepteTrouveSaFicheDansLesDeuxLangues() {
+        KnowledgeBase kb = productionKb();
+        assertThat(firstHit(kb, "fr", "Comment ajouter des kilos à mon colis déjà accepté ?")).isEqualTo("modifier-colis");
+        assertThat(firstHit(kb, "fr", "Puis-je agrandir mon colis ?")).isEqualTo("modifier-colis");
+        assertThat(firstHit(kb, "fr", "modifier mon colis")).isEqualTo("modifier-colis");
+        assertThat(firstHit(kb, "en", "How do I add kilos to my accepted parcel?")).isEqualTo("modifier-colis");
+        assertThat(firstHit(kb, "en", "Can I change my parcel after it was accepted?")).isEqualTo("modifier-colis");
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        for (String locale : List.of("fr", "en")) {
+            KbArticle fiche = corpus.articles(locale).stream().filter(a -> a.id().equals("modifier-colis"))
+                    .findFirst().orElseThrow();
+            // Règles réelles du code (BidAmendmentProperties) : délai de réponse, plafond de modifications acceptées,
+            // fenêtre minimale, fenêtre d'autorisation de la carte.
+            assertThat(fiche.body()).as(locale).contains("48").contains("2 ").contains("30");
+            // Route statique de l'app, déjà autorisée par d'autres fiches (pas de /bids nu).
+            assertThat(fiche.routes()).extracting(KbRoute::path).containsExactly("/envois");
+        }
+        assertThat(corpus.articles("fr").stream().filter(a -> a.id().equals("modifier-colis")).findFirst().orElseThrow()
+                .body()).contains("Les kilos en plus ne sont pas là").contains("ajustement de prix");
+        assertThat(corpus.articles("en").stream().filter(a -> a.id().equals("modifier-colis")).findFirst().orElseThrow()
+                .body()).contains("The extra kilos are not there").contains("price adjustment");
+    }
+
+    @Test
+    void lesFichesDePaiementEtDeRemiseParlentDeLaModificationDuColis() {
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        for (String id : List.of("remboursement", "paiement-especes", "quand-paye-voyageur", "remise-colis")) {
+            for (String locale : List.of("fr", "en")) {
+                KbArticle fiche = corpus.articles(locale).stream().filter(a -> a.id().equals(id))
+                        .findFirst().orElseThrow();
+                assertThat(fiche.body()).as(locale + "/" + id).containsIgnoringCase(
+                        locale.equals("fr") ? "modification" : "change");
+            }
+        }
+    }
+
+    @Test
     void leNumeroDejaUtiliseMeneAChangerNumero() {
         // YADONY-FLUTTER-PROD-Y : le 409 « numéro déjà utilisé » doit trouver sa réponse.
         KnowledgeBase kb = productionKb();
