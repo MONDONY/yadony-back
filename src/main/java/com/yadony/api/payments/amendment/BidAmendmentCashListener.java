@@ -2,6 +2,7 @@ package com.yadony.api.payments.amendment;
 
 import com.yadony.api.payments.amendment.events.BidAmendmentClosedEvent;
 import com.yadony.api.payments.amendment.events.BidAmendmentRefundRequestedEvent;
+import com.yadony.api.payments.amendment.events.BidAmendmentStaleCommissionEvent;
 import com.yadony.api.payments.supplement.BidSupplementRail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,6 +46,18 @@ public class BidAmendmentCashListener {
     public void onRefundRequested(BidAmendmentRefundRequestedEvent e) {
         if (e.rail() == BidSupplementRail.CASH) {
             settle(e.amendmentId());
+        }
+    }
+
+    /** PaymentIntent de commission aboutie hors de l'essai courant : rendue, PaymentIntent par PaymentIntent. */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onStaleCommission(BidAmendmentStaleCommissionEvent e) {
+        try {
+            refunds.refundStale(e.amendmentId(), e.bidId(), e.paymentIntentId());
+        } catch (RuntimeException ex) {
+            log.error("Commission {} de la modification {} : remboursement en échec", e.paymentIntentId(),
+                    e.amendmentId(), ex);
         }
     }
 

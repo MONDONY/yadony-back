@@ -370,7 +370,7 @@ class BidAmendmentCashRailIT {
                 Integer.class, id, "BID_AMENDMENT_ACCEPTED")).isEqualTo(1);
 
         when(gateway.findRefund(piId, "bid_amendment_id", id.toString())).thenReturn(Optional.empty());
-        when(gateway.createRefund(eq(piId), anyMap(), eq("amendment_commission_refund_" + id))).thenReturn("re_c");
+        when(gateway.createRefund(eq(piId), anyMap(), eq("amendment_commission_refund_" + piId))).thenReturn("re_c");
         assertThat(refunds.settle(id)).isTrue();
 
         assertThat(column(id, "status")).isEqualTo("REFUNDED");
@@ -425,7 +425,7 @@ class BidAmendmentCashRailIT {
                 new AmendmentAcceptRequest(CommissionSource.CARD, null)));
         jdbc.update("UPDATE bid_amendments SET responded_at = responded_at - interval '31 minutes' WHERE id = ?", id);
         assertThat(service.expire(id)).isTrue();
-        when(gateway.createRefund(eq(piId), anyMap(), eq("amendment_commission_refund_" + id))).thenReturn("re_late");
+        when(gateway.createRefund(eq(piId), anyMap(), eq("amendment_commission_refund_" + piId))).thenReturn("re_late");
 
         assertThat(dispatcher.dispatch(event("payment_intent.succeeded", "{\"id\":\"" + piId
                 + "\",\"object\":\"payment_intent\",\"status\":\"succeeded\",\"metadata\":{\"bid_amendment_id\":\""
@@ -435,7 +435,7 @@ class BidAmendmentCashRailIT {
         assertThat(column(id, "status")).as("la modification reste close").isEqualTo("CANCELLED");
         assertThat(auditActions(id)).contains("BID_AMENDMENT_LATE_COMMISSION_REFUND",
                 "BID_AMENDMENT_COMMISSION_REFUNDED");
-        verify(gateway).createRefund(eq(piId), anyMap(), eq("amendment_commission_refund_" + id));
+        verify(gateway).createRefund(eq(piId), anyMap(), eq("amendment_commission_refund_" + piId));
     }
 
     @Test
@@ -480,6 +480,8 @@ class BidAmendmentCashRailIT {
                 .thenReturn(requiresAction(secondPi));
         when(gateway.cancelPaymentIntent(firstPi)).thenReturn(new PaymentIntentView(firstPi, "canceled", 360L, "eur",
                 null, null, List.of("card")));
+        when(gateway.retrievePaymentIntent(firstPi)).thenReturn(new PaymentIntentView(firstPi, "canceled", 360L,
+                "eur", null, null, List.of("card")));
         UUID id = create(p, "3");
         cashRail.afterAcceptCommit(service.accept(p.bidId, id, p.traveler.getFirebaseUid(),
                 new AmendmentAcceptRequest(CommissionSource.CARD, null)));
@@ -523,6 +525,177 @@ class BidAmendmentCashRailIT {
         assertThat(column(id, "status")).isEqualTo("ACCEPTED");
         assertThat(column(id, "commission_status")).isEqualTo("CHARGED");
         assertThat(column(id, "commission_payment_intent_id")).isEqualTo(secondPi);
+    }
+
+    // ── PaymentIntent d'un essai précédent qui aboutit tard ──────────────────
+
+    private static String commissionEvent(String type, String piId, UUID amendmentId, String attempt) {
+        return event(type, "{\"id\":\"" + piId + "\",\"object\":\"payment_intent\",\"status\":\""
+                + ("payment_intent.succeeded".equals(type) ? "succeeded" : "requires_payment_method")
+                + "\",\"metadata\":{\"bid_amendment_id\":\"" + amendmentId
+                + "\",\"commission_purpose\":\"bid_amendment_commission\""
+                + (attempt == null ? "" : ",\"commission_attempt\":\"" + attempt + "\"") + "}}");
+    }
+
+    private static PaymentIntentView stripeView(String piId, String status) {
+        return new PaymentIntentView(piId, status, 360L, "eur", piId + "_secret", null, List.of("card"));
+    }
+
+    /** Numéro d'essai porté par la dernière PaymentIntent créée. */
+    private String lastAttempt() throws Exception {
+        ArgumentCaptor<PaymentIntentCreateParams> params = ArgumentCaptor.forClass(PaymentIntentCreateParams.class);
+        verify(gateway, org.mockito.Mockito.atLeastOnce()).createPaymentIntent(params.capture(), any());
+        return params.getValue().getMetadata().get("commission_attempt");
+    }
+
+    /** Premier essai par carte (PI1 en 3DS) puis échec de la 3DS : la modification est de nouveau PROPOSED. */
+    private String failedFirstCardAttempt(Parties p, UUID id, String firstPi) throws Exception {
+        when(gateway.createPaymentIntent(any(), any())).thenReturn(requiresAction(firstPi));
+        when(gateway.cancelPaymentIntent(firstPi)).thenReturn(stripeView(firstPi, "canceled"));
+        when(gateway.retrievePaymentIntent(firstPi)).thenReturn(stripeView(firstPi, "canceled"));
+        cashRail.afterAcceptCommit(service.accept(p.bidId, id, p.traveler.getFirebaseUid(),
+                new AmendmentAcceptRequest(CommissionSource.CARD, null)));
+        String attempt = lastAttempt();
+        assertThat(dispatcher.dispatch(commissionEvent("payment_intent.payment_failed", firstPi, id, attempt)))
+                .isTrue();
+        assertThat(column(id, "status")).isEqualTo("PROPOSED");
+        return attempt;
+    }
+
+    @Test
+    @DisplayName("PI1 aboutit tard après un essai 2 réussi au solde : PI1 remboursée, une seule commission retenue")
+    void latePaymentIntent_afterWalletRetry_isRefunded_singleCommissionKept() throws Exception {
+        Parties p = parties("pm_card", "EUR", "6.00");
+        String pi1 = pi();
+        UUID id = create(p, "3");
+        String attempt1 = failedFirstCardAttempt(p, id, pi1);
+        topUp(p.traveler.getId(), "EUR", "10.00");
+        service.accept(p.bidId, id, p.traveler.getFirebaseUid(), new AmendmentAcceptRequest(null, null));
+        assertThat(column(id, "status")).isEqualTo("ACCEPTED");
+        assertThat(column(id, "commission_payment_intent_id")).as("la PaymentIntent de l'essai échoué est oubliée")
+                .isNull();
+        when(gateway.findRefund(eq(pi1), eq("bid_amendment_id"), any())).thenReturn(Optional.empty());
+        when(gateway.createRefund(eq(pi1), anyMap(), eq("amendment_commission_refund_" + pi1))).thenReturn("re_1");
+
+        assertThat(dispatcher.dispatch(commissionEvent("payment_intent.succeeded", pi1, id, attempt1))).isTrue();
+
+        verify(gateway, org.mockito.Mockito.timeout(5000)).createRefund(eq(pi1), anyMap(),
+                eq("amendment_commission_refund_" + pi1));
+        verify(alerts, org.mockito.Mockito.timeout(5000)).raiseOnce(eq("AMEND_STALE_COMM_" + pi1),
+                org.mockito.ArgumentMatchers.anyString(), anyMap());
+        assertThat(column(id, "status")).isEqualTo("ACCEPTED");
+        assertThat(column(id, "commission_charged_via")).isEqualTo("WALLET");
+        assertThat(column(id, "commission_status")).isEqualTo("CHARGED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM wallet_transactions WHERE payment_ref = ?",
+                Integer.class, "amendment-" + id)).isEqualTo(1);
+        assertThat(walletService.getBalance(p.traveler.getId(), "EUR")).isEqualByComparingTo("6.40");
+        assertThat(auditActions(id)).contains("BID_AMENDMENT_STALE_COMMISSION");
+        assertThat(dispatcher.dispatch(commissionEvent("payment_intent.succeeded", pi1, id, attempt1)))
+                .as("rejeu du webhook").isTrue();
+    }
+
+    @Test
+    @DisplayName("PI1 aboutit tard pendant un essai 2 par carte (PI2) : PI1 remboursée, l'essai 2 continue puis l'emporte")
+    void latePaymentIntent_duringSecondCardAttempt_isRefunded_secondAttemptStillAccepts() throws Exception {
+        Parties p = parties("pm_card", "EUR", "6.00");
+        String pi1 = pi();
+        String pi2 = pi();
+        UUID id = create(p, "3");
+        String attempt1 = failedFirstCardAttempt(p, id, pi1);
+        when(gateway.createPaymentIntent(any(), any())).thenReturn(requiresAction(pi2));
+        Thread.sleep(5);
+        cashRail.afterAcceptCommit(service.accept(p.bidId, id, p.traveler.getFirebaseUid(),
+                new AmendmentAcceptRequest(CommissionSource.CARD, null)));
+        String attempt2 = lastAttempt();
+        assertThat(attempt2).isNotEqualTo(attempt1);
+        assertThat(column(id, "commission_payment_intent_id")).isEqualTo(pi2);
+        when(gateway.findRefund(eq(pi1), eq("bid_amendment_id"), any())).thenReturn(Optional.empty());
+        when(gateway.createRefund(eq(pi1), anyMap(), eq("amendment_commission_refund_" + pi1))).thenReturn("re_1");
+
+        assertThat(dispatcher.dispatch(commissionEvent("payment_intent.succeeded", pi1, id, attempt1))).isTrue();
+
+        verify(gateway, org.mockito.Mockito.timeout(5000)).createRefund(eq(pi1), anyMap(),
+                eq("amendment_commission_refund_" + pi1));
+        assertThat(column(id, "status")).isEqualTo("COMMISSION_PENDING");
+        assertThat(column(id, "commission_payment_intent_id")).isEqualTo(pi2);
+
+        assertThat(dispatcher.dispatch(commissionEvent("payment_intent.succeeded", pi2, id, attempt2))).isTrue();
+
+        assertThat(column(id, "status")).isEqualTo("ACCEPTED");
+        assertThat(column(id, "commission_payment_intent_id")).isEqualTo(pi2);
+        verify(gateway, never()).createRefund(eq(pi2), anyMap(), any());
+    }
+
+    @Test
+    @DisplayName("nouvel essai alors que PI1 est processing : 409 amendment-commission-in-progress, rien de créé")
+    void retryWhilePreviousPaymentIntentProcessing_409() throws Exception {
+        Parties p = parties("pm_card", "EUR", "6.00");
+        String pi1 = pi();
+        UUID id = create(p, "3");
+        failedFirstCardAttempt(p, id, pi1);
+        when(gateway.retrievePaymentIntent(pi1)).thenReturn(stripeView(pi1, "processing"));
+
+        AmendmentAcceptResponse retry = service.accept(p.bidId, id, p.traveler.getFirebaseUid(),
+                new AmendmentAcceptRequest(CommissionSource.CARD, null));
+        assertThat(retry.amendment().status()).isEqualTo("COMMISSION_PENDING");
+
+        assertThat(catchThrowable(() -> cashRail.afterAcceptCommit(retry))).isInstanceOfSatisfying(
+                YadonyBusinessException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo("amendment-commission-in-progress");
+                    assertThat(e.getStatus().value()).isEqualTo(409);
+                });
+
+        assertThat(column(id, "status")).isEqualTo("PROPOSED");
+        assertThat(column(id, "commission_status")).isEqualTo("FAILED");
+        assertThat(column(id, "responded_at")).isNull();
+        verify(gateway, org.mockito.Mockito.times(1)).createPaymentIntent(any(), any());
+        assertThat(availableKg(p.announcementId)).isEqualByComparingTo("3.00");
+    }
+
+    @Test
+    @DisplayName("commission réussie après l'échéance de confirmation : modification close, jamais acceptée, commission remboursée")
+    void commissionSucceedsAfterConfirmationWindow_closedAndRefunded() throws Exception {
+        Parties p = parties("pm_card", "EUR", "6.00");
+        String piId = pi();
+        when(gateway.createPaymentIntent(any(), any())).thenReturn(requiresAction(piId));
+        UUID id = create(p, "3");
+        cashRail.afterAcceptCommit(service.accept(p.bidId, id, p.traveler.getFirebaseUid(),
+                new AmendmentAcceptRequest(CommissionSource.CARD, null)));
+        String attempt = lastAttempt();
+        jdbc.update("UPDATE bid_amendments SET responded_at = responded_at - interval '31 minutes' WHERE id = ?", id);
+        when(gateway.findRefund(eq(piId), eq("bid_amendment_id"), any())).thenReturn(Optional.empty());
+        when(gateway.createRefund(eq(piId), anyMap(), eq("amendment_commission_refund_" + piId))).thenReturn("re_1");
+
+        assertThat(dispatcher.dispatch(commissionEvent("payment_intent.succeeded", piId, id, attempt))).isTrue();
+
+        assertThat(column(id, "status")).isEqualTo("CANCELLED");
+        assertThat(column(id, "closed_reason")).isEqualTo("COMMISSION_NOT_CONFIRMED");
+        assertThat(availableKg(p.announcementId)).isEqualByComparingTo("6.00");
+        assertThat(column(id, "accepted_at")).isNull();
+        awaitColumn(id, "commission_status", "REFUNDED");
+        verify(gateway).createRefund(eq(piId), anyMap(), eq("amendment_commission_refund_" + piId));
+    }
+
+    @Test
+    @DisplayName("commission réussie alors que le colis n'est plus accepté (remis) : modification close (BID_ENDED), commission remboursée")
+    void commissionSucceedsAfterBidEnded_closedAndRefunded() throws Exception {
+        Parties p = parties("pm_card", "EUR", "6.00");
+        String piId = pi();
+        when(gateway.createPaymentIntent(any(), any())).thenReturn(requiresAction(piId));
+        UUID id = create(p, "3");
+        cashRail.afterAcceptCommit(service.accept(p.bidId, id, p.traveler.getFirebaseUid(),
+                new AmendmentAcceptRequest(CommissionSource.CARD, null)));
+        String attempt = lastAttempt();
+        jdbc.update("UPDATE bids SET status = 'HANDED_OVER' WHERE id = ?", p.bidId);
+        when(gateway.findRefund(eq(piId), eq("bid_amendment_id"), any())).thenReturn(Optional.empty());
+        when(gateway.createRefund(eq(piId), anyMap(), eq("amendment_commission_refund_" + piId))).thenReturn("re_1");
+
+        assertThat(dispatcher.dispatch(commissionEvent("payment_intent.succeeded", piId, id, attempt))).isTrue();
+
+        assertThat(column(id, "status")).isEqualTo("CANCELLED");
+        assertThat(column(id, "closed_reason")).isEqualTo("BID_ENDED");
+        assertThat(availableKg(p.announcementId)).isEqualByComparingTo("6.00");
+        awaitColumn(id, "commission_status", "REFUNDED");
     }
 
     @Test

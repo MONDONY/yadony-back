@@ -318,6 +318,20 @@ public class BidAmendmentService {
         audit(a, "BID_AMENDMENT_ACCEPTED", a.getTravelerId(), Map.of());
     }
 
+    /**
+     * Clôt une modification ouverte parce que son colis n'est plus actif ({@code BID_ENDED}) : annulée, kilos
+     * rendus, rail prévenu, événement publié. Appelé sous les verrous du colis, du trajet et de la modification.
+     *
+     * @return vrai si la modification était ouverte et a été close.
+     */
+    public boolean cancelOpen(BidAmendmentEntity a, BidAmendmentClosedReason reason) {
+        if (!a.getStatus().isOpen()) {
+            return false;
+        }
+        close(a, BidAmendmentStatus.CANCELLED, reason, null);
+        return true;
+    }
+
     // ── Expiration ───────────────────────────────────────────────────────────
 
     /**

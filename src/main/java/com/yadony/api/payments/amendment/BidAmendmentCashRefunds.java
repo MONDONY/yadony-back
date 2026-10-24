@@ -22,7 +22,7 @@ import java.util.UUID;
  * <ul>
  *   <li>commission prélevée sur le solde : recréditée ({@link BidAmendmentCashLedger#refundWallet}), en
  *       {@code REFUND} avec {@code payment_ref = "amendment-refund-<id>"} ;</li>
- *   <li>commission prélevée sur la carte : Refund Stripe intégral, clé {@code amendment_commission_refund_<id>}
+ *   <li>commission prélevée sur la carte : Refund Stripe intégral, clé {@code amendment_commission_refund_<piId>}
  *       (un Refund déjà créé est retrouvé) ;</li>
  *   <li>PaymentIntent de commission encore en 3DS : annulée, pour qu'elle ne puisse plus aboutir ; si elle a
  *       abouti entre-temps, la commission est enregistrée puis rendue ;</li>
@@ -80,7 +80,7 @@ public class BidAmendmentCashRefunds {
     private boolean abandon(UUID amendmentId, String paymentIntentId) {
         try {
             gateway.cancelPaymentIntent(paymentIntentId);
-            return ledger.commissionFailed(amendmentId, paymentIntentId, "abandoned");
+            return ledger.commissionFailed(amendmentId, paymentIntentId, null, "abandoned");
         } catch (StripeException cancelRefused) {
             // Annulation refusée : le plus souvent parce que la 3DS vient d'aboutir.
             try {
@@ -88,11 +88,11 @@ public class BidAmendmentCashRefunds {
                 if (pi.succeeded()) {
                     // Commission tardive sur une modification close : enregistrée ; son remboursement part de
                     // l'événement publié par le registre (un seul chemin de remboursement).
-                    return ledger.commissionCharged(amendmentId, pi.id(), "cancel-refused")
+                    return ledger.commissionCharged(amendmentId, pi.id(), null, "cancel-refused")
                             == BidAmendmentCashLedger.ChargeOutcome.LATE_REFUND;
                 }
                 if (pi.canceled()) {
-                    return ledger.commissionFailed(amendmentId, paymentIntentId, "canceled");
+                    return ledger.commissionFailed(amendmentId, paymentIntentId, null, "canceled");
                 }
                 log.warn("Commission {} de la modification {} non annulée (statut {}) : le filet réessaiera",
                         paymentIntentId, amendmentId, pi.status());
@@ -117,7 +117,7 @@ public class BidAmendmentCashRefunds {
                         Map.of("bid_amendment_id", amendmentId.toString(),
                                 "commission_purpose", BidAmendmentCashRail.COMMISSION_PURPOSE,
                                 "amendment_bid_id", claim.bidId().toString()),
-                        refundKey(amendmentId));
+                        refundKey(claim.paymentIntentId()));
             }
             boolean done = ledger.cardRefunded(amendmentId, refundId, "refund", true);
             log.info("Commission de la modification {} rendue au voyageur {} (Refund {})", amendmentId,
@@ -152,7 +152,50 @@ public class BidAmendmentCashRefunds {
         }
     }
 
-    static String refundKey(UUID amendmentId) {
-        return "amendment_commission_refund_" + amendmentId;
+    /** Clé d'idempotence d'un Refund de commission : une par PaymentIntent (plusieurs peuvent exister par modification). */
+    static String refundKey(String paymentIntentId) {
+        return "amendment_commission_refund_" + paymentIntentId;
+    }
+
+    /**
+     * Rend une PaymentIntent de commission aboutie qui n'a pu accepter aucune modification (essai précédent,
+     * commission déjà payée autrement, modification qui n'en attend plus) : alerte admin une seule fois, puis
+     * Refund intégral de CETTE PaymentIntent (clé propre, un Refund déjà créé est retrouvé). Un échec lève une
+     * seconde alerte : rien ne rejoue ce remboursement ensuite.
+     *
+     * @return vrai si un Refund existe désormais (créé ici ou retrouvé).
+     */
+    public boolean refundStale(UUID amendmentId, UUID bidId, String paymentIntentId) {
+        alerts.raiseOnce("AMEND_STALE_COMM_" + paymentIntentId,
+                "PaymentIntent de commission " + paymentIntentId + " de la modification " + amendmentId
+                        + " aboutie hors de l'essai courant : remboursement engagé",
+                Map.of("amendmentId", amendmentId.toString(), "bidId", bidId.toString(),
+                        "paymentIntentId", paymentIntentId));
+        try {
+            String refundId = gateway.findRefund(paymentIntentId, "bid_amendment_id", amendmentId.toString())
+                    .orElse(null);
+            if (refundId == null) {
+                refundId = gateway.createRefund(paymentIntentId,
+                        Map.of("bid_amendment_id", amendmentId.toString(),
+                                "commission_purpose", BidAmendmentCashRail.COMMISSION_PURPOSE,
+                                "amendment_bid_id", bidId.toString()),
+                        refundKey(paymentIntentId));
+            }
+            ledger.auditOnly(amendmentId, "BID_AMENDMENT_STALE_COMMISSION_REFUNDED",
+                    Map.of("piId", paymentIntentId, "refundId", refundId));
+            return true;
+        } catch (IdempotencyException e) {
+            log.info("Remboursement de la PaymentIntent {} déjà en cours ailleurs", paymentIntentId);
+            return false;
+        } catch (Exception e) {
+            log.error("Remboursement de la PaymentIntent de commission {} (modification {}) en échec",
+                    paymentIntentId, amendmentId, e);
+            alerts.raiseOnce("AMEND_STALE_REFUND_FAIL_" + paymentIntentId,
+                    "Commission " + paymentIntentId + " de la modification " + amendmentId
+                            + " prélevée hors de l'essai courant et NON rendue : " + e.getMessage(),
+                    Map.of("amendmentId", amendmentId.toString(), "bidId", bidId.toString(),
+                            "paymentIntentId", paymentIntentId, "error", String.valueOf(e.getMessage())));
+            return false;
+        }
     }
 }

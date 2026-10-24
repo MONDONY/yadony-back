@@ -20,6 +20,9 @@ public interface StripeSupplementGateway {
 
     PaymentIntentView retrievePaymentIntent(String paymentIntentId) throws StripeException;
 
+    /** Métadonnées du PaymentIntent (vide si aucune) : retrouve la modification d'une charge ou d'un litige. */
+    Map<String, String> retrieveMetadata(String paymentIntentId) throws StripeException;
+
     /** Annule le PaymentIntent ; lève une {@link StripeException} s'il a déjà abouti. */
     PaymentIntentView cancelPaymentIntent(String paymentIntentId) throws StripeException;
 

@@ -2,9 +2,13 @@ package com.yadony.api.payments.amendment;
 
 import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.BidEntity;
+import com.yadony.api.matching.BidStatus;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.payments.amendment.events.BidAmendmentRefundRequestedEvent;
 import com.yadony.api.payments.amendment.events.BidAmendmentRefundedEvent;
+import com.yadony.api.payments.amendment.events.BidAmendmentStaleCommissionEvent;
 import com.yadony.api.payments.cash.CommissionChargedVia;
 import com.yadony.api.payments.cash.CommissionStatus;
 import com.yadony.api.payments.cash.WalletCommissionCollector;
@@ -20,6 +24,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.ZoneOffset;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,9 +39,9 @@ import java.util.UUID;
  * et {@link BidAmendmentCashRefunds}, entre deux de ces transactions). Toute transition relit l'état sous verrou :
  * un rejeu (webhook, confirmation de l'app, filet) ne produit aucun second effet.
  *
- * <p>Ordre des verrous : colis, puis modification. Une action qui ne verrouille que la modification créerait un
- * interblocage avec les chemins du colis ({@code BidAmendmentService}, remise). Aucune transition d'ici ne
- * clôt la modification ni ne rend de kilos (un refus de carte la remet en {@code PROPOSED}).
+ * <p>Ordre des verrous : colis, puis trajet quand la transition peut clore la modification (kilos rendus), puis
+ * modification. Une action qui ne verrouille que la modification créerait un interblocage avec les chemins du
+ * colis ({@code BidAmendmentService}, remise).
  *
  * <p>La commission principale du colis ({@code bids.commission_*}) n'est JAMAIS touchée ici.
  */
@@ -61,6 +66,8 @@ public class BidAmendmentCashLedger {
         LATE_REFUND,
         /** Déjà enregistrée (rejeu) : aucun effet. */
         ALREADY,
+        /** PaymentIntent qui n'est pas celle de l'essai courant : remboursée, la modification n'est pas touchée. */
+        STALE,
         /** Modification introuvable, d'un autre rail, ou PaymentIntent qui n'est pas la sienne. */
         IGNORED
     }
@@ -72,6 +79,7 @@ public class BidAmendmentCashLedger {
     private final BidAmendmentRepository amendments;
     private final BidAmendmentService service;
     private final BidRepository bids;
+    private final AnnouncementRepository announcements;
     private final WalletService walletService;
     private final WalletTransactionRepository walletTransactions;
     private final AuditService auditService;
@@ -80,13 +88,14 @@ public class BidAmendmentCashLedger {
     private final AdminAlertEscalator alerts;
 
     public BidAmendmentCashLedger(BidAmendmentRepository amendments, BidAmendmentService service, BidRepository bids,
-                                  WalletService walletService,
+                                  AnnouncementRepository announcements, WalletService walletService,
                                   WalletTransactionRepository walletTransactions, AuditService auditService,
                                   ApplicationEventPublisher events, BidAmendmentWindow window,
                                   AdminAlertEscalator alerts) {
         this.amendments = amendments;
         this.service = service;
         this.bids = bids;
+        this.announcements = announcements;
         this.walletService = walletService;
         this.walletTransactions = walletTransactions;
         this.auditService = auditService;
@@ -101,14 +110,61 @@ public class BidAmendmentCashLedger {
         return amendments.findById(amendmentId);
     }
 
-    /** PaymentIntent de commission en attente de la 3DS du voyageur. */
+    /**
+     * Identifiant de l'essai d'acceptation par carte en cours : {@code respondedAt}, posé à chaque acceptation et
+     * remis à zéro à chaque échec, en millisecondes. Porté par la PaymentIntent (métadonnée
+     * {@code commission_attempt}) pour reconnaître celle de l'essai courant avant même de l'avoir enregistrée.
+     * Nul hors d'un essai.
+     */
+    static String attemptOf(BidAmendmentEntity a) {
+        return a.getRespondedAt() == null ? null
+                : String.valueOf(a.getRespondedAt().toInstant(ZoneOffset.UTC).toEpochMilli());
+    }
+
+    /**
+     * Un nouvel essai par carte est en cours après un essai échoué : {@code commission_status} reste {@code FAILED}
+     * et {@code commission_payment_intent_id} garde la PaymentIntent de l'essai précédent jusqu'à ce que celle du
+     * nouvel essai la remplace.
+     */
+    static boolean retryInProgress(BidAmendmentEntity a) {
+        return a.getStatus() == BidAmendmentStatus.COMMISSION_PENDING
+                && a.getCommissionStatus() == CommissionStatus.FAILED;
+    }
+
+    /**
+     * Cette PaymentIntent est-elle celle de l'essai courant ? Celle déjà enregistrée, ou, tant que l'essai attend
+     * sa commission, une PaymentIntent inconnue qui porte le numéro de l'essai courant (le webhook peut devancer
+     * l'enregistrement). Jamais une PaymentIntent inconnue sans ce numéro.
+     */
+    private static boolean isCurrent(BidAmendmentEntity a, String paymentIntentId, String attempt) {
+        if (paymentIntentId == null) {
+            return false;
+        }
+        if (paymentIntentId.equals(a.getCommissionPaymentIntentId())) {
+            return !retryInProgress(a);
+        }
+        return a.getStatus() == BidAmendmentStatus.COMMISSION_PENDING && attempt != null
+                && attempt.equals(attemptOf(a))
+                && (a.getCommissionPaymentIntentId() == null || retryInProgress(a));
+    }
+
+    /**
+     * PaymentIntent de commission en attente de la 3DS du voyageur : enregistrée pour l'essai courant, en
+     * remplacement de celle de l'essai précédent le cas échéant. Toute autre PaymentIntent n'est pas enregistrée
+     * quand une autre est déjà posée.
+     */
     @Transactional
-    public BidAmendmentEntity commissionRequiresAction(UUID amendmentId, String paymentIntentId) {
-        BidAmendmentEntity a = lock(amendmentId).orElseThrow();
-        if (a.getCommissionPaymentIntentId() == null) {
+    public BidAmendmentEntity commissionRequiresAction(UUID amendmentId, String paymentIntentId, String attempt) {
+        BidAmendmentEntity a = lock(amendmentId, false).orElseThrow();
+        if (retryInProgress(a) && !paymentIntentId.equals(a.getCommissionPaymentIntentId())
+                && attempt != null && attempt.equals(attemptOf(a))) {
+            a.setCommissionPaymentIntentId(paymentIntentId);
+            a.setCommissionStatus(null);
+        } else if (a.getCommissionPaymentIntentId() == null) {
             a.setCommissionPaymentIntentId(paymentIntentId);
         }
-        if (a.getStatus() == BidAmendmentStatus.COMMISSION_PENDING && a.getCommissionStatus() == null) {
+        if (a.getStatus() == BidAmendmentStatus.COMMISSION_PENDING && a.getCommissionStatus() == null
+                && paymentIntentId.equals(a.getCommissionPaymentIntentId())) {
             a.setCommissionStatus(CommissionStatus.REQUIRES_3DS);
             audit(a, "BID_AMENDMENT_COMMISSION_3DS_REQUIRED", a.getTravelerId(), Map.of("piId", paymentIntentId));
         }
@@ -117,41 +173,68 @@ public class BidAmendmentCashLedger {
     }
 
     /**
-     * Commission prélevée sur la carte (débit, confirmation après 3DS, webhook, filet). Modification en attente
-     * de sa commission : {@code COMMISSION_PENDING → ACCEPTED} ({@link BidAmendmentService#markAccepted} : événement,
-     * audit). Modification close entre-temps (échéance, colis terminé) : la commission est rendue après le commit.
+     * Commission prélevée sur la carte (débit, confirmation après 3DS, webhook, filet). Seule la PaymentIntent de
+     * l'essai courant ({@link #isCurrent}) peut accepter la modification : jamais une PaymentIntent d'un essai
+     * précédent, ni une inconnue.
+     * <ul>
+     *   <li>modification en attente de sa commission, dans les délais et colis encore accepté :
+     *       {@code COMMISSION_PENDING → ACCEPTED} ({@link BidAmendmentService#markAccepted}) ;</li>
+     *   <li>échéance de confirmation dépassée, ou colis terminé : la commission est enregistrée, la modification
+     *       close ({@code COMMISSION_NOT_CONFIRMED}, {@code BID_ENDED}) et la commission rendue ;</li>
+     *   <li>modification déjà close : commission enregistrée puis rendue après le commit ;</li>
+     *   <li>toute autre PaymentIntent qui aboutit (essai précédent, commission déjà payée autrement, modification
+     *       qui n'en attend plus) : {@code STALE}, remboursée par PaymentIntent
+     *       ({@link BidAmendmentStaleCommissionEvent}), la modification n'est pas touchée.</li>
+     * </ul>
      * Rejeu : aucun effet.
+     *
+     * @param attempt numéro d'essai porté par la PaymentIntent, nul si inconnu.
      */
     @Transactional
-    public ChargeOutcome commissionCharged(UUID amendmentId, String paymentIntentId, String source) {
-        BidAmendmentEntity a = lock(amendmentId).orElse(null);
+    public ChargeOutcome commissionCharged(UUID amendmentId, String paymentIntentId, String attempt, String source) {
+        BidAmendmentEntity a = lock(amendmentId, true).orElse(null);
         if (a == null || a.getRail() != BidSupplementRail.CASH) {
-            log.warn("Commission {} d'une modification inconnue ou hors rail espèces {} ({})", paymentIntentId,
-                    amendmentId, source);
+            log.error("Commission {} d'une modification inconnue ou hors rail espèces {} ({}) : à vérifier",
+                    paymentIntentId, amendmentId, source);
             return ChargeOutcome.IGNORED;
         }
-        if (a.getCommissionPaymentIntentId() != null && paymentIntentId != null
-                && !a.getCommissionPaymentIntentId().equals(paymentIntentId)) {
-            log.error("Modification {} : commission {} réussie alors qu'elle porte {}", amendmentId,
-                    paymentIntentId, a.getCommissionPaymentIntentId());
-            return ChargeOutcome.IGNORED;
-        }
-        CommissionStatus current = a.getCommissionStatus();
-        if (current == CommissionStatus.CHARGED || current == CommissionStatus.REFUNDED
-                || current == CommissionStatus.REFUND_FAILED) {
+        boolean current = isCurrent(a, paymentIntentId, attempt);
+        CommissionStatus status = a.getCommissionStatus();
+        if (current && paymentIntentId.equals(a.getCommissionPaymentIntentId())
+                && (status == CommissionStatus.CHARGED || status == CommissionStatus.REFUNDED
+                || status == CommissionStatus.REFUND_FAILED)) {
             return ChargeOutcome.ALREADY;
         }
-        if (a.getCommissionPaymentIntentId() == null) {
-            // Le webhook peut arriver avant que le débit n'ait enregistré le PaymentIntent.
-            a.setCommissionPaymentIntentId(paymentIntentId);
+        BidAmendmentStatus state = a.getStatus();
+        boolean closed = !state.isOpen() && !state.isSecured();
+        if (!current) {
+            return stale(a, paymentIntentId, source);
         }
+        if (state != BidAmendmentStatus.COMMISSION_PENDING && !closed) {
+            // Essai déclaré échoué (PROPOSED), ou modification déjà acquise : rien à faire de cette
+            // PaymentIntent que la rendre.
+            return stale(a, paymentIntentId, source);
+        }
+        a.setCommissionPaymentIntentId(paymentIntentId);
         a.setCommissionChargedVia(CommissionChargedVia.CARD);
         a.setCommissionStatus(CommissionStatus.CHARGED);
         Map<String, Object> extra = new LinkedHashMap<>();
         extra.put("piId", String.valueOf(paymentIntentId));
         extra.put("source", source);
-        if (a.getStatus() == BidAmendmentStatus.COMMISSION_PENDING || a.getStatus() == BidAmendmentStatus.PROPOSED) {
-            // PROPOSED : la 3DS d'un essai déclaré échoué a finalement abouti, la commission est payée.
+        if (state == BidAmendmentStatus.COMMISSION_PENDING) {
+            if (window.isLapsed(a)) {
+                amendments.save(a);
+                audit(a, "BID_AMENDMENT_LATE_COMMISSION_REFUND", null, extra);
+                service.expireUnderBidLock(a);
+                return ChargeOutcome.LATE_REFUND;
+            }
+            BidEntity bid = bids.findById(a.getBidId()).orElse(null);
+            if (bid == null || bid.getStatus() != BidStatus.ACCEPTED) {
+                amendments.save(a);
+                audit(a, "BID_AMENDMENT_LATE_COMMISSION_REFUND", null, extra);
+                service.cancelOpen(a, BidAmendmentClosedReason.BID_ENDED);
+                return ChargeOutcome.LATE_REFUND;
+            }
             audit(a, "BID_AMENDMENT_COMMISSION_CHARGED_CARD", a.getTravelerId(), extra);
             service.markAccepted(a);
             return ChargeOutcome.ACCEPTED;
@@ -163,32 +246,77 @@ public class BidAmendmentCashLedger {
         return ChargeOutcome.LATE_REFUND;
     }
 
+    /** PaymentIntent de commission aboutie qui n'accepte rien : à rendre, par son identifiant, hors transaction. */
+    private ChargeOutcome stale(BidAmendmentEntity a, String paymentIntentId, String source) {
+        audit(a, "BID_AMENDMENT_STALE_COMMISSION", null,
+                Map.of("piId", String.valueOf(paymentIntentId), "source", String.valueOf(source)));
+        if (paymentIntentId != null) {
+            events.publishEvent(new BidAmendmentStaleCommissionEvent(a.getId(), a.getBidId(), paymentIntentId));
+        }
+        return ChargeOutcome.STALE;
+    }
+
+    /**
+     * Signale une PaymentIntent de commission aboutie hors de l'essai courant, constatée par un appelant qui l'a
+     * relue chez Stripe ({@code BidAmendmentCashRail}) : elle sera rendue.
+     */
+    @Transactional
+    public void reportStale(UUID amendmentId, String paymentIntentId, String source) {
+        amendments.findById(amendmentId).ifPresent(a -> stale(a, paymentIntentId, source));
+    }
+
+    /**
+     * Abandon d'un nouvel essai refusé avant d'avoir créé sa PaymentIntent (la précédente est encore en cours) :
+     * {@code COMMISSION_PENDING → PROPOSED}, {@code respondedAt} remis à zéro. Commission toujours {@code FAILED}.
+     *
+     * @return vrai si l'état a changé.
+     */
+    @Transactional
+    public boolean abortRetry(UUID amendmentId) {
+        BidAmendmentEntity a = lock(amendmentId, false).orElse(null);
+        if (a == null || !retryInProgress(a)) {
+            return false;
+        }
+        a.setStatus(BidAmendmentStatus.PROPOSED);
+        a.setRespondedAt(null);
+        amendments.save(a);
+        audit(a, "BID_AMENDMENT_COMMISSION_RETRY_ABORTED", a.getTravelerId(), Map.of());
+        return true;
+    }
+
     /**
      * Commission non prélevée : carte refusée, 3DS échouée ou abandonnée, PaymentIntent annulé. Modification en
      * attente de sa commission : elle repasse en {@code PROPOSED} ({@code respondedAt} remis à zéro, commission
      * {@code FAILED}), kilos gardés et rien débité : le voyageur peut réessayer d'accepter, avec le portefeuille
      * ou une autre carte, jusqu'à {@code expiresAt}. L'expéditeur n'en voit rien. Sur une modification déjà close,
-     * seule la commission est marquée. Une commission déjà prélevée n'est jamais écrasée, et un signal d'une
-     * ancienne PaymentIntent (essai précédent) est ignoré.
+     * seule la commission est marquée. Une commission déjà prélevée n'est jamais écrasée. Seul l'échec de
+     * l'essai courant compte : le signal d'une autre PaymentIntent (essai précédent, inconnue) est ignoré.
      *
+     * @param paymentIntentId nul quand l'échec n'a produit aucune PaymentIntent (carte refusée à la création).
+     * @param attempt         numéro d'essai porté par la PaymentIntent, nul si inconnu.
      * @return vrai si l'état a changé.
      */
     @Transactional
-    public boolean commissionFailed(UUID amendmentId, String paymentIntentId, String reason) {
-        BidAmendmentEntity a = lock(amendmentId).orElse(null);
+    public boolean commissionFailed(UUID amendmentId, String paymentIntentId, String attempt, String reason) {
+        BidAmendmentEntity a = lock(amendmentId, false).orElse(null);
         if (a == null || a.getRail() != BidSupplementRail.CASH) {
             return false;
         }
         CommissionStatus current = a.getCommissionStatus();
+        boolean retry = retryInProgress(a);
         if (current == CommissionStatus.CHARGED || current == CommissionStatus.REFUNDED
-                || current == CommissionStatus.REFUND_FAILED || current == CommissionStatus.FAILED) {
+                || current == CommissionStatus.REFUND_FAILED || (current == CommissionStatus.FAILED && !retry)) {
             return false;
         }
-        if (a.getCommissionPaymentIntentId() != null && paymentIntentId != null
-                && !a.getCommissionPaymentIntentId().equals(paymentIntentId)) {
-            return false;
-        }
-        if (a.getCommissionPaymentIntentId() == null && paymentIntentId != null) {
+        if (paymentIntentId != null) {
+            boolean sameAsStored = paymentIntentId.equals(a.getCommissionPaymentIntentId());
+            if (retry && sameAsStored) {
+                // Signal tardif de la PaymentIntent de l'essai précédent : l'essai en cours n'est pas concerné.
+                return false;
+            }
+            if (!sameAsStored && !isCurrent(a, paymentIntentId, attempt)) {
+                return false;
+            }
             a.setCommissionPaymentIntentId(paymentIntentId);
         }
         a.setCommissionChargedVia(CommissionChargedVia.CARD);
@@ -212,7 +340,7 @@ public class BidAmendmentCashLedger {
      */
     @Transactional
     public boolean refundWallet(UUID amendmentId) {
-        BidAmendmentEntity a = lock(amendmentId).orElse(null);
+        BidAmendmentEntity a = lock(amendmentId, false).orElse(null);
         if (a == null || a.getRail() != BidSupplementRail.CASH
                 || !SETTLEABLE.contains(a.getStatus())
                 || a.getCommissionChargedVia() != CommissionChargedVia.WALLET
@@ -268,7 +396,7 @@ public class BidAmendmentCashLedger {
      */
     @Transactional
     public boolean cardRefunded(UUID amendmentId, String refundId, String source, boolean settling) {
-        BidAmendmentEntity a = lock(amendmentId).orElse(null);
+        BidAmendmentEntity a = lock(amendmentId, false).orElse(null);
         if (a == null || a.getRail() != BidSupplementRail.CASH
                 || a.getCommissionStatus() != CommissionStatus.CHARGED) {
             return false;
@@ -288,7 +416,7 @@ public class BidAmendmentCashLedger {
      */
     @Transactional
     public boolean commissionRefundFailed(UUID amendmentId, String refundId) {
-        BidAmendmentEntity a = lock(amendmentId).orElse(null);
+        BidAmendmentEntity a = lock(amendmentId, false).orElse(null);
         if (a == null || a.getRail() != BidSupplementRail.CASH
                 || a.getCommissionStatus() != CommissionStatus.REFUNDED) {
             return false;
@@ -307,7 +435,7 @@ public class BidAmendmentCashLedger {
      */
     @Transactional
     public boolean closeAccepted(UUID amendmentId) {
-        BidAmendmentEntity a = lock(amendmentId).orElse(null);
+        BidAmendmentEntity a = lock(amendmentId, false).orElse(null);
         if (a == null || a.getRail() != BidSupplementRail.CASH
                 || a.getStatus() != BidAmendmentStatus.ACCEPTED
                 || (a.getCommissionStatus() != null && a.getCommissionStatus() != CommissionStatus.REFUNDED
@@ -357,14 +485,17 @@ public class BidAmendmentCashLedger {
     }
 
     /**
-     * Verrous dans l'ordre colis, puis modification (jamais la modification seule : interblocage avec les chemins
-     * du colis). Aucune de ces transitions ne rend de kilos, le verrou du trajet n'est donc pas nécessaire. Vide
-     * si la modification est introuvable.
+     * Verrous dans l'ordre colis, puis trajet si {@code withTrip}, puis modification (jamais la modification seule :
+     * interblocage avec les chemins du colis). Le trajet n'est verrouillé que par la transition qui peut clore la
+     * modification et en rendre les kilos. Vide si la modification est introuvable.
      */
-    private Optional<BidAmendmentEntity> lock(UUID amendmentId) {
+    private Optional<BidAmendmentEntity> lock(UUID amendmentId, boolean withTrip) {
         Optional<UUID> bidId = amendments.findBidIdById(amendmentId);
         if (bidId.isEmpty() || bids.lockForUpdate(bidId.get()) == 0) {
             return Optional.empty();
+        }
+        if (withTrip) {
+            bids.findById(bidId.get()).map(BidEntity::getAnnouncementId).flatMap(announcements::findByIdForUpdate);
         }
         return amendments.findByIdAndBidIdForUpdate(amendmentId, bidId.get());
     }

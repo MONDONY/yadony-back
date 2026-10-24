@@ -2,6 +2,7 @@ package com.yadony.api.payments.amendment;
 
 import com.stripe.exception.ApiConnectionException;
 import com.stripe.exception.InvalidRequestException;
+import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
@@ -53,6 +54,7 @@ class BidAmendmentCashRailTest {
     @Mock BidAmendmentRepository amendments;
     @Mock BidAmendmentItemRepository amendmentItems;
     @Mock UserRepository users;
+    @Mock AdminAlertEscalator alerts;
 
     private BidAmendmentCashRail rail;
     private BidAmendmentEntity a;
@@ -61,7 +63,7 @@ class BidAmendmentCashRailTest {
     @BeforeEach
     void setUp() {
         rail = new BidAmendmentCashRail(service, collector, activeCurrencyResolver, gateway, ledger, refunds,
-                amendments, amendmentItems, users, new BidAmendmentWindow(new BidAmendmentProperties()));
+                amendments, amendmentItems, users, new BidAmendmentWindow(new BidAmendmentProperties()), alerts);
         traveler = new UserEntity();
         BidAmendmentTestSupport.setId(traveler, UUID.randomUUID());
         traveler.setFirebaseUid("uid-traveler");
@@ -138,8 +140,8 @@ class BidAmendmentCashRailTest {
     }
 
     @Test
-    @DisplayName("nouvel essai après un refus : statut et PaymentIntent de l'essai précédent remis à zéro, clé neuve")
-    void accept_afterFailedAttempt_resetsCommissionState() throws Exception {
+    @DisplayName("nouvel essai par carte après un refus : la PaymentIntent précédente et FAILED restent, clé neuve")
+    void accept_cardRetry_keepsPreviousPaymentIntentForVerification() {
         a.setCommissionStatus(CommissionStatus.FAILED);
         a.setCommissionPaymentIntentId("pi_old");
         a.setCommissionChargedVia(CommissionChargedVia.CARD);
@@ -147,8 +149,8 @@ class BidAmendmentCashRailTest {
         rail.accept(a, traveler, new AmendmentAcceptRequest(CommissionSource.CARD, null));
 
         assertThat(a.getStatus()).isEqualTo(BidAmendmentStatus.COMMISSION_PENDING);
-        assertThat(a.getCommissionStatus()).isNull();
-        assertThat(a.getCommissionPaymentIntentId()).isNull();
+        assertThat(a.getCommissionStatus()).isEqualTo(CommissionStatus.FAILED);
+        assertThat(a.getCommissionPaymentIntentId()).isEqualTo("pi_old");
         assertThat(a.getRespondedAt()).isNotNull();
         String first = BidAmendmentCashRail.commissionKey(a);
         a.setRespondedAt(a.getRespondedAt().plusSeconds(1));
@@ -156,6 +158,35 @@ class BidAmendmentCashRailTest {
                 .startsWith("amendment_commission_" + a.getId() + "_");
         a.setRespondedAt(null);
         assertThat(BidAmendmentCashRail.commissionKey(a)).endsWith("_0");
+    }
+
+    @Test
+    @DisplayName("essai au solde ou commission nulle après un essai par carte échoué : la PaymentIntent précédente est oubliée")
+    void accept_walletOrZeroAfterFailedCardAttempt_forgetsPreviousPaymentIntent() {
+        a.setCommissionStatus(CommissionStatus.FAILED);
+        a.setCommissionPaymentIntentId("pi_old");
+        a.setCommissionChargedVia(CommissionChargedVia.CARD);
+        a.setCommissionAmount(BigDecimal.ZERO);
+
+        rail.accept(a, traveler, new AmendmentAcceptRequest(null, null));
+
+        assertThat(a.getCommissionStatus()).isNull();
+        assertThat(a.getCommissionPaymentIntentId()).isNull();
+        assertThat(a.getCommissionChargedVia()).isNull();
+
+        a.setCommissionAmount(new BigDecimal("3.60"));
+        a.setCommissionPaymentIntentId("pi_old2");
+        when(activeCurrencyResolver.resolve(traveler.getId())).thenReturn("EUR");
+        when(collector.plan(traveler.getId(), "EUR", "EUR", a.getCommissionAmount())).thenReturn(
+                new com.yadony.api.payments.cash.CommissionSplit("EUR", a.getCommissionAmount(),
+                        a.getCommissionAmount(), BigDecimal.ZERO, "EUR", BigDecimal.ZERO, null, BigDecimal.TEN,
+                        BigDecimal.TEN, true, a.getCommissionAmount()));
+
+        rail.accept(a, traveler, new AmendmentAcceptRequest(null, null));
+
+        assertThat(a.getCommissionPaymentIntentId()).as("la PaymentIntent d'un essai échoué n'est pas celle du solde")
+                .isNull();
+        assertThat(a.getCommissionChargedVia()).isEqualTo(CommissionChargedVia.WALLET);
     }
 
     @Test
@@ -194,7 +225,7 @@ class BidAmendmentCashRailTest {
 
         assertThat(catchThrowable(() -> rail.chargeCard(a.getId()))).isInstanceOf(CommissionMethodMissingException.class);
 
-        verify(ledger).commissionFailed(a.getId(), null, "no-commission-card");
+        verify(ledger).commissionFailed(a.getId(), null, null, "no-commission-card");
         verifyNoInteractions(gateway);
     }
 
@@ -212,7 +243,7 @@ class BidAmendmentCashRailTest {
         assertThat(catchThrowable(() -> rail.chargeCard(a.getId()))).isInstanceOfSatisfying(
                 YadonyBusinessException.class,
                 e -> assertThat(e.getErrorCode()).isEqualTo("amendment-commission-charge-failed"));
-        verify(ledger, never()).commissionFailed(any(), any(), any());
+        verify(ledger, never()).commissionFailed(any(), any(), any(), any());
     }
 
     @Test
@@ -226,7 +257,7 @@ class BidAmendmentCashRailTest {
 
         AmendmentAcceptResponse r = rail.chargeCard(a.getId());
 
-        verify(ledger).commissionCharged(a.getId(), "pi_c", "create");
+        verify(ledger).commissionCharged(a.getId(), "pi_c", null, "create");
         assertThat(r.commissionClientSecret()).isNull();
     }
 
@@ -238,13 +269,14 @@ class BidAmendmentCashRailTest {
         when(users.findById(traveler.getId())).thenReturn(Optional.of(traveler));
         when(gateway.createPaymentIntent(any(), anyString())).thenReturn(pi("processing"))
                 .thenReturn(pi("requires_payment_method"));
-        when(ledger.commissionRequiresAction(a.getId(), "pi_c")).thenReturn(a);
+        when(ledger.commissionRequiresAction(a.getId(), "pi_c", null)).thenReturn(a);
 
         assertThat(rail.chargeCard(a.getId()).commissionClientSecret()).isNull();
         assertThat(catchThrowable(() -> rail.chargeCard(a.getId()))).isInstanceOfSatisfying(
                 YadonyBusinessException.class,
                 e -> assertThat(e.getErrorCode()).isEqualTo("amendment-commission-card-declined"));
-        verify(ledger).commissionFailed(a.getId(), "pi_c", "status-requires_payment_method");
+        verify(ledger).commissionFailed(a.getId(), "pi_c", null, "status-requires_payment_method");
+        verify(gateway).cancelPaymentIntent("pi_c");
     }
 
     @Test
@@ -264,7 +296,7 @@ class BidAmendmentCashRailTest {
         cancelled.setAddedWeightKg(a.getAddedWeightKg());
         cancelled.setExpiresAt(a.getExpiresAt());
         cancelled.setStatus(BidAmendmentStatus.CANCELLED);
-        when(ledger.commissionRequiresAction(a.getId(), "pi_c")).thenReturn(cancelled);
+        when(ledger.commissionRequiresAction(a.getId(), "pi_c", null)).thenReturn(cancelled);
 
         rail.chargeCard(a.getId());
         verify(refunds).settle(a.getId());
@@ -325,7 +357,7 @@ class BidAmendmentCashRailTest {
         when(ledger.find(a.getId())).thenReturn(Optional.of(a));
         when(users.findById(traveler.getId())).thenReturn(Optional.of(traveler));
         when(gateway.createPaymentIntent(any(), anyString())).thenReturn(pi("requires_action"));
-        when(ledger.commissionRequiresAction(a.getId(), "pi_c")).thenReturn(a);
+        when(ledger.commissionRequiresAction(a.getId(), "pi_c", null)).thenReturn(a);
 
         assertThat(rail.confirmCommission(a.getBidId(), a.getId(), "uid-traveler").commissionClientSecret())
                 .isEqualTo("pi_c_secret");
@@ -359,29 +391,234 @@ class BidAmendmentCashRailTest {
     @Test
     @DisplayName("webhook : succès enregistré ; annulation = commission non prélevée ; autre type ignoré")
     void webhook_succeededCanceledAndOthers() {
-        rail.onCommissionWebhook("payment_intent.succeeded", a.getId(), "pi_c", "unknown");
-        rail.onCommissionWebhook("payment_intent.canceled", a.getId(), "pi_c", "unknown");
-        rail.onCommissionWebhook("payment_intent.created", a.getId(), "pi_c", "unknown");
+        rail.onCommissionWebhook("payment_intent.succeeded", a.getId(), "pi_c", "7", "unknown");
+        rail.onCommissionWebhook("payment_intent.canceled", a.getId(), "pi_c", "7", "unknown");
+        rail.onCommissionWebhook("payment_intent.created", a.getId(), "pi_c", "7", "unknown");
 
-        verify(ledger).commissionCharged(a.getId(), "pi_c", "webhook");
-        verify(ledger).commissionFailed(a.getId(), "pi_c", "canceled");
+        verify(ledger).commissionCharged(a.getId(), "pi_c", "7", "webhook");
+        verify(ledger).commissionFailed(a.getId(), "pi_c", "7", "canceled");
         verifyNoInteractions(gateway);
     }
 
     @Test
     @DisplayName("webhook : 3DS échouée, la PaymentIntent est annulée ; annulation refusée ou sans id : sans suite")
     void webhook_paymentFailed_cancelsPaymentIntentQuietly() throws Exception {
-        when(ledger.commissionFailed(a.getId(), "pi_c", "payment_failed:card_declined")).thenReturn(true);
-        when(ledger.commissionFailed(a.getId(), null, "payment_failed:card_declined")).thenReturn(true);
-        when(ledger.commissionFailed(a.getId(), "pi_old", "payment_failed:card_declined")).thenReturn(false);
+        when(ledger.commissionFailed(a.getId(), "pi_c", "7", "payment_failed:card_declined")).thenReturn(true);
+        when(ledger.commissionFailed(a.getId(), null, "7", "payment_failed:card_declined")).thenReturn(true);
+        when(ledger.commissionFailed(a.getId(), "pi_old", "7", "payment_failed:card_declined")).thenReturn(false);
         when(gateway.cancelPaymentIntent("pi_c")).thenThrow(new ApiConnectionException("timeout"));
 
-        rail.onCommissionWebhook("payment_intent.payment_failed", a.getId(), "pi_c", "card_declined");
-        rail.onCommissionWebhook("payment_intent.payment_failed", a.getId(), null, "card_declined");
-        rail.onCommissionWebhook("payment_intent.payment_failed", a.getId(), "pi_old", "card_declined");
+        rail.onCommissionWebhook("payment_intent.payment_failed", a.getId(), "pi_c", "7", "card_declined");
+        rail.onCommissionWebhook("payment_intent.payment_failed", a.getId(), null, "7", "card_declined");
+        rail.onCommissionWebhook("payment_intent.payment_failed", a.getId(), "pi_old", "7", "card_declined");
 
         verify(gateway).cancelPaymentIntent("pi_c");
         verify(gateway, never()).cancelPaymentIntent("pi_old");
+    }
+
+    // ── Nouvel essai : relecture de la PaymentIntent précédente ──────────────
+
+    /** Nouvel essai par carte après un essai échoué : COMMISSION_PENDING, FAILED, PaymentIntent précédente gardée. */
+    private void retryAfterFailure(String previousPi) throws Exception {
+        commissionPendingByCard();
+        a.setCommissionStatus(CommissionStatus.FAILED);
+        a.setCommissionPaymentIntentId(previousPi);
+        a.setRespondedAt(java.time.LocalDateTime.now());
+        when(ledger.find(a.getId())).thenReturn(Optional.of(a));
+        when(users.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+    }
+
+    @Test
+    @DisplayName("nouvel essai, PaymentIntent précédente aboutie : elle sera remboursée, l'essai continue avec une neuve")
+    void retry_previousSucceeded_reportedStale_andNewPaymentIntentCreated() throws Exception {
+        retryAfterFailure("pi_1");
+        when(gateway.retrievePaymentIntent("pi_1")).thenReturn(pi("succeeded"));
+        when(gateway.createPaymentIntent(any(), anyString())).thenReturn(new PaymentIntentView("pi_2",
+                "requires_action", 360L, "eur", "pi_2_secret", null, List.of("card")));
+        when(ledger.commissionRequiresAction(eq(a.getId()), eq("pi_2"), any())).thenReturn(a);
+
+        AmendmentAcceptResponse r = rail.chargeCard(a.getId());
+
+        verify(ledger).reportStale(a.getId(), "pi_1", "retry-check");
+        verify(gateway, never()).cancelPaymentIntent(any());
+        assertThat(r.commissionClientSecret()).isEqualTo("pi_2_secret");
+    }
+
+    @Test
+    @DisplayName("nouvel essai, PaymentIntent précédente en processing : refusé en 409, modification remise en PROPOSED")
+    void retry_previousProcessing_refusedWith409() throws Exception {
+        retryAfterFailure("pi_1");
+        when(gateway.retrievePaymentIntent("pi_1")).thenReturn(pi("processing"));
+
+        assertThat(catchThrowable(() -> rail.chargeCard(a.getId()))).isInstanceOfSatisfying(
+                YadonyBusinessException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo("amendment-commission-in-progress");
+                    assertThat(e.getStatus().value()).isEqualTo(409);
+                });
+
+        verify(ledger).abortRetry(a.getId());
+        verify(gateway, never()).createPaymentIntent(any(), anyString());
+        verify(gateway, never()).cancelPaymentIntent(any());
+    }
+
+    @Test
+    @DisplayName("nouvel essai, PaymentIntent précédente encore annulable : annulée puis nouvelle PaymentIntent")
+    void retry_previousCancellable_isCanceled_thenNewPaymentIntent() throws Exception {
+        retryAfterFailure("pi_1");
+        when(gateway.retrievePaymentIntent("pi_1")).thenReturn(pi("requires_payment_method"));
+        when(gateway.createPaymentIntent(any(), anyString())).thenReturn(pi("succeeded"));
+
+        rail.chargeCard(a.getId());
+
+        verify(gateway).cancelPaymentIntent("pi_1");
+        verify(ledger).commissionCharged(a.getId(), "pi_c", BidAmendmentCashLedger.attemptOf(a), "create");
+    }
+
+    @Test
+    @DisplayName("nouvel essai, précédente déjà annulée : rien à annuler")
+    void retry_previousAlreadyCanceled_nothingToCancel() throws Exception {
+        retryAfterFailure("pi_1");
+        when(gateway.retrievePaymentIntent("pi_1")).thenReturn(pi("canceled"));
+        when(gateway.createPaymentIntent(any(), anyString())).thenReturn(pi("succeeded"));
+
+        rail.chargeCard(a.getId());
+
+        verify(gateway, never()).cancelPaymentIntent(any());
+        verify(ledger, never()).reportStale(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("nouvel essai, annulation refusée : PaymentIntent relue ; aboutie, rendue ; processing, 409")
+    void retry_cancelRefused_rereadsPaymentIntent() throws Exception {
+        retryAfterFailure("pi_1");
+        when(gateway.retrievePaymentIntent("pi_1")).thenReturn(pi("requires_action"), pi("succeeded"),
+                pi("requires_action"), pi("processing"));
+        when(gateway.cancelPaymentIntent("pi_1")).thenThrow(new InvalidRequestException("cannot cancel", "req",
+                "code", "param", 400, null));
+        when(gateway.createPaymentIntent(any(), anyString())).thenReturn(pi("succeeded"));
+
+        rail.chargeCard(a.getId());
+        verify(ledger).reportStale(a.getId(), "pi_1", "retry-check");
+
+        assertThat(catchThrowable(() -> rail.chargeCard(a.getId()))).isInstanceOfSatisfying(
+                YadonyBusinessException.class,
+                e -> assertThat(e.getErrorCode()).isEqualTo("amendment-commission-in-progress"));
+        verify(ledger).abortRetry(a.getId());
+        verifyNoInteractions(alerts);
+    }
+
+    @Test
+    @DisplayName("nouvel essai, annulation refusée et PaymentIntent toujours vivante ou illisible : alerte admin, l'essai continue")
+    void retry_cancelRefusedAndStillAlive_alerts() throws Exception {
+        retryAfterFailure("pi_1");
+        when(gateway.retrievePaymentIntent("pi_1")).thenReturn(pi("requires_action"))
+                .thenThrow(new ApiConnectionException("timeout"));
+        when(gateway.cancelPaymentIntent("pi_1")).thenThrow(new InvalidRequestException("cannot cancel", "req",
+                "code", "param", 400, null));
+        when(gateway.createPaymentIntent(any(), anyString())).thenReturn(pi("succeeded"));
+
+        rail.chargeCard(a.getId());
+
+        verify(alerts).raiseOnce(eq("AMEND_COMM_PI_UNCANCELED_pi_1"), anyString(), org.mockito.ArgumentMatchers.anyMap());
+        verify(gateway).createPaymentIntent(any(), anyString());
+    }
+
+    @Test
+    @DisplayName("nouvel essai, relecture de la précédente impossible : 502, rien de créé")
+    void retry_previousUnreadable_noNewPaymentIntent() throws Exception {
+        retryAfterFailure("pi_1");
+        when(gateway.retrievePaymentIntent("pi_1")).thenThrow(new ApiConnectionException("timeout"));
+
+        assertThat(catchThrowable(() -> rail.chargeCard(a.getId()))).isInstanceOfSatisfying(
+                YadonyBusinessException.class, e -> assertThat(e.getErrorCode()).isEqualTo("stripe-unavailable"));
+
+        verify(gateway, never()).createPaymentIntent(any(), anyString());
+    }
+
+    @Test
+    @DisplayName("métadonnées de la PaymentIntent : identifiant de la modification, numéro d'essai, pas de bid_id")
+    void chargeCard_metadataCarriesAttemptNumber() throws Exception {
+        commissionPendingByCard();
+        a.setRespondedAt(java.time.LocalDateTime.of(2026, 10, 24, 10, 0, 0));
+        when(ledger.find(a.getId())).thenReturn(Optional.of(a));
+        when(users.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+        when(gateway.createPaymentIntent(any(), anyString())).thenReturn(pi("succeeded"));
+
+        rail.chargeCard(a.getId());
+
+        org.mockito.ArgumentCaptor<com.stripe.param.PaymentIntentCreateParams> params =
+                org.mockito.ArgumentCaptor.forClass(com.stripe.param.PaymentIntentCreateParams.class);
+        verify(gateway).createPaymentIntent(params.capture(), eq(BidAmendmentCashRail.commissionKey(a)));
+        assertThat(params.getValue().getMetadata())
+                .containsEntry("bid_amendment_id", a.getId().toString())
+                .containsEntry("commission_attempt", BidAmendmentCashLedger.attemptOf(a))
+                .doesNotContainKeys("bid_id", "payment_id");
+    }
+
+    @Test
+    @DisplayName("confirm pendant un nouvel essai sans PaymentIntent neuve : le débit est relancé, pas la précédente relue")
+    void confirm_duringRetry_restartsCharge() throws Exception {
+        asTraveler();
+        retryAfterFailure("pi_1");
+        when(amendments.findById(a.getId())).thenReturn(Optional.of(a));
+        when(gateway.retrievePaymentIntent("pi_1")).thenReturn(pi("canceled"));
+        when(gateway.createPaymentIntent(any(), anyString())).thenReturn(pi("succeeded"));
+
+        rail.confirmCommission(a.getBidId(), a.getId(), "uid-traveler");
+
+        verify(gateway).createPaymentIntent(any(), anyString());
+    }
+
+    // ── Annulation d'une PaymentIntent d'essai terminé ───────────────────────
+
+    @Test
+    @DisplayName("webhook d'échec : annulation refusée, PaymentIntent relue ; annulée rien, aboutie remboursée, vivante alerte")
+    void webhook_paymentFailed_cancelRefused_neverSwallowed() throws Exception {
+        when(ledger.commissionFailed(eq(a.getId()), anyString(), eq("7"), anyString())).thenReturn(true);
+        when(gateway.cancelPaymentIntent(anyString())).thenThrow(new InvalidRequestException("cannot cancel", "req",
+                "code", "param", 400, null));
+        when(gateway.retrievePaymentIntent("pi_canceled")).thenReturn(pi("canceled"));
+        when(gateway.retrievePaymentIntent("pi_ok")).thenReturn(pi("succeeded"));
+        when(gateway.retrievePaymentIntent("pi_alive")).thenReturn(pi("processing"));
+        when(gateway.retrievePaymentIntent("pi_unreadable")).thenThrow(new ApiConnectionException("timeout"));
+
+        for (String id : List.of("pi_canceled", "pi_ok", "pi_alive", "pi_unreadable")) {
+            rail.onCommissionWebhook("payment_intent.payment_failed", a.getId(), id, "7", "card_declined");
+        }
+
+        verify(ledger).commissionCharged(a.getId(), "pi_ok", "7", "cancel-refused");
+        verify(ledger, never()).commissionCharged(eq(a.getId()), eq("pi_canceled"), any(), any());
+        verify(alerts).raiseOnce(eq("AMEND_COMM_PI_UNCANCELED_pi_alive"), anyString(),
+                org.mockito.ArgumentMatchers.anyMap());
+        verify(alerts).raiseOnce(eq("AMEND_COMM_PI_UNCANCELED_pi_unreadable"), anyString(),
+                org.mockito.ArgumentMatchers.anyMap());
+        verify(alerts, never()).raiseOnce(eq("AMEND_COMM_PI_UNCANCELED_pi_canceled"), anyString(),
+                org.mockito.ArgumentMatchers.anyMap());
+    }
+
+    @Test
+    @DisplayName("PaymentIntent neuve créée pendant que la modification était close : annulée, jamais enregistrée")
+    void chargeCard_closedDuringCharge_cancelsNewPaymentIntent() throws Exception {
+        commissionPendingByCard();
+        when(ledger.find(a.getId())).thenReturn(Optional.of(a));
+        when(users.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+        when(gateway.createPaymentIntent(any(), anyString())).thenReturn(pi("requires_action"));
+        BidAmendmentEntity cancelled = new BidAmendmentEntity();
+        BidAmendmentTestSupport.setId(cancelled, a.getId());
+        cancelled.setRail(BidSupplementRail.CASH);
+        cancelled.setCurrency("EUR");
+        cancelled.setNetAmount(a.getNetAmount());
+        cancelled.setGrossAmount(a.getGrossAmount());
+        cancelled.setCommissionAmount(a.getCommissionAmount());
+        cancelled.setAddedWeightKg(a.getAddedWeightKg());
+        cancelled.setExpiresAt(a.getExpiresAt());
+        cancelled.setStatus(BidAmendmentStatus.CANCELLED);
+        when(ledger.commissionRequiresAction(eq(a.getId()), eq("pi_c"), any())).thenReturn(cancelled);
+
+        rail.chargeCard(a.getId());
+
+        verify(gateway).cancelPaymentIntent("pi_c");
+        verify(refunds).settle(a.getId());
     }
 
     @Test
