@@ -76,6 +76,21 @@ class NotificationDeeplinkTest {
         }
     }
 
+    /** Modification d'un colis : demande, rappel et acceptation ouvrent l'encart, les issues ouvrent le colis. */
+    @Test
+    void bidAmendmentTypesOpenTheBid() {
+        for (String type : new String[]{"BID_AMENDMENT_REQUESTED", "BID_AMENDMENT_REMINDER", "BID_AMENDMENT_ACCEPTED"}) {
+            assertThat(NotificationDeeplink.of(type, Map.of("bidId", bidId))).as(type)
+                    .contains("yadony://bids/" + bidId + "?action=amendment");
+            assertThat(NotificationDeeplink.of(type, Map.of("bidId", "../admin"))).as(type).isEmpty();
+        }
+        for (String type : new String[]{"BID_AMENDMENT_CANCELLED", "BID_AMENDMENT_DECLINED", "BID_AMENDMENT_EXPIRED",
+                "BID_AMENDMENT_NOT_BROUGHT", "BID_AMENDMENT_REFUNDED"}) {
+            assertThat(NotificationDeeplink.of(type, Map.of("bidId", bidId))).as(type).contains("yadony://bids/" + bidId);
+            assertThat(NotificationDeeplink.of(type, Map.of("bidId", "../admin"))).as(type).isEmpty();
+        }
+    }
+
     /** Le destinataire suit son colis depuis ses réceptions ; l'expéditeur reste sur le bid. */
     @Test
     void recipientTypesOpenTheReception() {

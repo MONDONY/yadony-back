@@ -271,12 +271,14 @@ class NotificationPrefsServiceTest {
     void isAllowed_senderPrefOff_onlySilencesWhatTheSenderReceives() {
         when(repository.findById(USER_ID)).thenReturn(Optional.of(roles(false, true, true)));
         for (String type : new String[]{"BID_ACCEPTED", "BID_REJECTED", "TRIP_CANCELLED",
-                "TRAVELER_INVITE", "BID_SUPPLEMENT_REQUESTED", "RECIPIENT_CONFIRMED", "TRIP_ARRIVED"}) {
+                "TRAVELER_INVITE", "BID_SUPPLEMENT_REQUESTED", "RECIPIENT_CONFIRMED", "TRIP_ARRIVED",
+                "BID_AMENDMENT_ACCEPTED", "BID_AMENDMENT_DECLINED", "BID_AMENDMENT_NOT_BROUGHT"}) {
             assertThat(service.isAllowed(USER_ID, type)).as(type).isFalse();
         }
         for (String type : new String[]{"BID_CREATED", "BID_SUPPLEMENT_PAID", "RECIPIENT_CHANGED",
                 "RECIPIENT_PARCEL_DEPARTED", "RECIPIENT_INVITATION",
-                "PARCEL_RETURNED", "MOBILE_MONEY_PAYMENT_CONFIRMED"}) {
+                "PARCEL_RETURNED", "MOBILE_MONEY_PAYMENT_CONFIRMED", "BID_AMENDMENT_REQUESTED",
+                "BID_AMENDMENT_REMINDER"}) {
             assertThat(service.isAllowed(USER_ID, type)).as(type).isTrue();
         }
     }
@@ -286,7 +288,8 @@ class NotificationPrefsServiceTest {
     void isAllowed_tripsPrefOff_onlySilencesWhatTheTravelerReceives() {
         when(repository.findById(USER_ID)).thenReturn(Optional.of(roles(true, false, true)));
         for (String type : new String[]{"BID_CREATED", "TRIP_RESCHEDULE_WITHDRAWN",
-                "PARCEL_RETURN_TO_SENDER", "DELIVERY_RETRY_APPOINTMENT", "BID_SUPPLEMENT_PAID_OUT"}) {
+                "PARCEL_RETURN_TO_SENDER", "DELIVERY_RETRY_APPOINTMENT", "BID_SUPPLEMENT_PAID_OUT",
+                "BID_AMENDMENT_REQUESTED", "BID_AMENDMENT_REMINDER"}) {
             assertThat(service.isAllowed(USER_ID, type)).as(type).isFalse();
         }
         assertThat(service.isAllowed(USER_ID, "BID_ACCEPTED")).isTrue();
@@ -312,7 +315,8 @@ class NotificationPrefsServiceTest {
         String[] shared = {"BID_CANCELLED_BY_ADMIN", "BID_SUPPLEMENT_EXPIRED", "BID_EXPIRED",
                 "DELIVERY_NOSHOW_REPORTED", "PARCEL_UNCLAIMED", "MM_PAYMENT_EXPIRED",
                 "MOBILE_MONEY_PAYMENT_CONFIRMED", "PARCEL_RETURNED", "RETURN_DEADLINE_WARNING",
-                "RETURN_DEADLINE_EXPIRED", "RECIPIENT_DECLINED", "RECIPIENT_WITHDRAWN"};
+                "RETURN_DEADLINE_EXPIRED", "RECIPIENT_DECLINED", "RECIPIENT_WITHDRAWN",
+                "BID_AMENDMENT_CANCELLED", "BID_AMENDMENT_EXPIRED", "BID_AMENDMENT_REFUNDED"};
         for (String type : shared) {
             assertThat(NotificationPrefsService.TYPE_TO_PREF.get(type)).as(type)
                     .isEqualTo(NotificationPrefsService.SENDER_OR_TRAVELER);

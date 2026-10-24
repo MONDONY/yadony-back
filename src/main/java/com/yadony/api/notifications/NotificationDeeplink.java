@@ -67,6 +67,14 @@ public final class NotificationDeeplink {
                  "BID_SUPPLEMENT_WITHDRAWN", "BID_SUPPLEMENT_REFUNDED", "BID_SUPPLEMENT_PAID_OUT" ->
                     bidId.map(id -> "bids/" + id);
 
+            // Modification d'un colis accepté : la demande, son rappel et l'acceptation ouvrent le colis sur
+            // l'encart de réponse ou de paiement ; les issues, sur le colis. Une app antérieure qui ignore la
+            // query ouvre le colis.
+            case "BID_AMENDMENT_REQUESTED", "BID_AMENDMENT_REMINDER", "BID_AMENDMENT_ACCEPTED" ->
+                    bidId.map(id -> "bids/" + id + "?action=amendment");
+            case "BID_AMENDMENT_CANCELLED", "BID_AMENDMENT_DECLINED", "BID_AMENDMENT_EXPIRED",
+                 "BID_AMENDMENT_NOT_BROUGHT", "BID_AMENDMENT_REFUNDED" -> bidId.map(id -> "bids/" + id);
+
             case "BID_ACCEPTED", "DELIVERY_CONFIRMED", "PAYMENT_RELEASED", "DISPUTE_OPENED", "PARCEL_REFUSED",
                  "CONFIRMATION_CODE_READY", "CONFIRMATION_CODE_BLOCKED", "DELIVERY_NOSHOW_REPORTED", "MM_PAYMENT_PENDING",
                  "HANDOVER_REMINDER_H2", "MOBILE_MONEY_PAYMENT_CONFIRMED", "SENDER_NOSHOW_REPORTED", "NOSHOW_DECISION", "MOBILE_MONEY_PAYMENT_FAILED",
