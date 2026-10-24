@@ -47,7 +47,7 @@ class TravelerSubscriptionRepositoryTest {
     }
 
     @Test
-    void findEnrichedBySenderId_fallsBackToPlaceholderName_whenTravelerHasNoFirstOrLastName() {
+    void findEnrichedBySenderId_fallsBackToUsername_whenTravelerHasNoFirstOrLastName() {
         UserEntity traveler = new UserEntity();
         traveler.setFirebaseUid("uid-" + UUID.randomUUID());
         // first_name / last_name left null on purpose — reproduces the "drissa"-style
@@ -63,9 +63,55 @@ class TravelerSubscriptionRepositoryTest {
         List<Object[]> rows = repo.findEnrichedBySenderId(sender);
 
         assertThat(rows).hasSize(1);
-        assertThat(rows.get(0)[1]).isEqualTo("Voyageur");
+        // Sans nom, le pseudo du compte (comme sur tous les autres écrans), jamais un libellé figé.
+        assertThat(rows.get(0)[1]).isEqualTo(traveler.getUsername());
         // avatar_url pas renseigné sur ce voyageur → colonne null (index 2)
         assertThat(rows.get(0)[2]).isNull();
+    }
+
+    /** Nom servi par la liste d'abonnements pour un voyageur de ce prénom et de ce nom. */
+    private Object listedName(String firstName, String lastName) {
+        UserEntity traveler = new UserEntity();
+        traveler.setFirebaseUid("uid-" + UUID.randomUUID());
+        traveler.setFirstName(firstName);
+        traveler.setLastName(lastName);
+        traveler = userRepository.save(traveler);
+
+        UUID sender = UUID.randomUUID();
+        TravelerSubscriptionEntity sub = new TravelerSubscriptionEntity();
+        sub.setSenderId(sender);
+        sub.setTravelerId(traveler.getId());
+        repo.save(sub);
+
+        List<Object[]> rows = repo.findEnrichedBySenderId(sender);
+        assertThat(rows).hasSize(1);
+        // Même règle que tous les écrans publics : une seule source de vérité.
+        assertThat(rows.get(0)[1]).isEqualTo(traveler.publicDisplayName());
+        return rows.get(0)[1];
+    }
+
+    @Test
+    void findEnrichedBySenderId_servesPublicName_neverTheFullSurname() {
+        // YADONY FLUTTER-S1 : « Mariam Diallo » s'affichait en entier dans Mes abonnements.
+        assertThat(listedName("Mariam", "Diallo")).isEqualTo("Mariam D.");
+    }
+
+    @Test
+    void findEnrichedBySenderId_firstNameOnly_isServedAsIs() {
+        assertThat(listedName("Ibrahima", null)).isEqualTo("Ibrahima");
+        assertThat(listedName("Awa", "  ")).isEqualTo("Awa");
+    }
+
+    @Test
+    void findEnrichedBySenderId_trimsNames() {
+        assertThat(listedName("  Seydou ", " Sow")).isEqualTo("Seydou S.");
+    }
+
+    @Test
+    void findEnrichedBySenderId_surnameWithoutFirstName_fallsBackToUsername() {
+        // Un nom de famille seul ne sort jamais : le pseudo du compte le remplace.
+        Object name = listedName(null, "Diallo");
+        assertThat(name).isNotEqualTo("Diallo").isNotEqualTo("D.");
     }
 
     @Test

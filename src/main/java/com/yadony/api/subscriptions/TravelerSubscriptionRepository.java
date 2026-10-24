@@ -64,10 +64,11 @@ public interface TravelerSubscriptionRepository extends JpaRepository<TravelerSu
 
     @Query(value = """
         SELECT ts.traveler_id                                   AS traveler_id,
-               COALESCE(
-                 NULLIF(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), ''),
-                 'Voyageur'
-               )                                                AS traveler_name,
+               CASE
+                 WHEN NULLIF(TRIM(u.first_name), '') IS NULL THEN u.username
+                 WHEN NULLIF(TRIM(u.last_name), '') IS NULL THEN TRIM(u.first_name)
+                 ELSE CONCAT(TRIM(u.first_name), ' ', SUBSTRING(TRIM(u.last_name), 1, 1), '.')
+               END                                              AS traveler_name,
                u.avatar_url                                     AS avatar_url,
                u.is_pro_account                                 AS is_pro,
                u.average_rating                                 AS average_rating,

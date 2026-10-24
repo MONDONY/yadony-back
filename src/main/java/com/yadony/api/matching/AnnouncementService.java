@@ -1538,7 +1538,8 @@ public class AnnouncementService {
         final String newCurrency = resolveCurrencyOnUpdate(announcement, request.currency(), user.getId());
         final boolean currencyChanged = !newCurrency.equalsIgnoreCase(oldCurrency);
 
-        PricingMode updatePricingMode = request.pricingMode() != null ? request.pricingMode() : announcement.getPricingMode();
+        final PricingMode previousPricingMode = announcement.getPricingMode();
+        PricingMode updatePricingMode = request.pricingMode() != null ? request.pricingMode() : previousPricingMode;
         if (updatePricingMode == PricingMode.KG &&
                 (request.pricePerKg() == null || request.pricePerKg().compareTo(java.math.BigDecimal.ZERO) <= 0)) {
             throw new YadonyBusinessException(
@@ -1628,15 +1629,25 @@ public class AnnouncementService {
                 announcement.setCardDeclined(false);
             }
         }
-        if (currencyChanged && announcement.getPricingMode() == PricingMode.MIXED) {
+        if (currencyChanged && previousPricingMode == PricingMode.MIXED && updatePricingMode == PricingMode.MIXED) {
             // Grille figée de l'annonce : ses nets étaient dans l'ancienne devise.
             priceGridService.convertAnnouncementGridCurrency(id, user.getId(), oldCurrency, newCurrency);
         }
         if (request.capacityUnit() != null) {
             announcement.setCapacityUnit(request.capacityUnit());
         }
+        // Le mode validé plus haut est celui qu'on enregistre : sans cette écriture, un trajet resté
+        // en mode KG recevait le prix 0 d'une demande en mode grille et la base refusait la ligne
+        // (chk_announcements_price_per_kg, YADONY-BACK-STAGING-1D).
+        announcement.setPricingMode(updatePricingMode);
 
         AnnouncementEntity saved = announcementRepository.save(announcement);
+
+        if (updatePricingMode == PricingMode.MIXED && previousPricingMode != PricingMode.MIXED) {
+            // Passage au mode grille : même copie de la grille du profil qu'à la création
+            // (422 price-grid-empty si le profil n'en a pas, la transaction est annulée).
+            priceGridService.snapshotToAnnouncement(user.getId(), saved.getId(), saved.getCurrency());
+        }
 
         if (currencyChanged) {
             auditService.log(
