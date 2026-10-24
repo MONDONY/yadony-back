@@ -436,7 +436,7 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
     }
 
     private void alertUncanceled(UUID amendmentId, String paymentIntentId, String error) {
-        alerts.raiseOnce("AMEND_COMM_PI_UNCANCELED_" + paymentIntentId,
+        alerts.raiseOnce("AMEND_COMM_PI_UNCANCEL_" + paymentIntentId,
                 "PaymentIntent de commission " + paymentIntentId + " de la modification " + amendmentId
                         + " d'un essai terminé impossible à annuler : elle peut encore aboutir (" + error + ")",
                 Map.of("amendmentId", amendmentId.toString(), "paymentIntentId", paymentIntentId,
