@@ -83,6 +83,7 @@ public class CashCommissionWebhookHandler {
             if (bidIdStr == null) return;
             bidRepo.findById(UUID.fromString(bidIdStr)).ifPresent(bid -> {
                 if (SETTLED.contains(bid.getCommissionStatus())) return;
+                CashCommissionService.recordCardCharge(bid, pi);
                 bid.setCommissionStatus(CommissionStatus.CHARGED);
                 bid.setCommissionChargedVia(com.yadony.api.payments.cash.CommissionChargedVia.CARD);
                 bid.setCommissionPaymentIntentId(pi.getId());

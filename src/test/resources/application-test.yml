@@ -65,6 +65,9 @@ yadony:
   # Filet des suppléments de prix : appelé directement par ses tests.
   bid-supplement:
     reconcile-enabled: false
+  # Filet des modifications de colis : appelé directement par ses tests.
+  bid-amendment:
+    reconcile-enabled: false
   payments:
     auto-heal:
       enabled: false

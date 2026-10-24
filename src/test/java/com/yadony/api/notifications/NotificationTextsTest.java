@@ -242,6 +242,37 @@ class NotificationTextsTest {
         map.put("bidSupplementRefunded", NotificationTexts.bidSupplementRefunded(m, pireMontant, false));
         map.put("bidSupplementRefunded commission", NotificationTexts.bidSupplementRefunded(m, pireMontant, true));
         map.put("bidSupplementPaidOut", NotificationTexts.bidSupplementPaidOut(m, pireMontant));
+        // Mois à l'abréviation la plus longue (« sept. », « févr. ») et heure à deux chiffres : pire cas de la date.
+        java.time.ZonedDateTime limiteLongue = java.time.ZonedDateTime.of(2026, 9, 28, 23, 59, 0, 0,
+                java.time.ZoneId.of("Africa/Dakar"));
+        map.put("bidAmendmentRequested", NotificationTexts.bidAmendmentRequested(m, pireMontant, limiteLongue));
+        map.put("bidAmendmentRequested xof", NotificationTexts.bidAmendmentRequested(m, pireBrut, limiteLongue));
+        map.put("bidAmendmentReminder", NotificationTexts.bidAmendmentReminder(m));
+        map.put("bidAmendmentAcceptedPayNow", NotificationTexts.bidAmendmentAcceptedPayNow(m));
+        map.put("bidAmendmentAcceptedCard", NotificationTexts.bidAmendmentAcceptedCard(m));
+        map.put("bidAmendmentAcceptedCash", NotificationTexts.bidAmendmentAcceptedCash(m));
+        map.put("bidAmendmentAccepted", NotificationTexts.bidAmendmentAccepted(m));
+        map.put("bidAmendmentDeclined", NotificationTexts.bidAmendmentDeclined(m, false));
+        map.put("bidAmendmentDeclined carte", NotificationTexts.bidAmendmentDeclined(m, true));
+        map.put("bidAmendmentExpiredForSender", NotificationTexts.bidAmendmentExpiredForSender(m, false, false));
+        map.put("bidAmendmentExpiredForSender carte", NotificationTexts.bidAmendmentExpiredForSender(m, false, true));
+        map.put("bidAmendmentExpiredForSender impayée", NotificationTexts.bidAmendmentExpiredForSender(m, true, false));
+        map.put("bidAmendmentExpiredForTraveler", NotificationTexts.bidAmendmentExpiredForTraveler(m, false));
+        map.put("bidAmendmentExpiredForTraveler impayée", NotificationTexts.bidAmendmentExpiredForTraveler(m, true));
+        map.put("bidAmendmentCancelledCaptureForSender", NotificationTexts.bidAmendmentCancelledCaptureForSender(m));
+        map.put("bidAmendmentCancelledCommissionForSender",
+                NotificationTexts.bidAmendmentCancelledCommissionForSender(m));
+        map.put("bidAmendmentCancelledForTraveler", NotificationTexts.bidAmendmentCancelledForTraveler(m));
+        map.put("bidAmendmentCancelledBySenderForTraveler",
+                NotificationTexts.bidAmendmentCancelledBySenderForTraveler(m));
+        map.put("bidAmendmentCancelledCaptureForTraveler",
+                NotificationTexts.bidAmendmentCancelledCaptureForTraveler(m));
+        map.put("bidAmendmentCancelledCommissionForTraveler",
+                NotificationTexts.bidAmendmentCancelledCommissionForTraveler(m));
+        map.put("bidAmendmentNotBrought", NotificationTexts.bidAmendmentNotBrought(m, false));
+        map.put("bidAmendmentNotBrought remboursé", NotificationTexts.bidAmendmentNotBrought(m, true));
+        map.put("bidAmendmentRefunded", NotificationTexts.bidAmendmentRefunded(m, pireMontant, false));
+        map.put("bidAmendmentRefunded commission", NotificationTexts.bidAmendmentRefunded(m, pireMontant, true));
         map.put("referralRewardAvailable", NotificationTexts.referralRewardAvailable(m, NOM));
         map.put("referralRewardAvailable sans prénom", NotificationTexts.referralRewardAvailable(m, null));
         map.put("supportReply", NotificationTexts.supportReply(m));

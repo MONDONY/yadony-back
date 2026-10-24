@@ -140,8 +140,11 @@ class CashCommissionWebhookHandlerTest {
             ReflectionTestUtils.setField(bid, "id", bidId);
             bid.setCommissionStatus(CommissionStatus.REQUIRES_3DS);
 
+            bid.setCurrency("XOF");
+
             PaymentIntent pi = new PaymentIntent();
             pi.setId("pi_test");
+            pi.setAmount(3280L);
             Map<String, String> meta = new HashMap<>();
             meta.put("commission_purpose", "cash_bid");
             meta.put("bid_id", bidId.toString());
@@ -154,6 +157,8 @@ class CashCommissionWebhookHandlerTest {
 
             assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
             assertThat(bid.getCommissionPaymentIntentId()).isEqualTo("pi_test");
+            // V348 : montant de la PaymentIntent, en unités majeures de la devise du colis (XOF sans décimale).
+            assertThat(bid.getCashCommissionChargedAmount()).isEqualByComparingTo("3280");
             verify(bidRepo).save(bid);
         }
 

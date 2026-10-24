@@ -45,6 +45,17 @@ public class NotificationPrefsService {
             Map.entry("BID_SUPPLEMENT_WITHDRAWN",     "pushActivityBids"),
             Map.entry("BID_SUPPLEMENT_REFUNDED",      "pushActivityBids"),
             Map.entry("BID_SUPPLEMENT_PAID_OUT",      "pushMyTrips"),
+            // Modification d'un colis accepté : ce que reçoit le voyageur (demande, rappel) suit « Mes
+            // trajets », ce que reçoit l'expéditeur (acceptée, refusée, non apportée) « Mes envois » ;
+            // annulée, expirée et remboursée vont, selon le cas, à l'un ou à l'autre.
+            Map.entry("BID_AMENDMENT_REQUESTED",      "pushMyTrips"),
+            Map.entry("BID_AMENDMENT_REMINDER",       "pushMyTrips"),
+            Map.entry("BID_AMENDMENT_CANCELLED",      SENDER_OR_TRAVELER),
+            Map.entry("BID_AMENDMENT_ACCEPTED",       "pushActivityBids"),
+            Map.entry("BID_AMENDMENT_DECLINED",       "pushActivityBids"),
+            Map.entry("BID_AMENDMENT_EXPIRED",        SENDER_OR_TRAVELER),
+            Map.entry("BID_AMENDMENT_NOT_BROUGHT",    "pushActivityBids"),
+            Map.entry("BID_AMENDMENT_REFUNDED",       SENDER_OR_TRAVELER),
             Map.entry("BID_EXPIRED",                  SENDER_OR_TRAVELER),
             Map.entry("TRIP_CANCELLED",               "pushActivityBids"),
             Map.entry("TRIP_RESCHEDULE_KEPT",         "pushMyTrips"),

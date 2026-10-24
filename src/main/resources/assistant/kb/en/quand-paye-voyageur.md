@@ -15,4 +15,5 @@ On confirmed delivery, Yadony pays your share into your Stripe account. The tran
 If the transfer fails (closed account, rejected IBAN), you are notified: update your bank account with "Change bank account".
 By mobile money, the payout goes on confirmed delivery to your account of the same operator and country as the payment. In cash, you are paid by hand at handover, and only the Yadony service fee goes through the app.
 An extra charge paid by card or mobile money is paid out together with the parcel payment.
+A parcel change accepted by card or mobile money is paid out together with the parcel, after delivery; in cash, the extra amount is collected by hand at handover.
 In case of a dispute, the payment stays frozen while the Yadony team reviews it.
