@@ -581,7 +581,8 @@ class BidAmendmentCashRailIT {
 
         verify(gateway, org.mockito.Mockito.timeout(5000)).createRefund(eq(pi1), anyMap(),
                 eq("amendment_commission_refund_" + pi1));
-        verify(alerts, org.mockito.Mockito.timeout(5000)).raiseOnce(eq("AMEND_STALE_COMM_" + pi1),
+        // L'alerte est levée par le ledger, dans la transaction du webhook : présente sans attendre l'écouteur.
+        verify(alerts).raiseOnce(eq("AMEND_STALE_COMM_" + pi1),
                 org.mockito.ArgumentMatchers.anyString(), anyMap());
         assertThat(column(id, "status")).isEqualTo("ACCEPTED");
         assertThat(column(id, "commission_charged_via")).isEqualTo("WALLET");

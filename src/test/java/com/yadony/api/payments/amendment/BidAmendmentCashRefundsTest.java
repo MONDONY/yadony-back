@@ -272,7 +272,7 @@ class BidAmendmentCashRefundsTest {
     // ── PaymentIntent hors essai ─────────────────────────────────────────────
 
     @Test
-    @DisplayName("PaymentIntent hors essai : alerte une fois, Refund de CETTE PaymentIntent, clé par PaymentIntent, audit")
+    @DisplayName("PaymentIntent hors essai : Refund de CETTE PaymentIntent, clé par PaymentIntent, audit ; l'alerte est celle du ledger")
     void stale_refundedByPaymentIntentKey_withAlert() throws Exception {
         when(gateway.findRefund("pi_old", "bid_amendment_id", a.getId().toString())).thenReturn(Optional.empty());
         when(gateway.createRefund(eq("pi_old"), anyMap(), eq("amendment_commission_refund_pi_old")))
@@ -280,7 +280,7 @@ class BidAmendmentCashRefundsTest {
 
         assertThat(refunds.refundStale(a.getId(), a.getBidId(), "pi_old")).isTrue();
 
-        verify(alerts).raiseOnce(eq("AMEND_STALE_COMM_pi_old"), anyString(), anyMap());
+        verifyNoInteractions(alerts);
         verify(ledger).auditOnly(eq(a.getId()), eq("BID_AMENDMENT_STALE_COMMISSION_REFUNDED"), anyMap());
     }
 

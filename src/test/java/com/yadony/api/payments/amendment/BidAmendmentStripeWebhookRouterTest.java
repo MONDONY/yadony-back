@@ -312,4 +312,42 @@ class BidAmendmentStripeWebhookRouterTest {
                 + "\"metadata\":{\"bid_amendment_id\":\"" + a.getId() + "\"}}"))).isFalse();
         verifyNoInteractions(cashLedger, alerts);
     }
+
+    /** Essai échoué : la PaymentIntent reste enregistrée mais n'est plus la courante (PROPOSED + FAILED). */
+    private void registeredPaymentIntentOfFailedAttempt() {
+        a.setStatus(BidAmendmentStatus.PROPOSED);
+        a.setCommissionStatus(com.yadony.api.payments.cash.CommissionStatus.FAILED);
+        a.setCommissionPaymentIntentId("pi_c");
+        when(amendments.findByCommissionPaymentIntentId("pi_c")).thenReturn(Optional.of(a));
+    }
+
+    @Test
+    @DisplayName("Refund échoué d'une PaymentIntent enregistrée d'un essai échoué : alerte hors essai, commission non touchée")
+    void failedAttemptPaymentIntent_refundFailed_alerts() {
+        registeredPaymentIntentOfFailedAttempt();
+
+        assertThat(router.handle(event("charge.refund.updated", "{\"id\":\"re_9\",\"object\":\"refund\","
+                + "\"payment_intent\":\"pi_c\",\"status\":\"failed\",\"failure_reason\":\"expired_or_canceled_card\"}")))
+                .isTrue();
+
+        verify(alerts).raiseOnce(eq("AMEND_STALE_RFD_FAIL_re_9"), anyString(), anyMap());
+        verify(cashLedger, never()).commissionRefundFailed(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    @DisplayName("charge remboursée d'une PaymentIntent enregistrée d'un essai échoué : confirmation tracée, commission non touchée")
+    void failedAttemptPaymentIntent_refunded_confirmationAudited() {
+        registeredPaymentIntentOfFailedAttempt();
+
+        assertThat(router.handle(event("charge.refunded", "{\"id\":\"ch_c\",\"object\":\"charge\","
+                + "\"payment_intent\":\"pi_c\",\"amount\":360,\"amount_refunded\":360,"
+                + "\"refunds\":{\"data\":[{\"id\":\"re_9\"}]}}"))).isTrue();
+
+        verify(cashLedger).auditOnly(eq(a.getId()), eq("BID_AMENDMENT_STALE_COMMISSION_REFUND_CONFIRMED"), anyMap());
+        verify(cashLedger, never()).cardRefunded(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyBoolean());
+        verifyNoInteractions(alerts);
+    }
 }

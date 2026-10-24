@@ -171,6 +171,49 @@ class BidAmendmentCashLedgerTest {
     }
 
     @Test
+    @DisplayName("PaymentIntent hors essai : l'alerte est levée dans le ledger, sans l'écouteur ni l'événement traité")
+    void stale_raisesAlertInsideLedger_withoutAnyListener() {
+        lockedWithTrip();
+
+        assertThat(ledger.commissionCharged(a.getId(), "pi_unknown", null, "webhook")).isEqualTo(ChargeOutcome.STALE);
+
+        // `events` est un mock : aucun écouteur n'a tourné, l'alerte est pourtant là.
+        verify(alerts).raiseOnce(eq("AMEND_STALE_COMM_pi_unknown"), org.mockito.ArgumentMatchers.anyString(),
+                anyMap());
+        verify(auditService).log(eq("BID_AMENDMENT"), eq(a.getId()), eq("BID_AMENDMENT_STALE_COMMISSION"), any(),
+                org.mockito.ArgumentMatchers.argThat(m -> "pi_unknown".equals(m.get("piId"))));
+    }
+
+    @Test
+    @DisplayName("PaymentIntent d'un essai échoué, modification close depuis : succès tardif remboursé, pas enregistré")
+    void commissionCharged_closedAmendment_failedAttemptPaymentIntent_stale() {
+        lockedWithTrip();
+        a.setStatus(BidAmendmentStatus.CANCELLED);
+        a.setCommissionPaymentIntentId("pi_1");
+        a.setCommissionStatus(CommissionStatus.FAILED);
+
+        assertThat(ledger.commissionCharged(a.getId(), "pi_1", null, "webhook")).isEqualTo(ChargeOutcome.STALE);
+
+        assertThat(a.getCommissionStatus()).isEqualTo(CommissionStatus.FAILED);
+        verify(events).publishEvent(new BidAmendmentStaleCommissionEvent(a.getId(), a.getBidId(), "pi_1"));
+    }
+
+    @Test
+    @DisplayName("prédicat partagé : enregistrée et non échouée = courante ; échouée = non ; inconnue = seulement par numéro d'essai")
+    void isCurrent_singleDefinition() {
+        a.setCommissionPaymentIntentId("pi_1");
+        assertThat(BidAmendmentCashLedger.isCurrent(a, "pi_1", null)).isTrue();
+        a.setCommissionStatus(CommissionStatus.REQUIRES_3DS);
+        assertThat(BidAmendmentCashLedger.isCurrent(a, "pi_1", null)).isTrue();
+        a.setCommissionStatus(CommissionStatus.FAILED);
+        assertThat(BidAmendmentCashLedger.isCurrent(a, "pi_1", null)).as("PROPOSED ou nouvel essai").isFalse();
+        a.setStatus(BidAmendmentStatus.PROPOSED);
+        assertThat(BidAmendmentCashLedger.isCurrent(a, "pi_1", null)).isFalse();
+        assertThat(BidAmendmentCashLedger.isCurrent(a, null, null)).isFalse();
+        assertThat(BidAmendmentCashLedger.isCurrent(a, "pi_other", attempt())).as("pas en attente").isFalse();
+    }
+
+    @Test
     @DisplayName("PaymentIntent d'un essai précédent aboutie après un essai au solde : remboursée, une seule commission retenue")
     void commissionCharged_previousAttemptAfterWalletAcceptance_stale() {
         lockedWithTrip();

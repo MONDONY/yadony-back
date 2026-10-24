@@ -31,6 +31,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -121,11 +122,12 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
             if (traveler.getCommissionPaymentMethodId() == null) {
                 throw new CommissionMethodMissingException();
             }
-            // respondedAt = début de la fenêtre commissionConfirmWindow lue par l'expiration, et numéro de l'essai.
+            // respondedAt = début de la fenêtre commissionConfirmWindow lue par l'expiration, et numéro de l'essai
+            // (en millisecondes : la valeur relue en base, qui porte l'essai, est identique à celle d'ici).
             // Après un essai échoué, commission_status reste FAILED et la PaymentIntent précédente reste enregistrée :
             // chargeCard la relit avant d'en créer une neuve.
             a.setStatus(BidAmendmentStatus.COMMISSION_PENDING);
-            a.setRespondedAt(window.now());
+            a.setRespondedAt(window.now().truncatedTo(ChronoUnit.MILLIS));
             a.setCommissionChargedVia(CommissionChargedVia.CARD);
             amendments.save(a);
             ledger.audit(a, "BID_AMENDMENT_COMMISSION_PENDING", traveler.getId(), Map.of());
