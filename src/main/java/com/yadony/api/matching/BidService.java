@@ -26,6 +26,7 @@ import com.yadony.api.matching.dto.BidQuoteRequest;
 import com.yadony.api.matching.dto.BidQuoteResponse;
 import com.yadony.api.matching.dto.BidRejectRequest;
 import com.yadony.api.matching.dto.BidRequest;
+import com.yadony.api.matching.dto.BidMoneyBreakdown;
 import com.yadony.api.matching.dto.BidResponse;
 import com.yadony.api.matching.dto.ContactPhoneResponse;
 import com.yadony.api.promo.PromoService;
@@ -115,6 +116,14 @@ public class BidService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setSupplementSummaryPort(BidSupplementSummaryPort supplementSummary) {
         this.supplementSummary = supplementSummary;
+    }
+
+    /** Modifications d'un colis accepté (payments/amendment) ; aucune tant que Spring ne l'a pas injecté. */
+    private BidAmendmentSummaryPort amendmentSummary = BidAmendmentSummaryPort.NONE;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setAmendmentSummaryPort(BidAmendmentSummaryPort amendmentSummary) {
+        this.amendmentSummary = amendmentSummary;
     }
 
     /** Jours de contact après livraison : même clé que la fenêtre d'appel in-app (calls/). */
@@ -1596,7 +1605,8 @@ public class BidService {
                 BidResponsePrefetch.loadInChunks(bidIds, bidGridItemRepository::findByBidIdIn).stream()
                         .collect(Collectors.groupingBy(BidGridItemEntity::getBidId));
         return new BidResponsePrefetch(links, raterPairs, cancellations, gridItems,
-                bidPhotoService.activePhotosByBid(bidIds), supplementSummary.prefetch(bidIds));
+                bidPhotoService.activePhotosByBid(bidIds), supplementSummary.prefetch(bidIds),
+                amendmentSummary.prefetch(bids));
     }
 
     /**
@@ -1784,6 +1794,16 @@ public class BidService {
                 supplementView.paidNet() != null && totalNetAmountEur != null
                         ? totalNetAmountEur.add(supplementView.paidNet())
                         : null;
+        // Modifications du colis : les champs ci-dessus restent ceux du colis initial (et du
+        // supplément) ; la ventilation additionne les transactions, calculée avant le masquage du net.
+        BidAmendmentView amendmentView = amendmentSummary.view(bid, announcement, callerId,
+                prefetch != null ? prefetch.amendments() : null);
+        BidMoneyBreakdown moneyBreakdown = moneyBreakdown(bid, callerIsSender, totalNetAmountEur,
+                totalSenderAmountEur, supplementView, amendmentView);
+        // Colis en grille pure (weightKg nul) : les kilos acquis par une modification comptent quand même.
+        java.math.BigDecimal totalWeightKg = bid.getWeightKg() == null && amendmentView.securedAddedKg().signum() <= 0
+                ? null
+                : (bid.getWeightKg() != null ? bid.getWeightKg() : BigDecimal.ZERO).add(amendmentView.securedAddedKg());
         // SÉCURITÉ (règle métier) : l'expéditeur ne reçoit JAMAIS le net du
         // voyageur — ni le tarif/kg net, ni le total net. Seulement le brut.
         if (callerId != null && callerId.equals(bid.getSenderId())) {
@@ -1886,8 +1906,49 @@ public class BidService {
                 supplementView.supplement(),
                 supplementView.requestAllowed(),
                 totalSenderAmountWithSupplementEur,
-                totalNetAmountWithSupplementEur
+                totalNetAmountWithSupplementEur,
+                amendmentView.amendments(),
+                amendmentView.amendmentAllowed(),
+                totalWeightKg,
+                moneyBreakdown
         );
+    }
+
+    /**
+     * Ventilation de l'argent ({@link BidMoneyBreakdown}) : colis initial, supplément payé, puis les modifications ;
+     * null sans modification acquise ni ouverte. Montants AVANT le masquage du net : {@link BidMoneyBreakdown#of}
+     * ne sert que des bruts à l'expéditeur.
+     */
+    private static BidMoneyBreakdown moneyBreakdown(BidEntity bid, boolean forSender, BigDecimal principalNet,
+                                                    BigDecimal principalGross, BidSupplementView supplement,
+                                                    BidAmendmentView amendments) {
+        if (amendments.moneyEntries().isEmpty()) {
+            return null;
+        }
+        String principalMethod = BidMoneyBreakdown.methodOf(
+                bid.getPaymentMethod() != null ? bid.getPaymentMethod().name() : null);
+        // Espèces : la commission du colis initial est déjà réglée par le voyageur une fois prélevée (CHARGED). Le
+        // montant réellement prélevé (bon de parrainage du voyageur, plancher, code promo) fait foi ; brut − net
+        // seulement pour un colis prélevé avant la colonne (V348).
+        BigDecimal principalCommission = null;
+        if (BidMoneyBreakdown.METHOD_CASH.equals(principalMethod)
+                && bid.getCommissionStatus() == com.yadony.api.payments.cash.CommissionStatus.CHARGED) {
+            principalCommission = bid.getCashCommissionChargedAmount() != null
+                    ? bid.getCashCommissionChargedAmount()
+                    : principalNet != null && principalGross != null ? principalGross.subtract(principalNet) : null;
+        }
+        List<BidMoneyBreakdown.Entry> entries = new java.util.ArrayList<>();
+        entries.add(new BidMoneyBreakdown.Entry(BidMoneyBreakdown.KIND_PRINCIPAL, bid.getId(), principalMethod,
+                principalNet, principalGross, principalCommission, true));
+        if (supplement.paidGross() != null && supplement.supplement() != null) {
+            entries.add(new BidMoneyBreakdown.Entry(BidMoneyBreakdown.KIND_SUPPLEMENT, supplement.supplement().id(),
+                    BidMoneyBreakdown.methodOf(supplement.supplement().rail()), supplement.paidNet(),
+                    supplement.paidGross(), supplement.paidNet() != null
+                    ? supplement.paidGross().subtract(supplement.paidNet()) : null, true));
+        }
+        entries.addAll(amendments.moneyEntries());
+        return BidMoneyBreakdown.of(forSender,
+                SupportedCurrency.fromCodeOrDefault(bid.getCurrency()).minorUnit(), entries);
     }
 
     /** Total expéditeur d'un bid sans grille (chemin hérité, inchangé) : taux figé, sinon résolu. */

@@ -314,6 +314,23 @@ yadony:
     reconcile-interval: ${BID_SUPPLEMENT_RECONCILE_INTERVAL:PT10M}
     # Mobile money : opérations pawaPay mortes (versement, remboursement) avant intervention manuelle.
     mm-max-attempts: ${BID_SUPPLEMENT_MM_MAX_ATTEMPTS:3}
+  # Modification d'un colis accepté (V347) : l'expéditeur ajoute des kilos ou des articles de grille,
+  # payés comme une 2e transaction. Éteint tant que les apps qui l'affichent ne sont pas sorties.
+  bid-amendment:
+    enabled: ${BID_AMENDMENT_ENABLED:false}
+    expiry: ${BID_AMENDMENT_EXPIRY:PT48H}
+    departure-margin: ${BID_AMENDMENT_DEPARTURE_MARGIN:PT15M}
+    min-response-window: ${BID_AMENDMENT_MIN_RESPONSE_WINDOW:PT2H}
+    authorization-window: ${BID_AMENDMENT_AUTHORIZATION_WINDOW:PT30M}
+    commission-confirm-window: ${BID_AMENDMENT_COMMISSION_CONFIRM_WINDOW:PT30M}
+    reminder-before: ${BID_AMENDMENT_REMINDER_BEFORE:PT6H}
+    max-accepted-per-bid: ${BID_AMENDMENT_MAX_ACCEPTED_PER_BID:2}
+    min-net-eur: ${BID_AMENDMENT_MIN_NET_EUR:1}
+    max-net-eur: ${BID_AMENDMENT_MAX_NET_EUR:300}
+    reconcile-interval: ${BID_AMENDMENT_RECONCILE_INTERVAL:PT10M}
+    reconcile-enabled: ${BID_AMENDMENT_RECONCILE_ENABLED:true}
+    # Mobile money : opérations pawaPay mortes (versement, remboursement) avant intervention manuelle.
+    mm-max-attempts: ${BID_AMENDMENT_MM_MAX_ATTEMPTS:3}
   # Procédure « destinataire absent » (FLUTTER-E2, V301).
   delivery-no-show:
     min-wait-minutes: ${YADONY_DELIVERY_NO_SHOW_MIN_WAIT_MINUTES:120}

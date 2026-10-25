@@ -33,6 +33,12 @@ public class StripeSupplementGatewayImpl implements StripeSupplementGateway {
     }
 
     @Override
+    public Map<String, String> retrieveMetadata(String paymentIntentId) throws StripeException {
+        Map<String, String> metadata = PaymentIntent.retrieve(paymentIntentId).getMetadata();
+        return metadata == null ? Map.of() : metadata;
+    }
+
+    @Override
     public PaymentIntentView cancelPaymentIntent(String paymentIntentId) throws StripeException {
         PaymentIntent pi = PaymentIntent.retrieve(paymentIntentId);
         return view(pi.cancel(PaymentIntentCancelParams.builder()
@@ -66,10 +72,11 @@ public class StripeSupplementGatewayImpl implements StripeSupplementGateway {
     }
 
     @Override
-    public Optional<String> findRefund(String paymentIntentId, String supplementId) throws StripeException {
+    public Optional<String> findRefund(String paymentIntentId, String metadataKey, String metadataValue)
+            throws StripeException {
         return Refund.list(RefundListParams.builder().setPaymentIntent(paymentIntentId).setLimit(100L).build())
                 .getData().stream()
-                .filter(r -> r.getMetadata() != null && supplementId.equals(r.getMetadata().get("bid_supplement_id")))
+                .filter(r -> r.getMetadata() != null && metadataValue.equals(r.getMetadata().get(metadataKey)))
                 .filter(r -> !"failed".equals(r.getStatus()) && !"canceled".equals(r.getStatus()))
                 .map(Refund::getId)
                 .findFirst();

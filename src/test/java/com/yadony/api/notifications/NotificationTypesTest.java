@@ -36,6 +36,8 @@ class NotificationTypesTest {
         // Supplément de prix : jamais de SMS de repli (décision du 19/10/2026).
         assertThat(NotificationTypes.isCritical("BID_SUPPLEMENT_REQUESTED")).isFalse();
         assertThat(NotificationTypes.isCritical("BID_SUPPLEMENT_PAID")).isFalse();
+        // Modification d'un colis : jamais de SMS de repli (voir BidAmendmentNotificationListenerTest#notCritical).
+        assertThat(NotificationTypes.isCritical("BID_AMENDMENT_REQUESTED")).isFalse();
         assertThat(NotificationTypes.isCritical("")).isFalse();
     }
 }

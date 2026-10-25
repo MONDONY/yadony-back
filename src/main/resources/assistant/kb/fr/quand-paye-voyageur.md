@@ -15,4 +15,5 @@ Par carte, l'argent est sécurisé à l'acceptation et bloqué chez Yadony ; le 
 Si le virement échoue (compte fermé, IBAN refusé), vous êtes prévenu : mettez à jour votre compte bancaire avec « Changer de compte bancaire ».
 Par mobile money, le versement part à la livraison confirmée sur votre compte du même opérateur et du même pays que le paiement. En espèces, vous êtes payé en main propre à la remise du colis, et seuls les frais de service Yadony passent par l'app.
 Un supplément de prix payé par carte ou mobile money est versé en même temps que le paiement du colis.
+Une modification de colis acceptée par carte ou mobile money est versée en même temps que le colis, après la livraison ; en espèces, le complément est encaissé en main propre à la remise.
 En cas de litige, le paiement reste gelé le temps de l'examen par l'équipe Yadony.

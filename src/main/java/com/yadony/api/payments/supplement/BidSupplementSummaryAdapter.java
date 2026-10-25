@@ -7,6 +7,8 @@ import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidSupplementSummaryPort;
 import com.yadony.api.matching.BidSupplementView;
+import com.yadony.api.payments.amendment.BidAmendmentRepository;
+import com.yadony.api.payments.amendment.BidAmendmentStatus;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -49,10 +51,12 @@ public class BidSupplementSummaryAdapter implements BidSupplementSummaryPort {
     private final Map<BidSupplementRail, BidSupplementRailHandler> handlers;
     private final StorageService storage;
     private final UserRepository users;
+    private final BidAmendmentRepository amendments;
 
     public BidSupplementSummaryAdapter(BidSupplementRepository supplements, BidSupplementWindow window,
                                        BidSupplementProperties properties, List<BidSupplementRailHandler> handlers,
-                                       StorageService storage, UserRepository users) {
+                                       StorageService storage, UserRepository users,
+                                       BidAmendmentRepository amendments) {
         this.supplements = supplements;
         this.window = window;
         this.properties = properties;
@@ -61,21 +65,25 @@ public class BidSupplementSummaryAdapter implements BidSupplementSummaryPort {
                 BidSupplementRailHandler::rail, h -> h, (a, b) -> a, () -> new java.util.EnumMap<>(BidSupplementRail.class)));
         this.storage = storage;
         this.users = users;
+        this.amendments = amendments;
     }
 
-    /** Suppléments d'une liste, regroupés par colis. */
-    record Loaded(Map<UUID, List<BidSupplementEntity>> byBid) implements Prefetch {
+    /** Suppléments d'une liste, regroupés par colis, et colis dont une modification est ouverte. */
+    record Loaded(Map<UUID, List<BidSupplementEntity>> byBid, Set<UUID> openAmendments) implements Prefetch {
     }
 
     @Override
     public Prefetch prefetch(Collection<UUID> bidIds) {
         List<UUID> distinct = new ArrayList<>(new java.util.HashSet<>(bidIds));
         Map<UUID, List<BidSupplementEntity>> byBid = new HashMap<>();
+        Set<UUID> openAmendments = new java.util.HashSet<>();
         for (int from = 0; from < distinct.size(); from += CHUNK_SIZE) {
-            supplements.findByBidIdIn(distinct.subList(from, Math.min(from + CHUNK_SIZE, distinct.size())))
+            List<UUID> chunk = distinct.subList(from, Math.min(from + CHUNK_SIZE, distinct.size()));
+            supplements.findByBidIdIn(chunk)
                     .forEach(s -> byBid.computeIfAbsent(s.getBidId(), k -> new ArrayList<>()).add(s));
+            openAmendments.addAll(amendments.findBidIdsByBidIdInAndStatusIn(chunk, BidAmendmentStatus.OPEN));
         }
-        return new Loaded(byBid);
+        return new Loaded(byBid, openAmendments);
     }
 
     @Override
@@ -90,7 +98,7 @@ public class BidSupplementSummaryAdapter implements BidSupplementSummaryPort {
         boolean paid = shown != null && BidSupplementStatus.PAID_STATES.contains(shown.getStatus());
         return new BidSupplementView(
                 shown == null ? null : BidSupplementViews.of(shown, forSender, storage, window),
-                requestAllowed(bid, announcement, callerId, all),
+                requestAllowed(bid, announcement, callerId, all, prefetch),
                 paid ? shown.getGrossAmount() : null,
                 paid ? shown.getNetAmount() : null);
     }
@@ -102,14 +110,22 @@ public class BidSupplementSummaryAdapter implements BidSupplementSummaryPort {
     }
 
     private boolean requestAllowed(BidEntity bid, AnnouncementEntity announcement, UUID callerId,
-                                   List<BidSupplementEntity> all) {
+                                   List<BidSupplementEntity> all, Prefetch prefetch) {
         return properties.isEnabled()
                 && announcement != null
                 && callerId != null && callerId.equals(announcement.getTravelerId())
                 && all.stream().filter(s -> !neverProposed(s)).count() < properties.getMaxPerBid()
                 && all.stream().noneMatch(s -> BidSupplementStatus.ACTIVE.contains(s.getStatus()))
                 && window.isOpen(bid, announcement)
-                && railPayable(bid, announcement);
+                && railPayable(bid, announcement)
+                && !amendmentOpen(bid.getId(), prefetch);
+    }
+
+    /** Une modification du colis est ouverte : même refus que la création ({@code supplement-already-active}). */
+    private boolean amendmentOpen(UUID bidId, Prefetch prefetch) {
+        return prefetch instanceof Loaded loaded
+                ? loaded.openAmendments().contains(bidId)
+                : amendments.existsByBidIdAndStatusIn(bidId, BidAmendmentStatus.OPEN);
     }
 
     /**

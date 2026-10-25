@@ -165,6 +165,62 @@ class KnowledgeBaseFichesTest {
     }
 
     @Test
+    void modifierUnColisAccepteTrouveSaFicheDansLesDeuxLangues() {
+        KnowledgeBase kb = productionKb();
+        assertThat(firstHit(kb, "fr", "Comment ajouter des kilos à mon colis déjà accepté ?")).isEqualTo("modifier-colis");
+        assertThat(firstHit(kb, "fr", "Puis-je agrandir mon colis ?")).isEqualTo("modifier-colis");
+        assertThat(firstHit(kb, "fr", "modifier mon colis")).isEqualTo("modifier-colis");
+        assertThat(firstHit(kb, "en", "How do I add kilos to my accepted parcel?")).isEqualTo("modifier-colis");
+        assertThat(firstHit(kb, "en", "Can I change my parcel after it was accepted?")).isEqualTo("modifier-colis");
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        Map<String, List<String>> phrases = Map.of(
+                "fr", List.of("48 h", "2 modifications acceptées au plus", "2 h 15 avant le départ",
+                        "le voyageur règle la commission Yadony de la modification",
+                        "Solde du voyageur insuffisant : acceptation refusée, rien n'est débité, la demande reste ouverte",
+                        "carte du voyageur refusée : rien n'est débité, retour en attente de réponse",
+                        "Le voyageur peut réessayer jusqu'à l'échéance", "Commission rendue si le colis n'est pas livré", "Les kilos en plus ne sont pas là",
+                        "Hors espèces, le colis et sa modification sont versés ensemble",
+                        "remboursés ensemble", "demandez au voyageur d'ajuster le prix"),
+                "en", List.of("48 hours", "at most 2 accepted changes", "2 h 15 before departure",
+                        "the traveler pays the Yadony service fee of the change",
+                        "Traveler's balance too low: acceptance refused, nothing is charged, the request stays open",
+                        "traveler's card declined: nothing is charged, back to awaiting an answer",
+                        "The traveler can retry until the deadline", "Fee returned if the parcel isn't delivered", "The extra kilos are not there",
+                        "Outside cash, the parcel and its change are paid out together",
+                        "refunded together", "ask the traveler to adjust the price"));
+        for (String locale : List.of("fr", "en")) {
+            KbArticle fiche = corpus.articles(locale).stream().filter(a -> a.id().equals("modifier-colis"))
+                    .findFirst().orElseThrow();
+            // Règles réelles du code (BidAmendmentProperties, BidAmendmentCashRail, BidAmendmentWindow).
+            assertThat(fiche.body()).as(locale).contains(phrases.get(locale));
+            // Route statique de l'app, déjà autorisée par d'autres fiches (pas de /bids nu).
+            assertThat(fiche.routes()).extracting(KbRoute::path).containsExactly("/envois");
+        }
+    }
+
+    @Test
+    void lesFichesDePaiementEtDeRemiseParlentDeLaModificationDuColis() {
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        // Une phrase propre au complément ajouté dans chaque fiche (id -> [français, anglais]).
+        Map<String, List<String>> complements = Map.of(
+                "remboursement", List.of("les deux transactions sont rendues ensemble si le colis n'est pas livré",
+                        "both transactions are returned together if the parcel isn't delivered"),
+                "paiement-especes", List.of(
+                        "Les frais de service de la modification sont prélevés au voyageur dès qu'il l'accepte",
+                        "The change's service fee is taken from the traveler as soon as they accept it"),
+                "quand-paye-voyageur", List.of("est versée en même temps que le colis, après la livraison",
+                        "is paid out together with the parcel, after delivery"),
+                "remise-colis", List.of("Les kilos en plus ne sont pas là", "The extra kilos are not there"));
+        complements.forEach((id, phrases) -> {
+            for (String locale : List.of("fr", "en")) {
+                KbArticle fiche = corpus.articles(locale).stream().filter(a -> a.id().equals(id))
+                        .findFirst().orElseThrow();
+                assertThat(fiche.body()).as(locale + "/" + id).contains(phrases.get(locale.equals("fr") ? 0 : 1));
+            }
+        });
+    }
+
+    @Test
     void leNumeroDejaUtiliseMeneAChangerNumero() {
         // YADONY-FLUTTER-PROD-Y : le 409 « numéro déjà utilisé » doit trouver sa réponse.
         KnowledgeBase kb = productionKb();

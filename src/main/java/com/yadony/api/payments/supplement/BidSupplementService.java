@@ -12,6 +12,8 @@ import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
 import com.yadony.api.matching.dto.BidSupplementResponse;
+import com.yadony.api.payments.amendment.BidAmendmentRepository;
+import com.yadony.api.payments.amendment.BidAmendmentStatus;
 import com.yadony.api.payments.currency.CurrencyBounds;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.supplement.dto.CreateSupplementRequest;
@@ -90,6 +92,8 @@ public class BidSupplementService {
     private final ApplicationEventPublisher events;
     private final StorageService storage;
     private final com.yadony.api.disputes.DisputeRepository disputes;
+    /** Modifications du colis : une seule « deuxième transaction » ouverte à la fois, supplément ou modification. */
+    private final BidAmendmentRepository amendments;
 
     public BidSupplementService(BidSupplementRepository supplements, BidRepository bids,
                                 AnnouncementRepository announcements,
@@ -97,7 +101,8 @@ public class BidSupplementService {
                                 UserRepository users, BidSupplementPricing pricing, BidSupplementWindow window,
                                 BidSupplementProperties properties, List<BidSupplementRailHandler> handlers,
                                 AuditService auditService, ApplicationEventPublisher events, StorageService storage,
-                                com.yadony.api.disputes.DisputeRepository disputes) {
+                                com.yadony.api.disputes.DisputeRepository disputes,
+                                BidAmendmentRepository amendments) {
         this.supplements = supplements;
         this.bids = bids;
         this.announcements = announcements;
@@ -112,6 +117,7 @@ public class BidSupplementService {
         this.events = events;
         this.storage = storage;
         this.disputes = disputes;
+        this.amendments = amendments;
     }
 
     /** Un composant existe-t-il pour ce rail ? Faux tant que le rail n'est pas livré. */
@@ -176,6 +182,11 @@ public class BidSupplementService {
         }
 
         if (supplements.existsByBidIdAndStatusIn(bidId, BidSupplementStatus.ACTIVE)) {
+            throw alreadyActive();
+        }
+        // Une modification du colis ouverte (expéditeur) occupe la seule place : lue sous le verrou du colis, que
+        // la création d'une modification prend aussi.
+        if (amendments.existsByBidIdAndStatusIn(bidId, BidAmendmentStatus.OPEN)) {
             throw alreadyActive();
         }
         if (supplements.countTowardLimit(bidId, NEVER_PROPOSED_REASONS) >= properties.getMaxPerBid()) {

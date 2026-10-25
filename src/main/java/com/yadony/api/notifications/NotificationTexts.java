@@ -878,6 +878,103 @@ public final class NotificationTexts {
                 m.get("notification.bid-supplement-paid-out.body", netText));
     }
 
+    // ── Modification d'un colis accepté ──────────────────────────────────────
+
+    /**
+     * L'expéditeur veut agrandir son colis : le voyageur voit son NET (jamais le brut) et l'heure limite de
+     * sa réponse, lue dans le fuseau du trajet.
+     */
+    public static NotificationText bidAmendmentRequested(Messages m, String netText,
+                                                         java.time.ZonedDateTime deadline) {
+        String time = deadline.format(java.time.format.DateTimeFormatter.ofPattern(
+                m.get("notification.bid-amendment-requested.time-pattern"), m.locale()));
+        return new NotificationText(m.get("notification.bid-amendment-requested.title"),
+                m.get("notification.bid-amendment-requested.body", netText, time));
+    }
+
+    public static NotificationText bidAmendmentReminder(Messages m) {
+        return amendmentText(m, "reminder", "body");
+    }
+
+    /** Le voyageur doit encore être payé : l'expéditeur règle maintenant (mobile money). */
+    public static NotificationText bidAmendmentAcceptedPayNow(Messages m) {
+        return amendmentText(m, "accepted", "pay-body");
+    }
+
+    /** Acceptée avec une carte : le montant bloqué est débité. */
+    public static NotificationText bidAmendmentAcceptedCard(Messages m) {
+        return amendmentText(m, "accepted", "card-body");
+    }
+
+    /** Acceptée en espèces : le complément se remet en main propre. */
+    public static NotificationText bidAmendmentAcceptedCash(Messages m) {
+        return amendmentText(m, "accepted", "cash-body");
+    }
+
+    /** Acceptée et déjà payée (mobile money confirmé). */
+    public static NotificationText bidAmendmentAccepted(Messages m) {
+        return amendmentText(m, "accepted", "body");
+    }
+
+    /** Refusée par le voyageur. Avec une carte, le montant bloqué est libéré. */
+    public static NotificationText bidAmendmentDeclined(Messages m, boolean cardHold) {
+        return amendmentText(m, "declined", cardHold ? "card-body" : "body");
+    }
+
+    /** Échue pour l'expéditeur : sans réponse du voyageur (carte : montant libéré), ou sans paiement de sa part. */
+    public static NotificationText bidAmendmentExpiredForSender(Messages m, boolean unpaid, boolean cardHold) {
+        return amendmentText(m, "expired", unpaid ? "sender-unpaid-body"
+                : cardHold ? "sender-card-body" : "sender-body");
+    }
+
+    /** Échue pour le voyageur : il n'a pas répondu, ou l'expéditeur n'a pas payé après son acceptation. */
+    public static NotificationText bidAmendmentExpiredForTraveler(Messages m, boolean unpaid) {
+        return amendmentText(m, "expired", unpaid ? "traveler-unpaid-body" : "traveler-body");
+    }
+
+    /** Capture de la carte échouée à l'acceptation : l'expéditeur n'a pas été débité. */
+    public static NotificationText bidAmendmentCancelledCaptureForSender(Messages m) {
+        return amendmentText(m, "cancelled", "sender-capture-body");
+    }
+
+    /** Commission du voyageur jamais confirmée : l'expéditeur, qui attendait une réponse, apprend la fin de sa demande. */
+    public static NotificationText bidAmendmentCancelledCommissionForSender(Messages m) {
+        return amendmentText(m, "cancelled", "sender-commission-body");
+    }
+
+    public static NotificationText bidAmendmentCancelledForTraveler(Messages m) {
+        return amendmentText(m, "cancelled", "traveler-body");
+    }
+
+    public static NotificationText bidAmendmentCancelledBySenderForTraveler(Messages m) {
+        return amendmentText(m, "cancelled", "traveler-sender-body");
+    }
+
+    public static NotificationText bidAmendmentCancelledCaptureForTraveler(Messages m) {
+        return amendmentText(m, "cancelled", "traveler-capture-body");
+    }
+
+    public static NotificationText bidAmendmentCancelledCommissionForTraveler(Messages m) {
+        return amendmentText(m, "cancelled", "traveler-commission-body");
+    }
+
+    /** Le voyageur dit que l'ajout n'a pas été apporté ; payé en ligne, il est remboursé. */
+    public static NotificationText bidAmendmentNotBrought(Messages m, boolean refund) {
+        return amendmentText(m, "not-brought", refund ? "refund-body" : "body");
+    }
+
+    /** Argent de la modification rendu : le brut à l'expéditeur, ou la commission espèces au voyageur. */
+    public static NotificationText bidAmendmentRefunded(Messages m, String amountText, boolean commissionOnly) {
+        return new NotificationText(m.get("notification.bid-amendment-refunded.title"),
+                m.get(commissionOnly ? "notification.bid-amendment-refunded.commission-body"
+                        : "notification.bid-amendment-refunded.body", amountText));
+    }
+
+    private static NotificationText amendmentText(Messages m, String name, String bodyKey) {
+        return new NotificationText(m.get("notification.bid-amendment-" + name + ".title"),
+                m.get("notification.bid-amendment-" + name + "." + bodyKey));
+    }
+
     /** Recharge mobile money créditée sur le portefeuille, avec le montant et l'opérateur. */
     public static NotificationText walletTopupConfirmed(Messages m, String amountText, String providerLabel) {
         return new NotificationText(m.get("notification.wallet-topup-confirmed.title"),

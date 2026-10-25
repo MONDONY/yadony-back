@@ -112,7 +112,7 @@ public class TrackingService {
         this.recipientLinkRepository = recipientLinkRepository;
     }
 
-    /** Raisons de bloquer la remise (supplément de prix en attente) ; aucune tant que Spring ne les a pas injectées. */
+    /** Raisons de bloquer la remise (supplément de prix, modification du colis) ; aucune tant que Spring ne les a pas injectées. */
     private List<HandoverBlocker> handoverBlockers = List.of();
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -537,9 +537,12 @@ public class TrackingService {
     }
 
     /**
-     * Un supplément de prix attend la réponse de l'expéditeur : la remise attend. Sous le verrou
-     * du colis, que la création d'un supplément prend aussi : aucune course entre les deux. Le 409
-     * n'est pas définitif pour l'app : un scan hors ligne reste en file et se rejoue plus tard.
+     * Une demande en cours sur le colis retient la remise : supplément de prix en attente de
+     * l'expéditeur, modification du colis en attente du voyageur ou d'un paiement. Tous les
+     * {@link HandoverBlocker} sont consultés, dans l'ordre, jusqu'au premier qui bloque. Sous le
+     * verrou du colis, que la création d'un supplément ou d'une modification prend aussi : aucune
+     * course entre elles. Le 409 n'est pas définitif pour l'app : un scan hors ligne reste en file et
+     * se rejoue plus tard.
      */
     private void assertHandoverNotBlocked(BidEntity bid) {
         if (bid.getStatus() != BidStatus.ACCEPTED) {
@@ -549,7 +552,7 @@ public class TrackingService {
                 .ifPresent(code -> {
                     log.info("Scan DEPART du colis {} refusé : {}", bid.getId(), code);
                     throw new YadonyBusinessException(HttpStatus.CONFLICT, code, "Handover Blocked",
-                            "Un supplément de prix attend la réponse de l'expéditeur.",
+                            "Une demande en cours sur ce colis (supplément de prix ou modification) attend une réponse ou un paiement.",
                             Map.of("bidId", bid.getId().toString()));
                 });
     }

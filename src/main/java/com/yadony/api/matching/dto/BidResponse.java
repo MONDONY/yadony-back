@@ -148,5 +148,20 @@ public record BidResponse(
         java.math.BigDecimal totalSenderAmountWithSupplementEur,
         /** {@link #totalNetAmountEur} plus le net de ce même supplément, null sans supplément payé
          * et TOUJOURS null pour l'expéditeur (même règle que {@code totalNetAmountEur}). */
-        java.math.BigDecimal totalNetAmountWithSupplementEur
+        java.math.BigDecimal totalNetAmountWithSupplementEur,
+        /** Modifications du colis accepté (kilos ou articles ajoutés par l'expéditeur) : les acquises, puis la
+         * dernière non acquise si elle est ouverte ou close depuis moins de 7 jours. Vide sans modification.
+         * L'expéditeur n'en voit que le brut ; le voyageur ne voit pas une demande dont le montant carte n'est pas
+         * encore bloqué. */
+        java.util.List<BidAmendmentResponse> amendments,
+        /** L'appelant (expéditeur du colis) peut demander une modification maintenant : interrupteur allumé, colis
+         * accepté, aucune transaction ouverte, plafond non atteint, fenêtre ouverte, un moyen de paiement possible.
+         * Toujours false pour le voyageur. SEULE source de l'encart côté app. */
+        boolean amendmentAllowed,
+        /** {@link #weightKg} plus les kilos des modifications acquises ({@code weightKg} reste celui du colis
+         * initial). */
+        java.math.BigDecimal totalWeightKg,
+        /** Argent du colis transaction par transaction et par destination, calculé par le serveur. Null (absent
+         * du JSON) sans modification acquise ni ouverte : l'app garde alors ses cartes actuelles. */
+        BidMoneyBreakdown moneyBreakdown
 ) {}

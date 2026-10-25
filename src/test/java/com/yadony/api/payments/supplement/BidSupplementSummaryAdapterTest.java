@@ -38,6 +38,8 @@ class BidSupplementSummaryAdapterTest {
     private final StorageService storage = mock(StorageService.class);
     private final BidSupplementProperties properties = new BidSupplementProperties();
     private final BidSupplementRailHandler cardRail = mock(BidSupplementRailHandler.class);
+    private final com.yadony.api.payments.amendment.BidAmendmentRepository amendments =
+            mock(com.yadony.api.payments.amendment.BidAmendmentRepository.class);
     private final com.yadony.api.auth.UserRepository users = mock(com.yadony.api.auth.UserRepository.class);
     private final com.yadony.api.auth.UserEntity traveler = new com.yadony.api.auth.UserEntity();
 
@@ -70,7 +72,7 @@ class BidSupplementSummaryAdapterTest {
     private BidSupplementSummaryAdapter adapter(BidSupplementRailHandler... handlers) {
         return new BidSupplementSummaryAdapter(repository,
                 new BidSupplementWindow(properties, Clock.fixed(NOW, ZoneOffset.UTC)), properties, List.of(handlers), storage,
-                users);
+                users, amendments);
     }
 
     private BidSupplementEntity add(BidSupplementStatus status, int minutesAgo) {
@@ -139,6 +141,28 @@ class BidSupplementSummaryAdapterTest {
         assertThat(adapter(cardRail).view(bid, announcement, travelerId, null).requestAllowed()).isTrue();
         add(BidSupplementStatus.EXPIRED, 10);
         assertThat(adapter(cardRail).view(bid, announcement, travelerId, null).requestAllowed()).isFalse();
+    }
+
+    @Test
+    void modificationDuColisOuverte_plusDeDemande() {
+        when(amendments.existsByBidIdAndStatusIn(bid.getId(),
+                com.yadony.api.payments.amendment.BidAmendmentStatus.OPEN)).thenReturn(true);
+        assertThat(adapter(cardRail).view(bid, announcement, travelerId, null).requestAllowed()).isFalse();
+    }
+
+    @Test
+    void modificationDuColisOuverte_lueParLotDansLesListes() {
+        UUID other = UUID.randomUUID();
+        when(repository.findByBidIdIn(anyList())).thenReturn(List.of());
+        when(amendments.findBidIdsByBidIdInAndStatusIn(anyList(),
+                org.mockito.ArgumentMatchers.eq(com.yadony.api.payments.amendment.BidAmendmentStatus.OPEN)))
+                .thenReturn(List.of(bid.getId()));
+        BidSupplementSummaryAdapter adapter = adapter(cardRail);
+
+        BidSupplementSummaryPort.Prefetch prefetch = adapter.prefetch(List.of(bid.getId(), other));
+
+        assertThat(adapter.view(bid, announcement, travelerId, prefetch).requestAllowed()).isFalse();
+        verify(amendments, never()).existsByBidIdAndStatusIn(any(), any());
     }
 
     @Test
