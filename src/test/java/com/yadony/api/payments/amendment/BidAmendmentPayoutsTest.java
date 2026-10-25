@@ -14,6 +14,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -24,6 +27,7 @@ import java.math.BigDecimal;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -339,6 +343,43 @@ class BidAmendmentPayoutsTest {
 
         verify(ledger, never()).beginPayout(any());
         verifyNoInteractions(alerts);
+    }
+
+    @Test
+    @DisplayName("versement : le compte Connect du voyageur est lu une fois pour la garde, une fois pour le Transfer")
+    void payout_readsDestinationOnceForTransfer() throws Exception {
+        assertThat(payouts.payout(a.getId())).isTrue();
+
+        verify(users, org.mockito.Mockito.times(2)).findById(traveler.getId());
+    }
+
+    static Stream<Arguments> transferErrors() {
+        return Stream.of(
+                Arguments.of(new com.stripe.exception.InvalidRequestException("x", null, "r", null, 400, null), true),
+                Arguments.of(new com.stripe.exception.CardException("x", "r", null, null, null, null, 402, null), true),
+                Arguments.of(new com.stripe.exception.AuthenticationException("x", "r", null, 401), true),
+                Arguments.of(new com.stripe.exception.PermissionException("x", "r", null, 403), true),
+                Arguments.of(new com.stripe.exception.RateLimitException("x", null, "r", null, 429, null), false),
+                Arguments.of(new com.stripe.exception.IdempotencyException("x", "r", null, 400), false),
+                Arguments.of(new IllegalStateException("hors Stripe"), false));
+    }
+
+    @ParameterizedTest(name = "{0} → retour à ACCEPTED : {1}")
+    @MethodSource("transferErrors")
+    @DisplayName("classement des erreurs du Transfer : seul un refus définitif ramène à ACCEPTED")
+    void transferError_classification(Exception error, boolean revert) throws Exception {
+        when(gateway.createTransfer(anyLong(), anyString(), anyString(), anyString(), anyString(), anyMap(),
+                anyString())).thenThrow(error);
+
+        assertThatCode(() -> assertThat(payouts.payout(a.getId())).isFalse()).doesNotThrowAnyException();
+
+        if (revert) {
+            verify(ledger).revertPayout(eq(a.getId()), any());
+            verify(alerts).raiseOnce(eq("AMEND_TRANSFER_FAILED_" + a.getId()), anyString(), anyMap());
+        } else {
+            verify(ledger, never()).revertPayout(any(), any());
+            verify(alerts).raiseOnce(eq("AMEND_TRANSFER_UNKNOWN_" + a.getId()), anyString(), anyMap());
+        }
     }
 
     private void assertBlocked(String reason) {

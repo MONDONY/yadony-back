@@ -1,13 +1,5 @@
 package com.yadony.api.payments;
 
-import com.stripe.exception.ApiConnectionException;
-import com.stripe.exception.ApiException;
-import com.stripe.exception.AuthenticationException;
-import com.stripe.exception.CardException;
-import com.stripe.exception.IdempotencyException;
-import com.stripe.exception.InvalidRequestException;
-import com.stripe.exception.PermissionException;
-import com.stripe.exception.RateLimitException;
 import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.Transfer;
@@ -484,13 +476,13 @@ public class StripeReleaseExecutor {
 
     private Execution onStripeFailure(StripeReleaseIntentEntity intent, StripeException e, boolean revertable) {
         String error = e.getClass().getSimpleName() + ": " + e.getMessage();
-        if (definitiveRefusal(e) && revertable) {
+        if (StripeFailures.definitiveRefusal(e) && revertable) {
             // Rien n'a été créé : aucun envoi antérieur pour cette révision, ou recherche Stripe
             // vide et dernier envoi antérieur trop ancien pour être en vol, puis refus 4xx.
             log.error("Versement du paiement {} refusé par Stripe : {}", intent.getPaymentId(), error, e);
             return revert(intent, error);
         }
-        if (definitiveRefusal(e)) {
+        if (StripeFailures.definitiveRefusal(e)) {
             // Un essai précédent a pu créer le Transfer (issue inconnue) : jamais de retour en
             // séquestre. Réservation conservée, alerte immédiate, décision admin.
             log.error("Versement du paiement {} refusé par Stripe après un essai incertain : {}",
@@ -601,20 +593,6 @@ public class StripeReleaseExecutor {
         resolvePendingAlert(paymentId);
         resolveBlockedAlert(paymentId);
         return new Execution(Result.REVERTED, null, error);
-    }
-
-    /**
-     * Refus certain de Stripe (rien n'a été créé) : requête invalide (hors limite de débit), carte,
-     * authentification, permission. Tout le reste (réseau, 5xx, limite de débit, clé d'idempotence
-     * en cours ou réutilisée) est incertain ou transitoire : on rejoue, on n'annule jamais.
-     */
-    static boolean definitiveRefusal(StripeException e) {
-        if (e instanceof RateLimitException || e instanceof IdempotencyException
-                || e instanceof ApiConnectionException || e instanceof ApiException) {
-            return false;
-        }
-        return e instanceof InvalidRequestException || e instanceof CardException
-                || e instanceof AuthenticationException || e instanceof PermissionException;
     }
 
     static Duration backoff(int attempts) {

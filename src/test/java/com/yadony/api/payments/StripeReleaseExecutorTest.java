@@ -2,12 +2,8 @@ package com.yadony.api.payments;
 
 import com.stripe.exception.ApiConnectionException;
 import com.stripe.exception.ApiException;
-import com.stripe.exception.AuthenticationException;
-import com.stripe.exception.CardException;
 import com.stripe.exception.IdempotencyException;
 import com.stripe.exception.InvalidRequestException;
-import com.stripe.exception.PermissionException;
-import com.stripe.exception.RateLimitException;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.Transfer;
 import com.stripe.net.RequestOptions;
@@ -817,23 +813,6 @@ class StripeReleaseExecutorTest {
     }
 
     // ── Classement des erreurs, délais ───────────────────────────────────────
-
-    @Test
-    void classement_desErreursStripe() {
-        assertThat(StripeReleaseExecutor.definitiveRefusal(
-                new InvalidRequestException("x", null, "r", null, 400, null))).isTrue();
-        assertThat(StripeReleaseExecutor.definitiveRefusal(
-                new CardException("x", "r", null, null, null, null, 402, null))).isTrue();
-        assertThat(StripeReleaseExecutor.definitiveRefusal(
-                new AuthenticationException("x", "r", null, 401))).isTrue();
-        assertThat(StripeReleaseExecutor.definitiveRefusal(
-                new PermissionException("x", "r", null, 403))).isTrue();
-        assertThat(StripeReleaseExecutor.definitiveRefusal(new ApiConnectionException("x"))).isFalse();
-        assertThat(StripeReleaseExecutor.definitiveRefusal(new ApiException("x", "r", null, 500, null))).isFalse();
-        assertThat(StripeReleaseExecutor.definitiveRefusal(
-                new RateLimitException("x", null, "r", null, 429, null))).isFalse();
-        assertThat(StripeReleaseExecutor.definitiveRefusal(new IdempotencyException("x", "r", null, 400))).isFalse();
-    }
 
     @Test
     void delaiDeReprise_croitPuisPlafonne() {

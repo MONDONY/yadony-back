@@ -1,19 +1,12 @@
 package com.yadony.api.payments.amendment;
 
-import com.stripe.exception.ApiConnectionException;
-import com.stripe.exception.ApiException;
-import com.stripe.exception.AuthenticationException;
-import com.stripe.exception.CardException;
-import com.stripe.exception.IdempotencyException;
-import com.stripe.exception.InvalidRequestException;
-import com.stripe.exception.PermissionException;
-import com.stripe.exception.RateLimitException;
 import com.stripe.exception.StripeException;
 import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.disputes.DisputeRepository;
 import com.yadony.api.disputes.DisputeTypes;
+import com.yadony.api.payments.StripeFailures;
 import com.yadony.api.payments.currency.CurrencyAmount;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.hold.PayoutHoldPolicy;
@@ -135,7 +128,8 @@ public class BidAmendmentPayouts {
             return uncertain(claim, "recherche du Transfer impossible", e);
         }
         if (transferId == null) {
-            String stop = stopBeforeCall(claim, recheck);
+            String destination = claim.refundRequested() ? null : destination(claim.travelerId());
+            String stop = stopBeforeCall(claim, recheck, destination);
             if (stop != null) {
                 ledger.revertPayout(id, stop);
                 return false;
@@ -143,10 +137,10 @@ public class BidAmendmentPayouts {
             try {
                 SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(claim.currency());
                 transferId = gateway.createTransfer(CurrencyAmount.of(claim.net(), currency).minor(), currency.code(),
-                        destination(claim.travelerId()), claim.chargeId(), transferGroup(id),
+                        destination, claim.chargeId(), transferGroup(id),
                         transferMetadata(id, claim.bidId()), "amendment-transfer-" + id);
             } catch (StripeException e) {
-                if (!definitiveRefusal(e)) {
+                if (!StripeFailures.definitiveRefusal(e)) {
                     return uncertain(claim, "issue du Transfer inconnue", e);
                 }
                 log.error("Transfer de la modification {} refusé par Stripe", id, e);
@@ -182,11 +176,11 @@ public class BidAmendmentPayouts {
     }
 
     /** Raison de ne pas appeler Stripe (aucun Transfer n'existe), ou {@code null} ; alerte levée ici. */
-    private String stopBeforeCall(BidAmendmentCardLedger.PayoutClaim claim, boolean recheck) {
+    private String stopBeforeCall(BidAmendmentCardLedger.PayoutClaim claim, boolean recheck, String destination) {
         UUID id = claim.amendmentId();
         if (claim.refundRequested()) {
             log.info("Modification {} : remboursement demandé pendant le versement, aucun Transfer n'est parti", id);
-            return "REFUND_REQUESTED";
+            return BidAmendmentCardLedger.REFUND_REQUESTED_STOP;
         }
         if (recheck) {
             String blocked = blockingReason(claim.travelerId(), claim.bidId(), claim.chargeId(), id);
@@ -195,7 +189,7 @@ public class BidAmendmentPayouts {
                 return blocked;
             }
         }
-        String missing = destination(claim.travelerId()) == null ? "compte Connect du voyageur absent ou incomplet"
+        String missing = destination == null ? "compte Connect du voyageur absent ou incomplet"
                 : claim.chargeId() == null ? "charge de la modification inconnue" : null;
         if (missing != null) {
             raiseFailed(claim, missing);
@@ -230,19 +224,6 @@ public class BidAmendmentPayouts {
         alerts.raiseOnce(BLOCKED_ALERT_PREFIX + amendmentId,
                 "Versement de la modification " + amendmentId + " retenu (" + reason + ") : " + outcome
                         + ", le filet réessaiera", context);
-    }
-
-    /**
-     * Refus définitif de Stripe : rien n'a été créé (même liste que {@code StripeReleaseExecutor.definitiveRefusal}).
-     * Délai, coupure, 5xx, limite de débit, conflit d'idempotence : issue inconnue.
-     */
-    static boolean definitiveRefusal(StripeException e) {
-        if (e instanceof RateLimitException || e instanceof IdempotencyException
-                || e instanceof ApiConnectionException || e instanceof ApiException) {
-            return false;
-        }
-        return e instanceof InvalidRequestException || e instanceof CardException
-                || e instanceof AuthenticationException || e instanceof PermissionException;
     }
 
     /**

@@ -87,6 +87,9 @@ CREATE TABLE bid_amendments (
                                    AND stripe_transfer_id IS NULL AND stripe_refund_id IS NULL
                                    AND authorization_released_at IS NULL AND release_attempted_at IS NULL
                                    AND capture_attempt = 0)),
+    -- Demande de remboursement pendant un versement : seulement là où l'app verse (carte, mobile money).
+    CONSTRAINT chk_bid_amendments_refund_requested_online
+        CHECK (rail <> 'CASH' OR refund_requested_at IS NULL),
     -- Espèces en main propre à la remise : l'app n'encaisse rien, ne verse rien, ne rembourse rien.
     CONSTRAINT chk_bid_amendments_no_payout_cash
         CHECK (rail <> 'CASH' OR status NOT IN ('PAYMENT_PENDING', 'PAYOUT_PENDING', 'PAID_OUT', 'REFUND_PENDING'))

@@ -144,6 +144,24 @@ class BidAmendmentSchemaIT {
     }
 
     @Test
+    @DisplayName("demande de remboursement pendant le versement : jamais sur le rail espèces (rien n'y est versé)")
+    void refundRequestedMarkerNeverOnCash() {
+        jdbc.execute("SET LOCAL session_replication_role = replica");
+        UUID cash = insert(UUID.randomUUID(), "CASH", "ACCEPTED", null);
+        assertThatThrownBy(() -> guarded(() -> jdbc.update(
+                "UPDATE bid_amendments SET refund_requested_at = now() WHERE id = ?", cash)))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasMessageContaining("chk_bid_amendments_refund_requested_online");
+        for (String rail : List.of("STRIPE", "PAWAPAY")) {
+            UUID online = insert(UUID.randomUUID(), rail, "PAYOUT_PENDING",
+                    "STRIPE".equals(rail) ? "pi_" + UUID.randomUUID() : null);
+            assertThatCode(() -> guarded(() -> jdbc.update(
+                    "UPDATE bid_amendments SET refund_requested_at = now() WHERE id = ?", online)))
+                    .as(rail).doesNotThrowAnyException();
+        }
+    }
+
+    @Test
     @DisplayName("un PaymentIntent ne peut servir qu'à une seule modification")
     void stripePaymentIntentIsUnique() {
         jdbc.execute("SET LOCAL session_replication_role = replica");

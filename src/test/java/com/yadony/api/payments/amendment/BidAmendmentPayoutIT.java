@@ -258,6 +258,9 @@ class BidAmendmentPayoutIT {
         verify(gateway, after(1500).never()).createRefund(anyString(), anyMap(), anyString());
         assertThat(column(id, "status")).isEqualTo("PAYOUT_PENDING");
         assertThat(column(id, "refund_requested_at")).as("demande mémorisée").isNotNull();
+        service.onPrincipalRefunded(p.bidId);
+        assertThat(auditActions(id)).as("demande tracée une seule fois")
+                .containsOnlyOnce("BID_AMENDMENT_REFUND_REQUESTED_DURING_PAYOUT");
     }
 
     @Test

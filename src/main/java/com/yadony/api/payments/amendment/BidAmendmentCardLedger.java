@@ -510,11 +510,16 @@ public class BidAmendmentCardLedger {
      * principal remboursé) : {@code REFUND_PENDING}, et le rail rembourse l'expéditeur
      * ({@link BidAmendmentRefundRequestedEvent}), comme une modification acquise d'un colis terminé.
      */
+    /** Raison d'un versement abandonné parce que le remboursement a été demandé : pas un échec. */
+    public static final String REFUND_REQUESTED_STOP = "REFUND_REQUESTED";
+
     @Transactional
     public void revertPayout(UUID amendmentId, String error) {
         lock(amendmentId, false).filter(this::card).filter(a -> a.getStatus() == BidAmendmentStatus.PAYOUT_PENDING)
                 .ifPresent(a -> {
-                    audit(a, "BID_AMENDMENT_PAYOUT_FAILED", null, Map.of("error", String.valueOf(error)));
+                    if (!REFUND_REQUESTED_STOP.equals(error)) {
+                        audit(a, "BID_AMENDMENT_PAYOUT_FAILED", null, Map.of("error", String.valueOf(error)));
+                    }
                     if (a.getRefundRequestedAt() == null) {
                         a.setStatus(BidAmendmentStatus.ACCEPTED);
                         amendments.save(a);

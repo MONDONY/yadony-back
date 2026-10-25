@@ -419,6 +419,19 @@ class BidAmendmentCardLedgerTest {
     }
 
     @Test
+    @DisplayName("versement abandonné volontairement (remboursement demandé, aucun Transfer) : pas d'audit « échec »")
+    void revertPayout_voluntaryStop_noPayoutFailedAudit() {
+        a.setStatus(BidAmendmentStatus.PAYOUT_PENDING);
+        a.setRefundRequestedAt(LocalDateTime.now(ZoneOffset.UTC));
+
+        ledger.revertPayout(a.getId(), BidAmendmentCardLedger.REFUND_REQUESTED_STOP);
+
+        assertThat(a.getStatus()).isEqualTo(BidAmendmentStatus.REFUND_PENDING);
+        verify(auditService, never()).log(eq(BidAmendmentService.ENTITY), eq(a.getId()),
+                eq("BID_AMENDMENT_PAYOUT_FAILED"), any(), anyMap());
+    }
+
+    @Test
     @DisplayName("modification acquise marquée « remboursement demandé » : jamais réservée pour un versement")
     void beginPayout_refundRequested_refuses() {
         a.setStatus(BidAmendmentStatus.ACCEPTED);
