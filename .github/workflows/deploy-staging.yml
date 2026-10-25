@@ -191,6 +191,8 @@ jobs:
           ASSISTANT_FORM_DRAFT_DAILY_QUOTA=${{ vars.ASSISTANT_FORM_DRAFT_DAILY_QUOTA || '30' }}
           # Supplément de prix à la remise : éteint par défaut, allumé par la variable d'environnement GitHub.
           BID_SUPPLEMENT_ENABLED=${{ vars.BID_SUPPLEMENT_ENABLED || 'false' }}
+          # Modification d'un colis accepté : éteinte par défaut, allumée par la variable d'environnement GitHub.
+          BID_AMENDMENT_ENABLED=${{ vars.BID_AMENDMENT_ENABLED || 'false' }}
           # Rail mobile money pawaPay : token API du dashboard SANDBOX (staging ne parle
           # jamais à la production pawaPay, PAWAPAY_BASE_URL garde son défaut sandbox).
           # Secret d environnement staging. Le rail reste fermé tant que PAWAPAY_ENABLED
