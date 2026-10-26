@@ -50,6 +50,28 @@ class ReportResolvedNotificationListenerTest {
     }
 
     @Test
+    void motDuModerateur_estAjouteAuRemerciement() {
+        when(notificationDispatcher.messagesFor(reporterId)).thenReturn(TestMessages.fr());
+
+        listener.onResolved(new ReportResolvedEvent(reportId, reporterId, "  Le contenu a été retiré.  "));
+
+        verify(notificationDispatcher).notifyUser(eq(reporterId), eq("Signalement traité"),
+                eq("Merci, votre signalement a été traité. Le contenu a été retiré."),
+                eq(Map.of("type", "REPORT_RESOLVED")));
+    }
+
+    @Test
+    void motVide_nAjouteRienAuRemerciement() {
+        when(notificationDispatcher.messagesFor(reporterId)).thenReturn(TestMessages.fr());
+
+        listener.onResolved(new ReportResolvedEvent(reportId, reporterId, "   "));
+
+        verify(notificationDispatcher).notifyUser(eq(reporterId), eq("Signalement traité"),
+                eq("Merci, votre signalement a été traité."),
+                eq(Map.of("type", "REPORT_RESOLVED")));
+    }
+
+    @Test
     void signalantAbsent_rienNEstEnvoye() {
         listener.onResolved(new ReportResolvedEvent(reportId, null));
 

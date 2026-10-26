@@ -906,6 +906,44 @@ class AdminReportsControllerTest {
     }
 
     @Test
+    void resolve_motAuSignalant_estTransmisDansLEvenement() {
+        UUID id = UUID.randomUUID();
+        UUID reporterId = UUID.randomUUID();
+        ReportEntity report = buildReport(reporterId, ReportStatus.OPEN);
+        report.setTargetType(ReportTargetType.APP);
+        report.setTargetId(null);
+        when(reportRepo.findById(id)).thenReturn(Optional.of(report));
+        when(userRepo.findAllById(anyCollection())).thenReturn(List.of(userWithId(reporterId, "Jean", "Dupont")));
+
+        controller().resolveReport(id,
+                new ResolveReportRequest(ReportAction.RESOLVE, "note interne", null, "Corrigé dans la 1.0.84"),
+                authAs(UUID.randomUUID(), List.of()));
+
+        verify(eventPublisher).publishEvent(
+                new com.yadony.api.signalements.events.ReportResolvedEvent(id, reporterId, "Corrigé dans la 1.0.84"));
+        assertThat(report.getResolutionNote()).isEqualTo("note interne");
+    }
+
+    @Test
+    void resolve_warn_corpsDeLAvertissement_estLeMessageDedie_pasLaNote() {
+        UUID id = UUID.randomUUID();
+        UUID targetId = UUID.randomUUID();
+        ReportEntity report = buildReport(UUID.randomUUID(), ReportStatus.OPEN);
+        report.setTargetType(ReportTargetType.USER);
+        report.setTargetId(targetId);
+        when(reportRepo.findById(id)).thenReturn(Optional.of(report));
+        when(reportRepo.save(report)).thenReturn(report);
+        when(notificationDispatcher.messagesFor(targetId)).thenReturn(com.yadony.api.common.i18n.TestMessages.fr());
+
+        controller().resolveReport(id,
+                new ResolveReportRequest(ReportAction.WARN, "signalé par Awa", "Merci de rester courtois", null),
+                authAs(UUID.randomUUID(), List.of()));
+
+        verify(notificationDispatcher).notifyUser(eq(targetId), anyString(), eq("Merci de rester courtois"), anyMap());
+        assertThat(report.getResolutionNote()).isEqualTo("signalé par Awa");
+    }
+
+    @Test
     void resolve_rejet_neNotifiePasLeSignalant() {
         UUID id = UUID.randomUUID();
         UUID reporterId = UUID.randomUUID();
