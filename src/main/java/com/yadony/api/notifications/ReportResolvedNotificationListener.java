@@ -36,7 +36,7 @@ public class ReportResolvedNotificationListener {
             return;
         }
         Messages m = notificationDispatcher.messagesFor(event.reporterId());
-        NotificationText text = NotificationTexts.reportResolved(m);
+        NotificationText text = NotificationTexts.reportResolved(m, event.reporterMessage());
         notificationDispatcher.notifyUser(event.reporterId(), text.title(), text.body(), Map.of("type", TYPE));
     }
 }

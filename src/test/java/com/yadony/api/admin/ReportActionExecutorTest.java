@@ -62,7 +62,7 @@ class ReportActionExecutorTest {
     @Test
     void resolve_aucunGeste() {
         executor().apply(reportId, ReportAction.RESOLVE, report(ReportTargetType.APP), ResolvedReportTarget.none(),
-                "vu", adminId);
+                "vu", null, adminId);
         verifyNoInteractions(userService, announcementService, packageRequestModerationService,
                 notificationDispatcher, messageModeration, ratingModeration);
     }
@@ -72,7 +72,7 @@ class ReportActionExecutorTest {
         ConversationEntity conv = new ConversationEntity();
         var target = new ResolvedReportTarget(true, false, null, conv, "msg_1");
 
-        executor().apply(reportId, ReportAction.DELETE_MESSAGE, report(ReportTargetType.MESSAGE), target, "insulte", adminId);
+        executor().apply(reportId, ReportAction.DELETE_MESSAGE, report(ReportTargetType.MESSAGE), target, "insulte", null, adminId);
 
         verify(messageModeration).deleteMessage(conv, "msg_1", adminId);
     }
@@ -80,7 +80,7 @@ class ReportActionExecutorTest {
     @Test
     void excludeRating_delegueAvecLaNoteCommeMotif() {
         executor().apply(reportId, ReportAction.EXCLUDE_RATING, report(ReportTargetType.RATING), withAuthor(),
-                "avis mensonger", adminId);
+                "avis mensonger", null, adminId);
 
         verify(ratingModeration).exclude(targetId, true, "avis mensonger", adminId);
     }
@@ -88,7 +88,7 @@ class ReportActionExecutorTest {
     @Test
     void deleteRating_delegue() {
         executor().apply(reportId, ReportAction.DELETE_RATING, report(ReportTargetType.RATING), withAuthor(),
-                "insultes", adminId);
+                "insultes", null, adminId);
 
         verify(ratingModeration).delete(targetId, "insultes", adminId);
     }
@@ -97,7 +97,7 @@ class ReportActionExecutorTest {
     void warnAuthor_avertitLAuteurCommeWarn() {
         when(notificationDispatcher.messagesFor(authorId)).thenReturn(TestMessages.fr());
 
-        executor().apply(reportId, ReportAction.WARN_AUTHOR, report(ReportTargetType.BID), withAuthor(), null, adminId);
+        executor().apply(reportId, ReportAction.WARN_AUTHOR, report(ReportTargetType.BID), withAuthor(), null, null, adminId);
 
         verify(notificationDispatcher).notifyUser(eq(authorId), eq("Avertissement Yadony"),
                 eq("Un comportement signalé sur votre compte a été examiné."),
@@ -107,7 +107,7 @@ class ReportActionExecutorTest {
     @Test
     void suspendAuthor_suspendLAuteurAvecLAdmin() {
         executor().apply(reportId, ReportAction.SUSPEND_AUTHOR, report(ReportTargetType.MESSAGE), withAuthor(),
-                "harcèlement", adminId);
+                "harcèlement", null, adminId);
 
         verify(userService).suspendUser(authorId, "harcèlement", adminId);
     }
@@ -117,16 +117,40 @@ class ReportActionExecutorTest {
         when(notificationDispatcher.messagesFor(targetId)).thenReturn(TestMessages.fr());
 
         executor().apply(reportId, ReportAction.WARN, report(ReportTargetType.USER), ResolvedReportTarget.none(),
-                "Dernier avertissement", adminId);
+                "note interne", "Dernier avertissement", adminId);
 
         verify(notificationDispatcher).notifyUser(eq(targetId), eq("Avertissement Yadony"), eq("Dernier avertissement"),
                 eq(Map.of("type", "ADMIN_WARNING", "reportId", reportId.toString())));
     }
 
     @Test
+    void warn_laNoteInterneNEstJamaisLeCorpsDeLAvertissement() {
+        when(notificationDispatcher.messagesFor(targetId)).thenReturn(TestMessages.fr());
+
+        executor().apply(reportId, ReportAction.WARN, report(ReportTargetType.USER), ResolvedReportTarget.none(),
+                "signalé par Awa, sa voisine", null, adminId);
+
+        verify(notificationDispatcher).notifyUser(eq(targetId), eq("Avertissement Yadony"),
+                eq("Un comportement signalé sur votre compte a été examiné."),
+                eq(Map.of("type", "ADMIN_WARNING", "reportId", reportId.toString())));
+    }
+
+    @Test
+    void warnAuthor_utiliseLeMessageDedieEtPasLaNote() {
+        when(notificationDispatcher.messagesFor(authorId)).thenReturn(TestMessages.fr());
+
+        executor().apply(reportId, ReportAction.WARN_AUTHOR, report(ReportTargetType.BID), withAuthor(),
+                "note interne", "Merci de rester courtois", adminId);
+
+        verify(notificationDispatcher).notifyUser(eq(authorId), eq("Avertissement Yadony"),
+                eq("Merci de rester courtois"),
+                eq(Map.of("type", "ADMIN_WARNING", "reportId", reportId.toString())));
+    }
+
+    @Test
     void suspendTarget_suspendLaCible() {
         executor().apply(reportId, ReportAction.SUSPEND_TARGET, report(ReportTargetType.USER),
-                ResolvedReportTarget.none(), "récidive", adminId);
+                ResolvedReportTarget.none(), "récidive", null, adminId);
 
         verify(userService).suspendUser(targetId, "récidive", adminId);
     }
@@ -134,11 +158,11 @@ class ReportActionExecutorTest {
     @Test
     void removeContent_annonceOuDemande() {
         executor().apply(reportId, ReportAction.REMOVE_CONTENT, report(ReportTargetType.ANNOUNCEMENT),
-                ResolvedReportTarget.none(), "fraude", adminId);
+                ResolvedReportTarget.none(), "fraude", null, adminId);
         verify(announcementService).removeByAdmin(targetId, adminId, AnnouncementRemovalReason.OTHER, "fraude");
 
         executor().apply(reportId, ReportAction.REMOVE_CONTENT, report(ReportTargetType.PACKAGE_REQUEST),
-                ResolvedReportTarget.none(), "fraude", adminId);
+                ResolvedReportTarget.none(), "fraude", null, adminId);
         verify(packageRequestModerationService).removeByAdmin(eq(targetId), eq(adminId),
                 eq(AnnouncementRemovalReason.OTHER), any());
     }

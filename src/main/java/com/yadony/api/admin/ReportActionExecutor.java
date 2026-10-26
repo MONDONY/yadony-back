@@ -47,12 +47,17 @@ public class ReportActionExecutor {
         this.ratingModeration = ratingModeration;
     }
 
+    /**
+     * @param note          motif interne : audit et sanctions, jamais montré à la personne visée
+     * @param targetMessage corps de l'avertissement (WARN, WARN_AUTHOR), lu par la personne avertie ;
+     *                      {@code null} ou vide = texte par défaut
+     */
     public void apply(UUID reportId, ReportAction action, ReportEntity report, ResolvedReportTarget target,
-                      String note, UUID adminId) {
+                      String note, String targetMessage, UUID adminId) {
         switch (action) {
             case DISMISS, RESOLVE -> { }
-            case WARN -> warn(report.getTargetId(), reportId, note);
-            case WARN_AUTHOR -> warn(target.author().getId(), reportId, note);
+            case WARN -> warn(report.getTargetId(), reportId, targetMessage);
+            case WARN_AUTHOR -> warn(target.author().getId(), reportId, targetMessage);
             case SUSPEND_TARGET -> userService.suspendUser(report.getTargetId(), note, adminId);
             case SUSPEND_AUTHOR -> userService.suspendUser(target.author().getId(), note, adminId);
             case REMOVE_CONTENT -> {
@@ -70,9 +75,12 @@ public class ReportActionExecutor {
         }
     }
 
-    /** Même avertissement que WARN : notification ADMIN_WARNING, la note de l'admin en corps. */
-    private void warn(UUID userId, UUID reportId, String note) {
-        var text = NotificationTexts.adminWarning(notificationDispatcher.messagesFor(userId), note);
+    /**
+     * Même avertissement que WARN : notification ADMIN_WARNING. Le corps est le message écrit pour
+     * la personne avertie, jamais la note interne : celle-ci peut nommer le signalant.
+     */
+    private void warn(UUID userId, UUID reportId, String targetMessage) {
+        var text = NotificationTexts.adminWarning(notificationDispatcher.messagesFor(userId), targetMessage);
         notificationDispatcher.notifyUser(userId, text.title(), text.body(),
                 Map.of("type", "ADMIN_WARNING", "reportId", reportId.toString()));
     }

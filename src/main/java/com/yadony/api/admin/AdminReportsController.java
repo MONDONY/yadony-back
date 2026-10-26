@@ -183,7 +183,7 @@ public class AdminReportsController {
     @Transactional
     public ResponseEntity<AdminReportResponse> resolveReport(
             @PathVariable UUID id,
-            @RequestBody ResolveReportRequest request,
+            @Valid @RequestBody ResolveReportRequest request,
             Authentication authentication) {
 
         ReportEntity report = findOrThrow(id);
@@ -212,7 +212,7 @@ public class AdminReportsController {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "report-target-unresolvable",
                     "Unprocessable", "La cible de ce signalement (ou son auteur) est introuvable");
         }
-        actionExecutor.apply(id, action, report, target, request.note(), adminId);
+        actionExecutor.apply(id, action, report, target, request.note(), request.targetMessage(), adminId);
 
         report.setStatus(action.resultingStatus());
         report.setActionTaken(action);
@@ -234,7 +234,7 @@ public class AdminReportsController {
         // Le signalant est remercié (jamais au rejet), s'il existe encore : relu avec les
         // noms de la réponse, un compte supprimé n'y figure pas (@Where deleted_at IS NULL).
         if (report.getStatus() == ReportStatus.RESOLVED && response.reporterName() != null) {
-            eventPublisher.publishEvent(new ReportResolvedEvent(id, report.getReporterId()));
+            eventPublisher.publishEvent(new ReportResolvedEvent(id, report.getReporterId(), request.reporterMessage()));
         }
         return ResponseEntity.ok(response);
     }

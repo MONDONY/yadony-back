@@ -802,7 +802,16 @@ public final class NotificationTexts {
 
     /** Signalement traité : un remerciement, jamais la décision ni la sanction. */
     public static NotificationText reportResolved(Messages m) {
-        return new NotificationText(m.get("notification.report-resolved.title"), m.get("notification.report-resolved.body"));
+        return reportResolved(m, null);
+    }
+
+    /** Idem, avec le mot du modérateur à la suite du remerciement (jamais la décision elle-même). */
+    public static NotificationText reportResolved(Messages m, String reporterMessage) {
+        String body = m.get("notification.report-resolved.body");
+        if (reporterMessage != null && !reporterMessage.isBlank()) {
+            body = body + " " + reporterMessage.trim();
+        }
+        return new NotificationText(m.get("notification.report-resolved.title"), body);
     }
 
     /**
