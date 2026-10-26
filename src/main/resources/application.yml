@@ -506,6 +506,16 @@ yadony:
     thread-inactivity-hours: ${YADONY_REQUESTS_THREAD_INACTIVITY_HOURS:72}
     awaiting-trip-hours: ${YADONY_REQUESTS_AWAITING_TRIP_HOURS:12}
     awaiting-payment-hours: ${YADONY_REQUESTS_AWAITING_PAYMENT_HOURS:24}
+    # Rappel automatique d'un fil de négociation resté sans réponse (NegotiationAutoReminderScheduler).
+    # ÉTEINT par défaut : à allumer par environnement. delay = silence avant rappel, max-age = plus
+    # vieux fil rappelé (les fils OPEN expirent à thread-inactivity-hours), plage horaire locale du
+    # destinataire.
+    auto-reminder:
+      enabled: ${YADONY_REQUESTS_AUTO_REMINDER_ENABLED:false}
+      delay: ${YADONY_REQUESTS_AUTO_REMINDER_DELAY:PT24H}
+      max-age: ${YADONY_REQUESTS_AUTO_REMINDER_MAX_AGE:PT48H}
+      window-start-hour: ${YADONY_REQUESTS_AUTO_REMINDER_WINDOW_START_HOUR:9}
+      window-end-hour: ${YADONY_REQUESTS_AUTO_REMINDER_WINDOW_END_HOUR:20}
     date-tolerance-default-days: ${YADONY_REQUESTS_DATE_TOLERANCE_DEFAULT_DAYS:2}
     date-tolerance-max-days: ${YADONY_REQUESTS_DATE_TOLERANCE_MAX_DAYS:7}
     weight-kg-min: ${YADONY_REQUESTS_WEIGHT_KG_MIN:0.5}

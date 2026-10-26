@@ -65,6 +65,10 @@ public class NegotiationThreadEntity extends BaseEntity {
     @Column(name = "last_nudge_at")
     private LocalDateTime lastNudgeAt;
 
+    /** Dernier rappel automatique envoyé à la partie qui doit répondre (null = aucun). */
+    @Column(name = "auto_reminder_at")
+    private LocalDateTime autoReminderAt;
+
     @Column(name = "sender_last_read_at")
     private LocalDateTime senderLastReadAt;
 
@@ -205,6 +209,8 @@ public class NegotiationThreadEntity extends BaseEntity {
 
     public LocalDateTime getLastNudgeAt() { return lastNudgeAt; }
 
+    public LocalDateTime getAutoReminderAt() { return autoReminderAt; }
+
     public LocalDateTime getSenderLastReadAt() { return senderLastReadAt; }
 
     public LocalDateTime getTravelerLastReadAt() { return travelerLastReadAt; }
@@ -276,6 +282,8 @@ public class NegotiationThreadEntity extends BaseEntity {
     public void setLastActivityAt(LocalDateTime lastActivityAt) { this.lastActivityAt = lastActivityAt; }
 
     public void setLastNudgeAt(LocalDateTime lastNudgeAt) { this.lastNudgeAt = lastNudgeAt; }
+
+    public void setAutoReminderAt(LocalDateTime autoReminderAt) { this.autoReminderAt = autoReminderAt; }
 
     public void setSenderLastReadAt(LocalDateTime senderLastReadAt) { this.senderLastReadAt = senderLastReadAt; }
 

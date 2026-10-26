@@ -92,8 +92,39 @@ public record NegotiationThreadResponse(
     // Ce montant tient compte des réductions du voyageur (taux spécial, bon) : ne jamais le
     // combiner avec grossPriceEur, le brut public affiché à l'expéditeur, qui n'a pas ces réductions.
     // Additif, en fin de record : l'app annonce ce montant au lieu de le recalculer.
-    BigDecimal travelerCashCommissionEur
+    BigDecimal travelerCashCommissionEur,
+    // Rappel AUTOMATIQUE envoyé à la partie qui doit répondre (NegotiationAutoReminderScheduler),
+    // tant qu'aucun message n'est arrivé depuis. Null sinon, donc absent du JSON. Additif, en fin
+    // de record : l'app affiche « Rappel envoyé » dans le fil, sans rien déduire.
+    LocalDateTime autoReminderSentAt
 ) {
+    /** Constructeur de compatibilité (sans autoReminderSentAt, null) — ancienne arité canonique. */
+    public NegotiationThreadResponse(
+            UUID id, UUID packageRequestId, UUID travelerId, UUID travelerAnnouncementId,
+            LocalDate travelerTravelDate, BigDecimal travelerAvailableKg, String travelerCapacityUnit,
+            NegotiationThreadStatus status, BigDecimal currentPriceEur, int roundsCount,
+            LocalDateTime lastActivityAt, LocalDateTime createdAt, List<NegotiationMessageResponse> messages,
+            String paymentIntentClientSecret, String travelerName, BigDecimal travelerRating,
+            Integer travelerTripsCount, String travelerPhotoUrl, String departureCity, String arrivalCity,
+            BigDecimal weightKg, String senderName, String senderPhotoUrl, boolean isMyTurn,
+            boolean canAccept, boolean canCounter, int roundsRemaining, LinkedTripSummary linkedTrip,
+            BigDecimal grossPriceEur, PaymentMethod paymentMethod, UUID materializedBidId,
+            boolean cashCommissionAvailable, Set<PaymentMethod> availablePaymentMethods, boolean canNudge,
+            boolean hasUnread, String promoCode, BigDecimal commissionRate, String currency,
+            String commissionStatus, LocalDateTime commissionDeadline, LocalDateTime depositExpiresAt,
+            UUID senderId, boolean archived, boolean travelerGpPro, boolean senderGpPro,
+            UUID commissionGridId, BigDecimal travelerCashCommissionEur) {
+        this(id, packageRequestId, travelerId, travelerAnnouncementId, travelerTravelDate,
+                travelerAvailableKg, travelerCapacityUnit, status, currentPriceEur, roundsCount,
+                lastActivityAt, createdAt, messages, paymentIntentClientSecret, travelerName, travelerRating,
+                travelerTripsCount, travelerPhotoUrl, departureCity, arrivalCity, weightKg, senderName,
+                senderPhotoUrl, isMyTurn, canAccept, canCounter, roundsRemaining, linkedTrip, grossPriceEur,
+                paymentMethod, materializedBidId, cashCommissionAvailable, availablePaymentMethods, canNudge,
+                hasUnread, promoCode, commissionRate, currency, commissionStatus, commissionDeadline,
+                depositExpiresAt, senderId, archived, travelerGpPro, senderGpPro, commissionGridId,
+                travelerCashCommissionEur, null);
+    }
+
     /** Constructeur de compatibilité (sans travelerCashCommissionEur, null). */
     public NegotiationThreadResponse(
             UUID id, UUID packageRequestId, UUID travelerId, UUID travelerAnnouncementId,

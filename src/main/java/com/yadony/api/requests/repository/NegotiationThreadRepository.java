@@ -45,6 +45,28 @@ public interface NegotiationThreadRepository extends JpaRepository<NegotiationTh
     List<NegotiationThreadEntity> findByPackageRequestId(UUID packageRequestId);
 
     /**
+     * Fils OUVERTS sans réponse depuis {@code silentSince}, candidats au rappel automatique.
+     *
+     * <p>Garde-fous : jamais un fil plus ancien que {@code notOlderThan} (à la mise en service on
+     * ne relance pas des fils morts depuis des jours) ; un seul rappel par période d'attente
+     * ({@code auto_reminder_at} antérieur à la dernière activité, ou absent) ; pas de rappel
+     * automatique juste après une relance faite à la main.
+     */
+    @Query("""
+        SELECT t.id FROM NegotiationThreadEntity t
+        WHERE t.status = com.yadony.api.requests.entity.NegotiationThreadStatus.OPEN
+          AND t.lastActivityAt <= :silentSince
+          AND t.lastActivityAt >= :notOlderThan
+          AND (t.autoReminderAt IS NULL OR t.autoReminderAt < t.lastActivityAt)
+          AND (t.lastNudgeAt IS NULL OR t.lastNudgeAt <= :silentSince)
+        ORDER BY t.lastActivityAt
+    """)
+    List<UUID> findAutoReminderCandidates(
+        @Param("silentSince") LocalDateTime silentSince,
+        @Param("notOlderThan") LocalDateTime notOlderThan
+    );
+
+    /**
      * Fils ACTIFS d'un voyageur sur un lot de demandes (statuts de
      * {@link com.yadony.api.requests.entity.NegotiationThreadStatus#isActive()}), en une requête.
      * Sert à marquer, dans la recherche des demandes, celles où il négocie déjà (FLUTTER-NZ).
