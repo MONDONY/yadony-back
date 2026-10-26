@@ -417,4 +417,27 @@ class ReportContextServiceTest {
         }
         verify(reportRepo, never()).countByReasonAndScreenRoute(any(), any());
     }
+
+    @Test
+    void historiqueDUnAvis_reintegrationDistingueeDeLExclusion() {
+        UUID ratingId = UUID.randomUUID();
+        AuditLogEntity excluded = new AuditLogEntity();
+        excluded.setAction("RATING_EXCLUDED");
+        excluded.setPayload(Map.of("reason", "insultes", "excluded", "true"));
+        AuditLogEntity reintegrated = new AuditLogEntity();
+        reintegrated.setAction("RATING_EXCLUDED");
+        reintegrated.setPayload(Map.of("reason", "", "excluded", "false"));
+        AuditLogEntity legacy = new AuditLogEntity();
+        legacy.setAction("RATING_EXCLUDED");
+        legacy.setPayload(Map.of("reason", "ancien"));
+        when(auditLogRepo.findByEntityTypeAndEntityIdOrderByCreatedAtDescIdDesc(eq("RATING"), eq(ratingId), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(reintegrated, excluded, legacy)));
+
+        var history = service.history("RATING", ratingId);
+
+        assertThat(history).extracting(AdminReportContextResponse.HistoryEntry::detail)
+                .containsExactly("REINTEGRATED", null, null);
+        assertThat(history.get(1).note()).isEqualTo("insultes");
+        assertThat(service.history("RATING", null)).isEmpty();
+    }
 }

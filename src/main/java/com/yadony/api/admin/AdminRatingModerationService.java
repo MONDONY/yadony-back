@@ -46,8 +46,10 @@ public class AdminRatingModerationService {
         ratingRepo.save(rating);
         // L'exclusion sort l'avis de la moyenne : la moyenne stockée doit suivre.
         recalculateAggregates(rating);
+        // `excluded` distingue l'exclusion de la réintégration dans l'historique d'un avis.
         auditService.log("RATING", ratingId, "RATING_EXCLUDED", adminId,
-                Map.of("ratingId", ratingId.toString(), "reason", reason != null ? reason : ""));
+                Map.of("ratingId", ratingId.toString(), "reason", reason != null ? reason : "",
+                        "excluded", String.valueOf(excluded)));
         return rating;
     }
 

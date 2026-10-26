@@ -210,6 +210,12 @@ public interface ReportRepository extends JpaRepository<ReportEntity, UUID> {
     List<ReportEntity> findTop10ByTargetTypeAndTargetIdAndIdNotOrderByCreatedAtDesc(
             ReportTargetType targetType, UUID targetId, UUID excludedId);
 
+    /** Signalements visant cette cible, du plus récent au plus ancien (10 au plus). */
+    List<ReportEntity> findTop10ByTargetTypeAndTargetIdOrderByCreatedAtDesc(ReportTargetType targetType, UUID targetId);
+
+    /** Signalements visant cette cible pour un statut donné (ouverts). */
+    long countByTargetTypeAndTargetIdAndStatus(ReportTargetType targetType, UUID targetId, ReportStatus status);
+
     /** Retours du scarabée sur une même route d'écran (celui en cours compris). */
     long countByReasonAndScreenRoute(ReportReason reason, String screenRoute);
 
