@@ -155,6 +155,54 @@ public class FirestoreService {
         }
     }
 
+    /**
+     * Le message {@code messageId} et ses voisins : {@code before} messages plus anciens, {@code after}
+     * plus récents, du plus ancien au plus récent (lecture admin d'un signalement). Trois lectures
+     * bornées plutôt que toute la conversation. Vide si Firestore est désactivé, si le message n'existe
+     * pas ou si la lecture échoue : le dossier s'affiche alors sans contexte, sans erreur.
+     */
+    public java.util.List<Map<String, Object>> listMessagesAround(String conversationId, String messageId,
+                                                                  int before, int after) {
+        if (firestore == null) {
+            return java.util.List.of();
+        }
+        try {
+            var messages = firestore.collection("conversations").document(conversationId).collection("messages");
+            var anchor = messages.document(messageId).get().get();
+            if (!anchor.exists()) {
+                return java.util.List.of();
+            }
+            String sentAt = anchor.getString("sentAt");
+            java.util.List<Map<String, Object>> result = new java.util.ArrayList<>();
+            if (sentAt != null && before > 0) {
+                var older = messages.whereLessThan("sentAt", sentAt)
+                        .orderBy("sentAt", com.google.cloud.firestore.Query.Direction.DESCENDING)
+                        .limit(before).get().get().getDocuments();
+                for (int i = older.size() - 1; i >= 0; i--) {
+                    result.add(messageData(older.get(i)));
+                }
+            }
+            result.add(messageData(anchor));
+            if (sentAt != null && after > 0) {
+                var newer = messages.whereGreaterThan("sentAt", sentAt).orderBy("sentAt")
+                        .limit(after).get().get().getDocuments();
+                for (var doc : newer) {
+                    result.add(messageData(doc));
+                }
+            }
+            return result;
+        } catch (Exception e) {
+            log.warn("Firestore listMessagesAround failed for {}/{}: {}", conversationId, messageId, e.getMessage());
+            return java.util.List.of();
+        }
+    }
+
+    private static Map<String, Object> messageData(com.google.cloud.firestore.DocumentSnapshot doc) {
+        Map<String, Object> data = new HashMap<>(doc.getData());
+        data.put("id", doc.getId());
+        return data;
+    }
+
     /** lastMessageAt/lastMessagePreview par conversation, en un seul getAll. */
     public Map<String, Map<String, Object>> getConversationMeta(java.util.List<String> conversationIds) {
         if (firestore == null || conversationIds.isEmpty()) {
