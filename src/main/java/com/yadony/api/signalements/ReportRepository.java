@@ -202,4 +202,11 @@ public interface ReportRepository extends JpaRepository<ReportEntity, UUID> {
     long countReceivedByUser(@Param("userId") UUID userId);
 
     long countByReporterId(UUID reporterId);
+
+    /** Signalements déposés par un compte pour un statut donné (traités, rejetés). */
+    long countByReporterIdAndStatus(UUID reporterId, ReportStatus status);
+
+    /** Autres signalements sur la même cible, du plus récent au plus ancien (le dossier en cours exclu). */
+    List<ReportEntity> findTop10ByTargetTypeAndTargetIdAndIdNotOrderByCreatedAtDesc(
+            ReportTargetType targetType, UUID targetId, UUID excludedId);
 }
