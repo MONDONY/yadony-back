@@ -14,3 +14,4 @@ You first accept your commitments as a traveler: carry the parcel yourself, resp
 Your identity must be verified.
 Then fill in the departure and arrival city, date, time, mode of transport, capacity, price, accepted payment methods, handover place and drop-off deadline, then publish or save as a draft.
 The drop-off deadline is shown in the departure city's local time. After it, nobody can make a request on your trip anymore.
+Once the trip is published, the confirmation screen offers "See parcels for this trip": it opens the Search tab in "I'm traveling" mode, on the parcels that match your trips. "View my trip" opens its details and "Share my poster" opens the poster to share.
