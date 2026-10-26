@@ -107,4 +107,36 @@ class ReportRepositoryContextTest {
         assertThat(related).hasSize(10)
                 .extracting(ReportEntity::getId).doesNotContain(current.getId(), gone.getId());
     }
+
+    @Test
+    @DisplayName("retours du scarabée : comptés par route et statut, le dossier en cours exclu des derniers")
+    void sameScreenReports() {
+        ReportEntity current = screen("/payment/confirm", ReportStatus.OPEN);
+        ReportEntity older = screen("/payment/confirm", ReportStatus.RESOLVED);
+        ReportEntity newer = screen("/payment/confirm", ReportStatus.OPEN);
+        screen("/home", ReportStatus.OPEN);
+        // même route mais autre motif : n'entre pas dans les retours du scarabée
+        ReportEntity notABug = report(ReportTargetType.USER, UUID.randomUUID(), UUID.randomUUID(), ReportStatus.OPEN);
+        notABug.setScreenRoute("/payment/confirm");
+        em.persistAndFlush(notABug);
+        createdAt(older, LocalDateTime.of(2026, 10, 1, 9, 0));
+        createdAt(newer, LocalDateTime.of(2026, 10, 20, 9, 0));
+
+        assertThat(reportRepository.countByReasonAndScreenRoute(ReportReason.SCREEN_BUG, "/payment/confirm")).isEqualTo(3);
+        assertThat(reportRepository.countByReasonAndScreenRouteAndStatus(
+                ReportReason.SCREEN_BUG, "/payment/confirm", ReportStatus.OPEN)).isEqualTo(2);
+        assertThat(reportRepository.findTop5ByReasonAndScreenRouteAndIdNotOrderByCreatedAtDesc(
+                ReportReason.SCREEN_BUG, "/payment/confirm", current.getId()))
+                .extracting(ReportEntity::getId).containsExactly(newer.getId(), older.getId());
+    }
+
+    private ReportEntity screen(String route, ReportStatus status) {
+        ReportEntity r = new ReportEntity();
+        r.setTargetType(ReportTargetType.APP);
+        r.setReporterId(UUID.randomUUID());
+        r.setReason(ReportReason.SCREEN_BUG);
+        r.setScreenRoute(route);
+        r.setStatus(status);
+        return em.persistAndFlush(r);
+    }
 }

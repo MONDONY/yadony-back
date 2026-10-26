@@ -7,6 +7,7 @@ import com.yadony.api.admin.dto.AdminReportContextResponse.ContextMessage;
 import com.yadony.api.admin.dto.AdminReportContextResponse.HistoryEntry;
 import com.yadony.api.admin.dto.AdminReportContextResponse.RelatedReport;
 import com.yadony.api.admin.dto.AdminReportContextResponse.Reporter;
+import com.yadony.api.admin.dto.AdminReportContextResponse.SameScreen;
 import com.yadony.api.admin.dto.AdminReportContextResponse.Subject;
 import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.UserEntity;
@@ -17,6 +18,7 @@ import com.yadony.api.common.MatchingTextUtil;
 import com.yadony.api.messaging.FirestoreService;
 import com.yadony.api.messaging.SystemMessages;
 import com.yadony.api.signalements.ReportEntity;
+import com.yadony.api.signalements.ReportReason;
 import com.yadony.api.signalements.ReportRepository;
 import com.yadony.api.signalements.ReportStatus;
 import com.yadony.api.signalements.ReportTargetType;
@@ -52,19 +54,22 @@ public class ReportContextService {
     private final FirestoreService firestoreService;
     private final AuditLogRepository auditLogRepo;
     private final AdminUserRepository adminUserRepo;
+    private final ReportTargetPreviewBuilder previewBuilder;
 
     public ReportContextService(ReportRepository reportRepo,
                                 UserRepository userRepo,
                                 ReportTargetResolver targetResolver,
                                 FirestoreService firestoreService,
                                 AuditLogRepository auditLogRepo,
-                                AdminUserRepository adminUserRepo) {
+                                AdminUserRepository adminUserRepo,
+                                ReportTargetPreviewBuilder previewBuilder) {
         this.reportRepo = reportRepo;
         this.userRepo = userRepo;
         this.targetResolver = targetResolver;
         this.firestoreService = firestoreService;
         this.auditLogRepo = auditLogRepo;
         this.adminUserRepo = adminUserRepo;
+        this.previewBuilder = previewBuilder;
     }
 
     /**
@@ -83,7 +88,9 @@ public class ReportContextService {
                 readable ? messages(target, subjectUser) : null,
                 isMessage && !canReadConversations,
                 history(report),
-                related(report));
+                related(report),
+                previewBuilder.build(report),
+                sameScreen(report));
     }
 
     private Reporter reporter(ReportEntity report) {
@@ -175,8 +182,25 @@ public class ReportContextService {
                 || report.getTargetType() == ReportTargetType.APP) {
             return List.of();
         }
-        List<ReportEntity> others = reportRepo.findTop10ByTargetTypeAndTargetIdAndIdNotOrderByCreatedAtDesc(
-                report.getTargetType(), report.getTargetId(), report.getId());
+        return toRelated(reportRepo.findTop10ByTargetTypeAndTargetIdAndIdNotOrderByCreatedAtDesc(
+                report.getTargetType(), report.getTargetId(), report.getId()));
+    }
+
+    /** Retours du scarabée sur le même écran : plusieurs sur une même route disent un vrai problème. */
+    private SameScreen sameScreen(ReportEntity report) {
+        String route = report.getScreenRoute();
+        if (report.getReason() != ReportReason.SCREEN_BUG || route == null || route.isBlank()) {
+            return null;
+        }
+        return new SameScreen(
+                route,
+                reportRepo.countByReasonAndScreenRoute(ReportReason.SCREEN_BUG, route),
+                reportRepo.countByReasonAndScreenRouteAndStatus(ReportReason.SCREEN_BUG, route, ReportStatus.OPEN),
+                toRelated(reportRepo.findTop5ByReasonAndScreenRouteAndIdNotOrderByCreatedAtDesc(
+                        ReportReason.SCREEN_BUG, route, report.getId())));
+    }
+
+    private List<RelatedReport> toRelated(List<ReportEntity> others) {
         if (others.isEmpty()) {
             return List.of();
         }

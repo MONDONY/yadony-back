@@ -18,6 +18,10 @@ import java.util.UUID;
  *                           {@code MODERATION_VIEW} : il lit déjà le message signalé, pas la conversation
  * @param history            gestes tracés sur ce signalement, du plus récent au plus ancien
  * @param relatedReports     autres signalements sur la même cible (10 au plus), du plus récent au plus ancien
+ * @param targetPreview      ce que la cible est (annonce, demande d'envoi, offre) ; {@code null} pour les autres
+ *                           types ou quand la cible a disparu
+ * @param sameScreen         pour un retour du scarabée (SCREEN_BUG) : les autres retours sur le même écran ;
+ *                           {@code null} sinon
  */
 public record AdminReportContextResponse(
         Reporter reporter,
@@ -25,7 +29,9 @@ public record AdminReportContextResponse(
         List<ContextMessage> messages,
         boolean messagesRestricted,
         List<HistoryEntry> history,
-        List<RelatedReport> relatedReports
+        List<RelatedReport> relatedReports,
+        TargetPreview targetPreview,
+        SameScreen sameScreen
 ) {
 
     /** Compteurs du signalant : {@code resolved} = traités (toute action sauf rejet), {@code dismissed} = rejetés. */
@@ -57,4 +63,25 @@ public record AdminReportContextResponse(
     public record HistoryEntry(String action, String detail, LocalDateTime at, String actorEmail, String note) {}
 
     public record RelatedReport(UUID id, String reason, String status, LocalDateTime createdAt, String reporterName) {}
+
+    /**
+     * Les faits de la cible, déjà mis en forme en français (le back compose déjà « Paris → Dakar »).
+     *
+     * @param kind        {@code ANNOUNCEMENT}, {@code PACKAGE_REQUEST} ou {@code BID}
+     * @param status      statut brut de la cible ({@code ACTIVE}, {@code OPEN}…), libellé côté client
+     * @param description texte libre de l'auteur, tronqué à 600 caractères : c'est souvent ce qui est signalé
+     */
+    public record TargetPreview(String kind, String status, List<Fact> facts, String description) {}
+
+    public record Fact(String label, String value) {}
+
+    /**
+     * Retours du scarabée sur le même écran : plusieurs retours sur une même route désignent un
+     * vrai problème plutôt qu'un cas isolé.
+     *
+     * @param total  retours sur cette route, celui en cours compris
+     * @param open   dont encore ouverts
+     * @param recent les plus récents (5 au plus), celui en cours exclu
+     */
+    public record SameScreen(String route, long total, long open, List<RelatedReport> recent) {}
 }

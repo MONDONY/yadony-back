@@ -52,6 +52,7 @@ class ReportContextServiceTest {
     @Mock FirestoreService firestoreService;
     @Mock AuditLogRepository auditLogRepo;
     @Mock AdminUserRepository adminUserRepo;
+    @Mock ReportTargetPreviewBuilder previewBuilder;
 
     private ReportContextService service;
     private final UUID reportId = UUID.randomUUID();
@@ -61,7 +62,7 @@ class ReportContextServiceTest {
     @BeforeEach
     void setUp() {
         service = new ReportContextService(reportRepo, userRepo, targetResolver, firestoreService, auditLogRepo,
-                adminUserRepo);
+                adminUserRepo, previewBuilder);
         lenient().when(auditLogRepo.findByEntityTypeAndEntityIdOrderByCreatedAtDescIdDesc(
                 eq("REPORT"), eq(reportId), any(Pageable.class))).thenReturn(new PageImpl<>(List.of()));
     }
@@ -349,5 +350,71 @@ class ReportContextServiceTest {
         when(reportRepo.findTop10ByTargetTypeAndTargetIdAndIdNotOrderByCreatedAtDesc(
                 ReportTargetType.USER, subjectId, reportId)).thenReturn(List.of());
         assertThat(service.build(none, true).relatedReports()).isEmpty();
+    }
+
+    // ---- faits de la cible ----
+
+    @Test
+    void faitsDeLaCible_rendusTelsQuelsParLeConstructeur() {
+        ReportEntity r = report(ReportTargetType.ANNOUNCEMENT, UUID.randomUUID());
+        resolveTo(r, ResolvedReportTarget.none());
+        lenient().when(userRepo.findById(reporterId)).thenReturn(Optional.empty());
+        var preview = new AdminReportContextResponse.TargetPreview("ANNOUNCEMENT", "ACTIVE",
+                List.of(new AdminReportContextResponse.Fact("Trajet", "Paris → Dakar")), "Texte");
+        when(previewBuilder.build(r)).thenReturn(preview);
+
+        assertThat(service.build(r, true).targetPreview()).isSameAs(preview);
+    }
+
+    // ---- retours sur le même écran ----
+
+    private ReportEntity screenBug(String route) {
+        ReportEntity r = report(ReportTargetType.APP, null);
+        r.setReason(ReportReason.SCREEN_BUG);
+        r.setScreenRoute(route);
+        return r;
+    }
+
+    @Test
+    void retoursSurLeMemeEcran_decomptesEtDerniersRetours() {
+        ReportEntity r = screenBug("/payment/confirm");
+        resolveTo(r, ResolvedReportTarget.none());
+        lenient().when(userRepo.findById(reporterId)).thenReturn(Optional.empty());
+        UUID otherReporter = UUID.randomUUID();
+        ReportEntity other = new ReportEntity();
+        ReflectionTestUtils.setField(other, "id", UUID.randomUUID());
+        other.setReason(ReportReason.SCREEN_BUG);
+        other.setStatus(ReportStatus.OPEN);
+        other.setReporterId(otherReporter);
+        ReflectionTestUtils.setField(other, "createdAt", LocalDateTime.of(2026, 10, 25, 8, 0));
+        when(reportRepo.countByReasonAndScreenRoute(ReportReason.SCREEN_BUG, "/payment/confirm")).thenReturn(7L);
+        when(reportRepo.countByReasonAndScreenRouteAndStatus(ReportReason.SCREEN_BUG, "/payment/confirm", ReportStatus.OPEN))
+                .thenReturn(5L);
+        when(reportRepo.findTop5ByReasonAndScreenRouteAndIdNotOrderByCreatedAtDesc(
+                ReportReason.SCREEN_BUG, "/payment/confirm", reportId)).thenReturn(List.of(other));
+        when(userRepo.findAllById(anyCollection())).thenReturn(List.of(user(otherReporter, "Fatou", "Kane")));
+
+        var s = service.build(r, true).sameScreen();
+
+        assertThat(s.route()).isEqualTo("/payment/confirm");
+        assertThat(s.total()).isEqualTo(7);
+        assertThat(s.open()).isEqualTo(5);
+        assertThat(s.recent()).hasSize(1);
+        assertThat(s.recent().get(0).reporterName()).isEqualTo("Fatou Kane");
+    }
+
+    @Test
+    void retoursSurLeMemeEcran_rienPourUnAutreMotifOuSansRoute() {
+        ReportEntity other = report(ReportTargetType.USER, subjectId);
+        resolveTo(other, ResolvedReportTarget.none());
+        lenient().when(userRepo.findById(reporterId)).thenReturn(Optional.empty());
+        assertThat(service.build(other, true).sameScreen()).isNull();
+
+        for (String route : new String[] {null, "  "}) {
+            ReportEntity noRoute = screenBug(route);
+            resolveTo(noRoute, ResolvedReportTarget.none());
+            assertThat(service.build(noRoute, true).sameScreen()).isNull();
+        }
+        verify(reportRepo, never()).countByReasonAndScreenRoute(any(), any());
     }
 }
