@@ -37,7 +37,7 @@ class AdminReportContextControllerTest {
     }
 
     private static final AdminReportContextResponse EMPTY =
-            new AdminReportContextResponse(null, null, null, false, List.of(), List.of());
+            new AdminReportContextResponse(null, null, null, false, List.of(), List.of(), null, null);
 
     @Test
     void context_rendLeContexte_etTransmetLeDroitDeLireLesConversations() {

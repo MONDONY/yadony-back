@@ -209,4 +209,14 @@ public interface ReportRepository extends JpaRepository<ReportEntity, UUID> {
     /** Autres signalements sur la même cible, du plus récent au plus ancien (le dossier en cours exclu). */
     List<ReportEntity> findTop10ByTargetTypeAndTargetIdAndIdNotOrderByCreatedAtDesc(
             ReportTargetType targetType, UUID targetId, UUID excludedId);
+
+    /** Retours du scarabée sur une même route d'écran (celui en cours compris). */
+    long countByReasonAndScreenRoute(ReportReason reason, String screenRoute);
+
+    /** Idem, pour un statut donné (ouverts). */
+    long countByReasonAndScreenRouteAndStatus(ReportReason reason, String screenRoute, ReportStatus status);
+
+    /** Derniers retours sur la même route, celui en cours exclu. */
+    List<ReportEntity> findTop5ByReasonAndScreenRouteAndIdNotOrderByCreatedAtDesc(
+            ReportReason reason, String screenRoute, UUID excludedId);
 }
