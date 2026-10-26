@@ -472,6 +472,64 @@ class SupportTicketServiceTest {
                 .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
     }
 
+    // ------------------------------------------------------------------ priorité
+
+    @Test
+    void changePriority_updatesTheTicket_andLeavesATrace() {
+        SupportTicketEntity ticket = ticket(USER_ID, SupportTicketStatus.WAITING_SUPPORT);
+        when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
+
+        SupportTicketEntity result = service.changePriority(TICKET_ID, SupportPriority.URGENT, ADMIN_ID);
+
+        assertThat(result.getPriority()).isEqualTo(SupportPriority.URGENT);
+        verify(ticketRepository).save(ticket);
+        verify(auditService).log(eq("support_ticket"), eq(TICKET_ID), eq("SUPPORT_TICKET_PRIORITY_CHANGED"),
+                eq(ADMIN_ID), eq(Map.of("previous", "NORMAL", "priority", "URGENT")));
+    }
+
+    @Test
+    void changePriority_toTheSameValueChangesNothing() {
+        SupportTicketEntity ticket = ticket(USER_ID, SupportTicketStatus.NEW);
+        when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
+
+        service.changePriority(TICKET_ID, SupportPriority.NORMAL, ADMIN_ID);
+
+        verify(ticketRepository, never()).save(any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void changePriority_isRefusedOnAResolvedTicket() {
+        SupportTicketEntity ticket = ticket(USER_ID, SupportTicketStatus.RESOLVED);
+        when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
+
+        assertThatThrownBy(() -> service.changePriority(TICKET_ID, SupportPriority.HIGH, ADMIN_ID))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(SupportTicketServiceTest::statusOf)
+                .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+    // ------------------------------------------------------- dernier message
+
+    @Test
+    void lastMessages_keepsOneMessagePerTicket_andAsksNothingForNoTicket() {
+        UUID other = UUID.randomUUID();
+        SupportMessageEntity a = new SupportMessageEntity();
+        a.setTicketId(TICKET_ID);
+        SupportMessageEntity sameInstant = new SupportMessageEntity();
+        sameInstant.setTicketId(TICKET_ID);
+        SupportMessageEntity b = new SupportMessageEntity();
+        b.setTicketId(other);
+        when(messageRepository.findLatestOfTickets(List.of(TICKET_ID, other))).thenReturn(List.of(a, sameInstant, b));
+
+        Map<UUID, SupportMessageEntity> last = service.lastMessages(List.of(TICKET_ID, other));
+
+        assertThat(last).containsOnlyKeys(TICKET_ID, other);
+        assertThat(last.get(TICKET_ID)).isSameAs(a);
+        assertThat(service.lastMessages(List.of())).isEmpty();
+        verify(messageRepository, never()).findLatestOfTickets(List.of());
+    }
+
     @Test
     void listReplies_returnsOnlyActiveRepliesInConfiguredOrder() {
         SupportPredefinedReplyEntity reply = new SupportPredefinedReplyEntity();
