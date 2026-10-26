@@ -6,6 +6,7 @@ import com.yadony.api.admin.dto.AdminDisputeListItemResponse;
 import com.yadony.api.admin.dto.AdminGuaranteeFundRequest;
 import com.yadony.api.admin.dto.AdminResolveDisputeRequest;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.cancellation.CancellationEntity;
@@ -53,6 +54,7 @@ public class AdminDisputesController {
     private final UserRepository userRepo;
     private final ApplicationEventPublisher eventPublisher;
     private final BidRepository bidRepo;
+    private final PaymentRepository paymentRepo;
     private final com.yadony.api.payments.split.PaymentSplitService splitService;
     private final org.springframework.transaction.support.TransactionTemplate decisionTransaction;
 
@@ -62,6 +64,7 @@ public class AdminDisputesController {
                                    UserRepository userRepo,
                                    ApplicationEventPublisher eventPublisher,
                                    BidRepository bidRepo,
+                                   PaymentRepository paymentRepo,
                                    com.yadony.api.payments.split.PaymentSplitService splitService,
                                    org.springframework.transaction.PlatformTransactionManager transactionManager) {
         this.disputeRepo = disputeRepo;
@@ -70,6 +73,7 @@ public class AdminDisputesController {
         this.userRepo = userRepo;
         this.eventPublisher = eventPublisher;
         this.bidRepo = bidRepo;
+        this.paymentRepo = paymentRepo;
         this.splitService = splitService;
         this.decisionTransaction = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
     }
@@ -97,7 +101,8 @@ public class AdminDisputesController {
                 .filter(u -> u.getId() != null)
                 .collect(Collectors.toMap(UserEntity::getId, Function.identity(), (a, b) -> a));
 
-        Page<AdminDisputeListItemResponse> result = disputes.map(d -> toDisputeListItem(d, usersById));
+        Map<UUID, BidMoney> money = moneyOfBids(disputes.getContent().stream().map(DisputeEntity::getBidId).toList());
+        Page<AdminDisputeListItemResponse> result = disputes.map(d -> toDisputeListItem(d, usersById, money.get(d.getBidId())));
         return ResponseEntity.ok(result);
     }
 
@@ -358,7 +363,35 @@ public class AdminDisputesController {
         return MatchingTextUtil.buildName(u);
     }
 
-    private AdminDisputeListItemResponse toDisputeListItem(DisputeEntity d, Map<UUID, UserEntity> users) {
+    /** Montant d'un colis et sa devise, tels que le poste de traitement les affiche. */
+    private record BidMoney(java.math.BigDecimal amount, String currency) {}
+
+    /**
+     * Montant du colis par identifiant, en deux lectures pour toute la page : le paiement, à défaut le
+     * prix négocié du colis. Un colis sans montant n'apparaît pas dans le résultat.
+     */
+    private Map<UUID, BidMoney> moneyOfBids(java.util.Collection<UUID> bidIds) {
+        Set<UUID> ids = bidIds.stream().filter(Objects::nonNull).collect(Collectors.toCollection(HashSet::new));
+        // HashMap : un litige sans colis cherche la clé null, que les Map immuables refusent.
+        if (ids.isEmpty()) return new java.util.HashMap<>();
+        Map<UUID, com.yadony.api.payments.PaymentEntity> payments = paymentRepo.findByBidIdIn(ids).stream()
+                .collect(Collectors.toMap(com.yadony.api.payments.PaymentEntity::getBidId, Function.identity(), (a, b) -> a));
+        Map<UUID, com.yadony.api.matching.BidEntity> bids = bidRepo.findAllById(ids).stream()
+                .collect(Collectors.toMap(com.yadony.api.matching.BidEntity::getId, Function.identity(), (a, b) -> a));
+        Map<UUID, BidMoney> out = new java.util.HashMap<>();
+        for (UUID id : ids) {
+            com.yadony.api.payments.PaymentEntity payment = payments.get(id);
+            com.yadony.api.matching.BidEntity bid = bids.get(id);
+            java.math.BigDecimal amount = payment != null ? payment.getAmount() : (bid != null ? bid.getNegotiatedGrossEur() : null);
+            String currency = payment != null ? payment.getCurrency() : (bid != null ? bid.getCurrency() : null);
+            if (amount != null) {
+                out.put(id, new BidMoney(amount, currency != null ? currency.toUpperCase(java.util.Locale.ROOT) : null));
+            }
+        }
+        return out;
+    }
+
+    private AdminDisputeListItemResponse toDisputeListItem(DisputeEntity d, Map<UUID, UserEntity> users, BidMoney money) {
         return new AdminDisputeListItemResponse(
                 d.getId(),
                 d.getBidId(),
@@ -367,7 +400,9 @@ public class AdminDisputesController {
                 userName(d.getSenderId(), users),
                 userName(d.getTravelerId(), users),
                 d.isRefundFrozen(),
-                d.getCreatedAt());
+                d.getCreatedAt(),
+                money != null ? money.amount() : null,
+                money != null ? money.currency() : null);
     }
 
     private AdminDisputeDetailResponse toDisputeDetail(DisputeEntity d, Map<UUID, UserEntity> users) {
@@ -392,7 +427,8 @@ public class AdminDisputesController {
                 d.getSenderRefundAmount(),
                 d.getTravelerPayoutAmount(),
                 d.getSplitCurrency(),
-                splitOf(d));
+                splitOf(d),
+                amountOf(d));
     }
 
     private com.yadony.api.admin.dto.AdminDisputeSplitResponse splitOf(DisputeEntity d) {
@@ -403,6 +439,11 @@ public class AdminDisputesController {
                         s.getMode().name(), s.getStatus().name(), s.getAttempts(), s.getLastError(),
                         s.getStripeRefundId(), s.getStripeTransferId(), s.getCompletedAt()))
                 .orElse(null);
+    }
+
+    private java.math.BigDecimal amountOf(DisputeEntity d) {
+        BidMoney money = moneyOfBids(java.util.Collections.singletonList(d.getBidId())).get(d.getBidId());
+        return money != null ? money.amount() : null;
     }
 
     private String bidCurrencyOf(DisputeEntity d) {

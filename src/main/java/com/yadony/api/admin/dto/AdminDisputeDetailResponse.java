@@ -22,5 +22,7 @@ public record AdminDisputeDetailResponse(
     java.math.BigDecimal travelerPayoutAmount,
     String splitCurrency,
     /** Exécution du partage chez Stripe, null sans partage. */
-    AdminDisputeSplitResponse split
+    AdminDisputeSplitResponse split,
+    /** Montant du colis (paiement, à défaut prix négocié), dans la devise du colis ; null sans colis. */
+    java.math.BigDecimal amount
 ) {}

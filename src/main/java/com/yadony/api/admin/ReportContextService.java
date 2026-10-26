@@ -170,7 +170,10 @@ public class ReportContextService {
         }
         return entries.stream().map(e -> {
             Map<String, Object> payload = e.getPayload() != null ? e.getPayload() : Map.of();
-            Object note = payload.get("note") != null ? payload.get("note") : payload.get("reason");
+            // `decisionReason` : motif interne d'une décision sur une déclaration d'absence, dont `reason`
+            // est le code du motif (SENDER_NO_SHOW...), pas une note.
+            Object note = payload.get("note") != null ? payload.get("note")
+                    : payload.get("decisionReason") != null ? payload.get("decisionReason") : payload.get("reason");
             Object action = payload.get("action");
             // Un avis réintégré dans la moyenne se trace comme une exclusion avec `excluded=false`.
             String detail = action != null ? action.toString()
