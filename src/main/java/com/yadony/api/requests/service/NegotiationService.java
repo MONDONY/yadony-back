@@ -2781,8 +2781,20 @@ public class NegotiationService {
             traveler.isGpPro(),
             senderUser != null && senderUser.isGpPro(),
             t.getCommissionGridId(),
-            travelerCashCommissionEur
+            travelerCashCommissionEur,
+            autoReminderSentAt(t)
         );
+    }
+
+    /**
+     * Le rappel automatique n'est montré que tant qu'il reste d'actualité : un message arrivé
+     * depuis (dernière activité postérieure au rappel) remet le fil en attente d'un nouveau
+     * rappel, l'ancien ne doit plus s'afficher.
+     */
+    static LocalDateTime autoReminderSentAt(NegotiationThreadEntity t) {
+        LocalDateTime sent = t.getAutoReminderAt();
+        return sent != null && t.getLastActivityAt() != null && !sent.isBefore(t.getLastActivityAt())
+            ? sent : null;
     }
 
     /**
