@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.UUID;
@@ -43,17 +44,24 @@ public class RatingContextService {
         this.reportContext = reportContext;
     }
 
-    public AdminRatingContextResponse build(RatingEntity rating) {
+    /**
+     * @param canViewReports l'appelant a {@code REPORT_VIEW} : l'endpoint ne demande que
+     *                       {@code RATING_MODERATE}, et les signalements (motif, nom du signalant) relèvent
+     *                       d'un autre droit ; sans lui ils ne sont pas rendus
+     */
+    public AdminRatingContextResponse build(RatingEntity rating, boolean canViewReports) {
         UUID id = rating.getId();
+        boolean withReports = canViewReports && id != null;
         UUID raterId = rating.getRaterId();
         UUID ratedId = rating.getRatedUserId();
         return new AdminRatingContextResponse(
                 rater(raterId),
                 rated(ratedId),
                 raterId != null && ratedId != null ? ratingRepo.countByRaterIdAndRatedUserId(raterId, ratedId) : 0,
-                id != null ? reportContext.toRelated(
-                        reportRepo.findTop10ByTargetTypeAndTargetIdOrderByCreatedAtDesc(ReportTargetType.RATING, id)) : java.util.List.of(),
-                id != null ? reportRepo.countByTargetTypeAndTargetIdAndStatus(ReportTargetType.RATING, id, ReportStatus.OPEN) : 0,
+                withReports ? reportContext.toRelated(
+                        reportRepo.findTop10ByTargetTypeAndTargetIdOrderByCreatedAtDesc(ReportTargetType.RATING, id)) : List.of(),
+                withReports ? reportRepo.countByTargetTypeAndTargetIdAndStatus(ReportTargetType.RATING, id, ReportStatus.OPEN) : 0,
+                !canViewReports,
                 reportContext.history("RATING", id));
     }
 

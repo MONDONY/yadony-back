@@ -7,6 +7,7 @@ import com.yadony.api.ratings.RatingRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
@@ -26,12 +27,17 @@ public class AdminRatingContextController {
         this.contextService = contextService;
     }
 
-    /** Un avis supprimé reste consultable : la corbeille sert à décider d'une restauration. */
+    /**
+     * Un avis supprimé reste consultable : la corbeille sert à décider d'une restauration. Les
+     * signalements qui visent l'avis relèvent de {@code REPORT_VIEW}, pas de {@code RATING_MODERATE} :
+     * sans ce droit, la réponse les omet et le dit ({@code reportsRestricted}).
+     */
     @GetMapping("/admin/ratings/{id}/context")
-    public ResponseEntity<AdminRatingContextResponse> context(@PathVariable UUID id) {
+    public ResponseEntity<AdminRatingContextResponse> context(@PathVariable UUID id, Authentication authentication) {
         RatingEntity rating = ratingRepo.findByIdIncludingDeleted(id)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "rating-not-found", "Not Found", "Avis introuvable"));
-        return ResponseEntity.ok(contextService.build(rating));
+        boolean canViewReports = ReportActionPolicy.authorities(authentication).contains("REPORT_VIEW");
+        return ResponseEntity.ok(contextService.build(rating, canViewReports));
     }
 }

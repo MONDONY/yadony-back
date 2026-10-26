@@ -28,6 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -77,7 +78,7 @@ class RatingContextServiceTest {
         when(ratingRepo.averageStarsByRaterId(raterId)).thenReturn(1.8333333);
         when(ratingRepo.countByRaterIdAndStarsLessThanEqual(raterId, RatingContextService.LOW_STARS)).thenReturn(10L);
 
-        var rater = service.build(rating(raterId, ratedId)).rater();
+        var rater = service.build(rating(raterId, ratedId), true).rater();
 
         assertThat(rater.userId()).isEqualTo(raterId);
         assertThat(rater.displayName()).isEqualTo("Awa Diallo");
@@ -93,16 +94,16 @@ class RatingContextServiceTest {
         lenient().when(userRepo.findById(ratedId)).thenReturn(Optional.empty());
         when(ratingRepo.averageStarsByRaterId(raterId)).thenReturn(null);
 
-        assertThat(service.build(rating(raterId, ratedId)).rater().averageGiven()).isNull();
+        assertThat(service.build(rating(raterId, ratedId), true).rater().averageGiven()).isNull();
     }
 
     @Test
     void notantAnonymeOuSupprime_null_sansRequete() {
         lenient().when(userRepo.findById(ratedId)).thenReturn(Optional.empty());
-        assertThat(service.build(rating(null, ratedId)).rater()).isNull();
+        assertThat(service.build(rating(null, ratedId), true).rater()).isNull();
 
         when(userRepo.findById(raterId)).thenReturn(Optional.empty());
-        assertThat(service.build(rating(raterId, ratedId)).rater()).isNull();
+        assertThat(service.build(rating(raterId, ratedId), true).rater()).isNull();
         verify(ratingRepo, never()).countByRaterId(raterId);
     }
 
@@ -118,7 +119,7 @@ class RatingContextServiceTest {
         when(ratingRepo.countByRatedUserIdAndExcludedFromAverageTrue(ratedId)).thenReturn(2L);
         when(ratingRepo.countIncludedByStars(ratedId)).thenReturn(List.of(new Object[] {5, 12L}, new Object[] {1, 2L}, new Object[] {4, 4L}));
 
-        var r = service.build(rating(raterId, ratedId)).rated();
+        var r = service.build(rating(raterId, ratedId), true).rated();
 
         assertThat(r.userId()).isEqualTo(ratedId);
         assertThat(r.displayName()).isEqualTo("Moussa Ba");
@@ -133,8 +134,8 @@ class RatingContextServiceTest {
         lenient().when(userRepo.findById(raterId)).thenReturn(Optional.empty());
         when(userRepo.findById(ratedId)).thenReturn(Optional.empty());
 
-        assertThat(service.build(rating(raterId, ratedId)).rated()).isNull();
-        assertThat(service.build(rating(raterId, null)).rated()).isNull();
+        assertThat(service.build(rating(raterId, ratedId), true).rated()).isNull();
+        assertThat(service.build(rating(raterId, null), true).rated()).isNull();
     }
 
     // ---- même relation ----
@@ -145,9 +146,9 @@ class RatingContextServiceTest {
         lenient().when(userRepo.findById(ratedId)).thenReturn(Optional.empty());
         when(ratingRepo.countByRaterIdAndRatedUserId(raterId, ratedId)).thenReturn(3L);
 
-        assertThat(service.build(rating(raterId, ratedId)).sameRelationCount()).isEqualTo(3);
-        assertThat(service.build(rating(null, ratedId)).sameRelationCount()).isZero();
-        assertThat(service.build(rating(raterId, null)).sameRelationCount()).isZero();
+        assertThat(service.build(rating(raterId, ratedId), true).sameRelationCount()).isEqualTo(3);
+        assertThat(service.build(rating(null, ratedId), true).sameRelationCount()).isZero();
+        assertThat(service.build(rating(raterId, null), true).sameRelationCount()).isZero();
     }
 
     // ---- signalements et historique ----
@@ -165,11 +166,33 @@ class RatingContextServiceTest {
         when(reportRepo.countByTargetTypeAndTargetIdAndStatus(ReportTargetType.RATING, ratingId, ReportStatus.OPEN)).thenReturn(1L);
         when(reportContext.history("RATING", ratingId)).thenReturn(history);
 
-        var ctx = service.build(rating(raterId, ratedId));
+        var ctx = service.build(rating(raterId, ratedId), true);
 
         assertThat(ctx.reports()).isSameAs(related);
         assertThat(ctx.openReports()).isEqualTo(1);
         assertThat(ctx.history()).isSameAs(history);
+    }
+
+    @Test
+    void sansREPORT_VIEW_lesSignalementsNeSontNiLusNiRendus_etLaReponseLeDit() {
+        lenient().when(userRepo.findById(raterId)).thenReturn(Optional.empty());
+        lenient().when(userRepo.findById(ratedId)).thenReturn(Optional.empty());
+
+        var ctx = service.build(rating(raterId, ratedId), false);
+
+        assertThat(ctx.reportsRestricted()).isTrue();
+        assertThat(ctx.reports()).isEmpty();
+        assertThat(ctx.openReports()).isZero();
+        verifyNoInteractions(reportRepo);
+        verify(reportContext, never()).toRelated(java.util.List.of());
+    }
+
+    @Test
+    void avecREPORT_VIEW_pasDeRestriction() {
+        lenient().when(userRepo.findById(raterId)).thenReturn(Optional.empty());
+        lenient().when(userRepo.findById(ratedId)).thenReturn(Optional.empty());
+
+        assertThat(service.build(rating(raterId, ratedId), true).reportsRestricted()).isFalse();
     }
 
     @Test
@@ -179,7 +202,7 @@ class RatingContextServiceTest {
         lenient().when(userRepo.findById(ratedId)).thenReturn(Optional.empty());
         when(reportContext.history("RATING", null)).thenReturn(List.of());
 
-        var ctx = service.build(noId);
+        var ctx = service.build(noId, true);
 
         assertThat(ctx.reports()).isEmpty();
         assertThat(ctx.openReports()).isZero();

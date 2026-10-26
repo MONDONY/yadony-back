@@ -17,8 +17,11 @@ import java.util.UUID;
  * @param rater            le notant ; {@code null} pour un avis anonyme (destinataire d'un colis) ou un compte supprimé
  * @param rated            la personne notée ; {@code null} si le compte n'existe plus
  * @param sameRelationCount notes de ce notant à cette personne (celle-ci comprise) ; 0 sans notant ou sans noté
- * @param reports          signalements visant cet avis, du plus récent au plus ancien (10 au plus)
- * @param openReports      dont encore ouverts
+ * @param reports          signalements visant cet avis, du plus récent au plus ancien (10 au plus) ; vide si
+ *                         {@code reportsRestricted}
+ * @param openReports      dont encore ouverts ; 0 si {@code reportsRestricted}
+ * @param reportsRestricted l'appelant modère les avis sans avoir {@code REPORT_VIEW} : les signalements
+ *                         (motif, nom du signalant) lui restent fermés, comme dans l'écran des signalements
  * @param history          gestes tracés sur cet avis, du plus récent au plus ancien
  */
 public record AdminRatingContextResponse(
@@ -27,6 +30,7 @@ public record AdminRatingContextResponse(
         long sameRelationCount,
         List<RelatedReport> reports,
         long openReports,
+        boolean reportsRestricted,
         List<HistoryEntry> history
 ) {
 
