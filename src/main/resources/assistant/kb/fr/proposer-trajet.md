@@ -14,3 +14,4 @@ Vous acceptez d'abord vos engagements de voyageur : transporter le colis vous-m�
 Votre identité doit être vérifiée.
 Renseignez ensuite la ville de départ et d'arrivée, la date, l'heure, le mode de transport, la capacité, le prix, les moyens de paiement acceptés, le lieu de remise et la date limite de dépôt, puis publiez ou enregistrez en brouillon.
 La date limite de dépôt s'affiche à l'heure de la ville de départ. Après elle, plus personne ne peut faire de demande sur votre trajet.
+Une fois le trajet publié, l'écran de confirmation propose « Voir les colis pour ce trajet » : il ouvre l'onglet Rechercher en mode « Je voyage », sur les colis compatibles avec vos trajets. « Voir mon trajet » ouvre son détail et « Partager mon affiche » l'affiche à partager.
