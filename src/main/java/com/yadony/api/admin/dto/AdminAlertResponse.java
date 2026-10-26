@@ -23,7 +23,9 @@ public record AdminAlertResponse(
          * {@code payload.paymentId} s'il existe, sinon l'identifiant en suffixe du type
          * ({@code RECON_STRIPE_<id>}, {@code ESCROW_CAPTURE_FAILED_<id>}…). {@code null} sinon.
          */
-        UUID paymentId
+        UUID paymentId,
+        /** Reportée jusqu'à cette date (UTC) ; absente si l'alerte n'est pas reportée. */
+        OffsetDateTime snoozedUntil
 ) {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -38,7 +40,8 @@ public record AdminAlertResponse(
                 e.isResolved(),
                 e.getResolvedAt(),
                 e.getCreatedAt(),
-                paymentIdOf(e.getType(), payload)
+                paymentIdOf(e.getType(), payload),
+                e.getSnoozedUntil()
         );
     }
 
