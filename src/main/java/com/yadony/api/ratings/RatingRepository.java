@@ -70,6 +70,19 @@ public interface RatingRepository extends JpaRepository<RatingEntity, UUID> {
     /** Notes émises par ce compte — celles qui resteront affichées chez les autres. */
     long countByRaterId(UUID raterId);
 
+    /** Notes émises par ce compte, de {@code stars} étoiles ou moins : un notant qui note presque toujours bas. */
+    long countByRaterIdAndStarsLessThanEqual(UUID raterId, int stars);
+
+    /** Moyenne des notes émises par ce compte ; {@code null} s'il n'en a émis aucune. */
+    @Query("SELECT AVG(r.stars) FROM RatingEntity r WHERE r.raterId = :raterId")
+    Double averageStarsByRaterId(@Param("raterId") UUID raterId);
+
+    /** Notes de ce notant à ce noté (celle en cours comprise) : plusieurs, c'est un acharnement ou un habitué. */
+    long countByRaterIdAndRatedUserId(UUID raterId, UUID ratedUserId);
+
+    /** Avis du compte noté sortis de sa moyenne par l'équipe. */
+    long countByRatedUserIdAndExcludedFromAverageTrue(UUID ratedUserId);
+
     @Query("""
             SELECT r FROM RatingEntity r
             WHERE (:flagged IS NULL OR r.flagged = :flagged)

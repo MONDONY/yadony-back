@@ -87,7 +87,7 @@ public class ReportContextService {
                 subject(subjectUser),
                 readable ? messages(target, subjectUser) : null,
                 isMessage && !canReadConversations,
-                history(report),
+                history("REPORT", report.getId()),
                 related(report),
                 previewBuilder.build(report),
                 sameScreen(report));
@@ -148,12 +148,16 @@ public class ReportContextService {
         }).toList();
     }
 
-    private List<HistoryEntry> history(ReportEntity report) {
-        if (report.getId() == null) {
+    /**
+     * Gestes tracés sur une entité (signalement, avis), du plus récent au plus ancien, avec l'e-mail
+     * du compte admin. Partagé avec le contexte d'un avis.
+     */
+    List<HistoryEntry> history(String entityType, UUID entityId) {
+        if (entityId == null) {
             return List.of();
         }
         List<AuditLogEntity> entries = auditLogRepo
-                .findByEntityTypeAndEntityIdOrderByCreatedAtDescIdDesc("REPORT", report.getId(),
+                .findByEntityTypeAndEntityIdOrderByCreatedAtDescIdDesc(entityType, entityId,
                         PageRequest.of(0, HISTORY_LIMIT))
                 .getContent();
         Set<UUID> actorIds = entries.stream().map(AuditLogEntity::getActorId)
@@ -168,9 +172,12 @@ public class ReportContextService {
             Map<String, Object> payload = e.getPayload() != null ? e.getPayload() : Map.of();
             Object note = payload.get("note") != null ? payload.get("note") : payload.get("reason");
             Object action = payload.get("action");
+            // Un avis réintégré dans la moyenne se trace comme une exclusion avec `excluded=false`.
+            String detail = action != null ? action.toString()
+                    : "false".equals(String.valueOf(payload.get("excluded"))) ? "REINTEGRATED" : null;
             return new HistoryEntry(
                     e.getAction(),
-                    action != null ? action.toString() : null,
+                    detail,
                     e.getCreatedAt(),
                     e.getActorId() != null ? emails.get(e.getActorId()) : null,
                     note != null && !note.toString().isBlank() ? note.toString() : null);
@@ -200,7 +207,8 @@ public class ReportContextService {
                         ReportReason.SCREEN_BUG, route, report.getId())));
     }
 
-    private List<RelatedReport> toRelated(List<ReportEntity> others) {
+    /** Signalements voisins avec le nom de leur signalant ; partagé avec le contexte d'un avis. */
+    List<RelatedReport> toRelated(List<ReportEntity> others) {
         if (others.isEmpty()) {
             return List.of();
         }

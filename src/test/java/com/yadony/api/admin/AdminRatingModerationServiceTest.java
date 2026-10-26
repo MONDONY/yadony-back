@@ -57,7 +57,7 @@ class AdminRatingModerationServiceTest {
         order.verify(ratingRepo).save(r);
         order.verify(ratingService).recalculateAverageRating(ratedUserId);
         order.verify(auditService).log("RATING", ratingId, "RATING_EXCLUDED", adminId,
-                Map.of("ratingId", ratingId.toString(), "reason", "insultes"));
+                Map.of("ratingId", ratingId.toString(), "reason", "insultes", "excluded", "true"));
     }
 
     @Test
@@ -71,8 +71,9 @@ class AdminRatingModerationServiceTest {
 
         assertThat(r.isExcludedFromAverage()).isFalse();
         assertThat(r.getExcludedReason()).isNull();
+        // L'audit distingue la réintégration de l'exclusion.
         verify(auditService).log("RATING", ratingId, "RATING_EXCLUDED", adminId,
-                Map.of("ratingId", ratingId.toString(), "reason", ""));
+                Map.of("ratingId", ratingId.toString(), "reason", "", "excluded", "false"));
     }
 
     @Test
