@@ -61,6 +61,10 @@ public class AdminAlertEntity {
     @Column(name = "resolved_at")
     private OffsetDateTime resolvedAt;
 
+    /** Reportée jusqu'à cette date : cachée de la file « ouvertes » sans être résolue. */
+    @Column(name = "snoozed_until")
+    private OffsetDateTime snoozedUntil;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -90,6 +94,9 @@ public class AdminAlertEntity {
 
     public OffsetDateTime getResolvedAt() { return resolvedAt; }
     public void setResolvedAt(OffsetDateTime resolvedAt) { this.resolvedAt = resolvedAt; }
+
+    public OffsetDateTime getSnoozedUntil() { return snoozedUntil; }
+    public void setSnoozedUntil(OffsetDateTime snoozedUntil) { this.snoozedUntil = snoozedUntil; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
 }
