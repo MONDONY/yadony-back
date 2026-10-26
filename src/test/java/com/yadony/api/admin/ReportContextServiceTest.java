@@ -452,4 +452,16 @@ class ReportContextServiceTest {
 
         assertThat(service.history("CANCELLATION", id).get(0).note()).isEqualTo("Appel resté sans réponse");
     }
+
+    @Test
+    void historiqueDUnTicketSupport_laNouvellePrioriteQualifieLeGeste() {
+        UUID id = UUID.randomUUID();
+        AuditLogEntity changed = new AuditLogEntity();
+        changed.setAction("SUPPORT_TICKET_PRIORITY_CHANGED");
+        changed.setPayload(Map.of("previous", "NORMAL", "priority", "URGENT"));
+        when(auditLogRepo.findByEntityTypeAndEntityIdOrderByCreatedAtDescIdDesc(eq("support_ticket"), eq(id), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(changed)));
+
+        assertThat(service.history("support_ticket", id).get(0).detail()).isEqualTo("URGENT");
+    }
 }

@@ -9,6 +9,7 @@ import com.yadony.api.signalements.ReportEntity;
 import com.yadony.api.signalements.ReportRepository;
 import com.yadony.api.support.SupportAttachmentService;
 import com.yadony.api.support.SupportMessageEntity;
+import com.yadony.api.support.SupportMessagePreview;
 import com.yadony.api.support.SupportTicketEntity;
 import com.yadony.api.support.SupportTicketService;
 import com.yadony.api.support.dto.SupportAttachmentResponse;
@@ -30,6 +31,9 @@ import java.util.stream.Collectors;
  */
 @Component
 public class AdminSupportTicketViews {
+
+    /** Aperçu d'un message sans texte (une image seule). */
+    static final String ATTACHMENT_LABEL = "Pièce jointe";
 
     private final SupportTicketService supportTicketService;
     private final SupportAttachmentService attachmentService;
@@ -66,11 +70,18 @@ public class AdminSupportTicketViews {
         Map<UUID, UserEntity> users = loadUsers(tickets.getContent());
         Map<UUID, String> adminEmails = loadAdminEmails(tickets.getContent());
         Map<UUID, UUID> reports = sourceReports(tickets.getContent());
-        return tickets.map(ticket -> AdminSupportTicketResponse.summary(
-                ticket,
-                users.get(ticket.getUserId()),
-                ticket.getAssignedAdminId() == null ? null : adminEmails.get(ticket.getAssignedAdminId()),
-                reports.get(ticket.getId())));
+        Map<UUID, SupportMessageEntity> last = supportTicketService.lastMessages(
+                tickets.getContent().stream().map(SupportTicketEntity::getId).toList());
+        return tickets.map(ticket -> {
+            SupportMessageEntity message = last.get(ticket.getId());
+            return AdminSupportTicketResponse.summary(
+                    ticket,
+                    users.get(ticket.getUserId()),
+                    ticket.getAssignedAdminId() == null ? null : adminEmails.get(ticket.getAssignedAdminId()),
+                    reports.get(ticket.getId()),
+                    SupportMessagePreview.of(message, ATTACHMENT_LABEL),
+                    message == null ? null : message.getAuthorType().name());
+        });
     }
 
     /** ticketId → reportId, en une requête. */

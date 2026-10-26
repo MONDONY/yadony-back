@@ -174,7 +174,8 @@ public class ReportContextService {
             // est le code du motif (SENDER_NO_SHOW...), pas une note.
             Object note = payload.get("note") != null ? payload.get("note")
                     : payload.get("decisionReason") != null ? payload.get("decisionReason") : payload.get("reason");
-            Object action = payload.get("action");
+            // `priority` : nouvelle priorité d'un ticket support, qui qualifie le geste comme `action` ailleurs.
+            Object action = payload.get("action") != null ? payload.get("action") : payload.get("priority");
             // Un avis réintégré dans la moyenne se trace comme une exclusion avec `excluded=false`.
             String detail = action != null ? action.toString()
                     : "false".equals(String.valueOf(payload.get("excluded"))) ? "REINTEGRATED" : null;

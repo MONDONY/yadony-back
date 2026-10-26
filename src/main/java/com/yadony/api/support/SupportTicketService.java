@@ -297,6 +297,37 @@ public class SupportTicketService {
         return ticket;
     }
 
+    /**
+     * Change la priorité d'un ticket ouvert. Jamais l'utilisateur ne la choisit (voir
+     * {@link SupportPriority}) : elle ordonne la file du support. Un ticket résolu ne bouge plus.
+     */
+    public SupportTicketEntity changePriority(UUID ticketId, SupportPriority priority, UUID adminId) {
+        SupportTicketEntity ticket = requireTicket(ticketId);
+        requireNotResolved(ticket);
+        SupportPriority previous = ticket.getPriority();
+        if (previous == priority) {
+            return ticket;
+        }
+        ticket.setPriority(priority);
+        ticketRepository.save(ticket);
+        auditService.log(AUDIT_ENTITY, ticket.getId(), "SUPPORT_TICKET_PRIORITY_CHANGED", adminId,
+                payload("previous", previous.name(), "priority", priority.name()));
+        return ticket;
+    }
+
+    /** Dernier message de chaque ticket, en une requête (aperçu de la file du support). */
+    @Transactional(readOnly = true)
+    public Map<UUID, SupportMessageEntity> lastMessages(java.util.Collection<UUID> ticketIds) {
+        if (ticketIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, SupportMessageEntity> out = new java.util.HashMap<>();
+        for (SupportMessageEntity m : messageRepository.findLatestOfTickets(ticketIds)) {
+            out.putIfAbsent(m.getTicketId(), m);
+        }
+        return out;
+    }
+
     public SupportMessageEntity adminReply(UUID ticketId, UUID adminId, String content,
                                            List<String> attachmentKeys) {
         SupportTicketEntity ticket = requireTicket(ticketId);

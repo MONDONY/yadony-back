@@ -37,13 +37,19 @@ public record AdminSupportTicketResponse(
         LocalDateTime lastMessageAt,
         LocalDateTime resolvedAt,
         List<SupportMessageResponse> messages,
-        UUID sourceReportId) {
+        UUID sourceReportId,
+        /** Aperçu du dernier message (liste seulement ; absent du détail, qui porte le fil). */
+        String lastMessagePreview,
+        /** Auteur du dernier message : USER ou ADMIN. */
+        String lastMessageAuthor) {
 
     public static AdminSupportTicketResponse summary(SupportTicketEntity ticket,
                                                      UserEntity user,
                                                      String assignedAdminEmail,
-                                                     UUID sourceReportId) {
-        return build(ticket, user, assignedAdminEmail, null, sourceReportId);
+                                                     UUID sourceReportId,
+                                                     String lastMessagePreview,
+                                                     String lastMessageAuthor) {
+        return build(ticket, user, assignedAdminEmail, null, sourceReportId, lastMessagePreview, lastMessageAuthor);
     }
 
     public static AdminSupportTicketResponse withMessages(SupportTicketEntity ticket,
@@ -55,14 +61,16 @@ public record AdminSupportTicketResponse(
         List<SupportMessageResponse> mapped = messages.stream()
                 .map(m -> SupportMessageResponse.from(m, attachMap.getOrDefault(m.getId(), List.of())))
                 .toList();
-        return build(ticket, user, assignedAdminEmail, mapped, sourceReportId);
+        return build(ticket, user, assignedAdminEmail, mapped, sourceReportId, null, null);
     }
 
     private static AdminSupportTicketResponse build(SupportTicketEntity ticket,
                                                     UserEntity user,
                                                     String assignedAdminEmail,
                                                     List<SupportMessageResponse> messages,
-                                                    UUID sourceReportId) {
+                                                    UUID sourceReportId,
+                                                    String lastMessagePreview,
+                                                    String lastMessageAuthor) {
         return new AdminSupportTicketResponse(
                 ticket.getId(),
                 ticket.getCategory(),
@@ -77,7 +85,9 @@ public record AdminSupportTicketResponse(
                 ticket.getLastMessageAt(),
                 ticket.getResolvedAt(),
                 messages,
-                sourceReportId);
+                sourceReportId,
+                lastMessagePreview,
+                lastMessageAuthor);
     }
 
     /**

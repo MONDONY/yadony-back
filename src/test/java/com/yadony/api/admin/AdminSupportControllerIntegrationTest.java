@@ -43,7 +43,9 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -70,6 +72,7 @@ class AdminSupportControllerIntegrationTest {
     @BeforeEach
     void resetData() {
         notificationRepository.deleteAllInBatch();
+        jdbcTemplate.execute("DELETE FROM support_ticket_notes");
         messageRepository.deleteAll();
         ticketRepository.deleteAll();
         userRepository.deleteAll();
@@ -374,6 +377,190 @@ class AdminSupportControllerIntegrationTest {
                 principalOf(admin), null,
                 List.of(new SimpleGrantedAuthority("ROLE_ADMIN"),
                         new SimpleGrantedAuthority("SUPPORT_TICKET_VIEW")));
+    }
+
+    // ------------------------------------------------ lot B : aperçu, priorité, notes, réponses types
+
+    private static UsernamePasswordAuthenticationToken asViewer(AdminUserEntity admin) {
+        return new UsernamePasswordAuthenticationToken(
+                principalOf(admin), null,
+                List.of(new SimpleGrantedAuthority("ROLE_ADMIN"), new SimpleGrantedAuthority("SUPPORT_TICKET_VIEW")));
+    }
+
+    private void persistMessage(SupportTicketEntity ticket, com.yadony.api.support.SupportMessageAuthorType author, String content) {
+        com.yadony.api.support.SupportMessageEntity m = new com.yadony.api.support.SupportMessageEntity();
+        m.setTicketId(ticket.getId());
+        m.setAuthorType(author);
+        m.setAuthorId(author == com.yadony.api.support.SupportMessageAuthorType.USER ? user.getId() : firstAdmin.getId());
+        m.setContent(content);
+        messageRepository.save(m);
+    }
+
+    @Test
+    void list_carriesAPreviewOfTheLastMessageAndItsAuthor() throws Exception {
+        SupportTicketEntity ticket = persistTicket(SupportTicketStatus.NEW, null);
+        persistMessage(ticket, com.yadony.api.support.SupportMessageAuthorType.USER, "Bonjour,\n   mon colis   n'est pas arrivé");
+
+        mockMvc.perform(get("/admin/support/tickets").with(authentication(asAdmin(firstAdmin))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].lastMessagePreview").value("Bonjour, mon colis n'est pas arrivé"))
+                .andExpect(jsonPath("$.content[0].lastMessageAuthor").value("USER"));
+    }
+
+    @Test
+    void list_ofATicketWithoutAnyMessageHasNoPreview() throws Exception {
+        persistTicket(SupportTicketStatus.NEW, null);
+
+        mockMvc.perform(get("/admin/support/tickets").with(authentication(asAdmin(firstAdmin))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].lastMessagePreview").doesNotExist())
+                .andExpect(jsonPath("$.content[0].lastMessageAuthor").doesNotExist());
+    }
+
+    @Test
+    void setPriority_changesItAndTheContextHistoryShowsTheGesture() throws Exception {
+        SupportTicketEntity ticket = persistTicket(SupportTicketStatus.NEW, null);
+
+        mockMvc.perform(post("/admin/support/tickets/" + ticket.getId() + "/priority")
+                        .with(authentication(asAdmin(firstAdmin)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"priority\":\"HIGH\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.priority").value("HIGH"));
+
+        // Le schéma H2 de ces tests ne relit pas les payloads de l'audit : l'historique se vérifie en unitaire
+        // (ReportContextServiceTest) ; ici le geste est bien enregistré et le contexte d'un ticket neuf répond.
+        SupportTicketEntity fresh = persistTicket(SupportTicketStatus.NEW, null);
+        mockMvc.perform(get("/admin/support/tickets/" + fresh.getId() + "/context")
+                        .with(authentication(asViewer(secondAdmin))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.history.length()").value(0))
+                .andExpect(jsonPath("$.notes.length()").value(0));
+    }
+
+    @Test
+    void setPriority_rejectsAnUnknownValue_aResolvedTicket_andAViewer() throws Exception {
+        SupportTicketEntity ticket = persistTicket(SupportTicketStatus.NEW, null);
+        mockMvc.perform(post("/admin/support/tickets/" + ticket.getId() + "/priority")
+                        .with(authentication(asAdmin(firstAdmin)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"priority\":\"COSMIC\"}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post("/admin/support/tickets/" + ticket.getId() + "/priority")
+                        .with(authentication(asViewer(firstAdmin)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"priority\":\"HIGH\"}"))
+                .andExpect(status().isForbidden());
+        SupportTicketEntity resolved = persistTicket(SupportTicketStatus.RESOLVED, firstAdmin.getId());
+        mockMvc.perform(post("/admin/support/tickets/" + resolved.getId() + "/priority")
+                        .with(authentication(asAdmin(firstAdmin)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"priority\":\"HIGH\"}"))
+                .andExpect(status().isUnprocessableEntity());
+    }
+
+    @Test
+    void notes_areAddedAndReadBackWithTheirAuthor_neverShownOnTheUserSide() throws Exception {
+        SupportTicketEntity ticket = persistTicket(SupportTicketStatus.NEW, null);
+
+        mockMvc.perform(post("/admin/support/tickets/" + ticket.getId() + "/notes")
+                        .with(authentication(asAdmin(firstAdmin)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"content\":\"Appel passé, sans réponse\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.adminEmail").value("support-1@yadony.com"))
+                .andExpect(jsonPath("$.content").value("Appel passé, sans réponse"));
+
+        jdbcTemplate.execute("DELETE FROM audit_log");
+        mockMvc.perform(get("/admin/support/tickets/" + ticket.getId() + "/context")
+                        .with(authentication(asViewer(secondAdmin))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.notes.length()").value(1))
+                .andExpect(jsonPath("$.notes[0].content").value("Appel passé, sans réponse"))
+                .andExpect(jsonPath("$.notes[0].adminEmail").value("support-1@yadony.com"));
+
+        // Le détail administrateur n'embarque pas les notes : elles ne voyagent que par /context.
+        mockMvc.perform(get("/admin/support/tickets/" + ticket.getId()).with(authentication(asAdmin(firstAdmin))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.notes").doesNotExist());
+    }
+
+    @Test
+    void notes_rejectTooShort_andRequireTheManagePermission_andAKnownTicket() throws Exception {
+        SupportTicketEntity ticket = persistTicket(SupportTicketStatus.NEW, null);
+        mockMvc.perform(post("/admin/support/tickets/" + ticket.getId() + "/notes")
+                        .with(authentication(asAdmin(firstAdmin)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"content\":\"ab\"}"))
+                .andExpect(status().isUnprocessableEntity());
+        mockMvc.perform(post("/admin/support/tickets/" + ticket.getId() + "/notes")
+                        .with(authentication(asViewer(firstAdmin)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"content\":\"Une vraie note\"}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/admin/support/tickets/" + UUID.randomUUID() + "/context")
+                        .with(authentication(asViewer(firstAdmin))))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/admin/support/tickets/" + ticket.getId() + "/context")
+                        .with(authentication(asAdminWithoutSupportPermissions(firstAdmin))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void replyTemplates_areCreatedUpdatedAndSoftDeleted() throws Exception {
+        // Le schéma H2 de ces tests n'applique pas les migrations : les réponses semées se vérifient sur PostgreSQL
+        // (SupportAdminToolsPersistenceTest). Ici la liste part vide.
+        jdbcTemplate.execute("DELETE FROM support_reply_templates");
+        mockMvc.perform(get("/admin/support/reply-templates").with(authentication(asViewer(firstAdmin))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+
+        String created = mockMvc.perform(post("/admin/support/reply-templates")
+                        .with(authentication(asAdmin(firstAdmin)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"label\":\"Merci\",\"content\":\"Merci de votre patience.\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.sortOrder").value(10))
+                .andReturn().getResponse().getContentAsString();
+        String id = objectMapper.readTree(created).get("id").asText();
+
+        mockMvc.perform(put("/admin/support/reply-templates/" + id)
+                        .with(authentication(asAdmin(firstAdmin)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"label\":\"Merci !\",\"content\":\"Merci beaucoup.\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.label").value("Merci !"));
+
+        mockMvc.perform(delete("/admin/support/reply-templates/" + id).with(authentication(asAdmin(firstAdmin))))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get("/admin/support/reply-templates").with(authentication(asViewer(firstAdmin))))
+                .andExpect(jsonPath("$.length()").value(0));
+        Integer rows = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM support_reply_templates WHERE label = 'Merci !' AND deleted_at IS NOT NULL", Integer.class);
+        assertThat(rows).isEqualTo(1);
+    }
+
+    @Test
+    void replyTemplates_rejectInvalidBodies_andNeedTheManagePermissionToChange() throws Exception {
+        mockMvc.perform(post("/admin/support/reply-templates")
+                        .with(authentication(asAdmin(firstAdmin)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"label\":\"" + "x".repeat(61) + "\",\"content\":\"ok\"}"))
+                .andExpect(status().isUnprocessableEntity());
+        mockMvc.perform(post("/admin/support/reply-templates")
+                        .with(authentication(asAdmin(firstAdmin)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"label\":\"\",\"content\":\"ok\"}"))
+                .andExpect(status().isUnprocessableEntity());
+        mockMvc.perform(post("/admin/support/reply-templates")
+                        .with(authentication(asViewer(firstAdmin)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"label\":\"Merci\",\"content\":\"ok\"}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(delete("/admin/support/reply-templates/" + UUID.randomUUID()).with(authentication(asAdmin(firstAdmin))))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/admin/support/reply-templates").with(authentication(asAdminWithoutSupportPermissions(firstAdmin))))
+                .andExpect(status().isForbidden());
     }
 
     private static UsernamePasswordAuthenticationToken asAdmin(AdminUserEntity admin) {
