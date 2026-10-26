@@ -440,4 +440,16 @@ class ReportContextServiceTest {
         assertThat(history.get(1).note()).isEqualTo("insultes");
         assertThat(service.history("RATING", null)).isEmpty();
     }
+
+    @Test
+    void historiqueDUneDeclarationDAbsence_leMotifInterneEstLaNote_pasLeCodeDuMotif() {
+        UUID id = UUID.randomUUID();
+        AuditLogEntity decided = new AuditLogEntity();
+        decided.setAction("NOSHOW_CONFIRMED");
+        decided.setPayload(Map.of("reason", "SENDER_NO_SHOW", "decisionReason", "Appel resté sans réponse"));
+        when(auditLogRepo.findByEntityTypeAndEntityIdOrderByCreatedAtDescIdDesc(eq("CANCELLATION"), eq(id), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(decided)));
+
+        assertThat(service.history("CANCELLATION", id).get(0).note()).isEqualTo("Appel resté sans réponse");
+    }
 }

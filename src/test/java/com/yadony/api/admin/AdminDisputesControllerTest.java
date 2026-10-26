@@ -44,6 +44,7 @@ class AdminDisputesControllerTest {
     @Mock ApplicationEventPublisher eventPublisher;
 
     @Mock com.yadony.api.matching.BidRepository bidRepo;
+    @Mock com.yadony.api.payments.PaymentRepository paymentRepo;
     @Mock com.yadony.api.payments.split.PaymentSplitService splitService;
     @Mock org.springframework.transaction.PlatformTransactionManager transactionManager;
 
@@ -59,7 +60,7 @@ class AdminDisputesControllerTest {
 
     private AdminDisputesController controller() {
         return new AdminDisputesController(
-                disputeRepo, cancellationRepo, auditService, userRepo, eventPublisher, bidRepo,
+                disputeRepo, cancellationRepo, auditService, userRepo, eventPublisher, bidRepo, paymentRepo,
                 splitService, transactionManager);
     }
 
@@ -555,5 +556,68 @@ class AdminDisputesControllerTest {
         var resolved = controller().splitOptions(id).getBody();
         assertThat(resolved.splittable()).isFalse();
         assertThat(resolved.reasonCode()).isEqualTo("dispute-already-resolved");
+    }
+
+    // ---- montant du colis ----
+
+    private DisputeEntity disputeOn(UUID bidId) {
+        DisputeEntity d = new DisputeEntity();
+        d.setStatus("OPEN");
+        d.setBidId(bidId);
+        return d;
+    }
+
+    @Test
+    void listDisputes_exposesThePaymentAmount_orTheNegotiatedPriceWhenThereIsNoPayment() {
+        UUID paidBid = UUID.randomUUID();
+        UUID unpaidBid = UUID.randomUUID();
+        UUID noAmountBid = UUID.randomUUID();
+        com.yadony.api.payments.PaymentEntity payment = new com.yadony.api.payments.PaymentEntity();
+        payment.setBidId(paidBid);
+        payment.setAmount(new java.math.BigDecimal("38.00"));
+        payment.setCurrency("eur");
+        com.yadony.api.matching.BidEntity unpaid = bidIn("xof");
+        org.springframework.test.util.ReflectionTestUtils.setField(unpaid, "id", unpaidBid);
+        unpaid.setNegotiatedGrossEur(new java.math.BigDecimal("25000"));
+        com.yadony.api.matching.BidEntity noAmount = bidIn("EUR");
+        org.springframework.test.util.ReflectionTestUtils.setField(noAmount, "id", noAmountBid);
+        when(disputeRepo.findAdminFiltered(isNull(), any(Pageable.class))).thenReturn(new PageImpl<>(List.of(
+                disputeOn(paidBid), disputeOn(unpaidBid), disputeOn(noAmountBid), disputeOn(null))));
+        when(paymentRepo.findByBidIdIn(any())).thenReturn(List.of(payment));
+        when(bidRepo.findAllById(any())).thenReturn(List.of(unpaid, noAmount));
+
+        List<AdminDisputeListItemResponse> items = controller().listDisputes(null, 0, 20).getBody().getContent();
+
+        assertThat(items.get(0).amount()).isEqualByComparingTo("38.00");
+        assertThat(items.get(0).currency()).isEqualTo("EUR");
+        assertThat(items.get(1).amount()).isEqualByComparingTo("25000");
+        assertThat(items.get(1).currency()).isEqualTo("XOF");
+        assertThat(items.get(2).amount()).isNull();
+        assertThat(items.get(3).amount()).isNull();
+    }
+
+    @Test
+    void listDisputes_withoutAnyBid_asksNoMoney() {
+        when(disputeRepo.findAdminFiltered(isNull(), any(Pageable.class))).thenReturn(new PageImpl<>(List.of(disputeOn(null))));
+
+        controller().listDisputes(null, 0, 20);
+
+        verifyNoInteractions(paymentRepo);
+    }
+
+    @Test
+    void getDispute_exposesTheAmountOfTheParcel() {
+        UUID id = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        DisputeEntity entity = disputeOn(bidId);
+        com.yadony.api.payments.PaymentEntity payment = new com.yadony.api.payments.PaymentEntity();
+        payment.setBidId(bidId);
+        payment.setAmount(new java.math.BigDecimal("38.00"));
+        payment.setCurrency("EUR");
+        when(disputeRepo.findById(id)).thenReturn(Optional.of(entity));
+        when(paymentRepo.findByBidIdIn(any())).thenReturn(List.of(payment));
+        when(bidRepo.findAllById(any())).thenReturn(List.of());
+
+        assertThat(controller().getDispute(id).getBody().amount()).isEqualByComparingTo("38.00");
     }
 }
