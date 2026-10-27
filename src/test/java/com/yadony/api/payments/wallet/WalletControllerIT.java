@@ -49,7 +49,7 @@ class WalletControllerIT {
     @Autowired WalletTransactionRepository walletTransactionRepository;
     @Autowired WalletRefundRequestItemRepository walletRefundRequestItemRepository;
     @Autowired WalletRefundRequestRepository walletRefundRequestRepository;
-    @Autowired WalletAccountRepository walletAccountRepository;
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean WalletAccountRepository walletAccountRepository;
     @Autowired com.yadony.api.payments.pawapay.PawapayOperationService pawapayOperationService;
     @Autowired com.yadony.api.payments.pawapay.PawapayOperationRepository pawapayOperationRepository;
     @MockBean UserRepository userRepository;
@@ -60,6 +60,21 @@ class WalletControllerIT {
     @Autowired org.springframework.cache.CacheManager cacheManager;
 
     private static final UUID USER_UUID = UUID.randomUUID();
+
+    /**
+     * {@code WalletService#lockWallet} verrouille la ligne via {@code findByUserIdAndCurrencyForUpdate}
+     * ({@code FOR NO KEY UPDATE}), clause PostgreSQL que H2 (profil "test") refuse. Test mono-thread :
+     * on redirige vers la lecture sans verrou, tout le reste du flux (relecture, gel, allocation)
+     * reste réel. Le verrou lui-même est couvert par les IT Postgres (WalletIdempotencyConcurrencyIT,
+     * WalletRefundDebitRaceIT).
+     */
+    @org.junit.jupiter.api.BeforeEach
+    void rowLockUnsupportedOnH2() {
+        org.mockito.Mockito.doAnswer(inv -> walletAccountRepository
+                        .findByUserIdAndCurrency(inv.getArgument(0), inv.getArgument(1)))
+                .when(walletAccountRepository)
+                .findByUserIdAndCurrencyForUpdate(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
     private static final String FIREBASE_UID = "uid-test-wallet";
 
     /**
