@@ -202,6 +202,9 @@ jobs:
           # et le scheduler des alertes prix ne fait rien : rien ne casse au demarrage.
           TRAVELPAYOUTS_TOKEN=${{ secrets.TRAVELPAYOUTS_TOKEN }}
           TRAVELPAYOUTS_MARKER=${{ vars.TRAVELPAYOUTS_MARKER }}
+          # Sonde de cohérence de l'argent : lignes déjà connues par règle (anciennes données de
+          # test), « INV-05=3,INV-07=3 ». Vide = aucune : l'alerte part dès la première ligne.
+          MONEY_INTEGRITY_KNOWN_VIOLATIONS=${{ vars.MONEY_INTEGRITY_KNOWN_VIOLATIONS }}
 
           # Config métier (non sensible) — modifiable dans Settings > Environments > staging > Variables
           # `sandbox` en staging : un événement portant l'autre environnement est ignoré,
