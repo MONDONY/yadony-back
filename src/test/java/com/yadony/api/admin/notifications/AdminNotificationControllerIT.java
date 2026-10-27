@@ -169,10 +169,75 @@ class AdminNotificationControllerIT {
     }
 
     @Test
+    void markRead_204_laNotificationDevientLue_lesAutresRestentNonLues_etRienNEstAuditee() throws Exception {
+        AdminAlertEntity first = new AdminAlertEntity();
+        first.setType("READ_A_" + UUID.randomUUID());
+        alerts.save(first);
+        AdminAlertEntity second = new AdminAlertEntity();
+        second.setType("READ_B_" + UUID.randomUUID());
+        alerts.save(second);
+        String firstId = "ADMIN_ALERT:" + first.getId();
+        String secondId = "ADMIN_ALERT:" + second.getId();
+        long auditBefore = auditRows();
+
+        // Ouvrir le fil ne marque rien.
+        mockMvc.perform(get("/admin/notifications/feed").param("limit", "100").with(authentication(as("ALERT_VIEW"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.readIds.length()").value(0));
+
+        mockMvc.perform(post("/admin/notifications/" + firstId + "/read").with(authentication(as())))
+                .andExpect(status().isNoContent());
+        // Idempotent : un double clic ou un second onglet ne fait pas d'erreur.
+        mockMvc.perform(post("/admin/notifications/" + firstId + "/read").with(authentication(as())))
+                .andExpect(status().isNoContent());
+
+        cacheManager.getCache(AdminNotificationCache.CACHE).clear();
+        mockMvc.perform(get("/admin/notifications/feed").param("limit", "100").with(authentication(as("ALERT_VIEW"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.readIds[?(@ == '" + firstId + "')]").exists())
+                .andExpect(jsonPath("$.readIds[?(@ == '" + secondId + "')]").doesNotExist());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM admin_notification_reads WHERE admin_id = ?",
+                Long.class, admin.getId())).isEqualTo(1L);
+        assertThat(auditRows()).isEqualTo(auditBefore);
+    }
+
+    @Test
+    void markRead_identifiantInvalide_422_surLeProblemDetail() throws Exception {
+        mockMvc.perform(post("/admin/notifications/n-importe-quoi/read").with(authentication(as())))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("notification-id-invalid"));
+        mockMvc.perform(post("/admin/notifications/UNKNOWN_TYPE:" + UUID.randomUUID() + "/read").with(authentication(as())))
+                .andExpect(status().isUnprocessableEntity());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM admin_notification_reads WHERE admin_id = ?",
+                Long.class, admin.getId())).isZero();
+    }
+
+    @Test
+    void markRead_laLectureDUnAdminNeTouchePasLeFilDUnAutre() throws Exception {
+        AdminAlertEntity alert = new AdminAlertEntity();
+        alert.setType("READ_C_" + UUID.randomUUID());
+        alerts.save(alert);
+        String id = "ADMIN_ALERT:" + alert.getId();
+        AdminUserEntity other = adminUsers.save(new AdminUserEntity("uid-bell-" + UUID.randomUUID(),
+                "other-" + UUID.randomUUID() + "@yadony.test", AdminRole.SUPPORT));
+        mockMvc.perform(post("/admin/notifications/" + id + "/read").with(authentication(as())))
+                .andExpect(status().isNoContent());
+
+        AdminUserEntity me = admin;
+        admin = other;
+        cacheManager.getCache(AdminNotificationCache.CACHE).clear();
+        mockMvc.perform(get("/admin/notifications/feed").param("limit", "100").with(authentication(as("ALERT_VIEW"))))
+                .andExpect(jsonPath("$.readIds[?(@ == '" + id + "')]").doesNotExist());
+        admin = me;
+    }
+
+    @Test
     void anonyme_401() throws Exception {
         mockMvc.perform(get("/admin/notifications/feed")).andExpect(status().isUnauthorized());
         mockMvc.perform(get("/admin/notifications/counters")).andExpect(status().isUnauthorized());
         mockMvc.perform(post("/admin/notifications/mark-seen")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/admin/notifications/REPORT_CREATED:" + UUID.randomUUID() + "/read"))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
@@ -182,6 +247,8 @@ class AdminNotificationControllerIT {
         mockMvc.perform(get("/admin/notifications/feed").with(authentication(user))).andExpect(status().isForbidden());
         mockMvc.perform(get("/admin/notifications/counters").with(authentication(user))).andExpect(status().isForbidden());
         mockMvc.perform(post("/admin/notifications/mark-seen").with(authentication(user))).andExpect(status().isForbidden());
+        mockMvc.perform(post("/admin/notifications/REPORT_CREATED:" + UUID.randomUUID() + "/read")
+                .with(authentication(user))).andExpect(status().isForbidden());
     }
 
     @Test

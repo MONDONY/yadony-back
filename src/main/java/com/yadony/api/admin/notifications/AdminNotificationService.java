@@ -3,6 +3,9 @@ package com.yadony.api.admin.notifications;
 import com.yadony.api.admin.account.AdminPermission;
 import com.yadony.api.admin.account.AdminUserRepository;
 import com.yadony.api.admin.metrics.AdminQueueSnapshot;
+import com.yadony.api.common.YadonyBusinessException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
@@ -11,12 +14,14 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * Cloche du panel : fil des nouveautés, compteurs du menu et état lu/non lu par administrateur.
@@ -40,13 +45,19 @@ public class AdminNotificationService {
     private final AdminNotificationQueries queries;
     private final AdminNotificationCache cache;
     private final AdminUserRepository admins;
+    private final AdminNotificationReadRepository reads;
     private Clock clock = Clock.systemUTC();
 
+    /** {@code <TYPE>:<uuid>} : la forme des identifiants du fil (voir {@link AdminNotificationItem}). */
+    private static final Pattern NOTIFICATION_ID = Pattern.compile(
+            "^([A-Z_]{3,40}):[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+
     public AdminNotificationService(AdminNotificationQueries queries, AdminNotificationCache cache,
-                                    AdminUserRepository admins) {
+                                    AdminUserRepository admins, AdminNotificationReadRepository reads) {
         this.queries = queries;
         this.cache = cache;
         this.admins = admins;
+        this.reads = reads;
     }
 
     void setClock(Clock clock) {
@@ -78,8 +89,10 @@ public class AdminNotificationService {
                 .toList();
 
         Instant lastSeen = lastSeen(adminId, now);
-        Unread unread = unread(visible, lastSeen, from);
-        return new AdminNotificationFeedResponse(page, unread.count(), unread.capped(), lastSeen);
+        Set<String> readIds = readIds(adminId, from);
+        Unread unread = unread(visible, lastSeen, from, readIds);
+        List<String> readOnPage = page.stream().map(AdminNotificationItem::id).filter(readIds::contains).toList();
+        return new AdminNotificationFeedResponse(page, unread.count(), unread.capped(), lastSeen, readOnPage);
     }
 
     /**
@@ -111,8 +124,9 @@ public class AdminNotificationService {
             putIf(counts, permissions, AdminPermission.GP_PRO_REVIEW, "gpProReview", q.gpProReview());
         }
         Instant now = clock.instant();
-        Unread unread = unread(AdminNotificationType.visibleTo(permissions), lastSeen(adminId, now),
-                now.minus(AdminNotificationCache.WINDOW));
+        Instant from = now.minus(AdminNotificationCache.WINDOW);
+        Unread unread = unread(AdminNotificationType.visibleTo(permissions), lastSeen(adminId, now), from,
+                readIds(adminId, from));
         return new AdminNotificationCountersResponse(counts, unread.count(), unread.capped());
     }
 
@@ -127,6 +141,39 @@ public class AdminNotificationService {
         admins.advanceNotificationsSeenAt(adminId, LocalDateTime.ofInstant(seen, ZoneOffset.UTC));
     }
 
+    /**
+     * Marque une notification comme lue par cet administrateur. Idempotent : relire une notification
+     * déjà lue ne change rien (deux onglets, double clic). L'identifiant doit avoir la forme et le
+     * type d'une entrée du fil, sans quoi la table se remplirait de texte libre.
+     */
+    public void markRead(UUID adminId, String notificationId) {
+        var matcher = notificationId == null ? null : NOTIFICATION_ID.matcher(notificationId);
+        if (matcher == null || !matcher.matches() || !isKnownType(matcher.group(1))) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "notification-id-invalid",
+                    "Unprocessable Entity", "Identifiant de notification invalide");
+        }
+        if (reads.existsByAdminIdAndNotificationId(adminId, notificationId)) {
+            return;
+        }
+        AdminNotificationReadEntity read = new AdminNotificationReadEntity();
+        read.setAdminId(adminId);
+        read.setNotificationId(notificationId);
+        read.setReadAt(LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC));
+        try {
+            reads.save(read);
+        } catch (DataIntegrityViolationException alreadyRead) {
+            // Un autre appel l'a marquée entre la vérification et l'écriture : même résultat.
+        }
+    }
+
+    private static boolean isKnownType(String name) {
+        return Arrays.stream(AdminNotificationType.values()).anyMatch(t -> t.name().equals(name));
+    }
+
+    private Set<String> readIds(UUID adminId, Instant from) {
+        return reads.findReadIds(adminId, LocalDateTime.ofInstant(from, ZoneOffset.UTC));
+    }
+
     private Instant lastSeen(UUID adminId, Instant now) {
         return admins.findNotificationsSeenAt(adminId)
                 .map(at -> at.toInstant(ZoneOffset.UTC))
@@ -135,13 +182,15 @@ public class AdminNotificationService {
 
     /**
      * Compté sur les entrées en cache ({@link AdminNotificationCache#RECENT_DEPTH} par source) :
-     * une source qui en a davantage dépasse de toute façon le plafond.
+     * une source qui en a davantage dépasse de toute façon le plafond. Non lue = plus récente que
+     * la dernière consultation (« Tout marquer comme lu ») et pas lue individuellement.
      */
-    private Unread unread(List<AdminNotificationType> visible, Instant lastSeen, Instant from) {
+    private Unread unread(List<AdminNotificationType> visible, Instant lastSeen, Instant from, Set<String> readIds) {
         long count = 0;
         for (AdminNotificationType type : visible) {
             count += cache.recent(type).stream()
                     .filter(item -> item.createdAt().isAfter(lastSeen) && !item.createdAt().isBefore(from))
+                    .filter(item -> !readIds.contains(item.id()))
                     .count();
         }
         return new Unread((int) Math.min(count, UNREAD_CAP), count > UNREAD_CAP);

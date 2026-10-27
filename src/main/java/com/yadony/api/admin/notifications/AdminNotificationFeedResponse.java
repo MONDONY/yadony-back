@@ -10,10 +10,13 @@ import java.util.List;
  * @param unreadCapped vrai quand le vrai nombre dépasse le plafond (le front affiche « 99+ »)
  * @param lastSeenAt   seuil effectif du non-lu : la dernière consultation, ou il y a 7 jours
  *                     pour un administrateur qui n'a jamais ouvert la cloche
+ * @param readIds      entrées de cette page que l'administrateur a déjà lues une à une
+ *                     ({@code POST /admin/notifications/{id}/read}) ; absent sur un back plus ancien
  */
 public record AdminNotificationFeedResponse(
         List<AdminNotificationItem> items,
         int unreadCount,
         boolean unreadCapped,
-        Instant lastSeenAt
+        Instant lastSeenAt,
+        List<String> readIds
 ) {}
