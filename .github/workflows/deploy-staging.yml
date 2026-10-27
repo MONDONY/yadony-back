@@ -381,6 +381,15 @@ jobs:
             echo "🚀 Démarrage de TOUS les services (api, db, nginx, monitoring, stripe-cli)..."
             docker compose --env-file .env.staging -f docker-compose.staging.yml up -d --remove-orphans
 
+            echo "📨 Canal Telegram du staging (contactpoints.yaml embarque l'identifiant du canal prod, \$__env{} casse le typage JSON)..."
+            CHAT_ID=$(grep '^TELEGRAM_CHAT_ID=' .env.staging | cut -d= -f2- | tr -d '"')
+            if [ -n "$CHAT_ID" ]; then
+              sed -i "s|chatid: \"[-0-9]*\"|chatid: \"$CHAT_ID\"|" monitoring/grafana/provisioning/alerting/contactpoints.yaml
+            fi
+
+            echo "📊 Redémarrage de Grafana (le provisioning d'alerting n'est lu qu'au démarrage : sans lui, les règles modifiées ne sont jamais chargées)..."
+            docker restart yadony_grafana
+
             echo "🔄 Reload nginx (le bind mount de nginx.staging.conf ne déclenche pas de recreate via 'compose up')..."
             docker exec yadony_nginx nginx -t && docker exec yadony_nginx nginx -s reload
 
