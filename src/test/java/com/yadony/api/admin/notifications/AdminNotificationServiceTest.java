@@ -3,10 +3,12 @@ package com.yadony.api.admin.notifications;
 import com.yadony.api.admin.account.AdminPermission;
 import com.yadony.api.admin.account.AdminUserRepository;
 import com.yadony.api.admin.metrics.AdminQueueSnapshot;
+import com.yadony.api.common.YadonyBusinessException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -25,11 +27,16 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -45,18 +52,20 @@ class AdminNotificationServiceTest {
     @Mock AdminNotificationQueries queries;
     @Mock AdminNotificationCache cache;
     @Mock AdminUserRepository admins;
+    @Mock AdminNotificationReadRepository reads;
 
     private AdminNotificationService service;
 
     @BeforeEach
     void setUp() {
-        service = new AdminNotificationService(queries, cache, admins);
+        service = new AdminNotificationService(queries, cache, admins, reads);
         service.setClock(Clock.fixed(NOW, ZoneOffset.UTC));
         for (AdminNotificationType type : AdminNotificationType.values()) {
             when(cache.recent(type)).thenReturn(List.of());
         }
         when(admins.findNotificationsSeenAt(ADMIN)).thenReturn(Optional.empty());
         when(cache.queues()).thenReturn(snapshot());
+        when(reads.findReadIds(any(), any())).thenReturn(Set.of());
     }
 
     private static AdminNotificationItem item(AdminNotificationType type, Instant at) {
@@ -310,5 +319,119 @@ class AdminNotificationServiceTest {
         service.markSeen(ADMIN, upTo);
 
         verify(admins).advanceNotificationsSeenAt(ADMIN, LocalDateTime.ofInstant(upTo, ZoneOffset.UTC));
+    }
+
+    // ------------------------------------------------- lecture notification par notification
+
+    private void readByAdmin(AdminNotificationItem... items) {
+        when(reads.findReadIds(eq(ADMIN), any())).thenReturn(
+                java.util.Arrays.stream(items).map(AdminNotificationItem::id).collect(java.util.stream.Collectors.toSet()));
+    }
+
+    @Test
+    void feed_uneNotificationLue_neCompteQuePourLesAutres_etSeTrouveDansReadIds() {
+        AdminNotificationItem a = item(AdminNotificationType.REPORT_CREATED, ago(Duration.ofMinutes(5)));
+        AdminNotificationItem b = item(AdminNotificationType.REPORT_CREATED, ago(Duration.ofMinutes(9)));
+        when(cache.recent(AdminNotificationType.REPORT_CREATED)).thenReturn(List.of(a, b));
+        readByAdmin(a);
+
+        AdminNotificationFeedResponse feed = service.feed(ADMIN, all(), null, 30);
+
+        assertThat(feed.items()).containsExactly(a, b);
+        assertThat(feed.unreadCount()).isEqualTo(1);
+        assertThat(feed.readIds()).containsExactly(a.id());
+    }
+
+    @Test
+    void feed_ouvrirLeFilNeMarqueRien() {
+        AdminNotificationItem a = item(AdminNotificationType.REPORT_CREATED, ago(Duration.ofMinutes(5)));
+        when(cache.recent(AdminNotificationType.REPORT_CREATED)).thenReturn(List.of(a));
+
+        service.feed(ADMIN, all(), null, 30);
+        service.feed(ADMIN, all(), null, 30);
+
+        verify(reads, never()).save(any());
+        verify(admins, never()).advanceNotificationsSeenAt(any(), any());
+    }
+
+    @Test
+    void feed_readIdsNeContientQueLesEntreesDeLaPage() {
+        AdminNotificationItem onPage = item(AdminNotificationType.REPORT_CREATED, ago(Duration.ofMinutes(1)));
+        AdminNotificationItem offPage = item(AdminNotificationType.REPORT_CREATED, ago(Duration.ofMinutes(2)));
+        when(cache.recent(AdminNotificationType.REPORT_CREATED)).thenReturn(List.of(onPage, offPage));
+        readByAdmin(onPage, offPage);
+
+        AdminNotificationFeedResponse feed = service.feed(ADMIN, all(), null, 1);
+
+        assertThat(feed.readIds()).containsExactly(onPage.id());
+        assertThat(feed.unreadCount()).isZero();
+    }
+
+    @Test
+    void counters_laPastilleNeCompteplusUneNotificationLue() {
+        AdminNotificationItem a = item(AdminNotificationType.ADMIN_ALERT, ago(Duration.ofMinutes(5)));
+        AdminNotificationItem b = item(AdminNotificationType.ADMIN_ALERT, ago(Duration.ofMinutes(6)));
+        when(cache.recent(AdminNotificationType.ADMIN_ALERT)).thenReturn(List.of(a, b));
+        readByAdmin(b);
+
+        assertThat(service.counters(ADMIN, all()).unreadCount()).isEqualTo(1);
+    }
+
+    @Test
+    void feed_lesLecturesDUnAdminNeTouchentPasLesAutres() {
+        AdminNotificationItem a = item(AdminNotificationType.REPORT_CREATED, ago(Duration.ofMinutes(5)));
+        when(cache.recent(AdminNotificationType.REPORT_CREATED)).thenReturn(List.of(a));
+        when(reads.findReadIds(eq(OTHER_ADMIN), any())).thenReturn(Set.of(a.id()));
+        when(admins.findNotificationsSeenAt(OTHER_ADMIN)).thenReturn(Optional.empty());
+
+        assertThat(service.feed(ADMIN, all(), null, 30).unreadCount()).isEqualTo(1);
+        assertThat(service.feed(OTHER_ADMIN, all(), null, 30).unreadCount()).isZero();
+    }
+
+    @Test
+    void markRead_ecritUneLigne_aLaDateDuServeur() {
+        String id = "REPORT_CREATED:" + UUID.randomUUID();
+
+        service.markRead(ADMIN, id);
+
+        ArgumentCaptor<AdminNotificationReadEntity> saved = ArgumentCaptor.forClass(AdminNotificationReadEntity.class);
+        verify(reads).save(saved.capture());
+        assertThat(saved.getValue().getAdminId()).isEqualTo(ADMIN);
+        assertThat(saved.getValue().getNotificationId()).isEqualTo(id);
+        assertThat(saved.getValue().getReadAt()).isEqualTo(LocalDateTime.ofInstant(NOW, ZoneOffset.UTC));
+    }
+
+    @Test
+    void markRead_dejaLue_neReecritRien() {
+        String id = "ADMIN_ALERT:" + UUID.randomUUID();
+        when(reads.existsByAdminIdAndNotificationId(ADMIN, id)).thenReturn(true);
+
+        service.markRead(ADMIN, id);
+
+        verify(reads, never()).save(any());
+    }
+
+    @Test
+    void markRead_courseAvecUnAutreAppel_resteSilencieux() {
+        String id = "PAYOUT_HELD:" + UUID.randomUUID();
+        doThrow(new DataIntegrityViolationException("uq_admin_notification_reads")).when(reads).save(any());
+
+        service.markRead(ADMIN, id);
+
+        verify(reads).save(any());
+    }
+
+    @Test
+    void markRead_refuseUnIdentifiantQuiNEstPasUneEntreeDuFil() {
+        for (String bad : new String[] {null, "", "n'importe quoi", "REPORT_CREATED:pas-un-uuid",
+                "UNKNOWN_TYPE:" + UUID.randomUUID(), "report_created:" + UUID.randomUUID(),
+                UUID.randomUUID().toString(), "REPORT_CREATED:" + UUID.randomUUID() + "'; DROP TABLE x"}) {
+            assertThatThrownBy(() -> service.markRead(ADMIN, bad))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(e.getErrorCode()).isEqualTo("notification-id-invalid");
+                    });
+        }
+        verify(reads, never()).save(any());
     }
 }

@@ -8,6 +8,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -60,6 +61,14 @@ public class AdminNotificationController {
                                          Authentication authentication) {
         UUID adminId = AdminPrincipal.requireAdminId(authentication);
         service.markSeen(adminId, request == null || request.upTo() == null ? null : request.upTo().toInstant());
+        return ResponseEntity.noContent().build();
+    }
+
+    /** Marque une notification comme lue par l'appelant ; idempotent, sans trace d'audit (comme mark-seen). */
+    @PostMapping("/{id}/read")
+    public ResponseEntity<Void> markRead(@PathVariable String id, Authentication authentication) {
+        UUID adminId = AdminPrincipal.requireAdminId(authentication);
+        service.markRead(adminId, id);
         return ResponseEntity.noContent().build();
     }
 
