@@ -46,13 +46,28 @@ class AuthControllerDeleteAccountIntegrationTest {
 
     @Autowired MockMvc mockMvc;
     @Autowired UserRepository userRepository;
-    @Autowired WalletAccountRepository walletAccountRepository;
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean WalletAccountRepository walletAccountRepository;
     @Autowired WalletTransactionRepository walletTransactionRepository;
     // Frais Stripe réels lus via PaymentIntent.retrieve (appel réseau) : neutralisés ici pour
     // ne jamais dépendre de Stripe en IT (cf. tâche 3, lot 2 « recharge wallet mobile money »).
     @MockBean com.yadony.api.payments.wallet.fees.StripeFeeSource stripeFeeSource;
 
     private static final String FIREBASE_UID = "uid-delete-account-xof-residual";
+
+    /**
+     * {@code WalletService#lockWallet} verrouille la ligne via {@code findByUserIdAndCurrencyForUpdate}
+     * ({@code FOR NO KEY UPDATE}), clause PostgreSQL que H2 (profil "test") refuse. Test mono-thread :
+     * on redirige vers la lecture sans verrou, tout le reste du flux (relecture, gel, allocation)
+     * reste réel. Le verrou lui-même est couvert par les IT Postgres (WalletIdempotencyConcurrencyIT,
+     * WalletRefundDebitRaceIT).
+     */
+    @org.junit.jupiter.api.BeforeEach
+    void rowLockUnsupportedOnH2() {
+        org.mockito.Mockito.doAnswer(inv -> walletAccountRepository
+                        .findByUserIdAndCurrency(inv.getArgument(0), inv.getArgument(1)))
+                .when(walletAccountRepository)
+                .findByUserIdAndCurrencyForUpdate(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
 
     private UserEntity user;
 
