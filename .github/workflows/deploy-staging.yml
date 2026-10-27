@@ -386,6 +386,8 @@ jobs:
             if [ -n "$CHAT_ID" ]; then
               sed -i "s|chatid: \"[-0-9]*\"|chatid: \"$CHAT_ID\"|" monitoring/grafana/provisioning/alerting/contactpoints.yaml
             fi
+            # Le titre des messages porte l'environnement ([prod] dans le fichier commun).
+            sed -i 's|\[prod\]|[staging]|' monitoring/grafana/provisioning/alerting/contactpoints.yaml
 
             echo "📊 Redémarrage de Grafana (le provisioning d'alerting n'est lu qu'au démarrage : sans lui, les règles modifiées ne sont jamais chargées)..."
             docker restart yadony_grafana
