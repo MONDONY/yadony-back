@@ -24,12 +24,26 @@ public record AdminConversationResponse(
          */
         String kind,
         /** Conversation destinataire fermée après un changement de destinataire. */
-        LocalDateTime closedAt
+        LocalDateTime closedAt,
+        /**
+         * Identifiant interne ({@code conversations.id}). C'est LUI que porte {@code target_id} d'un
+         * signalement de message : l'identifiant Firestore ({@code id}) n'y figure jamais.
+         */
+        UUID conversationId,
+        /** Comptes des deux participants (mêmes rôles que {@code participantA}/{@code participantB}). */
+        UUID participantAId,
+        UUID participantBId,
+        /** Signalements ouverts visant un message de cette conversation ; {@code flagged} en dépend. */
+        int openReportCount,
+        /** Aperçu du dernier message, tel que l'app l'écrit dans Firestore ; null s'il est absent. */
+        String lastMessagePreview
 ) {
     public static AdminConversationResponse from(ConversationEntity e,
                                                  String participantAName,
                                                  String travelerName,
-                                                 String lastMessageAt) {
+                                                 String lastMessageAt,
+                                                 String lastMessagePreview,
+                                                 int openReportCount) {
         return new AdminConversationResponse(
                 e.getFirestoreConversationId(),
                 e.getBidId(),
@@ -37,10 +51,15 @@ public record AdminConversationResponse(
                 travelerName,
                 lastMessageAt,
                 0,
-                false,
+                openReportCount > 0,
                 e.getCreatedAt(),
                 e.getKind() != null ? e.getKind().name() : null,
-                e.getClosedAt()
+                e.getClosedAt(),
+                e.getId(),
+                e.participantAId(),
+                e.getTravelerId(),
+                openReportCount,
+                lastMessagePreview
         );
     }
 }

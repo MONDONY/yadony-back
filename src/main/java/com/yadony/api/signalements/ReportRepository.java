@@ -84,6 +84,19 @@ public interface ReportRepository extends JpaRepository<ReportEntity, UUID> {
             @Param("targetType") ReportTargetType targetType,
             @Param("targetIds") java.util.Collection<UUID> targetIds);
 
+    /**
+     * Signalements OUVERTS sur un message, comptés par conversation (lignes {@code [conversations.id,
+     * count]}) : pour une cible MESSAGE, {@code target_id} est l'identifiant interne de la conversation.
+     */
+    @Query("""
+            SELECT r.targetId, COUNT(r) FROM ReportEntity r
+            WHERE r.targetType = com.yadony.api.signalements.ReportTargetType.MESSAGE
+              AND r.status = com.yadony.api.signalements.ReportStatus.OPEN
+              AND r.targetId IN :conversationIds
+            GROUP BY r.targetId
+            """)
+    List<Object[]> countOpenMessageReports(@Param("conversationIds") java.util.Collection<UUID> conversationIds);
+
     /** Signalements (non supprimés) d'une cible, du plus récent au plus ancien. */
     List<ReportEntity> findByTargetTypeAndTargetIdOrderByCreatedAtDesc(ReportTargetType targetType, UUID targetId);
 

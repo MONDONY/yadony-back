@@ -24,6 +24,7 @@ class AdminConversationControllerTest {
     @Mock com.yadony.api.auth.UserRepository userRepository;
     @Mock MessagingImageRepository imageRepository;
     @Mock com.yadony.api.common.StorageService storageService;
+    @Mock com.yadony.api.signalements.ReportRepository reportRepository;
 
     AdminConversationController controller;
 
@@ -40,7 +41,7 @@ class AdminConversationControllerTest {
     void setUp() {
         controller = new AdminConversationController(repo, firestoreService, auditService, userRepository,
                 new com.yadony.api.admin.AdminMessageModerationService(firestoreService, auditService),
-                imageRepository, storageService);
+                imageRepository, storageService, reportRepository);
     }
 
     @Test
@@ -49,7 +50,7 @@ class AdminConversationControllerTest {
         var conv = new ConversationEntity(bidId, UUID.randomUUID(), UUID.randomUUID(), "conv_test");
         when(repo.findByFirestoreConversationId("conv_test")).thenReturn(Optional.of(conv));
 
-        controller.deleteMessage("conv_test", "msg_001", adminAuth());
+        controller.deleteMessage("conv_test", "msg_001", null, adminAuth());
 
         verify(firestoreService).softDeleteMessage("conv_test", "msg_001");
         // L'acteur est l'admin authentifie (AdminPrincipal), jamais null.
@@ -61,7 +62,7 @@ class AdminConversationControllerTest {
         when(repo.findByFirestoreConversationId("conv_unknown")).thenReturn(Optional.empty());
 
         try {
-            controller.deleteMessage("conv_unknown", "msg_001", adminAuth());
+            controller.deleteMessage("conv_unknown", "msg_001", null, adminAuth());
             throw new AssertionError("Expected exception");
         } catch (org.springframework.web.server.ResponseStatusException e) {
             assert e.getStatusCode().value() == 404;
@@ -194,11 +195,156 @@ class AdminConversationControllerTest {
                 () -> controller.getMessages("ghost"));
     }
 
+    // ---- Liste de la modération : signalements ouverts, recherche, aperçu ----
+
+    private static ConversationEntity conversation(UUID internalId, UUID a, UUID b, String firestoreId) {
+        var c = new ConversationEntity(UUID.randomUUID(), a, b, firestoreId);
+        org.springframework.test.util.ReflectionTestUtils.setField(c, "id", internalId);
+        return c;
+    }
+
+    private static org.springframework.data.domain.Page<ConversationEntity> pageOf(ConversationEntity... items) {
+        return new org.springframework.data.domain.PageImpl<>(java.util.List.of(items));
+    }
+
     @Test
-    void listConversations_flaggedTrue_returnsEmptyPage() {
-        var resp = controller.listAllConversations(true, 0, 20);
-        org.assertj.core.api.Assertions.assertThat(resp.getBody().getTotalElements()).isZero();
+    void listConversations_flaggedTrue_filtreSurLesSignalementsOuverts_etPorteLesCompteurs() {
+        UUID internal = UUID.randomUUID();
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+        when(repo.findForModeration(eq(true), eq(false), any(), any())).thenReturn(pageOf(conversation(internal, a, b, "conv_flag")));
+        when(userRepository.findAllById(any())).thenReturn(java.util.List.of(
+                userWithUid(a, "uA", "Aicha", "Diallo"), userWithUid(b, "uB", "Moussa", "Traore")));
+        when(firestoreService.getConversationMeta(any())).thenReturn(java.util.Map.of("conv_flag",
+                java.util.Map.of("lastMessageAt", "2026-10-23T09:52:00Z", "lastMessagePreview", "C'est quoi ce message ?")));
+        when(reportRepository.countOpenMessageReports(any())).thenReturn(java.util.List.<Object[]>of(new Object[] {internal, 2L}));
+
+        var body = controller.listAllConversations(true, null, 0, 20).getBody();
+
+        var only = body.getContent().get(0);
+        org.assertj.core.api.Assertions.assertThat(only.id()).isEqualTo("conv_flag");
+        org.assertj.core.api.Assertions.assertThat(only.conversationId()).isEqualTo(internal);
+        org.assertj.core.api.Assertions.assertThat(only.participantAId()).isEqualTo(a);
+        org.assertj.core.api.Assertions.assertThat(only.participantBId()).isEqualTo(b);
+        org.assertj.core.api.Assertions.assertThat(only.openReportCount()).isEqualTo(2);
+        org.assertj.core.api.Assertions.assertThat(only.flagged()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(only.lastMessagePreview()).isEqualTo("C'est quoi ce message ?");
+        org.assertj.core.api.Assertions.assertThat(only.participantA()).isEqualTo("Aicha Diallo");
+    }
+
+    @Test
+    void listConversations_sansFiltre_pasDeSignalement_pasDApercuQuandFirestoreEstMuet() {
+        UUID internal = UUID.randomUUID();
+        when(repo.findForModeration(eq(false), eq(false), any(), any()))
+                .thenReturn(pageOf(conversation(internal, UUID.randomUUID(), UUID.randomUUID(), "conv_calme")));
+        when(userRepository.findAllById(any())).thenReturn(java.util.List.of());
+        when(firestoreService.getConversationMeta(any())).thenReturn(java.util.Map.of());
+        when(reportRepository.countOpenMessageReports(any())).thenReturn(java.util.List.of());
+
+        var only = controller.listAllConversations(null, null, 0, 20).getBody().getContent().get(0);
+
+        org.assertj.core.api.Assertions.assertThat(only.flagged()).isFalse();
+        org.assertj.core.api.Assertions.assertThat(only.openReportCount()).isZero();
+        org.assertj.core.api.Assertions.assertThat(only.lastMessagePreview()).isNull();
+    }
+
+    @Test
+    void listConversations_aperçuVide_estIgnore() {
+        when(repo.findForModeration(eq(false), eq(false), any(), any()))
+                .thenReturn(pageOf(conversation(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "conv_v")));
+        when(userRepository.findAllById(any())).thenReturn(java.util.List.of());
+        when(firestoreService.getConversationMeta(any())).thenReturn(java.util.Map.of("conv_v",
+                java.util.Map.of("lastMessagePreview", "  ")));
+        when(reportRepository.countOpenMessageReports(any())).thenReturn(java.util.List.of());
+
+        org.assertj.core.api.Assertions.assertThat(
+                controller.listAllConversations(null, null, 0, 20).getBody().getContent().get(0).lastMessagePreview()).isNull();
+    }
+
+    @Test
+    void listConversations_rechercheParNom_restreintAuxComptesTrouves() {
+        UUID matching = UUID.randomUUID();
+        when(userRepository.findIdsByNameLike(eq("%aicha%"), any())).thenReturn(java.util.List.of(matching));
+        when(repo.findForModeration(eq(false), eq(true), eq(java.util.List.of(matching)), any()))
+                .thenReturn(pageOf(conversation(UUID.randomUUID(), matching, UUID.randomUUID(), "conv_s")));
+        when(userRepository.findAllById(any())).thenReturn(java.util.List.of());
+        when(firestoreService.getConversationMeta(any())).thenReturn(java.util.Map.of());
+        when(reportRepository.countOpenMessageReports(any())).thenReturn(java.util.List.of());
+
+        var body = controller.listAllConversations(null, "  Aicha ", 0, 20).getBody();
+
+        org.assertj.core.api.Assertions.assertThat(body.getContent()).hasSize(1);
+    }
+
+    @Test
+    void listConversations_rechercheSansAucunCompte_pageVide_sansLireLesConversations() {
+        when(userRepository.findIdsByNameLike(any(), any())).thenReturn(java.util.List.of());
+
+        var body = controller.listAllConversations(null, "zzz", 0, 20).getBody();
+
+        org.assertj.core.api.Assertions.assertThat(body.getTotalElements()).isZero();
+        verifyNoInteractions(repo);
         verifyNoInteractions(firestoreService);
+    }
+
+    @Test
+    void listConversations_rechercheTropCourte_estIgnoree() {
+        when(repo.findForModeration(eq(false), eq(false), any(), any())).thenReturn(pageOf());
+
+        controller.listAllConversations(null, "a", 0, 20);
+
+        verify(userRepository, never()).findIdsByNameLike(any(), any());
+    }
+
+    @Test
+    void listConversations_taillePlafonnee_pageNegativeRamenee() {
+        var pageable = org.mockito.ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
+        when(repo.findForModeration(anyBoolean(), anyBoolean(), any(), pageable.capture())).thenReturn(pageOf());
+
+        controller.listAllConversations(null, null, -3, 5000);
+
+        org.assertj.core.api.Assertions.assertThat(pageable.getValue().getPageSize()).isEqualTo(100);
+        org.assertj.core.api.Assertions.assertThat(pageable.getValue().getPageNumber()).isZero();
+    }
+
+    @Test
+    void escapeLike_neguiseLesJokers() {
+        org.assertj.core.api.Assertions.assertThat(AdminConversationController.escapeLike("a%b_c\\d"))
+                .isEqualTo("a\\%b\\_c\\\\d");
+    }
+
+    @Test
+    void deleteMessage_leMotifEstGraveDansLAudit_sansEspacesDeBord() {
+        var conv = new ConversationEntity(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "conv_m");
+        when(repo.findByFirestoreConversationId("conv_m")).thenReturn(Optional.of(conv));
+
+        controller.deleteMessage("conv_m", "msg_9", "  propos haineux  ", adminAuth());
+
+        verify(auditService).log(eq("message"), any(), eq("MESSAGE_ADMIN_DELETED"), eq(ADMIN_ID),
+                eq(java.util.Map.of("conversationId", "conv_m", "messageId", "msg_9", "reason", "propos haineux")));
+    }
+
+    @Test
+    void deleteMessage_motifVide_nEstPasGrave() {
+        var conv = new ConversationEntity(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "conv_m");
+        when(repo.findByFirestoreConversationId("conv_m")).thenReturn(Optional.of(conv));
+
+        controller.deleteMessage("conv_m", "msg_9", "   ", adminAuth());
+
+        verify(auditService).log(eq("message"), any(), eq("MESSAGE_ADMIN_DELETED"), eq(ADMIN_ID),
+                eq(java.util.Map.of("conversationId", "conv_m", "messageId", "msg_9")));
+    }
+
+    @Test
+    void deleteMessage_motifTropLong_422_avantToutEffet() {
+        var ex = org.junit.jupiter.api.Assertions.assertThrows(
+                com.yadony.api.common.YadonyBusinessException.class,
+                () -> controller.deleteMessage("conv_m", "msg_9", "x".repeat(501), adminAuth()));
+
+        org.assertj.core.api.Assertions.assertThat(ex.getStatus().value()).isEqualTo(422);
+        org.assertj.core.api.Assertions.assertThat(ex.getErrorCode()).isEqualTo("message-reason-invalid");
+        verifyNoInteractions(firestoreService);
+        verifyNoInteractions(auditService);
     }
 
     // ---- senderId Firestore = UID Firebase (l'app et le back y écrivent users.firebase_uid) ----

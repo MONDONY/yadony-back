@@ -17,6 +17,7 @@ import com.yadony.api.messaging.ConversationRepository;
 import com.yadony.api.messaging.FirestoreService;
 import com.yadony.api.messaging.MessagingImageEntity;
 import com.yadony.api.messaging.MessagingImageRepository;
+import com.yadony.api.signalements.ReportRepository;
 import com.yadony.api.common.StorageService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -48,6 +49,13 @@ public class AdminConversationController {
     private final AdminMessageModerationService messageModeration;
     private final MessagingImageRepository imageRepository;
     private final StorageService storageService;
+    private final ReportRepository reportRepository;
+
+    /** Taille maximale d'une page et nombre de comptes retenus par une recherche de nom. */
+    static final int MAX_PAGE_SIZE = 100;
+    static final int MAX_NAME_MATCHES = 200;
+    static final int MIN_SEARCH_LENGTH = 2;
+    static final int REASON_MAX = 500;
 
     /** Durée de vie des URL signées des photos vues par l'admin (FLUTTER-B4). */
     static final java.time.Duration IMAGE_URL_TTL = java.time.Duration.ofMinutes(15);
@@ -58,7 +66,8 @@ public class AdminConversationController {
                                        UserRepository userRepository,
                                        AdminMessageModerationService messageModeration,
                                        MessagingImageRepository imageRepository,
-                                       StorageService storageService) {
+                                       StorageService storageService,
+                                       ReportRepository reportRepository) {
         this.conversationRepository = conversationRepository;
         this.firestoreService = firestoreService;
         this.auditService = auditService;
@@ -66,24 +75,37 @@ public class AdminConversationController {
         this.messageModeration = messageModeration;
         this.imageRepository = imageRepository;
         this.storageService = storageService;
+        this.reportRepository = reportRepository;
     }
 
+    /**
+     * @param flagged vrai : seulement les conversations qui ont un signalement ouvert sur un message
+     * @param q       nom d'un participant (au moins 2 caractères, sans tenir compte de la casse)
+     */
     @PreAuthorize("hasAuthority('MODERATION_VIEW')")
     @GetMapping
     public ResponseEntity<Page<AdminConversationResponse>> listAllConversations(
             @RequestParam(required = false) Boolean flagged,
+            @RequestParam(required = false) String q,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        // Aucun mecanisme de conversation signalee cote back pour l'instant :
-        // le filtre flagged=true renvoie une page vide plutot que de mentir.
-        if (Boolean.TRUE.equals(flagged)) {
-            return ResponseEntity.ok(Page.empty(PageRequest.of(page, size)));
+        var pageable = PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), MAX_PAGE_SIZE),
+                Sort.by(Sort.Direction.DESC, "createdAt"));
+
+        String search = q == null ? "" : q.strip();
+        boolean filterUsers = search.length() >= MIN_SEARCH_LENGTH;
+        List<UUID> matchingUsers = filterUsers
+                ? userRepository.findIdsByNameLike("%" + escapeLike(search.toLowerCase()) + "%",
+                        PageRequest.of(0, MAX_NAME_MATCHES))
+                : List.of();
+        if (filterUsers && matchingUsers.isEmpty()) {
+            return ResponseEntity.ok(Page.empty(pageable));
         }
+        Page<ConversationEntity> conversations = conversationRepository.findForModeration(
+                Boolean.TRUE.equals(flagged), filterUsers,
+                filterUsers ? matchingUsers : List.of(new UUID(0, 0)), pageable);
 
-        var pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
-        Page<ConversationEntity> conversations = conversationRepository.findAll(pageable);
-
-        // Batch : noms des participants + lastMessageAt Firestore (un seul getAll).
+        // Batch : noms des participants + lastMessageAt Firestore (un seul getAll) + signalements ouverts.
         Set<UUID> userIds = new HashSet<>();
         for (ConversationEntity c : conversations.getContent()) {
             // participantAId : expéditeur ou destinataire selon le type (cf. ConversationEntity).
@@ -98,13 +120,34 @@ public class AdminConversationController {
                         .map(ConversationEntity::getFirestoreConversationId)
                         .filter(Objects::nonNull)
                         .toList());
+        Map<UUID, Integer> openReports = openReportCounts(conversations.getContent());
 
-        Page<AdminConversationResponse> result = conversations.map(c -> AdminConversationResponse.from(
-                c,
-                userName(c.participantAId(), usersById),
-                userName(c.getTravelerId(), usersById),
-                lastMessageAt(meta.get(c.getFirestoreConversationId()))));
+        Page<AdminConversationResponse> result = conversations.map(c -> {
+            Map<String, Object> m = meta.get(c.getFirestoreConversationId());
+            return AdminConversationResponse.from(
+                    c,
+                    userName(c.participantAId(), usersById),
+                    userName(c.getTravelerId(), usersById),
+                    lastMessageAt(m),
+                    lastMessagePreview(m),
+                    openReports.getOrDefault(c.getId(), 0));
+        });
         return ResponseEntity.ok(result);
+    }
+
+    private Map<UUID, Integer> openReportCounts(List<ConversationEntity> conversations) {
+        List<UUID> ids = conversations.stream().map(ConversationEntity::getId).filter(Objects::nonNull).toList();
+        if (ids.isEmpty()) return Map.of();
+        Map<UUID, Integer> counts = new java.util.HashMap<>();
+        for (Object[] row : reportRepository.countOpenMessageReports(ids)) {
+            counts.put((UUID) row[0], ((Number) row[1]).intValue());
+        }
+        return counts;
+    }
+
+    /** Les jokers LIKE saisis par l'administrateur sont des caractères ordinaires. */
+    public static String escapeLike(String s) {
+        return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 
     @PreAuthorize("hasAuthority('MODERATION_VIEW')")
@@ -158,7 +201,13 @@ public class AdminConversationController {
     public ResponseEntity<Void> deleteMessage(
             @PathVariable String conversationId,
             @PathVariable String messageId,
+            @RequestParam(required = false) String reason,
             Authentication authentication) {
+        String note = reason == null ? null : reason.strip();
+        if (note != null && note.length() > REASON_MAX) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "message-reason-invalid",
+                    "Unprocessable Entity", "Le motif ne peut pas dépasser " + REASON_MAX + " caractères");
+        }
         // L'admin authentifié est un AdminPrincipal : l'ancien @AuthenticationPrincipal
         // UserEntity valait toujours null et gravait une trace sans acteur dans audit_log.
         UUID adminId = AdminPrincipal.requireAdminId(authentication);
@@ -167,7 +216,7 @@ public class AdminConversationController {
                 .findByFirestoreConversationId(conversationId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Conversation not found"));
 
-        messageModeration.deleteMessage(conv, messageId, adminId);
+        messageModeration.deleteMessage(conv, messageId, adminId, note);
 
         return ResponseEntity.noContent().build();
     }
@@ -227,6 +276,12 @@ public class AdminConversationController {
         if (SystemMessages.isSystemSender(senderId)) return "Systeme";
         UserEntity u = senders.get(senderId);
         return u != null ? MatchingTextUtil.buildName(u) : null;
+    }
+
+    private static String lastMessagePreview(Map<String, Object> meta) {
+        if (meta == null) return null;
+        Object v = meta.get("lastMessagePreview");
+        return v != null && !v.toString().isBlank() ? v.toString() : null;
     }
 
     private static String lastMessageAt(Map<String, Object> meta) {
