@@ -109,7 +109,13 @@ public class WalletService {
     @Transactional(propagation = Propagation.MANDATORY)
     public BigDecimal getBalanceForUpdate(UUID userId, String currency) {
         return walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, normalize(currency))
-                .map(WalletAccountEntity::getBalance)
+                .map(wallet -> {
+                    // Même piège que lockWallet : l'entité déjà présente dans le cache de premier
+                    // niveau garde un solde périmé. La répartition d'une commission décide « couvert »
+                    // sur ce solde, il doit être celui du verrou.
+                    entityManager.refresh(wallet);
+                    return wallet.getBalance();
+                })
                 .orElse(BigDecimal.ZERO);
     }
 

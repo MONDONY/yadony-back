@@ -88,11 +88,12 @@ class CashCommissionServiceNegotiationTest {
         // existants qui ne touchent pas à la devise restent donc sur le chemin "même
         // devise, pas de conversion".
         lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
+        FixedRateConversions.stubRoundedConversion(exchangeRateService);
         service = new CashCommissionService(props, userRepo, bidRepo, announcementRepo, events,
                 walletService, walletTransactionRepository, auditService, commissionRateResolver,
                 negotiationThreadRepository, stripeCashGateway, bidGridItemRepository, stubbedContacts(),
                 voucherService, activeCurrencyResolver,
-                new WalletCommissionCollector(walletService, exchangeRateService), null,
+                new WalletCommissionCollector(walletService, exchangeRateService, org.mockito.Mockito.mock(com.yadony.api.payments.currency.ExchangeRateFreshness.class)), null,
                 org.mockito.Mockito.mock(com.yadony.api.promo.PromoService.class));
     }
 

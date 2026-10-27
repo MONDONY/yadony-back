@@ -160,7 +160,8 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
         String complement = WalletCommissionCollector.complementCurrency(activeCurrencyResolver,
                 a.getTravelerId(), fundingCurrency);
         BigDecimal commission = a.getCommissionAmount();
-        CommissionSplit split = collector.plan(a.getTravelerId(), bidCurrency, complement, commission);
+        CommissionSplit split = collector.plan(a.getTravelerId(), bidCurrency, complement,
+                WalletCommissionCollector.preferredOrNull(fundingCurrency), commission);
         if (!split.covered()) {
             throw unfunded(a.getTravelerId(), split, bidCurrency, complement, commission);
         }
@@ -173,6 +174,7 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
         if (split.remainingBid().signum() > 0) {
             extra.put("activeCurrency", split.activeCurrency());
         }
+        extra.put("lines", WalletCommissionCollector.auditLines(split));
         ledger.audit(a, "BID_AMENDMENT_COMMISSION_CHARGED_WALLET", a.getTravelerId(), extra);
     }
 

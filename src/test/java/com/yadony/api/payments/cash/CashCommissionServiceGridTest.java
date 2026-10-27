@@ -123,11 +123,12 @@ class CashCommissionServiceGridTest {
         lenient().when(commissionRateResolver.reductionsForBid(any(), any(), any(), isNull(), any())).thenCallRealMethod();
         lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
         lenient().when(commissionGridService.require(GRID_7_6_5.id())).thenReturn(GRID_7_6_5);
+        FixedRateConversions.stubRoundedConversion(exchangeRateService);
         service = new CashCommissionService(props, userRepo, bidRepo, announcementRepo, events,
                 walletService, walletTransactionRepository, auditService, commissionRateResolver,
                 negotiationThreadRepository, stripeCashGateway, bidGridItemRepository, contacts,
                 voucherService, activeCurrencyResolver,
-                new WalletCommissionCollector(walletService, exchangeRateService), TestMessages.resolver(),
+                new WalletCommissionCollector(walletService, exchangeRateService, org.mockito.Mockito.mock(com.yadony.api.payments.currency.ExchangeRateFreshness.class)), TestMessages.resolver(),
                 promoService);
         ReflectionTestUtils.setField(service, "commissionGridService", commissionGridService);
         ReflectionTestUtils.setField(service, "threadCommissionPricing", threadCommissionPricing);

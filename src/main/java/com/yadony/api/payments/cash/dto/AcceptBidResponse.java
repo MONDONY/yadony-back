@@ -25,15 +25,16 @@ public record AcceptBidResponse(
         String currency,
         CommissionShortfallDto breakdown,
         String bidCurrency,
-        List<FundingAlternativeDto> alternatives
+        List<FundingAlternativeDto> alternatives,
+        CommissionFundingDetailDto fundingDetail
 ) {
     public static AcceptBidResponse accepted() {
-        return new AcceptBidResponse(AcceptanceStatusDto.ACCEPTED, null, null, null, null, null, null, null, null, null, null);
+        return new AcceptBidResponse(AcceptanceStatusDto.ACCEPTED, null, null, null, null, null, null, null, null, null, null, null);
     }
 
     public static AcceptBidResponse requires3ds(String clientSecret, String paymentIntentId) {
         return new AcceptBidResponse(AcceptanceStatusDto.REQUIRES_3DS, clientSecret, paymentIntentId, null,
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null);
     }
 
     public static AcceptBidResponse insufficientWallet(BigDecimal availableBalance, BigDecimal requiredCommission,
@@ -51,11 +52,22 @@ public record AcceptBidResponse(
                                                         boolean hasCard, String currency,
                                                         CommissionShortfallDto breakdown, String bidCurrency,
                                                         List<FundingAlternativeDto> alternatives) {
+        return insufficientWallet(availableBalance, requiredCommission, hasCard, currency, breakdown, bidCurrency,
+                alternatives, null);
+    }
+
+    /** Avec le détail par portefeuille (somme de tous les portefeuilles utilisables, motifs d'exclusion). */
+    public static AcceptBidResponse insufficientWallet(BigDecimal availableBalance, BigDecimal requiredCommission,
+                                                        boolean hasCard, String currency,
+                                                        CommissionShortfallDto breakdown, String bidCurrency,
+                                                        List<FundingAlternativeDto> alternatives,
+                                                        CommissionFundingDetailDto fundingDetail) {
         return new AcceptBidResponse(AcceptanceStatusDto.INSUFFICIENT_WALLET, null, null, null,
-                availableBalance, requiredCommission, hasCard, currency, breakdown, bidCurrency, alternatives);
+                availableBalance, requiredCommission, hasCard, currency, breakdown, bidCurrency, alternatives,
+                fundingDetail);
     }
 
     public static AcceptBidResponse failed(String error) {
-        return new AcceptBidResponse(AcceptanceStatusDto.FAILED, null, null, error, null, null, null, null, null, null, null);
+        return new AcceptBidResponse(AcceptanceStatusDto.FAILED, null, null, error, null, null, null, null, null, null, null, null);
     }
 }

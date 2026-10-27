@@ -107,11 +107,12 @@ class CashCommissionServiceTest {
         // touchent pas à la devise restent donc sur le chemin "même devise, pas de
         // conversion" sans avoir à re-mocker ce resolver un par un.
         lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
+        FixedRateConversions.stubRoundedConversion(exchangeRateService);
         service = new CashCommissionService(props, userRepo, bidRepo, announcementRepo, events,
                 walletService, walletTransactionRepository, auditService, commissionRateResolver,
                 negotiationThreadRepository, new StripeCashGatewayImpl(), bidGridItemRepository,
                 stubbedContacts(), voucherService, activeCurrencyResolver,
-                new WalletCommissionCollector(walletService, exchangeRateService), TestMessages.resolver(),
+                new WalletCommissionCollector(walletService, exchangeRateService, org.mockito.Mockito.mock(com.yadony.api.payments.currency.ExchangeRateFreshness.class)), TestMessages.resolver(),
                 promoService);
         service.setClock(Clock.fixed(Instant.parse("2026-06-01T00:00:00Z"), ZoneOffset.UTC));
     }
@@ -1207,13 +1208,40 @@ class CashCommissionServiceTest {
         }
 
         @Test
-        void walletFirstPath_insufficient_listsBidCurrencyAndAlternatives() {
-            // Devise active EUR vide, mais un portefeuille XOF suffisant : la réponse rappelle
-            // la devise du trajet et propose XOF au taux du jour, sans rien prélever.
+        void walletFirstPath_noEuros_aNonActiveXofWalletCoversAlone_acceptsAndDebitsIt() {
+            // Euros vides, devise active EUR, mais 8 000 F CFA (≈ 12,19 €) sur un portefeuille NON actif :
+            // avant, la réponse proposait ce portefeuille en alternative et refusait l'acceptation ;
+            // maintenant il règle la commission de 12,00 € lui-même, converti au taux du jour.
             com.yadony.api.payments.wallet.WalletAccountEntity xof = new com.yadony.api.payments.wallet.WalletAccountEntity();
             xof.setCurrency("XOF");
             xof.setBalance(new BigDecimal("8000"));
             when(walletService.getAllBalances(travelerId)).thenReturn(java.util.List.of(xof));
+            when(walletService.getBalanceForUpdate(travelerId, "XOF")).thenReturn(new BigDecimal("8000"));
+            when(exchangeRateService.convert(new BigDecimal("12.00"), "EUR", "XOF"))
+                    .thenReturn(new BigDecimal("7869"));
+            when(walletTransactionRepository.existsByUserIdAndBidIdAndType(eq(travelerId), any(), any()))
+                    .thenReturn(false);
+
+            AcceptBidResponse resp = service.acceptCashBid(
+                    bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST);
+
+            assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+            assertThat(bid.getCommissionChargedVia()).isEqualTo(CommissionChargedVia.WALLET);
+            verify(walletService).debit(eq(travelerId), eq("XOF"), eq(new BigDecimal("7869")),
+                    eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), eq(bid.getId()),
+                    eq("EUR"), eq(new BigDecimal("12.00")), any());
+            verify(walletService, never()).debit(eq(travelerId), eq("EUR"), any(), any(), any());
+        }
+
+        @Test
+        void walletFirstPath_allWalletsTogetherInsufficient_exposesTheDetailPerWallet_andDebitsNothing() {
+            // Euros vides et 4 000 F CFA (6,098 €, arrondi à 6,09 €) pour 12,00 € : aucun portefeuille ne peut régler le reste,
+            // donc aucune alternative. La réponse détaille chaque portefeuille et ce qui manque.
+            com.yadony.api.payments.wallet.WalletAccountEntity xof = new com.yadony.api.payments.wallet.WalletAccountEntity();
+            xof.setCurrency("XOF");
+            xof.setBalance(new BigDecimal("4000"));
+            when(walletService.getAllBalances(travelerId)).thenReturn(java.util.List.of(xof));
+            when(walletService.getBalanceForUpdate(travelerId, "XOF")).thenReturn(new BigDecimal("4000"));
             when(walletService.getBalance(travelerId, "EUR")).thenReturn(BigDecimal.ZERO);
             when(exchangeRateService.convert(new BigDecimal("12.00"), "EUR", "XOF"))
                     .thenReturn(new BigDecimal("7869"));
@@ -1223,9 +1251,14 @@ class CashCommissionServiceTest {
 
             assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.INSUFFICIENT_WALLET);
             assertThat(resp.bidCurrency()).isEqualTo("EUR");
-            assertThat(resp.alternatives()).hasSize(1);
-            assertThat(resp.alternatives().get(0).currency()).isEqualTo("XOF");
-            assertThat(resp.alternatives().get(0).required()).isEqualByComparingTo("7869");
+            assertThat(resp.alternatives()).isEmpty();
+            assertThat(resp.fundingDetail()).isNotNull();
+            assertThat(resp.fundingDetail().commission()).isEqualByComparingTo("12.00");
+            assertThat(resp.fundingDetail().availableInBid()).isEqualByComparingTo("6.09");
+            assertThat(resp.fundingDetail().shortfallInBid()).isEqualByComparingTo("5.91");
+            assertThat(resp.fundingDetail().wallets())
+                    .extracting(com.yadony.api.payments.cash.CommissionSplit.WalletShare::currency)
+                    .containsExactly("XOF");
             verify(walletService, never()).debit(any(), any(), any(), any(), any());
         }
 

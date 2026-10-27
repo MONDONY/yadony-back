@@ -1,6 +1,7 @@
 package com.yadony.api.payments.cash;
 
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.payments.cash.dto.CommissionFundingDetailDto;
 import com.yadony.api.payments.cash.dto.CommissionShortfallDto;
 import com.yadony.api.payments.cash.dto.FundingAlternativeDto;
 import org.springframework.http.HttpStatus;
@@ -15,7 +16,8 @@ import java.util.Map;
  * portefeuille. Mêmes propriétés que l'{@code INSUFFICIENT_WALLET} de l'acceptation espèces, que l'app lit
  * pour proposer de recharger, de payer par carte ou d'utiliser un autre portefeuille : {@code availableBalance},
  * {@code requiredCommission}, {@code shortfall}, {@code hasCard}, {@code currency} (devise de complément),
- * {@code breakdown} si les devises diffèrent, {@code bidCurrency} et {@code alternatives}.
+ * {@code breakdown} si les devises diffèrent, {@code bidCurrency}, {@code alternatives} et {@code fundingDetail}
+ * (détail de tous les portefeuilles : un 422 signifie que leur SOMME ne couvre pas la commission).
  */
 public final class CommissionUnfundedProblem {
 
@@ -45,6 +47,7 @@ public final class CommissionUnfundedProblem {
         }
         props.put("bidCurrency", bidCurrency);
         props.put("alternatives", alternatives);
+        props.put("fundingDetail", CommissionFundingDetailDto.from(split));
         return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, errorCode, title, detail, props);
     }
 }

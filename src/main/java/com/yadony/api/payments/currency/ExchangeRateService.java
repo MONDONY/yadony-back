@@ -46,6 +46,15 @@ public class ExchangeRateService {
      * est rendu inchange, sans aucun appel a la base.
      */
     public BigDecimal convert(BigDecimal amount, String from, String to) {
+        return convert(amount, from, to, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Comme {@link #convert(BigDecimal, String, String)} avec un mode d'arrondi choisi par l'appelant.
+     * {@link RoundingMode#DOWN} sert à évaluer ce qu'un solde peut couvrir sans jamais le surestimer
+     * (capacité d'un portefeuille à régler une commission dans une autre devise).
+     */
+    public BigDecimal convert(BigDecimal amount, String from, String to, RoundingMode mode) {
         String normalizedFrom = normalize(from);
         String normalizedTo = normalize(to);
 
@@ -62,7 +71,7 @@ public class ExchangeRateService {
                 : amountInEur.multiply(rateOf(normalizedTo));
 
         int decimals = SupportedCurrency.fromCodeOrDefault(normalizedTo).minorUnit();
-        return converted.setScale(decimals, RoundingMode.HALF_UP);
+        return converted.setScale(decimals, mode);
     }
 
     /**

@@ -114,7 +114,7 @@ class BidAmendmentCashRailTest {
                         e -> assertThat(e.getErrorCode()).isEqualTo("funding-currency-invalid"));
 
         when(activeCurrencyResolver.resolve(traveler.getId())).thenReturn("EUR");
-        when(collector.plan(traveler.getId(), "EUR", "EUR", a.getCommissionAmount())).thenReturn(
+        when(collector.plan(traveler.getId(), "EUR", "EUR", null, a.getCommissionAmount())).thenReturn(
                 new com.yadony.api.payments.cash.CommissionSplit("EUR", a.getCommissionAmount(),
                         a.getCommissionAmount(), BigDecimal.ZERO, "EUR", BigDecimal.ZERO, null, BigDecimal.TEN,
                         BigDecimal.TEN, true, a.getCommissionAmount()));
@@ -177,7 +177,7 @@ class BidAmendmentCashRailTest {
         a.setCommissionAmount(new BigDecimal("3.60"));
         a.setCommissionPaymentIntentId("pi_old2");
         when(activeCurrencyResolver.resolve(traveler.getId())).thenReturn("EUR");
-        when(collector.plan(traveler.getId(), "EUR", "EUR", a.getCommissionAmount())).thenReturn(
+        when(collector.plan(traveler.getId(), "EUR", "EUR", null, a.getCommissionAmount())).thenReturn(
                 new com.yadony.api.payments.cash.CommissionSplit("EUR", a.getCommissionAmount(),
                         a.getCommissionAmount(), BigDecimal.ZERO, "EUR", BigDecimal.ZERO, null, BigDecimal.TEN,
                         BigDecimal.TEN, true, a.getCommissionAmount()));
