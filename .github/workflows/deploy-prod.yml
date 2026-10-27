@@ -301,6 +301,9 @@ jobs:
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker compose -f docker-compose.prod.yml pull api
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            # Grafana ne lit le provisioning d'alerting qu'au démarrage : sans redémarrage, des règles
+            # ajoutées ou modifiées ne sont jamais chargées (staging resté 2 mois sans aucune règle).
+            docker restart yadony_grafana || echo "⚠️ redémarrage de Grafana impossible"
             # Le bind mount de nginx.conf ne déclenche pas de recreate.
             docker exec yadony_nginx nginx -t && docker exec yadony_nginx nginx -s reload
             docker image prune -f

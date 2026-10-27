@@ -183,7 +183,7 @@ services:
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD:-admin}
       GF_SECURITY_ADMIN_USER: admin
-      GF_SERVER_ROOT_URL: http://141.95.41.96:3000
+      GF_SERVER_ROOT_URL: http://92.222.78.78:3000
       GF_INSTALL_PLUGINS: grafana-piechart-panel
       # Lus par les fichiers de provisioning alerting/contactpoints.yaml via $__env{}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
