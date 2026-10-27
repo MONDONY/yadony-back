@@ -14,7 +14,7 @@ import java.sql.Statement;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Rappel automatique d'un fil de négociation : colonne facultative, absente pour les fils existants. */
-class V350NegotiationThreadAutoReminderMigrationTest {
+class V351NegotiationThreadAutoReminderMigrationTest {
 
     private static EmbeddedPostgres postgres;
     private static DataSource dataSource;
@@ -40,10 +40,10 @@ class V350NegotiationThreadAutoReminderMigrationTest {
 
     @Test
     void migrate_addsNullableAutoReminderTimestamp() throws Exception {
-        Flyway baseline = flywayUpTo("349");
+        Flyway baseline = flywayUpTo("350");
         baseline.clean();
         baseline.migrate();
-        flywayUpTo("350").migrate();
+        flywayUpTo("351").migrate();
 
         try (Connection c = dataSource.getConnection(); Statement s = c.createStatement()) {
             ResultSet rs = s.executeQuery("SELECT data_type, is_nullable "
@@ -57,10 +57,10 @@ class V350NegotiationThreadAutoReminderMigrationTest {
 
     @Test
     void migrate_isIdempotent() throws Exception {
-        Flyway baseline = flywayUpTo("349");
+        Flyway baseline = flywayUpTo("350");
         baseline.clean();
         baseline.migrate();
-        flywayUpTo("350").migrate();
+        flywayUpTo("351").migrate();
 
         // Rejouer le DDL ne doit pas échouer (IF NOT EXISTS).
         try (Connection c = dataSource.getConnection(); Statement s = c.createStatement()) {
