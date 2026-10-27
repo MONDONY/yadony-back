@@ -1837,3 +1837,59 @@ Jusqu'à ce correctif, un échec d'envoi Telegram ou un délai dépassé du Geoc
 - [ ] Sentry back prod : aucune nouvelle issue `invalid-object-key`, `bid-not-pending` ou `account-reactivation-denied` en volume (quelques-unes isolées = tentatives ou vieux clients, normal).
 - [ ] Une demande espèces acceptée par le voyageur passe toujours (commission débitée une seule fois) ; une demande annulée par l'expéditeur pendant le 3DS du voyageur est refusée et la commission rendue (Stripe › Paiements › remboursement sur le PaymentIntent de commission).
 - [ ] Ajout d'une photo à une demande d'envoi, à un colis et à un signalement depuis l'app : fonctionne comme avant.
+
+---
+
+## 10. Supervision et alertes (Grafana, Uptime Kuma) — 27/10/2026
+
+> Origine : le 27/10, l'API staging a bouclé 7 h (migration `V350` en double, corrigée par #662) **sans aucune
+> alerte**. Cause : Grafana ne lit le provisioning d'alerting (`monitoring/grafana/provisioning/alerting/`)
+> **qu'au démarrage**. Celui du staging tournait depuis le 20/08 sans redémarrage, la table `alert_rule` était
+> vide. Corrigé sur le staging (#663, #664). **La prod n'a pas été vérifiée ni modifiée.**
+
+### 10.1 Prod : à faire avant ou avec la prochaine mise en production
+
+- [ ] **Vérifier les migrations avant de déployer.** #662 a renuméroté la relance de négociation en `V351`
+      (`V350` reste `support_admin_tools`). Sur la base prod : `SELECT version, description FROM flyway_schema_history
+      WHERE version IN ('350','351');`. Si `350` y est déjà avec la description `negotiation thread auto reminder`,
+      **ne pas déployer** sans décision à froid (historique incohérent avec le dépôt).
+- [ ] **Vérifier que Grafana prod a ses règles** : Grafana (`admin.yadony.com/grafana/`) → Alerting → Alert rules.
+      Il doit y avoir **8 règles** (API injoignable, pic d'erreurs, 5xx, heap, disque, pool DB, latence p95,
+      endpoint surchargé). Liste vide ou ancienne = Grafana jamais redémarré depuis l'ajout des fichiers.
+- [ ] Si la liste est vide : redémarrer le conteneur `yadony_grafana` sur le VPS prod, puis revérifier.
+      Le prochain déploiement prod (`deploy-prod.yml`, #664) le fait désormais tout seul.
+- [ ] **Canal Telegram** : `contactpoints.yaml` embarque l'identifiant du canal prod. Rien à remplacer en prod.
+      Le staging, lui, est remplacé au déploiement par `TELEGRAM_CHAT_ID` de `.env.staging`. Ne jamais copier le
+      fichier du staging en prod.
+- [ ] **Message d'alerte** : le titre porte `[prod]` (ou `[staging]`). Il n'apparaît en prod qu'après le
+      déploiement du `contactpoints.yaml` de #664 puis un redémarrage de Grafana.
+- [ ] **Test en prod sans couper l'API** : Grafana → Alerting → Contact points → Telegram → **Test**. Il vérifie
+      le bot, le canal et le modèle de message. Prévenir l'équipe avant : le canal prod recevra un message.
+- [ ] **Règle disque** : filtre `env=~"prod|staging"` depuis #664. Vérifier que son état est « Normal »
+      et non « No data ».
+- [ ] **Lien « Voir dans Grafana »** : en prod `GF_SERVER_ROOT_URL` vaut `%(protocol)s://%(domain)s/grafana/`,
+      le lien du message doit ouvrir `admin.yadony.com/grafana/...`. À vérifier sur la première alerte reçue.
+- [ ] **Uptime Kuma prod** : confirmer qu'un compte admin existe et qu'au moins une sonde HTTP sur
+      `/api/v1/actuator/health` envoie sur le canal prod.
+
+### 10.2 À savoir en exploitation
+
+- Une alerte « API injoignable » part environ **2 min 30 après la panne** (règle `for: 2m` + attente de groupe).
+- Le message « 🟢 RÉSOLU » arrive **jusqu'à 5 à 6 min après le retour de l'API** (`group_interval: 5m`). Normal.
+- **Ne pas redémarrer Grafana pendant une alerte en cours** : la notification « RÉSOLU » en attente est perdue
+  (constaté le 27/10 sur le staging).
+- Grafana n'alerte pas si **tout le serveur** s'arrête (il s'arrête avec lui). Seule une sonde externe
+  couvre ce cas.
+- `MigrationVersionsUniqueTest` échoue en CI si deux migrations ont la même version.
+
+### 10.3 Staging : reste à faire (non terminé)
+
+- [ ] **Uptime Kuma staging** : créer le compte admin, puis une sonde HTTP sur l'URL de santé de l'API staging,
+      une sonde TCP sur le port 443, et la notification Telegram du canal staging (« Default enabled »).
+- [ ] **Ne plus publier Grafana et Uptime Kuma directement sur Internet** : les passer derrière nginx comme en
+      prod, ou les lier à `127.0.0.1` avec accès par tunnel SSH.
+- [ ] Une alerte traîne dans le canal staging : événements `payment_intent.succeeded` en échec (`max_retry=8`,
+      le plus ancien du 07/08). Vérifier en base staging s'ils sont à purger.
+- [ ] Optionnel : règles « base de données injoignable » et « nginx injoignable » (seule l'API a aujourd'hui
+      sa règle d'indisponibilité).
+
