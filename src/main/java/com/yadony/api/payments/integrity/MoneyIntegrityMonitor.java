@@ -52,6 +52,8 @@ public class MoneyIntegrityMonitor {
     private final TransactionTemplate readOnlyTransaction;
     private final AdminAlertEscalator alertEscalator;
     private final boolean enabled;
+    /** Lignes déjà connues par règle (ex. données de test anciennes) : l'alerte ne part qu'au-delà. */
+    private final Map<String, Long> knownViolations;
     private final Map<String, AtomicLong> levels = new ConcurrentHashMap<>();
     private final Map<String, Long> lastCounts = new ConcurrentHashMap<>();
 
@@ -59,10 +61,12 @@ public class MoneyIntegrityMonitor {
                                  PlatformTransactionManager transactionManager,
                                  AdminAlertEscalator alertEscalator,
                                  MeterRegistry meterRegistry,
-                                 @Value("${yadony.money-integrity.enabled:true}") boolean enabled) {
+                                 @Value("${yadony.money-integrity.enabled:true}") boolean enabled,
+                                 @Value("${yadony.money-integrity.known-violations:}") String knownViolations) {
         this.jdbcTemplate = jdbcTemplate;
         this.alertEscalator = alertEscalator;
         this.enabled = enabled;
+        this.knownViolations = parseKnownViolations(knownViolations);
         this.readOnlyTransaction = new TransactionTemplate(transactionManager);
         this.readOnlyTransaction.setReadOnly(true);
         this.readOnlyTransaction.setTimeout(QUERY_TIMEOUT_SECONDS);
@@ -103,13 +107,38 @@ public class MoneyIntegrityMonitor {
             long violations = count == null ? 0 : count;
             counts.put(invariant.code(), violations);
             levels.get(invariant.code()).set(violations);
-            long previous = lastCounts.getOrDefault(invariant.code(), 0L);
+            long previous = Math.max(lastCounts.getOrDefault(invariant.code(), 0L),
+                    knownViolations.getOrDefault(invariant.code(), 0L));
             lastCounts.put(invariant.code(), violations);
             if (violations > previous) {
                 raise(invariant, violations, previous);
             }
         }
         return counts;
+    }
+
+    /**
+     * Lit {@code INV-05=3,INV-07=3} : le nombre de lignes déjà connues par règle. Les espaces sont
+     * tolérés, une entrée mal formée est ignorée (jamais de démarrage en échec pour une variable
+     * d'environnement). Vide : aucune ligne connue, comportement habituel.
+     */
+    static Map<String, Long> parseKnownViolations(String raw) {
+        Map<String, Long> known = new LinkedHashMap<>();
+        if (raw == null || raw.isBlank()) {
+            return known;
+        }
+        for (String entry : raw.split(",")) {
+            String[] parts = entry.split("=", 2);
+            if (parts.length != 2 || parts[0].isBlank()) {
+                continue;
+            }
+            try {
+                known.put(parts[0].trim(), Long.parseLong(parts[1].trim()));
+            } catch (NumberFormatException e) {
+                log.warn("Ligne connue ignorée pour la règle {} : valeur non numérique", parts[0].trim());
+            }
+        }
+        return known;
     }
 
     private void raise(MoneyInvariant invariant, long violations, long previous) {

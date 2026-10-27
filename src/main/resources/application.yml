@@ -221,6 +221,9 @@ yadony:
   money-integrity:
     enabled: ${MONEY_INTEGRITY_ENABLED:true}
     cron: "0 */15 * * * *"
+    # Lignes déjà connues par règle, « INV-05=3,INV-07=3 » : l'alerte ne part qu'au-delà (vieilles
+    # données de test de la staging, remontées au premier passage). La jauge garde le vrai compte.
+    known-violations: ${MONEY_INTEGRITY_KNOWN_VIOLATIONS:}
   # Rapprochement quotidien avec Stripe et pawaPay (ProviderReconciliationJob) : alerte
   # RECON_<PRESTATAIRE>_<référence> par écart, jauges yadony_reconciliation_*.
   reconciliation:

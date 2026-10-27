@@ -31,8 +31,12 @@ class MoneyIntegrityMonitorTest {
     private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
 
     private MoneyIntegrityMonitor monitor(boolean enabled) {
+        return monitor(enabled, "");
+    }
+
+    private MoneyIntegrityMonitor monitor(boolean enabled, String knownViolations) {
         return new MoneyIntegrityMonitor(jdbcTemplate, mock(PlatformTransactionManager.class),
-                alertEscalator, registry, enabled);
+                alertEscalator, registry, enabled, knownViolations);
     }
 
     @Test
@@ -113,5 +117,53 @@ class MoneyIntegrityMonitorTest {
         assertThat(inspection.title()).isEqualTo(MoneyInvariants.ALL.get(0).title());
         verify(jdbcTemplate).queryForList(contains("LIMIT " + MoneyIntegrityMonitor.MAX_INSPECT_ROWS));
         assertThat(monitor(true).inspect("INV-404", 10)).isEmpty();
+    }
+
+    @Test
+    void desLignesDejaConnuesNeLevantPasLAlerteMaisLaJaugeDitLaVerite() {
+        String inv05 = MoneyInvariants.ALL.get(4).sql();
+        when(jdbcTemplate.queryForObject(anyString(), eq(Long.class))).thenReturn(0L);
+        when(jdbcTemplate.queryForObject(contains(inv05), eq(Long.class))).thenReturn(3L);
+
+        monitor(true, "INV-05=3").runAll();
+
+        verify(alertEscalator, never()).raiseOnce(anyString(), anyString(), anyString(), anyMap());
+        assertThat(registry.get("yadony.money.invariant.violations").tag("invariant", "INV-05").gauge().value())
+                .isEqualTo(3.0);
+    }
+
+    @Test
+    void uneLigneDeTropAuDelaDuSeuilConnuLeveLAlerte() {
+        String inv05 = MoneyInvariants.ALL.get(4).sql();
+        when(jdbcTemplate.queryForObject(anyString(), eq(Long.class))).thenReturn(0L);
+        when(jdbcTemplate.queryForObject(contains(inv05), eq(Long.class))).thenReturn(4L);
+
+        monitor(true, "INV-05=3").runAll();
+
+        verify(alertEscalator).raiseOnce(eq("MONEY_INVARIANT_INV-05"), eq("CRITICAL"), contains("4 ligne(s)"),
+                anyMap());
+    }
+
+    @Test
+    void leSeuilConnuDeLUneNeCouvrePasLesAutresRegles() {
+        String inv07 = MoneyInvariants.ALL.get(6).sql();
+        when(jdbcTemplate.queryForObject(anyString(), eq(Long.class))).thenReturn(0L);
+        when(jdbcTemplate.queryForObject(contains(inv07), eq(Long.class))).thenReturn(1L);
+
+        monitor(true, "INV-05=3").runAll();
+
+        verify(alertEscalator).raiseOnce(eq("MONEY_INVARIANT_INV-07"), eq("CRITICAL"), contains("1 ligne(s)"),
+                anyMap());
+    }
+
+    @Test
+    void laListeDesLignesConnuesTolereLesEspacesEtIgnoreLesEntreesMalFormees() {
+        String inv05 = MoneyInvariants.ALL.get(4).sql();
+        when(jdbcTemplate.queryForObject(anyString(), eq(Long.class))).thenReturn(0L);
+        when(jdbcTemplate.queryForObject(contains(inv05), eq(Long.class))).thenReturn(2L);
+
+        monitor(true, " INV-05 = 2 , n'importe quoi, INV-07=abc, =5 ").runAll();
+
+        verify(alertEscalator, never()).raiseOnce(anyString(), anyString(), anyString(), anyMap());
     }
 }
