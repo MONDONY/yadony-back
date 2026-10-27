@@ -29,13 +29,14 @@ class WalletServiceTest {
     @Mock WalletTransactionRepository walletTransactionRepository;
     @Mock WalletRefundRequestRepository walletRefundRequestRepository;
     @Mock AuditService auditService;
+    @Mock jakarta.persistence.EntityManager entityManager;
 
     WalletService walletService;
 
     @BeforeEach
     void setUp() {
         walletService = new WalletService(walletAccountRepository, walletTransactionRepository,
-                walletRefundRequestRepository, auditService);
+                walletRefundRequestRepository, auditService, entityManager);
     }
 
     @Test
@@ -115,6 +116,7 @@ class WalletServiceTest {
         when(walletAccountRepository.findByUserIdAndCurrency(userId, "EUR")).thenReturn(Optional.of(eur));
         when(walletAccountRepository.findByUserIdAndCurrency(userId, "CAD")).thenReturn(Optional.of(cad));
         when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR")).thenReturn(Optional.of(eur));
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "CAD")).thenReturn(Optional.of(cad));
         when(walletAccountRepository.findAllByUserId(userId)).thenReturn(List.of(eur, cad));
         when(walletAccountRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(walletTransactionRepository.findByIdempotencyKey(anyString())).thenReturn(Optional.empty());
@@ -166,7 +168,7 @@ class WalletServiceTest {
     void credit_increasesBalanceAndLogsCurrencyOnTransaction() {
         UUID userId = UUID.randomUUID();
         WalletAccountEntity wallet = wallet(userId, "EUR", new BigDecimal("10.00"));
-        when(walletAccountRepository.findByUserIdAndCurrency(userId, "EUR")).thenReturn(Optional.of(wallet));
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR")).thenReturn(Optional.of(wallet));
         when(walletAccountRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(walletTransactionRepository.findByIdempotencyKey(anyString())).thenReturn(Optional.empty());
         when(walletTransactionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -188,7 +190,7 @@ class WalletServiceTest {
         UUID userId = UUID.randomUUID();
         UUID bidId = UUID.randomUUID();
         WalletAccountEntity wallet = wallet(userId, "EUR", new BigDecimal("10.00"));
-        when(walletAccountRepository.findByUserIdAndCurrency(userId, "EUR")).thenReturn(Optional.of(wallet));
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR")).thenReturn(Optional.of(wallet));
         when(walletAccountRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(walletTransactionRepository.findByIdempotencyKey(anyString())).thenReturn(Optional.empty());
         when(walletTransactionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -207,13 +209,18 @@ class WalletServiceTest {
     @Test
     void credit_idempotent_doesNothingIfKeyAlreadyProcessed() {
         UUID userId = UUID.randomUUID();
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR"))
+                .thenReturn(Optional.of(wallet(userId, "EUR", new BigDecimal("10.00"))));
         when(walletTransactionRepository.findByIdempotencyKey("idem-001"))
                 .thenReturn(Optional.of(new WalletTransactionEntity()));
 
         walletService.credit(userId, "EUR", new BigDecimal("50.00"),
                 WalletTransactionType.TOP_UP, "pi_123", "idem-001");
 
+        // Le verrou est pris AVANT le test de clé : deux appels de même clé sont sérialisés.
+        verify(walletAccountRepository).findByUserIdAndCurrencyForUpdate(userId, "EUR");
         verify(walletAccountRepository, never()).save(any());
+        verify(walletTransactionRepository, never()).save(any());
     }
 
     @Test
@@ -258,8 +265,9 @@ class WalletServiceTest {
     @Test
     void debit_createsRequestedCurrencyWalletWhenMissing_thenThrowsInsufficient() {
         UUID userId = UUID.randomUUID();
-        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "CAD")).thenReturn(Optional.empty());
-        when(walletAccountRepository.findByUserIdAndCurrency(userId, "CAD"))
+        // Absent au premier passage, créé par INSERT ... ON CONFLICT DO NOTHING, puis repris par
+        // la requête verrouillée (l'INSERT ne pose pas le verrou si un concurrent l'a créé).
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "CAD"))
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(wallet(userId, "CAD", BigDecimal.ZERO)));
 
@@ -297,13 +305,16 @@ class WalletServiceTest {
     @Test
     void debitWithPaymentRef_idempotentSkipWhenKeyExists() {
         UUID userId = UUID.randomUUID();
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR"))
+                .thenReturn(Optional.of(wallet(userId, "EUR", new BigDecimal("50.00"))));
         when(walletTransactionRepository.findByIdempotencyKey("dup-key"))
                 .thenReturn(Optional.of(new WalletTransactionEntity()));
 
         walletService.debit(userId, "EUR", new BigDecimal("12.00"),
                 WalletTransactionType.COMMISSION_DEDUCTED, "thread-1", "dup-key");
 
-        verify(walletAccountRepository, never()).findByUserIdAndCurrencyForUpdate(any(), anyString());
+        // Verrou pris avant le test de clé (sérialise deux appels de même clé), sans écriture.
+        verify(walletAccountRepository).findByUserIdAndCurrencyForUpdate(userId, "EUR");
         verify(walletAccountRepository, never()).save(any());
         verify(walletTransactionRepository, never()).save(any());
     }
@@ -328,7 +339,7 @@ class WalletServiceTest {
         UUID userId = UUID.randomUUID();
         WalletAccountEntity eur = wallet(userId, "EUR", BigDecimal.ZERO);
         eur.setRefundEligibleAmount(new BigDecimal("7.00"));
-        when(walletAccountRepository.findByUserIdAndCurrency(userId, "EUR")).thenReturn(Optional.of(eur));
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR")).thenReturn(Optional.of(eur));
         when(walletAccountRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(walletTransactionRepository.findByIdempotencyKey(anyString())).thenReturn(Optional.empty());
         when(walletTransactionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -361,6 +372,8 @@ class WalletServiceTest {
     @Test
     void debit_throwsWhenRefundRequestPendingOnCurrency() {
         UUID userId = UUID.randomUUID();
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR"))
+                .thenReturn(Optional.of(wallet(userId, "EUR", new BigDecimal("50.00"))));
         when(walletRefundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(
                 eq(userId), eq("EUR"), anyList())).thenReturn(true);
 
@@ -369,7 +382,10 @@ class WalletServiceTest {
 
         assertThat(thrown).isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", "wallet-refund-pending");
-        verify(walletAccountRepository, never()).findByUserIdAndCurrencyForUpdate(any(), any());
+        // Le gel est testé APRÈS le verrou : une demande de remboursement qui prend le verrou en
+        // premier doit être vue par un débit déjà en file derrière elle.
+        verify(walletAccountRepository).findByUserIdAndCurrencyForUpdate(userId, "EUR");
+        verify(walletAccountRepository, never()).save(any());
     }
 
     @Test
@@ -487,7 +503,7 @@ class WalletServiceTest {
         wallet.setUserId(userId);
         wallet.setCurrency("EUR");
         wallet.setBalance(BigDecimal.ZERO);
-        when(walletAccountRepository.findByUserIdAndCurrency(userId, "EUR"))
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR"))
                 .thenReturn(Optional.of(wallet));
         when(walletAccountRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(walletTransactionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -607,13 +623,16 @@ class WalletServiceTest {
     @Test
     void debitBidEtCle_cleDejaVue_aucunEffet() {
         UUID userId = UUID.randomUUID();
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR"))
+                .thenReturn(Optional.of(wallet(userId, "EUR", new BigDecimal("50.00"))));
         when(walletTransactionRepository.findByIdempotencyKey("supplement-commission-s3"))
                 .thenReturn(Optional.of(new WalletTransactionEntity()));
 
         walletService.debit(userId, "EUR", BigDecimal.ONE, WalletTransactionType.SUPPLEMENT_COMMISSION_DEDUCTED,
                 UUID.randomUUID(), "supplement-s3", "supplement-commission-s3", null, null, null);
 
-        verify(walletAccountRepository, never()).findByUserIdAndCurrencyForUpdate(any(), any());
+        verify(walletAccountRepository).findByUserIdAndCurrencyForUpdate(userId, "EUR");
+        verify(walletAccountRepository, never()).save(any());
         verify(walletTransactionRepository, never()).save(any());
     }
 
@@ -636,6 +655,8 @@ class WalletServiceTest {
     @Test
     void debitBidEtCle_deviseGelee_422() {
         UUID userId = UUID.randomUUID();
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR"))
+                .thenReturn(Optional.of(wallet(userId, "EUR", new BigDecimal("50.00"))));
         when(walletTransactionRepository.findByIdempotencyKey("k5")).thenReturn(Optional.empty());
         when(walletRefundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(eq(userId), eq("EUR"), anyList()))
                 .thenReturn(true);
@@ -646,5 +667,32 @@ class WalletServiceTest {
 
         assertThat(thrown).isInstanceOf(com.yadony.api.common.YadonyBusinessException.class);
         verify(walletTransactionRepository, never()).save(any());
+    }
+
+    @Test
+    void lockWallet_relitLEtatDeLaLigneUneFoisLeVerrouAcquis() {
+        UUID userId = UUID.randomUUID();
+        WalletAccountEntity wallet = wallet(userId, "EUR", new BigDecimal("10.00"));
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR")).thenReturn(Optional.of(wallet));
+
+        WalletAccountEntity locked = walletService.lockWallet(userId, "eur");
+
+        // Sans refresh, l'entité déjà présente dans le cache de premier niveau garde un solde périmé
+        // et l'UPDATE écrase un mouvement commité entre-temps (grand livre et solde divergent).
+        assertThat(locked).isSameAs(wallet);
+        verify(entityManager).refresh(wallet);
+        verify(walletAccountRepository, never()).insertIfAbsent(any(), any(), any());
+    }
+
+    @Test
+    void lockWallet_echoueFrancSiLaLigneResteIntrouvableApresCreation() {
+        UUID userId = UUID.randomUUID();
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "XOF")).thenReturn(Optional.empty());
+
+        Throwable thrown = catchThrowable(() -> walletService.lockWallet(userId, "XOF"));
+
+        assertThat(thrown).isInstanceOf(IllegalStateException.class);
+        verify(walletAccountRepository).insertIfAbsent(any(UUID.class), eq(userId), eq("XOF"));
+        verify(entityManager, never()).refresh(any());
     }
 }

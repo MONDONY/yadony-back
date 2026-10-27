@@ -3,6 +3,7 @@ package com.yadony.api.payments.wallet;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
+import jakarta.persistence.EntityManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
@@ -12,6 +13,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -28,15 +30,18 @@ public class WalletService {
     private final WalletTransactionRepository walletTransactionRepository;
     private final WalletRefundRequestRepository walletRefundRequestRepository;
     private final AuditService auditService;
+    private final EntityManager entityManager;
 
     public WalletService(WalletAccountRepository walletAccountRepository,
                          WalletTransactionRepository walletTransactionRepository,
                          WalletRefundRequestRepository walletRefundRequestRepository,
-                         AuditService auditService) {
+                         AuditService auditService,
+                         EntityManager entityManager) {
         this.walletAccountRepository = walletAccountRepository;
         this.walletTransactionRepository = walletTransactionRepository;
         this.walletRefundRequestRepository = walletRefundRequestRepository;
         this.auditService = auditService;
+        this.entityManager = entityManager;
     }
 
     private static final List<WalletRefundRequestStatus> FREEZING_STATUSES =
@@ -156,21 +161,15 @@ public class WalletService {
      */
     public void credit(UUID userId, String currency, BigDecimal amount, WalletTransactionType type,
                        String paymentRef, String idempotencyKey, UUID bidId) {
-        if (idempotencyKey != null) {
-            Optional<WalletTransactionEntity> existing =
-                    walletTransactionRepository.findByIdempotencyKey(idempotencyKey);
-            if (existing.isPresent()) {
-                log.info("Idempotent credit ignored for key={}", idempotencyKey);
-                return;
-            }
+        String code = normalize(currency);
+        // Verrou AVANT le test de clé : deux appels de même clé visent le même portefeuille, le
+        // verrou les sérialise et le second voit la ligne du premier. Testée avant le verrou, la
+        // clé laissait passer les deux, et le second butait sur UNIQUE(idempotency_key).
+        WalletAccountEntity wallet = lockWallet(userId, code);
+        if (isReplay(idempotencyKey, "credit")) {
+            return;
         }
 
-        String code = normalize(currency);
-        // Ligne verrouillée, comme pour les débits : sans verrou, un crédit concurrent
-        // d'un débit (ou d'un autre crédit) repartait d'un solde déjà périmé et écrasait
-        // l'autre écriture. Le ledger restait juste, le solde devenait faux.
-        WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, code)
-                .orElseGet(() -> getOrCreate(userId, code));
         BigDecimal newBalance = wallet.getBalance().add(amount);
         wallet.setBalance(newBalance);
         walletAccountRepository.save(wallet);
@@ -191,12 +190,63 @@ public class WalletService {
                 "paymentRef", String.valueOf(paymentRef)));
     }
 
-    @Transactional(noRollbackFor = InsufficientWalletBalanceException.class)
-    public void debit(UUID userId, String currency, BigDecimal amount, WalletTransactionType type, UUID bidId) {
+    /**
+     * Verrouille la ligne du portefeuille (la crée au besoin) et en rend l'état À JOUR.
+     *
+     * <p>Deux pièges, tous deux sources d'un solde faux :
+     * <ul>
+     *   <li>un portefeuille absent est créé par {@code INSERT ... ON CONFLICT DO NOTHING} : si un
+     *       concurrent vient de le créer, l'INSERT n'en pose pas le verrou, il faut donc le
+     *       reprendre par la requête {@code FOR UPDATE} ;</li>
+     *   <li>une requête verrouillée rend l'entité DÉJÀ présente dans le cache de premier niveau
+     *       sans recharger son état. Quand l'appelant a lu le portefeuille plus tôt dans sa
+     *       transaction (solde périmé), l'UPDATE écrasait un mouvement commité entre-temps : le
+     *       grand livre gardait les deux lignes, le solde n'en comptait qu'une (règle INV-01 du
+     *       moniteur d'intégrité). {@code refresh} relit la ligne une fois le verrou acquis.</li>
+     * </ul>
+     * Réservé aux écritures : une transaction est obligatoire, le verrou vit jusqu'à son terme.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public WalletAccountEntity lockWallet(UUID userId, String currency) {
         String code = normalize(currency);
-        assertNotFrozen(userId, code);
         WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, code)
-                .orElseGet(() -> getOrCreate(userId, code));
+                .orElseGet(() -> {
+                    walletAccountRepository.insertIfAbsent(UUID.randomUUID(), userId, code);
+                    return walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, code)
+                            .orElseThrow(() -> new IllegalStateException(
+                                    "Wallet introuvable après création : user=" + userId + " currency=" + code));
+                });
+        entityManager.refresh(wallet);
+        return wallet;
+    }
+
+    /** Vrai (et tracé) quand la clé d'idempotence a déjà produit une ligne : l'appel n'a alors aucun effet. */
+    private boolean isReplay(String idempotencyKey, String operation) {
+        if (idempotencyKey != null && walletTransactionRepository.findByIdempotencyKey(idempotencyKey).isPresent()) {
+            log.info("Idempotent {} ignored for key={}", operation, idempotencyKey);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Cœur unique de tous les débits. Ordre voulu : verrou, rejeu par clé, gel, solde. Le gel est
+     * testé APRÈS le verrou : une demande de remboursement qui prend le verrou avant ce débit en
+     * fait le gel visible, et un débit déjà en file derrière elle ne doit pas partir sur un
+     * contrôle périmé. Les surcharges publiques ne portent que leur propre audit.
+     *
+     * @param auditExtras champs d'audit propres à la surcharge, ajoutés à {@code amount} et {@code currency}
+     */
+    private void debitInternal(UUID userId, String currency, BigDecimal amount, WalletTransactionType type,
+                               UUID bidId, String paymentRef, String idempotencyKey,
+                               String sourceCurrency, BigDecimal sourceAmount, BigDecimal appliedRate,
+                               Map<String, Object> auditExtras) {
+        String code = normalize(currency);
+        WalletAccountEntity wallet = lockWallet(userId, code);
+        if (isReplay(idempotencyKey, "debit")) {
+            return;
+        }
+        assertNotFrozen(userId, code);
 
         if (wallet.getBalance().compareTo(amount) < 0) {
             throw new InsufficientWalletBalanceException(wallet.getBalance(), amount);
@@ -213,10 +263,32 @@ public class WalletService {
         tx.setAmount(amount.negate());
         tx.setBalanceAfter(newBalance);
         tx.setBidId(bidId);
+        tx.setPaymentRef(paymentRef);
+        tx.setIdempotencyKey(idempotencyKey);
+        tx.setSourceCurrency(sourceCurrency);
+        tx.setSourceAmount(sourceAmount);
+        tx.setAppliedRate(appliedRate);
         walletTransactionRepository.save(tx);
 
-        auditService.log("wallet", wallet.getId(), "WALLET_" + type.name(),
-                userId, Map.of("amount", amount.toString(), "currency", code, "bidId", String.valueOf(bidId)));
+        Map<String, Object> audit = new LinkedHashMap<>();
+        audit.put("amount", amount.toString());
+        audit.put("currency", code);
+        audit.putAll(auditExtras);
+        auditService.log("wallet", wallet.getId(), "WALLET_" + type.name(), userId, audit);
+    }
+
+    private static Map<String, Object> extras(Object... keyValues) {
+        Map<String, Object> extras = new LinkedHashMap<>();
+        for (int i = 0; i < keyValues.length; i += 2) {
+            extras.put((String) keyValues[i], String.valueOf(keyValues[i + 1]));
+        }
+        return extras;
+    }
+
+    @Transactional(noRollbackFor = InsufficientWalletBalanceException.class)
+    public void debit(UUID userId, String currency, BigDecimal amount, WalletTransactionType type, UUID bidId) {
+        debitInternal(userId, currency, amount, type, bidId, null, null, null, null, null,
+                extras("bidId", bidId));
     }
 
     /**
@@ -232,81 +304,23 @@ public class WalletService {
     @Transactional(noRollbackFor = InsufficientWalletBalanceException.class)
     public void debit(UUID userId, String currency, BigDecimal amount, WalletTransactionType type, UUID bidId,
                       String sourceCurrency, BigDecimal sourceAmount, BigDecimal appliedRate) {
-        String code = normalize(currency);
-        assertNotFrozen(userId, code);
-        WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, code)
-                .orElseGet(() -> getOrCreate(userId, code));
-
-        if (wallet.getBalance().compareTo(amount) < 0) {
-            throw new InsufficientWalletBalanceException(wallet.getBalance(), amount);
-        }
-
-        BigDecimal newBalance = wallet.getBalance().subtract(amount);
-        wallet.setBalance(newBalance);
-        walletAccountRepository.save(wallet);
-
-        WalletTransactionEntity tx = new WalletTransactionEntity();
-        tx.setUserId(userId);
-        tx.setCurrency(code);
-        tx.setType(type);
-        tx.setAmount(amount.negate());
-        tx.setBalanceAfter(newBalance);
-        tx.setBidId(bidId);
-        tx.setSourceCurrency(sourceCurrency);
-        tx.setSourceAmount(sourceAmount);
-        tx.setAppliedRate(appliedRate);
-        walletTransactionRepository.save(tx);
-
-        auditService.log("wallet", wallet.getId(), "WALLET_" + type.name(),
-                userId, Map.of("amount", amount.toString(), "currency", code, "bidId", String.valueOf(bidId),
-                "sourceCurrency", String.valueOf(sourceCurrency), "sourceAmount", String.valueOf(sourceAmount),
-                "appliedRate", String.valueOf(appliedRate)));
+        debitInternal(userId, currency, amount, type, bidId, null, null,
+                sourceCurrency, sourceAmount, appliedRate,
+                extras("bidId", bidId, "sourceCurrency", sourceCurrency, "sourceAmount", sourceAmount,
+                        "appliedRate", appliedRate));
     }
 
     @Transactional(noRollbackFor = InsufficientWalletBalanceException.class)
     public void debit(UUID userId, String currency, BigDecimal amount, WalletTransactionType type,
                       String paymentRef, String idempotencyKey) {
-        if (idempotencyKey != null) {
-            Optional<WalletTransactionEntity> existing =
-                    walletTransactionRepository.findByIdempotencyKey(idempotencyKey);
-            if (existing.isPresent()) {
-                log.info("Idempotent debit ignored for key={}", idempotencyKey);
-                return;
-            }
-        }
-
-        String code = normalize(currency);
-        assertNotFrozen(userId, code);
-        WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, code)
-                .orElseGet(() -> getOrCreate(userId, code));
-
-        if (wallet.getBalance().compareTo(amount) < 0) {
-            throw new InsufficientWalletBalanceException(wallet.getBalance(), amount);
-        }
-
-        BigDecimal newBalance = wallet.getBalance().subtract(amount);
-        wallet.setBalance(newBalance);
-        walletAccountRepository.save(wallet);
-
-        WalletTransactionEntity tx = new WalletTransactionEntity();
-        tx.setUserId(userId);
-        tx.setCurrency(code);
-        tx.setType(type);
-        tx.setAmount(amount.negate());
-        tx.setBalanceAfter(newBalance);
-        tx.setPaymentRef(paymentRef);
-        tx.setIdempotencyKey(idempotencyKey);
-        walletTransactionRepository.save(tx);
-
-        auditService.log("wallet", wallet.getId(), "WALLET_" + type.name(),
-                userId, Map.of("amount", amount.toString(), "currency", code,
-                "paymentRef", String.valueOf(paymentRef)));
+        debitInternal(userId, currency, amount, type, null, paymentRef, idempotencyKey, null, null, null,
+                extras("paymentRef", paymentRef));
     }
 
     /**
      * Variante de {@link #debit(UUID, String, BigDecimal, WalletTransactionType, String, String)}
      * (paymentRef / idempotencyKey, utilisée par les fils de négociation) qui snapshote
-     * une conversion de devise sur la transaction — même contrat que l'overload à
+     * une conversion de devise sur la transaction : même contrat que l'overload à
      * {@code bidId} : {@code sourceCurrency} / {@code sourceAmount} / {@code appliedRate}
      * sont figés au moment du prélèvement et ne doivent jamais être recalculés a
      * posteriori sur un changement ultérieur du taux administré.
@@ -315,46 +329,10 @@ public class WalletService {
     public void debit(UUID userId, String currency, BigDecimal amount, WalletTransactionType type,
                       String paymentRef, String idempotencyKey,
                       String sourceCurrency, BigDecimal sourceAmount, BigDecimal appliedRate) {
-        if (idempotencyKey != null) {
-            Optional<WalletTransactionEntity> existing =
-                    walletTransactionRepository.findByIdempotencyKey(idempotencyKey);
-            if (existing.isPresent()) {
-                log.info("Idempotent debit ignored for key={}", idempotencyKey);
-                return;
-            }
-        }
-
-        String code = normalize(currency);
-        assertNotFrozen(userId, code);
-        WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, code)
-                .orElseGet(() -> getOrCreate(userId, code));
-
-        if (wallet.getBalance().compareTo(amount) < 0) {
-            throw new InsufficientWalletBalanceException(wallet.getBalance(), amount);
-        }
-
-        BigDecimal newBalance = wallet.getBalance().subtract(amount);
-        wallet.setBalance(newBalance);
-        walletAccountRepository.save(wallet);
-
-        WalletTransactionEntity tx = new WalletTransactionEntity();
-        tx.setUserId(userId);
-        tx.setCurrency(code);
-        tx.setType(type);
-        tx.setAmount(amount.negate());
-        tx.setBalanceAfter(newBalance);
-        tx.setPaymentRef(paymentRef);
-        tx.setIdempotencyKey(idempotencyKey);
-        tx.setSourceCurrency(sourceCurrency);
-        tx.setSourceAmount(sourceAmount);
-        tx.setAppliedRate(appliedRate);
-        walletTransactionRepository.save(tx);
-
-        auditService.log("wallet", wallet.getId(), "WALLET_" + type.name(),
-                userId, Map.of("amount", amount.toString(), "currency", code,
-                "paymentRef", String.valueOf(paymentRef),
-                "sourceCurrency", String.valueOf(sourceCurrency), "sourceAmount", String.valueOf(sourceAmount),
-                "appliedRate", String.valueOf(appliedRate)));
+        debitInternal(userId, currency, amount, type, null, paymentRef, idempotencyKey,
+                sourceCurrency, sourceAmount, appliedRate,
+                extras("paymentRef", paymentRef, "sourceCurrency", sourceCurrency,
+                        "sourceAmount", sourceAmount, "appliedRate", appliedRate));
     }
 
     /**
@@ -368,49 +346,13 @@ public class WalletService {
     public void debit(UUID userId, String currency, BigDecimal amount, WalletTransactionType type, UUID bidId,
                       String paymentRef, String idempotencyKey,
                       String sourceCurrency, BigDecimal sourceAmount, BigDecimal appliedRate) {
-        if (idempotencyKey != null && walletTransactionRepository.findByIdempotencyKey(idempotencyKey).isPresent()) {
-            log.info("Idempotent debit ignored for key={}", idempotencyKey);
-            return;
-        }
-
-        String code = normalize(currency);
-        assertNotFrozen(userId, code);
-        WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, code)
-                .orElseGet(() -> getOrCreate(userId, code));
-
-        if (wallet.getBalance().compareTo(amount) < 0) {
-            throw new InsufficientWalletBalanceException(wallet.getBalance(), amount);
-        }
-
-        BigDecimal newBalance = wallet.getBalance().subtract(amount);
-        wallet.setBalance(newBalance);
-        walletAccountRepository.save(wallet);
-
-        WalletTransactionEntity tx = new WalletTransactionEntity();
-        tx.setUserId(userId);
-        tx.setCurrency(code);
-        tx.setType(type);
-        tx.setAmount(amount.negate());
-        tx.setBalanceAfter(newBalance);
-        tx.setBidId(bidId);
-        tx.setPaymentRef(paymentRef);
-        tx.setIdempotencyKey(idempotencyKey);
-        tx.setSourceCurrency(sourceCurrency);
-        tx.setSourceAmount(sourceAmount);
-        tx.setAppliedRate(appliedRate);
-        walletTransactionRepository.save(tx);
-
-        Map<String, Object> audit = new java.util.LinkedHashMap<>();
-        audit.put("amount", amount.toString());
-        audit.put("currency", code);
-        audit.put("bidId", String.valueOf(bidId));
-        audit.put("paymentRef", String.valueOf(paymentRef));
+        Map<String, Object> extras = extras("bidId", bidId, "paymentRef", paymentRef);
         if (sourceCurrency != null) {
-            audit.put("sourceCurrency", sourceCurrency);
-            audit.put("sourceAmount", String.valueOf(sourceAmount));
-            audit.put("appliedRate", String.valueOf(appliedRate));
+            extras.putAll(extras("sourceCurrency", sourceCurrency, "sourceAmount", sourceAmount,
+                    "appliedRate", appliedRate));
         }
-        auditService.log("wallet", wallet.getId(), "WALLET_" + type.name(), userId, audit);
+        debitInternal(userId, currency, amount, type, bidId, paymentRef, idempotencyKey,
+                sourceCurrency, sourceAmount, appliedRate, extras);
     }
 
     /**
