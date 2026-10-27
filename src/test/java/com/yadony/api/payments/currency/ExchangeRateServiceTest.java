@@ -152,4 +152,21 @@ class ExchangeRateServiceTest {
     void toEurPivot_null_returnsNull() {
         assertThat(service.toEurPivot(null, "XOF")).isNull();
     }
+
+    @Test
+    void convert_arrondiVersLeBas_neSurestimeJamaisUnSolde() {
+        // 3,00 $ valent 2,7777 € : arrondi à 2,78 en HALF_UP, mais le solde ne couvre que 2,77 €.
+        when(repository.findByCurrency("USD"))
+                .thenReturn(Optional.of(new ExchangeRateEntity("USD", new BigDecimal("1.08"))));
+
+        assertThat(service.convert(new BigDecimal("3.00"), "USD", "EUR")).isEqualByComparingTo("2.78");
+        assertThat(service.convert(new BigDecimal("3.00"), "USD", "EUR", java.math.RoundingMode.DOWN))
+                .isEqualByComparingTo("2.77");
+    }
+
+    @Test
+    void convert_arrondiVersLeBas_memeDevise_rendLeMontantInchange() {
+        assertThat(service.convert(new BigDecimal("3.456"), "EUR", "EUR", java.math.RoundingMode.DOWN))
+                .isEqualByComparingTo("3.456");
+    }
 }

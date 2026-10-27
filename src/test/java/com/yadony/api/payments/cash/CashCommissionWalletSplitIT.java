@@ -432,6 +432,69 @@ class CashCommissionWalletSplitIT {
         assertThat(commissionLines(travelerId, "USD")).hasSize(1);
     }
 
+    @Test
+    void preview_showsExactlyWhatTheAcceptanceThenDebits() {
+        BigDecimal commission = quotedCommission();
+        openFourPartialWallets(commission);
+
+        var preview = cashCommissionService.previewWalletAllocation(bidId, travelerId, null);
+
+        // L'aperçu ne débite rien.
+        assertThat(preview.covered()).isTrue();
+        assertThat(preview.lines()).extracting(l -> l.currency()).containsExactly("XOF", "USD", "EUR", "GBP");
+        assertThat(walletTransactionRepository.findAllByUserIdAndBidIdAndType(
+                travelerId, bidId, WalletTransactionType.COMMISSION_DEDUCTED)).isEmpty();
+        assertThat(preview.lines().get(0).rateOfTheDay()).isNull();
+        assertThat(preview.lines().get(1).rateOfTheDay()).isNotNull();
+
+        cashCommissionService.acceptCashBid(bidId, travelerId, CommissionSource.WALLET_FIRST);
+        entityManager.flush();
+        entityManager.clear();
+
+        // Ce que l'aperçu annonçait est exactement ce qui a été débité, portefeuille par portefeuille.
+        for (var line : preview.lines()) {
+            WalletTransactionEntity debited = commissionLines(travelerId, line.currency()).get(0);
+            assertThat(debited.getAmount().abs()).as("débit %s", line.currency())
+                    .isEqualByComparingTo(line.debitAmount());
+        }
+    }
+
+    @Test
+    void preview_whenTheWalletsDoNotCover_saysWhyAndTouchesNothing() {
+        BigDecimal commission = quotedCommission();
+        fund(travelerId, "XOF", new BigDecimal("100"));
+
+        var preview = cashCommissionService.previewWalletAllocation(bidId, travelerId, null);
+
+        assertThat(preview.covered()).isFalse();
+        assertThat(preview.lines()).isEmpty();
+        assertThat(preview.fundingDetail().shortfallInBid()).isEqualByComparingTo(commission.subtract(new BigDecimal("100")));
+        assertThat(balance(travelerId, "XOF")).isEqualByComparingTo("100");
+    }
+
+    @Test
+    void preview_isRefusedToAnotherTraveler_andOnABidNoLongerPending() {
+        fund(travelerId, "XOF", new BigDecimal("5000"));
+        UUID stranger = persistUser();
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> cashCommissionService.previewWalletAllocation(bidId, stranger, null))
+                .isInstanceOfSatisfying(com.yadony.api.common.YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("forbidden"));
+
+        cashCommissionService.acceptCashBid(bidId, travelerId, CommissionSource.WALLET_FIRST);
+        entityManager.flush();
+        entityManager.clear();
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> cashCommissionService.previewWalletAllocation(bidId, travelerId, null))
+                .isInstanceOfSatisfying(com.yadony.api.common.YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("bid-not-pending"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> cashCommissionService.previewWalletAllocation(UUID.randomUUID(), travelerId, null))
+                .isInstanceOfSatisfying(com.yadony.api.common.YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("bid-not-found"));
+    }
+
     /** Les règles du moniteur d'intégrité qui regardent le portefeuille et la commission : zéro anomalie. */
     private void assertMoneyInvariantsHold() {
         entityManager.flush();

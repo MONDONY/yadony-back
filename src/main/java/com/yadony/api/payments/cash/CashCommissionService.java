@@ -27,6 +27,7 @@ import com.yadony.api.payments.currency.CurrencyAmount;
 import com.yadony.api.payments.currency.CurrencyBounds;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.cash.dto.AcceptBidResponse;
+import com.yadony.api.payments.cash.dto.CommissionAllocationPreviewDto;
 import com.yadony.api.payments.cash.dto.CommissionFundingDetailDto;
 import com.yadony.api.payments.cash.dto.CommissionShortfallDto;
 import com.yadony.api.payments.cash.dto.AcceptanceStatusDto;
@@ -1175,6 +1176,36 @@ public class CashCommissionService {
             finalizeBidAcceptance(bid, announcement, travelerId);
         }
         return response;
+    }
+
+    /**
+     * Aperçu, en lecture seule, de la répartition de la commission d'un colis sur les portefeuilles du
+     * voyageur (cf. {@link WalletCommissionCollector#preview}). Même contrôle de propriété que l'acceptation :
+     * seul le voyageur du trajet voit le colis. Le devis ignore le bon de réduction du voyageur, qui ne se
+     * consomme qu'au prélèvement : l'aperçu ne sous-estime donc jamais ce qui sera prélevé.
+     */
+    @Transactional(readOnly = true)
+    public CommissionAllocationPreviewDto previewWalletAllocation(UUID bidId, UUID travelerId, String fundingCurrency) {
+        BidEntity bid = bidRepo.findById(bidId)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "bid-not-found", "Bid Not Found", "Demande introuvable"));
+        AnnouncementEntity announcement = announcementRepo.findById(bid.getAnnouncementId())
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+        if (!announcement.getTravelerId().equals(travelerId)) {
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
+                    "forbidden", "Forbidden", "Ce trajet ne vous appartient pas");
+        }
+        if (bid.getStatus() != BidStatus.PENDING) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "bid-not-pending", "Bid Not Pending",
+                    "Cette demande n'est plus en attente de réponse");
+        }
+        BigDecimal commission = quoteBidCommission(bid, announcement).commission();
+        String bidCurrency = normalizeCurrency(bid.getCurrency());
+        String travelerCurrency = resolveComplementCurrency(travelerId, fundingCurrency);
+        CommissionSplit split = commissionCollector.preview(travelerId, bidCurrency, travelerCurrency,
+                fundingCurrency, commission);
+        return CommissionAllocationPreviewDto.from(split, commissionCollector);
     }
 
     @Transactional

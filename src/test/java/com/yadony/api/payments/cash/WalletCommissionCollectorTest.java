@@ -425,6 +425,17 @@ class WalletCommissionCollectorTest {
         assertThat(s.covered()).isFalse();
         assertThat(s.excluded()).containsEntry("USD", "rate-stale");
         assertThat(s.availableInBid()).isEqualByComparingTo("100");
+        // L'admin est prévenu : des portefeuilles sont écartés tant que le taux n'est pas mis à jour.
+        verify(freshness).alertStale("USD");
+    }
+
+    @Test
+    void aFreshRate_raisesNoAlert() {
+        wallets("XOF", "100", "USD", "5.00");
+
+        collector.plan(traveler, "XOF", "XOF", new BigDecimal("1050"));
+
+        verify(freshness, never()).alertStale(anyString());
     }
 
     @Test
@@ -597,6 +608,48 @@ class WalletCommissionCollectorTest {
         assertThat(audit.get(0)).containsEntry("currency", "USD").containsEntry("debit", "3.00")
                 .containsEntry("coveredInBid", "2.77");
         assertThat(audit.get(1)).containsEntry("currency", "XOF").containsEntry("debit", "807");
+    }
+
+    // ─── Aperçu et taux du jour ───────────────────────────────────────────────
+
+    @Test
+    void preview_givesTheSameSplitAsPlan_withoutAnyLock() {
+        when(walletService.getBalance(eq(traveler), anyString())).thenReturn(BigDecimal.ZERO);
+        when(walletService.getBalance(traveler, "USD")).thenReturn(new BigDecimal("3.00"));
+        when(walletService.getBalance(traveler, "XOF")).thenReturn(new BigDecimal("1500"));
+        when(walletService.getAllBalances(traveler)).thenReturn(List.of(wallet("USD", "3.00"), wallet("XOF", "1500")));
+
+        CommissionSplit preview = collector.preview(traveler, "EUR", "EUR", null, new BigDecimal("4.00"));
+
+        assertThat(preview.covered()).isTrue();
+        assertThat(preview.lines()).extracting(CommissionLine::walletCurrency).containsExactly("USD", "XOF");
+        assertThat(preview.lines().get(0).coveredInBid()).isEqualByComparingTo("2.77");
+        assertThat(preview.lines().get(1).debitAmount()).isEqualByComparingTo("807");
+        // Lecture seule : aucun verrou, aucun débit.
+        verify(walletService, never()).getBalanceForUpdate(any(), any());
+        verify(walletService, never()).debit(any(), any(), any(), any(), any(UUID.class));
+    }
+
+    @Test
+    void preview_aFrozenWalletIsIgnored_andReportedAsExcluded() {
+        when(walletService.getBalance(eq(traveler), anyString())).thenReturn(BigDecimal.ZERO);
+        when(walletService.getBalance(traveler, "EUR")).thenReturn(new BigDecimal("5.00"));
+        when(walletService.getAllBalances(traveler)).thenReturn(List.of(wallet("EUR", "5.00"), wallet("USD", "9.00")));
+        when(walletService.isFrozen(traveler, "USD")).thenReturn(true);
+
+        CommissionSplit preview = collector.preview(traveler, "XOF", "EUR", null, new BigDecimal("1050"));
+
+        assertThat(preview.excluded()).containsEntry("USD", "frozen");
+        assertThat(preview.lines()).extracting(CommissionLine::walletCurrency).containsExactly("EUR");
+    }
+
+    @Test
+    void rateOfTheDay_isTheTableRate_notTheRoundedAppliedRate() {
+        assertThat(collector.rateOfTheDay("EUR", "XOF")).isEqualByComparingTo("655.957");
+        assertThat(collector.rateOfTheDay("EUR", "USD")).isEqualByComparingTo("1.08");
+        assertThat(collector.rateOfTheDay("XOF", "EUR")).isEqualByComparingTo("0.001524");
+        assertThat(collector.rateOfTheDay("XOF", "USD")).isEqualByComparingTo("0.001646");
+        assertThat(collector.rateOfTheDay("eur", "EUR")).isEqualByComparingTo("1");
     }
 
     // ─── Alternatives (contrat historique) ───────────────────────────────────

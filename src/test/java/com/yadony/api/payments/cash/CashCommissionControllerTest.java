@@ -63,6 +63,52 @@ class CashCommissionControllerTest {
                 List.of(new SimpleGrantedAuthority("ROLE_SENDER")));
     }
 
+    // ── GET /bids/{bidId}/commission-allocation ──────────────────────────────────
+
+    @Test
+    void previewAllocation_travelerRole_returnsTheLinesAndTheDetail() throws Exception {
+        var line = new com.yadony.api.payments.cash.dto.CommissionAllocationPreviewDto.Line(
+                "USD", new java.math.BigDecimal("3.00"), new java.math.BigDecimal("2.77"),
+                new java.math.BigDecimal("1.080000"));
+        var dto = new com.yadony.api.payments.cash.dto.CommissionAllocationPreviewDto(
+                "EUR", new java.math.BigDecimal("4.00"), true, List.of(line),
+                new com.yadony.api.payments.cash.dto.CommissionFundingDetailDto("EUR",
+                        new java.math.BigDecimal("4.00"), new java.math.BigDecimal("5.07"), java.math.BigDecimal.ZERO,
+                        List.of(), java.util.Map.of()));
+        when(cashCommissionService.previewWalletAllocation(BID_ID, USER_ID, "USD")).thenReturn(dto);
+
+        mockMvc.perform(get("/bids/" + BID_ID + "/commission-allocation").param("fundingCurrency", "USD")
+                        .with(authentication(asTraveler())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.covered").value(true))
+                .andExpect(jsonPath("$.lines[0].currency").value("USD"))
+                .andExpect(jsonPath("$.lines[0].rateOfTheDay").value(1.08))
+                .andExpect(jsonPath("$.fundingDetail.availableInBid").value(5.07));
+    }
+
+    @Test
+    void previewAllocation_withoutFundingCurrency_passesNull() throws Exception {
+        var dto = new com.yadony.api.payments.cash.dto.CommissionAllocationPreviewDto(
+                "EUR", new java.math.BigDecimal("4.00"), false, List.of(), null);
+        when(cashCommissionService.previewWalletAllocation(BID_ID, USER_ID, null)).thenReturn(dto);
+
+        mockMvc.perform(get("/bids/" + BID_ID + "/commission-allocation").with(authentication(asTraveler())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.covered").value(false));
+    }
+
+    @Test
+    void previewAllocation_senderRole_returns403() throws Exception {
+        mockMvc.perform(get("/bids/" + BID_ID + "/commission-allocation").with(authentication(asSender())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void previewAllocation_unauthenticated_returns401() throws Exception {
+        mockMvc.perform(get("/bids/" + BID_ID + "/commission-allocation"))
+                .andExpect(status().isUnauthorized());
+    }
+
     // ── POST /traveler/commission-method/setup ───────────────────────────────────
 
     @Test

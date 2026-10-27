@@ -91,16 +91,9 @@ public class WalletCommissionCollector {
         // Ensemble à verrouiller : devise du colis, devise active (soldes des champs historiques) et
         // tout portefeuille à solde positif. Un portefeuille crédité après cette lecture est ignoré,
         // ce qui est sûr. Ordre alphabétique : jamais d'interblocage entre deux règlements croisés.
-        Set<String> toLock = new TreeSet<>(List.of(bid, active));
-        for (WalletAccountEntity wallet : walletService.getAllBalances(travelerId)) {
-            if (wallet.getBalance() != null && wallet.getBalance().signum() > 0
-                    && SupportedCurrency.fromCode(normalize(wallet.getCurrency())) != null) {
-                toLock.add(normalize(wallet.getCurrency()));
-            }
-        }
         Map<String, BigDecimal> balances = new TreeMap<>();
         Set<String> frozen = new TreeSet<>();
-        for (String code : toLock) {
+        for (String code : candidateCodes(travelerId, bid, active)) {
             if (walletService.isFrozen(travelerId, code)) {
                 frozen.add(code);
                 balances.put(code, BigDecimal.ZERO);
@@ -109,6 +102,59 @@ public class WalletCommissionCollector {
             }
         }
         return allocate(bid, active, preferred, commission, balances, frozen);
+    }
+
+    /**
+     * Aperçu EN LECTURE SEULE de la répartition que {@link #plan} produirait : même calcul, mais les
+     * soldes sont lus sans verrou et rien n'est débité. Sert à montrer au voyageur, avant qu'il
+     * confirme, d'où partira la commission. Indicatif : un solde peut bouger entre l'aperçu et le
+     * prélèvement, qui replanifie sous verrou.
+     */
+    @Transactional(readOnly = true)
+    public CommissionSplit preview(UUID travelerId, String bidCurrency, String activeCurrency,
+                                   String preferredCurrency, BigDecimal commission) {
+        String bid = normalize(bidCurrency);
+        String active = normalize(activeCurrency);
+        Map<String, BigDecimal> balances = new TreeMap<>();
+        Set<String> frozen = new TreeSet<>();
+        for (String code : candidateCodes(travelerId, bid, active)) {
+            if (walletService.isFrozen(travelerId, code)) {
+                frozen.add(code);
+                balances.put(code, BigDecimal.ZERO);
+            } else {
+                balances.put(code, walletService.getBalance(travelerId, code));
+            }
+        }
+        return allocate(bid, active, preferredOrNull(preferredCurrency), commission, balances, frozen);
+    }
+
+    /**
+     * Taux du jour pour UNE unité de la devise du colis, exprimé dans la devise du portefeuille
+     * (ex. colis en euros, portefeuille en F CFA : 655,957). Celui de la table {@code exchange_rates},
+     * sans l'arrondi des montants : c'est le taux à montrer au voyageur, pas le taux recalculé et figé
+     * sur la ligne du grand livre.
+     */
+    public BigDecimal rateOfTheDay(String bidCurrency, String walletCurrency) {
+        String bid = normalize(bidCurrency);
+        String wallet = normalize(walletCurrency);
+        if (bid.equals(wallet)) {
+            return BigDecimal.ONE;
+        }
+        BigDecimal bidUnits = "EUR".equals(bid) ? BigDecimal.ONE : exchangeRateService.rateOf(bid);
+        BigDecimal walletUnits = "EUR".equals(wallet) ? BigDecimal.ONE : exchangeRateService.rateOf(wallet);
+        return walletUnits.divide(bidUnits, 6, RoundingMode.HALF_UP);
+    }
+
+    /** Devises à examiner : colis, active, et tout portefeuille supporté à solde positif (ordre alphabétique). */
+    private Set<String> candidateCodes(UUID travelerId, String bid, String active) {
+        Set<String> codes = new TreeSet<>(List.of(bid, active));
+        for (WalletAccountEntity wallet : walletService.getAllBalances(travelerId)) {
+            if (wallet.getBalance() != null && wallet.getBalance().signum() > 0
+                    && SupportedCurrency.fromCode(normalize(wallet.getCurrency())) != null) {
+                codes.add(normalize(wallet.getCurrency()));
+            }
+        }
+        return codes;
     }
 
     /**
@@ -137,6 +183,7 @@ public class WalletCommissionCollector {
                 }
                 if (exchangeRateFreshness.isStale(code)) {
                     excluded.put(code, "rate-stale");
+                    exchangeRateFreshness.alertStale(code);
                     continue;
                 }
                 BigDecimal value;

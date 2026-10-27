@@ -1,11 +1,15 @@
 package com.yadony.api.payments.currency;
 
+import com.yadony.api.admin.AdminAlertEscalator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -27,13 +31,34 @@ public class ExchangeRateFreshness {
     /** Devises dont le taux est fixe ou pivot : jamais périmées. */
     private static final Set<String> PEGGED = Set.of("EUR", "XOF", "XAF");
 
+    private static final Logger log = LoggerFactory.getLogger(ExchangeRateFreshness.class);
+
     private final ExchangeRateRepository repository;
+    private final AdminAlertEscalator alerts;
     private final Duration maxAge;
 
-    public ExchangeRateFreshness(ExchangeRateRepository repository,
+    public ExchangeRateFreshness(ExchangeRateRepository repository, AdminAlertEscalator alerts,
                                  @Value("${yadony.exchange-rates.max-age-hours:48}") long maxAgeHours) {
         this.repository = repository;
+        this.alerts = alerts;
         this.maxAge = Duration.ofHours(maxAgeHours);
+    }
+
+    /**
+     * Prévient l'admin qu'un taux périmé écarte des portefeuilles de la dépense. Une seule alerte non
+     * résolue par devise ({@code raiseOnce}, dans sa propre transaction) : le voyageur suivant n'en
+     * relance pas une de plus. Au mieux : une alerte qui échoue ne doit jamais bloquer un prélèvement.
+     */
+    public void alertStale(String currency) {
+        String code = currency == null ? "" : currency.trim().toUpperCase(Locale.ROOT);
+        try {
+            alerts.raiseOnce("EXCHANGE_RATE_STALE_" + code,
+                    "Le taux " + code + " a plus de " + maxAge.toHours() + " h : les portefeuilles en " + code
+                            + " sont écartés du prélèvement des commissions tant qu'il n'est pas mis à jour.",
+                    Map.of("currency", code, "maxAgeHours", maxAge.toHours()));
+        } catch (RuntimeException e) {
+            log.warn("Alerte de taux périmé {} non levée : {}", code, e.getMessage());
+        }
     }
 
     /** Vrai quand le taux de cette devise flottante a plus de {@code max-age-hours}. Taux absent : périmé. */
