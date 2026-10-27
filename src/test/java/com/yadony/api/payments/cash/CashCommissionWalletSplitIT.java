@@ -17,6 +17,8 @@ import com.yadony.api.payments.currency.ExchangeRateEntity;
 import com.yadony.api.payments.currency.ExchangeRateRepository;
 import com.yadony.api.payments.currency.ExchangeRateService;
 import com.yadony.api.payments.currency.SupportedCurrency;
+import com.yadony.api.payments.integrity.MoneyInvariant;
+import com.yadony.api.payments.integrity.MoneyInvariants;
 import com.yadony.api.payments.wallet.WalletAccountEntity;
 import com.yadony.api.payments.wallet.WalletAccountRepository;
 import com.yadony.api.payments.wallet.WalletTransactionEntity;
@@ -31,12 +33,15 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.cache.CacheManager;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.Map;
 import java.time.LocalDate;
 import java.util.EnumSet;
 import java.util.List;
@@ -46,8 +51,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Invariant « tout ou rien » de la répartition d'une commission espèces entre le
- * portefeuille de la devise du colis et celui de la devise active, contre une VRAIE base
+ * Invariant « tout ou rien » de la répartition d'une commission espèces entre les portefeuilles
+ * du voyageur (devise du colis d'abord, puis tous les autres du plus gros au plus petit), contre une VRAIE base
  * PostgreSQL : {@code CashCommissionServiceTest} mocke {@code WalletService}, il ne prouve
  * donc ni le verrou pessimiste pris par {@code WalletService.getBalanceForUpdate} ni ce qui
  * reste effectivement en base après un refus.
@@ -90,12 +95,14 @@ class CashCommissionWalletSplitIT {
 
     @Autowired private CashCommissionService cashCommissionService;
     @Autowired private ExchangeRateService exchangeRateService;
+    @Autowired private com.yadony.api.payments.wallet.WalletService walletService;
     @Autowired private ExchangeRateRepository exchangeRateRepository;
     @Autowired private CacheManager cacheManager;
     @Autowired private WalletAccountRepository walletAccountRepository;
     @Autowired private WalletTransactionRepository walletTransactionRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private EntityManager entityManager;
+    @Autowired private JdbcTemplate jdbc;
 
     private UUID travelerId;
     private UUID bidId;
@@ -261,6 +268,182 @@ class CashCommissionWalletSplitIT {
         assertThat(balance(travelerId, "EUR")).isEqualByComparingTo("2.00");
     }
 
+    // --- Répartition sur plusieurs devises ---
+
+    /** Commission du colis en XOF, telle que l'acceptation la prélèvera. */
+    private BigDecimal quotedCommission() {
+        return cashCommissionService.quoteBidCommission(bid, announcement).commission();
+    }
+
+    /** Montant, dans {@code currency}, qui vaut {@code share} de {@code xof} F CFA (arrondi de la production). */
+    private BigDecimal worth(String currency, BigDecimal xof, String share) {
+        return exchangeRateService.convert(xof.multiply(new BigDecimal(share)), "XOF", currency);
+    }
+
+    /** Ouvre XOF 100, USD, EUR et GBP dont chacun ne règle qu'une partie du reste, jamais seul. */
+    private Map<String, BigDecimal> openFourPartialWallets(BigDecimal commission) {
+        BigDecimal rest = commission.subtract(new BigDecimal("100"));
+        seedRate("USD", "1.08");
+        seedRate("GBP", "0.86");
+        BigDecimal usd = worth("USD", rest, "0.45");
+        BigDecimal eur = worth("EUR", rest, "0.35");
+        BigDecimal gbp = worth("GBP", rest, "0.30");
+        fund(travelerId, "XOF", new BigDecimal("100"));
+        fund(travelerId, "USD", usd);
+        fund(travelerId, "EUR", eur);
+        fund(travelerId, "GBP", gbp);
+        return Map.of("USD", usd, "EUR", eur, "GBP", gbp);
+    }
+
+    @Test
+    void fourPartialWallets_eachDrainedExactlyExceptTheLast_oneLinePerCurrency() {
+        BigDecimal commission = quotedCommission();
+        Map<String, BigDecimal> initial = openFourPartialWallets(commission);
+
+        AcceptBidResponse r = cashCommissionService.acceptCashBid(bidId, travelerId, CommissionSource.WALLET_FIRST);
+
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(r.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+        BidEntity after = reread(BidEntity.class, bidId);
+        assertThat(after.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
+        assertThat(after.getCommissionChargedVia()).isEqualTo(CommissionChargedVia.WALLET);
+
+        // Un seul prélèvement par portefeuille (INV-09), toutes devises, rattachés au colis.
+        List<WalletTransactionEntity> all = walletTransactionRepository.findAllByUserIdAndBidIdAndType(
+                travelerId, bidId, WalletTransactionType.COMMISSION_DEDUCTED);
+        assertThat(all).extracting(WalletTransactionEntity::getCurrency)
+                .containsExactlyInAnyOrder("XOF", "USD", "EUR", "GBP");
+
+        // Les montants couverts, ramenés dans la devise du colis, redonnent EXACTEMENT la commission.
+        BigDecimal covered = commissionLines(travelerId, "XOF").get(0).getAmount().abs();
+        for (String currency : List.of("USD", "EUR", "GBP")) {
+            WalletTransactionEntity line = commissionLines(travelerId, currency).get(0);
+            assertThat(line.getSourceCurrency()).isEqualTo("XOF");
+            assertThat(line.getAppliedRate()).isNotNull();
+            covered = covered.add(line.getSourceAmount());
+        }
+        assertThat(covered).isEqualByComparingTo(commission);
+
+        // USD et EUR (partiels) sont vidés exactement ; XOF aussi ; GBP, qui règle le reste, garde un solde.
+        assertThat(balance(travelerId, "XOF")).isEqualByComparingTo("0");
+        assertThat(balance(travelerId, "USD")).isEqualByComparingTo("0");
+        assertThat(balance(travelerId, "EUR")).isEqualByComparingTo("0");
+        BigDecimal gbpDebited = commissionLines(travelerId, "GBP").get(0).getAmount().abs();
+        assertThat(balance(travelerId, "GBP")).isEqualByComparingTo(initial.get("GBP").subtract(gbpDebited));
+        assertThat(balance(travelerId, "GBP")).isPositive();
+        assertMoneyInvariantsHold();
+    }
+
+    @Test
+    void cancelled_afterFourWalletSplit_recreditsEachCurrencyExactly() {
+        BigDecimal commission = quotedCommission();
+        Map<String, BigDecimal> initial = openFourPartialWallets(commission);
+
+        cashCommissionService.acceptCashBid(bidId, travelerId, CommissionSource.WALLET_FIRST);
+        entityManager.flush();
+        entityManager.clear();
+        BidEntity accepted = reread(BidEntity.class, bidId);
+
+        cashCommissionService.refundCommissionToWallet(accepted, travelerId, "wallet-refund-cancel-" + bidId);
+        entityManager.flush();
+        entityManager.clear();
+
+        // Chaque devise retrouve EXACTEMENT son solde d'avant, sans reconversion.
+        assertThat(balance(travelerId, "XOF")).isEqualByComparingTo("100");
+        assertThat(balance(travelerId, "USD")).isEqualByComparingTo(initial.get("USD"));
+        assertThat(balance(travelerId, "EUR")).isEqualByComparingTo(initial.get("EUR"));
+        assertThat(balance(travelerId, "GBP")).isEqualByComparingTo(initial.get("GBP"));
+        for (String currency : List.of("XOF", "USD", "EUR", "GBP")) {
+            assertThat(refundLines(travelerId, currency)).as("recrédit %s", currency).hasSize(1);
+        }
+        assertThat(reread(BidEntity.class, bidId).getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
+        assertMoneyInvariantsHold();
+    }
+
+    @Test
+    void aStaleRateWallet_isNeverSpent_theFreshOnesServe() {
+        BigDecimal commission = quotedCommission();
+        seedRate("USD", "1.08");
+        // USD aurait été pris en premier (le plus gros), mais son taux a 72 h : écarté.
+        fund(travelerId, "USD", worth("USD", commission, "5"));
+        fund(travelerId, "EUR", worth("EUR", commission, "2"));
+        entityManager.flush();
+        jdbc.update("UPDATE exchange_rates SET updated_at = now() - interval '72 hours' WHERE currency = 'USD'");
+        cacheManager.getCache("exchange-rates").clear();
+        // L'entité du taux est déjà dans le contexte de persistance avec son ancienne date : on la relit.
+        entityManager.clear();
+
+        AcceptBidResponse r = cashCommissionService.acceptCashBid(bidId, travelerId, CommissionSource.WALLET_FIRST);
+
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(r.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+        assertThat(commissionLines(travelerId, "USD")).isEmpty();
+        assertThat(commissionLines(travelerId, "EUR")).hasSize(1);
+        assertThat(balance(travelerId, "USD")).isEqualByComparingTo(worth("USD", commission, "5"));
+    }
+
+    @Test
+    void allWalletsTogetherInsufficient_nothingDebited_everyWalletIntact_andTheDetailSaysWhy() {
+        BigDecimal commission = quotedCommission();
+        seedRate("USD", "1.08");
+        fund(travelerId, "XOF", new BigDecimal("100"));
+        BigDecimal usd = worth("USD", commission, "0.10");
+        BigDecimal eur = worth("EUR", commission, "0.10");
+        fund(travelerId, "USD", usd);
+        fund(travelerId, "EUR", eur);
+
+        AcceptBidResponse r = cashCommissionService.acceptCashBid(bidId, travelerId, CommissionSource.WALLET_FIRST);
+
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(r.status()).isEqualTo(AcceptanceStatusDto.INSUFFICIENT_WALLET);
+        assertThat(r.fundingDetail()).isNotNull();
+        assertThat(r.fundingDetail().shortfallInBid()).isPositive();
+        assertThat(r.fundingDetail().wallets()).extracting(com.yadony.api.payments.cash.CommissionSplit.WalletShare::currency)
+                .containsExactlyInAnyOrder("XOF", "USD", "EUR");
+        assertThat(walletTransactionRepository.findAllByUserIdAndBidIdAndType(
+                travelerId, bidId, WalletTransactionType.COMMISSION_DEDUCTED)).isEmpty();
+        assertThat(balance(travelerId, "XOF")).isEqualByComparingTo("100");
+        assertThat(balance(travelerId, "USD")).isEqualByComparingTo(usd);
+        assertThat(balance(travelerId, "EUR")).isEqualByComparingTo(eur);
+        assertThat(reread(BidEntity.class, bidId).getStatus()).isEqualTo(BidStatus.PENDING);
+    }
+
+    @Test
+    void theChosenFundingCurrency_isTakenBeforeTheBiggerWallet() {
+        BigDecimal commission = quotedCommission();
+        seedRate("USD", "1.08");
+        seedRate("GBP", "0.86");
+        // USD couvrirait seul (le plus gros) ; le voyageur a choisi les livres, qui ne suffisent pas seules :
+        // elles partent d'abord, le dollar règle le reste.
+        BigDecimal gbp = worth("GBP", commission, "0.40");
+        fund(travelerId, "USD", worth("USD", commission, "3"));
+        fund(travelerId, "GBP", gbp);
+
+        AcceptBidResponse r = cashCommissionService.acceptCashBid(bidId, travelerId, CommissionSource.WALLET_FIRST, "GBP");
+
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(r.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+        assertThat(balance(travelerId, "GBP")).isEqualByComparingTo("0");
+        assertThat(commissionLines(travelerId, "GBP")).hasSize(1);
+        assertThat(commissionLines(travelerId, "USD")).hasSize(1);
+    }
+
+    /** Les règles du moniteur d'intégrité qui regardent le portefeuille et la commission : zéro anomalie. */
+    private void assertMoneyInvariantsHold() {
+        entityManager.flush();
+        for (MoneyInvariant invariant : MoneyInvariants.ALL) {
+            if (!List.of("INV-01", "INV-02", "INV-03", "INV-09", "INV-10", "INV-17").contains(invariant.code())) {
+                continue;
+            }
+            List<Map<String, Object>> rows = jdbc.queryForList(invariant.sql());
+            assertThat(rows).as("%s : %s", invariant.code(), invariant.title()).isEmpty();
+        }
+    }
+
     // --- helpers ---
 
     private void seedRate(String currency, String unitsPerEur) {
@@ -279,6 +462,16 @@ class CashCommissionWalletSplitIT {
         user.setRoles(Set.of(Role.TRAVELER, Role.SENDER));
         user.setStripeAccountStatus(StripeAccountStatus.NOT_CREATED);
         return userRepository.saveAndFlush(user).getId();
+    }
+
+    /**
+     * Finance un portefeuille par une vraie ligne de grand livre (recharge) : le solde égale la somme des
+     * mouvements, comme en production. {@link #openWallet} pose un solde sans mouvement, ce que la règle
+     * INV-01 du moniteur d'intégrité lit comme une dérive.
+     */
+    private void fund(UUID userId, String currency, BigDecimal amount) {
+        walletService.credit(userId, currency, amount, WalletTransactionType.TOP_UP,
+                "pi_fund_" + currency + "_" + userId, "fund-" + currency + "-" + userId);
     }
 
     private void openWallet(UUID userId, String currency, BigDecimal balance) {
