@@ -150,4 +150,20 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
            "AND COALESCE(b.deliveredAt, b.updatedAt) <= :deliveredBefore")
     java.util.List<ConversationEntity> findMessagesToPurge(
             @Param("deliveredBefore") java.time.LocalDateTime deliveredBefore);
+
+    /**
+     * Conversations de la modération, filtrables : seulement celles qui ont un signalement ouvert sur
+     * un message ({@code reports.target_id} = {@code conversations.id}), et/ou dont un participant est
+     * l'un de ces comptes. Les drapeaux évitent un {@code IN ()} vide : {@code userIds} n'est lu que si
+     * {@code filterUsers} est vrai (passer alors une liste non vide).
+     */
+    @Query("SELECT c FROM ConversationEntity c "
+            + "WHERE (:onlyFlagged = false OR c.id IN (SELECT r.targetId FROM com.yadony.api.signalements.ReportEntity r "
+            + "WHERE r.targetType = com.yadony.api.signalements.ReportTargetType.MESSAGE "
+            + "AND r.status = com.yadony.api.signalements.ReportStatus.OPEN)) "
+            + "AND (:filterUsers = false OR c.senderId IN :userIds OR c.travelerId IN :userIds)")
+    Page<ConversationEntity> findForModeration(@Param("onlyFlagged") boolean onlyFlagged,
+                                               @Param("filterUsers") boolean filterUsers,
+                                               @Param("userIds") Collection<UUID> userIds,
+                                               Pageable pageable);
 }

@@ -506,4 +506,10 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("update versioned UserEntity u set u.totalDeliveries = u.totalDeliveries + 1 where u.id = :id")
     int incrementTotalDeliveries(@Param("id") UUID id);
+
+    /** Comptes dont « prénom nom » contient le motif (déjà en minuscules, avec ses %) : recherche de la modération. */
+    @Query("SELECT u.id FROM UserEntity u "
+            + "WHERE LOWER(CONCAT(COALESCE(u.firstName, ''), ' ', COALESCE(u.lastName, ''))) LIKE :pattern")
+    java.util.List<UUID> findIdsByNameLike(@Param("pattern") String pattern,
+                                           org.springframework.data.domain.Pageable pageable);
 }

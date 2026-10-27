@@ -27,9 +27,22 @@ public class AdminMessageModerationService {
     }
 
     public void deleteMessage(ConversationEntity conversation, String messageId, UUID adminId) {
+        deleteMessage(conversation, messageId, adminId, null);
+    }
+
+    /**
+     * @param reason motif saisi par l'administrateur ; gravé dans l'audit s'il est renseigné (la
+     *               résolution d'un signalement n'en fournit pas : elle porte déjà sa propre note)
+     */
+    public void deleteMessage(ConversationEntity conversation, String messageId, UUID adminId, String reason) {
         String conversationId = conversation.getFirestoreConversationId();
         firestoreService.softDeleteMessage(conversationId, messageId);
-        auditService.log("message", conversation.getId(), "MESSAGE_ADMIN_DELETED", adminId,
-                Map.of("conversationId", conversationId, "messageId", messageId));
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("conversationId", conversationId);
+        payload.put("messageId", messageId);
+        if (reason != null && !reason.isBlank()) {
+            payload.put("reason", reason.strip());
+        }
+        auditService.log("message", conversation.getId(), "MESSAGE_ADMIN_DELETED", adminId, payload);
     }
 }
