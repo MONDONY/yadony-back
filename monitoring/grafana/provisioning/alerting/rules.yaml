@@ -7,7 +7,7 @@ groups:
     interval: 1m
     rules:
       - uid: yadony-api-down
-        title: "API prod injoignable"
+        title: "API injoignable"
         condition: C
         data:
           - refId: A
@@ -184,7 +184,7 @@ groups:
             datasourceUid: prometheus
             model:
               editorMode: code
-              expr: '1 - (node_filesystem_avail_bytes{env="prod", fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{env="prod", fstype!~"tmpfs|overlay"})'
+              expr: '1 - (node_filesystem_avail_bytes{env=~"prod|staging", fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{env=~"prod|staging", fstype!~"tmpfs|overlay"})'
               instant: true
               range: false
               refId: A
@@ -211,7 +211,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Le disque du VPS prod dépasse 85% d'occupation depuis 15 minutes."
+          summary: "Le disque du VPS dépasse 85% d'occupation depuis 15 minutes."
 
       - uid: yadony-db-pool-exhausted
         title: "Pool de connexions DB épuisé"
