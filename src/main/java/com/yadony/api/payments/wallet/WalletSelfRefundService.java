@@ -436,6 +436,16 @@ public class WalletSelfRefundService {
     @Transactional(noRollbackFor = {YadonyBusinessException.class, WalletAllocationInvariantException.class})
     public WalletRefundRequestEntity request(UUID userId, String currency, List<UUID> selectedTransactionIds) {
         String code = normalize(currency);
+        // Verrou du portefeuille AVANT le calcul de l'allocation, tenu jusqu'au commit de la
+        // demande. L'allocation lit le grand livre : sans ce verrou, un débit qui commitait entre
+        // cette lecture et l'écriture de la demande la laissait plus grande que le solde réel. Le
+        // remboursement partait alors chez Stripe, puis debitConfirmedRefund levait « solde
+        // insuffisant » et la demande restait PROCESSING. Un débit en file derrière ce verrou
+        // relit le gel une fois la demande committée (WalletService#debitInternal) et est refusé.
+        // Ordre des verrous : portefeuille puis demande à la création ; la résolution prend la
+        // demande puis le portefeuille, mais la demande n'existe pas encore pour elle à la création,
+        // et un re-clic sur une demande déjà active ne verrouille aucune ligne de demande (lecture).
+        walletService.lockWallet(userId, code);
         Set<UUID> selected = selectedTransactionIds == null ? Set.of() : new HashSet<>(selectedTransactionIds);
 
         // Une demande active gèle déjà la devise et ses recharges sont exclues de l'allocation

@@ -161,6 +161,7 @@ public class WalletService {
      */
     public void credit(UUID userId, String currency, BigDecimal amount, WalletTransactionType type,
                        String paymentRef, String idempotencyKey, UUID bidId) {
+        requireNonNegative(amount, "crédit");
         String code = normalize(currency);
         // Verrou AVANT le test de clé : deux appels de même clé visent le même portefeuille, le
         // verrou les sérialise et le second voit la ligne du premier. Testée avant le verrou, la
@@ -220,6 +221,17 @@ public class WalletService {
         return wallet;
     }
 
+    /**
+     * Un montant négatif inverserait le sens du mouvement (un « débit » négatif créditerait le
+     * solde, que la contrainte {@code balance >= 0} ne verrait pas) : refusé net. Zéro reste permis,
+     * la commission nulle débite volontairement zéro.
+     */
+    private static void requireNonNegative(BigDecimal amount, String operation) {
+        if (amount == null || amount.signum() < 0) {
+            throw new IllegalArgumentException("Montant de " + operation + " invalide : " + amount);
+        }
+    }
+
     /** Vrai (et tracé) quand la clé d'idempotence a déjà produit une ligne : l'appel n'a alors aucun effet. */
     private boolean isReplay(String idempotencyKey, String operation) {
         if (idempotencyKey != null && walletTransactionRepository.findByIdempotencyKey(idempotencyKey).isPresent()) {
@@ -241,6 +253,7 @@ public class WalletService {
                                UUID bidId, String paymentRef, String idempotencyKey,
                                String sourceCurrency, BigDecimal sourceAmount, BigDecimal appliedRate,
                                Map<String, Object> auditExtras) {
+        requireNonNegative(amount, "débit");
         String code = normalize(currency);
         WalletAccountEntity wallet = lockWallet(userId, code);
         if (isReplay(idempotencyKey, "debit")) {
@@ -369,9 +382,11 @@ public class WalletService {
      */
     @Transactional
     public void debitConfirmedRefund(UUID userId, String currency, BigDecimal amount, WalletTransactionType type) {
+        requireNonNegative(amount, "débit de remboursement");
         String code = normalize(currency);
-        WalletAccountEntity wallet = walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, code)
-                .orElseGet(() -> getOrCreate(userId, code));
+        // lockWallet relit la ligne après le verrou : comme pour credit et debit, un solde périmé
+        // dans le cache de premier niveau ferait écraser un mouvement commité entre-temps.
+        WalletAccountEntity wallet = lockWallet(userId, code);
 
         if (wallet.getBalance().compareTo(amount) < 0) {
             throw new InsufficientWalletBalanceException(wallet.getBalance(), amount);

@@ -166,6 +166,21 @@ class WalletIdempotencyConcurrencyIT {
         assertLedgerMatchesBalance(userId);
     }
 
+    @Test
+    void debitDeRemboursementConfirmeApresLecture_neEcrasePasUnDebitCommiteEntreTemps() {
+        UUID userId = persistUserWithBalance("100.00");
+
+        inCallerTransaction(() -> {
+            walletAccountRepository.findByUserIdAndCurrency(userId, "EUR").orElseThrow();
+            inIndependentTransaction(() -> walletService.debit(userId, "EUR", new BigDecimal("5.00"),
+                    WalletTransactionType.COMMISSION_DEDUCTED, (UUID) null));
+            walletService.debitConfirmedRefund(userId, "EUR", TEN, WalletTransactionType.SELF_REFUND_OUT);
+        });
+
+        assertThat(balance(userId)).isEqualByComparingTo("85.00");
+        assertLedgerMatchesBalance(userId);
+    }
+
     private void inCallerTransaction(Runnable work) {
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> work.run());
     }

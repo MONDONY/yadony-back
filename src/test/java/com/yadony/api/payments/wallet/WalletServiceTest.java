@@ -695,4 +695,39 @@ class WalletServiceTest {
         verify(walletAccountRepository).insertIfAbsent(any(UUID.class), eq(userId), eq("XOF"));
         verify(entityManager, never()).refresh(any());
     }
+
+    @Test
+    void credit_refuseUnMontantNegatifSansRienEcrire() {
+        UUID userId = UUID.randomUUID();
+
+        Throwable thrown = catchThrowable(() -> walletService.credit(userId, "EUR", new BigDecimal("-5.00"),
+                WalletTransactionType.TOP_UP, "pi_x", "k-neg"));
+
+        assertThat(thrown).isInstanceOf(IllegalArgumentException.class);
+        verify(walletAccountRepository, never()).findByUserIdAndCurrencyForUpdate(any(), any());
+        verify(walletTransactionRepository, never()).save(any());
+    }
+
+    @Test
+    void debit_refuseUnMontantNegatifQuiCrediteraitLeSolde() {
+        UUID userId = UUID.randomUUID();
+
+        Throwable thrown = catchThrowable(() -> walletService.debit(userId, "EUR", new BigDecimal("-5.00"),
+                WalletTransactionType.COMMISSION_DEDUCTED, UUID.randomUUID()));
+
+        assertThat(thrown).isInstanceOf(IllegalArgumentException.class);
+        verify(walletAccountRepository, never()).findByUserIdAndCurrencyForUpdate(any(), any());
+        verify(walletTransactionRepository, never()).save(any());
+    }
+
+    @Test
+    void debitConfirmedRefund_refuseUnMontantNegatif() {
+        UUID userId = UUID.randomUUID();
+
+        Throwable thrown = catchThrowable(() -> walletService.debitConfirmedRefund(userId, "EUR",
+                new BigDecimal("-1.00"), WalletTransactionType.SELF_REFUND_OUT));
+
+        assertThat(thrown).isInstanceOf(IllegalArgumentException.class);
+        verify(walletTransactionRepository, never()).save(any());
+    }
 }
