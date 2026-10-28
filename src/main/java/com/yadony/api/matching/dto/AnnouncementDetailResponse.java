@@ -100,10 +100,45 @@ public record AnnouncementDetailResponse(
          * le client s'en sert pour les afficher à l'heure de la ville de départ. Champ ajouté,
          * optionnel pour les anciens clients.
          */
-        String departureTimezone
+        String departureTimezone,
+        /**
+         * Colis que le voyageur a en sa possession (remis, en transit, arrivés) : nombre, kilos et
+         * net estimé. Servi au seul voyageur propriétaire, et seulement s'il en a au moins un ;
+         * null (donc absent du JSON) sinon. Champ ajouté, optionnel pour les anciens clients.
+         */
+        ParcelsSummary parcelsSummary
 ) {
     public AnnouncementDetailResponse {
         acceptedMobileMoneyNetworks = acceptedMobileMoneyNetworks == null ? List.of() : acceptedMobileMoneyNetworks;
+    }
+
+    /** Sans {@code parcelsSummary} (null) : appelants qui ne le calculent pas. */
+    public AnnouncementDetailResponse(
+            UUID id, UUID travelerId, String departureCity, String arrivalCity, LocalDate departureDate,
+            LocalTime departureTime, LocalTime arrivalTime, LocalDate arrivalDate,
+            AddressDto pickupAddress, AddressDto deliveryAddress, BigDecimal availableKg, BigDecimal totalKg,
+            BigDecimal pricePerKg, BigDecimal pricePerKgDisplay,
+            com.yadony.api.matching.TransportMode transportMode, Integer stopsCount, String status,
+            long bidsCount, long confirmedParcelCount, TravelerProfileDto traveler, String description,
+            List<String> acceptedContentTypes, List<String> refusedTypes, List<String> acceptedPaymentMethods,
+            com.yadony.api.matching.CapacityUnit capacityUnit, boolean cashAccepted,
+            LocalDateTime createdAt, LocalDateTime updatedAt, com.yadony.api.matching.PricingMode pricingMode,
+            List<AnnouncementPriceGridItemResponse> priceGridItems, BigDecimal reservedKg,
+            boolean surplusEligible, boolean surplusPublished, LocalDateTime handoverDeadline,
+            String currency, String arrivalInstructions, boolean negotiable,
+            Set<PaymentMethod> availablePaymentMethods, BigDecimal convertedPricePerKg,
+            BigDecimal pricePerKgDisplayConverted, String convertedCurrency, Integer remainingReschedules,
+            String departureCountryCode, String arrivalCountryCode, Boolean currencyEditable,
+            List<PayoutNetwork> acceptedMobileMoneyNetworks, String departureTimezone) {
+        this(id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime, arrivalDate,
+                pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay,
+                transportMode, stopsCount, status, bidsCount, confirmedParcelCount, traveler, description,
+                acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, cashAccepted,
+                createdAt, updatedAt, pricingMode, priceGridItems, reservedKg, surplusEligible,
+                surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
+                availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
+                remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
+                acceptedMobileMoneyNetworks, departureTimezone, null);
     }
 
     /** Sans {@code acceptedMobileMoneyNetworks} (liste vide) : appelants qui ne le calculent pas. */
@@ -171,7 +206,7 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                acceptedMobileMoneyNetworks, departureTimezone);
+                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary);
     }
 
     /** Copie enrichie des équivalents convertis — même pattern que le fil de recherche. */
@@ -188,7 +223,7 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                acceptedMobileMoneyNetworks, departureTimezone);
+                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary);
     }
 
     /** Copie portant les réseaux mobile money acceptés ; {@code null} devient la liste vide. */
@@ -202,7 +237,7 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                networks == null ? List.of() : networks, departureTimezone);
+                networks == null ? List.of() : networks, departureTimezone, parcelsSummary);
     }
 
     /** Copie portant le fuseau IANA de la ville de départ (YADONY-FLUTTER-PROD-1R). */
@@ -216,6 +251,20 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                acceptedMobileMoneyNetworks, departureTimezone);
+                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary);
+    }
+
+    /** Copie portant le résumé des colis en possession, posé pour le seul voyageur propriétaire. */
+    public AnnouncementDetailResponse withParcelsSummary(ParcelsSummary parcelsSummary) {
+        return new AnnouncementDetailResponse(
+                id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime, arrivalDate,
+                pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay,
+                transportMode, stopsCount, status, bidsCount, confirmedParcelCount, traveler, description,
+                acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, cashAccepted,
+                createdAt, updatedAt, pricingMode, priceGridItems, reservedKg, surplusEligible,
+                surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
+                availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
+                remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
+                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary);
     }
 }

@@ -22,6 +22,7 @@ import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.currency.ExchangeRateService;
 import com.yadony.api.matching.dto.AddressDto;
 import com.yadony.api.matching.dto.AnnouncementDetailResponse;
+import com.yadony.api.matching.dto.ParcelsSummary;
 import com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse;
 import com.yadony.api.matching.dto.AnnouncementRequest;
 import com.yadony.api.matching.dto.AnnouncementResponse;
@@ -207,6 +208,9 @@ public class AnnouncementService {
     private final TripRankingProperties rankingProperties;
     private final TripScoreCalculator tripScoreCalculator;
 
+    /** Net estimé des colis en possession du voyageur (implémenté dans {@code payments/}). */
+    private TravelerParcelsNetPort travelerParcelsNet = TravelerParcelsNetPort.NONE;
+
     @Value("${yadony.kyc.enforce:true}")
     private boolean enforceKyc;
 
@@ -259,6 +263,12 @@ public class AnnouncementService {
         this.travelerPayoutNetworks = travelerPayoutNetworks;
         this.rankingProperties = rankingProperties;
         this.tripScoreCalculator = tripScoreCalculator;
+    }
+
+    /** Injection par setter : ne change pas le constructeur de ce service, instancié à la main par les tests. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setTravelerParcelsNet(TravelerParcelsNetPort travelerParcelsNet) {
+        this.travelerParcelsNet = travelerParcelsNet;
     }
 
     // La clé porte la taille de page en plus du numéro : l'app compte les résultats
@@ -1430,6 +1440,7 @@ public class AnnouncementService {
         ).withDepartureTimezone(announcement.getTimezone());
         if (viewerId != null && viewerId.equals(announcement.getTravelerId())) {
             detail = detail.withCurrencyEditable(!isCurrencyLocked(id));
+            detail = detail.withParcelsSummary(parcelsSummary(announcement));
         }
 
         // Réseaux où le voyageur reçoit en mobile money, seulement quand ce rail est réellement
@@ -1464,6 +1475,25 @@ public class AnnouncementService {
             detail = detail.withConvertedPrices(convertedNet, convertedDisplay, viewerCurrency, convertedGrid);
         }
         return detail;
+    }
+
+    /**
+     * Colis que le voyageur a en sa possession (remis, en transit, arrivés : scannés, pas encore
+     * livrés) : nombre, kilos et net estimé, en une lecture des colis du trajet et une du net.
+     * {@code null} quand il n'en a aucun, pour que le champ soit absent du JSON.
+     */
+    private ParcelsSummary parcelsSummary(AnnouncementEntity announcement) {
+        List<BidEntity> held = bidRepository.findByAnnouncementIdAndStatusIn(
+                announcement.getId(), List.copyOf(BidStatus.EN_ROUTE));
+        if (held.isEmpty()) {
+            return null;
+        }
+        BigDecimal totalKg = held.stream()
+                .map(BidEntity::getWeightKg)
+                .filter(java.util.Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal net = travelerParcelsNet.estimatedNet(held.stream().map(BidEntity::getId).toList());
+        return new ParcelsSummary(held.size(), totalKg, net, announcement.getCurrency());
     }
 
     /**
