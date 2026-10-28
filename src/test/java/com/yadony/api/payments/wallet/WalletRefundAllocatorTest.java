@@ -112,6 +112,54 @@ class WalletRefundAllocatorTest {
         assertThat(r.inFlight()).isEqualByComparingTo("0");
     }
 
+    /**
+     * Recharge contestée : la reprise vide d'abord CETTE recharge (jamais remboursable vers la
+     * carte qui la conteste), pas la plus récente comme un débit ordinaire.
+     */
+    @Test
+    void rechargeContestee_laRepriseVideLaRechargeContestee() {
+        WalletTransactionEntity contestee = topup("40.00");
+        WalletTransactionEntity saine = topup("30.00");
+        tx(WalletTransactionType.TOPUP_DISPUTED, "-40.00", contestee.getPaymentRef());
+
+        WalletRefundAllocation r = allocate("30.00");
+
+        assertThat(r.refundable()).singleElement()
+                .satisfies(t -> {
+                    assertThat(t.walletTransactionId()).isEqualTo(saine.getId());
+                    assertThat(t.remaining()).isEqualByComparingTo("30.00");
+                });
+        assertThat(r.refundableTotal()).isEqualByComparingTo("30.00");
+    }
+
+    /** Recharge déjà en partie dépensée : la reprise prend le reste sur le chemin ordinaire (LIFO). */
+    @Test
+    void rechargeContesteeDejaEntamee_leSurplusSuitLeCheminOrdinaire() {
+        WalletTransactionEntity contestee = topup("40.00");
+        tx(WalletTransactionType.BID_PAYMENT, "-25.00", null);
+        topup("30.00");
+        tx(WalletTransactionType.TOPUP_DISPUTED, "-40.00", contestee.getPaymentRef());
+
+        WalletRefundAllocation r = allocate("5.00");
+
+        // 15 restants sur la contestée, puis 25 pris LIFO sur la recharge de 30.
+        assertThat(r.refundableTotal()).isEqualByComparingTo("5.00");
+    }
+
+    /** Litige gagné : la reprise rendue redevient remboursable vers la carte d'origine. */
+    @Test
+    void litigeGagne_laRechargeRedevientRemboursable() {
+        WalletTransactionEntity contestee = topup("40.00");
+        tx(WalletTransactionType.TOPUP_DISPUTED, "-40.00", contestee.getPaymentRef());
+        tx(WalletTransactionType.TOPUP_DISPUTE_REVERSED, "40.00", contestee.getPaymentRef());
+
+        WalletRefundAllocation r = allocate("40.00");
+
+        assertThat(r.refundable()).singleElement()
+                .satisfies(t -> assertThat(t.remaining()).isEqualByComparingTo("40.00"));
+        assertThat(r.nonRefundable()).isEqualByComparingTo("0");
+    }
+
     @Test
     void rechargeEntamee_resteRemboursable() {
         topup("40.00");

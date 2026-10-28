@@ -3,6 +3,7 @@ package com.yadony.api.payments.chargeback;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.PaymentRepository;
+import com.yadony.api.payments.wallet.WalletDisputeService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.stripe.model.Event;
@@ -24,17 +25,20 @@ public class ChargebackService {
     private final AuditService auditService;
     private final AdminAlertService adminAlert;
     private final ObjectMapper objectMapper;
+    private final WalletDisputeService walletDisputeService;
 
     public ChargebackService(ChargebackRepository chargebackRepository,
                               PaymentRepository paymentRepository,
                               AuditService auditService,
                               AdminAlertService adminAlert,
-                              ObjectMapper objectMapper) {
+                              ObjectMapper objectMapper,
+                              WalletDisputeService walletDisputeService) {
         this.chargebackRepository = chargebackRepository;
         this.paymentRepository = paymentRepository;
         this.auditService = auditService;
         this.adminAlert = adminAlert;
         this.objectMapper = objectMapper;
+        this.walletDisputeService = walletDisputeService;
     }
 
     @Transactional
@@ -74,6 +78,12 @@ public class ChargebackService {
             });
         }
 
+        // Recharge du portefeuille contestée (aucune ligne payments) : reprise sur le solde et gel
+        // de la devise, plutôt qu'une simple alerte pendant que le solde restait dépensable.
+        if (chargeback.getPaymentId() == null) {
+            walletDisputeService.onDisputeOpened(disputeId, dispute.path("payment_intent").asText(null), amount);
+        }
+
         chargebackRepository.save(chargeback);
         adminAlert.raise("STRIPE_CHARGEBACK_OPENED",
                 "Litige " + disputeId + " ouvert (charge=" + chargeId + ", raison=" + reason + ")",
@@ -88,6 +98,8 @@ public class ChargebackService {
 
         String disputeId = dispute.path("id").asText();
         String outcome   = dispute.path("status").asText();
+
+        walletDisputeService.onDisputeClosed(disputeId, "won".equals(outcome));
 
         chargebackRepository.findByStripeDisputeId(disputeId).ifPresent(cb -> {
             cb.setStatus("won".equals(outcome) ? ChargebackStatus.WON : ChargebackStatus.LOST);

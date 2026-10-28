@@ -79,6 +79,25 @@ class WalletTopupOutcomeListenerTest {
                 eq("Recharge de " + expectedAmount + " confirmée par Orange Money."), any());
     }
 
+    /**
+     * Notification impossible (texte, FCM) : le crédit reste acquis, rien n'est relancé ni alerté.
+     * Avant, son exception faisait rejeter toute la transaction du crédit.
+     */
+    @Test
+    void completedWalletTopup_notificationEnEchec_neDefaitPasLeCredit() {
+        UUID userId = UUID.randomUUID();
+        PawapayOperationEntity op = topup(userId);
+        when(operations.get(op.getId())).thenReturn(op);
+        when(notifications.messagesFor(userId)).thenThrow(new IllegalStateException("traductions"));
+
+        listener.onCompleted(new PawapayOperationCompletedEvent(op.getId(), PawapayOperationKind.DEPOSIT,
+                PawapayOperationPurpose.WALLET_TOPUP, null, userId));
+
+        verify(walletService).credit(userId, "XOF", new BigDecimal("10000"), WalletTransactionType.TOP_UP,
+                "pawapay:" + op.getId(), "pawapay-topup-" + op.getId());
+        verifyNoInteractions(adminAlertService);
+    }
+
     @Test
     void completedWalletTopup_englishRecipient_rendersInEnglish() {
         UUID userId = UUID.randomUUID();

@@ -195,7 +195,11 @@ public class ReferralService {
                     "Vous ne pouvez pas utiliser votre propre code de parrainage");
         }
 
-        // Un compte n'est parrainé qu'une fois, quel que soit l'avancement de l'invitation.
+        // Un compte n'est parrainé qu'une fois, quel que soit l'avancement de l'invitation. Le
+        // compte du filleul est verrouillé avant le test : deux saisies simultanées créaient deux
+        // invitations, et la récompense du parrain se perdait ensuite (lecture à résultat unique).
+        // L'index unique partiel V358 tient la même règle en base.
+        userRepository.findByIdForUpdate(referee.getId());
         if (referralInvitationRepository.existsByRefereeUserId(referee.getId())) {
             throw new YadonyBusinessException(
                     HttpStatus.CONFLICT, "already-referred",

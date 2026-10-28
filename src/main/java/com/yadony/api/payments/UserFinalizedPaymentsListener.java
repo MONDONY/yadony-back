@@ -13,10 +13,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.UUID;
@@ -27,10 +30,11 @@ import java.util.UUID;
  * remboursement (ou repris par un ticket manuel) n'est jamais touché. Idempotent : un
  * second passage ne trouve plus de non-cash.
  *
- * <p>Un échec de débit sur une devise marque la transaction {@code REQUIRES_NEW} de
- * {@link #onUserFinalized} rollback-only : les forfeits déjà faits pour d'autres devises
- * dans le même passage sont annulés au commit et rejoués (idempotents) au prochain
- * passage. L'appel Stripe qui suit, lui, est externe à la base et s'exécute bien.
+ * <p>Chaque devise est forfaitée dans sa propre transaction : un échec sur l'une (solde qui a
+ * bougé, base indisponible) n'annule qu'elle. Avant, l'exception marquait la transaction de
+ * {@link #onUserFinalized} rollback-only et annulait au commit les forfeits de toutes les autres
+ * devises, alors que l'événement n'est publié qu'une fois : rien ne les rejouait. L'appel Stripe
+ * qui suit est externe à la base et s'exécute dans tous les cas.
  */
 @Component
 public class UserFinalizedPaymentsListener {
@@ -42,17 +46,21 @@ public class UserFinalizedPaymentsListener {
     private final WalletAccountRepository walletAccountRepository;
     private final WalletSelfRefundService walletSelfRefundService;
     private final WalletService walletService;
+    private final TransactionTemplate perCurrency;
 
     public UserFinalizedPaymentsListener(StripeCustomerService stripeCustomerService,
                                          UserRepository userRepository,
                                          WalletAccountRepository walletAccountRepository,
                                          WalletSelfRefundService walletSelfRefundService,
-                                         WalletService walletService) {
+                                         WalletService walletService,
+                                         PlatformTransactionManager transactionManager) {
         this.stripeCustomerService = stripeCustomerService;
         this.userRepository = userRepository;
         this.walletAccountRepository = walletAccountRepository;
         this.walletSelfRefundService = walletSelfRefundService;
         this.walletService = walletService;
+        this.perCurrency = new TransactionTemplate(transactionManager);
+        this.perCurrency.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     @Async
@@ -72,13 +80,7 @@ public class UserFinalizedPaymentsListener {
                 continue;
             }
             try {
-                WalletRefundAllocation allocation = walletSelfRefundService.allocation(userId, wallet.getCurrency());
-                if (allocation.nonRefundable().signum() > 0) {
-                    walletService.debitConfirmedRefund(userId, wallet.getCurrency(),
-                            allocation.nonRefundable(), WalletTransactionType.FORFEITED_ON_DELETION);
-                    log.info("Non-cash perdu a la finalisation pour user {} : {} {}",
-                            userId, allocation.nonRefundable(), wallet.getCurrency());
-                }
+                perCurrency.executeWithoutResult(status -> forfeitCurrency(userId, wallet.getCurrency()));
             } catch (WalletAllocationInvariantException e) {
                 log.warn("Finalisation user {} : allocation {} incoherente, non-cash non debite ({})",
                         userId, wallet.getCurrency(), e.getMessage());
@@ -86,6 +88,17 @@ public class UserFinalizedPaymentsListener {
                 log.error("Finalisation user {} : forfeit {} impossible, le nettoyage Stripe continue",
                         userId, wallet.getCurrency(), e);
             }
+        }
+    }
+
+    /** Perte de la part non-cash d'une devise ; appelée dans sa propre transaction. */
+    private void forfeitCurrency(UUID userId, String currency) {
+        WalletRefundAllocation allocation = walletSelfRefundService.allocation(userId, currency);
+        if (allocation.nonRefundable().signum() > 0) {
+            walletService.debitConfirmedRefund(userId, currency,
+                    allocation.nonRefundable(), WalletTransactionType.FORFEITED_ON_DELETION);
+            log.info("Non-cash perdu a la finalisation pour user {} : {} {}",
+                    userId, allocation.nonRefundable(), currency);
         }
     }
 }

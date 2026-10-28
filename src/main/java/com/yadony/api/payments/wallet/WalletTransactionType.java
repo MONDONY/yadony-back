@@ -63,4 +63,14 @@ public enum WalletTransactionType {
      * {@code payment_ref = "amendment-refund-<id>"}.
      */
     AMENDMENT_COMMISSION_DEDUCTED
+    ,
+    /**
+     * Recharge carte contestée par le titulaire de la carte (litige Stripe) : le montant contesté est
+     * repris, au plus le solde, à l'ouverture du litige ({@code payment_ref} = PaymentIntent de la
+     * recharge). Cf. {@code WalletDisputeService}.
+     */
+    TOPUP_DISPUTED
+    ,
+    /** Litige gagné : ce qu'avait repris {@link #TOPUP_DISPUTED} est rendu au portefeuille. */
+    TOPUP_DISPUTE_REVERSED
 }
