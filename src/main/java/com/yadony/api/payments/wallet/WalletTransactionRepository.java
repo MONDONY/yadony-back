@@ -71,7 +71,7 @@ public interface WalletTransactionRepository extends JpaRepository<WalletTransac
     /** Somme, par devise, de montants en valeur absolue. */
     interface AmountByCurrency {
         String getCurrency();
-        java.math.BigDecimal getTotal();
+        BigDecimal getTotal();
     }
 
     /** Ajustements admin écrits par {@code adminId} depuis {@code since}, par devise (plafond de 24 h). */
