@@ -1,6 +1,7 @@
 package com.yadony.api.matching;
 
 import com.yadony.api.common.AuditService;
+import com.yadony.api.matching.events.AnnouncementCompletedEvent;
 import com.yadony.api.matching.events.HandoverExpiredEvent;
 import com.yadony.api.matching.events.ParcelRefusedEvent;
 import com.yadony.api.matching.events.TripActivityChangedEvent;
@@ -172,6 +173,8 @@ public class AnnouncementCompletionListener {
         // peut passer avant ce passage en COMPLETED).
         eventPublisher.publishEvent(
                 new TripActivityChangedEvent(announcement.getId(), announcement.getTravelerId()));
+        // Vie privée : le tracking efface les positions floues du voyageur (package tracking).
+        eventPublisher.publishEvent(new AnnouncementCompletedEvent(announcement.getId()));
 
         auditService.log(
                 "ANNOUNCEMENT",

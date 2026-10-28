@@ -133,6 +133,9 @@ class AnnouncementCompletionListenerTest {
         assertThat(captor.getValue()).containsEntry("lastDeliveredBidId", bidId.toString());
         // FLUTTER-FC : le trajet quitte « Trajets actifs » → cache trips-summary vidé.
         verify(eventPublisher).publishEvent(new TripActivityChangedEvent(announcementId, travelerId));
+        // Vie privée : le tracking efface les positions floues.
+        verify(eventPublisher).publishEvent(
+                new com.yadony.api.matching.events.AnnouncementCompletedEvent(announcementId));
     }
 
     @Test

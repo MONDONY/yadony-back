@@ -15,4 +15,5 @@ A position is taken at only three moments: when you tap "I'm leaving", when you 
 Once at least one parcel has been scanned, two notifications remind you of these buttons: 30 minutes before departure, and 30 minutes after the arrival time you entered (none if you did not enter one).
 As the sender, your parcel's page shows the status ("On the way", "Arrived", "Tracking not enabled by the traveler" or "last position is old"), a progress bar, the nearest city, the history of cities crossed between the scan of your parcel and its delivery, and the photos of the steps.
 A recipient without an account only sees the latest position on the public tracking page. No SMS or message is sent to recipients without an account.
+Once the last parcel of the trip is delivered, the traveler's approximate positions are deleted.
 Limits: if the traveler does not open the app, the position may be old. "Tracking not enabled by the traveler" means they do not share their position, not that something is wrong with the parcel.
