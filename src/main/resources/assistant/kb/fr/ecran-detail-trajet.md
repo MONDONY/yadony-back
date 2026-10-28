@@ -12,4 +12,4 @@ routes:
   - path: /announcements/trips
     label: Mes trajets
 ---
-Vous êtes sur la fiche de votre trajet : son détail, puis le nombre de vues. La tuile « Demandes », toujours active, ouvre Activité › Demandes sur « À traiter », filtré sur ce trajet ; « Colis » liste les colis embarqués. Selon l'état du trajet : « Modifier », « Reporter », « Affiche », « Annuler » ou « Supprimer ». Colis récupérés, touchez « Arrivé à destination », puis « Prévenir les destinataires ». Si ce trajet n'est pas le vôtre, Yadony ouvre sa fiche expéditeur, avec « Faire une demande ».
+Vous êtes sur la fiche de votre trajet : son détail, puis le nombre de vues. La tuile « Demandes » ouvre Activité › Demandes sur « À traiter », filtré sur ce trajet ; « Colis » liste les colis embarqués. Selon l'état : « Modifier », « Reporter », « Affiche », « Annuler » ou « Supprimer ». Colis récupérés, les rappels de suivi (facultatifs) vous amènent ici : « Je pars », « Je suis arrivé », un résumé (colis, kilos, gain) et « Voir mes colis ». Puis « Prévenir les destinataires ». Si ce trajet n'est pas le vôtre, Yadony ouvre sa fiche expéditeur.
