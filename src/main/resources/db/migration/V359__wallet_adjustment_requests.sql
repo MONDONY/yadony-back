@@ -23,8 +23,9 @@ CREATE TABLE wallet_adjustment_requests (
     CONSTRAINT chk_wallet_adjustment_requests_direction CHECK (direction IN ('CREDIT', 'DEBIT')),
     CONSTRAINT chk_wallet_adjustment_requests_status CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED')),
     CONSTRAINT chk_wallet_adjustment_requests_amount CHECK (amount > 0),
-    -- Jamais approuvée par son propre auteur.
-    CONSTRAINT chk_wallet_adjustment_requests_second_admin CHECK (decided_by IS NULL OR decided_by <> requested_by)
+    -- Jamais approuvée par son propre auteur ; il peut en revanche retirer (rejeter) sa demande.
+    CONSTRAINT chk_wallet_adjustment_requests_second_admin
+        CHECK (status <> 'APPROVED' OR (decided_by IS NOT NULL AND decided_by <> requested_by))
 );
 
 CREATE INDEX idx_wallet_adjustment_requests_pending ON wallet_adjustment_requests (created_at)
