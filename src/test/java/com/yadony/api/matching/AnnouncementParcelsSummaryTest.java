@@ -80,8 +80,8 @@ class AnnouncementParcelsSummaryTest {
                 blockVisibility, mock(AnnouncementViewService.class), payoutNetworksPort,
                 new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0),
                 new com.yadony.api.matching.ranking.TripScoreCalculator(
-                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)));
-        service.setTravelerParcelsNet(parcelsNetPort);
+                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)),
+                parcelsNetPort);
 
         AnnouncementEntity a = new AnnouncementEntity();
         ReflectionTestUtils.setField(a, "id", ANNOUNCEMENT_ID);
@@ -187,5 +187,32 @@ class AnnouncementParcelsSummaryTest {
 
         assertThat(r.parcelsSummary().count()).isEqualTo(1);
         assertThat(r.parcelsSummary().totalKg()).isEqualByComparingTo("4");
+    }
+
+    @Test
+    @DisplayName("colis en espèces : comptés en nombre et en kilos, net nul")
+    void parcelsSummaryCountsCashParcelWithZeroNet() {
+        bidsInDb(bid(BidStatus.HANDED_OVER, "3"));
+        when(parcelsNetPort.estimatedNet(any())).thenReturn(BigDecimal.ZERO);
+
+        AnnouncementDetailResponse r = service.getAnnouncementDetail(ANNOUNCEMENT_ID, TRAVELER_UID);
+
+        assertThat(r.parcelsSummary().count()).isEqualTo(1);
+        assertThat(r.parcelsSummary().totalKg()).isEqualByComparingTo("3");
+        assertThat(r.parcelsSummary().netAmount()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    @DisplayName("poids absent : ignoré dans la somme des kilos")
+    void parcelsSummaryIgnoresNullWeight() {
+        BidEntity noWeight = bid(BidStatus.ARRIVED, "1");
+        noWeight.setWeightKg(null);
+        bidsInDb(noWeight, bid(BidStatus.IN_TRANSIT, "2"));
+        when(parcelsNetPort.estimatedNet(any())).thenReturn(BigDecimal.ZERO);
+
+        AnnouncementDetailResponse r = service.getAnnouncementDetail(ANNOUNCEMENT_ID, TRAVELER_UID);
+
+        assertThat(r.parcelsSummary().count()).isEqualTo(2);
+        assertThat(r.parcelsSummary().totalKg()).isEqualByComparingTo("2");
     }
 }

@@ -22,8 +22,8 @@ import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.currency.ExchangeRateService;
 import com.yadony.api.matching.dto.AddressDto;
 import com.yadony.api.matching.dto.AnnouncementDetailResponse;
-import com.yadony.api.matching.dto.ParcelsSummary;
 import com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse;
+import com.yadony.api.matching.dto.ParcelsSummary;
 import com.yadony.api.matching.dto.AnnouncementRequest;
 import com.yadony.api.matching.dto.AnnouncementResponse;
 import com.yadony.api.matching.dto.AnnouncementSearchResponse;
@@ -209,7 +209,7 @@ public class AnnouncementService {
     private final TripScoreCalculator tripScoreCalculator;
 
     /** Net estimé des colis en possession du voyageur (implémenté dans {@code payments/}). */
-    private TravelerParcelsNetPort travelerParcelsNet = TravelerParcelsNetPort.NONE;
+    private final TravelerParcelsNetPort travelerParcelsNet;
 
     @Value("${yadony.kyc.enforce:true}")
     private boolean enforceKyc;
@@ -239,7 +239,8 @@ public class AnnouncementService {
             AnnouncementViewService announcementViewService,
             TravelerPayoutNetworksPort travelerPayoutNetworks,
             TripRankingProperties rankingProperties,
-            TripScoreCalculator tripScoreCalculator
+            TripScoreCalculator tripScoreCalculator,
+            TravelerParcelsNetPort travelerParcelsNet
     ) {
         this.announcementRepository = announcementRepository;
         this.bidRepository = bidRepository;
@@ -263,11 +264,6 @@ public class AnnouncementService {
         this.travelerPayoutNetworks = travelerPayoutNetworks;
         this.rankingProperties = rankingProperties;
         this.tripScoreCalculator = tripScoreCalculator;
-    }
-
-    /** Injection par setter : ne change pas le constructeur de ce service, instancié à la main par les tests. */
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setTravelerParcelsNet(TravelerParcelsNetPort travelerParcelsNet) {
         this.travelerParcelsNet = travelerParcelsNet;
     }
 

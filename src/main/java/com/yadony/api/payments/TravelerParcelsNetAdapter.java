@@ -1,6 +1,7 @@
 package com.yadony.api.payments;
 
 import com.yadony.api.matching.TravelerParcelsNetPort;
+import com.yadony.api.payments.overview.TravelerParcelNet;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -11,10 +12,10 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Implémentation du port côté {@code payments/} : net estimé = montant payé − commission, la formule
- * de « Mon argent » ({@code MoneyStateResolver#amountFor}), hors bon de parrainage (connu seulement
- * au versement, et {@link ReleaseNetCalculator} le consomme). Les paiements remboursés sont exclus ;
- * un colis en espèces n'a pas de paiement et compte pour zéro.
+ * Implémentation du port côté {@code payments/} : le net de chaque colis vient de
+ * {@link TravelerParcelNet}, donc du même calcul que « Mon argent » (hors bon de parrainage, connu
+ * seulement au versement). Un colis en espèces n'a pas de paiement et compte pour zéro. Deux
+ * requêtes au plus, quel que soit le nombre de colis.
  */
 @Component
 public class TravelerParcelsNetAdapter implements TravelerParcelsNetPort {
@@ -37,21 +38,19 @@ public class TravelerParcelsNetAdapter implements TravelerParcelsNetPort {
             withPayment.add(payment.getBidId());
             total = total.add(net(payment));
         }
-        // Colis issus d'une négociation : paiement rattaché au fil (bid_id NULL), un bid à la fois.
-        for (UUID bidId : bidIds) {
-            if (!withPayment.contains(bidId)) {
-                total = total.add(paymentRepository.findLinkedNegotiationPaymentOfBid(bidId)
-                        .map(TravelerParcelsNetAdapter::net).orElse(BigDecimal.ZERO));
+        // Colis issus d'une négociation : paiement rattaché au fil (bid_id NULL), lu par lot.
+        Set<UUID> withoutDirect = new HashSet<>(bidIds);
+        withoutDirect.removeAll(withPayment);
+        if (!withoutDirect.isEmpty()) {
+            for (Object[] pair : paymentRepository.findLinkedNegotiationPaymentsOfBids(withoutDirect)) {
+                total = total.add(net((PaymentEntity) pair[1]));
             }
         }
         return total;
     }
 
     private static BigDecimal net(PaymentEntity payment) {
-        if (payment.getStatus() == PaymentStatus.REFUNDED || payment.getAmount() == null) {
-            return BigDecimal.ZERO;
-        }
-        BigDecimal commission = payment.getCommissionAmount() == null ? BigDecimal.ZERO : payment.getCommissionAmount();
-        return payment.getAmount().subtract(commission).max(BigDecimal.ZERO);
+        return TravelerParcelNet.of(payment.getStatus() == null ? null : payment.getStatus().name(),
+                payment.getAmount(), payment.getCommissionAmount(), payment.getRefundedAmount());
     }
 }

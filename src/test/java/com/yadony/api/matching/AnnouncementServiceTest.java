@@ -117,7 +117,8 @@ class AnnouncementServiceTest {
                 negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService, travelerPayoutNetworksPort,
                 new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0),
                 new com.yadony.api.matching.ranking.TripScoreCalculator(
-                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)));
+                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)),
+                org.mockito.Mockito.mock(TravelerParcelsNetPort.class));
     }
 
     private static final String FIREBASE_UID = "uid-traveler-001";
@@ -3305,7 +3306,8 @@ class AnnouncementServiceTest {
                     negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService, travelerPayoutNetworksPort,
                 new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0),
                 new com.yadony.api.matching.ranking.TripScoreCalculator(
-                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)));
+                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)),
+                org.mockito.Mockito.mock(TravelerParcelsNetPort.class));
 
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             // le nouveau count (hors DRAFT) renvoie 1 => sous la limite (2) => création OK
@@ -3675,7 +3677,8 @@ class AnnouncementServiceTest {
                     negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService, travelerPayoutNetworksPort,
                 new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0),
                 new com.yadony.api.matching.ranking.TripScoreCalculator(
-                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)));
+                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)),
+                org.mockito.Mockito.mock(TravelerParcelsNetPort.class));
 
             AnnouncementEntity draft = draftEntityOwnedBy(user);
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
@@ -3894,7 +3897,8 @@ class AnnouncementServiceTest {
                     packageRequestRepository, negotiationThreadRepository, notificationDispatcher, blockVisibility, announcementViewService, travelerPayoutNetworksPort,
                 new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0),
                 new com.yadony.api.matching.ranking.TripScoreCalculator(
-                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)));
+                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)),
+                org.mockito.Mockito.mock(TravelerParcelsNetPort.class));
         }
 
         @Test

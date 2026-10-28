@@ -11,9 +11,6 @@ import java.util.UUID;
  */
 public interface TravelerParcelsNetPort {
 
-    /** Aucun calcul (port absent, tests unitaires) : net nul. */
-    TravelerParcelsNetPort NONE = bidIds -> BigDecimal.ZERO;
-
     /**
      * Somme, dans la devise des paiements, de (montant payé − commission) des colis réglés en ligne
      * et non remboursés. Les colis en espèces (sans paiement) comptent pour zéro. Lecture seule.
