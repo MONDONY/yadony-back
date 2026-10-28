@@ -249,7 +249,7 @@ class ReferralServiceTest {
         // Le filleul est verrouillé AVANT le test « déjà parrainé » : deux saisies simultanées
         // ne créent plus deux invitations.
         var order = inOrder(userRepository, referralInvitationRepository);
-        order.verify(userRepository).findByIdForUpdate(USER_ID);
+        order.verify(userRepository).lockForUpdate(USER_ID);
         order.verify(referralInvitationRepository).existsByRefereeUserId(USER_ID);
 
         ArgumentCaptor<ReferralInvitationEntity> captor =
