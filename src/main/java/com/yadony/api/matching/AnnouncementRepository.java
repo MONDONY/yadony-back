@@ -192,6 +192,45 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
     List<com.yadony.api.matching.dto.TravelerStatsDto.DestinationStat> findTopDestinationsForTraveler(
             @Param("travelerId") UUID travelerId, org.springframework.data.domain.Pageable pageable);
 
+    /**
+     * Rappel de départ du suivi voyageur : trajets publiés dont le départ tombe dans la plage de
+     * dates (marge d'un jour pour les fuseaux) et dont le rappel n'est pas encore parti. L'heure
+     * exacte est jugée en Java, avec le fuseau de chaque trajet.
+     */
+    @Query("""
+        SELECT a FROM AnnouncementEntity a
+        WHERE a.status IN ('ACTIVE', 'FULL', 'IN_PROGRESS')
+        AND a.departurePromptSentAt IS NULL
+        AND a.departureDate BETWEEN :from AND :to
+    """)
+    List<AnnouncementEntity> findDeparturePromptCandidates(@Param("from") LocalDate from,
+                                                           @Param("to") LocalDate to);
+
+    /** Rappel d'arrivée : jour d'arrivée effectif dans la plage, heure d'arrivée connue. */
+    @Query("""
+        SELECT a FROM AnnouncementEntity a
+        WHERE a.status IN ('ACTIVE', 'FULL', 'IN_PROGRESS', 'COMPLETED')
+        AND a.arrivalPromptSentAt IS NULL
+        AND a.arrivalTime IS NOT NULL
+        AND COALESCE(a.arrivalDate, a.departureDate) BETWEEN :from AND :to
+    """)
+    List<AnnouncementEntity> findArrivalPromptCandidates(@Param("from") LocalDate from,
+                                                         @Param("to") LocalDate to);
+
+    /** Réserve le rappel de départ : 1 si ce passage l'a pris, 0 si un autre l'a déjà envoyé. */
+    @Modifying
+    @Transactional
+    @Query("UPDATE AnnouncementEntity a SET a.departurePromptSentAt = :now "
+           + "WHERE a.id = :id AND a.departurePromptSentAt IS NULL")
+    int claimDeparturePrompt(@Param("id") UUID id, @Param("now") java.time.OffsetDateTime now);
+
+    /** Réserve le rappel d'arrivée, même principe. */
+    @Modifying
+    @Transactional
+    @Query("UPDATE AnnouncementEntity a SET a.arrivalPromptSentAt = :now "
+           + "WHERE a.id = :id AND a.arrivalPromptSentAt IS NULL")
+    int claimArrivalPrompt(@Param("id") UUID id, @Param("now") java.time.OffsetDateTime now);
+
     @Modifying
     @Query("UPDATE AnnouncementEntity a SET a.travelerIsPro = :isPro " +
            "WHERE a.travelerId = :travelerId AND a.status IN " +

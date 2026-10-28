@@ -240,4 +240,13 @@ class TripRescheduleServiceTest {
                 .isInstanceOfSatisfying(YadonyBusinessException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo("handover-deadline-past"));
     }
+
+    @Test
+    void rescheduleResetsBothSentColumns() {
+        announcement.setDeparturePromptSentAt(java.time.OffsetDateTime.now());
+        announcement.setArrivalPromptSentAt(java.time.OffsetDateTime.now());
+        service.reschedule(announcementId, "uid-traveler", request(newDate, LocalTime.of(23, 0)));
+        assertThat(announcement.getDeparturePromptSentAt()).isNull();
+        assertThat(announcement.getArrivalPromptSentAt()).isNull();
+    }
 }

@@ -149,6 +149,21 @@ class NotificationPrefsServiceTest {
         assertThat(service.isAllowed(USER_ID, "TRIP_IN_PROGRESS")).isTrue();
     }
 
+    /**
+     * Rappels de départ et d'arrivée du suivi voyageur : même interrupteur visible que « Bon
+     * voyage » (pushRemindersTips), jamais le pushTripReminder caché.
+     */
+    @Test
+    void isAllowed_tripPrompts_followRemindersTipsPref() {
+        NotificationPrefsEntity e = buildEntity(true, true, true, false, false);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(e));
+        assertThat(service.isAllowed(USER_ID, "TRIP_DEPARTURE_PROMPT")).isTrue();
+        assertThat(service.isAllowed(USER_ID, "TRIP_ARRIVAL_PROMPT")).isTrue();
+        e.setPushRemindersTips(false);
+        assertThat(service.isAllowed(USER_ID, "TRIP_DEPARTURE_PROMPT")).isFalse();
+        assertThat(service.isAllowed(USER_ID, "TRIP_ARRIVAL_PROMPT")).isFalse();
+    }
+
     @Test
     void isAllowed_remindersTipsFamily_followsRemindersTipsPref() {
         NotificationPrefsEntity e = buildEntity(true, true, true, true, false);

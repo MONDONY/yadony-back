@@ -42,6 +42,8 @@ class NotificationCategoryTest {
     void tripsAlertsAndRequestsAreTrajets() {
         assertThat(NotificationCategory.fromType("CORRIDOR_ALERT")).isEqualTo(NotificationCategory.TRAJETS);
         assertThat(NotificationCategory.fromType("TRIP_IN_PROGRESS")).isEqualTo(NotificationCategory.TRAJETS);
+        assertThat(NotificationCategory.fromType("TRIP_DEPARTURE_PROMPT")).isEqualTo(NotificationCategory.TRAJETS);
+        assertThat(NotificationCategory.fromType("TRIP_ARRIVAL_PROMPT")).isEqualTo(NotificationCategory.TRAJETS);
         assertThat(NotificationCategory.fromType("PACKAGE_MATCH")).isEqualTo(NotificationCategory.TRAJETS);
         assertThat(NotificationCategory.fromType("negotiation_started")).isEqualTo(NotificationCategory.TRAJETS);
         assertThat(NotificationCategory.fromType("request_accepted")).isEqualTo(NotificationCategory.TRAJETS);

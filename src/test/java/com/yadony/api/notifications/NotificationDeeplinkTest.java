@@ -202,6 +202,10 @@ class NotificationDeeplinkTest {
                 .contains("yadony://announcements/" + annId + "/trip");
         assertThat(NotificationDeeplink.of("automation_capacity_free", Map.of("announcementId", annId)))
                 .contains("yadony://announcements/" + annId + "/trip");
+        assertThat(NotificationDeeplink.of("TRIP_DEPARTURE_PROMPT", Map.of("announcementId", annId)))
+                .contains("yadony://announcements/" + annId + "/trip");
+        assertThat(NotificationDeeplink.of("TRIP_ARRIVAL_PROMPT", Map.of("announcementId", annId)))
+                .contains("yadony://announcements/" + annId + "/trip");
     }
 
     @Test

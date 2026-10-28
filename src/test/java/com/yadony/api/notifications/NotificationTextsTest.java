@@ -110,6 +110,8 @@ class NotificationTextsTest {
         map.put("travelerNoShow", NotificationTexts.travelerNoShow(m));
         map.put("tripArrived", NotificationTexts.tripArrived(m));
         map.put("tripInProgress", NotificationTexts.tripInProgress(m));
+        map.put("tripDeparturePrompt", NotificationTexts.tripDeparturePrompt(m));
+        map.put("tripArrivalPrompt", NotificationTexts.tripArrivalPrompt(m));
         map.put("handoverReminder", NotificationTexts.handoverReminder(m,
                 "Aéroport Roissy Charles-de-Gaulle, terminal 2E, porte 12, devant le comptoir"));
         map.put("handoverReminder sans lieu", NotificationTexts.handoverReminder(m, " "));
@@ -342,6 +344,17 @@ class NotificationTextsTest {
     void noCityInTitles(Messages m) {
         pireCas(m).forEach((nom, t) ->
                 assertThat(t.title()).as(nom).doesNotContain(DEPART).doesNotContain(ARRIVEE));
+    }
+
+    @ParameterizedTest
+    @MethodSource("deuxLangues")
+    void textsRespectCaps(Messages m) {
+        for (NotificationText t : List.of(NotificationTexts.tripDeparturePrompt(m),
+                NotificationTexts.tripArrivalPrompt(m))) {
+            assertThat(t.title()).isNotBlank().hasSizeLessThanOrEqualTo(NotificationCaps.TITLE_MAX);
+            assertThat(t.body()).isNotBlank().hasSizeLessThanOrEqualTo(NotificationCaps.BODY_MAX);
+            assertThat(t.title() + t.body()).doesNotContain("—").doesNotContain("→");
+        }
     }
 
     @Test

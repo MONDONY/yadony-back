@@ -94,7 +94,8 @@ public class TripPositionService {
         return hasCarriedParcel.getAsBoolean();
     }
 
-    private static OffsetDateTime departureInstant(AnnouncementEntity a) {
+    /** Instant de départ prévu (partagé avec le rappel de départ). */
+    static OffsetDateTime departureInstant(AnnouncementEntity a) {
         if (a.getDepartureAt() != null) {
             return a.getDepartureAt();
         }

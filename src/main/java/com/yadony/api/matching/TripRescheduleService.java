@@ -102,6 +102,10 @@ public class TripRescheduleService {
                 request.departureDate(), request.departureTime(), announcement.getTimezone()));
         announcement.setHandoverDeadline(request.handoverDeadline());
         announcement.setRescheduleCount(announcement.getRescheduleCount() + 1);
+        // Suivi voyageur : les rappels de départ et d'arrivée repartent pour la nouvelle date,
+        // dans la même transaction que le report.
+        announcement.setDeparturePromptSentAt(null);
+        announcement.setArrivalPromptSentAt(null);
         if (announcement.getStatus() == AnnouncementStatus.IN_PROGRESS) {
             // Le planificateur l'avait fait partir à l'ancienne heure : le trajet repart
             // sur le marché, complet s'il ne reste plus de place.
