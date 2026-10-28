@@ -66,6 +66,7 @@ Exemple (spec 4.1 bis) : commission 4,00 €, aucun euro, 3,00 $ et 1 500 F CFA.
 - `WalletCommissionCollector` n'a qu'UN constructeur (trois dépendances) : deux constructeurs sans `@Autowired` cassent Spring.
 - INV-09 (une ligne `COMMISSION_DEDUCTED` par colis et par devise) : chaque portefeuille n'est débité qu'une fois, y compris quand il est à la fois devise du colis et devise active. INV-17 : toute ligne convertie doit porter `sourceCurrency` = devise du colis.
 - Le recrédit à l'annulation boucle déjà sur toutes les lignes (une clé par devise) : aucune modification, testé avec quatre devises.
+- Audit : celui du colis et du supplément porte `lines` (devise, débit, part couverte). Celui de la MODIFICATION de colis ne porte jamais de montant (ils vivent dans le grand livre, `BidAmendmentCashRailIT` le vérifie) : il ne garde que `walletCurrencies`. Un test de CI l'a rappelé ; ne pas y remettre `lines`.
 - H2 ne connaît pas `FOR NO KEY UPDATE` : tout test de la répartition qui verrouille tourne sur Postgres embarqué (profil `e2e`).
 
 ## Critères d'acceptation couverts

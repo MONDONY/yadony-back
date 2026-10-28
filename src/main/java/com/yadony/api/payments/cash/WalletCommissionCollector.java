@@ -262,6 +262,14 @@ public class WalletCommissionCollector {
                 covered ? lines : List.of(), available, shares, excluded);
     }
 
+    /**
+     * Devises débitées, SANS aucun montant : l'audit d'une modification de colis ne porte jamais de montant
+     * (ils vivent dans le grand livre), seulement d'où part la commission.
+     */
+    public static List<String> auditCurrencies(CommissionSplit split) {
+        return split.lines().stream().map(CommissionLine::walletCurrency).toList();
+    }
+
     /** Lignes de la répartition pour l'audit : une entrée par portefeuille débité. */
     public static List<Map<String, String>> auditLines(CommissionSplit split) {
         List<Map<String, String>> out = new ArrayList<>();

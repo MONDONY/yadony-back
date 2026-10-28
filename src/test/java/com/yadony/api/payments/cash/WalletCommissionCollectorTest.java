@@ -652,6 +652,17 @@ class WalletCommissionCollectorTest {
         assertThat(collector.rateOfTheDay("eur", "EUR")).isEqualByComparingTo("1");
     }
 
+    @Test
+    void auditCurrencies_listsTheDebitedCurrenciesAndNoAmount() {
+        wallets("USD", "3.00", "XOF", "1500");
+        CommissionSplit s = collector.plan(traveler, "EUR", "EUR", new BigDecimal("4.00"));
+
+        List<String> audit = WalletCommissionCollector.auditCurrencies(s);
+
+        assertThat(audit).containsExactly("USD", "XOF");
+        assertThat(audit.toString()).doesNotContain("3.00").doesNotContain("807");
+    }
+
     // ─── Alternatives (contrat historique) ───────────────────────────────────
 
     @Test
