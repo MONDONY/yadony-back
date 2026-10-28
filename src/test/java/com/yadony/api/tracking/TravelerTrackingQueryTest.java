@@ -191,4 +191,30 @@ class TravelerTrackingQueryTest {
         assertThat(v.history()).isEmpty();
         assertThat(v.status()).isEqualTo(TrackingStatus.NOT_ACTIVATED);
     }
+
+    @Test
+    void deliveredParcelAfterPurgeShowsArrivedWithoutHistory() {
+        // Trajet terminé : les positions ont été effacées, la liste est vide.
+        BidEntity delivered = bid(BidStatus.COMPLETED, T0, T0.plusHours(6));
+
+        TravelerTrackingView v = query.forSender(delivered, T0.plusDays(3));
+
+        assertThat(v.status()).isEqualTo(TrackingStatus.ARRIVED);
+        assertThat(v.history()).isEmpty();
+        assertThat(v.nearestCity()).isNull();
+        assertThat(v.progressPct()).isNull();
+        assertThat(v.lastUpdatedAt()).isNull();
+    }
+
+    @Test
+    void publicViewAfterPurgeHasNoPositionAndNoError() {
+        BidEntity delivered = bid(BidStatus.COMPLETED, T0, T0.plusHours(6));
+
+        TravelerTrackingView v = query.forPublic(delivered, T0.plusDays(3));
+
+        assertThat(v.status()).isEqualTo(TrackingStatus.ARRIVED);
+        assertThat(v.history()).isEmpty();
+        assertThat(v.nearestCity()).isNull();
+        assertThat(v.progressPct()).isNull();
+    }
 }
