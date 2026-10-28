@@ -324,6 +324,12 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
 
     long countByAnnouncementIdAndStatusIn(UUID announcementId, List<BidStatus> statuses);
 
+    /** Trajets de la liste qui ont au moins un colis dans ces statuts (une requête pour toute la page). */
+    @Query("SELECT DISTINCT b.announcementId FROM BidEntity b "
+            + "WHERE b.announcementId IN :ids AND b.status IN :statuses")
+    List<UUID> findAnnouncementIdsWithStatusIn(@Param("ids") java.util.Collection<UUID> ids,
+                                               @Param("statuses") List<BidStatus> statuses);
+
     /** Variante par lot de {@link #countByAnnouncementIdAndStatusIn} : une ligne {@code [announcementId, count]}. */
     @Query("SELECT b.announcementId, COUNT(b) FROM BidEntity b "
             + "WHERE b.announcementId IN :ids AND b.status IN :statuses GROUP BY b.announcementId")

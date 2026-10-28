@@ -73,6 +73,7 @@ class BidServiceTest {
     @Mock private com.yadony.api.payments.PaymentService paymentService;
     @Mock private TripRescheduleRepository rescheduleRepository;
     @Mock private com.yadony.api.common.commission.CommissionGridService commissionGridService;
+    @Mock private com.yadony.api.tracking.TravelerTrackingQuery travelerTrackingQuery;
     @Mock private HttpServletRequest httpRequest;
 
     @InjectMocks private BidService bidService;
@@ -3950,6 +3951,24 @@ class BidServiceTest {
             assertThat(resp.recipientAppStatus()).isNull();
             assertThat(resp.recipientReplacementRequestedAt())
                     .isEqualTo(java.time.OffsetDateTime.parse("2026-10-05T09:30:00Z"));
+        }
+
+        @Test
+        @DisplayName("suivi du voyageur : servi à l'expéditeur seul, colis pris en charge, détail isolé")
+        void toResponse_travelerTracking_senderOnlyWhenCarried() {
+            UserEntity sender = buildSender();
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.IN_TRANSIT);
+            var view = new com.yadony.api.tracking.dto.TravelerTrackingView(
+                    com.yadony.api.tracking.dto.TravelerTrackingView.TrackingStatus.EN_ROUTE,
+                    null, 40, "Lyon", java.util.List.of());
+            when(travelerTrackingQuery.forSender(eq(bid), any())).thenReturn(view);
+
+            assertThat(bidService.toResponse(bid, sender, SENDER_ID).travelerTracking()).isEqualTo(view);
+            assertThat(bidService.toResponse(bid, sender, TRAVELER_ID).travelerTracking()).isNull();
+
+            bid.setStatus(BidStatus.ACCEPTED);
+            assertThat(bidService.toResponse(bid, sender, SENDER_ID).travelerTracking()).isNull();
         }
 
         @Test

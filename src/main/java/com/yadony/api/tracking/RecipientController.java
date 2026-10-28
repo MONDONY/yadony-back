@@ -7,6 +7,7 @@ import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
 import com.yadony.api.matching.RevokedTrackingTokenRepository;
+import com.yadony.api.tracking.dto.TravelerTrackingView;
 import com.google.zxing.BarcodeFormat;
 import com.google.zxing.EncodeHintType;
 import com.google.zxing.client.j2se.MatrixToImageWriter;
@@ -28,6 +29,7 @@ import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Base64;
@@ -48,6 +50,11 @@ public class RecipientController {
     private final TrackingEventRepository trackingEventRepository;
     private final StorageService storageService;
     private final RevokedTrackingTokenRepository revokedTokenRepository;
+    private final TravelerTrackingQuery travelerTrackingQuery;
+
+    /** Statuts de colis pour lesquels le suivi approximatif du voyageur a un sens (colis pris en charge). */
+    private static final java.util.Set<BidStatus> TRAVELER_TRACKING_STATUSES = java.util.EnumSet.of(
+            BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED, BidStatus.COMPLETED);
 
     @Value("${app.base-url}")
     private String appBaseUrl;
@@ -65,12 +72,14 @@ public class RecipientController {
                                AnnouncementRepository announcementRepository,
                                TrackingEventRepository trackingEventRepository,
                                StorageService storageService,
-                               RevokedTrackingTokenRepository revokedTokenRepository) {
+                               RevokedTrackingTokenRepository revokedTokenRepository,
+                               TravelerTrackingQuery travelerTrackingQuery) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.trackingEventRepository = trackingEventRepository;
         this.storageService = storageService;
         this.revokedTokenRepository = revokedTokenRepository;
+        this.travelerTrackingQuery = travelerTrackingQuery;
     }
 
     @GetMapping("/{trackingToken}")
@@ -105,12 +114,16 @@ public class RecipientController {
                 .toList();
 
         String currentStep = ParcelSteps.currentStep(rawEvents);
-        return ResponseEntity.ok(Map.of(
-                "currentStep", currentStep,
-                "events", events,
-                "publicConfirmationCode", publicConfirmationCode(bid),
-                "arrivalInstructions", arrivalInstructionsOrEmpty(announcementOpt)
-        ));
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("currentStep", currentStep);
+        body.put("events", events);
+        body.put("publicConfirmationCode", publicConfirmationCode(bid));
+        body.put("arrivalInstructions", arrivalInstructionsOrEmpty(announcementOpt));
+        // Champ facultatif : dernière position approximative seulement, jamais d'historique.
+        if (TRAVELER_TRACKING_STATUSES.contains(bid.getStatus())) {
+            body.put("travelerTracking", travelerTrackingQuery.forPublic(bid, OffsetDateTime.now(ZoneOffset.UTC)));
+        }
+        return ResponseEntity.ok(body);
     }
 
     /** Lien remplacé après un changement de destinataire : 410, sans rien dire du colis. */
@@ -175,8 +188,37 @@ public class RecipientController {
         model.addAttribute("trackingToken", trackingToken);
         model.addAttribute("isDelivered", bid.getStatus() == BidStatus.COMPLETED);
         addAppInvitation(model, bid, userAgent);
+        addTravelerTracking(model, bid);
 
         return "recipient/tracking";
+    }
+
+    /**
+     * Bloc « Position du voyageur » : statut, avancement, ville proche et ancienneté de la dernière
+     * position, sans historique. Absent tant que le colis n'est pas pris en charge.
+     */
+    private void addTravelerTracking(Model model, BidEntity bid) {
+        if (!TRAVELER_TRACKING_STATUSES.contains(bid.getStatus())) {
+            return;
+        }
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        TravelerTrackingView view = travelerTrackingQuery.forPublic(bid, now);
+        model.addAttribute("travelerStatus", view.status().name());
+        model.addAttribute("travelerCity", view.nearestCity());
+        model.addAttribute("travelerProgress", view.progressPct());
+        if (view.lastUpdatedAt() != null) {
+            long minutes = Math.max(0, Duration.between(view.lastUpdatedAt(), now).toMinutes());
+            if (minutes < 60) {
+                model.addAttribute("travelerAgeKey", "tracking.traveler.age.minutes");
+                model.addAttribute("travelerAgeValue", minutes);
+            } else if (minutes < 1440) {
+                model.addAttribute("travelerAgeKey", "tracking.traveler.age.hours");
+                model.addAttribute("travelerAgeValue", minutes / 60);
+            } else {
+                model.addAttribute("travelerAgeKey", "tracking.traveler.age.days");
+                model.addAttribute("travelerAgeValue", minutes / 1440);
+            }
+        }
     }
 
     /**

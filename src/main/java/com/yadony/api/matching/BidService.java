@@ -109,6 +109,11 @@ public class BidService {
     private final TripRescheduleRepository rescheduleRepository;
     private final com.yadony.api.matching.reception.BidRecipientLinkRepository recipientLinkRepository;
     private final CommissionGridService commissionGridService;
+    private final com.yadony.api.tracking.TravelerTrackingQuery travelerTrackingQuery;
+
+    /** Colis pris en charge (ou livré) : le suivi approximatif du voyageur a un sens pour l'expéditeur. */
+    private static final java.util.Set<BidStatus> TRAVELER_TRACKING_STATUSES =
+            java.util.EnumSet.of(BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED, BidStatus.COMPLETED);
 
     /** Supplément de prix à la remise (payments/supplement) ; aucun tant que Spring ne l'a pas injecté. */
     private BidSupplementSummaryPort supplementSummary = BidSupplementSummaryPort.NONE;
@@ -148,7 +153,8 @@ public class BidService {
                       MessagesResolver messagesResolver,
                       TripRescheduleRepository rescheduleRepository,
                       com.yadony.api.matching.reception.BidRecipientLinkRepository recipientLinkRepository,
-                      CommissionGridService commissionGridService) {
+                      CommissionGridService commissionGridService,
+                      com.yadony.api.tracking.TravelerTrackingQuery travelerTrackingQuery) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -171,6 +177,7 @@ public class BidService {
         this.rescheduleRepository = rescheduleRepository;
         this.recipientLinkRepository = recipientLinkRepository;
         this.commissionGridService = commissionGridService;
+        this.travelerTrackingQuery = travelerTrackingQuery;
     }
 
     /**
@@ -1812,6 +1819,13 @@ public class BidService {
             totalNetAmountWithSupplementEur = null;
         }
 
+        // Suivi approximatif : détail d'un colis isolé, côté expéditeur, une fois le colis pris en charge.
+        // Les listes (prefetch non nul) ne le portent pas : une lecture de plus par colis.
+        com.yadony.api.tracking.dto.TravelerTrackingView travelerTracking =
+                (callerIsSender && prefetch == null && TRAVELER_TRACKING_STATUSES.contains(bid.getStatus()))
+                        ? travelerTrackingQuery.forSender(bid, java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC))
+                        : null;
+
         return new BidResponse(
                 bid.getId(),
                 bid.getAnnouncementId(),
@@ -1910,7 +1924,8 @@ public class BidService {
                 amendmentView.amendments(),
                 amendmentView.amendmentAllowed(),
                 totalWeightKg,
-                moneyBreakdown
+                moneyBreakdown,
+                travelerTracking
         );
     }
 

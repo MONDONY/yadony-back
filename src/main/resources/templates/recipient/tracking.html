@@ -20,6 +20,9 @@
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
     .history-label { color: var(--subtle); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
     .muted { display: block; }
+    .traveler-city { margin: 4px 0; font-weight: 700; }
+    .traveler-progress { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; margin: 6px 0; }
+    .traveler-progress span { display: block; height: 100%; background: var(--blue); border-radius: 4px; }
     .app-invite-hint { margin: 0; line-height: 1.45; text-wrap: pretty; }
     .masked-phone { font-variant-numeric: tabular-nums; white-space: nowrap; }
     .empty { padding: 14px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line); display: grid; gap: 4px; }
@@ -76,6 +79,21 @@
           <strong th:text="${trackingNumber}">DON-XXXXXX</strong>
         </div>
       </div>
+    </section>
+
+    <section class="card section" th:if="${travelerStatus != null}" id="traveler-position">
+      <h2 class="section-title" th:text="#{tracking.traveler.title}">Position du voyageur</h2>
+      <strong th:text="#{'tracking.traveler.status.' + ${travelerStatus}}">Le voyageur est en route</strong>
+      <th:block th:if="${travelerCity != null}">
+        <p class="traveler-city" th:text="#{tracking.traveler.near(${travelerCity})}">Près de Lyon</p>
+        <div th:if="${travelerProgress != null}" class="traveler-progress"
+             role="progressbar" aria-valuemin="0" aria-valuemax="100" th:attr="aria-valuenow=${travelerProgress}">
+          <span th:style="'width:' + ${travelerProgress} + '%'"></span>
+        </div>
+        <p class="muted" th:if="${travelerProgress != null}" th:text="#{tracking.traveler.progress(${travelerProgress})}">40 %</p>
+        <p class="muted" th:if="${travelerAgeKey != null}" th:text="#{${travelerAgeKey}(${travelerAgeValue})}">Il y a 5 min</p>
+      </th:block>
+      <p class="muted" th:text="#{tracking.traveler.approximate}">Position approximative.</p>
     </section>
 
     <section id="public-code-panel"

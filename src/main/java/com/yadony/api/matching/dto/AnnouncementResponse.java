@@ -74,5 +74,9 @@ public record AnnouncementResponse(
          * le client s'en sert pour les afficher à l'heure de la ville de départ. Champ ajouté,
          * optionnel pour les anciens clients.
          */
-        String departureTimezone
+        String departureTimezone,
+        /** Suivi approximatif : la fenêtre d'envoi de position est ouverte maintenant pour ce trajet
+         * (30 min avant le départ, au moins un colis pris en charge). Champ ajouté, optionnel pour les
+         * anciens clients. */
+        boolean trackingActive
 ) {}

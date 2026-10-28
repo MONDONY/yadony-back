@@ -1268,6 +1268,31 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("trackingActive : fenêtre ouverte et colis porté, lu par lot pour la page")
+        void getMyAnnouncements_trackingActive_batchRead() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity open = buildAnnouncement(traveler);
+            open.setDepartureDate(LocalDate.now().minusDays(1));
+            AnnouncementEntity noParcel = buildAnnouncement(traveler);
+            UUID otherId = UUID.randomUUID();
+            setId(noParcel, otherId);
+            noParcel.setDepartureDate(LocalDate.now().minusDays(1));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.findAnnouncementIdsWithStatusIn(any(), any()))
+                    .thenReturn(List.of(ANNOUNCEMENT_ID));
+            when(announcementRepository.findByTravelerIdFiltered(
+                    eq(USER_ID), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), any()))
+                    .thenReturn(new PageImpl<>(List.of(open, noParcel)));
+
+            var content = announcementService.getMyAnnouncements(
+                    FIREBASE_UID, null, null, null, null, null, null, null, PageRequest.of(0, 10)).getContent();
+
+            assertThat(content.get(0).trackingActive()).isTrue();
+            assertThat(content.get(1).trackingActive()).isFalse();
+            verify(bidRepository, never()).existsByAnnouncementIdAndStatusIn(any(), any());
+        }
+
+        @Test
         @DisplayName("trajet d'un voyage à étapes → nombre d'étapes lu par lot ; sans bid → compteurs à zéro")
         void getMyAnnouncements_tripGroupLegCount_andZeroDefaults() {
             UserEntity traveler = buildTraveler();

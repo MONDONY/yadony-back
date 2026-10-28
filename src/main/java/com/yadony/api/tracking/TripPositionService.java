@@ -73,11 +73,25 @@ public class TripPositionService {
     }
 
     private boolean windowOpen(AnnouncementEntity a, OffsetDateTime now) {
+        return isWindowOpen(a, now, () -> bidRepository.existsByAnnouncementIdAndStatusIn(a.getId(), CARRIED));
+    }
+
+    /** Statuts de colis qui ouvrent la fenêtre (colis pris en charge, pas encore arrivé). */
+    public static List<BidStatus> carriedStatuses() {
+        return CARRIED;
+    }
+
+    /**
+     * Règle de la fenêtre, partagée avec la liste « Mes trajets » (qui lit « un colis porté » par
+     * lot) : {@code now} >= départ - 30 min, puis au moins un colis porté.
+     */
+    public static boolean isWindowOpen(AnnouncementEntity a, OffsetDateTime now,
+                                       java.util.function.BooleanSupplier hasCarriedParcel) {
         OffsetDateTime departure = departureInstant(a);
         if (departure == null || now.isBefore(departure.minus(WINDOW_LEAD))) {
             return false;
         }
-        return bidRepository.existsByAnnouncementIdAndStatusIn(a.getId(), CARRIED);
+        return hasCarriedParcel.getAsBoolean();
     }
 
     private static OffsetDateTime departureInstant(AnnouncementEntity a) {

@@ -2398,14 +2398,15 @@ public class AnnouncementService {
 
     /** Compteurs des cartes d'une page, lus par lot (cf. {@link #loadCardCounts}). */
     private record CardCounts(Map<UUID, Long> pending, Map<UUID, Long> confirmed,
-                              Map<UUID, BigDecimal> reservedNet, Map<UUID, Long> tripLegs) {}
+                              Map<UUID, BigDecimal> reservedNet, Map<UUID, Long> tripLegs,
+                              java.util.Set<UUID> carried) {}
 
     private static final List<BidStatus> CONFIRMED_STATUSES =
             List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.COMPLETED);
 
     private CardCounts loadCardCounts(List<AnnouncementEntity> announcements) {
         if (announcements.isEmpty()) {
-            return new CardCounts(Map.of(), Map.of(), Map.of(), Map.of());
+            return new CardCounts(Map.of(), Map.of(), Map.of(), Map.of(), java.util.Set.of());
         }
         List<UUID> ids = announcements.stream().map(AnnouncementEntity::getId).toList();
         List<UUID> groupIds = announcements.stream().map(AnnouncementEntity::getTripGroupId)
@@ -2415,7 +2416,9 @@ public class AnnouncementService {
                 countsById(bidRepository.countByAnnouncementIdsAndStatusIn(ids, CONFIRMED_STATUSES)),
                 amountsById(bidRepository.sumReservedNetByAnnouncementIds(
                         ids, CONFIRMED_STATUSES.stream().map(Enum::name).toList())),
-                groupIds.isEmpty() ? Map.of() : countsById(announcementRepository.countByTripGroupIds(groupIds)));
+                groupIds.isEmpty() ? Map.of() : countsById(announcementRepository.countByTripGroupIds(groupIds)),
+                new java.util.HashSet<>(bidRepository.findAnnouncementIdsWithStatusIn(
+                        ids, com.yadony.api.tracking.TripPositionService.carriedStatuses())));
     }
 
     private static Map<UUID, Long> countsById(List<Object[]> rows) {
@@ -2538,7 +2541,13 @@ public class AnnouncementService {
                         ? counts.tripLegs().getOrDefault(entity.getTripGroupId(), 0L).intValue()
                         : (int) announcementRepository.countByTripGroupId(entity.getTripGroupId()),
                 entity.getSeriesId(),
-                entity.getTimezone()
+                entity.getTimezone(),
+                com.yadony.api.tracking.TripPositionService.isWindowOpen(entity,
+                        java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC),
+                        () -> counts != null
+                                ? counts.carried().contains(entity.getId())
+                                : bidRepository.existsByAnnouncementIdAndStatusIn(entity.getId(),
+                                        com.yadony.api.tracking.TripPositionService.carriedStatuses()))
         );
     }
 
