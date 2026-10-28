@@ -66,7 +66,8 @@ solde, non-cash compris, et deux déclencheurs concurrents recréditaient deux f
 - [x] Deux déclencheurs concurrents ne recréditent la commission qu'une fois — `CashCommissionWalletSplitIT` (échoue sans le correctif : 2 lignes au lieu d'une).
 
 ## Tests
-- Voir la description de la PR pour le résultat de `./mvnw test` et la couverture JaCoCo.
+- `./mvnw clean test jacoco:report` → 14 107 tests, 0 échec, 0 erreur (7 ignorés, préexistants).
+- Couverture JaCoCo des lignes : 96,42 % (WalletSelfRefundService 93,9 %, CashCommissionService 96,1 %, WalletTopupOrchestrator 97,4 %, nouvelles classes 100 %).
 - Tests ajoutés ou modifiés : `BoundedDecimalsTest`, `BoundedDecimalWiringIT`, `WalletTopupCurrencyTest`, `WalletSelfRefundServiceTest`, `WalletRefundIT`, `WalletRefundIssueRecoverySchedulerTest`, `WalletRefundRequestSummaryResponseTest`, `UserServiceDeleteAccountTest`, `CashCommissionServiceTest`, `CashCommissionWalletSplitIT`, `NoShowServiceTest`, `NoShowSchedulerTest`.
 
 ## Décisions techniques
