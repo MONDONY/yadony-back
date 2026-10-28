@@ -153,6 +153,11 @@ public class TripPositionService {
         if (lat == null || lon == null) {
             return Optional.empty();
         }
+        if (source == SampleSource.ARRIVEE
+                && (lat < -90 || lat > 90 || lon < -180 || lon > 180)) {
+            // Corps de mark-arrived non validé : une position hors bornes est ignorée, jamais une erreur.
+            return Optional.empty();
+        }
         OffsetDateTime now = OffsetDateTime.now(clock);
         if (source == SampleSource.ARRIVEE) {
             // Au moment de l'arrivée les colis sont déjà passés en ARRIVED : seule l'heure compte.

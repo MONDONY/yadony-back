@@ -157,12 +157,25 @@ class AnnouncementControllerPositionTest {
     }
 
     @Test
-    void markArrivedWithInvalidPositionIs422() throws Exception {
+    void markArrivedWithOutOfRangePositionStillSucceedsAndStoresNothing() throws Exception {
         UUID id = UUID.randomUUID();
+        when(announcementService.markArrived(eq(id), eq(UID), isNull()))
+                .thenReturn(mock(AnnouncementDetailResponse.class));
+
         mockMvc.perform(post("/announcements/" + id + "/mark-arrived").with(authentication(as("ROLE_TRAVELER")))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"position\":{\"lat\":200,\"lon\":0}}"))
+                .andExpect(status().isOk());
+
+        verify(announcementService).markArrived(eq(id), eq(UID), isNull());
+    }
+
+    @Test
+    void positionEndpointStillRejectsOutOfRangePosition() throws Exception {
+        UUID id = UUID.randomUUID();
+        mockMvc.perform(post("/announcements/" + id + "/position").with(authentication(as("ROLE_TRAVELER")))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"lat\":200,\"lon\":0}"))
                 .andExpect(status().isUnprocessableEntity());
-        verify(announcementService, never()).markArrived(any(), anyString(), any());
+        verify(tripPositionService, never()).recordForFirebaseUid(any(), anyString(), any(), any(), any());
     }
 }

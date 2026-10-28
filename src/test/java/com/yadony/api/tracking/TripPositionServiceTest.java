@@ -186,6 +186,15 @@ class TripPositionServiceTest {
     }
 
     @Test
+    void arrivalSampleIgnoresOutOfRangePosition() {
+        for (double[] p : new double[][] {{200, 0}, {-91, 0}, {0, 181}, {0, -181}}) {
+            assertThat(service.record(announcementId, travelerId, p[0], p[1], SampleSource.ARRIVEE)).isEmpty();
+        }
+        verify(sampleRepository, never()).save(any());
+        verify(blurService, never()).blur(anyDouble(), anyDouble(), any(), any(), any(), any());
+    }
+
+    @Test
     void departIgnoredTooEarly() {
         trip.setDepartureAt(NOW.plusMinutes(31));
 
