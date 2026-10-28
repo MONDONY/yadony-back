@@ -48,8 +48,8 @@ import java.util.UUID;
  * {@code linkedNegotiationThreadId}.
  *
  * <p>Gardes : ne traite que les bids CASH dont {@code commissionStatus == CHARGED}
- * (refundCommissionToWallet/refundCommission verrouillent en plus la transition
- * → REFUNDED, prévenant tout double remboursement avec les autres flux).
+ * (refundCommissionToWallet/refundCommission verrouillent le colis et relisent son statut
+ * de commission en base, prévenant tout double remboursement avec les autres flux).
  */
 @Component
 public class BidCancelledCommissionRefundListener {
@@ -92,17 +92,30 @@ public class BidCancelledCommissionRefundListener {
         refund(event.getBidId(), "wallet-refund-noshow-", "traveler-no-show");
     }
 
-    private void refund(UUID bidId, String walletKeyPrefix, String trigger) {
+    /**
+     * Rattrapage d'un recrédit jamais fait ({@code CommissionRefundRecoveryJob}) : l'écouteur après
+     * commit a échoué, Spring a seulement journalisé l'exception et la commission restait
+     * CHARGED. Même chemin que les déclencheurs ; le verrou et la relecture du statut dans
+     * {@link CashCommissionService} empêchent tout second recrédit.
+     *
+     * @return {@code true} si un remboursement a été demandé pour ce colis
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean recover(UUID bidId) {
+        return refund(bidId, "wallet-refund-recovered-", "recovery");
+    }
+
+    private boolean refund(UUID bidId, String walletKeyPrefix, String trigger) {
         BidEntity bid = bidRepository.findById(bidId).orElse(null);
-        if (bid == null) return;
-        if (bid.getPaymentMethod() != PaymentMethod.CASH) return;
-        if (bid.getCommissionStatus() != CommissionStatus.CHARGED) return;
+        if (bid == null) return false;
+        if (bid.getPaymentMethod() != PaymentMethod.CASH) return false;
+        if (bid.getCommissionStatus() != CommissionStatus.CHARGED) return false;
 
         CommissionChargedVia via = bid.getCommissionChargedVia();
         if (via == null) {
             log.warn("BidCancelledCommissionRefundListener: bid {} CHARGED mais commissionChargedVia=null"
                     + " — remboursement impossible", bid.getId());
-            return;
+            return false;
         }
 
         switch (via) {
@@ -112,7 +125,7 @@ public class BidCancelledCommissionRefundListener {
                 if (announcement == null) {
                     log.warn("BidCancelledCommissionRefundListener: annonce introuvable pour bid {}"
                             + " — wallet refund impossible", bid.getId());
-                    return;
+                    return false;
                 }
                 cashCommissionService.refundCommissionToWallet(
                         bid, announcement.getTravelerId(), walletKeyPrefix + bid.getId());
@@ -125,5 +138,6 @@ public class BidCancelledCommissionRefundListener {
                         bid.getId(), trigger);
             }
         }
+        return true;
     }
 }

@@ -254,6 +254,15 @@ public final class MoneyInvariants {
                         SELECT b.id AS bid_id, b.status, b.payment_method, b.commission_status, b.commission_charged_via,
                                b.commission_payment_intent_id, b.commission_retry_count, b.updated_at,
                                CASE
+                                   -- Colis issu d'une négociation : la commission vit sur le fil (débit wallet
+                                   -- sans bid_id), seule la commission non rendue d'un colis clos se lit ici.
+                                   WHEN b.linked_negotiation_thread_id IS NOT NULL THEN
+                                        CASE WHEN b.commission_status = 'CHARGED'
+                                                  AND b.updated_at < now() - interval '1 hour'
+                                                  AND (b.status IN ('CANCELLED','REJECTED')
+                                                       OR (b.status IN ('NO_SHOW','PARCEL_REFUSED')
+                                                           AND b.updated_at >= TIMESTAMP '2026-10-19'))
+                                             THEN 'CHARGEE_SUR_BID_ANNULE' END
                                    WHEN b.commission_status = 'CHARGED' AND b.commission_charged_via IS NULL
                                         THEN 'CHARGEE_SANS_CANAL'
                                    WHEN b.commission_status = 'CHARGED' AND b.commission_charged_via = 'WALLET'
@@ -277,8 +286,13 @@ public final class MoneyInvariants {
                                         THEN 'LEDGER_DEBITE_STATUT_NON_CHARGE'
                                    WHEN b.commission_status = 'REFUND_FAILED'
                                         THEN 'REMBOURSEMENT_ECHOUE'
-                                   WHEN b.commission_status = 'CHARGED' AND b.status IN ('CANCELLED','REJECTED')
+                                   -- Commission toujours rendue sur un colis clos sans livraison ; pour l'absence
+                                   -- et le colis refusé, seulement depuis la règle du 19/10/2026.
+                                   WHEN b.commission_status = 'CHARGED'
                                         AND b.updated_at < now() - interval '1 hour'
+                                        AND (b.status IN ('CANCELLED','REJECTED')
+                                             OR (b.status IN ('NO_SHOW','PARCEL_REFUSED')
+                                                 AND b.updated_at >= TIMESTAMP '2026-10-19'))
                                         THEN 'CHARGEE_SUR_BID_ANNULE'
                                    WHEN b.payment_method = 'CASH'
                                         AND b.status IN ('ACCEPTED','HANDED_OVER','IN_TRANSIT','ARRIVED','COMPLETED')
@@ -288,9 +302,6 @@ public final class MoneyInvariants {
                                END AS anomaly
                         FROM bids b
                         WHERE (b.commission_status IS NOT NULL OR b.payment_method = 'CASH')
-                          -- Colis issu d'une négociation : la commission vit sur le fil (negotiation_threads),
-                          -- le débit wallet n'y porte pas de bid_id.
-                          AND b.linked_negotiation_thread_id IS NULL
                     ) x
                     WHERE anomaly IS NOT NULL
                     """),

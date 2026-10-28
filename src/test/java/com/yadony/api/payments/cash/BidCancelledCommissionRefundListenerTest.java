@@ -18,6 +18,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -58,6 +59,40 @@ class BidCancelledCommissionRefundListenerTest {
         verify(cashCommissionService).refundCommissionToWallet(eq(bid), eq(travelerId),
                 eq("wallet-refund-cancel-" + bidId));
         verify(cashCommissionService, never()).refundCommission(any());
+    }
+
+    /** Rattrapage : même chemin, clé dédiée, et le job sait qu'un recrédit a été demandé. */
+    @Test
+    void recoverRefundsAChargedWalletCommissionWithItsOwnKey() {
+        BidEntity bid = cashBid(CommissionChargedVia.WALLET);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(announcement()));
+
+        assertThat(listener.recover(bidId)).isTrue();
+
+        verify(cashCommissionService).refundCommissionToWallet(eq(bid), eq(travelerId),
+                eq("wallet-refund-recovered-" + bidId));
+    }
+
+    @Test
+    void recoverDoesNothingOnceTheCommissionIsNoLongerCharged() {
+        BidEntity bid = cashBid(CommissionChargedVia.WALLET);
+        bid.setCommissionStatus(CommissionStatus.REFUNDED);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+
+        assertThat(listener.recover(bidId)).isFalse();
+
+        verifyNoInteractions(cashCommissionService);
+    }
+
+    @Test
+    void recoverReportsNothingWhenTheAnnouncementIsMissing() {
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(cashBid(CommissionChargedVia.WALLET)));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.empty());
+
+        assertThat(listener.recover(bidId)).isFalse();
+
+        verifyNoInteractions(cashCommissionService);
     }
 
     /** Règle « commission toujours rendue » : colis refusé à la remise par le voyageur. */
