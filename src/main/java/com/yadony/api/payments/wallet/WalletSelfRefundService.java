@@ -2,16 +2,20 @@ package com.yadony.api.payments.wallet;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.stripe.exception.ApiException;
+import com.stripe.exception.RateLimitException;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Charge;
 import com.stripe.model.Event;
 import com.stripe.model.Refund;
 import com.stripe.net.RequestOptions;
 import com.stripe.param.RefundCreateParams;
+import com.stripe.param.RefundListParams;
 import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.AdminAlertService;
+import com.yadony.api.common.stripe.StripeUnavailable;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
@@ -55,6 +59,18 @@ import java.util.stream.Collectors;
 public class WalletSelfRefundService {
 
     private static final Logger log = LoggerFactory.getLogger(WalletSelfRefundService.class);
+
+    /**
+     * Préfixe de {@code failureReason} d'un item resté PENDING après une erreur Stripe
+     * transitoire (réseau, 5xx, 429) : la reprise planifiée le réémettra.
+     */
+    static final String STRIPE_TRANSIENT = "stripe-transient";
+
+    /** {@code failureReason} d'un item dont la charge était déjà remboursée hors de l'app. */
+    static final String CHARGE_ALREADY_REFUNDED = "charge-already-refunded";
+
+    /** Métadonnée posée sur chaque Refund Stripe émis, pour le retrouver après coup. */
+    static final String REFUND_ITEM_METADATA = "wallet_refund_item_id";
 
     private final WalletAccountRepository walletAccountRepository;
     private final WalletTransactionRepository walletTransactionRepository;
@@ -664,23 +680,53 @@ public class WalletSelfRefundService {
                             "amount", item.getAmount().toPlainString()));
             return;
         }
+        // Reprise après une erreur transitoire : Stripe a pu créer le refund avant que la
+        // réponse ne se perde. La clé d'idempotence le rend dans les 24 h, mais Stripe l'oublie
+        // ensuite : on cherche donc d'abord notre refund par sa métadonnée, sans limite de durée.
+        boolean retryAfterTransient = item.getFailureReason() != null
+                && item.getFailureReason().startsWith(STRIPE_TRANSIENT);
         try {
-            Refund refund = Refund.create(
-                    RefundCreateParams.builder()
-                            .setPaymentIntent(item.getPaymentIntentId())
-                            .setAmount(minorUnits)
-                            .build(),
-                    RequestOptions.builder()
-                            .setIdempotencyKey("wallet-self-refund-" + item.getId())
-                            .build());
+            Refund refund = retryAfterTransient ? findOwnRefund(item).orElse(null) : null;
+            if (refund == null) {
+                refund = Refund.create(
+                        RefundCreateParams.builder()
+                                .setPaymentIntent(item.getPaymentIntentId())
+                                .setAmount(minorUnits)
+                                .putMetadata(REFUND_ITEM_METADATA, item.getId().toString())
+                                .build(),
+                        RequestOptions.builder()
+                                .setIdempotencyKey("wallet-self-refund-" + item.getId())
+                                .build());
+            }
             item.setStripeRefundId(refund.getId());
             item.setStatus(WalletRefundItemStatus.PROCESSING);
+            item.setFailureReason(null);
             refundRequestItemRepository.save(item);
         } catch (StripeException e) {
+            if (isTransient(e)) {
+                // Rien n'est tranché : l'item reste PENDING sans identifiant d'émission, la
+                // reprise planifiée le réémet avec la même clé. Le passer FAILED ouvrait un ticket
+                // manuel alors que Stripe avait peut-être déjà remboursé : double paiement.
+                log.warn("Refund.create transitoire pour item {} (PI {}, statut {}) : reprise planifiée",
+                        item.getId(), item.getPaymentIntentId(), e.getStatusCode(), e);
+                item.setFailureReason(truncate(STRIPE_TRANSIENT + ":"
+                        + (e.getCode() != null ? e.getCode() : String.valueOf(e.getStatusCode())), 60));
+                refundRequestItemRepository.save(item);
+                if (!retryAfterTransient) {
+                    adminAlertService.raise("wallet-self-refund-stripe-retry",
+                            "Stripe injoignable pour un remboursement wallet : nouvel essai automatique",
+                            Map.of("itemId", String.valueOf(item.getId()),
+                                    "paymentIntentId", String.valueOf(item.getPaymentIntentId()),
+                                    "error", String.valueOf(e.getMessage())));
+                }
+                return;
+            }
             log.error("Echec Refund.create pour item {} (PI {}, code {})",
                     item.getId(), item.getPaymentIntentId(), e.getCode(), e);
+            boolean alreadyRefunded = "charge_already_refunded".equals(e.getCode());
             item.setStatus(WalletRefundItemStatus.FAILED);
-            item.setFailureReason(truncate(e.getCode() != null ? e.getCode() : "stripe-error", 60));
+            item.setFailureReason(alreadyRefunded ? CHARGE_ALREADY_REFUNDED
+                    : truncate(e.getCode() != null ? e.getCode() : "stripe-error", 60));
             refundRequestItemRepository.save(item);
             adminAlertService.raise("wallet-self-refund-failed",
                     "Echec Refund.create pour un remboursement wallet self-service",
@@ -689,6 +735,31 @@ public class WalletSelfRefundService {
                             "code", String.valueOf(e.getCode()),
                             "error", String.valueOf(e.getMessage())));
         }
+    }
+
+    /**
+     * Erreur Stripe dont l'issue est inconnue (le refund a pu être créé) ou qu'un nouvel essai
+     * peut lever : réseau, limitation de débit, erreur serveur. Un refus de paramètres, de carte
+     * ou de droits est définitif.
+     */
+    static boolean isTransient(StripeException e) {
+        if (StripeUnavailable.isNetworkFailure(e) || e instanceof RateLimitException || e instanceof ApiException) {
+            return true;
+        }
+        Integer status = e.getStatusCode();
+        return status != null && (status == 429 || status >= 500);
+    }
+
+    /** Refund déjà créé chez Stripe pour cet item (métadonnée {@link #REFUND_ITEM_METADATA}), s'il existe. */
+    private Optional<Refund> findOwnRefund(WalletRefundRequestItemEntity item) throws StripeException {
+        String itemId = item.getId().toString();
+        return Refund.list(RefundListParams.builder()
+                        .setPaymentIntent(item.getPaymentIntentId())
+                        .setLimit(100L)
+                        .build())
+                .getData().stream()
+                .filter(r -> r.getMetadata() != null && itemId.equals(r.getMetadata().get(REFUND_ITEM_METADATA)))
+                .findFirst();
     }
 
     private static String truncate(String s, int max) {
@@ -873,10 +944,28 @@ public class WalletSelfRefundService {
         refundRequestRepository.saveAndFlush(request);
 
         if (anyFailed) {
+            // Charge déjà remboursée hors de l'app (dashboard Stripe, support) : l'argent est
+            // déjà rendu à la carte. Un ticket manuel le ferait payer une seconde fois.
+            List<WalletRefundRequestItemEntity> alreadyRefunded = items.stream()
+                    .filter(i -> i.getStatus() == WalletRefundItemStatus.FAILED
+                            && CHARGE_ALREADY_REFUNDED.equals(i.getFailureReason()))
+                    .toList();
             List<WalletRefundRequestItemEntity> failedItems = items.stream()
-                    .filter(i -> i.getStatus() == WalletRefundItemStatus.FAILED)
+                    .filter(i -> i.getStatus() == WalletRefundItemStatus.FAILED
+                            && !CHARGE_ALREADY_REFUNDED.equals(i.getFailureReason()))
                     .toList();
             walletRefundRequestService.openChildForFailedItems(request, failedItems);
+            if (!alreadyRefunded.isEmpty()) {
+                adminAlertService.raise("wallet-refund-external",
+                        "Recharge déjà remboursée hors de l'app : aucun ticket manuel ouvert, "
+                                + "solde wallet NON débité de ce montant, à régulariser",
+                        Map.of("requestId", String.valueOf(request.getId()),
+                                "userId", String.valueOf(request.getUserId()),
+                                "currency", request.getCurrency(),
+                                "paymentIntentIds", alreadyRefunded.stream()
+                                        .map(WalletRefundRequestItemEntity::getPaymentIntentId)
+                                        .collect(Collectors.joining(","))));
+            }
         }
 
         auditService.log("wallet_refund_request", request.getId(),

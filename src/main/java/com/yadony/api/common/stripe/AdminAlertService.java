@@ -64,6 +64,8 @@ public class AdminAlertService {
             "PHOTO_PURGE_STALE",
             "PHOTO_RECONCILE_BLOCKED",
             "FIREBASE_USER_DELETE_FAILED",
+            // Remboursement wallet : Stripe injoignable, nouvel essai automatique toutes les 5 min.
+            "wallet-self-refund-stripe-retry",
             // Suppression RGPD : session d'identité restée chez Didit, à effacer depuis sa console.
             "DIDIT_SESSION_DELETE_FAILED");
 

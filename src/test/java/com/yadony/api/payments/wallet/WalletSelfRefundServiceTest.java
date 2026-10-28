@@ -1,7 +1,12 @@
 package com.yadony.api.payments.wallet;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.stripe.exception.ApiConnectionException;
+import com.stripe.exception.ApiException;
+import com.stripe.exception.IdempotencyException;
 import com.stripe.exception.InvalidRequestException;
+import com.stripe.exception.RateLimitException;
+import com.stripe.exception.StripeException;
 import com.stripe.model.Charge;
 import com.stripe.model.Event;
 import com.stripe.model.Refund;
@@ -9,6 +14,7 @@ import com.stripe.model.RefundCollection;
 import com.stripe.net.ApiResource;
 import com.stripe.net.RequestOptions;
 import com.stripe.param.RefundCreateParams;
+import com.stripe.param.RefundListParams;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.admin.AdminAlertEscalator;
@@ -23,6 +29,8 @@ import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
@@ -43,6 +51,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -654,6 +663,8 @@ class WalletSelfRefundServiceTest {
         WalletRefundRequestItemEntity item = lastSavedItem();
         assertThat(item.getAmount()).isEqualByComparingTo("40.00");
         assertThat(item.getFeeAmount()).isEqualByComparingTo("1.51");
+        // Persisté (donc identifié) avant son émission, comme en production.
+        setField(item, "id", UUID.randomUUID());
 
         when(refundRequestRepository.findByIdForUpdate(saved.getId())).thenReturn(Optional.of(saved));
         when(refundRequestItemRepository.findUnissuedForUpdate(saved.getId(), WalletRefundItemStatus.PENDING))
@@ -814,6 +825,35 @@ class WalletSelfRefundServiceTest {
 
         try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
             refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
+                    .thenThrow(new InvalidRequestException("disputed", "charge", "req_1",
+                            "charge_disputed", 400, null));
+
+            service.issuePendingItems(request.getId());
+        }
+
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
+        assertThat(item.getFailureReason()).isEqualTo("charge_disputed");
+        verify(adminAlertService).raise(eq("wallet-self-refund-failed"), any(), any());
+        // Tout a échoué : la demande se clôt tout de suite, sans débit, et ouvre l'enfant.
+        assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.FAILED);
+        verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
+        verify(walletRefundRequestService).openChildForFailedItems(request, List.of(item));
+    }
+
+    /**
+     * Charge déjà remboursée hors de l'app (dashboard Stripe) : l'argent est déjà rendu. Un
+     * ticket manuel le ferait payer une seconde fois : aucun ticket, alerte critique dédiée.
+     */
+    @Test
+    void issuePendingItems_chargeDejaRembourseeHorsApp_aucunTicketManuelEtAlerte() {
+        WalletRefundRequestEntity request = stubIssuable("EUR", "40.00");
+        WalletRefundRequestItemEntity item = pendingItem(request, "pi_1", "40.00");
+        when(refundRequestItemRepository.findUnissuedForUpdate(request.getId(), WalletRefundItemStatus.PENDING))
+                .thenReturn(List.of(item));
+        when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
                     .thenThrow(new InvalidRequestException("already refunded", "amount", "req_1",
                             "charge_already_refunded", 400, null));
 
@@ -821,12 +861,158 @@ class WalletSelfRefundServiceTest {
         }
 
         assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.FAILED);
-        assertThat(item.getFailureReason()).isEqualTo("charge_already_refunded");
-        verify(adminAlertService).raise(eq("wallet-self-refund-failed"), any(), any());
-        // Tout a échoué : la demande se clôt tout de suite, sans débit, et ouvre l'enfant.
+        assertThat(item.getFailureReason()).isEqualTo(WalletSelfRefundService.CHARGE_ALREADY_REFUNDED);
         assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.FAILED);
         verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
-        verify(walletRefundRequestService).openChildForFailedItems(request, List.of(item));
+        verify(walletRefundRequestService).openChildForFailedItems(request, List.of());
+        verify(adminAlertService).raise(eq("wallet-refund-external"), any(), any());
+    }
+
+    /**
+     * Erreur réseau ou serveur Stripe : le refund a pu être créé. L'item reste PENDING sans
+     * identifiant (la reprise planifiée le réémettra avec la même clé), aucun ticket manuel,
+     * une seule alerte d'avertissement.
+     */
+    @ParameterizedTest
+    @MethodSource("transientStripeErrors")
+    void issuePendingItems_erreurTransitoire_itemResteEnAttenteSansTicket(StripeException error) {
+        WalletRefundRequestEntity request = stubIssuable("EUR", "40.00");
+        WalletRefundRequestItemEntity item = pendingItem(request, "pi_1", "40.00");
+        when(refundRequestItemRepository.findUnissuedForUpdate(request.getId(), WalletRefundItemStatus.PENDING))
+                .thenReturn(List.of(item));
+        when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
+                    .thenThrow(error);
+
+            service.issuePendingItems(request.getId());
+
+            // Premier essai : aucune recherche préalable chez Stripe.
+            refundStatic.verify(() -> Refund.list(any(RefundListParams.class)), never());
+        }
+
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.PENDING);
+        assertThat(item.getStripeRefundId()).isNull();
+        assertThat(item.getFailureReason()).startsWith(WalletSelfRefundService.STRIPE_TRANSIENT);
+        assertThat(request.getStatus()).isEqualTo(WalletRefundRequestStatus.PROCESSING);
+        verify(adminAlertService).raise(eq("wallet-self-refund-stripe-retry"), any(), any());
+        verify(adminAlertService, never()).raise(eq("wallet-self-refund-failed"), any(), any());
+        verifyNoInteractions(walletService, walletRefundRequestService);
+    }
+
+    static Stream<StripeException> transientStripeErrors() {
+        return Stream.of(
+                new ApiConnectionException("Read timed out"),
+                new ApiException("server error", "req_1", null, 500, null),
+                new RateLimitException("too many", null, "req_1", "rate_limit", 429, null));
+    }
+
+    /**
+     * Reprise après une erreur transitoire : Stripe avait en fait créé le refund. Il est
+     * retrouvé par sa métadonnée et adopté, sans second Refund.create (au-delà de 24 h, la clé
+     * d'idempotence ne protège plus).
+     */
+    @Test
+    void issuePendingItems_repriseApresErreurTransitoire_adopteLeRefundDejaCree() {
+        WalletRefundRequestEntity request = stubIssuable("EUR", "40.00");
+        WalletRefundRequestItemEntity item = pendingItem(request, "pi_1", "40.00");
+        item.setFailureReason(WalletSelfRefundService.STRIPE_TRANSIENT + ":500");
+        when(refundRequestItemRepository.findUnissuedForUpdate(request.getId(), WalletRefundItemStatus.PENDING))
+                .thenReturn(List.of(item));
+        when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
+
+        Refund other = new Refund();
+        other.setId("re_other");
+        other.setMetadata(Map.of(WalletSelfRefundService.REFUND_ITEM_METADATA, UUID.randomUUID().toString()));
+        Refund ours = new Refund();
+        ours.setId("re_ours");
+        ours.setMetadata(Map.of(WalletSelfRefundService.REFUND_ITEM_METADATA, item.getId().toString()));
+        RefundCollection page = new RefundCollection();
+        page.setData(List.of(other, ours));
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            ArgumentCaptor<RefundListParams> listParams = ArgumentCaptor.forClass(RefundListParams.class);
+            refundStatic.when(() -> Refund.list(listParams.capture())).thenReturn(page);
+
+            service.issuePendingItems(request.getId());
+
+            assertThat(listParams.getValue().getPaymentIntent()).isEqualTo("pi_1");
+            refundStatic.verify(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)), never());
+        }
+
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.PROCESSING);
+        assertThat(item.getStripeRefundId()).isEqualTo("re_ours");
+        assertThat(item.getFailureReason()).isNull();
+    }
+
+    /** Reprise sans refund existant : nouvel essai avec la même clé et la métadonnée de l'item. */
+    @Test
+    void issuePendingItems_repriseSansRefundExistant_reemetAvecLaMemeCleEtLaMetadonnee() {
+        WalletRefundRequestEntity request = stubIssuable("EUR", "40.00");
+        WalletRefundRequestItemEntity item = pendingItem(request, "pi_1", "40.00");
+        item.setFailureReason(WalletSelfRefundService.STRIPE_TRANSIENT + ":500");
+        when(refundRequestItemRepository.findUnissuedForUpdate(request.getId(), WalletRefundItemStatus.PENDING))
+                .thenReturn(List.of(item));
+        when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
+        RefundCollection empty = new RefundCollection();
+        empty.setData(List.of());
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            refundStatic.when(() -> Refund.list(any(RefundListParams.class))).thenReturn(empty);
+            Refund refund = new Refund();
+            refund.setId("re_new");
+            ArgumentCaptor<RefundCreateParams> params = ArgumentCaptor.forClass(RefundCreateParams.class);
+            ArgumentCaptor<RequestOptions> options = ArgumentCaptor.forClass(RequestOptions.class);
+            refundStatic.when(() -> Refund.create(params.capture(), options.capture())).thenReturn(refund);
+
+            service.issuePendingItems(request.getId());
+
+            assertThat(options.getValue().getIdempotencyKey()).isEqualTo("wallet-self-refund-" + item.getId());
+            @SuppressWarnings("unchecked")
+            Map<String, String> metadata = (Map<String, String>) params.getValue().getMetadata();
+            assertThat(metadata).containsEntry(WalletSelfRefundService.REFUND_ITEM_METADATA, item.getId().toString());
+        }
+
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.PROCESSING);
+        assertThat(item.getStripeRefundId()).isEqualTo("re_new");
+    }
+
+    /** Une panne qui dure : nouvel échec transitoire à la reprise, pas de nouvelle alerte. */
+    @Test
+    void issuePendingItems_secondEchecTransitoire_pasDeNouvelleAlerte() {
+        WalletRefundRequestEntity request = stubIssuable("EUR", "40.00");
+        WalletRefundRequestItemEntity item = pendingItem(request, "pi_1", "40.00");
+        item.setFailureReason(WalletSelfRefundService.STRIPE_TRANSIENT + ":500");
+        when(refundRequestItemRepository.findUnissuedForUpdate(request.getId(), WalletRefundItemStatus.PENDING))
+                .thenReturn(List.of(item));
+        when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(item));
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            refundStatic.when(() -> Refund.list(any(RefundListParams.class)))
+                    .thenThrow(new ApiConnectionException("Read timed out"));
+
+            service.issuePendingItems(request.getId());
+
+            refundStatic.verify(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)), never());
+        }
+
+        assertThat(item.getStatus()).isEqualTo(WalletRefundItemStatus.PENDING);
+        assertThat(item.getStripeRefundId()).isNull();
+        verifyNoInteractions(adminAlertService);
+    }
+
+    @Test
+    void isTransient_seulsReseauServeurEtLimitation() {
+        assertThat(WalletSelfRefundService.isTransient(new ApiConnectionException("reset"))).isTrue();
+        assertThat(WalletSelfRefundService.isTransient(
+                new ApiException("boom", "req", null, 503, null))).isTrue();
+        assertThat(WalletSelfRefundService.isTransient(
+                new RateLimitException("slow", null, "req", "rate_limit", 429, null))).isTrue();
+        assertThat(WalletSelfRefundService.isTransient(
+                new InvalidRequestException("bad", "amount", "req", "amount_too_large", 400, null))).isFalse();
+        assertThat(WalletSelfRefundService.isTransient(
+                new IdempotencyException("conflict", "req", "idempotency_error", 409))).isFalse();
     }
 
     @Test
