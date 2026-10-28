@@ -60,18 +60,6 @@ public class TripPositionService {
         this.clock = clock;
     }
 
-    /**
-     * Fenêtre de suivi ouverte : au moins un colis en {@code HANDED_OVER}/{@code IN_TRANSIT}
-     * et {@code now} >= départ - 30 min. Le départ est {@code departure_at}, à défaut date +
-     * heure dans le fuseau du trajet (minuit local sans heure).
-     */
-    @Transactional(readOnly = true)
-    public boolean isTrackingWindowOpen(UUID announcementId, OffsetDateTime now) {
-        return announcementRepository.findById(announcementId)
-                .map(a -> windowOpen(a, now))
-                .orElse(false);
-    }
-
     private boolean windowOpen(AnnouncementEntity a, OffsetDateTime now) {
         return isWindowOpen(a, now, () -> bidRepository.existsByAnnouncementIdAndStatusIn(a.getId(), CARRIED));
     }

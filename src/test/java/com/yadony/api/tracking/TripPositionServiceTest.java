@@ -119,9 +119,8 @@ class TripPositionServiceTest {
         trip.setDepartureAt(NOW.plusMinutes(31));
 
         assertThat(service.record(announcementId, travelerId, LAT, LON, SampleSource.OUVERTURE)).isEmpty();
-        assertThat(service.isTrackingWindowOpen(announcementId, NOW)).isFalse();
         trip.setDepartureAt(NOW.plusMinutes(30));
-        assertThat(service.isTrackingWindowOpen(announcementId, NOW)).isTrue();
+        assertThat(service.record(announcementId, travelerId, LAT, LON, SampleSource.OUVERTURE)).isPresent();
     }
 
     @Test
@@ -131,9 +130,9 @@ class TripPositionServiceTest {
         trip.setDepartureDate(LocalDate.of(2026, 11, 1));
         trip.setDepartureTime(LocalTime.of(12, 20));   // UTC+0 en novembre : 12:20Z, ouvre à 11:50Z
 
-        assertThat(service.isTrackingWindowOpen(announcementId, NOW)).isTrue();
+        assertThat(service.record(announcementId, travelerId, LAT, LON, SampleSource.OUVERTURE)).isPresent();
         trip.setDepartureTime(LocalTime.of(13, 0));    // ouvre à 12:30Z
-        assertThat(service.isTrackingWindowOpen(announcementId, NOW)).isFalse();
+        assertThat(service.record(announcementId, travelerId, LAT, LON, SampleSource.OUVERTURE)).isEmpty();
     }
 
     @Test
