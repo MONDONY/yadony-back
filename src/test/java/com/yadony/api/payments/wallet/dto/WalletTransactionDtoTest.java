@@ -53,4 +53,40 @@ class WalletTransactionDtoTest {
                 .writeValueAsString(WalletTransactionDto.from(tx(bid), null, null, null, bid));
         assertThat(json).contains("\"bidId\":\"" + bid + "\"");
     }
+
+    @Test
+    void ligneConvertie_exposeLaDeviseEtLeMontantDOrigine() {
+        WalletTransactionEntity tx = tx(null);
+        tx.setSourceCurrency("xof");
+        tx.setSourceAmount(new BigDecimal("450"));
+
+        WalletTransactionDto dto = WalletTransactionDto.from(tx, null, null, null, null);
+
+        assertThat(dto.getSourceCurrency()).isEqualTo("XOF");
+        assertThat(dto.getSourceAmount()).isEqualByComparingTo("450");
+    }
+
+    @Test
+    void ligneNonConvertie_sansOrigine_etChampsAbsentsDuJson() throws Exception {
+        WalletTransactionDto dto = WalletTransactionDto.from(tx(null), null, null, null, null);
+
+        assertThat(dto.getSourceCurrency()).isNull();
+        assertThat(dto.getSourceAmount()).isNull();
+        String json = new ObjectMapper().findAndRegisterModules()
+                .setSerializationInclusion(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+                .writeValueAsString(dto);
+        assertThat(json).doesNotContain("sourceCurrency").doesNotContain("sourceAmount");
+    }
+
+    @Test
+    void nomsJson_sourceCurrencyEtSourceAmount() throws Exception {
+        WalletTransactionEntity tx = tx(null);
+        tx.setSourceCurrency("USD");
+        tx.setSourceAmount(new BigDecimal("2.77"));
+
+        String json = new ObjectMapper().findAndRegisterModules()
+                .writeValueAsString(WalletTransactionDto.from(tx, null, null, null, null));
+
+        assertThat(json).contains("\"sourceCurrency\":\"USD\"").contains("\"sourceAmount\":2.77");
+    }
 }
