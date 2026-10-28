@@ -10,5 +10,10 @@ import java.math.BigDecimal;
  * {@code YadonyBusinessException} pour porter un {@code errorCode} exploitable par les clients
  * admin, contrairement a un {@code MethodArgumentNotValidException} generique.
  */
-public record UpdateExchangeRateRequest(BigDecimal unitsPerEur) {
+public record UpdateExchangeRateRequest(BigDecimal unitsPerEur, Boolean confirmLargeChange) {
+
+    /** Ancien contrat (écran admin sans confirmation) : la garde de variation s'applique. */
+    public UpdateExchangeRateRequest(BigDecimal unitsPerEur) {
+        this(unitsPerEur, null);
+    }
 }

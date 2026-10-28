@@ -97,4 +97,33 @@ class ExchangeRateUpdateServiceTest {
                         .isEqualTo("exchange-rate-not-found"));
         verify(exchangeRateRepository, never()).save(any());
     }
+
+    @Test
+    @DisplayName("saisie admin — écart > 10 % non confirmé : 422 avec les deux taux, rien n'est écrit")
+    void apply_largeChangeWithoutConfirmation_isRejected() {
+        when(exchangeRateRepository.findByCurrency("GBP"))
+                .thenReturn(Optional.of(new ExchangeRateEntity("GBP", new BigDecimal("0.86"))));
+
+        assertThatThrownBy(() -> service().apply("GBP", new BigDecimal("0.0086"), UUID.randomUUID(),
+                "EXCHANGE_RATE_UPDATED", false))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo("exchange-rate-large-change");
+                    assertThat(ex.getProperties()).containsEntry("currentRate", "0.86")
+                            .containsEntry("newRate", "0.0086").containsEntry("changePercent", "99.0");
+                });
+        verify(exchangeRateRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    @DisplayName("saisie admin — écart > 10 % confirmé, ou écart ≤ 10 % : appliqué")
+    void apply_confirmedOrSmallChange_isApplied() {
+        when(exchangeRateRepository.findByCurrency("GBP"))
+                .thenReturn(Optional.of(new ExchangeRateEntity("GBP", new BigDecimal("0.86"))));
+        when(exchangeRateRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThat(service().apply("GBP", new BigDecimal("0.50"), null, "EXCHANGE_RATE_UPDATED", true)
+                .getUnitsPerEur()).isEqualByComparingTo("0.50");
+        assertThat(service().apply("GBP", new BigDecimal("0.54"), null, "EXCHANGE_RATE_UPDATED", false)
+                .getUnitsPerEur()).isEqualByComparingTo("0.54");
+    }
 }
