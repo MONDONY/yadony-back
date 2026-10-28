@@ -2068,6 +2068,23 @@ class CashCommissionServiceTest {
             bid.setCommissionStatus(CommissionStatus.CHARGED);
         }
 
+        /**
+         * Copie du colis chargée avant qu'un autre déclencheur ne rembourse (encore CHARGED en
+         * mémoire) : le statut relu en base sous verrou fait foi, rien n'est recrédité.
+         */
+        @Test
+        void staleChargedCopy_butRefundedInDatabase_recreditsNothing() {
+            when(bidRepo.findCommissionStatusById(bid.getId())).thenReturn(Optional.of(CommissionStatus.REFUNDED));
+
+            service.refundCommissionToWallet(bid, travelerId, "wallet-refund-noshow-" + bid.getId());
+
+            var order = inOrder(bidRepo);
+            order.verify(bidRepo).lockForUpdate(bid.getId());
+            order.verify(bidRepo).findCommissionStatusById(bid.getId());
+            verifyNoInteractions(walletService);
+            verify(bidRepo, never()).save(any());
+        }
+
         private com.yadony.api.payments.wallet.WalletTransactionEntity commissionTx(BigDecimal amount) {
             return commissionTx(amount, "EUR");
         }

@@ -33,7 +33,7 @@ class WalletRefundIssueRecoverySchedulerTest {
 
         ArgumentCaptor<Instant> cutoff = ArgumentCaptor.forClass(Instant.class);
         verify(itemRepository).findRequestIdsWithUnissuedItems(
-                eq(List.of(WalletRefundChannel.AUTOMATIC_STRIPE, WalletRefundChannel.AUTOMATIC_PAWAPAY)),
+                eq(List.of(WalletRefundChannel.AUTOMATIC_STRIPE, WalletRefundChannel.AUTOMATIC_PAWAPAY, WalletRefundChannel.AUTOMATIC_MIXED)),
                 eq(WalletRefundRequestStatus.PROCESSING), eq(WalletRefundItemStatus.PENDING), cutoff.capture());
         assertThat(cutoff.getValue()).isBeforeOrEqualTo(before.minus(Duration.ofMinutes(2)).plusSeconds(1));
         assertThat(cutoff.getValue()).isAfter(before.minus(Duration.ofMinutes(3)));
@@ -46,7 +46,7 @@ class WalletRefundIssueRecoverySchedulerTest {
         UUID second = UUID.randomUUID();
         Instant cutoff = Instant.now();
         when(itemRepository.findRequestIdsWithUnissuedItems(
-                List.of(WalletRefundChannel.AUTOMATIC_STRIPE, WalletRefundChannel.AUTOMATIC_PAWAPAY),
+                List.of(WalletRefundChannel.AUTOMATIC_STRIPE, WalletRefundChannel.AUTOMATIC_PAWAPAY, WalletRefundChannel.AUTOMATIC_MIXED),
                 WalletRefundRequestStatus.PROCESSING, WalletRefundItemStatus.PENDING, cutoff))
                 .thenReturn(List.of(first, second));
         doThrow(new IllegalStateException("verrou")).when(service).issuePendingItems(first);

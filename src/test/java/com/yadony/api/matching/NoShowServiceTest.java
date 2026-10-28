@@ -67,6 +67,18 @@ class NoShowServiceTest {
     }
 
     @Test
+    @DisplayName("le colis est verrouillé AVANT d'être lu : un signalement et le scheduler ne le traitent jamais en parallèle")
+    void recordTravelerNoShow_locksTheBidBeforeReadingIt() {
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.empty());
+
+        service.recordTravelerNoShow(BID_ID, "sender_report");
+
+        var order = inOrder(bidRepository);
+        order.verify(bidRepository).lockForUpdate(BID_ID);
+        order.verify(bidRepository).findById(BID_ID);
+    }
+
+    @Test
     @DisplayName("bid ACCEPTED → status NO_SHOW + noShowCount incrémenté + event publié + audit avec source")
     void recordTravelerNoShow_acceptedBid_marksNoShowAndPublishesEvent() {
         when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));

@@ -90,4 +90,19 @@ class WalletRefundRequestSummaryResponseTest {
         assertThat(dto.feeAmount()).isEqualByComparingTo("0");
         assertThat(dto.netAmount()).isEqualByComparingTo("10000");
     }
+
+    /** Demande mixte (carte + mobile money) : rail MIXED, frais et net sommés sur ses items. */
+    @Test
+    void demandeMixte_railMixedEtSommesDesItems() {
+        WalletRefundRequestSummaryResponse dto = WalletRefundRequestSummaryResponse.from(
+                request("20000", WalletRefundChannel.AUTOMATIC_MIXED, WalletRefundRequestStatus.PROCESSING),
+                List.of(item("10000", "300", WalletRefundItemStatus.PROCESSING),
+                        item("10000", "200", WalletRefundItemStatus.PENDING)),
+                "+225 07 •• •• 90");
+
+        assertThat(dto.rail()).isEqualTo("MIXED");
+        assertThat(dto.channel()).isEqualTo("AUTOMATIC_MIXED");
+        assertThat(dto.feeAmount()).isEqualByComparingTo("500");
+        assertThat(dto.netAmount()).isEqualByComparingTo("19500");
+    }
 }

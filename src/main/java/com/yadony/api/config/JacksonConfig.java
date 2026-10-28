@@ -1,14 +1,19 @@
 package com.yadony.api.config;
 
 import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.JsonSerializer;
 import com.fasterxml.jackson.databind.SerializerProvider;
+import com.fasterxml.jackson.databind.deser.std.NumberDeserializers;
 import com.fasterxml.jackson.databind.module.SimpleModule;
+import com.yadony.api.common.BoundedDecimals;
 import org.springframework.boot.autoconfigure.jackson.Jackson2ObjectMapperBuilderCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -32,7 +37,24 @@ public class JacksonConfig {
     public Jackson2ObjectMapperBuilderCustomizer utcLocalDateTimeCustomizer() {
         SimpleModule module = new SimpleModule();
         module.addSerializer(LocalDateTime.class, new UtcLocalDateTimeSerializer());
+        module.addDeserializer(BigDecimal.class, new BoundedBigDecimalDeserializer());
         return builder -> builder.modulesToInstall(module);
+    }
+
+    /**
+     * Refuse un décimal démesuré ({@code 1e10000000}) dès la lecture du corps : sinon le
+     * premier {@code setScale} d'un service fige un thread de longues secondes (voir
+     * {@link BoundedDecimals}). L'erreur remonte en 400 {@code malformed-request}.
+     */
+    static final class BoundedBigDecimalDeserializer extends NumberDeserializers.BigDecimalDeserializer {
+        @Override
+        public BigDecimal deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
+            BigDecimal value = super.deserialize(p, ctxt);
+            if (!BoundedDecimals.isBounded(value)) {
+                throw ctxt.weirdNumberException(value, BigDecimal.class, "nombre hors limites");
+            }
+            return value;
+        }
     }
 
     static final class UtcLocalDateTimeSerializer extends JsonSerializer<LocalDateTime> {

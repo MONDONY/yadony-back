@@ -794,6 +794,70 @@ class WalletRefundIT {
         assertThat(balanceOf(userId)).isEqualByComparingTo("0.00");
     }
 
+    /**
+     * Rails mixtes, sur la vraie base (contrainte du canal étendue par V356) : une recharge
+     * mobile money ET une recharge carte dans la même devise, plus un parrainage. Une seule
+     * demande AUTOMATIC_MIXED : la recharge carte repart chez Stripe, la recharge mobile money
+     * chez pawaPay, le parrainage reste au portefeuille. Le brut n'est débité qu'une fois les
+     * deux rails confirmés. Avant, un ticket manuel portait les 18 000, parrainage compris.
+     */
+    @Test
+    void railsMixtes_carteEtMobileMoneyDansLaMemeDevise_chaqueRechargeRepartVersSonRail() {
+        UUID userId = persistUser();
+        PawapayOperationEntity deposit = pawapayTopup(userId, "XOF", "10000");
+        completePawapayOperation(deposit.getId(), "OP-CIV-DEP-MIX");
+        String pi = "pi_mixed_" + UUID.randomUUID();
+        walletService.credit(userId, "XOF", new BigDecimal("5000"), WalletTransactionType.TOP_UP, pi, "stripe-" + pi);
+        walletService.credit(userId, "XOF", new BigDecimal("3000"), WalletTransactionType.REFERRAL_REWARD,
+                null, "referral-mix-" + userId);
+        assertThat(walletService.getBalance(userId, "XOF")).isEqualByComparingTo("18000");
+
+        stubPawapayConfig(true);
+        ArgumentCaptor<PawapayRefundRequest> refundCaptor = ArgumentCaptor.forClass(PawapayRefundRequest.class);
+        when(pawapayClient.initiateRefund(refundCaptor.capture())).thenReturn(PawapayInitiationResult.accepted());
+
+        WalletRefundRequestEntity request;
+        ArgumentCaptor<RefundCreateParams> stripeParams = ArgumentCaptor.forClass(RefundCreateParams.class);
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            refundStatic.when(() -> Refund.create(stripeParams.capture(), any(RequestOptions.class)))
+                    .thenReturn(stripeRefund("re_mixed"));
+
+            request = walletSelfRefundService.request(userId, "XOF", List.of());
+        }
+
+        assertThat(request.getChannel()).isEqualTo(WalletRefundChannel.AUTOMATIC_MIXED);
+        assertThat(request.getAmount()).isEqualByComparingTo("15000");
+        List<WalletRefundRequestItemEntity> items = walletRefundRequestItemRepository.findByRefundRequestId(request.getId());
+        assertThat(items).hasSize(2);
+        WalletRefundRequestItemEntity cardItem = items.stream()
+                .filter(i -> pi.equals(i.getPaymentIntentId())).findFirst().orElseThrow();
+        WalletRefundRequestItemEntity momoItem = items.stream()
+                .filter(i -> !pi.equals(i.getPaymentIntentId())).findFirst().orElseThrow();
+        assertThat(cardItem.getStripeRefundId()).isEqualTo("re_mixed");
+        assertThat(cardItem.getPawapayRefundId()).isNull();
+        assertThat(stripeParams.getAllValues()).singleElement()
+                .satisfies(p -> assertThat(p.getPaymentIntent()).isEqualTo(pi));
+        assertThat(momoItem.getPawapayRefundId()).isNotNull();
+        assertThat(momoItem.getStripeRefundId()).isNull();
+        assertThat(refundCaptor.getValue().depositId()).isEqualTo(deposit.getId());
+        // Rien débité tant qu'un rail n'a pas confirmé.
+        assertThat(walletService.getBalance(userId, "XOF")).isEqualByComparingTo("18000");
+
+        completePawapayOperation(momoItem.getPawapayRefundId(), "OP-CIV-REFUND-MIX");
+        assertThat(walletRefundRequestRepository.findById(request.getId()).orElseThrow().getStatus())
+                .isEqualTo(WalletRefundRequestStatus.PROCESSING);
+        simulateChargeRefundedWebhookForItem(cardItem);
+
+        assertThat(walletRefundRequestRepository.findById(request.getId()).orElseThrow().getStatus())
+                .isEqualTo(WalletRefundRequestStatus.REFUNDED);
+        // Le parrainage reste : seul le cash (15 000) est sorti.
+        assertThat(walletService.getBalance(userId, "XOF")).isEqualByComparingTo("3000");
+        assertThat(walletTransactionRepository.findByUserIdAndCurrencyOrderByCreatedAtAsc(userId, "XOF"))
+                .filteredOn(t -> t.getType() == WalletTransactionType.SELF_REFUND_OUT)
+                .singleElement()
+                .satisfies(t -> assertThat(t.getAmount()).isEqualByComparingTo("-15000"));
+    }
+
     /** Simule le webhook {@code charge.refunded} qui clôt un item Stripe déjà PROCESSING. */
     private void simulateChargeRefundedWebhookForItem(WalletRefundRequestItemEntity item) {
         WalletRefundRequestItemEntity reloaded = walletRefundRequestItemRepository.findById(item.getId()).orElseThrow();

@@ -131,6 +131,10 @@ public class NoShowService {
      */
     @Transactional
     public void recordTravelerNoShow(UUID bidId, String source) {
+        // Même verrou que expireUnconfirmedCashHandover : le signalement de l'expéditeur
+        // (asynchrone) et le passage du scheduler ne peuvent plus traiter le même colis en
+        // parallèle, chacun publiant son événement de remboursement.
+        bidRepository.lockForUpdate(bidId);
         BidEntity bid = bidRepository.findById(bidId).orElse(null);
         if (bid == null || bid.getStatus() != BidStatus.ACCEPTED) {
             return; // idempotent

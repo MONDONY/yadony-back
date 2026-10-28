@@ -2,16 +2,20 @@ package com.yadony.api.payments.wallet;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.stripe.exception.ApiException;
+import com.stripe.exception.RateLimitException;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Charge;
 import com.stripe.model.Event;
 import com.stripe.model.Refund;
 import com.stripe.net.RequestOptions;
 import com.stripe.param.RefundCreateParams;
+import com.stripe.param.RefundListParams;
 import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.AdminAlertService;
+import com.yadony.api.common.stripe.StripeUnavailable;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
@@ -55,6 +59,18 @@ import java.util.stream.Collectors;
 public class WalletSelfRefundService {
 
     private static final Logger log = LoggerFactory.getLogger(WalletSelfRefundService.class);
+
+    /**
+     * Préfixe de {@code failureReason} d'un item resté PENDING après une erreur Stripe
+     * transitoire (réseau, 5xx, 429) : la reprise planifiée le réémettra.
+     */
+    static final String STRIPE_TRANSIENT = "stripe-transient";
+
+    /** {@code failureReason} d'un item dont la charge était déjà remboursée hors de l'app. */
+    static final String CHARGE_ALREADY_REFUNDED = "charge-already-refunded";
+
+    /** Métadonnée posée sur chaque Refund Stripe émis, pour le retrouver après coup. */
+    static final String REFUND_ITEM_METADATA = "wallet_refund_item_id";
 
     private final WalletAccountRepository walletAccountRepository;
     private final WalletTransactionRepository walletTransactionRepository;
@@ -416,9 +432,9 @@ public class WalletSelfRefundService {
      * Liste non vide (ancien client qui sélectionnait ses recharges) : le restant des
      * recharges listées uniquement. Chaque item porte le montant partiel réellement demandé.
      *
-     * <p>Cibles mélangeant les rails carte et mobile money : aucun rail automatique ne sait les
-     * traiter, la méthode ouvre alors le TICKET MANUEL de la devise et le renvoie
-     * ({@link #openManualForMixedRails}) — ni exception ni demande automatique.
+     * <p>Cibles mélangeant les rails carte et mobile money : une seule demande
+     * {@link WalletRefundChannel#AUTOMATIC_MIXED}, dont chaque item repart vers son rail
+     * d'origine ({@link #issuePendingItems}). Seule la part remboursable est concernée.
      *
      * <p>{@code noRollbackFor} : les deux {@code throw YadonyBusinessException} ci-dessous
      * (cible vide, ou reliquat qui s'arrondit à zéro à l'unité mineure — ex. 0.50 XOF)
@@ -497,27 +513,21 @@ public class WalletSelfRefundService {
                     "Aucun montant remboursable sur ce solde");
         }
 
-        // Une demande ne part jamais à moitié Stripe, à moitié pawaPay : chaque canal a son
-        // propre émetteur (issueStripeRefund vs WalletRefundRailIssuer). Cas ATTEIGNABLE : une
-        // même devise (XOF) peut porter une recharge carte (WalletTopupOrchestrator, dans la
-        // devise active) et une recharge mobile money (WalletMobileMoneyTopupService).
-        //
-        // Ni exception technique ni refus : un 422 serait un cul-de-sac (le message annonce le
-        // support, mais personne n'est prévenu et l'argent reste bloqué). On bascule sur le
-        // TICKET MANUEL, exactement comme UserService#settleWalletsForDeletion, et on le renvoie :
-        // l'utilisateur voit une demande en cours prise en charge par le support. On n'ouvre pas
-        // une demande par rail — l'index unique uq_wallet_refund_requests_pending n'autorise
-        // qu'une demande vivante par (utilisateur, devise), et c'est ce ticket qui l'occupe.
-        // Décidé AVANT toute écriture : aucune demande automatique ni item n'est sauvegardé.
+        // Recharges carte ET mobile money dans la même devise (cas atteignable : une recharge
+        // carte dans la devise active, une recharge mobile money dans celle de l'opérateur) : une
+        // seule demande AUTOMATIC_MIXED, chaque item émis vers son propre rail. L'index unique
+        // uq_wallet_refund_requests_pending n'autorise qu'une demande vivante par (utilisateur,
+        // devise), d'où une demande et non deux. Seule la part remboursable (scaledTargets) est
+        // demandée : parrainage, crédits admin ou codes ne deviennent jamais de l'argent réel.
+        // L'ancien repli ouvrait un ticket manuel portant TOUT le solde, sans destination.
         Set<WalletRefundRail> rails = scaledTargets.stream()
                 .map(st -> st.target().rail())
                 .collect(Collectors.toSet());
-        if (rails.size() > 1) {
-            return openManualForMixedRails(userId, code, rails, allocation);
-        }
-        WalletRefundChannel channel = rails.contains(WalletRefundRail.PAWAPAY)
-                ? WalletRefundChannel.AUTOMATIC_PAWAPAY
-                : WalletRefundChannel.AUTOMATIC_STRIPE;
+        WalletRefundChannel channel = rails.size() > 1
+                ? WalletRefundChannel.AUTOMATIC_MIXED
+                : rails.contains(WalletRefundRail.PAWAPAY)
+                        ? WalletRefundChannel.AUTOMATIC_PAWAPAY
+                        : WalletRefundChannel.AUTOMATIC_STRIPE;
 
         BigDecimal amount = scaledTargets.stream()
                 .map(ScaledTarget::amount)
@@ -558,7 +568,8 @@ public class WalletSelfRefundService {
         // "[{paymentIntentId=pi_1, amount=35.00}]" n'est ni requetable (jsonb_array_elements)
         // ni relisible sans parsing maison.
         auditService.log("wallet_refund_request", saved.getId(), "AUTOMATIC_REQUESTED", userId,
-                Map.<String, Object>of("currency", code, "amount", saved.getAmount().toString(),
+                Map.<String, Object>of("currency", code, "channel", channel.name(),
+                        "amount", saved.getAmount().toString(),
                         "refundableTotal", allocation.refundableTotal().toPlainString(),
                         "nonRefundable", allocation.nonRefundable().toPlainString(),
                         "fees", totalFees.toPlainString(),
@@ -575,36 +586,9 @@ public class WalletSelfRefundService {
     }
 
     /**
-     * Repli des rails mixtes : ouvre (ou retrouve) le ticket manuel de la devise et le renvoie,
-     * exactement comme le fait {@code UserService#settleWalletsForDeletion} sur ses propres
-     * replis. {@link WalletRefundRequestService#request} est déjà injecté ici (aucun cycle : ce
-     * service ne dépend pas de celui-ci) et participe à la transaction courante ; il est
-     * idempotent (un ticket vivant est renvoyé tel quel) et lève sa propre alerte admin.
-     *
-     * <p>L'entrée d'audit dédiée dit au support POURQUOI ce ticket arrive : sans elle, il ne
-     * porte que le motif générique « solde wallet non nul » et rien ne rattache la demande aux
-     * rails mixtes.
-     */
-    private WalletRefundRequestEntity openManualForMixedRails(UUID userId, String code,
-                                                              Set<WalletRefundRail> rails,
-                                                              WalletRefundAllocation allocation) {
-        List<String> railNames = rails.stream().map(Enum::name).sorted().toList();
-        log.warn("Remboursement wallet : rails mixtes {} sur user {} devise {}, bascule sur le ticket manuel",
-                railNames, userId, code);
-        WalletRefundRequestEntity manual = walletRefundRequestService.request(userId, code);
-        auditService.log("wallet_refund_request", manual.getId(), "MANUAL_MIXED_RAILS_OPENED", userId,
-                Map.<String, Object>of("currency", code,
-                        "rails", railNames,
-                        "refundableTotal", allocation.refundableTotal().toPlainString(),
-                        "nonRefundable", allocation.nonRefundable().toPlainString(),
-                        "reason", "wallet-refund-mixed-rails"));
-        return manual;
-    }
-
-    /**
      * Émet les items PENDING sans identifiant d'émission d'une demande automatique PROCESSING
      * (Stripe directement, pawaPay via {@link WalletRefundRailIssuer} pour
-     * {@code AUTOMATIC_PAWAPAY}), puis clôt la demande si tous ses items sont terminaux (tout
+     * {@code AUTOMATIC_PAWAPAY}, chaque item vers son rail pour {@code AUTOMATIC_MIXED}), puis clôt la demande si tous ses items sont terminaux (tout
      * en échec : le ticket enfant s'ouvre tout de suite). Appelée au commit de la demande
      * ({@link WalletRefundIssueListener}) et par la reprise planifiée
      * ({@link WalletRefundIssueRecoveryScheduler}, les deux canaux automatiques). Côté pawaPay,
@@ -620,18 +604,20 @@ public class WalletSelfRefundService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void issuePendingItems(UUID refundRequestId) {
         WalletRefundRequestEntity request = refundRequestRepository.findByIdForUpdate(refundRequestId).orElse(null);
-        boolean automaticChannel = request != null
-                && (request.getChannel() == WalletRefundChannel.AUTOMATIC_STRIPE
-                    || request.getChannel() == WalletRefundChannel.AUTOMATIC_PAWAPAY);
-        if (request == null || !automaticChannel || request.getStatus() != WalletRefundRequestStatus.PROCESSING) {
+        if (request == null || request.getChannel() == WalletRefundChannel.MANUAL_ADMIN
+                || request.getStatus() != WalletRefundRequestStatus.PROCESSING) {
             return;
         }
         List<WalletRefundRequestItemEntity> items =
                 refundRequestItemRepository.findUnissuedForUpdate(refundRequestId, WalletRefundItemStatus.PENDING);
-        if (request.getChannel() == WalletRefundChannel.AUTOMATIC_PAWAPAY) {
-            walletRefundRailIssuer.issue(request, items);
-        } else {
-            for (WalletRefundRequestItemEntity item : items) {
+        List<WalletRefundRequestItemEntity> pawapayItems = items.stream()
+                .filter(i -> isPawapayItem(request, i))
+                .toList();
+        if (!pawapayItems.isEmpty()) {
+            walletRefundRailIssuer.issue(request, pawapayItems);
+        }
+        for (WalletRefundRequestItemEntity item : items) {
+            if (!isPawapayItem(request, item)) {
                 issueStripeRefund(item, request.getCurrency());
             }
         }
@@ -664,23 +650,53 @@ public class WalletSelfRefundService {
                             "amount", item.getAmount().toPlainString()));
             return;
         }
+        // Reprise après une erreur transitoire : Stripe a pu créer le refund avant que la
+        // réponse ne se perde. La clé d'idempotence le rend dans les 24 h, mais Stripe l'oublie
+        // ensuite : on cherche donc d'abord notre refund par sa métadonnée, sans limite de durée.
+        boolean retryAfterTransient = item.getFailureReason() != null
+                && item.getFailureReason().startsWith(STRIPE_TRANSIENT);
         try {
-            Refund refund = Refund.create(
-                    RefundCreateParams.builder()
-                            .setPaymentIntent(item.getPaymentIntentId())
-                            .setAmount(minorUnits)
-                            .build(),
-                    RequestOptions.builder()
-                            .setIdempotencyKey("wallet-self-refund-" + item.getId())
-                            .build());
+            Refund refund = retryAfterTransient ? findOwnRefund(item).orElse(null) : null;
+            if (refund == null) {
+                refund = Refund.create(
+                        RefundCreateParams.builder()
+                                .setPaymentIntent(item.getPaymentIntentId())
+                                .setAmount(minorUnits)
+                                .putMetadata(REFUND_ITEM_METADATA, item.getId().toString())
+                                .build(),
+                        RequestOptions.builder()
+                                .setIdempotencyKey("wallet-self-refund-" + item.getId())
+                                .build());
+            }
             item.setStripeRefundId(refund.getId());
             item.setStatus(WalletRefundItemStatus.PROCESSING);
+            item.setFailureReason(null);
             refundRequestItemRepository.save(item);
         } catch (StripeException e) {
+            if (isTransient(e)) {
+                // Rien n'est tranché : l'item reste PENDING sans identifiant d'émission, la
+                // reprise planifiée le réémet avec la même clé. Le passer FAILED ouvrait un ticket
+                // manuel alors que Stripe avait peut-être déjà remboursé : double paiement.
+                log.warn("Refund.create transitoire pour item {} (PI {}, statut {}) : reprise planifiée",
+                        item.getId(), item.getPaymentIntentId(), e.getStatusCode(), e);
+                item.setFailureReason(truncate(STRIPE_TRANSIENT + ":"
+                        + (e.getCode() != null ? e.getCode() : String.valueOf(e.getStatusCode())), 60));
+                refundRequestItemRepository.save(item);
+                if (!retryAfterTransient) {
+                    adminAlertService.raise("wallet-self-refund-stripe-retry",
+                            "Stripe injoignable pour un remboursement wallet : nouvel essai automatique",
+                            Map.of("itemId", String.valueOf(item.getId()),
+                                    "paymentIntentId", String.valueOf(item.getPaymentIntentId()),
+                                    "error", String.valueOf(e.getMessage())));
+                }
+                return;
+            }
             log.error("Echec Refund.create pour item {} (PI {}, code {})",
                     item.getId(), item.getPaymentIntentId(), e.getCode(), e);
+            boolean alreadyRefunded = "charge_already_refunded".equals(e.getCode());
             item.setStatus(WalletRefundItemStatus.FAILED);
-            item.setFailureReason(truncate(e.getCode() != null ? e.getCode() : "stripe-error", 60));
+            item.setFailureReason(alreadyRefunded ? CHARGE_ALREADY_REFUNDED
+                    : truncate(e.getCode() != null ? e.getCode() : "stripe-error", 60));
             refundRequestItemRepository.save(item);
             adminAlertService.raise("wallet-self-refund-failed",
                     "Echec Refund.create pour un remboursement wallet self-service",
@@ -689,6 +705,45 @@ public class WalletSelfRefundService {
                             "code", String.valueOf(e.getCode()),
                             "error", String.valueOf(e.getMessage())));
         }
+    }
+
+    /**
+     * Erreur Stripe dont l'issue est inconnue (le refund a pu être créé) ou qu'un nouvel essai
+     * peut lever : réseau, limitation de débit, erreur serveur. Un refus de paramètres, de carte
+     * ou de droits est définitif.
+     */
+    static boolean isTransient(StripeException e) {
+        if (StripeUnavailable.isNetworkFailure(e) || e instanceof RateLimitException || e instanceof ApiException) {
+            return true;
+        }
+        Integer status = e.getStatusCode();
+        return status != null && (status == 429 || status >= 500);
+    }
+
+    /** Refund déjà créé chez Stripe pour cet item (métadonnée {@link #REFUND_ITEM_METADATA}), s'il existe. */
+    private Optional<Refund> findOwnRefund(WalletRefundRequestItemEntity item) throws StripeException {
+        String itemId = item.getId().toString();
+        return Refund.list(RefundListParams.builder()
+                        .setPaymentIntent(item.getPaymentIntentId())
+                        .setLimit(100L)
+                        .build())
+                .getData().stream()
+                .filter(r -> r.getMetadata() != null && itemId.equals(r.getMetadata().get(REFUND_ITEM_METADATA)))
+                .findFirst();
+    }
+
+    /**
+     * L'item part-il (ou est-il parti) par pawaPay ? Le canal tranche pour une demande mono-rail ;
+     * une demande mixte le lit sur la référence de la recharge ({@code pawapay:<dépôt>}) ; un
+     * ticket manuel relancé depuis l'admin, sur l'opération pawaPay qu'il porte déjà.
+     */
+    static boolean isPawapayItem(WalletRefundRequestEntity request, WalletRefundRequestItemEntity item) {
+        return switch (request.getChannel()) {
+            case AUTOMATIC_PAWAPAY -> true;
+            case AUTOMATIC_STRIPE -> false;
+            case AUTOMATIC_MIXED -> WalletRefundRail.of(item.getPaymentIntentId()) == WalletRefundRail.PAWAPAY;
+            case MANUAL_ADMIN -> item.getPawapayRefundId() != null || item.getPawapayPayoutId() != null;
+        };
     }
 
     private static String truncate(String s, int max) {
@@ -873,10 +928,28 @@ public class WalletSelfRefundService {
         refundRequestRepository.saveAndFlush(request);
 
         if (anyFailed) {
+            // Charge déjà remboursée hors de l'app (dashboard Stripe, support) : l'argent est
+            // déjà rendu à la carte. Un ticket manuel le ferait payer une seconde fois.
+            List<WalletRefundRequestItemEntity> alreadyRefunded = items.stream()
+                    .filter(i -> i.getStatus() == WalletRefundItemStatus.FAILED
+                            && CHARGE_ALREADY_REFUNDED.equals(i.getFailureReason()))
+                    .toList();
             List<WalletRefundRequestItemEntity> failedItems = items.stream()
-                    .filter(i -> i.getStatus() == WalletRefundItemStatus.FAILED)
+                    .filter(i -> i.getStatus() == WalletRefundItemStatus.FAILED
+                            && !CHARGE_ALREADY_REFUNDED.equals(i.getFailureReason()))
                     .toList();
             walletRefundRequestService.openChildForFailedItems(request, failedItems);
+            if (!alreadyRefunded.isEmpty()) {
+                adminAlertService.raise("wallet-refund-external",
+                        "Recharge déjà remboursée hors de l'app : aucun ticket manuel ouvert, "
+                                + "solde wallet NON débité de ce montant, à régulariser",
+                        Map.of("requestId", String.valueOf(request.getId()),
+                                "userId", String.valueOf(request.getUserId()),
+                                "currency", request.getCurrency(),
+                                "paymentIntentIds", alreadyRefunded.stream()
+                                        .map(WalletRefundRequestItemEntity::getPaymentIntentId)
+                                        .collect(Collectors.joining(","))));
+            }
         }
 
         auditService.log("wallet_refund_request", request.getId(),
@@ -937,12 +1010,9 @@ public class WalletSelfRefundService {
             if (item.getStatus() != WalletRefundItemStatus.PROCESSING) {
                 continue;
             }
-            boolean pawapayItem = request.getChannel() == WalletRefundChannel.AUTOMATIC_PAWAPAY
-                    || (request.getChannel() == WalletRefundChannel.MANUAL_ADMIN
-                        && (item.getPawapayRefundId() != null || item.getPawapayPayoutId() != null));
-            if (pawapayItem) {
+            if (isPawapayItem(request, item)) {
                 walletRefundRailIssuer.reconcile(request, item);
-            } else if (request.getChannel() == WalletRefundChannel.AUTOMATIC_STRIPE
+            } else if (request.getChannel() != WalletRefundChannel.MANUAL_ADMIN
                     && item.getStripeRefundId() != null) {
                 applyStripeStatus(item, stripeStatuses.get(item.getStripeRefundId()));
             }
@@ -966,7 +1036,8 @@ public class WalletSelfRefundService {
     private Map<String, String> stripeStatusesOutsideLock(List<WalletRefundRequestEntity> requests) {
         Map<String, String> statuses = new HashMap<>();
         for (WalletRefundRequestEntity request : requests) {
-            if (request.getChannel() != WalletRefundChannel.AUTOMATIC_STRIPE) {
+            if (request.getChannel() != WalletRefundChannel.AUTOMATIC_STRIPE
+                    && request.getChannel() != WalletRefundChannel.AUTOMATIC_MIXED) {
                 continue;
             }
             for (WalletRefundRequestItemEntity item

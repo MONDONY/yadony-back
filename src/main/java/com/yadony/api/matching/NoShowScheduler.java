@@ -5,7 +5,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -38,8 +37,15 @@ public class NoShowScheduler {
         this.noShowService = noShowService;
     }
 
+    /**
+     * Volontairement SANS transaction englobante : chaque colis est traité dans la sienne
+     * ({@code @Transactional} des méthodes de {@link NoShowService}). Une transaction unique
+     * pour tout le lot avait deux défauts : une erreur sur un colis rendait la transaction
+     * rollback-only et annulait tout le lot (aucun remboursement de commission, sans alerte), et
+     * les colis chargés par {@link BidRepository#findNoShowBids} restaient en cache, si bien que
+     * le colis relu « sous verrou » gardait un statut périmé face à un signalement concurrent.
+     */
     @Scheduled(cron = "0 0 * * * *", zone = "UTC") // every hour, UTC
-    @Transactional
     public void detectNoShows() {
         detectNoShowsAt(Instant.now());
     }

@@ -27,9 +27,9 @@ public class WalletRefundIssueRecoveryScheduler {
     /** Laisse à l'écouteur après commit le temps de finir avant toute reprise. */
     static final Duration GRACE = Duration.ofMinutes(2);
 
-    /** Canaux émis automatiquement : Stripe et pawaPay passent tous deux par {@code issuePendingItems}. */
-    static final List<WalletRefundChannel> AUTOMATIC_CHANNELS =
-            List.of(WalletRefundChannel.AUTOMATIC_STRIPE, WalletRefundChannel.AUTOMATIC_PAWAPAY);
+    /** Canaux émis automatiquement : Stripe, pawaPay et mixte passent tous par {@code issuePendingItems}. */
+    static final List<WalletRefundChannel> AUTOMATIC_CHANNELS = List.of(WalletRefundChannel.AUTOMATIC_STRIPE,
+            WalletRefundChannel.AUTOMATIC_PAWAPAY, WalletRefundChannel.AUTOMATIC_MIXED);
 
     private final WalletRefundRequestItemRepository refundRequestItemRepository;
     private final WalletSelfRefundService walletSelfRefundService;

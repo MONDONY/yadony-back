@@ -7,6 +7,9 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.currency.CurrencyCatalog;
+import com.yadony.api.payments.currency.ExchangeRateLookup;
+import com.yadony.api.payments.currency.ExchangeRateService;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.wallet.dto.WalletTopupCheckoutResponse;
 import com.yadony.api.payments.wallet.dto.WalletTopupRequest;
 import com.yadony.api.payments.wallet.dto.WalletTopupResponse;
@@ -24,6 +27,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -161,7 +165,15 @@ class WalletTopupCurrencyTest {
         when(resolver.resolve(userId)).thenReturn(resolvedCurrency);
         return new WalletTopupOrchestrator(new CurrencyCatalog(), resolver, new WalletTopupProperties(
                 "https://pro.example/parametres?topup=success", "https://pro.example/parametres?topup=canceled"),
-                mobileMoneyTopupService, userRepository);
+                mobileMoneyTopupService, userRepository, defaultRates());
+    }
+
+    /** Taux par défaut du catalogue (1 € = 655,957 F CFA, 1,08 $…), sans base. */
+    private static ExchangeRateService defaultRates() {
+        ExchangeRateLookup lookup = mock(ExchangeRateLookup.class);
+        when(lookup.unitsPerEur(anyString())).thenAnswer(invocation ->
+                SupportedCurrency.fromCode(invocation.getArgument(0)).unitsPerEur());
+        return new ExchangeRateService(lookup);
     }
 
     private static PaymentIntentCreateParams captureTopupParams(WalletTopupOrchestrator orchestrator, UUID userId) {
@@ -358,6 +370,64 @@ class WalletTopupCurrencyTest {
             assertThatThrownBy(() -> orchestrator.initiate(userId, topupRequest("10.00")))
                     .isInstanceOfSatisfying(YadonyBusinessException.class,
                             error -> assertThat(error.getErrorCode()).isEqualTo("wallet-topup-stripe-error"));
+        }
+    }
+
+    /**
+     * Plafond d'une recharge carte : 1 000 € convertis au taux du jour (arrondi vers le bas)
+     * dans la devise du portefeuille. Au plafond exact, la recharge part.
+     */
+    @ParameterizedTest
+    @CsvSource({
+            "EUR, 1000.00, 100000",
+            "XOF, 655957, 655957",
+            "USD, 1080.00, 108000"
+    })
+    void initiate_atTheCardCap_isAccepted(String currency, String amount, long expectedMinor) {
+        UUID userId = UUID.randomUUID();
+        AtomicReference<PaymentIntentCreateParams> captured = new AtomicReference<>();
+        try (MockedStatic<PaymentIntent> mockedPi = mockStatic(PaymentIntent.class)) {
+            PaymentIntent fakePi = mock(PaymentIntent.class);
+            mockedPi.when(() -> PaymentIntent.create(any(PaymentIntentCreateParams.class)))
+                    .thenAnswer(invocation -> {
+                        captured.set(invocation.getArgument(0));
+                        return fakePi;
+                    });
+            orchestrator(userId, currency).initiate(userId, topupRequest(amount));
+        }
+        assertThat(captured.get().getAmount()).isEqualTo(expectedMinor);
+    }
+
+    /** Au-delà du plafond : 422, et aucun PaymentIntent créé chez Stripe. */
+    @ParameterizedTest
+    @CsvSource({
+            "EUR, 1000.01, 1 000,00 €",
+            "XOF, 655958, 655 957 F CFA",
+            "USD, 999999.99, 1 080,00 $"
+    })
+    void initiate_aboveTheCardCap_is422WithoutStripeCall(String currency, String amount, String shownMax) {
+        UUID userId = UUID.randomUUID();
+        try (MockedStatic<PaymentIntent> mockedPi = mockStatic(PaymentIntent.class)) {
+            assertThatThrownBy(() -> orchestrator(userId, currency).initiate(userId, topupRequest(amount)))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, error -> {
+                        assertThat(error.getStatus()).isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(error.getErrorCode()).isEqualTo("wallet-topup-above-max");
+                        assertThat(error.getMessage().replace('\u00A0', ' ').replace('\u202F', ' ')).contains(shownMax);
+                    });
+            mockedPi.verifyNoInteractions();
+        }
+    }
+
+    /** Le portail (Stripe Checkout) applique le même plafond que l'app. */
+    @Test
+    void createCheckoutSession_aboveTheCardCap_is422WithoutStripeCall() {
+        UUID userId = UUID.randomUUID();
+        try (MockedStatic<com.stripe.model.checkout.Session> mocked = mockStatic(com.stripe.model.checkout.Session.class)) {
+            assertThatThrownBy(() -> orchestrator(userId, "EUR")
+                    .createCheckoutSession(userId, new BigDecimal("1500")))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            error -> assertThat(error.getErrorCode()).isEqualTo("wallet-topup-above-max"));
+            mocked.verifyNoInteractions();
         }
     }
 }
