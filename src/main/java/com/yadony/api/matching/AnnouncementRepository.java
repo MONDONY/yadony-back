@@ -199,7 +199,7 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
      */
     @Query("""
         SELECT a FROM AnnouncementEntity a
-        WHERE a.status IN ('ACTIVE', 'FULL', 'IN_PROGRESS')
+        WHERE a.status IN (com.yadony.api.matching.AnnouncementStatus.ACTIVE, com.yadony.api.matching.AnnouncementStatus.FULL, com.yadony.api.matching.AnnouncementStatus.IN_PROGRESS)
         AND a.departurePromptSentAt IS NULL
         AND a.departureDate BETWEEN :from AND :to
     """)
@@ -209,7 +209,7 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
     /** Rappel d'arrivée : jour d'arrivée effectif dans la plage, heure d'arrivée connue. */
     @Query("""
         SELECT a FROM AnnouncementEntity a
-        WHERE a.status IN ('ACTIVE', 'FULL', 'IN_PROGRESS', 'COMPLETED')
+        WHERE a.status IN (com.yadony.api.matching.AnnouncementStatus.ACTIVE, com.yadony.api.matching.AnnouncementStatus.FULL, com.yadony.api.matching.AnnouncementStatus.IN_PROGRESS, com.yadony.api.matching.AnnouncementStatus.COMPLETED)
         AND a.arrivalPromptSentAt IS NULL
         AND a.arrivalTime IS NOT NULL
         AND COALESCE(a.arrivalDate, a.departureDate) BETWEEN :from AND :to

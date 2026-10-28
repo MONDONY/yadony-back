@@ -43,6 +43,12 @@ public class TripPromptScheduler {
     /** Passé 48 h après l'arrivée prévue, le rappel d'arrivée n'a plus de sens. */
     static final Duration ARRIVAL_GRACE = Duration.ofHours(48);
 
+    private static final Predicate<AnnouncementEntity> ELIGIBLE_STATUS = a -> a.getStatus() != null
+            && switch (a.getStatus()) {
+                case ACTIVE, FULL, IN_PROGRESS, COMPLETED -> true;
+                default -> false;
+            };
+
     private final AnnouncementRepository announcementRepository;
     private final BidRepository bidRepository;
     private final TripArrivalInstant arrivalInstant;
@@ -123,9 +129,4 @@ public class TripPromptScheduler {
         return bidRepository.existsByAnnouncementIdAndStatusIn(a.getId(), TripPositionService.carriedStatuses());
     }
 
-    private static final Predicate<AnnouncementEntity> ELIGIBLE_STATUS = a -> a.getStatus() != null
-            && switch (a.getStatus()) {
-                case ACTIVE, FULL, IN_PROGRESS, COMPLETED -> true;
-                default -> false;
-            };
 }
