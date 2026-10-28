@@ -97,7 +97,10 @@ public class TripPromptScheduler {
         for (AnnouncementEntity a : candidates) {
             try {
                 var arrival = arrivalInstant.of(a);
+                OffsetDateTime departure = TripPositionService.departureInstant(a);
                 if (arrival.isEmpty()
+                        // Ancien trajet sans date d'arrivée dont l'heure d'arrivée précède l'heure de départ.
+                        || (departure != null && arrival.get().isBefore(departure))
                         || now.isBefore(arrival.get().plus(ARRIVAL_DELAY))
                         || now.isAfter(arrival.get().plus(ARRIVAL_GRACE))) {
                     continue;
@@ -110,7 +113,7 @@ public class TripPromptScheduler {
     }
 
     private void claimAndPublish(AnnouncementEntity a, OffsetDateTime now, TripPromptDueEvent.Kind kind) {
-        if (!eligibleBeforeClaim(a)) {
+        if (!eligibleBeforeClaim(a, kind)) {
             return;
         }
         int claimed = kind == TripPromptDueEvent.Kind.DEPARTURE
@@ -122,8 +125,12 @@ public class TripPromptScheduler {
     }
 
     /** Trajet non annulé et au moins un colis encore porté (remis ou en transit, pas arrivé). */
-    private boolean eligibleBeforeClaim(AnnouncementEntity a) {
+    private boolean eligibleBeforeClaim(AnnouncementEntity a, TripPromptDueEvent.Kind kind) {
         if (!ELIGIBLE_STATUS.test(a)) {
+            return false;
+        }
+        // Le voyageur a déjà touché « Je pars » : le rappel de départ n'a plus lieu d'être.
+        if (kind == TripPromptDueEvent.Kind.DEPARTURE && a.getDepartedAt() != null) {
             return false;
         }
         return bidRepository.existsByAnnouncementIdAndStatusIn(a.getId(), TripPositionService.carriedStatuses());

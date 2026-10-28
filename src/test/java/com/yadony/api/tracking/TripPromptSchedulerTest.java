@@ -149,6 +149,7 @@ class TripPromptSchedulerTest {
         // Le trajet est lu à Tokyo (+9), la ville d'arrivée est en UTC : l'arrivée est à 06:30Z.
         trip.setTimezone("Asia/Tokyo");
         arrivesAt("Africa/Abidjan", LocalDate.of(2026, 11, 1), LocalTime.of(6, 30));
+        trip.setDepartureAt(OffsetDateTime.parse("2026-11-01T01:00:00Z"));
         clockNow = OffsetDateTime.parse("2026-11-01T06:45:00Z");
         scheduler().sendArrivalPrompts();
         verify(publisher, never()).publishEvent(any(Object.class));
@@ -177,6 +178,7 @@ class TripPromptSchedulerTest {
     @Test
     void noArrivalPromptIfAlreadyMarkedArrived() {
         arrivesAt("Africa/Abidjan", LocalDate.of(2026, 11, 1), LocalTime.of(6, 30));
+        trip.setDepartureAt(OffsetDateTime.parse("2026-11-01T01:00:00Z"));
         when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(announcementId), anyList())).thenReturn(false);
         scheduler().sendArrivalPrompts();
         verify(announcementRepository, never()).claimArrivalPrompt(any(), any());
@@ -186,8 +188,37 @@ class TripPromptSchedulerTest {
     @Test
     void arrivalClaimPreventsDoubleSend() {
         arrivesAt("Africa/Abidjan", LocalDate.of(2026, 11, 1), LocalTime.of(6, 30));
+        trip.setDepartureAt(OffsetDateTime.parse("2026-11-01T01:00:00Z"));
         when(announcementRepository.claimArrivalPrompt(eq(announcementId), any())).thenReturn(0);
         scheduler().sendArrivalPrompts();
+        verify(publisher, never()).publishEvent(any(Object.class));
+    }
+
+    @Test
+    void noDeparturePromptAfterDepartPressed() {
+        trip.setDepartedAt(NOW.minusMinutes(5));
+        scheduler().sendDeparturePrompts();
+        verify(announcementRepository, never()).claimDeparturePrompt(any(), any());
+        verify(publisher, never()).publishEvent(any(Object.class));
+    }
+
+    @Test
+    void arrivalPromptStillSentAfterDepartPressed() {
+        trip.setDepartedAt(NOW.minusHours(8));
+        arrivesAt("Africa/Abidjan", LocalDate.of(2026, 11, 1), LocalTime.of(6, 30));
+        clockNow = OffsetDateTime.parse("2026-11-01T07:01:00Z");
+        trip.setDepartureAt(OffsetDateTime.parse("2026-11-01T01:00:00Z"));
+        scheduler().sendArrivalPrompts();
+        assertThat(captured().kind()).isEqualTo(TripPromptDueEvent.Kind.ARRIVAL);
+    }
+
+    @Test
+    void noArrivalPromptWhenArrivalInstantBeforeDeparture() {
+        // Départ 13:00Z, arrivée saisie 06:30 le même jour (ancien trajet sans date d'arrivée).
+        arrivesAt("Africa/Abidjan", LocalDate.of(2026, 11, 1), LocalTime.of(6, 30));
+        clockNow = OffsetDateTime.parse("2026-11-01T07:01:00Z");
+        scheduler().sendArrivalPrompts();
+        verify(announcementRepository, never()).claimArrivalPrompt(any(), any());
         verify(publisher, never()).publishEvent(any(Object.class));
     }
 }
