@@ -44,8 +44,20 @@ public class PositionBlurService {
         this.cityRepository = cityRepository;
     }
 
+    /**
+     * Position floutée. {@code cityName} et {@code countryCode} sont null quand aucune ville
+     * d'au moins {@link #MIN_POPULATION} habitants n'est dans le rayon maximal de recherche.
+     * {@code progressPct} est null quand le trajet est inconnu (ville de départ ou d'arrivée
+     * absente ou introuvable), quand la position est hors route
+     * ({@link #MAX_OFF_ROUTE_RATIO}) ou quand départ et arrivée sont identiques. L'appelant
+     * doit gérer ces null.
+     */
     public record BlurredPosition(String cityName, String countryCode, Integer progressPct) {}
 
+    /**
+     * Floute une position brute. Voir {@link BlurredPosition} pour les cas où les champs
+     * du résultat sont null ; ne lève pas d'exception pour un trajet nul ou inconnu.
+     */
     public BlurredPosition blur(double lat, double lon,
                                 String departureCity, String departureCountry,
                                 String arrivalCity, String arrivalCountry) {

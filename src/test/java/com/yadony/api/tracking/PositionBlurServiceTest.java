@@ -87,6 +87,24 @@ class PositionBlurServiceTest {
     }
 
     @Test
+    @DisplayName("aucune ville trouvée : ville et pays null")
+    void noCityFoundGivesNullCity() {
+        when(repo.findInBoundingBox(anyDouble(), anyDouble(), anyDouble(), anyDouble(), anyLong(), anyInt()))
+                .thenReturn(List.of());
+        var r = service.blur(45.80, 4.90, "Paris", "FR", "Dakar", "SN");
+        assertThat(r.cityName()).isNull();
+        assertThat(r.countryCode()).isNull();
+    }
+
+    @Test
+    @DisplayName("paramètres de trajet nuls : pas d'exception, avancement null")
+    void nullRouteParamsGiveNullProgress() {
+        assertThat(service.blur(45.80, 4.90, null, "FR", "Dakar", "SN").progressPct()).isNull();
+        assertThat(service.blur(45.80, 4.90, "Paris", "FR", null, null).progressPct()).isNull();
+        assertThat(service.blur(45.80, 4.90, null, null, null, null).cityName()).isEqualTo("Lyon");
+    }
+
+    @Test
     @DisplayName("le résultat n'expose que nom, pays et pourcentage")
     void resultNeverContainsRawCoordinates() {
         var components = Arrays.stream(PositionBlurService.BlurredPosition.class.getRecordComponents())
