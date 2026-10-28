@@ -3,6 +3,7 @@ package com.yadony.api.payments.cash;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.cash.dto.AcceptBidResponse;
+import com.yadony.api.payments.cash.dto.CommissionAllocationPreviewDto;
 import com.yadony.api.payments.cash.dto.CommissionMethodResponse;
 import com.yadony.api.payments.cash.dto.ConfirmAcceptanceResponse;
 import com.yadony.api.payments.cash.dto.SetupCommissionMethodResponse;
@@ -76,6 +77,18 @@ public class CashCommissionController {
             case INSUFFICIENT_WALLET -> ResponseEntity.status(HttpStatus.CONFLICT).body(resp);
             case FAILED -> ResponseEntity.unprocessableEntity().body(resp);
         };
+    }
+
+    /**
+     * Aperçu, avant de confirmer, d'où partira la commission (portefeuilles débités, montants, taux du jour).
+     * Lecture seule : ne débite rien et ne verrouille rien.
+     */
+    @GetMapping("/bids/{bidId}/commission-allocation")
+    public ResponseEntity<CommissionAllocationPreviewDto> previewAllocation(
+            @PathVariable UUID bidId,
+            @RequestParam(required = false) String fundingCurrency) {
+        UUID userId = resolveUserId();
+        return ResponseEntity.ok(cashCommissionService.previewWalletAllocation(bidId, userId, fundingCurrency));
     }
 
     @PostMapping("/bids/{bidId}/confirm-acceptance")

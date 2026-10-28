@@ -58,12 +58,13 @@ class CashCommissionRefundStatusTest {
 
     @BeforeEach
     void setUp() {
+        FixedRateConversions.stubRoundedConversion(exchangeRateService);
         service = new CashCommissionService(
                 new CommissionProperties(new BigDecimal("0.12"), new BigDecimal("1.00"), 24),
                 userRepo, bidRepo, announcementRepo, events, walletService, walletTransactionRepository,
                 auditService, commissionRateResolver, negotiationThreadRepository, stripeCashGateway,
                 bidGridItemRepository, mock(com.yadony.api.auth.FirebaseContactService.class), voucherService,
-                activeCurrencyResolver, new WalletCommissionCollector(walletService, exchangeRateService),
+                activeCurrencyResolver, new WalletCommissionCollector(walletService, exchangeRateService, org.mockito.Mockito.mock(com.yadony.api.payments.currency.ExchangeRateFreshness.class)),
                 TestMessages.resolver(), promoService);
         bid = new BidEntity();
         ReflectionTestUtils.setField(bid, "id", UUID.randomUUID());

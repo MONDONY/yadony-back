@@ -148,7 +148,7 @@ class BidSupplementCashRailTest {
     void creation_soldeCouvert_debitDedieEtDemandeProposee() {
         when(activeCurrencyResolver.resolve(traveler.getId())).thenReturn("eur");
         CommissionSplit split = covered("1.10");
-        when(collector.plan(traveler.getId(), "EUR", "EUR", new BigDecimal("1.10"))).thenReturn(split);
+        when(collector.plan(traveler.getId(), "EUR", "EUR", null, new BigDecimal("1.10"))).thenReturn(split);
 
         rail.onCreated(s, request(null, null));
 
@@ -166,7 +166,7 @@ class BidSupplementCashRailTest {
         CommissionSplit split = new CommissionSplit("EUR", new BigDecimal("1.10"), new BigDecimal("0.50"),
                 new BigDecimal("0.60"), "XOF", new BigDecimal("394"), new BigDecimal("656.666667"),
                 new BigDecimal("0.50"), new BigDecimal("1000"), true, new BigDecimal("722"));
-        when(collector.plan(traveler.getId(), "EUR", "XOF", new BigDecimal("1.10"))).thenReturn(split);
+        when(collector.plan(traveler.getId(), "EUR", "XOF", "XOF", new BigDecimal("1.10"))).thenReturn(split);
 
         rail.onCreated(s, request(CommissionSource.WALLET_FIRST, "xof"));
 
@@ -184,7 +184,7 @@ class BidSupplementCashRailTest {
         CommissionSplit split = new CommissionSplit("EUR", new BigDecimal("1.10"), new BigDecimal("0.40"),
                 new BigDecimal("0.70"), "EUR", new BigDecimal("0.70"), null, new BigDecimal("0.40"),
                 new BigDecimal("0.40"), false, new BigDecimal("1.10"));
-        when(collector.plan(traveler.getId(), "EUR", "EUR", new BigDecimal("1.10"))).thenReturn(split);
+        when(collector.plan(traveler.getId(), "EUR", "EUR", null, new BigDecimal("1.10"))).thenReturn(split);
         List<FundingAlternativeDto> alternatives = List.of(new FundingAlternativeDto("XOF", new BigDecimal("5000"),
                 new BigDecimal("722")));
         when(collector.alternatives(traveler.getId(), "EUR", "EUR", new BigDecimal("1.10"))).thenReturn(alternatives);
@@ -213,7 +213,7 @@ class BidSupplementCashRailTest {
         CommissionSplit split = new CommissionSplit("EUR", new BigDecimal("1.10"), new BigDecimal("0.10"),
                 new BigDecimal("1.00"), "XOF", new BigDecimal("656"), new BigDecimal("656"),
                 new BigDecimal("0.10"), new BigDecimal("100"), false, new BigDecimal("722"));
-        when(collector.plan(traveler.getId(), "EUR", "XOF", new BigDecimal("1.10"))).thenReturn(split);
+        when(collector.plan(traveler.getId(), "EUR", "XOF", "XOF", new BigDecimal("1.10"))).thenReturn(split);
 
         Throwable thrown = catchThrowable(() -> rail.onCreated(s, request(CommissionSource.WALLET_FIRST, "XOF")));
 

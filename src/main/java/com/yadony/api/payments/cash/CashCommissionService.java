@@ -27,6 +27,8 @@ import com.yadony.api.payments.currency.CurrencyAmount;
 import com.yadony.api.payments.currency.CurrencyBounds;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.cash.dto.AcceptBidResponse;
+import com.yadony.api.payments.cash.dto.CommissionAllocationPreviewDto;
+import com.yadony.api.payments.cash.dto.CommissionFundingDetailDto;
 import com.yadony.api.payments.cash.dto.CommissionShortfallDto;
 import com.yadony.api.payments.cash.dto.AcceptanceStatusDto;
 import com.yadony.api.payments.cash.dto.CommissionMethodResponse;
@@ -573,7 +575,7 @@ public class CashCommissionService {
 
         String bidCurrency = normalizeCurrency(bid.getCurrency());
         String travelerCurrency = resolveComplementCurrency(travelerId, fundingCurrency);
-        CommissionSplit split = commissionCollector.plan(travelerId, bidCurrency, travelerCurrency, effectiveCommission);
+        CommissionSplit split = commissionCollector.plan(travelerId, bidCurrency, travelerCurrency, fundingCurrency, effectiveCommission);
         if (!split.covered()) {
             throw new InsufficientWalletBalanceException(split.activeBalance(), split.commissionInActive());
         }
@@ -591,6 +593,8 @@ public class CashCommissionService {
             audit.put("remainingActive", split.remainingActive().toPlainString());
             audit.put("activeCurrency", split.activeCurrency());
         }
+        // Une entrée par portefeuille débité (la commission peut partir de plusieurs devises).
+        audit.put("lines", WalletCommissionCollector.auditLines(split));
         auditService.log("payment", bid.getId(), "COMMISSION_CHARGED_WALLET", travelerId, audit);
     }
 
@@ -716,7 +720,7 @@ public class CashCommissionService {
             // répartition est exposé via breakdown quand les devises diffèrent.
             String threadCurrency = normalizeCurrency(thread.getCurrency());
             String travelerCurrency = resolveComplementCurrency(travelerId, fundingCurrency);
-            CommissionSplit split = commissionCollector.plan(travelerId, threadCurrency, travelerCurrency, commission);
+            CommissionSplit split = commissionCollector.plan(travelerId, threadCurrency, travelerCurrency, fundingCurrency, commission);
             if (split.covered()) {
                 try {
                     commissionCollector.executeForNegotiation(split, travelerId,
@@ -732,7 +736,7 @@ public class CashCommissionService {
                     // devrait plus survenir. On ne bascule pas sur la carte sans consentement ;
                     // la réponse repart d'une répartition fraîche (jamais d'un solde de
                     // l'exception, qui peut être dans la devise du fil et non l'active).
-                    split = commissionCollector.plan(travelerId, threadCurrency, travelerCurrency, commission);
+                    split = commissionCollector.plan(travelerId, threadCurrency, travelerCurrency, fundingCurrency, commission);
                 }
             }
             UserEntity traveler = userRepo.findById(travelerId).orElseThrow();
@@ -740,7 +744,8 @@ public class CashCommissionService {
                     split.activeBalance(), split.commissionInActive(),
                     traveler.getCommissionPaymentMethodId() != null,
                     travelerCurrency, CommissionShortfallDto.from(split), threadCurrency,
-                    commissionCollector.alternatives(travelerId, threadCurrency, travelerCurrency, commission));
+                    commissionCollector.alternatives(travelerId, threadCurrency, travelerCurrency, commission),
+                    CommissionFundingDetailDto.from(split));
         }
 
         // CommissionSource.CARD : le voyageur a explicitement choisi sa carte.
@@ -1134,10 +1139,10 @@ public class CashCommissionService {
             // bons et audit) reste dans chargeCommissionFromWallet, qui replanifie.
             String bidCurrency = normalizeCurrency(bid.getCurrency());
             String travelerCurrency = resolveComplementCurrency(travelerId, fundingCurrency);
-            CommissionSplit split = commissionCollector.plan(travelerId, bidCurrency, travelerCurrency, commission);
+            CommissionSplit split = commissionCollector.plan(travelerId, bidCurrency, travelerCurrency, fundingCurrency, commission);
             if (split.covered()) {
                 try {
-                    chargeCommissionFromWallet(bid, travelerId, commission, travelerCurrency);
+                    chargeCommissionFromWallet(bid, travelerId, commission, fundingCurrency);
                     finalizeBidAcceptance(bid, announcement, travelerId);
                     return AcceptBidResponse.accepted();
                 } catch (InsufficientWalletBalanceException e) {
@@ -1148,7 +1153,7 @@ public class CashCommissionService {
                     // devrait plus survenir (sauf bon voyageur changeant le montant effectif).
                     // La réponse repart d'une répartition fraîche, jamais du solde de
                     // l'exception (qui peut être dans la devise du bid et non l'active).
-                    split = commissionCollector.plan(travelerId, bidCurrency, travelerCurrency, commission);
+                    split = commissionCollector.plan(travelerId, bidCurrency, travelerCurrency, fundingCurrency, commission);
                 }
             }
             // Solde insuffisant → informer le voyageur dans sa devise ACTIVE (balance,
@@ -1159,7 +1164,8 @@ public class CashCommissionService {
             return AcceptBidResponse.insufficientWallet(
                     split.activeBalance(), split.commissionInActive(), hasCard, travelerCurrency,
                     CommissionShortfallDto.from(split), bidCurrency,
-                    commissionCollector.alternatives(travelerId, bidCurrency, travelerCurrency, commission));
+                    commissionCollector.alternatives(travelerId, bidCurrency, travelerCurrency, commission),
+                    CommissionFundingDetailDto.from(split));
         }
 
         // commissionSource == CARD → comportement carte existant
@@ -1170,6 +1176,36 @@ public class CashCommissionService {
             finalizeBidAcceptance(bid, announcement, travelerId);
         }
         return response;
+    }
+
+    /**
+     * Aperçu, en lecture seule, de la répartition de la commission d'un colis sur les portefeuilles du
+     * voyageur (cf. {@link WalletCommissionCollector#preview}). Même contrôle de propriété que l'acceptation :
+     * seul le voyageur du trajet voit le colis. Le devis ignore le bon de réduction du voyageur, qui ne se
+     * consomme qu'au prélèvement : l'aperçu ne sous-estime donc jamais ce qui sera prélevé.
+     */
+    @Transactional(readOnly = true)
+    public CommissionAllocationPreviewDto previewWalletAllocation(UUID bidId, UUID travelerId, String fundingCurrency) {
+        BidEntity bid = bidRepo.findById(bidId)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "bid-not-found", "Bid Not Found", "Demande introuvable"));
+        AnnouncementEntity announcement = announcementRepo.findById(bid.getAnnouncementId())
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+        if (!announcement.getTravelerId().equals(travelerId)) {
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
+                    "forbidden", "Forbidden", "Ce trajet ne vous appartient pas");
+        }
+        if (bid.getStatus() != BidStatus.PENDING) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "bid-not-pending", "Bid Not Pending",
+                    "Cette demande n'est plus en attente de réponse");
+        }
+        BigDecimal commission = quoteBidCommission(bid, announcement).commission();
+        String bidCurrency = normalizeCurrency(bid.getCurrency());
+        String travelerCurrency = resolveComplementCurrency(travelerId, fundingCurrency);
+        CommissionSplit split = commissionCollector.preview(travelerId, bidCurrency, travelerCurrency,
+                fundingCurrency, commission);
+        return CommissionAllocationPreviewDto.from(split, commissionCollector);
     }
 
     @Transactional

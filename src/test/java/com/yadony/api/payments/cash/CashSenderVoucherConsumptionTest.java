@@ -116,6 +116,7 @@ class CashSenderVoucherConsumptionTest {
                 new CommissionRateResolver(userRepo, settings, promoService, voucherService);
 
         lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
+        FixedRateConversions.stubRoundedConversion(exchangeRateService);
         service = new CashCommissionService(
                 new CommissionProperties(new BigDecimal("0.10"), BigDecimal.ZERO, 24),
                 userRepo, bidRepo, announcementRepo, events, walletService,
@@ -123,7 +124,7 @@ class CashSenderVoucherConsumptionTest {
                 new StripeCashGatewayImpl(), bidGridItemRepository,
                 org.mockito.Mockito.mock(com.yadony.api.auth.FirebaseContactService.class),
                 voucherService, activeCurrencyResolver,
-                new WalletCommissionCollector(walletService, exchangeRateService), null, promoService);
+                new WalletCommissionCollector(walletService, exchangeRateService, org.mockito.Mockito.mock(com.yadony.api.payments.currency.ExchangeRateFreshness.class)), null, promoService);
 
         lenient().when(bidGridItemRepository.findByBidId(any())).thenReturn(List.of());
         lenient().when(walletTransactionRepository.existsByUserIdAndBidIdAndType(any(), any(), any()))

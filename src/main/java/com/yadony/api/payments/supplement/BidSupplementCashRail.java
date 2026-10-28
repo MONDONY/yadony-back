@@ -141,7 +141,8 @@ public class BidSupplementCashRail implements BidSupplementRailHandler {
         String complement = WalletCommissionCollector.complementCurrency(activeCurrencyResolver,
                 s.getTravelerId(), fundingCurrency);
         BigDecimal commission = s.getCommissionAmount();
-        CommissionSplit split = collector.plan(s.getTravelerId(), bidCurrency, complement, commission);
+        CommissionSplit split = collector.plan(s.getTravelerId(), bidCurrency, complement,
+                WalletCommissionCollector.preferredOrNull(fundingCurrency), commission);
         if (!split.covered()) {
             throw unfunded(s.getTravelerId(), split, bidCurrency, complement, commission);
         }
@@ -155,6 +156,7 @@ public class BidSupplementCashRail implements BidSupplementRailHandler {
             extra.put("remainingActive", split.remainingActive().toPlainString());
             extra.put("activeCurrency", split.activeCurrency());
         }
+        extra.put("lines", WalletCommissionCollector.auditLines(split));
         ledger.audit(s, "BID_SUPPLEMENT_COMMISSION_CHARGED_WALLET", s.getTravelerId(), extra);
     }
 

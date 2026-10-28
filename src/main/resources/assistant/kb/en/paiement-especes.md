@@ -8,7 +8,7 @@ routes:
 ---
 In cash, the sender hands the traveler the total by hand at parcel handover: traveler's price + Yadony service fee.
 There is no escrow: Yadony does not hold the funds and cannot refund automatically in case of a dispute.
-The service fee (the commission) is always paid by the sender, but in cash the traveler advances it: it is taken on acceptance, from their wallet balance first (that is what the balance is for); otherwise they top up or save a valid card in Profile › Money › Cash service fee card. The sender pays it back to them as part of the cash payment.
+The service fee (the commission) is always paid by the sender, but in cash the traveler advances it: it is taken on acceptance, from their wallet balances first, in any currency (the parcel's currency first, then the others, converted at today's rate; that is what the balance is for); otherwise they top up or save a valid card in Profile › Money › Cash service fee card. The sender pays it back to them as part of the cash payment.
 If the card has expired, they must replace it to re-enable cash payment.
 Change to an accepted parcel: if the sender adds kilos or items and chooses cash, they hand the extra amount over in person at handover. The change's service fee is taken from the traveler as soon as they accept it (balance or service fee card), and is given back if the addition isn't brought or if the parcel isn't delivered.
 Extra charge requested at handover: the sender accepts it in the app and hands the extra amount to the traveler in cash, in person. The extra charge service fee is taken from the traveler as soon as they request it (balance or service fee card) and is always given back if the request is declined, expires, is withdrawn, or if the parcel isn't delivered.

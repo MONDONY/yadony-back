@@ -8,5 +8,5 @@ routes:
 ---
 Chaque trajet ou demande est publié dans une devise, et le paiement reste dans cette devise ; les utilisateurs d'une autre devise voient un prix converti, indicatif (« environ »).
 Dans Moi › Argent › Préférences (ou Moi › ☰ › Paramètres › Préférences), vous réglez votre pays de résidence, la devise de votre portefeuille et « Afficher les prix en ».
-La devise du portefeuille est verrouillée tant qu'il contient de l'argent dans une autre devise : elle se rouvre dès que le solde est à zéro, par exemple après un remboursement demandé depuis le portefeuille.
+Vous pouvez changer la devise du portefeuille à tout moment : chaque solde reste dans sa devise, rien n'est converti. Les frais de service se règlent sur tous vos portefeuilles, convertis au taux du jour si besoin.
 La carte n'est pas proposée dans toutes les devises.

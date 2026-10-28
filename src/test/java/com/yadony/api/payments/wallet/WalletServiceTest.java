@@ -730,4 +730,18 @@ class WalletServiceTest {
         assertThat(thrown).isInstanceOf(IllegalArgumentException.class);
         verify(walletTransactionRepository, never()).save(any());
     }
+
+    @Test
+    void getBalanceForUpdate_relitLaLigneApresLeVerrou_pourDecidersurLeVraiSolde() {
+        UUID userId = UUID.randomUUID();
+        WalletAccountEntity wallet = wallet(userId, "XOF", new BigDecimal("600"));
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "XOF")).thenReturn(Optional.of(wallet));
+
+        BigDecimal balance = walletService.getBalanceForUpdate(userId, "xof");
+
+        // Sans refresh, une entité déjà présente dans le cache de premier niveau garde un solde périmé et
+        // la répartition d'une commission déciderait « couvert » sur un chiffre faux.
+        assertThat(balance).isEqualByComparingTo("600");
+        verify(entityManager).refresh(wallet);
+    }
 }
