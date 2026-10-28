@@ -138,7 +138,7 @@ class AnnouncementParcelsSummaryTest {
         BidEntity transit = bid(BidStatus.IN_TRANSIT, "4");
         BidEntity arrived = bid(BidStatus.ARRIVED, "1.5");
         bidsInDb(handed, transit, arrived);
-        when(parcelsNetPort.estimatedNet(any())).thenReturn(new BigDecimal("36000.00"));
+        when(parcelsNetPort.estimatedNet(any(), any())).thenReturn(new BigDecimal("36000.00"));
 
         AnnouncementDetailResponse r = service.getAnnouncementDetail(ANNOUNCEMENT_ID, TRAVELER_UID);
 
@@ -150,7 +150,7 @@ class AnnouncementParcelsSummaryTest {
         org.mockito.Mockito.verify(parcelsNetPort).estimatedNet(
                 org.mockito.ArgumentMatchers.argThat((Collection<UUID> ids) ->
                         ids.containsAll(List.of(handed.getId(), transit.getId(), arrived.getId()))
-                                && ids.size() == 3));
+                                && ids.size() == 3), eq("XOF"));
     }
 
     @Test
@@ -181,7 +181,7 @@ class AnnouncementParcelsSummaryTest {
         BidEntity transit = bid(BidStatus.IN_TRANSIT, "4");
         bidsInDb(transit, bid(BidStatus.COMPLETED, "10"), bid(BidStatus.CANCELLED, "7"),
                 bid(BidStatus.REJECTED, "9"));
-        when(parcelsNetPort.estimatedNet(any())).thenReturn(new BigDecimal("12000"));
+        when(parcelsNetPort.estimatedNet(any(), any())).thenReturn(new BigDecimal("12000"));
 
         AnnouncementDetailResponse r = service.getAnnouncementDetail(ANNOUNCEMENT_ID, TRAVELER_UID);
 
@@ -193,7 +193,7 @@ class AnnouncementParcelsSummaryTest {
     @DisplayName("colis en espèces : comptés en nombre et en kilos, net nul")
     void parcelsSummaryCountsCashParcelWithZeroNet() {
         bidsInDb(bid(BidStatus.HANDED_OVER, "3"));
-        when(parcelsNetPort.estimatedNet(any())).thenReturn(BigDecimal.ZERO);
+        when(parcelsNetPort.estimatedNet(any(), any())).thenReturn(BigDecimal.ZERO);
 
         AnnouncementDetailResponse r = service.getAnnouncementDetail(ANNOUNCEMENT_ID, TRAVELER_UID);
 
@@ -208,7 +208,7 @@ class AnnouncementParcelsSummaryTest {
         BidEntity noWeight = bid(BidStatus.ARRIVED, "1");
         noWeight.setWeightKg(null);
         bidsInDb(noWeight, bid(BidStatus.IN_TRANSIT, "2"));
-        when(parcelsNetPort.estimatedNet(any())).thenReturn(BigDecimal.ZERO);
+        when(parcelsNetPort.estimatedNet(any(), any())).thenReturn(BigDecimal.ZERO);
 
         AnnouncementDetailResponse r = service.getAnnouncementDetail(ANNOUNCEMENT_ID, TRAVELER_UID);
 

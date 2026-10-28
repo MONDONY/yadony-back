@@ -28,7 +28,7 @@ public class TravelerParcelsNetAdapter implements TravelerParcelsNetPort {
 
     @Override
     @Transactional(readOnly = true)
-    public BigDecimal estimatedNet(Collection<UUID> bidIds) {
+    public BigDecimal estimatedNet(Collection<UUID> bidIds, String currency) {
         if (bidIds == null || bidIds.isEmpty()) {
             return BigDecimal.ZERO;
         }
@@ -36,17 +36,27 @@ public class TravelerParcelsNetAdapter implements TravelerParcelsNetPort {
         Set<UUID> withPayment = new HashSet<>();
         for (PaymentEntity payment : paymentRepository.findByBidIdIn(bidIds)) {
             withPayment.add(payment.getBidId());
-            total = total.add(net(payment));
+            if (sameCurrency(payment, currency)) {
+                total = total.add(net(payment));
+            }
         }
         // Colis issus d'une négociation : paiement rattaché au fil (bid_id NULL), lu par lot.
         Set<UUID> withoutDirect = new HashSet<>(bidIds);
         withoutDirect.removeAll(withPayment);
         if (!withoutDirect.isEmpty()) {
             for (Object[] pair : paymentRepository.findLinkedNegotiationPaymentsOfBids(withoutDirect)) {
-                total = total.add(net((PaymentEntity) pair[1]));
+                PaymentEntity linked = (PaymentEntity) pair[1];
+                if (sameCurrency(linked, currency)) {
+                    total = total.add(net(linked));
+                }
             }
         }
         return total;
+    }
+
+    /** Le total est étiqueté dans la devise du trajet, comme « Mon argent » qui groupe par devise. */
+    private static boolean sameCurrency(PaymentEntity payment, String currency) {
+        return payment.getCurrency() != null && payment.getCurrency().equalsIgnoreCase(currency);
     }
 
     private static BigDecimal net(PaymentEntity payment) {

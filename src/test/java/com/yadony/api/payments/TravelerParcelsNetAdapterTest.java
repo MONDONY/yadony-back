@@ -29,6 +29,7 @@ class TravelerParcelsNetAdapterTest {
         when(p.getCommissionAmount()).thenReturn(new BigDecimal(commission));
         when(p.getRefundedAmount()).thenReturn(refunded == null ? null : new BigDecimal(refunded));
         when(p.getStatus()).thenReturn(status);
+        when(p.getCurrency()).thenReturn("EUR");
         return p;
     }
 
@@ -51,7 +52,7 @@ class TravelerParcelsNetAdapterTest {
             UUID bid = UUID.randomUUID();
             PaymentEntity p = payment(bid, c.amount(), c.commission(), c.refunded(), c.status());
             when(repo.findByBidIdIn(any())).thenReturn(List.of(p));
-            assertThat(adapter.estimatedNet(List.of(bid)))
+            assertThat(adapter.estimatedNet(List.of(bid), "EUR"))
                     .as(c.toString())
                     .isEqualByComparingTo(monArgent(c.amount(), c.commission(), c.refunded(), c.status()))
                     .isEqualByComparingTo(TravelerParcelNet.of(c.status().name(), new BigDecimal(c.amount()),
@@ -69,7 +70,7 @@ class TravelerParcelsNetAdapterTest {
         when(repo.findLinkedNegotiationPaymentsOfBids(any()))
                 .thenReturn(List.<Object[]>of(new Object[] {negotiated, linked}));
 
-        assertThat(adapter.estimatedNet(List.of(direct, cash, negotiated))).isEqualByComparingTo("106");
+        assertThat(adapter.estimatedNet(List.of(direct, cash, negotiated), "EUR")).isEqualByComparingTo("106");
         verify(repo, never()).findLinkedNegotiationPaymentOfBid(any());
     }
 
@@ -79,7 +80,23 @@ class TravelerParcelsNetAdapterTest {
         PaymentEntity p = payment(bid, null, "0", null, PaymentStatus.ESCROW);
         when(repo.findByBidIdIn(any())).thenReturn(List.of(p));
         when(repo.findLinkedNegotiationPaymentsOfBids(any())).thenReturn(List.of());
-        assertThat(adapter.estimatedNet(List.of(bid))).isEqualByComparingTo("0");
-        assertThat(adapter.estimatedNet(List.of())).isEqualByComparingTo("0");
+        assertThat(adapter.estimatedNet(List.of(bid), "EUR")).isEqualByComparingTo("0");
+        assertThat(adapter.estimatedNet(List.of(), "EUR")).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void parcelsSummaryIgnoresPaymentsInOtherCurrency() {
+        UUID eur = UUID.randomUUID(), xof = UUID.randomUUID(), negotiated = UUID.randomUUID();
+        PaymentEntity inEur = payment(eur, "100.00", "12.00", null, PaymentStatus.ESCROW);
+        PaymentEntity inXof = payment(xof, "50000", "6000", null, PaymentStatus.ESCROW);
+        when(inXof.getCurrency()).thenReturn("XOF");
+        PaymentEntity linkedXof = payment(null, "20000", "2000", null, PaymentStatus.ESCROW);
+        when(linkedXof.getCurrency()).thenReturn("xof");
+        when(repo.findByBidIdIn(any())).thenReturn(List.of(inEur, inXof));
+        when(repo.findLinkedNegotiationPaymentsOfBids(any()))
+                .thenReturn(List.<Object[]>of(new Object[] {negotiated, linkedXof}));
+
+        assertThat(adapter.estimatedNet(List.of(eur, xof, negotiated), "EUR")).isEqualByComparingTo("88");
+        assertThat(adapter.estimatedNet(List.of(eur, xof, negotiated), "XOF")).isEqualByComparingTo("62000");
     }
 }

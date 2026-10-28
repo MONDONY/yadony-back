@@ -1488,7 +1488,8 @@ public class AnnouncementService {
                 .map(BidEntity::getWeightKg)
                 .filter(java.util.Objects::nonNull)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal net = travelerParcelsNet.estimatedNet(held.stream().map(BidEntity::getId).toList());
+        BigDecimal net = travelerParcelsNet.estimatedNet(
+                held.stream().map(BidEntity::getId).toList(), announcement.getCurrency());
         return new ParcelsSummary(held.size(), totalKg, net, announcement.getCurrency());
     }
 

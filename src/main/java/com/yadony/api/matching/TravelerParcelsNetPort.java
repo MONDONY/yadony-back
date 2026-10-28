@@ -12,8 +12,8 @@ import java.util.UUID;
 public interface TravelerParcelsNetPort {
 
     /**
-     * Somme, dans la devise des paiements, de (montant payé − commission) des colis réglés en ligne
+     * Somme, dans la devise demandée (les paiements d'une autre devise sont ignorés), de (montant payé − commission) des colis réglés en ligne
      * et non remboursés. Les colis en espèces (sans paiement) comptent pour zéro. Lecture seule.
      */
-    BigDecimal estimatedNet(Collection<UUID> bidIds);
+    BigDecimal estimatedNet(Collection<UUID> bidIds, String currency);
 }
