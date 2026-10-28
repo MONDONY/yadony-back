@@ -106,6 +106,7 @@ public class TripRescheduleService {
         // dans la même transaction que le report.
         announcement.setDeparturePromptSentAt(null);
         announcement.setArrivalPromptSentAt(null);
+        announcement.setDepartedAt(null);
         if (announcement.getStatus() == AnnouncementStatus.IN_PROGRESS) {
             // Le planificateur l'avait fait partir à l'ancienne heure : le trajet repart
             // sur le marché, complet s'il ne reste plus de place.

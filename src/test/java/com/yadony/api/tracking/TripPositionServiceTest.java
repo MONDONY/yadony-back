@@ -78,6 +78,7 @@ class TripPositionServiceTest {
         trip.setDepartureCountryCode("FR");
         trip.setArrivalCity("Dakar");
         trip.setArrivalCountryCode("SN");
+        trip.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
         trip.setDepartureAt(NOW.minusMinutes(10));
         lenient().when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(trip));
         lenient().when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(announcementId), anyList()))
@@ -182,6 +183,33 @@ class TripPositionServiceTest {
         assertThat(trip.getDepartedAt()).isEqualTo(NOW);
         verify(announcementRepository).save(trip);
         verify(sampleRepository, never()).save(any());
+    }
+
+    @Test
+    void departIgnoredTooEarly() {
+        trip.setDepartureAt(NOW.plusMinutes(31));
+
+        service.depart(announcementId, UID, LAT, LON);
+
+        assertThat(trip.getDepartedAt()).isNull();
+        verify(announcementRepository, never()).save(any());
+        verify(auditService, never()).log(any(), any(), any(), any(), anyMap());
+        verify(sampleRepository, never()).save(any());
+    }
+
+    @Test
+    void departIgnoredOnCancelledTrip() {
+        for (var status : List.of(com.yadony.api.matching.AnnouncementStatus.CANCELLED,
+                com.yadony.api.matching.AnnouncementStatus.COMPLETED,
+                com.yadony.api.matching.AnnouncementStatus.DRAFT)) {
+            trip.setStatus(status);
+
+            service.depart(announcementId, UID, LAT, LON);
+
+            assertThat(trip.getDepartedAt()).as(status.name()).isNull();
+        }
+        verify(announcementRepository, never()).save(any());
+        verify(auditService, never()).log(any(), any(), any(), any(), anyMap());
     }
 
     @Test

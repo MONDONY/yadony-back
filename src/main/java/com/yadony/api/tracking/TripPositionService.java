@@ -5,6 +5,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
 import com.yadony.api.matching.TripTimezones;
@@ -125,12 +126,26 @@ public class TripPositionService {
         AnnouncementEntity announcement = loadOwned(announcementId, travelerId);
         OffsetDateTime now = OffsetDateTime.now(clock);
         if (announcement.getDepartedAt() == null) {
+            if (!canDepart(announcement, now)) {
+                // Trop tôt ou trajet clos : on répond 200 sans rien changer.
+                return;
+            }
             announcement.setDepartedAt(now);
             announcementRepository.save(announcement);
             auditService.log("ANNOUNCEMENT", announcement.getId(), "TRIP_DEPARTED", travelerId,
                     Map.of("hasPosition", lat != null && lon != null));
         }
         store(announcement, lat, lon, SampleSource.DEPART);
+    }
+
+    /** « Je pars » n'a d'effet qu'à partir de départ - 30 min, sur un trajet encore en cours. */
+    private static boolean canDepart(AnnouncementEntity a, OffsetDateTime now) {
+        if (a.getStatus() != AnnouncementStatus.ACTIVE && a.getStatus() != AnnouncementStatus.FULL
+                && a.getStatus() != AnnouncementStatus.IN_PROGRESS) {
+            return false;
+        }
+        OffsetDateTime departure = departureInstant(a);
+        return departure != null && !now.isBefore(departure.minus(WINDOW_LEAD));
     }
 
     private Optional<TripPositionSampleEntity> store(AnnouncementEntity a, Double lat, Double lon,
