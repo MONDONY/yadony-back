@@ -14,4 +14,4 @@ routes:
   - path: /demandes
     label: Demandes
 ---
-Vous êtes sur la fiche d'un colis : le billet en haut résume le trajet et l'étape en cours. Expéditeur, vous y trouvez le code de retrait à transmettre au destinataire (« Régénérer le code » s'il est bloqué), le suivi approximatif et facultatif du voyageur, puis selon l'étape « Payer mon envoi », « Afficher le QR de remise » ou « Suivi du colis ». Voyageur, vous voyez votre gain, touchez « Accepter » ou « Refuser », puis « Lire le QR du colis » et « Valider la remise ». Le menu « Options » permet de contacter, signaler ou annuler .
+Vous êtes sur la fiche d'un colis. Expéditeur, vous y trouvez le code de retrait à transmettre au destinataire (« Régénérer le code » s'il est bloqué), le suivi du voyageur (facultatif), puis selon l'étape « Payer mon envoi », « Afficher le QR de remise » ou « Suivi du colis ». Voyageur, vous voyez votre gain, touchez « Accepter » ou « Refuser », puis « Lire le QR du colis » et « Valider la remise ». Le menu « Options » permet de contacter l'autre personne, de signaler ou d'annuler ; le voyageur y refuse aussi un colis qui ne correspond pas à la déclaration.
