@@ -3,6 +3,7 @@ package com.yadony.api.payments.pawapay;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.pawapay.dto.PawapayInitiationResult;
 import com.yadony.api.payments.pawapay.events.PawapayOperationCompletedEvent;
+import com.yadony.api.payments.pawapay.events.PawapayLateCompletionEvent;
 import com.yadony.api.payments.pawapay.events.PawapayOperationFailedEvent;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -206,6 +207,13 @@ public class PawapayOperationService {
                 log.warn("pawaPay {} {} : désaccord de statut final — {} déjà posé (lu avant tentative), "
                         + "{} reçu via {} ignoré — vérification humaine recommandée",
                         op.getKind(), id, op.getStatus(), newStatus, source);
+                // L'argent a bougé chez pawaPay alors que l'opération est classée en échec ici : dépôt
+                // encaissé sans crédit, ou versement doublé par un repli. Alerte critique dédiée.
+                if (newStatus == PawapayOperationStatus.COMPLETED && op.getStatus().isFinal()
+                        && op.getStatus() != PawapayOperationStatus.COMPLETED) {
+                    events.publishEvent(new PawapayLateCompletionEvent(id, op.getKind(), op.getPurpose(),
+                            op.getStatus(), op.getPaymentId(), op.getUserId(), op.getAmount(), op.getCurrency()));
+                }
             }
             return false;
         }
