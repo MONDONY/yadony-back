@@ -161,9 +161,8 @@ public class WalletAdminAdjustmentService {
             return new AdjustmentResult(null, false, openRequest(command, code, direction, amount, eur, reason,
                     storedKey));
         }
-        WalletTransactionEntity tx = write(command.userId(), command.adminId(), null, currency, direction, amount,
-                reason, storedKey, eur, key);
-        return new AdjustmentResult(tx, false);
+        return write(command.userId(), command.adminId(), null, currency, direction, amount, reason, storedKey, eur,
+                key);
     }
 
     /**
@@ -222,7 +221,7 @@ public class WalletAdminAdjustmentService {
         BigDecimal eur = assertUnderCap(request.getAmount(), currency.name());
         WalletTransactionEntity tx = write(request.getUserId(), request.getRequestedBy(), approverId, currency,
                 request.getDirection(), request.getAmount(), request.getReason(), storedKey, eur,
-                storedKey.substring(KEY_PREFIX.length()));
+                storedKey.substring(KEY_PREFIX.length())).transaction();
         WalletAdjustmentRequestEntity decided = requestRepository.findById(requestId).orElseThrow();
         decided.setTransactionId(tx.getId());
         requestRepository.save(decided);
@@ -259,9 +258,10 @@ public class WalletAdminAdjustmentService {
 
     /**
      * Écrit le mouvement, au nom de son auteur {@code actorId} ({@code approverId} quand un second
-     * admin l'a approuvé). Verrou du portefeuille, puis de l'admin, puis plafond de 24 h.
+     * admin l'a approuvé). Verrou du portefeuille, puis de l'admin, puis plafond de 24 h. Un mouvement
+     * déjà écrit sous la même clé (requête concurrente) est rendu comme rejeu.
      */
-    private WalletTransactionEntity write(UUID userId, UUID actorId, UUID approverId, SupportedCurrency currency,
+    private AdjustmentResult write(UUID userId, UUID actorId, UUID approverId, SupportedCurrency currency,
                                          WalletAdjustmentDirection direction, BigDecimal amount, String reason,
                                          String storedKey, BigDecimal eur, String key) {
         String code = currency.name();
@@ -271,7 +271,7 @@ public class WalletAdminAdjustmentService {
         // compte, a pu écrire entre la première lecture et l'obtention du verrou.
         Optional<WalletTransactionEntity> replay = replayOf(storedKey, userId, code, direction, amount, reason);
         if (replay.isPresent()) {
-            return replay.get();
+            return new AdjustmentResult(replay.get(), true);
         }
 
         assertUnderDailyCap(actorId, userId, eur);
@@ -337,7 +337,7 @@ public class WalletAdminAdjustmentService {
 
         eventPublisher.publishEvent(new WalletAdjustedByAdminEvent(userId, code, direction, amount,
                 tx.getId()));
-        return tx;
+        return new AdjustmentResult(tx, false);
     }
 
     /**

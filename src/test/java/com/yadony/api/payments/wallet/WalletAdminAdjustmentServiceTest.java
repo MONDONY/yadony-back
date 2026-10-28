@@ -383,7 +383,7 @@ class WalletAdminAdjustmentServiceTest {
 
     @Test
     void seuil_demandeConcurrenteMemeCle_409() {
-        when(requestRepository.saveAndFlush(any())).thenThrow(new DataIntegrityViolationException("uq"));
+        doThrow(new DataIntegrityViolationException("uq")).when(requestRepository).saveAndFlush(any());
 
         assertThat(business(catchThrowable(() -> service.adjust(credit("EUR", "150")))).getErrorCode())
                 .isEqualTo("wallet-adjustment-idempotency-conflict");
