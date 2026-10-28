@@ -777,41 +777,125 @@ class WalletSelfRefundServiceTest {
     }
 
     /**
-     * Rails mixtes : ni exception ni demande automatique. Un 422 serait un cul-de-sac (le
-     * message annonçait le support, mais aucun ticket n'était ouvert et personne n'était
-     * prévenu). On ouvre le ticket manuel de la devise, on le renvoie, et l'audit dit au
-     * support POURQUOI il le reçoit.
+     * Rails mixtes (recharge carte ET recharge mobile money dans la même devise) : une seule
+     * demande AUTOMATIC_MIXED, un item par recharge, pour la seule part remboursable. Le
+     * parrainage (non-cash) reste au portefeuille. L'ancien repli ouvrait un ticket manuel
+     * portant TOUT le solde, parrainage compris, sans destination.
      */
     @Test
-    void request_railsMixtes_ouvreLeTicketManuelEtLeRenvoie() {
+    void request_railsMixtes_creeUneDemandeMixteSurLaSeulePartRemboursable() {
         UUID opId = UUID.randomUUID();
-        WalletTransactionEntity stripeTopup = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pi_1");
-        WalletTransactionEntity pawapayTopup = ledgerTx(WalletTransactionType.TOP_UP, "40.00", "pawapay:" + opId);
-        stubLedger("80.00", stripeTopup, pawapayTopup);
+        WalletTransactionEntity cardTopup = ledgerTx("XOF", WalletTransactionType.TOP_UP, "10000", "pi_1");
+        WalletTransactionEntity momoTopup = ledgerTx("XOF", WalletTransactionType.TOP_UP, "10000", "pawapay:" + opId);
+        WalletTransactionEntity referral = ledgerTx("XOF", WalletTransactionType.REFERRAL_REWARD, "5000", null);
+        stubLedger("XOF", "25000", cardTopup, momoTopup, referral);
         PawapayOperationEntity op = mock(PawapayOperationEntity.class);
         when(op.getId()).thenReturn(opId);
         when(op.getProvider()).thenReturn("ORANGE_CIV");
         when(pawapayOperationRepository.findByUserIdAndPurposeAndKind(
                 USER_ID, PawapayOperationPurpose.WALLET_TOPUP, PawapayOperationKind.DEPOSIT))
                 .thenReturn(List.of(op));
-        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("EUR"), any()))
+        when(stripeFeeSource.fee("pi_1", "XOF")).thenReturn(new BigDecimal("300"));
+        when(pawapayFeeTable.fee(eq("ORANGE_CIV"), any(), eq("XOF"))).thenReturn(new BigDecimal("200"));
+        when(refundRequestRepository.findByUserIdAndCurrencyAndStatusIn(eq(USER_ID), eq("XOF"), any()))
                 .thenReturn(Optional.empty());
+        when(refundRequestRepository.save(any())).thenAnswer(inv -> {
+            WalletRefundRequestEntity r = inv.getArgument(0);
+            if (r.getId() == null) assignId(r);
+            return r;
+        });
+        List<WalletRefundRequestItemEntity> savedItems = new ArrayList<>();
+        when(refundRequestItemRepository.save(any())).thenAnswer(inv -> {
+            WalletRefundRequestItemEntity i = inv.getArgument(0);
+            if (i.getId() == null) setField(i, "id", UUID.randomUUID());
+            savedItems.add(i);
+            return i;
+        });
 
-        WalletRefundRequestEntity manual = new WalletRefundRequestEntity();
-        setField(manual, "id", UUID.randomUUID());
-        manual.setChannel(WalletRefundChannel.MANUAL_ADMIN);
-        when(walletRefundRequestService.request(USER_ID, "EUR")).thenReturn(manual);
+        WalletRefundRequestEntity saved = service.request(USER_ID, "XOF", List.of());
 
-        assertThat(service.request(USER_ID, "EUR", List.of())).isSameAs(manual);
+        assertThat(saved.getChannel()).isEqualTo(WalletRefundChannel.AUTOMATIC_MIXED);
+        assertThat(saved.getStatus()).isEqualTo(WalletRefundRequestStatus.PROCESSING);
+        // 10 000 carte + 10 000 mobile money ; les 5 000 de parrainage ne deviennent jamais du cash.
+        assertThat(saved.getAmount()).isEqualByComparingTo("20000");
+        assertThat(savedItems).extracting(WalletRefundRequestItemEntity::getPaymentIntentId)
+                .containsExactlyInAnyOrder("pi_1", "pawapay:" + opId);
+        verifyNoInteractions(walletRefundRequestService);
+        verify(eventPublisher).publishEvent(new WalletRefundItemsCreatedEvent(saved.getId()));
+        verify(auditService).log(eq("wallet_refund_request"), eq(saved.getId()), eq("AUTOMATIC_REQUESTED"),
+                eq(USER_ID), argThat(payload -> "AUTOMATIC_MIXED".equals(payload.get("channel"))));
 
-        // Aucune demande automatique, aucun item, aucune émission.
-        verify(refundRequestRepository, never()).save(any());
-        verify(refundRequestItemRepository, never()).save(any());
-        verifyNoInteractions(eventPublisher);
-        // L'audit rattache le ticket aux rails mixtes, sinon le support ne voit que le motif
-        // générique « solde wallet non nul » levé par WalletRefundRequestService.
-        verify(auditService).log(eq("wallet_refund_request"), eq(manual.getId()),
-                eq("MANUAL_MIXED_RAILS_OPENED"), eq(USER_ID), any());
+        // Émission : l'item carte part chez Stripe, l'item mobile money (seul) chez pawaPay.
+        WalletRefundRequestItemEntity cardItem = savedItems.stream()
+                .filter(i -> "pi_1".equals(i.getPaymentIntentId())).findFirst().orElseThrow();
+        WalletRefundRequestItemEntity momoItem = savedItems.stream()
+                .filter(i -> !"pi_1".equals(i.getPaymentIntentId())).findFirst().orElseThrow();
+        when(refundRequestRepository.findByIdForUpdate(saved.getId())).thenReturn(Optional.of(saved));
+        when(refundRequestItemRepository.findUnissuedForUpdate(saved.getId(), WalletRefundItemStatus.PENDING))
+                .thenReturn(List.of(cardItem, momoItem));
+        when(refundRequestItemRepository.findByRefundRequestId(saved.getId())).thenReturn(List.of(cardItem, momoItem));
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            Refund refund = new Refund();
+            refund.setId("re_card");
+            ArgumentCaptor<RefundCreateParams> params = ArgumentCaptor.forClass(RefundCreateParams.class);
+            refundStatic.when(() -> Refund.create(params.capture(), any(RequestOptions.class))).thenReturn(refund);
+
+            service.issuePendingItems(saved.getId());
+
+            assertThat(params.getAllValues()).hasSize(1);
+            assertThat(params.getValue().getPaymentIntent()).isEqualTo("pi_1");
+            assertThat(params.getValue().getAmount()).isEqualTo(9700L);
+        }
+        verify(walletRefundRailIssuer).issue(saved, List.of(momoItem));
+        assertThat(cardItem.getStripeRefundId()).isEqualTo("re_card");
+    }
+
+    /** Réconciliation d'une demande mixte : chaque item est rapproché auprès de son propre rail. */
+    @Test
+    void reconcile_demandeMixte_chaqueItemSurSonRail() {
+        WalletRefundRequestEntity request = processingRequest("80.00");
+        request.setChannel(WalletRefundChannel.AUTOMATIC_MIXED);
+        WalletRefundRequestItemEntity cardItem = processingItem(request, "pi_1", "40.00", "re_1");
+        WalletRefundRequestItemEntity momoItem = processingItem(request, "pawapay:" + UUID.randomUUID(), "40.00", null);
+        momoItem.setPawapayRefundId(UUID.randomUUID());
+        when(refundRequestRepository.findAllByUserIdOrderByRequestedAtDesc(USER_ID)).thenReturn(List.of(request));
+        when(refundRequestRepository.findByIdForUpdate(request.getId())).thenReturn(Optional.of(request));
+        when(refundRequestItemRepository.findByRefundRequestId(request.getId())).thenReturn(List.of(cardItem, momoItem));
+
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            Refund succeeded = new Refund();
+            succeeded.setStatus("succeeded");
+            refundStatic.when(() -> Refund.retrieve("re_1")).thenReturn(succeeded);
+
+            service.listForUser(USER_ID);
+
+            refundStatic.verify(() -> Refund.retrieve("re_1"));
+        }
+        assertThat(cardItem.getStatus()).isEqualTo(WalletRefundItemStatus.REFUNDED);
+        verify(walletRefundRailIssuer).reconcile(request, momoItem);
+        verify(walletRefundRailIssuer, never()).reconcile(request, cardItem);
+    }
+
+    @Test
+    void isPawapayItem_parCanalPuisParRail() {
+        WalletRefundRequestEntity request = processingRequest("10.00");
+        WalletRefundRequestItemEntity card = processingItem(request, "pi_1", "10.00", null);
+        WalletRefundRequestItemEntity momo = processingItem(request, "pawapay:" + UUID.randomUUID(), "10.00", null);
+
+        request.setChannel(WalletRefundChannel.AUTOMATIC_MIXED);
+        assertThat(WalletSelfRefundService.isPawapayItem(request, card)).isFalse();
+        assertThat(WalletSelfRefundService.isPawapayItem(request, momo)).isTrue();
+
+        request.setChannel(WalletRefundChannel.AUTOMATIC_PAWAPAY);
+        assertThat(WalletSelfRefundService.isPawapayItem(request, card)).isTrue();
+        request.setChannel(WalletRefundChannel.AUTOMATIC_STRIPE);
+        assertThat(WalletSelfRefundService.isPawapayItem(request, momo)).isFalse();
+
+        request.setChannel(WalletRefundChannel.MANUAL_ADMIN);
+        assertThat(WalletSelfRefundService.isPawapayItem(request, momo)).isFalse();
+        momo.setPawapayPayoutId(UUID.randomUUID());
+        assertThat(WalletSelfRefundService.isPawapayItem(request, momo)).isTrue();
     }
 
     @Test

@@ -13,7 +13,8 @@ import java.util.UUID;
 /**
  * Demande de remboursement. Champs additifs (un ancien client les ignore) : {@code feeAmount}
  * (somme des frais de ses items), {@code netAmount} (ce qui repart vers l'utilisateur),
- * {@code rail} ({@code STRIPE}, {@code PAWAPAY} ou {@code MANUAL}, dérivé du canal) et
+ * {@code rail} ({@code STRIPE}, {@code PAWAPAY}, {@code MIXED} ou {@code MANUAL}, dérivé du canal ;
+ * un client qui ne connaît pas {@code MIXED} affiche un rail générique) et
  * {@code destinationMasked} (numéro masqué du dépôt mobile money d'origine, {@code null} hors
  * pawaPay ; jamais le numéro en clair).
  */
@@ -32,6 +33,7 @@ public record WalletRefundRequestSummaryResponse(
 ) {
     public static final String RAIL_STRIPE = "STRIPE";
     public static final String RAIL_PAWAPAY = "PAWAPAY";
+    public static final String RAIL_MIXED = "MIXED";
     public static final String RAIL_MANUAL = "MANUAL";
 
     /**
@@ -71,6 +73,7 @@ public record WalletRefundRequestSummaryResponse(
         return switch (channel) {
             case AUTOMATIC_STRIPE -> RAIL_STRIPE;
             case AUTOMATIC_PAWAPAY -> RAIL_PAWAPAY;
+            case AUTOMATIC_MIXED -> RAIL_MIXED;
             case MANUAL_ADMIN -> RAIL_MANUAL;
         };
     }

@@ -170,7 +170,7 @@ class UserServiceDeleteAccountTest {
                 BigDecimal.ZERO, r);
     }
 
-    /** Une cible carte et une cible mobile money dans la même devise : demande impossible. */
+    /** Une cible carte et une cible mobile money dans la même devise : demande mixte. */
     private static WalletRefundAllocation mixedRailsAllocation() {
         return new WalletRefundAllocation(
                 List.of(new WalletRefundAllocation.RefundableTopup(UUID.randomUUID(), "pi_1",
@@ -238,16 +238,17 @@ class UserServiceDeleteAccountTest {
         }
 
         @Test
-        @DisplayName("rails mixtes → le ticket manuel ouvert par request() est simplement collecté")
-        void mixedRails_manualTicketFromRequest() {
-            // request() ne lève plus : elle bascule elle-même sur le ticket manuel et le renvoie.
-            // settleWalletsForDeletion n'a donc plus de cas particulier à rattraper ici.
+        @DisplayName("rails mixtes → la demande automatique mixte ouverte par request() est collectée")
+        void mixedRails_mixedRequestFromRequest() {
+            // request() ouvre elle-même une demande AUTOMATIC_MIXED (chaque recharge vers son rail
+            // d'origine) : settleWalletsForDeletion n'a aucun cas particulier à rattraper ici.
             when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(walletOf("XOF", "20000.00")));
             when(walletSelfRefundService.allocation(USER_ID, "XOF")).thenReturn(mixedRailsAllocation());
-            WalletRefundRequestEntity manual = new WalletRefundRequestEntity();
-            when(walletSelfRefundService.request(USER_ID, "XOF", List.of())).thenReturn(manual);
+            WalletRefundRequestEntity mixed = new WalletRefundRequestEntity();
+            mixed.setChannel(com.yadony.api.payments.wallet.WalletRefundChannel.AUTOMATIC_MIXED);
+            when(walletSelfRefundService.request(USER_ID, "XOF", List.of())).thenReturn(mixed);
 
-            assertThat(userService.settleWalletsForDeletion(USER_ID)).containsExactly(manual);
+            assertThat(userService.settleWalletsForDeletion(USER_ID)).containsExactly(mixed);
             verify(walletRefundRequestService, never()).request(any(), any());
         }
 
@@ -337,23 +338,24 @@ class UserServiceDeleteAccountTest {
         }
 
         /**
-         * Rails mixtes (carte + mobile money dans la même devise, cas réel en XOF) : aucun
-         * rail automatique ne sait traiter cette devise, {@code request} bascule sur le ticket
-         * manuel, qui rembourse TOUT le solde. On annonce donc MANUAL, frais 0 et net = solde, comme le
-         * repli d'invariant — et non plus STRIPE avec les montants de l'allocateur.
+         * Rails mixtes (carte + mobile money dans la même devise, cas réel en XOF) : chaque
+         * recharge repart vers son rail d'origine. On annonce MIXED avec les montants de
+         * l'allocateur (part remboursable seulement), et non plus MANUAL sur tout le solde.
          */
         @Test
-        void railsMixtes_railManualSurToutLeSolde() {
+        void railsMixtes_railMixedAvecLesMontantsDeLAllocateur() {
             when(walletAccountRepository.findAllByUserId(USER_ID)).thenReturn(List.of(walletOf("XOF", "20000.00")));
-            when(walletSelfRefundService.allocation(USER_ID, "XOF")).thenReturn(mixedRailsAllocation());
+            WalletRefundAllocation mixed = mixedRailsAllocation();
+            when(walletSelfRefundService.allocation(USER_ID, "XOF")).thenReturn(mixed);
+            when(walletSelfRefundService.destinationMasked(mixed)).thenReturn("+225 07 •• •• 90");
 
             WalletSettlementDto s = userService.walletSettlement(USER_ID).get(0);
 
-            assertThat(s.rail()).isEqualTo("MANUAL");
+            assertThat(s.rail()).isEqualTo("MIXED");
+            assertThat(s.refundableAmount()).isEqualByComparingTo("20");
             assertThat(s.feeAmount()).isEqualByComparingTo("0");
-            assertThat(s.netAmount()).isEqualByComparingTo("20000.00");
-            assertThat(s.refundableAmount()).isEqualByComparingTo("20000.00");
-            assertThat(s.destinationMasked()).isNull();
+            assertThat(s.netAmount()).isEqualByComparingTo("20");
+            assertThat(s.destinationMasked()).isEqualTo("+225 07 •• •• 90");
         }
 
         /**

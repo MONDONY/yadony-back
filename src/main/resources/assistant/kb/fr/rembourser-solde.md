@@ -8,5 +8,6 @@ routes:
 ---
 Dans Mon portefeuille, touchez Rembourser, choisissez la devise puis la ou les recharges à rembourser.
 Le montant revient sur le moyen de la recharge : la carte utilisée sous 5 à 10 jours selon votre banque, ou le numéro mobile money qui a payé, en général en quelques minutes ; votre solde est gelé pendant le traitement.
+Si vous avez rechargé par carte et par mobile money, chaque recharge revient automatiquement sur son propre moyen, dans une seule demande.
 Des frais du prestataire de paiement peuvent être retenus sur une recharge qui n'a jamais servi, et les bonus ne sont pas remboursables.
 Suivez vos demandes dans « Mes remboursements » : En cours, Remboursé ou Échoué.
