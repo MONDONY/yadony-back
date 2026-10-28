@@ -246,6 +246,12 @@ class ReferralServiceTest {
 
         referralService.redeemCode(FIREBASE_UID, CODE);
 
+        // Le filleul est verrouillé AVANT le test « déjà parrainé » : deux saisies simultanées
+        // ne créent plus deux invitations.
+        var order = inOrder(userRepository, referralInvitationRepository);
+        order.verify(userRepository).lockForUpdate(USER_ID);
+        order.verify(referralInvitationRepository).existsByRefereeUserId(USER_ID);
+
         ArgumentCaptor<ReferralInvitationEntity> captor =
                 ArgumentCaptor.forClass(ReferralInvitationEntity.class);
         verify(referralInvitationRepository).save(captor.capture());

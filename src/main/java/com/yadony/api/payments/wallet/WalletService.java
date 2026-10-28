@@ -29,17 +29,20 @@ public class WalletService {
     private final WalletAccountRepository walletAccountRepository;
     private final WalletTransactionRepository walletTransactionRepository;
     private final WalletRefundRequestRepository walletRefundRequestRepository;
+    private final WalletDisputeHoldRepository walletDisputeHoldRepository;
     private final AuditService auditService;
     private final EntityManager entityManager;
 
     public WalletService(WalletAccountRepository walletAccountRepository,
                          WalletTransactionRepository walletTransactionRepository,
                          WalletRefundRequestRepository walletRefundRequestRepository,
+                         WalletDisputeHoldRepository walletDisputeHoldRepository,
                          AuditService auditService,
                          EntityManager entityManager) {
         this.walletAccountRepository = walletAccountRepository;
         this.walletTransactionRepository = walletTransactionRepository;
         this.walletRefundRequestRepository = walletRefundRequestRepository;
+        this.walletDisputeHoldRepository = walletDisputeHoldRepository;
         this.auditService = auditService;
         this.entityManager = entityManager;
     }
@@ -71,23 +74,41 @@ public class WalletService {
     }
 
     private void assertNotFrozen(UUID userId, String code) {
+        if (isDisputeHeld(userId, code)) {
+            throw disputeHeld();
+        }
         if (isFrozen(userId, code)) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-pending",
                     "Unprocessable", "Solde gelé - une demande de remboursement est en cours sur cette devise");
         }
     }
 
+    /** 422 d'un portefeuille gelé par un litige carte ouvert sur l'une de ses recharges. */
+    public static YadonyBusinessException disputeHeld() {
+        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-dispute-hold",
+                "Unprocessable", "Solde bloqué : une recharge de cette devise fait l'objet d'une contestation "
+                        + "bancaire. Contactez le support.");
+    }
+
     /**
-     * Vrai quand une demande de remboursement (PENDING ou PROCESSING) gèle cette devise :
-     * exactement la règle qui fait échouer {@code debit} en 422 {@code wallet-refund-pending}.
-     * Exposée pour qu'un appelant qui RÉPARTIT un prélèvement entre plusieurs portefeuilles
-     * (cf. {@code WalletCommissionCollector}) puisse écarter d'avance un portefeuille gelé au
-     * lieu de faire échouer tout le règlement dessus.
+     * Vrai quand cette devise est gelée : une demande de remboursement PENDING ou PROCESSING, ou un
+     * litige carte ouvert sur l'une de ses recharges ({@link WalletDisputeService}). C'est la règle
+     * qui fait échouer {@code debit} en 422. Exposée pour qu'un appelant qui RÉPARTIT un
+     * prélèvement entre plusieurs portefeuilles (cf. {@code WalletCommissionCollector}) puisse
+     * écarter d'avance un portefeuille gelé au lieu de faire échouer tout le règlement dessus.
      */
     @Transactional(readOnly = true)
     public boolean isFrozen(UUID userId, String currency) {
         return walletRefundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(
-                userId, normalize(currency), FREEZING_STATUSES);
+                userId, normalize(currency), FREEZING_STATUSES)
+                || isDisputeHeld(userId, currency);
+    }
+
+    /** Vrai tant qu'un litige carte est ouvert sur une recharge de cette devise. */
+    @Transactional(readOnly = true)
+    public boolean isDisputeHeld(UUID userId, String currency) {
+        return walletDisputeHoldRepository.existsByUserIdAndCurrencyAndStatus(
+                userId, normalize(currency), WalletDisputeHoldStatus.OPEN);
     }
 
     /**
@@ -372,6 +393,47 @@ public class WalletService {
         }
         debitInternal(userId, currency, amount, type, bidId, paymentRef, idempotencyKey,
                 sourceCurrency, sourceAmount, appliedRate, extras);
+    }
+
+    /**
+     * Reprise du montant d'une recharge contestée ({@link WalletTransactionType#TOPUP_DISPUTED}) :
+     * au plus {@code disputedAmount}, au plus le solde. Ignore le gel, que le litige provoque
+     * lui-même. Rejouable : une clé déjà écrite rend le montant repris la première fois.
+     *
+     * @return le montant réellement repris (zéro si le solde est vide)
+     */
+    @Transactional
+    public BigDecimal debitDisputedTopup(UUID userId, String currency, BigDecimal disputedAmount,
+                                         String paymentIntentId, String idempotencyKey) {
+        requireNonNegative(disputedAmount, "reprise de recharge contestée");
+        String code = normalize(currency);
+        WalletAccountEntity wallet = lockWallet(userId, code);
+        Optional<WalletTransactionEntity> replay = walletTransactionRepository.findByIdempotencyKey(idempotencyKey);
+        if (replay.isPresent()) {
+            return replay.get().getAmount().negate();
+        }
+        BigDecimal taken = disputedAmount.min(wallet.getBalance());
+        if (taken.signum() <= 0) {
+            return BigDecimal.ZERO;
+        }
+        BigDecimal newBalance = wallet.getBalance().subtract(taken);
+        wallet.setBalance(newBalance);
+        walletAccountRepository.save(wallet);
+
+        WalletTransactionEntity tx = new WalletTransactionEntity();
+        tx.setUserId(userId);
+        tx.setCurrency(code);
+        tx.setType(WalletTransactionType.TOPUP_DISPUTED);
+        tx.setAmount(taken.negate());
+        tx.setBalanceAfter(newBalance);
+        tx.setPaymentRef(paymentIntentId);
+        tx.setIdempotencyKey(idempotencyKey);
+        walletTransactionRepository.save(tx);
+
+        auditService.log("wallet", wallet.getId(), "WALLET_TOPUP_DISPUTED", userId,
+                Map.of("amount", taken.toString(), "disputed", disputedAmount.toString(), "currency", code,
+                        "paymentRef", String.valueOf(paymentIntentId)));
+        return taken;
     }
 
     /**

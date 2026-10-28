@@ -462,6 +462,10 @@ public class WalletSelfRefundService {
         // demande puis le portefeuille, mais la demande n'existe pas encore pour elle à la création,
         // et un re-clic sur une demande déjà active ne verrouille aucune ligne de demande (lecture).
         walletService.lockWallet(userId, code);
+        // Litige carte ouvert sur une recharge de la devise : rien ne sort tant qu'il n'est pas clos.
+        if (walletService.isDisputeHeld(userId, code)) {
+            throw WalletService.disputeHeld();
+        }
         Set<UUID> selected = selectedTransactionIds == null ? Set.of() : new HashSet<>(selectedTransactionIds);
 
         // Une demande active gèle déjà la devise et ses recharges sont exclues de l'allocation

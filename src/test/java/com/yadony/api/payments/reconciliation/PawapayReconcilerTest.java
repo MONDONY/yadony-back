@@ -77,6 +77,31 @@ class PawapayReconcilerTest {
                 });
     }
 
+    /**
+     * Rejetée chez nous (introuvable chez pawaPay au moment du sondage) mais acceptée ensuite par
+     * pawaPay : désormais relue et signalée. Toujours inconnue de pawaPay : rien à signaler.
+     */
+    @Test
+    void rejeteeChezNousMaisReussieChezPawapay_estSignalee_inconnueNon() {
+        PawapayOperationEntity accepted = op(PawapayOperationStatus.SUBMIT_REJECTED, "15000");
+        PawapayOperationEntity neverSent = op(PawapayOperationStatus.SUBMIT_REJECTED, "15000");
+        localOps(accepted, neverSent);
+        when(client.getStatus(PawapayOperationKind.DEPOSIT, accepted.getId()))
+                .thenReturn(Optional.of(remote(PawapayOperationStatus.COMPLETED, "15000", "XOF")));
+        when(client.getStatus(PawapayOperationKind.DEPOSIT, neverSent.getId())).thenReturn(Optional.empty());
+
+        assertThat(reconciler.reconcile(NOW).mismatches()).singleElement()
+                .satisfies(m -> {
+                    assertThat(m.reference()).isEqualTo(accepted.getId().toString());
+                    assertThat(m.code()).contains("STATUT_DIFFERENT");
+                });
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.Collection<PawapayOperationStatus>> statuses =
+                org.mockito.ArgumentCaptor.forClass(java.util.Collection.class);
+        org.mockito.Mockito.verify(repository).findByStatusInAndFinalizedAtAfter(statuses.capture(), any());
+        assertThat(statuses.getValue()).contains(PawapayOperationStatus.SUBMIT_REJECTED);
+    }
+
     @Test
     void montantOuDeviseDifferents_sontSignales() {
         PawapayOperationEntity op = op(PawapayOperationStatus.COMPLETED, "15000");

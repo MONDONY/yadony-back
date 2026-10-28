@@ -56,6 +56,19 @@ public final class WalletRefundAllocator {
 
     private WalletRefundAllocator() {}
 
+    /** Recharge du grand livre portant ce PaymentIntent, ou {@code null}. */
+    private static Bucket bucketOf(List<Bucket> buckets, String paymentRef) {
+        if (paymentRef == null) {
+            return null;
+        }
+        for (Bucket b : buckets) {
+            if (paymentRef.equals(b.paymentIntentId)) {
+                return b;
+            }
+        }
+        return null;
+    }
+
     private static final class Bucket {
         final UUID transactionId;
         final String paymentIntentId;
@@ -121,6 +134,13 @@ public final class WalletRefundAllocator {
                 continue;
             }
             if (amount.signum() > 0) {
+                // Litige gagné : la reprise revient à la recharge contestée, de nouveau remboursable.
+                Bucket reinstated = tx.getType() == WalletTransactionType.TOPUP_DISPUTE_REVERSED
+                        ? bucketOf(buckets, tx.getPaymentRef()) : null;
+                if (reinstated != null) {
+                    reinstated.remaining = reinstated.remaining.add(amount);
+                    continue;
+                }
                 if (tx.getType() == WalletTransactionType.TOP_UP
                         && tx.getPaymentRef() != null && !tx.getPaymentRef().isBlank()) {
                     Bucket b = new Bucket(tx.getId(), tx.getPaymentRef(), amount);
@@ -133,6 +153,19 @@ public final class WalletRefundAllocator {
             }
 
             BigDecimal debit = amount.negate();
+            if (tx.getType() == WalletTransactionType.TOPUP_DISPUTED) {
+                // Recharge contestée : la reprise vide d'abord cette recharge-là, qui ne doit plus
+                // jamais être remboursée vers la carte ; le reste suit le chemin ordinaire.
+                Bucket disputed = bucketOf(buckets, tx.getPaymentRef());
+                if (disputed != null) {
+                    BigDecimal taken = disputed.remaining.min(debit);
+                    disputed.remaining = disputed.remaining.subtract(taken);
+                    debit = debit.subtract(taken);
+                    if (debit.signum() == 0) {
+                        continue;
+                    }
+                }
+            }
             if (tx.getType() == WalletTransactionType.FORFEITED_ON_DELETION) {
                 BigDecimal taken = nonCash.min(debit);
                 nonCash = nonCash.subtract(taken);

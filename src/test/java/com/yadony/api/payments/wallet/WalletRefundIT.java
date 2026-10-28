@@ -107,6 +107,9 @@ class WalletRefundIT {
     @Autowired WalletRefundRequestService walletRefundRequestService;
     @Autowired WalletSelfRefundService walletSelfRefundService;
     @Autowired WalletService walletService;
+    @Autowired WalletDisputeService walletDisputeService;
+    @Autowired WalletCreditRecoveryJob walletCreditRecoveryJob;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
     @Autowired WalletAccountRepository walletAccountRepository;
     @Autowired WalletTransactionRepository walletTransactionRepository;
     @Autowired WalletRefundRequestRepository walletRefundRequestRepository;
@@ -856,6 +859,77 @@ class WalletRefundIT {
                 .filteredOn(t -> t.getType() == WalletTransactionType.SELF_REFUND_OUT)
                 .singleElement()
                 .satisfies(t -> assertThat(t.getAmount()).isEqualByComparingTo("-15000"));
+    }
+
+    /**
+     * Litige carte sur une recharge, sur la vraie base (V357) : 50 € rechargés, 20 € dépensés,
+     * litige de 50 € ouvert. Les 30 € restants sont repris, la devise est gelée (aucun
+     * remboursement, aucune dépense) ; litige gagné : les 30 € reviennent, la recharge redevient
+     * remboursable vers la carte et le gel tombe. Un rejeu des deux webhooks ne change rien.
+     */
+    @Test
+    void litigeSurUneRecharge_reprisGelePuisRenduSiGagne() {
+        UUID userId = persistUser();
+        String pi = "pi_dispute_" + UUID.randomUUID();
+        topUp(userId, "50.00", pi);
+        walletService.debit(userId, "EUR", new BigDecimal("20.00"), WalletTransactionType.BID_PAYMENT, null);
+        String disputeId = "dp_it_" + UUID.randomUUID();
+
+        assertThat(walletDisputeService.onDisputeOpened(disputeId, pi, 5000)).isTrue();
+        assertThat(walletDisputeService.onDisputeOpened(disputeId, pi, 5000)).isTrue();
+
+        assertThat(balanceOf(userId)).isEqualByComparingTo("0.00");
+        assertThat(walletService.isFrozen(userId, "EUR")).isTrue();
+        assertThatThrownBy(() -> walletSelfRefundService.request(userId, "EUR", List.of()))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("wallet-dispute-hold"));
+        assertThat(walletTransactionRepository.findByUserIdAndCurrencyOrderByCreatedAtAsc(userId, "EUR"))
+                .filteredOn(t -> t.getType() == WalletTransactionType.TOPUP_DISPUTED)
+                .singleElement()
+                .satisfies(t -> assertThat(t.getAmount()).isEqualByComparingTo("-30.00"));
+
+        walletDisputeService.onDisputeClosed(disputeId, true);
+        walletDisputeService.onDisputeClosed(disputeId, true);
+
+        assertThat(balanceOf(userId)).isEqualByComparingTo("30.00");
+        assertThat(walletService.isFrozen(userId, "EUR")).isFalse();
+        assertThat(walletSelfRefundService.allocation(userId, "EUR").refundableTotal()).isEqualByComparingTo("30.00");
+        assertThat(walletTransactionRepository.findByUserIdAndCurrencyOrderByCreatedAtAsc(userId, "EUR"))
+                .filteredOn(t -> t.getType() == WalletTransactionType.TOPUP_DISPUTE_REVERSED)
+                .singleElement()
+                .satisfies(t -> assertThat(t.getAmount()).isEqualByComparingTo("30.00"));
+    }
+
+    /**
+     * Rattrapage sur la vraie base (requêtes natives) : une recharge mobile money confirmée par
+     * pawaPay et une récompense de parrainage choisie, dont les crédits après commit ont échoué.
+     * Le job les crédite avec leur clé d'origine ; un second passage ne crédite rien de plus.
+     */
+    @Test
+    void rattrapage_rechargeMobileMoneyEtParrainageJamaisCredites_creditesUneSeuleFois() {
+        UUID userId = persistUser();
+        PawapayOperationEntity deposit = pawapayTopup(userId, "XOF", "10000");
+        jdbcTemplate.update("UPDATE pawapay_operations SET status = 'COMPLETED', finalized_at = ? WHERE id = ?",
+                java.time.OffsetDateTime.now(ZoneOffset.UTC).minusHours(1), deposit.getId());
+        UUID referrerId = persistUser();
+        UUID invitationId = UUID.randomUUID();
+        // Écrite ici sans Hibernate, qui décale les LocalDateTime de l'écart entre le fuseau de la
+        // JVM et UTC (hibernate.jdbc.time_zone) : 3 h d'ancienneté restent au-delà de ce décalage.
+        LocalDateTime chosenAt = LocalDateTime.now(ZoneOffset.UTC).minusHours(3);
+        jdbcTemplate.update("INSERT INTO referral_invitations (id, referrer_user_id, status, reward_status, "
+                        + "reward_choice, credit_amount_cents, reward_chosen_at, rewarded_at) "
+                        + "VALUES (?, ?, 'REWARDED', 'CHOSEN', 'WALLET_CREDIT', 500, ?, ?)",
+                invitationId, referrerId, chosenAt, chosenAt);
+
+        walletCreditRecoveryJob.recoverMissedCredits();
+        walletCreditRecoveryJob.recoverMissedCredits();
+
+        assertThat(walletService.getBalance(userId, "XOF")).isEqualByComparingTo("10000");
+        assertThat(walletTransactionRepository.findByIdempotencyKey("pawapay-topup-" + deposit.getId()))
+                .hasValueSatisfying(t -> assertThat(t.getPaymentRef()).isEqualTo("pawapay:" + deposit.getId()));
+        assertThat(walletService.getBalance(referrerId, "EUR")).isEqualByComparingTo("5.00");
+        assertThat(walletTransactionRepository.findByIdempotencyKey("referral-reward:" + invitationId))
+                .hasValueSatisfying(t -> assertThat(t.getType()).isEqualTo(WalletTransactionType.REFERRAL_REWARD));
     }
 
     /** Simule le webhook {@code charge.refunded} qui clôt un item Stripe déjà PROCESSING. */

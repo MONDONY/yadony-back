@@ -622,6 +622,20 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
      * juste après {@link #lockForUpdate}, il rend le statut commité le plus récent : deux
      * déclencheurs de remboursement concurrents se voient alors l'un l'autre.
      */
+    /**
+     * Colis espèces clos sans livraison (annulé, refusé, absence, colis refusé) dont la commission
+     * est restée CHARGED entre {@code after} et {@code before} : le recrédit, porté par un écouteur
+     * après commit, a échoué sans reprise. Rattrapés par {@code CommissionRefundRecoveryJob}.
+     */
+    @Query("SELECT b.id FROM BidEntity b WHERE b.paymentMethod = :cash AND b.commissionStatus = :charged "
+            + "AND b.status IN :statuses AND b.updatedAt < :before AND b.updatedAt >= :after ORDER BY b.updatedAt")
+    List<UUID> findChargedCommissionOnClosedBids(@Param("cash") com.yadony.api.payments.cash.PaymentMethod cash,
+                                                 @Param("charged") com.yadony.api.payments.cash.CommissionStatus charged,
+                                                 @Param("statuses") java.util.Collection<BidStatus> statuses,
+                                                 @Param("before") LocalDateTime before,
+                                                 @Param("after") LocalDateTime after,
+                                                 org.springframework.data.domain.Pageable page);
+
     @Query("SELECT b.commissionStatus FROM BidEntity b WHERE b.id = :id")
     Optional<com.yadony.api.payments.cash.CommissionStatus> findCommissionStatusById(@Param("id") UUID id);
 

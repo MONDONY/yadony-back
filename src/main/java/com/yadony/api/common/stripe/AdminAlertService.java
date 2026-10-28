@@ -53,6 +53,8 @@ public class AdminAlertService {
             // app, mais Sentry ne relaie que la 1re d'un groupe. Ici, une alerte par signalement.
             "APP_REPORT_CREATED",
             "STRIPE_CHARGEBACK_CLOSED",
+            // Litige sur une recharge clos : gel levé (et reprise rendue si gagné), rien à faire.
+            "wallet-topup-dispute-closed",
             "KYC_IDENTITY_CANCELED");
 
     private static final Set<String> CODES_AVERTISSEMENT = Set.of(

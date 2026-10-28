@@ -28,6 +28,7 @@ class WalletServiceTest {
     @Mock WalletAccountRepository walletAccountRepository;
     @Mock WalletTransactionRepository walletTransactionRepository;
     @Mock WalletRefundRequestRepository walletRefundRequestRepository;
+    @Mock WalletDisputeHoldRepository walletDisputeHoldRepository;
     @Mock AuditService auditService;
     @Mock jakarta.persistence.EntityManager entityManager;
 
@@ -36,7 +37,7 @@ class WalletServiceTest {
     @BeforeEach
     void setUp() {
         walletService = new WalletService(walletAccountRepository, walletTransactionRepository,
-                walletRefundRequestRepository, auditService, entityManager);
+                walletRefundRequestRepository, walletDisputeHoldRepository, auditService, entityManager);
     }
 
     @Test
@@ -367,6 +368,79 @@ class WalletServiceTest {
 
         assertThat(eur.getBalance()).isEqualByComparingTo("35.00");
         assertThat(eur.getRefundEligibleAmount()).isEqualByComparingTo("7.00");
+    }
+
+    /** Litige carte ouvert sur une recharge : la devise est gelée, avec son propre code. */
+    @Test
+    void debit_throwsWalletDisputeHoldWhenADisputeIsOpen() {
+        UUID userId = UUID.randomUUID();
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR"))
+                .thenReturn(Optional.of(wallet(userId, "EUR", new BigDecimal("50.00"))));
+        when(walletDisputeHoldRepository.existsByUserIdAndCurrencyAndStatus(userId, "EUR", WalletDisputeHoldStatus.OPEN))
+                .thenReturn(true);
+
+        Throwable thrown = catchThrowable(() -> walletService.debit(
+                userId, "EUR", new BigDecimal("5.00"), WalletTransactionType.BID_PAYMENT, UUID.randomUUID()));
+
+        assertThat(thrown).isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "wallet-dispute-hold");
+        verify(walletTransactionRepository, never()).save(any());
+    }
+
+    @Test
+    void isFrozen_vraiPendantUnLitigeOuvert() {
+        UUID userId = UUID.randomUUID();
+        when(walletDisputeHoldRepository.existsByUserIdAndCurrencyAndStatus(userId, "XOF", WalletDisputeHoldStatus.OPEN))
+                .thenReturn(true);
+
+        assertThat(walletService.isFrozen(userId, "xof")).isTrue();
+        assertThat(walletService.isDisputeHeld(userId, "XOF")).isTrue();
+    }
+
+    /** Reprise d'une recharge contestée : au plus le solde, gel ignoré, ligne TOPUP_DISPUTED. */
+    @Test
+    void debitDisputedTopup_reprendAuPlusLeSolde() {
+        UUID userId = UUID.randomUUID();
+        WalletAccountEntity eur = wallet(userId, "EUR", new BigDecimal("30.00"));
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR")).thenReturn(Optional.of(eur));
+        when(walletTransactionRepository.findByIdempotencyKey("dispute-dp_1")).thenReturn(Optional.empty());
+
+        BigDecimal taken = walletService.debitDisputedTopup(userId, "EUR", new BigDecimal("50.00"), "pi_topup", "dispute-dp_1");
+
+        assertThat(taken).isEqualByComparingTo("30.00");
+        assertThat(eur.getBalance()).isEqualByComparingTo("0.00");
+        ArgumentCaptor<WalletTransactionEntity> tx = ArgumentCaptor.forClass(WalletTransactionEntity.class);
+        verify(walletTransactionRepository).save(tx.capture());
+        assertThat(tx.getValue().getType()).isEqualTo(WalletTransactionType.TOPUP_DISPUTED);
+        assertThat(tx.getValue().getAmount()).isEqualByComparingTo("-30.00");
+        assertThat(tx.getValue().getPaymentRef()).isEqualTo("pi_topup");
+        assertThat(tx.getValue().getIdempotencyKey()).isEqualTo("dispute-dp_1");
+    }
+
+    @Test
+    void debitDisputedTopup_soldeVide_rienNEstEcrit() {
+        UUID userId = UUID.randomUUID();
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR"))
+                .thenReturn(Optional.of(wallet(userId, "EUR", BigDecimal.ZERO)));
+        when(walletTransactionRepository.findByIdempotencyKey("dispute-dp_2")).thenReturn(Optional.empty());
+
+        assertThat(walletService.debitDisputedTopup(userId, "EUR", new BigDecimal("50.00"), "pi_topup", "dispute-dp_2"))
+                .isEqualByComparingTo("0");
+        verify(walletTransactionRepository, never()).save(any());
+    }
+
+    @Test
+    void debitDisputedTopup_rejoue_rendLaRepriseDejaFaite() {
+        UUID userId = UUID.randomUUID();
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR"))
+                .thenReturn(Optional.of(wallet(userId, "EUR", new BigDecimal("80.00"))));
+        WalletTransactionEntity previous = new WalletTransactionEntity();
+        previous.setAmount(new BigDecimal("-30.00"));
+        when(walletTransactionRepository.findByIdempotencyKey("dispute-dp_1")).thenReturn(Optional.of(previous));
+
+        assertThat(walletService.debitDisputedTopup(userId, "EUR", new BigDecimal("50.00"), "pi_topup", "dispute-dp_1"))
+                .isEqualByComparingTo("30.00");
+        verify(walletTransactionRepository, never()).save(any());
     }
 
     @Test

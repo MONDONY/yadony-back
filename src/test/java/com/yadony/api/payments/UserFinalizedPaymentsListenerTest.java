@@ -23,9 +23,11 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -38,6 +40,7 @@ class UserFinalizedPaymentsListenerTest {
     @Mock WalletAccountRepository walletAccountRepository;
     @Mock WalletSelfRefundService walletSelfRefundService;
     @Mock WalletService walletService;
+    @Mock org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     UserFinalizedPaymentsListener listener;
     static final UUID USER_ID = UUID.randomUUID();
@@ -45,7 +48,7 @@ class UserFinalizedPaymentsListenerTest {
     @BeforeEach
     void setUp() {
         listener = new UserFinalizedPaymentsListener(stripeCustomerService, userRepository,
-                walletAccountRepository, walletSelfRefundService, walletService);
+                walletAccountRepository, walletSelfRefundService, walletService, transactionManager);
         when(userRepository.findByIdIncludingDeleted(USER_ID)).thenReturn(Optional.of(new UserEntity()));
     }
 
@@ -117,6 +120,34 @@ class UserFinalizedPaymentsListenerTest {
         listener.onUserFinalized(new UserFinalizedEvent(USER_ID, FinalizationReason.SOFT_GRACE_EXPIRED));
 
         verify(stripeCustomerService).cleanupForUser(any());
+    }
+
+    /**
+     * Chaque devise dans sa propre transaction : un échec sur EUR n'annule que EUR, le forfait
+     * XOF est committé. Avant, l'échec marquait la transaction commune rollback-only.
+     */
+    @Test
+    void chaqueDeviseDansSaPropreTransaction_echecRollbackSeulementLaSienne() {
+        when(walletAccountRepository.findAllByUserId(USER_ID))
+                .thenReturn(List.of(wallet("EUR", "5.00"), wallet("XOF", "1000")));
+        when(walletSelfRefundService.allocation(USER_ID, "EUR")).thenReturn(allocation("0", "5.00", "0"));
+        when(walletSelfRefundService.allocation(USER_ID, "XOF")).thenReturn(allocation("0", "1000", "0"));
+        doThrow(new DataIntegrityViolationException("boom"))
+                .when(walletService).debitConfirmedRefund(USER_ID, "EUR", new BigDecimal("5.00"),
+                        WalletTransactionType.FORFEITED_ON_DELETION);
+        org.springframework.transaction.TransactionStatus eurTx = mock(org.springframework.transaction.TransactionStatus.class);
+        org.springframework.transaction.TransactionStatus xofTx = mock(org.springframework.transaction.TransactionStatus.class);
+        org.mockito.ArgumentCaptor<org.springframework.transaction.TransactionDefinition> definition =
+                org.mockito.ArgumentCaptor.forClass(org.springframework.transaction.TransactionDefinition.class);
+        when(transactionManager.getTransaction(definition.capture())).thenReturn(eurTx, xofTx);
+
+        listener.onUserFinalized(new UserFinalizedEvent(USER_ID, FinalizationReason.SOFT_GRACE_EXPIRED));
+
+        assertThat(definition.getAllValues()).allSatisfy(d -> assertThat(d.getPropagationBehavior())
+                .isEqualTo(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW));
+        verify(transactionManager).rollback(eurTx);
+        verify(transactionManager).commit(xofTx);
+        verify(transactionManager, never()).commit(eurTx);
     }
 
     @Test

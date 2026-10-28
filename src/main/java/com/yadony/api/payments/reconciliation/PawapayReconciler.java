@@ -29,7 +29,9 @@ import java.util.Optional;
  *
  * <p>Complète {@code PawapayReconciliationPoller}, qui ne s'occupe que des opérations encore
  * ouvertes : une fois une opération finale chez nous, plus rien ne la relisait. Les opérations
- * SUBMIT_REJECTED ne sont jamais parties chez pawaPay et ne sont pas relues.
+ * SUBMIT_REJECTED sont relues aussi : le poller classe ainsi une opération restée introuvable chez
+ * pawaPay après 2 minutes, que pawaPay a pu accepter ensuite. Inconnue chez pawaPay, elle n'est
+ * pas signalée ; COMPLETED chez pawaPay, elle remonte en STATUT_DIFFERENT.
  */
 @Component
 public class PawapayReconciler {
@@ -55,7 +57,8 @@ public class PawapayReconciler {
         int errors = 0;
         LocalDateTime since = LocalDateTime.ofInstant(now.minus(WINDOW), ZoneOffset.UTC);
         for (PawapayOperationEntity op : repository.findByStatusInAndFinalizedAtAfter(
-                List.of(PawapayOperationStatus.COMPLETED, PawapayOperationStatus.FAILED), since)) {
+                List.of(PawapayOperationStatus.COMPLETED, PawapayOperationStatus.FAILED,
+                        PawapayOperationStatus.SUBMIT_REJECTED), since)) {
             Optional<PawapayOperationSnapshot> remote;
             try {
                 remote = client.getStatus(op.getKind(), op.getId());

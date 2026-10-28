@@ -246,6 +246,45 @@ class PawapayOperationServiceTest {
                 });
     }
 
+    /**
+     * pawaPay confirme un remboursement déjà classé en échec (repli déjà lancé) : la transition
+     * reste refusée, mais l'événement d'alerte critique part avec l'opération.
+     */
+    @Test
+    void apply_completedSurUneOperationDejaEnEchec_publieLAlerteDeConfirmationTardive() {
+        PawapayOperationEntity o = op(UUID.randomUUID(), PawapayOperationKind.REFUND);
+        o.setStatus(PawapayOperationStatus.SUBMIT_REJECTED);
+        when(repository.findById(o.getId())).thenReturn(Optional.of(o));
+        when(repository.applyTransition(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(0);
+
+        assertThat(service.apply(o.getId(), PawapayOperationStatus.COMPLETED, null, null, "ptx", null, "{}",
+                PawapayOperationService.Source.CALLBACK)).isFalse();
+
+        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
+        verify(events).publishEvent(captor.capture());
+        assertThat(captor.getValue()).isInstanceOfSatisfying(
+                com.yadony.api.payments.pawapay.events.PawapayLateCompletionEvent.class, e -> {
+                    assertThat(e.operationId()).isEqualTo(o.getId());
+                    assertThat(e.kind()).isEqualTo(PawapayOperationKind.REFUND);
+                    assertThat(e.previousStatus()).isEqualTo(PawapayOperationStatus.SUBMIT_REJECTED);
+                    assertThat(e.amount()).isEqualByComparingTo("15000");
+                });
+    }
+
+    /** L'inverse (échec annoncé sur une opération aboutie) ne déplace pas d'argent : pas d'alerte. */
+    @Test
+    void apply_failedSurUneOperationAboutie_aucuneAlerte() {
+        PawapayOperationEntity o = op(UUID.randomUUID(), PawapayOperationKind.DEPOSIT);
+        o.setStatus(PawapayOperationStatus.COMPLETED);
+        when(repository.findById(o.getId())).thenReturn(Optional.of(o));
+        when(repository.applyTransition(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(0);
+
+        service.apply(o.getId(), PawapayOperationStatus.FAILED, "X", null, null, null, "{}",
+                PawapayOperationService.Source.POLL);
+
+        verify(events, never()).publishEvent(any());
+    }
+
     @Test
     void apply_nonFinal_updatesWithoutEvent() {
         PawapayOperationEntity o = op(UUID.randomUUID(), PawapayOperationKind.DEPOSIT);

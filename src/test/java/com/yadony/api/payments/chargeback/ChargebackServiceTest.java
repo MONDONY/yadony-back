@@ -30,13 +30,14 @@ class ChargebackServiceTest {
     @Mock PaymentRepository paymentRepository;
     @Mock AuditService auditService;
     @Mock AdminAlertService adminAlert;
+    @Mock com.yadony.api.payments.wallet.WalletDisputeService walletDisputeService;
 
     ChargebackService service;
 
     @BeforeEach
     void setUp() {
         service = new ChargebackService(chargebackRepository, paymentRepository,
-                auditService, adminAlert, new ObjectMapper());
+                auditService, adminAlert, new ObjectMapper(), walletDisputeService);
     }
 
     private static void setId(Object entity, UUID id) throws Exception {
@@ -142,6 +143,46 @@ class ChargebackServiceTest {
         verify(auditService).log(eq("PAYMENT"), any(), eq("PAYMENT_DISPUTE_WON"), any(), anyMap());
         verify(auditService).log(eq("CHARGEBACK"), any(), eq("CHARGEBACK_CLOSED"), any(), anyMap());
         verify(adminAlert).raise(eq("STRIPE_CHARGEBACK_CLOSED"), anyString(), anyMap());
+    }
+
+    /** Recharge du portefeuille contestée (aucun paiement de colis) : reprise et gel côté wallet. */
+    @Test
+    void handleDisputeCreated_surUneRecharge_delegueAuPortefeuille() {
+        when(chargebackRepository.findByStripeDisputeId("dp_topup")).thenReturn(Optional.empty());
+        when(paymentRepository.findByStripeChargeId("ch_topup")).thenReturn(Optional.empty());
+        String json = "{\"id\":\"evt_t\",\"object\":\"event\",\"type\":\"charge.dispute.created\","
+                + "\"data\":{\"object\":{\"id\":\"dp_topup\",\"charge\":\"ch_topup\","
+                + "\"payment_intent\":\"pi_topup\",\"amount\":5000,\"currency\":\"eur\","
+                + "\"reason\":\"fraudulent\",\"status\":\"needs_response\"}}}";
+
+        service.handleDisputeCreated(ApiResource.GSON.fromJson(json, Event.class));
+
+        verify(walletDisputeService).onDisputeOpened("dp_topup", "pi_topup", 5000L);
+        verify(chargebackRepository).save(any());
+    }
+
+    /** Paiement d'un colis contesté : le portefeuille n'est pas concerné. */
+    @Test
+    void handleDisputeCreated_surUnPaiementDeColis_neTouchePasAuPortefeuille() throws Exception {
+        when(chargebackRepository.findByStripeDisputeId("dp_bid")).thenReturn(Optional.empty());
+        var payment = new PaymentEntity();
+        setId(payment, UUID.randomUUID());
+        when(paymentRepository.findByStripeChargeId("ch_bid")).thenReturn(Optional.of(payment));
+
+        service.handleDisputeCreated(buildDisputeEvent("charge.dispute.created", "dp_bid", "ch_bid", "needs_response"));
+
+        verifyNoInteractions(walletDisputeService);
+    }
+
+    @Test
+    void handleDisputeClosed_transmetLIssueAuPortefeuille() {
+        when(chargebackRepository.findByStripeDisputeId(anyString())).thenReturn(Optional.empty());
+
+        service.handleDisputeClosed(buildDisputeEvent("charge.dispute.closed", "dp_w", "ch_x", "won"));
+        service.handleDisputeClosed(buildDisputeEvent("charge.dispute.closed", "dp_l", "ch_x", "lost"));
+
+        verify(walletDisputeService).onDisputeClosed("dp_w", true);
+        verify(walletDisputeService).onDisputeClosed("dp_l", false);
     }
 
     @Test

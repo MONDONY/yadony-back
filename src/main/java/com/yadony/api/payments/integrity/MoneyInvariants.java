@@ -57,9 +57,9 @@ public final class MoneyInvariants {
                     UNION ALL
                     SELECT 'SIGNE_INCOHERENT_AVEC_TYPE', t.id, t.user_id, t.currency, t.amount
                     FROM wallet_transactions t
-                    WHERE (t.type IN ('TOP_UP','REFUND','REFERRAL_REWARD','ADMIN_CREDIT','TOP_UP_CODE') AND t.amount <= 0)
-                       OR (t.type IN ('BID_PAYMENT','COMMISSION_DEDUCTED','ADMIN_REFUND_OUT','SELF_REFUND_OUT','FORFEITED_ON_DELETION','ADMIN_DEBIT','SUPPLEMENT_COMMISSION_DEDUCTED','AMENDMENT_COMMISSION_DEDUCTED') AND t.amount > 0)
-                       OR (t.type IN ('BID_PAYMENT','ADMIN_REFUND_OUT','SELF_REFUND_OUT','FORFEITED_ON_DELETION','ADMIN_DEBIT','SUPPLEMENT_COMMISSION_DEDUCTED','AMENDMENT_COMMISSION_DEDUCTED') AND t.amount = 0)
+                    WHERE (t.type IN ('TOP_UP','REFUND','REFERRAL_REWARD','ADMIN_CREDIT','TOP_UP_CODE','TOPUP_DISPUTE_REVERSED') AND t.amount <= 0)
+                       OR (t.type IN ('BID_PAYMENT','COMMISSION_DEDUCTED','ADMIN_REFUND_OUT','SELF_REFUND_OUT','FORFEITED_ON_DELETION','ADMIN_DEBIT','SUPPLEMENT_COMMISSION_DEDUCTED','AMENDMENT_COMMISSION_DEDUCTED','TOPUP_DISPUTED') AND t.amount > 0)
+                       OR (t.type IN ('BID_PAYMENT','ADMIN_REFUND_OUT','SELF_REFUND_OUT','FORFEITED_ON_DELETION','ADMIN_DEBIT','SUPPLEMENT_COMMISSION_DEDUCTED','AMENDMENT_COMMISSION_DEDUCTED','TOPUP_DISPUTED') AND t.amount = 0)
                     UNION ALL
                     SELECT 'AJUSTEMENT_ADMIN_SANS_AUTEUR', t.id, t.user_id, t.currency, t.amount
                     FROM wallet_transactions t
@@ -254,6 +254,15 @@ public final class MoneyInvariants {
                         SELECT b.id AS bid_id, b.status, b.payment_method, b.commission_status, b.commission_charged_via,
                                b.commission_payment_intent_id, b.commission_retry_count, b.updated_at,
                                CASE
+                                   -- Colis issu d'une négociation : la commission vit sur le fil (débit wallet
+                                   -- sans bid_id), seule la commission non rendue d'un colis clos se lit ici.
+                                   WHEN b.linked_negotiation_thread_id IS NOT NULL THEN
+                                        CASE WHEN b.commission_status = 'CHARGED'
+                                                  AND b.updated_at < now() - interval '1 hour'
+                                                  AND (b.status IN ('CANCELLED','REJECTED')
+                                                       OR (b.status IN ('NO_SHOW','PARCEL_REFUSED')
+                                                           AND b.updated_at >= TIMESTAMP '2026-10-19'))
+                                             THEN 'CHARGEE_SUR_BID_ANNULE' END
                                    WHEN b.commission_status = 'CHARGED' AND b.commission_charged_via IS NULL
                                         THEN 'CHARGEE_SANS_CANAL'
                                    WHEN b.commission_status = 'CHARGED' AND b.commission_charged_via = 'WALLET'
@@ -277,8 +286,13 @@ public final class MoneyInvariants {
                                         THEN 'LEDGER_DEBITE_STATUT_NON_CHARGE'
                                    WHEN b.commission_status = 'REFUND_FAILED'
                                         THEN 'REMBOURSEMENT_ECHOUE'
-                                   WHEN b.commission_status = 'CHARGED' AND b.status IN ('CANCELLED','REJECTED')
+                                   -- Commission toujours rendue sur un colis clos sans livraison ; pour l'absence
+                                   -- et le colis refusé, seulement depuis la règle du 19/10/2026.
+                                   WHEN b.commission_status = 'CHARGED'
                                         AND b.updated_at < now() - interval '1 hour'
+                                        AND (b.status IN ('CANCELLED','REJECTED')
+                                             OR (b.status IN ('NO_SHOW','PARCEL_REFUSED')
+                                                 AND b.updated_at >= TIMESTAMP '2026-10-19'))
                                         THEN 'CHARGEE_SUR_BID_ANNULE'
                                    WHEN b.payment_method = 'CASH'
                                         AND b.status IN ('ACCEPTED','HANDED_OVER','IN_TRANSIT','ARRIVED','COMPLETED')
@@ -288,9 +302,6 @@ public final class MoneyInvariants {
                                END AS anomaly
                         FROM bids b
                         WHERE (b.commission_status IS NOT NULL OR b.payment_method = 'CASH')
-                          -- Colis issu d'une négociation : la commission vit sur le fil (negotiation_threads),
-                          -- le débit wallet n'y porte pas de bid_id.
-                          AND b.linked_negotiation_thread_id IS NULL
                     ) x
                     WHERE anomaly IS NOT NULL
                     """),

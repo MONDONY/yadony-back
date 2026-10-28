@@ -10,4 +10,5 @@ In My wallet, tap Refund, choose the currency then the top-up or top-ups to refu
 The amount goes back to the top-up method: the card used within 5 to 10 days depending on your bank, or the mobile money number that paid, usually within minutes; your balance is frozen while it is processed.
 If you topped up by card and by mobile money, each top-up automatically goes back to its own method, in a single request.
 Payment provider fees may be withheld on a top-up that was never used, and bonuses cannot be refunded.
+If a card top-up is disputed with the bank, its amount is taken back from the balance and the currency stays blocked until the dispute ends: contact support.
 Follow your requests in "My refunds": In progress, Refunded or Failed.

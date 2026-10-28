@@ -93,18 +93,14 @@ public class WalletTopupOutcomeListener {
         if (event.kind() != PawapayOperationKind.DEPOSIT || event.purpose() != PawapayOperationPurpose.WALLET_TOPUP) {
             return;
         }
+        PawapayOperationEntity op;
         try {
-            PawapayOperationEntity op = operations.get(event.operationId());
+            op = operations.get(event.operationId());
             walletService.credit(op.getUserId(), op.getCurrency(), op.getAmount(), WalletTransactionType.TOP_UP,
                     "pawapay:" + op.getId(), "pawapay-topup-" + op.getId());
             auditService.log("wallet_topup", op.getId(), "MOBILE_MONEY_CONFIRMED", op.getUserId(),
                     Map.of("currency", op.getCurrency(), "amount", op.getAmount().toPlainString(), "provider",
                             op.getProvider()));
-            Messages m = notifications.messagesFor(op.getUserId());
-            NotificationText text = NotificationTexts.walletTopupConfirmed(m,
-                    WalletAmountText.format(op.getAmount(), op.getCurrency()), PawapayProviders.label(op.getProvider()));
-            notifications.notifyUser(op.getUserId(), text.title(), text.body(),
-                    Map.of("type", "wallet_topup_confirmed", "topupId", op.getId().toString()));
         } catch (RuntimeException e) {
             // event.operationId() / event.userId(), jamais op : si la relecture ci-dessus a
             // elle-même levé, op n'existe pas.
@@ -116,6 +112,18 @@ public class WalletTopupOutcomeListener {
                     Map.of("operationId", event.operationId().toString(), "userId",
                             String.valueOf(event.userId()), "error", String.valueOf(e.getMessage())));
             throw e;
+        }
+        // Hors du bloc du crédit : une notification qui échoue (texte, FCM) ne doit jamais annuler
+        // le crédit, déjà acquis. Avant, son exception faisait rejeter toute la transaction.
+        try {
+            Messages m = notifications.messagesFor(op.getUserId());
+            NotificationText text = NotificationTexts.walletTopupConfirmed(m,
+                    WalletAmountText.format(op.getAmount(), op.getCurrency()), PawapayProviders.label(op.getProvider()));
+            notifications.notifyUser(op.getUserId(), text.title(), text.body(),
+                    Map.of("type", "wallet_topup_confirmed", "topupId", op.getId().toString()));
+        } catch (RuntimeException e) {
+            log.error("Recharge {} créditée mais notification impossible pour user {} : {}",
+                    op.getId(), op.getUserId(), e.getMessage(), e);
         }
     }
 

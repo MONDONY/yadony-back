@@ -98,6 +98,17 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     void reactivateByFirebaseUid(@Param("firebaseUid") String firebaseUid, @Param("status") String status);
 
     /**
+     * Verrou de ligne du compte, tenu jusqu'à la fin de la transaction, par un UPDATE neutre
+     * (exécutable sous H2, contrairement à {@code SELECT … FOR NO KEY UPDATE}) qui ne touche pas
+     * à la version optimiste. Sérialise deux opérations concurrentes sur le même compte.
+     *
+     * @return 1 si le compte existe, 0 sinon
+     */
+    @Modifying
+    @Query("UPDATE UserEntity u SET u.status = u.status WHERE u.id = :id")
+    int lockForUpdate(@Param("id") UUID id);
+
+    /**
      * Loads a UserEntity with a pessimistic write lock to prevent concurrent
      * Stripe Connect account creation (race condition guard in createConnectAccount).
      */
