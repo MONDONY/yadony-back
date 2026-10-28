@@ -197,6 +197,19 @@ class NoShowSchedulerTest {
         }
     }
 
+    /**
+     * Aucune transaction englobante : chaque colis vit dans la sienne (méthodes de
+     * NoShowService). Une transaction unique annulait tout le lot à la première erreur et
+     * servait des colis périmés depuis son cache.
+     */
+    @Test
+    void detectNoShows_hasNoEnclosingTransaction() throws Exception {
+        assertThat(NoShowScheduler.class.getMethod("detectNoShows")
+                .isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class)).isFalse();
+        assertThat(NoShowScheduler.class
+                .isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class)).isFalse();
+    }
+
     // ─── Helpers ────────────────────────────────────────────────────────────────
 
     private static void setId(Object obj, UUID id) throws Exception {

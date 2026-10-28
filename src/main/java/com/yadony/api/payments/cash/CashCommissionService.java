@@ -1308,6 +1308,19 @@ public class CashCommissionService {
     }
 
     /**
+     * Verrou de ligne du colis, puis statut de commission relu en base et reporté sur
+     * l'entité. Les déclencheurs de remboursement (remise expirée, absence, refus, annulation
+     * du trajet ou du colis) arrivent chacun avec leur propre clé d'idempotence : sans ce
+     * verrou, deux d'entre eux concurrents lisaient tous deux {@code CHARGED} sur une entité
+     * chargée avant, et recréditaient deux fois la même commission. Le second voit désormais
+     * {@code REFUNDED} et s'arrête.
+     */
+    private void lockCommissionStatus(BidEntity bid) {
+        bidRepo.lockForUpdate(bid.getId());
+        bidRepo.findCommissionStatusById(bid.getId()).ifPresent(bid::setCommissionStatus);
+    }
+
+    /**
      * Rembourse la commission en créditant le wallet du voyageur.
      * Utilisé quand commissionChargedVia=WALLET et qu'un remboursement est dû.
      * Clé d'idempotence intentionnellement distincte selon le déclencheur :
@@ -1315,6 +1328,7 @@ public class CashCommissionService {
      */
     @Transactional
     public void refundCommissionToWallet(BidEntity bid, UUID travelerId, String idempotencyKey) {
+        lockCommissionStatus(bid);
         if (bid.getCommissionStatus() == CommissionStatus.REFUNDED) return;
         if (bid.getCommissionStatus() != CommissionStatus.CHARGED) {
             log.warn("refundCommissionToWallet called on bid {} with status {}", bid.getId(), bid.getCommissionStatus());
@@ -1358,6 +1372,7 @@ public class CashCommissionService {
 
     @Transactional
     public void refundCommission(BidEntity bid) {
+        lockCommissionStatus(bid);
         if (bid.getCommissionStatus() == CommissionStatus.REFUNDED) return;
         if (bid.getCommissionStatus() != CommissionStatus.CHARGED) {
             log.warn("refundCommission called on bid {} with status {}", bid.getId(), bid.getCommissionStatus());

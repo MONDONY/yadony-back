@@ -268,6 +268,44 @@ class CashCommissionWalletSplitIT {
         assertThat(balance(travelerId, "EUR")).isEqualByComparingTo("2.00");
     }
 
+    /**
+     * Deux déclencheurs de remboursement sur le même colis (remise expirée, puis absence du
+     * voyageur), chacun avec SA clé d'idempotence et une copie du colis chargée AVANT le premier
+     * remboursement (donc encore CHARGED). C'est exactement la course de deux écouteurs
+     * concurrents : le verrou les sérialise, et le second doit relire en base le statut REFUNDED
+     * laissé par le premier. Avant le correctif, il recréditait une seconde fois (+600 XOF et
+     * +reliquat EUR offerts à chaque cycle).
+     */
+    @Test
+    void twoRefundTriggers_withStaleCopies_recreditTheCommissionOnlyOnce() {
+        fund(travelerId, "XOF", new BigDecimal("600"));
+        fund(travelerId, "EUR", new BigDecimal("2.00"));
+        AcceptBidResponse r = cashCommissionService.acceptCashBid(bidId, travelerId, CommissionSource.WALLET_FIRST);
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(r.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+
+        BidEntity firstTriggerCopy = reread(BidEntity.class, bidId);
+        entityManager.detach(firstTriggerCopy);
+        BidEntity secondTriggerCopy = reread(BidEntity.class, bidId);
+        entityManager.detach(secondTriggerCopy);
+        assertThat(secondTriggerCopy.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
+
+        cashCommissionService.refundCommissionToWallet(firstTriggerCopy, travelerId, "wallet-refund-expired-" + bidId);
+        entityManager.flush();
+        entityManager.clear();
+        cashCommissionService.refundCommissionToWallet(secondTriggerCopy, travelerId, "wallet-refund-noshow-" + bidId);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(refundLines(travelerId, "XOF")).hasSize(1);
+        assertThat(refundLines(travelerId, "EUR")).hasSize(1);
+        assertThat(balance(travelerId, "XOF")).isEqualByComparingTo("600");
+        assertThat(balance(travelerId, "EUR")).isEqualByComparingTo("2.00");
+        assertThat(reread(BidEntity.class, bidId).getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
+        assertMoneyInvariantsHold();
+    }
+
     // --- Répartition sur plusieurs devises ---
 
     /** Commission du colis en XOF, telle que l'acceptation la prélèvera. */

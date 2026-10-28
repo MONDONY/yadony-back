@@ -617,6 +617,15 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     int lockForUpdate(@Param("id") UUID id);
 
     /**
+     * Statut de commission lu EN BASE (projection scalaire : jamais servie par le cache de
+     * premier niveau, contrairement à {@code findById} sur une entité déjà chargée). Appelé
+     * juste après {@link #lockForUpdate}, il rend le statut commité le plus récent : deux
+     * déclencheurs de remboursement concurrents se voient alors l'un l'autre.
+     */
+    @Query("SELECT b.commissionStatus FROM BidEntity b WHERE b.id = :id")
+    Optional<com.yadony.api.payments.cash.CommissionStatus> findCommissionStatusById(@Param("id") UUID id);
+
+    /**
      * Colis déjà remis au voyageur (HANDED_OVER, IN_TRANSIT, ARRIVED) d'un trajet, verrouillés :
      * l'annulation du trajet leur pose un code de retour (FLUTTER-FH). Le verrou évite qu'un scan
      * concurrent (livraison, arrivée) ne croise la procédure de retour.
