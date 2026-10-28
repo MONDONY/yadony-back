@@ -49,6 +49,6 @@ public interface TripPositionSampleRepository extends JpaRepository<TripPosition
     @Query(value = "DELETE FROM trip_position_samples WHERE id IN ("
             + "SELECT s.id FROM trip_position_samples s JOIN announcements a ON a.id = s.announcement_id "
             + "WHERE a.status IN ('COMPLETED', 'CANCELLED', 'REMOVED_BY_ADMIN') OR s.captured_at < :cutoff "
-            + "LIMIT :batchSize)", nativeQuery = true)
+            + "ORDER BY s.id LIMIT :batchSize)", nativeQuery = true)
     int eraseClosedOrExpiredBatch(@Param("cutoff") OffsetDateTime cutoff, @Param("batchSize") int batchSize);
 }

@@ -4,14 +4,17 @@ import com.yadony.api.auth.events.AccountDeletionRequestedEvent;
 import com.yadony.api.matching.events.AnnouncementCompletedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 /**
- * Branche l'effacement des positions floues sur deux événements d'autres packages. Un échec ici
- * ne doit JAMAIS remonter (le try/catch est volontairement hors de la transaction REQUIRES_NEW du service : un rollback-only est aussi absorbé) : il ne casse ni la clôture du trajet ni la suppression du compte (le
- * filet de sécurité quotidien rattrape).
+ * Branche l'effacement des positions floues sur deux événements d'autres packages.
+ *
+ * <p>Un échec ici ne remonte JAMAIS : il ne casse ni la clôture du trajet ni la suppression du
+ * compte, le filet quotidien rattrape. Le try/catch est volontairement hors de la transaction
+ * REQUIRES_NEW du service, pour absorber aussi un rollback-only.
  */
 @Component
 public class TripPositionPurgeListener {
@@ -35,6 +38,7 @@ public class TripPositionPurgeListener {
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    @Async
     public void onAccountDeletion(AccountDeletionRequestedEvent event) {
         try {
             purgeService.purgeTraveler(event.getUserId());

@@ -110,7 +110,7 @@ class TripPositionPurgeTest {
     }
 
     @Test
-    void tripCompletionPublishesEventAndPurges() {
+    void listenerPurgesTheCompletedTrip() {
         UUID t = trip(UUID.randomUUID(), AnnouncementStatus.COMPLETED).getId();
         samples(t, NOW.minusDays(3), 3);
 
