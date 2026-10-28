@@ -10,6 +10,7 @@ import com.yadony.api.common.stripe.StripeUnavailable;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
 import com.yadony.api.payments.currency.CurrencyAmount;
 import com.yadony.api.payments.currency.CurrencyCatalog;
+import com.yadony.api.payments.currency.ExchangeRateService;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.wallet.dto.WalletTopupCheckoutResponse;
 import com.yadony.api.payments.wallet.dto.WalletTopupRequest;
@@ -17,27 +18,40 @@ import com.yadony.api.payments.wallet.dto.WalletTopupResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.UUID;
 
 @Component
 public class WalletTopupOrchestrator {
+
+    /**
+     * Plafond d'une recharge par carte, en euros, converti au taux du jour dans la devise du
+     * portefeuille (décision du propriétaire, 28/10). Le mobile money a déjà les plafonds de
+     * l'opérateur. Sans lui, une carte volée pouvait verser jusqu'au maximum Stripe en un seul
+     * paiement, exposé ensuite au litige.
+     */
+    static final BigDecimal CARD_TOPUP_MAX_EUR = new BigDecimal("1000");
 
     private final CurrencyCatalog currencyCatalog;
     private final ActiveCurrencyResolver activeCurrencyResolver;
     private final WalletTopupProperties properties;
     private final WalletMobileMoneyTopupService mobileMoneyTopupService;
     private final UserRepository userRepository;
+    private final ExchangeRateService exchangeRateService;
 
     public WalletTopupOrchestrator(CurrencyCatalog currencyCatalog,
                                    ActiveCurrencyResolver activeCurrencyResolver,
                                    WalletTopupProperties properties,
                                    WalletMobileMoneyTopupService mobileMoneyTopupService,
-                                   UserRepository userRepository) {
+                                   UserRepository userRepository,
+                                   ExchangeRateService exchangeRateService) {
         this.currencyCatalog = currencyCatalog;
         this.activeCurrencyResolver = activeCurrencyResolver;
         this.properties = properties;
         this.mobileMoneyTopupService = mobileMoneyTopupService;
         this.userRepository = userRepository;
+        this.exchangeRateService = exchangeRateService;
     }
 
     /**
@@ -56,6 +70,7 @@ public class WalletTopupOrchestrator {
         SupportedCurrency currency =
                 currencyCatalog.resolve(activeCurrencyResolver.resolve(userId));
         CurrencyAmount amount = CurrencyAmount.of(requestedAmount, currency);
+        requireWithinCardCap(amount);
 
         com.stripe.param.checkout.SessionCreateParams params =
                 com.stripe.param.checkout.SessionCreateParams.builder()
@@ -130,6 +145,7 @@ public class WalletTopupOrchestrator {
         SupportedCurrency currency =
                 currencyCatalog.resolve(activeCurrencyResolver.resolve(userId));
         CurrencyAmount amount = CurrencyAmount.of(request.getAmount(), currency);
+        requireWithinCardCap(amount);
 
         PaymentIntentCreateParams.Builder paramsBuilder = PaymentIntentCreateParams.builder()
                 .setAmount(amount.minor())
@@ -157,6 +173,18 @@ public class WalletTopupOrchestrator {
                     HttpStatus.BAD_GATEWAY,
                     "wallet-topup-stripe-error", "Stripe Error",
                     "Impossible de préparer la recharge du wallet. Veuillez réessayer.");
+        }
+    }
+
+    private void requireWithinCardCap(CurrencyAmount amount) {
+        String code = amount.currency().code();
+        BigDecimal max = exchangeRateService.convert(CARD_TOPUP_MAX_EUR, "EUR", code, RoundingMode.DOWN);
+        if (amount.major().compareTo(max) > 0) {
+            throw new YadonyBusinessException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "wallet-topup-above-max", "Wallet Topup Above Max",
+                    "Une recharge par carte est limitée à " + WalletAmountText.format(max, code)
+                            + ".");
         }
     }
 
