@@ -181,6 +181,16 @@ class WalletTopupCodeRedemptionServiceTest {
     }
 
     @Test
+    void redeem_devisEnLitige_422MotifLitige() {
+        when(codes.findByCodeForUpdate("DAKAR2000")).thenReturn(Optional.of(activeCode(100, 3)));
+        when(redemptions.existsByCodeIdAndUserId(codeId, userId)).thenReturn(false);
+        when(walletService.isDisputeHeld(userId, "XOF")).thenReturn(true);
+        assertThatThrownBy(() -> service.redeem(userId, "DAKAR2000"))
+                .satisfies(t -> assertCode(t, HttpStatus.UNPROCESSABLE_ENTITY, "wallet-dispute-hold"));
+        verify(walletService, never()).credit(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
     void redeem_courseSurLaContrainteUnique_traduiteEnDejaUtilise() {
         when(codes.findByCodeForUpdate("DAKAR2000")).thenReturn(Optional.of(activeCode(100, 3)));
         when(redemptions.existsByCodeIdAndUserId(codeId, userId)).thenReturn(false);

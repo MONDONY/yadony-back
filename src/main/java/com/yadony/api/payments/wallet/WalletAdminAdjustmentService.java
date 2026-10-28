@@ -276,6 +276,11 @@ public class WalletAdminAdjustmentService {
 
         assertUnderDailyCap(actorId, userId, eur);
 
+        // Le litige d'abord : isFrozen le couvre aussi, et le motif « remboursement en cours »
+        // tromperait l'admin.
+        if (walletService.isDisputeHeld(userId, code)) {
+            throw WalletService.disputeHeld();
+        }
         if (walletService.isFrozen(userId, code)) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-pending",
                     "Unprocessable", "Solde gelé : une demande de remboursement est en cours sur cette devise");

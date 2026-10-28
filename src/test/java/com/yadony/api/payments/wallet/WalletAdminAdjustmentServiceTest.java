@@ -226,6 +226,21 @@ class WalletAdminAdjustmentServiceTest {
         verifyNoInteractions(auditService, eventPublisher);
     }
 
+    @Test
+    void credit_surDeviseEnLitige_refuse422MotifLitige() {
+        WalletAccountEntity w = wallet("EUR", "10.00");
+        locked(w);
+        when(walletService.isDisputeHeld(USER_ID, "EUR")).thenReturn(true);
+
+        YadonyBusinessException e = business(catchThrowable(() -> service.adjust(credit("EUR", "5"))));
+
+        assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(e.getErrorCode()).isEqualTo("wallet-dispute-hold");
+        assertThat(w.getBalance()).isEqualByComparingTo("10.00");
+        verify(transactionRepository, never()).saveAndFlush(any());
+        verifyNoInteractions(auditService, eventPublisher);
+    }
+
     // ── Débit ────────────────────────────────────────────────────────────────
 
     @Test
