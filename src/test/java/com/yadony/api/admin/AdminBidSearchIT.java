@@ -80,6 +80,11 @@ class AdminBidSearchIT {
         u.setFirebaseUid("uid-" + UUID.randomUUID());
         u.setStatus(UserStatus.ACTIVE);
         u.setKycStatus(KycStatus.NOT_STARTED);
+        // Nom d'utilisateur en lettres seules : le défaut (« user » + epoch + hexa) peut contenir « 345 »
+        // et faire matcher les recherches de numéro qui doivent ne rien trouver.
+        u.setUsername("u" + UUID.randomUUID().toString().replace("-", "").chars().limit(16)
+                .mapToObj(c -> String.valueOf((char) ('g' + Character.digit(c, 16))))
+                .collect(java.util.stream.Collectors.joining()));
         u.setFirstName(firstName);
         u.setLastName(lastName);
         return userRepository.save(u);
