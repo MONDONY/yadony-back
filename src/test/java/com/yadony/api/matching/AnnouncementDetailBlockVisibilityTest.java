@@ -92,7 +92,8 @@ class AnnouncementDetailBlockVisibilityTest {
                 blockVisibility, mock(AnnouncementViewService.class), payoutNetworksPort,
                 new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0),
                 new com.yadony.api.matching.ranking.TripScoreCalculator(
-                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)));
+                        new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)),
+                org.mockito.Mockito.mock(TravelerParcelsNetPort.class));
     }
 
     private AnnouncementEntity activeAnnouncement() {

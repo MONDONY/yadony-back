@@ -136,6 +136,10 @@ public class NotificationPrefsService {
             // ancienne version de l'app renvoie la valeur coupée de son cache à chaque PUT
             // et aurait défait la migration. pushTripReminder n'est plus lu par aucun type.
             Map.entry("TRIP_IN_PROGRESS",             "pushRemindersTips"),
+            // Suivi voyageur : rappels de départ et d'arrivée, même interrupteur visible que
+            // « Bon voyage » (pushTripReminder n'a plus d'interrupteur dans l'app).
+            Map.entry("TRIP_DEPARTURE_PROMPT",        "pushRemindersTips"),
+            Map.entry("TRIP_ARRIVAL_PROMPT",          "pushRemindersTips"),
             Map.entry("FIRST_ACTION_REMINDER",        "pushRemindersTips"),
             Map.entry("CALL_MISSED",                  "pushMissedCalls"),
             Map.entry("automation_capacity_free",     "pushTravelerAutomations"),

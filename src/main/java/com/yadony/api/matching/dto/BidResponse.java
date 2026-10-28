@@ -163,5 +163,8 @@ public record BidResponse(
         java.math.BigDecimal totalWeightKg,
         /** Argent du colis transaction par transaction et par destination, calculé par le serveur. Null (absent
          * du JSON) sans modification acquise ni ouverte : l'app garde alors ses cartes actuelles. */
-        BidMoneyBreakdown moneyBreakdown
+        BidMoneyBreakdown moneyBreakdown,
+        /** Suivi approximatif du voyageur (ville proche, avancement, historique de la fenêtre de CE colis).
+         * Servi à l'expéditeur seul, sur le détail d'un colis pris en charge ; absent sinon. Aucune coordonnée. */
+        com.yadony.api.tracking.dto.TravelerTrackingView travelerTracking
 ) {}

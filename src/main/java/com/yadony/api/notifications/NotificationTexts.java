@@ -250,6 +250,18 @@ public final class NotificationTexts {
                 m.get("notification.trip-in-progress.body"));
     }
 
+    /** Rappel de départ du suivi voyageur. */
+    public static NotificationText tripDeparturePrompt(Messages m) {
+        return new NotificationText(m.get("notification.trip-departure-prompt.title"),
+                m.get("notification.trip-departure-prompt.body"));
+    }
+
+    /** Rappel d'arrivée du suivi voyageur. */
+    public static NotificationText tripArrivalPrompt(Messages m) {
+        return new NotificationText(m.get("notification.trip-arrival-prompt.title"),
+                m.get("notification.trip-arrival-prompt.body"));
+    }
+
     /** Rappel critique H-2 ; le lieu de remise est libre, donc raccourci au mot. */
     public static NotificationText handoverReminder(Messages m, String location) {
         String lieu = location == null || location.isBlank()

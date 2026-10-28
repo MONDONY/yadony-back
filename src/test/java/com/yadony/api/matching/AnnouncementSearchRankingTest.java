@@ -131,7 +131,8 @@ class AnnouncementSearchRankingTest {
                 mock(com.yadony.api.common.BlockVisibility.class),
                 mock(AnnouncementViewService.class),
                 mock(TravelerPayoutNetworksPort.class),
-                props, scoreCalculator);
+                props, scoreCalculator,
+                mock(TravelerParcelsNetPort.class));
     }
 
     // ─── Fabriques ────────────────────────────────────────────────────────────

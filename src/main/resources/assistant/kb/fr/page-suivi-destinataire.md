@@ -10,3 +10,4 @@ Le destinataire n'a pas besoin de compte : il suit le colis en temps réel avec 
 Depuis Activités › Mes colis › votre envoi, touchez « Partager le suivi » ou utilisez la carte « Prévenir » pour l'envoyer par WhatsApp.
 Vous pouvez choisir d'afficher ou de retirer le code de retrait sur la page de suivi.
 Si le destinataire a Yadony, il peut aussi retrouver le colis dans l'onglet Suivi, sous Réceptions.
+Si le voyageur partage sa position, la page affiche seulement sa dernière position approximative (ville proche et progression), sans l'historique. Aucun message n'est envoyé automatiquement au destinataire sans compte.

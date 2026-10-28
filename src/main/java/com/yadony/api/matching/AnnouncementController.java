@@ -7,6 +7,11 @@ import com.yadony.api.matching.dto.AnnouncementRequest;
 import com.yadony.api.matching.dto.AnnouncementResponse;
 import com.yadony.api.matching.dto.AnnouncementSearchResponse;
 import com.yadony.api.matching.dto.ArrivalInstructionsRequest;
+import com.yadony.api.matching.dto.MarkArrivedRequest;
+import com.yadony.api.tracking.SampleSource;
+import com.yadony.api.tracking.TripPositionService;
+import com.yadony.api.tracking.dto.PositionRequest;
+import org.springframework.security.access.prepost.PreAuthorize;
 import com.yadony.api.matching.dto.TripLegsResponse;
 import com.yadony.api.matching.dto.TripRequest;
 import com.yadony.api.matching.dto.TripResponse;
@@ -44,13 +49,16 @@ public class AnnouncementController {
     private final AnnouncementService announcementService;
     private final TripGroupService tripGroupService;
     private final TripSeriesService tripSeriesService;
+    private final TripPositionService tripPositionService;
 
     public AnnouncementController(AnnouncementService announcementService,
                                   TripGroupService tripGroupService,
-                                  TripSeriesService tripSeriesService) {
+                                  TripSeriesService tripSeriesService,
+                                  TripPositionService tripPositionService) {
         this.announcementService = announcementService;
         this.tripGroupService = tripGroupService;
         this.tripSeriesService = tripSeriesService;
+        this.tripPositionService = tripPositionService;
     }
 
     @GetMapping
@@ -196,10 +204,41 @@ public class AnnouncementController {
     @PostMapping("/{id}/mark-arrived")
     public ResponseEntity<AnnouncementDetailResponse> markArrived(
             @PathVariable UUID id,
-            @Valid @RequestBody(required = false) ArrivalInstructionsRequest request) {
+            @Valid @RequestBody(required = false) MarkArrivedRequest request) {
         String firebaseUid = requireFirebaseUid();
         String instructions = request != null ? request.arrivalInstructions() : null;
-        return ResponseEntity.ok(announcementService.markArrived(id, firebaseUid, instructions));
+        AnnouncementDetailResponse response = announcementService.markArrived(id, firebaseUid, instructions);
+        PositionRequest position = request != null ? request.position() : null;
+        if (position != null) {
+            // L'arrivée est déjà enregistrée : la position floue ne doit jamais la faire échouer.
+            try {
+                tripPositionService.recordForFirebaseUid(
+                        id, firebaseUid, position.lat(), position.lon(), SampleSource.ARRIVEE);
+            } catch (RuntimeException e) {
+                log.warn("Position d'arrivée non enregistrée ({})", e.getClass().getSimpleName());
+            }
+        }
+        return ResponseEntity.ok(response);
+    }
+
+    /** Position floue du voyageur ; 200 même quand rien n'est enregistré (fenêtre fermée, etc.). */
+    @PostMapping("/{id}/position")
+    @PreAuthorize("hasRole('TRAVELER')")
+    public ResponseEntity<Void> recordPosition(@PathVariable UUID id,
+                                               @Valid @RequestBody PositionRequest request) {
+        tripPositionService.recordForFirebaseUid(
+                id, requireFirebaseUid(), request.lat(), request.lon(), SampleSource.OUVERTURE);
+        return ResponseEntity.ok().build();
+    }
+
+    /** « Je pars » : marque le départ ; la position est facultative. */
+    @PostMapping("/{id}/depart")
+    @PreAuthorize("hasRole('TRAVELER')")
+    public ResponseEntity<Void> depart(@PathVariable UUID id,
+                                       @Valid @RequestBody(required = false) PositionRequest request) {
+        tripPositionService.depart(id, requireFirebaseUid(),
+                request != null ? request.lat() : null, request != null ? request.lon() : null);
+        return ResponseEntity.ok().build();
     }
 
     @PatchMapping("/{id}/arrival-instructions")

@@ -23,6 +23,7 @@ import com.yadony.api.payments.currency.ExchangeRateService;
 import com.yadony.api.matching.dto.AddressDto;
 import com.yadony.api.matching.dto.AnnouncementDetailResponse;
 import com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse;
+import com.yadony.api.matching.dto.ParcelsSummary;
 import com.yadony.api.matching.dto.AnnouncementRequest;
 import com.yadony.api.matching.dto.AnnouncementResponse;
 import com.yadony.api.matching.dto.AnnouncementSearchResponse;
@@ -207,6 +208,9 @@ public class AnnouncementService {
     private final TripRankingProperties rankingProperties;
     private final TripScoreCalculator tripScoreCalculator;
 
+    /** Net estimé des colis en possession du voyageur (implémenté dans {@code payments/}). */
+    private final TravelerParcelsNetPort travelerParcelsNet;
+
     @Value("${yadony.kyc.enforce:true}")
     private boolean enforceKyc;
 
@@ -235,7 +239,8 @@ public class AnnouncementService {
             AnnouncementViewService announcementViewService,
             TravelerPayoutNetworksPort travelerPayoutNetworks,
             TripRankingProperties rankingProperties,
-            TripScoreCalculator tripScoreCalculator
+            TripScoreCalculator tripScoreCalculator,
+            TravelerParcelsNetPort travelerParcelsNet
     ) {
         this.announcementRepository = announcementRepository;
         this.bidRepository = bidRepository;
@@ -259,6 +264,7 @@ public class AnnouncementService {
         this.travelerPayoutNetworks = travelerPayoutNetworks;
         this.rankingProperties = rankingProperties;
         this.tripScoreCalculator = tripScoreCalculator;
+        this.travelerParcelsNet = travelerParcelsNet;
     }
 
     // La clé porte la taille de page en plus du numéro : l'app compte les résultats
@@ -1430,6 +1436,7 @@ public class AnnouncementService {
         ).withDepartureTimezone(announcement.getTimezone());
         if (viewerId != null && viewerId.equals(announcement.getTravelerId())) {
             detail = detail.withCurrencyEditable(!isCurrencyLocked(id));
+            detail = detail.withParcelsSummary(parcelsSummary(announcement));
         }
 
         // Réseaux où le voyageur reçoit en mobile money, seulement quand ce rail est réellement
@@ -1464,6 +1471,26 @@ public class AnnouncementService {
             detail = detail.withConvertedPrices(convertedNet, convertedDisplay, viewerCurrency, convertedGrid);
         }
         return detail;
+    }
+
+    /**
+     * Colis que le voyageur a en sa possession (remis, en transit, arrivés : scannés, pas encore
+     * livrés) : nombre, kilos et net estimé, en une lecture des colis du trajet et une du net.
+     * {@code null} quand il n'en a aucun, pour que le champ soit absent du JSON.
+     */
+    private ParcelsSummary parcelsSummary(AnnouncementEntity announcement) {
+        List<BidEntity> held = bidRepository.findByAnnouncementIdAndStatusIn(
+                announcement.getId(), List.copyOf(BidStatus.EN_ROUTE));
+        if (held.isEmpty()) {
+            return null;
+        }
+        BigDecimal totalKg = held.stream()
+                .map(BidEntity::getWeightKg)
+                .filter(java.util.Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal net = travelerParcelsNet.estimatedNet(
+                held.stream().map(BidEntity::getId).toList(), announcement.getCurrency());
+        return new ParcelsSummary(held.size(), totalKg, net, announcement.getCurrency());
     }
 
     /**
@@ -2398,14 +2425,15 @@ public class AnnouncementService {
 
     /** Compteurs des cartes d'une page, lus par lot (cf. {@link #loadCardCounts}). */
     private record CardCounts(Map<UUID, Long> pending, Map<UUID, Long> confirmed,
-                              Map<UUID, BigDecimal> reservedNet, Map<UUID, Long> tripLegs) {}
+                              Map<UUID, BigDecimal> reservedNet, Map<UUID, Long> tripLegs,
+                              java.util.Set<UUID> carried) {}
 
     private static final List<BidStatus> CONFIRMED_STATUSES =
             List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.COMPLETED);
 
     private CardCounts loadCardCounts(List<AnnouncementEntity> announcements) {
         if (announcements.isEmpty()) {
-            return new CardCounts(Map.of(), Map.of(), Map.of(), Map.of());
+            return new CardCounts(Map.of(), Map.of(), Map.of(), Map.of(), java.util.Set.of());
         }
         List<UUID> ids = announcements.stream().map(AnnouncementEntity::getId).toList();
         List<UUID> groupIds = announcements.stream().map(AnnouncementEntity::getTripGroupId)
@@ -2415,7 +2443,9 @@ public class AnnouncementService {
                 countsById(bidRepository.countByAnnouncementIdsAndStatusIn(ids, CONFIRMED_STATUSES)),
                 amountsById(bidRepository.sumReservedNetByAnnouncementIds(
                         ids, CONFIRMED_STATUSES.stream().map(Enum::name).toList())),
-                groupIds.isEmpty() ? Map.of() : countsById(announcementRepository.countByTripGroupIds(groupIds)));
+                groupIds.isEmpty() ? Map.of() : countsById(announcementRepository.countByTripGroupIds(groupIds)),
+                new java.util.HashSet<>(bidRepository.findAnnouncementIdsWithStatusIn(
+                        ids, com.yadony.api.tracking.TripPositionService.carriedStatuses())));
     }
 
     private static Map<UUID, Long> countsById(List<Object[]> rows) {
@@ -2538,7 +2568,13 @@ public class AnnouncementService {
                         ? counts.tripLegs().getOrDefault(entity.getTripGroupId(), 0L).intValue()
                         : (int) announcementRepository.countByTripGroupId(entity.getTripGroupId()),
                 entity.getSeriesId(),
-                entity.getTimezone()
+                entity.getTimezone(),
+                com.yadony.api.tracking.TripPositionService.isWindowOpen(entity,
+                        java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC),
+                        () -> counts != null
+                                ? counts.carried().contains(entity.getId())
+                                : bidRepository.existsByAnnouncementIdAndStatusIn(entity.getId(),
+                                        com.yadony.api.tracking.TripPositionService.carriedStatuses()))
         );
     }
 

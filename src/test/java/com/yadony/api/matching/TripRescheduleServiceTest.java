@@ -94,6 +94,18 @@ class TripRescheduleServiceTest {
     }
 
     @Test
+    void rescheduleResetsDepartedAt() {
+        announcement.setDepartedAt(java.time.OffsetDateTime.now().minusHours(1));
+        announcement.setDeparturePromptSentAt(java.time.OffsetDateTime.now().minusHours(1));
+        when(bidRepository.findByAnnouncementIdAndStatusIn(eq(announcementId), anyList())).thenReturn(List.of());
+
+        service.reschedule(announcementId, "uid-traveler", request(newDate, LocalTime.of(23, 0)));
+
+        assertThat(announcement.getDepartedAt()).isNull();
+        assertThat(announcement.getDeparturePromptSentAt()).isNull();
+    }
+
+    @Test
     void reschedule_movesTripAndAsksAcceptedAndHandedOverSendersToDecide() {
         BidEntity accepted = bid(BidStatus.ACCEPTED);
         accepted.setHandoverDeadline(oldDate.minusDays(1).atTime(18, 0));
@@ -239,5 +251,14 @@ class TripRescheduleServiceTest {
         assertThatThrownBy(() -> service.reschedule(announcementId, "uid-traveler", req))
                 .isInstanceOfSatisfying(YadonyBusinessException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo("handover-deadline-past"));
+    }
+
+    @Test
+    void rescheduleResetsBothSentColumns() {
+        announcement.setDeparturePromptSentAt(java.time.OffsetDateTime.now());
+        announcement.setArrivalPromptSentAt(java.time.OffsetDateTime.now());
+        service.reschedule(announcementId, "uid-traveler", request(newDate, LocalTime.of(23, 0)));
+        assertThat(announcement.getDeparturePromptSentAt()).isNull();
+        assertThat(announcement.getArrivalPromptSentAt()).isNull();
     }
 }

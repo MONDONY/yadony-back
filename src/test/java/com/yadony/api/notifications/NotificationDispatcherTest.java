@@ -364,6 +364,32 @@ class NotificationDispatcherTest {
         verify(fcmService, never()).sendToUser(any(), any(), any(), any());
     }
 
+    // ── TripPromptDueEvent ────────────────────────────────────────────────────
+
+    @Test
+    void onTripPromptDue_sendsDeparturePushWithTypeAndAnnouncementId() {
+        dispatcher.onTripPromptDue(new com.yadony.api.tracking.TripPromptDueEvent(
+                annId, travelerId, com.yadony.api.tracking.TripPromptDueEvent.Kind.DEPARTURE));
+
+        verify(notificationService).persist(eq(travelerId), eq("TRIP_DEPARTURE_PROMPT"),
+                any(), any(), argThat(d -> annId.toString().equals(d.get("announcementId"))), eq(false));
+        verify(fcmService).sendToUser(eq(travelerId), any(), any(),
+                argThat(d -> "TRIP_DEPARTURE_PROMPT".equals(d.get("type"))
+                        && annId.toString().equals(d.get("announcementId"))));
+    }
+
+    @Test
+    void onTripPromptDue_sendsArrivalPushWithTypeAndAnnouncementId() {
+        dispatcher.onTripPromptDue(new com.yadony.api.tracking.TripPromptDueEvent(
+                annId, travelerId, com.yadony.api.tracking.TripPromptDueEvent.Kind.ARRIVAL));
+
+        verify(notificationService).persist(eq(travelerId), eq("TRIP_ARRIVAL_PROMPT"),
+                any(), any(), any(), eq(false));
+        verify(fcmService).sendToUser(eq(travelerId), any(), any(),
+                argThat(d -> "TRIP_ARRIVAL_PROMPT".equals(d.get("type"))
+                        && annId.toString().equals(d.get("announcementId"))));
+    }
+
     // ── BidAcceptedEvent ──────────────────────────────────────────────────────
 
     @Test

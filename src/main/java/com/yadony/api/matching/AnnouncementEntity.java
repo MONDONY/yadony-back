@@ -86,6 +86,18 @@ public class AnnouncementEntity extends BaseEntity {
     @Column(name = "departure_at")
     private OffsetDateTime departureAt;
 
+    /** Suivi du voyageur : moment du « Je pars » (V354) ; null tant qu'il n'est pas parti. */
+    @Column(name = "departed_at")
+    private OffsetDateTime departedAt;
+
+    /** Idempotence du push « tu pars ? » ; remis à null si le trajet est reporté. */
+    @Column(name = "departure_prompt_sent_at")
+    private OffsetDateTime departurePromptSentAt;
+
+    /** Idempotence du push « tu es arrivé ? » ; remis à null si le trajet est reporté. */
+    @Column(name = "arrival_prompt_sent_at")
+    private OffsetDateTime arrivalPromptSentAt;
+
     @Column(name = "arrival_time")
     private LocalTime arrivalTime;
 
@@ -563,4 +575,13 @@ public class AnnouncementEntity extends BaseEntity {
 
     public LocalDateTime getHandoverDeadline() { return handoverDeadline; }
     public void setHandoverDeadline(LocalDateTime handoverDeadline) { this.handoverDeadline = handoverDeadline; }
+
+    public OffsetDateTime getDepartedAt() { return departedAt; }
+    public void setDepartedAt(OffsetDateTime departedAt) { this.departedAt = departedAt; }
+
+    public OffsetDateTime getDeparturePromptSentAt() { return departurePromptSentAt; }
+    public void setDeparturePromptSentAt(OffsetDateTime v) { this.departurePromptSentAt = v; }
+
+    public OffsetDateTime getArrivalPromptSentAt() { return arrivalPromptSentAt; }
+    public void setArrivalPromptSentAt(OffsetDateTime v) { this.arrivalPromptSentAt = v; }
 }

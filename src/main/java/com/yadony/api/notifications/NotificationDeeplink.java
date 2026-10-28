@@ -121,7 +121,7 @@ public final class NotificationDeeplink {
                     announcementId.map(id -> "traveler/" + id);
             // Alerte prix d'un billet d'avion : la liste des alertes, prix du jour affiché.
             case "FLIGHT_PRICE_ALERT" -> Optional.of("flights/alerts");
-            case "TRIP_IN_PROGRESS", "automation_capacity_free" ->
+            case "TRIP_IN_PROGRESS", "TRIP_DEPARTURE_PROMPT", "TRIP_ARRIVAL_PROMPT", "automation_capacity_free" ->
                     announcementId.map(id -> "announcements/" + id + "/trip");
 
             case "NEW_MESSAGE" -> conversationId.map(id -> "conversations/" + id)

@@ -12,3 +12,4 @@ The timeline follows the steps: handed to the traveler, on its way, arrived at d
 Only the sender and the traveler can track a parcel from their account; the recipient uses the tracking link, or the Receiving section if they have Yadony.
 Delivery time depends on the trip and the date announced by the traveler: check it before accepting an offer.
 You can also ask the assistant "where is my parcel?": it offers your ongoing parcels, or finds the one whose DON-… number you type, and opens it.
+As the sender, the parcel page can also show the traveler's approximate tracking (optional, nearest city and progress): see the traveler tracking article.

@@ -32,6 +32,7 @@ import com.yadony.api.matching.events.HandoverAlertEvent;
 import com.yadony.api.matching.events.ParcelRefusedEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
 import com.yadony.api.matching.events.TripRescheduledEvent;
+import com.yadony.api.tracking.TripPromptDueEvent;
 import com.yadony.api.messaging.SystemMessages;
 import com.yadony.api.matching.events.VoyageurNoShowEvent;
 import com.yadony.api.payments.events.MobileMoneyDepositFailedEvent;
@@ -841,6 +842,20 @@ public class NotificationDispatcher {
                 Map.of("type", "TRIP_IN_PROGRESS",
                        "announcementId", event.getAnnouncementId().toString()),
                 false);
+    }
+
+    // Suivi voyageur : rappels de départ et d'arrivée, planifiés par TripPromptScheduler.
+    // Push normal (pas critique, pas de SMS de repli) ; l'entrée du centre de notifications
+    // reste si le push est coupé.
+    @EventListener @Async
+    public void onTripPromptDue(TripPromptDueEvent event) {
+        boolean departure = event.kind() == TripPromptDueEvent.Kind.DEPARTURE;
+        var messages = messagesFor(event.travelerId());
+        var text = departure ? NotificationTexts.tripDeparturePrompt(messages)
+                : NotificationTexts.tripArrivalPrompt(messages);
+        notifyUser(event.travelerId(), text.title(), text.body(),
+                Map.of("type", departure ? "TRIP_DEPARTURE_PROMPT" : "TRIP_ARRIVAL_PROMPT",
+                       "announcementId", event.announcementId().toString()));
     }
 
     // Bid expiré au départ — notif expéditeur "Demande expirée"
