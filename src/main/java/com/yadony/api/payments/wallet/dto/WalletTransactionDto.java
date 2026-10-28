@@ -28,6 +28,15 @@ public class WalletTransactionDto {
      * colis qui en est issu ({@code WalletTransactionBidLinks}). {@code null} sans colis.
      */
     private UUID bidId;
+    /**
+     * Origine d'une ligne convertie (additifs) : une commission prélevée sur un portefeuille autre que celui
+     * de la devise du colis porte la devise et le montant de la part de commission qu'elle règle
+     * ({@code wallet_transactions.source_currency} / {@code source_amount}). L'app y lit « pour 450 F CFA ».
+     * {@code null} (champs absents du JSON) quand rien n'a été converti. Jamais le taux : le taux figé est
+     * recalculé sur des montants arrondis et paraîtrait faux à l'utilisateur.
+     */
+    private String sourceCurrency;
+    private BigDecimal sourceAmount;
 
     public static WalletTransactionDto from(WalletTransactionEntity tx, String refundStatus,
                                             BigDecimal feeAmount, BigDecimal netAmount, UUID bidId) {
@@ -42,6 +51,9 @@ public class WalletTransactionDto {
         dto.feeAmount = feeAmount;
         dto.netAmount = netAmount;
         dto.bidId = bidId;
+        dto.sourceCurrency = tx.getSourceCurrency() != null
+                ? tx.getSourceCurrency().toUpperCase(java.util.Locale.ROOT) : null;
+        dto.sourceAmount = tx.getSourceAmount();
         return dto;
     }
 
@@ -55,4 +67,6 @@ public class WalletTransactionDto {
     public BigDecimal getFeeAmount() { return feeAmount; }
     public BigDecimal getNetAmount() { return netAmount; }
     public UUID getBidId() { return bidId; }
+    public String getSourceCurrency() { return sourceCurrency; }
+    public BigDecimal getSourceAmount() { return sourceAmount; }
 }
