@@ -30,6 +30,18 @@ public class StripeConfig {
     @Value("${stripe.max-network-retries:2}")
     private int maxNetworkRetries;
 
+    /**
+     * Délais réseau de chaque appel Stripe. Ceux du SDK (30 s de connexion, 80 s de lecture,
+     * multipliés par les relances) laissaient un appel bloqué tenir un thread HTTP plusieurs
+     * minutes, parfois sous un verrou de portefeuille. Une requête Stripe aboutit en quelques
+     * secondes ; au-delà, mieux vaut échouer et laisser la relance ou le rattrapage reprendre.
+     */
+    @Value("${stripe.connect-timeout-ms:10000}")
+    private int connectTimeoutMs;
+
+    @Value("${stripe.read-timeout-ms:30000}")
+    private int readTimeoutMs;
+
     @Value("${stripe.webhook-secret:}")
     private String webhookSecret;
 
@@ -49,6 +61,8 @@ public class StripeConfig {
     public void init() {
         Stripe.apiKey = secretKey;
         Stripe.setMaxNetworkRetries(maxNetworkRetries);
+        Stripe.setConnectTimeout(connectTimeoutMs);
+        Stripe.setReadTimeout(readTimeoutMs);
         // Points d'entrée statiques (PaymentIntent.create, Refund.create…) : même client
         // que le StripeClient ci-dessous, qui relance aussi une connexion réinitialisée.
         ApiResource.setGlobalResponseGetter(
@@ -66,6 +80,8 @@ public class StripeConfig {
         return StripeClient.builder()
                 .setApiKey(secretKey)
                 .setMaxNetworkRetries(maxNetworkRetries)
+                .setConnectTimeout(connectTimeoutMs)
+                .setReadTimeout(readTimeoutMs)
                 .setHttpClient(new ConnectionResetRetryingHttpClient())
                 .build();
     }
