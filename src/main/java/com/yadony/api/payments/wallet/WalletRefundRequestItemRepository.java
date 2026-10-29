@@ -71,4 +71,7 @@ public interface WalletRefundRequestItemRepository extends JpaRepository<WalletR
                                                @Param("requestStatus") WalletRefundRequestStatus requestStatus,
                                                @Param("itemStatus") WalletRefundItemStatus itemStatus,
                                                @Param("cutoff") Instant cutoff);
+
+    /** Ce remboursement Stripe a-t-il été émis par l'app (item de demande de remboursement) ? */
+    boolean existsByStripeRefundId(String stripeRefundId);
 }

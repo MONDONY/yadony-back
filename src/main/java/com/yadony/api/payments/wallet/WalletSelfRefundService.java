@@ -466,6 +466,10 @@ public class WalletSelfRefundService {
         if (walletService.isDisputeHeld(userId, code)) {
             throw WalletService.disputeHeld();
         }
+        // Recharge déjà remboursée hors de l'app : rien ne sort avant régularisation par l'équipe.
+        if (walletService.isExternalRefundHeld(userId, code)) {
+            throw WalletService.externalRefundHeld();
+        }
         Set<UUID> selected = selectedTransactionIds == null ? Set.of() : new HashSet<>(selectedTransactionIds);
 
         // Une demande active gèle déjà la devise et ses recharges sont exclues de l'allocation

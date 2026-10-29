@@ -119,6 +119,26 @@ class PaymentStripeWebhookHandlerTest {
     }
 
     @Test
+    void handle_chargeRefunded_alsoRecordsExternalTopupRefunds() {
+        com.yadony.api.payments.wallet.WalletExternalRefundService externalRefunds =
+                mock(com.yadony.api.payments.wallet.WalletExternalRefundService.class);
+        PaymentStripeWebhookHandler withExternal = new PaymentStripeWebhookHandler(paymentService, cashHandler,
+                chargebackService, walletService, walletSelfRefundService, new ObjectMapper(), new CurrencyCatalog(),
+                null, null, null, externalRefunds);
+        Charge charge = mock(Charge.class);
+        EventDataObjectDeserializer deserializer = mock(EventDataObjectDeserializer.class);
+        when(deserializer.getObject()).thenReturn(Optional.of(charge));
+        Event event = mock(Event.class);
+        when(event.getType()).thenReturn("charge.refunded");
+        when(event.getDataObjectDeserializer()).thenReturn(deserializer);
+
+        withExternal.handle(event);
+
+        verify(walletSelfRefundService).handleChargeRefunded(charge);
+        verify(externalRefunds).recordFromCharge(charge);
+    }
+
+    @Test
     void handle_chargeRefunded_deserializerEmpty_fetchesViaApiAndRoutesToWallet() {
         // Régression : même mismatch de version d'API que pour payment_intent.succeeded.
         // Sans le fallback (getRawJson + Charge.retrieve), l'item de remboursement wallet

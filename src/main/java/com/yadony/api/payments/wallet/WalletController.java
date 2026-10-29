@@ -3,6 +3,7 @@ package com.yadony.api.payments.wallet;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersRequest;
 import com.yadony.api.payments.mobilemoney.dto.MobileMoneyProvidersResponse;
 import com.yadony.api.payments.wallet.dto.WalletBalanceResponse;
@@ -77,7 +78,8 @@ public class WalletController {
         WalletAccountEntity wallet = walletService.getOrCreate(userId, activeCurrency);
         // Lu après getOrCreate : le portefeuille de la devise active, créé à l'instant, figure
         // dans la liste des devises.
-        WalletSelfRefundService.BalanceView view = walletSelfRefundService.balanceView(userId, page);
+        // Page négative ramenée à 0 : PageRequest.of lèverait IllegalArgumentException, donc un 500.
+        WalletSelfRefundService.BalanceView view = walletSelfRefundService.balanceView(userId, Math.max(0, page));
         // Colis lié à chaque ligne (FLUTTER-QP), résolu en une requête pour toute la page.
         Map<UUID, UUID> bidIdByTx = transactionBidLinks.resolve(view.transactions());
         List<WalletTransactionDto> txs = view.transactions()
@@ -181,7 +183,7 @@ public class WalletController {
     @GetMapping("/{currency}/refund-eligible-topups")
     public ResponseEntity<List<WalletEligibleTopupResponse>> refundEligibleTopups(@PathVariable String currency) {
         UUID userId = currentUserId();
-        return ResponseEntity.ok(walletSelfRefundService.listEligibleTopups(userId, currency).stream()
+        return ResponseEntity.ok(walletSelfRefundService.listEligibleTopups(userId, supported(currency)).stream()
                 .map(WalletEligibleTopupResponse::from)
                 .collect(Collectors.toList()));
     }
@@ -192,7 +194,7 @@ public class WalletController {
             @RequestBody(required = false) WalletRefundSelectionRequest request) {
         UUID userId = currentUserId();
         List<UUID> transactionIds = request == null ? List.of() : request.transactionIds();
-        WalletRefundRequestEntity created = walletSelfRefundService.request(userId, currency, transactionIds);
+        WalletRefundRequestEntity created = walletSelfRefundService.request(userId, supported(currency), transactionIds);
         return ResponseEntity.ok(summaries(List.of(created)).get(0));
     }
 
@@ -218,5 +220,19 @@ public class WalletController {
     private String currentFirebaseUid() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return (String) auth.getPrincipal();
+    }
+
+    /**
+     * Devise de l'adresse, contrôlée avant tout accès au portefeuille : une devise inconnue
+     * créait sinon un portefeuille à la volée, que seule la contrainte SQL refusait.
+     */
+    private static String supported(String currency) {
+        SupportedCurrency code = currency == null ? null
+                : SupportedCurrency.fromCode(currency.trim().toUpperCase(java.util.Locale.ROOT));
+        if (code == null) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "currency-unsupported",
+                    "Currency Unsupported", "Devise non prise en charge");
+        }
+        return code.name();
     }
 }

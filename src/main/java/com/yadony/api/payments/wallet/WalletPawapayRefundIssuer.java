@@ -325,6 +325,14 @@ public class WalletPawapayRefundIssuer implements WalletRefundRailIssuer {
             }
             item.setStatus(WalletRefundItemStatus.REFUNDED);
             itemRepository.save(item);
+            // Trace de l'argent effectivement rendu par CE rail, item par item : la demande n'est
+            // auditée qu'à sa résolution, globalement (même niveau de détail que côté Stripe).
+            auditService.log("wallet_refund_request", item.getRefundRequestId(), "PAWAPAY_ITEM_REFUNDED",
+                    request.getUserId(), Map.of("itemId", String.valueOf(item.getId()),
+                            "operationKind", kind.name(),
+                            "operationId", String.valueOf(kind == PawapayOperationKind.PAYOUT
+                                    ? item.getPawapayPayoutId() : item.getPawapayRefundId()),
+                            "amount", String.valueOf(item.getAmount())));
             return;
         }
         if (kind == PawapayOperationKind.REFUND) {

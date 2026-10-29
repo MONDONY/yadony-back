@@ -616,6 +616,21 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     @Query("UPDATE BidEntity b SET b.status = b.status WHERE b.id = :id")
     int lockForUpdate(@Param("id") UUID id);
 
+    /** Expéditeur et voyageur d'un colis. */
+    interface BidParties {
+        UUID getSenderId();
+        UUID getTravelerId();
+    }
+
+    /**
+     * Parties d'un colis en projection scalaire (rien dans le cache de premier niveau, donc sans
+     * effet sur les lectures verrouillées qui suivent) : contrôle de propriété AVANT tout verrou,
+     * pour qu'un tiers ne puisse pas verrouiller le colis ou le trajet d'un autre.
+     */
+    @Query("SELECT b.senderId AS senderId, a.travelerId AS travelerId FROM BidEntity b "
+            + "JOIN AnnouncementEntity a ON b.announcementId = a.id WHERE b.id = :bidId")
+    Optional<BidParties> findPartiesById(@Param("bidId") UUID bidId);
+
     /**
      * Statut de commission lu EN BASE (projection scalaire : jamais servie par le cache de
      * premier niveau, contrairement à {@code findById} sur une entité déjà chargée). Appelé

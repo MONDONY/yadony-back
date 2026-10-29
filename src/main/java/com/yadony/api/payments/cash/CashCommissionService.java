@@ -1066,6 +1066,15 @@ public class CashCommissionService {
     @Transactional
     public AcceptBidResponse acceptCashBid(UUID bidId, UUID travelerId, CommissionSource commissionSource,
                                            String fundingCurrency) {
+        // Propriété vérifiée AVANT les verrous : sinon tout voyageur pouvait verrouiller le colis
+        // et le trajet d'un autre le temps de sa requête. Revérifiée sous verrou plus bas.
+        BidRepository.BidParties parties = bidRepo.findPartiesById(bidId)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                        "bid-not-found", "Bid Not Found", "Demande introuvable"));
+        if (!travelerId.equals(parties.getTravelerId())) {
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
+                    "forbidden", "Forbidden", "Ce trajet ne vous appartient pas");
+        }
         BidEntity bid = bidRepo.findByIdForUpdate(bidId)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "bid-not-found", "Bid Not Found", "Demande introuvable"));

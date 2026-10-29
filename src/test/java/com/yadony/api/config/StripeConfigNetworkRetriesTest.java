@@ -22,12 +22,16 @@ class StripeConfigNetworkRetriesTest {
 
     private String previousApiKey;
     private int previousRetries;
+    private int previousConnectTimeout;
+    private int previousReadTimeout;
     private com.stripe.net.StripeResponseGetter previousGetter;
 
     @BeforeEach
     void saveGlobals() {
         previousApiKey = Stripe.apiKey;
         previousRetries = Stripe.getMaxNetworkRetries();
+        previousConnectTimeout = Stripe.getConnectTimeout();
+        previousReadTimeout = Stripe.getReadTimeout();
         previousGetter = com.stripe.net.ApiResource.getGlobalResponseGetter();
     }
 
@@ -35,6 +39,8 @@ class StripeConfigNetworkRetriesTest {
     void restoreGlobals() {
         Stripe.apiKey = previousApiKey;
         Stripe.setMaxNetworkRetries(previousRetries);
+        Stripe.setConnectTimeout(previousConnectTimeout);
+        Stripe.setReadTimeout(previousReadTimeout);
         com.stripe.net.ApiResource.setGlobalResponseGetter(previousGetter);
     }
 
@@ -42,6 +48,8 @@ class StripeConfigNetworkRetriesTest {
         StripeConfig config = new StripeConfig();
         ReflectionTestUtils.setField(config, "secretKey", "sk_test_dummy");
         ReflectionTestUtils.setField(config, "maxNetworkRetries", retries);
+        ReflectionTestUtils.setField(config, "connectTimeoutMs", 10_000);
+        ReflectionTestUtils.setField(config, "readTimeoutMs", 30_000);
         return config;
     }
 
@@ -72,5 +80,24 @@ class StripeConfigNetworkRetriesTest {
         String yml = new ClassPathResource("application.yml").getContentAsString(StandardCharsets.UTF_8);
 
         assertThat(yml).contains("max-network-retries: ${STRIPE_MAX_NETWORK_RETRIES:2}");
+    }
+
+    @Test
+    void init_bornesLesDelaisDuSdk() {
+        config(2).init();
+
+        assertThat(Stripe.getConnectTimeout()).isEqualTo(10_000);
+        assertThat(Stripe.getReadTimeout()).isEqualTo(30_000);
+    }
+
+    @Test
+    void stripeClient_porteLesMemesDelais() {
+        StripeClient client = config(2).stripeClient();
+
+        Object getter = ReflectionTestUtils.getField(client, "responseGetter");
+        StripeResponseGetterOptions options =
+                (StripeResponseGetterOptions) ReflectionTestUtils.getField(getter, "options");
+        assertThat(options.getConnectTimeout()).isEqualTo(10_000);
+        assertThat(options.getReadTimeout()).isEqualTo(30_000);
     }
 }
