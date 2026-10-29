@@ -559,9 +559,9 @@ yadony:
     enabled: ${PAWAPAY_ENABLED:false}
     base-url: ${PAWAPAY_BASE_URL:https://api.sandbox.pawapay.io}
     api-token: ${PAWAPAY_API_TOKEN:}
-    # Obligatoire en prod (PawapayConfig refuse de démarrer sinon), activé aussi dans le
+    # Obligatoire hors dev/test (PawapayConfig refuse de démarrer sinon), activé aussi dans le
     # dashboard pawaPay (« Signed callbacks »).
-    callback-signatures-required: ${PAWAPAY_CALLBACK_SIGNATURES:false}
+    callback-signatures-required: ${PAWAPAY_CALLBACK_SIGNATURES:true}
     deposit-deadline-minutes: ${PAWAPAY_DEPOSIT_DEADLINE_MINUTES:30}
     # Page de rebond Wave (HTTPS, jamais le deep link : refusé par les PSP).
     return-base-url: ${PAWAPAY_RETURN_BASE_URL:https://api.yadony.com}

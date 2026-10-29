@@ -51,6 +51,19 @@ public enum RateLimitRule {
     REFERRAL_REDEEM(Key.ACCOUNT, Set.of("POST"), List.of("/referral/redeem"), 10, Duration.ofHours(1)),
 
     /**
+     * Saisie d'un code de recharge : chaque code valide crédite le solde. Le service borne
+     * déjà les échecs (par compte, par IP, au total) ; cette règle borne aussi les essais
+     * réussis d'un même compte.
+     */
+    TOPUP_CODE_REDEEM(Key.ACCOUNT, Set.of("POST"), List.of("/wallet/topup-codes/redeem"), 10, Duration.ofHours(1)),
+
+    /**
+     * Même saisie par IP, tous comptes confondus : freine la force brute répartie sur des
+     * comptes jetables. Large à cause du CGNAT : 60 essais par heure et par IP.
+     */
+    TOPUP_CODE_REDEEM_IP(Key.IP, Set.of("POST"), List.of("/wallet/topup-codes/redeem"), 60, Duration.ofHours(1)),
+
+    /**
      * Envois de code OTP depuis une même IP, toutes adresses et tous numéros confondus.
      * La limite par adresse existe déjà dans les services OTP ; celle-ci freine
      * l'arrosage de milliers de destinataires (SMS pumping, saturation de la boîte
@@ -122,6 +135,7 @@ public enum RateLimitRule {
                 "/wallet/topup",
                 "/wallet/topup/**",
                 "/wallet/*/refund-request",
+                "/wallet/topup-codes/redeem",
                 "/auth/me/wallet-refund-request",
                 "/bids/checkout",
                 "/bids/*/confirm-payment",
@@ -129,6 +143,14 @@ public enum RateLimitRule {
                 "/bids/*/mobile-money/**",
                 "/bids/*/accept-with-commission",
                 "/bids/*/confirm-acceptance",
+                // Supplément et avenant : création puis paiement ou autorisation (le devis
+                // « quote » et la lecture des options restent hors limite de paiement).
+                "/bids/*/supplements",
+                "/bids/*/supplements/*/*",
+                "/bids/*/supplements/*/*/*",
+                "/bids/*/amendments",
+                "/bids/*/amendments/*/*",
+                "/bids/*/amendments/*/*/*",
                 "/negotiations/*/checkout",
                 "/negotiations/*/settle-commission",
                 "/negotiations/*/confirm-commission",

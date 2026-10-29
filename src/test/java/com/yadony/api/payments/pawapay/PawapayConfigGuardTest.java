@@ -35,8 +35,34 @@ class PawapayConfigGuardTest {
     }
 
     @Test
-    void staging_isNotGuarded() {
-        assertThatCode(() -> new PawapayConfig(props(true, false), "staging").verifyProductionSafety())
+    void staging_enabled_withoutSignatures_refusesToStart() {
+        assertThatThrownBy(() -> new PawapayConfig(props(true, false), "staging").verifyProductionSafety())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("staging");
+    }
+
+    @Test
+    void noProfile_enabled_withoutSignatures_refusesToStart() {
+        assertThatThrownBy(() -> new PawapayConfig(props(true, false), "").verifyProductionSafety())
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void devTestOrE2e_enabled_withoutSignatures_starts() {
+        for (String profiles : new String[] {"dev", "test", "e2e", "staging, test"}) {
+            assertThatCode(() -> new PawapayConfig(props(true, false), profiles).verifyProductionSafety())
+                    .doesNotThrowAnyException();
+        }
+    }
+
+    @Test
+    void environmentConstructor_readsActiveProfiles() {
+        org.springframework.mock.env.MockEnvironment env = new org.springframework.mock.env.MockEnvironment();
+        env.setActiveProfiles("staging");
+        assertThatThrownBy(() -> new PawapayConfig(props(true, false), env).verifyProductionSafety())
+                .isInstanceOf(IllegalStateException.class);
+        env.setActiveProfiles("test");
+        assertThatCode(() -> new PawapayConfig(props(true, false), env).verifyProductionSafety())
                 .doesNotThrowAnyException();
     }
 

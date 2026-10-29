@@ -1,6 +1,7 @@
 package com.yadony.api.payments;
 
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.stripe.StripeConnectEvents;
 import com.yadony.api.common.stripe.StripeWebhookHandler;
 import com.yadony.api.payments.amendment.BidAmendmentStripeWebhookRouter;
 import com.yadony.api.payments.bankpayout.BankPayoutTrackingService;
@@ -149,6 +150,15 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
 
     @Override
     public void handle(Event event) {
+        // Second rempart après l'ingestion : un événement d'un compte connecté qui n'est ni la
+        // vie du compte ni un virement n'est jamais traité (aucun crédit de solde, aucun
+        // supplément, aucun colis à partir des métadonnées d'un paiement du voyageur).
+        if (StripeConnectEvents.fromConnectedAccount(event)
+                && !StripeConnectEvents.isConnectedAccountType(event.getType())) {
+            log.warn("Stripe event {} ({}) du compte connecté {} : type non attendu, ignoré",
+                    event.getId(), event.getType(), event.getAccount());
+            return;
+        }
         if (supplementRouter != null && supplementRouter.handle(event)) {
             return;
         }

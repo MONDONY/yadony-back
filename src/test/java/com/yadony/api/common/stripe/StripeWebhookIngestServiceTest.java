@@ -58,6 +58,12 @@ class StripeWebhookIngestServiceTest {
                 + "\",\"data\":{\"object\":{}}}";
     }
 
+    /** Événement d'un compte connecté : Stripe renseigne {@code account}. */
+    private static String connectPayload(String eventId, String type, String account) {
+        return "{\"id\":\"" + eventId + "\",\"object\":\"event\",\"account\":\"" + account
+                + "\",\"type\":\"" + type + "\",\"data\":{\"object\":{}}}";
+    }
+
     @Test
     @DisplayName("un événement billing signé avec le secret billing est accepté et rangé sous BILLING")
     void billingEventAcceptedWithBillingSecret() {
@@ -122,7 +128,7 @@ class StripeWebhookIngestServiceTest {
     @Test
     @DisplayName("un événement de compte connecté signé avec le secret connect est accepté sous PAYMENTS")
     void connectEventAcceptedOnPaymentsWithConnectSecret() {
-        String body = payload("evt_connect_1", "account.updated");
+        String body = connectPayload("evt_connect_1", "account.updated", "acct_traveler");
         when(repo.existsById("evt_connect_1")).thenReturn(false);
 
         service().ingest(body, signature(body, CONNECT_SECRET), StripeWebhookSource.PAYMENTS);
@@ -157,5 +163,47 @@ class StripeWebhookIngestServiceTest {
                 .isInstanceOf(YadonyBusinessException.class);
 
         verify(repo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("secret connect : un paiement encaissé par un compte connecté n'est jamais stocké")
+    void connectSecretPaymentIntentIgnored() {
+        String body = connectPayload("evt_connect_pi", "payment_intent.succeeded", "acct_traveler");
+
+        service().ingest(body, signature(body, CONNECT_SECRET), StripeWebhookSource.PAYMENTS);
+
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("secret connect : un type de compte sans champ account n'est pas stocké")
+    void connectSecretWithoutAccountIgnored() {
+        String body = payload("evt_connect_noacct", "account.updated");
+
+        service().ingest(body, signature(body, CONNECT_SECRET), StripeWebhookSource.PAYMENTS);
+
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("secret connect : un virement du compte connecté est stocké")
+    void connectSecretPayoutAccepted() {
+        String body = connectPayload("evt_connect_po", "payout.paid", "acct_traveler");
+        when(repo.existsById("evt_connect_po")).thenReturn(false);
+
+        service().ingest(body, signature(body, CONNECT_SECRET), StripeWebhookSource.PAYMENTS);
+
+        verify(repo).save(any());
+    }
+
+    @Test
+    @DisplayName("secret payments : un événement plateforme est stocké quel que soit son type")
+    void paymentsSecretUnaffectedByConnectRule() {
+        String body = payload("evt_platform_pi", "payment_intent.succeeded");
+        when(repo.existsById("evt_platform_pi")).thenReturn(false);
+
+        service().ingest(body, signature(body, PAYMENTS_SECRET), StripeWebhookSource.PAYMENTS);
+
+        verify(repo).save(any());
     }
 }

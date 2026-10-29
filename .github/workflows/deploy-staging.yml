@@ -169,6 +169,9 @@ jobs:
           AWS_S3_SECRET_KEY=${{ secrets.AWS_S3_SECRET_KEY }}
           RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
           INTERNAL_SHARED_SECRET=${{ secrets.INTERNAL_SHARED_SECRET }}
+          # Clé HMAC des codes de recharge du solde (stockés hachés). Obligatoire hors dev/test :
+          # le back refuse de démarrer sans elle. La changer rend tous les codes en cours inutilisables.
+          TOPUP_CODE_HMAC_KEY=${{ secrets.TOPUP_CODE_HMAC_KEY }}
           TWILIO_ACCOUNT_SID=${{ secrets.TWILIO_ACCOUNT_SID }}
           TWILIO_AUTH_TOKEN=${{ secrets.TWILIO_AUTH_TOKEN }}
           AT_API_KEY=${{ secrets.AT_API_KEY }}
@@ -250,7 +253,7 @@ jobs:
           # (posés en secrets le 2026-09-06), la variable prime si les deux existent. Voir
           # docs/runbooks/pawapay.md.
           PAWAPAY_ENABLED=${{ vars.PAWAPAY_ENABLED || secrets.PAWAPAY_ENABLED }}
-          PAWAPAY_CALLBACK_SIGNATURES=${{ vars.PAWAPAY_CALLBACK_SIGNATURES || secrets.PAWAPAY_CALLBACK_SIGNATURES }}
+          PAWAPAY_CALLBACK_SIGNATURES=${{ vars.PAWAPAY_CALLBACK_SIGNATURES || secrets.PAWAPAY_CALLBACK_SIGNATURES || 'true' }}
           PAWAPAY_BALANCE_MIN_XOF=${{ vars.PAWAPAY_BALANCE_MIN_XOF }}
           PAWAPAY_BALANCE_MIN_XAF=${{ vars.PAWAPAY_BALANCE_MIN_XAF }}
           # Essai gratuit de l abonnement PRO, en jours. Absente ou nulle : pas d essai.

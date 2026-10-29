@@ -140,6 +140,9 @@ public class SecurityConfig {
                 // Acceptation des engagements de publication : écrit sur la ligne `users`
                 // et dans audit_log (preuve légale). Un invité ne publie pas.
                 .requestMatchers("/auth/me/publish-commitments").access(authenticatedNonGuest())
+                // Demande de remboursement du solde avant suppression du compte : déplace de
+                // l'argent. Même motif, et un invité n'a pas de solde.
+                .requestMatchers("/auth/me/wallet-refund-request").access(authenticatedNonGuest())
                 // Réclamation des données d'une session anonyme : mute deux comptes (les
                 // favoris changent de propriétaire, la ligne invitée est supprimée). Même
                 // motif que les règles ci-dessus, et même emplacement obligatoire, AVANT

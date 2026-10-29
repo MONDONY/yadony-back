@@ -163,6 +163,41 @@ class RateLimitInterceptorTest {
     }
 
     @Test
+    @DisplayName("code de recharge : borné par compte et par IP, tous comptes confondus")
+    void topupCodeRedeem() {
+        limit(properties, RateLimitRule.TOPUP_CODE_REDEEM, 1);
+        limit(properties, RateLimitRule.TOPUP_CODE_REDEEM_IP, 2);
+        loggedInAs("uid-code-1");
+        assertThat(pass(request("POST", "/wallet/topup-codes/redeem", "5.5.5.5"))).isTrue();
+        assertThatThrownBy(() -> pass(request("POST", "/wallet/topup-codes/redeem", "6.6.6.6")))
+                .isInstanceOf(RateLimitExceededException.class);
+        loggedInAs("uid-code-2");
+        assertThat(pass(request("POST", "/wallet/topup-codes/redeem", "5.5.5.5"))).isTrue();
+        loggedInAs("uid-code-3");
+        assertThatThrownBy(() -> pass(request("POST", "/wallet/topup-codes/redeem", "5.5.5.5")))
+                .isInstanceOf(RateLimitExceededException.class);
+    }
+
+    @Test
+    @DisplayName("supplément et avenant : création et paiement comptés, devis et options libres")
+    void supplementAndAmendmentWrites() {
+        limit(properties, RateLimitRule.PAYMENT_MINUTE, 3);
+        loggedInAs("uid-suppl");
+        String bid = "/bids/" + UUID.randomUUID();
+        for (int i = 0; i < 5; i++) {
+            assertThat(pass(request("POST", bid + "/supplements/quote", "1.1.1.1"))).isTrue();
+            assertThat(pass(request("POST", bid + "/amendments/quote", "1.1.1.1"))).isTrue();
+        }
+        assertThat(pass(request("POST", bid + "/supplements", "1.1.1.1"))).isTrue();
+        assertThat(pass(request("POST", bid + "/supplements/" + UUID.randomUUID() + "/mobile-money/initiate",
+                "1.1.1.1"))).isTrue();
+        assertThat(pass(request("POST", bid + "/amendments/" + UUID.randomUUID() + "/confirm-authorization",
+                "1.1.1.1"))).isTrue();
+        assertThatThrownBy(() -> pass(request("POST", bid + "/amendments", "1.1.1.1")))
+                .isInstanceOf(RateLimitExceededException.class);
+    }
+
+    @Test
     @DisplayName("administrateur, anonyme ou principal inattendu : pas de limite par compte")
     void exemptions() {
         limit(properties, RateLimitRule.ACCOUNT, 1);
