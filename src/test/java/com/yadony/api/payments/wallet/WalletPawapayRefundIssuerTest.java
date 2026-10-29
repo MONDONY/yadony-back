@@ -567,6 +567,37 @@ class WalletPawapayRefundIssuerTest {
         verifyNoInteractions(adminAlertService);
     }
 
+    @Test
+    void applyPawapayOutcome_itemRembourse_traceAuditAvecOperationEtMontant() {
+        WalletRefundRequestItemEntity item = item();
+        UUID payoutId = UUID.randomUUID();
+        item.setPawapayPayoutId(payoutId);
+        item.setStatus(WalletRefundItemStatus.PROCESSING);
+
+        issuer.applyPawapayOutcome(request, item, PawapayOperationKind.PAYOUT, true, null);
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> payload =
+                org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(auditService).log(eq("wallet_refund_request"), eq(item.getRefundRequestId()),
+                eq("PAWAPAY_ITEM_REFUNDED"), eq(request.getUserId()), payload.capture());
+        assertThat(payload.getValue())
+                .containsEntry("operationKind", "PAYOUT")
+                .containsEntry("operationId", payoutId.toString())
+                .containsEntry("amount", String.valueOf(item.getAmount()));
+    }
+
+    @Test
+    void applyPawapayOutcome_rejeuSurItemDejaRembourse_pasDeSecondeTrace() {
+        WalletRefundRequestItemEntity item = item();
+        item.setPawapayRefundId(UUID.randomUUID());
+        item.setStatus(WalletRefundItemStatus.REFUNDED);
+
+        issuer.applyPawapayOutcome(request, item, PawapayOperationKind.REFUND, true, null);
+
+        verify(auditService, never()).log(any(), any(), eq("PAWAPAY_ITEM_REFUNDED"), any(), any());
+    }
+
     /**
      * Le versement aboutit APRÈS que le remboursement a déjà passé l'item REFUNDED : son
      * COMPLETED était avalé par un simple log.info. C'est la moitié visible du double mouvement.

@@ -113,6 +113,7 @@ class CashCommissionServiceGridTest {
 
     @BeforeEach
     void setUp() {
+        stubBidParties();
         FirebaseContactService contacts = mock(FirebaseContactService.class);
         lenient().when(contacts.getContact(any()))
                 .thenReturn(new FirebaseContactService.Contact("+33600000000", "test@yadony.app"));
@@ -511,5 +512,27 @@ class CashCommissionServiceGridTest {
         verify(walletService).debit(eq(travelerId), eq("EUR"), argThat(a -> a.compareTo(new BigDecimal("0.25")) == 0),
                 eq(WalletTransactionType.COMMISSION_DEDUCTED), anyString(), anyString());
         verifyNoInteractions(commissionGridService, threadCommissionPricing);
+    }
+
+    /**
+     * Parties du colis déduites du colis et du trajet simulés par chaque test (lecture préalable
+     * au verrou, cf. CashCommissionService#acceptCashBid).
+     */
+    private void stubBidParties() {
+        lenient().when(bidRepo.findPartiesById(any())).thenAnswer(inv -> {
+            java.util.Optional<com.yadony.api.matching.BidEntity> bid = bidRepo.findByIdForUpdate(inv.getArgument(0));
+            if (bid == null || bid.isEmpty()) {
+                return java.util.Optional.empty();
+            }
+            java.util.Optional<com.yadony.api.matching.AnnouncementEntity> announcement =
+                    announcementRepo.findByIdForUpdate(bid.get().getAnnouncementId());
+            java.util.UUID travelerId = announcement == null || announcement.isEmpty() ? null
+                    : announcement.get().getTravelerId();
+            java.util.UUID senderId = bid.get().getSenderId();
+            return java.util.Optional.of(new BidRepository.BidParties() {
+                @Override public java.util.UUID getSenderId() { return senderId; }
+                @Override public java.util.UUID getTravelerId() { return travelerId; }
+            });
+        });
     }
 }

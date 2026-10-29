@@ -97,6 +97,7 @@ class CashCommissionServiceTest {
 
     @BeforeEach
     void setUp() {
+        stubBidParties();
         lenient().when(commissionRateResolver.resolve(any(), any())).thenReturn(new BigDecimal("0.12"));
         lenient().when(commissionRateResolver.resolve(any(), any(), any(), any(), any()))
                 .thenReturn(new BigDecimal("0.12"));
@@ -989,7 +990,8 @@ class CashCommissionServiceTest {
             bid.setSenderId(UUID.randomUUID());
             bid.setAnnouncementId(announcementId);
             bid.setStatus(BidStatus.PENDING);
-            when(bidRepo.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+            // lenient : les refus de propriété (B7) s'arrêtent avant cette lecture verrouillée.
+            lenient().when(bidRepo.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
 
             java.util.Set<com.yadony.api.payments.cash.PaymentMethod> methods =
                     java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.CASH);
@@ -1025,6 +1027,39 @@ class CashCommissionServiceTest {
             verify(bidRepo, never()).save(any());
             verify(announcementRepo, never()).save(any());
             verify(events, never()).publishEvent(any());
+        }
+
+        @Test
+        // Audit 28/10 (B7) : un autre voyageur est refusé AVANT tout verrou sur le colis ou le trajet.
+        void notTheTraveler_forbiddenBeforeAnyLock() {
+            UUID stranger = UUID.randomUUID();
+            // doReturn et non when(...) : when appellerait la réponse générique, qui lit le colis verrouillé.
+            doReturn(Optional.of(new BidRepository.BidParties() {
+                @Override public UUID getSenderId() { return bid.getSenderId(); }
+                @Override public UUID getTravelerId() { return travelerId; }
+            })).when(bidRepo).findPartiesById(bid.getId());
+
+            assertThatThrownBy(() -> service.acceptCashBid(
+                    bid.getId(), stranger, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST))
+                    .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((com.yadony.api.common.YadonyBusinessException) e).getStatus())
+                            .isEqualTo(org.springframework.http.HttpStatus.FORBIDDEN));
+
+            verify(bidRepo, never()).findByIdForUpdate(any());
+            verify(announcementRepo, never()).findByIdForUpdate(any());
+        }
+
+        @Test
+        void unknownBid_notFoundBeforeAnyLock() {
+            UUID unknown = UUID.randomUUID();
+            doReturn(Optional.empty()).when(bidRepo).findPartiesById(unknown);
+
+            assertThatThrownBy(() -> service.acceptCashBid(
+                    unknown, travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST))
+                    .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((com.yadony.api.common.YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("bid-not-found"));
+            verify(bidRepo, never()).findByIdForUpdate(any());
         }
 
         @Test
@@ -2724,5 +2759,27 @@ class CashCommissionServiceTest {
             assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
             assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
         }
+    }
+
+    /**
+     * Parties du colis déduites du colis et du trajet simulés par chaque test (lecture préalable
+     * au verrou, cf. CashCommissionService#acceptCashBid).
+     */
+    private void stubBidParties() {
+        lenient().when(bidRepo.findPartiesById(any())).thenAnswer(inv -> {
+            java.util.Optional<com.yadony.api.matching.BidEntity> bid = bidRepo.findByIdForUpdate(inv.getArgument(0));
+            if (bid == null || bid.isEmpty()) {
+                return java.util.Optional.empty();
+            }
+            java.util.Optional<com.yadony.api.matching.AnnouncementEntity> announcement =
+                    announcementRepo.findByIdForUpdate(bid.get().getAnnouncementId());
+            java.util.UUID travelerId = announcement == null || announcement.isEmpty() ? null
+                    : announcement.get().getTravelerId();
+            java.util.UUID senderId = bid.get().getSenderId();
+            return java.util.Optional.of(new BidRepository.BidParties() {
+                @Override public java.util.UUID getSenderId() { return senderId; }
+                @Override public java.util.UUID getTravelerId() { return travelerId; }
+            });
+        });
     }
 }
