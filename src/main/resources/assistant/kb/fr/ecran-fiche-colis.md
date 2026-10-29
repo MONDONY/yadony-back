@@ -1,7 +1,7 @@
 ---
 id: ecran-fiche-colis
 title: L'écran Fiche du colis
-keywords: écran fiche du colis, à quoi sert cet écran, détail de l'envoi, mon colis, colis transporté, billet du colis, étape du colis
+keywords: écran fiche du colis, à quoi sert cet écran, détail de l'envoi, mon colis, colis transporté, billet du colis, étape du colis, tuile, votre envoi, à traiter, tampon du billet
 screens:
   - /bids/:bidId
 questions:
@@ -14,4 +14,4 @@ routes:
   - path: /demandes
     label: Demandes
 ---
-Vous êtes sur la fiche d'un colis. Expéditeur, vous y trouvez le code de retrait à transmettre au destinataire (« Régénérer le code » s'il est bloqué), le suivi du voyageur (facultatif), puis selon l'étape « Payer mon envoi », « Afficher le QR de remise » ou « Suivi du colis ». Voyageur, vous voyez votre gain, touchez « Accepter » ou « Refuser », puis « Lire le QR du colis » et « Valider la remise ». Le menu « Options » permet de contacter l'autre personne, de signaler ou d'annuler ; le voyageur y refuse aussi un colis qui ne correspond pas à la déclaration.
+Fiche d'un colis. Expéditeur : en haut le billet (QR du colis, code de retrait, numéro de suivi), puis « À traiter » si une réponse est attendue, le voyageur, le paiement, et « Votre envoi » en tuiles (Prévenir {prénom}, Lieux après acceptation, avant la remise, puis Suivi, Colis et destinataire, Plus de détails). Le bouton du bas suit l'étape (« Payer mon envoi », « Afficher le QR de remise »). Voyageur : votre gain, « Refuser » ou « Accepter », puis « Lire le QR du colis » et « Valider la remise ». Menu « Options » : contacter, signaler, annuler, supprimer, « Scanner le transit » (voyageur).
