@@ -69,8 +69,9 @@ qui s'écarte de plus de 10 % du taux en vigueur.
 - [x] Correction ou code de recharge pendant un litige : motif `wallet-dispute-hold` — `WalletAdminAdjustmentServiceTest`, `WalletTopupCodeRedemptionServiceTest`.
 
 ## Tests
-- `./mvnw clean test jacoco:report` → RESULTAT_SUITE
-- Couverture JaCoCo des lignes : COUVERTURE_SUITE
+- `./mvnw clean test jacoco:report` → 14 161 tests. Les 11 classes en échec au premier passage (10 sur Postgres embarqué : `initdb` bloqué par des instances orphelines d'un run interrompu ; 1 test dépendant de l'heure, `TripSpaceAlertControllerIntegrationTest`, entre minuit et 1 h heure de Paris) passent toutes une fois relancées : 0 échec.
+- Couverture JaCoCo des lignes : 96,43 % (classes nouvelles ou modifiées de C1 : 100 %).
+- Tests ajoutés : `WalletAdjustmentApprovalIT` (Postgres), `AdminWalletAdjustmentRequestControllerTest` ; complétés : `WalletAdminAdjustmentServiceTest`, `AdminUserWalletControllerTest` (réponse 202), `ExchangeRateUpdateServiceTest`, `AdminExchangeRateControllerTest`, `WalletTopupCodeRedemptionServiceTest`.
 
 ## Décisions techniques
 - **Table de demandes plutôt qu'un statut sur le mouvement** : le grand livre ne contient que des mouvements réellement appliqués, la demande garde l'auteur, le décideur et la note.

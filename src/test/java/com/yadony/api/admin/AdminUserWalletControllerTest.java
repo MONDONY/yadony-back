@@ -10,6 +10,9 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.wallet.WalletAccountView;
+import com.yadony.api.payments.wallet.WalletAdjustmentDirection;
+import com.yadony.api.payments.wallet.WalletAdjustmentRequestEntity;
+import com.yadony.api.payments.wallet.WalletAdjustmentRequestStatus;
 import com.yadony.api.payments.wallet.WalletAdminAdjustmentService;
 import com.yadony.api.payments.wallet.WalletAdminAdjustmentService.AdjustmentCommand;
 import com.yadony.api.payments.wallet.WalletAdminAdjustmentService.AdjustmentResult;
@@ -301,6 +304,38 @@ class AdminUserWalletControllerTest {
         assertThat(command.getValue().amount()).isEqualByComparingTo("1500");
         assertThat(command.getValue().reason()).isEqualTo("Geste commercial après litige");
         assertThat(command.getValue().idempotencyKey()).isEqualTo("k-123");
+    }
+
+    @Test
+    @DisplayName("POST — au-delà du seuil → 202, aucun mouvement, demande en attente avec l'e-mail de l'auteur")
+    void adjust_aboveThreshold_returns202WithPendingRequest() throws Exception {
+        UUID requestId = UUID.randomUUID();
+        WalletAdjustmentRequestEntity pending = withId(new WalletAdjustmentRequestEntity(), requestId);
+        pending.setUserId(USER_ID);
+        pending.setCurrency("XOF");
+        pending.setDirection(WalletAdjustmentDirection.CREDIT);
+        pending.setAmount(new BigDecimal("150000"));
+        pending.setEurEquivalent(new BigDecimal("228.67"));
+        pending.setReason("Geste commercial après litige");
+        pending.setIdempotencyKey("admin-adjust:k-9");
+        pending.setRequestedBy(ADMIN_ID);
+        pending.setStatus(WalletAdjustmentRequestStatus.PENDING);
+        when(adjustmentService.adjust(any())).thenReturn(new AdjustmentResult(null, false, pending));
+        AdminUserEntity admin = withId(new AdminUserEntity(), ADMIN_ID);
+        admin.setEmail("ops@yadony.test");
+        when(adminUserRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
+
+        mockMvc.perform(post(BASE + "/adjustments").header("Idempotency-Key", "k-9")
+                        .contentType(MediaType.APPLICATION_JSON).content(BODY)
+                        .with(authentication(adminAuth(AdminRole.ADMIN))))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.account").value(nullValue()))
+                .andExpect(jsonPath("$.transaction").value(nullValue()))
+                .andExpect(jsonPath("$.pendingRequest.id").value(requestId.toString()))
+                .andExpect(jsonPath("$.pendingRequest.status").value("PENDING"))
+                .andExpect(jsonPath("$.pendingRequest.eurEquivalent").value(228.67))
+                .andExpect(jsonPath("$.pendingRequest.requestedByEmail").value("ops@yadony.test"));
+        verify(adjustmentService, never()).account(any(), anyString());
     }
 
     @Test
