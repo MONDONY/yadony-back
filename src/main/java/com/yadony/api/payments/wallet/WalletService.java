@@ -30,6 +30,7 @@ public class WalletService {
     private final WalletTransactionRepository walletTransactionRepository;
     private final WalletRefundRequestRepository walletRefundRequestRepository;
     private final WalletDisputeHoldRepository walletDisputeHoldRepository;
+    private final WalletExternalRefundHoldRepository walletExternalRefundHoldRepository;
     private final AuditService auditService;
     private final EntityManager entityManager;
 
@@ -37,12 +38,14 @@ public class WalletService {
                          WalletTransactionRepository walletTransactionRepository,
                          WalletRefundRequestRepository walletRefundRequestRepository,
                          WalletDisputeHoldRepository walletDisputeHoldRepository,
+                         WalletExternalRefundHoldRepository walletExternalRefundHoldRepository,
                          AuditService auditService,
                          EntityManager entityManager) {
         this.walletAccountRepository = walletAccountRepository;
         this.walletTransactionRepository = walletTransactionRepository;
         this.walletRefundRequestRepository = walletRefundRequestRepository;
         this.walletDisputeHoldRepository = walletDisputeHoldRepository;
+        this.walletExternalRefundHoldRepository = walletExternalRefundHoldRepository;
         this.auditService = auditService;
         this.entityManager = entityManager;
     }
@@ -77,6 +80,9 @@ public class WalletService {
         if (isDisputeHeld(userId, code)) {
             throw disputeHeld();
         }
+        if (isExternalRefundHeld(userId, code)) {
+            throw externalRefundHeld();
+        }
         if (isFrozen(userId, code)) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-pending",
                     "Unprocessable", "Solde gelé - une demande de remboursement est en cours sur cette devise");
@@ -91,17 +97,42 @@ public class WalletService {
     }
 
     /**
-     * Vrai quand cette devise est gelée : une demande de remboursement PENDING ou PROCESSING, ou un
-     * litige carte ouvert sur l'une de ses recharges ({@link WalletDisputeService}). C'est la règle
+     * 422 d'un portefeuille gelé parce qu'une de ses recharges a été remboursée hors de l'app : le
+     * crédit est déjà revenu sur la carte, l'équipe doit régulariser le solde.
+     */
+    public static YadonyBusinessException externalRefundHeld() {
+        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-external-refund-hold",
+                "Unprocessable", "Solde bloqué : une recharge de cette devise vous a déjà été remboursée sur "
+                        + "votre carte. Contactez le support.");
+    }
+
+    /**
+     * Vrai quand cette devise est gelée : une demande de remboursement PENDING ou PROCESSING, un
+     * litige carte ouvert sur l'une de ses recharges ({@link WalletDisputeService}) ou une recharge
+     * remboursée hors de l'app ({@link WalletExternalRefundService}). C'est la règle
      * qui fait échouer {@code debit} en 422. Exposée pour qu'un appelant qui RÉPARTIT un
      * prélèvement entre plusieurs portefeuilles (cf. {@code WalletCommissionCollector}) puisse
      * écarter d'avance un portefeuille gelé au lieu de faire échouer tout le règlement dessus.
      */
     @Transactional(readOnly = true)
     public boolean isFrozen(UUID userId, String currency) {
+        return isRefundRequestPending(userId, currency)
+                || isDisputeHeld(userId, currency)
+                || isExternalRefundHeld(userId, currency);
+    }
+
+    /** Vrai tant qu'une demande de remboursement de cette devise est PENDING ou PROCESSING. */
+    @Transactional(readOnly = true)
+    public boolean isRefundRequestPending(UUID userId, String currency) {
         return walletRefundRequestRepository.existsByUserIdAndCurrencyAndStatusIn(
-                userId, normalize(currency), FREEZING_STATUSES)
-                || isDisputeHeld(userId, currency);
+                userId, normalize(currency), FREEZING_STATUSES);
+    }
+
+    /** Vrai tant qu'une recharge de cette devise, remboursée hors de l'app, n'a pas été régularisée. */
+    @Transactional(readOnly = true)
+    public boolean isExternalRefundHeld(UUID userId, String currency) {
+        return walletExternalRefundHoldRepository.existsByUserIdAndCurrencyAndStatus(
+                userId, normalize(currency), WalletExternalRefundHoldStatus.OPEN);
     }
 
     /** Vrai tant qu'un litige carte est ouvert sur une recharge de cette devise. */

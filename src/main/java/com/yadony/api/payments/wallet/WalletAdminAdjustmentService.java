@@ -276,12 +276,16 @@ public class WalletAdminAdjustmentService {
 
         assertUnderDailyCap(actorId, userId, eur);
 
-        // Le litige d'abord : isFrozen le couvre aussi, et le motif « remboursement en cours »
-        // tromperait l'admin.
+        // Chaque gel a son motif : « remboursement en cours » tromperait l'admin sur un litige.
         if (walletService.isDisputeHeld(userId, code)) {
             throw WalletService.disputeHeld();
         }
-        if (walletService.isFrozen(userId, code)) {
+        // Recharge remboursée hors de l'app : le gel laisse passer le DÉBIT, seul moyen de retirer
+        // du solde le crédit déjà rendu sur la carte, et refuse tout crédit.
+        if (direction == WalletAdjustmentDirection.CREDIT && walletService.isExternalRefundHeld(userId, code)) {
+            throw WalletService.externalRefundHeld();
+        }
+        if (walletService.isRefundRequestPending(userId, code)) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-pending",
                     "Unprocessable", "Solde gelé : une demande de remboursement est en cours sur cette devise");
         }

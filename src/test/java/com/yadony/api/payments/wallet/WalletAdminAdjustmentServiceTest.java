@@ -215,7 +215,7 @@ class WalletAdminAdjustmentServiceTest {
     void credit_surPortefeuilleGele_refuse422() {
         WalletAccountEntity w = wallet("EUR", "10.00");
         locked(w);
-        when(walletService.isFrozen(USER_ID, "EUR")).thenReturn(true);
+        when(walletService.isRefundRequestPending(USER_ID, "EUR")).thenReturn(true);
 
         YadonyBusinessException e = business(catchThrowable(() -> service.adjust(credit("EUR", "5"))));
 
@@ -239,6 +239,19 @@ class WalletAdminAdjustmentServiceTest {
         assertThat(w.getBalance()).isEqualByComparingTo("10.00");
         verify(transactionRepository, never()).saveAndFlush(any());
         verifyNoInteractions(auditService, eventPublisher);
+    }
+
+    @Test
+    void credit_surDeviseGeleeParRemboursementExterne_refuse422() {
+        WalletAccountEntity w = wallet("EUR", "10.00");
+        locked(w);
+        when(walletService.isExternalRefundHeld(USER_ID, "EUR")).thenReturn(true);
+
+        YadonyBusinessException e = business(catchThrowable(() -> service.adjust(credit("EUR", "5"))));
+
+        assertThat(e.getErrorCode()).isEqualTo("wallet-external-refund-hold");
+        assertThat(w.getBalance()).isEqualByComparingTo("10.00");
+        verify(transactionRepository, never()).saveAndFlush(any());
     }
 
     // ── Débit ────────────────────────────────────────────────────────────────
@@ -312,12 +325,25 @@ class WalletAdminAdjustmentServiceTest {
     void debit_surPortefeuilleGele_refuse422() {
         WalletAccountEntity w = wallet("EUR", "30.00");
         locked(w);
-        when(walletService.isFrozen(USER_ID, "EUR")).thenReturn(true);
+        when(walletService.isRefundRequestPending(USER_ID, "EUR")).thenReturn(true);
 
         YadonyBusinessException e = business(catchThrowable(() -> service.adjust(debit("EUR", "5"))));
 
         assertThat(e.getErrorCode()).isEqualTo("wallet-refund-pending");
         assertThat(w.getBalance()).isEqualByComparingTo("30.00");
+    }
+
+    @Test
+    void debit_surDeviseGeleeParRemboursementExterne_accepte_pourRegulariser() {
+        WalletAccountEntity w = wallet("EUR", "30.00");
+        locked(w);
+        org.mockito.Mockito.lenient().when(walletService.isExternalRefundHeld(USER_ID, "EUR")).thenReturn(true);
+        org.mockito.Mockito.lenient().when(walletService.isFrozen(USER_ID, "EUR")).thenReturn(true);
+
+        AdjustmentResult result = service.adjust(debit("EUR", "20"));
+
+        assertThat(w.getBalance()).isEqualByComparingTo("10.00");
+        assertThat(result.transaction().getType()).isEqualTo(WalletTransactionType.ADMIN_DEBIT);
     }
 
     // ── Plafond ──────────────────────────────────────────────────────────────
