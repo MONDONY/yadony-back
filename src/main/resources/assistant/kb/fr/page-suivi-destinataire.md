@@ -7,7 +7,8 @@ routes:
     label: Mes colis
 ---
 Le destinataire n'a pas besoin de compte : il suit le colis en temps réel avec le lien de suivi que vous lui envoyez.
-Depuis Activités › Mes colis › votre envoi, touchez « Partager le suivi » ou utilisez la carte « Prévenir » pour l'envoyer par WhatsApp.
+Depuis Activités › Mes colis › votre envoi, ouvrez la tuile « Prévenir {prénom} » de « Votre envoi » pour l'envoyer par WhatsApp, ou touchez « Partager le suivi » (icône de partage de l'en-tête ou menu « Options »).
 Vous pouvez choisir d'afficher ou de retirer le code de retrait sur la page de suivi.
 Si le destinataire a Yadony, il peut aussi retrouver le colis dans l'onglet Suivi, sous Réceptions.
 Si le voyageur partage sa position, la page affiche seulement sa dernière position approximative (ville proche et progression), sans l'historique. Aucun message n'est envoyé automatiquement au destinataire sans compte.
+De votre côté, la tuile « Suivi » de « Votre envoi » montre les étapes, la position du voyageur et la carte, avec « Voir toutes les étapes et photos ».

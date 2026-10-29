@@ -1,7 +1,7 @@
 ---
 id: ecran-fiche-colis
 title: The Parcel details screen
-keywords: parcel details screen, what is this screen for, shipment details, my parcel, carried parcel, parcel ticket, parcel step
+keywords: parcel details screen, what is this screen for, shipment details, my parcel, carried parcel, parcel ticket, parcel step, tile, your shipment, to do, ticket stamp
 screens:
   - /bids/:bidId
 questions:
@@ -14,4 +14,4 @@ routes:
   - path: /demandes
     label: Requests
 ---
-You are on a parcel's details. As the sender, you find the pickup code to pass on to the recipient ("Regenerate the code" if it is blocked), the traveler's tracking (optional), then, depending on the step, "Pay for my shipment", "Show the drop-off QR" or "Track my parcel". As the traveler, you see your earnings, tap "Accept" or "Decline", then "Scan the parcel QR" and "Confirm the drop-off". The "Options" menu lets you contact the other person, report or cancel; the traveler can also refuse a parcel that doesn't match the declaration there.
+You are on a parcel's details. Sender: at the top, the ticket (parcel QR, pickup code, tracking number), then "To do" when an answer is expected from you, the traveler, the payment, and "Your shipment" as tiles (Let know, Tracking, Parcel and recipient, More details) that open at the bottom of the screen. The bottom button follows the step ("Pay for my shipment", "Show the drop-off QR", "Track my parcel"). Traveler: your earnings, "Accept" or "Decline", then "Scan the parcel QR" and "Confirm the drop-off". The "Options" menu contacts, reports or cancels.
