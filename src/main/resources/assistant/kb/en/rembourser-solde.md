@@ -11,4 +11,5 @@ The amount goes back to the top-up method: the card used within 5 to 10 days dep
 If you topped up by card and by mobile money, each top-up automatically goes back to its own method, in a single request.
 Payment provider fees may be withheld on a top-up that was never used, and bonuses cannot be refunded.
 If a card top-up is disputed with the bank, its amount is taken back from the balance and the currency stays blocked until the dispute ends: contact support.
+If a top-up was already refunded to your card outside the app (by the Yadony team), the currency is blocked while the team removes that amount from the balance: contact support.
 Follow your requests in "My refunds": In progress, Refunded or Failed.
