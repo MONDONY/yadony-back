@@ -12,18 +12,19 @@ import java.util.UUID;
 
 public interface WalletTopupCodeRepository extends JpaRepository<WalletTopupCodeEntity, UUID> {
 
-    Optional<WalletTopupCodeEntity> findByCode(String code);
-
-    /** Sérialise les utilisations d'un même code : la dernière unité ne part qu'une fois. */
+    /**
+     * Recherche par empreinte, qui sérialise les utilisations d'un même code : la dernière unité
+     * ne part qu'une fois.
+     */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select c from WalletTopupCodeEntity c where c.code = :code")
-    Optional<WalletTopupCodeEntity> findByCodeForUpdate(@Param("code") String code);
+    @Query("select c from WalletTopupCodeEntity c where c.codeHash = :codeHash")
+    Optional<WalletTopupCodeEntity> findByCodeHashForUpdate(@Param("codeHash") String codeHash);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select c from WalletTopupCodeEntity c where c.id = :id")
     Optional<WalletTopupCodeEntity> findByIdForUpdate(@Param("id") UUID id);
 
-    boolean existsByCode(String code);
+    boolean existsByCodeHash(String codeHash);
 
     List<WalletTopupCodeEntity> findAllByOrderByCreatedAtDesc();
 }

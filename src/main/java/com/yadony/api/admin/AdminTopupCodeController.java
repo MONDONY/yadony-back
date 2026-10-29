@@ -104,7 +104,8 @@ public class AdminTopupCodeController {
                         codes.stream().map(WalletTopupCodeEntity::getCreatedBy).filter(Objects::nonNull).distinct().toList())
                 .stream().collect(Collectors.toMap(a -> a.getId(), a -> a.getEmail()));
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
-        return codes.stream().map(c -> new AdminTopupCodeResponse(c.getId(), c.getCode(), c.getAmount(),
+        return codes.stream().map(c -> new AdminTopupCodeResponse(c.getId(), c.getIssuedCode(), c.getCodeHint(),
+                c.getAmount(),
                 c.getCurrency(), c.getMaxRedemptions(), c.getRedeemedCount(), c.remaining(), c.getExpiresAt(),
                 c.displayStatus(now).name(), c.getNote(), c.getCreatedAt(), c.getCreatedBy(),
                 emails.get(c.getCreatedBy()), c.getRevokedAt())).toList();

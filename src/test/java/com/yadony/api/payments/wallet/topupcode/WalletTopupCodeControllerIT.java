@@ -57,7 +57,7 @@ class WalletTopupCodeControllerIT {
 
     @Test
     void redeem_renvoieLeCredit() throws Exception {
-        when(redemptionService.redeem(USER_ID, "dakar 2000")).thenReturn(new TopupCodeRedeemResponse(
+        when(redemptionService.redeem(eq(USER_ID), eq("dakar 2000"), anyString())).thenReturn(new TopupCodeRedeemResponse(
                 new BigDecimal("2000"), "XOF", new BigDecimal("3500"), UUID.randomUUID()));
         mockMvc.perform(post("/wallet/topup-codes/redeem").with(authentication(sender()))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"dakar 2000\"}"))
@@ -69,7 +69,7 @@ class WalletTopupCodeControllerIT {
 
     @Test
     void redeem_erreurMetier_problemDetailAvecCode() throws Exception {
-        when(redemptionService.redeem(eq(USER_ID), anyString())).thenThrow(new YadonyBusinessException(
+        when(redemptionService.redeem(eq(USER_ID), anyString(), anyString())).thenThrow(new YadonyBusinessException(
                 HttpStatus.UNPROCESSABLE_ENTITY, "topup-code-exhausted", "Unprocessable", "Épuisé"));
         mockMvc.perform(post("/wallet/topup-codes/redeem").with(authentication(sender()))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"DAKAR2000\"}"))

@@ -28,6 +28,11 @@ public class WalletTopupCodeAdminService {
     static final int MAX_QUANTITY = 10_000;
     static final int DEFAULT_VALIDITY_DAYS = 90;
     static final String ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+    /**
+     * Code saisi par l'admin : au moins 10 lettres ou chiffres (les tirets ne comptent pas),
+     * pour qu'il ne se devine pas en quelques milliers d'essais (décision du propriétaire, 28/10).
+     */
+    static final int MANUAL_CODE_MIN_ALPHANUMERIC = 10;
     private static final int MAX_GENERATION_ATTEMPTS = 10;
     private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -38,25 +43,37 @@ public class WalletTopupCodeAdminService {
     private final WalletTopupCodeRedemptionRepository redemptions;
     private final ExchangeRateService exchangeRateService;
     private final AuditService auditService;
+    private final TopupCodeHasher hasher;
 
     public WalletTopupCodeAdminService(WalletTopupCodeRepository codes,
                                        WalletTopupCodeRedemptionRepository redemptions,
                                        ExchangeRateService exchangeRateService,
-                                       AuditService auditService) {
+                                       AuditService auditService,
+                                       TopupCodeHasher hasher) {
         this.codes = codes;
         this.redemptions = redemptions;
         this.exchangeRateService = exchangeRateService;
         this.auditService = auditService;
+        this.hasher = hasher;
     }
 
+    /**
+     * Le code créé porte son texte en clair dans {@link WalletTopupCodeEntity#getIssuedCode()},
+     * jamais persisté : c'est la seule fois où l'admin peut le copier.
+     */
+
     public WalletTopupCodeEntity create(CreateCommand command) {
-        String code = command.code() == null || command.code().isBlank()
-                ? generateCode()
-                : WalletTopupCodeRedemptionService.normalize(command.code());
+        boolean manual = command.code() != null && !command.code().isBlank();
+        String code = manual ? WalletTopupCodeRedemptionService.normalize(command.code()) : generateCode();
         if (!WalletTopupCodeRedemptionService.CODE_FORMAT.matcher(code).matches()) {
             throw badRequest("topup-code-format-invalid",
-                    "Le code doit faire 4 à 32 caractères : lettres, chiffres ou tirets");
+                    "Le code doit faire au plus 32 caractères : lettres, chiffres ou tirets");
         }
+        if (manual && code.replace("-", "").length() < MANUAL_CODE_MIN_ALPHANUMERIC) {
+            throw badRequest("topup-code-too-short", "Le code doit contenir au moins "
+                    + MANUAL_CODE_MIN_ALPHANUMERIC + " lettres ou chiffres (les tirets ne comptent pas)");
+        }
+        String codeHash = hasher.hash(code);
         SupportedCurrency currency = SupportedCurrency.fromCode(command.currency() == null ? null
                 : command.currency().trim().toUpperCase(java.util.Locale.ROOT));
         if (currency == null) {
@@ -76,13 +93,14 @@ public class WalletTopupCodeAdminService {
         if (!expiresAt.isAfter(now)) {
             throw badRequest("topup-code-expiry-invalid", "La date d'expiration doit être dans le futur");
         }
-        if (codes.existsByCode(code)) {
-            throw duplicate(code);
+        if (codes.existsByCodeHash(codeHash)) {
+            throw duplicate();
         }
         assertUnderCap(amount, currency.name());
 
         WalletTopupCodeEntity entity = new WalletTopupCodeEntity();
-        entity.setCode(code);
+        entity.setCodeHash(codeHash);
+        entity.setCodeHint(TopupCodeHasher.hint(code));
         entity.setAmount(amount);
         entity.setCurrency(currency.name());
         entity.setMaxRedemptions(quantity);
@@ -95,11 +113,13 @@ public class WalletTopupCodeAdminService {
             // uq_wallet_topup_codes_code ici, en 409, au lieu d'un 500 au commit.
             saved = codes.saveAndFlush(entity);
         } catch (DataIntegrityViolationException e) {
-            throw duplicate(code);
+            throw duplicate();
         }
+        saved.setIssuedCode(code);
 
+        // Jamais le code en clair : audit_log est immuable et lisible par tout admin d'audit.
         Map<String, Object> payload = new HashMap<>();
-        payload.put("code", saved.getCode());
+        payload.put("codeHint", saved.getCodeHint());
         payload.put("amount", amount.toPlainString());
         payload.put("currency", currency.name());
         payload.put("maxRedemptions", quantity);
@@ -107,12 +127,15 @@ public class WalletTopupCodeAdminService {
         return saved;
     }
 
-    /** Code libre, au format YD-XXXX-XXXX, sans caractères ambigus (0/O, 1/I/L). */
+    /**
+     * Code libre, au format YD-XXXX-XXXX-XXXX (12 caractères tirés au hasard sur 31, environ 59
+     * bits), sans caractères ambigus (0/O, 1/I/L).
+     */
     @Transactional(readOnly = true)
     public String generateCode() {
         for (int attempt = 0; attempt < MAX_GENERATION_ATTEMPTS; attempt++) {
-            String candidate = "YD-" + randomBlock() + "-" + randomBlock();
-            if (!codes.existsByCode(candidate)) return candidate;
+            String candidate = "YD-" + randomBlock() + "-" + randomBlock() + "-" + randomBlock();
+            if (!codes.existsByCodeHash(hasher.hash(candidate))) return candidate;
         }
         throw new IllegalStateException("Impossible de générer un code de recharge libre");
     }
@@ -140,7 +163,7 @@ public class WalletTopupCodeAdminService {
         code.setRevokedAt(LocalDateTime.now(ZoneOffset.UTC));
         WalletTopupCodeEntity saved = codes.save(code);
         auditService.log("wallet_topup_code", id, "WALLET_TOPUP_CODE_REVOKED", adminId,
-                Map.of("code", code.getCode(), "redeemedCount", code.getRedeemedCount()));
+                Map.of("codeHint", String.valueOf(code.getCodeHint()), "redeemedCount", code.getRedeemedCount()));
         return saved;
     }
 
@@ -163,9 +186,9 @@ public class WalletTopupCodeAdminService {
         return new YadonyBusinessException(HttpStatus.BAD_REQUEST, code, "Bad Request", detail);
     }
 
-    private static YadonyBusinessException duplicate(String code) {
+    private static YadonyBusinessException duplicate() {
         return new YadonyBusinessException(HttpStatus.CONFLICT, "topup-code-duplicate", "Conflict",
-                "Un code de recharge existe déjà avec ce code : " + code);
+                "Un code de recharge existe déjà avec ce code");
     }
 
     private static YadonyBusinessException notFound() {

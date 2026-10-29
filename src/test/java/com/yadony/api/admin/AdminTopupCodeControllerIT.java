@@ -44,6 +44,7 @@ class AdminTopupCodeControllerIT {
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper objectMapper;
     @Autowired WalletTopupCodeRepository codeRepository;
+    @Autowired com.yadony.api.payments.wallet.topupcode.TopupCodeHasher hasher;
     @Autowired WalletTopupCodeRedemptionRepository redemptionRepository;
 
     @BeforeEach
@@ -66,18 +67,24 @@ class AdminTopupCodeControllerIT {
     void creerPuisLister_puisRedemptions() throws Exception {
         String created = mockMvc.perform(post("/admin/topup-codes").with(authentication(adminAuth(AdminRole.ADMIN)))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(body(Map.of("code", "dakar2000", "amount", 10, "currency", "EUR",
+                        .content(body(Map.of("code", "dakar-2000-lancement", "amount", 10, "currency", "EUR",
                                 "maxRedemptions", 100, "note", "Lancement"))))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.code").value("DAKAR2000"))
+                .andExpect(jsonPath("$.code").value("DAKAR-2000-LANCEMENT"))
+                .andExpect(jsonPath("$.codeHint").value("MENT"))
                 .andExpect(jsonPath("$.remaining").value(100))
                 .andExpect(jsonPath("$.displayStatus").value("ACTIVE"))
                 .andReturn().getResponse().getContentAsString();
         String id = objectMapper.readTree(created).get("id").asText();
 
+        // Stocké haché : la liste ne peut plus montrer le code, seulement sa fin.
         mockMvc.perform(get("/admin/topup-codes").with(authentication(adminAuth(AdminRole.ADMIN))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].code").value("DAKAR2000"));
+                .andExpect(jsonPath("$[0].code").doesNotExist())
+                .andExpect(jsonPath("$[0].codeHint").value("MENT"));
+        mockMvc.perform(get("/admin/topup-codes/{id}", id).with(authentication(adminAuth(AdminRole.ADMIN))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").doesNotExist());
 
         // La révocation (findByIdForUpdate = FOR NO KEY UPDATE) n'est pas exécutable sous H2 :
         // elle est couverte par AdminTopupCodeControllerTest.
@@ -90,7 +97,8 @@ class AdminTopupCodeControllerIT {
     @Test
     void doublon_409() throws Exception {
         WalletTopupCodeEntity existing = new WalletTopupCodeEntity();
-        existing.setCode("DAKAR2000");
+        existing.setCodeHash(hasher.hash("DAKAR-2000-LANCEMENT"));
+        existing.setCodeHint("MENT");
         existing.setAmount(BigDecimal.TEN);
         existing.setCurrency("EUR");
         existing.setMaxRedemptions(1);
@@ -100,7 +108,8 @@ class AdminTopupCodeControllerIT {
 
         mockMvc.perform(post("/admin/topup-codes").with(authentication(adminAuth(AdminRole.ADMIN)))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(body(Map.of("code", "DAKAR2000", "amount", 10, "currency", "EUR", "maxRedemptions", 1))))
+                        .content(body(Map.of("code", "dakar-2000-lancement", "amount", 10, "currency", "EUR",
+                                "maxRedemptions", 1))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("topup-code-duplicate"));
     }
@@ -109,7 +118,7 @@ class AdminTopupCodeControllerIT {
     void genererUnCode() throws Exception {
         mockMvc.perform(post("/admin/topup-codes/generate-code").with(authentication(adminAuth(AdminRole.ADMIN))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value(org.hamcrest.Matchers.matchesPattern("YD-[A-Z2-9]{4}-[A-Z2-9]{4}")));
+                .andExpect(jsonPath("$.code").value(org.hamcrest.Matchers.matchesPattern("YD-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}")));
     }
 
     @Test
