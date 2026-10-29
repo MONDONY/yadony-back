@@ -41,6 +41,9 @@ public class ExchangeRateUpdateService {
     // zéros de trop se traduirait en commissions et montants convertis totalement faux.
     public static final BigDecimal MAX_UNITS_PER_EUR = new BigDecimal("10000");
 
+    /** Écart relatif au taux en place au-delà duquel une saisie admin doit être confirmée. */
+    public static final BigDecimal LARGE_CHANGE = new BigDecimal("0.10");
+
     private final ExchangeRateRepository exchangeRateRepository;
     private final AuditService auditService;
     private final CacheManager cacheManager;
@@ -71,6 +74,20 @@ public class ExchangeRateUpdateService {
     @Transactional
     public ExchangeRateEntity apply(String currency, BigDecimal unitsPerEur,
                                     UUID actorId, String auditAction) {
+        // Synchronisation BCE : elle refuse déjà toute variation de plus de 10 % (ExchangeRateSyncService).
+        return apply(currency, unitsPerEur, actorId, auditAction, true);
+    }
+
+    /**
+     * Comme {@link #apply(String, BigDecimal, UUID, String)}, avec la garde de saisie admin : un
+     * taux qui s'écarte de plus de {@link #LARGE_CHANGE} du taux en place exige
+     * {@code confirmLargeChange} (sinon 422 {@code exchange-rate-large-change}). Une faute de
+     * frappe (0,0086 au lieu de 0,86) faussait sinon toutes les conversions, et la synchronisation
+     * BCE refusait ensuite de la corriger, l'écart dépassant sa propre borne.
+     */
+    @Transactional
+    public ExchangeRateEntity apply(String currency, BigDecimal unitsPerEur, UUID actorId, String auditAction,
+                                    boolean confirmLargeChange) {
         String normalized = normalize(currency);
 
         if (FIXED_PARITY_CURRENCIES.contains(normalized)) {
@@ -87,6 +104,21 @@ public class ExchangeRateUpdateService {
                         "exchange-rate-not-found", "Exchange Rate Not Found",
                         "Aucun taux de change n'existe pour la devise " + normalized));
 
+        BigDecimal previous = entity.getUnitsPerEur();
+        if (!confirmLargeChange && previous != null && previous.signum() > 0) {
+            BigDecimal change = unitsPerEur.subtract(previous).abs()
+                    .divide(previous, 6, java.math.RoundingMode.HALF_UP);
+            if (change.compareTo(LARGE_CHANGE) > 0) {
+                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "exchange-rate-large-change", "Exchange Rate Large Change",
+                        "Le nouveau taux s'écarte de plus de 10 % du taux en place : confirmez la saisie.",
+                        Map.of("currency", normalized, "currentRate", previous.toPlainString(),
+                                "newRate", unitsPerEur.toPlainString(),
+                                "changePercent", change.movePointRight(2).setScale(1, java.math.RoundingMode.HALF_UP)
+                                        .toPlainString()));
+            }
+        }
+
         entity.setUnitsPerEur(unitsPerEur);
         entity.setUpdatedAt(OffsetDateTime.now());
         entity.setUpdatedBy(actorId);
@@ -102,7 +134,8 @@ public class ExchangeRateUpdateService {
         eventPublisher.publishEvent(new ExchangeRateChangedEvent(normalized, saved.getUnitsPerEur()));
 
         auditService.log("EXCHANGE_RATE", null, auditAction, actorId,
-                Map.of("currency", normalized, "unitsPerEur", saved.getUnitsPerEur().toPlainString()));
+                Map.of("currency", normalized, "unitsPerEur", saved.getUnitsPerEur().toPlainString(),
+                        "previousUnitsPerEur", String.valueOf(previous)));
 
         return saved;
     }

@@ -68,6 +68,35 @@ public interface WalletTransactionRepository extends JpaRepository<WalletTransac
     /** Recharge rattachée à un PaymentIntent Stripe (litige sur une recharge, cf. WalletDisputeService). */
     List<WalletTransactionEntity> findByPaymentRefAndType(String paymentRef, WalletTransactionType type);
 
+    /** Somme, par devise, de montants en valeur absolue. */
+    interface AmountByCurrency {
+        String getCurrency();
+        BigDecimal getTotal();
+    }
+
+    /** Ajustements admin écrits par {@code adminId} depuis {@code since}, par devise (plafond de 24 h). */
+    @Query("SELECT t.currency AS currency, SUM(ABS(t.amount)) AS total FROM WalletTransactionEntity t "
+            + "WHERE t.type IN :types AND t.adminActorId = :adminId AND t.createdAt >= :since GROUP BY t.currency")
+    List<AmountByCurrency> sumAdjustmentsByAdmin(@Param("types") java.util.Collection<WalletTransactionType> types,
+                                                 @Param("adminId") UUID adminId,
+                                                 @Param("since") java.time.Instant since);
+
+    /** Ajustements admin reçus par {@code userId} depuis {@code since}, par devise (plafond de 24 h). */
+    @Query("SELECT t.currency AS currency, SUM(ABS(t.amount)) AS total FROM WalletTransactionEntity t "
+            + "WHERE t.type IN :types AND t.userId = :userId AND t.createdAt >= :since GROUP BY t.currency")
+    List<AmountByCurrency> sumAdjustmentsForUser(@Param("types") java.util.Collection<WalletTransactionType> types,
+                                                 @Param("userId") UUID userId,
+                                                 @Param("since") java.time.Instant since);
+
+    /**
+     * Verrou de la ligne de l'admin (UPDATE neutre, exécutable sous H2) : deux ajustements
+     * simultanés du même admin, sur deux comptes différents, ne franchissent plus ensemble le
+     * plafond de 24 h. Requête native pour ne pas dépendre du paquet admin.
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query(value = "UPDATE admin_users SET id = id WHERE id = :adminId", nativeQuery = true)
+    int lockAdmin(@Param("adminId") UUID adminId);
+
     // Journal admin des mouvements (cf. WalletAdminAdjustmentService#transactions) : le tri
     // vient du Pageable, un filtre absent choisit la variante sans ce critère.
     Page<WalletTransactionEntity> findByUserId(UUID userId, Pageable pageable);

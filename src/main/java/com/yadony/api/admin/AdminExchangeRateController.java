@@ -66,7 +66,8 @@ public class AdminExchangeRateController {
                                        @RequestBody UpdateExchangeRateRequest request,
                                        Authentication authentication) {
         return ExchangeRateResponse.from(updateService.apply(
-                currency, request.unitsPerEur(), adminId(authentication), "EXCHANGE_RATE_UPDATED"));
+                currency, request.unitsPerEur(), adminId(authentication), "EXCHANGE_RATE_UPDATED",
+                Boolean.TRUE.equals(request.confirmLargeChange())));
     }
 
     private UUID adminId(Authentication authentication) {

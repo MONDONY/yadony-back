@@ -43,6 +43,7 @@ class WalletAdminAdjustmentServiceTest {
 
     @Mock WalletAccountRepository accountRepository;
     @Mock WalletTransactionRepository transactionRepository;
+    @Mock WalletAdjustmentRequestRepository requestRepository;
     @Mock WalletService walletService;
     @Mock WalletSelfRefundService selfRefundService;
     @Mock ExchangeRateService exchangeRateService;
@@ -57,10 +58,12 @@ class WalletAdminAdjustmentServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new WalletAdminAdjustmentService(accountRepository, transactionRepository, walletService,
+        service = new WalletAdminAdjustmentService(accountRepository, transactionRepository, requestRepository,
+                walletService,
                 selfRefundService, exchangeRateService, auditService, eventPublisher);
         lenient().when(transactionRepository.saveAndFlush(any())).thenAnswer(inv -> withId(inv.getArgument(0)));
         lenient().when(accountRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(requestRepository.saveAndFlush(any())).thenAnswer(inv -> withId(inv.getArgument(0)));
     }
 
     // ── Aides ────────────────────────────────────────────────────────────────
@@ -223,6 +226,21 @@ class WalletAdminAdjustmentServiceTest {
         verifyNoInteractions(auditService, eventPublisher);
     }
 
+    @Test
+    void credit_surDeviseEnLitige_refuse422MotifLitige() {
+        WalletAccountEntity w = wallet("EUR", "10.00");
+        locked(w);
+        when(walletService.isDisputeHeld(USER_ID, "EUR")).thenReturn(true);
+
+        YadonyBusinessException e = business(catchThrowable(() -> service.adjust(credit("EUR", "5"))));
+
+        assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(e.getErrorCode()).isEqualTo("wallet-dispute-hold");
+        assertThat(w.getBalance()).isEqualByComparingTo("10.00");
+        verify(transactionRepository, never()).saveAndFlush(any());
+        verifyNoInteractions(auditService, eventPublisher);
+    }
+
     // ── Débit ────────────────────────────────────────────────────────────────
 
     @Test
@@ -314,14 +332,225 @@ class WalletAdminAdjustmentServiceTest {
         verify(accountRepository, never()).findByUserIdAndCurrencyForUpdate(any(), anyString());
     }
 
+    /** 500 € reste sous le plafond par opération, mais au-delà de 100 € : demande à approuver. */
     @Test
-    void plafond_eurExactement500_accepte() {
+    void plafond_eurExactement500_accepteEnAttenteDApprobation() {
+        AdjustmentResult result = service.adjust(credit("EUR", "500"));
+
+        assertThat(result.awaitingApproval()).isTrue();
+        assertThat(result.pendingRequest().getAmount()).isEqualByComparingTo("500");
+        verify(transactionRepository, never()).saveAndFlush(any());
+    }
+
+    // ── Double validation (au-delà de 100 €) ─────────────────────────────────
+
+    @Test
+    void seuil_100EurExactement_estAppliqueToutDeSuite() {
         WalletAccountEntity w = wallet("EUR", "0");
         locked(w);
 
-        service.adjust(credit("EUR", "500"));
+        AdjustmentResult result = service.adjust(credit("EUR", "100"));
 
-        assertThat(w.getBalance()).isEqualByComparingTo("500");
+        assertThat(result.awaitingApproval()).isFalse();
+        assertThat(w.getBalance()).isEqualByComparingTo("100");
+        verify(requestRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void seuil_auDelaDe100Eur_ouvreUneDemandeSansRienEcrire() {
+        AdjustmentResult result = service.adjust(credit("EUR", "100.01"));
+
+        ArgumentCaptor<WalletAdjustmentRequestEntity> saved = ArgumentCaptor.forClass(WalletAdjustmentRequestEntity.class);
+        verify(requestRepository).saveAndFlush(saved.capture());
+        WalletAdjustmentRequestEntity request = saved.getValue();
+        assertThat(request.getStatus()).isEqualTo(WalletAdjustmentRequestStatus.PENDING);
+        assertThat(request.getRequestedBy()).isEqualTo(ADMIN_ID);
+        assertThat(request.getUserId()).isEqualTo(USER_ID);
+        assertThat(request.getDirection()).isEqualTo(WalletAdjustmentDirection.CREDIT);
+        assertThat(request.getEurEquivalent()).isEqualByComparingTo("100.01");
+        assertThat(request.getIdempotencyKey()).isEqualTo("admin-adjust:key-1");
+        assertThat(result.awaitingApproval()).isTrue();
+        verify(accountRepository, never()).findByUserIdAndCurrencyForUpdate(any(), anyString());
+        verify(transactionRepository, never()).saveAndFlush(any());
+        verify(auditService).log(eq("wallet_adjustment_request"), any(), eq("WALLET_ADJUSTMENT_REQUESTED"),
+                eq(ADMIN_ID), any());
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void seuil_demandeRejouee_memeContenu_rendLaDemande_contenuDifferent_409() {
+        WalletAdjustmentRequestEntity pending = withId(new WalletAdjustmentRequestEntity());
+        pending.setUserId(USER_ID);
+        pending.setCurrency("EUR");
+        pending.setDirection(WalletAdjustmentDirection.CREDIT);
+        pending.setAmount(new BigDecimal("150"));
+        pending.setReason(REASON);
+        when(requestRepository.findByIdempotencyKey("admin-adjust:key-1")).thenReturn(Optional.of(pending));
+
+        AdjustmentResult replay = service.adjust(credit("EUR", "150"));
+
+        assertThat(replay.replayed()).isTrue();
+        assertThat(replay.pendingRequest()).isSameAs(pending);
+        verify(requestRepository, never()).saveAndFlush(any());
+        assertThat(business(catchThrowable(() -> service.adjust(credit("EUR", "151")))).getErrorCode())
+                .isEqualTo("wallet-adjustment-idempotency-conflict");
+    }
+
+    @Test
+    void seuil_demandeConcurrenteMemeCle_409() {
+        doThrow(new DataIntegrityViolationException("uq")).when(requestRepository).saveAndFlush(any());
+
+        assertThat(business(catchThrowable(() -> service.adjust(credit("EUR", "150")))).getErrorCode())
+                .isEqualTo("wallet-adjustment-idempotency-conflict");
+    }
+
+    // ── Plafond cumulé de 24 h ───────────────────────────────────────────────
+
+    private static WalletTransactionRepository.AmountByCurrency total(String currency, String amount) {
+        return new WalletTransactionRepository.AmountByCurrency() {
+            @Override public String getCurrency() { return currency; }
+            @Override public BigDecimal getTotal() { return new BigDecimal(amount); }
+        };
+    }
+
+    @Test
+    void plafond24h_parAdmin_refuse422EtVerrouilleLAdmin() {
+        locked(wallet("EUR", "0"));
+        when(transactionRepository.sumAdjustmentsByAdmin(any(), eq(ADMIN_ID), any()))
+                .thenReturn(List.of(total("EUR", "450")));
+
+        YadonyBusinessException e = business(catchThrowable(() -> service.adjust(credit("EUR", "60"))));
+
+        assertThat(e.getErrorCode()).isEqualTo("wallet-adjustment-daily-cap-exceeded");
+        verify(transactionRepository).lockAdmin(ADMIN_ID);
+        verify(transactionRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void plafond24h_parUtilisateurCible_convertitLesAutresDevises() {
+        locked(wallet("EUR", "0"));
+        when(transactionRepository.sumAdjustmentsForUser(any(), eq(USER_ID), any()))
+                .thenReturn(List.of(total("EUR", "100"), total("XOF", "262383")));
+        when(exchangeRateService.toEurPivot(new BigDecimal("262383"), "XOF")).thenReturn(new BigDecimal("400.0000"));
+
+        assertThat(business(catchThrowable(() -> service.adjust(credit("EUR", "1")))).getErrorCode())
+                .isEqualTo("wallet-adjustment-daily-cap-exceeded");
+    }
+
+    @Test
+    void plafond24h_atteintExactement_accepte() {
+        WalletAccountEntity w = wallet("EUR", "0");
+        locked(w);
+        when(transactionRepository.sumAdjustmentsByAdmin(any(), eq(ADMIN_ID), any()))
+                .thenReturn(List.of(total("EUR", "440")));
+
+        service.adjust(credit("EUR", "60"));
+
+        assertThat(w.getBalance()).isEqualByComparingTo("60");
+    }
+
+    // ── Approbation et rejet ─────────────────────────────────────────────────
+
+    static final UUID SECOND_ADMIN = UUID.randomUUID();
+
+    private WalletAdjustmentRequestEntity storedRequest(String amount) {
+        WalletAdjustmentRequestEntity request = withId(new WalletAdjustmentRequestEntity());
+        request.setUserId(USER_ID);
+        request.setCurrency("EUR");
+        request.setDirection(WalletAdjustmentDirection.CREDIT);
+        request.setAmount(new BigDecimal(amount));
+        request.setEurEquivalent(new BigDecimal(amount));
+        request.setReason(REASON);
+        request.setIdempotencyKey("admin-adjust:key-1");
+        request.setRequestedBy(ADMIN_ID);
+        when(requestRepository.findById(request.getId())).thenReturn(Optional.of(request));
+        return request;
+    }
+
+    @Test
+    void approbation_parUnSecondAdmin_ecritAuNomDeLAuteur() {
+        WalletAdjustmentRequestEntity request = storedRequest("150");
+        WalletAccountEntity w = wallet("EUR", "0");
+        locked(w);
+        when(requestRepository.claim(eq(request.getId()), eq(WalletAdjustmentRequestStatus.APPROVED),
+                eq(SECOND_ADMIN), any(), any())).thenReturn(1);
+
+        AdjustmentResult result = service.approve(request.getId(), SECOND_ADMIN);
+
+        assertThat(w.getBalance()).isEqualByComparingTo("150");
+        assertThat(result.transaction().getAdminActorId()).isEqualTo(ADMIN_ID);
+        assertThat(result.transaction().getIdempotencyKey()).isEqualTo("admin-adjust:key-1");
+        assertThat(request.getTransactionId()).isEqualTo(result.transaction().getId());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).log(eq("wallet"), eq(w.getId()), eq("WALLET_ADMIN_CREDIT"), eq(ADMIN_ID), payload.capture());
+        assertThat(payload.getValue()).containsEntry("approvedBy", SECOND_ADMIN.toString());
+        verify(auditService).log(eq("wallet_adjustment_request"), eq(request.getId()), eq("WALLET_ADJUSTMENT_APPROVED"),
+                eq(SECOND_ADMIN), any());
+    }
+
+    @Test
+    void approbation_parSonAuteur_refuse403SansPrendreLaDemande() {
+        WalletAdjustmentRequestEntity request = storedRequest("150");
+
+        YadonyBusinessException e = business(catchThrowable(() -> service.approve(request.getId(), ADMIN_ID)));
+
+        assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(e.getErrorCode()).isEqualTo("wallet-adjustment-self-approval");
+        verify(requestRepository, never()).claim(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void approbation_dejaDecidee_409SansEcriture() {
+        WalletAdjustmentRequestEntity request = storedRequest("150");
+        when(requestRepository.claim(any(), any(), any(), any(), any())).thenReturn(0);
+
+        assertThat(business(catchThrowable(() -> service.approve(request.getId(), SECOND_ADMIN))).getErrorCode())
+                .isEqualTo("wallet-adjustment-request-already-decided");
+        verify(transactionRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void approbation_demandeInconnue_404() {
+        assertThat(business(catchThrowable(() -> service.approve(UUID.randomUUID(), SECOND_ADMIN))).getErrorCode())
+                .isEqualTo("wallet-adjustment-request-not-found");
+    }
+
+    @Test
+    void rejet_prendLaDemandeAvecSaNote() {
+        WalletAdjustmentRequestEntity request = storedRequest("150");
+        when(requestRepository.claim(eq(request.getId()), eq(WalletAdjustmentRequestStatus.REJECTED),
+                eq(SECOND_ADMIN), any(), eq("Montant non justifié"))).thenReturn(1);
+
+        service.reject(request.getId(), SECOND_ADMIN, "  Montant non justifié ");
+
+        verify(auditService).log(eq("wallet_adjustment_request"), eq(request.getId()), eq("WALLET_ADJUSTMENT_REJECTED"),
+                eq(SECOND_ADMIN), eq(Map.of("note", "Montant non justifié")));
+        verifyNoInteractions(walletService);
+    }
+
+    @Test
+    void rejet_dejaDecide_409_noteTropLongue_400() {
+        WalletAdjustmentRequestEntity request = storedRequest("150");
+
+        assertThat(business(catchThrowable(() -> service.reject(request.getId(), SECOND_ADMIN, "x".repeat(501))))
+                .getErrorCode()).isEqualTo("wallet-adjustment-note-invalid");
+        assertThat(business(catchThrowable(() -> service.reject(request.getId(), SECOND_ADMIN, null))).getErrorCode())
+                .isEqualTo("wallet-adjustment-request-already-decided");
+    }
+
+    @Test
+    void file_bornee_triParAnciennete() {
+        when(requestRepository.findByStatus(eq(WalletAdjustmentRequestStatus.PENDING), any()))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        service.requests(WalletAdjustmentRequestStatus.PENDING, -1, 500);
+
+        ArgumentCaptor<Pageable> page = ArgumentCaptor.forClass(Pageable.class);
+        verify(requestRepository).findByStatus(eq(WalletAdjustmentRequestStatus.PENDING), page.capture());
+        assertThat(page.getValue().getPageNumber()).isZero();
+        assertThat(page.getValue().getPageSize()).isEqualTo(100);
+        assertThat(page.getValue().getSort().getOrderFor("createdAt").getDirection()).isEqualTo(Sort.Direction.ASC);
     }
 
     @Test

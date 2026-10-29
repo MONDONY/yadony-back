@@ -91,6 +91,9 @@ public class WalletTopupCodeRedemptionService {
         if (redemptions.existsByCodeIdAndUserId(topupCode.getId(), userId)) {
             throw unprocessable("topup-code-already-redeemed", "Tu as déjà utilisé ce code");
         }
+        if (walletService.isDisputeHeld(userId, topupCode.getCurrency())) {
+            throw WalletService.disputeHeld();
+        }
         if (walletService.isFrozen(userId, topupCode.getCurrency())) {
             throw unprocessable("wallet-refund-pending",
                     "Solde gelé : une demande de remboursement est en cours sur cette devise");
