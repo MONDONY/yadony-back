@@ -82,13 +82,15 @@ class WalletTopupCodeRedemptionPostgresIT {
     @Autowired private UserRepository userRepository;
     @Autowired private WalletAccountRepository walletAccountRepository;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private TopupCodeHasher hasher;
+    @Autowired private TopupCodeHashBackfill backfill;
 
     @Test
     void redeem_succes_crediteLeSoldeEtEcritUnTopUpCodeSansPaymentRef() {
         UUID user = persistUser().getId();
         WalletTopupCodeEntity code = createCode(10);
 
-        TopupCodeRedeemResponse response = redemptionService.redeem(user, code.getCode().toLowerCase(Locale.ROOT));
+        TopupCodeRedeemResponse response = redemptionService.redeem(user, code.getIssuedCode().toLowerCase(Locale.ROOT));
 
         assertThat(response.amount()).isEqualByComparingTo("15");
         assertThat(balance(user)).isEqualByComparingTo("15");
@@ -108,9 +110,9 @@ class WalletTopupCodeRedemptionPostgresIT {
     void redeem_memeCompteDeuxFois_422_etUnSeulCredit() {
         UUID user = persistUser().getId();
         WalletTopupCodeEntity code = createCode(10);
-        redemptionService.redeem(user, code.getCode());
+        redemptionService.redeem(user, code.getIssuedCode());
 
-        assertThatThrownBy(() -> redemptionService.redeem(user, code.getCode()))
+        assertThatThrownBy(() -> redemptionService.redeem(user, code.getIssuedCode()))
                 .satisfies(t -> assertProblem(t, "topup-code-already-redeemed"));
 
         assertThat(balance(user)).isEqualByComparingTo("15");
@@ -125,8 +127,8 @@ class WalletTopupCodeRedemptionPostgresIT {
         UUID second = persistUser().getId();
         WalletTopupCodeEntity code = createCode(10);
 
-        redemptionService.redeem(first, code.getCode());
-        redemptionService.redeem(second, code.getCode());
+        redemptionService.redeem(first, code.getIssuedCode());
+        redemptionService.redeem(second, code.getIssuedCode());
 
         assertThat(balance(first)).isEqualByComparingTo("15");
         assertThat(balance(second)).isEqualByComparingTo("15");
@@ -148,7 +150,7 @@ class WalletTopupCodeRedemptionPostgresIT {
                 results.add(pool.submit(() -> {
                     start.await();
                     try {
-                        redemptionService.redeem(user, code.getCode());
+                        redemptionService.redeem(user, code.getIssuedCode());
                         return "OK";
                     } catch (YadonyBusinessException e) {
                         return e.getErrorCode();
@@ -178,7 +180,7 @@ class WalletTopupCodeRedemptionPostgresIT {
 
         adminService.revoke(code.getId(), admin);
 
-        assertThatThrownBy(() -> redemptionService.redeem(user, code.getCode()))
+        assertThatThrownBy(() -> redemptionService.redeem(user, code.getIssuedCode()))
                 .satisfies(t -> assertProblem(t, "topup-code-revoked"));
         assertThat(ledgerRows(user)).isZero();
         assertThat(redeemedCount(code.getId())).isZero();
@@ -188,7 +190,7 @@ class WalletTopupCodeRedemptionPostgresIT {
     void redemptions_admin_listeLUtilisationApresSucces() {
         UUID user = persistUser().getId();
         WalletTopupCodeEntity code = createCode(10);
-        TopupCodeRedeemResponse response = redemptionService.redeem(user, code.getCode());
+        TopupCodeRedeemResponse response = redemptionService.redeem(user, code.getIssuedCode());
 
         List<WalletTopupCodeRedemptionEntity> list = adminService.redemptions(code.getId());
 
@@ -199,6 +201,50 @@ class WalletTopupCodeRedemptionPostgresIT {
             assertThat(r.getCurrency()).isEqualTo("EUR");
             assertThat(r.getWalletTransactionId()).isEqualTo(response.transactionId());
         });
+    }
+
+    @Test
+    void creation_neStockeJamaisLeCodeEnClair() {
+        WalletTopupCodeEntity code = createCode(10);
+
+        var row = jdbc.queryForMap("SELECT code, code_hash, code_hint FROM wallet_topup_codes WHERE id = ?",
+                code.getId());
+        assertThat(row.get("code")).isNull();
+        assertThat((String) row.get("code_hash")).matches("[0-9a-f]{64}");
+        assertThat(row.get("code_hint")).isEqualTo(TopupCodeHasher.hint(code.getIssuedCode()));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM audit_log WHERE entity_id = ? AND payload::text LIKE ?",
+                Integer.class, code.getId(), "%" + code.getIssuedCode() + "%")).isZero();
+    }
+
+    @Test
+    void codeAnterieurEnClair_hacheParLeRattrapage_resteUtilisable() {
+        UUID admin = persistUser().getId();
+        UUID user = persistUser().getId();
+        UUID id = UUID.randomUUID();
+        jdbc.update("INSERT INTO wallet_topup_codes (id, code, amount, currency, max_redemptions, redeemed_count, "
+                        + "expires_at, status, created_by, created_at, updated_at) "
+                        + "VALUES (?, 'YD-LEGA-CY01', 15, 'EUR', 5, 0, ?, 'ACTIVE', ?, now(), now())",
+                id, LocalDateTime.now(ZoneOffset.UTC).plusDays(5), admin);
+
+        assertThat(backfill.backfill()).isEqualTo(1);
+        assertThat(backfill.backfill()).isZero();
+
+        var row = jdbc.queryForMap("SELECT code, code_hash, code_hint FROM wallet_topup_codes WHERE id = ?", id);
+        assertThat(row.get("code")).isNull();
+        assertThat(row.get("code_hash")).isEqualTo(hasher.hash("YD-LEGA-CY01"));
+        assertThat(row.get("code_hint")).isEqualTo("01");
+        TopupCodeRedeemResponse response = redemptionService.redeem(user, "yd-lega-cy01");
+        assertThat(response.amount()).isEqualByComparingTo("15");
+    }
+
+    @Test
+    void base_refuseUnCodeSansEmpreinteNiTexte() {
+        UUID admin = persistUser().getId();
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO wallet_topup_codes (id, amount, currency, max_redemptions, "
+                        + "redeemed_count, expires_at, status, created_by, created_at, updated_at) "
+                        + "VALUES (?, 15, 'EUR', 5, 0, ?, 'ACTIVE', ?, now(), now())",
+                UUID.randomUUID(), LocalDateTime.now(ZoneOffset.UTC).plusDays(5), admin))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
     }
 
     private WalletTopupCodeEntity createCode(int maxRedemptions) {

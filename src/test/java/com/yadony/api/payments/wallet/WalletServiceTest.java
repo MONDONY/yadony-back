@@ -29,6 +29,7 @@ class WalletServiceTest {
     @Mock WalletTransactionRepository walletTransactionRepository;
     @Mock WalletRefundRequestRepository walletRefundRequestRepository;
     @Mock WalletDisputeHoldRepository walletDisputeHoldRepository;
+    @Mock WalletExternalRefundHoldRepository walletExternalRefundHoldRepository;
     @Mock AuditService auditService;
     @Mock jakarta.persistence.EntityManager entityManager;
 
@@ -37,7 +38,8 @@ class WalletServiceTest {
     @BeforeEach
     void setUp() {
         walletService = new WalletService(walletAccountRepository, walletTransactionRepository,
-                walletRefundRequestRepository, walletDisputeHoldRepository, auditService, entityManager);
+                walletRefundRequestRepository, walletDisputeHoldRepository, walletExternalRefundHoldRepository,
+                auditService, entityManager);
     }
 
     @Test
@@ -817,5 +819,24 @@ class WalletServiceTest {
         // la répartition d'une commission déciderait « couvert » sur un chiffre faux.
         assertThat(balance).isEqualByComparingTo("600");
         verify(entityManager).refresh(wallet);
+    }
+
+    @Test
+    void externalRefundHold_gelLaDevise_etDebitRefuseAvecSonMotif() {
+        UUID userId = UUID.randomUUID();
+        when(walletAccountRepository.findByUserIdAndCurrencyForUpdate(userId, "EUR"))
+                .thenReturn(Optional.of(wallet(userId, "EUR", new BigDecimal("50.00"))));
+        org.mockito.Mockito.when(walletExternalRefundHoldRepository.existsByUserIdAndCurrencyAndStatus(
+                userId, "EUR", WalletExternalRefundHoldStatus.OPEN)).thenReturn(true);
+
+        org.assertj.core.api.Assertions.assertThat(walletService.isExternalRefundHeld(userId, "eur")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(walletService.isFrozen(userId, "EUR")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(walletService.isRefundRequestPending(userId, "EUR")).isFalse();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> walletService.debit(userId, "EUR",
+                        new java.math.BigDecimal("1.00"), WalletTransactionType.COMMISSION_DEDUCTED, UUID.randomUUID()))
+                .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
+                .satisfies(e -> org.assertj.core.api.Assertions.assertThat(
+                        ((com.yadony.api.common.YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("wallet-external-refund-hold"));
     }
 }

@@ -211,10 +211,41 @@ class AdminExchangeRateControllerTest {
         mockMvc.perform(put("/admin/exchange-rates/USD")
                         .with(authentication(adminAuth()))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"unitsPerEur\":\"1.20\"}"))
+                        .content("{\"unitsPerEur\":\"1.15\"}"))
                 .andExpect(status().isOk());
 
         assertThat(cache.get("USD")).isNull();
+    }
+
+    @Test
+    @DisplayName("PUT — écart de plus de 10 % sans confirmation -> 422 exchange-rate-large-change, rien n'est écrit")
+    void put_largeChangeWithoutConfirmation_is422() throws Exception {
+        when(exchangeRateRepository.findByCurrency("USD")).thenReturn(Optional.of(usdRate()));
+
+        mockMvc.perform(put("/admin/exchange-rates/USD")
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"unitsPerEur\":\"0.0108\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("exchange-rate-large-change"))
+                .andExpect(jsonPath("$.currentRate").value("1.080000"))
+                .andExpect(jsonPath("$.changePercent").value("99.0"));
+
+        verify(exchangeRateRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    @DisplayName("PUT — écart de plus de 10 % confirmé -> 200, le taux est appliqué")
+    void put_largeChangeConfirmed_isApplied() throws Exception {
+        when(exchangeRateRepository.findByCurrency("USD")).thenReturn(Optional.of(usdRate()));
+        when(exchangeRateRepository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mockMvc.perform(put("/admin/exchange-rates/USD")
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"unitsPerEur\":\"1.30\",\"confirmLargeChange\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.unitsPerEur").value(1.30));
     }
 
     // ── PUT validation ───────────────────────────────────────────────────────

@@ -6,6 +6,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import org.hibernate.annotations.Where;
 
 import java.math.BigDecimal;
@@ -18,8 +19,24 @@ import java.util.UUID;
 @Where(clause = "deleted_at IS NULL")
 public class WalletTopupCodeEntity extends BaseEntity {
 
-    @Column(name = "code", nullable = false, unique = true, length = 32)
+    /**
+     * Code en clair des codes créés avant le hachage (V360), effacé au démarrage par
+     * {@link TopupCodeHashBackfill}. Toujours nul pour un code créé depuis.
+     */
+    @Column(name = "code", length = 32)
     private String code;
+
+    /** HMAC-SHA256 du code normalisé ({@link TopupCodeHasher}) : seule clé de recherche. */
+    @Column(name = "code_hash", unique = true, length = 64)
+    private String codeHash;
+
+    /** Fin du code, seule partie affichée après la création. */
+    @Column(name = "code_hint", length = 8)
+    private String codeHint;
+
+    /** Code en clair d'une création, jamais persisté : la réponse de création est le seul endroit où il apparaît. */
+    @Transient
+    private String issuedCode;
 
     @Column(name = "amount", nullable = false, precision = 10, scale = 2)
     private BigDecimal amount;
@@ -63,6 +80,12 @@ public class WalletTopupCodeEntity extends BaseEntity {
 
     public String getCode() { return code; }
     public void setCode(String code) { this.code = code != null ? code.toUpperCase(Locale.ROOT) : null; }
+    public String getCodeHash() { return codeHash; }
+    public void setCodeHash(String codeHash) { this.codeHash = codeHash; }
+    public String getCodeHint() { return codeHint; }
+    public void setCodeHint(String codeHint) { this.codeHint = codeHint; }
+    public String getIssuedCode() { return issuedCode; }
+    public void setIssuedCode(String issuedCode) { this.issuedCode = issuedCode; }
     public BigDecimal getAmount() { return amount; }
     public void setAmount(BigDecimal amount) { this.amount = amount; }
     public String getCurrency() { return currency; }

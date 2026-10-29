@@ -106,6 +106,9 @@ jobs:
           TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
           RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
           INTERNAL_SHARED_SECRET=${{ secrets.INTERNAL_SHARED_SECRET }}
+          # Clé HMAC des codes de recharge du solde (stockés hachés). Obligatoire hors dev/test :
+          # le back refuse de démarrer sans elle. La changer rend tous les codes en cours inutilisables.
+          TOPUP_CODE_HMAC_KEY=${{ secrets.TOPUP_CODE_HMAC_KEY }}
           TWILIO_ACCOUNT_SID=${{ secrets.TWILIO_ACCOUNT_SID }}
           TWILIO_AUTH_TOKEN=${{ secrets.TWILIO_AUTH_TOKEN }}
           AT_API_KEY=${{ secrets.AT_API_KEY }}

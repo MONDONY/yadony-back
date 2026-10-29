@@ -203,6 +203,12 @@ public class BidAmendmentService {
     @Transactional
     public AmendmentCreateResponse create(UUID bidId, String firebaseUid, CreateAmendmentRequest request) {
         UserEntity sender = user(firebaseUid);
+        // Propriété vérifiée AVANT les verrous (même refus que l'éligibilité) : un tiers ne verrouille
+        // plus le colis ni le trajet d'un autre.
+        BidRepository.BidParties parties = bids.findPartiesById(bidId).orElseThrow(BidAmendmentService::bidNotFound);
+        if (!sender.getId().equals(parties.getSenderId())) {
+            throw BidAmendmentEligibility.exceptionFor("amendment-not-eligible");
+        }
         lockBid(bidId);
         BidEntity bid = bid(bidId);
         AnnouncementEntity announcement = lockAnnouncement(bid).orElseThrow(BidAmendmentService::announcementNotFound);

@@ -119,6 +119,28 @@ class AdminWalletRefundControllerTest {
         verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
     }
 
+    @Test
+    @DisplayName("autorités PAYMENT_* sans ROLE_ADMIN → 403 partout (la règle de méthode répète hasRole)")
+    void authoritiesWithoutAdminRole_returns403() throws Exception {
+        var authoritiesOnly = new UsernamePasswordAuthenticationToken("not-an-admin", null,
+                List.of(new SimpleGrantedAuthority("PAYMENT_VIEW"), new SimpleGrantedAuthority("PAYMENT_REFUND")));
+        UUID requestId = UUID.randomUUID();
+        mockMvc.perform(get("/admin/wallet-refund-requests").with(authentication(authoritiesOnly)))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/admin/wallet-refund-requests/" + requestId + "/resolve")
+                        .with(authentication(authoritiesOnly)))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/admin/wallet-refund-requests/" + requestId + "/retry-preview")
+                        .with(authentication(authoritiesOnly)))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/admin/wallet-refund-requests/" + requestId + "/retry")
+                        .with(authentication(authoritiesOnly)))
+                .andExpect(status().isForbidden());
+
+        verify(walletService, never()).debitConfirmedRefund(any(), any(), any(), any());
+        org.mockito.Mockito.verifyNoInteractions(walletRefundRetryService, refundRequestRepository);
+    }
+
     // ── GET ──────────────────────────────────────────────────────────────────
 
     @Test

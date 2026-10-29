@@ -62,6 +62,16 @@ public class StripeWebhookIngestService {
                 throw new YadonyBusinessException(HttpStatus.BAD_REQUEST,
                         "invalid-webhook-signature", "Webhook Error", "Signature webhook invalide");
             }
+            // Signé par l'endpoint des comptes connectés : il ne porte que la vie des comptes
+            // voyageurs et leurs virements. Tout autre type (un paiement encaissé par le voyageur
+            // lui-même, par exemple) est écarté sans être stocké ; 200 pour que Stripe ne le
+            // rejoue pas.
+            if (!StripeConnectEvents.fromConnectedAccount(event)
+                    || !StripeConnectEvents.isConnectedAccountType(event.getType())) {
+                log.warn("Stripe event {} ({}, account={}) signé par l'endpoint Connect : type non attendu, ignoré",
+                        event.getId(), event.getType(), event.getAccount());
+                return;
+            }
         }
 
         if (repo.existsById(event.getId())) {

@@ -26,4 +26,25 @@ public class WalletTopupCodeConfig {
                 .expireAfterWrite(1, TimeUnit.HOURS)
                 .build();
     }
+
+    /** Même compteur par IP (adresse vue par nginx), tous comptes confondus. */
+    @Bean("topupCodeIpFailureCache")
+    public Cache<String, AtomicInteger> topupCodeIpFailureCache() {
+        return Caffeine.newBuilder()
+                .maximumSize(50_000)
+                .expireAfterWrite(1, TimeUnit.HOURS)
+                .build();
+    }
+
+    /**
+     * Compteur de toute la plateforme, et marqueur « alerte déjà levée » de la fenêtre. Cache à
+     * part, de deux entrées : un afflux d'IP ne peut pas l'évincer.
+     */
+    @Bean("topupCodeGlobalFailureCache")
+    public Cache<String, AtomicInteger> topupCodeGlobalFailureCache() {
+        return Caffeine.newBuilder()
+                .maximumSize(16)
+                .expireAfterWrite(1, TimeUnit.HOURS)
+                .build();
+    }
 }

@@ -3,9 +3,11 @@ package com.yadony.api.admin;
 import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.account.AdminUserEntity;
 import com.yadony.api.admin.account.AdminUserRepository;
+import com.yadony.api.admin.dto.AdminExternalRefundHoldResponse;
 import com.yadony.api.admin.dto.AdminUserWalletResponse;
 import com.yadony.api.admin.dto.AdminWalletAccountResponse;
 import com.yadony.api.admin.dto.AdminWalletAdjustmentRequest;
+import com.yadony.api.admin.dto.AdminWalletAdjustmentRequestResponse;
 import com.yadony.api.admin.dto.AdminWalletAdjustmentResponse;
 import com.yadony.api.admin.dto.AdminWalletTransactionResponse;
 import com.yadony.api.auth.UserRepository;
@@ -14,9 +16,13 @@ import com.yadony.api.payments.wallet.WalletAccountView;
 import com.yadony.api.payments.wallet.WalletAdminAdjustmentService;
 import com.yadony.api.payments.wallet.WalletAdminAdjustmentService.AdjustmentCommand;
 import com.yadony.api.payments.wallet.WalletAdminAdjustmentService.AdjustmentResult;
+import com.yadony.api.payments.wallet.WalletAdjustmentRequestEntity;
+import com.yadony.api.payments.wallet.WalletExternalRefundHoldEntity;
+import com.yadony.api.payments.wallet.WalletExternalRefundService;
 import com.yadony.api.payments.wallet.WalletTransactionEntity;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -49,14 +55,20 @@ public class AdminUserWalletController {
 
     static final String IDEMPOTENCY_HEADER = "Idempotency-Key";
 
+    /** Note de levée d'un gel : comment le solde a été régularisé. */
+    public record ReleaseHoldRequest(String note) {}
+
     private final WalletAdminAdjustmentService adjustmentService;
+    private final WalletExternalRefundService externalRefundService;
     private final UserRepository userRepository;
     private final AdminUserRepository adminUserRepository;
 
     public AdminUserWalletController(WalletAdminAdjustmentService adjustmentService,
+                                     WalletExternalRefundService externalRefundService,
                                      UserRepository userRepository,
                                      AdminUserRepository adminUserRepository) {
         this.adjustmentService = adjustmentService;
+        this.externalRefundService = externalRefundService;
         this.userRepository = userRepository;
         this.adminUserRepository = adminUserRepository;
     }
@@ -85,7 +97,7 @@ public class AdminUserWalletController {
 
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('WALLET_ADJUST')")
     @PostMapping("/adjustments")
-    public AdminWalletAdjustmentResponse adjust(@PathVariable UUID userId,
+    public ResponseEntity<AdminWalletAdjustmentResponse> adjust(@PathVariable UUID userId,
                                                 @RequestHeader(value = IDEMPOTENCY_HEADER, required = false)
                                                 String idempotencyKey,
                                                 @RequestBody AdminWalletAdjustmentRequest request,
@@ -99,11 +111,43 @@ public class AdminUserWalletController {
 
         AdjustmentResult result = adjustmentService.adjust(new AdjustmentCommand(userId, adminId,
                 request.currency(), request.direction(), request.amount(), request.reason(), idempotencyKey));
+        if (result.awaitingApproval()) {
+            // Au-delà du seuil de double validation : rien n'est écrit, la demande attend un second admin.
+            WalletAdjustmentRequestEntity pending = result.pendingRequest();
+            String requestedBy = adminUserRepository.findById(pending.getRequestedBy())
+                    .map(AdminUserEntity::getEmail).orElse(null);
+            return ResponseEntity.status(HttpStatus.ACCEPTED).body(new AdminWalletAdjustmentResponse(null, null,
+                    AdminWalletAdjustmentRequestResponse.from(pending, requestedBy, null)));
+        }
         WalletTransactionEntity tx = result.transaction();
         WalletAccountView account = adjustmentService.account(userId, tx.getCurrency());
-        return new AdminWalletAdjustmentResponse(
+        return ResponseEntity.ok(new AdminWalletAdjustmentResponse(
                 account == null ? null : AdminWalletAccountResponse.from(account),
-                AdminWalletTransactionResponse.from(tx, adminEmails(List.of(tx)).get(tx.getAdminActorId())));
+                AdminWalletTransactionResponse.from(tx, adminEmails(List.of(tx)).get(tx.getAdminActorId()))));
+    }
+
+    /** Gels posés après un remboursement Stripe fait hors de l'app, ouverts et levés. */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
+    @GetMapping("/external-refund-holds")
+    public List<AdminExternalRefundHoldResponse> externalRefundHolds(@PathVariable UUID userId) {
+        requireUser(userId);
+        List<WalletExternalRefundHoldEntity> holds = externalRefundService.holds(userId);
+        Map<UUID, String> emails = emailsOf(holds.stream().map(WalletExternalRefundHoldEntity::getReleasedBy).toList());
+        return holds.stream().map(h -> AdminExternalRefundHoldResponse.from(h, emails.get(h.getReleasedBy()))).toList();
+    }
+
+    /** Levée d'un gel, une fois le solde régularisé (note obligatoire). */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('WALLET_ADJUST')")
+    @PostMapping("/external-refund-holds/{holdId}/release")
+    public AdminExternalRefundHoldResponse releaseExternalRefundHold(@PathVariable UUID userId,
+                                                                    @PathVariable UUID holdId,
+                                                                    @RequestBody(required = false) ReleaseHoldRequest body,
+                                                                    Authentication authentication) {
+        UUID adminId = AdminPrincipal.requireAdminId(authentication);
+        requireUser(userId);
+        WalletExternalRefundHoldEntity released = externalRefundService.release(userId, holdId, adminId,
+                body == null ? null : body.note());
+        return AdminExternalRefundHoldResponse.from(released, emailsOf(List.of(adminId)).get(adminId));
     }
 
     /** Utilisateur inexistant ou supprimé (soft delete) : 404, avant toute lecture du wallet. */
@@ -112,6 +156,18 @@ public class AdminUserWalletController {
                 .filter(user -> user.getDeletedAt() == null)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found",
                         "Not Found", "Utilisateur introuvable"));
+    }
+
+    /** E-mail d'admins, en une seule lecture. */
+    private Map<UUID, String> emailsOf(Collection<UUID> adminIds) {
+        List<UUID> ids = adminIds.stream().filter(Objects::nonNull).distinct().toList();
+        Map<UUID, String> emails = new HashMap<>();
+        if (!ids.isEmpty()) {
+            for (AdminUserEntity admin : adminUserRepository.findAllById(ids)) {
+                emails.put(admin.getId(), admin.getEmail());
+            }
+        }
+        return emails;
     }
 
     /** E-mail des admins auteurs d'une correction, en une seule lecture pour la page. */

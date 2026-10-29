@@ -1,6 +1,7 @@
 package com.yadony.api.payments;
 
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.stripe.StripeConnectEvents;
 import com.yadony.api.common.stripe.StripeWebhookHandler;
 import com.yadony.api.payments.amendment.BidAmendmentStripeWebhookRouter;
 import com.yadony.api.payments.bankpayout.BankPayoutTrackingService;
@@ -9,6 +10,7 @@ import com.yadony.api.payments.chargeback.ChargebackService;
 import com.yadony.api.payments.currency.CurrencyCatalog;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.supplement.BidSupplementStripeWebhookRouter;
+import com.yadony.api.payments.wallet.WalletExternalRefundService;
 import com.yadony.api.payments.wallet.WalletService;
 import com.yadony.api.payments.wallet.WalletSelfRefundService;
 import com.yadony.api.payments.wallet.WalletTransactionType;
@@ -82,6 +84,8 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
      * supplément et avant tout traitement du colis.
      */
     private final BidAmendmentStripeWebhookRouter amendmentRouter;
+    /** Recharge remboursée hors de l'app : gel de la devise (nul dans les tests qui n'en ont pas besoin). */
+    private final WalletExternalRefundService externalRefunds;
 
     public PaymentStripeWebhookHandler(PaymentService paymentService,
                                         CashCommissionWebhookHandler cashHandler,
@@ -119,7 +123,6 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
                 objectMapper, currencyCatalog, bankPayoutTracking, supplementRouter, null);
     }
 
-    @Autowired
     public PaymentStripeWebhookHandler(PaymentService paymentService,
                                         CashCommissionWebhookHandler cashHandler,
                                         ChargebackService chargebackService,
@@ -130,6 +133,23 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
                                         BankPayoutTrackingService bankPayoutTracking,
                                         BidSupplementStripeWebhookRouter supplementRouter,
                                         BidAmendmentStripeWebhookRouter amendmentRouter) {
+        this(paymentService, cashHandler, chargebackService, walletService, walletSelfRefundService,
+                objectMapper, currencyCatalog, bankPayoutTracking, supplementRouter, amendmentRouter, null);
+    }
+
+    @Autowired
+    public PaymentStripeWebhookHandler(PaymentService paymentService,
+                                        CashCommissionWebhookHandler cashHandler,
+                                        ChargebackService chargebackService,
+                                        WalletService walletService,
+                                        WalletSelfRefundService walletSelfRefundService,
+                                        ObjectMapper objectMapper,
+                                        CurrencyCatalog currencyCatalog,
+                                        BankPayoutTrackingService bankPayoutTracking,
+                                        BidSupplementStripeWebhookRouter supplementRouter,
+                                        BidAmendmentStripeWebhookRouter amendmentRouter,
+                                        WalletExternalRefundService externalRefunds) {
+        this.externalRefunds = externalRefunds;
         this.supplementRouter = supplementRouter;
         this.amendmentRouter = amendmentRouter;
         this.bankPayoutTracking = bankPayoutTracking;
@@ -149,6 +169,15 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
 
     @Override
     public void handle(Event event) {
+        // Second rempart après l'ingestion : un événement d'un compte connecté qui n'est ni la
+        // vie du compte ni un virement n'est jamais traité (aucun crédit de solde, aucun
+        // supplément, aucun colis à partir des métadonnées d'un paiement du voyageur).
+        if (StripeConnectEvents.fromConnectedAccount(event)
+                && !StripeConnectEvents.isConnectedAccountType(event.getType())) {
+            log.warn("Stripe event {} ({}) du compte connecté {} : type non attendu, ignoré",
+                    event.getId(), event.getType(), event.getAccount());
+            return;
+        }
         if (supplementRouter != null && supplementRouter.handle(event)) {
             return;
         }
@@ -168,7 +197,11 @@ public class PaymentStripeWebhookHandler implements StripeWebhookHandler {
             }
             case "charge.refunded" -> {
                 paymentService.handleChargeRefunded(event);
-                walletSelfRefundService.handleChargeRefunded(resolveCharge(event));
+                Charge charge = resolveCharge(event);
+                walletSelfRefundService.handleChargeRefunded(charge);
+                if (externalRefunds != null) {
+                    externalRefunds.recordFromCharge(charge);
+                }
             }
             case "setup_intent.succeeded"             -> cashHandler.handleSetupIntentSucceeded(event);
             case "payment_intent.succeeded" -> {

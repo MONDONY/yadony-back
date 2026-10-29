@@ -430,6 +430,19 @@ class WalletCommissionCollectorTest {
     }
 
     @Test
+    void staleBidCurrencyRate_noConversionAtAll_evenFromAFreshWallet() {
+        wallets("USD", "1.00", "EUR", "50.00", "XOF", "9000");
+        when(freshness.isStale("USD")).thenReturn(true);
+
+        CommissionSplit s = collector.plan(traveler, "USD", "USD", new BigDecimal("3.00"));
+
+        assertThat(s.covered()).isFalse();
+        assertThat(s.excluded()).containsEntry("EUR", "rate-stale").containsEntry("XOF", "rate-stale");
+        assertThat(s.availableInBid()).isEqualByComparingTo("1.00");
+        verify(freshness).alertStale("USD");
+    }
+
+    @Test
     void aFreshRate_raisesNoAlert() {
         wallets("XOF", "100", "USD", "5.00");
 
@@ -691,6 +704,15 @@ class WalletCommissionCollectorTest {
         when(freshness.isStale("USD")).thenReturn(true);
 
         assertThat(collector.alternatives(traveler, "XOF", "EUR", new BigDecimal("1050"))).isEmpty();
+    }
+
+    @Test
+    void alternatives_staleBidCurrencyRate_nothingSuggested() {
+        when(walletService.getBalance(traveler, "USD")).thenReturn(new BigDecimal("1.00"));
+        when(freshness.isStale("USD")).thenReturn(true);
+
+        assertThat(collector.alternatives(traveler, "USD", "USD", new BigDecimal("3.00"))).isEmpty();
+        verify(walletService, never()).getAllBalances(any());
     }
 
     @Test

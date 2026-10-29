@@ -10,6 +10,9 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.wallet.WalletAccountView;
+import com.yadony.api.payments.wallet.WalletAdjustmentDirection;
+import com.yadony.api.payments.wallet.WalletAdjustmentRequestEntity;
+import com.yadony.api.payments.wallet.WalletAdjustmentRequestStatus;
 import com.yadony.api.payments.wallet.WalletAdminAdjustmentService;
 import com.yadony.api.payments.wallet.WalletAdminAdjustmentService.AdjustmentCommand;
 import com.yadony.api.payments.wallet.WalletAdminAdjustmentService.AdjustmentResult;
@@ -68,6 +71,7 @@ class AdminUserWalletControllerTest {
     @MockitoBean WalletAdminAdjustmentService adjustmentService;
     @MockitoBean UserRepository userRepository;
     @MockitoBean AdminUserRepository adminUserRepository;
+    @MockitoBean com.yadony.api.payments.wallet.WalletExternalRefundService externalRefundService;
 
     private static final UUID ADMIN_ID = UUID.randomUUID();
     private static final UUID USER_ID = UUID.randomUUID();
@@ -304,6 +308,38 @@ class AdminUserWalletControllerTest {
     }
 
     @Test
+    @DisplayName("POST — au-delà du seuil → 202, aucun mouvement, demande en attente avec l'e-mail de l'auteur")
+    void adjust_aboveThreshold_returns202WithPendingRequest() throws Exception {
+        UUID requestId = UUID.randomUUID();
+        WalletAdjustmentRequestEntity pending = withId(new WalletAdjustmentRequestEntity(), requestId);
+        pending.setUserId(USER_ID);
+        pending.setCurrency("XOF");
+        pending.setDirection(WalletAdjustmentDirection.CREDIT);
+        pending.setAmount(new BigDecimal("150000"));
+        pending.setEurEquivalent(new BigDecimal("228.67"));
+        pending.setReason("Geste commercial après litige");
+        pending.setIdempotencyKey("admin-adjust:k-9");
+        pending.setRequestedBy(ADMIN_ID);
+        pending.setStatus(WalletAdjustmentRequestStatus.PENDING);
+        when(adjustmentService.adjust(any())).thenReturn(new AdjustmentResult(null, false, pending));
+        AdminUserEntity admin = withId(new AdminUserEntity(), ADMIN_ID);
+        admin.setEmail("ops@yadony.test");
+        when(adminUserRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
+
+        mockMvc.perform(post(BASE + "/adjustments").header("Idempotency-Key", "k-9")
+                        .contentType(MediaType.APPLICATION_JSON).content(BODY)
+                        .with(authentication(adminAuth(AdminRole.ADMIN))))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.account").value(nullValue()))
+                .andExpect(jsonPath("$.transaction").value(nullValue()))
+                .andExpect(jsonPath("$.pendingRequest.id").value(requestId.toString()))
+                .andExpect(jsonPath("$.pendingRequest.status").value("PENDING"))
+                .andExpect(jsonPath("$.pendingRequest.eurEquivalent").value(228.67))
+                .andExpect(jsonPath("$.pendingRequest.requestedByEmail").value("ops@yadony.test"));
+        verify(adjustmentService, never()).account(any(), anyString());
+    }
+
+    @Test
     @DisplayName("POST — SUPER_ADMIN → 200")
     void adjust_superAdmin_allowed() throws Exception {
         when(adjustmentService.adjust(any())).thenReturn(new AdjustmentResult(adjustmentTx(UUID.randomUUID()), true));
@@ -402,5 +438,92 @@ class AdminUserWalletControllerTest {
         static PageImpl<WalletTransactionEntity> empty() {
             return new PageImpl<>(List.of(), PageRequest.of(0, 20), 0);
         }
+    }
+
+    // ── Gels après remboursement Stripe externe ─────────────────────────────
+
+    private static com.yadony.api.payments.wallet.WalletExternalRefundHoldEntity hold(UUID id,
+            com.yadony.api.payments.wallet.WalletExternalRefundHoldStatus status) {
+        var h = withId(new com.yadony.api.payments.wallet.WalletExternalRefundHoldEntity(), id);
+        h.setUserId(USER_ID);
+        h.setCurrency("EUR");
+        h.setAmount(new BigDecimal("25.00"));
+        h.setPaymentIntentId("pi_topup");
+        h.setStripeRefundId("re_ext");
+        h.setStatus(status);
+        if (status == com.yadony.api.payments.wallet.WalletExternalRefundHoldStatus.RELEASED) {
+            h.setReleasedBy(ADMIN_ID);
+            h.setReleasedAt(LocalDateTime.of(2026, 10, 29, 9, 0));
+            h.setReleaseNote("Solde débité de 25 €");
+        }
+        return h;
+    }
+
+    @Test
+    @DisplayName("GET external-refund-holds — SUPPORT (PAYMENT_VIEW) → 200, e-mail de l'admin qui a levé")
+    void externalRefundHolds_support_lists() throws Exception {
+        UUID open = UUID.randomUUID();
+        UUID released = UUID.randomUUID();
+        when(externalRefundService.holds(USER_ID)).thenReturn(List.of(
+                hold(open, com.yadony.api.payments.wallet.WalletExternalRefundHoldStatus.OPEN),
+                hold(released, com.yadony.api.payments.wallet.WalletExternalRefundHoldStatus.RELEASED)));
+
+        mockMvc.perform(get(BASE + "/external-refund-holds").with(authentication(adminAuth(AdminRole.SUPPORT))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].id").value(open.toString()))
+                .andExpect(jsonPath("$[0].status").value("OPEN"))
+                .andExpect(jsonPath("$[0].amount").value(25.00))
+                .andExpect(jsonPath("$[1].status").value("RELEASED"))
+                .andExpect(jsonPath("$[1].releasedByEmail").value("ops@yadony.test"))
+                .andExpect(jsonPath("$[1].releaseNote").value("Solde débité de 25 €"));
+    }
+
+    @Test
+    @DisplayName("POST release — ADMIN → 200, note et admin transmis")
+    void releaseExternalRefundHold_admin() throws Exception {
+        UUID holdId = UUID.randomUUID();
+        when(externalRefundService.release(USER_ID, holdId, ADMIN_ID, "Solde débité de 25 €"))
+                .thenReturn(hold(holdId, com.yadony.api.payments.wallet.WalletExternalRefundHoldStatus.RELEASED));
+
+        mockMvc.perform(post(BASE + "/external-refund-holds/" + holdId + "/release")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"note\":\"Solde débité de 25 €\"}")
+                        .with(authentication(adminAuth(AdminRole.ADMIN))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("RELEASED"))
+                .andExpect(jsonPath("$.releasedByEmail").value("ops@yadony.test"));
+    }
+
+    @Test
+    @DisplayName("POST release — sans corps : note nulle transmise (le service refuse en 400)")
+    void releaseExternalRefundHold_withoutBody() throws Exception {
+        UUID holdId = UUID.randomUUID();
+        when(externalRefundService.release(USER_ID, holdId, ADMIN_ID, null)).thenThrow(new YadonyBusinessException(
+                HttpStatus.BAD_REQUEST, "wallet-external-refund-hold-note-invalid", "Bad Request", "Note requise"));
+
+        mockMvc.perform(post(BASE + "/external-refund-holds/" + holdId + "/release")
+                        .with(authentication(adminAuth(AdminRole.ADMIN))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("wallet-external-refund-hold-note-invalid"));
+    }
+
+    @Test
+    @DisplayName("POST release — SUPPORT (sans WALLET_ADJUST) → 403, rien n'est levé")
+    void releaseExternalRefundHold_support_forbidden() throws Exception {
+        mockMvc.perform(post(BASE + "/external-refund-holds/" + UUID.randomUUID() + "/release")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"note\":\"x\"}")
+                        .with(authentication(adminAuth(AdminRole.SUPPORT))))
+                .andExpect(status().isForbidden());
+        verify(externalRefundService, never()).release(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("GET external-refund-holds — utilisateur inconnu → 404")
+    void externalRefundHolds_unknownUser_404() throws Exception {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.empty());
+
+        mockMvc.perform(get(BASE + "/external-refund-holds").with(authentication(adminAuth(AdminRole.ADMIN))))
+                .andExpect(status().isNotFound());
+        verify(externalRefundService, never()).holds(any());
     }
 }

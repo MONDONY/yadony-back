@@ -174,6 +174,12 @@ public class WalletCommissionCollector {
         }
 
         List<WalletOption> options = new ArrayList<>();
+        // Toute conversion passe aussi par le taux de la devise du colis : périmé, il fausserait
+        // chaque complément (USD, CAD, GBP, CHF flottent ; EUR, XOF et XAF ne périment jamais).
+        boolean bidRateStale = remaining.signum() > 0 && exchangeRateFreshness.isStale(bid);
+        if (bidRateStale) {
+            exchangeRateFreshness.alertStale(bid);
+        }
         if (remaining.signum() > 0) {
             for (Map.Entry<String, BigDecimal> e : balances.entrySet()) {
                 String code = e.getKey();
@@ -181,7 +187,7 @@ public class WalletCommissionCollector {
                 if (code.equals(bid) || balance.signum() <= 0) {
                     continue;
                 }
-                if (exchangeRateFreshness.isStale(code)) {
+                if (bidRateStale || exchangeRateFreshness.isStale(code)) {
                     excluded.put(code, "rate-stale");
                     exchangeRateFreshness.alertStale(code);
                     continue;
@@ -310,7 +316,7 @@ public class WalletCommissionCollector {
         }
         BigDecimal remainingBid = commission.subtract(commission.min(bidBalance).max(BigDecimal.ZERO));
         List<FundingAlternativeDto> result = new ArrayList<>();
-        if (remainingBid.signum() <= 0) {
+        if (remainingBid.signum() <= 0 || exchangeRateFreshness.isStale(bid)) {
             return result;
         }
         for (var wallet : walletService.getAllBalances(travelerId)) {

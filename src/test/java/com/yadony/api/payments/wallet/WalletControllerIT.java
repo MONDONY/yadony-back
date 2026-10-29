@@ -208,6 +208,36 @@ class WalletControllerIT {
     }
 
     @Test
+    void getBalance_negativePage_treatedAsFirstPage() throws Exception {
+        mockMvc.perform(get("/wallet/balance")
+                .param("page", "-3")
+                .with(authentication(authAs(FIREBASE_UID, "TRAVELER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.transactions").isArray());
+    }
+
+    @Test
+    void unknownCurrencyInPath_returns422_withoutCreatingAWallet() throws Exception {
+        mockMvc.perform(get("/wallet/JPY/refund-eligible-topups")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.code").value("currency-unsupported"));
+        mockMvc.perform(post("/wallet/zz/refund-request")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.code").value("currency-unsupported"));
+        org.assertj.core.api.Assertions.assertThat(
+                walletAccountRepository.findByUserIdAndCurrency(USER_UUID, "JPY")).isEmpty();
+    }
+
+    @Test
+    void lowerCaseSupportedCurrencyInPath_accepted() throws Exception {
+        mockMvc.perform(get("/wallet/eur/refund-eligible-topups")
+                .with(authentication(authAs(FIREBASE_UID, "SENDER"))))
+            .andExpect(status().isOk());
+    }
+
+    @Test
     void topup_invalidAmount_returns422() throws Exception {
         mockMvc.perform(post("/wallet/topup")
                 .contentType(MediaType.APPLICATION_JSON)
