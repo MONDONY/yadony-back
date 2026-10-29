@@ -9,3 +9,4 @@ routes:
 If the Yadony team gave you a top-up code, open My wallet › Top up, then tap "I have a top-up code".
 Enter the code and confirm: the amount is added to your balance.
 This credit can only pay Yadony service fees, when the sender pays the traveler in cash: it cannot be refunded or withdrawn.
+A mistyped code counts as a failed attempt: after 5 failed attempts within an hour, entering codes is blocked for an hour. Check the code (letters, digits and dashes) before confirming.
