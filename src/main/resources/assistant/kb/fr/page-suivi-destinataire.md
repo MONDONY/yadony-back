@@ -11,4 +11,4 @@ Depuis Activités › Mes colis › votre envoi, ouvrez la tuile « Prévenir {p
 Vous pouvez choisir d'afficher ou de retirer le code de retrait sur la page de suivi.
 Si le destinataire a Yadony, il peut aussi retrouver le colis dans l'onglet Suivi, sous Réceptions.
 Si le voyageur partage sa position, la page affiche seulement sa dernière position approximative (ville proche et progression), sans l'historique. Aucun message n'est envoyé automatiquement au destinataire sans compte.
-De votre côté, la tuile « Suivi » de « Votre envoi » montre les étapes, la position du voyageur et la carte, avec « Voir toutes les étapes et photos ».
+De votre côté, dans « Votre envoi », avant la remise du colis au voyageur, la tuile « Lieux » montre sur une carte les adresses de dépôt et de récupération. Une fois le colis remis, elle devient « Suivi » : la position approximative du voyageur et la carte des adresses. Le bouton du bas « Voir toutes les étapes et photos » ouvre les étapes et les photos.
