@@ -2,6 +2,7 @@ package com.yadony.api.payments.wallet.topupcode;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.payments.wallet.WalletService;
 import com.yadony.api.payments.wallet.WalletTransactionEntity;
@@ -16,6 +17,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
@@ -30,6 +33,16 @@ import java.util.regex.Pattern;
 public class WalletTopupCodeRedemptionService {
 
     static final int MAX_FAILURES_PER_HOUR = 5;
+    /** Échecs par IP, tous comptes confondus : large à cause du CGNAT des opérateurs mobiles. */
+    static final int MAX_FAILURES_PER_IP_PER_HOUR = 20;
+    /**
+     * Échecs de toute la plateforme : au-delà, une force brute répartie (comptes et IP jetables)
+     * est en cours ; toute saisie est suspendue jusqu'à la fin de la fenêtre et l'admin alerté.
+     */
+    static final int MAX_GLOBAL_FAILURES_PER_HOUR = 200;
+    static final String GLOBAL_KEY = "global";
+    static final String GLOBAL_ALERTED_KEY = "global-alerted";
+    static final String BRUTEFORCE_ALERT = "wallet-topup-code-bruteforce";
     static final Pattern CODE_FORMAT = Pattern.compile("^[A-Z0-9-]{4,32}$");
     private static final String UNPROCESSABLE = "Unprocessable";
     static final String REDEMPTION_UNIQUE_CONSTRAINT = "uq_topup_code_redemption_user";
@@ -39,20 +52,33 @@ public class WalletTopupCodeRedemptionService {
     private final WalletService walletService;
     private final WalletTransactionRepository transactions;
     private final AuditService auditService;
+    private final TopupCodeHasher hasher;
+    private final AdminAlertService adminAlertService;
     private final Cache<UUID, AtomicInteger> failures;
+    private final Cache<String, AtomicInteger> ipFailures;
+    private final Cache<String, AtomicInteger> globalFailures;
 
     public WalletTopupCodeRedemptionService(WalletTopupCodeRepository codes,
                                             WalletTopupCodeRedemptionRepository redemptions,
                                             WalletService walletService,
                                             WalletTransactionRepository transactions,
                                             AuditService auditService,
-                                            @Qualifier("topupCodeFailureCache") Cache<UUID, AtomicInteger> failures) {
+                                            TopupCodeHasher hasher,
+                                            AdminAlertService adminAlertService,
+                                            @Qualifier("topupCodeFailureCache") Cache<UUID, AtomicInteger> failures,
+                                            @Qualifier("topupCodeIpFailureCache") Cache<String, AtomicInteger> ipFailures,
+                                            @Qualifier("topupCodeGlobalFailureCache")
+                                            Cache<String, AtomicInteger> globalFailures) {
         this.codes = codes;
         this.redemptions = redemptions;
         this.walletService = walletService;
         this.transactions = transactions;
         this.auditService = auditService;
+        this.hasher = hasher;
+        this.adminAlertService = adminAlertService;
         this.failures = failures;
+        this.ipFailures = ipFailures;
+        this.globalFailures = globalFailures;
     }
 
     /** Majuscules, espaces retirés (copie depuis WhatsApp), tirets conservés. */
@@ -60,27 +86,33 @@ public class WalletTopupCodeRedemptionService {
         return raw == null ? "" : raw.replaceAll("\\s+", "").toUpperCase(Locale.ROOT);
     }
 
+    /**
+     * Sans IP connue (appel interne, tests) : seuls les compteurs par compte et global jouent.
+     * {@code @Transactional} ici aussi : l'appel à la variante avec IP passe par {@code this}, pas
+     * par le proxy, et le verrou de la recherche exige une transaction ouverte.
+     */
     @Transactional
     public TopupCodeRedeemResponse redeem(UUID userId, String rawCode) {
-        // Réservation atomique d'une tentative AVANT la recherche : des requêtes parallèles ne peuvent
-        // pas passer toutes la garde (pas de lecture puis incrément séparés).
-        AtomicInteger counter = failures.get(userId, k -> new AtomicInteger(0));
-        if (counter.incrementAndGet() > MAX_FAILURES_PER_HOUR) {
-            counter.decrementAndGet();
-            throw new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS, "topup-code-too-many-attempts",
-                    "Too Many Requests", "Trop d'essais de code. Réessaie dans une heure.");
-        }
+        return redeem(userId, rawCode, null);
+    }
+
+    @Transactional
+    public TopupCodeRedeemResponse redeem(UUID userId, String rawCode, String clientIp) {
+        // Réservation atomique d'une tentative AVANT la recherche, sur chaque compteur : des
+        // requêtes parallèles ne peuvent pas passer toutes la garde (pas de lecture puis
+        // incrément séparés).
+        List<AtomicInteger> reserved = reserveAttempt(userId, clientIp);
 
         String code = normalize(rawCode);
         WalletTopupCodeEntity topupCode = CODE_FORMAT.matcher(code).matches()
-                ? codes.findByCodeForUpdate(code).orElse(null)
+                ? codes.findByCodeHashForUpdate(hasher.hash(code)).orElse(null)
                 : null;
         if (topupCode == null) {
-            // L'unité réservée reste comptée : c'est un échec.
+            // Les unités réservées restent comptées : c'est un échec.
             throw unprocessable("topup-code-not-found", "Ce code de recharge n'existe pas");
         }
-        // Code trouvé : l'unité réservée est libérée, les autres issues ne comptent pas comme échec.
-        counter.decrementAndGet();
+        // Code trouvé : les unités réservées sont libérées, les autres issues ne comptent pas comme échec.
+        reserved.forEach(AtomicInteger::decrementAndGet);
 
         switch (topupCode.displayStatus(LocalDateTime.now(ZoneOffset.UTC))) {
             case REVOKED -> throw unprocessable("topup-code-revoked", "Ce code de recharge a été désactivé");
@@ -123,11 +155,49 @@ public class WalletTopupCodeRedemptionService {
         codes.save(topupCode);
 
         auditService.log("wallet_topup_code", topupCode.getId(), "WALLET_TOPUP_CODE_REDEEMED", userId,
-                Map.of("code", topupCode.getCode(), "amount", topupCode.getAmount().toPlainString(),
-                        "currency", topupCode.getCurrency()));
+                Map.of("codeHint", String.valueOf(topupCode.getCodeHint()),
+                        "amount", topupCode.getAmount().toPlainString(), "currency", topupCode.getCurrency()));
 
         return new TopupCodeRedeemResponse(topupCode.getAmount(), topupCode.getCurrency(),
                 tx.getBalanceAfter(), tx.getId());
+    }
+
+    /**
+     * Réserve une tentative sur le compteur du compte, de l'IP (si connue) puis de la plateforme.
+     * Un compteur plein libère les unités déjà prises et refuse en 429.
+     */
+    private List<AtomicInteger> reserveAttempt(UUID userId, String clientIp) {
+        List<AtomicInteger> reserved = new ArrayList<>(3);
+        reserve(failures.get(userId, k -> new AtomicInteger(0)), MAX_FAILURES_PER_HOUR, reserved,
+                "Trop d'essais de code. Réessaie dans une heure.");
+        if (clientIp != null && !clientIp.isBlank()) {
+            reserve(ipFailures.get(clientIp, k -> new AtomicInteger(0)), MAX_FAILURES_PER_IP_PER_HOUR, reserved,
+                    "Trop d'essais de code depuis ce réseau. Réessaie dans une heure.");
+        }
+        AtomicInteger global = globalFailures.get(GLOBAL_KEY, k -> new AtomicInteger(0));
+        if (global.get() >= MAX_GLOBAL_FAILURES_PER_HOUR && alertOncePerWindow()) {
+            adminAlertService.raise(BRUTEFORCE_ALERT, "Saisie des codes de recharge suspendue : "
+                    + MAX_GLOBAL_FAILURES_PER_HOUR + " codes inconnus en moins d'une heure (force brute probable)",
+                    Map.of("failures", global.get(), "windowHours", 1));
+        }
+        reserve(global, MAX_GLOBAL_FAILURES_PER_HOUR, reserved,
+                "Trop d'essais de code en ce moment. Réessayez plus tard.");
+        return reserved;
+    }
+
+    private static void reserve(AtomicInteger counter, int max, List<AtomicInteger> reserved, String detail) {
+        if (counter.incrementAndGet() > max) {
+            counter.decrementAndGet();
+            reserved.forEach(AtomicInteger::decrementAndGet);
+            throw new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS, "topup-code-too-many-attempts",
+                    "Too Many Requests", detail);
+        }
+        reserved.add(counter);
+    }
+
+    /** Vrai une seule fois par fenêtre d'une heure : l'entrée expire avec le compteur global. */
+    private boolean alertOncePerWindow() {
+        return globalFailures.asMap().putIfAbsent(GLOBAL_ALERTED_KEY, new AtomicInteger(1)) == null;
     }
 
     /**

@@ -4,6 +4,7 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.wallet.WalletService;
 import com.yadony.api.payments.wallet.WalletTransactionEntity;
 import com.yadony.api.payments.wallet.WalletTransactionRepository;
@@ -42,8 +43,12 @@ class WalletTopupCodeRedemptionServiceTest {
     @Mock WalletService walletService;
     @Mock WalletTransactionRepository transactions;
     @Mock AuditService auditService;
+    @Mock AdminAlertService adminAlertService;
 
+    final TopupCodeHasher hasher = new TopupCodeHasher("unit-test-key-0123456789abcdef0123456789");
     Cache<UUID, AtomicInteger> failures;
+    Cache<String, AtomicInteger> ipFailures;
+    Cache<String, AtomicInteger> globalFailures;
     WalletTopupCodeRedemptionService service;
 
     final UUID userId = UUID.randomUUID();
@@ -52,14 +57,17 @@ class WalletTopupCodeRedemptionServiceTest {
     @BeforeEach
     void setUp() {
         failures = Caffeine.newBuilder().build();
+        ipFailures = Caffeine.newBuilder().build();
+        globalFailures = Caffeine.newBuilder().build();
         service = new WalletTopupCodeRedemptionService(codes, redemptions, walletService, transactions,
-                auditService, failures);
+                auditService, hasher, adminAlertService, failures, ipFailures, globalFailures);
     }
 
     private WalletTopupCodeEntity activeCode(int max, int used) {
         WalletTopupCodeEntity c = new WalletTopupCodeEntity();
         ReflectionTestUtils.setField(c, "id", codeId);
-        c.setCode("DAKAR2000");
+        c.setCodeHash(hasher.hash("DAKAR2000"));
+        c.setCodeHint("00");
         c.setAmount(new BigDecimal("2000"));
         c.setCurrency("XOF");
         c.setMaxRedemptions(max);
@@ -91,7 +99,7 @@ class WalletTopupCodeRedemptionServiceTest {
     @Test
     void redeem_succes_crediteTopUpCodeSansPaymentRef_incrementeEtTrace() {
         WalletTopupCodeEntity code = activeCode(100, 37);
-        when(codes.findByCodeForUpdate("DAKAR2000")).thenReturn(Optional.of(code));
+        when(codes.findByCodeHashForUpdate(hasher.hash("DAKAR2000"))).thenReturn(Optional.of(code));
         when(redemptions.existsByCodeIdAndUserId(codeId, userId)).thenReturn(false);
         when(walletService.isFrozen(userId, "XOF")).thenReturn(false);
         stubLedger();
@@ -108,12 +116,17 @@ class WalletTopupCodeRedemptionServiceTest {
         assertThat(r.amount()).isEqualByComparingTo("2000");
         assertThat(r.currency()).isEqualTo("XOF");
         assertThat(r.balance()).isEqualByComparingTo("3500");
-        verify(auditService).log(eq("wallet_topup_code"), eq(codeId), eq("WALLET_TOPUP_CODE_REDEEMED"), eq(userId), any());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Map<String, Object>> payload = ArgumentCaptor.forClass(java.util.Map.class);
+        verify(auditService).log(eq("wallet_topup_code"), eq(codeId), eq("WALLET_TOPUP_CODE_REDEEMED"), eq(userId),
+                payload.capture());
+        assertThat(payload.getValue()).containsEntry("codeHint", "00").doesNotContainKey("code");
+        assertThat(payload.getValue().values()).noneMatch(v -> String.valueOf(v).contains("DAKAR2000"));
     }
 
     @Test
     void redeem_codeInconnu_422_etCompteUnEchec() {
-        when(codes.findByCodeForUpdate("NOPE")).thenReturn(Optional.empty());
+        when(codes.findByCodeHashForUpdate(hasher.hash("NOPE"))).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.redeem(userId, "nope"))
                 .satisfies(t -> assertCode(t, HttpStatus.UNPROCESSABLE_ENTITY, "topup-code-not-found"));
         assertThat(failures.getIfPresent(userId)).hasValue(1);
@@ -123,7 +136,7 @@ class WalletTopupCodeRedemptionServiceTest {
     void redeem_formatInvalide_traiteCommeInconnuSansToucherLaBase() {
         assertThatThrownBy(() -> service.redeem(userId, "a!"))
                 .satisfies(t -> assertCode(t, HttpStatus.UNPROCESSABLE_ENTITY, "topup-code-not-found"));
-        verify(codes, never()).findByCodeForUpdate(anyString());
+        verify(codes, never()).findByCodeHashForUpdate(anyString());
         assertThat(failures.getIfPresent(userId)).hasValue(1);
     }
 
@@ -132,14 +145,14 @@ class WalletTopupCodeRedemptionServiceTest {
         failures.put(userId, new AtomicInteger(5));
         assertThatThrownBy(() -> service.redeem(userId, "DAKAR2000"))
                 .satisfies(t -> assertCode(t, HttpStatus.TOO_MANY_REQUESTS, "topup-code-too-many-attempts"));
-        verify(codes, never()).findByCodeForUpdate(anyString());
+        verify(codes, never()).findByCodeHashForUpdate(anyString());
     }
 
     @Test
     void redeem_revoque_422() {
         WalletTopupCodeEntity code = activeCode(10, 0);
         code.setStatus(WalletTopupCodeStatus.REVOKED);
-        when(codes.findByCodeForUpdate("DAKAR2000")).thenReturn(Optional.of(code));
+        when(codes.findByCodeHashForUpdate(hasher.hash("DAKAR2000"))).thenReturn(Optional.of(code));
         assertThatThrownBy(() -> service.redeem(userId, "DAKAR2000"))
                 .satisfies(t -> assertCode(t, HttpStatus.UNPROCESSABLE_ENTITY, "topup-code-revoked"));
         verify(walletService, never()).credit(any(), any(), any(), any(), any(), any());
@@ -149,21 +162,21 @@ class WalletTopupCodeRedemptionServiceTest {
     void redeem_expire_422() {
         WalletTopupCodeEntity code = activeCode(10, 0);
         code.setExpiresAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
-        when(codes.findByCodeForUpdate("DAKAR2000")).thenReturn(Optional.of(code));
+        when(codes.findByCodeHashForUpdate(hasher.hash("DAKAR2000"))).thenReturn(Optional.of(code));
         assertThatThrownBy(() -> service.redeem(userId, "DAKAR2000"))
                 .satisfies(t -> assertCode(t, HttpStatus.UNPROCESSABLE_ENTITY, "topup-code-expired"));
     }
 
     @Test
     void redeem_epuise_422() {
-        when(codes.findByCodeForUpdate("DAKAR2000")).thenReturn(Optional.of(activeCode(2, 2)));
+        when(codes.findByCodeHashForUpdate(hasher.hash("DAKAR2000"))).thenReturn(Optional.of(activeCode(2, 2)));
         assertThatThrownBy(() -> service.redeem(userId, "DAKAR2000"))
                 .satisfies(t -> assertCode(t, HttpStatus.UNPROCESSABLE_ENTITY, "topup-code-exhausted"));
     }
 
     @Test
     void redeem_dejaUtiliseParCeCompte_422_etNeComptePasUnEchec() {
-        when(codes.findByCodeForUpdate("DAKAR2000")).thenReturn(Optional.of(activeCode(100, 3)));
+        when(codes.findByCodeHashForUpdate(hasher.hash("DAKAR2000"))).thenReturn(Optional.of(activeCode(100, 3)));
         when(redemptions.existsByCodeIdAndUserId(codeId, userId)).thenReturn(true);
         assertThatThrownBy(() -> service.redeem(userId, "DAKAR2000"))
                 .satisfies(t -> assertCode(t, HttpStatus.UNPROCESSABLE_ENTITY, "topup-code-already-redeemed"));
@@ -172,7 +185,7 @@ class WalletTopupCodeRedemptionServiceTest {
 
     @Test
     void redeem_portefeuilleGele_422() {
-        when(codes.findByCodeForUpdate("DAKAR2000")).thenReturn(Optional.of(activeCode(100, 3)));
+        when(codes.findByCodeHashForUpdate(hasher.hash("DAKAR2000"))).thenReturn(Optional.of(activeCode(100, 3)));
         when(redemptions.existsByCodeIdAndUserId(codeId, userId)).thenReturn(false);
         when(walletService.isFrozen(userId, "XOF")).thenReturn(true);
         assertThatThrownBy(() -> service.redeem(userId, "DAKAR2000"))
@@ -182,7 +195,7 @@ class WalletTopupCodeRedemptionServiceTest {
 
     @Test
     void redeem_devisEnLitige_422MotifLitige() {
-        when(codes.findByCodeForUpdate("DAKAR2000")).thenReturn(Optional.of(activeCode(100, 3)));
+        when(codes.findByCodeHashForUpdate(hasher.hash("DAKAR2000"))).thenReturn(Optional.of(activeCode(100, 3)));
         when(redemptions.existsByCodeIdAndUserId(codeId, userId)).thenReturn(false);
         when(walletService.isDisputeHeld(userId, "XOF")).thenReturn(true);
         assertThatThrownBy(() -> service.redeem(userId, "DAKAR2000"))
@@ -192,7 +205,7 @@ class WalletTopupCodeRedemptionServiceTest {
 
     @Test
     void redeem_courseSurLaContrainteUnique_traduiteEnDejaUtilise() {
-        when(codes.findByCodeForUpdate("DAKAR2000")).thenReturn(Optional.of(activeCode(100, 3)));
+        when(codes.findByCodeHashForUpdate(hasher.hash("DAKAR2000"))).thenReturn(Optional.of(activeCode(100, 3)));
         when(redemptions.existsByCodeIdAndUserId(codeId, userId)).thenReturn(false);
         when(walletService.isFrozen(userId, "XOF")).thenReturn(false);
         stubLedger();
@@ -205,7 +218,7 @@ class WalletTopupCodeRedemptionServiceTest {
 
     @Test
     void redeem_contrainteUniqueDansLeMessageDuPilote_traduiteEnDejaUtilise() {
-        when(codes.findByCodeForUpdate("DAKAR2000")).thenReturn(Optional.of(activeCode(100, 3)));
+        when(codes.findByCodeHashForUpdate(hasher.hash("DAKAR2000"))).thenReturn(Optional.of(activeCode(100, 3)));
         when(redemptions.existsByCodeIdAndUserId(codeId, userId)).thenReturn(false);
         when(walletService.isFrozen(userId, "XOF")).thenReturn(false);
         stubLedger();
@@ -218,7 +231,7 @@ class WalletTopupCodeRedemptionServiceTest {
 
     @Test
     void redeem_autreViolationDIntegrite_remonteTelleQuelle() {
-        when(codes.findByCodeForUpdate("DAKAR2000")).thenReturn(Optional.of(activeCode(100, 3)));
+        when(codes.findByCodeHashForUpdate(hasher.hash("DAKAR2000"))).thenReturn(Optional.of(activeCode(100, 3)));
         when(redemptions.existsByCodeIdAndUserId(codeId, userId)).thenReturn(false);
         when(walletService.isFrozen(userId, "XOF")).thenReturn(false);
         stubLedger();
@@ -233,7 +246,7 @@ class WalletTopupCodeRedemptionServiceTest {
     @Test
     void redeem_codeTrouve_laisseLeCompteurInchange() {
         failures.put(userId, new AtomicInteger(4));
-        when(codes.findByCodeForUpdate("DAKAR2000")).thenReturn(Optional.of(activeCode(2, 2)));
+        when(codes.findByCodeHashForUpdate(hasher.hash("DAKAR2000"))).thenReturn(Optional.of(activeCode(2, 2)));
         assertThatThrownBy(() -> service.redeem(userId, "DAKAR2000"))
                 .satisfies(t -> assertCode(t, HttpStatus.UNPROCESSABLE_ENTITY, "topup-code-exhausted"));
         assertThat(failures.getIfPresent(userId)).hasValue(4);
@@ -243,7 +256,7 @@ class WalletTopupCodeRedemptionServiceTest {
     void redeem_parallele_uneSeuleTentativeAtteintLaBase() throws Exception {
         failures.put(userId, new AtomicInteger(4));
         java.util.concurrent.atomic.AtomicInteger lookups = new java.util.concurrent.atomic.AtomicInteger();
-        when(codes.findByCodeForUpdate("NOPE")).thenAnswer(inv -> {
+        when(codes.findByCodeHashForUpdate(hasher.hash("NOPE"))).thenAnswer(inv -> {
             lookups.incrementAndGet();
             return Optional.empty();
         });
@@ -270,5 +283,59 @@ class WalletTopupCodeRedemptionServiceTest {
         assertThat(lookups.get()).isEqualTo(1);
         assertThat(tooMany).isEqualTo(2);
         assertThat(failures.getIfPresent(userId)).hasValue(5);
+    }
+
+    @Test
+    void redeem_ipAuDelaDe20Echecs_429_memePourUnAutreCompte() {
+        ipFailures.put("41.82.0.9", new AtomicInteger(WalletTopupCodeRedemptionService.MAX_FAILURES_PER_IP_PER_HOUR));
+        assertThatThrownBy(() -> service.redeem(UUID.randomUUID(), "DAKAR2000", "41.82.0.9"))
+                .satisfies(t -> assertCode(t, HttpStatus.TOO_MANY_REQUESTS, "topup-code-too-many-attempts"));
+        verify(codes, never()).findByCodeHashForUpdate(anyString());
+        // L'unité prise sur le compteur du compte est rendue.
+        assertThat(ipFailures.getIfPresent("41.82.0.9"))
+                .hasValue(WalletTopupCodeRedemptionService.MAX_FAILURES_PER_IP_PER_HOUR);
+    }
+
+    @Test
+    void redeem_codeInconnuAvecIp_compteSurLesTroisCompteurs() {
+        when(codes.findByCodeHashForUpdate(hasher.hash("NOPE-NOPE"))).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.redeem(userId, "nope-nope", "41.82.0.10"))
+                .satisfies(t -> assertCode(t, HttpStatus.UNPROCESSABLE_ENTITY, "topup-code-not-found"));
+        assertThat(failures.getIfPresent(userId)).hasValue(1);
+        assertThat(ipFailures.getIfPresent("41.82.0.10")).hasValue(1);
+        assertThat(globalFailures.getIfPresent(WalletTopupCodeRedemptionService.GLOBAL_KEY)).hasValue(1);
+    }
+
+    @Test
+    void redeem_codeTrouveAvecIp_libereLesTroisCompteurs() {
+        when(codes.findByCodeHashForUpdate(hasher.hash("DAKAR2000"))).thenReturn(Optional.of(activeCode(2, 2)));
+        assertThatThrownBy(() -> service.redeem(userId, "DAKAR2000", "41.82.0.11"))
+                .satisfies(t -> assertCode(t, HttpStatus.UNPROCESSABLE_ENTITY, "topup-code-exhausted"));
+        assertThat(failures.getIfPresent(userId)).hasValue(0);
+        assertThat(ipFailures.getIfPresent("41.82.0.11")).hasValue(0);
+        assertThat(globalFailures.getIfPresent(WalletTopupCodeRedemptionService.GLOBAL_KEY)).hasValue(0);
+    }
+
+    @Test
+    void redeem_seuilGlobalAtteint_429PourTous_etUneSeuleAlerte() {
+        globalFailures.put(WalletTopupCodeRedemptionService.GLOBAL_KEY,
+                new AtomicInteger(WalletTopupCodeRedemptionService.MAX_GLOBAL_FAILURES_PER_HOUR));
+        for (int i = 0; i < 3; i++) {
+            UUID someone = UUID.randomUUID();
+            assertThatThrownBy(() -> service.redeem(someone, "DAKAR2000", "41.82.1." + someone.hashCode()))
+                    .satisfies(t -> assertCode(t, HttpStatus.TOO_MANY_REQUESTS, "topup-code-too-many-attempts"));
+            assertThat(failures.getIfPresent(someone)).hasValue(0);
+        }
+        verify(codes, never()).findByCodeHashForUpdate(anyString());
+        verify(adminAlertService, org.mockito.Mockito.times(1))
+                .raise(eq(WalletTopupCodeRedemptionService.BRUTEFORCE_ALERT), anyString(), any());
+    }
+
+    @Test
+    void redeem_sansIp_neCreePasDeCompteurIp() {
+        when(codes.findByCodeHashForUpdate(hasher.hash("NOPE-NOPE"))).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.redeem(userId, "NOPE-NOPE", " "))
+                .satisfies(t -> assertCode(t, HttpStatus.UNPROCESSABLE_ENTITY, "topup-code-not-found"));
+        assertThat(ipFailures.asMap()).isEmpty();
     }
 }

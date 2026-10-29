@@ -416,6 +416,11 @@ yadony:
       stripe-fallback:
         percent: ${WALLET_REFUND_FEE_STRIPE_FALLBACK_PERCENT:3.15}
         fixed: ${WALLET_REFUND_FEE_STRIPE_FALLBACK_FIXED:0.25}
+    topup-code:
+      # Clé HMAC des codes de recharge, stockés hachés (TopupCodeHasher). Obligatoire hors
+      # dev/test, 32 caractères au moins (openssl rand -hex 32). La changer rend tous les codes
+      # en cours inutilisables.
+      hmac-key: ${TOPUP_CODE_HMAC_KEY:}
   dispute-sla-hours: ${YADONY_DISPUTE_SLA_HOURS:72}
   reimbursement:
     max-amount-eur: ${YADONY_REIMBURSEMENT_MAX_AMOUNT_EUR:50}
@@ -559,9 +564,9 @@ yadony:
     enabled: ${PAWAPAY_ENABLED:false}
     base-url: ${PAWAPAY_BASE_URL:https://api.sandbox.pawapay.io}
     api-token: ${PAWAPAY_API_TOKEN:}
-    # Obligatoire en prod (PawapayConfig refuse de démarrer sinon), activé aussi dans le
+    # Obligatoire hors dev/test (PawapayConfig refuse de démarrer sinon), activé aussi dans le
     # dashboard pawaPay (« Signed callbacks »).
-    callback-signatures-required: ${PAWAPAY_CALLBACK_SIGNATURES:false}
+    callback-signatures-required: ${PAWAPAY_CALLBACK_SIGNATURES:true}
     deposit-deadline-minutes: ${PAWAPAY_DEPOSIT_DEADLINE_MINUTES:30}
     # Page de rebond Wave (HTTPS, jamais le deep link : refusé par les PSP).
     return-base-url: ${PAWAPAY_RETURN_BASE_URL:https://api.yadony.com}

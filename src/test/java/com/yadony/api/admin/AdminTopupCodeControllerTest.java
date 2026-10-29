@@ -36,7 +36,7 @@ class AdminTopupCodeControllerTest {
         UUID id = UUID.randomUUID();
 
         WalletTopupCodeEntity code = new WalletTopupCodeEntity();
-        code.setCode("DAKAR2000");
+        code.setCodeHint("2000");
         code.setAmount(BigDecimal.TEN);
         code.setCurrency("EUR");
         code.setMaxRedemptions(5);
@@ -54,7 +54,8 @@ class AdminTopupCodeControllerTest {
 
         verify(service).revoke(id, adminId);
         assertThat(response.displayStatus()).isEqualTo("REVOKED");
-        assertThat(response.code()).isEqualTo("DAKAR2000");
+        assertThat(response.code()).isNull();
+        assertThat(response.codeHint()).isEqualTo("2000");
         assertThat(response.revokedAt()).isNotNull();
         assertThat(response.remaining()).isEqualTo(5);
     }

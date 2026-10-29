@@ -36,6 +36,9 @@ import java.util.UUID;
  * manuels). Avec {@code status} : suivi des remboursements automatiques (PROCESSING), des échecs
  * (FAILED) et historique (REFUNDED, RESOLVED). Un ticket manuel se résout après remboursement
  * hors-app ; un remboursement automatique ne demande aucun geste.
+ *
+ * <p>Une {@code @PreAuthorize} de méthode remplace celle de la classe : chaque méthode répète
+ * {@code hasRole('ADMIN')}.
  */
 @RestController
 @RequestMapping("/admin/wallet-refund-requests")
@@ -54,7 +57,7 @@ public class AdminWalletRefundController {
         this.walletRefundRetryService = walletRefundRetryService;
     }
 
-    @PreAuthorize("hasAuthority('PAYMENT_VIEW')")
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
     @GetMapping
     public ResponseEntity<Page<AdminWalletRefundRequestResponse>> list(
             @RequestParam(defaultValue = "0") int page,
@@ -104,7 +107,7 @@ public class AdminWalletRefundController {
      * {@code {"paidAmount": 487, "note": "..."}} : le montant réellement versé et une note, gardés
      * sur la demande et dans l'audit. Sans corps (admin d'avant), comportement inchangé.
      */
-    @PreAuthorize("hasAuthority('PAYMENT_REFUND')")
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_REFUND')")
     @PostMapping("/{id}/resolve")
     public ResponseEntity<AdminWalletRefundRequestResponse> resolve(
             @PathVariable UUID id,
@@ -122,7 +125,7 @@ public class AdminWalletRefundController {
      * du wallet pawaPay, montant sûr, montant suggéré, manque à alimenter et numéro masqué.
      * Même permission que {@code resolve} : l'aperçu prépare un versement réel.
      */
-    @PreAuthorize("hasAuthority('PAYMENT_REFUND')")
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_REFUND')")
     @GetMapping("/{id}/retry-preview")
     public ResponseEntity<AdminWalletRefundRetryPreviewResponse> retryPreview(@PathVariable UUID id) {
         return ResponseEntity.ok(AdminWalletRefundRetryPreviewResponse.from(walletRefundRetryService.preview(id)));
@@ -133,7 +136,7 @@ public class AdminWalletRefundController {
      * recharge, par le rail pawaPay du flux automatique. Corps facultatif {@code {"amount": 477}},
      * qui doit égaler le dû (confirmation du montant affiché).
      */
-    @PreAuthorize("hasAuthority('PAYMENT_REFUND')")
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_REFUND')")
     @PostMapping("/{id}/retry")
     public ResponseEntity<AdminWalletRefundRetryResponse> retry(
             @PathVariable UUID id,
