@@ -141,6 +141,7 @@ class NotificationTextsTest {
         map.put("disputeResolved", NotificationTexts.disputeResolved(m));
         // Délai de contestation à trois chiffres : le réglage n'est pas borné.
         map.put("senderNoShowReported", NotificationTexts.senderNoShowReported(m, 168));
+        map.put("senderNoShowWithdrawn", NotificationTexts.senderNoShowWithdrawn(m));
         map.put("noShowConfirmedHandover", NotificationTexts.noShowConfirmedHandover(m));
         map.put("noShowConfirmedDelivery", NotificationTexts.noShowConfirmedDelivery(m));
         map.put("noShowRejected", NotificationTexts.noShowRejected(m));

@@ -47,6 +47,18 @@ public interface CancellationRepository extends JpaRepository<CancellationEntity
     boolean existsByBidIdAndScopeAndNoShowStatusIn(UUID bidId, CancellationScope scope,
                                                     List<CancellationStatus> statuses);
 
+    /**
+     * Statut de la déclaration lu EN BASE (projection scalaire, jamais servie par le cache de premier
+     * niveau). Appelé juste après le verrou du colis : il voit la levée ou la réponse qu'une requête
+     * concurrente vient de commiter.
+     */
+    @Query("SELECT c.noShowStatus FROM CancellationEntity c WHERE c.id = :id")
+    Optional<CancellationStatus> findNoShowStatusById(@Param("id") UUID id);
+
+    /** Colis d'une déclaration, en projection scalaire : à lire AVANT le verrou du colis, sans rien charger en cache. */
+    @Query("SELECT c.bidId FROM CancellationEntity c WHERE c.id = :id")
+    Optional<UUID> findBidIdById(@Param("id") UUID id);
+
     @Query("SELECT c FROM CancellationEntity c WHERE c.scope = :scope " +
            "AND c.noShowStatus = 'PENDING_CONFIRMATION' AND c.contestationDeadline < :now")
     List<CancellationEntity> findExpiredPendingByScope(@Param("scope") CancellationScope scope,

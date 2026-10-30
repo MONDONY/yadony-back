@@ -327,6 +327,11 @@ public final class NotificationTexts {
                 m.get("notification.sender-no-show-reported.body", contestationHours));
     }
 
+    public static NotificationText senderNoShowWithdrawn(Messages m) {
+        return new NotificationText(m.get("notification.sender-no-show-withdrawn.title"),
+                m.get("notification.sender-no-show-withdrawn.body"));
+    }
+
     public static NotificationText noShowConfirmedHandover(Messages m) {
         return new NotificationText(m.get("notification.no-show-confirmed.title"),
                 m.get("notification.no-show-confirmed.handover.body"));

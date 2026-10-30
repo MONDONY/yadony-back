@@ -8,6 +8,7 @@ import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.matching.BidStatus;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -28,7 +29,9 @@ import java.util.UUID;
  *   <li><b>Confirmer HANDOVER</b> : même chemin que la confirmation historique
  *       ({@link CancellationConfirmedEvent} SENDER_NO_SHOW : bid CANCELLED, remboursement du
  *       séquestre, commission espèces remboursée, compteur de réputation). Un litige de
- *       contestation ouvert est fermé (NOSHOW_CONFIRMED) : la décision admin le tranche.</li>
+ *       contestation ouvert est fermé (NOSHOW_CONFIRMED) : la décision admin le tranche.
+ *       Refusé en 409 {@code noshow-parcel-handed-over} si le colis a déjà été remis
+ *       ({@link BidStatus#SENDER_SHOWED_UP}) : l'admin rejette alors.</li>
  *   <li><b>Confirmer DELIVERY</b> : aucune conséquence financière ici. En attente : ouvre le
  *       litige « non contesté » exactement comme l'échéance
  *       ({@link DeliveryNoShowUncontestedScheduler#openUncontestedDispute}). Contestée : le
@@ -98,6 +101,7 @@ public class NoShowArbitrationService {
      */
     @Transactional
     public void confirmLegacyByBid(UUID bidId, UUID adminId) {
+        bidRepository.lockForUpdate(bidId);
         CancellationEntity c = cancellationRepository.findByBidId(bidId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "cancellation-not-found", "Not Found",
@@ -111,6 +115,15 @@ public class NoShowArbitrationService {
     private CancellationEntity doConfirm(CancellationEntity c, UUID adminId, String decisionReason) {
         CancellationStatus previous = c.getNoShowStatus();
         BidEntity bid = loadBid(c);
+        // Expéditeur absent alors que son colis a été remis (déclaration ouverte avant
+        // SenderNoShowHandoverGate) : confirmer rembourserait le séquestre d'un colis qui voyage.
+        if (c.getScope() == CancellationScope.HANDOVER
+                && BidStatus.SENDER_SHOWED_UP.contains(bid.getStatus())) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "noshow-parcel-handed-over",
+                    "Parcel Already Handed Over",
+                    "Le colis a déjà été remis au voyageur (" + bid.getStatus().name() + ") : l'absence de"
+                            + " l'expéditeur ne peut plus être confirmée. Rejetez la déclaration.");
+        }
         AnnouncementEntity announcement = findAnnouncement(bid);
 
         markDecision(c, NoShowAdminDecision.CONFIRMED, adminId, decisionReason);
@@ -140,17 +153,34 @@ public class NoShowArbitrationService {
         return c;
     }
 
+    /**
+     * Verrou du colis AVANT de charger la déclaration, comme le scan de remise qui peut la lever au
+     * même instant ({@link SenderNoShowHandoverGate}) : l'identifiant du colis est lu en projection
+     * scalaire (rien dans le cache), puis la déclaration et le colis sont chargés frais. Son statut
+     * ({@code previousStatus} de l'audit) et l'écriture qui suit portent donc sur la valeur commitée
+     * la plus récente : une déclaration levée entre-temps répond 409, une déclaration contestée
+     * entre-temps est arbitrée comme contestée.
+     */
     private CancellationEntity loadOpenNoShow(UUID cancellationId) {
+        UUID bidId = cancellationRepository.findBidIdById(cancellationId).orElseThrow(NoShowArbitrationService::notFound);
+        bidRepository.lockForUpdate(bidId);
         CancellationEntity c = cancellationRepository.findById(cancellationId)
                 .filter(found -> NoShowReasons.isNoShow(found.getReason()))
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "noshow-not-found", "Not Found",
-                        "Déclaration d'absence introuvable"));
+                .orElseThrow(NoShowArbitrationService::notFound);
         if (!isOpen(c)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "noshow-already-decided",
-                    "No-show Already Decided", "Cette déclaration d'absence est déjà tranchée");
+            throw alreadyDecided();
         }
         return c;
+    }
+
+    private static YadonyBusinessException notFound() {
+        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "noshow-not-found", "Not Found",
+                "Déclaration d'absence introuvable");
+    }
+
+    private static YadonyBusinessException alreadyDecided() {
+        return new YadonyBusinessException(HttpStatus.CONFLICT, "noshow-already-decided",
+                "No-show Already Decided", "Cette déclaration d'absence est déjà tranchée");
     }
 
     private static boolean isOpen(CancellationEntity c) {

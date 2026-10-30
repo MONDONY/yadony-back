@@ -55,6 +55,15 @@ public enum BidStatus {
     public static final Set<BidStatus> EN_ROUTE = EnumSet.of(HANDED_OVER, IN_TRANSIT, ARRIVED);
 
     /**
+     * L'expéditeur s'est forcément présenté à la remise : colis remis (HANDED_OVER, IN_TRANSIT,
+     * ARRIVED, COMPLETED) ou refusé à l'inspection de la remise (PARCEL_REFUSED). Une absence de
+     * l'expéditeur n'y a plus de sens : ni confirmation, ni remboursement « absence », ni pénalité
+     * (cancellation/ et payments/ le lisent). {@code contains(null)} rend faux.
+     */
+    public static final Set<BidStatus> SENDER_SHOWED_UP =
+            EnumSet.of(HANDED_OVER, IN_TRANSIT, ARRIVED, COMPLETED, PARCEL_REFUSED);
+
+    /**
      * Statuts pour lesquels le numéro de téléphone de la contrepartie est
      * communicable : ARRIVED est justement le moment où expéditeur et voyageur
      * coordonnent le retrait, donc le pire moment pour masquer le numéro.

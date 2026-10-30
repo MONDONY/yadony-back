@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.cancellation.events.CancellationConfirmedEvent;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.matching.BidStatus;
 import com.yadony.api.common.AuditService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -54,6 +55,11 @@ public class SenderReputationListener {
         BidEntity bid = bidRepository.findById(event.bidId()).orElse(null);
         if (bid == null) {
             log.debug("Sender no-show réputation : bid {} introuvable", event.bidId());
+            return;
+        }
+        // Défense en profondeur : colis remis, l'expéditeur était là, aucune pénalité.
+        if (BidStatus.SENDER_SHOWED_UP.contains(bid.getStatus())) {
+            log.warn("Sender no-show réputation : colis {} déjà {}, aucun incident compté", bid.getId(), bid.getStatus());
             return;
         }
         UserEntity sender = userRepository.findById(bid.getSenderId()).orElse(null);

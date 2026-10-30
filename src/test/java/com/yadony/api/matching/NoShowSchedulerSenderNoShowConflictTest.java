@@ -108,10 +108,24 @@ class NoShowSchedulerSenderNoShowConflictTest {
     }
 
     @Test
-    void declarationClasseeParLAdmin_leCronReprendSonCoursNormal() {
-        // RESOLVED = l'admin a rejeté la déclaration : « le bid continue normalement ».
+    void declarationLeveeRecemment_leCronLaisseAuVoyageurLeTempsDeScanner() {
+        // RESOLVED il y a 2 h (équipe ou litige) : la date limite est passée, mais le voyageur doit
+        // pouvoir scanner la remise ; le cron ne le déclare pas absent dans les 24 h.
         Fixture f = acceptedBidPastDeadline();
-        reportSenderNoShow(f.bid, CancellationStatus.RESOLVED);
+        CancellationEntity c = reportSenderNoShow(f.bid, CancellationStatus.RESOLVED);
+        resolvedHoursAgo(c, 2);
+
+        scheduler.detectNoShows();
+
+        assertTravelerNotPenalized(f);
+    }
+
+    @Test
+    void declarationLeveeIlYAPlusDe24h_leCronReprendSonCoursNormal() {
+        // RESOLVED il y a 25 h sans scan : le bid reprend son cours (voyageur déclaré absent).
+        Fixture f = acceptedBidPastDeadline();
+        CancellationEntity c = reportSenderNoShow(f.bid, CancellationStatus.RESOLVED);
+        resolvedHoursAgo(c, 25);
 
         scheduler.detectNoShows();
         em.flush();
@@ -119,6 +133,32 @@ class NoShowSchedulerSenderNoShowConflictTest {
 
         assertThat(bidRepository.findById(f.bid.getId()).orElseThrow().getStatus())
                 .isEqualTo(BidStatus.NO_SHOW);
+    }
+
+    @Test
+    void autreMotifResoluRecemment_neRetientPasLeCron() {
+        // Seule une déclaration SENDER_NO_SHOW levée accorde le délai.
+        Fixture f = acceptedBidPastDeadline();
+        CancellationEntity c = reportSenderNoShow(f.bid, CancellationStatus.RESOLVED);
+        c.setReason(CancellationReason.TRAVELER_CANCEL_AFTER_HANDOVER.name());
+        cancellationRepository.saveAndFlush(c);
+        resolvedHoursAgo(c, 2);
+
+        scheduler.detectNoShows();
+        em.flush();
+        em.clear();
+
+        assertThat(bidRepository.findById(f.bid.getId()).orElseThrow().getStatus())
+                .isEqualTo(BidStatus.NO_SHOW);
+    }
+
+    /** {@code updated_at} est posé par {@code @PreUpdate} : on le recule en SQL. */
+    private void resolvedHoursAgo(CancellationEntity c, int hours) {
+        em.getEntityManager().createNativeQuery("UPDATE cancellations SET updated_at = :at WHERE id = :id")
+                .setParameter("at", LocalDateTime.now(ZoneOffset.UTC).minusHours(hours))
+                .setParameter("id", c.getId())
+                .executeUpdate();
+        em.clear();
     }
 
     @Test
@@ -225,7 +265,7 @@ class NoShowSchedulerSenderNoShowConflictTest {
         assertThat(events.stream(VoyageurNoShowEvent.class)).isEmpty();
     }
 
-    private void reportSenderNoShow(BidEntity bid, CancellationStatus status) {
+    private CancellationEntity reportSenderNoShow(BidEntity bid, CancellationStatus status) {
         CancellationEntity c = new CancellationEntity();
         c.setBidId(bid.getId());
         c.setCancelledBy(UUID.randomUUID());
@@ -233,7 +273,7 @@ class NoShowSchedulerSenderNoShowConflictTest {
         c.setScope(CancellationScope.HANDOVER);
         c.setNoShowStatus(status);
         c.setContestationDeadline(OffsetDateTime.now().plusHours(22));
-        cancellationRepository.saveAndFlush(c);
+        return cancellationRepository.saveAndFlush(c);
     }
 
     private Fixture acceptedBidPastDeadline() {

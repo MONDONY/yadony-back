@@ -6,6 +6,7 @@ import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.matching.BidStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -45,6 +46,12 @@ public class CommissionRefundListener {
 
         BidEntity bid = bidRepository.findById(event.bidId()).orElse(null);
         if (bid == null) return;
+        // Défense en profondeur : le colis a été remis, l'expéditeur était là, la commission reste due.
+        if (BidStatus.SENDER_SHOWED_UP.contains(bid.getStatus())) {
+            log.warn("CommissionRefundListener: absence confirmée sur le colis {} déjà {} — commission non remboursée",
+                    bid.getId(), bid.getStatus());
+            return;
+        }
         if (bid.getPaymentMethod() != PaymentMethod.CASH) return;
         if (bid.getCommissionStatus() != CommissionStatus.CHARGED) return;
 

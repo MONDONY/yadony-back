@@ -119,6 +119,21 @@ class CommissionRefundListenerTest {
 
     // --- helpers ---
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = com.yadony.api.matching.BidStatus.class,
+            names = {"HANDED_OVER", "IN_TRANSIT", "ARRIVED", "COMPLETED", "PARCEL_REFUSED"})
+    void parcelAlreadyHandedOver_commissionIsNotRefunded(com.yadony.api.matching.BidStatus handedOver) {
+        // Le colis voyage : la commission reste due, une absence confirmée ne la rend pas.
+        BidEntity bid = cashBid(CommissionChargedVia.CARD);
+        bid.setStatus(handedOver);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+
+        listener.onCancellationConfirmed(
+                new CancellationConfirmedEvent(bidId, cancelId, CancellationReason.SENDER_NO_SHOW));
+
+        verifyNoInteractions(cashCommissionService, announcementRepository);
+    }
+
     private BidEntity cashBid(CommissionChargedVia via) {
         BidEntity bid = new BidEntity();
         ReflectionTestUtils.setField(bid, "id", bidId);

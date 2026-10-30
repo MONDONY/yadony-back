@@ -2,6 +2,9 @@ package com.yadony.api.payments;
 
 import com.yadony.api.cancellation.CancellationReason;
 import com.yadony.api.cancellation.events.CancellationConfirmedEvent;
+import com.yadony.api.matching.BidEntity;
+import com.yadony.api.matching.BidRepository;
+import com.yadony.api.matching.BidStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -29,12 +32,13 @@ class SenderNoShowConfirmedListenerTest {
 
     @Mock private PaymentRepository paymentRepository;
     @Mock private RefundProcessor refundProcessor;
+    @Mock private BidRepository bidRepository;
 
     private SenderNoShowConfirmedListener listener;
 
     @BeforeEach
     void setUp() {
-        listener = new SenderNoShowConfirmedListener(paymentRepository, refundProcessor);
+        listener = new SenderNoShowConfirmedListener(paymentRepository, refundProcessor, bidRepository);
     }
 
     @Test
@@ -60,7 +64,7 @@ class SenderNoShowConfirmedListenerTest {
         listener.onCancellationConfirmed(
                 new CancellationConfirmedEvent(bidId, UUID.randomUUID(), CancellationReason.TRIP_CANCELLED));
 
-        verifyNoInteractions(refundProcessor, paymentRepository);
+        verifyNoInteractions(refundProcessor, paymentRepository, bidRepository);
     }
 
     @Test
@@ -72,5 +76,42 @@ class SenderNoShowConfirmedListenerTest {
                 new CancellationConfirmedEvent(bidId, UUID.randomUUID(), CancellationReason.SENDER_NO_SHOW));
 
         verifyNoInteractions(refundProcessor);
+    }
+
+    private void bidIn(UUID bidId, BidStatus status) {
+        BidEntity bid = new BidEntity();
+        bid.setStatus(status);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = BidStatus.class,
+            names = {"HANDED_OVER", "IN_TRANSIT", "ARRIVED", "COMPLETED", "PARCEL_REFUSED"})
+    void parcelAlreadyHandedOver_refundsNothing(BidStatus handedOver) {
+        // Défense en profondeur : une absence confirmée sur un colis qui voyage ne rend pas le séquestre.
+        UUID bidId = UUID.randomUUID();
+        bidIn(bidId, handedOver);
+
+        listener.onCancellationConfirmed(
+                new CancellationConfirmedEvent(bidId, UUID.randomUUID(), CancellationReason.SENDER_NO_SHOW));
+
+        verifyNoInteractions(refundProcessor, paymentRepository);
+    }
+
+    @Test
+    void parcelCancelledByTheConfirmation_isRefunded() {
+        // Chemin nominal : SenderNoShowBidCancelListener a passé le colis CANCELLED avant le commit.
+        UUID bidId = UUID.randomUUID();
+        UUID paymentId = UUID.randomUUID();
+        bidIn(bidId, BidStatus.CANCELLED);
+        PaymentEntity p = spy(new PaymentEntity());
+        when(p.getId()).thenReturn(paymentId);
+        when(paymentRepository.findForBid(bidId)).thenReturn(Optional.of(p));
+
+        listener.onCancellationConfirmed(
+                new CancellationConfirmedEvent(bidId, UUID.randomUUID(), CancellationReason.SENDER_NO_SHOW));
+
+        verify(refundProcessor).processRefund(eq(paymentId),
+                eq("PAYMENT_REFUNDED_SENDER_NO_SHOW"), eq(bidId), any(Map.class));
     }
 }

@@ -74,6 +74,14 @@ public class AdminAlertService {
     /** Préfixe du message (log et issue Sentry) de toute alerte admin. */
     public static final String PREFIXE_ALERTE = "[ADMIN ALERT] ";
 
+    /**
+     * Préfixe des alertes « remise hors ligne arrivée après la décision » SANS preuve vérifiée
+     * ({@code admin/LateHandoverScanAlertListener}) : simple déclaration du client, en avertissement.
+     * Avec un numéro de suivi vérifié, l'alerte prend le préfixe {@code LATE_HANDOVER_SCAN_} et reste
+     * un incident (règle par défaut).
+     */
+    public static final String PREFIXE_REMISE_TARDIVE_NON_VERIFIEE = "LATE_HANDOVER_CLAIM_";
+
     /** Préfixe des alertes nées d'un webhook Sentry. Voir {@link #raise}. */
     private static final String PREFIXE_SENTRY = "SENTRY_ISSUE_";
 
@@ -191,6 +199,7 @@ public class AdminAlertService {
         if (code == null) return Gravite.INCIDENT;
         if (CODES_INFO.contains(code)) return Gravite.INFO;
         if (CODES_AVERTISSEMENT.contains(code)) return Gravite.AVERTISSEMENT;
+        if (code.startsWith(PREFIXE_REMISE_TARDIVE_NON_VERIFIEE)) return Gravite.AVERTISSEMENT;
         return Gravite.INCIDENT;
     }
 

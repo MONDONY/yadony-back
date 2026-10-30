@@ -62,6 +62,33 @@ class NoShowNotificationListenerTest {
     }
 
     @Test
+    void declarationLeveeParLeScan_expediteurPrevenu() {
+        when(dispatcher.messagesFor(senderId)).thenReturn(TestMessages.fr());
+
+        listener.onSenderNoShowWithdrawn(new com.yadony.api.cancellation.events.SenderNoShowWithdrawnEvent(
+                bidId, cancellationId, senderId));
+
+        verify(dispatcher).notifyUser(senderId, "Absence levée",
+                "Le voyageur a scanné votre colis : la déclaration d'absence est levée.",
+                Map.of("type", "SENDER_NOSHOW_WITHDRAWN", "bidId", bidId.toString(),
+                        "cancellationId", cancellationId.toString()));
+    }
+
+    @Test
+    void declarationLeveeParLeScan_anglais_etSansExpediteurRienNEstEnvoye() {
+        when(dispatcher.messagesFor(senderId)).thenReturn(TestMessages.en());
+
+        listener.onSenderNoShowWithdrawn(new com.yadony.api.cancellation.events.SenderNoShowWithdrawnEvent(
+                bidId, cancellationId, senderId));
+        listener.onSenderNoShowWithdrawn(new com.yadony.api.cancellation.events.SenderNoShowWithdrawnEvent(
+                bidId, cancellationId, null));
+
+        verify(dispatcher).notifyUser(eq(senderId), eq("Absence report lifted"),
+                eq("The traveler scanned your parcel: the absence report is lifted."), any());
+        verify(dispatcher, org.mockito.Mockito.times(1)).notifyUser(any(), anyString(), anyString(), any());
+    }
+
+    @Test
     void confirmationRemise_lesDeuxPartiesPrevenues_sansMotifInterne() {
         when(dispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
 

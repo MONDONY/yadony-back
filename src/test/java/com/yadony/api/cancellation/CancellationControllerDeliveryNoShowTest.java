@@ -111,7 +111,7 @@ class CancellationControllerDeliveryNoShowTest {
                 .andExpect(status().isOk());
 
         verify(arbitrationService).confirmLegacyByBid(BID_ID, adminId);
-        verify(cancellationService, never()).confirmSenderNoShow(any());
+        verify(cancellationService, never()).confirmSenderNoShow(any(), any());
     }
 
     @Test

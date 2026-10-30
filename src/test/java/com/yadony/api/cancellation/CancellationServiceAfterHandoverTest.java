@@ -270,4 +270,69 @@ class CancellationServiceAfterHandoverTest {
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
                         .isEqualTo(HttpStatus.CONFLICT));
     }
+
+    /** Déclaration « expéditeur absent » levée par le scan de remise : la ligne HANDOVER existe déjà. */
+    private CancellationEntity liftedSenderNoShow() {
+        CancellationEntity c = new CancellationEntity();
+        ReflectionTestUtils.setField(c, "id", CANCELLATION_ID);
+        c.setBidId(BID_ID);
+        c.setCancelledBy(TRAVELER_ID);
+        c.setReason(CancellationReason.SENDER_NO_SHOW.name());
+        c.setNoShowStatus(CancellationStatus.RESOLVED);
+        c.setContestationDeadline(OffsetDateTime.now().plusHours(20));
+        c.setAdminDecision(NoShowAdminDecision.REJECTED);
+        c.setDecidedByAdminId(UUID.randomUUID());
+        c.setDecidedAt(OffsetDateTime.now().minusHours(1));
+        c.setDecisionReason("Expéditeur venu");
+        return c;
+    }
+
+    @Test
+    void declarationDAbsenceLevee_laLigneEstReutilisee_auLieuDUn409() {
+        // UNIQUE(bid_id, scope) : une seule ligne HANDOVER par colis. Levée par le scan, la déclaration
+        // ne doit pas interdire l'annulation après remise (le colis est chez le voyageur).
+        stubFullFlow(SENDER_ID, BidStatus.HANDED_OVER, OffsetDateTime.now().plusHours(5));
+        CancellationEntity existing = liftedSenderNoShow();
+        when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.of(existing));
+
+        service.cancelAfterHandover(FIREBASE, BID_ID);
+
+        ArgumentCaptor<CancellationEntity> cCap = ArgumentCaptor.forClass(CancellationEntity.class);
+        verify(cancellationRepository).save(cCap.capture());
+        CancellationEntity saved = cCap.getValue();
+        assertThat(saved).isSameAs(existing);
+        assertThat(saved.getReason()).isEqualTo("SENDER_CANCEL_AFTER_HANDOVER");
+        assertThat(saved.getCancelledBy()).isEqualTo(SENDER_ID);
+        assertThat(saved.getNoShowStatus()).isEqualTo(CancellationStatus.CONFIRMED);
+        assertThat(saved.getContestationDeadline()).isNull();
+        assertThat(saved.getAdminDecision()).isNull();
+        assertThat(saved.getDecidedByAdminId()).isNull();
+        assertThat(saved.getDecidedAt()).isNull();
+        assertThat(saved.getDecisionReason()).isNull();
+        // L'historique de la déclaration reste dans audit_log.
+        verify(auditService).log("CANCELLATION", CANCELLATION_ID, "SENDER_NO_SHOW_ROW_REUSED_AFTER_HANDOVER",
+                SENDER_ID, java.util.Map.of("bidId", BID_ID.toString(), "previousReason", "SENDER_NO_SHOW",
+                        "previousStatus", "RESOLVED", "newReason", "SENDER_CANCEL_AFTER_HANDOVER"));
+        ArgumentCaptor<BidEntity> bidCap = ArgumentCaptor.forClass(BidEntity.class);
+        verify(bidRepository).save(bidCap.capture());
+        assertThat(bidCap.getValue().getReturnCode()).hasSize(6);
+        verify(eventPublisher).publishEvent(any(TripCancelledEvent.class));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = CancellationStatus.class,
+            names = {"PENDING_CONFIRMATION", "CONTESTED", "CONFIRMED"})
+    void declarationDAbsenceNonLevee_resteUnConflit(CancellationStatus open) {
+        when(userRepository.findByFirebaseUid(FIREBASE)).thenReturn(Optional.of(user(SENDER_ID)));
+        when(bidRepository.findByIdForUpdate(BID_ID)).thenReturn(Optional.of(bid(BidStatus.HANDED_OVER)));
+        when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(ann(OffsetDateTime.now().plusHours(5))));
+        CancellationEntity existing = liftedSenderNoShow();
+        existing.setNoShowStatus(open);
+        when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.cancelAfterHandover(FIREBASE, BID_ID))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("already-cancelled"));
+        verify(cancellationRepository, org.mockito.Mockito.never()).save(any());
+    }
 }
