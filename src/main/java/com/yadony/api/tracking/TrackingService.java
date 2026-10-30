@@ -537,24 +537,29 @@ public class TrackingService {
     }
 
     /**
-     * Une demande en cours sur le colis retient la remise : supplément de prix en attente de
-     * l'expéditeur, modification du colis en attente du voyageur ou d'un paiement. Tous les
-     * {@link HandoverBlocker} sont consultés, dans l'ordre, jusqu'au premier qui bloque. Sous le
-     * verrou du colis, que la création d'un supplément ou d'une modification prend aussi : aucune
-     * course entre elles. Le 409 n'est pas définitif pour l'app : un scan hors ligne reste en file et
-     * se rejoue plus tard.
+     * Une demande en cours sur le colis retient la remise : déclaration d'absence de l'expéditeur
+     * non levée, supplément de prix en attente de l'expéditeur, modification du colis en attente du
+     * voyageur ou d'un paiement. Tous les {@link HandoverBlocker} sont consultés, dans l'ordre
+     * ({@code @Order}), jusqu'au premier qui bloque. Sous le verrou du colis, que la création d'un
+     * supplément, d'une modification ou d'une déclaration d'absence prend aussi : aucune course entre
+     * elles. Le 409 n'est pas définitif pour l'app : un scan hors ligne reste en file et se rejoue
+     * plus tard. Seul un colis ACCEPTED est concerné : TRANSIT et livraison ne passent jamais ici.
      */
     private void assertHandoverNotBlocked(BidEntity bid) {
         if (bid.getStatus() != BidStatus.ACCEPTED) {
             return;
         }
-        handoverBlockers.stream().map(b -> b.blockingCode(bid.getId())).flatMap(Optional::stream).findFirst()
-                .ifPresent(code -> {
-                    log.info("Scan DEPART du colis {} refusé : {}", bid.getId(), code);
-                    throw new YadonyBusinessException(HttpStatus.CONFLICT, code, "Handover Blocked",
-                            "Une demande en cours sur ce colis (supplément de prix ou modification) attend une réponse ou un paiement.",
-                            Map.of("bidId", bid.getId().toString()));
-                });
+        for (HandoverBlocker blocker : handoverBlockers) {
+            Optional<String> code = blocker.blockingCode(bid.getId());
+            if (code.isPresent()) {
+                log.info("Scan DEPART du colis {} refusé : {}", bid.getId(), code.get());
+                String detail = blocker.messageKey() != null
+                        ? messagesResolver.forRequest().get(blocker.messageKey())
+                        : "Une demande en cours sur ce colis (supplément de prix ou modification) attend une réponse ou un paiement.";
+                throw new YadonyBusinessException(HttpStatus.CONFLICT, code.get(), "Handover Blocked", detail,
+                        Map.of("bidId", bid.getId().toString()));
+            }
+        }
     }
 
     /**

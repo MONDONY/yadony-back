@@ -2173,4 +2173,81 @@ class TrackingServiceTest {
         assertThat(service.processScan(new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null),
                 "uid-traveler").eventType()).isEqualTo("DEPART");
     }
+
+    // ── Déclaration d'absence de l'expéditeur non levée : scan de remise bloqué ─────
+
+    /** Porte de remise qui porte sa propre clé de message (comme celle de l'absence de l'expéditeur). */
+    private static HandoverBlocker senderNoShowBlocker() {
+        return new HandoverBlocker() {
+            @Override
+            public Optional<String> blockingCode(UUID id) {
+                return Optional.of("handover-sender-noshow-pending");
+            }
+
+            @Override
+            public String messageKey() {
+                return "problem.handover-sender-noshow-pending";
+            }
+        };
+    }
+
+    @Test
+    void processScan_departWhileTheSenderIsReportedAbsent_is409WithItsOwnMessage() {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        stubDepartScan(bid);
+        service.setHandoverBlockers(List.of(senderNoShowBlocker()));
+
+        Throwable thrown = catchThrowable(() -> service.processScan(
+                new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null,
+                        LocalDateTime.now(ZoneOffset.UTC).minusMinutes(30)), "uid-traveler"));
+
+        assertThat(thrown).isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+            assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+            assertThat(e.getErrorCode()).isEqualTo("handover-sender-noshow-pending");
+            assertThat(e.getMessage()).contains("Vous avez déclaré l'expéditeur absent");
+        });
+        verify(trackingEventRepository, never()).save(any());
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
+    }
+
+    @Test
+    void processScan_departWhileTheSenderIsReportedAbsent_isTranslated() {
+        TestMessages.requestWithAcceptLanguage("en");
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        stubDepartScan(bid);
+        service.setHandoverBlockers(List.of(senderNoShowBlocker()));
+
+        Throwable thrown = catchThrowable(() -> service.processScan(
+                new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null), "uid-traveler"));
+
+        assertThat(thrown).isInstanceOfSatisfying(YadonyBusinessException.class, e ->
+                assertThat(e.getMessage()).contains("You reported the sender as absent"));
+    }
+
+    @Test
+    void processScan_firstBlockingGateWins_laterGatesAreNotConsulted() {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        stubDepartScan(bid);
+        HandoverBlocker later = org.mockito.Mockito.mock(HandoverBlocker.class);
+        service.setHandoverBlockers(List.of(id -> Optional.empty(), senderNoShowBlocker(), later));
+
+        Throwable thrown = catchThrowable(() -> service.processScan(
+                new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null), "uid-traveler"));
+
+        assertThat(thrown).isInstanceOfSatisfying(YadonyBusinessException.class, e ->
+                assertThat(e.getErrorCode()).isEqualTo("handover-sender-noshow-pending"));
+        org.mockito.Mockito.verifyNoInteractions(later);
+    }
+
+    @Test
+    void processScan_transitOfAHandedOverParcel_ignoresTheHandoverGates() {
+        BidEntity bid = buildBid(BidStatus.HANDED_OVER, "qt");
+        stubDepartScan(bid);
+        HandoverBlocker gate = org.mockito.Mockito.mock(HandoverBlocker.class);
+        service.setHandoverBlockers(List.of(gate));
+
+        assertThat(service.processScan(new QrScanRequest(bidId, TrackingEventType.TRANSIT, null, null, null, null, null),
+                "uid-traveler").eventType()).isEqualTo("TRANSIT");
+        org.mockito.Mockito.verifyNoInteractions(gate);
+    }
 }

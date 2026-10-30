@@ -96,6 +96,22 @@ class CancellationNoShowTest {
         }
 
         @Test
+        void verrouilleLeColisAvantDeLireSonStatut() {
+            // Course avec le scan de remise : sans le verrou, la déclaration lisait ACCEPTED
+            // pendant que le scan (qui tient le verrou) passait le colis HANDED_OVER, et une
+            // déclaration ouverte restait sur un colis parti.
+            BidEntity bid = cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.reportSenderNoShow(BID_ID, TRAVELER_ID);
+
+            org.mockito.InOrder order = org.mockito.Mockito.inOrder(bidRepository);
+            order.verify(bidRepository).lockForUpdate(BID_ID);
+            order.verify(bidRepository).findById(BID_ID);
+        }
+
+        @Test
         void refuseUnCompteQuiNEstPasLeVoyageurDuBid() {
             // Régression : le rôle TRAVELER est attribué à tout compte, il ne prouvait pas la
             // participation au bid. N'importe qui pouvait déclarer l'expéditeur d'un autre absent.

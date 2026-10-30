@@ -431,6 +431,11 @@ public class CancellationService {
 
     @Transactional
     public CancellationEntity reportSenderNoShow(UUID bidId, UUID travelerId) {
+        // Verrou du colis avant de lire son statut, le même que le scan de remise
+        // (TrackingService.recordScan) : la déclaration et le DEPART se sérialisent. Sinon la
+        // déclaration lisait ACCEPTED pendant que le scan, qui consulte SenderNoShowHandoverGate,
+        // passait le colis HANDED_OVER, et une déclaration ouverte restait sur un colis parti.
+        bidRepository.lockForUpdate(bidId);
         BidEntity bid = bidRepository.findById(bidId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Bid introuvable"));
