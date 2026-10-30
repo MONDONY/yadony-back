@@ -6,8 +6,8 @@ routes:
   - path: /announcements/trips
     label: My trips
 ---
-A trip can no longer be edited as soon as it has received a request, or has an accepted parcel: the "Edit" button in My trips is then greyed out ("Editable only while there's no request"). While it has received no request, it can be edited freely.
-To change the date of a trip that already has a request, use "Reschedule".
-You can unpublish a trip with no request: it then stays in your drafts.
-A trip with an accepted parcel cannot be deleted, you must cancel it first.
-The trip also offers a poster to share to find senders.
+The trip's "Edit" button (sticky button at the bottom, or the ⋮ menu) is only offered for a draft or a published trip that has received no request. As soon as it gets a first request, or a parcel is accepted, the trip can no longer be edited (the server refuses). In the "Your trip" windows (route, payments, conditions), "Edit" only appears if the trip can be edited.
+To change the date of a trip that already has a request, use "Reschedule" (⋮ menu), possible twice at most.
+"Unpublish" (⋮ menu) puts a published trip back in your drafts, as long as it has received no request or negotiation.
+"Delete" is possible for a draft, a canceled trip or a published trip with no request. A full trip cannot be deleted: contact support. With an accepted parcel, cancel it first.
+"Share the poster" (bottom button or ⋮ menu) offers a poster to find senders.

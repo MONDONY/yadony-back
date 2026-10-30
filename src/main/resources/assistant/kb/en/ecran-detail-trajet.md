@@ -12,4 +12,4 @@ routes:
   - path: /announcements/trips
     label: My trips
 ---
-You are on your trip's page: its details, then its views. The "Requests" tile, always active, opens Activity › Requests on "To review", filtered on this trip; "Parcels" lists parcels on board. Depending on status: "Edit", "Reschedule", "Poster", "Cancel" or "Delete". Once parcels are picked up, tap "Arrived at destination"; the optional tracking reminders also open this screen with "I'm leaving", a summary (parcels, kilos, earnings) and "See my parcels". Then "Notify recipients". If this trip isn't yours, Yadony opens its sender view, with "Make a request".
+Your trip reads top to bottom: the ticket, a status card, "To handle" (requests to handle, "I'm leaving", add the card), then the Requests, Parcels ("See the list") and Earnings cards, and "Your trip" (route, payments, conditions, poster, arrival). The sticky button at the bottom offers the action of the moment: Edit, Publish, Share the poster, See the requests, "Arrived at destination", then "Notify recipients". The ⋮ menu groups Reschedule, Unpublish, Cancel the trip and Delete. If this trip isn't yours, you see its sender view.

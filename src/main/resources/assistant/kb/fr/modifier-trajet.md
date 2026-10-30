@@ -6,8 +6,8 @@ routes:
   - path: /announcements/trips
     label: Mes trajets
 ---
-Un trajet ne se modifie plus dès qu'il a reçu une demande, ou qu'un colis y est accepté : le bouton « Modifier » de Mes trajets est alors grisé (« Modifiable tant qu'aucune demande »). Tant qu'il n'a reçu aucune demande, il se modifie librement.
-Pour changer la date d'un trajet qui a déjà une demande, utilisez « Reporter ».
-Vous pouvez dépublier un trajet sans demande : il reste alors dans vos brouillons.
-Un trajet qui a un colis accepté ne peut pas être supprimé, il faut d'abord l'annuler.
-Le trajet propose aussi une affiche à partager pour trouver des expéditeurs.
+Le bouton « Modifier » du trajet (bouton fixe en bas, ou menu ⋮) n'est proposé que pour un brouillon ou un trajet publié qui n'a reçu aucune demande. Dès la première demande, ou dès qu'un colis est accepté, le trajet ne se modifie plus (le serveur refuse). Dans les fenêtres de « Votre trajet » (itinéraire, paiements, conditions), « Modifier » n'apparaît que si le trajet est modifiable.
+Pour changer la date d'un trajet qui a déjà une demande, utilisez « Reporter » (menu ⋮), possible deux fois au plus.
+« Dépublier » (menu ⋮) remet un trajet publié dans vos brouillons, tant qu'il n'a reçu aucune demande ni négociation.
+« Supprimer » est possible pour un brouillon, un trajet annulé ou un trajet publié sans demande. Un trajet complet ne peut pas être supprimé : contactez le support. Avec un colis accepté, annulez-le d'abord.
+« Partager l'affiche » (bouton du bas ou menu ⋮) propose une affiche pour trouver des expéditeurs.
