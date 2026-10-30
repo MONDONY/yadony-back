@@ -112,7 +112,9 @@ public class AdminAccountService {
             firebaseUid = userRecord.getUid();
         } catch (FirebaseAuthException e) {
             if (e.getAuthErrorCode() == AuthErrorCode.EMAIL_ALREADY_EXISTS) {
-                log.error("Firebase createUser: EMAIL_ALREADY_EXISTS for email={} (orphaned Firebase user? not in Postgres)", email);
+                // Refus attendu (adresse d'un compte de l'app, ou identité Firebase orpheline) :
+                // l'admin reçoit le 409, un warn suffit (YADONY-BACK-STAGING-1P).
+                log.warn("Firebase createUser: EMAIL_ALREADY_EXISTS for email={} (orphaned Firebase user? not in Postgres)", email);
                 throw business(HttpStatus.CONFLICT, "ADMIN_EMAIL_DUPLICATE", "Email already in use");
             }
             log.error("Firebase createUser failed for email={}: {}", email, e.getAuthErrorCode(), e);
