@@ -2313,7 +2313,7 @@ class TrackingServiceTest {
     }
 
     @Test
-    void offlineDepartScannedBeforeTheSenderNoShowWasConfirmed_alertsAndStays422() {
+    void offlineDepartScannedBeforeTheSenderNoShowWasConfirmed_alertsUnverifiedAndStays422() {
         LocalDateTime decidedAt = LocalDateTime.now(ZoneOffset.UTC).minusHours(1);
         decidedBid(BidStatus.CANCELLED, "SENDER_NO_SHOW", decidedAt);
         LocalDateTime offline = decidedAt.minusHours(3);
@@ -2323,18 +2323,71 @@ class TrackingServiceTest {
 
         assertThat(thrown).isInstanceOfSatisfying(YadonyBusinessException.class,
                 e -> assertThat(e.getErrorCode()).isEqualTo("bid-not-accepted"));
+        // QR : le contenu du QR n'est pas transmis, aucune preuve vérifiée.
         verify(eventPublisher).publishEvent(new com.yadony.api.tracking.events.LateHandoverScanEvent(
-                bidId, travelerId, "CANCELLED", "SENDER_NO_SHOW", decidedAt, offline, "QR", photo));
+                bidId, travelerId, "CANCELLED", "SENDER_NO_SHOW", decidedAt, offline, "QR", photo, false, "NONE"));
         verify(trackingEventRepository, never()).save(any());
+        verify(bidRepository, never()).save(any());
+        verify(auditService, never()).log(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void lateOfflineDepartWithTheRightTrackingNumber_proofValidated() {
+        LocalDateTime decidedAt = LocalDateTime.now(ZoneOffset.UTC).minusHours(1);
+        decidedBid(BidStatus.CANCELLED, "SENDER_NO_SHOW", decidedAt);
+        LocalDateTime offline = decidedAt.minusHours(3);
+
+        catchThrowable(() -> service.processScan(new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null,
+                null, offline, ScanMethod.MANUAL, "trk000001"), "uid-traveler"));
+
+        verify(eventPublisher).publishEvent(new com.yadony.api.tracking.events.LateHandoverScanEvent(
+                bidId, travelerId, "CANCELLED", "SENDER_NO_SHOW", decidedAt, offline, "MANUAL", null, true,
+                "TRACKING_NUMBER"));
+    }
+
+    @Test
+    void lateOfflineDepartFailingTheNormalDepartChecks_staysItsErrorWithoutAlert() {
+        LocalDateTime decidedAt = LocalDateTime.now(ZoneOffset.UTC).minusHours(1);
+        BidEntity bid = decidedBid(BidStatus.CANCELLED, "SENDER_NO_SHOW", decidedAt);
+        LocalDateTime offline = decidedAt.minusHours(3);
+
+        // Numéro de suivi faux.
+        assertThat(catchThrowable(() -> service.processScan(new QrScanRequest(bidId, TrackingEventType.DEPART, null,
+                null, null, null, offline, ScanMethod.MANUAL, "TRK999999"), "uid-traveler")))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("bid-not-accepted"));
+        // Photo hors du dossier du colis, ou qui en sort.
+        replayDepart(offline, "https://ailleurs.example/x.jpg");
+        replayDepart(offline, "tracking/" + bidId + "/../autre.jpg");
+        // Heure de scan antérieure à la création du colis.
+        ReflectionTestUtils.setField(bid, "createdAt", decidedAt.minusHours(1));
+        replayDepart(offline, null);
+        ReflectionTestUtils.setField(bid, "createdAt", null);
+        // QR jamais généré : le chemin normal répond qr-not-ready.
+        bid.setQrToken(null);
+        replayDepart(offline, null);
+
+        verify(eventPublisher, never()).publishEvent(any(com.yadony.api.tracking.events.LateHandoverScanEvent.class));
+    }
+
+    @Test
+    void lateOfflineDepartWithAFutureTimestamp_noAlert() {
+        // Décision horodatée dans le futur (horloge) : un scan « avant » elle mais dans le futur reste une fraude.
+        LocalDateTime decidedAt = LocalDateTime.now(ZoneOffset.UTC).plusHours(2);
+        decidedBid(BidStatus.CANCELLED, "SENDER_NO_SHOW", decidedAt);
+
+        replayDepart(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(30), null);
+
+        verify(eventPublisher, never()).publishEvent(any(com.yadony.api.tracking.events.LateHandoverScanEvent.class));
     }
 
     @Test
     void offlineDepartBeforeTheTravelerNoShow_orTheUnconfirmedCashHandover_alertsToo() {
         LocalDateTime decidedAt = LocalDateTime.now(ZoneOffset.UTC).minusHours(1);
         decidedBid(BidStatus.NO_SHOW, null, decidedAt);
-        replayDepart(decidedAt.minusMinutes(5), "https://ailleurs.example/x.jpg");
+        replayDepart(decidedAt.minusMinutes(5), null);
         verify(eventPublisher).publishEvent(new com.yadony.api.tracking.events.LateHandoverScanEvent(
-                bidId, travelerId, "NO_SHOW", null, decidedAt, decidedAt.minusMinutes(5), "QR", null));
+                bidId, travelerId, "NO_SHOW", null, decidedAt, decidedAt.minusMinutes(5), "QR", null, false, "NONE"));
 
         org.mockito.Mockito.clearInvocations(eventPublisher);
         decidedBid(BidStatus.CANCELLED, "HANDOVER_NOT_CONFIRMED", decidedAt);
@@ -2359,15 +2412,15 @@ class TrackingServiceTest {
     }
 
     @Test
-    void lateOfflineDepart_fromAnOldAppWithATraversalPhoto_alertsWithoutMethodNorPhoto() {
+    void lateOfflineDepartFromAnOldAppWithABlankNumber_alertsWithoutMethodNorProof() {
         LocalDateTime decidedAt = LocalDateTime.now(ZoneOffset.UTC).minusHours(1);
         decidedBid(BidStatus.CANCELLED, "SENDER_NO_SHOW", decidedAt);
         LocalDateTime offline = decidedAt.minusHours(2);
 
         catchThrowable(() -> service.processScan(new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null,
-                "tracking/" + bidId + "/../autre.jpg", offline), "uid-traveler"));
+                null, offline, null, "  "), "uid-traveler"));
 
         verify(eventPublisher).publishEvent(new com.yadony.api.tracking.events.LateHandoverScanEvent(
-                bidId, travelerId, "CANCELLED", "SENDER_NO_SHOW", decidedAt, offline, null, null));
+                bidId, travelerId, "CANCELLED", "SENDER_NO_SHOW", decidedAt, offline, null, null, false, "NONE"));
     }
 }

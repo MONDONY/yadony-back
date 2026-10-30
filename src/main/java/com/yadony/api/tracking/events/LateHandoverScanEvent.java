@@ -16,7 +16,12 @@ import java.util.UUID;
  * @param rejectionReason  motif de la décision ({@code SENDER_NO_SHOW}, {@code HANDOVER_NOT_CONFIRMED}, …)
  * @param decidedAt        heure de la décision (UTC)
  * @param offlineTimestamp heure du scan hors ligne (UTC), antérieure à {@code decidedAt}
- * @param photoKey         clé de la photo de remise si elle est valide pour ce colis, sinon nulle
+ * @param photoKey         clé de la photo de remise, validée comme au chemin normal (ou nulle sans photo)
+ * @param proofValidated   vrai seulement si une preuve a été vérifiée par le back : numéro de suivi
+ *                         saisi et identique à celui du colis. Un scan QR ne transmet pas le contenu
+ *                         du QR : il reste non vérifié. Dans tous les cas, l'heure hors ligne est
+ *                         DÉCLARÉE PAR LE CLIENT et n'est jamais un fait établi.
+ * @param proofMethod      {@code TRACKING_NUMBER} si le numéro a été vérifié, sinon {@code NONE}
  */
 public record LateHandoverScanEvent(
         UUID bidId,
@@ -26,6 +31,8 @@ public record LateHandoverScanEvent(
         LocalDateTime decidedAt,
         LocalDateTime offlineTimestamp,
         String scanMethod,
-        String photoKey
+        String photoKey,
+        boolean proofValidated,
+        String proofMethod
 ) {
 }

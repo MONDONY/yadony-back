@@ -423,16 +423,20 @@ public class TrackingService {
     }
 
     /**
-     * Scan de remise hors ligne rejoué sur un colis déjà tranché « non remis » alors que le scan est
-     * antérieur à la décision : absence de l'expéditeur confirmée ({@code CANCELLED} +
+     * Scan de remise hors ligne rejoué sur un colis déjà tranché « non remis » alors que le scan se
+     * dit antérieur à la décision : absence de l'expéditeur confirmée ({@code CANCELLED} +
      * {@code SENDER_NO_SHOW}, l'échéance de 24 h passée pendant que le téléphone était hors ligne),
      * remise espèces non confirmée ({@code CANCELLED} + {@code HANDOVER_NOT_CONFIRMED}) ou voyageur
-     * déclaré absent ({@code NO_SHOW}). Le scan prouve la remise alors que l'argent a suivi la
-     * décision : {@link LateHandoverScanEvent} lève une alerte admin et un audit, commités à part
-     * (la transaction du scan est annulée par le 422 qui suit, gardé pour l'appelant).
+     * déclaré absent ({@code NO_SHOW}). L'heure hors ligne est DÉCLARÉE PAR LE CLIENT : on ne signale
+     * que si le scan passe les mêmes contrôles qu'un DEPART normal (le voyageur du colis, déjà vérifié
+     * par l'appelant ; QR généré ; heure ni future ni antérieure au colis ; numéro de suivi juste s'il
+     * est saisi ou exigé ; photo valide si envoyée). Sinon : aucune alerte, le 422 suit. Aucune
+     * écriture métier ici : {@link LateHandoverScanEvent} lève une alerte admin et un audit (commités
+     * à part, la transaction du scan est annulée par le 422, gardé pour l'appelant).
      */
     private void reportLateHandoverIfAny(BidEntity bid, QrScanRequest request, UserEntity traveler) {
-        if (request.eventType() != TrackingEventType.DEPART || request.offlineTimestamp() == null) {
+        LocalDateTime offline = request.offlineTimestamp();
+        if (request.eventType() != TrackingEventType.DEPART || offline == null) {
             return;
         }
         LocalDateTime decidedAt = null;
@@ -443,15 +447,36 @@ public class TrackingService {
         } else if (bid.getStatus() == BidStatus.NO_SHOW) {
             decidedAt = bid.getNoShowAt();
         }
-        if (decidedAt == null || !request.offlineTimestamp().isBefore(decidedAt)) {
+        if (decidedAt == null || !offline.isBefore(decidedAt)) {
             return;
         }
-        String photo = request.photoUrl();
-        String photoKey = photo != null && photo.startsWith("tracking/" + bid.getId() + "/") && !photo.contains("..")
-                ? photo : null;
+        if (!passesNormalDepartChecks(bid, request)) {
+            log.info("Scan de remise hors ligne tardif du colis {} sans preuve valide : aucune alerte", bid.getId());
+            return;
+        }
+        boolean numberVerified = request.trackingNumber() != null && !request.trackingNumber().isBlank();
         eventPublisher.publishEvent(new LateHandoverScanEvent(bid.getId(), traveler.getId(), bid.getStatus().name(),
-                bid.getRejectionReason(), decidedAt, request.offlineTimestamp(),
-                request.scanMethod() != null ? request.scanMethod().name() : null, photoKey));
+                bid.getRejectionReason(), decidedAt, offline,
+                request.scanMethod() != null ? request.scanMethod().name() : null,
+                validatedPhotoKey(bid, request.photoUrl()),
+                numberVerified, numberVerified ? "TRACKING_NUMBER" : "NONE"));
+    }
+
+    /** Contrôles du DEPART normal, sans effet de bord (ni audit, ni écriture). */
+    private boolean passesNormalDepartChecks(BidEntity bid, QrScanRequest request) {
+        LocalDateTime offline = request.offlineTimestamp();
+        if (bid.getQrToken() == null
+                || offline.isAfter(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(5))
+                || (bid.getCreatedAt() != null && offline.isBefore(bid.getCreatedAt()))) {
+            return false;
+        }
+        try {
+            assertTrackingNumberOnDepart(bid, request.trackingNumber(), request.scanMethod());
+            validatedPhotoKey(bid, request.photoUrl());
+            return true;
+        } catch (YadonyBusinessException e) {
+            return false;
+        }
     }
 
     /**

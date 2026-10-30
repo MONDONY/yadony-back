@@ -343,26 +343,86 @@ class DepartScanSenderNoShowIT {
     }
 
     @Test
-    void departHorsLigneAnterieurALaConfirmation_422_maisAlerteEtAuditPersistes() throws Exception {
+    void departHorsLigneAnterieurALaConfirmation_422_uneSeuleAlerteNonVerifiee_aucunEtatMetierModifie() throws Exception {
         // Le téléphone était hors ligne au moment de la remise ; l'échéance a confirmé l'absence entre-temps.
         BidEntity bid = seedBid(BidStatus.ACCEPTED);
+        CancellationEntity c = seedSenderNoShow(bid, CancellationStatus.CONFIRMED);
+        com.yadony.api.payments.PaymentEntity payment = seedEscrowPayment(bid);
         LocalDateTime decidedAt = LocalDateTime.now(ZoneOffset.UTC).minusMinutes(10).withNano(0);
-        jdbc.update("UPDATE bids SET status = 'CANCELLED', rejection_reason = 'SENDER_NO_SHOW', cancelled_at = ? WHERE id = ?",
-                decidedAt, bid.getId());
+        // Colis créé deux jours plus tôt : l'heure de scan déclarée n'est pas antérieure au colis.
+        jdbc.update("UPDATE bids SET status = 'CANCELLED', rejection_reason = 'SENDER_NO_SHOW', cancelled_at = ?, "
+                + "created_at = created_at - interval '2 days' WHERE id = ?", decidedAt, bid.getId());
+        Map<String, Object> bidBefore = jdbc.queryForMap(
+                "SELECT status, rejection_reason, cancelled_at, updated_at FROM bids WHERE id = ?", bid.getId());
+        Map<String, Object> declarationBefore = jdbc.queryForMap(
+                "SELECT no_show_status, updated_at FROM cancellations WHERE id = ?", c.getId());
         LocalDateTime offline = decidedAt.minusHours(2);
+        String body = "{\"bidId\":\"" + bid.getId() + "\",\"eventType\":\"DEPART\",\"scanMethod\":\"MANUAL\","
+                + "\"trackingNumber\":\"" + bid.getTrackingNumber() + "\",\"offlineTimestamp\":\"" + offline + "\"}";
 
-        scan("{\"bidId\":\"" + bid.getId() + "\",\"eventType\":\"DEPART\",\"scanMethod\":\"QR\","
-                + "\"offlineTimestamp\":\"" + offline + "\"}", "fr")
-                .andExpect(status().isUnprocessableEntity())
-                .andExpect(jsonPath("$.code").value("bid-not-accepted"));
+        // Deux rejeux (la file hors ligne renvoie l'étape) : 422 à chaque fois, une seule alerte, un seul audit.
+        for (int i = 0; i < 2; i++) {
+            scan(body, "fr")
+                    .andExpect(status().isUnprocessableEntity())
+                    .andExpect(jsonPath("$.code").value("bid-not-accepted"));
+        }
 
-        // Le scan est annulé par le 422 ; l'alerte et l'audit, commités à part, restent.
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM admin_alerts WHERE type = ? AND resolved = false",
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM admin_alerts WHERE type = ?",
                 Integer.class, "LATE_HANDOVER_SCAN_" + bid.getId())).isEqualTo(1);
+        Map<String, Object> alert = jdbc.queryForMap("SELECT detail, payload->>'clientDeclared' AS declared, "
+                + "payload->>'verified' AS verified, payload->>'proofValidated' AS proof, payload->>'proofMethod' AS method "
+                + "FROM admin_alerts WHERE type = ?", "LATE_HANDOVER_SCAN_" + bid.getId());
+        assertThat((String) alert.get("detail")).startsWith("DÉCLARÉ PAR LE CLIENT, NON VÉRIFIÉ");
+        assertThat(alert.get("declared")).isEqualTo("true");
+        assertThat(alert.get("verified")).isEqualTo("false");
+        assertThat(alert.get("proof")).isEqualTo("true");
+        assertThat(alert.get("method")).isEqualTo("TRACKING_NUMBER");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM audit_log WHERE entity_id = ? "
                 + "AND action = 'LATE_HANDOVER_SCAN_AFTER_DECISION' AND actor_id = ?", Integer.class, bid.getId(), travelerId))
                 .isEqualTo(1);
+        // Alerte et audit seulement : colis, déclaration, étapes et paiement intacts.
+        assertThat(jdbc.queryForMap("SELECT status, rejection_reason, cancelled_at, updated_at FROM bids WHERE id = ?",
+                bid.getId())).isEqualTo(bidBefore);
+        assertThat(jdbc.queryForMap("SELECT no_show_status, updated_at FROM cancellations WHERE id = ?", c.getId()))
+                .isEqualTo(declarationBefore);
         assertThat(trackingEventRepository.findByBidIdOrderByScannedAtAsc(bid.getId())).isEmpty();
+        assertThat(paymentRepository.findById(payment.getId()).orElseThrow().getStatus())
+                .isEqualTo(com.yadony.api.payments.PaymentStatus.ESCROW);
+        org.mockito.Mockito.verifyNoInteractions(refundProcessor);
+    }
+
+    @Test
+    void departHorsLigneTardifSansPreuveValide_422_sansAlerte() throws Exception {
+        BidEntity bid = seedBid(BidStatus.ACCEPTED);
+        LocalDateTime decidedAt = LocalDateTime.now(ZoneOffset.UTC).minusMinutes(10).withNano(0);
+        // Colis créé deux jours plus tôt : l'heure de scan déclarée n'est pas antérieure au colis.
+        jdbc.update("UPDATE bids SET status = 'CANCELLED', rejection_reason = 'SENDER_NO_SHOW', cancelled_at = ?, "
+                + "created_at = created_at - interval '2 days' WHERE id = ?", decidedAt, bid.getId());
+        LocalDateTime offline = decidedAt.minusHours(2);
+
+        // Numéro de suivi faux.
+        scan("{\"bidId\":\"" + bid.getId() + "\",\"eventType\":\"DEPART\",\"scanMethod\":\"MANUAL\","
+                + "\"trackingNumber\":\"DNY000000000\",\"offlineTimestamp\":\"" + offline + "\"}", "fr")
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("bid-not-accepted"));
+        // Photo hors du dossier du colis.
+        scan("{\"bidId\":\"" + bid.getId() + "\",\"eventType\":\"DEPART\",\"photoUrl\":\"https://ailleurs.example/x.jpg\","
+                + "\"offlineTimestamp\":\"" + offline + "\"}", "fr")
+                .andExpect(status().isUnprocessableEntity());
+        // Un autre voyageur : refusé avant tout (403), rien n'est signalé.
+        UserEntity other = persistUser(Role.TRAVELER);
+        mockMvc.perform(post("/tracking/events")
+                        .with(authentication(new UsernamePasswordAuthenticationToken(other.getFirebaseUid(), null,
+                                List.of(new SimpleGrantedAuthority("ROLE_TRAVELER")))))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"bidId\":\"" + bid.getId() + "\",\"eventType\":\"DEPART\",\"offlineTimestamp\":\""
+                                + offline + "\"}"))
+                .andExpect(status().isForbidden());
+
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM admin_alerts WHERE type = ?",
+                Integer.class, "LATE_HANDOVER_SCAN_" + bid.getId())).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM audit_log WHERE entity_id = ? "
+                + "AND action = 'LATE_HANDOVER_SCAN_AFTER_DECISION'", Integer.class, bid.getId())).isZero();
     }
 
     // ── Concurrence réelle (verrou du colis) ─────────────────────────────────
