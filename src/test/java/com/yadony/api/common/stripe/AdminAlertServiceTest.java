@@ -292,6 +292,16 @@ class AdminAlertServiceTest {
     }
 
     @Test
+    void graviteDe_remiseTardive_nonVerifieeEnAvertissement_verifieeEnIncident() {
+        String bid = java.util.UUID.randomUUID().toString();
+        assertThat(AdminAlertService.graviteDe(AdminAlertService.PREFIXE_REMISE_TARDIVE_NON_VERIFIEE + bid))
+                .isEqualTo(AdminAlertService.Gravite.AVERTISSEMENT);
+        assertThat(AdminAlertService.severityOf("LATE_HANDOVER_CLAIM_" + bid)).isEqualTo("WARN");
+        assertThat(AdminAlertService.graviteDe("LATE_HANDOVER_SCAN_" + bid)).isEqualTo(AdminAlertService.Gravite.INCIDENT);
+        assertThat(AdminAlertService.severityOf("LATE_HANDOVER_SCAN_" + bid)).isEqualTo("CRITICAL");
+    }
+
+    @Test
     void raise_evenementMetier_neJournalisePasEnError() {
         ListAppender<ILoggingEvent> appender = brancherAppender();
         try (MockedStatic<Sentry> sentryMock = mockStatic(Sentry.class)) {

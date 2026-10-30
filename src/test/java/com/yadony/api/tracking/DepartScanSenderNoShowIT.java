@@ -108,6 +108,10 @@ class DepartScanSenderNoShowIT {
         registry.add("spring.jpa.database-platform", () -> "org.hibernate.dialect.PostgreSQLDialect");
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
         registry.add("spring.flyway.enabled", () -> true);
+        // Pool réduit et délai court, comme en prod (20 connexions, 5 s) mais plus serré : une
+        // seconde connexion prise par rejeu épuiserait le pool sous 25 rejeux simultanés.
+        registry.add("spring.datasource.hikari.maximum-pool-size", () -> 10);
+        registry.add("spring.datasource.hikari.connection-timeout", () -> 5000);
     }
 
     @Autowired MockMvc mockMvc;
@@ -369,6 +373,8 @@ class DepartScanSenderNoShowIT {
 
         assertThat(jdbc.queryForObject("SELECT count(*) FROM admin_alerts WHERE type = ?",
                 Integer.class, "LATE_HANDOVER_SCAN_" + bid.getId())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT severity FROM admin_alerts WHERE type = ?", String.class,
+                "LATE_HANDOVER_SCAN_" + bid.getId())).as("numéro de suivi vérifié : incident").isEqualTo("CRITICAL");
         Map<String, Object> alert = jdbc.queryForMap("SELECT detail, payload->>'clientDeclared' AS declared, "
                 + "payload->>'verified' AS verified, payload->>'proofValidated' AS proof, payload->>'proofMethod' AS method "
                 + "FROM admin_alerts WHERE type = ?", "LATE_HANDOVER_SCAN_" + bid.getId());
@@ -408,7 +414,8 @@ class DepartScanSenderNoShowIT {
         // Photo hors du dossier du colis.
         scan("{\"bidId\":\"" + bid.getId() + "\",\"eventType\":\"DEPART\",\"photoUrl\":\"https://ailleurs.example/x.jpg\","
                 + "\"offlineTimestamp\":\"" + offline + "\"}", "fr")
-                .andExpect(status().isUnprocessableEntity());
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("bid-not-accepted"));
         // Un autre voyageur : refusé avant tout (403), rien n'est signalé.
         UserEntity other = persistUser(Role.TRAVELER);
         mockMvc.perform(post("/tracking/events")
@@ -419,10 +426,62 @@ class DepartScanSenderNoShowIT {
                                 + offline + "\"}"))
                 .andExpect(status().isForbidden());
 
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM admin_alerts WHERE type = ?",
-                Integer.class, "LATE_HANDOVER_SCAN_" + bid.getId())).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM admin_alerts WHERE type IN (?, ?)",
+                Integer.class, "LATE_HANDOVER_SCAN_" + bid.getId(), "LATE_HANDOVER_CLAIM_" + bid.getId())).isZero();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM audit_log WHERE entity_id = ? "
                 + "AND action = 'LATE_HANDOVER_SCAN_AFTER_DECISION'", Integer.class, bid.getId())).isZero();
+    }
+
+    @Test
+    void vingtCinqRejeuxSimultanesDeColisDejaSignales_nEpuisentPasLePool() throws Exception {
+        // Colis distincts (donc des verrous distincts, en parallèle), tous déjà signalés : la
+        // déduplication se lit dans la transaction du scan, sans seconde connexion. Avec une
+        // transaction REQUIRES_NEW par rejeu, 10 scans tenaient chacun une connexion en attendant la
+        // seconde : pool épuisé, chaque rejeu attendait le délai de 5 s.
+        int replays = 25;
+        List<BidEntity> bids = new java.util.ArrayList<>();
+        LocalDateTime decidedAt = LocalDateTime.now(ZoneOffset.UTC).minusMinutes(10).withNano(0);
+        for (int i = 0; i < replays; i++) {
+            BidEntity bid = seedBid(BidStatus.ACCEPTED);
+            jdbc.update("UPDATE bids SET status = 'CANCELLED', rejection_reason = 'SENDER_NO_SHOW', cancelled_at = ?, "
+                    + "created_at = created_at - interval '2 days' WHERE id = ?", decidedAt, bid.getId());
+            jdbc.update("INSERT INTO audit_log (entity_type, entity_id, action, actor_id, payload, created_at) "
+                    + "VALUES ('BID', ?, 'LATE_HANDOVER_SCAN_AFTER_DECISION', ?, '{}'::jsonb, now())", bid.getId(), travelerId);
+            bids.add(bid);
+        }
+        LocalDateTime offline = decidedAt.minusHours(2);
+        CyclicBarrier start = new CyclicBarrier(replays);
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(replays);
+        List<java.util.concurrent.Future<Throwable>> results = new java.util.ArrayList<>();
+        long begin = System.nanoTime();
+        try {
+            for (BidEntity bid : bids) {
+                results.add(pool.submit(() -> {
+                    start.await(10, TimeUnit.SECONDS);
+                    try {
+                        trackingService.recordScan(new QrScanRequest(bid.getId(), TrackingEventType.DEPART,
+                                null, null, null, null, offline), travelerUid);
+                        return null;
+                    } catch (Throwable t) {
+                        return t;
+                    }
+                }));
+            }
+            for (var result : results) {
+                assertThat(result.get(30, TimeUnit.SECONDS))
+                        .isInstanceOfSatisfying(YadonyBusinessException.class,
+                                e -> assertThat(e.getErrorCode()).isEqualTo("bid-not-accepted"));
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        long elapsedMs = (System.nanoTime() - begin) / 1_000_000;
+
+        assertThat(elapsedMs).as("aucun rejeu n'a attendu le délai du pool (5 s)").isLessThan(4_500);
+        for (BidEntity bid : bids) {
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM audit_log WHERE entity_id = ? "
+                    + "AND action = 'LATE_HANDOVER_SCAN_AFTER_DECISION'", Integer.class, bid.getId())).isEqualTo(1);
+        }
     }
 
     // ── Concurrence réelle (verrou du colis) ─────────────────────────────────

@@ -455,11 +455,16 @@ public class TrackingService {
             return;
         }
         boolean numberVerified = request.trackingNumber() != null && !request.trackingNumber().isBlank();
-        eventPublisher.publishEvent(new LateHandoverScanEvent(bid.getId(), traveler.getId(), bid.getStatus().name(),
-                bid.getRejectionReason(), decidedAt, offline,
-                request.scanMethod() != null ? request.scanMethod().name() : null,
-                validatedPhotoKey(bid, request.photoUrl()),
-                numberVerified, numberVerified ? "TRACKING_NUMBER" : "NONE"));
+        // Le signalement ne doit jamais changer la réponse : l'appelant lève toujours son 422.
+        try {
+            eventPublisher.publishEvent(new LateHandoverScanEvent(bid.getId(), traveler.getId(), bid.getStatus().name(),
+                    bid.getRejectionReason(), decidedAt, offline,
+                    request.scanMethod() != null ? request.scanMethod().name() : null,
+                    validatedPhotoKey(bid, request.photoUrl()),
+                    numberVerified, numberVerified ? "TRACKING_NUMBER" : "NONE"));
+        } catch (RuntimeException e) {
+            log.error("Signalement de la remise hors ligne tardive du colis {} en échec", bid.getId(), e);
+        }
     }
 
     /** Contrôles du DEPART normal, sans effet de bord (ni audit, ni écriture). */

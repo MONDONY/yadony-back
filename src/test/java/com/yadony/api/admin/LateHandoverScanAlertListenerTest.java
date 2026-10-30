@@ -25,6 +25,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -65,7 +66,7 @@ class LateHandoverScanAlertListenerTest {
     }
 
     @Test
-    void alerteCritiqueEtiqueteeNonVerifiee_etAuditDansUneTransactionIndependante() {
+    void sansPreuveVerifiee_alerteAvertissement_puisAuditDansSaPropreTransaction() {
         String photo = "tracking/" + bidId + "/1.jpg";
         when(auditLogRepository.findLastActionAt("BID", bidId, "LATE_HANDOVER_SCAN_AFTER_DECISION"))
                 .thenReturn(Optional.empty());
@@ -73,18 +74,23 @@ class LateHandoverScanAlertListenerTest {
         listener.onLateHandoverScan(event(photo, false));
 
         ArgumentCaptor<String> detail = ArgumentCaptor.forClass(String.class);
-        verify(escalator).raiseOnce(eq("LATE_HANDOVER_SCAN_" + bidId), eq("CRITICAL"), detail.capture(),
+        var order = inOrder(auditLogRepository, escalator, tm, auditService);
+        // Lecture de déduplication dans la transaction du scan : aucune transaction ouverte pour elle.
+        order.verify(auditLogRepository).findLastActionAt("BID", bidId, "LATE_HANDOVER_SCAN_AFTER_DECISION");
+        order.verify(escalator).raiseOnce(eq("LATE_HANDOVER_CLAIM_" + bidId), eq("WARN"), detail.capture(),
                 eq(expectedContext(photo, false)));
-        assertThat(detail.getValue()).startsWith("DÉCLARÉ PAR LE CLIENT, NON VÉRIFIÉ").contains("Preuve vérifiée : aucune");
-        var order = inOrder(tm, auditService);
         order.verify(tm).getTransaction(argThat(d ->
                 d.getPropagationBehavior() == TransactionDefinition.PROPAGATION_REQUIRES_NEW));
         order.verify(auditService).log("BID", bidId, "LATE_HANDOVER_SCAN_AFTER_DECISION", travelerId,
                 expectedContext(photo, false));
+        order.verify(tm).commit(any());
+        assertThat(detail.getValue()).startsWith("DÉCLARÉ PAR LE CLIENT, NON VÉRIFIÉ")
+                .contains("le 2026-10-29T09:15 UTC").contains("le 2026-10-30T10:00 UTC")
+                .contains("Preuve vérifiée : aucune");
     }
 
     @Test
-    void numeroDeSuiviVerifie_laPreuveEstIndiquee_maisToujoursDeclaree() {
+    void numeroDeSuiviVerifie_alerteCritique_maisToujoursDeclaree() {
         listener.onLateHandoverScan(event(null, true));
 
         ArgumentCaptor<String> detail = ArgumentCaptor.forClass(String.class);
@@ -92,6 +98,36 @@ class LateHandoverScanAlertListenerTest {
                 eq(expectedContext(null, true)));
         assertThat(detail.getValue()).startsWith("DÉCLARÉ PAR LE CLIENT, NON VÉRIFIÉ")
                 .contains("Preuve vérifiée : numéro de suivi");
+    }
+
+    @Test
+    void nRejeux_uneSeuleTransactionIndependanteAuTotal() {
+        // Premier rejeu : rien n'est encore audité ; les suivants voient l'audit commité.
+        when(auditLogRepository.findLastActionAt("BID", bidId, "LATE_HANDOVER_SCAN_AFTER_DECISION"))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(LocalDateTime.of(2026, 10, 30, 10, 5)));
+
+        for (int i = 0; i < 5; i++) {
+            listener.onLateHandoverScan(event(null, false));
+        }
+
+        verify(tm, times(1)).getTransaction(any());
+        verify(escalator, times(1)).raiseOnce(anyString(), anyString(), anyString(), anyMap());
+        verify(auditService, times(1)).log(any(), any(), any(), any(), any());
+        verify(auditLogRepository, times(5)).findLastActionAt(any(), any(), any());
+    }
+
+    @Test
+    void premiereDeclarationFigeLeSignalement_unRejeuUlterieurAvecPreuveNEstPasRetenu() {
+        when(auditLogRepository.findLastActionAt("BID", bidId, "LATE_HANDOVER_SCAN_AFTER_DECISION"))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(LocalDateTime.of(2026, 10, 30, 10, 5)));
+
+        listener.onLateHandoverScan(event(null, false));
+        listener.onLateHandoverScan(event(null, true));
+
+        verify(escalator).raiseOnce(eq("LATE_HANDOVER_CLAIM_" + bidId), eq("WARN"), anyString(), anyMap());
+        verify(escalator, never()).raiseOnce(eq("LATE_HANDOVER_SCAN_" + bidId), anyString(), anyString(), anyMap());
     }
 
     @Test
@@ -110,7 +146,7 @@ class LateHandoverScanAlertListenerTest {
                 null, null, false, "NONE"));
 
         ArgumentCaptor<Map<String, Object>> ctx = mapCaptor();
-        verify(escalator).raiseOnce(anyString(), eq("CRITICAL"), anyString(), ctx.capture());
+        verify(escalator).raiseOnce(anyString(), eq("WARN"), anyString(), ctx.capture());
         assertThat(ctx.getValue()).doesNotContainKeys("scanMethod", "photoKey")
                 .containsEntry("rejectionReason", "null").containsEntry("bidStatus", "NO_SHOW");
     }
@@ -130,7 +166,7 @@ class LateHandoverScanAlertListenerTest {
 
         assertThatCode(() -> listener.onLateHandoverScan(event(null, false))).doesNotThrowAnyException();
         verify(escalator, never()).raiseOnce(anyString(), anyString(), anyString(), anyMap());
-        verifyNoInteractions(auditService);
+        verifyNoInteractions(auditService, tm);
     }
 
     @SuppressWarnings("unchecked")

@@ -2423,4 +2423,34 @@ class TrackingServiceTest {
         verify(eventPublisher).publishEvent(new com.yadony.api.tracking.events.LateHandoverScanEvent(
                 bidId, travelerId, "CANCELLED", "SENDER_NO_SHOW", decidedAt, offline, null, null, false, "NONE"));
     }
+
+    @Test
+    void lateOfflineDepartWithoutTheRequiredNumber_noAlert() {
+        // Numéro exigé à la remise : MANUAL ou ancienne app sans numéro échouent au chemin normal.
+        ReflectionTestUtils.setField(service, "requireNumberOnDepart", true);
+        LocalDateTime decidedAt = LocalDateTime.now(ZoneOffset.UTC).minusHours(1);
+        decidedBid(BidStatus.CANCELLED, "SENDER_NO_SHOW", decidedAt);
+        LocalDateTime offline = decidedAt.minusHours(2);
+
+        for (ScanMethod method : new ScanMethod[]{ScanMethod.MANUAL, null}) {
+            assertThat(catchThrowable(() -> service.processScan(new QrScanRequest(bidId, TrackingEventType.DEPART,
+                    null, null, null, null, offline, method, null), "uid-traveler")))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("bid-not-accepted"));
+        }
+
+        verify(eventPublisher, never()).publishEvent(any(com.yadony.api.tracking.events.LateHandoverScanEvent.class));
+    }
+
+    @Test
+    void lateOfflineDepart_aFailingAlertNeverChangesThe422() {
+        LocalDateTime decidedAt = LocalDateTime.now(ZoneOffset.UTC).minusHours(1);
+        decidedBid(BidStatus.CANCELLED, "SENDER_NO_SHOW", decidedAt);
+        org.mockito.Mockito.doThrow(new IllegalStateException("écouteur en panne"))
+                .when(eventPublisher).publishEvent(any(com.yadony.api.tracking.events.LateHandoverScanEvent.class));
+
+        assertThat(replayDepart(decidedAt.minusHours(2), null))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("bid-not-accepted"));
+    }
 }
