@@ -9,5 +9,5 @@ routes:
 Ouvrez Moi › Argent › Recevoir mes paiements, puis connectez votre compte bancaire : l'argent est ensuite viré automatiquement sur le compte lié à votre IBAN après chaque livraison confirmée.
 Votre identité doit d'abord être vérifiée, sinon la ligne reste grisée.
 Cette ligne n'apparaît pas si l'activation n'est pas possible dans votre pays de résidence, ou si le compte est déjà actif.
-C'est le pays de résidence de votre profil qui compte (s'il est vide, l'app vous le demande ; il se règle aussi dans Réglages › Préférences), pas le pays où vous vous trouvez ; sans activation, vous pouvez continuer à être payé en espèces ou par mobile money.
+C'est le pays de résidence de votre profil qui compte (s'il est vide, l'app vous le demande ; il se règle aussi dans Paramètres › Préférences), pas le pays où vous vous trouvez ; sans activation, vous pouvez continuer à être payé en espèces ou par mobile money.
 Si vous avez commencé sans terminer, Yadony vous le rappelle le lendemain puis une semaine plus tard : par e-mail si votre compte a une adresse, avec un bouton « Terminer mon inscription » qui rouvre le formulaire Stripe là où vous vous êtes arrêté (valable 14 jours), sinon par notification.
