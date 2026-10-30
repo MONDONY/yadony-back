@@ -1,7 +1,6 @@
 package com.yadony.api.payments;
 
 import com.yadony.api.cancellation.CancellationReason;
-import com.yadony.api.cancellation.SenderNoShowHandoverGate;
 import com.yadony.api.cancellation.events.CancellationConfirmedEvent;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
@@ -18,7 +17,7 @@ import java.util.Map;
 /**
  * Sender no-show confirmé (admin ou timeout de contestation) : si le bid portait un
  * escrow Stripe, le rembourser à l'expéditeur — le colis n'a pas voyagé. Rien n'est remboursé
- * si le colis a été remis ({@link SenderNoShowHandoverGate#parcelAlreadyHandedOver}).
+ * si le colis a été remis ({@link BidStatus#SENDER_SHOWED_UP}).
  * (Le pendant cash — remboursement de commission au voyageur — vit dans
  * payments/cash/CommissionRefundListener.)
  *
@@ -52,7 +51,7 @@ public class SenderNoShowConfirmedListener {
         // n'émettent plus l'événement sur un colis remis. S'il arrive quand même, le colis voyage :
         // rendre le séquestre paierait le transport à l'expéditeur.
         BidStatus bidStatus = bidRepository.findById(event.bidId()).map(BidEntity::getStatus).orElse(null);
-        if (SenderNoShowHandoverGate.parcelAlreadyHandedOver(bidStatus)) {
+        if (BidStatus.SENDER_SHOWED_UP.contains(bidStatus)) {
             log.warn("Sender no-show confirmé sur le colis {} déjà {} : aucun remboursement du séquestre",
                     event.bidId(), bidStatus);
             return;

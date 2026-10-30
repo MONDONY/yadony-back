@@ -1,9 +1,5 @@
-package com.yadony.api.payments.cash.job;
+package com.yadony.api.cancellation;
 
-import com.yadony.api.cancellation.CancellationEntity;
-import com.yadony.api.cancellation.CancellationReason;
-import com.yadony.api.cancellation.CancellationRepository;
-import com.yadony.api.cancellation.CancellationStatus;
 import com.yadony.api.cancellation.events.CancellationConfirmedEvent;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.matching.BidEntity;
@@ -12,7 +8,10 @@ import com.yadony.api.matching.BidStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -42,6 +41,7 @@ class NoShowContestationTimeoutJobTest {
         job = new NoShowContestationTimeoutJob(cancellationRepo, events, bidRepository, auditService);
     }
 
+    /** Déclaration échue, encore en attente en base. */
     private CancellationEntity pending() {
         CancellationEntity c = new CancellationEntity();
         ReflectionTestUtils.setField(c, "id", UUID.randomUUID());
@@ -49,35 +49,9 @@ class NoShowContestationTimeoutJobTest {
         c.setNoShowStatus(CancellationStatus.PENDING_CONFIRMATION);
         c.setReason(CancellationReason.SENDER_NO_SHOW.name());
         c.setContestationDeadline(OffsetDateTime.now().minusMinutes(5));
+        lenient().when(cancellationRepo.findNoShowStatusById(c.getId()))
+                .thenReturn(Optional.of(CancellationStatus.PENDING_CONFIRMATION));
         return c;
-    }
-
-    @Test
-    void confirmsExpiredPendingAndPublishesEvent() {
-        CancellationEntity c = pending();
-        when(cancellationRepo.findExpiredPending(any())).thenReturn(List.of(c));
-        when(cancellationRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-
-        job.run();
-
-        assertThat(c.getNoShowStatus()).isEqualTo(CancellationStatus.CONFIRMED);
-        verify(cancellationRepo).save(c);
-
-        ArgumentCaptor<CancellationConfirmedEvent> captor =
-                ArgumentCaptor.forClass(CancellationConfirmedEvent.class);
-        verify(events).publishEvent(captor.capture());
-        assertThat(captor.getValue().reason()).isEqualTo(CancellationReason.SENDER_NO_SHOW);
-        assertThat(captor.getValue().bidId()).isEqualTo(c.getBidId());
-    }
-
-    @Test
-    void noExpiredPendingIsNoOp() {
-        when(cancellationRepo.findExpiredPending(any())).thenReturn(List.of());
-
-        job.run();
-
-        verifyNoInteractions(events);
-        verify(cancellationRepo, never()).save(any());
     }
 
     private void bidIn(CancellationEntity c, BidStatus status) {
@@ -88,7 +62,7 @@ class NoShowContestationTimeoutJobTest {
     }
 
     @Test
-    void confirmsWhenTheParcelIsStillAwaitingHandover() {
+    void confirmsExpiredPendingAndPublishesEvent_underTheParcelLock() {
         CancellationEntity c = pending();
         bidIn(c, BidStatus.ACCEPTED);
         when(cancellationRepo.findExpiredPending(any())).thenReturn(List.of(c));
@@ -96,20 +70,42 @@ class NoShowContestationTimeoutJobTest {
         job.run();
 
         assertThat(c.getNoShowStatus()).isEqualTo(CancellationStatus.CONFIRMED);
-        verify(events).publishEvent(any(CancellationConfirmedEvent.class));
+        verify(cancellationRepo).save(c);
+        ArgumentCaptor<CancellationConfirmedEvent> captor = ArgumentCaptor.forClass(CancellationConfirmedEvent.class);
+        verify(events).publishEvent(captor.capture());
+        assertThat(captor.getValue().reason()).isEqualTo(CancellationReason.SENDER_NO_SHOW);
+        assertThat(captor.getValue().bidId()).isEqualTo(c.getBidId());
+        // Verrou du colis AVANT la relecture du statut et du colis.
+        InOrder order = inOrder(bidRepository, cancellationRepo);
+        order.verify(bidRepository).lockForUpdate(c.getBidId());
+        order.verify(cancellationRepo).findNoShowStatusById(c.getId());
+        order.verify(bidRepository).findById(c.getBidId());
         verifyNoInteractions(auditService);
     }
 
-    @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.EnumSource(value = BidStatus.class,
+    @ParameterizedTest
+    @EnumSource(value = CancellationStatus.class, names = {"RESOLVED", "CONTESTED", "CONFIRMED"})
+    void declarationChangedConcurrently_isLeftAlone(CancellationStatus now) {
+        // Le scan de remise vient de la lever (RESOLVED), ou l'expéditeur a répondu : rien à confirmer.
+        CancellationEntity c = pending();
+        when(cancellationRepo.findNoShowStatusById(c.getId())).thenReturn(Optional.of(now));
+        when(cancellationRepo.findExpiredPending(any())).thenReturn(List.of(c));
+
+        job.run();
+
+        assertThat(c.getNoShowStatus()).isEqualTo(CancellationStatus.PENDING_CONFIRMATION);
+        verify(cancellationRepo, never()).save(any());
+        verify(bidRepository, never()).findById(any());
+        verifyNoInteractions(events, auditService);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = BidStatus.class,
             names = {"HANDED_OVER", "IN_TRANSIT", "ARRIVED", "COMPLETED", "PARCEL_REFUSED"})
     void parcelAlreadyHandedOver_closesTheReportWithoutRefundOrPenalty(BidStatus handedOver) {
-        // Le colis voyage : confirmer l'absence rembourserait le séquestre (SenderNoShowConfirmedListener)
-        // et pénaliserait l'expéditeur (SenderReputationListener). La déclaration est close, sans événement.
         CancellationEntity c = pending();
         bidIn(c, handedOver);
         when(cancellationRepo.findExpiredPending(any())).thenReturn(List.of(c));
-        when(cancellationRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         job.run();
 
@@ -117,7 +113,20 @@ class NoShowContestationTimeoutJobTest {
         verify(cancellationRepo).save(c);
         verifyNoInteractions(events);
         verify(auditService).log(eq("CANCELLATION"), eq(c.getId()), eq("SENDER_NO_SHOW_CLOSED_PARCEL_HANDED_OVER"),
-                isNull(), any());
+                isNull(), eq(java.util.Map.of("bidId", c.getBidId().toString(), "bidStatus", handedOver.name(),
+                        "previousStatus", "PENDING_CONFIRMATION")));
+    }
+
+    @Test
+    void parcelNotFound_confirmsAsBefore() {
+        CancellationEntity c = pending();
+        when(bidRepository.findById(c.getBidId())).thenReturn(Optional.empty());
+        when(cancellationRepo.findExpiredPending(any())).thenReturn(List.of(c));
+
+        job.run();
+
+        assertThat(c.getNoShowStatus()).isEqualTo(CancellationStatus.CONFIRMED);
+        verify(events).publishEvent(any(CancellationConfirmedEvent.class));
     }
 
     @Test
@@ -135,5 +144,15 @@ class NoShowContestationTimeoutJobTest {
         ArgumentCaptor<CancellationConfirmedEvent> captor = ArgumentCaptor.forClass(CancellationConfirmedEvent.class);
         verify(events).publishEvent(captor.capture());
         assertThat(captor.getValue().bidId()).isEqualTo(awaiting.getBidId());
+    }
+
+    @Test
+    void noExpiredPendingIsNoOp() {
+        when(cancellationRepo.findExpiredPending(any())).thenReturn(List.of());
+
+        job.run();
+
+        verifyNoInteractions(events, bidRepository);
+        verify(cancellationRepo, never()).save(any());
     }
 }

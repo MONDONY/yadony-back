@@ -17,6 +17,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -74,6 +75,9 @@ class NoShowArbitrationServiceTest {
         c.setNoShowStatus(status);
         c.setCancelledBy(scope == CancellationScope.HANDOVER ? TRAVELER_ID : TRAVELER_ID);
         c.setContestationDeadline(OffsetDateTime.now().plusHours(3));
+        // Relecture du statut en base après le verrou du colis : par défaut, celui de la ligne.
+        lenient().when(cancellationRepository.findNoShowStatusById(ID))
+                .thenAnswer(inv -> Optional.of(c.getNoShowStatus()));
         return c;
     }
 
@@ -106,6 +110,26 @@ class NoShowArbitrationServiceTest {
 
     @Nested
     class Confirmer {
+
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.EnumSource(value = CancellationStatus.class, names = {"RESOLVED", "CONFIRMED"})
+        void declarationLeveeEntreTemps_409_apresLeVerrouDuColis(CancellationStatus now) {
+            // Le scan de remise vient de lever la déclaration (RESOLVED) pendant que l'admin la lisait.
+            CancellationEntity c = row(CancellationScope.HANDOVER, "SENDER_NO_SHOW",
+                    CancellationStatus.PENDING_CONFIRMATION);
+            stubRow(c);
+            when(cancellationRepository.findNoShowStatusById(ID)).thenReturn(Optional.of(now));
+
+            assertThatThrownBy(() -> service.confirm(ID, ADMIN_ID, MOTIF))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("noshow-already-decided"));
+            InOrder order = inOrder(bidRepository, cancellationRepository);
+            order.verify(bidRepository).lockForUpdate(BID_ID);
+            order.verify(cancellationRepository).findNoShowStatusById(ID);
+            verify(bidRepository, never()).findById(any());
+            verify(cancellationRepository, never()).save(any());
+            verifyNoInteractions(eventPublisher);
+        }
 
         @org.junit.jupiter.params.ParameterizedTest
         @org.junit.jupiter.params.provider.EnumSource(value = BidStatus.class,

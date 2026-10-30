@@ -346,7 +346,7 @@ public class TrackingService {
 
         if (request.eventType() == TrackingEventType.DEPART) {
             assertTrackingNumberOnDepart(bid, request.trackingNumber(), request.scanMethod());
-            assertHandoverNotBlocked(bid);
+            assertHandoverNotBlocked(bid, traveler.getId());
         }
 
         String photoKey = validatedPhotoKey(bid, request.photoUrl());
@@ -538,19 +538,20 @@ public class TrackingService {
 
     /**
      * Une demande en cours sur le colis retient la remise : déclaration d'absence de l'expéditeur
-     * non levée, supplément de prix en attente de l'expéditeur, modification du colis en attente du
-     * voyageur ou d'un paiement. Tous les {@link HandoverBlocker} sont consultés, dans l'ordre
+     * contestée ou confirmée (une déclaration encore en attente est levée par ce scan, cf.
+     * {@code cancellation/SenderNoShowHandoverGate}), supplément de prix en attente de l'expéditeur,
+     * modification du colis en attente du voyageur ou d'un paiement. Tous les {@link HandoverBlocker} sont consultés, dans l'ordre
      * ({@code @Order}), jusqu'au premier qui bloque. Sous le verrou du colis, que la création d'un
      * supplément, d'une modification ou d'une déclaration d'absence prend aussi : aucune course entre
      * elles. Le 409 n'est pas définitif pour l'app : un scan hors ligne reste en file et se rejoue
      * plus tard. Seul un colis ACCEPTED est concerné : TRANSIT et livraison ne passent jamais ici.
      */
-    private void assertHandoverNotBlocked(BidEntity bid) {
+    private void assertHandoverNotBlocked(BidEntity bid, UUID travelerId) {
         if (bid.getStatus() != BidStatus.ACCEPTED) {
             return;
         }
         for (HandoverBlocker blocker : handoverBlockers) {
-            Optional<String> code = blocker.blockingCode(bid.getId());
+            Optional<String> code = blocker.blockingCode(bid.getId(), travelerId);
             if (code.isPresent()) {
                 log.info("Scan DEPART du colis {} refusé : {}", bid.getId(), code.get());
                 String detail = blocker.messageKey() != null

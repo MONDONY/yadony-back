@@ -29,8 +29,6 @@ import com.yadony.api.matching.HandoverDeadlineRules;
 import com.yadony.api.payments.cash.CommissionProperties;
 import com.yadony.api.requests.entity.NegotiationThreadStatus;
 import com.yadony.api.requests.repository.NegotiationThreadRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -50,8 +48,6 @@ import java.util.UUID;
 
 @Service
 public class CancellationService {
-
-    private static final Logger log = LoggerFactory.getLogger(CancellationService.class);
 
     private final CancellationRepository cancellationRepository;
     private final RematchSuggestionRepository rematchSuggestionRepository;
@@ -884,11 +880,23 @@ public class CancellationService {
 
     @Transactional
     public void confirmSenderNoShow(UUID bidId) {
-        applySenderNoShowConfirmation(bidId);
+        bidRepository.lockForUpdate(bidId);
+        applySenderNoShowConfirmation(bidId, null);
     }
 
-    /** @return l'annulation confirmée, vide si elle n'était plus en attente de confirmation. */
-    private Optional<CancellationEntity> applySenderNoShowConfirmation(UUID bidId) {
+    /**
+     * Sous le verrou du colis (pris par l'appelant, avant toute lecture : déclaration et colis sont
+     * donc lus frais, sans course avec le scan de remise qui peut lever la déclaration).
+     *
+     * <p>Colis déjà remis ({@link BidStatus#SENDER_SHOWED_UP}) : une absence confirmée rembourserait
+     * le séquestre et pénaliserait l'expéditeur d'un colis qui voyage. La déclaration est close en
+     * RESOLVED sans {@link CancellationConfirmedEvent} ({@link SenderNoShowClosing}) ; reste des
+     * déclarations ouvertes avant la porte de remise.
+     *
+     * @param actorId auteur de la confirmation (l'expéditeur), nul s'il n'est pas connu
+     * @return l'annulation confirmée, vide si elle n'était plus en attente de confirmation
+     */
+    private Optional<CancellationEntity> applySenderNoShowConfirmation(UUID bidId, UUID actorId) {
         CancellationEntity c = cancellationRepository.findByBidId(bidId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "cancellation-not-found", "Not Found",
@@ -896,8 +904,9 @@ public class CancellationService {
         if (c.getNoShowStatus() != CancellationStatus.PENDING_CONFIRMATION) return Optional.empty();
 
         Optional<BidEntity> bid = bidRepository.findById(bidId);
-        if (bid.isPresent() && SenderNoShowHandoverGate.parcelAlreadyHandedOver(bid.get().getStatus())) {
-            closeBecauseParcelHandedOver(c, bid.get().getStatus());
+        if (bid.isPresent() && BidStatus.SENDER_SHOWED_UP.contains(bid.get().getStatus())) {
+            new SenderNoShowClosing(cancellationRepository, auditService)
+                    .closeBecauseParcelHandedOver(c, bid.get().getStatus(), actorId);
             return Optional.empty();
         }
 
@@ -909,31 +918,13 @@ public class CancellationService {
     }
 
     /**
-     * L'expéditeur a remis (ou présenté) son colis : une absence confirmée rembourserait le séquestre
-     * et pénaliserait l'expéditeur d'un colis qui voyage. La déclaration est close en RESOLVED, comme
-     * une déclaration rejetée (le colis continue sans annulation ni remboursement), sans
-     * {@link CancellationConfirmedEvent}. Inatteignable depuis {@link SenderNoShowHandoverGate} ;
-     * reste les déclarations ouvertes avant la porte.
-     */
-    private void closeBecauseParcelHandedOver(CancellationEntity c, BidStatus bidStatus) {
-        log.warn("Absence de l'expéditeur non confirmée : le colis {} est déjà {} (déclaration {} close)",
-                c.getBidId(), bidStatus, c.getId());
-        CancellationStatus previous = c.getNoShowStatus();
-        c.setNoShowStatus(CancellationStatus.RESOLVED);
-        cancellationRepository.save(c);
-        auditService.log("CANCELLATION", c.getId(), SenderNoShowHandoverGate.AUDIT_CLOSED_PARCEL_HANDED_OVER, null,
-                Map.of("bidId", c.getBidId().toString(),
-                        "bidStatus", bidStatus.name(),
-                        "previousStatus", previous.name()));
-    }
-
-    /**
      * Variante côté expéditeur : il confirme lui-même son absence (le bid sera
      * annulé, pas de débit). Vérifie qu'il est bien l'expéditeur du bid avant de
-     * réutiliser la logique de confirmation.
+     * réutiliser la logique de confirmation. Verrou du colis d'abord, comme le scan de remise.
      */
     @Transactional
     public void confirmSenderNoShow(UUID bidId, UUID senderId) {
+        bidRepository.lockForUpdate(bidId);
         BidEntity bid = bidRepository.findById(bidId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Bid introuvable"));
@@ -941,11 +932,19 @@ public class CancellationService {
             throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
                     "Vous n'êtes pas l'expéditeur de ce bid.");
         }
-        confirmSenderNoShow(bidId);
+        applySenderNoShowConfirmation(bidId, senderId);
     }
 
+    /**
+     * L'expéditeur conteste la déclaration d'absence : un litige s'ouvre, l'équipe tranche. Sous le
+     * verrou du colis (le scan de remise peut lever la même déclaration au même instant), et
+     * seulement si elle attend encore sa réponse : une déclaration déjà levée, contestée ou
+     * confirmée répond 409 {@code noshow-already-decided}, comme l'arbitrage admin. Sans cette
+     * garde, contester une déclaration levée par le scan la rouvrait (CONTESTED) sur un colis remis.
+     */
     @Transactional
     public void contestSenderNoShow(UUID bidId, UUID senderId) {
+        bidRepository.lockForUpdate(bidId);
         BidEntity bid = bidRepository.findById(bidId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Bid introuvable"));
@@ -954,7 +953,14 @@ public class CancellationService {
                     "Vous n'êtes pas l'expéditeur de ce bid.");
         }
 
-        CancellationEntity c = cancellationRepository.findByBidId(bidId).orElseThrow();
+        CancellationEntity c = cancellationRepository.findByBidId(bidId)
+                .orElseThrow(() -> new YadonyBusinessException(
+                        HttpStatus.NOT_FOUND, "cancellation-not-found", "Not Found",
+                        "Aucune déclaration d'absence pour ce bid"));
+        if (c.getNoShowStatus() != CancellationStatus.PENDING_CONFIRMATION) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "noshow-already-decided",
+                    "No-show Already Decided", "Cette déclaration d'absence est déjà tranchée");
+        }
         if (c.getContestationDeadline() == null
                 || OffsetDateTime.now().isAfter(c.getContestationDeadline())) {
             throw new IllegalStateException("Le délai de contestation est dépassé.");

@@ -5,6 +5,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.cancellation.events.CancellationConfirmedEvent;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.matching.BidStatus;
 import com.yadony.api.common.AuditService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,7 +58,7 @@ public class SenderReputationListener {
             return;
         }
         // Défense en profondeur : colis remis, l'expéditeur était là, aucune pénalité.
-        if (SenderNoShowHandoverGate.parcelAlreadyHandedOver(bid.getStatus())) {
+        if (BidStatus.SENDER_SHOWED_UP.contains(bid.getStatus())) {
             log.warn("Sender no-show réputation : colis {} déjà {}, aucun incident compté", bid.getId(), bid.getStatus());
             return;
         }

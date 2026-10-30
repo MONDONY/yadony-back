@@ -385,6 +385,28 @@ class CancellationNoShowTest {
         }
 
         @Test
+        void senderOverload_colisDejaRemis_clotureAuditeeAuNomDeLExpediteur() {
+            CancellationEntity c = new CancellationEntity();
+            ReflectionTestUtils.setField(c, "id", UUID.randomUUID());
+            c.setBidId(BID_ID);
+            c.setNoShowStatus(CancellationStatus.PENDING_CONFIRMATION);
+            when(bidRepository.findById(BID_ID)).thenReturn(
+                    Optional.of(cashBid(BidStatus.HANDED_OVER, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1))));
+            when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.of(c));
+
+            service.confirmSenderNoShow(BID_ID, SENDER_ID);
+
+            assertThat(c.getNoShowStatus()).isEqualTo(CancellationStatus.RESOLVED);
+            verify(eventPublisher, never()).publishEvent(any());
+            verify(auditService).log("CANCELLATION", c.getId(), "SENDER_NO_SHOW_CLOSED_PARCEL_HANDED_OVER", SENDER_ID,
+                    java.util.Map.of("bidId", BID_ID.toString(), "bidStatus", "HANDED_OVER",
+                            "previousStatus", "PENDING_CONFIRMATION"));
+            org.mockito.InOrder order = org.mockito.Mockito.inOrder(bidRepository);
+            order.verify(bidRepository).lockForUpdate(BID_ID);
+            order.verify(bidRepository, atLeastOnce()).findById(BID_ID);
+        }
+
+        @Test
         void senderOverload_nonOwnerForbidden() {
             when(bidRepository.findById(BID_ID)).thenReturn(
                     Optional.of(cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1))));
@@ -424,6 +446,62 @@ class CancellationNoShowTest {
             assertThat(event.getBidId()).isEqualTo(BID_ID);
             assertThat(event.getSenderId()).isEqualTo(SENDER_ID);
             assertThat(event.getTravelerId()).isEqualTo(TRAVELER_ID);
+        }
+
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.EnumSource(value = CancellationStatus.class,
+                names = {"RESOLVED", "CONFIRMED", "CONTESTED"})
+        void declarationDejaTranchee_409_rienNeChange(CancellationStatus decided) {
+            // RESOLVED : levée par le scan de remise (colis parti) ou rejetée ; la contester la rouvrait.
+            when(bidRepository.findById(BID_ID))
+                    .thenReturn(Optional.of(cashBid(BidStatus.HANDED_OVER, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1))));
+            CancellationEntity c = new CancellationEntity();
+            c.setBidId(BID_ID);
+            c.setNoShowStatus(decided);
+            c.setContestationDeadline(java.time.OffsetDateTime.now().plusHours(10));
+            when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.of(c));
+
+            assertThatThrownBy(() -> service.contestSenderNoShow(BID_ID, SENDER_ID))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(e.getErrorCode()).isEqualTo("noshow-already-decided");
+                    });
+            assertThat(c.getNoShowStatus()).isEqualTo(decided);
+            verify(cancellationRepository, never()).save(any());
+            verifyNoInteractions(eventPublisher);
+        }
+
+        @Test
+        void verrouilleLeColisAvantDeLireLaDeclaration() {
+            CancellationEntity c = new CancellationEntity();
+            ReflectionTestUtils.setField(c, "id", UUID.randomUUID());
+            c.setBidId(BID_ID);
+            c.setNoShowStatus(CancellationStatus.PENDING_CONFIRMATION);
+            c.setContestationDeadline(java.time.OffsetDateTime.now().plusHours(10));
+            when(bidRepository.findById(BID_ID))
+                    .thenReturn(Optional.of(cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1))));
+            when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.of(c));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                    .thenReturn(Optional.of(announcementWithTraveler(TRAVELER_ID)));
+
+            service.contestSenderNoShow(BID_ID, SENDER_ID);
+
+            org.mockito.InOrder order = org.mockito.Mockito.inOrder(bidRepository, cancellationRepository);
+            order.verify(bidRepository).lockForUpdate(BID_ID);
+            order.verify(bidRepository).findById(BID_ID);
+            order.verify(cancellationRepository).findByBidId(BID_ID);
+            assertThat(c.getNoShowStatus()).isEqualTo(CancellationStatus.CONTESTED);
+        }
+
+        @Test
+        void sansDeclaration_404() {
+            when(bidRepository.findById(BID_ID))
+                    .thenReturn(Optional.of(cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1))));
+            when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.contestSenderNoShow(BID_ID, SENDER_ID))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
         }
 
         @Test

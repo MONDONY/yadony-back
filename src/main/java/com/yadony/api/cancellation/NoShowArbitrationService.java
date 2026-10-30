@@ -8,6 +8,7 @@ import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.matching.BidStatus;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -30,7 +31,7 @@ import java.util.UUID;
  *       séquestre, commission espèces remboursée, compteur de réputation). Un litige de
  *       contestation ouvert est fermé (NOSHOW_CONFIRMED) : la décision admin le tranche.
  *       Refusé en 409 {@code noshow-parcel-handed-over} si le colis a déjà été remis
- *       ({@link SenderNoShowHandoverGate#parcelAlreadyHandedOver}) : l'admin rejette alors.</li>
+ *       ({@link BidStatus#SENDER_SHOWED_UP}) : l'admin rejette alors.</li>
  *   <li><b>Confirmer DELIVERY</b> : aucune conséquence financière ici. En attente : ouvre le
  *       litige « non contesté » exactement comme l'échéance
  *       ({@link DeliveryNoShowUncontestedScheduler#openUncontestedDispute}). Contestée : le
@@ -107,6 +108,7 @@ public class NoShowArbitrationService {
         if (!NoShowReasons.isNoShow(c.getReason()) || !isOpen(c)) {
             return;
         }
+        lockParcelAndRecheck(c);
         doConfirm(c, adminId, LEGACY_DECISION_REASON);
     }
 
@@ -116,7 +118,7 @@ public class NoShowArbitrationService {
         // Expéditeur absent alors que son colis a été remis (déclaration ouverte avant
         // SenderNoShowHandoverGate) : confirmer rembourserait le séquestre d'un colis qui voyage.
         if (c.getScope() == CancellationScope.HANDOVER
-                && SenderNoShowHandoverGate.parcelAlreadyHandedOver(bid.getStatus())) {
+                && BidStatus.SENDER_SHOWED_UP.contains(bid.getStatus())) {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "noshow-parcel-handed-over",
                     "Parcel Already Handed Over",
                     "Le colis a déjà été remis au voyageur (" + bid.getStatus().name() + ") : l'absence de"
@@ -158,10 +160,28 @@ public class NoShowArbitrationService {
                         HttpStatus.NOT_FOUND, "noshow-not-found", "Not Found",
                         "Déclaration d'absence introuvable"));
         if (!isOpen(c)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "noshow-already-decided",
-                    "No-show Already Decided", "Cette déclaration d'absence est déjà tranchée");
+            throw alreadyDecided();
         }
+        lockParcelAndRecheck(c);
         return c;
+    }
+
+    /**
+     * Verrou du colis, comme le scan de remise qui peut lever la déclaration au même instant
+     * ({@link SenderNoShowHandoverGate}), puis statut relu en base : une déclaration levée ou
+     * tranchée entre-temps n'est plus arbitrée (409). Le colis, chargé après le verrou, est frais.
+     */
+    private void lockParcelAndRecheck(CancellationEntity c) {
+        bidRepository.lockForUpdate(c.getBidId());
+        CancellationStatus current = cancellationRepository.findNoShowStatusById(c.getId()).orElse(null);
+        if (current != CancellationStatus.PENDING_CONFIRMATION && current != CancellationStatus.CONTESTED) {
+            throw alreadyDecided();
+        }
+    }
+
+    private static YadonyBusinessException alreadyDecided() {
+        return new YadonyBusinessException(HttpStatus.CONFLICT, "noshow-already-decided",
+                "No-show Already Decided", "Cette déclaration d'absence est déjà tranchée");
     }
 
     private static boolean isOpen(CancellationEntity c) {

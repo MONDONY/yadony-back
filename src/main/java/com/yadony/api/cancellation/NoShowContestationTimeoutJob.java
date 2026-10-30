@@ -1,14 +1,10 @@
-package com.yadony.api.payments.cash.job;
+package com.yadony.api.cancellation;
 
-import com.yadony.api.cancellation.CancellationEntity;
-import com.yadony.api.cancellation.CancellationReason;
-import com.yadony.api.cancellation.CancellationRepository;
-import com.yadony.api.cancellation.CancellationStatus;
-import com.yadony.api.cancellation.SenderNoShowHandoverGate;
 import com.yadony.api.cancellation.events.CancellationConfirmedEvent;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.matching.BidStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -17,18 +13,22 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
-import java.util.Map;
 import java.util.Optional;
 
 /**
  * Échéance de contestation d'une déclaration « expéditeur absent » (HANDOVER) : sans réponse de
  * l'expéditeur, l'absence est confirmée ({@link CancellationConfirmedEvent} : colis annulé,
- * séquestre remboursé à l'expéditeur, compteur d'incidents).
+ * séquestre remboursé à l'expéditeur, compteur d'incidents). Logique d'annulation : vit dans
+ * {@code cancellation/} (elle était sous {@code payments/cash/job}).
  *
- * <p>Sauf si le colis a déjà été remis ({@link SenderNoShowHandoverGate#parcelAlreadyHandedOver}) :
- * déclaration ouverte avant que la porte de remise ne bloque le scan. L'expéditeur est venu, le
- * colis voyage : la déclaration est close en RESOLVED (comme une déclaration rejetée), sans
- * événement, donc sans remboursement ni pénalité, et tracée dans {@code audit_log}.
+ * <p>Chaque déclaration est traitée sous le verrou du colis, comme le scan de remise qui peut la
+ * lever au même instant ({@link SenderNoShowHandoverGate}) : son statut est relu en base après le
+ * verrou, et seule une déclaration encore {@code PENDING_CONFIRMATION} est confirmée. Sans ce verrou,
+ * le job confirmait une déclaration que le scan venait de lever et repassait le colis remis en
+ * CANCELLED (remboursement d'un colis qui voyage).
+ *
+ * <p>Colis déjà remis ({@link BidStatus#SENDER_SHOWED_UP}, déclaration ouverte avant la porte) :
+ * la déclaration est close en RESOLVED sans événement ({@link SenderNoShowClosing}).
  */
 @Component
 public class NoShowContestationTimeoutJob {
@@ -38,7 +38,7 @@ public class NoShowContestationTimeoutJob {
     private final CancellationRepository cancellationRepo;
     private final ApplicationEventPublisher events;
     private final BidRepository bidRepository;
-    private final AuditService auditService;
+    private final SenderNoShowClosing closing;
 
     public NoShowContestationTimeoutJob(CancellationRepository cancellationRepo,
                                         ApplicationEventPublisher events,
@@ -47,7 +47,7 @@ public class NoShowContestationTimeoutJob {
         this.cancellationRepo = cancellationRepo;
         this.events = events;
         this.bidRepository = bidRepository;
-        this.auditService = auditService;
+        this.closing = new SenderNoShowClosing(cancellationRepo, auditService);
     }
 
     @Scheduled(cron = "${yadony.cash-commission.no-show-timeout-cron}", zone = "UTC")
@@ -57,25 +57,21 @@ public class NoShowContestationTimeoutJob {
     }
 
     private void confirm(CancellationEntity c) {
+        bidRepository.lockForUpdate(c.getBidId());
+        CancellationStatus current = cancellationRepo.findNoShowStatusById(c.getId()).orElse(null);
+        if (current != CancellationStatus.PENDING_CONFIRMATION) {
+            log.info("Échéance de contestation : déclaration {} déjà {} (scan ou réponse concurrente), ignorée",
+                    c.getId(), current);
+            return;
+        }
         Optional<BidEntity> bid = bidRepository.findById(c.getBidId());
-        if (bid.isPresent() && SenderNoShowHandoverGate.parcelAlreadyHandedOver(bid.get().getStatus())) {
-            closeBecauseParcelHandedOver(c, bid.get());
+        if (bid.isPresent() && BidStatus.SENDER_SHOWED_UP.contains(bid.get().getStatus())) {
+            closing.closeBecauseParcelHandedOver(c, bid.get().getStatus(), null);
             return;
         }
         c.setNoShowStatus(CancellationStatus.CONFIRMED);
         cancellationRepo.save(c);
         events.publishEvent(new CancellationConfirmedEvent(
                 c.getBidId(), c.getId(), CancellationReason.valueOf(c.getReason())));
-    }
-
-    private void closeBecauseParcelHandedOver(CancellationEntity c, BidEntity bid) {
-        log.warn("Échéance de contestation : absence de l'expéditeur non confirmée, le colis {} est déjà {}"
-                + " (déclaration {} close, aucun remboursement)", bid.getId(), bid.getStatus(), c.getId());
-        c.setNoShowStatus(CancellationStatus.RESOLVED);
-        cancellationRepo.save(c);
-        auditService.log("CANCELLATION", c.getId(), SenderNoShowHandoverGate.AUDIT_CLOSED_PARCEL_HANDED_OVER, null,
-                Map.of("bidId", c.getBidId().toString(),
-                        "bidStatus", bid.getStatus().name(),
-                        "previousStatus", CancellationStatus.PENDING_CONFIRMATION.name()));
     }
 }

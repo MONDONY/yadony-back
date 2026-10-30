@@ -189,7 +189,7 @@ public class NotificationPrefsService {
             // Vérification d'identité
             "KYC_VERIFIED", "KYC_ACTION_REQUIRED", "KYC_RESET",
             // Litiges et absences
-            "DISPUTE_RESOLVED", "SENDER_NOSHOW_REPORTED", "NOSHOW_DECISION",
+            "DISPUTE_RESOLVED", "SENDER_NOSHOW_REPORTED", "SENDER_NOSHOW_WITHDRAWN", "NOSHOW_DECISION",
             // Modération et plateforme
             "ADMIN_BROADCAST", "SYSTEM", "ADMIN_WARNING", "MESSAGING_MUTED",
             "ACCOUNT_SUSPENDED", "ACCOUNT_DELETION_CANCELLED", "REPORT_RESOLVED",

@@ -2204,7 +2204,7 @@ class TrackingServiceTest {
         assertThat(thrown).isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
             assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
             assertThat(e.getErrorCode()).isEqualTo("handover-sender-noshow-pending");
-            assertThat(e.getMessage()).contains("Vous avez déclaré l'expéditeur absent");
+            assertThat(e.getMessage()).contains("Votre déclaration d'absence de l'expéditeur est examinée");
         });
         verify(trackingEventRepository, never()).save(any());
         assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
@@ -2221,7 +2221,7 @@ class TrackingServiceTest {
                 new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null), "uid-traveler"));
 
         assertThat(thrown).isInstanceOfSatisfying(YadonyBusinessException.class, e ->
-                assertThat(e.getMessage()).contains("You reported the sender as absent"));
+                assertThat(e.getMessage()).contains("Your report of the sender's absence is being reviewed"));
     }
 
     @Test
@@ -2249,5 +2249,20 @@ class TrackingServiceTest {
         assertThat(service.processScan(new QrScanRequest(bidId, TrackingEventType.TRANSIT, null, null, null, null, null),
                 "uid-traveler").eventType()).isEqualTo("TRANSIT");
         org.mockito.Mockito.verifyNoInteractions(gate);
+    }
+
+    @Test
+    void processScan_depart_passesTheScanningTravelerToTheGates() {
+        // La porte de l'absence de l'expéditeur lève une déclaration en attente au nom du voyageur qui scanne.
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        stubDepartScan(bid);
+        HandoverBlocker gate = org.mockito.Mockito.mock(HandoverBlocker.class);
+        when(gate.blockingCode(bidId, travelerId)).thenReturn(Optional.empty());
+        service.setHandoverBlockers(List.of(gate));
+
+        service.processScan(new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null),
+                "uid-traveler");
+
+        verify(gate).blockingCode(bidId, travelerId);
     }
 }
