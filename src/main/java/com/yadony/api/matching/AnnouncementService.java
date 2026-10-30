@@ -1437,6 +1437,12 @@ public class AnnouncementService {
         if (viewerId != null && viewerId.equals(announcement.getTravelerId())) {
             detail = detail.withCurrencyEditable(!isCurrencyLocked(id));
             detail = detail.withParcelsSummary(parcelsSummary(announcement));
+            // Même règle que la liste « Mes trajets » (TripPositionService.isWindowOpen), lue ici
+            // pour un seul trajet : le booléen suffit, jamais de position.
+            detail = detail.withTrackingActive(com.yadony.api.tracking.TripPositionService.isWindowOpen(
+                    announcement, java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC),
+                    () -> bidRepository.existsByAnnouncementIdAndStatusIn(id,
+                            com.yadony.api.tracking.TripPositionService.carriedStatuses())));
         }
 
         // Réseaux où le voyageur reçoit en mobile money, seulement quand ce rail est réellement

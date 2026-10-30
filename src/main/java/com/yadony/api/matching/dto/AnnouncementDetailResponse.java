@@ -106,7 +106,15 @@ public record AnnouncementDetailResponse(
          * net estimé. Servi au seul voyageur propriétaire, et seulement s'il en a au moins un ;
          * null (donc absent du JSON) sinon. Champ ajouté, optionnel pour les anciens clients.
          */
-        ParcelsSummary parcelsSummary
+        ParcelsSummary parcelsSummary,
+        /**
+         * Suivi approximatif : la fenêtre d'envoi de position est ouverte maintenant pour ce trajet
+         * (30 min avant le départ, au moins un colis pris en charge), même règle que
+         * {@code trackingActive} de la liste « Mes trajets ». Servi au seul voyageur propriétaire,
+         * {@code false} pour tout autre lecteur ; jamais de position, juste le booléen. Champ
+         * ajouté, optionnel pour les anciens clients.
+         */
+        boolean trackingActive
 ) {
     public AnnouncementDetailResponse {
         acceptedMobileMoneyNetworks = acceptedMobileMoneyNetworks == null ? List.of() : acceptedMobileMoneyNetworks;
@@ -138,7 +146,7 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                acceptedMobileMoneyNetworks, departureTimezone, null);
+                acceptedMobileMoneyNetworks, departureTimezone, null, false);
     }
 
     /** Sans {@code acceptedMobileMoneyNetworks} (liste vide) : appelants qui ne le calculent pas. */
@@ -206,7 +214,7 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary);
+                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive);
     }
 
     /** Copie enrichie des équivalents convertis — même pattern que le fil de recherche. */
@@ -223,7 +231,7 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary);
+                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive);
     }
 
     /** Copie portant les réseaux mobile money acceptés ; {@code null} devient la liste vide. */
@@ -237,7 +245,7 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                networks == null ? List.of() : networks, departureTimezone, parcelsSummary);
+                networks == null ? List.of() : networks, departureTimezone, parcelsSummary, trackingActive);
     }
 
     /** Copie portant le fuseau IANA de la ville de départ (YADONY-FLUTTER-PROD-1R). */
@@ -251,7 +259,7 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary);
+                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive);
     }
 
     /** Copie portant le résumé des colis en possession, posé pour le seul voyageur propriétaire. */
@@ -265,6 +273,20 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary);
+                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive);
+    }
+
+    /** Copie portant {@code trackingActive}, posé pour le seul voyageur propriétaire. */
+    public AnnouncementDetailResponse withTrackingActive(boolean trackingActive) {
+        return new AnnouncementDetailResponse(
+                id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime, arrivalDate,
+                pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay,
+                transportMode, stopsCount, status, bidsCount, confirmedParcelCount, traveler, description,
+                acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, cashAccepted,
+                createdAt, updatedAt, pricingMode, priceGridItems, reservedKg, surplusEligible,
+                surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
+                availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
+                remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
+                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive);
     }
 }
