@@ -9,5 +9,6 @@ routes:
 Si l'autre personne ne se présente pas à la remise, signalez son absence depuis l'envoi : « Signaler l'absence du voyageur » pour l'expéditeur, « Signaler l'absence de l'expéditeur » pour le voyageur.
 Quand l'expéditeur signale le voyageur absent, l'envoi est annulé immédiatement et un paiement en ligne est intégralement remboursé.
 Quand le voyageur signale l'expéditeur absent, l'expéditeur a 24 h pour confirmer ou contester ; sans réponse, l'envoi est annulé automatiquement.
-Une absence contestée ouvre un litige : le paiement reste gelé et l'équipe Yadony tranche.
-Tant que la déclaration d'absence de l'expéditeur n'est pas levée, le voyageur ne peut pas scanner la remise du colis, même si l'expéditeur arrive finalement : contactez le support, qui peut la lever.
+Si l'expéditeur arrive finalement pendant ces 24 h, le voyageur scanne simplement la remise : la déclaration est levée et le colis part.
+Une absence contestée ouvre un litige : le paiement reste gelé et l'équipe Yadony tranche. La contestation ne débloque pas la remise : le scan reste refusé jusqu'à la décision de l'équipe.
+Si l'équipe lève la déclaration, scannez la remise tout de suite : sans scan dans les 24 h, l'envoi est annulé comme une remise manquée.
