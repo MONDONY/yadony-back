@@ -56,6 +56,11 @@ public class SenderReputationListener {
             log.debug("Sender no-show réputation : bid {} introuvable", event.bidId());
             return;
         }
+        // Défense en profondeur : colis remis, l'expéditeur était là, aucune pénalité.
+        if (SenderNoShowHandoverGate.parcelAlreadyHandedOver(bid.getStatus())) {
+            log.warn("Sender no-show réputation : colis {} déjà {}, aucun incident compté", bid.getId(), bid.getStatus());
+            return;
+        }
         UserEntity sender = userRepository.findById(bid.getSenderId()).orElse(null);
         if (sender == null) {
             log.debug("Sender no-show réputation : expéditeur {} introuvable", bid.getSenderId());

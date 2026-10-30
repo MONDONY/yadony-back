@@ -28,7 +28,9 @@ import java.util.UUID;
  *   <li><b>Confirmer HANDOVER</b> : même chemin que la confirmation historique
  *       ({@link CancellationConfirmedEvent} SENDER_NO_SHOW : bid CANCELLED, remboursement du
  *       séquestre, commission espèces remboursée, compteur de réputation). Un litige de
- *       contestation ouvert est fermé (NOSHOW_CONFIRMED) : la décision admin le tranche.</li>
+ *       contestation ouvert est fermé (NOSHOW_CONFIRMED) : la décision admin le tranche.
+ *       Refusé en 409 {@code noshow-parcel-handed-over} si le colis a déjà été remis
+ *       ({@link SenderNoShowHandoverGate#parcelAlreadyHandedOver}) : l'admin rejette alors.</li>
  *   <li><b>Confirmer DELIVERY</b> : aucune conséquence financière ici. En attente : ouvre le
  *       litige « non contesté » exactement comme l'échéance
  *       ({@link DeliveryNoShowUncontestedScheduler#openUncontestedDispute}). Contestée : le
@@ -111,6 +113,15 @@ public class NoShowArbitrationService {
     private CancellationEntity doConfirm(CancellationEntity c, UUID adminId, String decisionReason) {
         CancellationStatus previous = c.getNoShowStatus();
         BidEntity bid = loadBid(c);
+        // Expéditeur absent alors que son colis a été remis (déclaration ouverte avant
+        // SenderNoShowHandoverGate) : confirmer rembourserait le séquestre d'un colis qui voyage.
+        if (c.getScope() == CancellationScope.HANDOVER
+                && SenderNoShowHandoverGate.parcelAlreadyHandedOver(bid.getStatus())) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "noshow-parcel-handed-over",
+                    "Parcel Already Handed Over",
+                    "Le colis a déjà été remis au voyageur (" + bid.getStatus().name() + ") : l'absence de"
+                            + " l'expéditeur ne peut plus être confirmée. Rejetez la déclaration.");
+        }
         AnnouncementEntity announcement = findAnnouncement(bid);
 
         markDecision(c, NoShowAdminDecision.CONFIRMED, adminId, decisionReason);

@@ -301,6 +301,27 @@ class CancellationNoShowTest {
         }
 
         @Test
+        void colisDejaRemis_declarationClose_sansEvenementNiRemboursement() {
+            // Ancienne donnée ou course passée : le colis voyage, l'absence n'a plus de sens.
+            CancellationEntity c = new CancellationEntity();
+            ReflectionTestUtils.setField(c, "id", UUID.randomUUID());
+            c.setBidId(BID_ID);
+            c.setNoShowStatus(CancellationStatus.PENDING_CONFIRMATION);
+            when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.of(c));
+            when(bidRepository.findById(BID_ID)).thenReturn(
+                    Optional.of(cashBid(BidStatus.IN_TRANSIT, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1))));
+            when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.confirmSenderNoShow(BID_ID);
+
+            assertThat(c.getNoShowStatus()).isEqualTo(CancellationStatus.RESOLVED);
+            verify(cancellationRepository).save(c);
+            verify(eventPublisher, never()).publishEvent(any());
+            verify(auditService).log(org.mockito.ArgumentMatchers.eq("CANCELLATION"), org.mockito.ArgumentMatchers.eq(c.getId()),
+                    org.mockito.ArgumentMatchers.eq("SENDER_NO_SHOW_CLOSED_PARCEL_HANDED_OVER"), any(), any());
+        }
+
+        @Test
         void isNoOpWhenAlreadyConfirmed() {
             CancellationEntity c = new CancellationEntity();
             c.setBidId(BID_ID);

@@ -1,6 +1,7 @@
 package com.yadony.api.payments.cash;
 
 import com.yadony.api.cancellation.CancellationReason;
+import com.yadony.api.cancellation.SenderNoShowHandoverGate;
 import com.yadony.api.cancellation.events.CancellationConfirmedEvent;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
@@ -45,6 +46,12 @@ public class CommissionRefundListener {
 
         BidEntity bid = bidRepository.findById(event.bidId()).orElse(null);
         if (bid == null) return;
+        // Défense en profondeur : le colis a été remis, l'expéditeur était là, la commission reste due.
+        if (SenderNoShowHandoverGate.parcelAlreadyHandedOver(bid.getStatus())) {
+            log.warn("CommissionRefundListener: absence confirmée sur le colis {} déjà {} — commission non remboursée",
+                    bid.getId(), bid.getStatus());
+            return;
+        }
         if (bid.getPaymentMethod() != PaymentMethod.CASH) return;
         if (bid.getCommissionStatus() != CommissionStatus.CHARGED) return;
 

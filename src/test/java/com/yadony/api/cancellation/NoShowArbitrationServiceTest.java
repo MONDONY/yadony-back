@@ -107,6 +107,31 @@ class NoShowArbitrationServiceTest {
     @Nested
     class Confirmer {
 
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.EnumSource(value = BidStatus.class,
+                names = {"HANDED_OVER", "IN_TRANSIT", "ARRIVED", "COMPLETED", "PARCEL_REFUSED"})
+        void handoverSurColisDejaRemis_409_rienNEstConfirme(BidStatus remis) {
+            // Le colis voyage : confirmer l'absence rembourserait le séquestre à l'expéditeur.
+            CancellationEntity c = row(CancellationScope.HANDOVER, "SENDER_NO_SHOW", CancellationStatus.CONTESTED);
+            stubRow(c);
+            BidEntity bid = new BidEntity();
+            ReflectionTestUtils.setField(bid, "id", BID_ID);
+            bid.setSenderId(SENDER_ID);
+            bid.setAnnouncementId(ANN_ID);
+            bid.setStatus(remis);
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+
+            assertThatThrownBy(() -> service.confirm(ID, ADMIN_ID, MOTIF))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(e.getErrorCode()).isEqualTo("noshow-parcel-handed-over");
+                    });
+            assertThat(c.getNoShowStatus()).isEqualTo(CancellationStatus.CONTESTED);
+            assertThat(c.getAdminDecision()).isNull();
+            verify(cancellationRepository, never()).save(any());
+            verifyNoInteractions(eventPublisher);
+        }
+
         @Test
         void handoverEnAttente_confirmeParLEvenementExistant_etTraceLaDecision() {
             CancellationEntity c = row(CancellationScope.HANDOVER, "SENDER_NO_SHOW",

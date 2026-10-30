@@ -106,4 +106,21 @@ class SenderReputationListenerTest {
 
         verify(userRepository, never()).save(any());
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = com.yadony.api.matching.BidStatus.class,
+            names = {"HANDED_OVER", "IN_TRANSIT", "ARRIVED", "COMPLETED", "PARCEL_REFUSED"})
+    @DisplayName("colis déjà remis → l'expéditeur est venu, aucune pénalité")
+    void parcelAlreadyHandedOver_noPenalty(com.yadony.api.matching.BidStatus handedOver) {
+        BidEntity b = bid();
+        b.setStatus(handedOver);
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(b));
+
+        listener.onCancellationConfirmed(
+                new CancellationConfirmedEvent(BID_ID, CANCELLATION_ID, CancellationReason.SENDER_NO_SHOW));
+
+        verify(userRepository, never()).findById(any());
+        verify(userRepository, never()).save(any());
+        verify(auditService, never()).log(anyString(), any(), anyString(), any(), any());
+    }
 }

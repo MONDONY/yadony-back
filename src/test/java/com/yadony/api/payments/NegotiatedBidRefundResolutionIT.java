@@ -140,7 +140,7 @@ class NegotiatedBidRefundResolutionIT {
 
     @Test
     void negotiated_sender_no_show_confirmed_refunds_thread_payment() {
-        new SenderNoShowConfirmedListener(paymentRepository, refundProcessor).onCancellationConfirmed(
+        new SenderNoShowConfirmedListener(paymentRepository, refundProcessor, bidRepository).onCancellationConfirmed(
                 new CancellationConfirmedEvent(negotiatedBid.getId(), UUID.randomUUID(),
                         CancellationReason.SENDER_NO_SHOW));
 

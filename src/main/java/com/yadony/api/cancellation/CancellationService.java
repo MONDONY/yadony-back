@@ -29,6 +29,8 @@ import com.yadony.api.matching.HandoverDeadlineRules;
 import com.yadony.api.payments.cash.CommissionProperties;
 import com.yadony.api.requests.entity.NegotiationThreadStatus;
 import com.yadony.api.requests.repository.NegotiationThreadRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -48,6 +50,8 @@ import java.util.UUID;
 
 @Service
 public class CancellationService {
+
+    private static final Logger log = LoggerFactory.getLogger(CancellationService.class);
 
     private final CancellationRepository cancellationRepository;
     private final RematchSuggestionRepository rematchSuggestionRepository;
@@ -891,11 +895,36 @@ public class CancellationService {
                         "Aucune annulation en attente pour ce bid"));
         if (c.getNoShowStatus() != CancellationStatus.PENDING_CONFIRMATION) return Optional.empty();
 
+        Optional<BidEntity> bid = bidRepository.findById(bidId);
+        if (bid.isPresent() && SenderNoShowHandoverGate.parcelAlreadyHandedOver(bid.get().getStatus())) {
+            closeBecauseParcelHandedOver(c, bid.get().getStatus());
+            return Optional.empty();
+        }
+
         c.setNoShowStatus(CancellationStatus.CONFIRMED);
         cancellationRepository.save(c);
         eventPublisher.publishEvent(
                 new CancellationConfirmedEvent(bidId, c.getId(), CancellationReason.SENDER_NO_SHOW));
         return Optional.of(c);
+    }
+
+    /**
+     * L'expéditeur a remis (ou présenté) son colis : une absence confirmée rembourserait le séquestre
+     * et pénaliserait l'expéditeur d'un colis qui voyage. La déclaration est close en RESOLVED, comme
+     * une déclaration rejetée (le colis continue sans annulation ni remboursement), sans
+     * {@link CancellationConfirmedEvent}. Inatteignable depuis {@link SenderNoShowHandoverGate} ;
+     * reste les déclarations ouvertes avant la porte.
+     */
+    private void closeBecauseParcelHandedOver(CancellationEntity c, BidStatus bidStatus) {
+        log.warn("Absence de l'expéditeur non confirmée : le colis {} est déjà {} (déclaration {} close)",
+                c.getBidId(), bidStatus, c.getId());
+        CancellationStatus previous = c.getNoShowStatus();
+        c.setNoShowStatus(CancellationStatus.RESOLVED);
+        cancellationRepository.save(c);
+        auditService.log("CANCELLATION", c.getId(), SenderNoShowHandoverGate.AUDIT_CLOSED_PARCEL_HANDED_OVER, null,
+                Map.of("bidId", c.getBidId().toString(),
+                        "bidStatus", bidStatus.name(),
+                        "previousStatus", previous.name()));
     }
 
     /**
