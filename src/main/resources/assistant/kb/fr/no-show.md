@@ -11,4 +11,4 @@ Quand l'expéditeur signale le voyageur absent, l'envoi est annulé immédiateme
 Quand le voyageur signale l'expéditeur absent, l'expéditeur a 24 h pour confirmer ou contester ; sans réponse, l'envoi est annulé automatiquement.
 Si l'expéditeur arrive finalement pendant ces 24 h, le voyageur scanne simplement la remise : la déclaration est levée et le colis part.
 Une absence contestée ouvre un litige : le paiement reste gelé et l'équipe Yadony tranche. La contestation ne débloque pas la remise : le scan reste refusé jusqu'à la décision de l'équipe.
-Si l'équipe lève la déclaration, scannez la remise tout de suite : sans scan dans les 24 h, l'envoi est annulé comme une remise manquée.
+Si l'équipe lève la déclaration, scannez la remise tout de suite : sans scan dans les 24 h, vous êtes considéré comme absent à la remise et l'expéditeur est remboursé (paiement en espèces : l'envoi est annulé sans fautif).

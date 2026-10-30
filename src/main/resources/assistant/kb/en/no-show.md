@@ -11,4 +11,4 @@ When the sender reports the traveler as absent, the shipment is canceled immedia
 When the traveler reports the sender as absent, the sender has 24 h to confirm or contest; with no answer, the shipment is canceled automatically.
 If the sender finally arrives within those 24 h, the traveler simply scans the handover: the report is lifted and the parcel goes ahead.
 A contested absence opens a dispute: the payment stays frozen and the Yadony team decides. Contesting does not unblock the handover: the scan stays refused until the team decides.
-If the team lifts the report, scan the handover right away: without a scan within 24 h, the shipment is canceled as a missed handover.
+If the team lifts the report, scan the handover right away: without a scan within 24 h, you are considered absent at handover and the sender is refunded (cash payment: the shipment is canceled with no one at fault).
