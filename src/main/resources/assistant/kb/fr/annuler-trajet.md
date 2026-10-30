@@ -11,4 +11,5 @@ Cette entrée n'apparaît que pour un trajet publié qui a des demandes ou des c
 Tous les expéditeurs liés sont remboursés automatiquement.
 Si un colis vous a déjà été remis, vous devez le rendre à son expéditeur sous 3 jours, contre le code de retour qu'il vous communique.
 Seul un trajet publié (actif) peut être annulé. Un trajet complet ne peut être ni annulé ni supprimé depuis l'app : contactez le support. Un expéditeur qui a accepté votre offre et procède au paiement bloque aussi l'annulation pendant son délai de paiement.
+Sur un trajet complet ou retiré par l'équipe, la carte de statut de l'écran du trajet propose le lien « Contacter le support ».
 Un trajet qui a un colis accepté ne peut pas être supprimé : annulez-le d'abord. Pour un simple changement de date, utilisez plutôt « Reporter ».
