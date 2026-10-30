@@ -1,7 +1,7 @@
 ---
 id: ecran-detail-trajet
 title: L'écran Trajet (votre trajet)
-keywords: écran trajet, à quoi sert cet écran, détail de mon trajet, gérer mon trajet, colis du trajet, arrivé à destination, vues du trajet
+keywords: écran trajet, à quoi sert cet écran, détail de mon trajet, gérer mon trajet, colis du trajet, à traiter, menu, je pars, arrivé à destination, prévenir les destinataires, récurrent, modèle, vues du trajet
 screens:
   - /announcements/:id/trip
 questions:
@@ -12,4 +12,4 @@ routes:
   - path: /announcements/trips
     label: Mes trajets
 ---
-Votre trajet se lit de haut en bas : le billet, une carte de statut, « À traiter » (demandes à traiter, « Je pars », ajouter la carte), puis les cartes Demandes, Colis (« Voir la liste ») et Gain, et « Votre trajet » (itinéraire, paiements, conditions, affiche, arrivée). Le bouton fixe en bas propose l'action du moment : Modifier, Publier, Partager l'affiche, Voir les demandes, « Arrivé à destination », puis « Prévenir les destinataires ». Le menu ⋮ regroupe Reporter, Dépublier, Annuler le voyage et Supprimer. Si ce trajet n'est pas le vôtre, vous voyez sa fiche expéditeur.
+De haut en bas : le billet et ses pastilles kilos et prix, une carte de statut, « À traiter » (Demandes à traiter, Je pars, carte), les cartes Demandes, Colis (2 premiers colis, total, « Voir les N autres colis », « Voir la liste ») et Gain estimé, puis « Votre trajet » (Itinéraire et lieux, Paiements, Conditions, Affiche, Arrivée). Le bouton fixe du bas propose l'action du moment. Le menu ⋮ : Modifier, Reporter, Dépublier, Partager l'affiche, Instructions de retrait, Rendre ce trajet récurrent, Enregistrer en modèle, Annuler le voyage, Supprimer, selon l'état du trajet.
