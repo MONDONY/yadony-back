@@ -10,3 +10,4 @@ If the other person doesn't show up at handover, report their absence from the s
 When the sender reports the traveler as absent, the shipment is canceled immediately and an online payment is fully refunded.
 When the traveler reports the sender as absent, the sender has 24 h to confirm or contest; with no answer, the shipment is canceled automatically.
 A contested absence opens a dispute: the payment stays frozen and the Yadony team decides.
+As long as the sender's no-show report has not been lifted, the traveler cannot scan the parcel handover, even if the sender finally shows up: contact support, who can lift it.
