@@ -328,18 +328,27 @@ class CancellationNoShowTest {
                     org.mockito.ArgumentMatchers.eq("SENDER_NO_SHOW_CLOSED_PARCEL_HANDED_OVER"), any(), any());
         }
 
-        @Test
-        void isNoOpWhenAlreadyConfirmed() {
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.EnumSource(value = CancellationStatus.class,
+                names = {"RESOLVED", "CONFIRMED", "CONTESTED"})
+        void declarationDejaLeveeOuTranchee_409_sansRienChanger(CancellationStatus decided) {
+            // L'app affichait « absence confirmée » sur un 200 sans effet (déclaration levée par le scan).
             CancellationEntity c = new CancellationEntity();
             c.setBidId(BID_ID);
-            c.setNoShowStatus(CancellationStatus.CONFIRMED);
-
+            c.setNoShowStatus(decided);
             when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.of(c));
 
-            service.confirmSenderNoShow(BID_ID, SENDER_ID);
-
+            assertThatThrownBy(() -> service.confirmSenderNoShow(BID_ID, SENDER_ID))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(e.getErrorCode()).isEqualTo("noshow-already-decided");
+                    });
+            assertThat(c.getNoShowStatus()).isEqualTo(decided);
             verify(cancellationRepository, never()).save(any());
-            verifyNoInteractions(eventPublisher);
+            verifyNoInteractions(eventPublisher, auditService);
+            org.mockito.InOrder order = org.mockito.Mockito.inOrder(bidRepository, cancellationRepository);
+            order.verify(bidRepository).lockForUpdate(BID_ID);
+            order.verify(cancellationRepository).findByBidId(BID_ID);
         }
 
         @Test

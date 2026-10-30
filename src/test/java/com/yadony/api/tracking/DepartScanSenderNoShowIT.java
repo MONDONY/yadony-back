@@ -484,6 +484,38 @@ class DepartScanSenderNoShowIT {
         }
     }
 
+    @Test
+    void expediteurConfirmeSonAbsence_surUneDeclarationLeveeParLeScan_409_rienNeChange() throws Exception {
+        BidEntity bid = seedBid(BidStatus.ACCEPTED);
+        CancellationEntity c = seedSenderNoShow(bid, CancellationStatus.PENDING_CONFIRMATION);
+        scan("{\"bidId\":\"" + bid.getId() + "\",\"eventType\":\"DEPART\"}", "fr").andExpect(status().isCreated());
+
+        mockMvc.perform(post("/cancellations/bids/{bidId}/confirm-noshow-self", bid.getId())
+                        .with(authentication(sender(bid))))
+                .andExpect(status().isConflict())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("noshow-already-decided"));
+
+        assertThat(statusOf(c)).isEqualTo("RESOLVED");
+        assertThat(bidRepository.findById(bid.getId()).orElseThrow().getStatus()).isEqualTo(BidStatus.HANDED_OVER);
+        org.mockito.Mockito.verify(refundProcessor, org.mockito.Mockito.after(500).never())
+                .processRefund(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void expediteurConfirmeSonAbsence_surUneDeclarationEnAttente_200_colisAnnule() throws Exception {
+        BidEntity bid = seedBid(BidStatus.ACCEPTED);
+        CancellationEntity c = seedSenderNoShow(bid, CancellationStatus.PENDING_CONFIRMATION);
+
+        mockMvc.perform(post("/cancellations/bids/{bidId}/confirm-noshow-self", bid.getId())
+                        .with(authentication(sender(bid))))
+                .andExpect(status().isOk());
+
+        assertThat(statusOf(c)).isEqualTo("CONFIRMED");
+        assertThat(bidRepository.findById(bid.getId()).orElseThrow().getStatus()).isEqualTo(BidStatus.CANCELLED);
+    }
+
     // ── Concurrence réelle (verrou du colis) ─────────────────────────────────
 
     @RepeatedTest(3)
@@ -664,6 +696,11 @@ class DepartScanSenderNoShowIT {
         Integer n = jdbc.queryForObject("SELECT count(*) FROM audit_log WHERE entity_id = ? AND action = ?",
                 Integer.class, c.getId(), action);
         return n == null ? 0 : n;
+    }
+
+    private UsernamePasswordAuthenticationToken sender(BidEntity bid) {
+        String uid = userRepository.findById(bid.getSenderId()).orElseThrow().getFirebaseUid();
+        return new UsernamePasswordAuthenticationToken(uid, null, List.of(new SimpleGrantedAuthority("ROLE_SENDER")));
     }
 
     private UsernamePasswordAuthenticationToken traveler() {

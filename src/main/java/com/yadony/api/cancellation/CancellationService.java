@@ -915,14 +915,21 @@ public class CancellationService {
      * déclarations ouvertes avant la porte de remise.
      *
      * @param actorId auteur de la confirmation : l'expéditeur
-     * @return l'annulation confirmée, vide si elle n'était plus en attente de confirmation
+     * @return l'annulation confirmée, vide si le colis avait déjà été remis (déclaration close)
+     * @throws YadonyBusinessException 409 {@code noshow-already-decided} si la déclaration n'attend
+     *         plus la réponse de l'expéditeur
      */
     private Optional<CancellationEntity> applySenderNoShowConfirmation(UUID bidId, UUID actorId) {
         CancellationEntity c = cancellationRepository.findByBidId(bidId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "cancellation-not-found", "Not Found",
                         "Aucune annulation en attente pour ce bid"));
-        if (c.getNoShowStatus() != CancellationStatus.PENDING_CONFIRMATION) return Optional.empty();
+        // Déclaration déjà levée (par le scan de remise ou l'équipe), contestée ou confirmée : 409,
+        // comme la contestation. Un 200 sans effet faisait afficher « absence confirmée » par l'app.
+        if (c.getNoShowStatus() != CancellationStatus.PENDING_CONFIRMATION) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "noshow-already-decided",
+                    "No-show Already Decided", "Cette déclaration d'absence est déjà tranchée");
+        }
 
         Optional<BidEntity> bid = bidRepository.findById(bidId);
         if (bid.isPresent() && BidStatus.SENDER_SHOWED_UP.contains(bid.get().getStatus())) {
