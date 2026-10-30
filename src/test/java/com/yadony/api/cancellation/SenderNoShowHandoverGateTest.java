@@ -4,6 +4,7 @@ import com.yadony.api.cancellation.events.SenderNoShowWithdrawnEvent;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.tracking.HandoverScan;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -12,6 +13,9 @@ import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -35,6 +39,7 @@ class SenderNoShowHandoverGateTest {
     private final UUID cancellationId = UUID.randomUUID();
     private final UUID senderId = UUID.randomUUID();
     private final UUID travelerId = UUID.randomUUID();
+    private final UUID trackingEventId = UUID.randomUUID();
 
     private CancellationEntity declaration(String reason, CancellationStatus status) {
         CancellationEntity c = new CancellationEntity();
@@ -46,72 +51,106 @@ class SenderNoShowHandoverGateTest {
         return c;
     }
 
+    private HandoverScan scan() {
+        return new HandoverScan(bidId, travelerId, trackingEventId, "QR", "tracking/" + bidId + "/1_depart.jpg",
+                LocalDateTime.of(2026, 10, 30, 9, 15), new BigDecimal("48.856600"), new BigDecimal("2.352200"));
+    }
+
     @ParameterizedTest
     @EnumSource(value = CancellationStatus.class, names = {"CONTESTED", "CONFIRMED"})
     void declarationContesteeOuConfirmee_bloqueLaRemise_sansRienModifier(CancellationStatus status) {
         CancellationEntity c = declaration(CancellationReason.SENDER_NO_SHOW.name(), status);
 
-        assertThat(gate.blockingCode(bidId, travelerId)).contains("handover-sender-noshow-pending");
+        assertThat(gate.blockingCode(bidId)).contains("handover-sender-noshow-pending");
+        gate.onHandover(scan());
+
         assertThat(c.getNoShowStatus()).isEqualTo(status);
         verify(cancellations, never()).save(any());
         verifyNoInteractions(audit, events);
     }
 
     @Test
-    void declarationEnAttente_leveeParLeScan_puisRemiseAutorisee() {
-        // Décision du propriétaire : l'expéditeur est finalement venu, le scan de remise le prouve.
+    void declarationEnAttente_neBloquePas_etLaDecisionNEcritRien() {
+        // « La remise est-elle bloquée ? » est une lecture : la levée n'a lieu qu'une fois la remise enregistrée.
+        CancellationEntity c = declaration(CancellationReason.SENDER_NO_SHOW.name(),
+                CancellationStatus.PENDING_CONFIRMATION);
+
+        assertThat(gate.blockingCode(bidId)).isEmpty();
+
+        assertThat(c.getNoShowStatus()).isEqualTo(CancellationStatus.PENDING_CONFIRMATION);
+        verify(cancellations, never()).save(any());
+        verifyNoInteractions(audit, events, bids);
+    }
+
+    @Test
+    void declarationEnAttente_leveeApresLaRemise_auditAvecLaPreuveDuScan() {
         CancellationEntity c = declaration(CancellationReason.SENDER_NO_SHOW.name(),
                 CancellationStatus.PENDING_CONFIRMATION);
         BidEntity bid = new BidEntity();
         bid.setSenderId(senderId);
         when(bids.findById(bidId)).thenReturn(Optional.of(bid));
 
-        assertThat(gate.blockingCode(bidId, travelerId)).isEmpty();
+        gate.onHandover(scan());
 
         assertThat(c.getNoShowStatus()).isEqualTo(CancellationStatus.RESOLVED);
         verify(cancellations).save(c);
-        verify(audit).log("CANCELLATION", cancellationId, "SENDER_NO_SHOW_WITHDRAWN_BY_HANDOVER", travelerId,
-                Map.of("bidId", bidId.toString(), "previousStatus", "PENDING_CONFIRMATION"));
+        Map<String, Object> expected = new LinkedHashMap<>();
+        expected.put("bidId", bidId.toString());
+        expected.put("trackingEventId", trackingEventId.toString());
+        expected.put("scanMethod", "QR");
+        expected.put("photoKey", "tracking/" + bidId + "/1_depart.jpg");
+        expected.put("offlineTimestamp", "2026-10-30T09:15");
+        expected.put("gpsLat", "48.856600");
+        expected.put("gpsLon", "2.352200");
+        expected.put("previousStatus", "PENDING_CONFIRMATION");
+        verify(audit).log("CANCELLATION", cancellationId, "SENDER_NO_SHOW_WITHDRAWN_BY_HANDOVER", travelerId, expected);
         verify(events).publishEvent(new SenderNoShowWithdrawnEvent(bidId, cancellationId, senderId));
     }
 
     @Test
-    void declarationLevee_neBloquePas() {
+    void scanSansPhotoNiPositionEnLigne_auditSansCesChamps() {
+        CancellationEntity c = declaration(CancellationReason.SENDER_NO_SHOW.name(),
+                CancellationStatus.PENDING_CONFIRMATION);
+        when(bids.findById(bidId)).thenReturn(Optional.empty());
+
+        gate.onHandover(new HandoverScan(bidId, travelerId, trackingEventId, null, null, null, null, null));
+
+        assertThat(c.getNoShowStatus()).isEqualTo(CancellationStatus.RESOLVED);
+        verify(audit).log("CANCELLATION", cancellationId, "SENDER_NO_SHOW_WITHDRAWN_BY_HANDOVER", travelerId,
+                Map.of("bidId", bidId.toString(), "trackingEventId", trackingEventId.toString(),
+                        "previousStatus", "PENDING_CONFIRMATION"));
+        // Colis introuvable : pas d'expéditeur à prévenir.
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    void declarationLevee_niBloqueNiModifiee() {
         declaration(CancellationReason.SENDER_NO_SHOW.name(), CancellationStatus.RESOLVED);
 
-        assertThat(gate.blockingCode(bidId, travelerId)).isEmpty();
+        assertThat(gate.blockingCode(bidId)).isEmpty();
+        gate.onHandover(scan());
         verify(cancellations, never()).save(any());
         verifyNoInteractions(audit, events);
     }
 
     @Test
-    void aucuneDeclaration_neBloquePas() {
+    void aucuneDeclaration_rienNeSePasse() {
         when(cancellations.findByBidId(bidId)).thenReturn(Optional.empty());
 
-        assertThat(gate.blockingCode(bidId, travelerId)).isEmpty();
+        assertThat(gate.blockingCode(bidId)).isEmpty();
+        gate.onHandover(scan());
         verifyNoInteractions(audit, events);
     }
 
     @Test
-    void autreMotifHandover_neBloquePasEtNEstPasLeve() {
+    void autreMotifHandover_niBloqueNiLeve() {
         CancellationEntity c = declaration(CancellationReason.TRAVELER_CANCEL_AFTER_HANDOVER.name(),
                 CancellationStatus.PENDING_CONFIRMATION);
 
-        assertThat(gate.blockingCode(bidId, travelerId)).isEmpty();
+        assertThat(gate.blockingCode(bidId)).isEmpty();
+        gate.onHandover(scan());
         assertThat(c.getNoShowStatus()).isEqualTo(CancellationStatus.PENDING_CONFIRMATION);
         verifyNoInteractions(audit, events);
-    }
-
-    @Test
-    void sansAuteur_laVarianteDuPortSeComporteDeMeme() {
-        CancellationEntity c = declaration(CancellationReason.SENDER_NO_SHOW.name(),
-                CancellationStatus.PENDING_CONFIRMATION);
-        when(bids.findById(bidId)).thenReturn(Optional.empty());
-
-        assertThat(gate.blockingCode(bidId)).isEmpty();
-        assertThat(c.getNoShowStatus()).isEqualTo(CancellationStatus.RESOLVED);
-        // Colis introuvable : pas d'expéditeur à prévenir.
-        verifyNoInteractions(events);
     }
 
     @Test

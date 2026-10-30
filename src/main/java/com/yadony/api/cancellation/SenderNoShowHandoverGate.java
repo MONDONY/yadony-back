@@ -5,6 +5,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.tracking.HandoverBlocker;
+import com.yadony.api.tracking.HandoverScan;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
@@ -19,11 +20,13 @@ import java.util.UUID;
  * l'échéance de contestation confirmait l'absence : séquestre remboursé et incident compté alors
  * que le colis voyageait. Décision du propriétaire, selon l'état de la déclaration :
  * <ul>
- *   <li>{@code PENDING_CONFIRMATION} : le scan la <b>lève</b> (l'expéditeur est venu) et la remise
- *       passe. Clôture en {@code RESOLVED} dans la transaction du scan, sous le verrou du colis,
- *       audit {@code SENDER_NO_SHOW_WITHDRAWN_BY_HANDOVER} (auteur : le voyageur qui scanne),
- *       {@link SenderNoShowWithdrawnEvent} pour prévenir l'expéditeur après commit. Si le scan
- *       échoue ensuite (autre porte, photo invalide…), la levée est annulée avec lui ;</li>
+ *   <li>{@code PENDING_CONFIRMATION} : la remise passe ({@link #blockingCode} ne bloque pas) et,
+ *       une fois enregistrée, le scan <b>lève</b> la déclaration ({@link #onHandover}) : clôture en
+ *       {@code RESOLVED} dans la transaction du scan, sous le verrou du colis, audit
+ *       {@code SENDER_NO_SHOW_WITHDRAWN_BY_HANDOVER} (auteur : le voyageur qui scanne ; étape,
+ *       provenance, photo, heure hors ligne et position du scan), {@link SenderNoShowWithdrawnEvent}
+ *       pour prévenir l'expéditeur après commit. Si le scan échoue ensuite, la levée est annulée
+ *       avec lui. Aucune preuve n'est exigée pour lever (décision du propriétaire) ;</li>
  *   <li>{@code CONTESTED} (litige ouvert, l'équipe tranche) et {@code CONFIRMED} (absence actée,
  *       remboursement parti) : 409 {@value #CODE}, rien n'est modifié ;</li>
  *   <li>{@code RESOLVED} ou aucune déclaration : rien ne bloque.</li>
@@ -52,29 +55,33 @@ public class SenderNoShowHandoverGate implements HandoverBlocker {
         this.closing = new SenderNoShowClosing(cancellations, auditService);
     }
 
+    /** Lecture seule : seules une déclaration contestée ou confirmée refusent la remise. */
     @Override
     public Optional<String> blockingCode(UUID bidId) {
-        return blockingCode(bidId, null);
+        return senderNoShow(bidId)
+                .filter(c -> c.getNoShowStatus() == CancellationStatus.CONTESTED
+                        || c.getNoShowStatus() == CancellationStatus.CONFIRMED)
+                .map(c -> CODE);
     }
 
+    /**
+     * La remise vient d'être enregistrée : une déclaration encore en attente est levée, avec ce
+     * qui prouve la remise dans l'audit (étape, provenance, photo, heure hors ligne, position).
+     */
     @Override
-    public Optional<String> blockingCode(UUID bidId, UUID actorId) {
-        Optional<CancellationEntity> declaration = cancellations.findByBidId(bidId)
+    public void onHandover(HandoverScan scan) {
+        senderNoShow(scan.bidId())
+                .filter(c -> c.getNoShowStatus() == CancellationStatus.PENDING_CONFIRMATION)
+                .ifPresent(c -> {
+                    closing.withdrawByHandover(c, scan);
+                    bids.findById(scan.bidId()).map(BidEntity::getSenderId).ifPresent(senderId ->
+                            events.publishEvent(new SenderNoShowWithdrawnEvent(scan.bidId(), c.getId(), senderId)));
+                });
+    }
+
+    private Optional<CancellationEntity> senderNoShow(UUID bidId) {
+        return cancellations.findByBidId(bidId)
                 .filter(c -> CancellationReason.SENDER_NO_SHOW.name().equals(c.getReason()));
-        if (declaration.isEmpty()) {
-            return Optional.empty();
-        }
-        CancellationEntity c = declaration.get();
-        return switch (c.getNoShowStatus()) {
-            case PENDING_CONFIRMATION -> {
-                closing.withdrawByHandover(c, actorId);
-                bids.findById(bidId).map(BidEntity::getSenderId).ifPresent(senderId ->
-                        events.publishEvent(new SenderNoShowWithdrawnEvent(bidId, c.getId(), senderId)));
-                yield Optional.empty();
-            }
-            case CONTESTED, CONFIRMED -> Optional.of(CODE);
-            case RESOLVED -> Optional.empty();
-        };
     }
 
     @Override

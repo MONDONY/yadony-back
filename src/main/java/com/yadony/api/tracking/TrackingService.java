@@ -24,6 +24,7 @@ import com.yadony.api.tracking.dto.TrackingSearchResponse;
 import com.yadony.api.tracking.dto.TripScanHistoryEntryDto;
 import com.yadony.api.tracking.events.ConfirmationCodeBlockedEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
+import com.yadony.api.tracking.events.LateHandoverScanEvent;
 import com.yadony.api.tracking.events.ParcelDepartedEvent;
 import com.yadony.api.tracking.events.ParcelInTransitEvent;
 import com.yadony.api.matching.reception.BidRecipientLinkRepository;
@@ -319,6 +320,7 @@ public class TrackingService {
         if (bid.getStatus() != BidStatus.ACCEPTED
                 && bid.getStatus() != BidStatus.HANDED_OVER
                 && bid.getStatus() != BidStatus.IN_TRANSIT) {
+            reportLateHandoverIfAny(bid, request, traveler);
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "bid-not-accepted",
                     "Bid Not Accepted", "Ce colis n'est pas dans un état scannable");
         }
@@ -346,7 +348,7 @@ public class TrackingService {
 
         if (request.eventType() == TrackingEventType.DEPART) {
             assertTrackingNumberOnDepart(bid, request.trackingNumber(), request.scanMethod());
-            assertHandoverNotBlocked(bid, traveler.getId());
+            assertHandoverNotBlocked(bid);
         }
 
         String photoKey = validatedPhotoKey(bid, request.photoUrl());
@@ -386,6 +388,10 @@ public class TrackingService {
 
         if (request.eventType() == TrackingEventType.DEPART && bid.getStatus() == BidStatus.ACCEPTED) {
             bid.setStatus(BidStatus.HANDED_OVER);
+            HandoverScan handover = new HandoverScan(bid.getId(), traveler.getId(), event.getId(),
+                    scanMethodName(event), photoKey, event.getOfflineTimestamp(),
+                    request.gpsLat(), request.gpsLon());
+            handoverBlockers.forEach(blocker -> blocker.onHandover(handover));
             if (bid.getConfirmationCode() == null) {
                 String code = com.yadony.api.matching.PickupCodes.newCode();
                 bid.setConfirmationCode(code);
@@ -414,6 +420,38 @@ public class TrackingService {
         }
 
         return new ScanOutcome(toEventResponse(event, null), true);
+    }
+
+    /**
+     * Scan de remise hors ligne rejoué sur un colis déjà tranché « non remis » alors que le scan est
+     * antérieur à la décision : absence de l'expéditeur confirmée ({@code CANCELLED} +
+     * {@code SENDER_NO_SHOW}, l'échéance de 24 h passée pendant que le téléphone était hors ligne),
+     * remise espèces non confirmée ({@code CANCELLED} + {@code HANDOVER_NOT_CONFIRMED}) ou voyageur
+     * déclaré absent ({@code NO_SHOW}). Le scan prouve la remise alors que l'argent a suivi la
+     * décision : {@link LateHandoverScanEvent} lève une alerte admin et un audit, commités à part
+     * (la transaction du scan est annulée par le 422 qui suit, gardé pour l'appelant).
+     */
+    private void reportLateHandoverIfAny(BidEntity bid, QrScanRequest request, UserEntity traveler) {
+        if (request.eventType() != TrackingEventType.DEPART || request.offlineTimestamp() == null) {
+            return;
+        }
+        LocalDateTime decidedAt = null;
+        if (bid.getStatus() == BidStatus.CANCELLED
+                && (BidEntity.REJECTION_SENDER_NO_SHOW.equals(bid.getRejectionReason())
+                    || com.yadony.api.matching.NoShowService.HANDOVER_NOT_CONFIRMED_REASON.equals(bid.getRejectionReason()))) {
+            decidedAt = bid.getCancelledAt();
+        } else if (bid.getStatus() == BidStatus.NO_SHOW) {
+            decidedAt = bid.getNoShowAt();
+        }
+        if (decidedAt == null || !request.offlineTimestamp().isBefore(decidedAt)) {
+            return;
+        }
+        String photo = request.photoUrl();
+        String photoKey = photo != null && photo.startsWith("tracking/" + bid.getId() + "/") && !photo.contains("..")
+                ? photo : null;
+        eventPublisher.publishEvent(new LateHandoverScanEvent(bid.getId(), traveler.getId(), bid.getStatus().name(),
+                bid.getRejectionReason(), decidedAt, request.offlineTimestamp(),
+                request.scanMethod() != null ? request.scanMethod().name() : null, photoKey));
     }
 
     /**
@@ -538,20 +576,20 @@ public class TrackingService {
 
     /**
      * Une demande en cours sur le colis retient la remise : déclaration d'absence de l'expéditeur
-     * contestée ou confirmée (une déclaration encore en attente est levée par ce scan, cf.
-     * {@code cancellation/SenderNoShowHandoverGate}), supplément de prix en attente de l'expéditeur,
+     * contestée ou confirmée (une déclaration encore en attente est levée par ce scan une fois la
+     * remise enregistrée, {@link HandoverBlocker#onHandover}), supplément de prix en attente de l'expéditeur,
      * modification du colis en attente du voyageur ou d'un paiement. Tous les {@link HandoverBlocker} sont consultés, dans l'ordre
      * ({@code @Order}), jusqu'au premier qui bloque. Sous le verrou du colis, que la création d'un
      * supplément, d'une modification ou d'une déclaration d'absence prend aussi : aucune course entre
      * elles. Le 409 n'est pas définitif pour l'app : un scan hors ligne reste en file et se rejoue
      * plus tard. Seul un colis ACCEPTED est concerné : TRANSIT et livraison ne passent jamais ici.
      */
-    private void assertHandoverNotBlocked(BidEntity bid, UUID travelerId) {
+    private void assertHandoverNotBlocked(BidEntity bid) {
         if (bid.getStatus() != BidStatus.ACCEPTED) {
             return;
         }
         for (HandoverBlocker blocker : handoverBlockers) {
-            Optional<String> code = blocker.blockingCode(bid.getId(), travelerId);
+            Optional<String> code = blocker.blockingCode(bid.getId());
             if (code.isPresent()) {
                 log.info("Scan DEPART du colis {} refusé : {}", bid.getId(), code.get());
                 String detail = blocker.messageKey() != null
