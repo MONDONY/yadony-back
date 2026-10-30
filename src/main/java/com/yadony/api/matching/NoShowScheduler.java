@@ -28,6 +28,15 @@ public class NoShowScheduler {
     private static final Logger log = LoggerFactory.getLogger(NoShowScheduler.class);
     static final Duration NO_SHOW_GRACE = Duration.ofHours(1);
 
+    /**
+     * Délai laissé au voyageur après la levée d'une déclaration « expéditeur absent » (RESOLVED :
+     * rejet par l'équipe, litige tranché) pour scanner la remise, la date limite étant déjà passée.
+     * Mesuré sur {@code cancellations.updated_at} (pas de colonne dédiée, pas de migration) : une
+     * levée par le support doit être suivie d'un scan dans ces 24 h, sinon le passage horaire déclare
+     * le voyageur absent. Une levée par le scan lui-même n'est pas concernée (le DEPART exclut déjà).
+     */
+    static final Duration RESOLVED_SENDER_NO_SHOW_GRACE = Duration.ofHours(24);
+
     private final BidRepository bidRepository;
     private final NoShowService noShowService;
 
@@ -60,7 +69,8 @@ public class NoShowScheduler {
      */
     void detectNoShowsAt(Instant now) {
         LocalDateTime cutoff = LocalDateTime.ofInstant(now.minus(NO_SHOW_GRACE), ZoneOffset.UTC);
-        List<BidEntity> candidates = bidRepository.findNoShowBids(cutoff);
+        LocalDateTime resolvedSince = LocalDateTime.ofInstant(now.minus(RESOLVED_SENDER_NO_SHOW_GRACE), ZoneOffset.UTC);
+        List<BidEntity> candidates = bidRepository.findNoShowBids(cutoff, resolvedSince);
 
         List<BidEntity> noShowBids = candidates.stream()
                 .filter(b -> isPastGrace(b, now))

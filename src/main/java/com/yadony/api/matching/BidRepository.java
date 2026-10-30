@@ -569,7 +569,11 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     // l'expéditeur a ses 24 h pour confirmer/contester, ou qu'un litige est ouvert, le bid
     // reste ACCEPTED et ce flux suit son propre cours. Sans cette exclusion, l'expéditeur
     // absent faisait pénaliser le voyageur et se faisait rembourser intégralement.
-    // RESOLVED (déclaration rejetée par l'admin) n'est pas exclu : le bid reprend son cours.
+    // RESOLVED (déclaration rejetée par l'admin, litige tranché) : le bid reprend son cours, mais
+    // pas tout de suite. La date limite est déjà passée : sans délai, le passage horaire suivant
+    // déclarait le voyageur absent (pénalité + remboursement de l'expéditeur) avant qu'il ait pu
+    // scanner la remise. Une déclaration levée depuis moins de NoShowScheduler.RESOLVED_SENDER_NO_SHOW_GRACE
+    // (24 h, mesurée sur updated_at, sans migration) exclut donc encore le bid ; :resolvedSince = now - 24 h.
     @Query("SELECT b FROM BidEntity b WHERE b.status = 'ACCEPTED' " +
            "AND b.handoverDeadline IS NOT NULL " +
            "AND b.handoverDeadline < :cutoff " +
@@ -581,8 +585,14 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
            "AND c.reason = 'SENDER_NO_SHOW' " +
            "AND c.noShowStatus IN (com.yadony.api.cancellation.CancellationStatus.PENDING_CONFIRMATION, " +
            "com.yadony.api.cancellation.CancellationStatus.CONTESTED, " +
-           "com.yadony.api.cancellation.CancellationStatus.CONFIRMED))")
-    List<BidEntity> findNoShowBids(@Param("cutoff") LocalDateTime cutoff);
+           "com.yadony.api.cancellation.CancellationStatus.CONFIRMED)) " +
+           "AND NOT EXISTS (SELECT r FROM CancellationEntity r WHERE r.bidId = b.id " +
+           "AND r.scope = com.yadony.api.cancellation.CancellationScope.HANDOVER " +
+           "AND r.reason = 'SENDER_NO_SHOW' " +
+           "AND r.noShowStatus = com.yadony.api.cancellation.CancellationStatus.RESOLVED " +
+           "AND r.updatedAt > :resolvedSince)")
+    List<BidEntity> findNoShowBids(@Param("cutoff") LocalDateTime cutoff,
+                                   @Param("resolvedSince") LocalDateTime resolvedSince);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT b FROM BidEntity b WHERE b.id = :id AND b.deletedAt IS NULL")

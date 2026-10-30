@@ -79,11 +79,11 @@ class NoShowSchedulerTest {
         @DisplayName("passage à 16:33Z : requête bornée à now - 1 h en UTC, aucun colis de limite 18:30Z traité")
         void runAt1633ExpiresNothing() throws Exception {
             bid.setHandoverDeadline(LocalDateTime.of(2026, 10, 19, 18, 30));
-            when(bidRepository.findNoShowBids(any())).thenReturn(List.of(bid));
+            when(bidRepository.findNoShowBids(any(), any())).thenReturn(List.of(bid));
 
             scheduler.detectNoShowsAt(Instant.parse("2026-10-19T16:33:00Z"));
 
-            verify(bidRepository).findNoShowBids(LocalDateTime.of(2026, 10, 19, 15, 33));
+            verify(bidRepository).findNoShowBids(LocalDateTime.of(2026, 10, 19, 15, 33), LocalDateTime.of(2026, 10, 18, 16, 33));
             verifyNoInteractions(noShowService);
         }
 
@@ -96,7 +96,7 @@ class NoShowSchedulerTest {
             setId(notYet, notYetId);
             setField(notYet, "announcementId", ANNOUNCEMENT_ID);
             notYet.setHandoverDeadline(LocalDateTime.of(2026, 7, 15, 11, 30)); // pas encore
-            when(bidRepository.findNoShowBids(any())).thenReturn(List.of(bid, notYet));
+            when(bidRepository.findNoShowBids(any(), any())).thenReturn(List.of(bid, notYet));
 
             scheduler.detectNoShowsAt(Instant.parse("2026-07-15T12:00:00Z"));
 
@@ -112,7 +112,7 @@ class NoShowSchedulerTest {
         @Test
         @DisplayName("bid no-show détecté → délègue à NoShowService avec source 'scheduler'")
         void detectNoShows_bidFound_delegatesToService() {
-            when(bidRepository.findNoShowBids(any())).thenReturn(List.of(bid));
+            when(bidRepository.findNoShowBids(any(), any())).thenReturn(List.of(bid));
 
             scheduler.detectNoShows();
 
@@ -126,7 +126,7 @@ class NoShowSchedulerTest {
             UUID bid2Id = UUID.randomUUID();
             setId(bid2, bid2Id);
             setField(bid2, "status", BidStatus.ACCEPTED);
-            when(bidRepository.findNoShowBids(any())).thenReturn(List.of(bid, bid2));
+            when(bidRepository.findNoShowBids(any(), any())).thenReturn(List.of(bid, bid2));
 
             scheduler.detectNoShows();
 
@@ -137,7 +137,7 @@ class NoShowSchedulerTest {
         @Test
         @DisplayName("aucun bid à traiter → aucune délégation")
         void detectNoShows_noBids_noOp() {
-            when(bidRepository.findNoShowBids(any())).thenReturn(List.of());
+            when(bidRepository.findNoShowBids(any(), any())).thenReturn(List.of());
 
             scheduler.detectNoShows();
 
@@ -152,7 +152,7 @@ class NoShowSchedulerTest {
             UUID cardId = UUID.randomUUID();
             setId(card, cardId);
             setField(card, "status", BidStatus.ACCEPTED);
-            when(bidRepository.findNoShowBids(any())).thenReturn(List.of(bid, card));
+            when(bidRepository.findNoShowBids(any(), any())).thenReturn(List.of(bid, card));
 
             scheduler.detectNoShows();
 
@@ -170,7 +170,7 @@ class NoShowSchedulerTest {
             UUID bid2Id = UUID.randomUUID();
             setId(bid2, bid2Id);
             setField(bid2, "status", BidStatus.ACCEPTED);
-            when(bidRepository.findNoShowBids(any())).thenReturn(List.of(bid, bid2));
+            when(bidRepository.findNoShowBids(any(), any())).thenReturn(List.of(bid, bid2));
             doThrow(new RuntimeException("db error")).when(noShowService).expireUnconfirmedCashHandover(BID_ID);
 
             scheduler.detectNoShows();
@@ -185,7 +185,7 @@ class NoShowSchedulerTest {
             UUID bid2Id = UUID.randomUUID();
             setId(bid2, bid2Id);
             setField(bid2, "status", BidStatus.ACCEPTED);
-            when(bidRepository.findNoShowBids(any())).thenReturn(List.of(bid, bid2));
+            when(bidRepository.findNoShowBids(any(), any())).thenReturn(List.of(bid, bid2));
             doThrow(new RuntimeException("db error"))
                     .when(noShowService).recordTravelerNoShow(BID_ID, "scheduler");
 
