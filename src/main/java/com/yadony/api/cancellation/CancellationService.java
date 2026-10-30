@@ -711,10 +711,20 @@ public class CancellationService {
 
         CancellationGuard.assertCancellable(bid, announcement);
 
-        if (cancellationRepository.findByBidId(bidId).isPresent()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "already-cancelled",
-                    "Already Cancelled", "Une annulation existe déjà pour ce bid.");
-        }
+        // UNIQUE(bid_id, scope) : une seule ligne HANDOVER par colis. Une déclaration « expéditeur
+        // absent » levée (RESOLVED, par le scan de remise ou par l'équipe) n'est plus une
+        // annulation : sa ligne est réutilisée, l'historique de la déclaration reste dans audit_log.
+        // Toute autre ligne (annulation, absence ouverte ou confirmée) reste un conflit.
+        CancellationEntity liftedSenderNoShow = cancellationRepository.findByBidId(bidId)
+                .map(existing -> {
+                    if (CancellationReason.SENDER_NO_SHOW.name().equals(existing.getReason())
+                            && existing.getNoShowStatus() == CancellationStatus.RESOLVED) {
+                        return existing;
+                    }
+                    throw new YadonyBusinessException(HttpStatus.CONFLICT, "already-cancelled",
+                            "Already Cancelled", "Une annulation existe déjà pour ce bid.");
+                })
+                .orElse(null);
 
         CancellationActor actor = isSender ? CancellationActor.SENDER : CancellationActor.TRAVELER;
         CancellationReason reason = isSender
@@ -737,12 +747,29 @@ public class CancellationService {
         ParcelReturn.open(bid, LocalDateTime.now());
         bidRepository.save(bid);
 
-        CancellationEntity c = new CancellationEntity();
+        CancellationEntity c = liftedSenderNoShow != null ? liftedSenderNoShow : new CancellationEntity();
+        String previousReason = c.getReason();
+        CancellationStatus previousStatus = liftedSenderNoShow != null ? c.getNoShowStatus() : null;
         c.setBidId(bidId);
         c.setCancelledBy(caller.getId());
         c.setReason(reason.name());
         c.setNoShowStatus(CancellationStatus.CONFIRMED);
+        c.setContestationDeadline(null);
+        c.setAdminDecision(null);
+        c.setDecidedByAdminId(null);
+        c.setDecidedAt(null);
+        c.setDecisionReason(null);
+        if (liftedSenderNoShow != null) {
+            // Mêmes valeurs de départ qu'une ligne neuve pour les suivis de remboursement et de rematch.
+            c.setRefundStatus("PENDING");
+            c.setRematchStatus("NONE");
+        }
         c = cancellationRepository.save(c);
+        if (liftedSenderNoShow != null) {
+            auditService.log("CANCELLATION", c.getId(), "SENDER_NO_SHOW_ROW_REUSED_AFTER_HANDOVER",
+                    caller.getId(), Map.of("bidId", bidId.toString(), "previousReason", previousReason,
+                            "previousStatus", previousStatus.name(), "newReason", reason.name()));
+        }
 
         // Réputation (D8 : l'annulation après remise est immédiatement CONFIRMED).
         // Voyageur → compteur d'annulations existant ; expéditeur → compteur d'incidents
@@ -878,14 +905,8 @@ public class CancellationService {
         return new ReturnCodeResponse(bid.getReturnCode(), bid.getReturnDeadline(), bid.getReturnedAt());
     }
 
-    @Transactional
-    public void confirmSenderNoShow(UUID bidId) {
-        bidRepository.lockForUpdate(bidId);
-        applySenderNoShowConfirmation(bidId, null);
-    }
-
     /**
-     * Sous le verrou du colis (pris par l'appelant, avant toute lecture : déclaration et colis sont
+     * Sous le verrou du colis (pris par {@link #confirmSenderNoShow}, avant toute lecture : déclaration et colis sont
      * donc lus frais, sans course avec le scan de remise qui peut lever la déclaration).
      *
      * <p>Colis déjà remis ({@link BidStatus#SENDER_SHOWED_UP}) : une absence confirmée rembourserait
@@ -893,7 +914,7 @@ public class CancellationService {
      * RESOLVED sans {@link CancellationConfirmedEvent} ({@link SenderNoShowClosing}) ; reste des
      * déclarations ouvertes avant la porte de remise.
      *
-     * @param actorId auteur de la confirmation (l'expéditeur), nul s'il n'est pas connu
+     * @param actorId auteur de la confirmation : l'expéditeur
      * @return l'annulation confirmée, vide si elle n'était plus en attente de confirmation
      */
     private Optional<CancellationEntity> applySenderNoShowConfirmation(UUID bidId, UUID actorId) {

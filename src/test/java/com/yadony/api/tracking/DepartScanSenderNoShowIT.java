@@ -42,6 +42,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
@@ -52,6 +53,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
@@ -112,7 +114,11 @@ class DepartScanSenderNoShowIT {
     @Autowired UserRepository userRepository;
     @Autowired AnnouncementRepository announcementRepository;
     @Autowired BidRepository bidRepository;
-    @Autowired CancellationRepository cancellationRepository;
+    // Espion : le test d'entrelacement retient le job entre sa lecture des échéances et le verrou du colis.
+    @MockitoSpyBean CancellationRepository cancellationRepository;
+    @Autowired com.yadony.api.payments.PaymentRepository paymentRepository;
+    // Aucun remboursement réel ; le test vérifie qu'aucun n'est demandé pour un colis remis.
+    @MockitoBean com.yadony.api.payments.RefundProcessor refundProcessor;
     @Autowired TrackingEventRepository trackingEventRepository;
     @Autowired TrackingService trackingService;
     @Autowired CancellationService cancellationService;
@@ -155,21 +161,40 @@ class DepartScanSenderNoShowIT {
     }
 
     @Test
-    void declarationEnAttente_scanHorsLigneRejoue_memeRegle() throws Exception {
+    void declarationEnAttente_scanHorsLigneRejoue_memeRegle_auditAvecLaPreuveDuScan() throws Exception {
         BidEntity bid = seedBid(BidStatus.ACCEPTED);
         CancellationEntity c = seedSenderNoShow(bid, CancellationStatus.PENDING_CONFIRMATION);
         LocalDateTime offline = LocalDateTime.now(ZoneOffset.UTC).minusMinutes(20).withNano(0);
+        String photo = "tracking/" + bid.getId() + "/1_depart.jpg";
 
-        scan("{\"bidId\":\"" + bid.getId() + "\",\"eventType\":\"DEPART\",\"scanMethod\":\"QR\","
+        scan("{\"bidId\":\"" + bid.getId() + "\",\"eventType\":\"DEPART\",\"scanMethod\":\"MANUAL\","
+                + "\"trackingNumber\":\"" + bid.getTrackingNumber() + "\",\"photoUrl\":\"" + photo + "\","
+                + "\"gpsLat\":48.8566,\"gpsLon\":2.3522,\"gpsLabel\":\"Gare du Nord\","
                 + "\"offlineTimestamp\":\"" + offline + "\"}", "fr")
                 .andExpect(status().isCreated());
 
         assertHandedOverAndWithdrawn(bid, c);
+        // Décision du propriétaire : aucune preuve exigée, mais l'audit garde celle du scan.
+        Map<String, Object> payload = jdbc.queryForMap("SELECT payload->>'trackingEventId' AS event, "
+                + "payload->>'scanMethod' AS method, payload->>'photoKey' AS photo, payload->>'offlineTimestamp' AS offline, "
+                + "payload->>'gpsLat' AS lat, payload->>'gpsLon' AS lon, payload->>'previousStatus' AS previous, "
+                + "payload::text AS raw FROM audit_log WHERE entity_id = ? AND action = 'SENDER_NO_SHOW_WITHDRAWN_BY_HANDOVER'",
+                c.getId());
+        UUID departId = trackingEventRepository.findByBidIdOrderByScannedAtAsc(bid.getId()).get(0).getId();
+        assertThat(payload.get("event")).isEqualTo(departId.toString());
+        assertThat(payload.get("method")).isEqualTo("MANUAL");
+        assertThat(payload.get("photo")).isEqualTo(photo);
+        assertThat(payload.get("offline")).isEqualTo(offline.toString());
+        assertThat(payload.get("lat")).isEqualTo("48.8566");
+        assertThat(payload.get("lon")).isEqualTo("2.3522");
+        assertThat(payload.get("previous")).isEqualTo("PENDING_CONFIRMATION");
+        // Coordonnées seules : jamais le libellé d'adresse.
+        assertThat((String) payload.get("raw")).doesNotContain("Gare du Nord");
     }
 
     @Test
     void declarationEnAttente_scanEnsuiteRefuse_laLeveeEstAnnuleeAvecLui() throws Exception {
-        // La photo invalide est refusée APRÈS les portes : la levée, dans la même transaction, est annulée.
+        // La photo invalide est refusée avant l'enregistrement de la remise : la déclaration n'est pas levée.
         BidEntity bid = seedBid(BidStatus.ACCEPTED);
         CancellationEntity c = seedSenderNoShow(bid, CancellationStatus.PENDING_CONFIRMATION);
 
@@ -292,6 +317,54 @@ class DepartScanSenderNoShowIT {
         assertThat(bidRepository.findById(bid.getId()).orElseThrow().getStatus()).isEqualTo(BidStatus.IN_TRANSIT);
     }
 
+    @Test
+    void declarationLeveeParLeScan_puisAnnulationApresRemise_200_retourOuvert() throws Exception {
+        // UNIQUE(bid_id, scope) : la ligne HANDOVER de la déclaration levée est réutilisée, pas de 409.
+        BidEntity bid = seedBid(BidStatus.ACCEPTED);
+        CancellationEntity c = seedSenderNoShow(bid, CancellationStatus.PENDING_CONFIRMATION);
+        scan("{\"bidId\":\"" + bid.getId() + "\",\"eventType\":\"DEPART\"}", "fr").andExpect(status().isCreated());
+
+        mockMvc.perform(post("/bids/{bidId}/cancel-after-handover", bid.getId()).with(authentication(traveler())))
+                .andExpect(status().isOk());
+
+        BidEntity after = bidRepository.findById(bid.getId()).orElseThrow();
+        assertThat(after.getStatus()).isEqualTo(BidStatus.CANCELLED);
+        assertThat(after.getReturnCode()).hasSize(6);
+        assertThat(after.getReturnDeadline()).isNotNull();
+        Map<String, Object> row = jdbc.queryForMap("SELECT id, reason, no_show_status, cancelled_by, contestation_deadline "
+                + "FROM cancellations WHERE bid_id = ? AND scope = 'HANDOVER'", bid.getId());
+        assertThat(row.get("id")).isEqualTo(c.getId());
+        assertThat(row.get("reason")).isEqualTo("TRAVELER_CANCEL_AFTER_HANDOVER");
+        assertThat(row.get("no_show_status")).isEqualTo("CONFIRMED");
+        assertThat(row.get("cancelled_by")).isEqualTo(travelerId);
+        assertThat(row.get("contestation_deadline")).isNull();
+        assertThat(auditCount(c, "SENDER_NO_SHOW_WITHDRAWN_BY_HANDOVER")).isEqualTo(1);
+        assertThat(auditCount(c, "SENDER_NO_SHOW_ROW_REUSED_AFTER_HANDOVER")).isEqualTo(1);
+    }
+
+    @Test
+    void departHorsLigneAnterieurALaConfirmation_422_maisAlerteEtAuditPersistes() throws Exception {
+        // Le téléphone était hors ligne au moment de la remise ; l'échéance a confirmé l'absence entre-temps.
+        BidEntity bid = seedBid(BidStatus.ACCEPTED);
+        LocalDateTime decidedAt = LocalDateTime.now(ZoneOffset.UTC).minusMinutes(10).withNano(0);
+        jdbc.update("UPDATE bids SET status = 'CANCELLED', rejection_reason = 'SENDER_NO_SHOW', cancelled_at = ? WHERE id = ?",
+                decidedAt, bid.getId());
+        LocalDateTime offline = decidedAt.minusHours(2);
+
+        scan("{\"bidId\":\"" + bid.getId() + "\",\"eventType\":\"DEPART\",\"scanMethod\":\"QR\","
+                + "\"offlineTimestamp\":\"" + offline + "\"}", "fr")
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("bid-not-accepted"));
+
+        // Le scan est annulé par le 422 ; l'alerte et l'audit, commités à part, restent.
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM admin_alerts WHERE type = ? AND resolved = false",
+                Integer.class, "LATE_HANDOVER_SCAN_" + bid.getId())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM audit_log WHERE entity_id = ? "
+                + "AND action = 'LATE_HANDOVER_SCAN_AFTER_DECISION' AND actor_id = ?", Integer.class, bid.getId(), travelerId))
+                .isEqualTo(1);
+        assertThat(trackingEventRepository.findByBidIdOrderByScannedAtAsc(bid.getId())).isEmpty();
+    }
+
     // ── Concurrence réelle (verrou du colis) ─────────────────────────────────
 
     @RepeatedTest(3)
@@ -327,6 +400,7 @@ class DepartScanSenderNoShowIT {
         CancellationEntity c = seedSenderNoShow(bid, CancellationStatus.PENDING_CONFIRMATION);
         jdbc.update("UPDATE cancellations SET contestation_deadline = now() - interval '5 minutes' WHERE id = ?",
                 c.getId());
+        com.yadony.api.payments.PaymentEntity payment = seedEscrowPayment(bid);
         AtomicReference<Throwable> jobError = new AtomicReference<>();
         AtomicReference<Throwable> scanError = new AtomicReference<>();
 
@@ -339,6 +413,10 @@ class DepartScanSenderNoShowIT {
         if (scanError.get() == null) {
             assertThat(bidStatus).isEqualTo("HANDED_OVER");
             assertThat(declaration).isEqualTo("RESOLVED");
+            // Colis remis : le séquestre n'est jamais rendu.
+            org.mockito.Mockito.verify(refundProcessor, org.mockito.Mockito.after(1_500).never())
+                    .processRefund(org.mockito.ArgumentMatchers.eq(payment.getId()), org.mockito.ArgumentMatchers.any(),
+                            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
         } else {
             assertThat(scanError.get()).isInstanceOfSatisfying(YadonyBusinessException.class,
                     e -> assertThat(e.getErrorCode()).isEqualTo("bid-not-accepted"));
@@ -346,6 +424,61 @@ class DepartScanSenderNoShowIT {
             assertThat(declaration).isEqualTo("CONFIRMED");
             assertThat(trackingEventRepository.findByBidIdOrderByScannedAtAsc(bid.getId())).isEmpty();
         }
+    }
+
+    @Test
+    void echeanceRetenueApresSaLecture_leScanLeveLaDeclaration_leJobNeConfirmeRien_aucunRemboursement() throws Exception {
+        // Entrelacement dangereux forcé : le job a lu la déclaration échue (encore en attente) puis est
+        // retenu AVANT le verrou du colis ; le scan passe, lève la déclaration et commite. Sans le
+        // verrou suivi de la relecture du statut, le job confirmait sa copie périmée (CONFIRMED sur un
+        // colis remis).
+        BidEntity bid = seedBid(BidStatus.ACCEPTED);
+        CancellationEntity c = seedSenderNoShow(bid, CancellationStatus.PENDING_CONFIRMATION);
+        jdbc.update("UPDATE cancellations SET contestation_deadline = now() - interval '5 minutes' WHERE id = ?",
+                c.getId());
+        com.yadony.api.payments.PaymentEntity payment = seedEscrowPayment(bid);
+        java.util.concurrent.CountDownLatch jobRead = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch scanDone = new java.util.concurrent.CountDownLatch(1);
+        org.mockito.stubbing.Answer<?> real = org.mockito.Mockito.mockingDetails(cancellationRepository)
+                .getMockCreationSettings().getDefaultAnswer();
+        org.mockito.Mockito.doAnswer(inv -> {
+            Object expired = real.answer(inv);
+            jobRead.countDown();
+            assertThat(scanDone.await(20, TimeUnit.SECONDS)).isTrue();
+            return expired;
+        }).when(cancellationRepository).findExpiredPending(org.mockito.ArgumentMatchers.any());
+        AtomicReference<Throwable> jobError = new AtomicReference<>();
+        Thread job = new Thread(() -> {
+            try {
+                contestationTimeoutJob.run();
+            } catch (Throwable t) {
+                jobError.set(t);
+            }
+        });
+        try {
+            job.start();
+            assertThat(jobRead.await(20, TimeUnit.SECONDS)).as("le job a lu les échéances").isTrue();
+            assertThat(trackingService.recordScan(departOf(bid), travelerUid).created()).isTrue();
+        } finally {
+            scanDone.countDown();
+            job.join(30_000);
+            org.mockito.Mockito.reset(cancellationRepository);
+        }
+
+        assertThat(job.isAlive()).isFalse();
+        assertThat(jobError.get()).isNull();
+        assertThat(jdbc.queryForObject("SELECT status FROM bids WHERE id = ?", String.class, bid.getId()))
+                .isEqualTo("HANDED_OVER");
+        assertThat(statusOf(c)).isEqualTo("RESOLVED");
+        // Le job a relu le statut sous le verrou et ignoré la déclaration levée : il ne l'a pas réécrite
+        // à partir de sa copie périmée (sans verrou, il la « clôturait » une seconde fois depuis PENDING).
+        assertThat(auditCount(c, "SENDER_NO_SHOW_WITHDRAWN_BY_HANDOVER")).isEqualTo(1);
+        assertThat(auditCount(c, "SENDER_NO_SHOW_CLOSED_PARCEL_HANDED_OVER")).isZero();
+        org.mockito.Mockito.verify(refundProcessor, org.mockito.Mockito.after(1_500).never())
+                .processRefund(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        assertThat(paymentRepository.findById(payment.getId()).orElseThrow().getStatus())
+                .isEqualTo(com.yadony.api.payments.PaymentStatus.ESCROW);
     }
 
     // ── Outils ───────────────────────────────────────────────────────────────
@@ -373,6 +506,8 @@ class DepartScanSenderNoShowIT {
         b.start();
         a.join(30_000);
         b.join(30_000);
+        assertThat(a.isAlive()).as("premier fil terminé").isFalse();
+        assertThat(b.isAlive()).as("second fil terminé").isFalse();
     }
 
     private QrScanRequest departOf(BidEntity bid) {
@@ -426,6 +561,18 @@ class DepartScanSenderNoShowIT {
         u.setRoles(new HashSet<>(Set.of(role)));
         u.setStripeAccountStatus(com.yadony.api.auth.StripeAccountStatus.NOT_CREATED);
         return userRepository.saveAndFlush(u);
+    }
+
+    private com.yadony.api.payments.PaymentEntity seedEscrowPayment(BidEntity bid) {
+        com.yadony.api.payments.PaymentEntity p = new com.yadony.api.payments.PaymentEntity();
+        p.setBidId(bid.getId());
+        p.setRail(com.yadony.api.payments.PaymentRail.STRIPE);
+        p.setStripePaymentIntentId("pi_" + UUID.randomUUID());
+        p.setAmount(new BigDecimal("50.00"));
+        p.setCommissionAmount(new BigDecimal("6.00"));
+        p.setCurrency("EUR");
+        p.setStatus(com.yadony.api.payments.PaymentStatus.ESCROW);
+        return paymentRepository.saveAndFlush(p);
     }
 
     private CancellationEntity seedSenderNoShow(BidEntity bid, CancellationStatus status) {

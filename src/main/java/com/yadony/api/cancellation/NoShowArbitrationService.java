@@ -101,6 +101,7 @@ public class NoShowArbitrationService {
      */
     @Transactional
     public void confirmLegacyByBid(UUID bidId, UUID adminId) {
+        bidRepository.lockForUpdate(bidId);
         CancellationEntity c = cancellationRepository.findByBidId(bidId)
                 .orElseThrow(() -> new YadonyBusinessException(
                         HttpStatus.NOT_FOUND, "cancellation-not-found", "Not Found",
@@ -108,7 +109,6 @@ public class NoShowArbitrationService {
         if (!NoShowReasons.isNoShow(c.getReason()) || !isOpen(c)) {
             return;
         }
-        lockParcelAndRecheck(c);
         doConfirm(c, adminId, LEGACY_DECISION_REASON);
     }
 
@@ -153,30 +153,29 @@ public class NoShowArbitrationService {
         return c;
     }
 
+    /**
+     * Verrou du colis AVANT de charger la déclaration, comme le scan de remise qui peut la lever au
+     * même instant ({@link SenderNoShowHandoverGate}) : l'identifiant du colis est lu en projection
+     * scalaire (rien dans le cache), puis la déclaration et le colis sont chargés frais. Son statut
+     * ({@code previousStatus} de l'audit) et l'écriture qui suit portent donc sur la valeur commitée
+     * la plus récente : une déclaration levée entre-temps répond 409, une déclaration contestée
+     * entre-temps est arbitrée comme contestée.
+     */
     private CancellationEntity loadOpenNoShow(UUID cancellationId) {
+        UUID bidId = cancellationRepository.findBidIdById(cancellationId).orElseThrow(NoShowArbitrationService::notFound);
+        bidRepository.lockForUpdate(bidId);
         CancellationEntity c = cancellationRepository.findById(cancellationId)
                 .filter(found -> NoShowReasons.isNoShow(found.getReason()))
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "noshow-not-found", "Not Found",
-                        "Déclaration d'absence introuvable"));
+                .orElseThrow(NoShowArbitrationService::notFound);
         if (!isOpen(c)) {
             throw alreadyDecided();
         }
-        lockParcelAndRecheck(c);
         return c;
     }
 
-    /**
-     * Verrou du colis, comme le scan de remise qui peut lever la déclaration au même instant
-     * ({@link SenderNoShowHandoverGate}), puis statut relu en base : une déclaration levée ou
-     * tranchée entre-temps n'est plus arbitrée (409). Le colis, chargé après le verrou, est frais.
-     */
-    private void lockParcelAndRecheck(CancellationEntity c) {
-        bidRepository.lockForUpdate(c.getBidId());
-        CancellationStatus current = cancellationRepository.findNoShowStatusById(c.getId()).orElse(null);
-        if (current != CancellationStatus.PENDING_CONFIRMATION && current != CancellationStatus.CONTESTED) {
-            throw alreadyDecided();
-        }
+    private static YadonyBusinessException notFound() {
+        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "noshow-not-found", "Not Found",
+                "Déclaration d'absence introuvable");
     }
 
     private static YadonyBusinessException alreadyDecided() {

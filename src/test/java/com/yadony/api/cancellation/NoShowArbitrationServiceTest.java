@@ -75,9 +75,8 @@ class NoShowArbitrationServiceTest {
         c.setNoShowStatus(status);
         c.setCancelledBy(scope == CancellationScope.HANDOVER ? TRAVELER_ID : TRAVELER_ID);
         c.setContestationDeadline(OffsetDateTime.now().plusHours(3));
-        // Relecture du statut en base après le verrou du colis : par défaut, celui de la ligne.
-        lenient().when(cancellationRepository.findNoShowStatusById(ID))
-                .thenAnswer(inv -> Optional.of(c.getNoShowStatus()));
+        // Colis lu en projection avant le verrou, puis la ligne est chargée fraîche.
+        lenient().when(cancellationRepository.findBidIdById(ID)).thenReturn(Optional.of(BID_ID));
         return c;
     }
 
@@ -113,22 +112,41 @@ class NoShowArbitrationServiceTest {
 
         @org.junit.jupiter.params.ParameterizedTest
         @org.junit.jupiter.params.provider.EnumSource(value = CancellationStatus.class, names = {"RESOLVED", "CONFIRMED"})
-        void declarationLeveeEntreTemps_409_apresLeVerrouDuColis(CancellationStatus now) {
-            // Le scan de remise vient de lever la déclaration (RESOLVED) pendant que l'admin la lisait.
-            CancellationEntity c = row(CancellationScope.HANDOVER, "SENDER_NO_SHOW",
-                    CancellationStatus.PENDING_CONFIRMATION);
-            stubRow(c);
-            when(cancellationRepository.findNoShowStatusById(ID)).thenReturn(Optional.of(now));
+        void declarationLeveeEntreTemps_409_luApresLeVerrouDuColis(CancellationStatus now) {
+            // Le scan de remise vient de lever la déclaration (RESOLVED) pendant que l'admin la lisait :
+            // la ligne chargée après le verrou porte le statut commité.
+            stubRow(row(CancellationScope.HANDOVER, "SENDER_NO_SHOW", now));
 
             assertThatThrownBy(() -> service.confirm(ID, ADMIN_ID, MOTIF))
                     .isInstanceOfSatisfying(YadonyBusinessException.class,
                             e -> assertThat(e.getErrorCode()).isEqualTo("noshow-already-decided"));
             InOrder order = inOrder(bidRepository, cancellationRepository);
+            order.verify(cancellationRepository).findBidIdById(ID);
             order.verify(bidRepository).lockForUpdate(BID_ID);
-            order.verify(cancellationRepository).findNoShowStatusById(ID);
+            order.verify(cancellationRepository).findById(ID);
             verify(bidRepository, never()).findById(any());
             verify(cancellationRepository, never()).save(any());
             verifyNoInteractions(eventPublisher);
+        }
+
+        @Test
+        void contesteeEntreTemps_arbitreeCommeContestee_previousStatusRelu() {
+            // L'admin a ouvert une déclaration en attente ; l'expéditeur la conteste avant la décision.
+            // La ligne chargée après le verrou est CONTESTED : l'audit et l'écriture partent de là.
+            CancellationEntity c = row(CancellationScope.HANDOVER, "SENDER_NO_SHOW", CancellationStatus.CONTESTED);
+            stubRow(c);
+            stubBidAndAnnouncement();
+
+            service.confirm(ID, ADMIN_ID, MOTIF);
+
+            assertThat(c.getNoShowStatus()).isEqualTo(CancellationStatus.CONFIRMED);
+            verify(cancellationRepository).save(c);
+            verify(auditService).log("CANCELLATION", ID, "NOSHOW_CONFIRMED_BY_ADMIN", ADMIN_ID,
+                    Map.of("bidId", BID_ID.toString(), "scope", "HANDOVER", "reason", "SENDER_NO_SHOW",
+                            "decisionReason", MOTIF, "previousStatus", "CONTESTED"));
+            InOrder order = inOrder(bidRepository, cancellationRepository);
+            order.verify(bidRepository).lockForUpdate(BID_ID);
+            order.verify(cancellationRepository).findById(ID);
         }
 
         @org.junit.jupiter.params.ParameterizedTest
@@ -261,7 +279,7 @@ class NoShowArbitrationServiceTest {
 
         @Test
         void ligneInconnue_404() {
-            when(cancellationRepository.findById(ID)).thenReturn(Optional.empty());
+            when(cancellationRepository.findBidIdById(ID)).thenReturn(Optional.empty());
 
             assertThatThrownBy(() -> service.confirm(ID, ADMIN_ID, MOTIF))
                     .isInstanceOf(YadonyBusinessException.class)

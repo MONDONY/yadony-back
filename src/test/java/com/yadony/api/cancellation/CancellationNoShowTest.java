@@ -278,6 +278,13 @@ class CancellationNoShowTest {
     @Nested
     class ConfirmSenderNoShow {
 
+        /** Seule la variante expéditeur existe : le colis de l'expéditeur, accepté, sauf mention contraire. */
+        @BeforeEach
+        void colisDeLExpediteur() {
+            lenient().when(bidRepository.findById(BID_ID)).thenReturn(
+                    Optional.of(cashBid(BidStatus.ACCEPTED, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1))));
+        }
+
         @Test
         void confirmsAndPublishesCancellationConfirmedEvent() {
             CancellationEntity c = new CancellationEntity();
@@ -289,7 +296,7 @@ class CancellationNoShowTest {
             when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.of(c));
             when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-            service.confirmSenderNoShow(BID_ID);
+            service.confirmSenderNoShow(BID_ID, SENDER_ID);
 
             assertThat(c.getNoShowStatus()).isEqualTo(CancellationStatus.CONFIRMED);
 
@@ -312,7 +319,7 @@ class CancellationNoShowTest {
                     Optional.of(cashBid(BidStatus.IN_TRANSIT, LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1))));
             when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-            service.confirmSenderNoShow(BID_ID);
+            service.confirmSenderNoShow(BID_ID, SENDER_ID);
 
             assertThat(c.getNoShowStatus()).isEqualTo(CancellationStatus.RESOLVED);
             verify(cancellationRepository).save(c);
@@ -329,7 +336,7 @@ class CancellationNoShowTest {
 
             when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.of(c));
 
-            service.confirmSenderNoShow(BID_ID);
+            service.confirmSenderNoShow(BID_ID, SENDER_ID);
 
             verify(cancellationRepository, never()).save(any());
             verifyNoInteractions(eventPublisher);
@@ -343,7 +350,7 @@ class CancellationNoShowTest {
             // test all-endpoints).
             when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.empty());
 
-            assertThatThrownBy(() -> service.confirmSenderNoShow(BID_ID))
+            assertThatThrownBy(() -> service.confirmSenderNoShow(BID_ID, SENDER_ID))
                     .isInstanceOf(YadonyBusinessException.class)
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus())
                             .isEqualTo(HttpStatus.NOT_FOUND));
@@ -361,7 +368,7 @@ class CancellationNoShowTest {
             when(cancellationRepository.findByBidId(BID_ID)).thenReturn(Optional.of(c));
             when(cancellationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-            service.confirmSenderNoShow(BID_ID);
+            service.confirmSenderNoShow(BID_ID, SENDER_ID);
 
             verify(auditService, never()).log(any(), any(), org.mockito.ArgumentMatchers.eq("NOSHOW_CONFIRMED_BY_ADMIN"), any(), any());
         }
