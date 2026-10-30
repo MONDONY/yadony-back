@@ -7,6 +7,6 @@ routes:
     label: My preferences
 ---
 Each trip or request is published in a currency, and payment stays in that currency; users in another currency see an indicative converted price ("about").
-In Profile › Money › Preferences (or Profile › ☰ › Settings › Preferences), you set your country of residence, your wallet currency and "Show prices in".
+In Profile › Money › Preferences (or Profile › ☰ › Settings › Preferences), you set your country of residence (optional at sign-up, requested later when you publish a trip or activate payments), your wallet currency and "Show prices in".
 You can change the wallet currency at any time: each balance stays in its own currency and nothing is converted. Service fees are paid from all your wallets, converted at today's rate if needed.
 Card payment is not offered in every currency.
