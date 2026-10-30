@@ -14,4 +14,4 @@ routes:
   - path: /demandes
     label: Requests
 ---
-You are on a parcel's details. At the top the ticket (parcel QR, pickup code, tracking), then "To do" when an answer is expected, the other person and the payment. Sender: "Your shipment" as tiles (Let {name} know, Places, Tracking, Parcel and recipient, More details), bottom button follows the step ("Pay for my shipment"). Traveler: next step, earnings, "Your trip" as tiles (Places, Parcel and recipient, More details), bottom: "Decline" or "Accept", "Scan the parcel QR", "Confirm the drop-off". "Options" menu: contact, report, cancel, delete, "Scan the transit".
+You are on a parcel's details. Ticket at the top (tracking; parcel QR and pickup code for the sender once handed over), then "To do" when an action is expected, the other person, the payment or the earnings. Sender: "Your shipment" as tiles, bottom button "Show the drop-off QR". Traveler: "Your trip" as tiles (Places with the drop-off deadline, Parcel and recipient, More details), bottom: "Decline" or "Accept", "Confirm my presence", "Scan the parcel QR", "Confirm the drop-off". "Options" menu: contact, report, cancel, delete, "Scan the transit".
