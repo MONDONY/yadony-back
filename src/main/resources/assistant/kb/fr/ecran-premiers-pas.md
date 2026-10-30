@@ -1,7 +1,7 @@
 ---
 id: ecran-premiers-pas
-title: L'écran Votre compte est prêt (premiers pas)
-keywords: écran premiers pas, à quoi sert cet écran, fin d'inscription, compte prêt, par quoi commencer, je voyage, j'envoie un colis
+title: L'écran Par quoi voulez-vous commencer ? (premiers pas)
+keywords: écran premiers pas, par quoi commencer ?, je regarde d'abord, plus tard, voyager avec des colis, envoyer un colis, à quoi sert cet écran, fin d'inscription, compte prêt, par quoi commencer, je voyage, j'envoie un colis
 screens:
   - /first-steps
 questions:
@@ -9,4 +9,4 @@ questions:
   - Comment envoyer un colis ?
   - Comment créer une alerte sur un trajet ?
 ---
-Vous êtes sur l'écran de fin d'inscription : votre compte est prêt. Choisissez par quoi commencer : « Je voyage » pour publier votre trajet, ou « J'envoie un colis » pour trouver un voyageur ou publier votre demande. Selon votre profil, l'écran peut plutôt vous montrer les trajets ou les colis de votre ligne, ou vous proposer une alerte. « Plus tard, aller à l'accueil » vous ramène à l'accueil, et vous pourrez toujours faire l'autre plus tard.
+Vous êtes sur l'écran de fin d'inscription, « Par quoi voulez-vous commencer ? ». Touchez « Envoyer un colis » pour trouver un voyageur ou publier votre demande, « Voyager avec des colis » pour publier votre trajet, ou « Je regarde d'abord » pour explorer. « Plus tard » vous mène à l'accueil sans rien choisir. Votre choix ne vous enferme pas : l'accueil s'ouvre sur « J'envoie un colis », ou sur « Je voyage » si vous avez choisi « Voyager avec des colis », et vous passez de l'un à l'autre à tout moment avec le sélecteur de l'accueil.

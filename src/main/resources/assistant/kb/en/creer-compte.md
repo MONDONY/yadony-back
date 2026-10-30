@@ -1,10 +1,11 @@
 ---
 id: creer-compte
 title: Create my account
-keywords: sign up, register, create account, new account, first time, Google, Apple, email, browse without an account, terms
+keywords: sign up, get acquainted, skip for now, optional first name, register, create account, new account, first time, Google, Apple, email, browse without an account, terms
 ---
-When you open the app, choose "Continue with phone", "Continue with email", Google or Apple.
+When you open the app, choose "Continue with phone", "Continue with email", Google or Apple, then enter the code you receive: your account is created.
 You can also "Browse without an account": access is then limited to search, and publishing, contacting, booking or paying requires an account.
-Sign-up goes through your country, your details (your name as it appears on your ID document) and acceptance of the Terms of Use and the privacy policy.
-The referral code and usage statistics are optional.
-Anything left to complete can be found afterwards in the Profile tab.
+The "Let's get acquainted" screen (first name, last name, country of residence) is optional: tap "Skip for now" to ignore it. Without a first or last name, other members see your account's automatic nickname, never your phone number or email.
+Next comes the "What would you like to start with?" screen, then the home screen. No identity verification is requested at sign-up: it is only requested before sending a parcel or publishing a trip.
+If you opened an invitation link, the referral code is applied automatically after sign-up.
+Your country of residence is requested automatically when you publish a trip; to activate card payments, set it in Settings › Preferences. Anything else can be completed afterwards in the Profile tab.

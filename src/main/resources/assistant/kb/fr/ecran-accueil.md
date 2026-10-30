@@ -1,7 +1,7 @@
 ---
 id: ecran-accueil
 title: L'écran Rechercher
-keywords: écran rechercher, à quoi sert cet écran, accueil, carte des voyageurs, trouver un voyageur, colis à transporter, près de moi
+keywords: écran rechercher, à quoi sert cet écran, accueil, carte des voyageurs, trouver un voyageur, colis à transporter, près de moi, mode par défaut, ce que je fais sur Yadony
 screens:
   - /home
 questions:
@@ -12,4 +12,4 @@ routes:
   - path: /corridor-alerts
     label: Mes alertes
 ---
-Onglet Rechercher : « J'envoie un colis » liste les voyageurs, « Je voyage » les colis à transporter. La carte est plein écran : touchez un prix pour voir le trajet, puis la carte-résumé pour ouvrir la fiche. « Liste » affiche les résultats, « Carte » revient. Le bouton de localisation active « Près de moi » (rayon de 5 à 200 km, modifiable ou retirable avec la puce « Rayon »). La barre de recherche règle villes et filtres, « + » publie, le marque-page ouvre vos favoris.
+Onglet Rechercher : « J'envoie un colis » liste les voyageurs, « Je voyage » les colis à transporter. L'écran s'ouvre sur « Je voyage » seulement si vous avez choisi « Voyager avec des colis » ; le sélecteur change de mode à tout moment, et Paramètres › « Ce que je fais sur Yadony » fixe le mode au prochain lancement. Carte plein écran : touchez un prix pour voir le trajet. « Liste » affiche les résultats. Le bouton de localisation active « Près de moi » (5 à 200 km, puce « Rayon »). La barre de recherche règle villes et filtres, « + » publie, le marque-page ouvre vos favoris.
