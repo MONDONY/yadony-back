@@ -8,4 +8,4 @@ You can also "Browse without an account": access is then limited to search, and 
 The "Let's get acquainted" screen (first name, last name, country of residence) is optional: tap "Skip for now" to ignore it. Without a first or last name, other members see your account's automatic nickname, never your phone number or email.
 Next comes the "What would you like to start with?" screen, then the home screen. No identity verification is requested at sign-up: it is only requested before sending a parcel or publishing a trip.
 If you opened an invitation link, the referral code is applied automatically after sign-up.
-Your country of residence will be requested later, when you publish a trip or activate payments, and may also be set in Settings › Preferences. Anything else can be completed afterwards in the Profile tab.
+Your country of residence is requested automatically when you publish a trip; to activate card payments, set it in Settings › Preferences. Anything else can be completed afterwards in the Profile tab.
