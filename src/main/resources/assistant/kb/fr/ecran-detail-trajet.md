@@ -1,7 +1,7 @@
 ---
 id: ecran-detail-trajet
 title: L'écran Trajet (votre trajet)
-keywords: écran trajet, à quoi sert cet écran, détail de mon trajet, gérer mon trajet, colis du trajet, à traiter, menu, je pars, arrivé à destination, prévenir les destinataires, récurrent, modèle, vues du trajet
+keywords: écran trajet, à quoi sert cet écran, détail de mon trajet, gérer mon trajet, activité du trajet, répondre à une demande, demandes à traiter, colis du trajet, à traiter, menu, je pars, arrivé à destination, prévenir les destinataires, récurrent, modèle, vues du trajet
 screens:
   - /announcements/:id/trip
 questions:
@@ -12,4 +12,4 @@ routes:
   - path: /announcements/trips
     label: Mes trajets
 ---
-De haut en bas : le billet, une carte de statut (« Trajet arrivé : vos colis attendent leurs destinataires » après l'arrivée ; lien « Contacter le support » si le trajet est complet ou retiré), « À traiter » (Demandes, Je pars, « Ajouter la carte » seulement sans colis accepté), Demandes (absente d'un trajet terminé), Colis (2 premiers colis, total, « Voir les N autres colis », « Voir la liste »), Gain estimé, « Votre trajet ». Le bouton fixe propose l'action du moment. Menu ⋮ : Modifier, Reporter, Dépublier, Partager l'affiche, Instructions de retrait, récurrent, modèle, Annuler, Supprimer.
+Billet et pastilles kilos et prix. Carte de statut : brouillon, complet, arrivé, annulé ou retiré. « À traiter » : la carte « Demande 1 sur N » (Refuser, Accepter, « Voir les N demandes »), puis « Je pars » et « Ajouter la carte ». « Activité du trajet » : Demandes, Colis (« Ouvrir la liste des colis »), Gain, chacun ouvre une fenêtre. « Votre trajet » : Itinéraire et lieux (étapes), Paiements, Conditions, Affiche, Arrivée. Bouton fixe selon l'état. Menu ⋮ : Modifier, Reporter, Dépublier, Partager l'affiche, Instructions de retrait, récurrent, modèle, Annuler, Supprimer.
