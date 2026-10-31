@@ -329,6 +329,53 @@ class ConversationServiceTest {
         verify(blockVisibility, atLeastOnce()).assertVisible(senderId, travelerId);
     }
 
+    /**
+     * Régression Sentry YADONY-BACK-STAGING-1R : l'expéditeur a supprimé son compte
+     * (filtré par @Where), aucun fil n'existe encore. Le voyageur reçoit un 404 métier,
+     * plus un 500 NoSuchElementException.
+     */
+    @Test
+    void getOrCreateByBidId_rend404_quandLExpediteurASupprimeSonCompte() {
+        UUID announcementId = UUID.randomUUID();
+        BidEntity bid = new BidEntity();
+        bid.setSenderId(senderId);
+        bid.setAnnouncementId(announcementId);
+        com.yadony.api.matching.AnnouncementEntity announcement =
+                new com.yadony.api.matching.AnnouncementEntity();
+        announcement.setTravelerId(travelerId);
+
+        when(conversationRepository.findByBidIdAndParticipant(bidId, travelerId))
+                .thenReturn(Optional.empty());
+        when(conversationRepository.findByBidIdAndParticipantIgnoreDeleted(bidId, travelerId))
+                .thenReturn(Optional.empty());
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(announcement));
+        when(conversationRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        when(userRepository.findById(senderId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.getOrCreateByBidId(bidId, travelerId))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    YadonyBusinessException ex = (YadonyBusinessException) e;
+                    assertThat(ex.getStatus()).isEqualTo(org.springframework.http.HttpStatus.NOT_FOUND);
+                    assertThat(ex.getErrorCode()).isEqualTo("conversation-counterpart-deleted");
+                });
+        verify(conversationRepository, never()).save(any());
+        verifyNoInteractions(firestoreService);
+    }
+
+    @Test
+    void createConversationForBid_rend404_quandLeVoyageurASupprimeSonCompte() {
+        when(conversationRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        when(userRepository.findById(travelerId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.createConversationForBid(bidId, senderId, travelerId))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("conversation-counterpart-deleted"));
+        verify(conversationRepository, never()).save(any());
+    }
+
     @Test
     void createConversationForBid_refuses_whenParticipantsHiddenFromEachOther() {
         doThrow(new YadonyBusinessException(org.springframework.http.HttpStatus.NOT_FOUND,

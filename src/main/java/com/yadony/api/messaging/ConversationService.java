@@ -6,6 +6,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.CallAvailability;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
@@ -162,8 +163,13 @@ public class ConversationService {
         return conversationRepository.findByBidId(bidId).orElseGet(() -> {
             String firestoreId = "conv_" + bidId;
 
-            UserEntity sender   = userRepository.findById(senderId).orElseThrow();
-            UserEntity traveler = userRepository.findById(travelerId).orElseThrow();
+            // Un compte supprimé est filtré par @Where : son fil ne peut plus naître.
+            // Cas réel (Sentry YADONY-BACK-STAGING-1R) : colis livré, expéditeur parti
+            // depuis, le voyageur ouvre le colis et recevait un 500, rejoué trois fois.
+            UserEntity sender   = userRepository.findById(senderId)
+                .orElseThrow(ConversationService::counterpartDeleted);
+            UserEntity traveler = userRepository.findById(travelerId)
+                .orElseThrow(ConversationService::counterpartDeleted);
 
             ConversationEntity entity = new ConversationEntity(bidId, senderId, travelerId, firestoreId);
             ConversationEntity saved  = conversationRepository.save(entity);
@@ -192,6 +198,15 @@ public class ConversationService {
 
             return saved;
         });
+    }
+
+    /**
+     * 404 et non 410 : une app antérieure classe le 404 en « introuvable », juste,
+     * alors qu'un 410 tomberait dans son message réseau générique.
+     */
+    private static YadonyBusinessException counterpartDeleted() {
+        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "conversation-counterpart-deleted",
+            "Not Found", "Ce membre a supprimé son compte : la conversation n'est plus disponible.");
     }
 
     /**
