@@ -1,7 +1,7 @@
 ---
 id: ecran-detail-trajet
 title: The Trip screen (your trip)
-keywords: trip screen, what is this screen for, my trip details, manage my trip, parcels on this trip, arrived at destination, trip views
+keywords: trip screen, what is this screen for, my trip details, manage my trip, parcels line, estimated earnings, reply to a request, requests to review, parcels on this trip, to do, menu, I'm leaving, arrived at destination, notify recipients, recurring, template, trip views
 screens:
   - /announcements/:id/trip
 questions:
@@ -12,4 +12,4 @@ routes:
   - path: /announcements/trips
     label: My trips
 ---
-You are on your trip's page: its details, then its views. The "Requests" tile, always active, opens Activity › Requests on "To review", filtered on this trip; "Parcels" lists parcels on board. Depending on status: "Edit", "Reschedule", "Poster", "Cancel" or "Delete". Once parcels are picked up, tap "Arrived at destination"; the optional tracking reminders also open this screen with "I'm leaving", a summary (parcels, kilos, earnings) and "See my parcels". Then "Notify recipients". If this trip isn't yours, Yadony opens its sender view, with "Make a request".
+Ticket, kilo and price pills, status card (draft, full, arrived, canceled, removed). "To do": the "Request 1 of N" card (Decline, Accept, "See all N requests"), then "I'm leaving" and "Add card to this trip". Then ONE "Parcels" line ("N parcels · estimated earnings", "4 in transit · 2 to pick up") opening the "Parcels" sheet, which starts with "Estimated earnings" (Online, In cash, Estimated total). "Your trip": Route and places, Payments, Conditions, Poster ("N people have seen your trip"), Arrival. Sticky button ("Arrived at destination" only once under way). ⋮ menu.

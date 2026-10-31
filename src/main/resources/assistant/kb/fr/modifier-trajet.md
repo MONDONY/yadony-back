@@ -1,13 +1,15 @@
 ---
 id: modifier-trajet
 title: Modifier ou supprimer mon trajet
-keywords: modifier mon trajet, supprimer un trajet, dépublier, changer le prix, changer la devise, trajet publié, ouvrir les kilos restants, affiche
+keywords: modifier mon trajet, supprimer un trajet, dépublier, changer le prix, changer la devise, trajet publié, affiche
 routes:
   - path: /announcements/trips
     label: Mes trajets
 ---
-Un trajet ne se modifie plus dès qu'il a reçu une demande, ou qu'un colis y est accepté : le bouton « Modifier » de Mes trajets est alors grisé (« Modifiable tant qu'aucune demande »). Tant qu'il n'a reçu aucune demande, il se modifie librement.
-Pour changer la date d'un trajet qui a déjà une demande, utilisez « Reporter ».
-Vous pouvez dépublier un trajet sans demande : il reste alors dans vos brouillons.
-Un trajet qui a un colis accepté ne peut pas être supprimé, il faut d'abord l'annuler.
-Le trajet propose aussi une affiche à partager pour trouver des expéditeurs.
+Le bouton « Modifier » du trajet (bouton fixe en bas, ou menu ⋮) n'est proposé que pour un brouillon ou un trajet publié qui n'a reçu aucune demande. Dès la première demande, ou dès qu'un colis est accepté, il disparaît et le trajet ne se modifie plus (le serveur refuse). Dans les fenêtres « Itinéraire et lieux » et « Conditions » de « Votre trajet », « Modifier » n'apparaît que si le trajet est modifiable ; la fenêtre « Paiements » n'en a pas.
+Dans « À traiter », la ligne « Ajouter la carte à ce trajet » (ou « Activer les paiements par carte » si votre compte n'est pas prêt) ne s'affiche que pour un trajet en espèces seules que le serveur accepterait de modifier : aucun colis accepté ni en cours de route. Dès qu'un colis est accepté, elle disparaît.
+Un brouillon se met en ligne avec le bouton fixe « Publier ».
+Pour changer la date d'un trajet qui a déjà une demande, utilisez « Reporter » (menu ⋮), possible deux fois au plus.
+« Dépublier » (menu ⋮) remet un trajet publié dans vos brouillons, tant qu'il n'a reçu aucune demande ni négociation.
+« Supprimer » (menu ⋮) est possible pour un brouillon, un trajet annulé ou un trajet publié sans demande. Un trajet complet ne peut pas être supprimé : contactez le support. Avec un colis accepté, annulez-le d'abord.
+« Partager l'affiche » (bouton du bas ou menu ⋮) propose une affiche pour trouver des expéditeurs.

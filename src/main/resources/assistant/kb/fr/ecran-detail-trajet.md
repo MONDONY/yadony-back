@@ -1,7 +1,7 @@
 ---
 id: ecran-detail-trajet
 title: L'écran Trajet (votre trajet)
-keywords: écran trajet, à quoi sert cet écran, détail de mon trajet, gérer mon trajet, colis du trajet, arrivé à destination, vues du trajet
+keywords: écran trajet, à quoi sert cet écran, détail de mon trajet, gérer mon trajet, ligne colis, gain estimé, répondre à une demande, demandes à traiter, colis du trajet, à traiter, menu, je pars, arrivé à destination, prévenir les destinataires, récurrent, modèle, vues du trajet
 screens:
   - /announcements/:id/trip
 questions:
@@ -12,4 +12,4 @@ routes:
   - path: /announcements/trips
     label: Mes trajets
 ---
-Vous êtes sur la fiche de votre trajet : son détail et ses vues. La tuile « Demandes », toujours active, ouvre les demandes de ce trajet ; « Colis » liste les colis embarqués. Selon l'état : « Modifier », « Reporter », « Affiche », « Annuler » ou « Supprimer ». Colis récupérés, touchez « Arrivé à destination » ; les rappels de suivi (facultatifs) ouvrent aussi cet écran avec « Je pars », un résumé (colis, kilos, gain) et « Voir mes colis ». Puis « Prévenir les destinataires ». Si ce trajet n'est pas le vôtre, Yadony ouvre sa fiche expéditeur, avec « Faire une demande ».
+Billet, pastilles kilos et prix, carte de statut selon l'état. « À traiter » : la carte « Demande 1 sur N » (Refuser, Accepter, « Voir les N demandes »), puis « Je pars » et « Ajouter la carte ». Ensuite UNE ligne « Colis » (« N colis · gain estimé », « 4 en route · 2 à récupérer ») ouvrant la feuille « Colis », qui commence par « Gain estimé » (En ligne, En espèces, Total estimé). « Votre trajet » : Itinéraire et lieux, Paiements, Conditions, Affiche (« N personnes ont vu votre trajet »), Arrivée. Bouton fixe (« Arrivé à destination » en cours de trajet seulement).
