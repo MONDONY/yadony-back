@@ -170,13 +170,13 @@ class AnnouncementTrackingActiveDetailTest {
     }
 
     @Test
-    @DisplayName("false pour un lecteur non propriétaire ou anonyme, sans même lire les colis")
-    void trackingActive_falseForNonOwnerAndGuest() {
+    @DisplayName("absent (null) pour un lecteur non propriétaire ou anonyme, sans même lire les colis")
+    void trackingActive_nullForNonOwnerAndGuest() {
         announcement.setDepartureDate(LocalDate.now().minusDays(1));
         carriedParcel(true);
 
-        assertThat(service.getAnnouncementDetail(ANNOUNCEMENT_ID, OTHER_UID).trackingActive()).isFalse();
-        assertThat(service.getAnnouncementDetail(ANNOUNCEMENT_ID, null).trackingActive()).isFalse();
+        assertThat(service.getAnnouncementDetail(ANNOUNCEMENT_ID, OTHER_UID).trackingActive()).isNull();
+        assertThat(service.getAnnouncementDetail(ANNOUNCEMENT_ID, null).trackingActive()).isNull();
         verify(bidRepository, never()).existsByAnnouncementIdAndStatusIn(any(), any());
     }
 

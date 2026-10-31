@@ -110,11 +110,12 @@ public record AnnouncementDetailResponse(
         /**
          * Suivi approximatif : la fenêtre d'envoi de position est ouverte maintenant pour ce trajet
          * (30 min avant le départ, au moins un colis pris en charge), même règle que
-         * {@code trackingActive} de la liste « Mes trajets ». Servi au seul voyageur propriétaire,
-         * {@code false} pour tout autre lecteur ; jamais de position, juste le booléen. Champ
-         * ajouté, optionnel pour les anciens clients.
+         * {@code trackingActive} de la liste « Mes trajets ». Servi au seul voyageur propriétaire
+         * (true ou false) ; null (donc absent du JSON) pour tout autre lecteur et pour un invité ;
+         * jamais de position, juste le booléen. Champ ajouté, optionnel pour les anciens clients
+         * (absent = false).
          */
-        boolean trackingActive
+        Boolean trackingActive
 ) {
     public AnnouncementDetailResponse {
         acceptedMobileMoneyNetworks = acceptedMobileMoneyNetworks == null ? List.of() : acceptedMobileMoneyNetworks;
@@ -146,7 +147,7 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                acceptedMobileMoneyNetworks, departureTimezone, null, false);
+                acceptedMobileMoneyNetworks, departureTimezone, null, null);
     }
 
     /** Sans {@code acceptedMobileMoneyNetworks} (liste vide) : appelants qui ne le calculent pas. */
@@ -277,7 +278,7 @@ public record AnnouncementDetailResponse(
     }
 
     /** Copie portant {@code trackingActive}, posé pour le seul voyageur propriétaire. */
-    public AnnouncementDetailResponse withTrackingActive(boolean trackingActive) {
+    public AnnouncementDetailResponse withTrackingActive(Boolean trackingActive) {
         return new AnnouncementDetailResponse(
                 id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime, arrivalDate,
                 pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay,
