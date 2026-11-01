@@ -101,6 +101,10 @@ public class CashCommissionService {
     private static final String NEGO_COMMISSION_REFUND_FAILED = CommissionStatus.REFUND_FAILED.name();
     private static final String NEGO_COMMISSION_VIA_WALLET = CommissionChargedVia.WALLET.name();
     private static final String NEGO_COMMISSION_VIA_CARD = CommissionChargedVia.CARD.name();
+    /** Doublon de commission carte dont le remboursement automatique a échoué. */
+    static final String DUPLICATE_REFUND_ALERT_PREFIX = "COMMISSION_DUP_REFUND_";
+    /** Succès carte d'un fil non réglé qui porte déjà un autre PaymentIntent. */
+    static final String UNLINKED_CARD_ALERT_PREFIX = "COMMISSION_PI_UNLINKED_";
 
     private final CommissionProperties props;
     private final UserRepository userRepo;
@@ -129,6 +133,9 @@ public class CashCommissionService {
     /** Commission des fils à grille, la même que celle annoncée par {@code NegotiationService}. */
     @org.springframework.beans.factory.annotation.Autowired
     private ThreadCommissionPricing threadCommissionPricing;
+    /** Alertes admin dédupliquées (doublon carte à rembourser à la main) ; injectée par champ, même raison. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.yadony.api.admin.AdminAlertEscalator alertEscalator;
     private Clock clock = Clock.systemUTC();
 
     public CashCommissionService(CommissionProperties props,
@@ -692,8 +699,14 @@ public class CashCommissionService {
             String fundingCurrency) {
         com.yadony.api.requests.entity.NegotiationThreadEntity thread =
                 negotiationThreadRepository.findById(threadId).orElseThrow();
+        lockNegotiationCommission(thread);
 
         if (NEGO_COMMISSION_CHARGED.equals(thread.getCommissionStatus())) {
+            return AcceptBidResponse.accepted();
+        }
+        // Un paiement carte de cette commission est peut-être encore vivant, ou abouti sans que la
+        // réponse Stripe soit arrivée : il est rapproché avant tout nouveau débit.
+        if (reconcileNegotiationCardAttempt(thread, travelerId, source)) {
             return AcceptBidResponse.accepted();
         }
 
@@ -1006,6 +1019,164 @@ public class CashCommissionService {
         }
     }
 
+    /**
+     * Verrou du fil puis état de commission relu en base et reporté sur l'entité (même motif que
+     * {@link #lockCommissionStatus} pour un colis). Le webhook carte prend le même verrou : un
+     * succès carte et un règlement portefeuille du même fil se voient toujours l'un l'autre.
+     */
+    private void lockNegotiationCommission(com.yadony.api.requests.entity.NegotiationThreadEntity thread) {
+        negotiationThreadRepository.lockForUpdate(thread.getId());
+        negotiationThreadRepository.findCommissionStateById(thread.getId()).ifPresent(state -> {
+            thread.setCommissionStatus(state.getCommissionStatus());
+            thread.setCommissionPaymentIntentId(state.getCommissionPaymentIntentId());
+            thread.setCommissionChargedVia(state.getCommissionChargedVia());
+        });
+    }
+
+    /**
+     * Avant tout nouveau règlement de la commission d'un fil, rapproche le PaymentIntent carte qui
+     * y est resté rattaché (3DS jamais confirmée, ou succès rattaché par le webhook après une
+     * réponse Stripe perdue).
+     *
+     * <ul>
+     *   <li>abouti : la commission est réglée par carte, {@code true}, rien d'autre n'est débité ;</li>
+     *   <li>en cours de traitement : 409, quel que soit le moyen choisi ;</li>
+     *   <li>portefeuille choisi : le PaymentIntent est annulé (annulation confirmée par Stripe,
+     *       sinon 409), détaché du fil, et le compteur de réessai avance ;</li>
+     *   <li>carte choisie : inchangé, la même clé d'idempotence rend le même PaymentIntent.</li>
+     * </ul>
+     */
+    private boolean reconcileNegotiationCardAttempt(com.yadony.api.requests.entity.NegotiationThreadEntity thread,
+                                                    UUID travelerId, CommissionSource source) {
+        String piId = thread.getCommissionPaymentIntentId();
+        // Commission déjà rendue : son PaymentIntent reste « succeeded » chez Stripe après
+        // remboursement, il ne vaut plus paiement.
+        if (piId == null || NEGO_COMMISSION_REFUNDED.equals(thread.getCommissionStatus())
+                || NEGO_COMMISSION_REFUND_FAILED.equals(thread.getCommissionStatus())) {
+            return false;
+        }
+        PaymentIntent pi = retrieveCardAttempt(piId);
+        String status = String.valueOf(pi.getStatus());
+        if ("succeeded".equals(status)) {
+            SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(thread.getCurrency());
+            BigDecimal amount = BigDecimal.valueOf(pi.getAmount()).movePointLeft(currency.minorUnit());
+            markNegotiationCommissionCharged(thread, NEGO_COMMISSION_VIA_CARD, travelerId, amount);
+            return true;
+        }
+        if ("processing".equals(status)) {
+            throw cardAttemptPending();
+        }
+        if (source != CommissionSource.WALLET_FIRST) {
+            return false;
+        }
+        if (!"canceled".equals(status)) {
+            cancelCardAttempt(piId);
+        }
+        thread.setCommissionPaymentIntentId(null);
+        recordCommissionFailure(thread, travelerId,
+                Map.of("reason", "card-attempt-superseded", "paymentIntentId", piId, "status", status));
+        return false;
+    }
+
+    /**
+     * Webhook {@code payment_intent.succeeded} d'une commission de négociation
+     * ({@code commission_purpose = cash_negotiation}). Ne scelle jamais l'accord : c'est le rôle
+     * de {@code NegotiationService}.
+     *
+     * <ul>
+     *   <li>commission déjà réglée par un autre moyen (portefeuille, autre PaymentIntent) : ce
+     *       débit carte est un doublon, il est remboursé ;</li>
+     *   <li>pas encore réglée et aucun PaymentIntent rattaché (réponse Stripe perdue) : celui-ci
+     *       est rattaché au fil, le prochain règlement le verra abouti au lieu de redébiter ;</li>
+     *   <li>pas encore réglée mais un autre PaymentIntent rattaché : alerte, décision manuelle.</li>
+     * </ul>
+     */
+    @Transactional
+    public void reconcileNegotiationCardCommission(PaymentIntent pi) {
+        String rawThreadId = pi.getMetadata() != null ? pi.getMetadata().get("negotiation_thread_id") : null;
+        if (rawThreadId == null) {
+            return;
+        }
+        UUID threadId = UUID.fromString(rawThreadId);
+        negotiationThreadRepository.lockForUpdate(threadId);
+        com.yadony.api.requests.entity.NegotiationThreadEntity thread =
+                negotiationThreadRepository.findById(threadId).orElse(null);
+        if (thread == null) {
+            return;
+        }
+        String status = thread.getCommissionStatus();
+        if (NEGO_COMMISSION_CHARGED.equals(status) || NEGO_COMMISSION_REFUNDED.equals(status)
+                || NEGO_COMMISSION_REFUND_FAILED.equals(status)) {
+            boolean sameCardCharge = !NEGO_COMMISSION_VIA_WALLET.equals(thread.getCommissionChargedVia())
+                    && pi.getId().equals(thread.getCommissionPaymentIntentId());
+            if (!sameCardCharge) {
+                refundDuplicateCardCommission(pi, "NEGOTIATION_THREAD", threadId);
+            }
+            return;
+        }
+        String linked = thread.getCommissionPaymentIntentId();
+        if (linked == null) {
+            thread.setCommissionPaymentIntentId(pi.getId());
+            negotiationThreadRepository.save(thread);
+            log.info("Commission carte {} aboutie rattachée au fil {} (pas encore réglé)", pi.getId(), threadId);
+        } else if (!linked.equals(pi.getId())) {
+            Map<String, Object> context = new LinkedHashMap<>();
+            context.put("threadId", threadId.toString());
+            context.put("paymentIntentId", pi.getId());
+            context.put("linkedPaymentIntentId", linked);
+            alertEscalator.raiseOnce(UNLINKED_CARD_ALERT_PREFIX + pi.getId(),
+                    "Commission carte " + pi.getId() + " aboutie sur le fil " + threadId
+                            + " alors qu'un autre paiement carte (" + linked + ") y est rattaché :"
+                            + " vérifier qu'un seul est conservé",
+                    context);
+        }
+    }
+
+    /**
+     * Rembourse en totalité un PaymentIntent de commission carte payé en double (la commission
+     * est déjà réglée autrement). Clé d'idempotence par PaymentIntent : un rejeu du webhook ne
+     * rembourse jamais deux fois. Erreur Stripe : alerte puis exception, pour que l'événement
+     * soit rejoué ; refus explicite de Stripe : alerte, remboursement manuel.
+     */
+    public void refundDuplicateCardCommission(PaymentIntent pi, String entityType, UUID entityId) {
+        String piId = pi.getId();
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("paymentIntentId", piId);
+        details.put("amountMinor", String.valueOf(pi.getAmount()));
+        details.put("currency", String.valueOf(pi.getCurrency()));
+        com.stripe.model.Refund refund;
+        try {
+            refund = stripeCashGateway.createRefund(
+                    RefundCreateParams.builder().setPaymentIntent(piId).build(),
+                    RequestOptions.builder().setIdempotencyKey("commission_duplicate_refund_" + piId).build());
+        } catch (StripeException e) {
+            alertDuplicateRefund(piId, entityType, entityId, details, String.valueOf(e.getMessage()));
+            throw new IllegalStateException("Remboursement du doublon de commission " + piId + " impossible", e);
+        }
+        String refundStatus = refund != null ? refund.getStatus() : null;
+        details.put("refundId", String.valueOf(refund != null ? refund.getId() : null));
+        details.put("refundStatus", String.valueOf(refundStatus));
+        if ("failed".equals(refundStatus) || "canceled".equals(refundStatus)) {
+            auditService.log(entityType, entityId, "CASH_COMMISSION_DUPLICATE_REFUND_FAILED", null, details);
+            alertDuplicateRefund(piId, entityType, entityId, details, "refund " + refundStatus);
+            return;
+        }
+        auditService.log(entityType, entityId, "CASH_COMMISSION_DUPLICATE_REFUNDED", null, details);
+        log.warn("Commission carte {} payée en double ({} {}) : remboursée", piId, entityType, entityId);
+    }
+
+    private void alertDuplicateRefund(String piId, String entityType, UUID entityId,
+                                      Map<String, Object> details, String reason) {
+        Map<String, Object> context = new LinkedHashMap<>(details);
+        context.put("entityType", entityType);
+        context.put("entityId", entityId.toString());
+        context.put("reason", reason);
+        alertEscalator.raiseOnce(DUPLICATE_REFUND_ALERT_PREFIX + piId,
+                "Commission carte " + piId + " payée en double (" + entityType + " " + entityId
+                        + ") : remboursement automatique impossible (" + reason + "), rembourser à la main",
+                context);
+    }
+
     private void markNegotiationCommissionCharged(
             com.yadony.api.requests.entity.NegotiationThreadEntity thread,
             String via, UUID travelerId, BigDecimal commission) {
@@ -1143,6 +1314,12 @@ public class CashCommissionService {
         bindAppliedPromo(bid, quote);
 
         if (commissionSource == CommissionSource.WALLET_FIRST) {
+            // Un paiement carte de cette même commission est peut-être encore vivant : il est
+            // rapproché AVANT tout débit, sinon la commission serait payée deux fois.
+            if (reconcileCardAttemptBeforeWallet(bid, travelerId)) {
+                finalizeBidAcceptance(bid, announcement, travelerId);
+                return AcceptBidResponse.accepted();
+            }
             // Portefeuille de la devise du bid d'abord, complément converti sur la devise
             // active (cf. WalletCommissionCollector), tout ou rien. Le débit réel (avec
             // bons et audit) reste dans chargeCommissionFromWallet, qui replanifie.
@@ -1185,6 +1362,88 @@ public class CashCommissionService {
             finalizeBidAcceptance(bid, announcement, travelerId);
         }
         return response;
+    }
+
+    /**
+     * Avant tout débit portefeuille d'une commission de colis. Un paiement carte de cette même
+     * commission peut être resté rattaché au colis (3DS abandonnée, confirm-acceptance qui l'a vu
+     * inabouti sans l'annuler) et aboutir après coup : le laisser vivant puis débiter le
+     * portefeuille ferait payer la commission deux fois.
+     *
+     * <ul>
+     *   <li>commission déjà réglée (webhook carte arrivé avant) ou PaymentIntent abouti :
+     *       {@code true}, l'appelant accepte sans rien débiter ;</li>
+     *   <li>PaymentIntent en cours de traitement, annulation refusée ou non confirmée : 409, rien
+     *       n'est débité, le voyageur réessaie ;</li>
+     *   <li>sinon le PaymentIntent est annulé (ou l'était déjà) puis détaché du colis, et le
+     *       compteur de réessai avance pour qu'un nouvel essai carte parte sur une clé neuve (même
+     *       convention que {@code OrphanedPaymentIntentCleanupJob}) : {@code false}.</li>
+     * </ul>
+     */
+    private boolean reconcileCardAttemptBeforeWallet(BidEntity bid, UUID travelerId) {
+        if (bid.getCommissionStatus() == CommissionStatus.CHARGED) {
+            return true;
+        }
+        String piId = bid.getCommissionPaymentIntentId();
+        // Commission déjà rendue : son PaymentIntent reste « succeeded » chez Stripe après
+        // remboursement, il ne vaut plus paiement.
+        if (piId == null || bid.getCommissionStatus() == CommissionStatus.REFUNDED
+                || bid.getCommissionStatus() == CommissionStatus.REFUND_FAILED) {
+            return false;
+        }
+        PaymentIntent pi = retrieveCardAttempt(piId);
+        String status = String.valueOf(pi.getStatus());
+        switch (status) {
+            case "succeeded" -> {
+                recordCardCharge(bid, pi);
+                bid.setCommissionStatus(CommissionStatus.CHARGED);
+                bid.setCommissionChargedVia(CommissionChargedVia.CARD);
+                bidRepo.save(bid);
+                return true;
+            }
+            case "processing" -> throw cardAttemptPending();
+            case "canceled" -> { }
+            default -> cancelCardAttempt(piId);
+        }
+        bid.setCommissionStatus(null);
+        bid.setCommissionPaymentIntentId(null);
+        bid.setCommissionRetryCount(bid.getCommissionRetryCount() + 1);
+        bidRepo.save(bid);
+        auditService.log("payment", bid.getId(), "COMMISSION_CARD_ATTEMPT_CANCELED", travelerId,
+                Map.of("paymentIntentId", piId, "status", status));
+        return false;
+    }
+
+    /** Relit un PaymentIntent de commission ; illisible, aucun débit ne part (502). */
+    private PaymentIntent retrieveCardAttempt(String paymentIntentId) {
+        try {
+            return stripeCashGateway.retrievePaymentIntent(paymentIntentId);
+        } catch (StripeException e) {
+            log.error("PaymentIntent de commission {} illisible avant un débit portefeuille : {}",
+                    paymentIntentId, e.getMessage());
+            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "stripe-error", "Stripe Error",
+                    "Impossible de vérifier le paiement par carte en cours de cette commission");
+        }
+    }
+
+    /** Annule un PaymentIntent de commission ; seul l'état {@code canceled} rendu par Stripe vaut annulation. */
+    private void cancelCardAttempt(String paymentIntentId) {
+        PaymentIntent canceled;
+        try {
+            canceled = stripeCashGateway.cancelPaymentIntent(paymentIntentId);
+        } catch (StripeException e) {
+            log.warn("Annulation du PaymentIntent de commission {} refusée : {}", paymentIntentId, e.getMessage());
+            throw cardAttemptPending();
+        }
+        if (canceled == null || !"canceled".equals(canceled.getStatus())) {
+            throw cardAttemptPending();
+        }
+    }
+
+    private static YadonyBusinessException cardAttemptPending() {
+        return new YadonyBusinessException(HttpStatus.CONFLICT, "commission-card-attempt-pending",
+                "Card Commission Pending",
+                "Un paiement par carte de cette commission est encore en cours. Réessayez dans un instant.");
     }
 
     /**

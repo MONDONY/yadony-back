@@ -76,6 +76,8 @@ class MobileMoneyPayoutInitiatorHoldTest {
         ReflectionTestUtils.setField(account, "id", UUID.randomUUID());
         lenient().when(accountRepository.findByUserIdAndDeletedAtIsNullOrderByCreatedAtAsc(travelerId))
                 .thenReturn(List.of(account));
+        // État nominal : aucun remboursement pawaPay sur ce paiement (garde REFUND de release()).
+        lenient().when(operations.findLive(any(), eq(PawapayOperationKind.REFUND))).thenReturn(Optional.empty());
     }
 
     private PawapayOperationEntity accepted() {

@@ -24,6 +24,8 @@ public class CashCommissionWebhookHandler {
     private static final Logger log = LoggerFactory.getLogger(CashCommissionWebhookHandler.class);
     private static final String COMMISSION_PURPOSE_KEY = "commission_purpose";
     private static final String COMMISSION_PURPOSE_VALUE = "cash_bid";
+    /** Commission d'un fil de négociation espèces (CashCommissionService#settleNegotiationCommission). */
+    private static final String NEGOTIATION_PURPOSE_VALUE = "cash_negotiation";
 
     /** Statuts de commission déjà réglés : un webhook tardif ne doit pas les réécrire. */
     private static final Set<CommissionStatus> SETTLED = EnumSet.of(
@@ -78,11 +80,26 @@ public class CashCommissionWebhookHandler {
     public void handlePaymentIntentSucceeded(Event event) {
         event.getDataObjectDeserializer().getObject().ifPresent(obj -> {
             PaymentIntent pi = (PaymentIntent) obj;
+            if (NEGOTIATION_PURPOSE_VALUE.equals(purposeOf(pi))) {
+                cashCommissionService.reconcileNegotiationCardCommission(pi);
+                return;
+            }
             if (!isCommissionPi(pi)) return;
             String bidIdStr = pi.getMetadata().get("bid_id");
             if (bidIdStr == null) return;
-            bidRepo.findById(UUID.fromString(bidIdStr)).ifPresent(bid -> {
-                if (SETTLED.contains(bid.getCommissionStatus())) return;
+            UUID bidId = UUID.fromString(bidIdStr);
+            // Même verrou que l'acceptation (acceptCashBid) : un débit portefeuille en cours et ce
+            // succès carte se voient l'un l'autre au lieu de régler deux fois la commission.
+            bidRepo.lockForUpdate(bidId);
+            bidRepo.findById(bidId).ifPresent(bid -> {
+                if (SETTLED.contains(bid.getCommissionStatus())) {
+                    // Réglée par un autre moyen (portefeuille, autre PaymentIntent) : ce débit
+                    // carte est un doublon, il est rendu.
+                    if (!isSettlingCardCharge(bid, pi)) {
+                        cashCommissionService.refundDuplicateCardCommission(pi, "payment", bid.getId());
+                    }
+                    return;
+                }
                 CashCommissionService.recordCardCharge(bid, pi);
                 bid.setCommissionStatus(CommissionStatus.CHARGED);
                 bid.setCommissionChargedVia(com.yadony.api.payments.cash.CommissionChargedVia.CARD);
@@ -108,6 +125,9 @@ public class CashCommissionWebhookHandler {
             if (bidIdStr == null) return;
             bidRepo.findById(UUID.fromString(bidIdStr)).ifPresent(bid -> {
                 if (bid.getCommissionStatus() == CommissionStatus.FAILED) return;
+                // Échec tardif d'un ancien essai : une commission réglée ne redevient jamais FAILED,
+                // sinon plus aucun remboursement ne la verrait.
+                if (SETTLED.contains(bid.getCommissionStatus())) return;
                 bid.setCommissionStatus(CommissionStatus.FAILED);
                 bidRepo.save(bid);
                 log.warn("Commission FAILED via webhook for bid {}", bidIdStr);
@@ -133,7 +153,19 @@ public class CashCommissionWebhookHandler {
     }
 
     private boolean isCommissionPi(PaymentIntent pi) {
-        return COMMISSION_PURPOSE_VALUE.equals(
-                pi.getMetadata() != null ? pi.getMetadata().get(COMMISSION_PURPOSE_KEY) : null);
+        return COMMISSION_PURPOSE_VALUE.equals(purposeOf(pi));
+    }
+
+    private static String purposeOf(PaymentIntent pi) {
+        return pi.getMetadata() != null ? pi.getMetadata().get(COMMISSION_PURPOSE_KEY) : null;
+    }
+
+    /**
+     * Le PaymentIntent qui a réglé la commission. Une ligne ancienne peut ne pas porter le moyen
+     * ({@code commissionChargedVia} nul) : seul WALLET exclut alors la carte.
+     */
+    private static boolean isSettlingCardCharge(com.yadony.api.matching.BidEntity bid, PaymentIntent pi) {
+        return bid.getCommissionChargedVia() != CommissionChargedVia.WALLET
+                && java.util.Objects.equals(pi.getId(), bid.getCommissionPaymentIntentId());
     }
 }

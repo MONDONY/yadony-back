@@ -199,12 +199,83 @@ class CashCommissionWebhookHandlerTest {
         @EnumSource(value = CommissionStatus.class, names = {"REFUNDED", "REFUND_FAILED"})
         void neverRewritesAnAlreadyRefundedCommission(CommissionStatus settled) {
             BidEntity bid = commissionBid(BidStatus.CANCELLED, settled);
+            // Réglée par CE PaymentIntent puis remboursée : rien à faire.
+            bid.setCommissionChargedVia(CommissionChargedVia.CARD);
+            bid.setCommissionPaymentIntentId("pi_late");
 
             handler.handlePaymentIntentSucceeded(eventFor(commissionPi(bid)));
 
             assertThat(bid.getCommissionStatus()).isEqualTo(settled);
             verify(bidRepo, never()).save(any());
             verifyNoInteractions(cashCommissionService);
+        }
+
+        // --- Audit doublons 01/11 ---
+
+        @ParameterizedTest
+        @EnumSource(value = CommissionStatus.class, names = {"CHARGED", "REFUNDED", "REFUND_FAILED"})
+        void cardSuccessOnACommissionSettledByWallet_isRefundedAsADuplicate(CommissionStatus settled) {
+            BidEntity bid = commissionBid(BidStatus.ACCEPTED, settled);
+            bid.setCommissionChargedVia(CommissionChargedVia.WALLET);
+            PaymentIntent pi = commissionPi(bid);
+
+            handler.handlePaymentIntentSucceeded(eventFor(pi));
+
+            verify(cashCommissionService).refundDuplicateCardCommission(pi, "payment", bid.getId());
+            assertThat(bid.getCommissionStatus()).isEqualTo(settled);
+            assertThat(bid.getCommissionChargedVia()).isEqualTo(CommissionChargedVia.WALLET);
+            verify(bidRepo, never()).save(any());
+        }
+
+        @Test
+        void cardSuccessOfAnotherIntentThanTheSettlingOne_isRefundedAsADuplicate() {
+            BidEntity bid = commissionBid(BidStatus.ACCEPTED, CommissionStatus.CHARGED);
+            bid.setCommissionChargedVia(CommissionChargedVia.CARD);
+            bid.setCommissionPaymentIntentId("pi_kept");
+            PaymentIntent pi = commissionPi(bid);
+
+            handler.handlePaymentIntentSucceeded(eventFor(pi));
+
+            verify(cashCommissionService).refundDuplicateCardCommission(pi, "payment", bid.getId());
+            assertThat(bid.getCommissionPaymentIntentId()).isEqualTo("pi_kept");
+        }
+
+        @Test
+        void sameIntentAsTheCardSettlement_isANoOp() {
+            BidEntity bid = commissionBid(BidStatus.ACCEPTED, CommissionStatus.CHARGED);
+            bid.setCommissionChargedVia(CommissionChargedVia.CARD);
+            bid.setCommissionPaymentIntentId("pi_late");
+
+            handler.handlePaymentIntentSucceeded(eventFor(commissionPi(bid)));
+
+            verifyNoInteractions(cashCommissionService);
+            verify(bidRepo, never()).save(any());
+        }
+
+        @Test
+        void locksTheBidBeforeReadingIt() {
+            BidEntity bid = commissionBid(BidStatus.PENDING, CommissionStatus.REQUIRES_3DS);
+
+            handler.handlePaymentIntentSucceeded(eventFor(commissionPi(bid)));
+
+            var order = inOrder(bidRepo);
+            order.verify(bidRepo).lockForUpdate(bid.getId());
+            order.verify(bidRepo).findById(bid.getId());
+        }
+
+        @Test
+        void negotiationCommission_isDelegatedToTheService() {
+            PaymentIntent pi = new PaymentIntent();
+            pi.setId("pi_nego");
+            Map<String, String> meta = new HashMap<>();
+            meta.put("commission_purpose", "cash_negotiation");
+            meta.put("negotiation_thread_id", UUID.randomUUID().toString());
+            pi.setMetadata(meta);
+
+            handler.handlePaymentIntentSucceeded(eventFor(pi));
+
+            verify(cashCommissionService).reconcileNegotiationCardCommission(pi);
+            verifyNoInteractions(bidRepo);
         }
 
         @ParameterizedTest
@@ -277,6 +348,33 @@ class CashCommissionWebhookHandlerTest {
 
             assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.FAILED);
             verify(bidRepo).save(bid);
+        }
+
+        /**
+         * Échec tardif d'un ancien essai carte alors que la commission est réglée (portefeuille ou
+         * autre PaymentIntent) : la repasser en FAILED empêcherait tout remboursement ultérieur.
+         */
+        @ParameterizedTest
+        @EnumSource(value = CommissionStatus.class, names = {"CHARGED", "REFUNDED", "REFUND_FAILED"})
+        void neverDowngradesASettledCommission(CommissionStatus settled) {
+            BidEntity bid = new BidEntity();
+            UUID bidId = UUID.randomUUID();
+            ReflectionTestUtils.setField(bid, "id", bidId);
+            bid.setCommissionStatus(settled);
+            bid.setCommissionChargedVia(CommissionChargedVia.WALLET);
+
+            PaymentIntent pi = new PaymentIntent();
+            pi.setId("pi_old_attempt");
+            Map<String, String> meta = new HashMap<>();
+            meta.put("commission_purpose", "cash_bid");
+            meta.put("bid_id", bidId.toString());
+            pi.setMetadata(meta);
+            when(bidRepo.findById(bidId)).thenReturn(Optional.of(bid));
+
+            handler.handlePaymentIntentFailed(eventFor(pi));
+
+            assertThat(bid.getCommissionStatus()).isEqualTo(settled);
+            verify(bidRepo, never()).save(any());
         }
 
         @Test

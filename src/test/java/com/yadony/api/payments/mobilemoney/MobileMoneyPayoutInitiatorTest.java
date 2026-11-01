@@ -70,6 +70,8 @@ class MobileMoneyPayoutInitiatorTest {
         payment.setAmount(new BigDecimal("16800"));
         payment.setCommissionAmount(new BigDecimal("1800"));
         payment.setCurrency("XOF");
+        // État nominal : aucun remboursement pawaPay sur ce paiement (garde REFUND de release()).
+        lenient().when(operations.findLive(any(), eq(PawapayOperationKind.REFUND))).thenReturn(Optional.empty());
     }
 
     private MobileMoneyPayoutAccountEntity account(String provider, String country, String currency, String msisdn,
@@ -327,5 +329,64 @@ class MobileMoneyPayoutInitiatorTest {
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("INSUFFICIENT_BALANCE");
         verify(adminAlert).raise(eq("PAWAPAY_PAYOUT_REJECTED"), any(), any());
         verify(audit, never()).log(any(), any(), any(), any(), any());
+    }
+
+    private PawapayOperationEntity refundOf(PawapayOperationEntity deposit, PawapayOperationStatus status) {
+        PawapayOperationEntity o = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.REFUND, payment.getId(),
+                deposit.getId(), new BigDecimal("16800"), "XOF", "ORANGE_SEN", "SN", "221770000000");
+        o.setStatus(status);
+        return o;
+    }
+
+    /**
+     * Miroir de RefundProcessor (remboursement refusé si un payout existe) : un remboursement
+     * admin dont la réponse pawaPay a expiré annule le claim REFUNDED alors que l'opération
+     * aboutit quand même. Le paiement redevient ESCROW : sans cette garde, la livraison ou le
+     * force-release verserait le net au voyageur pendant que l'expéditeur est remboursé du brut.
+     */
+    @Test
+    void release_refusedWhenRefundAlreadyLiveOrDone_neverSubmitsPayout() {
+        givenAccounts(account("ORANGE_SEN", "SN", "XOF", "221771234567", false));
+        PawapayOperationEntity funding = deposit("ORANGE_SEN");
+        PawapayOperationEntity refunded = refundOf(funding, PawapayOperationStatus.COMPLETED);
+        when(operations.findLive(payment.getId(), PawapayOperationKind.REFUND)).thenReturn(Optional.of(refunded));
+        // Sans la garde, release() irait jusqu'à la soumission : aucun payout vivant, dépôt abouti.
+        lenient().when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
+        lenient().when(operations.findLive(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(funding));
+        lenient().when(submission.submitPayout(any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(payout(PawapayOperationStatus.ACCEPTED));
+
+        assertThatThrownBy(() -> initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "force-release"))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("refund");
+        verify(alerts).raiseOnce(eq(MobileMoneyPayoutInitiator.REFUND_EXISTS_ALERT_PREFIX + payment.getId()), any(), any());
+        verify(submission, never()).submitPayout(any(), any(), any(), any(), any(), any(), any());
+        verify(audit, never()).log(any(), any(), any(), any(), any());
+    }
+
+    /**
+     * Paiement de négociation recyclé (CANCELLED → PENDING, même identifiant) : le dépôt tardif de
+     * la première tentative a été rendu, le second dépôt finance le séquestre. Ce remboursement
+     * ancien ne bloque pas le versement.
+     */
+    @Test
+    void release_refundOfAnOlderDeposit_onARecycledPayment_doesNotBlockThePayout() {
+        givenAccounts(account("ORANGE_SEN", "SN", "XOF", "221771234567", false));
+        PawapayOperationEntity lateFirstDeposit = deposit("ORANGE_SEN");
+        PawapayOperationEntity funding = deposit("ORANGE_SEN");
+        when(operations.findLive(payment.getId(), PawapayOperationKind.REFUND))
+                .thenReturn(Optional.of(refundOf(lateFirstDeposit, PawapayOperationStatus.COMPLETED)));
+        when(operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT)).thenReturn(Optional.empty());
+        when(operations.findLive(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(funding));
+        PawapayOperationEntity accepted = payout(PawapayOperationStatus.ACCEPTED);
+        when(submission.submitPayout(any(), any(), any(), any(), any(), any(), any())).thenReturn(accepted);
+
+        assertThat(initiator.release(payment, bidId, travelerId, new BigDecimal("15000"), "delivery")).isSameAs(accepted);
+        verify(alerts, never()).raiseOnce(eq(MobileMoneyPayoutInitiator.REFUND_EXISTS_ALERT_PREFIX + payment.getId()), any(), any());
+    }
+
+    @Test
+    void refundExistsAlertType_fitsInAdminAlertsTypeColumn() {
+        String type = MobileMoneyPayoutInitiator.REFUND_EXISTS_ALERT_PREFIX + UUID.randomUUID();
+        assertThat(type.length()).isLessThanOrEqualTo(AdminAlertEscalator.TYPE_MAX_LENGTH);
     }
 }

@@ -49,6 +49,8 @@ public class MobileMoneyPayoutInitiator {
      * nulle). Celui-ci fait 17 + 36 = 53. Voir {@code MobileMoneyPayoutInitiatorTest}.
      */
     static final String ORPHAN_ALERT_PREFIX = "MM_PAYOUT_ORPHAN_";
+    /** Payout refusé : un remboursement pawaPay du même paiement est vivant ou abouti. */
+    static final String REFUND_EXISTS_ALERT_PREFIX = "MM_PAYOUT_REFUND_EXISTS_";
 
     private final MobileMoneyPayoutAccounts accounts;
     private final PawapayOperationService operations;
@@ -131,6 +133,26 @@ public class MobileMoneyPayoutInitiator {
             throw new PayoutHeldException("Payout blocked for payment " + payment.getId()
                     + (payment.isDisputed() ? ": payment disputed" : ": traveler " + travelerId + " payouts are held"));
         }
+        // Miroir de RefundProcessor#refundEscrowedMobileMoney (remboursement refusé si un payout
+        // existe). Un remboursement dont la réponse pawaPay a expiré annule le claim REFUNDED alors
+        // que l'opération aboutit quand même : le paiement redevient ESCROW. Verser ici paierait le
+        // voyageur pendant que l'expéditeur est remboursé du brut. findLive couvre COMPLETED.
+        // Seul compte le remboursement du dépôt qui finance ce séquestre : un paiement de
+        // négociation est recyclé (CANCELLED → PENDING, même identifiant) et peut porter le
+        // remboursement d'un dépôt tardif de la tentative précédente.
+        Optional<PawapayOperationEntity> refund = operations.findLive(payment.getId(), PawapayOperationKind.REFUND)
+                .filter(r -> refundsTheFundingDeposit(payment.getId(), r));
+        if (refund.isPresent()) {
+            PawapayOperationEntity op = refund.get();
+            alerts.raiseOnce(REFUND_EXISTS_ALERT_PREFIX + payment.getId(),
+                    "Payout bloqué pour le paiement " + payment.getId() + " : un remboursement pawaPay existe déjà"
+                            + " (opération " + op.getId() + ", statut " + op.getStatus() + "), vérification manuelle requise",
+                    Map.of("paymentId", payment.getId().toString(), "operationId", op.getId().toString(),
+                            "refundStatus", op.getStatus().name(), "source", source));
+            throw new IllegalStateException(
+                    "pawaPay refund already exists for payment " + payment.getId() + " — payout refused");
+        }
+
         Optional<PawapayOperationEntity> live = operations.findLive(payment.getId(), PawapayOperationKind.PAYOUT);
         if (live.isPresent()) {
             PawapayOperationEntity op = live.get();
@@ -175,5 +197,15 @@ public class MobileMoneyPayoutInitiator {
                         "provider", to.provider(), "accountId", to.accountId().toString())));
         log.info("Payout mobile money {} soumis pour le paiement {} ({})", op.getId(), payment.getId(), source);
         return op;
+    }
+
+    /**
+     * Vrai si {@code refund} rend le dépôt qui finance le séquestre (dernier dépôt vivant ou
+     * abouti), ou si aucun dépôt n'est retrouvé : dans le doute, le versement est bloqué.
+     */
+    private boolean refundsTheFundingDeposit(UUID paymentId, PawapayOperationEntity refund) {
+        return operations.findLive(paymentId, PawapayOperationKind.DEPOSIT)
+                .map(deposit -> deposit.getId().equals(refund.getRelatedOperationId()))
+                .orElse(true);
     }
 }
