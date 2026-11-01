@@ -298,4 +298,32 @@ public interface NegotiationThreadRepository extends JpaRepository<NegotiationTh
     @org.springframework.data.jpa.repository.Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("UPDATE NegotiationThreadEntity t SET t.travelerHiddenAt = :at WHERE t.id = :id")
     int updateTravelerHiddenAt(@Param("id") UUID id, @Param("at") LocalDateTime at);
+
+    /**
+     * Verrou de ligne du fil, tenu jusqu'à la fin de la transaction, par un UPDATE neutre
+     * (exécutable aussi sous H2, comme {@code BidRepository#lockForUpdate}). Sérialise le
+     * règlement de la commission et le rapprochement d'un succès carte reçu par webhook : sans
+     * lui, un débit portefeuille et un PaymentIntent abouti pouvaient se croiser sans se voir.
+     * Sans {@code clearAutomatically} : le fil déjà chargé par l'appelant reste géré.
+     *
+     * @return 1 si le fil existe, 0 sinon
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE NegotiationThreadEntity t SET t.commissionStatus = t.commissionStatus WHERE t.id = :id")
+    int lockForUpdate(@Param("id") UUID id);
+
+    /** État de la commission d'un fil, en projection scalaire (jamais servie par le cache de premier niveau). */
+    interface CommissionState {
+        String getCommissionStatus();
+        String getCommissionPaymentIntentId();
+        String getCommissionChargedVia();
+    }
+
+    /**
+     * État de la commission lu EN BASE, à appeler juste après {@link #lockForUpdate} : il rend
+     * le dernier état commité, même quand l'entité du fil a été chargée avant le verrou.
+     */
+    @Query("SELECT t.commissionStatus AS commissionStatus, t.commissionPaymentIntentId AS commissionPaymentIntentId, "
+            + "t.commissionChargedVia AS commissionChargedVia FROM NegotiationThreadEntity t WHERE t.id = :id")
+    Optional<CommissionState> findCommissionStateById(@Param("id") UUID id);
 }

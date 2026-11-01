@@ -142,6 +142,10 @@ public class ProBillingStripeWebhookHandler implements StripeWebhookHandler {
             return;
         }
 
+        if (cancelIfDuplicateSubscription(userId, subscriptionId, sessionId)) {
+            return;
+        }
+
         BillingCycle cycle = readCycle(data);
         // L'échéance exacte arrivera par invoice.paid ; on pose une borne
         // provisoire pour que la ligne ne paraisse jamais expirée entre-temps.
@@ -150,6 +154,53 @@ public class ProBillingStripeWebhookHandler implements StripeWebhookHandler {
 
         subscriptionService.activateFromStripe(userId, customerId, subscriptionId,
                 cycle, provisionalEnd);
+    }
+
+    /** Statuts Stripe d'un abonnement qui prélève (ou prélèvera) encore. */
+    private static final Set<String> LIVE_STRIPE_STATUSES = Set.of("active", "trialing", "past_due", "unpaid");
+
+    /**
+     * Deux sessions Checkout ouvertes en même temps (deux onglets, double clic) et payées toutes
+     * les deux : la ligne unique de l'utilisateur ne peut porter qu'un abonnement, l'autre serait
+     * prélevé chaque mois sans aucune trace locale. Si la ligne porte déjà un AUTRE abonnement,
+     * encore vivant chez Stripe, le nouveau est un doublon : résilié tout de suite, jamais activé,
+     * et une alerte donne la facture à rembourser. Un abonnement enregistré mort chez Stripe
+     * laisse passer le nouveau (cas normal de réabonnement).
+     *
+     * <p>Lecture Stripe impossible : exception, l'événement est rejoué plus tard (rien n'a changé).
+     *
+     * @return {@code true} si la session était un doublon (rien à activer)
+     */
+    private boolean cancelIfDuplicateSubscription(UUID userId, String subscriptionId, String sessionId) {
+        Optional<ProSubscriptionEntity> current = repository.findByUserId(userId);
+        String keptId = current.map(ProSubscriptionEntity::getStripeSubscriptionId).orElse(null);
+        if (keptId == null || keptId.equals(subscriptionId) || !current.get().getStatus().grantsProAccess()) {
+            return false;
+        }
+        try {
+            Subscription kept = Subscription.retrieve(keptId);
+            if (!LIVE_STRIPE_STATUSES.contains(kept.getStatus())) {
+                return false;
+            }
+            Subscription duplicate = Subscription.retrieve(subscriptionId);
+            if (!"canceled".equals(duplicate.getStatus())) {
+                duplicate.cancel();
+            }
+            log.warn("Abonnement PRO {} en double de {} pour l'utilisateur {} : résilié", subscriptionId, keptId, userId);
+            adminAlertService.raise("BILLING_DUPLICATE_SUBSCRIPTION",
+                    "Deuxième abonnement PRO payé par l'utilisateur " + userId + " (session " + sessionId
+                            + ") alors que " + keptId + " est actif : " + subscriptionId
+                            + " a été résilié, rembourser sa facture",
+                    Map.of("userId", userId.toString(),
+                            "checkoutSessionId", String.valueOf(sessionId),
+                            "keptSubscriptionId", keptId,
+                            "canceledSubscriptionId", subscriptionId,
+                            "invoiceToRefund", String.valueOf(duplicate.getLatestInvoice())));
+            return true;
+        } catch (StripeException e) {
+            throw new IllegalStateException("Doublon d'abonnement PRO " + subscriptionId
+                    + " impossible à vérifier chez Stripe : " + e.getMessage(), e);
+        }
     }
 
     /**

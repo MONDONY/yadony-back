@@ -1153,6 +1153,171 @@ class CashCommissionServiceTest {
             verify(events).publishEvent(any(BidAcceptedEvent.class));
         }
 
+        // --- Audit doublons 01/11 : un paiement carte de la commission encore vivant ne doit
+        // jamais coexister avec un débit portefeuille (sinon la commission est payée deux fois).
+
+        private PaymentIntent cardAttempt(String status) {
+            PaymentIntent pi = mock(PaymentIntent.class);
+            lenient().when(pi.getId()).thenReturn("pi_card_attempt");
+            lenient().when(pi.getStatus()).thenReturn(status);
+            lenient().when(pi.getAmount()).thenReturn(1200L);
+            return pi;
+        }
+
+        private void givenWalletCoversCommission() {
+            lenient().when(walletService.getBalanceForUpdate(travelerId, "EUR")).thenReturn(new BigDecimal("13.00"));
+            lenient().when(walletTransactionRepository.existsByUserIdAndBidIdAndType(eq(travelerId), any(), any()))
+                    .thenReturn(false);
+        }
+
+        @Test
+        void walletFirst_liveCardAttempt_isCanceledBeforeTheWalletIsDebited() throws StripeException {
+            // confirm-acceptance a vu « requires_action » : commission FAILED, PaymentIntent jamais annulé.
+            bid.setCommissionStatus(CommissionStatus.FAILED);
+            bid.setCommissionPaymentIntentId("pi_card_attempt");
+            bid.setCommissionRetryCount(2);
+            givenWalletCoversCommission();
+            PaymentIntent live = cardAttempt("requires_action");
+            PaymentIntent canceled = new PaymentIntent();
+            canceled.setStatus("canceled");
+            when(live.cancel()).thenReturn(canceled);
+
+            AcceptBidResponse resp;
+            try (MockedStatic<PaymentIntent> st = mockStatic(PaymentIntent.class)) {
+                st.when(() -> PaymentIntent.retrieve("pi_card_attempt")).thenReturn(live);
+                resp = service.acceptCashBid(bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST);
+            }
+
+            assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+            var order = inOrder(live, walletService);
+            order.verify(live).cancel();
+            order.verify(walletService).debit(eq(travelerId), eq("EUR"), any(),
+                    eq(com.yadony.api.payments.wallet.WalletTransactionType.COMMISSION_DEDUCTED), any());
+            assertThat(bid.getCommissionChargedVia()).isEqualTo(CommissionChargedVia.WALLET);
+            // Même convention que OrphanedPaymentIntentCleanupJob : un réessai carte part sur une clé neuve.
+            assertThat(bid.getCommissionPaymentIntentId()).isNull();
+            assertThat(bid.getCommissionRetryCount()).isEqualTo(3);
+        }
+
+        @Test
+        void walletFirst_cardAttemptAlreadySucceeded_acceptsByCardWithoutTouchingTheWallet() {
+            bid.setCommissionStatus(CommissionStatus.REQUIRES_3DS);
+            bid.setCommissionPaymentIntentId("pi_card_attempt");
+            givenWalletCoversCommission();
+            PaymentIntent done = cardAttempt("succeeded");
+
+            AcceptBidResponse resp;
+            try (MockedStatic<PaymentIntent> st = mockStatic(PaymentIntent.class)) {
+                st.when(() -> PaymentIntent.retrieve("pi_card_attempt")).thenReturn(done);
+                resp = service.acceptCashBid(bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST);
+            }
+
+            assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
+            assertThat(bid.getCommissionStatus()).isEqualTo(CommissionStatus.CHARGED);
+            assertThat(bid.getCommissionChargedVia()).isEqualTo(CommissionChargedVia.CARD);
+            assertThat(bid.getCashCommissionChargedAmount()).isEqualByComparingTo("12.00");
+            verify(walletService, never()).getBalanceForUpdate(any(), any());
+        }
+
+        @Test
+        void walletFirst_cardAttemptStillProcessing_refusedWithoutDebit() {
+            bid.setCommissionStatus(CommissionStatus.REQUIRES_3DS);
+            bid.setCommissionPaymentIntentId("pi_card_attempt");
+            givenWalletCoversCommission();
+            PaymentIntent processing = cardAttempt("processing");
+
+            try (MockedStatic<PaymentIntent> st = mockStatic(PaymentIntent.class)) {
+                st.when(() -> PaymentIntent.retrieve("pi_card_attempt")).thenReturn(processing);
+                assertThatThrownBy(() -> service.acceptCashBid(
+                        bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST))
+                        .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
+                        .satisfies(e -> {
+                            var y = (com.yadony.api.common.YadonyBusinessException) e;
+                            assertThat(y.getStatus()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+                            assertThat(y.getErrorCode()).isEqualTo("commission-card-attempt-pending");
+                        });
+            }
+
+            verify(walletService, never()).getBalanceForUpdate(any(), any());
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PENDING);
+        }
+
+        @Test
+        void walletFirst_cardAttemptCancelRefused_refusedWithoutDebit() throws StripeException {
+            bid.setCommissionStatus(CommissionStatus.FAILED);
+            bid.setCommissionPaymentIntentId("pi_card_attempt");
+            givenWalletCoversCommission();
+            PaymentIntent live = cardAttempt("requires_action");
+            when(live.cancel()).thenThrow(new com.stripe.exception.ApiConnectionException("reset"));
+
+            try (MockedStatic<PaymentIntent> st = mockStatic(PaymentIntent.class)) {
+                st.when(() -> PaymentIntent.retrieve("pi_card_attempt")).thenReturn(live);
+                assertThatThrownBy(() -> service.acceptCashBid(
+                        bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST))
+                        .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
+                        .satisfies(e -> assertThat(((com.yadony.api.common.YadonyBusinessException) e).getErrorCode())
+                                .isEqualTo("commission-card-attempt-pending"));
+            }
+
+            verify(walletService, never()).getBalanceForUpdate(any(), any());
+            assertThat(bid.getCommissionPaymentIntentId()).isEqualTo("pi_card_attempt");
+        }
+
+        @Test
+        void walletFirst_cardAttemptUnreadable_refusedWithoutDebit() {
+            bid.setCommissionStatus(CommissionStatus.REQUIRES_3DS);
+            bid.setCommissionPaymentIntentId("pi_card_attempt");
+            givenWalletCoversCommission();
+
+            try (MockedStatic<PaymentIntent> st = mockStatic(PaymentIntent.class)) {
+                st.when(() -> PaymentIntent.retrieve("pi_card_attempt"))
+                        .thenThrow(new com.stripe.exception.ApiConnectionException("timeout"));
+                assertThatThrownBy(() -> service.acceptCashBid(
+                        bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST))
+                        .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
+                        .satisfies(e -> assertThat(((com.yadony.api.common.YadonyBusinessException) e).getStatus())
+                                .isEqualTo(org.springframework.http.HttpStatus.BAD_GATEWAY));
+            }
+
+            verify(walletService, never()).getBalanceForUpdate(any(), any());
+        }
+
+        @Test
+        void walletFirst_cardAttemptAlreadyCanceled_debitsWalletAndFreesTheKey() {
+            bid.setCommissionStatus(CommissionStatus.FAILED);
+            bid.setCommissionPaymentIntentId("pi_card_attempt");
+            givenWalletCoversCommission();
+            PaymentIntent canceled = cardAttempt("canceled");
+
+            AcceptBidResponse resp;
+            try (MockedStatic<PaymentIntent> st = mockStatic(PaymentIntent.class)) {
+                st.when(() -> PaymentIntent.retrieve("pi_card_attempt")).thenReturn(canceled);
+                resp = service.acceptCashBid(bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST);
+            }
+
+            assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+            assertThat(bid.getCommissionChargedVia()).isEqualTo(CommissionChargedVia.WALLET);
+            assertThat(bid.getCommissionRetryCount()).isEqualTo(1);
+        }
+
+        @Test
+        void walletFirst_commissionAlreadyChargedByCardWebhook_acceptsWithoutDebit() {
+            // Le webhook payment_intent.succeeded a réglé la commission, la demande est encore PENDING.
+            bid.setCommissionStatus(CommissionStatus.CHARGED);
+            bid.setCommissionChargedVia(CommissionChargedVia.CARD);
+            bid.setCommissionPaymentIntentId("pi_card_attempt");
+            givenWalletCoversCommission();
+
+            AcceptBidResponse resp = service.acceptCashBid(
+                    bid.getId(), travelerId, com.yadony.api.payments.cash.CommissionSource.WALLET_FIRST);
+
+            assertThat(resp.status()).isEqualTo(AcceptanceStatusDto.ACCEPTED);
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
+            assertThat(bid.getCommissionChargedVia()).isEqualTo(CommissionChargedVia.CARD);
+            verify(walletService, never()).getBalanceForUpdate(any(), any());
+        }
+
         @Test
         void walletFirstPath_nonEurCurrency_checksAndDebitsInBidCurrency() {
             // Un bid/annonce CAD doit interroger et débiter le wallet CAD, pas le

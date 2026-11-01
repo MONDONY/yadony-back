@@ -560,4 +560,111 @@ class ProBillingStripeWebhookHandlerTest {
 
         verifyNoInteractions(repository, subscriptionService);
     }
+
+    // --- Audit doublons 01/11 : deux sessions Checkout payées pour le même utilisateur ---
+
+    private static final String NEW_SUBSCRIPTION_ID = "sub_new";
+
+    private static String paidCheckoutFor(String subscriptionId) {
+        return "{\"id\":\"cs_dup\",\"payment_status\":\"paid\",\"client_reference_id\":\"" + USER_ID
+                + "\",\"customer\":\"cus_1\",\"subscription\":\"" + subscriptionId
+                + "\",\"metadata\":{\"billing_cycle\":\"MONTHLY\"}}";
+    }
+
+    private static Subscription stripeSubscription(String status) {
+        Subscription sub = mock(Subscription.class);
+        org.mockito.Mockito.lenient().when(sub.getStatus()).thenReturn(status);
+        org.mockito.Mockito.lenient().when(sub.getLatestInvoice()).thenReturn("in_dup");
+        return sub;
+    }
+
+    @Test
+    @DisplayName("un second abonnement payé alors que le premier vit chez Stripe est résilié, jamais activé")
+    void secondPaidCheckoutWhileFirstSubscriptionIsLive_isCanceledNotActivated() throws Exception {
+        when(repository.findByUserId(USER_ID)).thenReturn(Optional.of(existingSubscription(ProSubscriptionStatus.ACTIVE)));
+        Subscription live = stripeSubscription("active");
+        Subscription duplicate = stripeSubscription("active");
+
+        try (MockedStatic<Subscription> subStatic = mockStatic(Subscription.class)) {
+            subStatic.when(() -> Subscription.retrieve(SUBSCRIPTION_ID)).thenReturn(live);
+            subStatic.when(() -> Subscription.retrieve(NEW_SUBSCRIPTION_ID)).thenReturn(duplicate);
+
+            handler().handle(event("checkout.session.completed", paidCheckoutFor(NEW_SUBSCRIPTION_ID)));
+        }
+
+        verify(duplicate).cancel();
+        verify(live, never()).cancel();
+        verify(subscriptionService, never()).activateFromStripe(any(), any(), any(), any(), any());
+        ArgumentCaptor<Map<String, Object>> context = ArgumentCaptor.forClass(Map.class);
+        verify(adminAlertService).raise(eq("BILLING_DUPLICATE_SUBSCRIPTION"), anyString(), context.capture());
+        assertThat(context.getValue()).containsEntry("canceledSubscriptionId", NEW_SUBSCRIPTION_ID)
+                .containsEntry("keptSubscriptionId", SUBSCRIPTION_ID)
+                .containsEntry("invoiceToRefund", "in_dup");
+    }
+
+    @Test
+    @DisplayName("un doublon déjà résilié (rejeu de l'événement) n'est pas résilié une seconde fois")
+    void duplicateAlreadyCanceled_isNotCanceledAgain() throws Exception {
+        when(repository.findByUserId(USER_ID)).thenReturn(Optional.of(existingSubscription(ProSubscriptionStatus.ACTIVE)));
+        Subscription live = stripeSubscription("active");
+        Subscription duplicate = stripeSubscription("canceled");
+
+        try (MockedStatic<Subscription> subStatic = mockStatic(Subscription.class)) {
+            subStatic.when(() -> Subscription.retrieve(SUBSCRIPTION_ID)).thenReturn(live);
+            subStatic.when(() -> Subscription.retrieve(NEW_SUBSCRIPTION_ID)).thenReturn(duplicate);
+
+            handler().handle(event("checkout.session.completed", paidCheckoutFor(NEW_SUBSCRIPTION_ID)));
+        }
+
+        verify(duplicate, never()).cancel();
+        verify(subscriptionService, never()).activateFromStripe(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("l'abonnement enregistré n'existe plus chez Stripe : le nouveau est activé normalement")
+    void recordedSubscriptionDeadAtStripe_newOneIsActivated() throws Exception {
+        when(repository.findByUserId(USER_ID)).thenReturn(Optional.of(existingSubscription(ProSubscriptionStatus.ACTIVE)));
+        Subscription dead = stripeSubscription("canceled");
+
+        try (MockedStatic<Subscription> subStatic = mockStatic(Subscription.class)) {
+            subStatic.when(() -> Subscription.retrieve(SUBSCRIPTION_ID)).thenReturn(dead);
+
+            handler().handle(event("checkout.session.completed", paidCheckoutFor(NEW_SUBSCRIPTION_ID)));
+        }
+
+        verify(subscriptionService).activateFromStripe(eq(USER_ID), eq("cus_1"), eq(NEW_SUBSCRIPTION_ID),
+                eq(BillingCycle.MONTHLY), any(Instant.class));
+        verify(adminAlertService, never()).raise(eq("BILLING_DUPLICATE_SUBSCRIPTION"), anyString(), anyMap());
+    }
+
+    @Test
+    @DisplayName("rejeu du checkout de l'abonnement déjà enregistré : réactivation idempotente, aucun appel Stripe")
+    void replayOfTheRecordedSubscription_isActivatedWithoutStripeCall() {
+        when(repository.findByUserId(USER_ID)).thenReturn(Optional.of(existingSubscription(ProSubscriptionStatus.ACTIVE)));
+
+        try (MockedStatic<Subscription> subStatic = mockStatic(Subscription.class)) {
+            handler().handle(event("checkout.session.completed", paidCheckoutFor(SUBSCRIPTION_ID)));
+            subStatic.verifyNoInteractions();
+        }
+
+        verify(subscriptionService).activateFromStripe(eq(USER_ID), eq("cus_1"), eq(SUBSCRIPTION_ID),
+                eq(BillingCycle.MONTHLY), any(Instant.class));
+    }
+
+    @Test
+    @DisplayName("abonnement enregistré illisible chez Stripe : exception pour rejouer l'événement, rien activé ni résilié")
+    void recordedSubscriptionUnreadable_throwsSoTheEventIsReplayed() {
+        when(repository.findByUserId(USER_ID)).thenReturn(Optional.of(existingSubscription(ProSubscriptionStatus.ACTIVE)));
+
+        try (MockedStatic<Subscription> subStatic = mockStatic(Subscription.class)) {
+            subStatic.when(() -> Subscription.retrieve(SUBSCRIPTION_ID))
+                    .thenThrow(new com.stripe.exception.ApiConnectionException("timeout"));
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    handler().handle(event("checkout.session.completed", paidCheckoutFor(NEW_SUBSCRIPTION_ID))))
+                    .isInstanceOf(IllegalStateException.class);
+        }
+
+        verify(subscriptionService, never()).activateFromStripe(any(), any(), any(), any(), any());
+    }
 }
