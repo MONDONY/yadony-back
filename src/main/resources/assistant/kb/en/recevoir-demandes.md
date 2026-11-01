@@ -7,7 +7,7 @@ routes:
     label: Requests received
 ---
 Senders' requests on your trips arrive in Activity › Requests received, sorted into To review, Accepted and Completed.
-You can also reply from the trip screen: under "To do", the "Request 1 of N" card shows the sender, the parcel and what you earn, with "Decline" and "Accept". After you reply, the next request appears; "See all N requests" opens the whole list.
+You can also reply from the trip screen: under "To do", requests come first among the urgent actions, on the "Request 1 of N" card, which shows the sender, the parcel and what you earn, with "Decline" and "Accept". After you reply, the next request appears; "See all N requests" opens the whole list. A card request only comes up for review once the sender's card has been charged. Once the trip has left, or the drop-off deadline has passed, they are no longer offered there.
 Open a request to check the parcel, its weight, its content and what you earn, then tap Accept or Decline, choosing a reason the sender will see.
 For a cash payment, the Yadony service fee is taken from your wallet or your service fee card when you accept.
 Once the request is accepted, you can contact the sender.
