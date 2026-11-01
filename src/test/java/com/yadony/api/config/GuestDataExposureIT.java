@@ -414,6 +414,10 @@ class GuestDataExposureIT {
                 .isNotEmpty();
         auditer(corps, "GET /announcements/{id}");
 
+        assertThat(corps.has("trackingActive"))
+                .as("trackingActive est reserve au voyageur proprietaire : absent pour un invite")
+                .isFalse();
+
         assertThat(corps.path("pricePerKgDisplay").decimalValue())
                 .as("le brut au kilo doit rester servi a un visiteur")
                 .isGreaterThan(BigDecimal.ZERO);
