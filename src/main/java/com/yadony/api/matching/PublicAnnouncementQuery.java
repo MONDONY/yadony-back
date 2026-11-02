@@ -39,13 +39,12 @@ public record PublicAnnouncementQuery(
                                              String transportMode, String contentType,
                                              Integer page, LocalDate today) {
         LocalDate from = dateFrom != null ? dateFrom : today;
-        if (dateTo != null) {
-            if (from.isAfter(dateTo)) {
-                throw invalid("dateFrom must not be after dateTo");
-            }
-            if (ChronoUnit.DAYS.between(from, dateTo) > MAX_RANGE_DAYS) {
-                throw invalid("Date range must not exceed " + MAX_RANGE_DAYS + " days");
-            }
+        LocalDate to = dateTo != null ? dateTo : from.plusDays(MAX_RANGE_DAYS);
+        if (from.isAfter(to)) {
+            throw invalid("dateFrom must not be after dateTo");
+        }
+        if (ChronoUnit.DAYS.between(from, to) > MAX_RANGE_DAYS) {
+            throw invalid("Date range must not exceed " + MAX_RANGE_DAYS + " days");
         }
         requireNotNegative(minAvailableKg, "minAvailableKg");
         requireNotNegative(maxPricePerKg, "maxPricePerKg");
@@ -60,7 +59,7 @@ public record PublicAnnouncementQuery(
         return new PublicAnnouncementQuery(
                 normaliseCity(departureCity, "departureCity"),
                 normaliseCity(arrivalCity, "arrivalCity"),
-                from, dateTo, minAvailableKg, maxPricePerKg, minRating, urgent,
+                from, to, minAvailableKg, maxPricePerKg, minRating, urgent,
                 blankToNull(transportMode, true),
                 blankToNull(contentType, false),
                 p);

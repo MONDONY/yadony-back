@@ -98,6 +98,29 @@ class PublicAnnouncementQueryTest {
     }
 
     @Test
+    void dateToParDefautVautDateFromPlus90Jours() {
+        PublicAnnouncementQuery q = query(null, null, null, null, null, null, null, null);
+        assertThat(q.dateFrom()).isEqualTo(LocalDate.of(2026, 11, 2));
+        assertThat(q.dateTo()).isEqualTo(LocalDate.of(2027, 1, 31));
+    }
+
+    @Test
+    void dateToAbsentEtDateToExplicitePlus90DonnentDesCriteresEgaux() {
+        LocalDate d = TODAY.plusDays(3);
+        PublicAnnouncementQuery sansDateTo = query(null, null, d, null, null, null, null, null);
+        PublicAnnouncementQuery avecDateTo = query(null, null, d, d.plusDays(90), null, null, null, null);
+        assertThat(sansDateTo).isEqualTo(avecDateTo);
+    }
+
+    @Test
+    void dateToAbsentAvecDateFromExpliciteDansLePasse() {
+        LocalDate passe = TODAY.minusDays(10);
+        PublicAnnouncementQuery q = query(null, null, passe, null, null, null, null, null);
+        assertThat(q.dateFrom()).isEqualTo(passe);
+        assertThat(q.dateTo()).isEqualTo(passe.plusDays(90));
+    }
+
+    @Test
     void refuseUneValeurNegative() {
         assertInvalid(() -> query(null, null, null, null, new BigDecimal("-1"), null, null, null));
         assertInvalid(() -> query(null, null, null, null, null, new BigDecimal("-0.01"), null, null));
