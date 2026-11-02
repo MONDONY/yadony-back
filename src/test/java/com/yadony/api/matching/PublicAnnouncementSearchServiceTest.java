@@ -15,6 +15,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -110,6 +111,17 @@ class PublicAnnouncementSearchServiceTest {
         assertThat(PublicAnnouncementCard.class.getRecordComponents())
                 .extracting(c -> c.getName())
                 .doesNotContain("travelerId", "pricePerKg", "description");
+    }
+
+    @Test
+    void transactionEnLectureSeuleBorneeA5Secondes() throws Exception {
+        // Spec 5.5.3 : une requête publique lente ne retient pas une connexion plus de 5 s.
+        Transactional tx = PublicAnnouncementSearchService.class
+                .getMethod("search", PublicAnnouncementQuery.class)
+                .getAnnotation(Transactional.class);
+        assertThat(tx).isNotNull();
+        assertThat(tx.readOnly()).isTrue();
+        assertThat(tx.timeout()).isEqualTo(5);
     }
 
     private static AnnouncementSearchResponse source() {

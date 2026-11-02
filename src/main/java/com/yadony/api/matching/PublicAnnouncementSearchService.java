@@ -33,7 +33,8 @@ public class PublicAnnouncementSearchService {
         this.announcementService = announcementService;
     }
 
-    @Transactional(readOnly = true)
+    /** Spec 5.5.3 : une recherche anonyme lente ne retient pas une connexion Hikari plus de 5 s. */
+    @Transactional(readOnly = true, timeout = 5)
     @Cacheable(value = "public-announcements-search", key = "#q")
     public PageResponse<PublicAnnouncementCard> search(PublicAnnouncementQuery q) {
         return PageResponse.from(announcementService.searchAnnouncements(
