@@ -11,6 +11,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -122,6 +123,18 @@ class PublicAnnouncementSearchServiceTest {
         assertThat(tx).isNotNull();
         assertThat(tx.readOnly()).isTrue();
         assertThat(tx.timeout()).isEqualTo(5);
+    }
+
+    @Test
+    void cacheSynchronisePourUneSeuleLectureParCle() throws Exception {
+        // Rafale de visiteurs sur la même clé froide : un seul calcul, les autres attendent.
+        Cacheable cacheable = PublicAnnouncementSearchService.class
+                .getMethod("search", PublicAnnouncementQuery.class)
+                .getAnnotation(Cacheable.class);
+        assertThat(cacheable).isNotNull();
+        assertThat(cacheable.value()).containsExactly("public-announcements-search");
+        assertThat(cacheable.key()).isEqualTo("#q");
+        assertThat(cacheable.sync()).isTrue();
     }
 
     private static AnnouncementSearchResponse source() {
