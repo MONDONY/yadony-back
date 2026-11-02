@@ -55,7 +55,8 @@ class PublicAnnouncementSearchCacheIT {
         assertThat(b).isSameAs(a);
         verify(announcementService, times(1)).searchAnnouncements(
                 any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                org.mockito.ArgumentMatchers.eq(AnnouncementSearchExtras.PUBLIC_VIEW));
         assertThat(cacheManager.getCache(CACHE).get(first)).isNotNull();
     }
 
@@ -69,6 +70,7 @@ class PublicAnnouncementSearchCacheIT {
 
         verify(announcementService, times(2)).searchAnnouncements(
                 any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                org.mockito.ArgumentMatchers.eq(AnnouncementSearchExtras.PUBLIC_VIEW));
     }
 }

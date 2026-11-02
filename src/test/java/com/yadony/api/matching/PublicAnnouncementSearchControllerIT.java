@@ -16,9 +16,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -31,11 +34,13 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertTimeout;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -244,6 +249,40 @@ class PublicAnnouncementSearchControllerIT {
         mockMvc.perform(get(PUBLIC_PATH).param("departureCity", "Paris"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content[0].currency").value("XOF"));
+    }
+
+    @Test
+    void unTauxDeChangeManquantNeCassePasLaRecherchePublique() throws Exception {
+        // La carte publique sert le prix dans la devise de l'annonce : aucune conversion n'est
+        // calculée, donc un taux absent ne fait plus échouer la page en 422.
+        Optional<ExchangeRateEntity> previousGbp = exchangeRateRepository.findById("GBP");
+        exchangeRateRepository.deleteById("GBP");
+        Cache rates = cacheManager.getCache("exchange-rates");
+        if (rates != null) {
+            rates.evict("GBP");
+        }
+        try {
+            AnnouncementEntity gbp = seed("Paris", "Dakar", AnnouncementStatus.ACTIVE);
+            gbp.setCurrency("GBP");
+            announcementRepository.save(gbp);
+
+            mockMvc.perform(get(PUBLIC_PATH).param("departureCity", "Paris"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.content.length()").value(1))
+                    .andExpect(jsonPath("$.content[0].currency").value("GBP"));
+
+            // La recherche de l'app garde son comportement : conversion, donc 422 sans taux.
+            mockMvc.perform(get("/announcements").param("departureCity", "Paris")
+                            .with(authentication(new UsernamePasswordAuthenticationToken(
+                                    "uid-public-search-viewer", null,
+                                    List.of(new SimpleGrantedAuthority("ROLE_SENDER"))))))
+                    .andExpect(status().isUnprocessableEntity())
+                    .andExpect(jsonPath("$.code").value("exchange-rate-missing"));
+        } finally {
+            // Remet GBP dans l'état trouvé (les IT s'enchaînent dans une même JVM).
+            previousGbp.ifPresent(e -> exchangeRateRepository.save(
+                    new ExchangeRateEntity("GBP", e.getUnitsPerEur())));
+        }
     }
 
     @Test

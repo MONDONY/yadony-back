@@ -320,6 +320,13 @@ public class AnnouncementService {
      * au moins un critère souple, chacun avec ses écarts ; moins d'écarts d'abord, puis le même
      * ordre que le bloc 1 ; plafonné à {@code similarMax}.
      *
+     * <p><b>Vue publique</b> ({@link AnnouncementSearchExtras#publicView()}, recherche anonyme
+     * du site) : ni bloc 2 ni conversions de devise ({@code convertedPricePerKg},
+     * {@code convertedCurrency}, {@code pricePerKgDisplayConverted} restent nuls). La carte
+     * publique ne sert ni l'un ni les autres ; les calculer coûtait jusqu'à 1000 lignes lues et
+     * faisait échouer toute la page en 422 {@code exchange-rate-missing} pour un taux manquant.
+     * Les appels de l'app ne posent jamais ce drapeau : leur comportement est inchangé.
+     *
      * <p>Le score ne sort jamais de cette classe : ni DTO, ni log, ni réponse.
      */
     @Transactional(readOnly = true)
@@ -509,7 +516,7 @@ public class AnnouncementService {
         long bookableExact = bookable != null ? bookable : total;
         List<RankingRow> similarRows = List.of();
         Map<UUID, List<UnmetCriterion>> unmetById = new HashMap<>();
-        if (!counterCall && pageable.getPageNumber() == 0 && hasCity
+        if (!counterCall && !filters.publicView() && pageable.getPageNumber() == 0 && hasCity
                 && bookableExact < rankingProperties.exactThreshold()) {
             // Exactes réservables à écarter du bloc 2 : déjà lues si toutes sont en mémoire,
             // sinon relues (moins de exactThreshold lignes).
@@ -537,7 +544,8 @@ public class AnnouncementService {
         List<AnnouncementEntity> toMap = new java.util.ArrayList<>(pageEntities);
         toMap.addAll(similarEntities);
         lookupTravelers(toMap.stream().map(RankingRow::of).toList(), travelers, lookedUp);
-        List<AnnouncementSearchResponse> mapped = mapAnnouncements(toMap, favIds, viewerCurrency, viewerId, travelers);
+        List<AnnouncementSearchResponse> mapped = mapAnnouncements(toMap, favIds, viewerCurrency,
+                !filters.publicView(), viewerId, travelers);
         List<AnnouncementSearchResponse> content = new java.util.ArrayList<>(mapped.subList(0, pageEntities.size()));
         List<SimilarAnnouncementResponse> similar = new java.util.ArrayList<>(similarEntities.size());
         for (int i = 0; i < similarEntities.size(); i++) {
@@ -703,9 +711,11 @@ public class AnnouncementService {
      * maps each to {@link AnnouncementSearchResponse}, then enriches the response with the
      * price equivalent converted into {@code viewerCurrency} (Tâche 10). Les voyageurs sont
      * déjà chargés par {@link #searchAnnouncements} (une seule requête pour les deux blocs).
+     * {@code convertPrices} faux (vue publique) : aucune conversion, champs convertis laissés nuls.
      */
     private List<AnnouncementSearchResponse> mapAnnouncements(List<AnnouncementEntity> entities,
                                                                 Set<UUID> favIds, String viewerCurrency,
+                                                                boolean convertPrices,
                                                                 UUID viewerId, Map<UUID, UserEntity> userMap) {
         List<UUID> announcementIds = entities.stream().map(AnnouncementEntity::getId).toList();
 
@@ -733,11 +743,13 @@ public class AnnouncementService {
         for (AnnouncementEntity a : entities) {
             AnnouncementSearchResponse base = announcementSearchMapper.toSearchResponse(
                     a, favIds.contains(a.getId()), userMap, bidCountMap, gridItemMap);
-            result.add(base.withConvertedPrice(
-                    convertedPricePerKgForResponse(a, viewerCurrency),
-                    viewerCurrency,
-                    pricePerKgDisplayConverted(base.pricePerKgDisplay(), a.getCurrency(), viewerCurrency))
-                    .withUniqueViewerCount(ownViewCounts.get(a.getId())));
+            AnnouncementSearchResponse priced = !convertPrices
+                    ? base
+                    : base.withConvertedPrice(
+                            convertedPricePerKgForResponse(a, viewerCurrency),
+                            viewerCurrency,
+                            pricePerKgDisplayConverted(base.pricePerKgDisplay(), a.getCurrency(), viewerCurrency));
+            result.add(priced.withUniqueViewerCount(ownViewCounts.get(a.getId())));
         }
         return result;
     }

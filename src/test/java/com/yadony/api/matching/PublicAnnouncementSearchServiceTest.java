@@ -50,7 +50,7 @@ class PublicAnnouncementSearchServiceTest {
                 "plane", "DOCUMENTS", 2, TODAY);
         when(announcementService.searchAnnouncements(
                 any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(Page.empty(PageRequest.of(2, 20)));
 
         service.search(q);
@@ -79,7 +79,9 @@ class PublicAnnouncementSearchServiceTest {
                 sortDir.capture(),
                 pageable.capture(),
                 isNull(),                                          // viewerFirebaseUid
-                org.mockito.ArgumentMatchers.eq(true));            // urgent
+                org.mockito.ArgumentMatchers.eq(true),             // urgent
+                // Vue publique : ni bloc 2 ni conversions de devise (I3).
+                org.mockito.ArgumentMatchers.eq(AnnouncementSearchExtras.PUBLIC_VIEW));
 
         assertThat(sortBy.getValue()).isEqualTo("date");
         assertThat(sortDir.getValue()).isEqualTo("asc");
@@ -94,7 +96,8 @@ class PublicAnnouncementSearchServiceTest {
         AnnouncementSearchResponse source = source();
         when(announcementService.searchAnnouncements(
                 anyString(), anyString(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), anyString(), anyString(), any(), any(), any()))
+                any(), any(), any(), any(), any(), anyString(), anyString(), any(), any(), any(),
+                org.mockito.ArgumentMatchers.eq(AnnouncementSearchExtras.PUBLIC_VIEW)))
                 .thenReturn(new PageImpl<>(List.of(source), PageRequest.of(0, 20), 1));
 
         PageResponse<PublicAnnouncementCard> result = service.search(q);
