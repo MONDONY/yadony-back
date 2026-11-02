@@ -119,10 +119,12 @@ public class CacheConfig {
 
         // public-announcements-search : recherche d'annonces ouverte aux visiteurs anonymes
         // (PublicAnnouncementSearchService). Endpoint sans authentification donc exposé aux
-        // rafales : la TTL de 60 s borne la charge sur la base, sans éviction manuelle (un retard
-        // d'une minute est invisible pour un visiteur). La clé est le record de critères
-        // normalisés, d'où 2000 entrées au plus. registerCustomCache et NON setCacheNames, cf.
-        // l'avertissement de platform-settings plus haut.
+        // rafales : la TTL de 60 s borne la charge sur la base, sans éviction manuelle. Fraîcheur
+        // réelle : un trajet créé, modifié ou publié apparaît au plus 60 s après (ces écritures
+        // purgent announcements-search en dessous) ; un changement qui ne purge pas ce cache
+        // interne (5 min) peut mettre jusqu'à 5 min à se voir (doc de story, piège a). La clé est
+        // le record de critères normalisés, d'où 2000 entrées au plus. registerCustomCache et NON
+        // setCacheNames, cf. l'avertissement de platform-settings plus haut.
         manager.registerCustomCache("public-announcements-search",
                 Caffeine.newBuilder()
                         .maximumSize(2000)
