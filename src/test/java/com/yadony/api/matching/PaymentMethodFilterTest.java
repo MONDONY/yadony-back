@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -31,5 +32,17 @@ class PaymentMethodFilterTest {
         assertThat(a.cacheKey()).isEqualTo(b.cacheKey());
         assertThat(AnnouncementSearchExtras.NONE.cacheKey()).isNotEqualTo(a.cacheKey());
         assertThat(new AnnouncementSearchExtras(null, null).paymentMethods()).isEmpty();
+    }
+
+    @Test
+    void extras_publicView_aSaPropreCleDeCacheEtResteFauxParDefaut() {
+        // La recherche publique saute le bloc 2 et les conversions : jamais la même entrée
+        // de cache qu'une recherche de l'app aux mêmes critères.
+        assertThat(AnnouncementSearchExtras.PUBLIC_VIEW.publicView()).isTrue();
+        assertThat(AnnouncementSearchExtras.PUBLIC_VIEW.cacheKey())
+                .isNotEqualTo(AnnouncementSearchExtras.NONE.cacheKey());
+        assertThat(AnnouncementSearchExtras.NONE.publicView()).isFalse();
+        assertThat(new AnnouncementSearchExtras(1, Set.of(), true).publicView()).isFalse();
+        assertThat(new AnnouncementSearchExtras(1, null).publicView()).isFalse();
     }
 }

@@ -266,6 +266,8 @@ class AnnouncementSearchRankingTest {
         Boolean kyc;
         Set<PaymentMethod> payments = Set.of();
         boolean includeFull;
+        /** Recherche publique anonyme (PublicAnnouncementSearchService) : ni bloc 2 ni conversions. */
+        boolean publicView;
         Pageable pageable = PageRequest.of(0, 20);
 
         TripSearchPage<AnnouncementSearchResponse> run() {
@@ -273,7 +275,7 @@ class AnnouncementSearchRankingTest {
                     dep, arr, from, to, minKg, null, maxPrice, minRating, null, null,
                     null, kyc, null, null, null, null,
                     sortBy, sortDir, pageable, viewer, null,
-                    new AnnouncementSearchExtras(null, payments, includeFull));
+                    new AnnouncementSearchExtras(null, payments, includeFull, publicView));
             assertThat(page).isInstanceOf(TripSearchPage.class);
             return (TripSearchPage<AnnouncementSearchResponse>) page;
         }
@@ -412,6 +414,92 @@ class AnnouncementSearchRankingTest {
         assertThat(page.getContent()).hasSize(7);
         assertThat(page.similarAnnouncements()).isEmpty();
         assertThat(reads).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("recherche publique : 6 exactes avec ville → ni bloc 2 ni lecture du vivier")
+    void publicView_sixExactWithCity_noSimilarBlock() {
+        UserEntity t = traveler();
+        List<AnnouncementEntity> exact = trips(t, 6, 11);
+        List<AnnouncementEntity> pool = new ArrayList<>(exact);
+        pool.add(trip(t, 20));
+        stubFindAll(exact, pool);
+        Q q = new Q();
+        q.from = TODAY.plusDays(10);
+        q.to = TODAY.plusDays(12);
+        q.sortBy = "date";
+        q.publicView = true;
+
+        TripSearchPage<AnnouncementSearchResponse> page = q.run();
+
+        assertThat(page.getContent()).hasSize(6);
+        assertThat(page.similarAnnouncements()).isEmpty();
+        // Une seule lecture : la page. Ni vivier du bloc 2 (jusqu'à 1000 lignes), ni relecture
+        // des exactes, ni chargement de voyageurs pour lui.
+        assertThat(reads).hasSize(1);
+        verify(announcementRepository, never()).findRankingRows(
+                ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class));
+    }
+
+    @Test
+    @DisplayName("même recherche sans le drapeau public → bloc 2 calculé comme avant")
+    void withoutPublicView_sixExactWithCity_similarBlockUnchanged() {
+        UserEntity t = traveler();
+        List<AnnouncementEntity> exact = trips(t, 6, 11);
+        AnnouncementEntity offDate = trip(t, 20);
+        List<AnnouncementEntity> pool = new ArrayList<>(exact);
+        pool.add(offDate);
+        stubFindAll(exact, pool);
+        Q q = new Q();
+        q.from = TODAY.plusDays(10);
+        q.to = TODAY.plusDays(12);
+        q.sortBy = "date";
+
+        TripSearchPage<AnnouncementSearchResponse> page = q.run();
+
+        assertThat(similarIds(page)).containsExactly(offDate.getId());
+        assertThat(reads).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("recherche publique : aucune conversion de devise, champs convertis absents")
+    void publicView_skipsCurrencyConversions() {
+        AnnouncementEntity xof = trip(traveler(), 11);
+        xof.setCurrency("XOF");
+        xof.setPricePerKg(BigDecimal.valueOf(5000));
+        when(priceGridService.displayPrice(any(), any())).thenReturn(BigDecimal.valueOf(5600));
+        stubFindAll(List.of(xof));
+        Q q = new Q();
+        q.sortBy = "date";
+        q.publicView = true;
+
+        TripSearchPage<AnnouncementSearchResponse> page = q.run();
+
+        verify(exchangeRateService, never()).convert(any(), any(), any());
+        AnnouncementSearchResponse r = page.getContent().get(0);
+        assertThat(r.pricePerKgDisplay()).isEqualByComparingTo("5600");
+        assertThat(r.currency()).isEqualTo("XOF");
+        assertThat(r.convertedPricePerKg()).isNull();
+        assertThat(r.convertedCurrency()).isNull();
+        assertThat(r.pricePerKgDisplayConverted()).isNull();
+    }
+
+    @Test
+    @DisplayName("sans le drapeau public → conversions inchangées")
+    void withoutPublicView_convertsAsBefore() {
+        AnnouncementEntity xof = trip(traveler(), 11);
+        xof.setCurrency("XOF");
+        xof.setPricePerKg(BigDecimal.valueOf(5000));
+        when(priceGridService.displayPrice(any(), any())).thenReturn(BigDecimal.valueOf(5600));
+        stubFindAll(List.of(xof));
+        Q q = new Q();
+        q.sortBy = "date";
+
+        AnnouncementSearchResponse r = q.run().getContent().get(0);
+
+        verify(exchangeRateService, atLeastOnce()).convert(any(), eq("XOF"), eq("EUR"));
+        assertThat(r.convertedCurrency()).isEqualTo("EUR");
+        assertThat(r.pricePerKgDisplayConverted()).isEqualByComparingTo("5600");
     }
 
     @Test

@@ -14,13 +14,25 @@ import java.util.stream.Collectors;
  * @param paymentMethods FLUTTER-G0, moyens recherchés (jamais null, vide = pas de filtre)
  * @param includeFull    FLUTTER-JH, ajoute les trajets complets à venir APRÈS les trajets
  *                       réservables. Absent (ancienne app, compteur) : réservables seuls.
+ * @param publicView     recherche publique anonyme ({@link PublicAnnouncementSearchService}) :
+ *                       ni bloc 2 ({@code similarAnnouncements}), ni conversions de devise, que
+ *                       la carte publique jetterait. Toujours {@code false} pour l'app.
  */
-public record AnnouncementSearchExtras(Integer maxStops, Set<PaymentMethod> paymentMethods, boolean includeFull) {
+public record AnnouncementSearchExtras(Integer maxStops, Set<PaymentMethod> paymentMethods, boolean includeFull,
+                                       boolean publicView) {
 
     public static final AnnouncementSearchExtras NONE = new AnnouncementSearchExtras(null, Set.of(), false);
 
+    /** Recherche publique anonyme : aucun filtre ajouté, bloc 2 et conversions sautés. */
+    public static final AnnouncementSearchExtras PUBLIC_VIEW = new AnnouncementSearchExtras(null, Set.of(), false, true);
+
     public AnnouncementSearchExtras {
         paymentMethods = paymentMethods == null ? Set.of() : Set.copyOf(paymentMethods);
+    }
+
+    /** Appels de l'app : jamais la vue publique. */
+    public AnnouncementSearchExtras(Integer maxStops, Set<PaymentMethod> paymentMethods, boolean includeFull) {
+        this(maxStops, paymentMethods, includeFull, false);
     }
 
     public AnnouncementSearchExtras(Integer maxStops, Set<PaymentMethod> paymentMethods) {
@@ -30,6 +42,7 @@ public record AnnouncementSearchExtras(Integer maxStops, Set<PaymentMethod> paym
     /** Fragment de clé de cache, stable quel que soit l'ordre des moyens reçus. */
     public String cacheKey() {
         String methods = paymentMethods.stream().map(Enum::name).sorted().collect(Collectors.joining(","));
-        return "stops=" + TripStops.searchBound(maxStops) + "_pm=" + methods + "_full=" + includeFull;
+        return "stops=" + TripStops.searchBound(maxStops) + "_pm=" + methods + "_full=" + includeFull
+                + "_public=" + publicView;
     }
 }
