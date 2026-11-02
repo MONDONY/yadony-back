@@ -117,6 +117,19 @@ public class CacheConfig {
                         .recordStats()
                         .build());
 
+        // public-announcements-search : recherche d'annonces ouverte aux visiteurs anonymes
+        // (PublicAnnouncementSearchService). Endpoint sans authentification donc exposé aux
+        // rafales : la TTL de 60 s borne la charge sur la base, sans éviction manuelle (un retard
+        // d'une minute est invisible pour un visiteur). La clé est le record de critères
+        // normalisés, d'où 2000 entrées au plus. registerCustomCache et NON setCacheNames, cf.
+        // l'avertissement de platform-settings plus haut.
+        manager.registerCustomCache("public-announcements-search",
+                Caffeine.newBuilder()
+                        .maximumSize(2000)
+                        .expireAfterWrite(60, TimeUnit.SECONDS)
+                        .recordStats()
+                        .build());
+
         // commission-grids : liste de TOUTES les grilles de commission non annulees (CommissionGridService).
         // Lue a chaque devis, paiement et ecran de prix ; la grille en vigueur est choisie dans la liste
         // d'apres l'horloge, a chaque appel, donc un changement de grille a sa date ne depend pas du cache.
