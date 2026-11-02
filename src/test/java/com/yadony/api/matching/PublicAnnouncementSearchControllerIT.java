@@ -25,6 +25,7 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -33,6 +34,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertTimeout;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -175,6 +177,16 @@ class PublicAnnouncementSearchControllerIT {
                     .andExpect(status().isBadRequest())
                     .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON));
         }
+    }
+
+    @Test
+    void refuseUnExposantGeantRapidement() {
+        // Avant la borne : 10^20000004 matérialisé par setScale(4), 9,4 s et une connexion tenue.
+        assertTimeout(Duration.ofSeconds(5), () ->
+                mockMvc.perform(get(PUBLIC_PATH).param("maxPricePerKg", "1E+20000000"))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                        .andExpect(jsonPath("$.code").value("invalid-search")));
     }
 
     @Test

@@ -131,6 +131,58 @@ class PublicAnnouncementQueryTest {
         assertThat(ok.minRating()).isEqualByComparingTo("5");
     }
 
+    /** Un des trois paramètres numériques posé à {@code value}, les deux autres absents. */
+    private static PublicAnnouncementQuery numeric(int which, BigDecimal value) {
+        return switch (which) {
+            case 0 -> query(null, null, null, null, value, null, null, null);
+            case 1 -> query(null, null, null, null, null, value, null, null);
+            default -> query(null, null, null, null, null, null, value, null);
+        };
+    }
+
+    @Test
+    void refuseLesExposantsGeantsSurLesTroisParametresNumeriques() {
+        // 1E+20000000 tient en 12 octets mais setScale(4) le matérialisait en 10^20000004 (9,4 s).
+        for (String raw : new String[] {"1E+999999", "1E-999999", "1E+2147483647"}) {
+            BigDecimal value = new BigDecimal(raw);
+            for (int which = 0; which < 3; which++) {
+                int field = which;
+                assertInvalid(() -> numeric(field, value));
+            }
+        }
+    }
+
+    @Test
+    void refusePlusDeQuatreDecimales() {
+        for (int which = 0; which < 3; which++) {
+            int field = which;
+            assertInvalid(() -> numeric(field, new BigDecimal("1.00001")));
+        }
+        assertThat(numeric(1, new BigDecimal("1.0001")).maxPricePerKg()).isEqualByComparingTo("1.0001");
+    }
+
+    @Test
+    void unVirguleZeroEtUnDonnentDesCriteresEgaux() {
+        for (int which = 0; which < 3; which++) {
+            assertThat(numeric(which, new BigDecimal("1.0")))
+                    .isEqualTo(numeric(which, new BigDecimal("1")))
+                    .isEqualTo(numeric(which, new BigDecimal("1.0000")));
+        }
+        assertThat(numeric(0, new BigDecimal("0.00")).minAvailableKg()).isEqualTo(BigDecimal.ZERO);
+    }
+
+    @Test
+    void borneHauteDesKilosEtDuPrix() {
+        assertThat(numeric(0, new BigDecimal("1000")).minAvailableKg()).isEqualByComparingTo("1000");
+        assertInvalid(() -> numeric(0, new BigDecimal("1000.0001")));
+        assertInvalid(() -> numeric(0, new BigDecimal("1001")));
+        assertThat(numeric(1, new BigDecimal("100000")).maxPricePerKg()).isEqualByComparingTo("100000");
+        assertInvalid(() -> numeric(1, new BigDecimal("100000.0001")));
+        assertInvalid(() -> numeric(1, new BigDecimal("100001")));
+        assertThat(PublicAnnouncementQuery.MAX_MIN_AVAILABLE_KG).isEqualByComparingTo("1000");
+        assertThat(PublicAnnouncementQuery.MAX_PRICE_PER_KG).isEqualByComparingTo("100000");
+    }
+
     @Test
     void normaliseModeDeTransportEtTypeDeContenu() {
         PublicAnnouncementQuery q = PublicAnnouncementQuery.of(null, null, null, null, null, null, null,

@@ -31,6 +31,12 @@ public record PublicAnnouncementQuery(
     public static final int MAX_PAGE = 4;
     public static final long MAX_RANGE_DAYS = 90;
     private static final BigDecimal MAX_RATING = new BigDecimal("5");
+    /** Borne haute de {@code minAvailableKg}. */
+    public static final BigDecimal MAX_MIN_AVAILABLE_KG = new BigDecimal("1000");
+    /** Borne haute de {@code maxPricePerKg} (couvre un prix au kilo en F CFA). */
+    public static final BigDecimal MAX_PRICE_PER_KG = new BigDecimal("100000");
+    /** Décimales admises sur les paramètres numériques ({@code 1E-999999} est donc refusé). */
+    public static final int MAX_DECIMALS = 4;
 
     public static PublicAnnouncementQuery of(String departureCity, String arrivalCity,
                                              LocalDate dateFrom, LocalDate dateTo,
@@ -46,12 +52,9 @@ public record PublicAnnouncementQuery(
         if (ChronoUnit.DAYS.between(from, to) > MAX_RANGE_DAYS) {
             throw invalid("Date range must not exceed " + MAX_RANGE_DAYS + " days");
         }
-        requireNotNegative(minAvailableKg, "minAvailableKg");
-        requireNotNegative(maxPricePerKg, "maxPricePerKg");
-        if (minRating != null
-                && (minRating.signum() < 0 || minRating.compareTo(MAX_RATING) > 0)) {
-            throw invalid("minRating must be between 0 and 5");
-        }
+        BigDecimal kg = boundedDecimal(minAvailableKg, "minAvailableKg", MAX_MIN_AVAILABLE_KG);
+        BigDecimal price = boundedDecimal(maxPricePerKg, "maxPricePerKg", MAX_PRICE_PER_KG);
+        BigDecimal rating = boundedDecimal(minRating, "minRating", MAX_RATING);
         int p = page == null ? 0 : page;
         if (p < 0 || p > MAX_PAGE) {
             throw invalid("page must be between 0 and " + MAX_PAGE);
@@ -59,7 +62,7 @@ public record PublicAnnouncementQuery(
         return new PublicAnnouncementQuery(
                 normaliseCity(departureCity, "departureCity"),
                 normaliseCity(arrivalCity, "arrivalCity"),
-                from, to, minAvailableKg, maxPricePerKg, minRating, urgent,
+                from, to, kg, price, rating, urgent,
                 blankToNull(transportMode, true),
                 blankToNull(contentType, false),
                 p);
@@ -90,10 +93,25 @@ public record PublicAnnouncementQuery(
         return upperCase ? trimmed.toUpperCase(Locale.ROOT) : trimmed;
     }
 
-    private static void requireNotNegative(BigDecimal value, String field) {
-        if (value != null && value.signum() < 0) {
-            throw invalid(field + " must not be negative");
+    /**
+     * Borne un paramètre décimal AVANT tout calcul : Spring lie {@code 1E+20000000} (12 octets)
+     * par {@code new BigDecimal}, et le premier {@code setScale} en aval matérialise alors un
+     * entier de 20 millions de chiffres. {@code signum}, {@code compareTo} et {@code scale} ne
+     * lisent que le signe et l'exposant : ils restent instantanés même sur un exposant géant.
+     * La valeur rendue est sans zéros de queue, pour que {@code 1.0} et {@code 1} donnent la
+     * même clé de cache.
+     */
+    private static BigDecimal boundedDecimal(BigDecimal value, String field, BigDecimal max) {
+        if (value == null) {
+            return null;
         }
+        if (value.signum() < 0 || value.compareTo(max) > 0) {
+            throw invalid(field + " must be between 0 and " + max.toPlainString());
+        }
+        if (value.scale() > MAX_DECIMALS) {
+            throw invalid(field + " must not have more than " + MAX_DECIMALS + " decimals");
+        }
+        return value.stripTrailingZeros();
     }
 
     private static YadonyBusinessException invalid(String detail) {
