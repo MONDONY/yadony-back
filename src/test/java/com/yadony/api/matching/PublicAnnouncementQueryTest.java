@@ -114,10 +114,24 @@ class PublicAnnouncementQueryTest {
 
     @Test
     void dateToAbsentAvecDateFromExpliciteDansLePasse() {
+        // Annonces ouvertes et à venir : un dateFrom passé est ramené à aujourd'hui.
         LocalDate passe = TODAY.minusDays(10);
         PublicAnnouncementQuery q = query(null, null, passe, null, null, null, null, null);
-        assertThat(q.dateFrom()).isEqualTo(passe);
-        assertThat(q.dateTo()).isEqualTo(passe.plusDays(90));
+        assertThat(q.dateFrom()).isEqualTo(TODAY);
+        assertThat(q.dateTo()).isEqualTo(TODAY.plusDays(90));
+        assertThat(q).isEqualTo(query(null, null, null, null, null, null, null, null));
+    }
+
+    @Test
+    void laPlageDe90JoursSeMesureDepuisLeDateFromRamene() {
+        // 95 jours depuis le dateFrom saisi, 85 depuis aujourd'hui : accepté.
+        PublicAnnouncementQuery q = query(null, null, TODAY.minusDays(10), TODAY.plusDays(85),
+                null, null, null, null);
+        assertThat(q.dateFrom()).isEqualTo(TODAY);
+        assertThat(q.dateTo()).isEqualTo(TODAY.plusDays(85));
+        // Une fin déjà passée reste incohérente avec « à venir » : refusée.
+        assertInvalid(() -> query(null, null, TODAY.minusDays(10), TODAY.minusDays(1),
+                null, null, null, null));
     }
 
     @Test
@@ -191,9 +205,29 @@ class PublicAnnouncementQueryTest {
         assertThat(q.contentType()).isEqualTo("DOCUMENTS");
         assertThat(q.urgent()).isTrue();
 
-        PublicAnnouncementQuery inconnu = PublicAnnouncementQuery.of(null, null, null, null, null, null, null,
-                null, "teleporter", "  ", 0, TODAY);
-        assertThat(inconnu.transportMode()).isEqualTo("TELEPORTER");
-        assertThat(inconnu.contentType()).isNull();
+        PublicAnnouncementQuery vide = PublicAnnouncementQuery.of(null, null, null, null, null, null, null,
+                null, "  ", "  ", 0, TODAY);
+        assertThat(vide.transportMode()).isNull();
+        assertThat(vide.contentType()).isNull();
+    }
+
+    @Test
+    void refuseUnModeDeTransportInconnu() {
+        assertInvalid(() -> PublicAnnouncementQuery.of(null, null, null, null, null, null, null,
+                null, "teleporter", null, 0, TODAY));
+        for (TransportMode mode : TransportMode.values()) {
+            assertThat(PublicAnnouncementQuery.of(null, null, null, null, null, null, null,
+                    null, mode.name().toLowerCase(java.util.Locale.ROOT), null, 0, TODAY).transportMode())
+                    .isEqualTo(mode.name());
+        }
+    }
+
+    @Test
+    void borneLeTypeDeContenuA40Caracteres() {
+        assertInvalid(() -> PublicAnnouncementQuery.of(null, null, null, null, null, null, null,
+                null, null, "a".repeat(41), 0, TODAY));
+        assertThat(PublicAnnouncementQuery.of(null, null, null, null, null, null, null,
+                null, null, " " + "a".repeat(40) + " ", 0, TODAY).contentType()).hasSize(40);
+        assertThat(PublicAnnouncementQuery.MAX_CONTENT_TYPE_LENGTH).isEqualTo(40);
     }
 }

@@ -28,6 +28,7 @@ public record PublicAnnouncementQuery(
         int page) {
 
     public static final int MAX_CITY_LENGTH = 80;
+    public static final int MAX_CONTENT_TYPE_LENGTH = 40;
     public static final int MAX_PAGE = 4;
     public static final long MAX_RANGE_DAYS = 90;
     private static final BigDecimal MAX_RATING = new BigDecimal("5");
@@ -44,7 +45,9 @@ public record PublicAnnouncementQuery(
                                              BigDecimal minRating, Boolean urgent,
                                              String transportMode, String contentType,
                                              Integer page, LocalDate today) {
-        LocalDate from = dateFrom != null ? dateFrom : today;
+        // Annonces ouvertes et à venir : un dateFrom passé est ramené à aujourd'hui, et la plage
+        // de 90 jours se mesure depuis cette date ramenée.
+        LocalDate from = dateFrom != null && dateFrom.isAfter(today) ? dateFrom : today;
         LocalDate to = dateTo != null ? dateTo : from.plusDays(MAX_RANGE_DAYS);
         if (from.isAfter(to)) {
             throw invalid("dateFrom must not be after dateTo");
@@ -63,9 +66,32 @@ public record PublicAnnouncementQuery(
                 normaliseCity(departureCity, "departureCity"),
                 normaliseCity(arrivalCity, "arrivalCity"),
                 from, to, kg, price, rating, urgent,
-                blankToNull(transportMode, true),
-                blankToNull(contentType, false),
+                normaliseTransportMode(transportMode),
+                normaliseContentType(contentType),
                 p);
+    }
+
+    /** {@code strip}, insensible à la casse, puis le nom exact de {@link TransportMode} ; inconnu = 400. */
+    private static String normaliseTransportMode(String value) {
+        String trimmed = blankToNull(value);
+        if (trimmed == null) {
+            return null;
+        }
+        String upper = trimmed.toUpperCase(Locale.ROOT);
+        for (TransportMode mode : TransportMode.values()) {
+            if (mode.name().equals(upper)) {
+                return mode.name();
+            }
+        }
+        throw invalid("transportMode must be one of " + java.util.Arrays.toString(TransportMode.values()));
+    }
+
+    private static String normaliseContentType(String value) {
+        String trimmed = blankToNull(value);
+        if (trimmed != null && trimmed.length() > MAX_CONTENT_TYPE_LENGTH) {
+            throw invalid("contentType must not exceed " + MAX_CONTENT_TYPE_LENGTH + " characters");
+        }
+        return trimmed;
     }
 
     private static String normaliseCity(String value, String field) {
@@ -82,15 +108,12 @@ public record PublicAnnouncementQuery(
         return normalised;
     }
 
-    private static String blankToNull(String value, boolean upperCase) {
+    private static String blankToNull(String value) {
         if (value == null) {
             return null;
         }
         String trimmed = value.strip();
-        if (trimmed.isEmpty()) {
-            return null;
-        }
-        return upperCase ? trimmed.toUpperCase(Locale.ROOT) : trimmed;
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     /**
