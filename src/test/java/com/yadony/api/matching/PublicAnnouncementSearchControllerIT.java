@@ -31,6 +31,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -102,6 +103,36 @@ class PublicAnnouncementSearchControllerIT {
                 .andExpect(jsonPath("$.content[0].departureCity").value("Paris"))
                 .andExpect(jsonPath("$.content[0].pricePerKgDisplay").exists())
                 .andExpect(jsonPath("$.content[0].traveler.displayName").exists());
+    }
+
+    @Test
+    void laCarteNeServQueLaListeBlancheDeClefs() throws Exception {
+        UserEntity traveler = userRepository.findById(travelerId).orElseThrow();
+        traveler.setAverageRating(new BigDecimal("4.5"));
+        userRepository.save(traveler);
+        AnnouncementEntity free = seed("Paris", "Dakar", AnnouncementStatus.ACTIVE);
+        free.setCapacityUnit(CapacityUnit.KG_FREE);
+        free.setAvailableKg(BigDecimal.ONE);
+        free.setAcceptedContentTypes(new java.util.ArrayList<>(List.of("DOCUMENTS")));
+        announcementRepository.save(free);
+
+        JsonNode card = objectMapper.readTree(getOk(PUBLIC_PATH + "?departureCity=Paris"))
+                .path("content").get(0);
+
+        Set<String> keys = new HashSet<>();
+        card.fieldNames().forEachRemaining(keys::add);
+        assertThat(keys).containsExactlyInAnyOrder(
+                "id", "departureCity", "arrivalCity", "departureDate", "availableKg",
+                "capacityUnit", "pricePerKgDisplay", "currency", "pricingMode", "transportMode",
+                "urgent", "acceptedContentTypes", "traveler");
+        Set<String> travelerKeys = new HashSet<>();
+        card.path("traveler").fieldNames().forEachRemaining(travelerKeys::add);
+        assertThat(travelerKeys).containsExactlyInAnyOrder(
+                "displayName", "averageRating", "totalTrips", "identityVerified");
+        // Kilo libre : availableKg vaut 1 techniquement, capacityUnit dit au client de ne pas l'afficher.
+        assertThat(card.path("capacityUnit").asText()).isEqualTo("KG_FREE");
+        assertThat(card.path("pricingMode").asText()).isEqualTo("KG");
+        assertThat(card.path("acceptedContentTypes").get(0).asText()).isEqualTo("DOCUMENTS");
     }
 
     @Test

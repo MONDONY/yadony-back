@@ -1,6 +1,8 @@
 package com.yadony.api.matching.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.yadony.api.matching.CapacityUnit;
+import com.yadony.api.matching.PricingMode;
 import com.yadony.api.matching.TransportMode;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -15,6 +17,12 @@ import java.util.UUID;
  * téléphone, e-mail, identifiant du voyageur, photo, adresses de remise, description libre, GPS,
  * prix net du voyageur ({@code pricePerKg}, {@code convertedPricePerKg}), taux de commission.
  * Le prix est {@code pricePerKgDisplay} (payé par l'expéditeur) dans {@code currency}.
+ *
+ * <p><b>Le client lit {@code capacityUnit} avant d'afficher des kilos.</b> {@code availableKg}
+ * n'a de sens que pour une capacité au poids : en {@link CapacityUnit#KG_FREE} (kilo libre, non
+ * borné) c'est une valeur technique (≈ 1) qu'il ne faut jamais afficher comme « 1 kg disponible ».
+ * {@code pricingMode} explique un prix absent : un trajet {@link PricingMode#MIXED} à grille
+ * seule n'a pas de prix au kilo (la grille, elle, n'est pas servie ici).
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record PublicAnnouncementCard(
@@ -23,8 +31,10 @@ public record PublicAnnouncementCard(
         String arrivalCity,
         LocalDate departureDate,
         BigDecimal availableKg,
+        CapacityUnit capacityUnit,
         BigDecimal pricePerKgDisplay,
         String currency,
+        PricingMode pricingMode,
         TransportMode transportMode,
         boolean urgent,
         List<String> acceptedContentTypes,
@@ -38,11 +48,14 @@ public record PublicAnnouncementCard(
                 r.arrivalCity(),
                 r.departureDate(),
                 r.availableKg(),
+                r.capacityUnit(),
                 displayablePrice(r.pricePerKgDisplay()),
                 r.currency(),
+                r.pricingMode(),
                 r.transportMode(),
                 r.urgent(),
-                r.acceptedContentTypes(),
+                // Copie : la source est un PersistentBag Hibernate tenu dans une valeur de cache partagée.
+                r.acceptedContentTypes() == null ? null : List.copyOf(r.acceptedContentTypes()),
                 PublicTravelerCard.from(r.traveler()));
     }
 

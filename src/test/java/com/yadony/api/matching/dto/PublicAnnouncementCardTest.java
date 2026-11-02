@@ -93,8 +93,8 @@ class PublicAnnouncementCardTest {
 
         assertThat(fieldNames(root)).containsExactlyInAnyOrder(
                 "id", "departureCity", "arrivalCity", "departureDate", "availableKg",
-                "pricePerKgDisplay", "currency", "transportMode", "urgent",
-                "acceptedContentTypes", "traveler");
+                "capacityUnit", "pricePerKgDisplay", "currency", "pricingMode", "transportMode",
+                "urgent", "acceptedContentTypes", "traveler");
         assertThat(fieldNames(root.get("traveler"))).containsExactlyInAnyOrder(
                 "displayName", "averageRating", "totalTrips", "identityVerified");
 
@@ -104,6 +104,9 @@ class PublicAnnouncementCardTest {
         assertThat(root.get("departureDate").asText()).isEqualTo("2026-12-20");
         assertThat(root.get("currency").asText()).isEqualTo("EUR");
         assertThat(root.get("transportMode").asText()).isEqualTo("PLANE");
+        assertThat(root.get("capacityUnit").asText()).isEqualTo("KG_EXACT");
+        assertThat(root.get("pricingMode").asText()).isEqualTo("KG");
+        assertThat(root.get("availableKg").decimalValue()).isEqualByComparingTo("15.0");
         assertThat(root.get("urgent").asBoolean()).isTrue();
         assertThat(root.get("acceptedContentTypes")).hasSize(2);
         assertThat(root.get("traveler").get("displayName").asText()).isEqualTo("Awa D.");
@@ -165,6 +168,67 @@ class PublicAnnouncementCardTest {
         PublicAnnouncementCard card = PublicAnnouncementCard.from(source(new BigDecimal("9.00")));
 
         assertThat(card.traveler()).isEqualTo(new PublicTravelerCard("Awa D.", 4.8, 12, true));
+    }
+
+    /** Copie de {@code r} avec un autre profil voyageur, unité, mode de prix et types acceptés. */
+    private static AnnouncementSearchResponse with(AnnouncementSearchResponse r, TravelerProfileDto traveler,
+                                                   CapacityUnit unit, PricingMode pricing,
+                                                   List<String> accepted) {
+        return new AnnouncementSearchResponse(
+                r.id(), r.travelerId(), r.departureCity(), r.arrivalCity(), r.departureDate(),
+                r.departureTime(), r.arrivalTime(), r.arrivalDate(), r.pickupAddress(),
+                r.deliveryAddress(), r.availableKg(), r.totalKg(), r.pricePerKg(),
+                r.pricePerKgDisplay(), r.transportMode(), r.stopsCount(), r.status(), r.bidsCount(),
+                traveler, r.description(), accepted, r.refusedTypes(),
+                r.acceptedPaymentMethods(), unit, r.createdAt(), r.updatedAt(),
+                pricing, r.priceGridItems(), r.handoverDeadline(), r.isFavorite(),
+                r.urgent(), r.currency(), r.negotiable(), r.availablePaymentMethods(),
+                r.convertedPricePerKg(), r.convertedCurrency(), r.pricePerKgDisplayConverted(),
+                r.uniqueViewerCount(), r.departureTimezone());
+    }
+
+    @Test
+    void identiteVerifieeReprendKycVerifiedEtPasUnBooleenVoisin() {
+        AnnouncementSearchResponse r = source(new BigDecimal("9.00"));
+        // kycVerified seul à false, tous les booléens voisins à true : un décalage de position
+        // (gpPro, isProAccount, acceptsUnverified) donnerait true.
+        TravelerProfileDto nonVerifie = new TravelerProfileDto(
+                TRAVELER_ID, "Awa D.", 4.8, 12, true, true, true, false, null, true);
+        assertThat(PublicAnnouncementCard.from(with(r, nonVerifie, r.capacityUnit(), r.pricingMode(),
+                r.acceptedContentTypes())).traveler().identityVerified()).isFalse();
+
+        // Et l'inverse : kycVerified seul à true.
+        TravelerProfileDto verifie = new TravelerProfileDto(
+                TRAVELER_ID, "Awa D.", 4.8, 12, false, false, false, true, null, false);
+        assertThat(PublicAnnouncementCard.from(with(r, verifie, r.capacityUnit(), r.pricingMode(),
+                r.acceptedContentTypes())).traveler().identityVerified()).isTrue();
+    }
+
+    @Test
+    void exposeLUniteDeCapaciteEtLeModeDePrix() {
+        AnnouncementSearchResponse r = source(BigDecimal.ZERO);
+        // Kilo libre : availableKg n'est qu'une valeur technique, le client lit capacityUnit.
+        // Mixte à grille seule : pas de prix au kilo, pricingMode dit pourquoi.
+        PublicAnnouncementCard card = PublicAnnouncementCard.from(
+                with(r, r.traveler(), CapacityUnit.KG_FREE, PricingMode.MIXED, r.acceptedContentTypes()));
+
+        assertThat(card.capacityUnit()).isEqualTo(CapacityUnit.KG_FREE);
+        assertThat(card.pricingMode()).isEqualTo(PricingMode.MIXED);
+        assertThat(card.pricePerKgDisplay()).isNull();
+    }
+
+    @Test
+    void copieLesTypesAcceptesSansGarderLaListeSource() {
+        AnnouncementSearchResponse r = source(new BigDecimal("9.00"));
+        List<String> mutable = new java.util.ArrayList<>(List.of("DOCUMENTS"));
+        PublicAnnouncementCard card = PublicAnnouncementCard.from(
+                with(r, r.traveler(), r.capacityUnit(), r.pricingMode(), mutable));
+        mutable.add("CLOTHES");
+
+        assertThat(card.acceptedContentTypes()).containsExactly("DOCUMENTS");
+        // Liste source absente : tolérée, rien n'est sérialisé.
+        assertThat(PublicAnnouncementCard.from(
+                with(r, r.traveler(), r.capacityUnit(), r.pricingMode(), null)).acceptedContentTypes()).isNull();
     }
 
     @Test
