@@ -3,6 +3,8 @@ package com.yadony.api.matching;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.GetUsersResult;
+import com.google.firebase.auth.UserRecord;
 import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.Role;
 import com.yadony.api.auth.UserEntity;
@@ -40,6 +42,10 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertTimeout;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -60,6 +66,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class PublicAnnouncementSearchControllerIT {
 
     private static final String PHONE_IN_DESCRIPTION = "+33 6 12 34 56 78";
+    /** Contact du voyageur tel que Firebase le servirait (le seul endroit où il est stocké). */
+    private static final String TRAVELER_PHONE = "+221771234567";
+    private static final String TRAVELER_EMAIL = "moussa.secret@example.test";
     private static final String PUBLIC_PATH = "/public/announcements";
 
     @Autowired private MockMvc mockMvc;
@@ -68,12 +77,23 @@ class PublicAnnouncementSearchControllerIT {
     @Autowired private UserRepository userRepository;
     @Autowired private CacheManager cacheManager;
     @Autowired private ExchangeRateRepository exchangeRateRepository;
+    @Autowired private PriceGridService priceGridService;
     @MockBean private FirebaseAuth firebaseAuth;
 
     private UUID travelerId;
 
     @BeforeEach
-    void seedTraveler() {
+    void seedTraveler() throws Exception {
+        // Téléphone et e-mail ne sont qu'en Firebase : tout lecteur de contact les recevrait ici.
+        UserRecord contact = mock(UserRecord.class);
+        when(contact.getUid()).thenReturn("uid-public-search-traveler");
+        when(contact.getPhoneNumber()).thenReturn(TRAVELER_PHONE);
+        when(contact.getEmail()).thenReturn(TRAVELER_EMAIL);
+        GetUsersResult contacts = mock(GetUsersResult.class);
+        when(contacts.getUsers()).thenReturn(Set.of(contact));
+        when(firebaseAuth.getUser(anyString())).thenReturn(contact);
+        when(firebaseAuth.getUsers(any())).thenReturn(contacts);
+
         announcementRepository.deleteAll();
         userRepository.deleteAll();
         for (String name : List.of("public-announcements-search", "announcements-search")) {
@@ -176,9 +196,15 @@ class PublicAnnouncementSearchControllerIT {
         assertThat(objectMapper.readTree(body).path("content")).isNotEmpty();
         for (String forbidden : List.of("travelerId", "phone", "email", "avatarUrl", "description",
                 "pickupAddress", "deliveryAddress", "pricePerKg\"", "convertedPricePerKg",
-                "arrivalInstructions", "Sentinelle1974", "moussa-secret", "commission", "lat\"", "lng\"")) {
+                "arrivalInstructions", "Sentinelle1974", "moussa-secret", "commission")) {
             assertThat(body).as("sous-chaîne interdite : %s", forbidden).doesNotContain(forbidden);
         }
+        // Par VALEUR : contact Firebase du voyageur, libellés d'adresse et coordonnées semés.
+        for (String value : List.of(TRAVELER_PHONE, "771234567", TRAVELER_EMAIL,
+                "12 rue Secrète", "Secrète", "Villa 4231", "48.8566", "2.3522", "14.6928", "17.4467")) {
+            assertThat(body).as("valeur interdite : %s", value).doesNotContainIgnoringCase(value);
+        }
+        assertThat(body.toLowerCase(java.util.Locale.ROOT)).doesNotContain("\"lat").doesNotContain("\"lng");
         assertThat(body).doesNotContain(PHONE_IN_DESCRIPTION);
         assertThat(body).doesNotContain("12 34 56 78");
         assertThat(body).doesNotContain(travelerId.toString());
@@ -246,9 +272,14 @@ class PublicAnnouncementSearchControllerIT {
         xof.setPricePerKg(new BigDecimal("5000"));
         announcementRepository.save(xof);
 
-        mockMvc.perform(get(PUBLIC_PATH).param("departureCity", "Paris"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[0].currency").value("XOF"));
+        JsonNode card = objectMapper.readTree(getOk(PUBLIC_PATH + "?departureCity=Paris"))
+                .path("content").get(0);
+
+        assertThat(card.path("currency").asText()).isEqualTo("XOF");
+        // Le prix affiché expéditeur, dans la devise de l'annonce, jamais le net (5000).
+        BigDecimal expected = priceGridService.displayPrice(new BigDecimal("5000"), travelerId);
+        assertThat(expected).isGreaterThan(new BigDecimal("5000"));
+        assertThat(card.path("pricePerKgDisplay").decimalValue()).isEqualByComparingTo(expected);
     }
 
     @Test
