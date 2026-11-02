@@ -38,11 +38,19 @@ public record PublicAnnouncementCard(
                 r.arrivalCity(),
                 r.departureDate(),
                 r.availableKg(),
-                r.pricePerKgDisplay(),
+                displayablePrice(r.pricePerKgDisplay()),
                 r.currency(),
                 r.transportMode(),
                 r.urgent(),
                 r.acceptedContentTypes(),
                 PublicTravelerCard.from(r.traveler()));
+    }
+
+    /**
+     * Un trajet à grille seule (mode MIXED) est stocké avec 0 au kilo (contrainte V94) : le servir
+     * afficherait « 0 €/kg ». Un prix nul ou négatif est donc traité comme absent.
+     */
+    private static BigDecimal displayablePrice(BigDecimal price) {
+        return price != null && price.signum() > 0 ? price : null;
     }
 }

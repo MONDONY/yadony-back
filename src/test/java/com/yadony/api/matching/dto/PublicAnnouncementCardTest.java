@@ -143,6 +143,15 @@ class PublicAnnouncementCardTest {
     }
 
     @Test
+    void traiteUnPrixNulCommeAbsent() throws Exception {
+        // Trajet MIXED à grille seule : 0 au kilo en base, jamais « 0 €/kg » côté public.
+        PublicAnnouncementCard card = PublicAnnouncementCard.from(source(BigDecimal.ZERO));
+
+        assertThat(card.pricePerKgDisplay()).isNull();
+        assertThat(json.readTree(json.writeValueAsString(card)).has("pricePerKgDisplay")).isFalse();
+    }
+
+    @Test
     void reprendLePrixAffichePasLeNet() {
         PublicAnnouncementCard card = PublicAnnouncementCard.from(source(new BigDecimal("9.00")));
 
