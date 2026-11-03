@@ -173,6 +173,10 @@ jobs:
           ASSISTANT_FORM_DRAFT_DAILY_QUOTA=${{ vars.ASSISTANT_FORM_DRAFT_DAILY_QUOTA || '30' }}
           # Supplément de prix à la remise : éteint par défaut, allumé par la variable d'environnement GitHub.
           BID_SUPPLEMENT_ENABLED=${{ vars.BID_SUPPLEMENT_ENABLED || 'false' }}
+          # Modification d'un colis accepté (« Modifier mon colis ») : éteinte par défaut,
+          # allumée par la variable d'environnement GitHub. Manquait ici alors que staging
+          # la transmettait : la variable posée en production restait sans effet.
+          BID_AMENDMENT_ENABLED=${{ vars.BID_AMENDMENT_ENABLED || 'false' }}
           STORE_OS_REDIRECT_ENABLED=${{ vars.STORE_OS_REDIRECT_ENABLED }}
           STORAGE_PUBLIC_BASE_URL=${{ vars.STORAGE_PUBLIC_BASE_URL }}
           SWAGGER_ENABLED=${{ vars.SWAGGER_ENABLED }}
