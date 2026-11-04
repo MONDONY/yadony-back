@@ -27,6 +27,9 @@ jobs:
   test:
     name: Tests & Couverture
     runs-on: ubuntu-latest
+    # La suite prend ~32 min. Sans plafond, un fork bloqué (OOM du 2026-11-04)
+    # occupait le runner 6 h, la limite de GitHub, avant d'être annulé.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
