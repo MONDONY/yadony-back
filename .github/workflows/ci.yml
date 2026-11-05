@@ -27,10 +27,11 @@ jobs:
   test:
     name: Tests & Couverture
     runs-on: ubuntu-latest
-    # La suite prend ~32 min sur un runner rapide, ~65 min sur un lent (compilation
-    # 1,7 fois plus longue le 2026-11-05). Sans plafond, un fork bloqué (OOM du
-    # 2026-11-04) occupait le runner 6 h, la limite de GitHub, avant d'être annulé.
-    timeout-minutes: 90
+    # Dépôt privé sur le plan Free : runner de 2 vCPU et 7 Go (4 vCPU et 16 Go tant
+    # que le dépôt était public, jusqu'au 2026-11-03). La suite y prend ~75 min,
+    # contre ~32 avant. Sans plafond, un fork bloqué (OOM du 2026-11-04) occupait
+    # le runner 6 h, la limite de GitHub, avant d'être annulé.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -47,7 +48,9 @@ jobs:
       # 16 min chacune (mesuré le 2026-09-30).
       #
       # -DforkCount=3 : trois JVM de test se partagent les classes au lieu d'une
-      # seule, sur un runner qui a 4 vCPU et 16 Go. Chaque JVM a sa propre base H2
+      # seule (choisi pour 4 vCPU et 16 Go ; sur 7 Go, chaque JVM n'a que 1,75 Go
+      # de tas, d'où le plafond du cache de contextes dans
+      # src/test/resources/spring.properties). Chaque JVM a sa propre base H2
       # en mémoire et ses propres contextes Spring. Le pom ne fixe pas forkCount :
       # en local la suite reste sur un fork (RAM du poste), `-DforkCount=2` pour
       # l'accélérer si la machine le permet.
