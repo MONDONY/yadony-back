@@ -38,6 +38,9 @@ jobs:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
           cache: maven
+      # Un runner lent explique une suite deux fois plus longue : le noter d'emblée.
+      - name: Ressources du runner
+        run: nproc && free -g
       # Une seule passe : `verify` enchaîne déjà les tests, le rapport JaCoCo (lié
       # à la phase test), le package et jacoco:check (seuil dans pom.xml). L'ancien
       # `mvnw test` suivi de `mvnw verify` exécutait toute la suite deux fois,
@@ -48,9 +51,6 @@ jobs:
       # en mémoire et ses propres contextes Spring. Le pom ne fixe pas forkCount :
       # en local la suite reste sur un fork (RAM du poste), `-DforkCount=2` pour
       # l'accélérer si la machine le permet.
-      # Un runner lent explique une suite deux fois plus longue : le noter d'emblée.
-      - name: Ressources du runner
-        run: nproc && free -g
       - name: Tests + gate couverture (bloquant — seuil configuré dans pom.xml)
         run: |
           chmod +x mvnw
