@@ -1,5 +1,6 @@
 package com.yadony.api.city;
 
+import com.yadony.api.common.AccentFolding;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -19,32 +20,47 @@ public interface CityRepository extends JpaRepository<CityEntity, Long> {
      * puis pays dont le nom commence par elle ; population à rang égal. Le pays exact
      * passe avant le simple préfixe pour que « Niger » donne Niamey avant Lagos
      * (Nigeria, plus peuplée).
+     *
+     * <p>Sans accent : « Thies » doit trouver « Thiès » (GeoNames garde les accents, la
+     * diaspora tape sans). {@code lower()} puis {@code translate()} s'appliquent à la
+     * colonne ET à la saisie, avec la même table ({@link com.yadony.api.common.AccentFolding}),
+     * si bien que « Thiès » et « THIES » trouvent la même ville. Le {@code LIKE} sur les
+     * deux côtés repliés remplace l'{@code ILIKE}, qui ne repliait que la casse.
      */
     @Query(value = """
         SELECT * FROM cities
-        WHERE name ILIKE :prefix
-           OR name ILIKE :anywhere
-           OR country_name ILIKE :prefix
+        WHERE translate(lower(name), :accented, :unaccented)
+                  LIKE translate(lower(:prefix), :accented, :unaccented)
+           OR translate(lower(name), :accented, :unaccented)
+                  LIKE translate(lower(:anywhere), :accented, :unaccented)
+           OR translate(lower(country_name), :accented, :unaccented)
+                  LIKE translate(lower(:prefix), :accented, :unaccented)
         ORDER BY
             CASE
-                WHEN name ILIKE :prefix THEN 0
-                WHEN LOWER(country_name) = LOWER(:exact) THEN 1
-                WHEN name ILIKE :anywhere THEN 2
+                WHEN translate(lower(name), :accented, :unaccented)
+                         LIKE translate(lower(:prefix), :accented, :unaccented) THEN 0
+                WHEN translate(lower(country_name), :accented, :unaccented)
+                         = translate(lower(:exact), :accented, :unaccented) THEN 1
+                WHEN translate(lower(name), :accented, :unaccented)
+                         LIKE translate(lower(:anywhere), :accented, :unaccented) THEN 2
                 ELSE 3
             END,
             population DESC
         LIMIT :limit
         """, nativeQuery = true)
     List<CityEntity> searchByName(
-        @Param("exact")    String exact,
-        @Param("prefix")   String prefix,
-        @Param("anywhere") String anywhere,
-        @Param("limit")    int limit
+        @Param("exact")      String exact,
+        @Param("prefix")     String prefix,
+        @Param("anywhere")   String anywhere,
+        @Param("limit")      int limit,
+        @Param("accented")   String accented,
+        @Param("unaccented") String unaccented
     );
 
     default List<CityEntity> searchByName(String query, int limit) {
         String q = query.trim();
-        return searchByName(q, q + "%", "%" + q + "%", limit);
+        return searchByName(q, q + "%", "%" + q + "%", limit,
+            AccentFolding.ACCENTED, AccentFolding.UNACCENTED);
     }
 
     /**

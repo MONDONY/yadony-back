@@ -1,6 +1,7 @@
 package com.yadony.api.search;
 
 import com.yadony.api.city.CityEntity;
+import com.yadony.api.common.AccentFolding;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.Repository;
 import org.springframework.data.repository.query.Param;
@@ -33,8 +34,8 @@ public interface SearchCityRepository extends Repository<CityEntity, Long> {
     record CityMatch(String name, double similarity, long population, String countryCode) {}
 
     /** Diacritiques latins → forme sans accent, dans le même ordre (position à position). */
-    String ACCENTED = "àâäáãåèéêëìíîïòóôöõùúûüçñýÿ";
-    String UNACCENTED = "aaaaaaeeeeiiiioooooouuuucnyy";
+    String ACCENTED = AccentFolding.ACCENTED;
+    String UNACCENTED = AccentFolding.UNACCENTED;
 
     @Query(value = """
         SELECT name              AS name,
