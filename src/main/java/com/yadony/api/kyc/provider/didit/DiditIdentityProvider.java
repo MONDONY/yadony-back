@@ -1,6 +1,7 @@
 package com.yadony.api.kyc.provider.didit;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.kyc.VerifiedIdentitySnapshot;
 import com.yadony.api.kyc.provider.IdentityVerificationProvider;
@@ -34,14 +35,19 @@ public class DiditIdentityProvider implements IdentityVerificationProvider {
     /** Statut Didit d'une session aboutie, tel que l'API l'ecrit — casse comprise. */
     private static final String APPROVED = "Approved";
 
+    static final String CREDITS_ALERT = "KYC_DIDIT_CREDITS_EXHAUSTED";
+
     private final DiditClient client;
     private final String kycReturnUrl;
+    private final AdminAlertEscalator alerts;
 
     public DiditIdentityProvider(
             DiditClient client,
-            @Value("${yadony.kyc.return-url:https://yadony.com/kyc/complete}") String kycReturnUrl) {
+            @Value("${yadony.kyc.return-url:https://yadony.com/kyc/complete}") String kycReturnUrl,
+            AdminAlertEscalator alerts) {
         this.client = client;
         this.kycReturnUrl = kycReturnUrl;
+        this.alerts = alerts;
     }
 
     @Override
@@ -73,6 +79,7 @@ public class DiditIdentityProvider implements IdentityVerificationProvider {
     }
 
     private ProviderSession open(UserEntity user, java.util.function.Supplier<JsonNode> call) {
+        ProviderSession session;
         try {
             JsonNode response = call.get();
             String sessionId = text(response, "session_id");
@@ -80,12 +87,59 @@ public class DiditIdentityProvider implements IdentityVerificationProvider {
             if (sessionId == null || url == null) {
                 throw new IllegalStateException("réponse Didit sans session_id ni url");
             }
-            return new ProviderSession(url, sessionId);
+            session = new ProviderSession(url, sessionId);
         } catch (Exception e) {
             log.error("Failed to create Didit session for user {} ({}){}",
                     user.getId(), e.getClass().getSimpleName(), diagnostic(e));
+            if (isOutOfCredits(e)) {
+                raiseCreditsAlert(user);
+            }
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                     "Impossible de créer la session de vérification");
+        }
+        closeCreditsAlert();
+        return session;
+    }
+
+    /**
+     * Solde Didit épuisé : Didit répond 400 avec « You don't have enough credits… Please top up ».
+     * Plus AUCUNE vérification d'identité ne démarre tant que personne ne recharge, et chaque
+     * utilisateur ne voit qu'un « service indisponible » (YADONY-BACK-PROD-D, 03-04/11/2026 :
+     * 13 refus sur trois comptes en deux jours). Le statut seul ne suffit pas à le reconnaître,
+     * Didit renvoie aussi 400 pour une requête mal formée : c'est le texte qui décide.
+     */
+    private static boolean isOutOfCredits(Exception e) {
+        if (!(e instanceof HttpClientErrorException erreur)) return false;
+        String corps = erreur.getResponseBodyAsString();
+        return corps != null && corps.toLowerCase(java.util.Locale.ROOT).contains("enough credits");
+    }
+
+    /**
+     * Une seule alerte (Telegram) tant qu'elle n'est pas close, quel que soit le nombre de
+     * refus. Ne doit jamais transformer le 503 attendu par l'app en 500 : un échec de l'alerte
+     * est journalisé, rien de plus.
+     */
+    private void raiseCreditsAlert(UserEntity user) {
+        try {
+            alerts.raiseOnce(CREDITS_ALERT,
+                    "Didit n'a plus de crédits : plus aucune vérification d'identité ne démarre. "
+                            + "Recharger le solde sur https://business.didit.me (ou activer la recharge automatique).",
+                    java.util.Map.of("provider", "DIDIT", "firstRefusedUserId", user.getId().toString()));
+        } catch (RuntimeException alertFailure) {
+            log.error("Alerte {} impossible à lever", CREDITS_ALERT, alertFailure);
+        }
+    }
+
+    /**
+     * Une session qui s'ouvre prouve que le solde est revenu : l'alerte se clôt seule, et la
+     * prochaine panne en lèvera une nouvelle. Sans effet sur la session rendue si la base
+     * refuse.
+     */
+    private void closeCreditsAlert() {
+        try {
+            alerts.resolveOpen(CREDITS_ALERT);
+        } catch (RuntimeException alertFailure) {
+            log.warn("Alerte {} impossible à clore", CREDITS_ALERT, alertFailure);
         }
     }
 
