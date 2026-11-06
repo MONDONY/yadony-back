@@ -10,12 +10,13 @@ Dans le gestionnaire de secrets de l'environnement cible, définir :
 
 | Variable | Rôle |
 |---|---|
+| `ADMIN_ROOT_EMAIL` | E-mail du compte racine (jamais écrit dans le code public). Vide = bootstrap désactivé |
 | `ADMIN_BOOTSTRAP_SECRET` | Secret partagé attendu dans le header `X-Bootstrap-Secret` |
-| `ADMIN_BOOTSTRAP_EMAIL` | Doit valoir exactement `aboubakar.diakite@yadony.com` — toute autre valeur est rejetée |
+| `ADMIN_BOOTSTRAP_EMAIL` | Doit être égal à `ADMIN_ROOT_EMAIL` (casse et espaces ignorés), toute autre valeur est rejetée |
 | `ADMIN_BOOTSTRAP_PASSWORD` | Mot de passe initial du compte racine, 12 caractères minimum |
 
 Ces trois variables ne doivent **jamais** apparaître en clair dans le code,
-Git, les logs, ou les tests. Tant qu'une des trois est absente, l'endpoint
+Git, les logs, ou les tests. Tant qu'une de ces variables est absente, l'endpoint
 répond `404` (indistinguable d'une route inexistante).
 
 ## 2. Déployer le backend
@@ -30,14 +31,14 @@ curl -i -X POST https://<host>/api/v1/admin/bootstrap \
   -H "X-Bootstrap-Secret: <valeur de ADMIN_BOOTSTRAP_SECRET>"
 ```
 
-- **`201 Created`**, corps `{"email": "aboubakar.diakite@yadony.com"}` → compte créé. Le mot de passe configuré n'est jamais renvoyé dans la réponse.
+- **`201 Created`**, corps `{"email": "<ADMIN_ROOT_EMAIL>"}` → compte créé. Le mot de passe configuré n'est jamais renvoyé dans la réponse.
 - **`409 Conflict`** → un `SUPER_ADMIN` existe déjà, aucune réinitialisation n'a lieu.
-- **`404 Not Found`** → une des trois variables n'est pas configurée.
+- **`404 Not Found`** → une des variables (dont `ADMIN_ROOT_EMAIL`) n'est pas configurée.
 
 ## 4. Vérifier et se connecter
 
 1. Confirmer le `201` et l'email retourné.
-2. Se connecter sur `dony-admin` avec `aboubakar.diakite@yadony.com` et le mot de passe configuré à l'étape 1.
+2. Se connecter sur `dony-admin` avec l'e-mail racine et le mot de passe configuré à l'étape 1.
 3. Changer immédiatement ce mot de passe (le compte est créé avec `mustChangePassword=true`).
 
 ## 5. Refermer le bootstrap

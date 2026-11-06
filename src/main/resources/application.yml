@@ -279,6 +279,14 @@ yadony:
   internal:
     secret: ${INTERNAL_SHARED_SECRET:}
   admin:
+    # Compte racine (SUPER_ADMIN) : seul e-mail que l'amorçage accepte, jamais créable ni
+    # modifiable par l'API. Vide = amorçage désactivé (le rôle SUPER_ADMIN reste immuable).
+    root-email: ${ADMIN_ROOT_EMAIL:}
+    # Back-office : exiger le second facteur (TOTP) dans la session Firebase. À n'activer
+    # qu'une fois chaque admin inscrit, sinon seuls /admin/me et le changement de mot de
+    # passe leur restent ouverts.
+    mfa:
+      required: ${ADMIN_MFA_REQUIRED:false}
     bootstrap:
       secret: ${ADMIN_BOOTSTRAP_SECRET:}
       email: ${ADMIN_BOOTSTRAP_EMAIL:}

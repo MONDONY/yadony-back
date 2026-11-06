@@ -545,6 +545,115 @@ class FirebaseTokenFilterTest {
         verify(response, never()).setStatus(SC_FORBIDDEN);
     }
 
+    // ── Double authentification du back-office (06/11) ──────────────────────
+
+    private AdminAuthorities mfaAdmin() {
+        return new AdminAuthorities(AdminRole.ADMIN, Set.of(), false, "admin@yadony.com", UUID.randomUUID());
+    }
+
+    /** Revendications Firebase d'un jeton : {@code secondFactor} nul = connexion sans second facteur. */
+    private void tokenSignedInWith(String secondFactor) {
+        Map<String, Object> firebase = new java.util.HashMap<>();
+        firebase.put("sign_in_provider", "password");
+        if (secondFactor != null) {
+            firebase.put("sign_in_second_factor", secondFactor);
+        }
+        lenient().when(mockToken.getClaims()).thenReturn(Map.of("firebase", firebase));
+    }
+
+    private FirebaseTokenFilter mfaFilter(boolean required) {
+        FirebaseTokenFilter filter = new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService,
+                TestMessages.resolver(), sessionCheck, false, "", "test");
+        filter.setAdminMfaRequired(required);
+        return filter;
+    }
+
+    private void runAdminRequest(FirebaseTokenFilter filter, String method, String uri) throws Exception {
+        when(request.getHeader("Authorization")).thenReturn("Bearer fake-token");
+        lenient().when(request.getMethod()).thenReturn(method);
+        when(request.getRequestURI()).thenReturn(uri);
+        when(request.getContextPath()).thenReturn("/api/v1");
+        when(adminAuthService.resolve(FIREBASE_UID)).thenReturn(Optional.of(mfaAdmin()));
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class);
+             MockedStatic<FirebaseApp> staticApp = mockStatic(FirebaseApp.class)) {
+            staticApp.when(FirebaseApp::getApps).thenReturn(List.of(mock(FirebaseApp.class)));
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockFirebaseAuth);
+            mockFirebaseToken();
+            filter.doFilterInternal(request, response, filterChain);
+        }
+    }
+
+    @Test
+    @DisplayName("2FA exigée + jeton sans second facteur → 403 ADMIN_MFA_REQUIRED sur une route admin")
+    void mfaRequired_tokenWithoutSecondFactor_isRefusedOnAdminRoutes() throws Exception {
+        tokenSignedInWith(null);
+        StringWriter body = new StringWriter();
+        when(response.getWriter()).thenReturn(new PrintWriter(body));
+
+        runAdminRequest(mfaFilter(true), "GET", "/api/v1/admin/users");
+
+        verify(response).setStatus(SC_FORBIDDEN);
+        verify(filterChain, never()).doFilter(any(), any());
+        assertThat(body.toString()).contains("ADMIN_MFA_REQUIRED");
+    }
+
+    @Test
+    @DisplayName("2FA exigée + jeton avec second facteur TOTP → route admin autorisée")
+    void mfaRequired_tokenWithTotp_isAllowed() throws Exception {
+        tokenSignedInWith("totp");
+
+        runAdminRequest(mfaFilter(true), "GET", "/api/v1/admin/users");
+
+        verify(filterChain).doFilter(request, response);
+        verify(response, never()).setStatus(SC_FORBIDDEN);
+    }
+
+    @Test
+    @DisplayName("2FA exigée + jeton sans second facteur → GET /admin/me reste ouvert (inscription)")
+    void mfaRequired_ownProfileStaysReachableToEnroll() throws Exception {
+        tokenSignedInWith(null);
+
+        runAdminRequest(mfaFilter(true), "GET", "/api/v1/admin/me");
+
+        verify(filterChain).doFilter(request, response);
+        verify(response, never()).setStatus(SC_FORBIDDEN);
+    }
+
+    @Test
+    @DisplayName("2FA exigée + jeton sans second facteur → POST /admin/me/change-password reste ouvert")
+    void mfaRequired_ownPasswordChangeStaysReachable() throws Exception {
+        tokenSignedInWith(null);
+
+        runAdminRequest(mfaFilter(true), "POST", "/api/v1/admin/me/change-password");
+
+        verify(filterChain).doFilter(request, response);
+        verify(response, never()).setStatus(SC_FORBIDDEN);
+    }
+
+    @Test
+    @DisplayName("2FA non exigée (défaut) + jeton sans second facteur → route admin autorisée")
+    void mfaNotRequiredByDefault_tokenWithoutSecondFactor_isAllowed() throws Exception {
+        tokenSignedInWith(null);
+
+        runAdminRequest(new FirebaseTokenFilter(userLinkerService, new ObjectMapper(), adminAuthService,
+                TestMessages.resolver(), sessionCheck, false, "", "test"), "GET", "/api/v1/admin/users");
+
+        verify(filterChain).doFilter(request, response);
+        verify(response, never()).setStatus(SC_FORBIDDEN);
+    }
+
+    @Test
+    @DisplayName("2FA exigée + revendication firebase absente → refus (fermé par défaut)")
+    void mfaRequired_missingFirebaseClaim_isRefused() throws Exception {
+        lenient().when(mockToken.getClaims()).thenReturn(Map.of());
+        when(response.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
+
+        runAdminRequest(mfaFilter(true), "GET", "/api/v1/admin/users");
+
+        verify(response).setStatus(SC_FORBIDDEN);
+        verify(filterChain, never()).doFilter(any(), any());
+    }
+
     // ── Compte admin dans l'application (YADONY-BACK-PROD-6 à B) ────────────
 
     private void runAdminOn(String uri, AdminAuthorities admin) throws Exception {

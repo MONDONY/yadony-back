@@ -45,10 +45,22 @@ public class AdminAccountService {
     private static final String CHARS_SYMBOL = "!@#$%^&*()-_=+[]{}";
     private static final String CHARS_ALL = CHARS_UPPER + CHARS_LOWER + CHARS_DIGIT + CHARS_SYMBOL;
     private static final int PASSWORD_LENGTH = 20;
-    private static final String ROOT_EMAIL = "aboubakar.diakite@yadony.com";
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
 
     private static final SecureRandom RANDOM = new SecureRandom();
+
+    /**
+     * E-mail du compte racine (SUPER_ADMIN), lu en configuration ({@code ADMIN_ROOT_EMAIL})
+     * plutôt qu'écrit dans le code public. Vide : aucun amorçage possible ; le rôle SUPER_ADMIN
+     * reste immuable de toute façon ({@link #rejectRootMutation}).
+     */
+    @org.springframework.beans.factory.annotation.Value("${yadony.admin.root-email:}")
+    private String rootEmail;
+
+    private boolean isRootEmail(String email) {
+        return rootEmail != null && !rootEmail.isBlank() && email != null
+                && rootEmail.trim().equalsIgnoreCase(email.trim());
+    }
 
     private final AdminUserRepository adminUserRepository;
     private final FirebaseAuth firebaseAuth;
@@ -79,7 +91,7 @@ public class AdminAccountService {
         }
 
         String email = normalizeEmail(req.email());
-        if (ROOT_EMAIL.equalsIgnoreCase(email)) {
+        if (isRootEmail(email)) {
             throw business(HttpStatus.FORBIDDEN, "ADMIN_ROLE_FORBIDDEN", "Role forbidden");
         }
         return createFirebaseAndPersist(email, generatePassword(), req.role(), actorId);
@@ -88,7 +100,7 @@ public class AdminAccountService {
     /** Creates the one permitted SUPER_ADMIN account during the protected bootstrap flow. */
     public void bootstrapSuperAdmin(String rawEmail, String password) {
         String email = normalizeEmail(rawEmail);
-        if (!ROOT_EMAIL.equalsIgnoreCase(email) || password == null || password.isBlank()) {
+        if (!isRootEmail(email) || password == null || password.isBlank()) {
             throw business(HttpStatus.FORBIDDEN, "ADMIN_ROLE_FORBIDDEN", "Role forbidden");
         }
         if (adminUserRepository.countByRole(AdminRole.SUPER_ADMIN) > 0) {
@@ -419,7 +431,7 @@ public class AdminAccountService {
     }
 
     private void rejectRootMutation(AdminUserEntity entity) {
-        if (entity.getRole() == AdminRole.SUPER_ADMIN || ROOT_EMAIL.equalsIgnoreCase(entity.getEmail())) {
+        if (entity.getRole() == AdminRole.SUPER_ADMIN || isRootEmail(entity.getEmail())) {
             throw business(HttpStatus.CONFLICT, "ADMIN_SUPER_ADMIN_IMMUTABLE", "SUPER_ADMIN is immutable");
         }
     }
