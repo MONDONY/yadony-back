@@ -205,6 +205,10 @@ jobs:
           PAWAPAY_ENABLED=${{ vars.PAWAPAY_ENABLED || 'false' }}
           PAWAPAY_BASE_URL=${{ vars.PAWAPAY_BASE_URL || 'https://api.pawapay.io' }}
           PAWAPAY_CALLBACK_SIGNATURES=${{ vars.PAWAPAY_CALLBACK_SIGNATURES || 'true' }}
+          # - ADMIN_MFA_REQUIRED : le back-office refuse toute session sans second facteur
+          #   (TOTP). Variable d'environnement « production » à passer à true SEULEMENT une
+          #   fois chaque admin inscrit (dony-admin /mfa-setup). Jamais vide (booléen).
+          ADMIN_MFA_REQUIRED=${{ vars.ADMIN_MFA_REQUIRED || 'false' }}
           PAWAPAY_BALANCE_MIN_XOF=${{ vars.PAWAPAY_BALANCE_MIN_XOF }}
           PAWAPAY_BALANCE_MIN_XAF=${{ vars.PAWAPAY_BALANCE_MIN_XAF }}
           YADONY_COMMISSION_RATE=${{ vars.YADONY_COMMISSION_RATE }}
