@@ -2,6 +2,7 @@ package com.yadony.api.kyc.provider.didit;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.kyc.VerifiedIdentitySnapshot;
 import com.yadony.api.kyc.provider.ProviderAdminView;
@@ -12,17 +13,25 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -33,13 +42,14 @@ class DiditIdentityProviderTest {
     private static final String RETURN_URL = "https://yadony.com/kyc/complete";
 
     @Mock DiditClient client;
+    @Mock AdminAlertEscalator alerts;
 
     private DiditIdentityProvider provider;
     private UserEntity user;
 
     @BeforeEach
     void setUp() {
-        provider = new DiditIdentityProvider(client, RETURN_URL);
+        provider = new DiditIdentityProvider(client, RETURN_URL, alerts);
         user = new UserEntity();
         ReflectionTestUtils.setField(user, "id", UUID.randomUUID());
     }
@@ -97,6 +107,86 @@ class DiditIdentityProviderTest {
         assertThatThrownBy(() -> provider.createSession(user, null))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("Impossible de créer la session");
+    }
+
+    /** Réponse exacte de Didit en prod les 03 et 04/11/2026 (YADONY-BACK-PROD-D). */
+    private static HttpClientErrorException noCredits() {
+        return HttpClientErrorException.create(HttpStatus.BAD_REQUEST, "Bad Request", HttpHeaders.EMPTY,
+                """
+                {"detail":"You don't have enough credits to perform this request. Please top up at https://business.didit.me"}
+                """.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+    }
+
+    /**
+     * YADONY-BACK-PROD-D : solde Didit à zéro, 13 vérifications refusées en deux jours sur trois
+     * comptes, sans que personne ne le sache avant d'aller lire Sentry. Une alerte admin
+     * (Telegram) dit quoi faire ; l'utilisateur reçoit toujours son 503.
+     */
+    @Test
+    void createSession_raisesTheCreditsAlert_whenDiditHasNoCreditsLeft() {
+        when(client.createSession(any(), anyString(), anyString())).thenThrow(noCredits());
+
+        assertThatThrownBy(() -> provider.createSession(user, null))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(e -> ((ResponseStatusException) e).getStatusCode())
+                .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+
+        verify(alerts).raiseOnce(eq(DiditIdentityProvider.CREDITS_ALERT),
+                contains("business.didit.me"), anyMap());
+    }
+
+    @Test
+    void createFreshSession_raisesTheCreditsAlert_whenDiditHasNoCreditsLeft() {
+        when(client.createSession(any(), anyString(), anyString(), anyString())).thenThrow(noCredits());
+
+        assertThatThrownBy(() -> provider.createFreshSession(user)).isInstanceOf(ResponseStatusException.class);
+
+        verify(alerts).raiseOnce(eq(DiditIdentityProvider.CREDITS_ALERT), anyString(), anyMap());
+    }
+
+    @Test
+    void createSession_doesNotRaiseTheCreditsAlert_onAnotherDiditError() {
+        when(client.createSession(any(), anyString(), anyString())).thenThrow(HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST, "Bad Request", HttpHeaders.EMPTY,
+                "{\"callback\":[\"Enter a valid URL.\"]}".getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8));
+
+        assertThatThrownBy(() -> provider.createSession(user, null)).isInstanceOf(ResponseStatusException.class);
+
+        verify(alerts, never()).raiseOnce(anyString(), anyString(), anyMap());
+    }
+
+    /** L'alerte ne doit jamais remplacer le 503 attendu par l'app par une 500. */
+    @Test
+    void createSession_stillAnswers503_whenTheAlertCannotBeRaised() {
+        when(client.createSession(any(), anyString(), anyString())).thenThrow(noCredits());
+        when(alerts.raiseOnce(anyString(), anyString(), anyMap())).thenThrow(new IllegalStateException("base indisponible"));
+
+        assertThatThrownBy(() -> provider.createSession(user, null))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(e -> ((ResponseStatusException) e).getStatusCode())
+                .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
+    /** Recharge faite : l'alerte se clôt seule, et la prochaine panne alertera de nouveau. */
+    @Test
+    void createSession_closesTheCreditsAlert_onceASessionOpensAgain() {
+        when(client.createSession(eq(user.getId()), eq(RETURN_URL), eq("fr"))).thenReturn(json("""
+                {"session_id":"sess_ok","url":"https://verify.didit.me/fr/session/ok"}
+                """));
+
+        provider.createSession(user, null);
+
+        verify(alerts).resolveOpen(DiditIdentityProvider.CREDITS_ALERT);
+    }
+
+    @Test
+    void createSession_returnsTheSession_evenIfClosingTheAlertFails() {
+        when(client.createSession(eq(user.getId()), eq(RETURN_URL), eq("fr"))).thenReturn(json("""
+                {"session_id":"sess_ok","url":"https://verify.didit.me/fr/session/ok"}
+                """));
+        when(alerts.resolveOpen(anyString())).thenThrow(new IllegalStateException("base indisponible"));
+
+        assertThat(provider.createSession(user, null).sessionId()).isEqualTo("sess_ok");
     }
 
     @Test
