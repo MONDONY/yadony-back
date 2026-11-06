@@ -99,8 +99,9 @@ class AdminBootstrapControllerIT {
     @ActiveProfiles("test")
     @AutoConfigureMockMvc
     @TestPropertySource(properties = {
+            "yadony.admin.root-email=root@yadony.test",
             "yadony.admin.bootstrap.secret=test-bootstrap-secret-123",
-            "yadony.admin.bootstrap.email=aboubakar.diakite@yadony.com",
+            "yadony.admin.bootstrap.email=root@yadony.test",
             "yadony.admin.bootstrap.password=test-only-value"
     })
     class WhenSecretConfigured {
@@ -173,7 +174,7 @@ class AdminBootstrapControllerIT {
             mockMvc.perform(post("/admin/bootstrap")
                             .header("X-Bootstrap-Secret", VALID_SECRET))
                     .andExpect(status().isCreated())
-                    .andExpect(jsonPath("$.email").value("aboubakar.diakite@yadony.com"))
+                    .andExpect(jsonPath("$.email").value("root@yadony.test"))
                     .andExpect(jsonPath("$.temporaryPassword").doesNotExist());
         }
 
@@ -188,7 +189,7 @@ class AdminBootstrapControllerIT {
                     .andExpect(status().isCreated());
 
             verify(adminAccountService).bootstrapSuperAdmin(
-                    "aboubakar.diakite@yadony.com", "test-only-value");
+                    "root@yadony.test", "test-only-value");
             verify(adminAccountService, never()).createAdmin(any(), any());
             verify(adminAccountService, never()).resetPassword(any(), any());
         }
@@ -217,6 +218,7 @@ class AdminBootstrapControllerIT {
     @ActiveProfiles("test")
     @AutoConfigureMockMvc
     @TestPropertySource(properties = {
+            "yadony.admin.root-email=root@yadony.test",
             "yadony.admin.bootstrap.secret=test-bootstrap-secret-123",
             "yadony.admin.bootstrap.email=other-admin@yadony.com",
             "yadony.admin.bootstrap.password=test-only-value"
@@ -250,8 +252,9 @@ class AdminBootstrapControllerIT {
     @ActiveProfiles("test")
     @AutoConfigureMockMvc
     @TestPropertySource(properties = {
+            "yadony.admin.root-email=root@yadony.test",
             "yadony.admin.bootstrap.secret=test-bootstrap-secret-123",
-            "yadony.admin.bootstrap.email= Aboubakar.Diakite@Yadony.com ",
+            "yadony.admin.bootstrap.email= Root@Yadony.Test ",
             "yadony.admin.bootstrap.password=test-only-value"
     })
     class WhenBootstrapIdentityNeedsNormalization {
@@ -273,11 +276,44 @@ class AdminBootstrapControllerIT {
             mockMvc.perform(post("/admin/bootstrap")
                             .header("X-Bootstrap-Secret", "test-bootstrap-secret-123"))
                     .andExpect(status().isCreated())
-                    .andExpect(jsonPath("$.email").value("aboubakar.diakite@yadony.com"))
+                    .andExpect(jsonPath("$.email").value("root@yadony.test"))
                     .andExpect(jsonPath("$.temporaryPassword").doesNotExist());
 
             verify(adminAccountService).bootstrapSuperAdmin(
-                    "aboubakar.diakite@yadony.com", "test-only-value");
+                    "root@yadony.test", "test-only-value");
+        }
+    }
+
+    @Nested
+    @DisplayName("When no root email is configured")
+    @SpringBootTest
+    @ActiveProfiles("test")
+    @AutoConfigureMockMvc
+    @TestPropertySource(properties = {
+            "yadony.admin.root-email=",
+            "yadony.admin.bootstrap.secret=test-bootstrap-secret-123",
+            "yadony.admin.bootstrap.email=root@yadony.test",
+            "yadony.admin.bootstrap.password=test-only-value"
+    })
+    class WhenRootEmailMissing {
+
+        @Autowired
+        MockMvc mockMvc;
+
+        @MockitoBean
+        AdminAccountService adminAccountService;
+
+        @MockitoBean
+        AdminUserRepository adminUserRepository;
+
+        @Test
+        @DisplayName("Bootstrap stays disabled (404) even with a valid secret")
+        void noRootEmail_returns404() throws Exception {
+            mockMvc.perform(post("/admin/bootstrap")
+                            .header("X-Bootstrap-Secret", "test-bootstrap-secret-123"))
+                    .andExpect(status().isNotFound());
+
+            verify(adminAccountService, never()).bootstrapSuperAdmin(any(), any());
         }
     }
 }

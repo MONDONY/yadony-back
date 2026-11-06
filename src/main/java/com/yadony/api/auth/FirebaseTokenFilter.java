@@ -88,6 +88,17 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
         }
     }
 
+    /**
+     * Back-office : refuser un jeton sans second facteur (TOTP). Coupé par défaut, le temps que
+     * chaque admin s'inscrive ; injecté par champ pour ne pas toucher au constructeur.
+     */
+    @Value("${yadony.admin.mfa.required:false}")
+    private boolean adminMfaRequired;
+
+    void setAdminMfaRequired(boolean adminMfaRequired) {
+        this.adminMfaRequired = adminMfaRequired;
+    }
+
     private static boolean isProdProfile(String profile) {
         for (String p : profile.split(",")) {
             if ("prod".equalsIgnoreCase(p.trim())) return true;
@@ -176,6 +187,13 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
             }
             if (admin.mustChangePassword() && !isPasswordChangeAllowed(request)) {
                 writeForbidden(response, "PASSWORD_CHANGE_REQUIRED", "Password change required");
+                return true;
+            }
+            // Un mot de passe volé ne suffit plus : sans second facteur dans la session, seuls
+            // le profil et le changement de mot de passe restent ouverts, le temps de s'inscrire.
+            if (adminMfaRequired && !signedInWithSecondFactor(decoded) && !isPasswordChangeAllowed(request)) {
+                writeForbidden(response, "ADMIN_MFA_REQUIRED",
+                        "Double authentification requise pour le back-office");
                 return true;
             }
             UsernamePasswordAuthenticationToken adminAuth =
@@ -309,6 +327,20 @@ public class FirebaseTokenFilter extends OncePerRequestFilter {
         String method = request.getMethod();
         return ("GET".equals(method) && "/admin/me".equals(path))
                 || ("POST".equals(method) && "/admin/me/change-password".equals(path));
+    }
+
+    /**
+     * Vrai si la session Firebase a été ouverte avec un second facteur : revendication
+     * {@code firebase.sign_in_second_factor} (« totp »), posée par Firebase à la connexion et
+     * conservée par les jetons rafraîchis de cette session. Absente ou vide : faux.
+     */
+    static boolean signedInWithSecondFactor(FirebaseToken decoded) {
+        Object firebase = decoded.getClaims() == null ? null : decoded.getClaims().get("firebase");
+        if (firebase instanceof java.util.Map<?, ?> claims) {
+            Object factor = claims.get("sign_in_second_factor");
+            return factor instanceof String s && !s.isBlank();
+        }
+        return false;
     }
 
     private void writeForbidden(HttpServletResponse response, String detail) throws IOException {

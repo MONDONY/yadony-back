@@ -29,7 +29,9 @@ import java.util.Map;
 @RequestMapping("/admin/bootstrap")
 public class AdminBootstrapController {
 
-    private static final String ROOT_EMAIL = "aboubakar.diakite@yadony.com";
+    /** Seule identité que l'amorçage accepte ({@code ADMIN_ROOT_EMAIL}) ; vide = amorçage désactivé. */
+    @Value("${yadony.admin.root-email:}")
+    private String rootEmail;
 
     @Value("${yadony.admin.bootstrap.secret:}")
     private String bootstrapSecret;
@@ -74,7 +76,7 @@ public class AdminBootstrapController {
         }
 
         String normalizedBootstrapEmail = bootstrapEmail.trim().toLowerCase(Locale.ROOT);
-        if (!ROOT_EMAIL.equals(normalizedBootstrapEmail)) {
+        if (!rootEmail.trim().toLowerCase(Locale.ROOT).equals(normalizedBootstrapEmail)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
 
@@ -83,11 +85,12 @@ public class AdminBootstrapController {
         }
 
         adminAccountService.bootstrapSuperAdmin(normalizedBootstrapEmail, bootstrapPassword);
-        return ResponseEntity.status(HttpStatus.CREATED).body(Map.of("email", ROOT_EMAIL));
+        return ResponseEntity.status(HttpStatus.CREATED).body(Map.of("email", normalizedBootstrapEmail));
     }
 
     private boolean bootstrapConfigured() {
-        return bootstrapSecret != null && !bootstrapSecret.isBlank()
+        return rootEmail != null && !rootEmail.isBlank()
+                && bootstrapSecret != null && !bootstrapSecret.isBlank()
                 && bootstrapEmail != null && !bootstrapEmail.isBlank()
                 && bootstrapPassword != null && !bootstrapPassword.isBlank();
     }

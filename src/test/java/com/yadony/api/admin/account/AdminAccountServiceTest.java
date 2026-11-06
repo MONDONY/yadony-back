@@ -57,6 +57,14 @@ class AdminAccountServiceTest {
     @InjectMocks
     private AdminAccountService adminAccountService;
 
+    /** E-mail racine fictif : la vraie adresse n'est plus écrite dans le code public. */
+    private static final String ROOT_EMAIL = "root@yadony.test";
+
+    @BeforeEach
+    void configureRootEmail() {
+        org.springframework.test.util.ReflectionTestUtils.setField(adminAccountService, "rootEmail", ROOT_EMAIL);
+    }
+
     // -------------------------------------------------------------------------
     // Test doubles
     // -------------------------------------------------------------------------
@@ -192,7 +200,7 @@ class AdminAccountServiceTest {
         UUID actorId = UUID.randomUUID();
 
         assertThatThrownBy(() -> adminAccountService.createAdmin(
-                new CreateAdminRequest("aboubakar.diakite@yadony.com", AdminRole.ADMIN), actorId))
+                new CreateAdminRequest(ROOT_EMAIL, AdminRole.ADMIN), actorId))
                 .isInstanceOf(YadonyBusinessException.class)
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
                 .isEqualTo("ADMIN_ROLE_FORBIDDEN");
@@ -204,15 +212,28 @@ class AdminAccountServiceTest {
     @DisplayName("bootstrapSuperAdmin creates the canonical root as the only SUPER_ADMIN")
     void bootstrapSuperAdmin_createsCanonicalRoot() throws Exception {
         when(adminUserRepository.countByRole(AdminRole.SUPER_ADMIN)).thenReturn(0L);
-        when(adminUserRepository.existsByEmailIgnoreCase("aboubakar.diakite@yadony.com")).thenReturn(false);
+        when(adminUserRepository.existsByEmailIgnoreCase(ROOT_EMAIL)).thenReturn(false);
         UserRecord userRecord = mockUserRecord("uid-bootstrap-root");
         when(firebaseAuth.createUser(any(UserRecord.CreateRequest.class))).thenReturn(userRecord);
-        adminAccountService.bootstrapSuperAdmin(" Aboubakar.Diakite@Yadony.com ", "test-only-value");
+        adminAccountService.bootstrapSuperAdmin(" Root@Yadony.Test ", "test-only-value");
 
         verify(adminUserRepository).saveAndFlush(argThat(entity ->
                 entity.getRole() == AdminRole.SUPER_ADMIN
-                        && entity.getEmail().equals("aboubakar.diakite@yadony.com")
+                        && entity.getEmail().equals(ROOT_EMAIL)
                         && Boolean.TRUE.equals(entity.getMustChangePassword())));
+    }
+
+    @Test
+    @DisplayName("bootstrapSuperAdmin is refused when no root email is configured")
+    void bootstrapSuperAdmin_refusedWithoutConfiguredRootEmail() throws Exception {
+        org.springframework.test.util.ReflectionTestUtils.setField(adminAccountService, "rootEmail", "");
+
+        assertThatThrownBy(() -> adminAccountService.bootstrapSuperAdmin(ROOT_EMAIL, "test-only-value"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(e -> ((YadonyBusinessException) e).getErrorCode())
+                .isEqualTo("ADMIN_ROLE_FORBIDDEN");
+
+        verify(firebaseAuth, never()).createUser(any());
     }
 
     // -------------------------------------------------------------------------
@@ -346,7 +367,7 @@ class AdminAccountServiceTest {
     void resetPassword_rootAccount_throwsImmutable() throws Exception {
         UUID adminId = UUID.randomUUID();
         when(adminUserRepository.findById(adminId)).thenReturn(Optional.of(
-                buildEntity(adminId, "uid-root", "aboubakar.diakite@yadony.com", AdminRole.ADMIN, AdminStatus.ACTIVE)));
+                buildEntity(adminId, "uid-root", ROOT_EMAIL, AdminRole.ADMIN, AdminStatus.ACTIVE)));
 
         assertThatThrownBy(() -> adminAccountService.resetPassword(adminId, UUID.randomUUID()))
                 .isInstanceOf(YadonyBusinessException.class)
@@ -424,7 +445,7 @@ class AdminAccountServiceTest {
     @DisplayName("changeOwnPassword → SUPER_ADMIN racine peut changer son propre mot de passe")
     void rootCanChangeOwnPassword() throws Exception {
         UUID rootId = UUID.randomUUID();
-        AdminUserEntity root = buildEntity(rootId, "uid-root", "aboubakar.diakite@yadony.com",
+        AdminUserEntity root = buildEntity(rootId, "uid-root", ROOT_EMAIL,
                 AdminRole.SUPER_ADMIN, AdminStatus.ACTIVE);
         root.setMustChangePassword(true);
         when(adminUserRepository.findById(rootId)).thenReturn(Optional.of(root));
