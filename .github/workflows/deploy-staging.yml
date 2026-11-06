@@ -254,6 +254,10 @@ jobs:
           # docs/runbooks/pawapay.md.
           PAWAPAY_ENABLED=${{ vars.PAWAPAY_ENABLED || secrets.PAWAPAY_ENABLED }}
           PAWAPAY_CALLBACK_SIGNATURES=${{ vars.PAWAPAY_CALLBACK_SIGNATURES || secrets.PAWAPAY_CALLBACK_SIGNATURES || 'true' }}
+          # Double authentification du back-office (TOTP) exigée par le back : variable
+          # d environnement « staging » à passer à true SEULEMENT une fois chaque admin
+          # inscrit (dony-admin /mfa-setup). Jamais vide : un booléen vide refuse le démarrage.
+          ADMIN_MFA_REQUIRED=${{ vars.ADMIN_MFA_REQUIRED || 'false' }}
           PAWAPAY_BALANCE_MIN_XOF=${{ vars.PAWAPAY_BALANCE_MIN_XOF }}
           PAWAPAY_BALANCE_MIN_XAF=${{ vars.PAWAPAY_BALANCE_MIN_XAF }}
           # Essai gratuit de l abonnement PRO, en jours. Absente ou nulle : pas d essai.
