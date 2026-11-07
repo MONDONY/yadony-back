@@ -41,7 +41,7 @@ public sealed interface AudienceRule {
     /** Parse et valide la forme ; la racine est toujours un groupe (eventuellement vide). */
     static Group parse(JsonNode json) {
         if (json == null || !json.isObject() || !json.has("children")) {
-            throw invalid("La racine de la regle doit etre un groupe");
+            throw invalid("La racine de la règle doit être un groupe");
         }
         int[] count = {0};
         Group root = parseGroup(json, 1, count);
@@ -50,13 +50,13 @@ public sealed interface AudienceRule {
 
     private static Group parseGroup(JsonNode node, int depth, int[] count) {
         if (depth > MAX_DEPTH) {
-            throw invalid("Une regle ne peut pas depasser " + MAX_DEPTH + " niveaux de groupes");
+            throw invalid("Une règle ne peut pas dépasser " + MAX_DEPTH + " niveaux de groupes");
         }
         Op op;
         try {
             op = Op.valueOf(node.path("op").asText(""));
         } catch (IllegalArgumentException e) {
-            throw invalid("L'operateur de groupe doit etre AND ou OR");
+            throw invalid("L'opérateur de groupe doit être AND ou OR");
         }
         JsonNode kids = node.get("children");
         if (kids == null || !kids.isArray()) {
@@ -65,20 +65,20 @@ public sealed interface AudienceRule {
         List<AudienceRule> children = new ArrayList<>();
         for (JsonNode kid : kids) {
             if (!kid.isObject()) {
-                throw invalid("Chaque element d'un groupe doit etre un objet");
+                throw invalid("Chaque élément d'un groupe doit être un objet");
             }
             if (kid.has("children")) {
                 Group sub = parseGroup(kid, depth + 1, count);
                 if (sub.children().isEmpty()) {
-                    throw invalid("Un sous-groupe ne peut pas etre vide");
+                    throw invalid("Un sous-groupe ne peut pas être vide");
                 }
                 children.add(sub);
             } else {
                 if (!kid.path("field").isTextual() || !kid.path("operator").isTextual()) {
-                    throw invalid("Une condition exige un champ et un operateur");
+                    throw invalid("Une condition exige un champ et un opérateur");
                 }
                 if (++count[0] > MAX_CONDITIONS) {
-                    throw invalid("Une regle ne peut pas depasser " + MAX_CONDITIONS + " conditions");
+                    throw invalid("Une règle ne peut pas dépasser " + MAX_CONDITIONS + " conditions");
                 }
                 JsonNode value = kid.get("value");
                 children.add(new Condition(kid.get("field").asText(), kid.get("operator").asText(),

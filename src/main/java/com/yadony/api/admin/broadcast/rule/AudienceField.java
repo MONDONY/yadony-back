@@ -12,7 +12,7 @@ import java.util.Set;
 
 /**
  * Catalogue ferme des champs ciblables. Tout ce qui finit dans le SQL vient d'ici : un champ
- * inconnu, un operateur non permis ou une valeur de mauvais type donnent un 422 avant toute
+ * inconnu, un opérateur non permis ou une valeur de mauvais type donnent un 422 avant toute
  * generation. Les valeurs passent toujours par {@link ParamSink#bind}.
  *
  * <p>Le ciblage est comportemental : jamais de filtre sur {@code user_roles} (depuis V193,
@@ -26,7 +26,7 @@ public enum AudienceField {
 
     LANGUAGE("language", Family.STATUS, "Langue",
             Map.of(AudienceOperator.IN, ValueType.ENUM_MULTI),
-            List.of(new ValueOption("fr", "Francais"), new ValueOption("en", "Anglais")),
+            List.of(new ValueOption("fr", "Français"), new ValueOption("en", "Anglais")),
             (op, value, p) -> "u.preferred_language IN (" + p.bind(texts(value)) + ")");
 
     /** Generateur du fragment booleen, appele apres validation. */
@@ -74,7 +74,7 @@ public enum AudienceField {
     public String toSql(AudienceOperator op, JsonNode value, ParamSink params) {
         ValueType type = operators.get(op);
         if (type == null) {
-            throw invalid("L'operateur " + op + " n'est pas permis pour le champ " + key);
+            throw invalid("L'opérateur " + op + " n'est pas permis pour le champ « " + label + " »");
         }
         validate(op, type, value);
         return sql.build(op, value, params);
@@ -89,12 +89,17 @@ public enum AudienceField {
         throw invalid("Champ d'audience inconnu");
     }
 
-    private void validate(AudienceOperator op, ValueType type, JsonNode value) {
+    /** Visible du package pour tester les types sans champ du catalogue (NONE). */
+    void validate(AudienceOperator op, ValueType type, JsonNode value) {
         switch (type) {
-            case NONE -> { }
+            case NONE -> {
+                if (value != null && !value.isNull()) {
+                    throw invalid("L'opérateur " + op + " du champ « " + label + " » n'accepte aucune valeur");
+                }
+            }
             case BOOLEAN -> {
                 if (value == null || !value.isBoolean()) {
-                    throw bad("un booleen");
+                    throw bad("un booléen");
                 }
             }
             case ENUM -> {
@@ -122,7 +127,7 @@ public enum AudienceField {
             }
             case TEXT -> {
                 if (!validText(value)) {
-                    throw bad("un texte non vide de " + MAX_TEXT + " caracteres au plus");
+                    throw bad("un texte non vide de " + MAX_TEXT + " caractères au plus");
                 }
             }
             case CORRIDOR -> {
@@ -143,7 +148,7 @@ public enum AudienceField {
     }
 
     private YadonyBusinessException bad(String expected) {
-        return invalid("La valeur du champ " + key + " doit etre " + expected);
+        return invalid("La valeur du champ « " + label + " » doit être " + expected);
     }
 
     private static List<String> texts(JsonNode array) {

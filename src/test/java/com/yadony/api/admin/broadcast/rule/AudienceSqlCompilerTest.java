@@ -98,10 +98,55 @@ class AudienceSqlCompilerTest {
     @Test
     void valeurMalveillanteAbsenteDuMessageEtDuSql() {
         String evil = "x' OR 1=1 --";
-        try {
-            compile(one("language", "IN", "[\"" + evil + "\"]"));
-        } catch (YadonyBusinessException e) {
-            assertThat(e.getMessage()).doesNotContain("1=1");
+        assertThatThrownBy(() -> compile(one("language", "IN", "[\"" + evil + "\"]")))
+                .satisfies(e -> assertThat(e.getMessage()).doesNotContain("1=1"));
+    }
+
+    @Test
+    void libellesAvecAccents() {
+        assertThat(AudienceField.LANGUAGE.options())
+                .extracting(ValueOption::label).contains("Français");
+        assertThatThrownBy(() -> compile(one("kilo_pro", "GTE", "1")))
+                .hasMessageContaining("opérateur").hasMessageContaining("« Kilo Pro »");
+    }
+
+    @Test
+    void arbreSansParse_sousGroupeVide_422() {
+        AudienceRule.Group root = new AudienceRule.Group(AudienceRule.Op.AND,
+                java.util.List.of(new AudienceRule.Group(AudienceRule.Op.OR, java.util.List.of())));
+        assertThatThrownBy(() -> AudienceSqlCompiler.compile(root))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("broadcast-rule-invalid"));
+    }
+
+    @Test
+    void arbreSansParse_opNull_422() {
+        AudienceRule.Group root = new AudienceRule.Group(null, java.util.List.of(
+                new AudienceRule.Condition("kilo_pro", "IS", MAPPER.getNodeFactory().booleanNode(true))));
+        assertThatThrownBy(() -> AudienceSqlCompiler.compile(root))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
+    }
+
+    @Test
+    void arbreSansParse_champOuOperateurNull_422() {
+        for (AudienceRule.Condition c : new AudienceRule.Condition[] {
+                new AudienceRule.Condition(null, "IS", null), new AudienceRule.Condition("kilo_pro", null, null)}) {
+            AudienceRule.Group root = new AudienceRule.Group(AudienceRule.Op.AND, java.util.List.of(c));
+            assertThatThrownBy(() -> AudienceSqlCompiler.compile(root))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("broadcast-rule-invalid"));
         }
+    }
+
+    @Test
+    void typeNone_refuseToutEtAccepteAbsent() {
+        var f = AudienceField.KILO_PRO;
+        var yes = MAPPER.getNodeFactory().booleanNode(true);
+        assertThatThrownBy(() -> f.validate(AudienceOperator.IS, ValueType.NONE, yes))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
+        f.validate(AudienceOperator.IS, ValueType.NONE, null);
+        f.validate(AudienceOperator.IS, ValueType.NONE, MAPPER.getNodeFactory().nullNode());
     }
 }

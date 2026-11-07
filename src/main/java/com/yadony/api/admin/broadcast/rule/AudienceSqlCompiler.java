@@ -26,17 +26,27 @@ public final class AudienceSqlCompiler {
         };
         String where = ACTIVE_PREFIX;
         if (!root.children().isEmpty()) {
-            where += " AND " + render(root, sink);
+            where += " AND " + render(root, sink, true);
         }
         return new CompiledRule(where, params);
     }
 
-    private static String render(AudienceRule rule, ParamSink sink) {
+    private static String render(AudienceRule rule, ParamSink sink, boolean isRoot) {
         if (rule instanceof AudienceRule.Group g) {
+            // Arbre reconstruit hors parse (ex. relu en base) : on ne fait confiance à rien.
+            if (g.op() == null) {
+                throw invalid("L'opérateur de groupe doit être AND ou OR");
+            }
+            if (!isRoot && g.children().isEmpty()) {
+                throw invalid("Un sous-groupe ne peut pas être vide");
+            }
             String joiner = g.op() == AudienceRule.Op.AND ? " AND " : " OR ";
-            return g.children().stream().map(c -> render(c, sink)).collect(Collectors.joining(joiner, "(", ")"));
+            return g.children().stream().map(c -> render(c, sink, false)).collect(Collectors.joining(joiner, "(", ")"));
         }
         AudienceRule.Condition c = (AudienceRule.Condition) rule;
+        if (c.field() == null || c.operator() == null) {
+            throw invalid("Une condition exige un champ et un opérateur");
+        }
         AudienceField field = AudienceField.fromKey(c.field());
         AudienceOperator op = operator(c.operator());
         return "(" + field.toSql(op, c.value(), sink) + ")";
@@ -46,8 +56,12 @@ public final class AudienceSqlCompiler {
         try {
             return AudienceOperator.valueOf(raw);
         } catch (IllegalArgumentException e) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "broadcast-rule-invalid", "Unprocessable Entity", "Operateur inconnu");
+            throw invalid("Opérateur inconnu");
         }
+    }
+
+    private static YadonyBusinessException invalid(String detail) {
+        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                "broadcast-rule-invalid", "Unprocessable Entity", detail);
     }
 }
