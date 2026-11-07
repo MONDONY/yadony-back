@@ -155,7 +155,9 @@ public class AdminBroadcastController {
     }
 
     /** Liste paginée des destinataires d'un ciblage (sans coordonnées). */
-    @PreAuthorize("hasRole('ADMIN') and hasAuthority('NOTIFICATION_SEND')")
+    // Ces routes exposent les noms des utilisateurs : les droits d'un admin pouvant etre surcharges
+    // par compte (AdminPermissions.effective), NOTIFICATION_SEND seul ne suffit pas, USER_VIEW aussi.
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('NOTIFICATION_SEND') and hasAuthority('USER_VIEW')")
     @PostMapping("/admin/notifications/broadcast/recipients")
     public Page<BroadcastRecipientResponse> recipients(@RequestBody @Valid BroadcastTargetRequest request,
                                                        @RequestParam(defaultValue = "0") int page,
@@ -166,7 +168,9 @@ public class AdminBroadcastController {
     }
 
     /** Export CSV des destinataires, borné par {@code yadony.broadcast.export-max-rows}. */
-    @PreAuthorize("hasRole('ADMIN') and hasAuthority('NOTIFICATION_SEND')")
+    // Ces routes exposent les noms des utilisateurs : les droits d'un admin pouvant etre surcharges
+    // par compte (AdminPermissions.effective), NOTIFICATION_SEND seul ne suffit pas, USER_VIEW aussi.
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('NOTIFICATION_SEND') and hasAuthority('USER_VIEW')")
     @PostMapping("/admin/notifications/broadcast/recipients.csv")
     public ResponseEntity<byte[]> recipientsCsv(@RequestBody @Valid BroadcastTargetRequest request,
                                                 Authentication authentication) {

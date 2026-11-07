@@ -77,6 +77,16 @@ class AdminBroadcastControllerIT {
                 ADMIN_ID, "admin@yadony.test", AdminRole.ADMIN, false, "uid-admin-broadcast");
         return new UsernamePasswordAuthenticationToken(principal, null,
                 List.of(new SimpleGrantedAuthority("ROLE_ADMIN"),
+                        new SimpleGrantedAuthority("NOTIFICATION_SEND"),
+                        new SimpleGrantedAuthority("USER_VIEW")));
+    }
+
+    /** Droits surcharges par compte : NOTIFICATION_SEND sans USER_VIEW. */
+    private static UsernamePasswordAuthenticationToken sendWithoutUserViewAuth() {
+        AdminPrincipal principal = new AdminPrincipal(
+                UUID.randomUUID(), "send-only@yadony.test", AdminRole.ADMIN, false, "uid-send-only-broadcast");
+        return new UsernamePasswordAuthenticationToken(principal, null,
+                List.of(new SimpleGrantedAuthority("ROLE_ADMIN"),
                         new SimpleGrantedAuthority("NOTIFICATION_SEND")));
     }
 
@@ -493,6 +503,24 @@ class AdminBroadcastControllerIT {
     @DisplayName("fields — SUPPORT → 403")
     void fields_support_403() throws Exception {
         mockMvc.perform(get("/admin/notifications/broadcast/fields").with(authentication(supportAuth())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("recipients — NOTIFICATION_SEND sans USER_VIEW → 403 (noms d'utilisateurs)")
+    void recipients_sansUserView_403() throws Exception {
+        mockMvc.perform(post("/admin/notifications/broadcast/recipients")
+                        .with(authentication(sendWithoutUserViewAuth())).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"type\":\"ALL\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("recipients.csv — NOTIFICATION_SEND sans USER_VIEW → 403 (noms d'utilisateurs)")
+    void recipientsCsv_sansUserView_403() throws Exception {
+        mockMvc.perform(post("/admin/notifications/broadcast/recipients.csv")
+                        .with(authentication(sendWithoutUserViewAuth())).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"type\":\"ALL\"}"))
                 .andExpect(status().isForbidden());
     }
 
