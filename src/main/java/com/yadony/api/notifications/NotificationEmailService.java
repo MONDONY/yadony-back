@@ -48,6 +48,7 @@ public class NotificationEmailService {
     private final ResendEmailService emailService;
     private final MessagesResolver messagesResolver;
     private final Map<String, NotificationEmailLink> links;
+    private final SearchSuggestionUnsubscribeLinks unsubscribeLinks;
     private final Clock clock;
     private final Cache<String, AtomicInteger> sentToday =
             Caffeine.newBuilder().maximumSize(200_000).expireAfterWrite(Duration.ofHours(26)).build();
@@ -59,9 +60,11 @@ public class NotificationEmailService {
                                     NotificationPrefsService prefsService,
                                     ResendEmailService emailService,
                                     MessagesResolver messagesResolver,
-                                    ObjectProvider<NotificationEmailLink> emailLinks) {
+                                    ObjectProvider<NotificationEmailLink> emailLinks,
+                                    ObjectProvider<SearchSuggestionUnsubscribeLinks> unsubscribeLinks) {
         this(enabled, userRepository, firebaseContactService, prefsService, emailService,
-                messagesResolver, emailLinks.orderedStream().toList(), Clock.systemUTC());
+                messagesResolver, emailLinks.orderedStream().toList(), unsubscribeLinks.getIfAvailable(),
+                Clock.systemUTC());
     }
 
     NotificationEmailService(boolean enabled, UserRepository userRepository,
@@ -77,6 +80,16 @@ public class NotificationEmailService {
                              NotificationPrefsService prefsService, ResendEmailService emailService,
                              MessagesResolver messagesResolver, List<NotificationEmailLink> emailLinks,
                              Clock clock) {
+        this(enabled, userRepository, firebaseContactService, prefsService, emailService,
+                messagesResolver, emailLinks, null, clock);
+    }
+
+    NotificationEmailService(boolean enabled, UserRepository userRepository,
+                             FirebaseContactService firebaseContactService,
+                             NotificationPrefsService prefsService, ResendEmailService emailService,
+                             MessagesResolver messagesResolver, List<NotificationEmailLink> emailLinks,
+                             SearchSuggestionUnsubscribeLinks unsubscribeLinks, Clock clock) {
+        this.unsubscribeLinks = unsubscribeLinks;
         this.enabled = enabled;
         this.userRepository = userRepository;
         this.firebaseContactService = firebaseContactService;
@@ -113,7 +126,12 @@ public class NotificationEmailService {
                 return;
             }
             Optional<NotificationEmailLink.Cta> cta = ctaFor(userId, type);
-            if (cta.isPresent()) {
+            String unsubscribeUrl = unsubscribeUrlFor(userId, target.get().kind());
+            if (unsubscribeUrl != null) {
+                emailService.sendNotification(target.get().email(), target.get().kind(), type,
+                        title, body, NotificationOpenLink.urlFor(type, data), unsubscribeUrl,
+                        messagesResolver.forUser(userId));
+            } else if (cta.isPresent()) {
                 emailService.sendNotification(target.get().email(), target.get().kind(), type,
                         title, body, cta.get(), messagesResolver.forUser(userId));
             } else {
@@ -139,6 +157,22 @@ public class NotificationEmailService {
         } catch (RuntimeException e) {
             log.warn("[Mail] Lien propre de {} indisponible : {}", type, e.getClass().getSimpleName());
             return Optional.empty();
+        }
+    }
+
+    /**
+     * Lien de désinscription en un clic des suggestions selon les recherches, ou {@code null}
+     * pour les autres familles (elles renvoient aux Paramètres) ou sans origine d'API.
+     */
+    private String unsubscribeUrlFor(UUID userId, Kind kind) {
+        if (kind != Kind.SUGGESTION || unsubscribeLinks == null) {
+            return null;
+        }
+        try {
+            return unsubscribeLinks.urlFor(userId).orElse(null);
+        } catch (RuntimeException e) {
+            log.warn("[Mail] Lien de désinscription indisponible : {}", e.getClass().getSimpleName());
+            return null;
         }
     }
 

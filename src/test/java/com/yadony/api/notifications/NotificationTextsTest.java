@@ -104,6 +104,8 @@ class NotificationTextsTest {
         java.time.LocalDate longestDate = java.time.LocalDate.of(2026, 9, 30);
         map.put("tripRescheduled", NotificationTexts.tripRescheduled(m, longestDate, true));
         map.put("tripRescheduled info", NotificationTexts.tripRescheduled(m, longestDate, false));
+        map.put("searchSuggestion", NotificationTexts.searchSuggestion(m, DEPART, ARRIVEE, longestDate));
+        map.put("searchSuggestion sans date", NotificationTexts.searchSuggestion(m, DEPART, ARRIVEE, null));
         map.put("tripRescheduleKept", NotificationTexts.tripRescheduleKept(m, NOM));
         map.put("tripRescheduleKept sans prénom", NotificationTexts.tripRescheduleKept(m, null));
         map.put("tripRescheduleWithdrawn", NotificationTexts.tripRescheduleWithdrawn(m));

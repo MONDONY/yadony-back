@@ -569,6 +569,65 @@ class NotificationPrefsServiceTest {
         assertThat(service.isPackageMatchEnabled(USER_ID)).isFalse();
     }
 
+    // Suggestions selon les recherches (V362)
+
+    @Test
+    void isAllowed_searchSuggestion_needsItsOwnSwitchAndTheTripAlertsOne() {
+        NotificationPrefsEntity e = buildEntity(true, true, true, true, false);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(e));
+        assertThat(service.isAllowed(USER_ID, "SEARCH_SUGGESTION")).isTrue();
+
+        e.setPushCorridorAlerts(false);
+        assertThat(service.isAllowed(USER_ID, "SEARCH_SUGGESTION")).isFalse();
+
+        e.setPushCorridorAlerts(true);
+        e.setSearchSuggestions(false);
+        assertThat(service.isAllowed(USER_ID, "SEARCH_SUGGESTION")).isFalse();
+    }
+
+    @Test
+    void disableSearchSuggestions_createsTheRowWhenMissing_andCutsOnlyThatSwitch() {
+        when(repository.findById(USER_ID)).thenReturn(Optional.empty());
+        service.disableSearchSuggestions(USER_ID);
+        ArgumentCaptor<NotificationPrefsEntity> captor = ArgumentCaptor.forClass(NotificationPrefsEntity.class);
+        verify(repository).save(captor.capture());
+        assertThat(captor.getValue().getUserId()).isEqualTo(USER_ID);
+        assertThat(captor.getValue().isSearchSuggestions()).isFalse();
+        assertThat(captor.getValue().isPushCorridorAlerts()).isTrue();
+        assertThat(captor.getValue().isEmailAlertsTips()).isTrue();
+    }
+
+    @Test
+    void disableSearchSuggestions_existingRow_isUpdated() {
+        NotificationPrefsEntity existing = buildEntity(true, true, true, true, false);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(existing));
+        service.disableSearchSuggestions(USER_ID);
+        verify(repository).save(existing);
+        assertThat(existing.isSearchSuggestions()).isFalse();
+    }
+
+    @Test
+    void upsert_searchSuggestions_nullKeepsStoredValue_andValueIsApplied() {
+        NotificationPrefsEntity existing = buildEntity(true, true, true, true, false);
+        existing.setSearchSuggestions(false);
+        when(repository.findById(USER_ID)).thenReturn(Optional.of(existing));
+
+        // Application antérieure à V362 : le champ n'existe pas, le réglage reste coupé.
+        service.upsert(FIREBASE_UID, new NotificationPrefsDto(true, true, true, true, false, true,
+                true, true, true, true, true, true, true));
+        assertThat(existing.isSearchSuggestions()).isFalse();
+
+        service.upsert(FIREBASE_UID, new NotificationPrefsDto(true, true, true, true, false, true,
+                true, true, true, true, true, true, true, true));
+        assertThat(existing.isSearchSuggestions()).isTrue();
+        assertThat(service.getPrefs(FIREBASE_UID).searchSuggestions()).isTrue();
+    }
+
+    @Test
+    void defaults_searchSuggestionsOn() {
+        assertThat(NotificationPrefsDto.defaults().searchSuggestions()).isTrue();
+    }
+
     /** {@code bids} règle les trois rôles à la fois, comme l'ancien « Offres » (V340). */
     private NotificationPrefsEntity buildEntity(boolean bids, boolean negs, boolean msgs, boolean reminder, boolean promo) {
         NotificationPrefsEntity e = new NotificationPrefsEntity();

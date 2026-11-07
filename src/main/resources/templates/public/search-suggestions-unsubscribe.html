@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="fr" th:lang="${lang}" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <!-- L'adresse porte un jeton de désinscription : il ne part vers aucun autre site. -->
+  <meta name="referrer" content="no-referrer">
+  <title th:text="${title} + ' - Yadony'">Yadony</title>
+  <!-- Polices, couleurs et composants communs : fragments/public-page.html. -->
+  <th:block th:replace="~{fragments/public-page :: head}"></th:block>
+  <style>
+    .page { min-height: 70vh; align-content: center; }
+    .badge {
+      width: 56px; height: 56px; border-radius: 50%;
+      display: grid; place-items: center;
+      background: var(--blue-soft); color: var(--blue);
+      font-size: 26px; font-weight: 800; line-height: 1;
+    }
+    .badge.ok { background: var(--success-soft); color: var(--success); }
+    form { margin: 0; }
+  </style>
+</head>
+<body>
+<main class="page">
+  <div th:replace="~{fragments/public-page :: brand}"></div>
+
+  <section class="hero">
+    <span class="badge" th:classappend="${state == 'done'} ? 'ok'" aria-hidden="true"
+          th:text="${state == 'done'} ? '✓' : (${state == 'expired'} ? '!' : '?')">?</span>
+    <h1 th:text="${title}">Ne plus recevoir de suggestions ?</h1>
+    <p th:text="${body}">Yadony ne vous préviendra plus des nouveaux trajets qui correspondent à vos recherches.</p>
+  </section>
+
+  <div class="actions">
+    <!-- Confirmation par POST : un GET ouvert par l'antivirus d'une messagerie ne coupe rien. -->
+    <form th:if="${state == 'confirm'}" method="post"
+          th:action="@{/public/notifications/search-suggestions/unsubscribe}">
+      <input type="hidden" name="t" th:value="${token}">
+      <button type="submit" class="btn btn-primary" th:text="${confirmCta}">Confirmer</button>
+    </form>
+    <a class="btn" th:classappend="${state == 'confirm'} ? 'btn-secondary' : 'btn-primary'"
+       th:href="${appUrl}" href="https://yadony.com" rel="noopener" th:text="${appCta}">Ouvrir Yadony</a>
+  </div>
+</main>
+</body>
+</html>

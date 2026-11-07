@@ -69,6 +69,13 @@ public class NotificationPrefsEntity {
     @Column(name = "email_alerts_tips", nullable = false)
     private boolean emailAlertsTips = true;
 
+    /**
+     * Suggestions de trajets selon les recherches, sans alerte posée (V362) : push et e-mail.
+     * Coupé par le lien de désinscription des e-mails de suggestion.
+     */
+    @Column(name = "search_suggestions", nullable = false)
+    private boolean searchSuggestions = true;
+
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
@@ -108,5 +115,8 @@ public class NotificationPrefsEntity {
     public void setEmailRecaps(boolean v) { this.emailRecaps = v; }
     public boolean isEmailAlertsTips() { return emailAlertsTips; }
     public void setEmailAlertsTips(boolean v) { this.emailAlertsTips = v; }
+
+    public boolean isSearchSuggestions() { return searchSuggestions; }
+    public void setSearchSuggestions(boolean v) { this.searchSuggestions = v; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
 }

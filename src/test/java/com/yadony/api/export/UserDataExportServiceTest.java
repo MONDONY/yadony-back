@@ -40,6 +40,7 @@ class UserDataExportServiceTest {
     @Mock private FavoriteRepository favoriteRepository;
     @Mock private KycRepository kycRepository;
     @Mock private com.yadony.api.auth.FirebaseContactService firebaseContact;
+    @Mock private com.yadony.api.alerts.SearchInterestRepository searchInterestRepository;
 
     private UserDataExportService service() {
         // L'export RGPD lit les coordonnées dans Firebase, elles ne sont plus en base
@@ -49,7 +50,7 @@ class UserDataExportServiceTest {
                         "+221771234567", "aissatou@example.com"));
         return new UserDataExportService(
                 recipientRepository, pickupAddressRepository, deliveryAddressRepository,
-                favoriteRepository, kycRepository, firebaseContact);
+                favoriteRepository, kycRepository, firebaseContact, searchInterestRepository);
     }
 
     private static void setId(Object entity, UUID id) {
@@ -124,6 +125,13 @@ class UserDataExportServiceTest {
         kyc.setStatus(KycVerificationStatus.VERIFIED);
         when(kycRepository.findByUserId(userId)).thenReturn(Optional.of(kyc));
 
+        com.yadony.api.alerts.SearchInterestEntity search = new com.yadony.api.alerts.SearchInterestEntity();
+        search.setUserId(userId);
+        search.setDepartureCity("Paris");
+        search.setArrivalCity("Abidjan");
+        search.setLastSearchedAt(java.time.LocalDateTime.of(2026, 11, 5, 10, 0));
+        when(searchInterestRepository.findAllByUserIdOrderByLastSearchedAtDesc(userId)).thenReturn(List.of(search));
+
         UserDataExportDto export = service().export(user);
 
         assertThat(export.profile().id()).isEqualTo(userId);
@@ -141,6 +149,11 @@ class UserDataExportServiceTest {
         assertThat(export.deliveryAddresses().get(0).label()).isEqualTo("Bureau");
         assertThat(export.favorites()).hasSize(1);
         assertThat(export.favorites().get(0).targetType()).isEqualTo("TRIP");
+        assertThat(export.searchInterests()).singleElement().satisfies(si -> {
+            assertThat(si.departureCity()).isEqualTo("Paris");
+            assertThat(si.arrivalCity()).isEqualTo("Abidjan");
+            assertThat(si.lastSearchedAt()).isEqualTo(java.time.LocalDateTime.of(2026, 11, 5, 10, 0));
+        });
         assertThat(export.generatedAt()).isNotNull();
     }
 
@@ -159,5 +172,6 @@ class UserDataExportServiceTest {
 
         assertThat(export.kyc()).isNull();
         assertThat(export.recipients()).isEmpty();
+        assertThat(export.searchInterests()).isEmpty();
     }
 }

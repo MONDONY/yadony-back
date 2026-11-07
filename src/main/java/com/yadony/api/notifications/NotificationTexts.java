@@ -597,6 +597,20 @@ public final class NotificationTexts {
                 m.get("notification.corridor-alert-trip.body", corridor(m, departure, arrival)));
     }
 
+    /**
+     * Suggestion selon les recherches : un trajet vient d'être publié sur un corridor que
+     * l'utilisateur a cherché sans rien trouver. Date de départ courte (« 14 nov. »).
+     */
+    public static NotificationText searchSuggestion(Messages m, String departure, String arrival,
+                                                    java.time.LocalDate departureDate) {
+        String date = departureDate == null ? "" : departureDate.format(java.time.format.DateTimeFormatter.ofPattern(
+                m.get("notification.trip-rescheduled.date-pattern"), m.locale()));
+        String body = departureDate == null
+                ? m.get("notification.search-suggestion.body-no-date", corridor(m, departure, arrival))
+                : m.get("notification.search-suggestion.body", corridor(m, departure, arrival), date);
+        return new NotificationText(m.get("notification.search-suggestion.title"), body);
+    }
+
     /** FLUTTER-JH : un trajet complet auquel on s'était abonné a de nouveau de la place. */
     public static NotificationText tripSpaceFreed(Messages m, String departure, String arrival) {
         return new NotificationText(m.get("notification.trip-space-freed.title"),
