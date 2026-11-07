@@ -131,4 +131,13 @@ class AudienceRuleTest {
         ObjectMapper m = new ObjectMapper();
         assertThat(AudienceRule.parse(m.readTree(a)).hash()).isEqualTo(AudienceRule.parse(m.readTree(b)).hash());
     }
+
+    @Test
+    void hash_sourcesNullEtAbsentes_sontIdentiques() throws Exception {
+        String pre = "{\"op\":\"AND\",\"children\":[{\"field\":\"corridor_interest\",\"operator\":\"MATCHES\",\"value\":";
+        String a = pre + "{\"kind\":\"CITY\",\"origin\":\"Paris\"}}]}";
+        String b = pre + "{\"kind\":\"CITY\",\"origin\":\"Paris\",\"sources\":null}}]}";
+        ObjectMapper m = new ObjectMapper();
+        assertThat(AudienceRule.parse(m.readTree(a)).hash()).isEqualTo(AudienceRule.parse(m.readTree(b)).hash());
+    }
 }

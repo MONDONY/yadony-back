@@ -538,4 +538,37 @@ class AudienceFieldsIT {
         assertThat(match("country", "IN", "[\"FR\",\"SN\"]")).contains(fr, sn);
         assertThat(match("intent_destination", "IN", "[\"CI\"]")).contains(fr).doesNotContain(sn, none);
     }
+
+    @Test
+    void corridorInterest_sourcesNull_valentToutesLesSources() {
+        UUID traveler = user();
+        UUID other = user();
+        announcement(traveler, "Paris", "Dakar", "FR", "SN");
+        announcement(other, "Lyon", "Abidjan", "FR", "CI");
+
+        String v = "{\"kind\":\"CITY\",\"origin\":\"Paris\",\"sources\":null}";
+        assertThat(match("corridor_interest", "MATCHES", v)).contains(traveler).doesNotContain(other);
+    }
+
+    @Test
+    void corridorInterest_sourceDemandeeEnModePays() {
+        UUID traveler = user();
+        UUID sender = user();
+        UUID other = user();
+        bid(announcement(traveler, "Paris", "Dakar", "FR", "SN"), sender);
+
+        assertThat(match("corridor_interest", "MATCHES", corridor("COUNTRY", "FR", "SN", "[\"REQUESTED\"]")))
+                .contains(sender).doesNotContain(traveler, other);
+    }
+
+    @Test
+    void country_toutPaysIso_accepte_etInconnuRefuse() {
+        UUID jp = user();
+        setUser(jp, "country", "JP");
+
+        assertThat(match("country", "IN", "[\"JP\"]")).contains(jp);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> match("country", "IN", "[\"ZZ\"]"))
+                .isInstanceOfSatisfying(com.yadony.api.common.YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("broadcast-rule-invalid"));
+    }
 }

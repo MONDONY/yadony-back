@@ -187,4 +187,20 @@ class AudienceSqlCompilerTest {
         String where = compile(corridorRule("{\"kind\":\"CITY\",\"origin\":\"Paris\"}")).where();
         assertThat(where).contains("FROM announcements a ").contains("FROM bids b").contains("FROM corridor_alerts c");
     }
+
+    @Test
+    void pays_isoComplet_accepte_etInconnuRefuse() {
+        assertThat(compile(one("country", "IN", "[\"JP\"]")).where()).contains("upper(u.country) IN (:p0)");
+        assert422(one("country", "IN", "[\"ZZ\"]"));
+        assert422(one("intent_destination", "IN", "[\"ZZ\"]"));
+        assertThat(compile(corridorRule("{\"kind\":\"COUNTRY\",\"origin\":\"jp\"}")).params().getValue("p0"))
+                .isEqualTo("JP");
+        assert422(corridorRule("{\"kind\":\"COUNTRY\",\"origin\":\"ZZ\"}"));
+    }
+
+    @Test
+    void sourcesNull_valentSourcesAbsentes() {
+        String where = compile(corridorRule("{\"kind\":\"CITY\",\"origin\":\"Paris\",\"sources\":null}")).where();
+        assertThat(where).contains("FROM announcements a ").contains("FROM bids b").contains("FROM corridor_alerts c");
+    }
 }

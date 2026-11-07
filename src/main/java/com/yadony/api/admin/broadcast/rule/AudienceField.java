@@ -1,21 +1,21 @@
 package com.yadony.api.admin.broadcast.rule;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.yadony.api.common.YadonyBusinessException;
-import org.springframework.http.HttpStatus;
-
 import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.MobileMoneyPayoutStatus;
 import com.yadony.api.auth.StripeAccountStatus;
 import com.yadony.api.billing.ProSubscriptionStatus;
+import com.yadony.api.common.YadonyBusinessException;
+import org.springframework.http.HttpStatus;
 
+import java.text.Collator;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
-import java.util.Locale;
-import java.util.EnumMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -159,25 +159,23 @@ public enum AudienceField {
     private static final Set<String> CORRIDOR_SOURCES = new LinkedHashSet<>(List.of("PUBLISHED", "REQUESTED", "ALERT"));
 
     /**
-     * Pays proposés pour la résidence et la destination (principaux marchés de GeoNamesDataLoader).
-     * Classe imbriquée : un champ statique de l'enum serait encore nul pendant la création des constantes.
+     * Tous les pays ISO 3166, libellés en français et triés par libellé. Classe imbriquée : un champ
+     * statique de l'enum serait encore nul pendant la création des constantes (init paresseuse).
      */
     private static final class Countries {
         static final Map<String, String> ALL = build();
 
         private static Map<String, String> build() {
-            Map<String, String> m = new LinkedHashMap<>();
-            String[][] c = {{"FR", "France"}, {"SN", "Sénégal"}, {"CI", "Côte d'Ivoire"}, {"ML", "Mali"},
-                {"CM", "Cameroun"}, {"GN", "Guinée"}, {"BF", "Burkina Faso"}, {"TG", "Togo"}, {"BJ", "Bénin"},
-                {"NE", "Niger"}, {"MR", "Mauritanie"}, {"CD", "Congo (RDC)"}, {"CG", "Congo"}, {"GA", "Gabon"},
-                {"TD", "Tchad"}, {"MA", "Maroc"}, {"DZ", "Algérie"}, {"TN", "Tunisie"}, {"MG", "Madagascar"},
-                {"US", "États-Unis"}, {"CA", "Canada"}, {"GB", "Royaume-Uni"}, {"DE", "Allemagne"},
-                {"ES", "Espagne"}, {"IT", "Italie"}, {"BE", "Belgique"}, {"CH", "Suisse"}, {"NL", "Pays-Bas"},
-                {"PT", "Portugal"}};
-            for (String[] e : c) {
-                m.put(e[0], e[1]);
+            Map<String, String> byCode = new LinkedHashMap<>();
+            for (String cc : Locale.getISOCountries()) {
+                byCode.put(cc, Locale.of("", cc).getDisplayCountry(Locale.FRENCH));
             }
-            return m;
+            Collator collator = Collator.getInstance(Locale.FRENCH);
+            Map<String, String> sorted = new LinkedHashMap<>();
+            byCode.entrySet().stream()
+                    .sorted((x, y) -> collator.compare(x.getValue(), y.getValue()))
+                    .forEach(e -> sorted.put(e.getKey(), e.getValue()));
+            return sorted;
         }
     }
 
@@ -296,8 +294,9 @@ public enum AudienceField {
                 continue;
             }
             if (!b.isTextual() || b.asText().length() > MAX_TEXT
-                    || (country && !b.asText().isBlank() && !b.asText().trim().matches("[A-Za-z]{2}"))) {
-                throw bad(country ? "un corridor dont les bornes sont des codes pays à 2 lettres"
+                    || (country && !b.asText().isBlank()
+                    && !Countries.ALL.containsKey(b.asText().trim().toUpperCase(Locale.ROOT)))) {
+                throw bad(country ? "un corridor dont les bornes sont des codes pays ISO à 2 lettres"
                         : "un corridor dont les villes font " + MAX_TEXT + " caractères au plus");
             }
             if (!b.asText().isBlank()) {
@@ -380,7 +379,7 @@ public enum AudienceField {
         String d = destination == null ? null : p.bind(country ? destination.toUpperCase(Locale.ROOT) : escapeLike(destination));
 
         List<String> sources = new ArrayList<>();
-        if (value.has("sources")) {
+        if (value.hasNonNull("sources")) {
             value.get("sources").forEach(n -> sources.add(n.asText()));
         } else {
             sources.addAll(CORRIDOR_SOURCES);

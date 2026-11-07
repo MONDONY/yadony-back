@@ -123,10 +123,27 @@ public sealed interface AudienceRule {
         } else if (rule instanceof Condition c) {
             m.put("field", c.field());
             m.put("operator", c.operator());
-            m.put("value", c.value() == null ? null
-                    : CanonicalSupport.MAPPER.convertValue(c.value(), Object.class));
+            m.put("value", c.value() == null ? null : withoutNulls(
+                    CanonicalSupport.MAPPER.convertValue(c.value(), Object.class)));
         }
         return m;
+    }
+
+    /** Une clé à null équivaut à une clé absente : les deux donnent la même empreinte. */
+    private static Object withoutNulls(Object v) {
+        if (v instanceof Map<?, ?> map) {
+            Map<Object, Object> out = new LinkedHashMap<>();
+            map.forEach((k, x) -> {
+                if (x != null) {
+                    out.put(k, withoutNulls(x));
+                }
+            });
+            return out;
+        }
+        if (v instanceof List<?> list) {
+            return list.stream().map(AudienceRule::withoutNulls).toList();
+        }
+        return v;
     }
 
     private static YadonyBusinessException invalid(String detail) {
