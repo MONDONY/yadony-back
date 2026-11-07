@@ -117,6 +117,47 @@ class RuleAudienceRepositoryIT {
     }
 
     @Test
+    void idsAfter_visiteChaqueCompteUneFois_memeSiDesComptesQuittentLaRegleEntreDeuxPages() {
+        List<UserEntity> batch = new ArrayList<>();
+        for (int i = 0; i < 450; i++) {
+            batch.add(newUser(UserStatus.ACTIVE));
+        }
+        List<UUID> ids = userRepository.saveAllAndFlush(batch).stream().map(UserEntity::getId).toList();
+        jdbc.update("UPDATE users SET last_seen_at = now() - interval '60 days' WHERE id IN ("
+                + String.join(",", ids.stream().map(id -> "'" + id + "'").toList()) + ")");
+
+        CompiledRule rule = AudienceSqlCompiler.compile(new AudienceRule.Group(AudienceRule.Op.AND, List.of(
+                new AudienceRule.Condition("last_seen", "OLDER_THAN_DAYS", com.fasterxml.jackson.databind.node.IntNode.valueOf(30)))));
+        long total = repository.count(rule);
+        Set<UUID> expected = new HashSet<>();
+        for (RuleAudienceRepository.IdCursor c : repository.idsAfter(rule, null, (int) total)) {
+            expected.add(c.id());
+        }
+        assertThat(expected).hasSize((int) total).containsAll(ids);
+
+        List<UUID> visited = new ArrayList<>();
+        RuleAudienceRepository.IdCursor cursor = null;
+        int pageNumber = 0;
+        List<RuleAudienceRepository.IdCursor> page;
+        do {
+            page = repository.idsAfter(rule, cursor, 200);
+            page.forEach(c -> visited.add(c.id()));
+            if (pageNumber == 0) {
+                // 60 comptes de la première page « ouvrent l'app » : ils quittent la règle en cours d'envoi.
+                String seen = String.join(",", page.subList(0, 60).stream().map(c -> "'" + c.id() + "'").toList());
+                jdbc.update("UPDATE users SET last_seen_at = now() WHERE id IN (" + seen + ")");
+            }
+            if (!page.isEmpty()) {
+                cursor = page.get(page.size() - 1);
+            }
+            pageNumber++;
+        } while (page.size() >= 200);
+
+        assertThat(visited).doesNotHaveDuplicates();
+        assertThat(new HashSet<>(visited)).isEqualTo(expected);
+    }
+
+    @Test
     void countPushReachable_ignoreAppareilSansJeton() {
         long before = repository.countPushReachable(everyone());
         UUID withToken = user(UserStatus.ACTIVE);

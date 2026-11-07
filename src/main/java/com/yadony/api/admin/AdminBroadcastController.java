@@ -188,7 +188,10 @@ public class AdminBroadcastController {
         do {
             current = audienceService.recipients(target, pageNumber++, EXPORT_PAGE_SIZE);
             rows.addAll(current.getContent());
-        } while (current.hasNext());
+        } while (current.hasNext() && rows.size() < exportMaxRows);
+        if (rows.size() > exportMaxRows) {
+            rows = new java.util.ArrayList<>(rows.subList(0, exportMaxRows));
+        }
 
         AudienceRule.Group rule = ruleOf(target);
         Map<String, Object> payload = new LinkedHashMap<>();

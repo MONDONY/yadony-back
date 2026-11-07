@@ -125,6 +125,12 @@ public class BroadcastAudienceService {
         return AudienceSqlCompiler.compile(equivalentRule(target));
     }
 
+    /** Page d'envoi par curseur d'une cible RULE ({@code after} nul pour la première page). */
+    public List<RuleAudienceRepository.IdCursor> rulePageAfter(BroadcastTarget target,
+                                                               RuleAudienceRepository.IdCursor after) {
+        return ruleRepository.idsAfter(AudienceSqlCompiler.compile(target.rule()), after, PAGE_SIZE);
+    }
+
     public Page<UUID> page(BroadcastTarget target, int pageNumber) {
         Pageable pageable = PageRequest.of(pageNumber, PAGE_SIZE);
         return switch (target.type()) {

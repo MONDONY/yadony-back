@@ -35,7 +35,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** Segments d'audience enregistrés : CRUD admin sur Postgres embarqué (migration V362). */
+/** Segments d'audience enregistrés : CRUD admin sur Postgres embarqué (migration V363). */
 @SpringBootTest
 @ActiveProfiles("e2e")
 @AutoConfigureMockMvc

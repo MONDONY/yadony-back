@@ -18,7 +18,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/** Migration V362 : segments de diffusion et règle d'audience sur l'historique. */
+/** Migration V363 : segments de diffusion et règle d'audience sur l'historique. */
 @SpringBootTest
 @ActiveProfiles("e2e")
 @Transactional
