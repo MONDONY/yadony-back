@@ -149,4 +149,42 @@ class AudienceSqlCompilerTest {
         f.validate(AudienceOperator.IS, ValueType.NONE, null);
         f.validate(AudienceOperator.IS, ValueType.NONE, MAPPER.getNodeFactory().nullNode());
     }
+
+    private static String corridorRule(String value) {
+        return one("corridor_interest", "MATCHES", value);
+    }
+
+    @Test
+    void ville_avecInjection_estLieeEnParametre() {
+        String hostile = "x' OR 1=1 --";
+        CompiledRule r = compile(corridorRule("{\"kind\":\"CITY\",\"origin\":\"" + hostile + "\"}"));
+        assertThat(r.where()).doesNotContain("OR 1=1").doesNotContain("x'");
+        assertThat(r.params().getValue("p0")).isEqualTo(hostile);
+    }
+
+    @Test
+    void ville_jokersEchappes() {
+        CompiledRule r = compile(corridorRule("{\"kind\":\"CITY\",\"origin\":\"Pa_%\\\\\"}"));
+        assertThat(r.params().getValue("p0")).isEqualTo("Pa\\_\\%\\\\");
+        assertThat(r.where()).contains("ILIKE :p0 ESCAPE '\\'");
+    }
+
+    @Test
+    void corridor_valeursInvalides_422() {
+        assert422(corridorRule("{\"kind\":\"REGION\",\"origin\":\"Paris\"}"));
+        assert422(corridorRule("{\"origin\":\"Paris\"}"));
+        assert422(corridorRule("{\"kind\":\"CITY\",\"origin\":\"Paris\",\"sources\":[]}"));
+        assert422(corridorRule("{\"kind\":\"CITY\",\"origin\":\"Paris\",\"sources\":[\"SEARCHED\"]}"));
+        assert422(corridorRule("{\"kind\":\"CITY\",\"origin\":\"Paris\",\"sources\":\"ALERT\"}"));
+        assert422(corridorRule("{\"kind\":\"CITY\",\"origin\":12}"));
+        assert422(corridorRule("{\"kind\":\"CITY\"}"));
+        assert422(corridorRule("{\"kind\":\"COUNTRY\",\"origin\":\"France\"}"));
+        assert422(corridorRule("\"Paris\""));
+    }
+
+    @Test
+    void sourcesAbsentes_donnentLesTroisSources() {
+        String where = compile(corridorRule("{\"kind\":\"CITY\",\"origin\":\"Paris\"}")).where();
+        assertThat(where).contains("FROM announcements a ").contains("FROM bids b").contains("FROM corridor_alerts c");
+    }
 }

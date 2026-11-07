@@ -278,4 +278,264 @@ class AudienceFieldsIT {
         assertThat(match("referral", "IS", "\"REFERRER\"")).doesNotContain(pendingOnly, deletedOnly);
         assertThat(match("referral", "IS", "\"REFERRED\"")).doesNotContain(filleul);
     }
+
+    // ── Activité ────────────────────────────────────────────────────────────
+
+    private UUID announcement(UUID travelerId, String from, String to, String fromCc, String toCc) {
+        AnnouncementEntity a = new AnnouncementEntity();
+        a.setTravelerId(travelerId);
+        a.setDepartureCity(from);
+        a.setArrivalCity(to);
+        a.setDepartureCountryCode(fromCc);
+        a.setArrivalCountryCode(toCc);
+        a.setDepartureDate(LocalDate.now().plusDays(10));
+        a.setTransportMode(TransportMode.PLANE);
+        a.setPickupAddressLabel("12 rue de Rivoli");
+        a.setPickupLat(new BigDecimal("48.8566"));
+        a.setPickupLng(new BigDecimal("2.3522"));
+        a.setDeliveryAddressLabel("Avenue Bourguiba");
+        a.setDeliveryLat(new BigDecimal("14.6928"));
+        a.setDeliveryLng(new BigDecimal("-17.4467"));
+        a.setAvailableKg(new BigDecimal("20"));
+        a.setTotalKg(new BigDecimal("20"));
+        a.setPricePerKg(new BigDecimal("12"));
+        return announcementRepository.saveAndFlush(a).getId();
+    }
+
+    private UUID bid(UUID announcementId, UUID senderId) {
+        BidEntity b = new BidEntity();
+        b.setAnnouncementId(announcementId);
+        b.setSenderId(senderId);
+        b.setWeightKg(new BigDecimal("5"));
+        return bidRepository.saveAndFlush(b).getId();
+    }
+
+    private void alert(UUID ownerId, String from, String to, String fromCc, String toCc, boolean active) {
+        jdbc.update("INSERT INTO corridor_alerts (owner_id, departure_city, arrival_city, departure_country_code,"
+                + " arrival_country_code, active) VALUES (?, ?, ?, ?, ?, ?)",
+                ownerId, from, to, fromCc, toCc, active);
+    }
+
+    @Test
+    void publishedTrip_everEtNever() {
+        UUID traveler = user();
+        UUID idle = user();
+        announcement(traveler, "Paris", "Dakar", "FR", "SN");
+
+        assertThat(match("published_trip", "EVER", "null")).contains(traveler).doesNotContain(idle);
+        assertThat(match("published_trip", "NEVER", "null")).contains(idle).doesNotContain(traveler);
+    }
+
+    @Test
+    void publishedTrip_withinDays_exclutAnnonceAncienne() {
+        UUID recent = user();
+        UUID old = user();
+        announcement(recent, "Paris", "Dakar", "FR", "SN");
+        UUID oldAnnouncement = announcement(old, "Paris", "Dakar", "FR", "SN");
+        jdbc.update("UPDATE announcements SET created_at = now() - interval '40 days' WHERE id = ?", oldAnnouncement);
+
+        assertThat(match("published_trip", "WITHIN_DAYS", "30")).contains(recent).doesNotContain(old);
+    }
+
+    @Test
+    void createdRequest_utiliseLesBidsEtLaFenetre() {
+        UUID sender = user();
+        UUID oldSender = user();
+        UUID traveler = user();
+        UUID announcement = announcement(traveler, "Paris", "Dakar", "FR", "SN");
+        bid(announcement, sender);
+        UUID oldBid = bid(announcement, oldSender);
+        jdbc.update("UPDATE bids SET created_at = now() - interval '90 days' WHERE id = ?", oldBid);
+
+        assertThat(match("created_request", "EVER", "null")).contains(sender, oldSender).doesNotContain(traveler);
+        assertThat(match("created_request", "WITHIN_DAYS", "30")).contains(sender).doesNotContain(oldSender, traveler);
+        assertThat(match("created_request", "NEVER", "null")).contains(traveler).doesNotContain(sender);
+    }
+
+    @Test
+    void completedTrips_gteEtLte() {
+        UUID three = user();
+        UUID zero = user();
+        setUser(three, "total_trips", 3);
+
+        assertThat(match("completed_trips", "GTE", "3")).contains(three).doesNotContain(zero);
+        assertThat(match("completed_trips", "LTE", "2")).contains(zero).doesNotContain(three);
+    }
+
+    @Test
+    void completedShipments_gteEtLte() {
+        UUID five = user();
+        UUID zero = user();
+        setUser(five, "total_shipments", 5);
+
+        assertThat(match("completed_shipments", "GTE", "5")).contains(five).doesNotContain(zero);
+        assertThat(match("completed_shipments", "LTE", "4")).contains(zero).doesNotContain(five);
+    }
+
+    @Test
+    void lastSeen_within_etOlderThan() {
+        UUID recent = user();
+        UUID old = user();
+        setUser(recent, "last_seen_at", java.sql.Timestamp.valueOf(java.time.LocalDateTime.now().minusDays(2)));
+        setUser(old, "last_seen_at", java.sql.Timestamp.valueOf(java.time.LocalDateTime.now().minusDays(60)));
+
+        assertThat(match("last_seen", "WITHIN_DAYS", "7")).contains(recent).doesNotContain(old);
+        assertThat(match("last_seen", "OLDER_THAN_DAYS", "30")).contains(old).doesNotContain(recent);
+    }
+
+    @Test
+    void lastSeen_olderThan_inclutJamaisVu() {
+        UUID never = user();
+        UUID recent = user();
+        setUser(recent, "last_seen_at", java.sql.Timestamp.valueOf(java.time.LocalDateTime.now().minusDays(1)));
+
+        assertThat(match("last_seen", "OLDER_THAN_DAYS", "30")).contains(never).doesNotContain(recent);
+        assertThat(match("last_seen", "WITHIN_DAYS", "30")).doesNotContain(never);
+    }
+
+    @Test
+    void signedUp_within_etOlderThan() {
+        UUID fresh = user();
+        UUID old = user();
+        setUser(old, "created_at", java.sql.Timestamp.valueOf(java.time.LocalDateTime.now().minusDays(200)));
+
+        assertThat(match("signed_up", "WITHIN_DAYS", "30")).contains(fresh).doesNotContain(old);
+        assertThat(match("signed_up", "OLDER_THAN_DAYS", "100")).contains(old).doesNotContain(fresh);
+    }
+
+    // ── Géographie ──────────────────────────────────────────────────────────
+
+    private static String corridor(String kind, String origin, String destination, String sources) {
+        StringBuilder sb = new StringBuilder("{\"kind\":\"" + kind + "\"");
+        if (origin != null) {
+            sb.append(",\"origin\":\"").append(origin).append('"');
+        }
+        if (destination != null) {
+            sb.append(",\"destination\":\"").append(destination).append('"');
+        }
+        if (sources != null) {
+            sb.append(",\"sources\":").append(sources);
+        }
+        return sb.append('}').toString();
+    }
+
+    @Test
+    void corridorInterest_origineSeule() {
+        UUID traveler = user();
+        UUID sender = user();
+        UUID other = user();
+        UUID announcement = announcement(traveler, "Paris", "Dakar", "FR", "SN");
+        bid(announcement, sender);
+        announcement(other, "Lyon", "Abidjan", "FR", "CI");
+
+        assertThat(match("corridor_interest", "MATCHES", corridor("CITY", "paris", null, null)))
+                .contains(traveler, sender).doesNotContain(other);
+        assertThat(match("corridor_interest", "MATCHES", corridor("CITY", null, "ABIDJAN", null)))
+                .contains(other).doesNotContain(traveler, sender);
+        assertThat(match("corridor_interest", "MATCHES", corridor("CITY", "Paris", "Abidjan", null)))
+                .doesNotContain(traveler, sender, other);
+    }
+
+    @Test
+    void corridorInterest_pays_viaCodesPays() {
+        UUID traveler = user();
+        UUID other = user();
+        UUID alerter = user();
+        announcement(traveler, "Paris", "Dakar", "FR", "SN");
+        announcement(other, "Lyon", "Abidjan", "FR", "CI");
+        alert(alerter, "Marseille", "Dakar", "fr", "sn", true);
+
+        assertThat(match("corridor_interest", "MATCHES", corridor("COUNTRY", "fr", "SN", null)))
+                .contains(traveler, alerter).doesNotContain(other);
+        assertThat(match("corridor_interest", "MATCHES", corridor("COUNTRY", null, "CI", null)))
+                .contains(other).doesNotContain(traveler, alerter);
+    }
+
+    @Test
+    void corridorInterest_sourceAlerteSeule() {
+        UUID traveler = user();
+        UUID alerter = user();
+        UUID inactive = user();
+        announcement(traveler, "Paris", "Dakar", "FR", "SN");
+        alert(alerter, "Paris", "Dakar", "FR", "SN", true);
+        alert(inactive, "Paris", "Dakar", "FR", "SN", false);
+
+        assertThat(match("corridor_interest", "MATCHES", corridor("CITY", "Paris", "Dakar", "[\"ALERT\"]")))
+                .contains(alerter).doesNotContain(traveler, inactive);
+        assertThat(match("corridor_interest", "MATCHES", corridor("CITY", "Paris", "Dakar", "[\"PUBLISHED\"]")))
+                .contains(traveler).doesNotContain(alerter);
+        assertThat(match("corridor_interest", "MATCHES", corridor("CITY", "Paris", "Dakar", "[\"REQUESTED\"]")))
+                .doesNotContain(traveler, alerter);
+    }
+
+    @Test
+    void corridorInterest_jokerEchappe() {
+        UUID traveler = user();
+        UUID literal = user();
+        announcement(traveler, "Paris", "Dakar", "FR", "SN");
+        announcement(literal, "Par%", "Dakar", "FR", "SN");
+
+        Set<UUID> hits = match("corridor_interest", "MATCHES", corridor("CITY", "Par%", null, null));
+        assertThat(hits).contains(literal).doesNotContain(traveler);
+        assertThat(match("corridor_interest", "MATCHES", corridor("CITY", "P_ris", null, null)))
+                .doesNotContain(traveler);
+        assertThat(match("corridor_interest", "MATCHES", corridor("CITY", "Pa\\\\ris", null, null)))
+                .doesNotContain(traveler);
+    }
+
+    @Test
+    void corridorInterest_bornesAbsentes_422() {
+        for (String v : List.of("{\"kind\":\"CITY\"}", "{\"kind\":\"CITY\",\"origin\":\"  \",\"destination\":\"\"}")) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> match("corridor_interest", "MATCHES", v))
+                    .isInstanceOfSatisfying(com.yadony.api.common.YadonyBusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("broadcast-rule-invalid"));
+        }
+    }
+
+    @Test
+    void corridorInterest_sansDoublon() {
+        UUID traveler = user();
+        announcement(traveler, "Paris", "Dakar", "FR", "SN");
+        announcement(traveler, "Paris", "Dakar", "FR", "SN");
+        announcement(traveler, "Paris", "Dakar", "FR", "SN");
+        alert(traveler, "Paris", "Dakar", "FR", "SN", true);
+
+        String json = "{\"op\":\"AND\",\"children\":[{\"field\":\"corridor_interest\",\"operator\":\"MATCHES\","
+                + "\"value\":" + corridor("CITY", "Paris", "Dakar", null) + "}]}";
+        try {
+            CompiledRule rule = AudienceSqlCompiler.compile(AudienceRule.parse(MAPPER.readTree(json)));
+            List<UUID> ids = new NamedParameterJdbcTemplate(jdbc).query(
+                    "SELECT u.id FROM users u WHERE " + rule.where(), rule.params(),
+                    (rs, i) -> rs.getObject(1, UUID.class));
+            assertThat(ids).containsOnlyOnce(traveler);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @Test
+    void corridorAlert_isBoolean() {
+        UUID with = user();
+        UUID inactive = user();
+        UUID without = user();
+        alert(with, "Paris", "Dakar", "FR", "SN", true);
+        alert(inactive, "Paris", "Dakar", "FR", "SN", false);
+
+        assertThat(match("corridor_alert", "IS", "true")).contains(with).doesNotContain(inactive, without);
+        assertThat(match("corridor_alert", "IS", "false")).contains(inactive, without).doesNotContain(with);
+    }
+
+    @Test
+    void country_etIntentDestination_insensiblesALaCasse() {
+        UUID fr = user();
+        UUID sn = user();
+        UUID none = user();
+        setUser(fr, "country", "fr");
+        setUser(sn, "country", "SN");
+        setUser(fr, "intent_destination_country", "CI");
+
+        assertThat(match("country", "IN", "[\"FR\"]")).contains(fr).doesNotContain(sn, none);
+        assertThat(match("country", "IN", "[\"FR\",\"SN\"]")).contains(fr, sn);
+        assertThat(match("intent_destination", "IN", "[\"CI\"]")).contains(fr).doesNotContain(sn, none);
+    }
 }

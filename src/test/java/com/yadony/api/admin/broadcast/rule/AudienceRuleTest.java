@@ -121,4 +121,14 @@ class AudienceRuleTest {
         AudienceRule.Group b = AudienceRule.parse(json("{\"op\":\"OR\",\"children\":[" + cond() + "]}"));
         assertThat(a.hash()).isNotEqualTo(b.hash());
     }
+
+    @Test
+    void hash_corridorAvecClesPermutees_estIdentique() throws Exception {
+        String a = "{\"op\":\"AND\",\"children\":[{\"field\":\"corridor_interest\",\"operator\":\"MATCHES\","
+                + "\"value\":{\"kind\":\"CITY\",\"origin\":\"Paris\",\"destination\":\"Dakar\"}}]}";
+        String b = "{\"children\":[{\"value\":{\"destination\":\"Dakar\",\"origin\":\"Paris\",\"kind\":\"CITY\"},"
+                + "\"operator\":\"MATCHES\",\"field\":\"corridor_interest\"}],\"op\":\"AND\"}";
+        ObjectMapper m = new ObjectMapper();
+        assertThat(AudienceRule.parse(m.readTree(a)).hash()).isEqualTo(AudienceRule.parse(m.readTree(b)).hash());
+    }
 }

@@ -108,7 +108,47 @@ public enum AudienceField {
             (op, value, p) -> "REFERRED".equals(value.asText())
                     ? "EXISTS (SELECT 1 FROM referral_invitations i WHERE i.referee_user_id = u.id AND i.deleted_at IS NULL)"
                     : "EXISTS (SELECT 1 FROM referral_invitations i WHERE i.referrer_user_id = u.id"
-                            + " AND i.referee_user_id IS NOT NULL AND i.deleted_at IS NULL)");
+                            + " AND i.referee_user_id IS NOT NULL AND i.deleted_at IS NULL)"),
+
+    PUBLISHED_TRIP("published_trip", Family.ACTIVITY, "A publié un trajet", activityOps(), List.of(),
+            (op, value, p) -> existsSince(op, value, p, "announcements a", "a.traveler_id = u.id", "a")),
+
+    CREATED_REQUEST("created_request", Family.ACTIVITY, "A fait une demande d'envoi", activityOps(), List.of(),
+            (op, value, p) -> existsSince(op, value, p, "bids b", "b.sender_id = u.id", "b")),
+
+    COMPLETED_TRIPS("completed_trips", Family.ACTIVITY, "Trajets réalisés", countOps(), List.of(),
+            (op, value, p) -> "u.total_trips " + cmp(op) + " " + p.bind(value.asInt())),
+
+    COMPLETED_SHIPMENTS("completed_shipments", Family.ACTIVITY, "Colis envoyés", countOps(), List.of(),
+            (op, value, p) -> "u.total_shipments " + cmp(op) + " " + p.bind(value.asInt())),
+
+    LAST_SEEN("last_seen", Family.ACTIVITY, "Dernière visite", daysOps(), List.of(),
+            (op, value, p) -> op == AudienceOperator.WITHIN_DAYS
+                    ? "u.last_seen_at >= now() - make_interval(days => " + p.bind(value.asInt()) + ")"
+                    : "(u.last_seen_at IS NULL OR u.last_seen_at < now() - make_interval(days => "
+                            + p.bind(value.asInt()) + "))"),
+
+    SIGNED_UP("signed_up", Family.ACTIVITY, "Inscription", daysOps(), List.of(),
+            (op, value, p) -> op == AudienceOperator.WITHIN_DAYS
+                    ? "u.created_at >= now() - make_interval(days => " + p.bind(value.asInt()) + ")"
+                    : "u.created_at < now() - make_interval(days => " + p.bind(value.asInt()) + ")"),
+
+    CORRIDOR_INTEREST("corridor_interest", Family.GEO, "Intérêt pour un corridor",
+            Map.of(AudienceOperator.MATCHES, ValueType.CORRIDOR), List.of(),
+            (op, value, p) -> corridorSql(value, p)),
+
+    CORRIDOR_ALERT("corridor_alert", Family.GEO, "A une alerte de corridor",
+            Map.of(AudienceOperator.IS, ValueType.BOOLEAN), List.of(),
+            (op, value, p) -> (value.asBoolean() ? "" : "NOT ")
+                    + "EXISTS (SELECT 1 FROM corridor_alerts c WHERE c.owner_id = u.id AND c.active AND c.deleted_at IS NULL)"),
+
+    COUNTRY("country", Family.GEO, "Pays de résidence",
+            Map.of(AudienceOperator.IN, ValueType.ENUM_MULTI), countryOptions(),
+            (op, value, p) -> "upper(u.country) IN (" + p.bind(texts(value)) + ")"),
+
+    INTENT_DESTINATION("intent_destination", Family.GEO, "Pays de destination déclaré",
+            Map.of(AudienceOperator.IN, ValueType.ENUM_MULTI), countryOptions(),
+            (op, value, p) -> "upper(u.intent_destination_country) IN (" + p.bind(texts(value)) + ")");
 
     /** Generateur du fragment booleen, appele apres validation. */
     @FunctionalInterface
