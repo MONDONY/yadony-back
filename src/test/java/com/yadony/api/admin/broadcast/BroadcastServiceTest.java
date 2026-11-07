@@ -53,6 +53,35 @@ class BroadcastServiceTest {
     }
 
     @Test
+    void record_rule_copieLaRegleCanonique() throws Exception {
+        var rule = com.yadony.api.admin.broadcast.rule.AudienceRule.parse(new com.fasterxml.jackson.databind.ObjectMapper()
+                .readTree("{\"op\":\"AND\",\"children\":[{\"field\":\"created_request\",\"operator\":\"EVER\"}]}"));
+        BroadcastTarget target = new BroadcastTarget(BroadcastTargetType.RULE, null, null, null, rule);
+        UUID segmentId = UUID.randomUUID();
+        when(audienceService.count(target)).thenReturn(5L);
+        when(broadcastRepository.save(any(AdminBroadcastEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AdminBroadcastEntity saved = service.record("T", "C", target, UUID.randomUUID(), segmentId, "Mon segment");
+
+        assertThat(saved.getAudienceRule()).isEqualTo(rule.canonicalJson());
+        assertThat(saved.getSegmentId()).isEqualTo(segmentId);
+        assertThat(saved.getSegmentName()).isEqualTo("Mon segment");
+        assertThat(saved.getTargetType()).isEqualTo(BroadcastTargetType.RULE);
+    }
+
+    @Test
+    void record_ancienneSignature_nEnregistrePasDeRegle() {
+        when(audienceService.count(ALL)).thenReturn(1L);
+        when(broadcastRepository.save(any(AdminBroadcastEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AdminBroadcastEntity saved = service.record("T", "C", ALL, UUID.randomUUID());
+
+        assertThat(saved.getAudienceRule()).isNull();
+        assertThat(saved.getSegmentId()).isNull();
+        assertThat(saved.getSegmentName()).isNull();
+    }
+
+    @Test
     void dispatchWalksEveryPageAndNotifiesEachRecipientOnce() {
         UUID u1 = UUID.randomUUID();
         UUID u2 = UUID.randomUUID();

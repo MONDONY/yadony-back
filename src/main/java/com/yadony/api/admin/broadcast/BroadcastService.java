@@ -49,10 +49,21 @@ public class BroadcastService {
     /** Compte les destinataires et fige la ligne d'historique. Synchrone : la reponse HTTP en depend. */
     @Transactional
     public AdminBroadcastEntity record(String title, String body, BroadcastTarget target, UUID adminId) {
+        return record(title, body, target, adminId, null, null);
+    }
+
+    /**
+     * Variante avec segment : la règle est copiée sur la ligne ({@code canonicalJson}) et le
+     * nom du segment aussi, pour que l'historique survive à une modification ou une suppression.
+     */
+    @Transactional
+    public AdminBroadcastEntity record(String title, String body, BroadcastTarget target, UUID adminId,
+                                       UUID segmentId, String segmentName) {
         long recipientCount = audienceService.count(target);
+        String rule = target.type() == BroadcastTargetType.RULE ? target.rule().canonicalJson() : null;
         return broadcastRepository.save(new AdminBroadcastEntity(
                 title, body, target.type(), target.origin(), target.destination(),
-                target.userId(), (int) recipientCount, adminId));
+                target.userId(), (int) recipientCount, adminId, rule, segmentId, segmentName));
     }
 
     /**

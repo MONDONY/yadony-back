@@ -17,6 +17,6 @@ public record BroadcastTargetRequest(
         UUID userId) {
 
     public BroadcastTarget toDomain() {
-        return new BroadcastTarget(type, origin, destination, userId);
+        return new BroadcastTarget(type, origin, destination, userId, null);
     }
 }

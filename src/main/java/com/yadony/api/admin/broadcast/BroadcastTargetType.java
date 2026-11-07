@@ -18,5 +18,7 @@ public enum BroadcastTargetType {
     /** A publie une annonce ou un bid sur le corridor (ville de depart -> ville d'arrivee). */
     CORRIDOR,
     /** Un utilisateur designe. */
-    USER
+    USER,
+    /** Une regle d'audience (groupes ET/OU de conditions), voir {@code rule.AudienceRule}. */
+    RULE
 }

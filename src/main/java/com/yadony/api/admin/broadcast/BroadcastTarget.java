@@ -1,5 +1,6 @@
 package com.yadony.api.admin.broadcast;
 
+import com.yadony.api.admin.broadcast.rule.AudienceRule;
 import com.yadony.api.common.YadonyBusinessException;
 import org.springframework.http.HttpStatus;
 
@@ -17,7 +18,13 @@ import java.util.UUID;
  * pays, seule alternative, sont nullables en base — les villes sont les seules colonnes
  * fiables ({@code announcements.departure_city} / {@code arrival_city}, VARCHAR(100) NOT NULL).
  */
-public record BroadcastTarget(BroadcastTargetType type, String origin, String destination, UUID userId) {
+public record BroadcastTarget(BroadcastTargetType type, String origin, String destination, UUID userId,
+                              AudienceRule.Group rule) {
+
+    /** Ciblage historique (sans regle) : les cinq anciens types. */
+    public BroadcastTarget(BroadcastTargetType type, String origin, String destination, UUID userId) {
+        this(type, origin, destination, userId, null);
+    }
 
     public BroadcastTarget {
         if (type == null) {
@@ -39,6 +46,13 @@ public record BroadcastTarget(BroadcastTargetType type, String origin, String de
             }
         } else {
             userId = null;
+        }
+        if (type == BroadcastTargetType.RULE) {
+            if (rule == null) {
+                throw invalid("Un ciblage par règle exige une règle d'audience");
+            }
+        } else {
+            rule = null;
         }
     }
 
