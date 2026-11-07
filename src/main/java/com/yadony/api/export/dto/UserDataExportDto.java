@@ -21,8 +21,22 @@ public record UserDataExportDto(
         List<PickupAddressDto> pickupAddresses,
         List<DeliveryAddressDto> deliveryAddresses,
         List<FavoriteExport> favorites,
+        List<SearchInterestExport> searchInterests,
         LocalDateTime generatedAt
 ) {
+    /**
+     * Corridors cherchés et retenus pour les suggestions de trajets (V362), effacés 30 jours
+     * après la dernière recherche.
+     */
+    public record SearchInterestExport(
+            String departureCity,
+            String arrivalCity,
+            LocalDate dateFrom,
+            LocalDate dateTo,
+            LocalDateTime lastSearchedAt,
+            LocalDateTime notifiedAt
+    ) {}
+
     public record ProfileExport(
             UUID id,
             String firstName,

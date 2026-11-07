@@ -177,12 +177,30 @@ public class ResendEmailService {
      */
     public void sendNotification(String to, NotificationEmailPolicy.Kind kind, String type,
                                  String title, String body, NotificationEmailLink.Cta cta, Messages m) {
-        sendNotification(to, kind, type, title, body, cta, null, m);
+        sendNotification(to, kind, type, title, body, cta, null, null, m);
+    }
+
+    /**
+     * Variante avec désinscription en un clic (suggestions selon les recherches) : la ligne du
+     * bas explique pourquoi l'e-mail arrive et porte le lien, et les en-têtes
+     * {@code List-Unsubscribe} / {@code List-Unsubscribe-Post} (RFC 8058) donnent le bouton
+     * « Se désabonner » des messageries. {@code unsubscribeUrl} nul = variante ordinaire.
+     */
+    public void sendNotification(String to, NotificationEmailPolicy.Kind kind, String type,
+                                 String title, String body, String openUrl, String unsubscribeUrl,
+                                 Messages m) {
+        sendNotification(to, kind, type, title, body, null, openUrl, unsubscribeUrl, m);
     }
 
     private void sendNotification(String to, NotificationEmailPolicy.Kind kind, String type,
                                   String title, String body, NotificationEmailLink.Cta cta,
                                   String openUrl, Messages m) {
+        sendNotification(to, kind, type, title, body, cta, openUrl, null, m);
+    }
+
+    private void sendNotification(String to, NotificationEmailPolicy.Kind kind, String type,
+                                  String title, String body, NotificationEmailLink.Cta cta,
+                                  String openUrl, String unsubscribeUrl, Messages m) {
         try {
             if (!emailSendingConfigured) {
                 return;
@@ -199,15 +217,25 @@ public class ResendEmailService {
             }
             String ctaUrl = cta != null ? cta.url() : (openUrl != null ? openUrl : APP_URL);
             String ctaLabel = m.get(cta != null ? cta.labelKey() : "email.notif.cta");
+            String unsubscribeLabel = unsubscribeUrl == null ? null : m.get("email.notif.unsubscribe.suggestion");
             String text = String.join("\n\n", title, body == null ? "" : body, detail,
                     ctaLabel + " : " + ctaUrl);
-            Map<String, Object> payload = Map.of(
-                    "from", fromAddress,
-                    "to", List.of(to),
-                    "subject", title,
-                    "html", renderNotificationHtml(kind, family, title, body, detail, ctaUrl, ctaLabel, m),
-                    "text", text
-            );
+            if (unsubscribeUrl != null) {
+                text = text + "\n\n" + m.get("email.notif.why.suggestion") + "\n"
+                        + unsubscribeLabel + " : " + unsubscribeUrl;
+            }
+            Map<String, Object> payload = new java.util.LinkedHashMap<>();
+            payload.put("from", fromAddress);
+            payload.put("to", List.of(to));
+            payload.put("subject", title);
+            payload.put("html", renderNotificationHtml(kind, family, title, body, detail, ctaUrl, ctaLabel,
+                    unsubscribeUrl, unsubscribeLabel, m));
+            payload.put("text", text);
+            if (unsubscribeUrl != null) {
+                payload.put("headers", Map.of(
+                        "List-Unsubscribe", "<" + unsubscribeUrl + ">",
+                        "List-Unsubscribe-Post", "List-Unsubscribe=One-Click"));
+            }
             restClient.post()
                     .uri("/emails")
                     .contentType(MediaType.APPLICATION_JSON)
@@ -221,7 +249,7 @@ public class ResendEmailService {
 
     private String renderNotificationHtml(NotificationEmailPolicy.Kind kind, String family, String heading,
                                           String body, String detail, String ctaUrl, String ctaLabel,
-                                          Messages m) {
+                                          String unsubscribeUrl, String unsubscribeLabel, Messages m) {
         Context context = new Context(m.locale());
         context.setVariable("eyebrow", m.get(family + ".eyebrow"));
         context.setVariable("heading", heading);
@@ -230,6 +258,8 @@ public class ResendEmailService {
         context.setVariable("optional", kind.pref().isPresent());
         context.setVariable("appUrl", ctaUrl);
         context.setVariable("ctaLabel", ctaLabel);
+        context.setVariable("unsubscribeUrl", unsubscribeUrl);
+        context.setVariable("unsubscribeLabel", unsubscribeLabel);
         context.setVariable("lang", m.language().code());
         return templateEngine.process("email-notification", context);
     }

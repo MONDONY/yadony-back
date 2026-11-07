@@ -10,10 +10,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class NotificationEmailPolicyTest {
 
-    /** Plan validé : 22 types doublés par un e-mail, 5 où l'e-mail remplace le push. */
+    /**
+     * Plan validé : 22 types doublés par un e-mail, 4 où l'e-mail remplace le push, plus la
+     * suggestion selon les recherches (V362), doublée d'un e-mail avec désinscription.
+     */
     @Test
     void planCounts() {
-        assertThat(NotificationEmailPolicy.WITH_PUSH).hasSize(22);
+        assertThat(NotificationEmailPolicy.WITH_PUSH).hasSize(23);
+        assertThat(NotificationEmailPolicy.kindOf("SEARCH_SUGGESTION", Map.of())).contains(Kind.SUGGESTION);
+        assertThat(NotificationEmailPolicy.replacesPush("SEARCH_SUGGESTION", Map.of())).isFalse();
+        assertThat(Kind.SUGGESTION.pref()).contains("emailAlertsTips");
         assertThat(NotificationEmailPolicy.INSTEAD_OF_PUSH).hasSize(4);
         assertThat(NotificationEmailPolicy.WITH_PUSH.keySet())
                 .doesNotContainAnyElementsOf(NotificationEmailPolicy.INSTEAD_OF_PUSH.keySet());

@@ -262,6 +262,42 @@ class ResendEmailServiceTest {
     }
 
     @Test
+    @DisplayName("sendNotification — suggestion selon les recherches : ligne propre, lien et en-têtes de désinscription")
+    @SuppressWarnings("unchecked")
+    void notificationEmail_searchSuggestionCarriesOneClickUnsubscribe() {
+        String open = "https://yadony.com/ouvrir?type=SEARCH_SUGGESTION";
+        String unsubscribe = "https://api.yadony.com/api/v1/public/notifications/search-suggestions/unsubscribe?t=abc.def";
+        service.sendNotification("user@example.com", com.yadony.api.notifications.NotificationEmailPolicy.Kind.SUGGESTION,
+                "SEARCH_SUGGESTION", "Le trajet que vous cherchiez", "Paris vers Abidjan : départ le 14 nov.",
+                open, unsubscribe, TestMessages.fr());
+
+        Map<String, Object> payload = lastPayload();
+        assertThat((String) payload.get("html"))
+                .contains("Selon vos recherches")
+                .contains("Vous avez cherché ce trajet sur Yadony sans trouver de voyageur")
+                .contains("Vous recevez cet e-mail car vous avez cherché ce trajet sur Yadony.")
+                .contains("Ne plus recevoir ces suggestions").contains(unsubscribe)
+                .doesNotContain("Vous pouvez couper ces e-mails")
+                .doesNotContain("??");
+        assertThat((String) payload.get("text")).contains("Ne plus recevoir ces suggestions : " + unsubscribe);
+        assertThat((Map<String, String>) payload.get("headers"))
+                .containsEntry("List-Unsubscribe", "<" + unsubscribe + ">")
+                .containsEntry("List-Unsubscribe-Post", "List-Unsubscribe=One-Click");
+    }
+
+    @Test
+    @DisplayName("sendNotification — sans désinscription, ni en-têtes List-Unsubscribe ni ligne propre (anglais)")
+    void notificationEmail_withoutUnsubscribe_hasNoListHeaders() {
+        service.sendNotification("user@example.com", com.yadony.api.notifications.NotificationEmailPolicy.Kind.SUGGESTION,
+                "SEARCH_SUGGESTION", "A trip you searched for", "b", "https://yadony.com/ouvrir", null, TestMessages.en());
+
+        Map<String, Object> payload = lastPayload();
+        assertThat(payload).doesNotContainKey("headers");
+        assertThat((String) payload.get("html")).contains("Based on your searches")
+                .contains("You can turn these emails off").doesNotContain("??");
+    }
+
+    @Test
     @DisplayName("sendNotification — un reçu part toujours : pas de ligne pour couper, version anglaise")
     void notificationEmail_receiptInEnglish() {
         service.sendNotification("user@example.com", com.yadony.api.notifications.NotificationEmailPolicy.Kind.RECEIPT,

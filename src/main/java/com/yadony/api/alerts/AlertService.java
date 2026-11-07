@@ -430,16 +430,7 @@ public class AlertService {
      */
     @Transactional(readOnly = true)
     public List<CorridorAlertEntity> findSenderAlertsMatchingTrip(AnnouncementEntity trip) {
-        if (trip.getStatus() != AnnouncementStatus.ACTIVE
-                && trip.getStatus() != AnnouncementStatus.FULL) {
-            return List.of();
-        }
-        // Trajet dédié non ouvert au public : aucune alerte de tiers (FLUTTER-EW).
-        if (!trip.isPubliclyVisible()) {
-            return List.of();
-        }
-        // Dépôt déjà clos : personne ne pourrait y faire de demande (PROD-1R).
-        if (trip.isHandoverDeadlinePassed(clock.instant())) {
+        if (!isTripOpenToThirdParties(trip)) {
             return List.of();
         }
         LocalDate today = today();
@@ -454,6 +445,23 @@ public class AlertService {
                 .filter(a -> fitsAlertDate(trip.getDepartureDate(), a))
                 .filter(a -> zoneContainsPickup(a, trip))
                 .toList();
+    }
+
+    /**
+     * Un tiers peut-il être prévenu de ce trajet (alerte, suggestion selon ses recherches) ?
+     * Publié (ACTIVE ou FULL), visible du public, et dépôt encore ouvert.
+     */
+    public boolean isTripOpenToThirdParties(AnnouncementEntity trip) {
+        if (trip.getStatus() != AnnouncementStatus.ACTIVE
+                && trip.getStatus() != AnnouncementStatus.FULL) {
+            return false;
+        }
+        // Trajet dédié non ouvert au public : aucune alerte de tiers (FLUTTER-EW).
+        if (!trip.isPubliclyVisible()) {
+            return false;
+        }
+        // Dépôt déjà clos : personne ne pourrait y faire de demande (PROD-1R).
+        return !trip.isHandoverDeadlinePassed(clock.instant());
     }
 
     /**

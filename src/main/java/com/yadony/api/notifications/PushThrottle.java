@@ -51,7 +51,8 @@ public class PushThrottle {
     static final Set<String> BURST_TYPES = Set.of("TRIP_ARRIVED", "TRIP_CANCELLED", "BID_EXPIRED", "BID_REJECTED");
 
     /** Découverte d'un trajet ou d'une demande : alertes, abonnements, colis compatibles. */
-    static final Set<String> DISCOVERY_TYPES = Set.of("CORRIDOR_ALERT", "TRAVELER_NEW_ANNOUNCEMENT", "PACKAGE_MATCH");
+    static final Set<String> DISCOVERY_TYPES = Set.of("CORRIDOR_ALERT", "TRAVELER_NEW_ANNOUNCEMENT", "PACKAGE_MATCH",
+            "SEARCH_SUGGESTION");
 
     private final Map<Rule, Cache<String, Boolean>> recent = new EnumMap<>(Rule.class);
 
