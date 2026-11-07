@@ -8,6 +8,8 @@ import com.yadony.api.matching.dto.AnnouncementResponse;
 import com.yadony.api.matching.dto.AnnouncementSearchResponse;
 import com.yadony.api.matching.dto.ArrivalInstructionsRequest;
 import com.yadony.api.matching.dto.MarkArrivedRequest;
+import com.yadony.api.matching.events.TripSearchPerformedEvent;
+import org.springframework.context.ApplicationEventPublisher;
 import com.yadony.api.tracking.SampleSource;
 import com.yadony.api.tracking.TripPositionService;
 import com.yadony.api.tracking.dto.PositionRequest;
@@ -50,15 +52,18 @@ public class AnnouncementController {
     private final TripGroupService tripGroupService;
     private final TripSeriesService tripSeriesService;
     private final TripPositionService tripPositionService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public AnnouncementController(AnnouncementService announcementService,
                                   TripGroupService tripGroupService,
                                   TripSeriesService tripSeriesService,
-                                  TripPositionService tripPositionService) {
+                                  TripPositionService tripPositionService,
+                                  ApplicationEventPublisher eventPublisher) {
         this.announcementService = announcementService;
         this.tripGroupService = tripGroupService;
         this.tripSeriesService = tripSeriesService;
         this.tripPositionService = tripPositionService;
+        this.eventPublisher = eventPublisher;
     }
 
     @GetMapping
@@ -98,14 +103,41 @@ public class AnnouncementController {
         // null (et non false) quand aucun filtre : même valeur, donc même clé de cache,
         // que les appels internes qui ne passent pas le paramètre.
         Boolean gp = Boolean.TRUE.equals(gpProOnly) || Boolean.TRUE.equals(kiloProOnly) ? Boolean.TRUE : null;
+        String firebaseUid = currentFirebaseUidOrNull();
         Page<AnnouncementSearchResponse> page = announcementService.searchAnnouncements(
                 departureCity, arrivalCity, departureDateFrom, departureDateTo,
                 minAvailableKg, maxAvailableKg, maxPricePerKg, minRating, gp, weekendOnly,
                 transportMode, kycVerifiedOnly, contentType,
                 userLat, userLng, radiusKm,
-                sortBy, sortDir, pageable, currentFirebaseUidOrNull(), urgent,
+                sortBy, sortDir, pageable, firebaseUid, urgent,
                 new AnnouncementSearchExtras(maxStops, PaymentMethodFilter.parse(paymentMethods), includeFull));
-        return ResponseEntity.ok(com.yadony.api.matching.dto.TripSearchPageResponse.from(page));
+        var response = com.yadony.api.matching.dto.TripSearchPageResponse.from(page);
+        publishSearch(firebaseUid, departureCity, arrivalCity, departureDateFrom, departureDateTo,
+                pageable, response.bookableElements() != null ? response.bookableElements() : response.totalElements());
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Retient la recherche d'un utilisateur connecté pour lui suggérer plus tard un trajet
+     * (package {@code alerts}). Seulement la première page d'une vraie liste sur un corridor
+     * complet : l'app appelle aussi cet endpoint avec {@code size=1} pour de simples compteurs,
+     * qui ne sont pas des recherches. Ne fait jamais échouer la recherche.
+     */
+    private void publishSearch(String firebaseUid, String departureCity, String arrivalCity,
+                               LocalDate dateFrom, LocalDate dateTo, Pageable pageable, long bookable) {
+        if (firebaseUid == null || departureCity == null || departureCity.isBlank()
+                || arrivalCity == null || arrivalCity.isBlank()) {
+            return;
+        }
+        if (pageable.isPaged() && (pageable.getPageNumber() != 0 || pageable.getPageSize() <= 1)) {
+            return;
+        }
+        try {
+            eventPublisher.publishEvent(new TripSearchPerformedEvent(firebaseUid,
+                    departureCity.trim(), arrivalCity.trim(), dateFrom, dateTo, bookable));
+        } catch (RuntimeException e) {
+            log.warn("Recherche non retenue pour les suggestions : {}", e.getClass().getSimpleName());
+        }
     }
 
     @PostMapping

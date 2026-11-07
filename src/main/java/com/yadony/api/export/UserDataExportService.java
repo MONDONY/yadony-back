@@ -1,6 +1,8 @@
 package com.yadony.api.export;
 
 import com.yadony.api.auth.FirebaseContactService;
+import com.yadony.api.alerts.SearchInterestRepository;
+import com.yadony.api.export.dto.UserDataExportDto.SearchInterestExport;
 import com.yadony.api.addressbook.delivery.DeliveryAddressEntity;
 import com.yadony.api.addressbook.delivery.DeliveryAddressRepository;
 import com.yadony.api.addressbook.delivery.dto.DeliveryAddressDto;
@@ -33,19 +35,22 @@ public class UserDataExportService {
     private final FavoriteRepository favoriteRepository;
     private final KycRepository kycRepository;
     private final FirebaseContactService firebaseContact;
+    private final SearchInterestRepository searchInterestRepository;
 
     public UserDataExportService(RecipientRepository recipientRepository,
                                   PickupAddressRepository pickupAddressRepository,
                                   DeliveryAddressRepository deliveryAddressRepository,
                                   FavoriteRepository favoriteRepository,
                                   KycRepository kycRepository,
-                                  FirebaseContactService firebaseContact) {
+                                  FirebaseContactService firebaseContact,
+                                  SearchInterestRepository searchInterestRepository) {
         this.recipientRepository = recipientRepository;
         this.pickupAddressRepository = pickupAddressRepository;
         this.deliveryAddressRepository = deliveryAddressRepository;
         this.favoriteRepository = favoriteRepository;
         this.kycRepository = kycRepository;
         this.firebaseContact = firebaseContact;
+        this.searchInterestRepository = searchInterestRepository;
     }
 
     public UserDataExportDto export(UserEntity user) {
@@ -94,6 +99,13 @@ public class UserDataExportService {
                 .map(f -> new FavoriteExport(f.getTargetType().name(), f.getTargetId(), f.getCreatedAt()))
                 .collect(Collectors.toList());
 
+        List<SearchInterestExport> searchInterests = searchInterestRepository
+                .findAllByUserIdOrderByLastSearchedAtDesc(user.getId())
+                .stream()
+                .map(s -> new SearchInterestExport(s.getDepartureCity(), s.getArrivalCity(),
+                        s.getDateFrom(), s.getDateTo(), s.getLastSearchedAt(), s.getNotifiedAt()))
+                .collect(Collectors.toList());
+
         return new UserDataExportDto(
                 profile,
                 kyc,
@@ -101,6 +113,7 @@ public class UserDataExportService {
                 pickupAddresses,
                 deliveryAddresses,
                 favorites,
+                searchInterests,
                 LocalDateTime.now(ZoneOffset.UTC)
         );
     }

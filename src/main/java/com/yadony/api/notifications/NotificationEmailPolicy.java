@@ -33,7 +33,12 @@ public final class NotificationEmailPolicy {
         /** Alerte posée par l'utilisateur : récapitulatif de trajets, prix d'un vol. */
         ALERT("emailAlertsTips"),
         /** Conseil pour bien démarrer. */
-        TIP("emailAlertsTips");
+        TIP("emailAlertsTips"),
+        /**
+         * Trajet publié sur un corridor cherché sans résultat, sans alerte posée (V362). Même
+         * réglage que les alertes ; l'e-mail porte en plus un lien de désinscription en un clic.
+         */
+        SUGGESTION("emailAlertsTips");
 
         private final String pref;
 
@@ -46,6 +51,9 @@ public final class NotificationEmailPolicy {
             return Optional.ofNullable(pref);
         }
     }
+
+    /** Suggestion selon les recherches : push et e-mail, ce dernier avec désinscription. */
+    public static final String SEARCH_SUGGESTION = "SEARCH_SUGGESTION";
 
     static final Map<String, Kind> WITH_PUSH = Map.ofEntries(
             Map.entry("PAYMENT_RELEASED", Kind.RECEIPT),
@@ -69,7 +77,8 @@ public final class NotificationEmailPolicy {
             Map.entry("PARCEL_RETURN_REQUIRED", Kind.RECAP),
             Map.entry("PARCEL_RETURN_TO_SENDER", Kind.RECAP),
             Map.entry("RETURN_DEADLINE_EXPIRED", Kind.RECAP),
-            Map.entry("PARCEL_UNCLAIMED", Kind.RECAP)
+            Map.entry("PARCEL_UNCLAIMED", Kind.RECAP),
+            Map.entry(SEARCH_SUGGESTION, Kind.SUGGESTION)
     );
 
     static final Map<String, Kind> INSTEAD_OF_PUSH = Map.of(

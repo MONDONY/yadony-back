@@ -31,6 +31,9 @@ public class NotificationPrefsService {
      */
     static final String SENDER_OR_TRAVELER = "pushMyParcelsOrTrips";
 
+    /** Suggestions selon les recherches : réglage propre ET alertes de trajet allumés. */
+    static final String SEARCH_SUGGESTIONS = "searchSuggestionsAndCorridorAlerts";
+
     static final Map<String, String> TYPE_TO_PREF = Map.ofEntries(
             Map.entry("BID_CREATED",                  "pushMyTrips"),
             Map.entry("BID_ACCEPTED",                 "pushActivityBids"),
@@ -159,6 +162,10 @@ public class NotificationPrefsService {
             // (on me signale un trajet) ; l'entrée du centre de notifications reste si le
             // push est coupé, c'est le repli dans l'app.
             Map.entry("TRIP_SPACE_FREED",             "pushCorridorAlerts"),
+            // Suggestion selon les recherches (V362) : son propre réglage ET celui des alertes
+            // de trajet. Qui a coupé la découverte de trajets ne la reçoit pas, même avec une
+            // version de l'app qui ne montre pas encore l'interrupteur des suggestions.
+            Map.entry("SEARCH_SUGGESTION",            SEARCH_SUGGESTIONS),
             // PackageMatchTravelerNotifyListener coupe déjà en amont via
             // isPackageMatchEnabled ; cette entrée aligne isAllowed sur le même
             // interrupteur pour que tout futur émetteur du type soit filtré sans
@@ -275,6 +282,22 @@ public class NotificationPrefsService {
                 ? dto.pushRecipientParcels() : dto.pushActivityBids());
         if (dto.emailRecaps() != null) entity.setEmailRecaps(dto.emailRecaps());
         if (dto.emailAlertsTips() != null) entity.setEmailAlertsTips(dto.emailAlertsTips());
+        if (dto.searchSuggestions() != null) entity.setSearchSuggestions(dto.searchSuggestions());
+        repository.save(entity);
+    }
+
+    /**
+     * Lien « Ne plus recevoir ces suggestions » d'un e-mail : coupe les suggestions selon
+     * les recherches (push et e-mail). Les alertes posées par l'utilisateur ne changent pas.
+     */
+    public void disableSearchSuggestions(UUID userId) {
+        NotificationPrefsEntity entity = repository.findById(userId)
+                .orElseGet(() -> {
+                    NotificationPrefsEntity e = new NotificationPrefsEntity();
+                    e.setUserId(userId);
+                    return e;
+                });
+        entity.setSearchSuggestions(false);
         repository.save(entity);
     }
 
@@ -352,6 +375,7 @@ public class NotificationPrefsService {
             case "pushMyTrips"              -> prefs.isPushMyTrips();
             case "pushRecipientParcels"     -> prefs.isPushRecipientParcels();
             case SENDER_OR_TRAVELER         -> prefs.isPushActivityBids() || prefs.isPushMyTrips();
+            case SEARCH_SUGGESTIONS         -> prefs.isSearchSuggestions() && prefs.isPushCorridorAlerts();
             default                         -> true;
         };
     }
@@ -378,7 +402,8 @@ public class NotificationPrefsService {
                 e.isPushMyTrips(),
                 e.isPushRecipientParcels(),
                 e.isEmailRecaps(),
-                e.isEmailAlertsTips()
+                e.isEmailAlertsTips(),
+                e.isSearchSuggestions()
         );
     }
 }

@@ -50,6 +50,7 @@ public enum NotificationCategory {
 
     private static final Set<String> TRAJETS_TYPES = Set.of(
             "TRIP_IN_PROGRESS", "TRIP_DEPARTURE_PROMPT", "TRIP_ARRIVAL_PROMPT", "CORRIDOR_ALERT", "FLIGHT_PRICE_ALERT", "TRIP_SPACE_FREED", "TRAVELER_NEW_ANNOUNCEMENT",
+            "SEARCH_SUGGESTION",
             "PACKAGE_MATCH", "TRAVELER_INVITE", "SENDER_INVITE", "ANNOUNCEMENT_REMOVED",
             "automation_capacity_free", "automation_loyal_sender",
             "negotiation", "negotiation_started", "negotiation_counter",

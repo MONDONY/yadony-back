@@ -172,10 +172,56 @@ class NotificationEmailServiceTest {
         when(provider.orderedStream()).thenAnswer(inv -> java.util.stream.Stream.of(
                 link("STRIPE_ONBOARDING_INCOMPLETE", id -> Optional.of(cta))));
 
-        new NotificationEmailService(true, userRepository, contacts, prefs, resend, messages, provider)
+        @SuppressWarnings("unchecked")
+        org.springframework.beans.factory.ObjectProvider<SearchSuggestionUnsubscribeLinks> unsubscribe =
+                mock(org.springframework.beans.factory.ObjectProvider.class);
+        new NotificationEmailService(true, userRepository, contacts, prefs, resend, messages, provider, unsubscribe)
                 .send(userId, "STRIPE_ONBOARDING_INCOMPLETE", "t", "b", Map.of());
 
         verify(resend).sendNotification(anyString(), any(), anyString(), anyString(), anyString(), eq(cta), any());
+    }
+
+    @Test
+    void searchSuggestion_carriesTheOneClickUnsubscribeLink() {
+        SearchSuggestionUnsubscribeLinks links = mock(SearchSuggestionUnsubscribeLinks.class);
+        when(links.urlFor(userId)).thenReturn(Optional.of("https://api.yadony.com/api/v1/public/x?t=abc"));
+        UUID tripId = UUID.randomUUID();
+
+        new NotificationEmailService(true, userRepository, contacts, prefs, resend, messages,
+                java.util.List.of(), links, clock)
+                .send(userId, "SEARCH_SUGGESTION", "Le trajet que vous cherchiez", "b",
+                        Map.of("announcementId", tripId.toString()));
+
+        verify(resend).sendNotification(eq("awa@exemple.com"), eq(Kind.SUGGESTION), eq("SEARCH_SUGGESTION"),
+                eq("Le trajet que vous cherchiez"), eq("b"),
+                eq("https://yadony.com/ouvrir?type=SEARCH_SUGGESTION&announcementId=" + tripId),
+                eq("https://api.yadony.com/api/v1/public/x?t=abc"), any());
+    }
+
+    @Test
+    void searchSuggestion_withoutUnsubscribeLink_stillSendsTheOrdinaryEmail() {
+        SearchSuggestionUnsubscribeLinks links = mock(SearchSuggestionUnsubscribeLinks.class);
+        when(links.urlFor(userId)).thenThrow(new IllegalStateException("boom"));
+
+        new NotificationEmailService(true, userRepository, contacts, prefs, resend, messages,
+                java.util.List.of(), links, clock)
+                .send(userId, "SEARCH_SUGGESTION", "t", "b", Map.of());
+
+        verify(resend).sendNotification(eq("awa@exemple.com"), eq(Kind.SUGGESTION), eq("SEARCH_SUGGESTION"),
+                eq("t"), eq("b"), eq("https://yadony.com/ouvrir?type=SEARCH_SUGGESTION"), any());
+    }
+
+    @Test
+    void otherFamilies_neverGetAnUnsubscribeLink() {
+        SearchSuggestionUnsubscribeLinks links = mock(SearchSuggestionUnsubscribeLinks.class);
+
+        new NotificationEmailService(true, userRepository, contacts, prefs, resend, messages,
+                java.util.List.of(), links, clock)
+                .send(userId, "PAYMENT_RELEASED", "t", "b", Map.of());
+
+        verify(links, never()).urlFor(any());
+        verify(resend).sendNotification(eq("awa@exemple.com"), eq(Kind.RECEIPT), eq("PAYMENT_RELEASED"),
+                eq("t"), eq("b"), eq("https://yadony.com/ouvrir?type=PAYMENT_RELEASED"), any());
     }
 
     private NotificationEmailService withLinks(NotificationEmailLink... links) {
