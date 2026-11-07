@@ -6,7 +6,24 @@ import com.yadony.api.admin.broadcast.AdminBroadcastRepository;
 import com.yadony.api.admin.broadcast.BroadcastAudienceService;
 import com.yadony.api.admin.broadcast.BroadcastService;
 import com.yadony.api.admin.broadcast.BroadcastTarget;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.yadony.api.admin.broadcast.BroadcastTargetType;
+import com.yadony.api.admin.broadcast.rule.AudienceRule;
+import com.yadony.api.admin.broadcast.rule.RuleAudienceRepository.RecipientRow;
+import com.yadony.api.admin.broadcast.segment.BroadcastSegmentService;
 import com.yadony.api.admin.dto.AdminBroadcastResponse;
+import com.yadony.api.admin.dto.AudienceFieldResponse;
+import com.yadony.api.admin.dto.BroadcastRecipientResponse;
+import com.yadony.api.admin.dto.BroadcastTargetRequest.ResolvedTarget;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
 import com.yadony.api.admin.dto.BroadcastAudienceResponse;
 import com.yadony.api.admin.dto.BroadcastRequest;
 import com.yadony.api.admin.dto.BroadcastTargetRequest;
@@ -44,20 +61,30 @@ public class AdminBroadcastController {
 
     /** Borne haute de pagination, comme {@code AdminFinanceController}. */
     private static final int MAX_PAGE_SIZE = 100;
+    private static final int EXPORT_PAGE_SIZE = 1000;
 
     private final BroadcastService broadcastService;
     private final BroadcastAudienceService audienceService;
     private final AdminBroadcastRepository broadcastRepository;
     private final AuditService auditService;
+    private final BroadcastSegmentService segmentService;
+    private final ObjectMapper objectMapper;
+    private final int exportMaxRows;
 
     public AdminBroadcastController(BroadcastService broadcastService,
                                     BroadcastAudienceService audienceService,
                                     AdminBroadcastRepository broadcastRepository,
-                                    AuditService auditService) {
+                                    AuditService auditService,
+                                    BroadcastSegmentService segmentService,
+                                    ObjectMapper objectMapper,
+                                    @Value("${yadony.broadcast.export-max-rows:50000}") int exportMaxRows) {
         this.broadcastService = broadcastService;
         this.audienceService = audienceService;
         this.broadcastRepository = broadcastRepository;
         this.auditService = auditService;
+        this.segmentService = segmentService;
+        this.objectMapper = objectMapper;
+        this.exportMaxRows = exportMaxRows;
     }
 
     /**
@@ -69,7 +96,8 @@ public class AdminBroadcastController {
     public ResponseEntity<AdminBroadcastResponse> send(@RequestBody @Valid BroadcastRequest request,
                                                        Authentication authentication) {
         UUID adminId = adminId(authentication);
-        BroadcastTarget target = request.target().toDomain();
+        ResolvedTarget resolved = request.target().toDomain(segmentService::requireRule);
+        BroadcastTarget target = resolved.target();
 
         // Ciblage nominatif : 404 si le compte n'existe pas, 422 s'il ne peut plus rien
         // recevoir. Sans cette garde, l'envoi partait « a 0 destinataire » en 202, et
@@ -82,7 +110,8 @@ public class AdminBroadcastController {
         }
 
         AdminBroadcastEntity saved = broadcastService.record(
-                request.title(), request.body(), target, adminId);
+                request.title(), request.body(), target, adminId,
+                resolved.segmentId(), resolved.segmentName());
 
         // Les cles ci-dessous echappent toutes a la denylist PII d'AuditService.redact()
         // (aucune ne finit par « name » ni ne contient phone/email/city/label).
@@ -94,23 +123,87 @@ public class AdminBroadcastController {
         payload.put("targetUserId", saved.getTargetUserId());
         payload.put("recipientCount", saved.getRecipientCount());
         payload.put("push", request.pushOrDefault());
+        AudienceRule.Group audienceRule = ruleOf(target);
+        payload.put("ruleHash", audienceRule == null ? null : audienceRule.hash());
+        payload.put("conditionCount", audienceRule == null ? null : audienceRule.conditionCount());
+        payload.put("segmentId", resolved.segmentId());
         auditService.log("admin_broadcast", saved.getId(), "BROADCAST_SENT", adminId, payload);
 
         broadcastService.dispatchAsync(saved.getId(), saved.getTitle(), saved.getBody(), target,
                 request.pushOrDefault());
 
-        return ResponseEntity.status(HttpStatus.ACCEPTED).body(AdminBroadcastResponse.from(saved));
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(AdminBroadcastResponse.from(saved, objectMapper));
     }
 
     /** Apercu du volume avant envoi. Aucune ecriture, donc aucune entree audit_log. */
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('NOTIFICATION_SEND')")
     @PostMapping("/admin/notifications/broadcast/preview")
     public BroadcastAudienceResponse preview(@RequestBody @Valid BroadcastTargetRequest request) {
-        BroadcastTarget target = request.toDomain();
+        BroadcastTarget target = request.toDomain(segmentService::requireRule).target();
         var targetUser = audienceService.targetUser(target);
         return new BroadcastAudienceResponse(audienceService.count(target),
+                audienceService.countPushReachable(target),
                 targetUser.map(BroadcastAudienceService.TargetUser::displayName).orElse(null),
                 targetUser.map(BroadcastAudienceService.TargetUser::reachable).orElse(null));
+    }
+
+    /** Catalogue des champs ciblables, pour le constructeur de règles de l'admin. */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('NOTIFICATION_SEND')")
+    @GetMapping("/admin/notifications/broadcast/fields")
+    public List<AudienceFieldResponse> fields() {
+        return AudienceFieldResponse.catalogue();
+    }
+
+    /** Liste paginée des destinataires d'un ciblage (sans coordonnées). */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('NOTIFICATION_SEND')")
+    @PostMapping("/admin/notifications/broadcast/recipients")
+    public Page<BroadcastRecipientResponse> recipients(@RequestBody @Valid BroadcastTargetRequest request,
+                                                       @RequestParam(defaultValue = "0") int page,
+                                                       @RequestParam(defaultValue = "20") int size) {
+        BroadcastTarget target = request.toDomain(segmentService::requireRule).target();
+        return audienceService.recipients(target, Math.max(page, 0), Math.min(Math.max(size, 1), MAX_PAGE_SIZE))
+                .map(BroadcastRecipientResponse::from);
+    }
+
+    /** Export CSV des destinataires, borné par {@code yadony.broadcast.export-max-rows}. */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('NOTIFICATION_SEND')")
+    @PostMapping("/admin/notifications/broadcast/recipients.csv")
+    public ResponseEntity<byte[]> recipientsCsv(@RequestBody @Valid BroadcastTargetRequest request,
+                                                Authentication authentication) {
+        UUID adminId = adminId(authentication);
+        BroadcastTarget target = request.toDomain(segmentService::requireRule).target();
+        long total = audienceService.count(target);
+        if (total > exportMaxRows) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "broadcast-export-too-large", "Unprocessable Entity",
+                    "Export limité à " + exportMaxRows + " destinataires : affinez la règle (" + total + " trouvés)");
+        }
+        List<RecipientRow> rows = new java.util.ArrayList<>();
+        int pageNumber = 0;
+        Page<RecipientRow> current;
+        do {
+            current = audienceService.recipients(target, pageNumber++, EXPORT_PAGE_SIZE);
+            rows.addAll(current.getContent());
+        } while (current.hasNext());
+
+        AudienceRule.Group rule = ruleOf(target);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("ruleHash", rule == null ? null : rule.hash());
+        payload.put("rowCount", rows.size());
+        auditService.log("admin_broadcast", null, "BROADCAST_RECIPIENTS_EXPORTED", adminId, payload);
+
+        String filename = "destinataires-"
+                + LocalDateTime.now(ZoneOffset.UTC).format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmm")) + ".csv";
+        return ResponseEntity.ok()
+                .contentType(new MediaType("text", "csv", StandardCharsets.UTF_8))
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(filename).build().toString())
+                .body(BroadcastRecipientsCsv.write(rows));
+    }
+
+    /** Règle effective d'un ciblage ; nulle pour USER (un compte désigné n'est pas un comportement). */
+    private static AudienceRule.Group ruleOf(BroadcastTarget target) {
+        return target.type() == BroadcastTargetType.USER ? null : BroadcastAudienceService.equivalentRule(target);
     }
 
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('NOTIFICATION_SEND')")
@@ -122,7 +215,7 @@ public class AdminBroadcastController {
         // 4xx RFC 7807.
         return broadcastRepository.findAllByOrderByCreatedAtDesc(
                         PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), MAX_PAGE_SIZE)))
-                .map(AdminBroadcastResponse::from);
+                .map(e -> AdminBroadcastResponse.from(e, objectMapper));
     }
 
     private UUID adminId(Authentication authentication) {
