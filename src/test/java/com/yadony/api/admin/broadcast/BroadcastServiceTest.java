@@ -53,6 +53,35 @@ class BroadcastServiceTest {
     }
 
     @Test
+    void record_rule_copieLaRegleCanonique() throws Exception {
+        var rule = com.yadony.api.admin.broadcast.rule.AudienceRule.parse(new com.fasterxml.jackson.databind.ObjectMapper()
+                .readTree("{\"op\":\"AND\",\"children\":[{\"field\":\"created_request\",\"operator\":\"EVER\"}]}"));
+        BroadcastTarget target = new BroadcastTarget(BroadcastTargetType.RULE, null, null, null, rule);
+        UUID segmentId = UUID.randomUUID();
+        when(audienceService.count(target)).thenReturn(5L);
+        when(broadcastRepository.save(any(AdminBroadcastEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AdminBroadcastEntity saved = service.record("T", "C", target, UUID.randomUUID(), segmentId, "Mon segment");
+
+        assertThat(saved.getAudienceRule()).isEqualTo(rule.canonicalJson());
+        assertThat(saved.getSegmentId()).isEqualTo(segmentId);
+        assertThat(saved.getSegmentName()).isEqualTo("Mon segment");
+        assertThat(saved.getTargetType()).isEqualTo(BroadcastTargetType.RULE);
+    }
+
+    @Test
+    void record_ancienneSignature_nEnregistrePasDeRegle() {
+        when(audienceService.count(ALL)).thenReturn(1L);
+        when(broadcastRepository.save(any(AdminBroadcastEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AdminBroadcastEntity saved = service.record("T", "C", ALL, UUID.randomUUID());
+
+        assertThat(saved.getAudienceRule()).isNull();
+        assertThat(saved.getSegmentId()).isNull();
+        assertThat(saved.getSegmentName()).isNull();
+    }
+
+    @Test
     void dispatchWalksEveryPageAndNotifiesEachRecipientOnce() {
         UUID u1 = UUID.randomUUID();
         UUID u2 = UUID.randomUUID();
@@ -67,6 +96,29 @@ class BroadcastServiceTest {
         verify(notificationDispatcher).notifyUser(eq(u1), eq("Titre"), eq("Corps"), any(), anyBoolean());
         verify(notificationDispatcher).notifyUser(eq(u2), eq("Titre"), eq("Corps"), any(), anyBoolean());
         verify(notificationDispatcher).notifyUser(eq(u3), eq("Titre"), eq("Corps"), any(), anyBoolean());
+    }
+
+    @Test
+    void dispatchRuleTargetUsesKeysetCursorAndNeverOffsets() {
+        var rule = new com.yadony.api.admin.broadcast.rule.AudienceRule.Group(
+                com.yadony.api.admin.broadcast.rule.AudienceRule.Op.AND, List.of());
+        BroadcastTarget target = new BroadcastTarget(BroadcastTargetType.RULE, null, null, null, rule);
+        var now = java.time.Instant.now();
+        List<com.yadony.api.admin.broadcast.rule.RuleAudienceRepository.IdCursor> first = new java.util.ArrayList<>();
+        for (int i = 0; i < BroadcastAudienceService.PAGE_SIZE; i++) {
+            first.add(new com.yadony.api.admin.broadcast.rule.RuleAudienceRepository.IdCursor(UUID.randomUUID(), now.plusSeconds(i)));
+        }
+        var last = first.get(first.size() - 1);
+        var tail = new com.yadony.api.admin.broadcast.rule.RuleAudienceRepository.IdCursor(UUID.randomUUID(), now.plusSeconds(999));
+        when(audienceService.rulePageAfter(target, null)).thenReturn(first);
+        when(audienceService.rulePageAfter(target, last)).thenReturn(List.of(tail));
+
+        service.dispatchAsync(BROADCAST_ID, "T", "C", target, false);
+
+        verify(notificationDispatcher, times(BroadcastAudienceService.PAGE_SIZE + 1))
+                .notifyUser(any(), eq("T"), eq("C"), any(), anyBoolean());
+        verify(notificationDispatcher).notifyUser(eq(tail.id()), eq("T"), eq("C"), any(), anyBoolean());
+        verify(audienceService, never()).page(any(), org.mockito.ArgumentMatchers.anyInt());
     }
 
     @Test

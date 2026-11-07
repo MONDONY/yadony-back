@@ -1,5 +1,6 @@
 package com.yadony.api.admin.broadcast;
 
+import com.yadony.api.admin.broadcast.rule.RuleAudienceRepository;
 import com.yadony.api.notifications.NotificationDispatcher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -8,6 +9,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -49,10 +51,21 @@ public class BroadcastService {
     /** Compte les destinataires et fige la ligne d'historique. Synchrone : la reponse HTTP en depend. */
     @Transactional
     public AdminBroadcastEntity record(String title, String body, BroadcastTarget target, UUID adminId) {
+        return record(title, body, target, adminId, null, null);
+    }
+
+    /**
+     * Variante avec segment : la règle est copiée sur la ligne ({@code canonicalJson}) et le
+     * nom du segment aussi, pour que l'historique survive à une modification ou une suppression.
+     */
+    @Transactional
+    public AdminBroadcastEntity record(String title, String body, BroadcastTarget target, UUID adminId,
+                                       UUID segmentId, String segmentName) {
         long recipientCount = audienceService.count(target);
+        String rule = target.type() == BroadcastTargetType.RULE ? target.rule().canonicalJson() : null;
         return broadcastRepository.save(new AdminBroadcastEntity(
                 title, body, target.type(), target.origin(), target.destination(),
-                target.userId(), (int) recipientCount, adminId));
+                target.userId(), (int) recipientCount, adminId, rule, segmentId, segmentName));
     }
 
     /**
@@ -66,25 +79,46 @@ public class BroadcastService {
                 "type", NOTIFICATION_TYPE,
                 "broadcastId", broadcastId.toString());
 
-        int pageNumber = 0;
-        int sent = 0;
-        int failed = 0;
-        Page<UUID> page;
-        do {
-            page = audienceService.page(target, pageNumber);
-            for (UUID userId : page.getContent()) {
-                try {
-                    notificationDispatcher.notifyUser(userId, title, body, data, push);
-                    sent++;
-                } catch (RuntimeException e) {
-                    failed++;
-                    log.warn("[BROADCAST] {} — echec pour l'utilisateur {} : {}",
-                            broadcastId, userId, e.getMessage());
+        int[] counts = new int[2];
+        if (target.type() == BroadcastTargetType.RULE) {
+            // Curseur (created_at, id) : la règle est recalculée à chaque page et des comptes
+            // peuvent la quitter en cours d'envoi, un OFFSET sauterait des destinataires.
+            RuleAudienceRepository.IdCursor cursor = null;
+            List<RuleAudienceRepository.IdCursor> batch;
+            do {
+                batch = audienceService.rulePageAfter(target, cursor);
+                for (RuleAudienceRepository.IdCursor row : batch) {
+                    deliver(broadcastId, row.id(), title, body, data, push, counts);
                 }
-            }
-            pageNumber++;
-        } while (page.hasNext());
+                if (!batch.isEmpty()) {
+                    cursor = batch.get(batch.size() - 1);
+                }
+            } while (batch.size() >= BroadcastAudienceService.PAGE_SIZE);
+        } else {
+            int pageNumber = 0;
+            Page<UUID> page;
+            do {
+                page = audienceService.page(target, pageNumber);
+                for (UUID userId : page.getContent()) {
+                    deliver(broadcastId, userId, title, body, data, push, counts);
+                }
+                pageNumber++;
+            } while (page.hasNext());
+        }
+        int sent = counts[0];
+        int failed = counts[1];
 
         log.info("[BROADCAST] {} termine — {} envoyes, {} en echec", broadcastId, sent, failed);
+    }
+
+    private void deliver(UUID broadcastId, UUID userId, String title, String body, Map<String, String> data,
+                         boolean push, int[] counts) {
+        try {
+            notificationDispatcher.notifyUser(userId, title, body, data, push);
+            counts[0]++;
+        } catch (RuntimeException e) {
+            counts[1]++;
+            log.warn("[BROADCAST] {} — echec pour l'utilisateur {} : {}", broadcastId, userId, e.getMessage());
+        }
     }
 }

@@ -6,7 +6,9 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.Where;
+import org.hibernate.type.SqlTypes;
 
 import java.util.UUID;
 
@@ -41,6 +43,17 @@ public class AdminBroadcastEntity extends BaseEntity {
     @Column(name = "admin_id", nullable = false)
     private UUID adminId;
 
+    /** Règle copiée telle qu'envoyée (JSON canonique) ; {@code JSON} obligatoire, cf. AdminAlertEntity. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "audience_rule", columnDefinition = "jsonb")
+    private String audienceRule;
+
+    @Column(name = "segment_id")
+    private UUID segmentId;
+
+    @Column(name = "segment_name", length = 80)
+    private String segmentName;
+
     protected AdminBroadcastEntity() {
         // Hibernate
     }
@@ -58,6 +71,16 @@ public class AdminBroadcastEntity extends BaseEntity {
         this.adminId = adminId;
     }
 
+    public AdminBroadcastEntity(String title, String body, BroadcastTargetType targetType,
+                                String targetOrigin, String targetDestination, UUID targetUserId,
+                                int recipientCount, UUID adminId,
+                                String audienceRule, UUID segmentId, String segmentName) {
+        this(title, body, targetType, targetOrigin, targetDestination, targetUserId, recipientCount, adminId);
+        this.audienceRule = audienceRule;
+        this.segmentId = segmentId;
+        this.segmentName = segmentName;
+    }
+
     public String getTitle() { return title; }
     public String getBody() { return body; }
     public BroadcastTargetType getTargetType() { return targetType; }
@@ -66,4 +89,7 @@ public class AdminBroadcastEntity extends BaseEntity {
     public UUID getTargetUserId() { return targetUserId; }
     public int getRecipientCount() { return recipientCount; }
     public UUID getAdminId() { return adminId; }
+    public String getAudienceRule() { return audienceRule; }
+    public UUID getSegmentId() { return segmentId; }
+    public String getSegmentName() { return segmentName; }
 }
