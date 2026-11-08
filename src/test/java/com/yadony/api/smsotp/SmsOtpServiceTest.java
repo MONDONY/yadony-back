@@ -1250,6 +1250,22 @@ class SmsOtpServiceTest {
         }
 
         @Test
+        @DisplayName("compte réactivé par l'admin → repart de zéro, pas resuspendu à la demande suivante")
+        void reactivatedAccount_startsFromZero() {
+            SmsOtpService service = trackedService();
+            service.sendOtp("+33600000001", UID);
+            service.sendOtp("+33600000002", UID);
+            assertThatThrownBy(() -> service.sendOtp("+33600000003", UID))
+                    .isInstanceOf(YadonyBusinessException.class);
+
+            // L'admin clique « Réactiver » : le compte redemande un code pour son numéro.
+            assertThat(service.sendOtp("+33600000004", UID)).isNotNull();
+
+            verify(publisher, times(1)).publishEvent(any(SmsOtpNumberHoppingEvent.class));
+            verify(smsService).sendOrThrow(eq("+33600000004"), anyString());
+        }
+
+        @Test
         @DisplayName("les demandes refusées comptent aussi (numéros inconnus en mode « inscrits »)")
         void refusedRequestsCount() {
             properties.setRegisteredNumbersOnly(true);

@@ -38,6 +38,15 @@ class SmsOtpNumberTracker {
      * numéros différents qu'il a visés sur la fenêtre, celui-ci compris. Redemander le même
      * numéro (renvoi du code) ne compte pas deux fois.
      */
+    /**
+     * Oublie les numéros de ce compte : appelé quand il est suspendu. Un compte que l'admin
+     * réactive (« Réactiver » sur sa fiche) repart de zéro, au lieu d'être suspendu de nouveau
+     * à sa première demande parce que ses numéros d'avant seraient encore dans la fenêtre.
+     */
+    void forget(String accountUid) {
+        numbersByAccount.invalidate(accountUid);
+    }
+
     int record(String accountUid, String phoneNumber) {
         Instant now = clock.instant();
         Instant since = now.minus(WINDOW);

@@ -59,6 +59,19 @@ class SmsOtpNumberTrackerTest {
     }
 
     @Test
+    @DisplayName("oublier un compte (suspendu) le fait repartir de zéro, sans toucher aux autres")
+    void forgetResetsOnlyThatAccount() {
+        tracker.record("uid-a", "+2250100000001");
+        tracker.record("uid-a", "+2250100000002");
+        tracker.record("uid-b", "+2250100000009");
+
+        tracker.forget("uid-a");
+
+        assertThat(tracker.record("uid-a", "+2250100000003")).isEqualTo(1);
+        assertThat(tracker.record("uid-b", "+2250100000008")).isEqualTo(2);
+    }
+
+    @Test
     @DisplayName("redemander un numéro rafraîchit sa date")
     void reRequestRefreshesTimestamp() {
         tracker.record("uid-a", "+2250100000001");

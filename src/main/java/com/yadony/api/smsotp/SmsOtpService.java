@@ -113,6 +113,9 @@ public class SmsOtpService {
         // ERROR → Sentry, en plus de l'alerte du back-office levée par l'écouteur.
         log.error("Compte {} : codes SMS demandés pour {} numéros différents en 24 h (seuil {}), "
                 + "suspension automatique", signedInUid, distinctNumbers, threshold);
+        // Remise à zéro : tant qu'il est suspendu, FirebaseTokenFilter refuse toutes ses requêtes ;
+        // réactivé par un admin, il ne doit pas être resuspendu sur ses numéros d'avant.
+        numberTracker.forget(signedInUid);
         if (eventPublisher != null) {
             eventPublisher.publishEvent(new SmsOtpNumberHoppingEvent(signedInUid, distinctNumbers, threshold));
         }
