@@ -89,6 +89,23 @@ public class SmsOtpService {
                 : properties.isRegisteredNumbersOnly();
     }
 
+    /**
+     * Plafond global des SMS de code sur 1 h, réglé dans le back-office
+     * ({@code sms_otp_max_sends_per_hour_global}) ; la propriété prend le relais sans lui.
+     */
+    private int maxSendsPerHourGlobal() {
+        return platformSettings != null
+                ? platformSettings.smsOtpMaxSendsPerHourGlobal()
+                : properties.getMaxSendsPerHourGlobal();
+    }
+
+    /** Même plafond sur 24 h ({@code sms_otp_max_sends_per_day_global}). */
+    private int maxSendsPerDayGlobal() {
+        return platformSettings != null
+                ? platformSettings.smsOtpMaxSendsPerDayGlobal()
+                : properties.getMaxSendsPerDayGlobal();
+    }
+
     /** Seuil de suspension, lu à chaque envoi comme {@link #registeredNumbersOnly()}. */
     private int maxNumbersPerAccount() {
         return platformSettings != null
@@ -122,6 +139,31 @@ public class SmsOtpService {
         throw new YadonyBusinessException(
                 HttpStatus.FORBIDDEN, "account-suspended",
                 "Account Suspended", "Votre compte est suspendu ou banni");
+    }
+
+    /** Numéros visés par chaque téléphone SANS compte connecté (écran de connexion), sur 24 h. */
+    private final SmsOtpNumberTracker deviceTracker = new SmsOtpNumberTracker(java.time.Clock.systemUTC());
+
+    /**
+     * Téléphone sans compte qui vise trop de numéros différents en 24 h : alerte seulement, via
+     * {@link SmsOtpDeviceNumberHoppingEvent} (le package admin lève l'alerte du back-office). Rien
+     * n'est bloqué ici : il n'y a pas de compte à suspendre, et un vrai utilisateur qui se
+     * trompe de numéro ne doit pas être puni ; en mode « numéros inscrits », les numéros sans
+     * compte ne reçoivent de toute façon aucun SMS. L'appareil repart de zéro après l'alerte.
+     */
+    private void watchDevice(String deviceKey, String phoneNumber) {
+        int threshold = maxNumbersPerAccount();
+        int distinctNumbers = deviceTracker.record(deviceKey, phoneNumber);
+        if (distinctNumbers < threshold) {
+            return;
+        }
+        // WARN → Sentry, en plus de l'alerte du back-office levée par l'écouteur.
+        log.warn("Téléphone sans compte {} : codes SMS demandés pour {} numéros différents en 24 h (seuil {})",
+                deviceKey, distinctNumbers, threshold);
+        deviceTracker.forget(deviceKey);
+        if (eventPublisher != null) {
+            eventPublisher.publishEvent(new SmsOtpDeviceNumberHoppingEvent(deviceKey, distinctNumbers, threshold));
+        }
     }
 
     public SmsOtpService(SmsOtpRepository smsOtpRepository,
@@ -174,6 +216,17 @@ public class SmsOtpService {
      */
     @Transactional(isolation = Isolation.SERIALIZABLE)
     public Instant sendOtp(String phoneNumber, String signedInUid) {
+        return sendOtp(phoneNumber, signedInUid, null);
+    }
+
+    /**
+     * @param deviceKey identifiant du téléphone qui demande le code ({@code device:<id>} ou
+     *                  {@code guest:<uid>}, voir {@code SmsOtpController#deviceKey}), {@code null}
+     *                  s'il est inconnu : sans compte connecté, il sert à alerter le back-office
+     *                  quand un même téléphone vise plusieurs numéros.
+     */
+    @Transactional(isolation = Isolation.SERIALIZABLE)
+    public Instant sendOtp(String phoneNumber, String signedInUid, String deviceKey) {
         // En dev/test, SMS désactivé est le réglage normal (voir le relais de log
         // plus bas) : on ne bloque qu'en prod, où un flag resté à false alors que
         // l'écran est accessible (build client périgé, deep link) enverrait
@@ -183,6 +236,8 @@ public class SmsOtpService {
         // Avant tout autre contrôle : une demande refusée ensuite compte quand même.
         if (signedInUid != null && reviewCode.isEmpty()) {
             guardAgainstNumberHopping(signedInUid, phoneNumber);
+        } else if (deviceKey != null && reviewCode.isEmpty()) {
+            watchDevice(deviceKey, phoneNumber);
         }
         if (reviewCode.isEmpty() && !smsService.isEnabled() && !devProfile) {
             throw new YadonyBusinessException(
@@ -231,12 +286,14 @@ public class SmsOtpService {
         }
         // Inutile de facturer un SMS dont le code serait refusé à la vérification.
         ensureLoginBudget(phoneNumber, now);
-        if (smsOtpRepository.countAllSince(now.minusHours(1)) >= properties.getMaxSendsPerHourGlobal()
-                || smsOtpRepository.countAllSince(now.minusDays(1)) >= properties.getMaxSendsPerDayGlobal()) {
-            // ERROR → Sentry : chaque SMS est facturé. Pic légitime (relever le budget) ou
-            // pompage réparti sur des milliers de numéros et d'IP.
+        int perHourGlobal = maxSendsPerHourGlobal();
+        int perDayGlobal = maxSendsPerDayGlobal();
+        if (smsOtpRepository.countAllSince(now.minusHours(1)) >= perHourGlobal
+                || smsOtpRepository.countAllSince(now.minusDays(1)) >= perDayGlobal) {
+            // ERROR → Sentry : chaque SMS est facturé. Pic légitime (relever le budget dans le
+            // back-office, Paramètres) ou pompage réparti sur des milliers de numéros et d'IP.
             log.error("Budget global de SMS de code atteint ({} / h, {} / 24 h) : envois suspendus",
-                    properties.getMaxSendsPerHourGlobal(), properties.getMaxSendsPerDayGlobal());
+                    perHourGlobal, perDayGlobal);
             throw new YadonyBusinessException(
                     HttpStatus.SERVICE_UNAVAILABLE, "sms-otp-budget-exceeded",
                     "Service Unavailable",

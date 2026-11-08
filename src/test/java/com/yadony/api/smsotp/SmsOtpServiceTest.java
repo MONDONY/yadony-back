@@ -1300,6 +1300,9 @@ class SmsOtpServiceTest {
             com.yadony.api.config.PlatformSettingsService settings =
                     mock(com.yadony.api.config.PlatformSettingsService.class);
             when(settings.smsOtpMaxNumbersPerAccount()).thenReturn(2);
+            // Plafond global du back-office : large, ce test ne porte pas dessus.
+            lenient().when(settings.smsOtpMaxSendsPerHourGlobal()).thenReturn(1000);
+            lenient().when(settings.smsOtpMaxSendsPerDayGlobal()).thenReturn(10000);
             SmsOtpService service = trackedService();
             service.setPlatformSettings(settings);
             service.sendOtp("+33600000001", UID);
@@ -1308,6 +1311,154 @@ class SmsOtpServiceTest {
                     .isInstanceOf(YadonyBusinessException.class);
 
             verify(publisher).publishEvent(new SmsOtpNumberHoppingEvent(UID, 2, 2));
+        }
+    }
+
+    /** Plafond global des SMS de code réglé dans le back-office (08/11/2026). */
+    @Nested
+    @DisplayName("sendOtp — plafond global réglé dans le back-office")
+    class GlobalBudgetFromAdmin {
+
+        private com.yadony.api.config.PlatformSettingsService settings(int perHour, int perDay) {
+            com.yadony.api.config.PlatformSettingsService settings =
+                    mock(com.yadony.api.config.PlatformSettingsService.class);
+            when(settings.smsOtpMaxSendsPerHourGlobal()).thenReturn(perHour);
+            when(settings.smsOtpMaxSendsPerDayGlobal()).thenReturn(perDay);
+            return settings;
+        }
+
+        @Test
+        @DisplayName("plafond horaire du back-office atteint → 503 sms-otp-budget-exceeded, aucun SMS")
+        void adminHourlyCap_reached() {
+            SmsOtpService service = newService();
+            service.setPlatformSettings(settings(1, 1000));
+            when(smsService.isEnabled()).thenReturn(true);
+            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L);
+            when(smsOtpRepository.countAllSince(any())).thenReturn(1L);
+
+            assertThatThrownBy(() -> service.sendOtp(PHONE))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("sms-otp-budget-exceeded"));
+            verify(smsService, never()).sendOrThrow(any(), any());
+        }
+
+        @Test
+        @DisplayName("plafond relevé dans le back-office → le même trafic passe")
+        void adminRaisedCap_allows() {
+            SmsOtpService service = newService();
+            service.setPlatformSettings(settings(1000, 10000));
+            when(smsService.isEnabled()).thenReturn(true);
+            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L);
+            when(smsOtpRepository.countAllSince(any())).thenReturn(40L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            assertThat(service.sendOtp(PHONE)).isNotNull();
+
+            verify(smsService).sendOrThrow(eq(PHONE), anyString());
+        }
+    }
+
+    /**
+     * Demande du propriétaire (08/11/2026) : alerte quand un même téléphone SANS compte (écran de
+     * connexion) demande des codes pour plusieurs numéros. Alerte seulement, rien n'est bloqué.
+     */
+    @Nested
+    @DisplayName("sendOtp — téléphone sans compte qui vise plusieurs numéros")
+    class DeviceNumberHopping {
+
+        private static final String DEVICE = "device:3f2b8c1e-9a4d-4e7b-8c2f-1a2b3c4d5e6f";
+        private final org.springframework.context.ApplicationEventPublisher publisher =
+                mock(org.springframework.context.ApplicationEventPublisher.class);
+
+        private SmsOtpService watchedService() {
+            SmsOtpService service = newService();
+            service.setEventPublisher(publisher);
+            when(smsService.isEnabled()).thenReturn(true);
+            lenient().when(smsOtpRepository.countByPhoneSince(anyString(), any())).thenReturn(0L);
+            lenient().when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            lenient().when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+            return service;
+        }
+
+        @Test
+        @DisplayName("deux numéros → codes envoyés, aucune alerte")
+        void twoNumbers_noAlert() {
+            SmsOtpService service = watchedService();
+
+            service.sendOtp("+33600000001", null, DEVICE);
+            service.sendOtp("+33600000002", null, DEVICE);
+
+            verify(smsService, times(2)).sendOrThrow(anyString(), anyString());
+            verifyNoInteractions(publisher);
+        }
+
+        @Test
+        @DisplayName("3e numéro différent → alerte, et le code part quand même (rien n'est bloqué)")
+        void thirdNumber_alertsWithoutBlocking() {
+            SmsOtpService service = watchedService();
+            service.sendOtp("+33600000001", null, DEVICE);
+            service.sendOtp("+33600000002", null, DEVICE);
+
+            assertThat(service.sendOtp("+33600000003", null, DEVICE)).isNotNull();
+
+            verify(publisher).publishEvent(new SmsOtpDeviceNumberHoppingEvent(DEVICE, 3, 3));
+            verify(smsService).sendOrThrow(eq("+33600000003"), anyString());
+        }
+
+        @Test
+        @DisplayName("numéros sans compte refusés (mode « inscrits ») → comptés quand même, alerte au 3e")
+        void refusedUnknownNumbers_stillCounted() {
+            properties.setRegisteredNumbersOnly(true);
+            SmsOtpService service = watchedService();
+            when(firebaseContact.findUidByPhone(anyString())).thenReturn(Optional.empty());
+
+            for (String phone : java.util.List.of("+2250100000001", "+2250100000002", "+2250100000003")) {
+                assertThatThrownBy(() -> service.sendOtp(phone, null, DEVICE))
+                        .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                                .isEqualTo("sms-otp-disabled"));
+            }
+
+            verify(publisher).publishEvent(new SmsOtpDeviceNumberHoppingEvent(DEVICE, 3, 3));
+            verify(smsService, never()).sendOrThrow(any(), any());
+        }
+
+        @Test
+        @DisplayName("après l'alerte, le téléphone repart de zéro : pas une alerte à chaque demande")
+        void afterAlert_counterRestarts() {
+            SmsOtpService service = watchedService();
+            service.sendOtp("+33600000001", null, DEVICE);
+            service.sendOtp("+33600000002", null, DEVICE);
+            service.sendOtp("+33600000003", null, DEVICE);
+
+            service.sendOtp("+33600000004", null, DEVICE);
+            service.sendOtp("+33600000005", null, DEVICE);
+
+            verify(publisher, times(1)).publishEvent(any(SmsOtpDeviceNumberHoppingEvent.class));
+        }
+
+        @Test
+        @DisplayName("compte connecté → suivi comme compte (suspension), jamais comme téléphone")
+        void signedInAccount_notWatchedAsDevice() {
+            SmsOtpService service = watchedService();
+
+            service.sendOtp("+33600000001", "uid-account", DEVICE);
+            service.sendOtp("+33600000002", "uid-account", DEVICE);
+
+            verify(publisher, never()).publishEvent(any(SmsOtpDeviceNumberHoppingEvent.class));
+        }
+
+        @Test
+        @DisplayName("téléphone inconnu (ni identifiant ni session) → jamais compté")
+        void unknownDevice_neverWatched() {
+            SmsOtpService service = watchedService();
+
+            service.sendOtp("+33600000001", null, null);
+            service.sendOtp("+33600000002", null, null);
+            service.sendOtp("+33600000003", null, null);
+
+            verifyNoInteractions(publisher);
         }
     }
 
@@ -1446,6 +1597,9 @@ class SmsOtpServiceTest {
             com.yadony.api.config.PlatformSettingsService settings =
                     mock(com.yadony.api.config.PlatformSettingsService.class);
             when(settings.smsOtpRegisteredNumbersOnly()).thenReturn(false);
+            // Plafond global du back-office : large, ce test ne porte pas dessus.
+            when(settings.smsOtpMaxSendsPerHourGlobal()).thenReturn(1000);
+            when(settings.smsOtpMaxSendsPerDayGlobal()).thenReturn(10000);
             SmsOtpService service = registeredOnlyService(); // propriété à vrai
             service.setPlatformSettings(settings);
             stubSuccessfulSend();

@@ -40,7 +40,7 @@ class SmsOtpControllerIntegrationTest {
     void send_success() throws Exception {
         Instant expiry = Instant.parse("2026-05-19T10:15:00Z");
         // Sans jeton : aucun compte connecté transmis (SmsOtpController#signedInUid).
-        when(smsOtpService.sendOtp("+221701234567", null)).thenReturn(expiry);
+        when(smsOtpService.sendOtp("+221701234567", null, null)).thenReturn(expiry);
 
         mockMvc.perform(post("/auth/sms-otp/send")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -70,7 +70,7 @@ class SmsOtpControllerIntegrationTest {
     @Test
     @DisplayName("send 429 — rate-limit atteint")
     void send_rateLimitExceeded() throws Exception {
-        when(smsOtpService.sendOtp(anyString(), isNull()))
+        when(smsOtpService.sendOtp(anyString(), isNull(), isNull()))
                 .thenThrow(new YadonyBusinessException(
                         HttpStatus.TOO_MANY_REQUESTS, "phone-otp-rate-limit",
                         "Too Many Requests", "Trop de tentatives, réessaie dans 5 min"));

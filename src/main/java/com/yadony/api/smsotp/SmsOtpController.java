@@ -32,7 +32,7 @@ public class SmsOtpController {
 
     @PostMapping("/send")
     public ResponseEntity<SmsOtpSendResponse> send(@Valid @RequestBody SmsOtpSendRequest request) {
-        var expiresAt = smsOtpService.sendOtp(request.phoneNumber(), signedInUid());
+        var expiresAt = smsOtpService.sendOtp(request.phoneNumber(), signedInUid(), deviceKey());
         return ResponseEntity.ok(new SmsOtpSendResponse(expiresAt));
     }
 
@@ -76,6 +76,45 @@ public class SmsOtpController {
         boolean guest = auth.getAuthorities().stream()
                 .anyMatch(a -> "ROLE_GUEST".equals(a.getAuthority()));
         return guest ? null : uid;
+    }
+
+    /** En-tête posé par l'app sur toute requête qui porte un jeton Firebase, invité compris. */
+    static final String DEVICE_ID_HEADER = "X-Device-Id";
+
+    /** UUID généré et gardé par l'app ; tout le reste est ignoré (en-tête libre, donc borné). */
+    private static final java.util.regex.Pattern DEVICE_ID = java.util.regex.Pattern.compile("[A-Za-z0-9-]{8,64}");
+
+    /**
+     * Identifiant du téléphone qui demande un code, pour alerter quand un même téléphone sans
+     * compte vise plusieurs numéros : {@code device:<X-Device-Id>} si l'en-tête est valide,
+     * sinon {@code guest:<uid>} pour une session invitée, sinon {@code null}. Jamais l'adresse
+     * IP : derrière le CGNAT d'un opérateur mobile, des centaines d'abonnés la partagent.
+     *
+     * <p>L'en-tête vient du client : un robot peut le changer ou l'omettre. C'est un signal
+     * d'alerte, pas une protection (celle-ci tient au mode « numéros inscrits »).
+     */
+    static String deviceKey() {
+        if (org.springframework.web.context.request.RequestContextHolder.getRequestAttributes()
+                instanceof org.springframework.web.context.request.ServletRequestAttributes attributes) {
+            String header = attributes.getRequest().getHeader(DEVICE_ID_HEADER);
+            if (header != null && DEVICE_ID.matcher(header.trim()).matches()) {
+                return "device:" + header.trim();
+            }
+        }
+        String guest = guestUid();
+        return guest == null ? null : "guest:" + guest;
+    }
+
+    /** UID de la session invitée (anonyme Firebase, {@code ROLE_GUEST}), sinon {@code null}. */
+    private static String guestUid() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated() || !(auth.getPrincipal() instanceof String uid)
+                || uid.isBlank() || "anonymousUser".equals(uid)) {
+            return null;
+        }
+        boolean guest = auth.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_GUEST".equals(a.getAuthority()));
+        return guest ? uid : null;
     }
 
     /**
