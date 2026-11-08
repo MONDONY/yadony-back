@@ -124,6 +124,31 @@ public class SmsOtpService {
                 "Account Suspended", "Votre compte est suspendu ou banni");
     }
 
+    /** Numéros visés par chaque téléphone SANS compte connecté (écran de connexion), sur 24 h. */
+    private final SmsOtpNumberTracker deviceTracker = new SmsOtpNumberTracker(java.time.Clock.systemUTC());
+
+    /**
+     * Téléphone sans compte qui vise trop de numéros différents en 24 h : alerte seulement, via
+     * {@link SmsOtpDeviceNumberHoppingEvent} (le package admin lève l'alerte du back-office). Rien
+     * n'est bloqué ici : il n'y a pas de compte à suspendre, et un vrai utilisateur qui se
+     * trompe de numéro ne doit pas être puni ; en mode « numéros inscrits », les numéros sans
+     * compte ne reçoivent de toute façon aucun SMS. L'appareil repart de zéro après l'alerte.
+     */
+    private void watchDevice(String deviceKey, String phoneNumber) {
+        int threshold = maxNumbersPerAccount();
+        int distinctNumbers = deviceTracker.record(deviceKey, phoneNumber);
+        if (distinctNumbers < threshold) {
+            return;
+        }
+        // WARN → Sentry, en plus de l'alerte du back-office levée par l'écouteur.
+        log.warn("Téléphone sans compte {} : codes SMS demandés pour {} numéros différents en 24 h (seuil {})",
+                deviceKey, distinctNumbers, threshold);
+        deviceTracker.forget(deviceKey);
+        if (eventPublisher != null) {
+            eventPublisher.publishEvent(new SmsOtpDeviceNumberHoppingEvent(deviceKey, distinctNumbers, threshold));
+        }
+    }
+
     public SmsOtpService(SmsOtpRepository smsOtpRepository,
                           PasswordEncoder passwordEncoder,
                           SmsService smsService,
@@ -174,6 +199,17 @@ public class SmsOtpService {
      */
     @Transactional(isolation = Isolation.SERIALIZABLE)
     public Instant sendOtp(String phoneNumber, String signedInUid) {
+        return sendOtp(phoneNumber, signedInUid, null);
+    }
+
+    /**
+     * @param deviceKey identifiant du téléphone qui demande le code ({@code device:<id>} ou
+     *                  {@code guest:<uid>}, voir {@code SmsOtpController#deviceKey}), {@code null}
+     *                  s'il est inconnu : sans compte connecté, il sert à alerter le back-office
+     *                  quand un même téléphone vise plusieurs numéros.
+     */
+    @Transactional(isolation = Isolation.SERIALIZABLE)
+    public Instant sendOtp(String phoneNumber, String signedInUid, String deviceKey) {
         // En dev/test, SMS désactivé est le réglage normal (voir le relais de log
         // plus bas) : on ne bloque qu'en prod, où un flag resté à false alors que
         // l'écran est accessible (build client périgé, deep link) enverrait
@@ -183,6 +219,8 @@ public class SmsOtpService {
         // Avant tout autre contrôle : une demande refusée ensuite compte quand même.
         if (signedInUid != null && reviewCode.isEmpty()) {
             guardAgainstNumberHopping(signedInUid, phoneNumber);
+        } else if (deviceKey != null && reviewCode.isEmpty()) {
+            watchDevice(deviceKey, phoneNumber);
         }
         if (reviewCode.isEmpty() && !smsService.isEnabled() && !devProfile) {
             throw new YadonyBusinessException(
