@@ -71,6 +71,21 @@ class TwilioVerifyServiceTest {
     }
 
     @Test
+    @DisplayName("route — TWILIO_VERIFY_CALLING_CODES élargi aux corridors africains, la France reste hors Verify")
+    void handles_africanCorridorsWhenConfigured() {
+        ReflectionTestUtils.setField(verify, "callingCodes", List.of("1", "225", "221", "223", "237"));
+
+        assertThat(verify.handles("+2250712345678")).isTrue();    // Côte d'Ivoire (Orange)
+        assertThat(verify.handles("+2250512345678")).isTrue();    // Côte d'Ivoire (MTN)
+        assertThat(verify.handles("+221701234567")).isTrue();     // Sénégal
+        assertThat(verify.handles("+22370123456")).isTrue();      // Mali
+        assertThat(verify.handles("+237612345678")).isTrue();     // Cameroun
+        assertThat(verify.handles(US_PHONE)).isTrue();            // +1 conservé
+        assertThat(verify.handles("+33612345678")).isFalse();     // France
+        assertThat(verify.handles("+22912345678")).isFalse();     // Bénin, non listé
+    }
+
+    @Test
     @DisplayName("route — sans TWILIO_VERIFY_SERVICE_SID, rien ne passe par Verify")
     void handles_nothingWhenNotConfigured() {
         TwilioVerifyService notConfigured = configured("");

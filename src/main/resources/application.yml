@@ -741,8 +741,10 @@ app:
       auth-token: ${TWILIO_AUTH_TOKEN:}
       from: ${TWILIO_FROM:}
       # Twilio Verify, pour les indicatifs où un SMS depuis notre numéro est bloqué par les
-      # opérateurs (États-Unis/Canada : enregistrement A2P 10DLC exigé). Vide = désactivé,
-      # tous les numéros gardent la route SMS classique.
+      # opérateurs (États-Unis/Canada : enregistrement A2P 10DLC exigé ; Côte d'Ivoire et
+      # corridors africains : SMS d'un numéro étranger filtré sans erreur). Vide = désactivé,
+      # tous les numéros gardent la route SMS classique. Indicatifs séparés par des virgules,
+      # ex. 1,225,221,223,237 (variable d'environnement GitHub, repli 1 dans les workflows).
       verify-service-sid: ${TWILIO_VERIFY_SERVICE_SID:}
       verify-calling-codes: ${TWILIO_VERIFY_CALLING_CODES:1}
   places:
