@@ -82,6 +82,10 @@ public class SmsOtpProperties {
      * dizaines de numéros inconnus qui se suivaient, un seul chacun, si bien qu'aucune
      * limite par numéro ne pouvait jouer. Faux par défaut ici (tests unitaires), vrai
      * dans {@code application.yml}.
+     *
+     * <p>En marche, c'est le réglage du back-office {@code sms_otp_registered_numbers_only}
+     * qui fait autorité ({@code PlatformSettingsService}) : cette propriété ne fait que
+     * l'amorcer au premier démarrage, et ne sert seule qu'en l'absence de ce service.
      */
     private boolean registeredNumbersOnly = false;
 

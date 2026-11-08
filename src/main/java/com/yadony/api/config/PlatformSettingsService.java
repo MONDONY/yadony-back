@@ -108,6 +108,16 @@ public class PlatformSettingsService {
         return raw == null ? smsEnabledProperty : Boolean.parseBoolean(raw);
     }
 
+    /**
+     * Vrai : un code SMS de connexion ne part que vers un numéro déjà inscrit, ou vers celui
+     * qu'un compte connecté ajoute à son profil. Ligne absente ou illisible : vrai, la position
+     * sûre (chaque SMS est facturé). Voir {@link PlatformSettingKey#SMS_OTP_REGISTERED_NUMBERS_ONLY}.
+     */
+    public boolean smsOtpRegisteredNumbersOnly() {
+        String raw = cache.all().get(PlatformSettingKey.SMS_OTP_REGISTERED_NUMBERS_ONLY.key());
+        return raw == null || !"false".equalsIgnoreCase(raw.trim());
+    }
+
     /** Feature flag des billets d'avion — voir {@link PlatformSettingKey#FLIGHTS_ENABLED}. */
     public boolean flightsEnabled() {
         return Boolean.parseBoolean(cache.all().get(PlatformSettingKey.FLIGHTS_ENABLED.key()));
@@ -264,6 +274,7 @@ public class PlatformSettingsService {
             case URGENCY_THRESHOLD_DAYS -> String.valueOf(urgencyThresholdDays());
             case REIMBURSEMENT_CAP_EUR -> reimbursementCapEur().toPlainString();
             case SMS_ENABLED -> String.valueOf(smsEnabled());
+            case SMS_OTP_REGISTERED_NUMBERS_ONLY -> String.valueOf(smsOtpRegisteredNumbersOnly());
             case PRO_ENABLED -> String.valueOf(proEnabled());
             case KYC_DIDIT_ENABLED -> String.valueOf(kycDiditEnabled());
             case CRITICAL_SMS_FALLBACK_ENABLED -> String.valueOf(criticalSmsFallbackEnabled());
@@ -381,6 +392,8 @@ public class PlatformSettingsService {
                 }
                 yield String.valueOf(Boolean.parseBoolean(value));
             }
+            case SMS_OTP_REGISTERED_NUMBERS_ONLY -> strictBoolean(value,
+                    "Le code SMS réservé aux numéros inscrits attend true ou false");
             case PRO_ENABLED -> {
                 if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
                     throw invalid("L'activation de l'offre PRO attend true ou false");

@@ -70,6 +70,25 @@ public class SmsOtpService {
         this.eventPublisher = eventPublisher;
     }
 
+    /**
+     * Réglage du back-office {@code sms_otp_registered_numbers_only}, injecté par setter pour la
+     * même raison que l'éditeur d'événements. Absent (tests unitaires) : la propriété
+     * {@code yadony.sms.registered-numbers-only} prend le relais.
+     */
+    private com.yadony.api.config.PlatformSettingsService platformSettings;
+
+    @Autowired(required = false)
+    void setPlatformSettings(com.yadony.api.config.PlatformSettingsService platformSettings) {
+        this.platformSettings = platformSettings;
+    }
+
+    /** Lu à chaque envoi : une bascule depuis le back-office s'applique sans redémarrage. */
+    private boolean registeredNumbersOnly() {
+        return platformSettings != null
+                ? platformSettings.smsOtpRegisteredNumbersOnly()
+                : properties.isRegisteredNumbersOnly();
+    }
+
     public SmsOtpService(SmsOtpRepository smsOtpRepository,
                           PasswordEncoder passwordEncoder,
                           SmsService smsService,
@@ -140,7 +159,7 @@ public class SmsOtpService {
                     "La connexion par SMS n'est pas disponible pour ce pays, utilise ton adresse email");
         }
 
-        if (reviewCode.isEmpty() && properties.isRegisteredNumbersOnly()
+        if (reviewCode.isEmpty() && registeredNumbersOnly()
                 && !mayReceiveCode(phoneNumber, signedInUid)) {
             // Avant toute écriture et tout envoi facturé. Même code que les SMS coupés : l'app
             // l'affiche déjà (« La connexion par téléphone n'est pas encore disponible »).

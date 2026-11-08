@@ -671,8 +671,9 @@ yadony:
     max-sends-per-day-global: ${YADONY_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL:150}
     # Code SMS réservé aux numéros déjà inscrits, et au numéro qu'un compte connecté ajoute
     # à son profil : l'inscription se fait par email, Google ou Apple. Le pompage du
-    # 08/11/2026 visait des dizaines de numéros inconnus, un code chacun. false rouvre
-    # l'inscription par SMS (les budgets ci-dessus restent seuls en garde).
+    # 08/11/2026 visait des dizaines de numéros inconnus, un code chacun. Valeur INITIALE du
+    # réglage sms_otp_registered_numbers_only du back-office (Paramètres), lue au premier
+    # démarrage seulement : ensuite, on le bascule depuis le panel admin.
     registered-numbers-only: ${YADONY_SMS_OTP_REGISTERED_NUMBERS_ONLY:true}
     # Comptes de démo pour la review des stores, « +E164:code » séparés par des virgules :
     # aucun SMS, code fixe accepté. Vide par défaut, à vider après la review.

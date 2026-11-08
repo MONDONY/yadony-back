@@ -1311,6 +1311,36 @@ class SmsOtpServiceTest {
         }
 
         @Test
+        @DisplayName("réglage du back-office prioritaire : activé dans l'admin, propriété à faux → numéro inconnu refusé")
+        void adminSettingOn_overridesProperty() {
+            com.yadony.api.config.PlatformSettingsService settings =
+                    mock(com.yadony.api.config.PlatformSettingsService.class);
+            when(settings.smsOtpRegisteredNumbersOnly()).thenReturn(true);
+            SmsOtpService service = newService(); // propriété à faux (défaut)
+            service.setPlatformSettings(settings);
+            when(smsService.isEnabled()).thenReturn(true);
+            when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.empty());
+
+            assertRefusedWithoutSms(() -> service.sendOtp(PHONE));
+        }
+
+        @Test
+        @DisplayName("réglage du back-office prioritaire : désactivé dans l'admin, propriété à vrai → numéro inconnu servi")
+        void adminSettingOff_overridesProperty() {
+            com.yadony.api.config.PlatformSettingsService settings =
+                    mock(com.yadony.api.config.PlatformSettingsService.class);
+            when(settings.smsOtpRegisteredNumbersOnly()).thenReturn(false);
+            SmsOtpService service = registeredOnlyService(); // propriété à vrai
+            service.setPlatformSettings(settings);
+            stubSuccessfulSend();
+
+            assertThat(service.sendOtp(PHONE)).isNotNull();
+
+            verify(firebaseContact, never()).findUidByPhone(any());
+            verify(smsService).sendOrThrow(eq(PHONE), anyString());
+        }
+
+        @Test
         @DisplayName("réglage désactivé → numéro inconnu servi sans recherche Firebase (inscription par SMS ouverte)")
         void settingOff_noLookup() {
             SmsOtpService service = newService();

@@ -36,6 +36,7 @@ public class PlatformSettingsInitializer {
     private final boolean paypalEnabledProperty;
     private final boolean applePayEnabledProperty;
     private final boolean googlePayEnabledProperty;
+    private final boolean smsOtpRegisteredNumbersOnlyProperty;
 
     public PlatformSettingsInitializer(PlatformSettingRepository repository,
                                        YadonyConfigProperties config,
@@ -50,7 +51,9 @@ public class PlatformSettingsInitializer {
                                        @Value("${yadony.payments.paypal-enabled:}") String paypalEnabledProperty,
                                        @Value("${yadony.payments.apple-pay-enabled:}") String applePayEnabledProperty,
                                        @Value("${yadony.payments.google-pay-enabled:}")
-                                       String googlePayEnabledProperty) {
+                                       String googlePayEnabledProperty,
+                                       @Value("${yadony.sms.registered-numbers-only:true}")
+                                       String smsOtpRegisteredNumbersOnlyProperty) {
         this.repository = repository;
         this.config = config;
         this.smsEnabledProperty = smsEnabledProperty;
@@ -68,6 +71,10 @@ public class PlatformSettingsInitializer {
         this.paypalEnabledProperty = booleanOrFalse(paypalEnabledProperty);
         this.applePayEnabledProperty = booleanOrFalse(applePayEnabledProperty);
         this.googlePayEnabledProperty = booleanOrFalse(googlePayEnabledProperty);
+        // Vide ou illisible vaut VRAI, à l'inverse des drapeaux ci-dessus : c'est la parade au
+        // pompage de SMS, seul un « false » explicite rouvre l'inscription par SMS.
+        this.smsOtpRegisteredNumbersOnlyProperty = smsOtpRegisteredNumbersOnlyProperty == null
+                || !"false".equalsIgnoreCase(smsOtpRegisteredNumbersOnlyProperty.trim());
     }
 
     /** Vide ou absent vaut faux, comme {@code kyc_didit_enabled} : jamais un démarrage en échec. */
@@ -109,6 +116,10 @@ public class PlatformSettingsInitializer {
                 config.reimbursement().maxAmountEur().toPlainString());
         defaults.put(PlatformSettingKey.SMS_ENABLED,
                 String.valueOf(smsEnabledProperty));
+        // Amorcé une seule fois depuis YADONY_SMS_OTP_REGISTERED_NUMBERS_ONLY : le back-office
+        // fait ensuite autorité, changer la variable après coup ne fait plus rien.
+        defaults.put(PlatformSettingKey.SMS_OTP_REGISTERED_NUMBERS_ONLY,
+                String.valueOf(smsOtpRegisteredNumbersOnlyProperty));
         defaults.put(PlatformSettingKey.PRO_ENABLED,
                 String.valueOf(proEnabledProperty));
         defaults.put(PlatformSettingKey.KYC_DIDIT_ENABLED,

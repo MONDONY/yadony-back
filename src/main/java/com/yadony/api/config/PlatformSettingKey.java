@@ -30,6 +30,13 @@ import java.util.Arrays;
  * coupe en plus les codes OTP de connexion : desactiver celui-ci coupe UNIQUEMENT ce repli,
  * jamais l'authentification. Faux par defaut : a activer depuis le back-office au besoin.
  *
+ * <p>{@code SMS_OTP_REGISTERED_NUMBERS_ONLY} : vrai, un code SMS de connexion ne part que vers
+ * un numéro déjà porté par un compte, ou vers le numéro qu'un compte connecté ajoute à son
+ * profil ; l'inscription se fait alors par email, Google ou Apple. Parade au pompage de SMS du
+ * 08/11/2026 (des dizaines de numéros inconnus, un code chacun). Faux rouvre l'inscription par
+ * SMS à tout numéro. Amorcé depuis {@code YADONY_SMS_OTP_REGISTERED_NUMBERS_ONLY} (vrai par
+ * défaut), puis piloté depuis le back-office ; ligne absente : vrai, la position sûre.
+ *
  * <p>{@code PHOTO_PURGE_ENABLED} : faux, la purge des photos (après livraison, orphelins,
  * historique) tourne à blanc et ne supprime rien de R2. Le premier passage réel est
  * irréversible : on l'allume après avoir lu le décompte à blanc dans le panel.
@@ -58,6 +65,7 @@ public enum PlatformSettingKey {
     URGENCY_THRESHOLD_DAYS("urgency_threshold_days", PlatformSettingType.INTEGER),
     REIMBURSEMENT_CAP_EUR("reimbursement_cap_eur", PlatformSettingType.DECIMAL),
     SMS_ENABLED("sms_enabled", PlatformSettingType.BOOLEAN),
+    SMS_OTP_REGISTERED_NUMBERS_ONLY("sms_otp_registered_numbers_only", PlatformSettingType.BOOLEAN),
     PRO_ENABLED("pro_enabled", PlatformSettingType.BOOLEAN),
     KYC_DIDIT_ENABLED("kyc_didit_enabled", PlatformSettingType.BOOLEAN),
     CRITICAL_SMS_FALLBACK_ENABLED("critical_sms_fallback_enabled", PlatformSettingType.BOOLEAN),
