@@ -9,6 +9,7 @@ import com.yadony.api.common.Msisdn;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.notifications.InvalidSmsRecipientException;
+import com.yadony.api.notifications.SmsDeliveryException;
 import com.yadony.api.notifications.SmsService;
 import com.yadony.api.notifications.TwilioVerifyService;
 import com.yadony.api.notifications.TwilioVerifyService.VerifyUnavailableException;
@@ -192,11 +193,20 @@ public class SmsOtpService {
                 twilioVerify.start(phoneNumber, LocaleContextHolder.getLocale().getLanguage(),
                         appHashes.isEmpty() ? null : appHashes.get(0));
             } else {
-                smsService.send(phoneNumber, withAppHashes(
+                smsService.sendOrThrow(phoneNumber, withAppHashes(
                         messagesResolver.forRequest().get("sms.otp", code), appHashes));
             }
         } catch (VerifyUnavailableException e) {
             throw verifyUnavailable();
+        } catch (SmsDeliveryException e) {
+            // Le transporteur n'a rien envoyé (compte Twilio suspendu → 401, route refusée →
+            // 21612, panne) : 503 et le repli email, Google ou Apple, au lieu d'un « code envoyé »
+            // qui n'arrive jamais (Sentry YADONY-BACK-PROD-G). Même code que les SMS coupés, que
+            // l'application sait déjà afficher. L'exception fait rollback de la ligne OTP.
+            throw new YadonyBusinessException(
+                    HttpStatus.SERVICE_UNAVAILABLE, "sms-otp-disabled",
+                    "SMS OTP Unavailable",
+                    "L'envoi du code par SMS est momentanément indisponible, connecte-toi par email, Google ou Apple");
         } catch (InvalidSmsRecipientException e) {
             // Le transporteur refuse le numéro lui-même : 422 au client plutôt qu'un
             // « code envoyé » qui n'arrive jamais. L'exception fait rollback de la ligne OTP

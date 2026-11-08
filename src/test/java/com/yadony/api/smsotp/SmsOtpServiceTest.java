@@ -102,7 +102,7 @@ class SmsOtpServiceTest {
             assertThat(result).isNotNull();
             verify(smsOtpRepository).save(argThat(e ->
                     PHONE.equals(e.getPhoneNumber()) && "$2a$10$hashed".equals(e.getCodeHash())));
-            verify(smsService).send(eq(PHONE), argThat(msg ->
+            verify(smsService).sendOrThrow(eq(PHONE), argThat(msg ->
                     msg.matches("Votre code Yadony est : \\d{6}\\. Valable 10 minutes\\.")));
         }
 
@@ -118,7 +118,7 @@ class SmsOtpServiceTest {
 
             service.sendOtp(PHONE);
 
-            verify(smsService).send(eq(PHONE), argThat(msg ->
+            verify(smsService).sendOrThrow(eq(PHONE), argThat(msg ->
                     msg.matches("Your Yadony code is: \\d{6}\\. Valid for 10 minutes\\.")));
         }
 
@@ -133,7 +133,7 @@ class SmsOtpServiceTest {
             when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
             when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
             when(smsService.isEnabled()).thenReturn(true);
-            doThrow(new InvalidSmsRecipientException(21211)).when(smsService).send(eq(PHONE), anyString());
+            doThrow(new InvalidSmsRecipientException(21211)).when(smsService).sendOrThrow(eq(PHONE), anyString());
 
             assertThatThrownBy(() -> service.sendOtp(PHONE))
                     .isInstanceOf(YadonyBusinessException.class)
@@ -142,6 +142,30 @@ class SmsOtpServiceTest {
                                 .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
                         assertThat(((YadonyBusinessException) e).getErrorCode())
                                 .isEqualTo("invalid-phone-number");
+                    });
+        }
+
+        @Test
+        @DisplayName("transporteur en panne (Twilio suspendu, route refusée) → 503 sms-otp-disabled, repli email")
+        void carrierFailure_throws503_smsOtpDisabled() {
+            // Sentry YADONY-BACK-PROD-G, 08/11/2026 : compte Twilio suspendu (401) et route
+            // refusée (21612) avalés par SmsService, l'app annonçait « code envoyé ». Le code
+            // d'erreur est celui des SMS coupés, que l'application sait déjà afficher.
+            SmsOtpService service = newService();
+            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+            when(smsService.isEnabled()).thenReturn(true);
+            doThrow(new com.yadony.api.notifications.SmsDeliveryException("HTTP 401"))
+                    .when(smsService).sendOrThrow(eq(PHONE), anyString());
+
+            assertThatThrownBy(() -> service.sendOtp(PHONE))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+                        assertThat(ex.getErrorCode()).isEqualTo("sms-otp-disabled");
+                        assertThat(ex.getMessage()).contains("email");
                     });
         }
 
@@ -157,7 +181,7 @@ class SmsOtpServiceTest {
             when(smsService.isEnabled()).thenReturn(true);
 
             assertThat(service.sendOtp(PHONE)).isNotNull();
-            verify(smsService).send(eq(PHONE), anyString());
+            verify(smsService).sendOrThrow(eq(PHONE), anyString());
         }
 
         @Test
@@ -172,7 +196,7 @@ class SmsOtpServiceTest {
                     .isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
 
             verify(smsOtpRepository, never()).save(any());
-            verify(smsService, never()).send(any(), any());
+            verify(smsService, never()).sendOrThrow(any(), any());
         }
 
         @Test
@@ -211,7 +235,7 @@ class SmsOtpServiceTest {
 
             verify(smsOtpRepository, never()).countByPhoneSince(any(), any());
             verify(smsOtpRepository, never()).save(any());
-            verify(smsService, never()).send(any(), any());
+            verify(smsService, never()).sendOrThrow(any(), any());
         }
 
         @Test
@@ -226,7 +250,7 @@ class SmsOtpServiceTest {
             var result = service.sendOtp(PHONE);
 
             assertThat(result).isNotNull();
-            verify(smsService).send(eq(PHONE), anyString());
+            verify(smsService).sendOrThrow(eq(PHONE), anyString());
         }
     }
 
@@ -957,7 +981,7 @@ class SmsOtpServiceTest {
             assertThat(service.sendOtp(US_PHONE)).isNotNull();
 
             verify(twilioVerify).start(eq(US_PHONE), anyString(), any());
-            verify(smsService, never()).send(any(), any());
+            verify(smsService, never()).sendOrThrow(any(), any());
             // La ligne est gardée : elle porte le budget anti-spam et le budget de tentatives.
             verify(smsOtpRepository).save(argThat(e -> US_PHONE.equals(e.getPhoneNumber())));
         }
@@ -1027,7 +1051,7 @@ class SmsOtpServiceTest {
             service.sendOtp(US_PHONE);
 
             verify(twilioVerify, never()).start(any(), any(), any());
-            verify(smsService).send(eq(US_PHONE), anyString());
+            verify(smsService).sendOrThrow(eq(US_PHONE), anyString());
         }
 
         @Test
@@ -1114,7 +1138,7 @@ class SmsOtpServiceTest {
 
             service.sendOtp(PHONE);
 
-            verify(smsService).send(eq(PHONE), argThat(msg -> msg.matches(
+            verify(smsService).sendOrThrow(eq(PHONE), argThat(msg -> msg.matches(
                     "Votre code Yadony est : \\d{6}\\. Valable 10 minutes\\.\n"
                             + java.util.regex.Pattern.quote(PLAY_HASH + " " + DEBUG_HASH))));
         }
@@ -1127,7 +1151,7 @@ class SmsOtpServiceTest {
 
             service.sendOtp(PHONE);
 
-            verify(smsService).send(eq(PHONE), argThat(msg ->
+            verify(smsService).sendOrThrow(eq(PHONE), argThat(msg ->
                     msg.matches("Votre code Yadony est : \\d{6}\\. Valable 10 minutes\\.")));
         }
 

@@ -660,8 +660,12 @@ yadony:
     denied-prefixes: ${YADONY_SMS_OTP_DENIED_PREFIXES:1242,1246,1264,1268,1284,1345,1441,1473,1649,1658,1664,1721,1758,1767,1784,1809,1829,1849,1868,1869,1876}
     # SMS de code par heure et par 24 h, tous numéros confondus ; au-delà 503 + alerte.
     # Bloquant exprès : chaque SMS est facturé, et l'email reste disponible.
-    max-sends-per-hour-global: ${YADONY_SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL:200}
-    max-sends-per-day-global: ${YADONY_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL:1000}
+    # Abaissés le 08/11/2026 (200 / h et 1000 / 24 h avant) : 58 demandes en 7 minutes, sans
+    # rapport avec le trafic réel (une quinzaine d'inscriptions par jour), ont fait suspendre le
+    # compte Twilio (Sentry YADONY-BACK-PROD-G). À relever par variable d'environnement si le
+    # trafic légitime grandit.
+    max-sends-per-hour-global: ${YADONY_SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL:30}
+    max-sends-per-day-global: ${YADONY_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL:150}
     # Comptes de démo pour la review des stores, « +E164:code » séparés par des virgules :
     # aucun SMS, code fixe accepté. Vide par défaut, à vider après la review.
     review-accounts: ${YADONY_SMS_OTP_REVIEW_ACCOUNTS:}
