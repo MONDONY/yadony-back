@@ -4,5 +4,10 @@ package com.yadony.api.config;
 public enum PlatformSettingType {
     DECIMAL,
     INTEGER,
-    BOOLEAN
+    BOOLEAN,
+    /**
+     * Liste d'indicatifs téléphoniques séparés par des virgules (« 221,225 »), vide permise :
+     * voir {@link CallingCodeList}.
+     */
+    CALLING_CODES
 }

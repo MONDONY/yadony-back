@@ -77,6 +77,12 @@ class PlatformSettingsInitializerIT {
         assertThat(repository.findBySettingKey("sms_enabled")).isPresent()
                 .get().extracting(PlatformSettingEntity::getSettingValue)
                 .isEqualTo("false");
+        // Pays bloqués : « none » dans application-test.yml, la suite garde ses numéros africains.
+        assertThat(repository.findBySettingKey("sms_blocked_country_codes")).isPresent()
+                .get().satisfies(row -> {
+                    assertThat(row.getSettingValue()).isEmpty();
+                    assertThat(row.getValueType()).isEqualTo(PlatformSettingType.CALLING_CODES);
+                });
         // Quotas de l'assistant : amorcés depuis les variables d'environnement (20 et 30 par défaut).
         assertThat(repository.findBySettingKey("assistant_daily_quota")).isPresent()
                 .get().extracting(PlatformSettingEntity::getSettingValue)

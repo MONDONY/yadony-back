@@ -10,6 +10,7 @@ routes:
 ---
 You can add a number from your profile if your account does not have one yet: Profile › ☰ › Edit profile › Contact details › Phone.
 Enter the number, then the verification code you receive by text message to confirm it.
+In some African countries, SMS verification may be temporarily unavailable: keep signing in with your email, Google or Apple.
 
 You cannot yet replace a number already on your account yourself: the app shows "Number already set". To change your number, write to support (Profile › Help › Contact support, Account category).
 

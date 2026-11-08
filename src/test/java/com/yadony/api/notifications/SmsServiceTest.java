@@ -319,4 +319,56 @@ class SmsServiceTest {
 
         verify(restTemplate).postForEntity(contains("twilio.com"), any(), eq(String.class));
     }
+
+    // ── Pays bloqués depuis le back-office (sms_blocked_country_codes) ───────
+
+    private SmsService serviceBlocking(String callingCode) {
+        com.yadony.api.config.PlatformSettingsService settings = PlatformSettingsTestFactory.withSmsEnabled(true);
+        when(settings.smsBlockedCallingCode(anyString())).thenAnswer(inv -> {
+            String phone = inv.getArgument(0);
+            return phone.startsWith("+" + callingCode)
+                    ? java.util.Optional.of(callingCode) : java.util.Optional.empty();
+        });
+        SmsService service = new SmsService(restTemplate, settings);
+        ReflectionTestUtils.setField(service, "atApiKey", "test-at-key");
+        ReflectionTestUtils.setField(service, "atUsername", "sandbox");
+        ReflectionTestUtils.setField(service, "atCorridorCallingCodes", java.util.List.of("221", "225", "223", "237"));
+        ReflectionTestUtils.setField(service, "twilioAccountSid", "ACtest");
+        ReflectionTestUtils.setField(service, "twilioAuthToken", "token");
+        ReflectionTestUtils.setField(service, "twilioFrom", "+15005550006");
+        return service;
+    }
+
+    @Test
+    void send_blockedCallingCode_noHttpCallAndNoError() {
+        // Repli SMS des notifications critiques : Twilio facturait des SMS « Delivered » vers
+        // l'Afrique qui n'arrivaient jamais (08/11/2026). Rien ne part, rien n'est levé.
+        SmsService service = serviceBlocking("225");
+
+        service.send("+2250712345678", "Votre colis est livré");
+
+        verifyNoInteractions(restTemplate);
+    }
+
+    @Test
+    void sendOrThrow_blockedCallingCode_noHttpCallAndDeliveryException() {
+        // Filet : SmsOtpService refuse avant, mais un code ne doit jamais être annoncé « envoyé ».
+        SmsService service = serviceBlocking("225");
+
+        assertThatThrownBy(() -> service.sendOrThrow("+2250712345678", "Votre code Yadony est : 123456"))
+                .isInstanceOf(SmsDeliveryException.class)
+                .hasMessageContaining("country-blocked +225");
+        verifyNoInteractions(restTemplate);
+    }
+
+    @Test
+    void send_otherCountryWhileAfricaBlocked_stillSent() {
+        SmsService service = serviceBlocking("225");
+        when(restTemplate.postForEntity(contains("twilio.com"), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("{}"));
+
+        service.send("+33612345678", "Votre colis est livré");
+
+        verify(restTemplate).postForEntity(contains("twilio.com"), any(HttpEntity.class), eq(String.class));
+    }
 }
