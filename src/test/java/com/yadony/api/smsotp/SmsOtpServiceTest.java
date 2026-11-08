@@ -170,12 +170,12 @@ class SmsOtpServiceTest {
         }
 
         @Test
-        @DisplayName("le 5e renvoi passe encore — le bouton de l'app se rouvre toutes les 60 s")
-        void fourPreviousSendsStillAllowANewOne() {
-            // Régression : le budget était de 3, alors que l'écran de saisie du code
-            // (partagé avec le canal email) rouvre « Renvoyer » chaque minute.
+        @DisplayName("un renvoi passe après le premier code (2 par fenêtre de 5 min)")
+        void onePreviousSendStillAllowsAResend() {
+            // Budget abaissé de 5 à 2 le 08/11/2026 (pompage, compte Twilio suspendu) :
+            // le premier code et un renvoi, chaque SMS étant facturé.
             SmsOtpService service = newService();
-            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(4L);
+            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(1L);
             when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
             when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
             when(smsService.isEnabled()).thenReturn(true);
@@ -185,10 +185,10 @@ class SmsOtpServiceTest {
         }
 
         @Test
-        @DisplayName("429 — 5 envois ou plus dans la fenêtre de 5 min")
+        @DisplayName("429 — 2 envois ou plus dans la fenêtre de 5 min")
         void rateLimitExceeded() {
             SmsOtpService service = newService();
-            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(5L);
+            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(2L);
 
             assertThatThrownBy(() -> service.sendOtp(PHONE))
                     .isInstanceOf(YadonyBusinessException.class)
@@ -1192,6 +1192,134 @@ class SmsOtpServiceTest {
             service.sendOtp(usPhone);
 
             verify(twilioVerify).start(eq(usPhone), anyString(), eq(PLAY_HASH));
+        }
+    }
+
+    /**
+     * Pompage du 08/11/2026 : des dizaines de numéros inconnus qui se suivaient, un code
+     * chacun. Avec {@code registered-numbers-only}, seul un numéro déjà inscrit, ou celui
+     * qu'un compte connecté ajoute à son profil, reçoit un SMS.
+     */
+    @Nested
+    @DisplayName("sendOtp — numéros inscrits seulement")
+    class RegisteredNumbersOnly {
+
+        private static final String CALLER_UID = "uid-email-account";
+
+        private SmsOtpService registeredOnlyService() {
+            properties.setRegisteredNumbersOnly(true);
+            return newService();
+        }
+
+        private void stubSuccessfulSend() {
+            when(smsService.isEnabled()).thenReturn(true);
+            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        }
+
+        private void assertRefusedWithoutSms(Runnable call) {
+            assertThatThrownBy(call::run)
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+                        assertThat(ex.getErrorCode()).isEqualTo("sms-otp-disabled");
+                        assertThat(ex.getMessage()).contains("email", "Google", "Apple");
+                    });
+            verify(smsOtpRepository, never()).save(any());
+            verify(smsService, never()).sendOrThrow(any(), any());
+        }
+
+        @Test
+        @DisplayName("numéro déjà porté par un compte → code envoyé (connexion d'un inscrit)")
+        void registeredNumber_receivesCode() {
+            SmsOtpService service = registeredOnlyService();
+            stubSuccessfulSend();
+            when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.of("uid-phone-user"));
+
+            assertThat(service.sendOtp(PHONE)).isNotNull();
+
+            verify(smsService).sendOrThrow(eq(PHONE), anyString());
+            verifyNoInteractions(userRepository);
+        }
+
+        @Test
+        @DisplayName("numéro inconnu sans compte connecté → 503 sms-otp-disabled, ni ligne ni SMS")
+        void unknownNumber_withoutAccount_refused() {
+            SmsOtpService service = registeredOnlyService();
+            when(smsService.isEnabled()).thenReturn(true);
+            when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.empty());
+
+            assertRefusedWithoutSms(() -> service.sendOtp(PHONE));
+            verify(smsOtpRepository, never()).countByPhoneSince(any(), any());
+        }
+
+        @Test
+        @DisplayName("numéro inconnu demandé par un compte connecté sans numéro → code envoyé (ajout au profil)")
+        void unknownNumber_attachFromSignedInAccount_receivesCode() {
+            SmsOtpService service = registeredOnlyService();
+            stubSuccessfulSend();
+            when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.empty());
+            when(userRepository.findByFirebaseUid(CALLER_UID)).thenReturn(Optional.of(new UserEntity()));
+            when(firebaseContact.getContact(CALLER_UID))
+                    .thenReturn(new FirebaseContactService.Contact(null, "a@b.fr"));
+
+            assertThat(service.sendOtp(PHONE, CALLER_UID)).isNotNull();
+
+            verify(smsService).sendOrThrow(eq(PHONE), anyString());
+        }
+
+        @Test
+        @DisplayName("compte connecté qui a déjà un numéro → refus pour un autre numéro inconnu")
+        void unknownNumber_accountAlreadyHasPhone_refused() {
+            // Un compte qui a déjà son numéro ne peut pas en ajouter un autre (409 à l'attach) :
+            // lui envoyer des codes vers des inconnus ne servirait qu'au pompage.
+            SmsOtpService service = registeredOnlyService();
+            when(smsService.isEnabled()).thenReturn(true);
+            when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.empty());
+            when(userRepository.findByFirebaseUid(CALLER_UID)).thenReturn(Optional.of(new UserEntity()));
+            when(firebaseContact.getContact(CALLER_UID))
+                    .thenReturn(new FirebaseContactService.Contact("+33600000000", null));
+
+            assertRefusedWithoutSms(() -> service.sendOtp(PHONE, CALLER_UID));
+        }
+
+        @Test
+        @DisplayName("compte Firebase sans fiche Yadony → refus (l'attach répondrait 404)")
+        void unknownNumber_callerWithoutYadonyUser_refused() {
+            SmsOtpService service = registeredOnlyService();
+            when(smsService.isEnabled()).thenReturn(true);
+            when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.empty());
+            when(userRepository.findByFirebaseUid(CALLER_UID)).thenReturn(Optional.empty());
+
+            assertRefusedWithoutSms(() -> service.sendOtp(PHONE, CALLER_UID));
+        }
+
+        @Test
+        @DisplayName("compte de revue des stores → jamais bloqué, aucune recherche Firebase")
+        void reviewAccount_bypassesRegistrationCheck() {
+            properties.setReviewAccounts(java.util.List.of(PHONE + ":123456"));
+            SmsOtpService service = registeredOnlyService();
+            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            assertThat(service.sendOtp(PHONE)).isNotNull();
+
+            verify(firebaseContact, never()).findUidByPhone(any());
+        }
+
+        @Test
+        @DisplayName("réglage désactivé → numéro inconnu servi sans recherche Firebase (inscription par SMS ouverte)")
+        void settingOff_noLookup() {
+            SmsOtpService service = newService();
+            stubSuccessfulSend();
+
+            assertThat(service.sendOtp(PHONE)).isNotNull();
+
+            verify(firebaseContact, never()).findUidByPhone(any());
+            verify(smsService).sendOrThrow(eq(PHONE), anyString());
         }
     }
 }

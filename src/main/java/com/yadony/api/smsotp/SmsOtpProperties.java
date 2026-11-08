@@ -14,14 +14,15 @@ import java.util.regex.Pattern;
 public class SmsOtpProperties {
 
     /**
-     * Nombre de codes envoyables à un même numéro par fenêtre glissante.
+     * Nombre de codes envoyables à un même numéro par fenêtre glissante : le premier
+     * code et un renvoi.
      *
-     * <p>Même contrainte que pour l'email : l'écran de saisie du code est partagé
-     * entre les deux canaux et rouvre « Renvoyer le code » toutes les 60 s. Un
-     * budget inférieur à {@link #rateWindowMinutes} envois ferait refuser un
-     * renvoi que le bouton venait de proposer.
+     * <p>Plus strict que l'email (5) parce que chaque SMS est facturé : décision du
+     * 08/11/2026, après le pompage qui a fait suspendre le compte Twilio. L'écran de
+     * saisie rouvre « Renvoyer le code » toutes les 60 s ; un troisième envoi dans la
+     * fenêtre reçoit le 429 {@code phone-otp-rate-limit}, que l'application affiche.
      */
-    private int maxSendsPerWindow = 5;
+    private int maxSendsPerWindow = 2;
 
     /** Durée, en minutes, de la fenêtre glissante appliquée à {@link #maxSendsPerWindow}. */
     private int rateWindowMinutes = 5;
@@ -72,6 +73,18 @@ public class SmsOtpProperties {
     /** Même budget sur 24 h : un pompage lent passerait sous la limite horaire. */
     private int maxSendsPerDayGlobal = 1000;
 
+    /**
+     * Vrai : un code ne part que vers un numéro déjà porté par un compte Firebase, ou
+     * vers le numéro qu'un compte connecté (ni invité, ni déjà doté d'un numéro) ajoute
+     * à son profil. Une inscription se fait alors par email, Google ou Apple.
+     *
+     * <p>Parade au pompage du 08/11/2026 : l'attaquant a fait envoyer un code à des
+     * dizaines de numéros inconnus qui se suivaient, un seul chacun, si bien qu'aucune
+     * limite par numéro ne pouvait jouer. Faux par défaut ici (tests unitaires), vrai
+     * dans {@code application.yml}.
+     */
+    private boolean registeredNumbersOnly = false;
+
     /** Empreinte SMS Retriever : 11 caractères de l'alphabet base64. */
     private static final Pattern APP_HASH = Pattern.compile("[A-Za-z0-9+/]{11}");
 
@@ -118,6 +131,8 @@ public class SmsOtpProperties {
     public void setMaxSendsPerHourGlobal(int maxSendsPerHourGlobal) { this.maxSendsPerHourGlobal = maxSendsPerHourGlobal; }
     public int getMaxSendsPerDayGlobal() { return maxSendsPerDayGlobal; }
     public void setMaxSendsPerDayGlobal(int maxSendsPerDayGlobal) { this.maxSendsPerDayGlobal = maxSendsPerDayGlobal; }
+    public boolean isRegisteredNumbersOnly() { return registeredNumbersOnly; }
+    public void setRegisteredNumbersOnly(boolean registeredNumbersOnly) { this.registeredNumbersOnly = registeredNumbersOnly; }
 
     /** Indicatifs nettoyés (espaces, « + » retirés), sans doublon. */
     public List<String> getAllowedCountryCodes() {

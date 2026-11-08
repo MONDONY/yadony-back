@@ -73,6 +73,15 @@ public enum RateLimitRule {
             List.of("/auth/email-otp/send", "/auth/sms-otp/send"), 30, Duration.ofMinutes(10)),
 
     /**
+     * Codes SMS demandés par un même compte (invité compris) sur 24 h. Un compte connecté
+     * sans numéro peut demander un code pour un numéro encore inconnu (ajout au profil,
+     * SmsOtpService) : sans plafond, un seul compte arroserait des milliers de numéros,
+     * chacun sous sa propre limite (pompage du 08/11/2026). Même budget que la limite
+     * journalière par numéro.
+     */
+    SMS_OTP_SEND_ACCOUNT(Key.ACCOUNT, Set.of("POST"), List.of("/auth/sms-otp/send"), 10, Duration.ofDays(1)),
+
+    /**
      * Vérifications de code depuis une même IP. Le budget par adresse (5 essais) borne
      * la force brute sur UN compte ; celle-ci borne l'essai d'un même code sur des
      * milliers d'adresses.

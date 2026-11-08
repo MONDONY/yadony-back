@@ -18,6 +18,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.time.Instant;
 
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -38,7 +39,8 @@ class SmsOtpControllerIntegrationTest {
     @DisplayName("send 200 — retourne expiresAt")
     void send_success() throws Exception {
         Instant expiry = Instant.parse("2026-05-19T10:15:00Z");
-        when(smsOtpService.sendOtp("+221701234567")).thenReturn(expiry);
+        // Sans jeton : aucun compte connecté transmis (SmsOtpController#signedInUid).
+        when(smsOtpService.sendOtp("+221701234567", null)).thenReturn(expiry);
 
         mockMvc.perform(post("/auth/sms-otp/send")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -68,7 +70,7 @@ class SmsOtpControllerIntegrationTest {
     @Test
     @DisplayName("send 429 — rate-limit atteint")
     void send_rateLimitExceeded() throws Exception {
-        when(smsOtpService.sendOtp(anyString()))
+        when(smsOtpService.sendOtp(anyString(), isNull()))
                 .thenThrow(new YadonyBusinessException(
                         HttpStatus.TOO_MANY_REQUESTS, "phone-otp-rate-limit",
                         "Too Many Requests", "Trop de tentatives, réessaie dans 5 min"));

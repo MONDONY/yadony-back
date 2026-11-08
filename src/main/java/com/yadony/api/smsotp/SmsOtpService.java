@@ -107,8 +107,19 @@ public class SmsOtpService {
         }
     }
 
+    /** Envoi sans compte connecté (ou en invité) : seul un numéro déjà inscrit reçoit un code. */
     @Transactional(isolation = Isolation.SERIALIZABLE)
     public Instant sendOtp(String phoneNumber) {
+        return sendOtp(phoneNumber, null);
+    }
+
+    /**
+     * @param signedInUid UID Firebase du compte connecté qui demande le code, {@code null}
+     *                    sans compte ou en invité : il autorise un numéro encore inconnu,
+     *                    à ajouter à ce compte (voir {@link #mayReceiveCode}).
+     */
+    @Transactional(isolation = Isolation.SERIALIZABLE)
+    public Instant sendOtp(String phoneNumber, String signedInUid) {
         // En dev/test, SMS désactivé est le réglage normal (voir le relais de log
         // plus bas) : on ne bloque qu'en prod, où un flag resté à false alors que
         // l'écran est accessible (build client périgé, deep link) enverrait
@@ -127,6 +138,18 @@ public class SmsOtpService {
                     HttpStatus.UNPROCESSABLE_ENTITY, "phone-country-not-supported",
                     "Country Not Supported",
                     "La connexion par SMS n'est pas disponible pour ce pays, utilise ton adresse email");
+        }
+
+        if (reviewCode.isEmpty() && properties.isRegisteredNumbersOnly()
+                && !mayReceiveCode(phoneNumber, signedInUid)) {
+            // Avant toute écriture et tout envoi facturé. Même code que les SMS coupés : l'app
+            // l'affiche déjà (« La connexion par téléphone n'est pas encore disponible »).
+            log.info("Code SMS refusé : {} n'est porté par aucun compte", maskPhone(phoneNumber));
+            throw new YadonyBusinessException(
+                    HttpStatus.SERVICE_UNAVAILABLE, "sms-otp-disabled",
+                    "SMS OTP Unavailable",
+                    "La connexion par téléphone est réservée aux comptes qui ont déjà un numéro : "
+                            + "inscris-toi par email, Google ou Apple, puis ajoute ton numéro à ton profil");
         }
 
         int windowMinutes = properties.getRateWindowMinutes();
@@ -397,6 +420,25 @@ public class SmsOtpService {
         smsOtpRepository.save(token);
         // Les codes plus anciens encore valides ne doivent pas survivre à une connexion.
         smsOtpRepository.invalidateActive(phoneNumber, now);
+    }
+
+    /**
+     * Vrai si ce numéro peut recevoir un code quand {@code registered-numbers-only} est actif :
+     * <ul>
+     *   <li>il est déjà porté par un compte Firebase (connexion d'un inscrit) ;</li>
+     *   <li>ou le demandeur est un compte connecté, ni invité ni sans fiche Yadony, qui n'a
+     *       pas encore de numéro : il ajoute le sien (voir {@link #attachPhoneToAccount}).</li>
+     * </ul>
+     * Une panne Firebase vaut « numéro inconnu » : on refuse plutôt que de payer un SMS vers
+     * un inconnu, la connexion par email, Google ou Apple reste ouverte.
+     */
+    private boolean mayReceiveCode(String phoneNumber, String signedInUid) {
+        if (firebaseContact.findUidByPhone(phoneNumber).isPresent()) {
+            return true;
+        }
+        return signedInUid != null
+                && userRepository.findByFirebaseUid(signedInUid).isPresent()
+                && firebaseContact.getContact(signedInUid).phoneNumber() == null;
     }
 
     /**
