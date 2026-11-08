@@ -89,6 +89,23 @@ public class SmsOtpService {
                 : properties.isRegisteredNumbersOnly();
     }
 
+    /**
+     * Plafond global des SMS de code sur 1 h, réglé dans le back-office
+     * ({@code sms_otp_max_sends_per_hour_global}) ; la propriété prend le relais sans lui.
+     */
+    private int maxSendsPerHourGlobal() {
+        return platformSettings != null
+                ? platformSettings.smsOtpMaxSendsPerHourGlobal()
+                : properties.getMaxSendsPerHourGlobal();
+    }
+
+    /** Même plafond sur 24 h ({@code sms_otp_max_sends_per_day_global}). */
+    private int maxSendsPerDayGlobal() {
+        return platformSettings != null
+                ? platformSettings.smsOtpMaxSendsPerDayGlobal()
+                : properties.getMaxSendsPerDayGlobal();
+    }
+
     /** Seuil de suspension, lu à chaque envoi comme {@link #registeredNumbersOnly()}. */
     private int maxNumbersPerAccount() {
         return platformSettings != null
@@ -269,12 +286,14 @@ public class SmsOtpService {
         }
         // Inutile de facturer un SMS dont le code serait refusé à la vérification.
         ensureLoginBudget(phoneNumber, now);
-        if (smsOtpRepository.countAllSince(now.minusHours(1)) >= properties.getMaxSendsPerHourGlobal()
-                || smsOtpRepository.countAllSince(now.minusDays(1)) >= properties.getMaxSendsPerDayGlobal()) {
-            // ERROR → Sentry : chaque SMS est facturé. Pic légitime (relever le budget) ou
-            // pompage réparti sur des milliers de numéros et d'IP.
+        int perHourGlobal = maxSendsPerHourGlobal();
+        int perDayGlobal = maxSendsPerDayGlobal();
+        if (smsOtpRepository.countAllSince(now.minusHours(1)) >= perHourGlobal
+                || smsOtpRepository.countAllSince(now.minusDays(1)) >= perDayGlobal) {
+            // ERROR → Sentry : chaque SMS est facturé. Pic légitime (relever le budget dans le
+            // back-office, Paramètres) ou pompage réparti sur des milliers de numéros et d'IP.
             log.error("Budget global de SMS de code atteint ({} / h, {} / 24 h) : envois suspendus",
-                    properties.getMaxSendsPerHourGlobal(), properties.getMaxSendsPerDayGlobal());
+                    perHourGlobal, perDayGlobal);
             throw new YadonyBusinessException(
                     HttpStatus.SERVICE_UNAVAILABLE, "sms-otp-budget-exceeded",
                     "Service Unavailable",

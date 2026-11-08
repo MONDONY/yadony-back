@@ -665,8 +665,9 @@ yadony:
     # Bloquant exprès : chaque SMS est facturé, et l'email reste disponible.
     # Abaissés le 08/11/2026 (200 / h et 1000 / 24 h avant) : 58 demandes en 7 minutes, sans
     # rapport avec le trafic réel (une quinzaine d'inscriptions par jour), ont fait suspendre le
-    # compte Twilio (Sentry YADONY-BACK-PROD-G). À relever par variable d'environnement si le
-    # trafic légitime grandit.
+    # compte Twilio (Sentry YADONY-BACK-PROD-G). Valeurs INITIALES des réglages
+    # sms_otp_max_sends_per_hour_global / _per_day_global du back-office (Paramètres), lues au
+    # premier démarrage seulement : ensuite, on les règle depuis le panel admin.
     max-sends-per-hour-global: ${YADONY_SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL:30}
     max-sends-per-day-global: ${YADONY_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL:150}
     # Code SMS réservé aux numéros déjà inscrits, et au numéro qu'un compte connecté ajoute

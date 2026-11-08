@@ -38,6 +38,8 @@ public class PlatformSettingsInitializer {
     private final boolean googlePayEnabledProperty;
     private final boolean smsOtpRegisteredNumbersOnlyProperty;
     private final int smsOtpMaxNumbersPerAccountProperty;
+    private final int smsOtpMaxSendsPerHourGlobalProperty;
+    private final int smsOtpMaxSendsPerDayGlobalProperty;
 
     public PlatformSettingsInitializer(PlatformSettingRepository repository,
                                        YadonyConfigProperties config,
@@ -56,7 +58,11 @@ public class PlatformSettingsInitializer {
                                        @Value("${yadony.sms.registered-numbers-only:true}")
                                        String smsOtpRegisteredNumbersOnlyProperty,
                                        @Value("${yadony.sms.max-numbers-per-account:3}")
-                                       String smsOtpMaxNumbersPerAccountProperty) {
+                                       String smsOtpMaxNumbersPerAccountProperty,
+                                       @Value("${yadony.sms.max-sends-per-hour-global:30}")
+                                       String smsOtpMaxSendsPerHourGlobalProperty,
+                                       @Value("${yadony.sms.max-sends-per-day-global:150}")
+                                       String smsOtpMaxSendsPerDayGlobalProperty) {
         this.repository = repository;
         this.config = config;
         this.smsEnabledProperty = smsEnabledProperty;
@@ -82,6 +88,25 @@ public class PlatformSettingsInitializer {
                 PlatformSettingKey.MIN_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT,
                 PlatformSettingKey.MAX_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT,
                 PlatformSettingKey.DEFAULT_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT);
+        // Ramenés dans les bornes du panel plutôt que remplacés par le défaut : une valeur trop
+        // grande (1000000 dans application-test.yml) veut dire « le plus large possible ».
+        this.smsOtpMaxSendsPerHourGlobalProperty = clampedOr(smsOtpMaxSendsPerHourGlobalProperty,
+                PlatformSettingKey.MAX_SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL,
+                PlatformSettingKey.DEFAULT_SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL);
+        this.smsOtpMaxSendsPerDayGlobalProperty = clampedOr(smsOtpMaxSendsPerDayGlobalProperty,
+                PlatformSettingKey.MAX_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL,
+                PlatformSettingKey.DEFAULT_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL);
+    }
+
+    /** Entier de l'environnement ramené dans [1, max] ; vide ou illisible : le défaut. */
+    private static int clampedOr(String raw, int max, int fallback) {
+        if (raw == null || raw.isBlank()) return fallback;
+        try {
+            int value = Integer.parseInt(raw.trim());
+            return Math.max(1, Math.min(max, value));
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
     /** Entier lu de l'environnement dans les bornes du panel, sinon le défaut : jamais un démarrage en échec. */
@@ -140,6 +165,10 @@ public class PlatformSettingsInitializer {
                 String.valueOf(smsOtpRegisteredNumbersOnlyProperty));
         defaults.put(PlatformSettingKey.SMS_OTP_MAX_NUMBERS_PER_ACCOUNT,
                 String.valueOf(smsOtpMaxNumbersPerAccountProperty));
+        defaults.put(PlatformSettingKey.SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL,
+                String.valueOf(smsOtpMaxSendsPerHourGlobalProperty));
+        defaults.put(PlatformSettingKey.SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL,
+                String.valueOf(smsOtpMaxSendsPerDayGlobalProperty));
         defaults.put(PlatformSettingKey.PRO_ENABLED,
                 String.valueOf(proEnabledProperty));
         defaults.put(PlatformSettingKey.KYC_DIDIT_ENABLED,

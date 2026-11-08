@@ -132,6 +132,29 @@ public class PlatformSettingsService {
                 : value;
     }
 
+    /**
+     * SMS de code envoyés par toute l'app sur 1 h glissante avant blocage. Ligne absente, illisible
+     * ou hors bornes : le défaut (30). Voir {@link PlatformSettingKey#SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL}.
+     */
+    public int smsOtpMaxSendsPerHourGlobal() {
+        return boundedOrDefault(PlatformSettingKey.SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL,
+                PlatformSettingKey.MAX_SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL,
+                PlatformSettingKey.DEFAULT_SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL);
+    }
+
+    /** Même plafond sur 24 h glissantes (défaut 150). Voir {@link PlatformSettingKey#SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL}. */
+    public int smsOtpMaxSendsPerDayGlobal() {
+        return boundedOrDefault(PlatformSettingKey.SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL,
+                PlatformSettingKey.MAX_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL,
+                PlatformSettingKey.DEFAULT_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL);
+    }
+
+    /** Valeur entière de la ligne entre 1 et {@code max}, sinon {@code fallback}. */
+    private int boundedOrDefault(PlatformSettingKey key, int max, int fallback) {
+        int value = intOr(key, fallback);
+        return value < 1 || value > max ? fallback : value;
+    }
+
     /** Feature flag des billets d'avion — voir {@link PlatformSettingKey#FLIGHTS_ENABLED}. */
     public boolean flightsEnabled() {
         return Boolean.parseBoolean(cache.all().get(PlatformSettingKey.FLIGHTS_ENABLED.key()));
@@ -290,6 +313,8 @@ public class PlatformSettingsService {
             case SMS_ENABLED -> String.valueOf(smsEnabled());
             case SMS_OTP_REGISTERED_NUMBERS_ONLY -> String.valueOf(smsOtpRegisteredNumbersOnly());
             case SMS_OTP_MAX_NUMBERS_PER_ACCOUNT -> String.valueOf(smsOtpMaxNumbersPerAccount());
+            case SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL -> String.valueOf(smsOtpMaxSendsPerHourGlobal());
+            case SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL -> String.valueOf(smsOtpMaxSendsPerDayGlobal());
             case PRO_ENABLED -> String.valueOf(proEnabled());
             case KYC_DIDIT_ENABLED -> String.valueOf(kycDiditEnabled());
             case CRITICAL_SMS_FALLBACK_ENABLED -> String.valueOf(criticalSmsFallbackEnabled());
@@ -413,6 +438,12 @@ public class PlatformSettingsService {
                     PlatformSettingKey.MIN_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT,
                     PlatformSettingKey.MAX_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT,
                     "Le nombre de numéros par compte avant suspension doit être un entier entre 2 et 20");
+            case SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL -> boundedInt(value, 1,
+                    PlatformSettingKey.MAX_SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL,
+                    "Le plafond de SMS de code par heure doit être un entier entre 1 et 1000");
+            case SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL -> boundedInt(value, 1,
+                    PlatformSettingKey.MAX_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL,
+                    "Le plafond de SMS de code par 24 h doit être un entier entre 1 et 10000");
             case PRO_ENABLED -> {
                 if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
                     throw invalid("L'activation de l'offre PRO attend true ou false");

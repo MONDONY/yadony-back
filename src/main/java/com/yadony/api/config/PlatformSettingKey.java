@@ -41,6 +41,13 @@ import java.util.Arrays;
  * même compte connecté peut demander un code SMS sur 24 h. À ce nombre, le compte est suspendu
  * automatiquement et le back-office alerté (bornes 2 à 20, défaut 3).
  *
+ * <p>{@code SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL} et {@code SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL} : plafond
+ * des SMS de code envoyés par toute l'app, sur 1 h et sur 24 h glissantes. Au-delà, plus aucun code
+ * ne part (503, alerte Sentry) et les utilisateurs passent par email, Google ou Apple : c'est la
+ * facture SMS maximale, quoi que fasse un attaquant. Amorcés depuis
+ * {@code YADONY_SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL} / {@code _PER_DAY_GLOBAL} (30 et 150), bornes
+ * 1 à 1000 et 1 à 10000, puis pilotés depuis le back-office.
+ *
  * <p>{@code PHOTO_PURGE_ENABLED} : faux, la purge des photos (après livraison, orphelins,
  * historique) tourne à blanc et ne supprime rien de R2. Le premier passage réel est
  * irréversible : on l'allume après avoir lu le décompte à blanc dans le panel.
@@ -71,6 +78,8 @@ public enum PlatformSettingKey {
     SMS_ENABLED("sms_enabled", PlatformSettingType.BOOLEAN),
     SMS_OTP_REGISTERED_NUMBERS_ONLY("sms_otp_registered_numbers_only", PlatformSettingType.BOOLEAN),
     SMS_OTP_MAX_NUMBERS_PER_ACCOUNT("sms_otp_max_numbers_per_account", PlatformSettingType.INTEGER),
+    SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL("sms_otp_max_sends_per_hour_global", PlatformSettingType.INTEGER),
+    SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL("sms_otp_max_sends_per_day_global", PlatformSettingType.INTEGER),
     PRO_ENABLED("pro_enabled", PlatformSettingType.BOOLEAN),
     KYC_DIDIT_ENABLED("kyc_didit_enabled", PlatformSettingType.BOOLEAN),
     CRITICAL_SMS_FALLBACK_ENABLED("critical_sms_fallback_enabled", PlatformSettingType.BOOLEAN),
@@ -89,6 +98,12 @@ public enum PlatformSettingKey {
     public static final int DEFAULT_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT = 3;
     public static final int MIN_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT = 2;
     public static final int MAX_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT = 20;
+
+    /** Plafond global des SMS de code (toute l'app), sur 1 h puis sur 24 h. */
+    public static final int DEFAULT_SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL = 30;
+    public static final int MAX_SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL = 1000;
+    public static final int DEFAULT_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL = 150;
+    public static final int MAX_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL = 10000;
 
     /** Défauts des réglages photos : aucune property, le panel admin est le seul levier. */
     public static final int DEFAULT_PHOTO_RETENTION_DAYS = 7;

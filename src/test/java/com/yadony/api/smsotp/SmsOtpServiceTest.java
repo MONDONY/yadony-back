@@ -1300,6 +1300,9 @@ class SmsOtpServiceTest {
             com.yadony.api.config.PlatformSettingsService settings =
                     mock(com.yadony.api.config.PlatformSettingsService.class);
             when(settings.smsOtpMaxNumbersPerAccount()).thenReturn(2);
+            // Plafond global du back-office : large, ce test ne porte pas dessus.
+            lenient().when(settings.smsOtpMaxSendsPerHourGlobal()).thenReturn(1000);
+            lenient().when(settings.smsOtpMaxSendsPerDayGlobal()).thenReturn(10000);
             SmsOtpService service = trackedService();
             service.setPlatformSettings(settings);
             service.sendOtp("+33600000001", UID);
@@ -1308,6 +1311,52 @@ class SmsOtpServiceTest {
                     .isInstanceOf(YadonyBusinessException.class);
 
             verify(publisher).publishEvent(new SmsOtpNumberHoppingEvent(UID, 2, 2));
+        }
+    }
+
+    /** Plafond global des SMS de code réglé dans le back-office (08/11/2026). */
+    @Nested
+    @DisplayName("sendOtp — plafond global réglé dans le back-office")
+    class GlobalBudgetFromAdmin {
+
+        private com.yadony.api.config.PlatformSettingsService settings(int perHour, int perDay) {
+            com.yadony.api.config.PlatformSettingsService settings =
+                    mock(com.yadony.api.config.PlatformSettingsService.class);
+            when(settings.smsOtpMaxSendsPerHourGlobal()).thenReturn(perHour);
+            when(settings.smsOtpMaxSendsPerDayGlobal()).thenReturn(perDay);
+            return settings;
+        }
+
+        @Test
+        @DisplayName("plafond horaire du back-office atteint → 503 sms-otp-budget-exceeded, aucun SMS")
+        void adminHourlyCap_reached() {
+            SmsOtpService service = newService();
+            service.setPlatformSettings(settings(1, 1000));
+            when(smsService.isEnabled()).thenReturn(true);
+            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L);
+            when(smsOtpRepository.countAllSince(any())).thenReturn(1L);
+
+            assertThatThrownBy(() -> service.sendOtp(PHONE))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("sms-otp-budget-exceeded"));
+            verify(smsService, never()).sendOrThrow(any(), any());
+        }
+
+        @Test
+        @DisplayName("plafond relevé dans le back-office → le même trafic passe")
+        void adminRaisedCap_allows() {
+            SmsOtpService service = newService();
+            service.setPlatformSettings(settings(1000, 10000));
+            when(smsService.isEnabled()).thenReturn(true);
+            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L);
+            when(smsOtpRepository.countAllSince(any())).thenReturn(40L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            assertThat(service.sendOtp(PHONE)).isNotNull();
+
+            verify(smsService).sendOrThrow(eq(PHONE), anyString());
         }
     }
 
@@ -1548,6 +1597,9 @@ class SmsOtpServiceTest {
             com.yadony.api.config.PlatformSettingsService settings =
                     mock(com.yadony.api.config.PlatformSettingsService.class);
             when(settings.smsOtpRegisteredNumbersOnly()).thenReturn(false);
+            // Plafond global du back-office : large, ce test ne porte pas dessus.
+            when(settings.smsOtpMaxSendsPerHourGlobal()).thenReturn(1000);
+            when(settings.smsOtpMaxSendsPerDayGlobal()).thenReturn(10000);
             SmsOtpService service = registeredOnlyService(); // propriété à vrai
             service.setPlatformSettings(settings);
             stubSuccessfulSend();
