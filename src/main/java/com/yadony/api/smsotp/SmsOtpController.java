@@ -32,7 +32,7 @@ public class SmsOtpController {
 
     @PostMapping("/send")
     public ResponseEntity<SmsOtpSendResponse> send(@Valid @RequestBody SmsOtpSendRequest request) {
-        var expiresAt = smsOtpService.sendOtp(request.phoneNumber());
+        var expiresAt = smsOtpService.sendOtp(request.phoneNumber(), signedInUid());
         return ResponseEntity.ok(new SmsOtpSendResponse(expiresAt));
     }
 
@@ -58,6 +58,24 @@ public class SmsOtpController {
             response.header(SESSION_TOKEN_HEADER, sessionToken);
         }
         return response.body(authService.getProfile(firebaseUid));
+    }
+
+    /**
+     * UID du compte connecté qui demande un code, {@code null} sans jeton, en invité
+     * (session anonyme Firebase, {@code ROLE_GUEST}) ou pour un administrateur. Seul un
+     * vrai compte peut demander un code pour un numéro encore inconnu, pour l'ajouter à
+     * son profil : un invité se crée sans rien prouver, il rouvrirait le pompage.
+     */
+    static String signedInUid() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated()
+                || !(auth.getPrincipal() instanceof String uid) || uid.isBlank()
+                || "anonymousUser".equals(uid)) {
+            return null;
+        }
+        boolean guest = auth.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_GUEST".equals(a.getAuthority()));
+        return guest ? null : uid;
     }
 
     /**

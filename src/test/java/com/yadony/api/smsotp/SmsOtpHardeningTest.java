@@ -82,7 +82,7 @@ class SmsOtpHardeningTest {
                     assertThat(e.getErrorCode()).isEqualTo("phone-country-not-supported");
                 });
         verify(repository, never()).save(any());
-        verify(smsService, never()).send(anyString(), anyString());
+        verify(smsService, never()).sendOrThrow(anyString(), anyString());
     }
 
     @Test
@@ -96,7 +96,7 @@ class SmsOtpHardeningTest {
         InOrder order = inOrder(repository);
         order.verify(repository).invalidateActive(eq(PHONE), any());
         order.verify(repository).save(any());
-        verify(smsService).send(eq(PHONE), anyString());
+        verify(smsService).sendOrThrow(eq(PHONE), anyString());
     }
 
     @Test
@@ -110,7 +110,7 @@ class SmsOtpHardeningTest {
                     assertThat(e.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
                     assertThat(e.getErrorCode()).isEqualTo("sms-otp-budget-exceeded");
                 });
-        verify(smsService, never()).send(anyString(), anyString());
+        verify(smsService, never()).sendOrThrow(anyString(), anyString());
     }
 
     @Test
@@ -202,7 +202,7 @@ class SmsOtpHardeningTest {
                     assertThat(e.getStatus()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
                     assertThat(e.getErrorCode()).isEqualTo("phone-otp-daily-limit");
                 });
-        verify(smsService, never()).send(anyString(), anyString());
+        verify(smsService, never()).sendOrThrow(anyString(), anyString());
     }
 
     @Test
@@ -213,7 +213,7 @@ class SmsOtpHardeningTest {
 
         service.sendOtp(PHONE);
 
-        verify(smsService).send(eq(PHONE), anyString());
+        verify(smsService).sendOrThrow(eq(PHONE), anyString());
     }
 
     @Test
@@ -227,7 +227,7 @@ class SmsOtpHardeningTest {
                     assertThat(e.getProperties()).containsEntry("retryAfterSeconds", 600L);
                 });
         verify(repository, never()).save(any());
-        verify(smsService, never()).send(anyString(), anyString());
+        verify(smsService, never()).sendOrThrow(anyString(), anyString());
     }
 
     @Test

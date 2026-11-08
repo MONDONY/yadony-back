@@ -216,4 +216,107 @@ class SmsServiceTest {
         assertThatThrownBy(() -> smsService.send("+22574884000", "code"))
                 .isInstanceOf(InvalidSmsRecipientException.class);
     }
+
+    // ── Codes de connexion : l'échec du transporteur remonte (Sentry YADONY-BACK-PROD-G) ──
+    // Le 08/11/2026, le compte Twilio suspendu répondait 401 et une route refusée 21612 :
+    // send() les avalait, l'application affichait « code envoyé » pour des SMS jamais partis.
+
+    private static HttpClientErrorException twilioUnauthorized() {
+        return HttpClientErrorException.create(HttpStatus.UNAUTHORIZED, "Unauthorized",
+                HttpHeaders.EMPTY, new byte[0], StandardCharsets.UTF_8);
+    }
+
+    @Test
+    void sendOrThrow_suspendedTwilioAccount401_throwsSmsDelivery_withoutLeakingThePhone() {
+        when(restTemplate.postForEntity(contains("twilio.com"), any(HttpEntity.class), eq(String.class)))
+                .thenThrow(twilioUnauthorized());
+
+        assertThatThrownBy(() -> smsService.sendOrThrow("+33612345678", "code"))
+                .isInstanceOf(SmsDeliveryException.class)
+                .hasMessageContaining("HTTP 401")
+                .hasMessageNotContaining("612345678")
+                .extracting(e -> ((SmsDeliveryException) e).getDeliveryFailure())
+                .isEqualTo("HTTP 401");
+    }
+
+    @Test
+    void sendOrThrow_routeRefused21612_throwsSmsDelivery_notInvalidRecipient() {
+        // 21612 : couple expéditeur/destinataire refusé (numéro US vers le Sénégal). Le numéro
+        // saisi est juste, lui demander de vérifier l'indicatif serait faux.
+        when(restTemplate.postForEntity(contains("twilio.com"), any(HttpEntity.class), eq(String.class)))
+                .thenThrow(twilioBadRequest(21612, "Message cannot be sent with the current combination of 'To' and/or 'From' parameters"));
+
+        assertThatThrownBy(() -> smsService.sendOrThrow("+33612345678", "code"))
+                .isInstanceOf(SmsDeliveryException.class)
+                .hasMessageContaining("code 21612");
+    }
+
+    @Test
+    void sendOrThrow_networkFailure_throwsSmsDelivery() {
+        when(restTemplate.postForEntity(contains("twilio.com"), any(HttpEntity.class), eq(String.class)))
+                .thenThrow(new org.springframework.web.client.ResourceAccessException("Read timed out"));
+
+        assertThatThrownBy(() -> smsService.sendOrThrow("+33612345678", "code"))
+                .isInstanceOf(SmsDeliveryException.class)
+                .hasMessageContaining("ResourceAccessException");
+    }
+
+    @Test
+    void sendOrThrow_non2xxResponse_throwsSmsDelivery() {
+        when(restTemplate.postForEntity(contains("twilio.com"), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body("{}"));
+
+        assertThatThrownBy(() -> smsService.sendOrThrow("+33612345678", "code"))
+                .isInstanceOf(SmsDeliveryException.class)
+                .hasMessageContaining("HTTP 503");
+    }
+
+    @Test
+    void sendOrThrow_success_doesNotThrow() {
+        when(restTemplate.postForEntity(contains("twilio.com"), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(ResponseEntity.status(HttpStatus.CREATED).body("{}"));
+
+        smsService.sendOrThrow("+33612345678", "code");
+
+        verify(restTemplate).postForEntity(contains("twilio.com"), any(), eq(String.class));
+    }
+
+    @Test
+    void sendOrThrow_invalidRecipient_stillThrowsInvalidRecipient() {
+        when(restTemplate.postForEntity(contains("twilio.com"), any(HttpEntity.class), eq(String.class)))
+                .thenThrow(twilioBadRequest(21211, "Invalid 'To' Phone Number"));
+
+        assertThatThrownBy(() -> smsService.sendOrThrow("+22574884000", "code"))
+                .isInstanceOf(InvalidSmsRecipientException.class);
+    }
+
+    @Test
+    void sendOrThrow_smsDisabled_skipsWithoutThrowing() {
+        // SMS coupés depuis le back-office : c'est SmsOtpService qui répond 503 en amont.
+        disabledService().sendOrThrow("+33612345678", "code");
+
+        verifyNoInteractions(restTemplate);
+    }
+
+    @Test
+    void sendOrThrow_africasTalkingFails_thenTwilio401_throwsSmsDelivery() {
+        when(restTemplate.postForEntity(contains("africastalking"), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("error"));
+        when(restTemplate.postForEntity(contains("twilio"), any(HttpEntity.class), eq(String.class)))
+                .thenThrow(twilioUnauthorized());
+
+        assertThatThrownBy(() -> smsService.sendOrThrow("+221701234567", "code"))
+                .isInstanceOf(SmsDeliveryException.class);
+    }
+
+    @Test
+    void send_suspendedTwilioAccount401_isLoggedNotThrown() {
+        // Notifications : un échec du transporteur ne doit pas casser le traitement appelant.
+        when(restTemplate.postForEntity(contains("twilio.com"), any(HttpEntity.class), eq(String.class)))
+                .thenThrow(twilioUnauthorized());
+
+        smsService.send("+33612345678", "Votre colis est arrivé");
+
+        verify(restTemplate).postForEntity(contains("twilio.com"), any(), eq(String.class));
+    }
 }

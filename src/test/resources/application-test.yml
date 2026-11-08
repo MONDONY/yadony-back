@@ -109,6 +109,8 @@ yadony:
     max-sends-per-day-global: 1000000
     max-sends-per-day: 1000000
     max-logins-per-window: 1000000
+    # Firebase absent en test : tout numéro y serait inconnu. Règle couverte par SmsOtpServiceTest.
+    registered-numbers-only: false
   urgency:
     threshold-days: 3
   matching:

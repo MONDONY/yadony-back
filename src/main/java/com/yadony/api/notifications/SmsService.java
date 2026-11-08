@@ -82,7 +82,25 @@ public class SmsService {
         return settings.smsEnabled();
     }
 
+    /**
+     * Envoi au mieux, pour les notifications : un échec du transporteur est journalisé (ERROR,
+     * donc Sentry) mais jamais remonté, pour ne pas casser le traitement qui notifie.
+     */
     public void send(String phoneNumber, String message) {
+        deliver(phoneNumber, message, false);
+    }
+
+    /**
+     * Envoi d'un code de connexion : un échec du transporteur remonte en
+     * {@link SmsDeliveryException}. Le 08/11/2026, le compte Twilio suspendu répondait 401 et une
+     * route refusée répondait 21612 ; {@link #send} les avalait et l'application affichait
+     * « code envoyé » pour des SMS jamais partis (Sentry YADONY-BACK-PROD-G).
+     */
+    public void sendOrThrow(String phoneNumber, String message) {
+        deliver(phoneNumber, message, true);
+    }
+
+    private void deliver(String phoneNumber, String message, boolean strict) {
         // Même source que isEnabled() : une coupure décidée depuis le back-office doit
         // arrêter l'envoi réel, pas seulement masquer un bouton.
         if (!isEnabled()) {
@@ -94,10 +112,10 @@ public class SmsService {
         if (isAfricasTalkingCorridor(phoneNumber) && isAfricasTalkingConfigured()) {
             if (!sendViaAfricasTalking(phoneNumber, message)) {
                 log.warn("[SMS] Africa's Talking failed, falling back to Twilio");
-                sendViaTwilio(phoneNumber, message);
+                sendViaTwilio(phoneNumber, message, strict);
             }
         } else {
-            sendViaTwilio(phoneNumber, message);
+            sendViaTwilio(phoneNumber, message, strict);
         }
     }
 
@@ -142,6 +160,15 @@ public class SmsService {
     }
 
     void sendViaTwilio(String phoneNumber, String message) {
+        sendViaTwilio(phoneNumber, message, false);
+    }
+
+    /**
+     * @param strict {@code true} pour un code de connexion : tout échec qui ne tient pas au
+     *               numéro lève {@link SmsDeliveryException} après journalisation.
+     */
+    void sendViaTwilio(String phoneNumber, String message, boolean strict) {
+        String failure;
         try {
             String url = "https://api.twilio.com/2010-04-01/Accounts/" + twilioAccountSid + "/Messages.json";
 
@@ -159,9 +186,10 @@ public class SmsService {
 
             if (response.getStatusCode().is2xxSuccessful()) {
                 log.info("[SMS] Twilio: delivered successfully");
-            } else {
-                log.error("[SMS] Twilio returned HTTP {}", response.getStatusCode());
+                return;
             }
+            log.error("[SMS] Twilio returned HTTP {}", response.getStatusCode());
+            failure = "HTTP " + response.getStatusCode().value();
         } catch (HttpClientErrorException e) {
             Integer code = twilioErrorCode(e.getResponseBodyAsString());
             if (code != null && TWILIO_INVALID_RECIPIENT_CODES.contains(code)) {
@@ -169,8 +197,13 @@ public class SmsService {
                 throw new InvalidSmsRecipientException(code);
             }
             log.error("[SMS] Twilio error: {}", e.getMessage());
+            failure = code != null ? "code " + code : "HTTP " + e.getStatusCode().value();
         } catch (Exception e) {
             log.error("[SMS] Twilio error: {}", e.getMessage());
+            failure = e.getClass().getSimpleName();
+        }
+        if (strict) {
+            throw new SmsDeliveryException(failure);
         }
     }
 

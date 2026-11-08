@@ -102,7 +102,7 @@ class SmsOtpServiceTest {
             assertThat(result).isNotNull();
             verify(smsOtpRepository).save(argThat(e ->
                     PHONE.equals(e.getPhoneNumber()) && "$2a$10$hashed".equals(e.getCodeHash())));
-            verify(smsService).send(eq(PHONE), argThat(msg ->
+            verify(smsService).sendOrThrow(eq(PHONE), argThat(msg ->
                     msg.matches("Votre code Yadony est : \\d{6}\\. Valable 10 minutes\\.")));
         }
 
@@ -118,7 +118,7 @@ class SmsOtpServiceTest {
 
             service.sendOtp(PHONE);
 
-            verify(smsService).send(eq(PHONE), argThat(msg ->
+            verify(smsService).sendOrThrow(eq(PHONE), argThat(msg ->
                     msg.matches("Your Yadony code is: \\d{6}\\. Valid for 10 minutes\\.")));
         }
 
@@ -133,7 +133,7 @@ class SmsOtpServiceTest {
             when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
             when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
             when(smsService.isEnabled()).thenReturn(true);
-            doThrow(new InvalidSmsRecipientException(21211)).when(smsService).send(eq(PHONE), anyString());
+            doThrow(new InvalidSmsRecipientException(21211)).when(smsService).sendOrThrow(eq(PHONE), anyString());
 
             assertThatThrownBy(() -> service.sendOtp(PHONE))
                     .isInstanceOf(YadonyBusinessException.class)
@@ -146,25 +146,49 @@ class SmsOtpServiceTest {
         }
 
         @Test
-        @DisplayName("le 5e renvoi passe encore — le bouton de l'app se rouvre toutes les 60 s")
-        void fourPreviousSendsStillAllowANewOne() {
-            // Régression : le budget était de 3, alors que l'écran de saisie du code
-            // (partagé avec le canal email) rouvre « Renvoyer » chaque minute.
+        @DisplayName("transporteur en panne (Twilio suspendu, route refusée) → 503 sms-otp-disabled, repli email")
+        void carrierFailure_throws503_smsOtpDisabled() {
+            // Sentry YADONY-BACK-PROD-G, 08/11/2026 : compte Twilio suspendu (401) et route
+            // refusée (21612) avalés par SmsService, l'app annonçait « code envoyé ». Le code
+            // d'erreur est celui des SMS coupés, que l'application sait déjà afficher.
             SmsOtpService service = newService();
-            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(4L);
+            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+            when(smsService.isEnabled()).thenReturn(true);
+            doThrow(new com.yadony.api.notifications.SmsDeliveryException("HTTP 401"))
+                    .when(smsService).sendOrThrow(eq(PHONE), anyString());
+
+            assertThatThrownBy(() -> service.sendOtp(PHONE))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+                        assertThat(ex.getErrorCode()).isEqualTo("sms-otp-disabled");
+                        assertThat(ex.getMessage()).contains("email");
+                    });
+        }
+
+        @Test
+        @DisplayName("un renvoi passe après le premier code (2 par fenêtre de 5 min)")
+        void onePreviousSendStillAllowsAResend() {
+            // Budget abaissé de 5 à 2 le 08/11/2026 (pompage, compte Twilio suspendu) :
+            // le premier code et un renvoi, chaque SMS étant facturé.
+            SmsOtpService service = newService();
+            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(1L);
             when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
             when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
             when(smsService.isEnabled()).thenReturn(true);
 
             assertThat(service.sendOtp(PHONE)).isNotNull();
-            verify(smsService).send(eq(PHONE), anyString());
+            verify(smsService).sendOrThrow(eq(PHONE), anyString());
         }
 
         @Test
-        @DisplayName("429 — 5 envois ou plus dans la fenêtre de 5 min")
+        @DisplayName("429 — 2 envois ou plus dans la fenêtre de 5 min")
         void rateLimitExceeded() {
             SmsOtpService service = newService();
-            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(5L);
+            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(2L);
 
             assertThatThrownBy(() -> service.sendOtp(PHONE))
                     .isInstanceOf(YadonyBusinessException.class)
@@ -172,7 +196,7 @@ class SmsOtpServiceTest {
                     .isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
 
             verify(smsOtpRepository, never()).save(any());
-            verify(smsService, never()).send(any(), any());
+            verify(smsService, never()).sendOrThrow(any(), any());
         }
 
         @Test
@@ -211,7 +235,7 @@ class SmsOtpServiceTest {
 
             verify(smsOtpRepository, never()).countByPhoneSince(any(), any());
             verify(smsOtpRepository, never()).save(any());
-            verify(smsService, never()).send(any(), any());
+            verify(smsService, never()).sendOrThrow(any(), any());
         }
 
         @Test
@@ -226,7 +250,7 @@ class SmsOtpServiceTest {
             var result = service.sendOtp(PHONE);
 
             assertThat(result).isNotNull();
-            verify(smsService).send(eq(PHONE), anyString());
+            verify(smsService).sendOrThrow(eq(PHONE), anyString());
         }
     }
 
@@ -957,7 +981,7 @@ class SmsOtpServiceTest {
             assertThat(service.sendOtp(US_PHONE)).isNotNull();
 
             verify(twilioVerify).start(eq(US_PHONE), anyString(), any());
-            verify(smsService, never()).send(any(), any());
+            verify(smsService, never()).sendOrThrow(any(), any());
             // La ligne est gardée : elle porte le budget anti-spam et le budget de tentatives.
             verify(smsOtpRepository).save(argThat(e -> US_PHONE.equals(e.getPhoneNumber())));
         }
@@ -1027,7 +1051,7 @@ class SmsOtpServiceTest {
             service.sendOtp(US_PHONE);
 
             verify(twilioVerify, never()).start(any(), any(), any());
-            verify(smsService).send(eq(US_PHONE), anyString());
+            verify(smsService).sendOrThrow(eq(US_PHONE), anyString());
         }
 
         @Test
@@ -1114,7 +1138,7 @@ class SmsOtpServiceTest {
 
             service.sendOtp(PHONE);
 
-            verify(smsService).send(eq(PHONE), argThat(msg -> msg.matches(
+            verify(smsService).sendOrThrow(eq(PHONE), argThat(msg -> msg.matches(
                     "Votre code Yadony est : \\d{6}\\. Valable 10 minutes\\.\n"
                             + java.util.regex.Pattern.quote(PLAY_HASH + " " + DEBUG_HASH))));
         }
@@ -1127,7 +1151,7 @@ class SmsOtpServiceTest {
 
             service.sendOtp(PHONE);
 
-            verify(smsService).send(eq(PHONE), argThat(msg ->
+            verify(smsService).sendOrThrow(eq(PHONE), argThat(msg ->
                     msg.matches("Votre code Yadony est : \\d{6}\\. Valable 10 minutes\\.")));
         }
 
@@ -1168,6 +1192,280 @@ class SmsOtpServiceTest {
             service.sendOtp(usPhone);
 
             verify(twilioVerify).start(eq(usPhone), anyString(), eq(PLAY_HASH));
+        }
+    }
+
+    /**
+     * Demande du propriétaire (08/11/2026) : un compte qui demande des codes pour plusieurs
+     * numéros différents est suspendu automatiquement, et le back-office alerté.
+     */
+    @Nested
+    @DisplayName("sendOtp — compte qui vise plusieurs numéros")
+    class NumberHopping {
+
+        private static final String UID = "uid-hopper";
+        private final org.springframework.context.ApplicationEventPublisher publisher =
+                mock(org.springframework.context.ApplicationEventPublisher.class);
+
+        private SmsOtpService trackedService() {
+            SmsOtpService service = newService();
+            service.setEventPublisher(publisher);
+            when(smsService.isEnabled()).thenReturn(true);
+            lenient().when(smsOtpRepository.countByPhoneSince(anyString(), any())).thenReturn(0L);
+            lenient().when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            lenient().when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+            return service;
+        }
+
+        @Test
+        @DisplayName("deux numéros (une faute de frappe) → codes envoyés, aucune suspension")
+        void twoNumbers_allowed() {
+            SmsOtpService service = trackedService();
+
+            service.sendOtp("+33600000001", UID);
+            service.sendOtp("+33600000002", UID);
+            service.sendOtp("+33600000002", UID); // renvoi du même numéro : ne compte pas
+
+            verify(smsService, times(3)).sendOrThrow(anyString(), anyString());
+            verifyNoInteractions(publisher);
+        }
+
+        @Test
+        @DisplayName("3e numéro différent → 403 account-suspended, événement de suspension, aucun SMS")
+        void thirdNumber_suspends() {
+            SmsOtpService service = trackedService();
+            service.sendOtp("+33600000001", UID);
+            service.sendOtp("+33600000002", UID);
+
+            assertThatThrownBy(() -> service.sendOtp("+33600000003", UID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                        assertThat(ex.getErrorCode()).isEqualTo("account-suspended");
+                    });
+
+            verify(publisher).publishEvent(new SmsOtpNumberHoppingEvent(UID, 3, 3));
+            verify(smsService, never()).sendOrThrow(eq("+33600000003"), anyString());
+        }
+
+        @Test
+        @DisplayName("compte réactivé par l'admin → repart de zéro, pas resuspendu à la demande suivante")
+        void reactivatedAccount_startsFromZero() {
+            SmsOtpService service = trackedService();
+            service.sendOtp("+33600000001", UID);
+            service.sendOtp("+33600000002", UID);
+            assertThatThrownBy(() -> service.sendOtp("+33600000003", UID))
+                    .isInstanceOf(YadonyBusinessException.class);
+
+            // L'admin clique « Réactiver » : le compte redemande un code pour son numéro.
+            assertThat(service.sendOtp("+33600000004", UID)).isNotNull();
+
+            verify(publisher, times(1)).publishEvent(any(SmsOtpNumberHoppingEvent.class));
+            verify(smsService).sendOrThrow(eq("+33600000004"), anyString());
+        }
+
+        @Test
+        @DisplayName("les demandes refusées comptent aussi (numéros inconnus en mode « inscrits »)")
+        void refusedRequestsCount() {
+            properties.setRegisteredNumbersOnly(true);
+            SmsOtpService service = trackedService();
+            when(firebaseContact.findUidByPhone(anyString())).thenReturn(Optional.empty());
+            when(userRepository.findByFirebaseUid(UID)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.sendOtp("+2250100000001", UID)).hasMessageContaining("email");
+            assertThatThrownBy(() -> service.sendOtp("+2250100000002", UID)).hasMessageContaining("email");
+            assertThatThrownBy(() -> service.sendOtp("+2250100000003", UID))
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("account-suspended"));
+
+            verify(publisher).publishEvent(new SmsOtpNumberHoppingEvent(UID, 3, 3));
+        }
+
+        @Test
+        @DisplayName("sans compte connecté (invité, aucun jeton) → jamais compté")
+        void withoutAccount_neverTracked() {
+            SmsOtpService service = trackedService();
+
+            service.sendOtp("+33600000001");
+            service.sendOtp("+33600000002");
+            service.sendOtp("+33600000003");
+
+            verifyNoInteractions(publisher);
+        }
+
+        @Test
+        @DisplayName("seuil réglé dans le back-office (2) → suspension dès le 2e numéro")
+        void thresholdFromAdminSetting() {
+            com.yadony.api.config.PlatformSettingsService settings =
+                    mock(com.yadony.api.config.PlatformSettingsService.class);
+            when(settings.smsOtpMaxNumbersPerAccount()).thenReturn(2);
+            SmsOtpService service = trackedService();
+            service.setPlatformSettings(settings);
+            service.sendOtp("+33600000001", UID);
+
+            assertThatThrownBy(() -> service.sendOtp("+33600000002", UID))
+                    .isInstanceOf(YadonyBusinessException.class);
+
+            verify(publisher).publishEvent(new SmsOtpNumberHoppingEvent(UID, 2, 2));
+        }
+    }
+
+    /**
+     * Pompage du 08/11/2026 : des dizaines de numéros inconnus qui se suivaient, un code
+     * chacun. Avec {@code registered-numbers-only}, seul un numéro déjà inscrit, ou celui
+     * qu'un compte connecté ajoute à son profil, reçoit un SMS.
+     */
+    @Nested
+    @DisplayName("sendOtp — numéros inscrits seulement")
+    class RegisteredNumbersOnly {
+
+        private static final String CALLER_UID = "uid-email-account";
+
+        private SmsOtpService registeredOnlyService() {
+            properties.setRegisteredNumbersOnly(true);
+            return newService();
+        }
+
+        private void stubSuccessfulSend() {
+            when(smsService.isEnabled()).thenReturn(true);
+            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        }
+
+        private void assertRefusedWithoutSms(Runnable call) {
+            assertThatThrownBy(call::run)
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+                        assertThat(ex.getErrorCode()).isEqualTo("sms-otp-disabled");
+                        assertThat(ex.getMessage()).contains("email", "Google", "Apple");
+                    });
+            verify(smsOtpRepository, never()).save(any());
+            verify(smsService, never()).sendOrThrow(any(), any());
+        }
+
+        @Test
+        @DisplayName("numéro déjà porté par un compte → code envoyé (connexion d'un inscrit)")
+        void registeredNumber_receivesCode() {
+            SmsOtpService service = registeredOnlyService();
+            stubSuccessfulSend();
+            when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.of("uid-phone-user"));
+
+            assertThat(service.sendOtp(PHONE)).isNotNull();
+
+            verify(smsService).sendOrThrow(eq(PHONE), anyString());
+            verifyNoInteractions(userRepository);
+        }
+
+        @Test
+        @DisplayName("numéro inconnu sans compte connecté → 503 sms-otp-disabled, ni ligne ni SMS")
+        void unknownNumber_withoutAccount_refused() {
+            SmsOtpService service = registeredOnlyService();
+            when(smsService.isEnabled()).thenReturn(true);
+            when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.empty());
+
+            assertRefusedWithoutSms(() -> service.sendOtp(PHONE));
+            verify(smsOtpRepository, never()).countByPhoneSince(any(), any());
+        }
+
+        @Test
+        @DisplayName("numéro inconnu demandé par un compte connecté sans numéro → code envoyé (ajout au profil)")
+        void unknownNumber_attachFromSignedInAccount_receivesCode() {
+            SmsOtpService service = registeredOnlyService();
+            stubSuccessfulSend();
+            when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.empty());
+            when(userRepository.findByFirebaseUid(CALLER_UID)).thenReturn(Optional.of(new UserEntity()));
+            when(firebaseContact.getContact(CALLER_UID))
+                    .thenReturn(new FirebaseContactService.Contact(null, "a@b.fr"));
+
+            assertThat(service.sendOtp(PHONE, CALLER_UID)).isNotNull();
+
+            verify(smsService).sendOrThrow(eq(PHONE), anyString());
+        }
+
+        @Test
+        @DisplayName("compte connecté qui a déjà un numéro → refus pour un autre numéro inconnu")
+        void unknownNumber_accountAlreadyHasPhone_refused() {
+            // Un compte qui a déjà son numéro ne peut pas en ajouter un autre (409 à l'attach) :
+            // lui envoyer des codes vers des inconnus ne servirait qu'au pompage.
+            SmsOtpService service = registeredOnlyService();
+            when(smsService.isEnabled()).thenReturn(true);
+            when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.empty());
+            when(userRepository.findByFirebaseUid(CALLER_UID)).thenReturn(Optional.of(new UserEntity()));
+            when(firebaseContact.getContact(CALLER_UID))
+                    .thenReturn(new FirebaseContactService.Contact("+33600000000", null));
+
+            assertRefusedWithoutSms(() -> service.sendOtp(PHONE, CALLER_UID));
+        }
+
+        @Test
+        @DisplayName("compte Firebase sans fiche Yadony → refus (l'attach répondrait 404)")
+        void unknownNumber_callerWithoutYadonyUser_refused() {
+            SmsOtpService service = registeredOnlyService();
+            when(smsService.isEnabled()).thenReturn(true);
+            when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.empty());
+            when(userRepository.findByFirebaseUid(CALLER_UID)).thenReturn(Optional.empty());
+
+            assertRefusedWithoutSms(() -> service.sendOtp(PHONE, CALLER_UID));
+        }
+
+        @Test
+        @DisplayName("compte de revue des stores → jamais bloqué, aucune recherche Firebase")
+        void reviewAccount_bypassesRegistrationCheck() {
+            properties.setReviewAccounts(java.util.List.of(PHONE + ":123456"));
+            SmsOtpService service = registeredOnlyService();
+            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            assertThat(service.sendOtp(PHONE)).isNotNull();
+
+            verify(firebaseContact, never()).findUidByPhone(any());
+        }
+
+        @Test
+        @DisplayName("réglage du back-office prioritaire : activé dans l'admin, propriété à faux → numéro inconnu refusé")
+        void adminSettingOn_overridesProperty() {
+            com.yadony.api.config.PlatformSettingsService settings =
+                    mock(com.yadony.api.config.PlatformSettingsService.class);
+            when(settings.smsOtpRegisteredNumbersOnly()).thenReturn(true);
+            SmsOtpService service = newService(); // propriété à faux (défaut)
+            service.setPlatformSettings(settings);
+            when(smsService.isEnabled()).thenReturn(true);
+            when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.empty());
+
+            assertRefusedWithoutSms(() -> service.sendOtp(PHONE));
+        }
+
+        @Test
+        @DisplayName("réglage du back-office prioritaire : désactivé dans l'admin, propriété à vrai → numéro inconnu servi")
+        void adminSettingOff_overridesProperty() {
+            com.yadony.api.config.PlatformSettingsService settings =
+                    mock(com.yadony.api.config.PlatformSettingsService.class);
+            when(settings.smsOtpRegisteredNumbersOnly()).thenReturn(false);
+            SmsOtpService service = registeredOnlyService(); // propriété à vrai
+            service.setPlatformSettings(settings);
+            stubSuccessfulSend();
+
+            assertThat(service.sendOtp(PHONE)).isNotNull();
+
+            verify(firebaseContact, never()).findUidByPhone(any());
+            verify(smsService).sendOrThrow(eq(PHONE), anyString());
+        }
+
+        @Test
+        @DisplayName("réglage désactivé → numéro inconnu servi sans recherche Firebase (inscription par SMS ouverte)")
+        void settingOff_noLookup() {
+            SmsOtpService service = newService();
+            stubSuccessfulSend();
+
+            assertThat(service.sendOtp(PHONE)).isNotNull();
+
+            verify(firebaseContact, never()).findUidByPhone(any());
+            verify(smsService).sendOrThrow(eq(PHONE), anyString());
         }
     }
 }

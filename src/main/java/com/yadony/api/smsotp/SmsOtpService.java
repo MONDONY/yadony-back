@@ -9,6 +9,7 @@ import com.yadony.api.common.Msisdn;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.notifications.InvalidSmsRecipientException;
+import com.yadony.api.notifications.SmsDeliveryException;
 import com.yadony.api.notifications.SmsService;
 import com.yadony.api.notifications.TwilioVerifyService;
 import com.yadony.api.notifications.TwilioVerifyService.VerifyUnavailableException;
@@ -69,6 +70,60 @@ public class SmsOtpService {
         this.eventPublisher = eventPublisher;
     }
 
+    /**
+     * Réglage du back-office {@code sms_otp_registered_numbers_only}, injecté par setter pour la
+     * même raison que l'éditeur d'événements. Absent (tests unitaires) : la propriété
+     * {@code yadony.sms.registered-numbers-only} prend le relais.
+     */
+    private com.yadony.api.config.PlatformSettingsService platformSettings;
+
+    @Autowired(required = false)
+    void setPlatformSettings(com.yadony.api.config.PlatformSettingsService platformSettings) {
+        this.platformSettings = platformSettings;
+    }
+
+    /** Lu à chaque envoi : une bascule depuis le back-office s'applique sans redémarrage. */
+    private boolean registeredNumbersOnly() {
+        return platformSettings != null
+                ? platformSettings.smsOtpRegisteredNumbersOnly()
+                : properties.isRegisteredNumbersOnly();
+    }
+
+    /** Seuil de suspension, lu à chaque envoi comme {@link #registeredNumbersOnly()}. */
+    private int maxNumbersPerAccount() {
+        return platformSettings != null
+                ? platformSettings.smsOtpMaxNumbersPerAccount()
+                : properties.getMaxNumbersPerAccount();
+    }
+
+    private final SmsOtpNumberTracker numberTracker = new SmsOtpNumberTracker(java.time.Clock.systemUTC());
+
+    /**
+     * Compte connecté qui vise trop de numéros différents en 24 h : refus (403, même code que
+     * pour un compte suspendu) et {@link SmsOtpNumberHoppingEvent}, sur lequel le package auth
+     * suspend le compte et alerte le back-office. Une fois suspendu, le compte reçoit 403 sur
+     * toute requête (FirebaseTokenFilter) : il ne peut plus faire vérifier aucun numéro.
+     */
+    private void guardAgainstNumberHopping(String signedInUid, String phoneNumber) {
+        int threshold = maxNumbersPerAccount();
+        int distinctNumbers = numberTracker.record(signedInUid, phoneNumber);
+        if (distinctNumbers < threshold) {
+            return;
+        }
+        // ERROR → Sentry, en plus de l'alerte du back-office levée par l'écouteur.
+        log.error("Compte {} : codes SMS demandés pour {} numéros différents en 24 h (seuil {}), "
+                + "suspension automatique", signedInUid, distinctNumbers, threshold);
+        // Remise à zéro : tant qu'il est suspendu, FirebaseTokenFilter refuse toutes ses requêtes ;
+        // réactivé par un admin, il ne doit pas être resuspendu sur ses numéros d'avant.
+        numberTracker.forget(signedInUid);
+        if (eventPublisher != null) {
+            eventPublisher.publishEvent(new SmsOtpNumberHoppingEvent(signedInUid, distinctNumbers, threshold));
+        }
+        throw new YadonyBusinessException(
+                HttpStatus.FORBIDDEN, "account-suspended",
+                "Account Suspended", "Votre compte est suspendu ou banni");
+    }
+
     public SmsOtpService(SmsOtpRepository smsOtpRepository,
                           PasswordEncoder passwordEncoder,
                           SmsService smsService,
@@ -106,14 +161,29 @@ public class SmsOtpService {
         }
     }
 
+    /** Envoi sans compte connecté (ou en invité) : seul un numéro déjà inscrit reçoit un code. */
     @Transactional(isolation = Isolation.SERIALIZABLE)
     public Instant sendOtp(String phoneNumber) {
+        return sendOtp(phoneNumber, null);
+    }
+
+    /**
+     * @param signedInUid UID Firebase du compte connecté qui demande le code, {@code null}
+     *                    sans compte ou en invité : il autorise un numéro encore inconnu,
+     *                    à ajouter à ce compte (voir {@link #mayReceiveCode}).
+     */
+    @Transactional(isolation = Isolation.SERIALIZABLE)
+    public Instant sendOtp(String phoneNumber, String signedInUid) {
         // En dev/test, SMS désactivé est le réglage normal (voir le relais de log
         // plus bas) : on ne bloque qu'en prod, où un flag resté à false alors que
         // l'écran est accessible (build client périgé, deep link) enverrait
         // sinon un "code envoyé" silencieux qui n'arrive jamais.
         // Un compte de revue n'envoie aucun SMS : il reste utilisable SMS coupés.
         Optional<String> reviewCode = properties.reviewCodeFor(phoneNumber);
+        // Avant tout autre contrôle : une demande refusée ensuite compte quand même.
+        if (signedInUid != null && reviewCode.isEmpty()) {
+            guardAgainstNumberHopping(signedInUid, phoneNumber);
+        }
         if (reviewCode.isEmpty() && !smsService.isEnabled() && !devProfile) {
             throw new YadonyBusinessException(
                     HttpStatus.SERVICE_UNAVAILABLE, "sms-otp-disabled",
@@ -126,6 +196,18 @@ public class SmsOtpService {
                     HttpStatus.UNPROCESSABLE_ENTITY, "phone-country-not-supported",
                     "Country Not Supported",
                     "La connexion par SMS n'est pas disponible pour ce pays, utilise ton adresse email");
+        }
+
+        if (reviewCode.isEmpty() && registeredNumbersOnly()
+                && !mayReceiveCode(phoneNumber, signedInUid)) {
+            // Avant toute écriture et tout envoi facturé. Même code que les SMS coupés : l'app
+            // l'affiche déjà (« La connexion par téléphone n'est pas encore disponible »).
+            log.info("Code SMS refusé : {} n'est porté par aucun compte", maskPhone(phoneNumber));
+            throw new YadonyBusinessException(
+                    HttpStatus.SERVICE_UNAVAILABLE, "sms-otp-disabled",
+                    "SMS OTP Unavailable",
+                    "La connexion par téléphone est réservée aux comptes qui ont déjà un numéro : "
+                            + "inscris-toi par email, Google ou Apple, puis ajoute ton numéro à ton profil");
         }
 
         int windowMinutes = properties.getRateWindowMinutes();
@@ -192,11 +274,20 @@ public class SmsOtpService {
                 twilioVerify.start(phoneNumber, LocaleContextHolder.getLocale().getLanguage(),
                         appHashes.isEmpty() ? null : appHashes.get(0));
             } else {
-                smsService.send(phoneNumber, withAppHashes(
+                smsService.sendOrThrow(phoneNumber, withAppHashes(
                         messagesResolver.forRequest().get("sms.otp", code), appHashes));
             }
         } catch (VerifyUnavailableException e) {
             throw verifyUnavailable();
+        } catch (SmsDeliveryException e) {
+            // Le transporteur n'a rien envoyé (compte Twilio suspendu → 401, route refusée →
+            // 21612, panne) : 503 et le repli email, Google ou Apple, au lieu d'un « code envoyé »
+            // qui n'arrive jamais (Sentry YADONY-BACK-PROD-G). Même code que les SMS coupés, que
+            // l'application sait déjà afficher. L'exception fait rollback de la ligne OTP.
+            throw new YadonyBusinessException(
+                    HttpStatus.SERVICE_UNAVAILABLE, "sms-otp-disabled",
+                    "SMS OTP Unavailable",
+                    "L'envoi du code par SMS est momentanément indisponible, connecte-toi par email, Google ou Apple");
         } catch (InvalidSmsRecipientException e) {
             // Le transporteur refuse le numéro lui-même : 422 au client plutôt qu'un
             // « code envoyé » qui n'arrive jamais. L'exception fait rollback de la ligne OTP
@@ -387,6 +478,25 @@ public class SmsOtpService {
         smsOtpRepository.save(token);
         // Les codes plus anciens encore valides ne doivent pas survivre à une connexion.
         smsOtpRepository.invalidateActive(phoneNumber, now);
+    }
+
+    /**
+     * Vrai si ce numéro peut recevoir un code quand {@code registered-numbers-only} est actif :
+     * <ul>
+     *   <li>il est déjà porté par un compte Firebase (connexion d'un inscrit) ;</li>
+     *   <li>ou le demandeur est un compte connecté, ni invité ni sans fiche Yadony, qui n'a
+     *       pas encore de numéro : il ajoute le sien (voir {@link #attachPhoneToAccount}).</li>
+     * </ul>
+     * Une panne Firebase vaut « numéro inconnu » : on refuse plutôt que de payer un SMS vers
+     * un inconnu, la connexion par email, Google ou Apple reste ouverte.
+     */
+    private boolean mayReceiveCode(String phoneNumber, String signedInUid) {
+        if (firebaseContact.findUidByPhone(phoneNumber).isPresent()) {
+            return true;
+        }
+        return signedInUid != null
+                && userRepository.findByFirebaseUid(signedInUid).isPresent()
+                && firebaseContact.getContact(signedInUid).phoneNumber() == null;
     }
 
     /**

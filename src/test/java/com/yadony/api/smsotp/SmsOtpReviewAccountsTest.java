@@ -76,7 +76,7 @@ class SmsOtpReviewAccountsTest {
 
             verify(smsOtpRepository).save(argThat(e ->
                     REVIEW_PHONE.equals(e.getPhoneNumber()) && "$2a$10$review".equals(e.getCodeHash())));
-            verify(smsService, never()).send(anyString(), anyString());
+            verify(smsService, never()).sendOrThrow(anyString(), anyString());
             verifyNoInteractions(twilioVerify);
         }
 

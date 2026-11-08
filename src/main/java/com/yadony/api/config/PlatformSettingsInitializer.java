@@ -36,6 +36,8 @@ public class PlatformSettingsInitializer {
     private final boolean paypalEnabledProperty;
     private final boolean applePayEnabledProperty;
     private final boolean googlePayEnabledProperty;
+    private final boolean smsOtpRegisteredNumbersOnlyProperty;
+    private final int smsOtpMaxNumbersPerAccountProperty;
 
     public PlatformSettingsInitializer(PlatformSettingRepository repository,
                                        YadonyConfigProperties config,
@@ -50,7 +52,11 @@ public class PlatformSettingsInitializer {
                                        @Value("${yadony.payments.paypal-enabled:}") String paypalEnabledProperty,
                                        @Value("${yadony.payments.apple-pay-enabled:}") String applePayEnabledProperty,
                                        @Value("${yadony.payments.google-pay-enabled:}")
-                                       String googlePayEnabledProperty) {
+                                       String googlePayEnabledProperty,
+                                       @Value("${yadony.sms.registered-numbers-only:true}")
+                                       String smsOtpRegisteredNumbersOnlyProperty,
+                                       @Value("${yadony.sms.max-numbers-per-account:3}")
+                                       String smsOtpMaxNumbersPerAccountProperty) {
         this.repository = repository;
         this.config = config;
         this.smsEnabledProperty = smsEnabledProperty;
@@ -68,6 +74,25 @@ public class PlatformSettingsInitializer {
         this.paypalEnabledProperty = booleanOrFalse(paypalEnabledProperty);
         this.applePayEnabledProperty = booleanOrFalse(applePayEnabledProperty);
         this.googlePayEnabledProperty = booleanOrFalse(googlePayEnabledProperty);
+        // Vide ou illisible vaut VRAI, à l'inverse des drapeaux ci-dessus : c'est la parade au
+        // pompage de SMS, seul un « false » explicite rouvre l'inscription par SMS.
+        this.smsOtpRegisteredNumbersOnlyProperty = smsOtpRegisteredNumbersOnlyProperty == null
+                || !"false".equalsIgnoreCase(smsOtpRegisteredNumbersOnlyProperty.trim());
+        this.smsOtpMaxNumbersPerAccountProperty = boundedOr(smsOtpMaxNumbersPerAccountProperty,
+                PlatformSettingKey.MIN_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT,
+                PlatformSettingKey.MAX_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT,
+                PlatformSettingKey.DEFAULT_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT);
+    }
+
+    /** Entier lu de l'environnement dans les bornes du panel, sinon le défaut : jamais un démarrage en échec. */
+    private static int boundedOr(String raw, int min, int max, int fallback) {
+        if (raw == null || raw.isBlank()) return fallback;
+        try {
+            int value = Integer.parseInt(raw.trim());
+            return value >= min && value <= max ? value : fallback;
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
     /** Vide ou absent vaut faux, comme {@code kyc_didit_enabled} : jamais un démarrage en échec. */
@@ -109,6 +134,12 @@ public class PlatformSettingsInitializer {
                 config.reimbursement().maxAmountEur().toPlainString());
         defaults.put(PlatformSettingKey.SMS_ENABLED,
                 String.valueOf(smsEnabledProperty));
+        // Amorcé une seule fois depuis YADONY_SMS_OTP_REGISTERED_NUMBERS_ONLY : le back-office
+        // fait ensuite autorité, changer la variable après coup ne fait plus rien.
+        defaults.put(PlatformSettingKey.SMS_OTP_REGISTERED_NUMBERS_ONLY,
+                String.valueOf(smsOtpRegisteredNumbersOnlyProperty));
+        defaults.put(PlatformSettingKey.SMS_OTP_MAX_NUMBERS_PER_ACCOUNT,
+                String.valueOf(smsOtpMaxNumbersPerAccountProperty));
         defaults.put(PlatformSettingKey.PRO_ENABLED,
                 String.valueOf(proEnabledProperty));
         defaults.put(PlatformSettingKey.KYC_DIDIT_ENABLED,

@@ -252,6 +252,41 @@ public class UserService {
         });
     }
 
+    /**
+     * Suspension décidée par le système, sans administrateur : acteur {@code null} dans
+     * audit_log (convention des traitements système). Seul un compte ACTIVE est suspendu :
+     * un compte déjà suspendu, banni ou en cours de suppression garde son statut.
+     *
+     * <p>Effets identiques à une suspension par un admin : le statut est lu en base à chaque
+     * requête par {@link FirebaseTokenFilter}, qui répond aussitôt 403 sur toutes les routes,
+     * et {@link UserSuspendedEvent} prévient l'utilisateur. Un admin lève la suspension par
+     * {@link #unsuspendUser}.
+     *
+     * @param reasonCode code stable écrit dans l'audit ({@code reason})
+     * @param reason     phrase portée par l'événement
+     * @param details    contexte de l'audit, sans donnée personnelle (AuditService masque
+     *                   par ailleurs les clés de type téléphone ou email)
+     * @return vrai si le compte vient d'être suspendu
+     */
+    @Transactional
+    public boolean suspendAutomatically(UUID userId, String reasonCode, String reason,
+                                        Map<String, Object> details) {
+        UserEntity user = userRepository.findById(userId).orElse(null);
+        if (user == null || user.getStatus() != UserStatus.ACTIVE) {
+            return false;
+        }
+        user.setStatus(UserStatus.SUSPENDED);
+        userRepository.save(user);
+
+        Map<String, Object> payload = new java.util.LinkedHashMap<>(details);
+        payload.put("reason", reasonCode);
+        auditService.log("USER", userId, "USER_AUTO_SUSPENDED", null, payload);
+        eventPublisher.publishEvent(new UserSuspendedEvent(userId, reason));
+
+        log.warn("Compte {} suspendu automatiquement ({})", userId, reasonCode);
+        return true;
+    }
+
     // Story 9.8 — Droit à l'effacement RGPD — demande initiale (période de grâce 30 jours)
     @Transactional
     public void requestDeletion(String firebaseUid) {

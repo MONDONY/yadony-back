@@ -139,6 +139,33 @@ class RateLimitInterceptorTest {
     }
 
     @Test
+    @DisplayName("code SMS : compté par compte (IP changeante comprise), l'email n'est pas concerné")
+    void smsOtpPerAccount() {
+        // Pompage du 08/11/2026 : un compte sans numéro peut demander un code pour un numéro
+        // inconnu (ajout au profil). Changer d'IP ne doit pas rouvrir le budget.
+        limit(properties, RateLimitRule.SMS_OTP_SEND_ACCOUNT, 2);
+        loggedInAs("uid-attach");
+        assertThat(pass(request("POST", "/auth/sms-otp/send", "1.1.1.1"))).isTrue();
+        assertThat(pass(request("POST", "/auth/sms-otp/send", "2.2.2.2"))).isTrue();
+        assertThat(pass(request("POST", "/auth/email-otp/send", "3.3.3.3"))).isTrue();
+        assertThatThrownBy(() -> pass(request("POST", "/auth/sms-otp/send", "4.4.4.4")))
+                .isInstanceOf(RateLimitExceededException.class);
+        assertThat(meters.counter("yadony.rate_limit.rejected", "rule", "sms-otp-send-account").count())
+                .isEqualTo(1);
+
+        loggedInAs("uid-other");
+        assertThat(pass(request("POST", "/auth/sms-otp/send", "1.1.1.1"))).isTrue();
+    }
+
+    @Test
+    @DisplayName("code SMS : par défaut 10 par compte et par 24 h")
+    void smsOtpPerAccountDefaults() {
+        assertThat(RateLimitRule.SMS_OTP_SEND_ACCOUNT.propertyName()).isEqualTo("sms-otp-send-account");
+        assertThat(properties.limitOf(RateLimitRule.SMS_OTP_SEND_ACCOUNT)).isEqualTo(10);
+        assertThat(properties.windowOf(RateLimitRule.SMS_OTP_SEND_ACCOUNT)).isEqualTo(Duration.ofDays(1));
+    }
+
+    @Test
     @DisplayName("vérification OTP et rattachement partagent le budget par IP")
     void otpVerifyPerIp() {
         limit(properties, RateLimitRule.OTP_VERIFY_IP, 2);
