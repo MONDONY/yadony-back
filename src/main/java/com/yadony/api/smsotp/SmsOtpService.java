@@ -89,6 +89,38 @@ public class SmsOtpService {
                 : properties.isRegisteredNumbersOnly();
     }
 
+    /** Seuil de suspension, lu à chaque envoi comme {@link #registeredNumbersOnly()}. */
+    private int maxNumbersPerAccount() {
+        return platformSettings != null
+                ? platformSettings.smsOtpMaxNumbersPerAccount()
+                : properties.getMaxNumbersPerAccount();
+    }
+
+    private final SmsOtpNumberTracker numberTracker = new SmsOtpNumberTracker(java.time.Clock.systemUTC());
+
+    /**
+     * Compte connecté qui vise trop de numéros différents en 24 h : refus (403, même code que
+     * pour un compte suspendu) et {@link SmsOtpNumberHoppingEvent}, sur lequel le package auth
+     * suspend le compte et alerte le back-office. Une fois suspendu, le compte reçoit 403 sur
+     * toute requête (FirebaseTokenFilter) : il ne peut plus faire vérifier aucun numéro.
+     */
+    private void guardAgainstNumberHopping(String signedInUid, String phoneNumber) {
+        int threshold = maxNumbersPerAccount();
+        int distinctNumbers = numberTracker.record(signedInUid, phoneNumber);
+        if (distinctNumbers < threshold) {
+            return;
+        }
+        // ERROR → Sentry, en plus de l'alerte du back-office levée par l'écouteur.
+        log.error("Compte {} : codes SMS demandés pour {} numéros différents en 24 h (seuil {}), "
+                + "suspension automatique", signedInUid, distinctNumbers, threshold);
+        if (eventPublisher != null) {
+            eventPublisher.publishEvent(new SmsOtpNumberHoppingEvent(signedInUid, distinctNumbers, threshold));
+        }
+        throw new YadonyBusinessException(
+                HttpStatus.FORBIDDEN, "account-suspended",
+                "Account Suspended", "Votre compte est suspendu ou banni");
+    }
+
     public SmsOtpService(SmsOtpRepository smsOtpRepository,
                           PasswordEncoder passwordEncoder,
                           SmsService smsService,
@@ -145,6 +177,10 @@ public class SmsOtpService {
         // sinon un "code envoyé" silencieux qui n'arrive jamais.
         // Un compte de revue n'envoie aucun SMS : il reste utilisable SMS coupés.
         Optional<String> reviewCode = properties.reviewCodeFor(phoneNumber);
+        // Avant tout autre contrôle : une demande refusée ensuite compte quand même.
+        if (signedInUid != null && reviewCode.isEmpty()) {
+            guardAgainstNumberHopping(signedInUid, phoneNumber);
+        }
         if (reviewCode.isEmpty() && !smsService.isEnabled() && !devProfile) {
             throw new YadonyBusinessException(
                     HttpStatus.SERVICE_UNAVAILABLE, "sms-otp-disabled",

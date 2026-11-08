@@ -118,6 +118,20 @@ public class PlatformSettingsService {
         return raw == null || !"false".equalsIgnoreCase(raw.trim());
     }
 
+    /**
+     * Numéros différents qu'un compte connecté peut viser sur 24 h avant d'être suspendu. Ligne
+     * absente, illisible ou hors bornes : le défaut (3). Voir
+     * {@link PlatformSettingKey#SMS_OTP_MAX_NUMBERS_PER_ACCOUNT}.
+     */
+    public int smsOtpMaxNumbersPerAccount() {
+        int value = intOr(PlatformSettingKey.SMS_OTP_MAX_NUMBERS_PER_ACCOUNT,
+                PlatformSettingKey.DEFAULT_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT);
+        return value < PlatformSettingKey.MIN_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT
+                || value > PlatformSettingKey.MAX_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT
+                ? PlatformSettingKey.DEFAULT_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT
+                : value;
+    }
+
     /** Feature flag des billets d'avion — voir {@link PlatformSettingKey#FLIGHTS_ENABLED}. */
     public boolean flightsEnabled() {
         return Boolean.parseBoolean(cache.all().get(PlatformSettingKey.FLIGHTS_ENABLED.key()));
@@ -275,6 +289,7 @@ public class PlatformSettingsService {
             case REIMBURSEMENT_CAP_EUR -> reimbursementCapEur().toPlainString();
             case SMS_ENABLED -> String.valueOf(smsEnabled());
             case SMS_OTP_REGISTERED_NUMBERS_ONLY -> String.valueOf(smsOtpRegisteredNumbersOnly());
+            case SMS_OTP_MAX_NUMBERS_PER_ACCOUNT -> String.valueOf(smsOtpMaxNumbersPerAccount());
             case PRO_ENABLED -> String.valueOf(proEnabled());
             case KYC_DIDIT_ENABLED -> String.valueOf(kycDiditEnabled());
             case CRITICAL_SMS_FALLBACK_ENABLED -> String.valueOf(criticalSmsFallbackEnabled());
@@ -394,6 +409,10 @@ public class PlatformSettingsService {
             }
             case SMS_OTP_REGISTERED_NUMBERS_ONLY -> strictBoolean(value,
                     "Le code SMS réservé aux numéros inscrits attend true ou false");
+            case SMS_OTP_MAX_NUMBERS_PER_ACCOUNT -> boundedInt(value,
+                    PlatformSettingKey.MIN_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT,
+                    PlatformSettingKey.MAX_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT,
+                    "Le nombre de numéros par compte avant suspension doit être un entier entre 2 et 20");
             case PRO_ENABLED -> {
                 if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
                     throw invalid("L'activation de l'offre PRO attend true ou false");

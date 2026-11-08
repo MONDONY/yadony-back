@@ -89,6 +89,14 @@ public class SmsOtpProperties {
      */
     private boolean registeredNumbersOnly = false;
 
+    /**
+     * Numéros différents qu'un même compte connecté peut viser sur 24 h : à ce nombre, le
+     * compte est suspendu automatiquement et le back-office alerté. 3 laisse passer une faute
+     * de frappe (deux numéros). Comme {@link #registeredNumbersOnly}, n'amorce que le réglage
+     * {@code sms_otp_max_numbers_per_account} du back-office, qui fait ensuite autorité.
+     */
+    private int maxNumbersPerAccount = 3;
+
     /** Empreinte SMS Retriever : 11 caractères de l'alphabet base64. */
     private static final Pattern APP_HASH = Pattern.compile("[A-Za-z0-9+/]{11}");
 
@@ -137,6 +145,8 @@ public class SmsOtpProperties {
     public void setMaxSendsPerDayGlobal(int maxSendsPerDayGlobal) { this.maxSendsPerDayGlobal = maxSendsPerDayGlobal; }
     public boolean isRegisteredNumbersOnly() { return registeredNumbersOnly; }
     public void setRegisteredNumbersOnly(boolean registeredNumbersOnly) { this.registeredNumbersOnly = registeredNumbersOnly; }
+    public int getMaxNumbersPerAccount() { return maxNumbersPerAccount; }
+    public void setMaxNumbersPerAccount(int maxNumbersPerAccount) { this.maxNumbersPerAccount = maxNumbersPerAccount; }
 
     /** Indicatifs nettoyés (espaces, « + » retirés), sans doublon. */
     public List<String> getAllowedCountryCodes() {

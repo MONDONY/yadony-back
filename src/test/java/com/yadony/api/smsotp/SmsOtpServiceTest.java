@@ -1196,6 +1196,106 @@ class SmsOtpServiceTest {
     }
 
     /**
+     * Demande du propriétaire (08/11/2026) : un compte qui demande des codes pour plusieurs
+     * numéros différents est suspendu automatiquement, et le back-office alerté.
+     */
+    @Nested
+    @DisplayName("sendOtp — compte qui vise plusieurs numéros")
+    class NumberHopping {
+
+        private static final String UID = "uid-hopper";
+        private final org.springframework.context.ApplicationEventPublisher publisher =
+                mock(org.springframework.context.ApplicationEventPublisher.class);
+
+        private SmsOtpService trackedService() {
+            SmsOtpService service = newService();
+            service.setEventPublisher(publisher);
+            when(smsService.isEnabled()).thenReturn(true);
+            lenient().when(smsOtpRepository.countByPhoneSince(anyString(), any())).thenReturn(0L);
+            lenient().when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            lenient().when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+            return service;
+        }
+
+        @Test
+        @DisplayName("deux numéros (une faute de frappe) → codes envoyés, aucune suspension")
+        void twoNumbers_allowed() {
+            SmsOtpService service = trackedService();
+
+            service.sendOtp("+33600000001", UID);
+            service.sendOtp("+33600000002", UID);
+            service.sendOtp("+33600000002", UID); // renvoi du même numéro : ne compte pas
+
+            verify(smsService, times(3)).sendOrThrow(anyString(), anyString());
+            verifyNoInteractions(publisher);
+        }
+
+        @Test
+        @DisplayName("3e numéro différent → 403 account-suspended, événement de suspension, aucun SMS")
+        void thirdNumber_suspends() {
+            SmsOtpService service = trackedService();
+            service.sendOtp("+33600000001", UID);
+            service.sendOtp("+33600000002", UID);
+
+            assertThatThrownBy(() -> service.sendOtp("+33600000003", UID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                        assertThat(ex.getErrorCode()).isEqualTo("account-suspended");
+                    });
+
+            verify(publisher).publishEvent(new SmsOtpNumberHoppingEvent(UID, 3, 3));
+            verify(smsService, never()).sendOrThrow(eq("+33600000003"), anyString());
+        }
+
+        @Test
+        @DisplayName("les demandes refusées comptent aussi (numéros inconnus en mode « inscrits »)")
+        void refusedRequestsCount() {
+            properties.setRegisteredNumbersOnly(true);
+            SmsOtpService service = trackedService();
+            when(firebaseContact.findUidByPhone(anyString())).thenReturn(Optional.empty());
+            when(userRepository.findByFirebaseUid(UID)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.sendOtp("+2250100000001", UID)).hasMessageContaining("email");
+            assertThatThrownBy(() -> service.sendOtp("+2250100000002", UID)).hasMessageContaining("email");
+            assertThatThrownBy(() -> service.sendOtp("+2250100000003", UID))
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("account-suspended"));
+
+            verify(publisher).publishEvent(new SmsOtpNumberHoppingEvent(UID, 3, 3));
+        }
+
+        @Test
+        @DisplayName("sans compte connecté (invité, aucun jeton) → jamais compté")
+        void withoutAccount_neverTracked() {
+            SmsOtpService service = trackedService();
+
+            service.sendOtp("+33600000001");
+            service.sendOtp("+33600000002");
+            service.sendOtp("+33600000003");
+
+            verifyNoInteractions(publisher);
+        }
+
+        @Test
+        @DisplayName("seuil réglé dans le back-office (2) → suspension dès le 2e numéro")
+        void thresholdFromAdminSetting() {
+            com.yadony.api.config.PlatformSettingsService settings =
+                    mock(com.yadony.api.config.PlatformSettingsService.class);
+            when(settings.smsOtpMaxNumbersPerAccount()).thenReturn(2);
+            SmsOtpService service = trackedService();
+            service.setPlatformSettings(settings);
+            service.sendOtp("+33600000001", UID);
+
+            assertThatThrownBy(() -> service.sendOtp("+33600000002", UID))
+                    .isInstanceOf(YadonyBusinessException.class);
+
+            verify(publisher).publishEvent(new SmsOtpNumberHoppingEvent(UID, 2, 2));
+        }
+    }
+
+    /**
      * Pompage du 08/11/2026 : des dizaines de numéros inconnus qui se suivaient, un code
      * chacun. Avec {@code registered-numbers-only}, seul un numéro déjà inscrit, ou celui
      * qu'un compte connecté ajoute à son profil, reçoit un SMS.

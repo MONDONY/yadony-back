@@ -37,6 +37,10 @@ import java.util.Arrays;
  * SMS à tout numéro. Amorcé depuis {@code YADONY_SMS_OTP_REGISTERED_NUMBERS_ONLY} (vrai par
  * défaut), puis piloté depuis le back-office ; ligne absente : vrai, la position sûre.
  *
+ * <p>{@code SMS_OTP_MAX_NUMBERS_PER_ACCOUNT} : nombre de numéros différents pour lesquels un
+ * même compte connecté peut demander un code SMS sur 24 h. À ce nombre, le compte est suspendu
+ * automatiquement et le back-office alerté (bornes 2 à 20, défaut 3).
+ *
  * <p>{@code PHOTO_PURGE_ENABLED} : faux, la purge des photos (après livraison, orphelins,
  * historique) tourne à blanc et ne supprime rien de R2. Le premier passage réel est
  * irréversible : on l'allume après avoir lu le décompte à blanc dans le panel.
@@ -66,6 +70,7 @@ public enum PlatformSettingKey {
     REIMBURSEMENT_CAP_EUR("reimbursement_cap_eur", PlatformSettingType.DECIMAL),
     SMS_ENABLED("sms_enabled", PlatformSettingType.BOOLEAN),
     SMS_OTP_REGISTERED_NUMBERS_ONLY("sms_otp_registered_numbers_only", PlatformSettingType.BOOLEAN),
+    SMS_OTP_MAX_NUMBERS_PER_ACCOUNT("sms_otp_max_numbers_per_account", PlatformSettingType.INTEGER),
     PRO_ENABLED("pro_enabled", PlatformSettingType.BOOLEAN),
     KYC_DIDIT_ENABLED("kyc_didit_enabled", PlatformSettingType.BOOLEAN),
     CRITICAL_SMS_FALLBACK_ENABLED("critical_sms_fallback_enabled", PlatformSettingType.BOOLEAN),
@@ -79,6 +84,11 @@ public enum PlatformSettingKey {
     PAYMENTS_PAYPAL_ENABLED("payments_paypal_enabled", PlatformSettingType.BOOLEAN),
     PAYMENTS_APPLE_PAY_ENABLED("payments_apple_pay_enabled", PlatformSettingType.BOOLEAN),
     PAYMENTS_GOOGLE_PAY_ENABLED("payments_google_pay_enabled", PlatformSettingType.BOOLEAN);
+
+    /** Numéros différents par compte et par 24 h avant suspension (bornes admin 2 à 20). */
+    public static final int DEFAULT_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT = 3;
+    public static final int MIN_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT = 2;
+    public static final int MAX_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT = 20;
 
     /** Défauts des réglages photos : aucune property, le panel admin est le seul levier. */
     public static final int DEFAULT_PHOTO_RETENTION_DAYS = 7;

@@ -10,4 +10,4 @@ If the code doesn't arrive, tap "Resend code". Only the latest code works: a new
 If the app says phone sign-in is unavailable, text messages are temporarily paused: sign in by email, Google or Apple, which stay available.
 For your security, codes are limited: 5 codes per 5 minutes for the same email address, 2 for the same phone number (the first code and one resend); after 10 codes in a day, only one code per hour. After 5 wrong codes, wait 10 minutes before trying again.
 By phone, the same number can sign in at most 3 times in 10 minutes, even with a correct code. Beyond that, wait a few minutes or sign in by email.
-If you turned on a PIN, it is asked every time you open the app.
+An account used to obtain text message codes for several different numbers within 24 hours is suspended automatically, for security. If this is a mistake, contact support.If you turned on a PIN, it is asked every time you open the app.

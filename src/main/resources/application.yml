@@ -675,6 +675,10 @@ yadony:
     # réglage sms_otp_registered_numbers_only du back-office (Paramètres), lue au premier
     # démarrage seulement : ensuite, on le bascule depuis le panel admin.
     registered-numbers-only: ${YADONY_SMS_OTP_REGISTERED_NUMBERS_ONLY:true}
+    # Numéros différents visés par un même compte connecté en 24 h : à ce nombre, suspension
+    # automatique du compte et alerte du back-office (Alertes, cloche, Telegram). Valeur INITIALE
+    # du réglage sms_otp_max_numbers_per_account (Paramètres, bornes 2 à 20).
+    max-numbers-per-account: ${YADONY_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT:3}
     # Comptes de démo pour la review des stores, « +E164:code » séparés par des virgules :
     # aucun SMS, code fixe accepté. Vide par défaut, à vider après la review.
     review-accounts: ${YADONY_SMS_OTP_REVIEW_ACCOUNTS:}
