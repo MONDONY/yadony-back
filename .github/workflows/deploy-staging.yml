@@ -241,11 +241,6 @@ jobs:
           AT_USERNAME=${{ vars.AT_USERNAME }}
           TWILIO_FROM=${{ vars.TWILIO_FROM }}
           TWILIO_VERIFY_SERVICE_SID=${{ vars.TWILIO_VERIFY_SERVICE_SID }}
-          # Indicatifs dont les codes de connexion passent par Twilio Verify plutôt que par un SMS
-          # depuis TWILIO_FROM (numéro américain) : les opérateurs ivoiriens filtrent ces SMS sans
-          # erreur, Twilio les voit « sent » et rien n'arrive. Repli '1' obligatoire : une valeur
-          # vide donnerait une liste vide et couperait Verify même pour les États-Unis.
-          TWILIO_VERIFY_CALLING_CODES=${{ vars.TWILIO_VERIFY_CALLING_CODES || '1' }}
           ANDROID_SMS_APP_HASHES=${{ vars.ANDROID_SMS_APP_HASHES }}
           YADONY_SMS_OTP_REVIEW_ACCOUNTS=${{ secrets.YADONY_SMS_OTP_REVIEW_ACCOUNTS }}
           WAVE_API_URL=${{ vars.WAVE_API_URL }}
