@@ -6,6 +6,8 @@ import com.yadony.api.auth.MobileMoneyPayoutStatus;
 import com.yadony.api.auth.StripeAccountStatus;
 import com.yadony.api.billing.ProSubscriptionStatus;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.kyc.KycVerificationStatus;
+import com.yadony.api.matching.AnnouncementStatus;
 import org.springframework.http.HttpStatus;
 
 import java.text.Collator;
@@ -61,6 +63,18 @@ public enum AudienceField {
                     new ValueOption(KycStatus.REJECTED.name(), "Refusée")),
             (op, value, p) -> "u.kyc_status IN (" + p.bind(texts(value)) + ")"),
 
+    // Une vérification fermée ou expirée repasse l'utilisateur à NOT_STARTED (KycStatusTransitionService
+    // .markRestartable) : l'état « pas commencée » mélange donc ceux qui n'ont jamais ouvert le parcours
+    // et ceux qui l'ont quitté. Seuls ces derniers ont une ligne de vérification encore en attente, sans
+    // soumission. Le délai de deux heures écarte ceux qui sont encore dans la fenêtre du fournisseur.
+    KYC_ABANDONED("kyc_abandoned", Family.STATUS, "Identité commencée puis abandonnée",
+            Map.of(AudienceOperator.IS, ValueType.BOOLEAN), List.of(),
+            (op, value, p) -> (value.asBoolean() ? "" : "NOT ")
+                    + "(u.kyc_status = " + p.bind(KycStatus.NOT_STARTED.name())
+                    + " AND EXISTS (SELECT 1 FROM kyc_schema.kyc_verifications k WHERE k.user_id = u.id"
+                    + " AND k.deleted_at IS NULL AND k.status = " + p.bind(KycVerificationStatus.PENDING.name())
+                    + " AND k.submitted_at IS NULL AND k.updated_at < now() - make_interval(hours => 2)))"),
+
     STRIPE_CONNECT("stripe_connect", Family.MONEY, "Compte de versement Stripe",
             Map.of(AudienceOperator.IN, ValueType.ENUM_MULTI),
             List.of(new ValueOption(StripeAccountStatus.NOT_CREATED.name(), "Pas créé"),
@@ -115,6 +129,16 @@ public enum AudienceField {
 
     CREATED_REQUEST("created_request", Family.ACTIVITY, "A fait une demande d'envoi", activityOps(), List.of(),
             (op, value, p) -> existsSince(op, value, p, "bids b", "b.sender_id = u.id", "b")),
+
+    // Trajet encore à vendre (ACTIVE ou FULL) dont le départ tombe dans les n prochains jours : le moment
+    // où une annonce « arrive à expiration » pour le voyageur. Un trajet déjà parti n'est pas retenu.
+    TRIP_DEPARTING("trip_departing", Family.ACTIVITY, "Trajet actif qui part bientôt",
+            Map.of(AudienceOperator.WITHIN_DAYS, ValueType.INT), List.of(),
+            (op, value, p) -> "EXISTS (SELECT 1 FROM announcements a WHERE a.traveler_id = u.id"
+                    + " AND a.deleted_at IS NULL AND a.status IN ("
+                    + p.bind(List.of(AnnouncementStatus.ACTIVE.name(), AnnouncementStatus.FULL.name())) + ")"
+                    + " AND a.departure_date >= current_date"
+                    + " AND a.departure_date <= current_date + make_interval(days => " + p.bind(value.asInt()) + "))"),
 
     COMPLETED_TRIPS("completed_trips", Family.ACTIVITY, "Trajets réalisés", countOps(), List.of(),
             (op, value, p) -> "u.total_trips " + cmp(op) + " " + p.bind(value.asInt())),

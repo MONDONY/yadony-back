@@ -316,6 +316,63 @@ class AudienceFieldsIT {
                 ownerId, from, to, fromCc, toCc, active);
     }
 
+    private void kycRow(UUID userId, String status, String hoursAgo, boolean submitted) {
+        jdbc.update("INSERT INTO kyc_schema.kyc_verifications (user_id, provider, status, submitted_at, updated_at)"
+                        + " VALUES (?, 'DIDIT', ?, " + (submitted ? "now()" : "NULL")
+                        + ", now() - make_interval(hours => ?))",
+                userId, status, Integer.parseInt(hoursAgo));
+    }
+
+    @Test
+    void kycAbandoned_neRetientQueLesParcoursQuittesSansSoumission() {
+        UUID abandoned = user();
+        UUID neverStarted = user();
+        UUID stillInFlow = user();
+        UUID submitted = user();
+        UUID verified = user();
+        UUID deletedRow = user();
+        kycRow(abandoned, "PENDING", "5", false);
+        kycRow(stillInFlow, "PENDING", "0", false);
+        kycRow(submitted, "PENDING", "5", true);
+        setUser(submitted, "kyc_status", KycStatus.PENDING.name());
+        kycRow(verified, "VERIFIED", "5", false);
+        setUser(verified, "kyc_status", KycStatus.VERIFIED.name());
+        kycRow(deletedRow, "PENDING", "5", false);
+        jdbc.update("UPDATE kyc_schema.kyc_verifications SET deleted_at = now() WHERE user_id = ?", deletedRow);
+
+        assertThat(match("kyc_abandoned", "IS", "true")).contains(abandoned)
+                .doesNotContain(neverStarted, stillInFlow, submitted, verified, deletedRow);
+        assertThat(match("kyc_abandoned", "IS", "false")).contains(neverStarted, stillInFlow, submitted, verified,
+                deletedRow).doesNotContain(abandoned);
+    }
+
+    @Test
+    void tripDeparting_retientLesTrajetsActifsQuiPartentDansLaFenetre() {
+        UUID soon = user();
+        UUID later = user();
+        UUID departed = user();
+        UUID cancelled = user();
+        UUID full = user();
+        UUID none = user();
+        UUID soonAnnouncement = announcement(soon, "Paris", "Dakar", "FR", "SN");
+        UUID laterAnnouncement = announcement(later, "Paris", "Dakar", "FR", "SN");
+        UUID departedAnnouncement = announcement(departed, "Paris", "Dakar", "FR", "SN");
+        UUID cancelledAnnouncement = announcement(cancelled, "Paris", "Dakar", "FR", "SN");
+        UUID fullAnnouncement = announcement(full, "Paris", "Dakar", "FR", "SN");
+        jdbc.update("UPDATE announcements SET departure_date = current_date + 2 WHERE id = ?", soonAnnouncement);
+        jdbc.update("UPDATE announcements SET departure_date = current_date + 20 WHERE id = ?", laterAnnouncement);
+        jdbc.update("UPDATE announcements SET departure_date = current_date - 1 WHERE id = ?", departedAnnouncement);
+        jdbc.update("UPDATE announcements SET departure_date = current_date + 2, status = 'CANCELLED' WHERE id = ?",
+                cancelledAnnouncement);
+        jdbc.update("UPDATE announcements SET departure_date = current_date + 3, status = 'FULL' WHERE id = ?",
+                fullAnnouncement);
+
+        assertThat(match("trip_departing", "WITHIN_DAYS", "3")).contains(soon, full)
+                .doesNotContain(later, departed, cancelled, none);
+        assertThat(match("trip_departing", "WITHIN_DAYS", "30")).contains(soon, later, full)
+                .doesNotContain(departed, cancelled, none);
+    }
+
     @Test
     void publishedTrip_everEtNever() {
         UUID traveler = user();

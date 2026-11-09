@@ -507,6 +507,25 @@ class AdminBroadcastControllerIT {
     }
 
     @Test
+    @DisplayName("presets — admin → 200 avec règle et modèles fr/en ; aucune donnée d'utilisateur lue")
+    void presets_admin_200() throws Exception {
+        mockMvc.perform(get("/admin/notifications/broadcast/presets").with(authentication(adminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].key").exists())
+                .andExpect(jsonPath("$[0].rule.op").value("AND"))
+                .andExpect(jsonPath("$[0].messages.fr.title").exists())
+                .andExpect(jsonPath("$[0].messages.en.body").exists());
+        org.mockito.Mockito.verifyNoInteractions(audienceService);
+    }
+
+    @Test
+    @DisplayName("presets — SUPPORT → 403")
+    void presets_support_403() throws Exception {
+        mockMvc.perform(get("/admin/notifications/broadcast/presets").with(authentication(supportAuth())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     @DisplayName("recipients — NOTIFICATION_SEND sans USER_VIEW → 403 (noms d'utilisateurs)")
     void recipients_sansUserView_403() throws Exception {
         mockMvc.perform(post("/admin/notifications/broadcast/recipients")
