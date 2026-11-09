@@ -441,6 +441,16 @@ yadony:
       # Faux = Stripe Identity, vrai = Didit. Ne concerne que les NOUVELLES sessions : une
       # session existante se relit toujours chez le fournisseur qui l'a produite.
       enabled: ${KYC_DIDIT_ENABLED:false}
+    # Rattrapage des sessions Didit restees PENDING (webhook perdu) et alerte quand une
+    # verification reste bloquee (KycPendingReconciler). Relit la decision chez Didit.
+    pending-reconciliation:
+      enabled: ${KYC_PENDING_RECONCILIATION_ENABLED:true}
+      cron: "0 */10 * * * *"
+      min-age: PT30M
+      max-age: P3D
+      batch-size: 20
+      review-alert-after: PT2H
+      unreadable-alert-after: PT2H
     # Lien « voir la session » de la fiche KYC admin, par fournisseur. Modele d'URL dont
     # {sessionId} est remplace par l'identifiant de session. Vide = pas de lien (null).
     # Stripe : https://dashboard.stripe.com/identity/verification-sessions/{sessionId}
