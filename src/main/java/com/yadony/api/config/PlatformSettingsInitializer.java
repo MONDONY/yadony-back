@@ -211,6 +211,8 @@ public class PlatformSettingsInitializer {
                 String.valueOf(PlatformSettingKey.DEFAULT_TRACKING_PHOTOS_MAX_PER_BID));
         defaults.put(PlatformSettingKey.PHOTO_PURGE_ENABLED, "false");
         defaults.put(PlatformSettingKey.FLIGHTS_ENABLED, "false");
+        defaults.put(PlatformSettingKey.REMOTE_CONFIG_FETCH_MINUTES,
+                String.valueOf(PlatformSettingKey.DEFAULT_REMOTE_CONFIG_FETCH_MINUTES));
         defaults.put(PlatformSettingKey.ASSISTANT_DAILY_QUOTA, String.valueOf(assistantDailyQuotaProperty));
         defaults.put(PlatformSettingKey.ASSISTANT_FORM_DRAFT_DAILY_QUOTA,
                 String.valueOf(assistantFormDraftDailyQuotaProperty));

@@ -90,6 +90,12 @@ class PlatformSettingsInitializerIT {
         assertThat(repository.findBySettingKey("assistant_form_draft_daily_quota")).isPresent()
                 .get().extracting(PlatformSettingEntity::getSettingValue)
                 .isEqualTo("30");
+        // Intervalle Remote Config : aucune property, défaut 60 minutes, type INTEGER.
+        assertThat(repository.findBySettingKey("remote_config_fetch_minutes")).isPresent()
+                .get().satisfies(row -> {
+                    assertThat(row.getSettingValue()).isEqualTo("60");
+                    assertThat(row.getValueType()).isEqualTo(PlatformSettingType.INTEGER);
+                });
     }
 
     @Test

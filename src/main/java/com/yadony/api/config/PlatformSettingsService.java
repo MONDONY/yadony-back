@@ -251,6 +251,19 @@ public class PlatformSettingsService {
         return Boolean.parseBoolean(cache.all().get(PlatformSettingKey.PAYMENTS_GOOGLE_PAY_ENABLED.key()));
     }
 
+    /**
+     * Minutes entre deux relectures de Remote Config par l'application. Ligne absente, illisible ou
+     * hors bornes : le défaut (60). Relue à chaque appel, sans cache propre.
+     */
+    public int remoteConfigFetchMinutes() {
+        int value = intOr(PlatformSettingKey.REMOTE_CONFIG_FETCH_MINUTES,
+                PlatformSettingKey.DEFAULT_REMOTE_CONFIG_FETCH_MINUTES);
+        return value < PlatformSettingKey.MIN_REMOTE_CONFIG_FETCH_MINUTES
+                || value > PlatformSettingKey.MAX_REMOTE_CONFIG_FETCH_MINUTES
+                ? PlatformSettingKey.DEFAULT_REMOTE_CONFIG_FETCH_MINUTES
+                : value;
+    }
+
     /** Questions à l'assistant d'aide par utilisateur et par jour UTC. */
     public int assistantDailyQuota() {
         return intOr(PlatformSettingKey.ASSISTANT_DAILY_QUOTA, PlatformSettingKey.DEFAULT_ASSISTANT_DAILY_QUOTA);
@@ -350,6 +363,7 @@ public class PlatformSettingsService {
             case PAYMENTS_PAYPAL_ENABLED -> String.valueOf(paypalEnabled());
             case PAYMENTS_APPLE_PAY_ENABLED -> String.valueOf(applePayEnabled());
             case PAYMENTS_GOOGLE_PAY_ENABLED -> String.valueOf(googlePayEnabled());
+            case REMOTE_CONFIG_FETCH_MINUTES -> String.valueOf(remoteConfigFetchMinutes());
         };
     }
 
@@ -512,6 +526,10 @@ public class PlatformSettingsService {
             case PAYMENTS_APPLE_PAY_ENABLED -> strictBoolean(value, "L'activation d'Apple Pay attend true ou false");
             case PAYMENTS_GOOGLE_PAY_ENABLED -> strictBoolean(value,
                     "L'activation de Google Pay attend true ou false");
+            case REMOTE_CONFIG_FETCH_MINUTES -> boundedInt(value,
+                    PlatformSettingKey.MIN_REMOTE_CONFIG_FETCH_MINUTES,
+                    PlatformSettingKey.MAX_REMOTE_CONFIG_FETCH_MINUTES,
+                    "L'intervalle de relecture de Remote Config doit être un entier de minutes entre 5 et 1440");
         };
     }
 

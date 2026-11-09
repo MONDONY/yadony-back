@@ -101,7 +101,17 @@ public enum PlatformSettingKey {
     ASSISTANT_FORM_DRAFT_DAILY_QUOTA("assistant_form_draft_daily_quota", PlatformSettingType.INTEGER),
     PAYMENTS_PAYPAL_ENABLED("payments_paypal_enabled", PlatformSettingType.BOOLEAN),
     PAYMENTS_APPLE_PAY_ENABLED("payments_apple_pay_enabled", PlatformSettingType.BOOLEAN),
-    PAYMENTS_GOOGLE_PAY_ENABLED("payments_google_pay_enabled", PlatformSettingType.BOOLEAN);
+    PAYMENTS_GOOGLE_PAY_ENABLED("payments_google_pay_enabled", PlatformSettingType.BOOLEAN),
+    REMOTE_CONFIG_FETCH_MINUTES("remote_config_fetch_minutes", PlatformSettingType.INTEGER);
+
+    /**
+     * Intervalle minimal, en minutes, entre deux relectures de Firebase Remote Config par l'application.
+     * Connu avant de lire Remote Config, il passe par {@code GET /config/remote-config-refresh}.
+     * Aucune property : défaut 60, bornes 5 à 1440 (24 h), réglé depuis le panel admin.
+     */
+    public static final int DEFAULT_REMOTE_CONFIG_FETCH_MINUTES = 60;
+    public static final int MIN_REMOTE_CONFIG_FETCH_MINUTES = 5;
+    public static final int MAX_REMOTE_CONFIG_FETCH_MINUTES = 1440;
 
     /** Numéros différents par compte et par 24 h avant suspension (bornes admin 2 à 20). */
     public static final int DEFAULT_SMS_OTP_MAX_NUMBERS_PER_ACCOUNT = 3;

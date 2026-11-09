@@ -10,6 +10,7 @@ import com.yadony.api.config.dto.FlightsEnabledResponse;
 import com.yadony.api.config.dto.PaymentMethodsResponse;
 import com.yadony.api.config.dto.ProEnabledResponse;
 import com.yadony.api.config.dto.ReimbursementCapResponse;
+import com.yadony.api.config.dto.RemoteConfigRefreshResponse;
 import com.yadony.api.config.dto.SmsEnabledResponse;
 import com.yadony.api.config.dto.UrgencyThresholdResponse;
 import org.springframework.http.ResponseEntity;
@@ -97,6 +98,16 @@ public class ConfigController {
     @GetMapping("/sms-enabled")
     public ResponseEntity<SmsEnabledResponse> getSmsEnabled() {
         return ResponseEntity.ok(new SmsEnabledResponse(settings.smsEnabled()));
+    }
+
+    /**
+     * Intervalle, en minutes, entre deux relectures de Firebase Remote Config par l'application.
+     * Lu avant Remote Config, donc servi par le back ; relu à chaque appel, sans cache. Public comme
+     * ses voisins : rien de sensible.
+     */
+    @GetMapping("/remote-config-refresh")
+    public ResponseEntity<RemoteConfigRefreshResponse> getRemoteConfigRefresh() {
+        return ResponseEntity.ok(new RemoteConfigRefreshResponse(settings.remoteConfigFetchMinutes()));
     }
 
     /**
