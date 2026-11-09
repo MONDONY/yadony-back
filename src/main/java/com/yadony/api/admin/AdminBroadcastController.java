@@ -8,6 +8,8 @@ import com.yadony.api.admin.broadcast.BroadcastService;
 import com.yadony.api.admin.broadcast.BroadcastTarget;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yadony.api.admin.broadcast.BroadcastTargetType;
+import com.yadony.api.admin.broadcast.preset.AudiencePreset;
+import com.yadony.api.admin.broadcast.preset.AudiencePresets;
 import com.yadony.api.admin.broadcast.rule.AudienceRule;
 import com.yadony.api.admin.broadcast.rule.RuleAudienceRepository.RecipientRow;
 import com.yadony.api.admin.broadcast.segment.BroadcastSegmentService;
@@ -152,6 +154,16 @@ public class AdminBroadcastController {
     @GetMapping("/admin/notifications/broadcast/fields")
     public List<AudienceFieldResponse> fields() {
         return AudienceFieldResponse.catalogue();
+    }
+
+    /**
+     * Audiences prêtes à l'emploi et leurs modèles de message. Catalogue fixe : il ne lit aucune
+     * donnée d'utilisateur ; l'audience réelle ne se calcule qu'à l'aperçu ou à l'envoi.
+     */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('NOTIFICATION_SEND')")
+    @GetMapping("/admin/notifications/broadcast/presets")
+    public List<AudiencePreset> presets() {
+        return AudiencePresets.all();
     }
 
     /** Liste paginée des destinataires d'un ciblage (sans coordonnées). */
