@@ -29,9 +29,7 @@ import java.util.regex.Pattern;
  * enregistrés, génère le code et le vérifie : yadony ne le connaît jamais.
  *
  * <p>Réservé à {@code app.sms.twilio.verify-calling-codes} (défaut {@code 1}, zone NANP : États-Unis,
- * Canada, Caraïbes). Même symptôme vers la Côte d'Ivoire depuis notre numéro américain : Twilio
- * marque « sent », l'opérateur filtre sans erreur (08/11). Les corridors africains s'ajoutent par
- * la variable {@code TWILIO_VERIFY_CALLING_CODES} ; la France garde sa route, moins chère.
+ * Canada, Caraïbes). La France et les corridors africains gardent leur route, moins chère.
  * Sans {@code TWILIO_VERIFY_SERVICE_SID}, rien ne change : {@link #handles} rend faux.
  */
 @Service
