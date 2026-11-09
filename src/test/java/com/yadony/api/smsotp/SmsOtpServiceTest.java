@@ -165,7 +165,7 @@ class SmsOtpServiceTest {
                         YadonyBusinessException ex = (YadonyBusinessException) e;
                         assertThat(ex.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
                         assertThat(ex.getErrorCode()).isEqualTo("sms-otp-disabled");
-                        assertThat(ex.getMessage()).contains("email");
+                        assertThat(ex.getMessage()).contains("e-mail");
                     });
         }
 
@@ -1273,8 +1273,8 @@ class SmsOtpServiceTest {
             when(firebaseContact.findUidByPhone(anyString())).thenReturn(Optional.empty());
             when(userRepository.findByFirebaseUid(UID)).thenReturn(Optional.empty());
 
-            assertThatThrownBy(() -> service.sendOtp("+2250100000001", UID)).hasMessageContaining("email");
-            assertThatThrownBy(() -> service.sendOtp("+2250100000002", UID)).hasMessageContaining("email");
+            assertThatThrownBy(() -> service.sendOtp("+2250100000001", UID)).hasMessageContaining("e-mail");
+            assertThatThrownBy(() -> service.sendOtp("+2250100000002", UID)).hasMessageContaining("e-mail");
             assertThatThrownBy(() -> service.sendOtp("+2250100000003", UID))
                     .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
                             .isEqualTo("account-suspended"));
@@ -1492,7 +1492,7 @@ class SmsOtpServiceTest {
                         YadonyBusinessException ex = (YadonyBusinessException) e;
                         assertThat(ex.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
                         assertThat(ex.getErrorCode()).isEqualTo("sms-otp-disabled");
-                        assertThat(ex.getMessage()).contains("email", "Google", "Apple");
+                        assertThat(ex.getMessage()).contains("e-mail", "Google", "Apple", "vous");
                     });
             verify(smsOtpRepository, never()).save(any());
             verify(smsService, never()).sendOrThrow(any(), any());
@@ -1620,6 +1620,251 @@ class SmsOtpServiceTest {
 
             verify(firebaseContact, never()).findUidByPhone(any());
             verify(smsService).sendOrThrow(eq(PHONE), anyString());
+        }
+    }
+
+    /**
+     * Pays dont les SMS n'arrivent pas (Twilio les facture et les dit « Delivered », 08/11/2026),
+     * bloqués depuis le back-office ({@code sms_blocked_country_codes}).
+     */
+    @Nested
+    @DisplayName("sendOtp — pays bloqué depuis le back-office")
+    class CountryBlocked {
+
+        private static final String PHONE_CI = "+2250701020304";
+        private static final String UID = "uid-email-account";
+
+        private com.yadony.api.config.PlatformSettingsService settings;
+
+        private SmsOtpService blockingService(String callingCode) {
+            settings = mock(com.yadony.api.config.PlatformSettingsService.class);
+            lenient().when(settings.smsBlockedCallingCode(anyString())).thenReturn(Optional.of(callingCode));
+            lenient().when(settings.smsOtpMaxNumbersPerAccount()).thenReturn(3);
+            SmsOtpService service = newService();
+            service.setPlatformSettings(settings);
+            // Lenient : un compte de revue ne lit même pas l'état des SMS.
+            lenient().when(smsService.isEnabled()).thenReturn(true);
+            return service;
+        }
+
+        private YadonyBusinessException refusal(Runnable call) {
+            Throwable thrown = org.assertj.core.api.Assertions.catchThrowable(call::run);
+            assertThat(thrown).isInstanceOf(YadonyBusinessException.class);
+            YadonyBusinessException ex = (YadonyBusinessException) thrown;
+            assertThat(ex.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+            // Code gardé : les versions installées de l'app affichent déjà leur texte « indisponible ».
+            assertThat(ex.getErrorCode()).isEqualTo("sms-otp-disabled");
+            return ex;
+        }
+
+        private void assertNothingWrittenNorSent() {
+            verify(smsOtpRepository, never()).save(any());
+            verify(smsOtpRepository, never()).invalidateActive(any(), any());
+            verify(smsOtpRepository, never()).countByPhoneSince(any(), any());
+            verify(smsService, never()).sendOrThrow(any(), any());
+            verify(smsService, never()).send(any(), any());
+            verifyNoInteractions(twilioVerify);
+            verify(firebaseContact, never()).findUidByPhone(any());
+        }
+
+        @Test
+        @DisplayName("sans compte connecté → 503 sms-otp-disabled, reason country-blocked, texte FR qui nomme le pays")
+        void guest_french() {
+            SmsOtpService service = blockingService("225");
+
+            YadonyBusinessException ex = refusal(() -> service.sendOtp(PHONE_CI));
+
+            assertThat(ex.getMessage()).isEqualTo("Les codes SMS n'arrivent pas en ce moment en Côte d'Ivoire. "
+                    + "Connectez-vous avec votre adresse e-mail, Google ou Apple.");
+            assertThat(ex.getProperties())
+                    .containsEntry("reason", "country-blocked")
+                    .containsEntry("callingCode", "225");
+            assertNothingWrittenNorSent();
+        }
+
+        @Test
+        @DisplayName("sans compte connecté, Accept-Language: en → texte anglais")
+        void guest_english() {
+            TestMessages.requestWithAcceptLanguage("en");
+            SmsOtpService service = blockingService("225");
+
+            YadonyBusinessException ex = refusal(() -> service.sendOtp(PHONE_CI));
+
+            assertThat(ex.getMessage()).isEqualTo("SMS codes aren't reaching phones in Côte d'Ivoire right now. "
+                    + "Sign in with your email address, Google or Apple.");
+        }
+
+        @Test
+        @DisplayName("compte connecté qui ajoute un numéro → texte FR « numéros de Côte d'Ivoire (+225) »")
+        void signedIn_french() {
+            SmsOtpService service = blockingService("225");
+
+            YadonyBusinessException ex = refusal(() -> service.sendOtp(PHONE_CI, UID));
+
+            assertThat(ex.getMessage()).isEqualTo(
+                    "La vérification par SMS n'est pas disponible pour le moment pour les numéros "
+                            + "de Côte d'Ivoire (+225).");
+            assertThat(ex.getProperties()).containsEntry("callingCode", "225");
+            assertNothingWrittenNorSent();
+        }
+
+        @Test
+        @DisplayName("compte connecté, Accept-Language: en → texte anglais")
+        void signedIn_english() {
+            TestMessages.requestWithAcceptLanguage("en");
+            SmsOtpService service = blockingService("225");
+
+            YadonyBusinessException ex = refusal(() -> service.sendOtp(PHONE_CI, UID));
+
+            assertThat(ex.getMessage()).isEqualTo(
+                    "SMS verification isn't available right now for numbers from Côte d'Ivoire (+225).");
+        }
+
+        @Test
+        @DisplayName("grammaire française par pays : « au Sénégal », « du Cameroun »")
+        void frenchCountryForms() {
+            SmsOtpService senegal = blockingService("221");
+            assertThat(refusal(() -> senegal.sendOtp(PHONE)).getMessage()).contains("en ce moment au Sénégal.");
+
+            SmsOtpService cameroon = blockingService("237");
+            assertThat(refusal(() -> cameroon.sendOtp("+237612345678", UID)).getMessage())
+                    .contains("pour les numéros du Cameroun (+237).");
+        }
+
+        @Test
+        @DisplayName("indicatif sans nom traduit → repli neutre « dans ce pays » / « de ce pays »")
+        void unknownCallingCode_neutralFallback() {
+            SmsOtpService service = blockingService("27");
+            assertThat(refusal(() -> service.sendOtp("+27821234567")).getMessage())
+                    .contains("en ce moment dans ce pays.");
+            assertThat(refusal(() -> service.sendOtp("+27821234567", UID)).getMessage())
+                    .contains("pour les numéros de ce pays (+27).");
+
+            TestMessages.requestWithAcceptLanguage("en");
+            assertThat(refusal(() -> service.sendOtp("+27821234567")).getMessage())
+                    .contains("reaching phones in this country right now");
+        }
+
+        @Test
+        @DisplayName("chaque pays du défaut, FR et EN, invité et connecté : une ligne, 200 caractères au plus, sans accolade")
+        void everyDefaultCountry_displayableByTheApp() {
+            for (String code : com.yadony.api.config.PlatformSettingKey.DEFAULT_SMS_BLOCKED_COUNTRY_CODES.split(",")) {
+                for (String language : java.util.List.of("fr", "en")) {
+                    TestMessages.requestWithAcceptLanguage(language);
+                    SmsOtpService service = blockingService(code);
+                    for (String uid : java.util.Arrays.asList(null, UID)) {
+                        String detail = refusal(() -> service.sendOtp("+" + code + "70000000", uid)).getMessage();
+                        assertThat(detail).as(code + " " + language + " " + uid)
+                                .hasSizeLessThanOrEqualTo(200)
+                                .doesNotContain("{", "}", "\n", "''", "ce pays", "this country")
+                                // L'app vouvoie partout : jamais de tutoiement dans un detail affiché.
+                                .doesNotContain("-toi", " ton ", " ta ", " tes ");
+                    }
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("compte de revue des stores → jamais bloqué, réglage pas même lu")
+        void reviewAccount_notBlocked() {
+            properties.setReviewAccounts(java.util.List.of(PHONE_CI + ":123456"));
+            SmsOtpService service = blockingService("225");
+            when(settings.smsOtpMaxSendsPerHourGlobal()).thenReturn(1000);
+            when(settings.smsOtpMaxSendsPerDayGlobal()).thenReturn(10000);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            assertThat(service.sendOtp(PHONE_CI)).isNotNull();
+
+            verify(settings, never()).smsBlockedCallingCode(any());
+            verify(smsService, never()).sendOrThrow(any(), any());
+        }
+
+        @Test
+        @DisplayName("pays non bloqué → envoi inchangé")
+        void notBlockedCountry_unchanged() {
+            settings = mock(com.yadony.api.config.PlatformSettingsService.class);
+            when(settings.smsBlockedCallingCode("+33612345678")).thenReturn(Optional.empty());
+            when(settings.smsOtpMaxSendsPerHourGlobal()).thenReturn(1000);
+            when(settings.smsOtpMaxSendsPerDayGlobal()).thenReturn(10000);
+            SmsOtpService service = newService();
+            service.setPlatformSettings(settings);
+            when(smsService.isEnabled()).thenReturn(true);
+            when(smsOtpRepository.countByPhoneSince(eq("+33612345678"), any())).thenReturn(0L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            assertThat(service.sendOtp("+33612345678")).isNotNull();
+
+            verify(smsService).sendOrThrow(eq("+33612345678"), anyString());
+        }
+
+        @Test
+        @DisplayName("pays hors liste blanche → toujours 422 phone-country-not-supported, avant le blocage")
+        void countryNotAllowed_checkedFirst() {
+            properties.setAllowedCountryCodes(java.util.List.of("33"));
+            SmsOtpService service = blockingService("225");
+
+            assertThatThrownBy(() -> service.sendOtp(PHONE_CI))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("phone-country-not-supported"));
+            verify(settings, never()).smsBlockedCallingCode(any());
+        }
+    }
+
+    /** Les autres refus 503 sms-otp-disabled passent aussi par les messages FR/EN : l'app affiche le detail. */
+    @Nested
+    @DisplayName("sendOtp — details sms-otp-disabled traduits")
+    class TranslatedDisabledDetails {
+
+        @Test
+        @DisplayName("SMS coupés en prod → FR puis EN")
+        void smsDisabled() {
+            Environment prodEnvironment = mock(Environment.class);
+            when(prodEnvironment.getActiveProfiles()).thenReturn(new String[] {"prod"});
+            SmsOtpService service = new SmsOtpService(smsOtpRepository, passwordEncoder, smsService,
+                    properties, firebaseAuth, userRepository, firebaseContact, auditService, prodEnvironment,
+                    messagesResolver, twilioVerify, phoneOwnership());
+            when(smsService.isEnabled()).thenReturn(false);
+
+            assertThatThrownBy(() -> service.sendOtp(PHONE))
+                    .hasMessage("L'authentification par SMS n'est pas encore disponible");
+            TestMessages.requestWithAcceptLanguage("en");
+            assertThatThrownBy(() -> service.sendOtp(PHONE))
+                    .hasMessage("Sign-in by SMS isn't available yet");
+        }
+
+        @Test
+        @DisplayName("numéros inscrits seulement → EN")
+        void registeredOnly_english() {
+            TestMessages.requestWithAcceptLanguage("en");
+            properties.setRegisteredNumbersOnly(true);
+            SmsOtpService service = newService();
+            when(smsService.isEnabled()).thenReturn(true);
+            when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.sendOtp(PHONE))
+                    .hasMessage("Phone sign-in is only for accounts that already have a number: sign up with "
+                            + "email, Google or Apple, then add your number to your profile");
+        }
+
+        @Test
+        @DisplayName("transporteur en panne → EN")
+        void deliveryFailed_english() {
+            TestMessages.requestWithAcceptLanguage("en");
+            SmsOtpService service = newService();
+            when(smsService.isEnabled()).thenReturn(true);
+            when(smsOtpRepository.countByPhoneSince(eq(PHONE), any())).thenReturn(0L);
+            when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$hashed");
+            when(smsOtpRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+            doThrow(new com.yadony.api.notifications.SmsDeliveryException("HTTP 401"))
+                    .when(smsService).sendOrThrow(eq(PHONE), anyString());
+
+            assertThatThrownBy(() -> service.sendOtp(PHONE))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .hasMessage("Sending the code by SMS is temporarily unavailable, sign in with email, "
+                            + "Google or Apple");
         }
     }
 }

@@ -48,6 +48,14 @@ import java.util.Arrays;
  * {@code YADONY_SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL} / {@code _PER_DAY_GLOBAL} (30 et 150), bornes
  * 1 à 1000 et 1 à 10000, puis pilotés depuis le back-office.
  *
+ * <p>{@code SMS_BLOCKED_COUNTRY_CODES} : indicatifs (« 221,225 ») vers lesquels aucun SMS ne part,
+ * ni code de connexion (503 {@code sms-otp-disabled}, {@code reason: country-blocked}) ni SMS de
+ * notification. Les SMS Twilio vers l'Afrique étaient facturés et marqués « Delivered » sans
+ * jamais arriver (08/11/2026). Vide : aucun pays bloqué. Amorcé depuis
+ * {@code YADONY_SMS_BLOCKED_COUNTRY_CODES} (par défaut les indicatifs africains de
+ * {@code allowed-country-codes}), puis piloté depuis le back-office ; ligne absente : la liste
+ * par défaut, la position sûre.
+ *
  * <p>{@code PHOTO_PURGE_ENABLED} : faux, la purge des photos (après livraison, orphelins,
  * historique) tourne à blanc et ne supprime rien de R2. Le premier passage réel est
  * irréversible : on l'allume après avoir lu le décompte à blanc dans le panel.
@@ -80,6 +88,7 @@ public enum PlatformSettingKey {
     SMS_OTP_MAX_NUMBERS_PER_ACCOUNT("sms_otp_max_numbers_per_account", PlatformSettingType.INTEGER),
     SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL("sms_otp_max_sends_per_hour_global", PlatformSettingType.INTEGER),
     SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL("sms_otp_max_sends_per_day_global", PlatformSettingType.INTEGER),
+    SMS_BLOCKED_COUNTRY_CODES("sms_blocked_country_codes", PlatformSettingType.CALLING_CODES),
     PRO_ENABLED("pro_enabled", PlatformSettingType.BOOLEAN),
     KYC_DIDIT_ENABLED("kyc_didit_enabled", PlatformSettingType.BOOLEAN),
     CRITICAL_SMS_FALLBACK_ENABLED("critical_sms_fallback_enabled", PlatformSettingType.BOOLEAN),
@@ -104,6 +113,14 @@ public enum PlatformSettingKey {
     public static final int MAX_SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL = 1000;
     public static final int DEFAULT_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL = 150;
     public static final int MAX_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL = 10000;
+
+    /**
+     * Indicatifs africains de {@code yadony.sms.allowed-country-codes} : Maroc, Algérie, Tunisie,
+     * Sénégal, Mauritanie, Mali, Guinée, Côte d'Ivoire, Burkina Faso, Niger, Togo, Bénin, Tchad,
+     * Centrafrique, Cameroun, Gabon, Congo, RD Congo.
+     */
+    public static final String DEFAULT_SMS_BLOCKED_COUNTRY_CODES =
+            "212,213,216,221,222,223,224,225,226,227,228,229,235,236,237,241,242,243";
 
     /** Défauts des réglages photos : aucune property, le panel admin est le seul levier. */
     public static final int DEFAULT_PHOTO_RETENTION_DAYS = 7;
@@ -132,6 +149,11 @@ public enum PlatformSettingKey {
 
     public PlatformSettingType type() {
         return type;
+    }
+
+    /** Vrai si une valeur vide a un sens (liste d'indicatifs vide : aucun pays bloqué). */
+    public boolean acceptsEmptyValue() {
+        return type == PlatformSettingType.CALLING_CODES;
     }
 
     public static PlatformSettingKey fromKey(String key) {

@@ -23,11 +23,11 @@ public class PlatformSettingEntity extends BaseEntity {
     @Column(name = "setting_key", nullable = false, length = 60, unique = true)
     private String settingKey;
 
-    @Column(name = "setting_value", nullable = false, length = 255)
+    @Column(name = "setting_value", nullable = false, length = 500)
     private String settingValue;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "value_type", nullable = false, length = 10)
+    @Column(name = "value_type", nullable = false, length = 20)
     private PlatformSettingType valueType;
 
     @Column(name = "updated_by")

@@ -111,6 +111,8 @@ yadony:
     max-logins-per-window: 1000000
     # Firebase absent en test : tout numéro y serait inconnu. Règle couverte par SmsOtpServiceTest.
     registered-numbers-only: false
+    # La suite garde ses numéros africains ; le blocage par pays est couvert par SmsOtpServiceTest.
+    blocked-country-codes: none
   urgency:
     threshold-days: 3
   matching:

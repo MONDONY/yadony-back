@@ -186,6 +186,53 @@ class AdminSettingsControllerIT {
     }
 
     @Test
+    @DisplayName("GET — liste des pays bloqués : type CALLING_CODES, valeur en texte")
+    void get_blockedCountryCodes_typeCallingCodes() throws Exception {
+        when(settingsService.listByKey()).thenReturn(List.of(
+                new PlatformSettingView(PlatformSettingKey.SMS_BLOCKED_COUNTRY_CODES,
+                        "212,213,216,221,222,223,224,225,226,227,228,229,235,236,237,241,242,243", null, null)));
+
+        mockMvc.perform(get("/admin/settings").with(authentication(adminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].key").value("sms_blocked_country_codes"))
+                .andExpect(jsonPath("$[0].type").value("CALLING_CODES"))
+                .andExpect(jsonPath("$[0].value")
+                        .value("212,213,216,221,222,223,224,225,226,227,228,229,235,236,237,241,242,243"));
+    }
+
+    @Test
+    @DisplayName("PUT — liste des pays bloqués vide → 200, transmise au service (aucun pays bloqué)")
+    void put_emptyBlockedCountryCodes_accepted() throws Exception {
+        when(settingsService.updateOne(eq(PlatformSettingKey.SMS_BLOCKED_COUNTRY_CODES), eq(""), eq(ADMIN_ID)))
+                .thenReturn(new PlatformSettingView(
+                        PlatformSettingKey.SMS_BLOCKED_COUNTRY_CODES, "", EDITED_AT, ADMIN_ID));
+        when(adminUserRepository.findById(ADMIN_ID)).thenReturn(Optional.empty());
+
+        mockMvc.perform(put("/admin/settings/sms_blocked_country_codes")
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"value\":\"\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.key").value("sms_blocked_country_codes"))
+                .andExpect(jsonPath("$.type").value("CALLING_CODES"))
+                .andExpect(jsonPath("$.value").value(""));
+
+        verify(settingsService).updateOne(PlatformSettingKey.SMS_BLOCKED_COUNTRY_CODES, "", ADMIN_ID);
+    }
+
+    @Test
+    @DisplayName("PUT — valeur absente (null) → 422 et rien n'est ecrit")
+    void put_withNullValue_returns422() throws Exception {
+        mockMvc.perform(put("/admin/settings/sms_blocked_country_codes")
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isUnprocessableEntity());
+
+        verify(settingsService, never()).updateOne(any(), any(), any());
+    }
+
+    @Test
     @DisplayName("PUT — cle inconnue → 422, on n'invente pas un reglage")
     void put_withUnknownKey_returns422() throws Exception {
         mockMvc.perform(put("/admin/settings/commission_rate_percent")

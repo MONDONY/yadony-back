@@ -3,6 +3,7 @@ package com.yadony.api.common.i18n;
 import org.springframework.context.MessageSource;
 
 import java.util.Locale;
+import java.util.Optional;
 
 /**
  * Textes d'une langue. Valeur immuable, sans état Spring.
@@ -30,6 +31,13 @@ public final class Messages {
      */
     public String get(String key, Object... args) {
         return source.getMessage(key, convert(args), language.locale());
+    }
+
+    /**
+     * Comme {@link #get}, mais vide si la clé n'existe pas (ex. nom d'un pays sans traduction).
+     */
+    public Optional<String> find(String key, Object... args) {
+        return Optional.ofNullable(source.getMessage(key, convert(args), null, language.locale()));
     }
 
     /**

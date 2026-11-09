@@ -78,8 +78,15 @@ public class AdminSettingsController {
     public PlatformSettingResponse update(@PathVariable String key,
                                           @RequestBody @Valid PlatformSettingUpdateRequest request,
                                           Authentication authentication) {
+        PlatformSettingKey settingKey = PlatformSettingKey.fromKey(key);
+        // Vide permis pour une liste d'indicatifs seulement (« aucun pays bloqué »).
+        if (request.value().isBlank() && !settingKey.acceptsEmptyValue()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "platform-setting-invalid", "Unprocessable Entity",
+                    "La valeur du reglage est obligatoire");
+        }
         PlatformSettingView view = settingsService.updateOne(
-                PlatformSettingKey.fromKey(key), request.value(), adminId(authentication));
+                settingKey, request.value(), adminId(authentication));
         return PlatformSettingResponse.from(view, emailOf(view.updatedBy()));
     }
 

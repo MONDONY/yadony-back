@@ -40,6 +40,7 @@ public class PlatformSettingsInitializer {
     private final int smsOtpMaxNumbersPerAccountProperty;
     private final int smsOtpMaxSendsPerHourGlobalProperty;
     private final int smsOtpMaxSendsPerDayGlobalProperty;
+    private final String smsBlockedCountryCodesProperty;
 
     public PlatformSettingsInitializer(PlatformSettingRepository repository,
                                        YadonyConfigProperties config,
@@ -62,7 +63,9 @@ public class PlatformSettingsInitializer {
                                        @Value("${yadony.sms.max-sends-per-hour-global:30}")
                                        String smsOtpMaxSendsPerHourGlobalProperty,
                                        @Value("${yadony.sms.max-sends-per-day-global:150}")
-                                       String smsOtpMaxSendsPerDayGlobalProperty) {
+                                       String smsOtpMaxSendsPerDayGlobalProperty,
+                                       @Value("${yadony.sms.blocked-country-codes:}")
+                                       String smsBlockedCountryCodesProperty) {
         this.repository = repository;
         this.config = config;
         this.smsEnabledProperty = smsEnabledProperty;
@@ -96,6 +99,28 @@ public class PlatformSettingsInitializer {
         this.smsOtpMaxSendsPerDayGlobalProperty = clampedOr(smsOtpMaxSendsPerDayGlobalProperty,
                 PlatformSettingKey.MAX_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL,
                 PlatformSettingKey.DEFAULT_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL);
+        this.smsBlockedCountryCodesProperty = blockedCountryCodesOr(smsBlockedCountryCodesProperty);
+    }
+
+    /**
+     * Indicatifs bloqués lus de l'environnement. Vide ou illisible vaut la liste par défaut, comme
+     * {@code registered-numbers-only} : une variable déclarée mais vide ne doit pas rouvrir les SMS
+     * vers l'Afrique. Seul « none » demande explicitement une liste vide (aucun pays bloqué).
+     */
+    static String blockedCountryCodesOr(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return PlatformSettingKey.DEFAULT_SMS_BLOCKED_COUNTRY_CODES;
+        }
+        if ("none".equalsIgnoreCase(raw.trim())) {
+            return "";
+        }
+        try {
+            String codes = CallingCodeList.normalize(raw);
+            return codes.isEmpty() ? PlatformSettingKey.DEFAULT_SMS_BLOCKED_COUNTRY_CODES : codes;
+        } catch (IllegalArgumentException e) {
+            log.warn("YADONY_SMS_BLOCKED_COUNTRY_CODES illisible ({}) : liste par défaut", e.getMessage());
+            return PlatformSettingKey.DEFAULT_SMS_BLOCKED_COUNTRY_CODES;
+        }
     }
 
     /** Entier de l'environnement ramené dans [1, max] ; vide ou illisible : le défaut. */
@@ -169,6 +194,9 @@ public class PlatformSettingsInitializer {
                 String.valueOf(smsOtpMaxSendsPerHourGlobalProperty));
         defaults.put(PlatformSettingKey.SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL,
                 String.valueOf(smsOtpMaxSendsPerDayGlobalProperty));
+        // Amorcé une seule fois depuis YADONY_SMS_BLOCKED_COUNTRY_CODES, comme les réglages SMS
+        // ci-dessus : le back-office fait ensuite autorité.
+        defaults.put(PlatformSettingKey.SMS_BLOCKED_COUNTRY_CODES, smsBlockedCountryCodesProperty);
         defaults.put(PlatformSettingKey.PRO_ENABLED,
                 String.valueOf(proEnabledProperty));
         defaults.put(PlatformSettingKey.KYC_DIDIT_ENABLED,

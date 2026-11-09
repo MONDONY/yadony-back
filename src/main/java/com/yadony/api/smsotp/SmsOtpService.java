@@ -7,6 +7,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.Msisdn;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.common.i18n.Messages;
 import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.notifications.InvalidSmsRecipientException;
 import com.yadony.api.notifications.SmsDeliveryException;
@@ -104,6 +105,37 @@ public class SmsOtpService {
         return platformSettings != null
                 ? platformSettings.smsOtpMaxSendsPerDayGlobal()
                 : properties.getMaxSendsPerDayGlobal();
+    }
+
+    /**
+     * Indicatif bloqué ({@code sms_blocked_country_codes} du back-office) par lequel commence ce
+     * numéro, lu à chaque envoi comme {@link #registeredNumbersOnly()}. Sans le réglage (tests
+     * unitaires) : aucun pays bloqué.
+     */
+    private Optional<String> blockedCallingCode(String phoneNumber) {
+        return platformSettings != null
+                ? platformSettings.smsBlockedCallingCode(phoneNumber)
+                : Optional.empty();
+    }
+
+    /**
+     * 503 {@code sms-otp-disabled}, le code que les versions installées de l'app savent déjà
+     * afficher, précisé par {@code reason: country-blocked} et {@code callingCode}. Le texte nomme
+     * le pays dans la langue de la requête : sans compte, il renvoie vers l'email, Google ou
+     * Apple ; un compte connecté (ajout d'un numéro) est déjà connecté autrement.
+     */
+    private YadonyBusinessException countryBlocked(String callingCode, String signedInUid) {
+        Messages m = messagesResolver.forRequest();
+        boolean guest = signedInUid == null;
+        String form = guest ? "in" : "of";
+        String country = m.find("sms.country." + form + "." + callingCode)
+                .orElseGet(() -> m.get("sms.country." + form + ".unknown"));
+        String detail = guest
+                ? m.get("sms.otp.country-blocked.guest", country)
+                : m.get("sms.otp.country-blocked.signed-in", country, callingCode);
+        return new YadonyBusinessException(
+                HttpStatus.SERVICE_UNAVAILABLE, "sms-otp-disabled", "SMS OTP Unavailable", detail,
+                Map.of("reason", "country-blocked", "callingCode", callingCode));
     }
 
     /** Seuil de suspension, lu à chaque envoi comme {@link #registeredNumbersOnly()}. */
@@ -242,7 +274,7 @@ public class SmsOtpService {
         if (reviewCode.isEmpty() && !smsService.isEnabled() && !devProfile) {
             throw new YadonyBusinessException(
                     HttpStatus.SERVICE_UNAVAILABLE, "sms-otp-disabled",
-                    "SMS OTP Disabled", "L'authentification par SMS n'est pas encore disponible");
+                    "SMS OTP Disabled", messagesResolver.forRequest().get("sms.otp.disabled"));
         }
 
         if (!properties.isCountryAllowed(phoneNumber)) {
@@ -253,6 +285,16 @@ public class SmsOtpService {
                     "La connexion par SMS n'est pas disponible pour ce pays, utilise ton adresse email");
         }
 
+        if (reviewCode.isEmpty()) {
+            // Pays dont les SMS n'arrivent pas (Twilio les facture et les dit « Delivered ») :
+            // refus avant toute écriture et tout envoi facturé.
+            Optional<String> blocked = blockedCallingCode(phoneNumber);
+            if (blocked.isPresent()) {
+                log.info("Code SMS refusé : indicatif +{} bloqué ({})", blocked.get(), maskPhone(phoneNumber));
+                throw countryBlocked(blocked.get(), signedInUid);
+            }
+        }
+
         if (reviewCode.isEmpty() && registeredNumbersOnly()
                 && !mayReceiveCode(phoneNumber, signedInUid)) {
             // Avant toute écriture et tout envoi facturé. Même code que les SMS coupés : l'app
@@ -261,8 +303,7 @@ public class SmsOtpService {
             throw new YadonyBusinessException(
                     HttpStatus.SERVICE_UNAVAILABLE, "sms-otp-disabled",
                     "SMS OTP Unavailable",
-                    "La connexion par téléphone est réservée aux comptes qui ont déjà un numéro : "
-                            + "inscris-toi par email, Google ou Apple, puis ajoute ton numéro à ton profil");
+                    messagesResolver.forRequest().get("sms.otp.registered-only"));
         }
 
         int windowMinutes = properties.getRateWindowMinutes();
@@ -344,7 +385,7 @@ public class SmsOtpService {
             throw new YadonyBusinessException(
                     HttpStatus.SERVICE_UNAVAILABLE, "sms-otp-disabled",
                     "SMS OTP Unavailable",
-                    "L'envoi du code par SMS est momentanément indisponible, connecte-toi par email, Google ou Apple");
+                    messagesResolver.forRequest().get("sms.otp.delivery-failed"));
         } catch (InvalidSmsRecipientException e) {
             // Le transporteur refuse le numéro lui-même : 422 au client plutôt qu'un
             // « code envoyé » qui n'arrive jamais. L'exception fait rollback de la ligne OTP

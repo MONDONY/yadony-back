@@ -15,6 +15,7 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -105,6 +106,18 @@ public class SmsService {
         // arrêter l'envoi réel, pas seulement masquer un bouton.
         if (!isEnabled()) {
             log.info("[SMS-DEV] To=*** | [message redacted]");
+            return;
+        }
+        // Pays bloqué depuis le back-office (sms_blocked_country_codes) : Twilio y facture des SMS
+        // marqués « Delivered » qui n'arrivent jamais (08/11/2026). Lu à chaque envoi.
+        Optional<String> blocked = settings.smsBlockedCallingCode(phoneNumber);
+        if (blocked.isPresent()) {
+            log.info("[SMS] Not sent: calling code +{} blocked (To=+{}***)", blocked.get(), blocked.get());
+            if (strict) {
+                // SmsOtpService refuse ces numéros avant d'arriver ici : filet, jamais un
+                // « code envoyé » pour un SMS qui n'est pas parti.
+                throw new SmsDeliveryException("country-blocked +" + blocked.get());
+            }
             return;
         }
         // Sans clé, l'appel à Africa's Talking part forcément en 401 : un aller-retour perdu et

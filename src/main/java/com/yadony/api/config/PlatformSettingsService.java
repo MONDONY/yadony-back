@@ -12,6 +12,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -147,6 +148,26 @@ public class PlatformSettingsService {
         return boundedOrDefault(PlatformSettingKey.SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL,
                 PlatformSettingKey.MAX_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL,
                 PlatformSettingKey.DEFAULT_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL);
+    }
+
+    /**
+     * Indicatifs vers lesquels aucun SMS ne part (codes de connexion comme notifications). Lu à
+     * chaque envoi : une modification dans le back-office s'applique sans redémarrage. Ligne
+     * absente : la liste par défaut (les indicatifs africains), la position sûre ; ligne vide :
+     * aucun pays bloqué. Voir {@link PlatformSettingKey#SMS_BLOCKED_COUNTRY_CODES}.
+     */
+    public List<String> smsBlockedCountryCodes() {
+        String raw = cache.all().get(PlatformSettingKey.SMS_BLOCKED_COUNTRY_CODES.key());
+        return CallingCodeList.parseLenient(
+                raw == null ? PlatformSettingKey.DEFAULT_SMS_BLOCKED_COUNTRY_CODES : raw);
+    }
+
+    /**
+     * Indicatif bloqué par lequel commence ce numéro E.164 (« 225 » pour +2250701020304), vide
+     * si le numéro peut recevoir des SMS. Voir {@link #smsBlockedCountryCodes()}.
+     */
+    public Optional<String> smsBlockedCallingCode(String phoneNumber) {
+        return CallingCodeList.match(smsBlockedCountryCodes(), phoneNumber);
     }
 
     /** Valeur entière de la ligne entre 1 et {@code max}, sinon {@code fallback}. */
@@ -315,6 +336,7 @@ public class PlatformSettingsService {
             case SMS_OTP_MAX_NUMBERS_PER_ACCOUNT -> String.valueOf(smsOtpMaxNumbersPerAccount());
             case SMS_OTP_MAX_SENDS_PER_HOUR_GLOBAL -> String.valueOf(smsOtpMaxSendsPerHourGlobal());
             case SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL -> String.valueOf(smsOtpMaxSendsPerDayGlobal());
+            case SMS_BLOCKED_COUNTRY_CODES -> String.join(",", smsBlockedCountryCodes());
             case PRO_ENABLED -> String.valueOf(proEnabled());
             case KYC_DIDIT_ENABLED -> String.valueOf(kycDiditEnabled());
             case CRITICAL_SMS_FALLBACK_ENABLED -> String.valueOf(criticalSmsFallbackEnabled());
@@ -395,7 +417,8 @@ public class PlatformSettingsService {
 
     /** Valide les bornes ET normalise la forme, pour que « 0.10 » et « 0.1 » ne divergent pas. */
     private String normalize(PlatformSettingKey key, String rawValue) {
-        if (rawValue == null || rawValue.isBlank()) {
+        // Vide permis pour une liste d'indicatifs seulement : elle veut alors dire « aucun pays ».
+        if (rawValue == null || (rawValue.isBlank() && !key.acceptsEmptyValue())) {
             throw invalid("La valeur de " + key.key() + " est obligatoire");
         }
         String value = rawValue.trim();
@@ -444,6 +467,7 @@ public class PlatformSettingsService {
             case SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL -> boundedInt(value, 1,
                     PlatformSettingKey.MAX_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL,
                     "Le plafond de SMS de code par 24 h doit être un entier entre 1 et 10000");
+            case SMS_BLOCKED_COUNTRY_CODES -> callingCodes(value);
             case PRO_ENABLED -> {
                 if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
                     throw invalid("L'activation de l'offre PRO attend true ou false");
@@ -489,6 +513,14 @@ public class PlatformSettingsService {
             case PAYMENTS_GOOGLE_PAY_ENABLED -> strictBoolean(value,
                     "L'activation de Google Pay attend true ou false");
         };
+    }
+
+    private String callingCodes(String value) {
+        try {
+            return CallingCodeList.normalize(value);
+        } catch (IllegalArgumentException e) {
+            throw invalid(e.getMessage());
+        }
     }
 
     private String strictBoolean(String value, String message) {
