@@ -83,7 +83,7 @@ class AudiencePresetsTest {
         AudiencePresets.all().forEach(p -> keys.add(p.key()));
         assertThat(keys).contains("activation", "identite_abandonnee", "identite_refusee",
                 "verifies_sans_trajet", "trajet_bientot", "versement_a_configurer", "solde_a_utiliser",
-                "promo_non_utilise", "reactivation_30j", "inactifs_3j");
+                "promo_non_utilise", "reactivation_30j", "inactifs_3j", "pas_encore_verifies");
     }
 
     @Test
@@ -92,5 +92,22 @@ class AudiencePresetsTest {
         JsonNode rule = AudiencePresets.all().stream()
                 .filter(p -> p.key().equals("identite_abandonnee")).findFirst().orElseThrow().rule();
         assertThat(rule.toString()).contains("kyc_abandoned");
+    }
+
+    @Test
+    @DisplayName("« pas encore vérifiés » cible l'identité non commencée et rassure sur Didit sans promesse absolue")
+    void notYetVerifiedExplainsAndReassures() {
+        AudiencePreset preset = AudiencePresets.all().stream()
+                .filter(p -> p.key().equals("pas_encore_verifies")).findFirst().orElseThrow();
+        assertThat(preset.rule().toString()).contains("\"kyc\"").contains("NOT_STARTED")
+                .doesNotContain("PENDING").doesNotContain("VERIFIED");
+        preset.messages().forEach((lang, m) -> {
+            assertThat(m.body()).as(lang).contains("Didit");
+            // Aucune garantie absolue : un prestataire ne peut pas promettre « jamais ».
+            assertThat((m.title() + m.body()).toLowerCase()).as(lang)
+                    .doesNotContain("jamais").doesNotContain("never");
+        });
+        assertThat(preset.messages().get("fr").body()).contains("Moi › Mon compte › Documents d'identité");
+        assertThat(preset.messages().get("en").body()).contains("Me › My account › ID documents");
     }
 }

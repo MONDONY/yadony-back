@@ -48,6 +48,22 @@ public final class AudiencePresets {
                                     "You stopped halfway. Pick up where you left off: it takes 2 minutes and lets "
                                             + "you publish your trip or send a parcel."))),
 
+            new AudiencePreset("pas_encore_verifies", "Pas encore vérifiés",
+                    "Identité non commencée (jamais ouverte ou abandonnée). Le message explique comment se vérifier "
+                            + "et rassure sur la pièce d'identité, traitée par Didit et non conservée par Yadony.",
+                    and(cond("kyc", "IN", list("NOT_STARTED"))),
+                    Map.of(
+                            "fr", new Message("Vérifie ton identité en 2 minutes",
+                                    "Va dans Moi › Mon compte › Documents d'identité, prends ta pièce d'identité en photo "
+                                            + "puis un selfie. Ta pièce est traitée par Didit, notre partenaire de vérification : "
+                                            + "Yadony ne la conserve pas et elle est stockée de façon sécurisée chez Didit. "
+                                            + "Nous n'y accédons que si un litige avec un utilisateur l'exige."),
+                            "en", new Message("Verify your identity in 2 minutes",
+                                    "Go to Me › My account › ID documents, take a photo of your ID and a selfie. "
+                                            + "Your document is handled by Didit, our verification partner: Yadony does not "
+                                            + "keep it and it is stored securely by Didit. We only access it if a dispute "
+                                            + "with a user requires it."))),
+
             new AudiencePreset("identite_refusee", "Identité refusée",
                     "Vérification d'identité refusée : à relancer avec un document lisible.",
                     and(cond("kyc", "IN", list("REJECTED"))),
