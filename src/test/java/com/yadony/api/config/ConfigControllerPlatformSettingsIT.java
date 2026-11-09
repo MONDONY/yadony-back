@@ -80,6 +80,32 @@ class ConfigControllerPlatformSettingsIT {
     }
 
     @Test
+    void remoteConfigRefreshIsPublicWithExactShape() throws Exception {
+        mockMvc.perform(get("/config/remote-config-refresh"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.minutes").isNumber())
+                .andExpect(jsonPath("$.length()").value(1));
+    }
+
+    @Test
+    void remoteConfigRefreshFollowsTheTableToo() throws Exception {
+        int before = settings.remoteConfigFetchMinutes();
+        int changed = before == 15 ? 30 : 15;
+
+        settings.update(Map.of(PlatformSettingKey.REMOTE_CONFIG_FETCH_MINUTES, String.valueOf(changed)),
+                UUID.randomUUID());
+        try {
+            mockMvc.perform(get("/config/remote-config-refresh"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.minutes").value(changed));
+        } finally {
+            settings.update(Map.of(PlatformSettingKey.REMOTE_CONFIG_FETCH_MINUTES, String.valueOf(before)),
+                    UUID.randomUUID());
+        }
+        assertThat(settings.remoteConfigFetchMinutes()).isEqualTo(before);
+    }
+
+    @Test
     void adminChangeIsVisibleImmediatelyOnThePublicEndpoint() throws Exception {
         BigDecimal before = settings.commissionRate();
         BigDecimal changed = before.add(new BigDecimal("0.01"));
