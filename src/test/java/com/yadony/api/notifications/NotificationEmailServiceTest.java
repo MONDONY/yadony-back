@@ -275,6 +275,18 @@ class NotificationEmailServiceTest {
                 eq("https://yadony.com/ouvrir?type=KYC_ACTION_REQUIRED"), eq(KYC_UNSUBSCRIBE), any());
     }
 
+    /** Sans lien de désinscription des relances (bean absent) : l'e-mail ordinaire part quand même. */
+    @Test
+    void email_relance_sansLienDeDesinscription_partSansLien() {
+        withKycLinks(null).send(userId, "KYC_ACTION_REQUIRED", "Votre vérification vous attend", "b", RELANCE);
+
+        verify(resend).sendNotification(eq("awa@exemple.com"), eq(Kind.REMINDER), eq("KYC_VERIFICATION_REMINDER"),
+                eq("Votre vérification vous attend"), eq("b"),
+                eq("https://yadony.com/ouvrir?type=KYC_ACTION_REQUIRED"), any());
+        verify(resend, never()).sendNotification(anyString(), any(), anyString(), anyString(), anyString(),
+                nullable(String.class), anyString(), any());
+    }
+
     /** Une relance compte dans le plafond de 6 e-mails coupables par jour. */
     @Test
     void email_relance_compteDansLePlafond() {

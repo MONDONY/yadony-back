@@ -116,6 +116,19 @@ public final class NotificationEmailPolicy {
     }
 
     /**
+     * Types (effectifs) dont le bouton a un libellé propre ({@code email.notif.cta.<type>}) à la
+     * place de « Ouvrir Yadony », sans changer son lien ni la ligne de la famille. Distinct de
+     * {@link NotificationEmailLink} : celui-là remplace aussi le lien et la ligne, et vaut pour
+     * le type d'origine (il toucherait le vrai refus de vérification).
+     */
+    static final Set<String> TYPE_CTAS = Set.of(NotificationTypes.KYC_VERIFICATION_REMINDER);
+
+    /** Le bouton du type a-t-il un libellé propre ? Attend le type effectif. */
+    public static boolean hasTypeCta(String type) {
+        return type != null && TYPE_CTAS.contains(type);
+    }
+
+    /**
      * Famille de l'e-mail, d'après le type effectif : une relance de vérification
      * ({@code KYC_ACTION_REQUIRED} + {@code reminder=true}) est une {@link Kind#REMINDER}, le
      * même type sans drapeau reste une {@link Kind#DECISION}.

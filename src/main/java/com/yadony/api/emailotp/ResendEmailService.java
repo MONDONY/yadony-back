@@ -218,7 +218,9 @@ public class ResendEmailService {
                 }
             }
             String ctaUrl = cta != null ? cta.url() : (openUrl != null ? openUrl : APP_URL);
-            String ctaLabel = m.get(cta != null ? cta.labelKey() : "email.notif.cta");
+            String ctaLabel = m.get(cta != null ? cta.labelKey()
+                    : NotificationEmailPolicy.hasTypeCta(type) ? "email.notif.cta." + type
+                    : "email.notif.cta");
             String kindKey = kind.name().toLowerCase(java.util.Locale.ROOT);
             String unsubscribeLabel = unsubscribeUrl == null ? null : m.get("email.notif.unsubscribe." + kindKey);
             String unsubscribeWhy = unsubscribeUrl == null ? null : m.get("email.notif.why." + kindKey);

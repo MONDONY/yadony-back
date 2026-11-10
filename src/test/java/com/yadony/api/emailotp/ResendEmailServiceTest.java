@@ -301,15 +301,20 @@ class ResendEmailServiceTest {
                 .contains("Vérification d&#39;identité")
                 .contains("Vos documents sont traités par Didit, spécialiste de la vérification")
                 .contains("Ne plus recevoir les rappels de vérification").contains(unsubscribe)
+                // Bouton propre à la relance, vers l'écran de vérification (ouvrir?type=KYC_ACTION_REQUIRED).
+                .contains("Terminer la vérification").contains("href=\"" + open + "\"")
+                .doesNotContain("Ouvrir Yadony")
                 .doesNotContain("cherché ce trajet").doesNotContain("Ne plus recevoir ces suggestions")
                 .doesNotContain("Vous pouvez couper ces e-mails")
                 .doesNotContain("??");
         assertThat((String) payload.get("text"))
                 .contains("La vérification d'identité vous permet de publier un trajet ou une demande de colis")
                 .contains("Yadony n'en garde aucune copie")
-                .contains("Vous recevez cet e-mail car vous avez commencé la vérification de votre identité")
+                .contains("Cela ne prend que quelques minutes dans l'application Yadony.")
+                .contains("Vous recevez cet e-mail car la vérification de votre identité sur Yadony n'est pas encore terminée.")
                 .contains("Ne plus recevoir les rappels de vérification : " + unsubscribe)
-                .contains(open)
+                .contains("Terminer la vérification : " + open)
+                .doesNotContain("Ouvrir Yadony")
                 .doesNotContain("cherché ce trajet");
         assertThat((Map<String, String>) payload.get("headers"))
                 .containsEntry("List-Unsubscribe", "<" + unsubscribe + ">")
@@ -320,9 +325,12 @@ class ResendEmailServiceTest {
         Map<String, Object> en = lastPayload();
         assertThat((String) en.get("html")).contains("Identity verification")
                 .contains("handled by Didit, an identity verification specialist")
-                .contains("Stop identity verification reminders").doesNotContain("??");
+                .contains("Stop identity verification reminders").contains("Finish verification")
+                .doesNotContain("Open Yadony").doesNotContain("??");
         assertThat((String) en.get("text")).contains("Stop identity verification reminders : " + unsubscribe)
-                .contains("started verifying your identity");
+                .contains("Finish verification : " + open)
+                .contains("It only takes a few minutes in the Yadony app.")
+                .contains("your identity verification on Yadony is not finished yet");
     }
 
     @Test
@@ -336,7 +344,18 @@ class ResendEmailServiceTest {
         assertThat(payload).doesNotContainKey("headers");
         assertThat((String) payload.get("html")).contains("Décision")
                 .contains("Vous recevez cet e-mail car il concerne votre compte Yadony.")
+                .contains("Ouvrir Yadony").doesNotContain("Terminer la vérification")
                 .doesNotContain("Didit").doesNotContain("rappels de vérification").doesNotContain("??");
+        assertThat((String) payload.get("text"))
+                .contains("Ouvrir Yadony : https://yadony.com/ouvrir?type=KYC_ACTION_REQUIRED")
+                .doesNotContain("Terminer la vérification");
+
+        service.sendNotification("user@example.com", com.yadony.api.notifications.NotificationEmailPolicy.Kind.DECISION,
+                "KYC_ACTION_REQUIRED", "Verification to redo", "b",
+                "https://yadony.com/ouvrir?type=KYC_ACTION_REQUIRED", TestMessages.en());
+        assertThat((String) lastPayload().get("text"))
+                .contains("Open Yadony : https://yadony.com/ouvrir?type=KYC_ACTION_REQUIRED")
+                .doesNotContain("Finish verification");
     }
 
     @Test

@@ -75,6 +75,7 @@ class NotificationEmailPolicyTest {
         assertThat(NotificationEmailPolicy.WITH_PUSH)
                 .containsEntry(NotificationTypes.KYC_VERIFICATION_REMINDER, Kind.REMINDER);
         assertThat(NotificationEmailPolicy.hasTypeDetail(NotificationTypes.KYC_VERIFICATION_REMINDER)).isTrue();
+        assertThat(NotificationEmailPolicy.hasTypeCta(NotificationTypes.KYC_VERIFICATION_REMINDER)).isTrue();
     }
 
     /** Sans drapeau, KYC_ACTION_REQUIRED reste une décision : toujours envoyée, sans ligne propre. */
@@ -85,5 +86,7 @@ class NotificationEmailPolicyTest {
         assertThat(NotificationEmailPolicy.kindOf("KYC_ACTION_REQUIRED", null)).contains(Kind.DECISION);
         assertThat(NotificationEmailPolicy.replacesPush("KYC_ACTION_REQUIRED", refus)).isFalse();
         assertThat(NotificationEmailPolicy.hasTypeDetail("KYC_ACTION_REQUIRED")).isFalse();
+        assertThat(NotificationEmailPolicy.hasTypeCta("KYC_ACTION_REQUIRED")).isFalse();
+        assertThat(NotificationEmailPolicy.hasTypeCta(null)).isFalse();
     }
 }
