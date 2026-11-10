@@ -98,6 +98,17 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     void reactivateByFirebaseUid(@Param("firebaseUid") String firebaseUid, @Param("status") String status);
 
     /**
+     * Enregistre le refus des relances de vérification d'identité, une seule fois : la première
+     * date est gardée si le lien est utilisé de nouveau.
+     *
+     * @return 1 si le refus vient d'être enregistré, 0 s'il l'était déjà ou si le compte n'existe pas
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE UserEntity u SET u.kycRemindersOptedOutAt = :at "
+            + "WHERE u.id = :id AND u.kycRemindersOptedOutAt IS NULL")
+    int markKycRemindersOptedOut(@Param("id") UUID id, @Param("at") java.time.Instant at);
+
+    /**
      * Verrou de ligne du compte, tenu jusqu'à la fin de la transaction, par un UPDATE neutre
      * (exécutable sous H2, contrairement à {@code SELECT … FOR NO KEY UPDATE}) qui ne touche pas
      * à la version optimiste. Sérialise deux opérations concurrentes sur le même compte.

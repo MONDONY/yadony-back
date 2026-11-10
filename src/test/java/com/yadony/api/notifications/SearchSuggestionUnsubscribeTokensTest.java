@@ -69,4 +69,15 @@ class SearchSuggestionUnsubscribeTokensTest {
                 .encodeToString("abc".getBytes(StandardCharsets.UTF_8));
         assertThat(tokens.verify(payloadWithoutColon + token.substring(token.indexOf('.')))).isEmpty();
     }
+
+    @Test
+    void tokenIssuedBeforeTheSharedImplementation_staysValid() {
+        // Valeur produite par l'ancienne classe (avant SignedUnsubscribeTokens) : les liens déjà
+        // envoyés par e-mail doivent continuer à fonctionner.
+        String frozen = "MTIzZTQ1NjctZTg5Yi0xMmQzLWE0NTYtNDI2NjE0MTc0MDAwOjE4MjU1ODE2MDA"
+                + ".aB0NMM3XAbP0HawsKCy17ooMUeNryh5_rQULNnaGTTY";
+        assertThat(tokens.verify(frozen))
+                .contains(UUID.fromString("123e4567-e89b-12d3-a456-426614174000"));
+        assertThat(tokens.issue(UUID.fromString("123e4567-e89b-12d3-a456-426614174000"))).isEqualTo(frozen);
+    }
 }
