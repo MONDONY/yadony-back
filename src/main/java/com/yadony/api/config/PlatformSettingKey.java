@@ -102,7 +102,17 @@ public enum PlatformSettingKey {
     PAYMENTS_PAYPAL_ENABLED("payments_paypal_enabled", PlatformSettingType.BOOLEAN),
     PAYMENTS_APPLE_PAY_ENABLED("payments_apple_pay_enabled", PlatformSettingType.BOOLEAN),
     PAYMENTS_GOOGLE_PAY_ENABLED("payments_google_pay_enabled", PlatformSettingType.BOOLEAN),
-    REMOTE_CONFIG_FETCH_MINUTES("remote_config_fetch_minutes", PlatformSettingType.INTEGER);
+    REMOTE_CONFIG_FETCH_MINUTES("remote_config_fetch_minutes", PlatformSettingType.INTEGER),
+    INDIVIDUAL_TRIPS_ALERT_THRESHOLD("individual_trips_alert_threshold", PlatformSettingType.INTEGER);
+
+    /**
+     * Lot 4 : un particulier est signalé à l'équipe (et reçoit la question « Confirmez votre statut ») au-delà de ce
+     * nombre de trajets avec une réservation acceptée sur 30 jours. Jamais de blocage. Aucune property : défaut 4,
+     * bornes 1 à 100, réglé depuis le panel admin ; ligne absente, illisible ou hors bornes : le défaut.
+     */
+    public static final int DEFAULT_INDIVIDUAL_TRIPS_ALERT_THRESHOLD = 4;
+    public static final int MIN_INDIVIDUAL_TRIPS_ALERT_THRESHOLD = 1;
+    public static final int MAX_INDIVIDUAL_TRIPS_ALERT_THRESHOLD = 100;
 
     /**
      * Intervalle minimal, en minutes, entre deux relectures de Firebase Remote Config par l'application.

@@ -264,6 +264,20 @@ public class PlatformSettingsService {
                 : value;
     }
 
+    /**
+     * Seuil d'alerte des particuliers fréquents (lot 4) : signalé au-delà de ce nombre de trajets sur 30 jours.
+     * Ligne absente, vide, illisible ou hors bornes : le défaut (4), jamais 0. Voir
+     * {@link PlatformSettingKey#INDIVIDUAL_TRIPS_ALERT_THRESHOLD}.
+     */
+    public int individualTripsAlertThreshold() {
+        int value = intOr(PlatformSettingKey.INDIVIDUAL_TRIPS_ALERT_THRESHOLD,
+                PlatformSettingKey.DEFAULT_INDIVIDUAL_TRIPS_ALERT_THRESHOLD);
+        return value < PlatformSettingKey.MIN_INDIVIDUAL_TRIPS_ALERT_THRESHOLD
+                || value > PlatformSettingKey.MAX_INDIVIDUAL_TRIPS_ALERT_THRESHOLD
+                ? PlatformSettingKey.DEFAULT_INDIVIDUAL_TRIPS_ALERT_THRESHOLD
+                : value;
+    }
+
     /** Questions à l'assistant d'aide par utilisateur et par jour UTC. */
     public int assistantDailyQuota() {
         return intOr(PlatformSettingKey.ASSISTANT_DAILY_QUOTA, PlatformSettingKey.DEFAULT_ASSISTANT_DAILY_QUOTA);
@@ -364,6 +378,7 @@ public class PlatformSettingsService {
             case PAYMENTS_APPLE_PAY_ENABLED -> String.valueOf(applePayEnabled());
             case PAYMENTS_GOOGLE_PAY_ENABLED -> String.valueOf(googlePayEnabled());
             case REMOTE_CONFIG_FETCH_MINUTES -> String.valueOf(remoteConfigFetchMinutes());
+            case INDIVIDUAL_TRIPS_ALERT_THRESHOLD -> String.valueOf(individualTripsAlertThreshold());
         };
     }
 
@@ -530,6 +545,10 @@ public class PlatformSettingsService {
                     PlatformSettingKey.MIN_REMOTE_CONFIG_FETCH_MINUTES,
                     PlatformSettingKey.MAX_REMOTE_CONFIG_FETCH_MINUTES,
                     "L'intervalle de relecture de Remote Config doit être un entier de minutes entre 5 et 1440");
+            case INDIVIDUAL_TRIPS_ALERT_THRESHOLD -> boundedInt(value,
+                    PlatformSettingKey.MIN_INDIVIDUAL_TRIPS_ALERT_THRESHOLD,
+                    PlatformSettingKey.MAX_INDIVIDUAL_TRIPS_ALERT_THRESHOLD,
+                    "Le seuil d'alerte des particuliers doit être un nombre entier de trajets entre 1 et 100");
         };
     }
 
