@@ -857,18 +857,27 @@ class BidServiceTest {
             assertThat(captor.getValue().getPaymentMethod())
                     .isEqualTo(com.yadony.api.payments.cash.PaymentMethod.CASH);
 
+            // Deux événements : une seule notification (CashBidCreatedEvent, jamais BidCreatedEvent)
+            // et la description pour la détection automatique d'envoi d'argent.
             ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
-            verify(eventPublisher, times(1)).publishEvent(eventCaptor.capture());
-            assertThat(eventCaptor.getValue()).isNotInstanceOf(BidCreatedEvent.class);
-            assertThat(eventCaptor.getValue().getClass().getSimpleName())
-                    .isEqualTo("CashBidCreatedEvent");
+            verify(eventPublisher, times(2)).publishEvent(eventCaptor.capture());
+            assertThat(eventCaptor.getAllValues()).noneMatch(BidCreatedEvent.class::isInstance);
+            assertThat(eventCaptor.getAllValues())
+                    .filteredOn(com.yadony.api.matching.events.BidDescriptionSubmittedEvent.class::isInstance)
+                    .singleElement()
+                    .satisfies(e -> assertThat(((com.yadony.api.matching.events.BidDescriptionSubmittedEvent) e)
+                            .senderId()).isEqualTo(sender.getId()));
+            CashBidCreatedEvent cashEvent = eventCaptor.getAllValues().stream()
+                    .filter(CashBidCreatedEvent.class::isInstance).map(CashBidCreatedEvent.class::cast)
+                    .reduce((a, b) -> { throw new AssertionError("deux CashBidCreatedEvent"); })
+                    .orElseThrow();
             // Tâche B2 : plus de repli "Un expéditeur" en dur ici — buildSender() ne pose
             // aucun prénom, l'événement doit porter null (le rendu du repli générique, dans
             // la langue du destinataire, est délégué à NotificationTexts.newBid).
-            assertThat(((CashBidCreatedEvent) eventCaptor.getValue()).senderFirstName()).isNull();
+            assertThat(cashEvent.senderFirstName()).isNull();
             // Demande déposée directement : notification « nouvelle demande » inchangée.
-            assertThat(((CashBidCreatedEvent) eventCaptor.getValue()).negotiated()).isFalse();
-            assertThat(((CashBidCreatedEvent) eventCaptor.getValue()).commissionDueBy()).isNull();
+            assertThat(cashEvent.negotiated()).isFalse();
+            assertThat(cashEvent.commissionDueBy()).isNull();
         }
 
         @Test

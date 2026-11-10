@@ -171,6 +171,9 @@ class PackageRequestServiceTest {
             assertThat(response.status()).isEqualTo(PackageRequestStatus.OPEN);
             assertThat(response.departureCity()).isEqualTo("Paris");
             verify(eventPublisher).publishEvent(any(PackageRequestCreatedEvent.class));
+            // Détection automatique d'envoi d'argent : la description part après le commit.
+            verify(eventPublisher).publishEvent(any(
+                com.yadony.api.requests.event.PackageRequestDescriptionSubmittedEvent.class));
             verify(auditService).log(eq("PACKAGE_REQUEST"), any(UUID.class), eq("CREATED"), eq(SENDER_ID), anyMap());
         }
 
@@ -1161,6 +1164,9 @@ class PackageRequestServiceTest {
             verify(repository).save(entity);
             verify(auditService).log(eq("PACKAGE_REQUEST"), eq(entity.getId()),
                 eq("UPDATED"), eq(SENDER_ID), any());
+            verify(eventPublisher).publishEvent(
+                new com.yadony.api.requests.event.PackageRequestDescriptionSubmittedEvent(
+                    entity.getId(), SENDER_ID, "desc"));
         }
 
         @Test @DisplayName("update() qui retire la date → « Date flexible », tolérance nulle")
@@ -2477,6 +2483,8 @@ class PackageRequestServiceTest {
             assertThat(e.getStatus()).isEqualTo(PackageRequestStatus.OPEN);
             assertThat(e.getDisclaimerSignedAt()).isNotNull();
             verify(eventPublisher).publishEvent(any(PackageRequestCreatedEvent.class));
+            verify(eventPublisher).publishEvent(any(
+                    com.yadony.api.requests.event.PackageRequestDescriptionSubmittedEvent.class));
             verify(auditService).log(eq("PACKAGE_REQUEST"), eq(id), eq("PUBLISHED"),
                     eq(SENDER_ID), any());
         }
@@ -2692,6 +2700,9 @@ class PackageRequestServiceTest {
             // Sans garde, update() posait OPEN en dur et publiait le brouillon en
             // silence — la demande devenait visible de tous à la première édition.
             assertThat(e.getStatus()).isEqualTo(PackageRequestStatus.DRAFT);
+            // Brouillon invisible des tiers : pas de détection automatique tant qu'il n'est pas publié.
+            verify(eventPublisher, never()).publishEvent(any(
+                com.yadony.api.requests.event.PackageRequestDescriptionSubmittedEvent.class));
         }
 
         @Test @DisplayName("éditer une demande en négociation la repasse OPEN")

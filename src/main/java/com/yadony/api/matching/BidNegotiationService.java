@@ -228,6 +228,9 @@ public class BidNegotiationService {
         persistGridItems(saved, announcement, gridItems);
         persistCustomItems(saved, customItems);
         bidPhotoService.attachPhotos(saved.getId(), sender.getId(), request.photoKeys());
+        // Détection automatique d'envoi d'argent (signalements/, après le commit).
+        eventPublisher.publishEvent(new com.yadony.api.matching.events.BidDescriptionSubmittedEvent(
+                saved.getId(), sender.getId(), saved.getDescription()));
 
         BidNegotiationMessageEntity message = postMessage(saved, sender.getId(),
                 BidNegotiationMessageKind.PROPOSAL, request.proposedTotalEur(), null);

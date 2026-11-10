@@ -75,6 +75,8 @@ public record AdminPackageRequestDetailResponse(
             String reason,
             String details,
             String status,
-            LocalDateTime createdAt
+            LocalDateTime createdAt,
+            /** Origine (V365) : {@code USER} ou {@code SYSTEM} (détection automatique, sans signalant). */
+            String source
     ) {}
 }

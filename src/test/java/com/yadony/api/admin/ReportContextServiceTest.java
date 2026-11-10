@@ -325,6 +325,7 @@ class ReportContextServiceTest {
         ReflectionTestUtils.setField(anonymous, "id", UUID.randomUUID());
         anonymous.setReason(ReportReason.SCAM_ATTEMPT);
         anonymous.setStatus(ReportStatus.OPEN);
+        anonymous.setSource(com.yadony.api.signalements.ReportSource.SYSTEM);
         when(reportRepo.findTop10ByTargetTypeAndTargetIdAndIdNotOrderByCreatedAtDesc(
                 ReportTargetType.ANNOUNCEMENT, targetId, reportId)).thenReturn(List.of(other, anonymous));
         when(userRepo.findAllById(anyCollection())).thenReturn(List.of(user(otherReporter, "Fatou", "Kane")));
@@ -335,7 +336,9 @@ class ReportContextServiceTest {
         assertThat(related.get(0).reason()).isEqualTo("SCAM_ATTEMPT");
         assertThat(related.get(0).status()).isEqualTo("RESOLVED");
         assertThat(related.get(0).reporterName()).isEqualTo("Fatou Kane");
+        assertThat(related.get(0).source()).isEqualTo("USER");
         assertThat(related.get(1).reporterName()).isNull();
+        assertThat(related.get(1).source()).isEqualTo("SYSTEM");
     }
 
     @Test

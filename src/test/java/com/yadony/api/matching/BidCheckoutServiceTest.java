@@ -42,6 +42,7 @@ class BidCheckoutServiceTest {
     @Mock private BidPhotoService bidPhotoService;
     @Mock private com.yadony.api.common.commission.CommissionGridService commissionGridService;
     @Mock private HttpServletRequest httpRequest;
+    @Mock private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     @InjectMocks private BidCheckoutService service;
 
@@ -101,6 +102,26 @@ class BidCheckoutServiceTest {
         assertThat(bid.getStatus()).isEqualTo(BidStatus.AWAITING_PAYMENT);
         assertThat(bid.getAwaitingPaymentExpiresAt()).isNotNull();
         assertThat(resp.clientSecret()).isEqualTo("secret_xyz");
+    }
+
+    @Test
+    void checkout_publie_la_description_pour_la_detection_d_envoi_d_argent() {
+        when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> {
+            BidEntity b = inv.getArgument(0);
+            if (b.getId() == null) ReflectionTestUtils.setField(b, "id", UUID.randomUUID());
+            return b;
+        });
+        when(paymentService.createEscrow(any(CreatePaymentRequest.class), eq("uid-sender")))
+            .thenReturn(stubPaymentResponse());
+
+        service.checkout("uid-sender", req, httpRequest);
+
+        ArgumentCaptor<com.yadony.api.matching.events.BidDescriptionSubmittedEvent> event =
+            ArgumentCaptor.forClass(com.yadony.api.matching.events.BidDescriptionSubmittedEvent.class);
+        verify(eventPublisher).publishEvent(event.capture());
+        assertThat(event.getValue().bidId()).isNotNull();
+        assertThat(event.getValue().senderId()).isEqualTo(sender.getId());
+        assertThat(event.getValue().description()).isEqualTo("test");
     }
 
     @Test

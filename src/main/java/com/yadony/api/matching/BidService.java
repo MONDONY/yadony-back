@@ -420,6 +420,10 @@ public class BidService {
 
         bidPhotoService.attachPhotos(saved.getId(), sender.getId(), request.photoKeys());
 
+        // Détection automatique d'envoi d'argent (signalements/, après le commit).
+        eventPublisher.publishEvent(new com.yadony.api.matching.events.BidDescriptionSubmittedEvent(
+                saved.getId(), sender.getId(), saved.getDescription()));
+
         // Le parcours carte publie le même événement après autorisation Stripe dans
         // PaymentService.promoteBidOnPaymentAuthorized(). En CASH comme en MOBILE_MONEY, la
         // création du bid termine directement le parcours de l'expéditeur : dans les deux

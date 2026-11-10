@@ -227,6 +227,8 @@ public class ReportContextService {
                 o.getStatus() != null ? o.getStatus().name() : null,
                 o.getCreatedAt(),
                 o.getReporterId() != null && reporters.containsKey(o.getReporterId())
-                        ? MatchingTextUtil.buildName(reporters.get(o.getReporterId())) : null)).toList();
+                        ? MatchingTextUtil.buildName(reporters.get(o.getReporterId())) : null,
+                (o.getSource() != null ? o.getSource() : com.yadony.api.signalements.ReportSource.USER).name()))
+                .toList();
     }
 }

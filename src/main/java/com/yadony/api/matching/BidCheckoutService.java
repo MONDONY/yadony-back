@@ -45,6 +45,7 @@ public class BidCheckoutService {
     private final AnnouncementPriceGridItemRepository annGridItemRepository;
     private final BidPhotoService bidPhotoService;
     private final CommissionGridService commissionGridService;
+    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     public BidCheckoutService(BidRepository bidRepository,
                               AnnouncementRepository announcementRepository,
@@ -55,7 +56,9 @@ public class BidCheckoutService {
                               BidGridItemRepository bidGridItemRepository,
                               AnnouncementPriceGridItemRepository annGridItemRepository,
                               BidPhotoService bidPhotoService,
-                              CommissionGridService commissionGridService) {
+                              CommissionGridService commissionGridService,
+                              org.springframework.context.ApplicationEventPublisher eventPublisher) {
+        this.eventPublisher = eventPublisher;
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -268,6 +271,9 @@ public class BidCheckoutService {
         }
 
         bidPhotoService.attachPhotos(saved.getId(), sender.getId(), req.photoKeys());
+        // Détection automatique d'envoi d'argent (signalements/, après le commit).
+        eventPublisher.publishEvent(new com.yadony.api.matching.events.BidDescriptionSubmittedEvent(
+                saved.getId(), sender.getId(), saved.getDescription()));
 
         BigDecimal kgNet = hasKg && announcement.getPricePerKg() != null
             ? saved.getWeightKg().multiply(announcement.getPricePerKg())

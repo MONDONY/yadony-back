@@ -411,6 +411,7 @@ public class PackageRequestService {
                 saved.getId(), senderId, saved.getDepartureCity(),
                 saved.getArrivalCity(), saved.getDesiredDate()
             ));
+            publishDescription(saved, senderId);
             auditService.log("PACKAGE_REQUEST", saved.getId(), "CREATED", senderId,
                 Map.of("corridor", saved.getDepartureCity() + "->" + saved.getArrivalCity()));
         }
@@ -523,8 +524,20 @@ public class PackageRequestService {
 
         auditService.log("PACKAGE_REQUEST", saved.getId(), "UPDATED", callerUid,
             Map.of("corridor", saved.getDepartureCity() + "->" + saved.getArrivalCity()));
+        if (saved.getStatus() != PackageRequestStatus.DRAFT) {
+            publishDescription(saved, callerUid);
+        }
 
         return toResponse(saved, callerUid);
+    }
+
+    /**
+     * Description visible des voyageurs : détection automatique d'envoi d'argent par
+     * {@code signalements/}, après le commit. Jamais pour un brouillon, invisible des tiers.
+     */
+    private void publishDescription(PackageRequestEntity saved, UUID senderId) {
+        eventPublisher.publishEvent(new com.yadony.api.requests.event.PackageRequestDescriptionSubmittedEvent(
+            saved.getId(), senderId, saved.getDescription()));
     }
 
     // ─── publish ─────────────────────────────────────────────────────────────────
@@ -581,6 +594,7 @@ public class PackageRequestService {
             saved.getId(), callerUid, saved.getDepartureCity(),
             saved.getArrivalCity(), saved.getDesiredDate()
         ));
+        publishDescription(saved, callerUid);
         auditService.log("PACKAGE_REQUEST", saved.getId(), "PUBLISHED", callerUid,
             Map.of("corridor", saved.getDepartureCity() + "->" + saved.getArrivalCity()));
 

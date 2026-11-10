@@ -44,7 +44,12 @@ public record AdminReportResponse(
          * Avis signalé (cible RATING retrouvée) : ce que l'admin doit lire pour décider,
          * sinon {@code null}. L'auteur de l'avis est {@link #targetAuthor}.
          */
-        RatingPreview ratingPreview
+        RatingPreview ratingPreview,
+        /**
+         * Origine (V365) : {@code USER} (signalement fait depuis l'app) ou {@code SYSTEM}
+         * (détection automatique, sans signalant ; l'admin affiche « Détection automatique »).
+         */
+        String source
 ) {
     public record TargetAuthor(UUID userId, String name) {}
 

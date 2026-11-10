@@ -176,7 +176,9 @@ public class AdminPackageRequestQueryService {
                         rep.getId(), rep.getReporterId(), names.get(rep.getReporterId()),
                         rep.getReason() != null ? rep.getReason().name() : null, rep.getDescription(),
                         rep.getStatus() != null ? rep.getStatus().name() : null,
-                        rep.getCreatedAt())).toList(),
+                        rep.getCreatedAt(),
+                        (rep.getSource() != null ? rep.getSource()
+                                : com.yadony.api.signalements.ReportSource.USER).name())).toList(),
                 blocked == null, blocked, removedByAdmin);
     }
 

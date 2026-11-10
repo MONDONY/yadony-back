@@ -236,6 +236,7 @@ class AdminPackageRequestQueryServiceDbTest {
             assertThat(rep.reporterName()).isEqualTo("Moussa Diop");
             assertThat(rep.reason()).isEqualTo("SCAM_ATTEMPT");
             assertThat(rep.details()).isEqualTo("frauduleuse");
+            assertThat(rep.source()).isEqualTo("USER");
         });
         assertThat(d.reportCount()).isEqualTo(1);
         assertThat(d.openNegotiationCount()).isEqualTo(1);

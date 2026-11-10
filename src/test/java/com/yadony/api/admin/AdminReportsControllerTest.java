@@ -152,6 +152,37 @@ class AdminReportsControllerTest {
         assertThat(resp.getBody()).isNotNull();
         assertThat(resp.getBody().getContent()).hasSize(1);
         assertThat(resp.getBody().getContent().get(0).reporterName()).isEqualTo("Jean Dupont");
+        assertThat(resp.getBody().getContent().get(0).source()).isEqualTo("USER");
+    }
+
+    @Test
+    void listReports_exposeLaSourceSysteme_pourUneDetectionAutomatique() {
+        ReportEntity report = buildReport(null, ReportStatus.OPEN);
+        report.setSource(com.yadony.api.signalements.ReportSource.SYSTEM);
+        when(reportRepo.findFiltered(isNull(), isNull(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(report)));
+
+        ResponseEntity<Page<AdminReportResponse>> resp =
+                controller().listReports(null, null, null, false, 0, 20, null);
+
+        assertThat(resp.getBody()).isNotNull();
+        AdminReportResponse item = resp.getBody().getContent().get(0);
+        assertThat(item.source()).isEqualTo("SYSTEM");
+        assertThat(item.reporterName()).isNull();
+    }
+
+    @Test
+    void listReports_sourceAbsente_traiteeCommeUtilisateur() {
+        ReportEntity report = buildReport(null, ReportStatus.OPEN);
+        report.setSource(null);
+        when(reportRepo.findFiltered(isNull(), isNull(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(report)));
+
+        ResponseEntity<Page<AdminReportResponse>> resp =
+                controller().listReports(null, null, null, false, 0, 20, null);
+
+        assertThat(resp.getBody()).isNotNull();
+        assertThat(resp.getBody().getContent().get(0).source()).isEqualTo("USER");
     }
 
     @Test
