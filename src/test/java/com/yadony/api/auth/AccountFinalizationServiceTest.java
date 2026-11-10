@@ -162,6 +162,31 @@ class AccountFinalizationServiceTest {
     }
 
     @Test
+    @DisplayName("efface les informations fiscales DAC7 : NIF, pays d'émission, TVA et leur suivi")
+    void clearsDac7TaxInfo() {
+        UserEntity user = makeUser();
+        user.setTaxIdentificationNumber("3023217600053");
+        user.setTaxCountry("FR");
+        user.setVatNumber("FR40303265045");
+        user.setTaxInfoProvidedAt(java.time.Instant.now());
+        user.setTaxInfoRequestedAt(java.time.Instant.now());
+        user.setTaxReminderCount(2);
+        com.google.firebase.auth.FirebaseAuth mockAuth = mock(com.google.firebase.auth.FirebaseAuth.class);
+
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class)) {
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockAuth);
+            service.finalize(user, FinalizationReason.HARD_IMMEDIATE);
+        }
+
+        assertThat(user.getTaxIdentificationNumber()).isNull();
+        assertThat(user.getTaxCountry()).isNull();
+        assertThat(user.getVatNumber()).isNull();
+        assertThat(user.getTaxInfoProvidedAt()).isNull();
+        assertThat(user.getTaxInfoRequestedAt()).isNull();
+        assertThat(user.getTaxReminderCount()).isZero();
+    }
+
+    @Test
     @DisplayName("remet kycStatus à NOT_STARTED et efface deletionRequestedAt")
     void resetsKycStatusAndClearsDeletionRequest() {
         UserEntity user = makeUser();

@@ -85,6 +85,15 @@ public class AccountFinalizationService {
         user.setBusinessName(null);
         user.setBusinessRegistrationNumber(null);
         user.setBusinessCountry(null);
+        // DAC7 (lot 3a) : le NIF et le numéro de TVA identifient la personne comme le SIRET. Effacés avec le reste de
+        // l'identité. À revoir avec l'obligation de conservation DAC7 (le nom, l'adresse et la date de naissance
+        // sont déjà effacés ici) : décision du propriétaire, signalée dans le rapport du lot 3a.
+        user.setTaxIdentificationNumber(null);
+        user.setTaxCountry(null);
+        user.setVatNumber(null);
+        user.setTaxInfoProvidedAt(null);
+        user.setTaxInfoRequestedAt(null);
+        user.setTaxReminderCount(0);
         // Lot C — un statut KYC VERIFIED survivant a la suppression rattache le compte
         // anonymise a une verification d'identite reelle.
         user.setKycStatus(KycStatus.NOT_STARTED);
