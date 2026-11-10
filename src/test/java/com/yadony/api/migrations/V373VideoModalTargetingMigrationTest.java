@@ -18,12 +18,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * V374 : moment, ciblage et fréquence des modals. Des lignes écrites AVANT la migration (V372, comme la
+ * V373 : moment, ciblage et fréquence des modals. Des lignes écrites AVANT la migration (V372, comme la
  * vidéo d'accueil en staging) doivent la traverser en gardant exactement leur comportement : « jusqu'à N
  * fois », arrêt après une réponse, aucune condition, aucune situation, toutes versions et plateformes.
  */
-@DisplayName("V374 : défauts des campagnes et réponses existantes, contraintes, colonnes d'absence")
-class V374VideoModalTargetingMigrationTest {
+@DisplayName("V373 : défauts des campagnes et réponses existantes, contraintes, colonnes d'absence")
+class V373VideoModalTargetingMigrationTest {
 
     private static EmbeddedPostgres postgres;
     private static DataSource dataSource;
@@ -59,7 +59,7 @@ class V374VideoModalTargetingMigrationTest {
                 VALUES (?, ?, 1, 2, 'DISMISSED', now())
                 """, CAMPAIGN, USER);
 
-        flywayUpTo("374").migrate();
+        flywayUpTo("373").migrate();
     }
 
     @AfterAll
