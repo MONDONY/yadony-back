@@ -51,7 +51,7 @@ public class VideoModalResponseEntity extends BaseEntity {
     @Column(name = "completed_at")
     private Instant completedAt;
 
-    /** « Ne plus afficher » : réponse définitive pour cette version (V373), sans toucher au statut. */
+    /** « Ne plus afficher » : réponse définitive pour cette version (V374), sans toucher au statut. */
     @Column(name = "dont_show_again_at")
     private Instant dontShowAgainAt;
 

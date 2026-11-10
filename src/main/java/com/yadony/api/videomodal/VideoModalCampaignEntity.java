@@ -133,7 +133,7 @@ public class VideoModalCampaignEntity extends BaseEntity {
     @Column(name = "version_published_at", nullable = false)
     private Instant versionPublishedAt;
 
-    // ── Moment, ciblage et fréquence (V373) ────────────────────────────────
+    // ── Moment, ciblage et fréquence (V374) ────────────────────────────────
 
     @Enumerated(EnumType.STRING)
     @Column(name = "frequency", nullable = false, length = 20)

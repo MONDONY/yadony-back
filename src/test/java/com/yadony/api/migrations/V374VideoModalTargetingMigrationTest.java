@@ -18,12 +18,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * V373 : moment, ciblage et fréquence des modals. Des lignes écrites AVANT la migration (V372, comme la
+ * V374 : moment, ciblage et fréquence des modals. Des lignes écrites AVANT la migration (V372, comme la
  * vidéo d'accueil en staging) doivent la traverser en gardant exactement leur comportement : « jusqu'à N
  * fois », arrêt après une réponse, aucune condition, aucune situation, toutes versions et plateformes.
  */
-@DisplayName("V373 : défauts des campagnes et réponses existantes, contraintes, colonnes d'absence")
-class V373VideoModalTargetingMigrationTest {
+@DisplayName("V374 : défauts des campagnes et réponses existantes, contraintes, colonnes d'absence")
+class V374VideoModalTargetingMigrationTest {
 
     private static EmbeddedPostgres postgres;
     private static DataSource dataSource;
@@ -42,7 +42,7 @@ class V373VideoModalTargetingMigrationTest {
         }
         jdbc = new JdbcTemplate(dataSource);
 
-        flywayUpTo("372").migrate();
+        flywayUpTo("373").migrate();
         // État d'avant : une campagne vidéo active, un modal Information, un utilisateur et sa réponse.
         jdbc.update("INSERT INTO users (id, firebase_uid, username, status, created_at, updated_at, last_seen_at) "
                 + "VALUES (?, ?, ?, 'ACTIVE', now(), now(), now() - interval '40 days')", USER, "uid-" + USER, "u-" + USER.toString().substring(0, 8));
@@ -59,7 +59,7 @@ class V373VideoModalTargetingMigrationTest {
                 VALUES (?, ?, 1, 2, 'DISMISSED', now())
                 """, CAMPAIGN, USER);
 
-        flywayUpTo("373").migrate();
+        flywayUpTo("374").migrate();
     }
 
     @AfterAll

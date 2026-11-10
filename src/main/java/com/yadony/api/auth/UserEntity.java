@@ -136,13 +136,13 @@ public class UserEntity extends BaseEntity {
 
     /**
      * Dernière visite avant la dernière pause d'au moins {@link UserRepository#ABSENCE_GAP_HOURS} h
-     * (V373). Écrite par {@link UserRepository#touchLastSeen} avec {@link #returnedAt}, en lecture
+     * (V374). Écrite par {@link UserRepository#touchLastSeen} avec {@link #returnedAt}, en lecture
      * seule ici. Sert à la situation « retour après une absence » des modals.
      */
     @Column(name = "absence_started_at", insertable = false, updatable = false)
     private java.time.LocalDateTime absenceStartedAt;
 
-    /** Moment du retour qui a clos la dernière pause (V373), voir {@link #absenceStartedAt}. */
+    /** Moment du retour qui a clos la dernière pause (V374), voir {@link #absenceStartedAt}. */
     @Column(name = "returned_at", insertable = false, updatable = false)
     private java.time.LocalDateTime returnedAt;
 
