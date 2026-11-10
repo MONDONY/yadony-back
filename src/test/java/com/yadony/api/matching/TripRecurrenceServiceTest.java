@@ -289,6 +289,116 @@ class TripRecurrenceServiceTest {
         assertThat(rec.getLastGeneratedDate()).isEqualTo(LocalDate.now().plusDays(1));
     }
 
+    // ── Statut du voyageur obligatoire (interrupteur traveler_status_required) ────────
+
+    private void requireTravelerStatus() {
+        var settings = mock(com.yadony.api.config.PlatformSettingsService.class);
+        lenient().when(settings.travelerStatusRequired()).thenReturn(true);
+        service.setTravelerStatusGate(new com.yadony.api.common.TravelerStatusGate(settings));
+    }
+
+    private UserEntity realUser(com.yadony.api.travelerstatus.TravelerStatus status) {
+        UserEntity u = new UserEntity();
+        u.setFirebaseUid("firebase-uid");
+        u.setTravelerStatus(status);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(u));
+        return u;
+    }
+
+    @Test
+    void create_activeWithoutTravelerStatus_switchOn_is403_andNothingIsSaved() {
+        requireTravelerStatus();
+        realUser(null);
+
+        assertThatThrownBy(() -> service.create(userId, request("1111111", 0, true)))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.FORBIDDEN);
+                    assertThat(e.getErrorCode()).isEqualTo("traveler-status-required");
+                });
+        verify(repository, never()).save(any(TripRecurrenceEntity.class));
+        verifyNoInteractions(auditService, eventPublisher);
+    }
+
+    @Test
+    void create_activeWithTravelerStatus_switchOn_passes() {
+        requireTravelerStatus();
+        realUser(com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL);
+
+        service.create(userId, request("1111111", 0, true));
+
+        verify(repository, atLeastOnce()).save(any(TripRecurrenceEntity.class));
+        verify(eventPublisher).publishEvent(any(TripRecurrenceSavedEvent.class));
+    }
+
+    @Test
+    void create_pausedRecurrence_isNeverGated() {
+        requireTravelerStatus();
+
+        service.create(userId, request("1111111", 0, false));
+
+        verify(repository, atLeastOnce()).save(any(TripRecurrenceEntity.class));
+        verify(userRepository, never()).findById(any());
+    }
+
+    @Test
+    void update_activeWithoutTravelerStatus_switchOn_is403_andNothingIsSaved() {
+        requireTravelerStatus();
+        realUser(null);
+        UUID id = UUID.randomUUID();
+        TripRecurrenceEntity existing = entity("1111111", 0, null);
+        when(repository.findByUserIdAndId(userId, id)).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.update(userId, id, request("1111111", 0, true)))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("traveler-status-required"));
+        verify(repository, never()).save(any(TripRecurrenceEntity.class));
+        verifyNoInteractions(auditService, eventPublisher);
+    }
+
+    @Test
+    void generate_travelerStatusRequired_doesNotAdvanceLastGeneratedDate_andRetriesLater() {
+        mockUser();
+        when(announcementService.createRecurringAnnouncement(anyString(), any(), any()))
+                .thenThrow(new YadonyBusinessException(org.springframework.http.HttpStatus.FORBIDDEN,
+                        "traveler-status-required", "Traveler Status Required", "Indiquez votre statut."));
+        TripRecurrenceEntity rec = entity("1111111", 3, null);
+
+        int created = service.generateForRecurrence(rec);
+
+        assertThat(created).isZero();
+        // Les dates de l'horizon ne sont pas perdues : le passage suivant les retentera une fois le statut déclaré.
+        assertThat(rec.getLastGeneratedDate()).isNull();
+        verify(repository, never()).save(any(TripRecurrenceEntity.class));
+        verify(announcementService, times(1)).createRecurringAnnouncement(anyString(), any(), any());
+    }
+
+    @Test
+    void generate_otherBusinessFailure_stillAdvancesLastGeneratedDate() {
+        mockUser();
+        when(announcementService.createRecurringAnnouncement(anyString(), any(), any()))
+                .thenThrow(new YadonyBusinessException(org.springframework.http.HttpStatus.FORBIDDEN,
+                        "pro-limit-reached", "Limit", "limite"));
+        TripRecurrenceEntity rec = entity("1111111", 1, null);
+
+        service.generateForRecurrence(rec);
+
+        assertThat(rec.getLastGeneratedDate()).isEqualTo(LocalDate.now().plusDays(1));
+        verify(repository).save(rec);
+    }
+
+    @Test
+    void generate_afterStatusDeclared_generatesNormallyAndAdvances() {
+        mockUser();
+        TripRecurrenceEntity rec = entity("1111111", 1, null);
+        when(announcementService.createRecurringAnnouncement(anyString(), any(), any()))
+                .thenReturn(mock(AnnouncementResponse.class));
+
+        int created = service.generateForRecurrence(rec);
+
+        assertThat(created).isEqualTo(2);
+        assertThat(rec.getLastGeneratedDate()).isEqualTo(LocalDate.now().plusDays(1));
+    }
+
     @Test
     void generate_missingUser_skips() {
         when(userRepository.findById(userId)).thenReturn(Optional.empty());

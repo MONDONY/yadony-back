@@ -66,6 +66,23 @@ public class TripRecurrenceService {
         this.activeCurrencyResolver = activeCurrencyResolver;
     }
 
+    /**
+     * Garde « statut du voyageur obligatoire », injecté par setter (constructeur inchangé) ; sans garde,
+     * aucun contrôle.
+     */
+    private com.yadony.api.common.TravelerStatusGate travelerStatusGate;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setTravelerStatusGate(com.yadony.api.common.TravelerStatusGate travelerStatusGate) {
+        this.travelerStatusGate = travelerStatusGate;
+    }
+
+    private void assertTravelerStatusDeclared(UUID userId) {
+        if (travelerStatusGate != null) {
+            userRepository.findById(userId).ifPresent(travelerStatusGate::assertDeclaredIfRequired);
+        }
+    }
+
     public List<TripRecurrenceDto> findAll(UUID userId) {
         return repository.findByUserIdOrderByUpdatedAtDesc(userId)
                 .stream().map(this::toDto).collect(Collectors.toList());
@@ -73,6 +90,11 @@ public class TripRecurrenceService {
 
     @Transactional
     public TripRecurrenceDto create(UUID userId, TripRecurrenceRequest request) {
+        // Une récurrence active publie des trajets : même garde que la publication, à la source, pour que le
+        // voyageur reçoive le 403 tout de suite au lieu d'un 200 sans aucun trajet généré.
+        if (request.active()) {
+            assertTravelerStatusDeclared(userId);
+        }
         TripRecurrenceEntity entity = new TripRecurrenceEntity();
         entity.setUserId(userId);
         // Devise absente (client antérieur) : celle du voyageur, comme un trajet simple.
@@ -95,6 +117,9 @@ public class TripRecurrenceService {
     public TripRecurrenceDto update(UUID userId, UUID id, TripRecurrenceRequest request) {
         TripRecurrenceEntity entity = repository.findByUserIdAndId(userId, id)
                 .orElseThrow(() -> new YadonyNotFoundException("TripRecurrence", id));
+        if (request.active()) {
+            assertTravelerStatusDeclared(userId);
+        }
         // Devise absente : la récurrence garde la sienne.
         applyFields(entity, request, entity::getCurrency);
         repository.save(entity);
@@ -168,6 +193,7 @@ public class TripRecurrenceService {
         String firebaseUid = user.getFirebaseUid();
 
         int created = 0;
+        boolean statusMissing = false;
         for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
             int idx = d.getDayOfWeek().getValue() - 1; // Lundi=0 .. Dimanche=6
             if (rec.getWeekdays().charAt(idx) != '1') {
@@ -186,9 +212,22 @@ public class TripRecurrenceService {
                     throw exception;
                 }
                 log.info("TripRecurrence {} : trajet {} déjà publié", rec.getId(), d);
+            } catch (YadonyBusinessException e) {
+                if ("traveler-status-required".equals(e.getErrorCode())) {
+                    // Le statut manque pour toutes les dates : inutile d'insister, et surtout ne pas avancer
+                    // lastGeneratedDate, sinon les dates de l'horizon seraient perdues pour toujours.
+                    statusMissing = true;
+                    break;
+                }
+                log.warn("TripRecurrence {} : échec création trajet {} : {}", rec.getId(), d, e.getMessage());
             } catch (Exception e) {
                 log.warn("TripRecurrence {} : échec création trajet {} : {}", rec.getId(), d, e.getMessage());
             }
+        }
+
+        if (statusMissing) {
+            log.warn("TripRecurrence {} : génération différée, le voyageur n'a pas déclaré son statut", rec.getId());
+            return created;
         }
 
         rec.setLastGeneratedDate(end);
