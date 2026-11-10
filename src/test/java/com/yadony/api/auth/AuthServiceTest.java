@@ -477,6 +477,38 @@ class AuthServiceTest {
         }
 
         @Test
+        @DisplayName("statut du voyageur non déclaré → quatre champs null")
+        void getProfile_travelerStatusNotDeclared_returnsNulls() {
+            UserEntity user = buildUser();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+
+            UserResponse result = authService.getProfile(FIREBASE_UID);
+
+            assertThat(result.travelerStatus()).isNull();
+            assertThat(result.businessName()).isNull();
+            assertThat(result.businessRegistrationNumber()).isNull();
+            assertThat(result.businessCountry()).isNull();
+        }
+
+        @Test
+        @DisplayName("statut du voyageur déclaré → le propriétaire voit son statut et son numéro")
+        void getProfile_travelerStatusProfessional_exposesOwnFields() {
+            UserEntity user = buildUser();
+            user.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL);
+            user.setBusinessName("Acme Express");
+            user.setBusinessRegistrationNumber("SIREN 123 456 789");
+            user.setBusinessCountry("FR");
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+
+            UserResponse result = authService.getProfile(FIREBASE_UID);
+
+            assertThat(result.travelerStatus()).isEqualTo("PROFESSIONAL");
+            assertThat(result.businessName()).isEqualTo("Acme Express");
+            assertThat(result.businessRegistrationNumber()).isEqualTo("SIREN 123 456 789");
+            assertThat(result.businessCountry()).isEqualTo("FR");
+        }
+
+        @Test
         @DisplayName("résidence et onboarding renseignés → exposés tels quels sur UserResponse")
         void getProfile_residenceAndOnboardingSet_returnsExactValues() {
             UserEntity user = buildUser();

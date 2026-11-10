@@ -77,6 +77,14 @@ public class AccountFinalizationService {
         // parfaitement re-identifiant tant qu'il subsiste. Le laisser vidait l'anonymisation
         // de son sens pour tout compte PRO.
         user.setProSiret(null);
+        // Statut légal du voyageur (lot 2) : la raison sociale et le numéro d'immatriculation
+        // identifient une entreprise ou son gérant ; on efface aussi le statut déclaré.
+        user.setTravelerStatus(null);
+        user.setTravelerStatusDeclaredAt(null);
+        user.setTravelerStatusTermsVersion(null);
+        user.setBusinessName(null);
+        user.setBusinessRegistrationNumber(null);
+        user.setBusinessCountry(null);
         // Lot C — un statut KYC VERIFIED survivant a la suppression rattache le compte
         // anonymise a une verification d'identite reelle.
         user.setKycStatus(KycStatus.NOT_STARTED);
