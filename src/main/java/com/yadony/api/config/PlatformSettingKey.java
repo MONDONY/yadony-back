@@ -112,6 +112,7 @@ public enum PlatformSettingKey {
      */
     public static final int DEFAULT_INDIVIDUAL_TRIPS_ALERT_THRESHOLD = 4;
     public static final int MIN_INDIVIDUAL_TRIPS_ALERT_THRESHOLD = 1;
+    /** Même borne que le CHECK {@code individual_frequency_flags_threshold_check} (V373) : les changer ensemble. */
     public static final int MAX_INDIVIDUAL_TRIPS_ALERT_THRESHOLD = 100;
 
     /**

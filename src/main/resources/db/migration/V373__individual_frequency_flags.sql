@@ -1,7 +1,7 @@
 -- V373 : alerte sur les « faux particuliers » (lot 4).
 --
 -- Un voyageur déclaré particulier (users.traveler_status = 'INDIVIDUAL', sans badge GP Pro) qui a eu, sur 30 jours
--- glissants, plus de trajets distincts avec une réservation acceptée que le seuil réglé dans l'admin
+-- glissants, plus de voyages (dates de départ distinctes) avec une réservation acceptée que le seuil réglé dans l'admin
 -- (platform_settings.individual_trips_alert_threshold), ou qui a demandé le badge GP Pro avec la fréquence « chaque
 -- semaine » sans l'obtenir, est signalé à l'équipe et reçoit une question neutre « Confirmez votre statut ».
 -- Jamais de blocage, de sanction ni de changement de statut : le contrôle n'écrit que dans cette table.
@@ -28,6 +28,7 @@ CREATE TABLE individual_frequency_flags (
     CONSTRAINT individual_frequency_flags_user_fkey FOREIGN KEY (user_id) REFERENCES users (id),
     CONSTRAINT individual_frequency_flags_trips_count_check CHECK (trips_count >= 0),
     CONSTRAINT individual_frequency_flags_window_days_check CHECK (window_days > 0),
+    -- Mêmes bornes que PlatformSettingKey.MIN/MAX_INDIVIDUAL_TRIPS_ALERT_THRESHOLD : les changer ensemble.
     CONSTRAINT individual_frequency_flags_threshold_check CHECK (threshold BETWEEN 1 AND 100)
 );
 
@@ -35,7 +36,7 @@ CREATE TABLE individual_frequency_flags (
 -- qu'après que la condition a cessé puis repris.
 CREATE UNIQUE INDEX uq_individual_frequency_flags_open
     ON individual_frequency_flags (user_id)
-    WHERE resolved_at IS NULL;
+    WHERE resolved_at IS NULL AND deleted_at IS NULL;
 
 COMMENT ON TABLE individual_frequency_flags IS
     'Particuliers qui voyagent comme des professionnels, à confirmer (lot 4). Jamais de blocage automatique.';

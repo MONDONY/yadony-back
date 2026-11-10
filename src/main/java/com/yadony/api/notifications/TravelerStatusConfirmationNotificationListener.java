@@ -19,6 +19,9 @@ import java.util.Map;
 @Component
 public class TravelerStatusConfirmationNotificationListener {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(TravelerStatusConfirmationNotificationListener.class);
+
     static final String TYPE = "TRAVELER_STATUS_CONFIRMATION";
     static final String ROUTE = "/profile/gp-pro";
 
@@ -32,8 +35,14 @@ public class TravelerStatusConfirmationNotificationListener {
     @Async
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onFlagged(IndividualFrequencyFlaggedEvent event) {
-        Messages m = dispatcher.messagesFor(event.userId());
-        NotificationText text = NotificationTexts.travelerStatusConfirmation(m);
-        dispatcher.notifyUser(event.userId(), text.title(), text.body(), Map.of("type", TYPE, "route", ROUTE));
+        try {
+            Messages m = dispatcher.messagesFor(event.userId());
+            NotificationText text = NotificationTexts.travelerStatusConfirmation(m);
+            dispatcher.notifyUser(event.userId(), text.title(), text.body(), Map.of("type", TYPE, "route", ROUTE));
+        } catch (RuntimeException e) {
+            // Le signalement est déjà validé et reste dans la file admin ; pas de relance.
+            log.warn("Question « Confirmez votre statut » non envoyée (utilisateur {}, signalement {}) : {}",
+                    event.userId(), event.flagId(), e.getClass().getSimpleName());
+        }
     }
 }

@@ -58,6 +58,17 @@ class TravelerStatusConfirmationNotificationListenerTest {
     }
 
     @Test
+    void envoiEnEchec_journaliseSansPropager() {
+        when(dispatcher.messagesFor(userId)).thenReturn(TestMessages.fr());
+        org.mockito.Mockito.doThrow(new IllegalStateException("fcm"))
+                .when(dispatcher).notifyUser(any(), any(), any(), any());
+
+        org.assertj.core.api.Assertions.assertThatCode(
+                () -> listener.onFlagged(new IndividualFrequencyFlaggedEvent(userId, flagId)))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
     void routageEtFamille() {
         assertThat(NotificationDeeplink.of("TRAVELER_STATUS_CONFIRMATION", Map.of()))
                 .contains("yadony://profile/gp-pro");

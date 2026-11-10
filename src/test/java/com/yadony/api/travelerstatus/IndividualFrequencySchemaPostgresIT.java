@@ -120,6 +120,89 @@ class IndividualFrequencySchemaPostgresIT {
         assertThat(flagRepository.findByResolvedAtIsNull()).hasSize(1);
     }
 
+    @Autowired com.yadony.api.matching.AnnouncementRepository announcementRepository;
+    @Autowired com.yadony.api.matching.BidRepository bidRepository;
+    @Autowired com.yadony.api.gppro.GpProApplicationRepository applicationRepository;
+    @Autowired jakarta.persistence.EntityManager entityManager;
+
+    private UUID trip(UUID travelerId, java.time.LocalDate departureDate) {
+        com.yadony.api.matching.AnnouncementEntity a = new com.yadony.api.matching.AnnouncementEntity();
+        a.setTravelerId(travelerId);
+        a.setDepartureCity("Paris");
+        a.setArrivalCity("Dakar");
+        a.setArrivalCountryCode("SN");
+        a.setDepartureDate(departureDate);
+        a.setTransportMode(com.yadony.api.matching.TransportMode.PLANE);
+        a.setPickupAddressLabel("Paris");
+        a.setPickupLat(new java.math.BigDecimal("48.860000"));
+        a.setPickupLng(new java.math.BigDecimal("2.350000"));
+        a.setDeliveryAddressLabel("Dakar");
+        a.setDeliveryLat(new java.math.BigDecimal("14.693000"));
+        a.setDeliveryLng(new java.math.BigDecimal("-17.447000"));
+        a.setAvailableKg(new java.math.BigDecimal("10.00"));
+        a.setTotalKg(new java.math.BigDecimal("10.00"));
+        a.setPricePerKg(new java.math.BigDecimal("5.00"));
+        a.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
+        return announcementRepository.saveAndFlush(a).getId();
+    }
+
+    private void acceptedBid(UUID tripId, UUID senderId) {
+        com.yadony.api.matching.BidEntity b = new com.yadony.api.matching.BidEntity();
+        b.setAnnouncementId(tripId);
+        b.setSenderId(senderId);
+        b.setStatus(com.yadony.api.matching.BidStatus.ACCEPTED);
+        b.setWeightKg(new java.math.BigDecimal("2.00"));
+        bidRepository.saveAndFlush(b);
+    }
+
+    @Test
+    @DisplayName("détection sur Postgres avec de vraies données : voyages, même jour, demande hebdomadaire refusée")
+    void detectionWithRealData() {
+        UUID sender = persistUser().getId();
+        UUID frequent = persistUser().getId();
+        UUID weekly = persistUser().getId();
+        java.time.LocalDate base = java.time.LocalDate.now().plusDays(10);
+        for (int i = 0; i < 5; i++) {
+            acceptedBid(trip(frequent, base.plusDays(i)), sender);
+        }
+        // Deux trajets dédiés du même vol : un seul voyage de plus.
+        acceptedBid(trip(frequent, base), sender);
+        acceptedBid(trip(weekly, base), sender);
+        acceptedBid(trip(weekly, base.plusDays(3)), sender);
+        com.yadony.api.gppro.GpProApplicationEntity app = new com.yadony.api.gppro.GpProApplicationEntity();
+        app.setUserId(weekly);
+        app.setStatus(com.yadony.api.gppro.GpProApplicationStatus.REJECTED);
+        app.setSource(com.yadony.api.gppro.GpProApplicationSource.PROFILE);
+        app.setTravelFrequency(com.yadony.api.gppro.GpProTravelFrequency.WEEKLY);
+        app.setDecidedAt(LocalDateTime.now(ZoneOffset.UTC).minusDays(2));
+        applicationRepository.saveAndFlush(app);
+        entityManager.clear();
+
+        var result = evaluator.detect(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(1), 4);
+
+        assertThat(result.get(frequent)).isEqualTo(new IndividualFrequencyEvaluator.Detection(5, false));
+        // countTrips (liste IN) exécutée sur Postgres pour le déclencheur hebdomadaire sous le seuil.
+        assertThat(result.get(weekly)).isEqualTo(new IndividualFrequencyEvaluator.Detection(2, true));
+        assertThat(result).doesNotContainKey(sender);
+    }
+
+    @Test
+    @DisplayName("écarter et résoudre par écriture conditionnelle")
+    void conditionalWrites() {
+        UUID userId = persistUser().getId();
+        IndividualFrequencyFlagEntity f = flagRepository.saveAndFlush(flag(userId));
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+
+        assertThat(flagRepository.dismissIfOpen(f.getId(), UUID.randomUUID(), now)).isEqualTo(1);
+        assertThat(flagRepository.dismissIfOpen(f.getId(), UUID.randomUUID(), now)).isZero();
+        assertThat(flagRepository.resolveIfOpen(f.getId(), now)).isEqualTo(1);
+        assertThat(flagRepository.resolveIfOpen(f.getId(), now)).isZero();
+        IndividualFrequencyFlagEntity reloaded = flagRepository.findById(f.getId()).orElseThrow();
+        assertThat(reloaded.getDismissedAt()).isNotNull();
+        assertThat(reloaded.getResolvedAt()).isNotNull();
+        assertThat(flagRepository.existsByUserIdAndDetectedAtGreaterThanEqual(userId, now.minusDays(90))).isTrue();
+    }
+
     @Test
     @DisplayName("seuil hors bornes refusé par la base")
     void thresholdOutOfBoundsRejected() {

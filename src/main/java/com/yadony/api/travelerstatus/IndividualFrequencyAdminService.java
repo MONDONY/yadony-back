@@ -51,24 +51,25 @@ public class IndividualFrequencyAdminService {
     }
 
     /**
-     * Écarte un signalement. Sans effet s'il l'est déjà ou s'il est déjà résolu (la condition a cessé entre-temps :
-     * il n'y a plus rien à écarter). Ne touche jamais au compte de l'utilisateur.
+     * Écarte un signalement. Une seule écriture conditionnelle ({@code dismissed_at} et {@code resolved_at} nuls) :
+     * un double clic ou une résolution simultanée par le contrôle ne produisent qu'un audit et aucun écrasement.
+     * Sans effet (204) s'il est déjà écarté ou résolu. Ne touche jamais au compte de l'utilisateur.
      */
     @Transactional
     public void dismiss(UUID flagId, UUID adminId) {
         IndividualFrequencyFlagEntity flag = flags.findById(flagId)
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "individual-frequency-flag-not-found", "Flag Not Found", "Signalement introuvable"));
-        if (flag.getDismissedAt() != null || flag.getResolvedAt() != null) {
+        // Lu avant l'UPDATE, qui vide le contexte de persistance.
+        UUID userId = flag.getUserId();
+        int tripsCount = flag.getTripsCount();
+        int threshold = flag.getThreshold();
+        if (flags.dismissIfOpen(flagId, adminId, LocalDateTime.now(ZoneOffset.UTC)) == 0) {
             return;
         }
-        flag.setDismissedAt(LocalDateTime.now(ZoneOffset.UTC));
-        flag.setDismissedBy(adminId);
-        flags.save(flag);
         // Jamais de donnée d'entreprise dans l'audit (immuable) : l'utilisateur et les chiffres seulement.
         audit.log("INDIVIDUAL_FREQUENCY_FLAG", flagId, "INDIVIDUAL_FREQUENCY_FLAG_DISMISSED", adminId,
-                Map.of("userId", flag.getUserId().toString(), "tripsCount", flag.getTripsCount(),
-                        "threshold", flag.getThreshold()));
+                Map.of("userId", userId.toString(), "tripsCount", tripsCount, "threshold", threshold));
     }
 
     /** Bandeau de la fiche utilisateur ; {@code null} sans signalement ouvert (le champ est alors omis du JSON). */

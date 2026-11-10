@@ -66,7 +66,10 @@ class IndividualFrequencyIT {
     private static final int THRESHOLD = 4;
 
     @Autowired IndividualFrequencyEvaluator evaluator;
-    @Autowired IndividualFrequencyScheduler scheduler;
+    /** Le bean du contexte : éteint par défaut (application.yml). */
+    @Autowired IndividualFrequencyScheduler contextScheduler;
+    @Autowired com.yadony.api.config.PlatformSettingsService settings;
+    @Autowired org.springframework.context.ApplicationEventPublisher publisher;
     @Autowired IndividualFrequencyFlagRepository flags;
     @Autowired UserRepository users;
     @Autowired AnnouncementRepository announcements;
@@ -80,12 +83,29 @@ class IndividualFrequencyIT {
     @MockBean FirebaseContactService firebaseContact;
 
     private LocalDateTime now;
+    /** Allumé explicitement, seuil réel (4 par défaut), vraies transactions et vrai écouteur de notification. */
+    private IndividualFrequencyScheduler scheduler;
+    /** Chaque trajet créé part un jour différent, sauf demande explicite. */
+    private int nextDay = 10;
 
     @BeforeEach
     void setUp() {
         when(firebaseContact.getContact(any())).thenReturn(FirebaseContactService.Contact.EMPTY);
         flags.deleteAll();
         now = LocalDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.SECONDS);
+        scheduler = enabledScheduler(settings);
+    }
+
+    private IndividualFrequencyScheduler enabledScheduler(com.yadony.api.config.PlatformSettingsService s) {
+        return new IndividualFrequencyScheduler(flags, evaluator, s, publisher,
+                new IndividualFrequencyProperties(null, true), java.time.Clock.systemUTC(), tx);
+    }
+
+    private IndividualFrequencyScheduler schedulerWithThreshold(int threshold) {
+        com.yadony.api.config.PlatformSettingsService s =
+                org.mockito.Mockito.mock(com.yadony.api.config.PlatformSettingsService.class);
+        when(s.individualTripsAlertThreshold()).thenReturn(threshold);
+        return enabledScheduler(s);
     }
 
     // ── Données ──────────────────────────────────────────────────────────────
@@ -115,12 +135,16 @@ class IndividualFrequencyIT {
     }
 
     private UUID trip(UserEntity traveler, AnnouncementStatus status) {
+        return trip(traveler, status, LocalDate.now().plusDays(nextDay++));
+    }
+
+    private UUID trip(UserEntity traveler, AnnouncementStatus status, LocalDate departureDate) {
         AnnouncementEntity a = new AnnouncementEntity();
         a.setTravelerId(traveler.getId());
         a.setDepartureCity("Paris");
         a.setArrivalCity("Dakar");
         a.setArrivalCountryCode("SN");
-        a.setDepartureDate(LocalDate.now().plusDays(20));
+        a.setDepartureDate(departureDate);
         a.setTransportMode(TransportMode.PLANE);
         a.setPickupAddressLabel("Paris");
         a.setPickupLat(new BigDecimal("48.860000"));
@@ -152,9 +176,13 @@ class IndividualFrequencyIT {
      * heure ou deux, fatal à un test de frontière à la minute.
      */
     private void backdate(String table, UUID id, LocalDateTime createdAt) {
+        backdate(table, "created_at", id, createdAt);
+    }
+
+    private void backdate(String table, String column, UUID id, LocalDateTime value) {
         tx.executeWithoutResult(s -> entityManager
-                .createNativeQuery("UPDATE " + table + " SET created_at = :createdAt WHERE id = :id")
-                .setParameter("createdAt", createdAt)
+                .createNativeQuery("UPDATE " + table + " SET " + column + " = :value WHERE id = :id")
+                .setParameter("value", value)
                 .setParameter("id", id)
                 .executeUpdate());
     }
@@ -191,12 +219,16 @@ class IndividualFrequencyIT {
     void gpProValide_professionnel_etSansStatut_neSontJamaisSignales() {
         UserEntity gpPro = user(TravelerStatus.INDIVIDUAL, true);
         UserEntity pro = user(TravelerStatus.PROFESSIONAL, true);
+        // Données d'avant le GP Pro unifié (#721) : professionnel sans badge.
+        UserEntity proWithoutBadge = user(TravelerStatus.PROFESSIONAL, false);
         UserEntity undeclared = user(null, false);
         acceptedTrips(gpPro, 8, 2);
         acceptedTrips(pro, 8, 2);
+        acceptedTrips(proWithoutBadge, 8, 2);
         acceptedTrips(undeclared, 8, 2);
 
-        assertThat(detect()).doesNotContainKeys(gpPro.getId(), pro.getId(), undeclared.getId());
+        assertThat(detect()).doesNotContainKeys(gpPro.getId(), pro.getId(), proWithoutBadge.getId(),
+                undeclared.getId());
     }
 
     @Test
@@ -320,27 +352,127 @@ class IndividualFrequencyIT {
         assertThat(detect()).doesNotContainKey(weekly.getId());
     }
 
-    private void application(UserEntity u, GpProTravelFrequency frequency, GpProApplicationStatus status,
-                             LocalDateTime createdAt) {
+    /** La fenêtre porte sur la décision (refus) ou l'annulation, pas sur le dépôt de la demande. */
+    @Test
+    void demandeGpProHebdomadaire_dateeSurLaDecision_pasSurLeDepot() {
+        UserEntity decidedRecently = user(TravelerStatus.INDIVIDUAL, false);
+        UserEntity cancelledRecently = user(TravelerStatus.INDIVIDUAL, false);
+        UserEntity createdRecentlyDecidedLongAgo = user(TravelerStatus.INDIVIDUAL, false);
+        UUID a1 = application(decidedRecently, GpProTravelFrequency.WEEKLY, GpProApplicationStatus.REJECTED,
+                now.minusDays(2));
+        backdate("gp_pro_applications", a1, now.minusDays(45));
+        UUID a2 = application(cancelledRecently, GpProTravelFrequency.WEEKLY, GpProApplicationStatus.CANCELLED,
+                now.minusDays(2));
+        backdate("gp_pro_applications", a2, now.minusDays(45));
+        UUID a3 = application(createdRecentlyDecidedLongAgo, GpProTravelFrequency.WEEKLY,
+                GpProApplicationStatus.REJECTED, now.minusDays(31));
+        backdate("gp_pro_applications", a3, now.minusDays(1));
+
+        assertThat(detect()).containsKeys(decidedRecently.getId(), cancelledRecently.getId())
+                .doesNotContainKey(createdRecentlyDecidedLongAgo.getId());
+    }
+
+    @Test
+    void demandeGpProEnCours_jamaisSignale_niParLeCompteur_etSonDrapeauEstResolu() {
+        UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
+        acceptedTrips(traveler, 6, 2);
+        scheduler.run();
+        assertThat(openFlags(traveler)).hasSize(1);
+
+        UUID open = application(traveler, GpProTravelFrequency.WEEKLY, GpProApplicationStatus.PENDING, now);
+        assertThat(detect()).doesNotContainKey(traveler.getId());
+        scheduler.run();
+        assertThat(openFlags(traveler)).isEmpty();
+
+        jdbc.update("UPDATE gp_pro_applications SET status = 'AWAITING_KYC' WHERE id = ?", open);
+        assertThat(detect()).doesNotContainKey(traveler.getId());
+    }
+
+    @Test
+    void deuxAnnoncesLeMemeJour_unSeulVoyage() {
+        UserEntity dedicated = user(TravelerStatus.INDIVIDUAL, false);
+        UserEntity sameDayBelow = user(TravelerStatus.INDIVIDUAL, false);
+        UserEntity s = sender();
+        // 4 voyages + 3 trajets dédiés du même vol : 5 voyages, pas 7.
+        acceptedTrips(dedicated, 4, 1);
+        LocalDate flight = LocalDate.now().plusDays(60);
+        for (int i = 0; i < 3; i++) {
+            bid(trip(dedicated, AnnouncementStatus.ACTIVE, flight), s, BidStatus.ACCEPTED, now.minusDays(1));
+        }
+        // 3 voyages + 2 annonces le même jour : 4 voyages, pas 5, sous le seuil.
+        acceptedTrips(sameDayBelow, 3, 1);
+        bid(trip(sameDayBelow, AnnouncementStatus.ACTIVE, flight), s, BidStatus.ACCEPTED, now.minusDays(1));
+        bid(trip(sameDayBelow, AnnouncementStatus.ACTIVE, flight), s, BidStatus.COMPLETED, now.minusDays(1));
+
+        Map<UUID, IndividualFrequencyEvaluator.Detection> result = detect();
+
+        assertThat(result.get(dedicated.getId()).tripsCount()).isEqualTo(5);
+        assertThat(result).doesNotContainKey(sameDayBelow.getId());
+    }
+
+    /**
+     * Demande GP Pro dont la dernière décision (refus : {@code decided_at}) ou modification (annulation, demande
+     * ouverte : {@code updated_at}) date de {@code closedAt}. Déposée la même date, sauf antidatage explicite.
+     */
+    private UUID application(UserEntity u, GpProTravelFrequency frequency, GpProApplicationStatus status,
+                             LocalDateTime closedAt) {
         GpProApplicationEntity a = new GpProApplicationEntity();
         a.setUserId(u.getId());
         a.setStatus(status);
         a.setSource(GpProApplicationSource.PROFILE);
         a.setTravelFrequency(frequency);
         UUID id = applications.saveAndFlush(a).getId();
-        backdate("gp_pro_applications", id, createdAt);
+        backdate("gp_pro_applications", "created_at", id, closedAt);
+        backdate("gp_pro_applications", "updated_at", id, closedAt);
+        if (status == GpProApplicationStatus.REJECTED) {
+            backdate("gp_pro_applications", "decided_at", id, closedAt);
+        }
+        return id;
+    }
+
+    private List<IndividualFrequencyFlagEntity> openFlags(UserEntity u) {
+        return flags.findAll().stream()
+                .filter(f -> f.getUserId().equals(u.getId()) && f.getResolvedAt() == null).toList();
+    }
+
+    private long questions(UserEntity u) {
+        return jdbc.queryForObject("SELECT COUNT(*) FROM notifications WHERE user_id = ? AND type = ?",
+                Long.class, u.getId(), "TRAVELER_STATUS_CONFIRMATION");
+    }
+
+    /** L'écouteur est asynchrone (après validation) : attend que {@code expected} questions soient enregistrées. */
+    private void awaitQuestions(UserEntity u, long expected) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 15_000;
+        while (questions(u) < expected && System.currentTimeMillis() < deadline) {
+            Thread.sleep(100);
+        }
+        assertThat(questions(u)).isEqualTo(expected);
     }
 
     // ── Contrôle quotidien ───────────────────────────────────────────────────
 
     @Test
-    void doubleExecution_unSeulDrapeau_etAucuneModificationDesDonnees() {
+    void beanDuContexte_eteintParDefaut_neFaitRien() {
+        UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
+        acceptedTrips(traveler, 6, 2);
+        application(traveler, GpProTravelFrequency.WEEKLY, GpProApplicationStatus.REJECTED, now.minusDays(1));
+
+        assertThat(contextScheduler.run()).isEqualTo(new IndividualFrequencyScheduler.Outcome(0, 0, 0, 0));
+        assertThat(openFlags(traveler)).isEmpty();
+    }
+
+    @Test
+    void doubleExecution_unSeulDrapeau_uneSeuleQuestion_etAucuneModificationDesDonnees() throws Exception {
         UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
         acceptedTrips(traveler, 5, 2);
         List<Map<String, Object>> before = snapshot(traveler);
 
         scheduler.run();
         scheduler.run();
+        // L'écouteur asynchrone a fini (sa ligne est écrite) avant de comparer : l'instantané couvre aussi l'envoi.
+        awaitQuestions(traveler, 1);
+        Thread.sleep(500);
+        assertThat(questions(traveler)).isEqualTo(1);
 
         List<IndividualFrequencyFlagEntity> mine = flags.findAll().stream()
                 .filter(f -> f.getUserId().equals(traveler.getId())).toList();
@@ -365,6 +497,23 @@ class IndividualFrequencyIT {
 
         assertThat(flags.findAll().stream().filter(f -> f.getUserId().equals(traveler.getId())))
                 .singleElement().satisfies(f -> assertThat(f.getResolvedAt()).isNotNull());
+    }
+
+    @Test
+    void seuilReleve_resout_puisSeuilRebaisse_nouveauDrapeauSansSecondeQuestion() throws Exception {
+        UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
+        acceptedTrips(traveler, 5, 2);
+
+        schedulerWithThreshold(4).run();
+        awaitQuestions(traveler, 1);
+        schedulerWithThreshold(10).run();
+        assertThat(openFlags(traveler)).isEmpty();
+        schedulerWithThreshold(4).run();
+
+        assertThat(openFlags(traveler)).hasSize(1);
+        assertThat(flags.findAll().stream().filter(f -> f.getUserId().equals(traveler.getId()))).hasSize(2);
+        Thread.sleep(500);
+        assertThat(questions(traveler)).isEqualTo(1);
     }
 
     @Test
@@ -429,7 +578,7 @@ class IndividualFrequencyIT {
 
         mockMvc.perform(post("/admin/individual-frequency-flags/{id}/dismiss", flag.getId()).with(admin))
                 .andExpect(status().isNoContent());
-        // Idempotent.
+        // Double clic : 204 aussi, et une seule ligne d'audit (écriture conditionnelle).
         mockMvc.perform(post("/admin/individual-frequency-flags/{id}/dismiss", flag.getId()).with(admin))
                 .andExpect(status().isNoContent());
 

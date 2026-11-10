@@ -22,11 +22,14 @@ import java.util.UUID;
  * <p>Un utilisateur est retenu s'il n'a pas le badge GP Pro, s'est déclaré particulier
  * ({@code traveler_status = INDIVIDUAL}), et :
  * <ul>
- *   <li>ses trajets distincts ayant au moins une réservation {@link #COUNTED_BIDS} créée dans les
- *       {@link #WINDOW_DAYS} derniers jours (UTC, borne incluse) sont strictement plus nombreux que le seuil ;</li>
- *   <li>ou il a demandé le badge GP Pro avec la fréquence « chaque semaine » dans la même fenêtre, demande refusée
- *       ou annulée (une demande encore ouverte est déjà examinée par l'équipe).</li>
+ *   <li>ses voyages (dates de départ distinctes, voir {@link IndividualFrequencyFlagRepository#countTripsAboveThreshold})
+ *       parmi les trajets ayant au moins une réservation {@link #COUNTED_BIDS} créée dans les {@link #WINDOW_DAYS}
+ *       derniers jours (UTC, borne incluse) sont strictement plus nombreux que le seuil ;</li>
+ *   <li>ou une demande GP Pro « chaque semaine » a été refusée ou annulée dans la même fenêtre (date de la décision
+ *       ou de l'annulation).</li>
  * </ul>
+ * N'est jamais retenu non plus celui qui a une demande GP Pro en cours ({@link #OPEN_APPLICATIONS}) : l'équipe
+ * l'examine déjà dans la file GP Pro.
  * Un professionnel, un GP Pro validé ou un utilisateur sans statut déclaré n'est jamais retenu, ni un compte
  * suspendu, banni, en cours de suppression ({@code status != ACTIVE} ou {@code deletion_requested_at} posé) ou
  * supprimé (soft delete). Un signalement ouvert d'un tel compte est donc résolu au passage suivant.
@@ -49,11 +52,15 @@ public class IndividualFrequencyEvaluator {
     static final Set<AnnouncementStatus> EXCLUDED_TRIPS =
             EnumSet.of(AnnouncementStatus.CANCELLED, AnnouncementStatus.REMOVED_BY_ADMIN);
 
+    /** Demande GP Pro en cours d'examen : la personne n'est pas signalée. */
+    static final Set<GpProApplicationStatus> OPEN_APPLICATIONS =
+            EnumSet.of(GpProApplicationStatus.AWAITING_KYC, GpProApplicationStatus.PENDING);
+
     /** Demande GP Pro close sans badge. */
     static final Set<GpProApplicationStatus> CLOSED_WITHOUT_BADGE =
             EnumSet.of(GpProApplicationStatus.REJECTED, GpProApplicationStatus.CANCELLED);
 
-    /** Ce qui a été constaté pour un utilisateur retenu. */
+    /** Ce qui a été constaté pour un utilisateur retenu ; {@code tripsCount} compte des voyages (dates de départ). */
     public record Detection(int tripsCount, boolean weeklyApplication) {
     }
 
@@ -73,11 +80,12 @@ public class IndividualFrequencyEvaluator {
         LocalDateTime since = now.minusDays(WINDOW_DAYS);
         int safeThreshold = Math.max(threshold, 1);
         Map<UUID, Detection> result = new HashMap<>();
-        for (Object[] row : repository.countTripsAboveThreshold(COUNTED_BIDS, EXCLUDED_TRIPS, since, safeThreshold)) {
+        for (Object[] row : repository.countTripsAboveThreshold(COUNTED_BIDS, EXCLUDED_TRIPS,
+                OPEN_APPLICATIONS, since, safeThreshold)) {
             result.put((UUID) row[0], new Detection(toInt(row[1]), false));
         }
         List<UUID> weekly = repository.findIndividualsWithApplication(GpProTravelFrequency.WEEKLY,
-                CLOSED_WITHOUT_BADGE, since);
+                CLOSED_WITHOUT_BADGE, OPEN_APPLICATIONS, since);
         if (weekly.isEmpty()) {
             return result;
         }

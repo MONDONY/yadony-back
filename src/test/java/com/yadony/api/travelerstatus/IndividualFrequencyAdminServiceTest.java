@@ -52,45 +52,28 @@ class IndividualFrequencyAdminServiceTest {
     }
 
     @Test
-    void ecarter_poseLaDate_lAuteur_etAudite() {
+    void ecarter_ecritureConditionnelle_etAudite() {
         IndividualFrequencyFlagEntity f = flag();
         when(flags.findById(f.getId())).thenReturn(Optional.of(f));
+        when(flags.dismissIfOpen(eq(f.getId()), eq(adminId), any())).thenReturn(1);
 
         service.dismiss(f.getId(), adminId);
 
-        assertThat(f.getDismissedAt()).isNotNull();
-        assertThat(f.getDismissedBy()).isEqualTo(adminId);
-        verify(flags).save(f);
+        verify(flags).dismissIfOpen(eq(f.getId()), eq(adminId), any());
+        verify(flags, never()).save(any());
         verify(audit).log("INDIVIDUAL_FREQUENCY_FLAG", f.getId(), "INDIVIDUAL_FREQUENCY_FLAG_DISMISSED", adminId,
                 Map.of("userId", userId.toString(), "tripsCount", 6, "threshold", 4));
     }
 
+    /** Déjà écarté, déjà résolu, ou devancé par un clic ou un contrôle simultané : l'UPDATE ne touche rien. */
     @Test
-    void ecarter_deuxFois_estSansEffet() {
+    void ecarter_sansLigneModifiee_pasDAudit() {
         IndividualFrequencyFlagEntity f = flag();
-        LocalDateTime first = LocalDateTime.of(2026, 11, 9, 10, 0);
-        f.setDismissedAt(first);
-        f.setDismissedBy(adminId);
         when(flags.findById(f.getId())).thenReturn(Optional.of(f));
-
-        service.dismiss(f.getId(), UUID.randomUUID());
-
-        assertThat(f.getDismissedAt()).isEqualTo(first);
-        assertThat(f.getDismissedBy()).isEqualTo(adminId);
-        verify(flags, never()).save(any());
-        verifyNoInteractions(audit);
-    }
-
-    @Test
-    void ecarter_unDrapeauDejaResolu_estSansEffet() {
-        IndividualFrequencyFlagEntity f = flag();
-        f.setResolvedAt(LocalDateTime.of(2026, 11, 9, 10, 0));
-        when(flags.findById(f.getId())).thenReturn(Optional.of(f));
+        when(flags.dismissIfOpen(eq(f.getId()), any(), any())).thenReturn(0);
 
         service.dismiss(f.getId(), adminId);
 
-        assertThat(f.getDismissedAt()).isNull();
-        verify(flags, never()).save(any());
         verifyNoInteractions(audit);
     }
 
