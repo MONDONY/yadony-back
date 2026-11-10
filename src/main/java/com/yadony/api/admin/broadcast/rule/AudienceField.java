@@ -90,9 +90,12 @@ public enum AudienceField {
                     .map(s -> new ValueOption(s.name(), s.name())).toList(),
             (op, value, p) -> "u.mobile_money_status IN (" + p.bind(texts(value)) + ")"),
 
-    ACCOUNT_TYPE("account_type", Family.STATUS, "Type de compte",
+    // Désigne l'abonnement PRO (is_pro_account), pas le statut légal « particulier / professionnel »
+    // que déclare le voyageur (users.traveler_status) : les libellés le disent, les clés restent.
+    ACCOUNT_TYPE("account_type", Family.STATUS, "Type d'abonnement",
             Map.of(AudienceOperator.IS, ValueType.ENUM),
-            List.of(new ValueOption("PERSONAL", "Particulier"), new ValueOption("BUSINESS", "Professionnel")),
+            List.of(new ValueOption("PERSONAL", "Abonnement particulier"),
+                    new ValueOption("BUSINESS", "Abonnement professionnel")),
             (op, value, p) -> "u.is_pro_account = " + ("BUSINESS".equals(value.asText()) ? "true" : "false")),
 
     // Source du solde : wallet_accounts, comme l'écran des portefeuilles de l'admin (AdminFinanceSql).

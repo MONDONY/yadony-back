@@ -75,6 +75,45 @@ class KnowledgeBaseFichesTest {
     }
 
     @Test
+    void laFicheStatutVoyageurExisteEnFrancaisEtEnAnglaisSansRouteNiEcran() {
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        for (String locale : List.of("fr", "en")) {
+            KbArticle fiche = corpus.articles(locale).stream()
+                    .filter(x -> x.id().equals("statut-voyageur")).findFirst().orElseThrow();
+            assertThat(fiche.routes()).as(locale).isEmpty();
+            assertThat(fiche.screens()).as(locale).isEmpty();
+            assertThat(fiche.body().length()).as(locale).isBetween(200, 2000);
+            assertThat(fiche.body()).doesNotContain("\u2014");
+        }
+    }
+
+    @Test
+    void lesFichesTouchees_parLeStatutVoyageur_restentSousLeursLimites() {
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        for (String locale : List.of("fr", "en")) {
+            for (String id : List.of("gp-pro", "proposer-trajet", "ecran-modifier-profil")) {
+                KbArticle fiche = corpus.articles(locale).stream()
+                        .filter(x -> x.id().equals(id)).findFirst().orElseThrow();
+                assertThat(fiche.body().length()).as(locale + "/" + id)
+                        .isLessThanOrEqualTo(fiche.screens().isEmpty() ? 2000 : 600);
+                assertThat(fiche.body().toLowerCase()).as(locale + "/" + id)
+                        .containsAnyOf("particulier", "individual");
+            }
+        }
+    }
+
+    @Test
+    void laQuestionSurLeStatutTrouveLaFicheStatutVoyageur() {
+        KnowledgeBase kb = productionKb();
+        assertThat(firstHit(kb, "fr", "Que change le statut particulier pour l'expéditeur ?"))
+                .isEqualTo("statut-voyageur");
+        assertThat(firstHit(kb, "fr", "Voyager en tant que particulier ou professionnel ?"))
+                .isEqualTo("statut-voyageur");
+        assertThat(firstHit(kb, "en", "Traveling as an individual or as a professional?"))
+                .isEqualTo("statut-voyageur");
+    }
+
+    @Test
     void lesQuestionsReellesTrouventLeurFicheEnTete() {
         KnowledgeBase kb = productionKb();
         Map<String, String> fr = new LinkedHashMap<>();

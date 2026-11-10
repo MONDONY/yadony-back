@@ -201,6 +201,22 @@ class AudienceFieldsIT {
         assertThat(match("account_type", "IS", "\"PERSONAL\"")).contains(personal).doesNotContain(business);
     }
 
+    /**
+     * Le champ désigne l'abonnement PRO (is_pro_account), pas le statut légal du voyageur : les libellés
+     * le disent pour que l'admin ne cible pas les « professionnels » en croyant viser le statut déclaré.
+     * Les clés restent PERSONAL / BUSINESS (règles de diffusion déjà enregistrées).
+     */
+    @Test
+    void accountType_libellesDisentAbonnement_clesInchangees() {
+        assertThat(AudienceField.ACCOUNT_TYPE.key()).isEqualTo("account_type");
+        assertThat(AudienceField.ACCOUNT_TYPE.label()).isEqualTo("Type d'abonnement");
+        assertThat(AudienceField.ACCOUNT_TYPE.options())
+                .extracting(ValueOption::key, ValueOption::label)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("PERSONAL", "Abonnement particulier"),
+                        org.assertj.core.groups.Tuple.tuple("BUSINESS", "Abonnement professionnel"));
+    }
+
     @Test
     void walletBalance_positiveEtZero() {
         UUID funded = user();

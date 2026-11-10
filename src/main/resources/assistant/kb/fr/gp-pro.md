@@ -13,4 +13,5 @@ L'équipe Yadony examine votre profil et décide. Aucun délai n'est garanti. Vo
 Vos documents sont supprimés dès la décision.
 Le badge s'affiche sur vos trajets et votre profil, et les expéditeurs peuvent filtrer les GP Pro. Il n'apporte ni réduction des frais de service ni annonces en plus.
 L'équipe peut retirer le badge, avec un motif. Après un refus ou un retrait, vous pouvez refaire une demande tout de suite.
+Le badge ne dit pas si vous voyagez comme particulier ou comme professionnel : il signale un profil examiné par Yadony. Ce statut se déclare à part, avant la publication d'un trajet.
 Kilo Pro n'existe plus : GP Pro le remplace.

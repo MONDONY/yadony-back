@@ -12,6 +12,7 @@ Depuis l'onglet Rechercher, touchez le bouton Publier puis « Publier un trajet 
 Depuis l'onglet Activités, la tuile « Je voyage » propose aussi « Publier un trajet » tant que vous n'avez aucun trajet ; ensuite la tuile « Trajets actifs » ouvre Mes trajets, où le bouton « + Nouveau » en crée un autre.
 Vous acceptez d'abord vos engagements de voyageur : transporter le colis vous-même, respecter la date et l'itinéraire, lire le QR à la remise et à la livraison, n'accepter que des contenus autorisés.
 Votre identité doit être vérifiée.
+Yadony peut aussi vous demander si vous voyagez comme particulier ou comme professionnel ; les expéditeurs le voient sur votre trajet.
 Renseignez ensuite la ville de départ et d'arrivée, la date, l'heure, le mode de transport, la capacité, le prix, les moyens de paiement acceptés, le lieu de remise et la date limite de dépôt, puis publiez ou enregistrez en brouillon.
 La date limite de dépôt s'affiche à l'heure de la ville de départ. Après elle, plus personne ne peut faire de demande sur votre trajet.
 Une fois le trajet publié, l'écran de confirmation propose « Voir les colis pour ce trajet » : il ouvre l'onglet Rechercher en mode « Je voyage », sur les colis compatibles avec vos trajets. « Voir mon trajet » ouvre son détail et « Partager mon affiche » l'affiche à partager.

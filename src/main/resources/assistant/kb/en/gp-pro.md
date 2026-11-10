@@ -13,4 +13,5 @@ The Yadony team reviews your profile and decides. No turnaround time is guarante
 Your documents are deleted as soon as the decision is made.
 The badge appears on your trips and your profile, and senders can filter for GP Pros. It brings no service fee discount and no extra listings.
 The team can remove the badge, with a reason. After a refusal or a removal, you can apply again right away.
+The badge does not say whether you travel as an individual or as a professional: it means a profile reviewed by Yadony. That status is declared separately, before you publish a trip.
 Kilo Pro no longer exists: GP Pro replaces it.
