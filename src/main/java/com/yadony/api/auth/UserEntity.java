@@ -330,6 +330,11 @@ public class UserEntity extends BaseEntity {
     @Column(name = "business_country", length = 2)
     private String businessCountry;
 
+    // Limite mensuelle de trajets publiés, réglée dans l'admin. null = aucune limite (aucune valeur par
+    // défaut). Un GP Pro validé n'est jamais limité.
+    @Column(name = "monthly_trip_limit")
+    private Integer monthlyTripLimit;
+
     @Column(name = "bio", length = 280)
     private String bio;
 
@@ -713,6 +718,9 @@ public class UserEntity extends BaseEntity {
 
     public String getBusinessCountry() { return businessCountry; }
     public void setBusinessCountry(String businessCountry) { this.businessCountry = businessCountry; }
+
+    public Integer getMonthlyTripLimit() { return monthlyTripLimit; }
+    public void setMonthlyTripLimit(Integer monthlyTripLimit) { this.monthlyTripLimit = monthlyTripLimit; }
 
     /**
      * Statut légal tel que le voient les expéditeurs : {@code "INDIVIDUAL"}, {@code "PROFESSIONAL"}

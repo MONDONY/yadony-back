@@ -2095,14 +2095,14 @@ public class AnnouncementService {
     }
 
     /**
-     * Garde « statut du voyageur obligatoire », injecté par setter pour ne pas élargir le constructeur
+     * Garde « limite mensuelle de trajets », injecté par setter pour ne pas élargir le constructeur
      * (construit à la main dans de nombreux tests) ; sans garde, aucun contrôle.
      */
-    private com.yadony.api.common.TravelerStatusGate travelerStatusGate;
+    private com.yadony.api.travelerstatus.PublishingLimitGate publishingLimitGate;
 
     @org.springframework.beans.factory.annotation.Autowired
-    void setTravelerStatusGate(com.yadony.api.common.TravelerStatusGate travelerStatusGate) {
-        this.travelerStatusGate = travelerStatusGate;
+    void setPublishingLimitGate(com.yadony.api.travelerstatus.PublishingLimitGate publishingLimitGate) {
+        this.publishingLimitGate = publishingLimitGate;
     }
 
     /**
@@ -2123,10 +2123,10 @@ public class AnnouncementService {
             );
         }
 
-        // Après le KYC, avant la limite mensuelle. Jamais pour un brouillon : assertCanPublish n'est
+        // Après le KYC, avant la limite PRO. Jamais pour un brouillon : assertCanPublish n'est
         // appelé que pour une publication (directe ou DRAFT vers ACTIVE).
-        if (travelerStatusGate != null) {
-            travelerStatusGate.assertDeclaredIfRequired(user);
+        if (publishingLimitGate != null) {
+            publishingLimitGate.assertCanPublish(user);
         }
 
         if (!settings.hasProQuotas(user.isProAccount()) && config.limits() != null) {

@@ -289,12 +289,15 @@ class TripRecurrenceServiceTest {
         assertThat(rec.getLastGeneratedDate()).isEqualTo(LocalDate.now().plusDays(1));
     }
 
-    // ── Statut du voyageur obligatoire (interrupteur traveler_status_required) ────────
+    // ── Garde de publication (limite mensuelle de trajets) ────────
 
     private void requireTravelerStatus() {
-        var settings = mock(com.yadony.api.config.PlatformSettingsService.class);
-        lenient().when(settings.travelerStatusRequired()).thenReturn(true);
-        service.setTravelerStatusGate(new com.yadony.api.common.TravelerStatusGate(settings));
+        publishingDecision(com.yadony.api.travelerstatus.PublishingEligibilityReason.STATUS_REQUIRED);
+    }
+
+    private void publishingDecision(com.yadony.api.travelerstatus.PublishingEligibilityReason reason) {
+        service.setPublishingLimitGate(
+                com.yadony.api.travelerstatus.PublishingLimitGateStubs.gateReturning(reason));
     }
 
     private UserEntity realUser(com.yadony.api.travelerstatus.TravelerStatus status) {
@@ -321,13 +324,36 @@ class TripRecurrenceServiceTest {
 
     @Test
     void create_activeWithTravelerStatus_switchOn_passes() {
-        requireTravelerStatus();
+        publishingDecision(com.yadony.api.travelerstatus.PublishingEligibilityReason.OK);
         realUser(com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL);
 
         service.create(userId, request("1111111", 0, true));
 
         verify(repository, atLeastOnce()).save(any(TripRecurrenceEntity.class));
         verify(eventPublisher).publishEvent(any(TripRecurrenceSavedEvent.class));
+    }
+
+    @Test
+    void create_activeAtMonthlyLimit_is403MonthlyLimitReached_andNothingIsSaved() {
+        publishingDecision(com.yadony.api.travelerstatus.PublishingEligibilityReason.LIMIT_REACHED);
+        realUser(com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL);
+
+        assertThatThrownBy(() -> service.create(userId, request("1111111", 0, true)))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("monthly-limit-reached"));
+        verify(repository, never()).save(any(TripRecurrenceEntity.class));
+        verifyNoInteractions(auditService, eventPublisher);
+    }
+
+    @Test
+    void create_activeWithGpProPending_is403GpProPending_andNothingIsSaved() {
+        publishingDecision(com.yadony.api.travelerstatus.PublishingEligibilityReason.GP_PRO_PENDING);
+        realUser(null);
+
+        assertThatThrownBy(() -> service.create(userId, request("1111111", 0, true)))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("gp-pro-pending"));
+        verify(repository, never()).save(any(TripRecurrenceEntity.class));
     }
 
     @Test
@@ -367,6 +393,23 @@ class TripRecurrenceServiceTest {
 
         assertThat(created).isZero();
         // Les dates de l'horizon ne sont pas perdues : le passage suivant les retentera une fois le statut déclaré.
+        assertThat(rec.getLastGeneratedDate()).isNull();
+        verify(repository, never()).save(any(TripRecurrenceEntity.class));
+        verify(announcementService, times(1)).createRecurringAnnouncement(anyString(), any(), any());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"monthly-limit-reached", "gp-pro-pending"})
+    void generate_limitOrPendingRefusal_doesNotAdvanceLastGeneratedDate(String code) {
+        mockUser();
+        when(announcementService.createRecurringAnnouncement(anyString(), any(), any()))
+                .thenThrow(new YadonyBusinessException(org.springframework.http.HttpStatus.FORBIDDEN,
+                        code, "Refus", "Publication refusée."));
+        TripRecurrenceEntity rec = entity("1111111", 3, null);
+
+        int created = service.generateForRecurrence(rec);
+
+        assertThat(created).isZero();
         assertThat(rec.getLastGeneratedDate()).isNull();
         verify(repository, never()).save(any(TripRecurrenceEntity.class));
         verify(announcementService, times(1)).createRecurringAnnouncement(anyString(), any(), any());
