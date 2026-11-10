@@ -203,6 +203,7 @@ class NotificationTextsTest {
         map.put("gpProApproved", NotificationTexts.gpProApproved(m));
         map.put("gpProRejected", NotificationTexts.gpProRejected(m));
         map.put("gpProRevoked", NotificationTexts.gpProRevoked(m));
+        map.put("travelerStatusConfirmation", NotificationTexts.travelerStatusConfirmation(m));
         map.put("kycVerified", NotificationTexts.kycVerified(m));
         map.put("kycActionRequired", NotificationTexts.kycActionRequired(m));
         map.put("kycReset", NotificationTexts.kycReset(m));

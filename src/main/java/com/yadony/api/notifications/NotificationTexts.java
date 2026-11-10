@@ -744,6 +744,11 @@ public final class NotificationTexts {
         return new NotificationText(m.get("notification.gp-pro-rejected.title"), m.get("notification.gp-pro-rejected.body"));
     }
 
+    public static NotificationText travelerStatusConfirmation(Messages m) {
+        return new NotificationText(m.get("notification.traveler-status-confirmation.title"),
+                m.get("notification.traveler-status-confirmation.body"));
+    }
+
     public static NotificationText gpProRevoked(Messages m) {
         return new NotificationText(m.get("notification.gp-pro-revoked.title"), m.get("notification.gp-pro-revoked.body"));
     }

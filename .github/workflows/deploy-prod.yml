@@ -179,6 +179,10 @@ jobs:
           BID_AMENDMENT_ENABLED=${{ vars.BID_AMENDMENT_ENABLED || 'false' }}
           # Relances de vérification d'identité (J+1/J+3/J+7) : éteintes par défaut.
           YADONY_KYC_VERIFICATION_REMINDERS_ENABLED=${{ vars.YADONY_KYC_VERIFICATION_REMINDERS_ENABLED || 'false' }}
+          # Alerte « particuliers à confirmer » (lot 4) : contrôle quotidien, signalement admin ET question
+          # « Confirmez votre statut ». Éteint par défaut : l'allumer est une décision du propriétaire (au premier
+          # passage, tous les particuliers déjà concernés sont signalés et questionnés d'un coup).
+          YADONY_INDIVIDUAL_FREQUENCY_SCHEDULER_ENABLED=${{ vars.YADONY_INDIVIDUAL_FREQUENCY_SCHEDULER_ENABLED || 'false' }}
           # Relance J+1/J+3 des comptes vérifiés sans première action : éteinte par défaut.
           # Manquait ici (staging l'allume par son application-staging.yml) : la variable posée
           # en production restait sans effet, comme BID_AMENDMENT_ENABLED avant elle.
