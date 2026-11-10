@@ -1831,7 +1831,13 @@ public class AnnouncementService {
                     "Not A Draft", "Seul un brouillon peut être publié");
         }
 
-        assertCanPublish(user);
+        // Dépublié puis republié dans le mois de sa publication : déjà compté ce mois-ci, la limite ne s'applique
+        // pas (le KYC, Stripe et la date restent contrôlés). Publié un mois précédent (ou jamais) : il compte
+        // dans le mois courant, la limite s'applique et la date de publication passe à ce mois.
+        boolean alreadyCountedThisMonth = announcement.getPublishedAt() != null
+                && java.time.YearMonth.from(announcement.getPublishedAt())
+                        .equals(java.time.YearMonth.now(java.time.ZoneOffset.UTC));
+        assertCanPublish(user, !alreadyCountedThisMonth);
         assertStripeCapability(user, announcement.getAcceptedPaymentMethods());
 
         if (announcement.getDepartureDate() != null
@@ -1847,8 +1853,9 @@ public class AnnouncementService {
         announcement.setTravelerIsPro(user.isProAccount());
         announcement.setTravelerIsGpPro(user.isGpPro());
         announcement.setStatus(AnnouncementStatus.ACTIVE);
-        // Première publication seulement : un trajet dépublié puis republié garde sa date (limite mensuelle).
-        if (announcement.getPublishedAt() == null) {
+        // Date de la publication la plus récente faite dans un nouveau mois : inchangée si le trajet est déjà
+        // compté ce mois-ci (limite mensuelle).
+        if (!alreadyCountedThisMonth) {
             announcement.setPublishedAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
         }
         AnnouncementEntity saved = announcementRepository.save(announcement);
@@ -2116,6 +2123,14 @@ public class AnnouncementService {
      * voir {@link PlatformSettingsService#hasProQuotas(boolean)}).
      */
     private void assertCanPublish(UserEntity user) {
+        assertCanPublish(user, true);
+    }
+
+    /**
+     * @param checkMonthlyLimit faux pour republier, dans le mois de sa première publication, un trajet déjà
+     *        compté : il a déjà consommé son quota de ce mois, le republier ne le fait pas augmenter
+     */
+    private void assertCanPublish(UserEntity user, boolean checkMonthlyLimit) {
         assertPublishingNotSuspended(user);
 
         if (enforceKyc && user.getKycStatus() != KycStatus.VERIFIED) {
@@ -2129,7 +2144,7 @@ public class AnnouncementService {
 
         // Après le KYC, avant la limite PRO. Jamais pour un brouillon : assertCanPublish n'est
         // appelé que pour une publication (directe ou DRAFT vers ACTIVE).
-        if (publishingLimitGate != null) {
+        if (checkMonthlyLimit && publishingLimitGate != null) {
             publishingLimitGate.assertCanPublish(user);
         }
 

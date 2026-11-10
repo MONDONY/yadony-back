@@ -11,7 +11,7 @@ Pour le demander : Moi › ☰ › Devenir GP Pro. Il faut d'abord une identité
 Vous indiquez votre fréquence de voyage, votre raison sociale, votre numéro d'entreprise (SIRET, NINEA, RCCM ou autre) et le pays d'immatriculation. Les documents (registre d'entreprise, billets, page de réseau social) sont facultatifs.
 L'équipe Yadony examine votre profil et décide. Aucun délai n'est garanti. Vous recevez la réponse par notification, et par e-mail si votre compte en a un.
 Vos documents sont supprimés dès la décision.
-Le badge s'affiche sur vos trajets et votre profil, et les expéditeurs peuvent filtrer les GP Pro. Il n'apporte ni réduction des frais de service ni annonces en plus.
+Le badge s'affiche sur vos trajets et votre profil, et les expéditeurs peuvent filtrer les GP Pro. Il n'apporte pas de réduction des frais de service. Contrairement à un particulier, un GP Pro validé n'a pas de limite de trajets par mois.
 L'équipe peut retirer le badge, avec un motif. Après un refus ou un retrait, vous pouvez refaire une demande tout de suite.
-GP Pro est le seul statut professionnel : validé, il remplace « Particulier ». Un GP Pro validé n'est jamais limité en trajets par mois. Pour redevenir particulier, un bouton et une confirmation suffisent ; le badge se redemande ensuite par le formulaire.
+GP Pro est le seul statut professionnel : validé, il remplace « Particulier ». Pour redevenir particulier, un bouton et une confirmation suffisent ; le badge se redemande ensuite par le formulaire.
 Kilo Pro n'existe plus : GP Pro le remplace.

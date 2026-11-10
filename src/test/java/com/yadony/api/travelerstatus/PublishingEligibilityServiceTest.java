@@ -160,7 +160,8 @@ class PublishingEligibilityServiceTest {
         ArgumentCaptor<LocalDateTime> to = ArgumentCaptor.forClass(LocalDateTime.class);
         verify(announcements).countPublishedInPeriod(eq(userId), from.capture(), to.capture());
         assertThat(from.getValue()).isEqualTo(LocalDateTime.of(2026, 11, 1, 0, 0));
-        assertThat(to.getValue()).isEqualTo(LocalDateTime.of(2026, 11, 30, 23, 59, 59));
+        // Intervalle semi-ouvert : le 1er du mois suivant à 00:00 est exclu.
+        assertThat(to.getValue()).isEqualTo(LocalDateTime.of(2026, 12, 1, 0, 0));
     }
 
     @Test
@@ -223,5 +224,49 @@ class PublishingEligibilityServiceTest {
         service.evaluate(user);
 
         org.mockito.Mockito.verify(users, org.mockito.Mockito.never()).findByIdForUpdate(any());
+    }
+
+    // ── Plusieurs trajets d'un coup (voyage multi-étapes) ──
+
+    @Test
+    void evaluateForPublishing_nTrajets_refuseSiLeTotalDepasseLaLimite_avantToutePublication() {
+        user.setMonthlyTripLimit(3);
+        user.setTravelerStatus(TravelerStatus.INDIVIDUAL);
+        used(1);
+
+        assertThat(service.evaluateForPublishing(user, 2).reason()).isEqualTo(PublishingEligibilityReason.OK);
+        assertThat(service.evaluateForPublishing(user, 3).reason())
+                .isEqualTo(PublishingEligibilityReason.LIMIT_REACHED);
+    }
+
+    @Test
+    void evaluateForPublishing_nTrajets_memesMotifsQueLeCasSimple() {
+        user.setMonthlyTripLimit(3);
+        used(2);
+        assertThat(service.evaluateForPublishing(user, 2).reason())
+                .isEqualTo(PublishingEligibilityReason.STATUS_REQUIRED);
+        when(applications.findFirstByUserIdAndStatusIn(eq(userId), any()))
+                .thenReturn(Optional.of(new GpProApplicationEntity()));
+        assertThat(service.evaluateForPublishing(user, 2).reason())
+                .isEqualTo(PublishingEligibilityReason.GP_PRO_PENDING);
+    }
+
+    @Test
+    void evaluateForPublishing_nTrajets_gpProJamaisLimite() {
+        user.setGpPro(true);
+        user.setMonthlyTripLimit(1);
+        used(0);
+
+        assertThat(service.evaluateForPublishing(user, 5).reason()).isEqualTo(PublishingEligibilityReason.OK);
+    }
+
+    @Test
+    void evaluateForPublishing_unSeulTrajet_equivautALaRegleUsedInferieurALimite() {
+        user.setMonthlyTripLimit(2);
+        used(1);
+        assertThat(service.evaluateForPublishing(user, 1).reason()).isEqualTo(PublishingEligibilityReason.OK);
+        used(2);
+        assertThat(service.evaluateForPublishing(user, 1).reason())
+                .isEqualTo(PublishingEligibilityReason.STATUS_REQUIRED);
     }
 }

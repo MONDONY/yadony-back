@@ -43,6 +43,14 @@ public class TripGroupService {
     private final BlockVisibility blockVisibility;
     private final AuditService auditService;
 
+    /** Garde « limite mensuelle de trajets », injecté par setter (constructeur inchangé). */
+    private com.yadony.api.travelerstatus.PublishingLimitGate publishingLimitGate;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setPublishingLimitGate(com.yadony.api.travelerstatus.PublishingLimitGate publishingLimitGate) {
+        this.publishingLimitGate = publishingLimitGate;
+    }
+
     public TripGroupService(AnnouncementService announcementService,
                             AnnouncementRepository announcementRepository,
                             UserRepository userRepository,
@@ -63,6 +71,7 @@ public class TripGroupService {
     public TripResponse createTrip(String firebaseUid, TripRequest request) {
         List<AnnouncementRequest> legs = request.legs();
         TripLegRules.validate(legs);
+        assertMonthlyLimitForAllLegs(firebaseUid, legs);
 
         UUID tripGroupId = UUID.randomUUID();
         List<UUID> legIds = new ArrayList<>(legs.size());
@@ -85,6 +94,19 @@ public class TripGroupService {
                 "draft", legs.get(0).isDraft()));
 
         return new TripResponse(tripGroupId, announcementService.toResponses(legIds));
+    }
+
+    /**
+     * Chaque étape publiée compte pour un trajet : la limite mensuelle est évaluée UNE fois, en amont, pour
+     * toutes les étapes. Refus (403 {@code monthly-limit-reached} ou apparentés) avant la première création : rien
+     * n'est créé et aucun événement n'est émis par une étape qui serait ensuite annulée. Brouillons exclus.
+     */
+    private void assertMonthlyLimitForAllLegs(String firebaseUid, List<AnnouncementRequest> legs) {
+        if (publishingLimitGate == null || legs.get(0).isDraft()) {
+            return;
+        }
+        userRepository.findByFirebaseUid(firebaseUid)
+                .ifPresent(user -> publishingLimitGate.assertCanPublish(user, legs.size()));
     }
 
     /**

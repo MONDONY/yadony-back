@@ -218,6 +218,11 @@ public class GpProAdminService {
         UUID userId = applicationOf(applicationId).getUserId();
         users.findByIdForUpdate(userId);
         decideOrConflict(applicationId, GpProApplicationStatus.REJECTED, adminId, reason);
+        // Minimisation : le numéro d'entreprise ne sert plus une fois la demande refusée.
+        applications.findById(applicationId).ifPresent(a -> {
+            a.clearBusinessDetails();
+            applications.save(a);
+        });
         audit.log(ENTITY, applicationId, "GP_PRO_REJECTED", adminId,
                 Map.of("userId", userId.toString(), "reason", reason));
         purgeDocuments(applicationId, adminId);

@@ -31,7 +31,15 @@ public class PublishingLimitGate {
      *         {@code gp-pro-pending} quand la publication est refusée
      */
     public void assertCanPublish(UserEntity user) {
-        PublishingEligibilityResponse e = eligibility.evaluateForPublishing(user);
+        refuseIfNotAllowed(eligibility.evaluateForPublishing(user));
+    }
+
+    /** Pour {@code trips} trajets d'un coup (voyage multi-étapes), avant d'en créer un seul. */
+    public void assertCanPublish(UserEntity user, int trips) {
+        refuseIfNotAllowed(eligibility.evaluateForPublishing(user, trips));
+    }
+
+    private static void refuseIfNotAllowed(PublishingEligibilityResponse e) {
         switch (e.reason()) {
             case OK -> { }
             case STATUS_REQUIRED -> throw new YadonyBusinessException(HttpStatus.FORBIDDEN,

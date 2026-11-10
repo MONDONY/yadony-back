@@ -53,7 +53,7 @@ public class PublishingEligibilityService {
     /** Éligibilité en lecture seule (écran, admin) : ne verrouille rien. */
     @Transactional(readOnly = true)
     public PublishingEligibilityResponse evaluate(UserEntity user) {
-        return decide(user);
+        return decide(user, 1);
     }
 
     /**
@@ -64,14 +64,24 @@ public class PublishingEligibilityService {
      */
     @Transactional
     public PublishingEligibilityResponse evaluateForPublishing(UserEntity user) {
+        return evaluateForPublishing(user, 1);
+    }
+
+    /**
+     * Comme {@link #evaluateForPublishing(UserEntity)} pour {@code trips} trajets publiés d'un coup (un voyage
+     * multi-étapes : chaque étape compte pour un trajet). Refusé dès que {@code used + trips} dépasse la limite,
+     * pour qu'aucune étape ne soit créée.
+     */
+    @Transactional
+    public PublishingEligibilityResponse evaluateForPublishing(UserEntity user, int trips) {
         UserEntity subject = user;
         if (!user.isGpPro() && user.getMonthlyTripLimit() != null) {
             subject = userRepository.findByIdForUpdate(user.getId()).orElse(user);
         }
-        return decide(subject);
+        return decide(subject, Math.max(trips, 1));
     }
 
-    private PublishingEligibilityResponse decide(UserEntity user) {
+    private PublishingEligibilityResponse decide(UserEntity user, int trips) {
         YearMonth month = YearMonth.now(clock);
         LocalDate resetsOn = month.plusMonths(1).atDay(1);
         int used = usedThisMonth(user, month);
@@ -81,7 +91,7 @@ public class PublishingEligibilityService {
             return response(PublishingEligibilityReason.OK, null, used, resetsOn, user);
         }
         int limit = user.getMonthlyTripLimit();
-        if (used < limit) {
+        if (used + trips <= limit) {
             return response(PublishingEligibilityReason.OK, limit, used, resetsOn, user);
         }
         PublishingEligibilityReason reason;
@@ -102,7 +112,8 @@ public class PublishingEligibilityService {
 
     private int usedThisMonth(UserEntity user, YearMonth month) {
         LocalDateTime from = month.atDay(1).atStartOfDay();
-        LocalDateTime to = month.atEndOfMonth().atTime(23, 59, 59);
+        // Intervalle semi-ouvert [1er du mois, 1er du mois suivant[.
+        LocalDateTime to = month.plusMonths(1).atDay(1).atStartOfDay();
         long count = announcementRepository.countPublishedInPeriod(user.getId(), from, to);
         return (int) Math.min(count, Integer.MAX_VALUE);
     }

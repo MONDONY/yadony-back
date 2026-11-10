@@ -45,9 +45,11 @@ public class AnnouncementEntity extends BaseEntity {
     private AnnouncementStatus persistedStatus;
 
     /**
-     * Date de première publication (V370) : posée une seule fois, à la création d'un trajet non brouillon
-     * ({@link #stampPublishedAtOnCreate}) ou au passage BROUILLON vers ACTIF ({@code publishAnnouncement}), jamais
-     * réécrite ensuite. Sert la limite mensuelle de trajets ; {@code null} = jamais publié.
+     * Date de la publication la plus récente faite dans un nouveau mois (V370) : posée à la création d'un trajet
+     * non brouillon ({@link #stampPublishedAtOnCreate}) ou au passage BROUILLON vers ACTIF
+     * ({@code publishAnnouncement}) ; inchangée par une modification, une offre ou un changement de statut, et
+     * quand un trajet dépublié est republié dans le même mois. Sert la limite mensuelle ; {@code null} = jamais
+     * publié.
      */
     @Column(name = "published_at")
     private java.time.LocalDateTime publishedAt;

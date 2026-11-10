@@ -117,6 +117,17 @@ class KnowledgeBaseFichesTest {
     }
 
     @Test
+    void laFicheGpProNeSeContredisPasSurLaLimiteDeTrajets() {
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        String fr = corpus.articles("fr").stream().filter(x -> x.id().equals("gp-pro")).findFirst().orElseThrow().body();
+        String en = corpus.articles("en").stream().filter(x -> x.id().equals("gp-pro")).findFirst().orElseThrow().body();
+        assertThat(fr).doesNotContain("annonces en plus").contains("n'a pas de limite de trajets par mois");
+        assertThat(en).doesNotContain("extra listings").contains("no monthly trip limit");
+        assertThat(fr.length()).isLessThanOrEqualTo(2000);
+        assertThat(en.length()).isLessThanOrEqualTo(2000);
+    }
+
+    @Test
     void lesQuestionsSurLaLimiteEtLaSortieGpProTrouventLaFicheStatutVoyageur() {
         KnowledgeBase kb = productionKb();
         assertThat(firstHit(kb, "fr", "Comment redevenir particulier ?")).isEqualTo("statut-voyageur");

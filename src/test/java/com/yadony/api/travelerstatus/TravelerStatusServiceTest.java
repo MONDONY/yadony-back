@@ -160,13 +160,17 @@ class TravelerStatusServiceTest {
     }
 
     @Test
-    void gpProAncienBadgeSansStatut_peutDeclarerParticulier() {
+    void gpProActifSansStatutPrealable_409_gpProActive_rienEcrit() {
         user.setGpPro(true);
 
-        service.declare(UID, individual(true));
-
-        assertThat(user.getTravelerStatus()).isEqualTo(TravelerStatus.INDIVIDUAL);
-        assertThat(user.isGpPro()).isTrue();
+        assertThatThrownBy(() -> service.declare(UID, individual(true)))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getErrorCode()).isEqualTo("gp-pro-active");
+                });
+        assertThat(user.getTravelerStatus()).isNull();
+        verify(users, never()).save(any());
+        verifyNoInteractions(events);
     }
 
     @Test

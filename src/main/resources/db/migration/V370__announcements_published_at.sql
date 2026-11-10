@@ -2,8 +2,9 @@
 --
 -- La date de création ne convient pas (un brouillon créé un mois et publié le suivant échappait au quota) et la
 -- dernière mise à jour non plus (une modification ou une offre acceptée ferait recompter un trajet ancien).
--- published_at est posée une seule fois : à la création d'un trajet non brouillon, ou au passage BROUILLON vers
--- ACTIF. NULL = jamais publié (brouillon).
+-- published_at est la date de la publication la plus récente faite dans un nouveau mois : posée à la création d'un
+-- trajet non brouillon ou au passage BROUILLON vers ACTIF, inchangée quand un trajet dépublié est republié dans le
+-- même mois, remise à la date du jour quand il l'est un mois plus tard. NULL = jamais publié (brouillon).
 --
 -- Rattrapage : un trajet existant qui n'est pas un brouillon est réputé publié à sa création.
 

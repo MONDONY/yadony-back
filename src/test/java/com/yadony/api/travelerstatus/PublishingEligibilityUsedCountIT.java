@@ -157,4 +157,37 @@ class PublishingEligibilityUsedCountIT {
 
         assertThat(used()).isEqualTo(2);
     }
+
+    @Test
+    void trajetPublieEtSupprimeEnDouceur_resteCompte_pasDeContournementParSuppression() {
+        UUID id = trip(AnnouncementStatus.ACTIVE);
+        assertThat(used()).isEqualTo(1);
+
+        AnnouncementEntity a = announcements.findById(id).orElseThrow();
+        a.softDelete();
+        announcements.saveAndFlush(a);
+
+        assertThat(announcements.findById(id)).isEmpty();
+        assertThat(used()).isEqualTo(1);
+    }
+
+    @Test
+    void trajetPublieLaDerniereSecondeDuMois_estCompte_intervalleSemiOuvert() {
+        UUID id = trip(AnnouncementStatus.ACTIVE);
+        AnnouncementEntity a = announcements.findById(id).orElseThrow();
+        a.setPublishedAt(java.time.YearMonth.now(ZoneOffset.UTC).atEndOfMonth().atTime(23, 59, 59, 500_000_000));
+        announcements.saveAndFlush(a);
+
+        assertThat(used()).isEqualTo(1);
+    }
+
+    @Test
+    void trajetPublieLeTouteDebutDuMoisSuivant_nEstPasCompteCeMois() {
+        UUID id = trip(AnnouncementStatus.ACTIVE);
+        AnnouncementEntity a = announcements.findById(id).orElseThrow();
+        a.setPublishedAt(java.time.YearMonth.now(ZoneOffset.UTC).plusMonths(1).atDay(1).atStartOfDay());
+        announcements.saveAndFlush(a);
+
+        assertThat(used()).isZero();
+    }
 }

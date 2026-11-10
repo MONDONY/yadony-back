@@ -43,6 +43,7 @@ class TripGroupIntegrationTest {
     @Autowired MockMvc mockMvc;
     @Autowired AnnouncementRepository announcementRepository;
     @Autowired UserRepository userRepository;
+    @org.springframework.boot.test.mock.mockito.SpyBean UserRepository spyUsers;
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
     @Autowired ObjectMapper objectMapper;
     @Autowired com.yadony.api.payments.currency.ExchangeRateRepository exchangeRateRepository;
@@ -54,6 +55,9 @@ class TripGroupIntegrationTest {
 
     @BeforeEach
     void cleanDb() {
+        // H2 ne connaît pas « FOR NO KEY UPDATE » (verrou de la limite mensuelle) : lecture simple à la place.
+        org.mockito.Mockito.doAnswer(inv -> spyUsers.findById(inv.getArgument(0)))
+                .when(spyUsers).findByIdForUpdate(org.mockito.ArgumentMatchers.any());
         announcementRepository.deleteAll();
         userRepository.deleteAll();
         seedUser(OWNER);
@@ -461,5 +465,58 @@ class TripGroupIntegrationTest {
     void unknownAnnouncement_tripLegsIs404() throws Exception {
         mockMvc.perform(get("/announcements/" + UUID.randomUUID() + "/trip-legs").with(authentication(as(OTHER))))
                 .andExpect(status().isNotFound());
+    }
+
+    // ── Limite mensuelle : un voyage de N étapes compte pour N trajets, évalué une fois en amont ──
+
+    private void limitOwnerTo(int limit) {
+        UserEntity owner = userRepository.findByFirebaseUid(OWNER).orElseThrow();
+        owner.setMonthlyTripLimit(limit);
+        owner.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL);
+        userRepository.save(owner);
+    }
+
+    @Test
+    void voyageDeDeuxEtapesAvecUneLimiteDeUn_403MonthlyLimitReached_avantToutesCreation_sansLegIndex() throws Exception {
+        limitOwnerTo(1);
+        LocalDate d = LocalDate.now().plusDays(10);
+
+        mockMvc.perform(post("/announcements/trips").with(authentication(as(OWNER)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(trip(leg("Paris", "Abidjan", d, 8, false),
+                                leg("Abidjan", "Douala", d.plusDays(4), 6, false))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("monthly-limit-reached"))
+                // Refus de tout le voyage, décidé avant la première étape : pas d'étape fautive.
+                .andExpect(jsonPath("$.legIndex").doesNotExist());
+
+        assertThat(announcementRepository.count()).isZero();
+    }
+
+    @Test
+    void voyageDeDeuxEtapesAvecUneLimiteDeDeux_201_etChaqueEtapeEstComptee() throws Exception {
+        limitOwnerTo(2);
+
+        JsonNode res = abidjanThenDouala();
+
+        assertThat(res.get("legs")).hasSize(2);
+        // Les deux étapes comptent : la limite est atteinte, un trajet de plus est refusé.
+        LocalDate d = LocalDate.now().plusDays(30);
+        mockMvc.perform(post("/announcements").with(authentication(as(OWNER)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(leg("Paris", "Dakar", d, 8, false)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("monthly-limit-reached"));
+        assertThat(announcementRepository.count()).isEqualTo(2);
+    }
+
+    @Test
+    void voyageEnBrouillon_neSubitJamaisLaLimite() throws Exception {
+        limitOwnerTo(1);
+        LocalDate d = LocalDate.now().plusDays(10);
+
+        createTrip(trip(leg("Paris", "Abidjan", d, 8, true), leg("Abidjan", "Douala", d.plusDays(4), 6, true)));
+
+        assertThat(announcementRepository.count()).isEqualTo(2);
     }
 }

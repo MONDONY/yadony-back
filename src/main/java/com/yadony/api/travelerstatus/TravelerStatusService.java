@@ -46,9 +46,10 @@ public class TravelerStatusService {
         validate(r);
         // Verrou par utilisateur, puis relecture : l'entité chargée avant le verrou peut être périmée.
         UserEntity user = userRepository.findByIdForUpdate(loaded.getId()).orElse(loaded);
-        if (user.isGpPro() && user.getTravelerStatus() == TravelerStatus.PROFESSIONAL) {
+        if (user.isGpPro()) {
             // Redevenir particulier se fait par la sortie GP Pro (POST /gp-pro/resign), qui retire le badge
-            // et le statut dans la même transaction : jamais un GP Pro avec un statut particulier.
+            // et le statut dans la même transaction : jamais un GP Pro avec un statut particulier, que son
+            // badge soit récent ou antérieur au statut (statut non déclaré).
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "gp-pro-active", "GP Pro Active",
                     "Pour redevenir particulier, quittez le statut GP Pro.");
         }

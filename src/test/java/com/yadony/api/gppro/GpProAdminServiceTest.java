@@ -544,4 +544,15 @@ class GpProAdminServiceTest {
         assertThat(detail.businessRegistrationNumber()).isNull();
         assertThat(detail.businessCountry()).isNull();
     }
+
+    @Test
+    void rejectEffaceLeNumeroEtLePaysDeLaDemandeRefusee() {
+        GpProApplicationEntity a = applicationWithBusiness();
+
+        service.reject(appId, adminId, "Justificatifs illisibles");
+
+        assertThat(a.getBusinessRegistrationNumber()).isNull();
+        assertThat(a.getBusinessCountry()).isNull();
+        verify(applications).save(a);
+    }
 }

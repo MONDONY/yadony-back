@@ -129,6 +129,21 @@ class GpProControllerIT {
     }
 
     @Test
+    void applyAvecUnSeulDesDeuxChampsEntreprise_memeVideOuBlanc_422_gpProBusinessIncomplete() throws Exception {
+        for (String extra : new String[]{
+                "\"businessCountry\":\"FR\",\"businessRegistrationNumber\":\"\"",
+                "\"businessCountry\":\"FR\",\"businessRegistrationNumber\":\"   \"",
+                "\"businessCountry\":\"FR\"",
+                "\"businessRegistrationNumber\":\"SIREN 123 456\",\"businessCountry\":\"\""}) {
+            mockMvc.perform(post("/gp-pro/applications").with(auth()).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"travelFrequency\":\"MONTHLY\",\"source\":\"PROFILE\",\"commercialName\":\"Acme\","
+                                    + extra + "}"))
+                    .andExpect(status().isUnprocessableEntity())
+                    .andExpect(jsonPath("$.code").value("gp-pro-business-incomplete"));
+        }
+    }
+
+    @Test
     void applyAvecNumeroInvalideOuPaysEnMinuscules_422() throws Exception {
         mockMvc.perform(post("/gp-pro/applications").with(auth()).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"travelFrequency\":\"MONTHLY\",\"source\":\"PROFILE\",\"commercialName\":\"Acme\","
