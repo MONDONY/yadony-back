@@ -223,6 +223,12 @@ public class SecurityConfig {
                     // Firebase. Authentifié par signature HMAC dans StreamWebhookController.
                     "/calls/webhook"
                 ).permitAll()
+                // Modals vidéo : la liste est publique, le visiteur sans compte voit aussi la
+                // vidéo de présentation. Jeton facultatif : FirebaseTokenFilter tourne sur toutes
+                // les routes et pose l'appelant quand un jeton valide est présent, la liste est
+                // alors filtrée selon ses réponses. GET seulement : l'envoi des réponses
+                // (POST /video-modals/{id}/events) reste sur la règle finale, vrai compte exigé.
+                .requestMatchers(HttpMethod.GET, "/video-modals/eligible").permitAll()
                 // ── Invités (session Firebase anonyme) ──────────────────────────────
                 // Modèle FERMÉ PAR DÉFAUT : on énumère ce qu'un invité peut faire, et
                 // tout le reste lui est refusé par la dernière règle. Un contrôleur

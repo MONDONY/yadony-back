@@ -136,6 +136,23 @@ class KnowledgeBaseFichesTest {
     }
 
     @Test
+    void laVideoDAccueilTrouveSaFicheSansPrendreCelleDesTutoriels() {
+        KnowledgeBase kb = productionKb();
+        assertThat(firstHit(kb, "fr", "Pourquoi une vidéo de présentation s'affiche à l'ouverture ?")).isEqualTo("video-accueil");
+        assertThat(firstHit(kb, "fr", "Comment revoir la vidéo d'accueil ?")).isEqualTo("video-accueil");
+        assertThat(firstHit(kb, "en", "Why does a welcome video pop up?")).isEqualTo("video-accueil");
+        assertThat(firstHit(kb, "fr", "Où sont les tutoriels ?")).isEqualTo("tutoriels-videos");
+        assertThat(firstHit(kb, "en", "Where are the tutorials?")).isEqualTo("tutoriels-videos");
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        for (String locale : List.of("fr", "en")) {
+            KbArticle fiche = corpus.articles(locale).stream().filter(a -> a.id().equals("video-accueil"))
+                    .findFirst().orElseThrow();
+            // Route existante de l'app (router.dart), déjà autorisée par la fiche des tutoriels.
+            assertThat(fiche.routes()).extracting(KbRoute::path).containsExactly("/profile/community");
+        }
+    }
+
+    @Test
     void leColisNonConformeMeneAuRefusDuVoyageur() {
         KnowledgeBase kb = productionKb();
         assertThat(firstHit(kb, "fr", "Le colis ne correspond pas à ce qui a été déclaré, que faire ?"))
