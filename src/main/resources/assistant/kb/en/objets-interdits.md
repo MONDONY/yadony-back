@@ -9,6 +9,7 @@ From December 10, 2026, the list adds: power banks; foreign currency, checks, ba
 Handing money to a traveler for delivery is a money transfer, an activity reserved for licensed institutions: Yadony does not allow it.
 Goods intended for resale must be declared as such in the parcel description. Customs duties and taxes are paid by the sender, and the traveler remains free to refuse to carry them.
 The full list is in article 4 of the Terms of use.
+If a parcel description mentions money (cash, checks…), the latest version of the app shows a warning under the field. Sending is still possible; the Yadony team then reviews the parcel.
 Before sending, the sender electronically signs ("I sign & accept") a warning about prohibited goods and their customs liability; the traveler reviews this declaration and can refuse a non-compliant parcel at handover, from the parcel details ("Options" › "The parcel doesn't match"), before the trip departs.
 The traveler also states on their trip what they accept or refuse, for example liquids or perishable goods.
 Forbidden content can be reported with the reason "Prohibited item".
