@@ -117,6 +117,19 @@ class KnowledgeBaseFichesTest {
     }
 
     @Test
+    void laFicheStatutVoyageurExpliqueLaQuestionConfirmezVotreStatut_sansBlocage() {
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        KbArticle fr = corpus.articles("fr").stream().filter(x -> x.id().equals("statut-voyageur"))
+                .findFirst().orElseThrow();
+        KbArticle en = corpus.articles("en").stream().filter(x -> x.id().equals("statut-voyageur"))
+                .findFirst().orElseThrow();
+        assertThat(fr.body()).contains("Confirmez votre statut", "Rien n'est bloqué");
+        assertThat(en.body()).contains("Confirm your status", "Nothing is blocked");
+        assertThat(fr.body().length()).isLessThanOrEqualTo(2000);
+        assertThat(en.body().length()).isLessThanOrEqualTo(2000);
+    }
+
+    @Test
     void laFicheGpProNeSeContredisPasSurLaLimiteDeTrajets() {
         KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
         String fr = corpus.articles("fr").stream().filter(x -> x.id().equals("gp-pro")).findFirst().orElseThrow().body();

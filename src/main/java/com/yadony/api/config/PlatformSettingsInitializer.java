@@ -213,6 +213,8 @@ public class PlatformSettingsInitializer {
         defaults.put(PlatformSettingKey.FLIGHTS_ENABLED, "false");
         defaults.put(PlatformSettingKey.REMOTE_CONFIG_FETCH_MINUTES,
                 String.valueOf(PlatformSettingKey.DEFAULT_REMOTE_CONFIG_FETCH_MINUTES));
+        defaults.put(PlatformSettingKey.INDIVIDUAL_TRIPS_ALERT_THRESHOLD,
+                String.valueOf(PlatformSettingKey.DEFAULT_INDIVIDUAL_TRIPS_ALERT_THRESHOLD));
         defaults.put(PlatformSettingKey.ASSISTANT_DAILY_QUOTA, String.valueOf(assistantDailyQuotaProperty));
         defaults.put(PlatformSettingKey.ASSISTANT_FORM_DRAFT_DAILY_QUOTA,
                 String.valueOf(assistantFormDraftDailyQuotaProperty));

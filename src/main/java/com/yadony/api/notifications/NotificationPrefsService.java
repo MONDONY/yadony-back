@@ -148,6 +148,9 @@ public class NotificationPrefsService {
             // reminder=true, voir NotificationTypes.effectiveType) : un rappel, pas une décision.
             // Hors ALWAYS_ON à dessein, pour qu'elle compte dans le plafond de 10 push par jour.
             Map.entry(NotificationTypes.KYC_VERIFICATION_REMINDER, "pushRemindersTips"),
+            // Question « Confirmez votre statut » au particulier fréquent (lot 4) : elle respecte les réglages
+            // (« Rappels et conseils »), la ligne reste lisible dans la boîte Annonces dans tous les cas.
+            Map.entry("TRAVELER_STATUS_CONFIRMATION", "pushRemindersTips"),
             Map.entry("CALL_MISSED",                  "pushMissedCalls"),
             Map.entry("automation_capacity_free",     "pushTravelerAutomations"),
             Map.entry("automation_loyal_sender",      "pushTravelerAutomations"),
