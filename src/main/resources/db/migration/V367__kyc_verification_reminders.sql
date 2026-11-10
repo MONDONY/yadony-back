@@ -1,4 +1,4 @@
--- V365 : relances de vérification d'identité (push + e-mail à J+1 / J+3 / J+7).
+-- V367 : relances de vérification d'identité (push + e-mail à J+1 / J+3 / J+7).
 -- L'ancre est la date du dernier geste de l'utilisateur dans le parcours ; le compteur et
 -- la date du dernier envoi servent de garde-fou, la désinscription est un horodatage.
 

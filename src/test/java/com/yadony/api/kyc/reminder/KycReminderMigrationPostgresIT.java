@@ -17,11 +17,11 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * V365 sur Postgres embarque : Flyway jusqu'a V364, quatre comptes avec ligne KYC, puis la
+ * V367 sur Postgres embarque : Flyway jusqu'a V366, quatre comptes avec ligne KYC, puis la
  * migration. Seul le compte non verifie avec une session ouverte il y a moins de 90 jours
- * recoit une ancre. Flyway est pilote a la main pour s'arreter a V364 (pas de contexte Spring).
+ * recoit une ancre. Flyway est pilote a la main pour s'arreter a V366 (pas de contexte Spring).
  */
-@DisplayName("Relances KYC : migration V365 (Postgres)")
+@DisplayName("Relances KYC : migration V367 (Postgres)")
 class KycReminderMigrationPostgresIT {
 
     private static EmbeddedPostgres postgres;
@@ -57,7 +57,7 @@ class KycReminderMigrationPostgresIT {
     @Test
     @DisplayName("le stock initial ne couvre que les non verifies avec session recente")
     void backfillOnlyRecentUnverifiedWithSession() throws Exception {
-        flyway("364").migrate();
+        flyway("366").migrate();
 
         Map<String, UUID> ids = new HashMap<>();
         try (Connection c = postgres.getPostgresDatabase().getConnection(); Statement st = c.createStatement()) {
@@ -67,7 +67,7 @@ class KycReminderMigrationPostgresIT {
             ids.put("j10Verifie", insert(st, "VERIFIED", "sess_c", 10));
         }
 
-        flyway("365").migrate();
+        flyway("367").migrate();
 
         try (Connection c = postgres.getPostgresDatabase().getConnection(); Statement st = c.createStatement()) {
             for (var e : ids.entrySet()) {
