@@ -103,6 +103,40 @@ class KnowledgeBaseFichesTest {
     }
 
     @Test
+    void laFicheStatutVoyageurExpliqueGpProLaLimiteMensuelleEtLaSortieEnUnClic() {
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        String fr = corpus.articles("fr").stream().filter(x -> x.id().equals("statut-voyageur"))
+                .findFirst().orElseThrow().body();
+        assertThat(fr).contains("GP Pro", "limite", "Redevenir particulier", "Plus tard", "validé par l'équipe");
+        String en = corpus.articles("en").stream().filter(x -> x.id().equals("statut-voyageur"))
+                .findFirst().orElseThrow().body();
+        assertThat(en).contains("GP Pro", "limit", "Become an individual again", "Later", "validated by the Yadony team");
+        // L'ancienne promesse (déclaration libre de professionnel, interrupteur obligatoire) a disparu.
+        assertThat(fr).doesNotContain("Yadony peut rendre cette déclaration obligatoire");
+        assertThat(en).doesNotContain("can make this declaration mandatory");
+    }
+
+    @Test
+    void laFicheGpProNeSeContredisPasSurLaLimiteDeTrajets() {
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        String fr = corpus.articles("fr").stream().filter(x -> x.id().equals("gp-pro")).findFirst().orElseThrow().body();
+        String en = corpus.articles("en").stream().filter(x -> x.id().equals("gp-pro")).findFirst().orElseThrow().body();
+        assertThat(fr).doesNotContain("annonces en plus").contains("n'a pas de limite de trajets par mois");
+        assertThat(en).doesNotContain("extra listings").contains("no monthly trip limit");
+        assertThat(fr.length()).isLessThanOrEqualTo(2000);
+        assertThat(en.length()).isLessThanOrEqualTo(2000);
+    }
+
+    @Test
+    void lesQuestionsSurLaLimiteEtLaSortieGpProTrouventLaFicheStatutVoyageur() {
+        KnowledgeBase kb = productionKb();
+        assertThat(firstHit(kb, "fr", "Comment redevenir particulier ?")).isEqualTo("statut-voyageur");
+        assertThat(firstHit(kb, "fr", "Pourquoi j'ai une limite de trajets par mois ?")).isEqualTo("statut-voyageur");
+        assertThat(firstHit(kb, "en", "How do I become an individual again?")).isEqualTo("statut-voyageur");
+        assertThat(firstHit(kb, "en", "Why is there a monthly trip limit?")).isEqualTo("statut-voyageur");
+    }
+
+    @Test
     void laQuestionSurLeStatutTrouveLaFicheStatutVoyageur() {
         KnowledgeBase kb = productionKb();
         assertThat(firstHit(kb, "fr", "Que change le statut particulier pour l'expéditeur ?"))

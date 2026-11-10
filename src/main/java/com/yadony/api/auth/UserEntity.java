@@ -330,6 +330,11 @@ public class UserEntity extends BaseEntity {
     @Column(name = "business_country", length = 2)
     private String businessCountry;
 
+    // Limite mensuelle de trajets publiés, réglée dans l'admin. null = aucune limite (aucune valeur par
+    // défaut). Un GP Pro validé n'est jamais limité.
+    @Column(name = "monthly_trip_limit")
+    private Integer monthlyTripLimit;
+
     @Column(name = "bio", length = 280)
     private String bio;
 
@@ -713,6 +718,41 @@ public class UserEntity extends BaseEntity {
 
     public String getBusinessCountry() { return businessCountry; }
     public void setBusinessCountry(String businessCountry) { this.businessCountry = businessCountry; }
+
+    /**
+     * Pose le statut professionnel et ses trois champs d'entreprise ensemble (contrainte
+     * {@code chk_users_traveler_status_pro_fields}). Appelé à l'approbation d'une demande GP Pro.
+     */
+    public void becomeProfessional(String businessName, String registrationNumber, String country,
+                                   String termsVersion) {
+        this.travelerStatus = com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL;
+        this.travelerStatusDeclaredAt = Instant.now();
+        this.travelerStatusTermsVersion = termsVersion;
+        this.businessName = businessName;
+        this.businessRegistrationNumber = registrationNumber;
+        this.businessCountry = country;
+    }
+
+    /**
+     * Un professionnel qui perd le badge GP Pro redevient particulier et ses champs d'entreprise sont effacés
+     * dans la même écriture (sinon la contrainte {@code chk_users_traveler_status_pro_fields} échoue). Sans
+     * effet pour un particulier ou un statut jamais déclaré (badges antérieurs au statut).
+     *
+     * @return vrai si le statut a changé
+     */
+    public boolean revertProfessionalToIndividual() {
+        if (travelerStatus != com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL) {
+            return false;
+        }
+        this.travelerStatus = com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL;
+        this.businessName = null;
+        this.businessRegistrationNumber = null;
+        this.businessCountry = null;
+        return true;
+    }
+
+    public Integer getMonthlyTripLimit() { return monthlyTripLimit; }
+    public void setMonthlyTripLimit(Integer monthlyTripLimit) { this.monthlyTripLimit = monthlyTripLimit; }
 
     /**
      * Statut légal tel que le voient les expéditeurs : {@code "INDIVIDUAL"}, {@code "PROFESSIONAL"}

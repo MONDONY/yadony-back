@@ -61,11 +61,11 @@ class TravelerStatusServiceTest {
     }
 
     private static TravelerStatusRequest individual(Boolean confirmed) {
-        return new TravelerStatusRequest(TravelerStatus.INDIVIDUAL, confirmed, null, null, null);
+        return new TravelerStatusRequest(TravelerStatus.INDIVIDUAL, confirmed);
     }
 
-    private static TravelerStatusRequest professional(String name, String number, String country) {
-        return new TravelerStatusRequest(TravelerStatus.PROFESSIONAL, null, name, number, country);
+    private static TravelerStatusRequest professional() {
+        return new TravelerStatusRequest(TravelerStatus.PROFESSIONAL, null);
     }
 
     private void assertInvalid(Runnable call) {
@@ -113,43 +113,22 @@ class TravelerStatusServiceTest {
     }
 
     @Test
-    void professionnelIncomplet_422() {
-        assertInvalid(() -> service.declare(UID, professional(null, NUMBER, "FR")));
-        assertInvalid(() -> service.declare(UID, professional(NAME, null, "FR")));
-        assertInvalid(() -> service.declare(UID, professional(NAME, NUMBER, null)));
-        assertInvalid(() -> service.declare(UID, professional("  ", NUMBER, "FR")));
+    void professionnel_422_utilisezLaDemandeGpPro_rienEcrit() {
+        assertThatThrownBy(() -> service.declare(UID, professional()))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(e.getErrorCode()).isEqualTo("traveler-status-invalid");
+                    assertThat(e.getMessage()).contains("GP Pro");
+                });
+        assertNothingWritten();
     }
 
     @Test
-    void professionnelAvecNumeroTropCourt_ouCaracteresDeControle_422_etRienDEcrit() {
-        assertInvalid(() -> service.declare(UID, professional(NAME, "AB1", "FR")));
-        assertInvalid(() -> service.declare(UID, professional(NAME, "AB12\n3456", "FR")));
-        assertInvalid(() -> service.declare(UID, professional(NAME, "AB12\u00003456", "FR")));
-        assertInvalid(() -> service.declare(UID, professional(NAME, "AB12<script>", "FR")));
-        assertInvalid(() -> service.declare(UID, professional("Ac\tme", NUMBER, "FR")));
-        assertInvalid(() -> service.declare(UID, professional(NAME, NUMBER, "fr")));
-        assertInvalid(() -> service.declare(UID, professional(NAME, NUMBER, "FRA")));
-    }
-
-    @Test
-    void professionnelComplet_poseLesChamps() {
-        TravelerStatusResponse r = service.declare(UID, professional("  " + NAME + " ", NUMBER, "FR"));
-
-        assertThat(user.getTravelerStatus()).isEqualTo(TravelerStatus.PROFESSIONAL);
-        assertThat(user.getBusinessName()).isEqualTo(NAME);
-        assertThat(user.getBusinessRegistrationNumber()).isEqualTo(NUMBER);
-        assertThat(user.getBusinessCountry()).isEqualTo("FR");
-        assertThat(user.getTravelerStatusTermsVersion()).isEqualTo(TravelerStatusService.TERMS_VERSION);
-        assertThat(r.status()).isEqualTo(TravelerStatus.PROFESSIONAL);
-        assertThat(r.businessName()).isEqualTo(NAME);
-        assertThat(r.registrationNumber()).isEqualTo(NUMBER);
-        assertThat(r.country()).isEqualTo("FR");
-    }
-
-    @Test
-    void professionnelVersParticulier_effaceRaisonSocialeNumeroEtPays_unSeulAudit() {
-        service.declare(UID, professional(NAME, NUMBER, "FR"));
-        org.mockito.Mockito.clearInvocations(audit, events);
+    void ancienProfessionnelDeclareSansGpPro_peutRedevenirParticulier_champsEffaces() {
+        user.setTravelerStatus(TravelerStatus.PROFESSIONAL);
+        user.setBusinessName(NAME);
+        user.setBusinessRegistrationNumber(NUMBER);
+        user.setBusinessCountry("FR");
 
         service.declare(UID, individual(true));
 
@@ -162,16 +141,36 @@ class TravelerStatusServiceTest {
     }
 
     @Test
-    @SuppressWarnings("unchecked")
-    void audit_neContientQueLeStatutEtLePays_jamaisLeNumeroNiLeNom() {
-        service.declare(UID, professional(NAME, NUMBER, "FR"));
+    void gpProValideAvecStatutProfessionnel_409_ilFautRedevenirParticulierParLaSortieGpPro() {
+        user.setGpPro(true);
+        user.setTravelerStatus(TravelerStatus.PROFESSIONAL);
+        user.setBusinessName(NAME);
+        user.setBusinessRegistrationNumber(NUMBER);
+        user.setBusinessCountry("FR");
 
-        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
-        verify(audit).log(eq("USER"), eq(userId), eq("TRAVELER_STATUS_DECLARED"), eq(userId), payload.capture());
-        assertThat(payload.getValue()).containsOnlyKeys("status", "country");
-        assertThat(payload.getValue()).containsEntry("status", "PROFESSIONAL").containsEntry("country", "FR");
-        assertThat(payload.getValue().values()).doesNotContain(NUMBER, NAME);
-        assertThat(payload.getValue().toString()).doesNotContain(NUMBER).doesNotContain(NAME);
+        assertThatThrownBy(() -> service.declare(UID, individual(true)))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getErrorCode()).isEqualTo("gp-pro-active");
+                });
+        assertThat(user.getTravelerStatus()).isEqualTo(TravelerStatus.PROFESSIONAL);
+        assertThat(user.getBusinessName()).isEqualTo(NAME);
+        verify(users, never()).save(any());
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    void gpProActifSansStatutPrealable_409_gpProActive_rienEcrit() {
+        user.setGpPro(true);
+
+        assertThatThrownBy(() -> service.declare(UID, individual(true)))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getErrorCode()).isEqualTo("gp-pro-active");
+                });
+        assertThat(user.getTravelerStatus()).isNull();
+        verify(users, never()).save(any());
+        verifyNoInteractions(events);
     }
 
     @Test
@@ -187,12 +186,12 @@ class TravelerStatusServiceTest {
 
     @Test
     void evenementPublieUneSeuleFois() {
-        service.declare(UID, professional(NAME, NUMBER, "FR"));
+        service.declare(UID, individual(true));
 
         ArgumentCaptor<TravelerStatusChangedEvent> ev = ArgumentCaptor.forClass(TravelerStatusChangedEvent.class);
         verify(events, times(1)).publishEvent(ev.capture());
         assertThat(ev.getValue().userId()).isEqualTo(userId);
-        assertThat(ev.getValue().status()).isEqualTo(TravelerStatus.PROFESSIONAL);
+        assertThat(ev.getValue().status()).isEqualTo(TravelerStatus.INDIVIDUAL);
     }
 
     @Test

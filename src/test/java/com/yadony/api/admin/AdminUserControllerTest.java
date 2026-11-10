@@ -480,4 +480,59 @@ class AdminUserControllerTest {
         assertThat(item.deletionRequestedAt()).isEqualTo(java.time.LocalDateTime.of(2026, 9, 10, 8, 0));
         assertThat(item.deletionScheduledFor()).isEqualTo(java.time.LocalDateTime.of(2026, 10, 10, 8, 0));
     }
+
+    // ── Limite mensuelle de trajets par utilisateur ─────────────────────────
+
+    @Test
+    void setMonthlyTripLimit_delegatesToService_andReturnsDetailWithLimitAndUsed() {
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        com.yadony.api.travelerstatus.PublishingEligibilityService eligibility =
+                org.mockito.Mockito.mock(com.yadony.api.travelerstatus.PublishingEligibilityService.class);
+        controller.setPublishingEligibilityService(eligibility);
+        when(firebaseContact.getContact(any())).thenReturn(com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
+        UUID userId = UUID.randomUUID();
+        com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
+        user.setMonthlyTripLimit(4);
+        when(userService.setMonthlyTripLimit(userId, 4, ADMIN_ID)).thenReturn(user);
+        when(eligibility.usedThisMonth(user)).thenReturn(2);
+
+        var resp = controller.setMonthlyTripLimit(userId, new MonthlyTripLimitRequest(4), adminAuth());
+
+        verify(userService).setMonthlyTripLimit(userId, 4, ADMIN_ID);
+        assertThat(resp.monthlyTripLimit()).isEqualTo(4);
+        assertThat(resp.monthlyTripsUsed()).isEqualTo(2);
+    }
+
+    @Test
+    void setMonthlyTripLimit_nullDelegatesNull_forNoLimit() {
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        when(firebaseContact.getContact(any())).thenReturn(com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
+        UUID userId = UUID.randomUUID();
+        when(userService.setMonthlyTripLimit(userId, null, ADMIN_ID)).thenReturn(new com.yadony.api.auth.UserEntity());
+
+        controller.setMonthlyTripLimit(userId, new MonthlyTripLimitRequest(null), adminAuth());
+
+        verify(userService).setMonthlyTripLimit(userId, null, ADMIN_ID);
+    }
+
+    @Test
+    void setMonthlyTripLimit_sameRightAsCommissionOverride() throws Exception {
+        var method = AdminUserController.class.getMethod("setMonthlyTripLimit",
+                UUID.class, MonthlyTripLimitRequest.class, org.springframework.security.core.Authentication.class);
+        var pre = method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+        var commission = AdminUserController.class.getMethod("setCommissionRate",
+                UUID.class, CommissionRateOverrideRequest.class, org.springframework.security.core.Authentication.class)
+                .getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+        assertThat(pre).isNotNull();
+        assertThat(pre.value()).isEqualTo(commission.value()).isEqualTo("hasAuthority('USER_COMMISSION')");
+    }
+
+    @Test
+    void monthlyTripLimitRequest_bounds1to100_nullAllowed() {
+        assertThat(validator().validate(new MonthlyTripLimitRequest(null))).isEmpty();
+        assertThat(validator().validate(new MonthlyTripLimitRequest(1))).isEmpty();
+        assertThat(validator().validate(new MonthlyTripLimitRequest(100))).isEmpty();
+        assertThat(validator().validate(new MonthlyTripLimitRequest(0))).isNotEmpty();
+        assertThat(validator().validate(new MonthlyTripLimitRequest(101))).isNotEmpty();
+    }
 }

@@ -75,7 +75,11 @@ public record AdminUserDetailResponse(
         /** Raison sociale, numéro et pays d'un professionnel ; {@code null} sinon. L'admin voit le numéro (droit USER_VIEW). */
         String businessName,
         String businessRegistrationNumber,
-        String businessCountry
+        String businessCountry,
+        /** Limite mensuelle de trajets publiés ({@code null} = aucune limite). Un GP Pro validé n'est jamais limité. */
+        Integer monthlyTripLimit,
+        /** Trajets publiés (hors brouillons) ce mois-ci, la même mesure que la limite. */
+        int monthlyTripsUsed
 ) {
     /**
      * Téléphone et email proviennent de Firebase : ils ne sont plus stockés en base.
@@ -88,6 +92,12 @@ public record AdminUserDetailResponse(
 
     public static AdminUserDetailResponse from(UserEntity u, FirebaseContactService.Contact contact,
                                                 ProSubscriptionEntity sub, PayoutHoldSummary payoutHold) {
+        return from(u, contact, sub, payoutHold, 0);
+    }
+
+    public static AdminUserDetailResponse from(UserEntity u, FirebaseContactService.Contact contact,
+                                                ProSubscriptionEntity sub, PayoutHoldSummary payoutHold,
+                                                int monthlyTripsUsed) {
         PayoutHoldSummary hold = payoutHold != null ? payoutHold : PayoutHoldSummary.NONE;
         return new AdminUserDetailResponse(
                 u.getId(),
@@ -139,7 +149,9 @@ public record AdminUserDetailResponse(
                 toUtc(u.getTravelerStatusDeclaredAt()),
                 u.getBusinessName(),
                 u.getBusinessRegistrationNumber(),
-                u.getBusinessCountry()
+                u.getBusinessCountry(),
+                u.getMonthlyTripLimit(),
+                monthlyTripsUsed
         );
     }
 

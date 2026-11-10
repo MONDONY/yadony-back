@@ -4845,25 +4845,28 @@ class AnnouncementServiceTest {
         }
     }
 
-    // ─── Statut du voyageur obligatoire pour publier (lot 2) ───────────────────
+    // ─── Limite mensuelle de trajets (lot 2b) ───────────────────
 
     @Nested
-    @DisplayName("garde « statut du voyageur obligatoire »")
-    class TravelerStatusGuardTests {
+    @DisplayName("garde « limite mensuelle de trajets »")
+    class PublishingLimitGuardTests {
 
-        private com.yadony.api.config.PlatformSettingsService requiredSwitch;
-        private com.yadony.api.common.TravelerStatusGate gate;
+        private com.yadony.api.travelerstatus.PublishingLimitGate gate;
+
+        private void decide(com.yadony.api.travelerstatus.PublishingEligibilityReason reason) {
+            gate = org.mockito.Mockito.spy(
+                    com.yadony.api.travelerstatus.PublishingLimitGateStubs.gateReturning(reason));
+            announcementService.setPublishingLimitGate(gate);
+        }
 
         @org.junit.jupiter.api.BeforeEach
         void wireGate() {
-            requiredSwitch = org.mockito.Mockito.mock(com.yadony.api.config.PlatformSettingsService.class);
-            lenient().when(requiredSwitch.travelerStatusRequired()).thenReturn(true);
-            gate = org.mockito.Mockito.spy(new com.yadony.api.common.TravelerStatusGate(requiredSwitch));
-            announcementService.setTravelerStatusGate(gate);
+            // Par défaut la limite est atteinte et le statut manque : chaque test précise sa décision au besoin.
+            decide(com.yadony.api.travelerstatus.PublishingEligibilityReason.STATUS_REQUIRED);
         }
 
         @Test
-        @DisplayName("publication directe, interrupteur actif, statut non déclaré → 403 traveler-status-required, rien d'écrit")
+        @DisplayName("publication directe, limite atteinte et statut non déclaré → 403 traveler-status-required, rien d'écrit")
         void createAnnouncement_directPublish_statusMissing_isRefused() {
             UserEntity user = verifiedProUser();
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
@@ -4877,10 +4880,10 @@ class AnnouncementServiceTest {
         }
 
         @Test
-        @DisplayName("publication directe, interrupteur actif, statut déclaré → publiée")
+        @DisplayName("publication directe, éligible → publiée")
         void createAnnouncement_directPublish_statusDeclared_passes() {
+            decide(com.yadony.api.travelerstatus.PublishingEligibilityReason.OK);
             UserEntity user = verifiedProUser();
-            user.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL);
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             when(announcementRepository.save(any())).thenAnswer(inv -> {
                 AnnouncementEntity a = inv.getArgument(0);
@@ -4893,7 +4896,7 @@ class AnnouncementServiceTest {
             AnnouncementResponse resp = announcementService.createAnnouncement(FIREBASE_UID, buildRequest());
 
             assertThat(resp.status()).isEqualTo("ACTIVE");
-            verify(gate).assertDeclaredIfRequired(user);
+            verify(gate).assertCanPublish(user);
         }
 
         @Test
@@ -4914,11 +4917,11 @@ class AnnouncementServiceTest {
             AnnouncementResponse resp = announcementService.createAnnouncement(FIREBASE_UID, draftRequest());
 
             assertThat(resp.status()).isEqualTo("DRAFT");
-            verify(gate, never()).assertDeclaredIfRequired(any());
+            verify(gate, never()).assertCanPublish(any());
         }
 
         @Test
-        @DisplayName("publication d'un brouillon, interrupteur actif, statut non déclaré → 403, le brouillon reste brouillon")
+        @DisplayName("publication d'un brouillon, limite atteinte et statut non déclaré → 403, le brouillon reste brouillon")
         void publishAnnouncement_statusMissing_isRefusedAndDraftStaysDraft() {
             UserEntity user = verifiedProUser();
             AnnouncementEntity draft = draftEntityOwnedBy(user);
@@ -4932,10 +4935,10 @@ class AnnouncementServiceTest {
         }
 
         @Test
-        @DisplayName("publication d'un brouillon, statut déclaré → ACTIVE")
-        void publishAnnouncement_statusDeclared_becomesActive() {
+        @DisplayName("publication d'un brouillon, éligible → ACTIVE")
+        void publishAnnouncement_eligible_becomesActive() {
+            decide(com.yadony.api.travelerstatus.PublishingEligibilityReason.OK);
             UserEntity user = verifiedProUser();
-            user.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL);
             AnnouncementEntity draft = draftEntityOwnedBy(user);
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             when(announcementRepository.findById(draft.getId())).thenReturn(Optional.of(draft));
@@ -4944,6 +4947,132 @@ class AnnouncementServiceTest {
             announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID);
 
             assertThat(draft.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
+        }
+
+        @Test
+        @DisplayName("publication d'un brouillon : la date de publication est posée une seule fois")
+        void publishAnnouncement_stampsPublishedAtOnce() {
+            decide(com.yadony.api.travelerstatus.PublishingEligibilityReason.OK);
+            UserEntity user = verifiedProUser();
+            AnnouncementEntity draft = draftEntityOwnedBy(user);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.findById(draft.getId())).thenReturn(Optional.of(draft));
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            assertThat(draft.getPublishedAt()).isNull();
+
+            announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID);
+
+            java.time.LocalDateTime first = draft.getPublishedAt();
+            assertThat(first).isNotNull();
+
+            // Une seconde publication est refusée (plus un brouillon) et ne touche pas à la date.
+            assertThatThrownBy(() -> announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("not-a-draft"));
+            assertThat(draft.getPublishedAt()).isEqualTo(first);
+        }
+
+        private AnnouncementEntity unpublishedDraftPublishedAt(java.time.LocalDateTime publishedAt) {
+            UserEntity user = verifiedProUser();
+            AnnouncementEntity draft = draftEntityOwnedBy(user);
+            draft.setPublishedAt(publishedAt);
+            lenient().when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            lenient().when(announcementRepository.findById(draft.getId())).thenReturn(Optional.of(draft));
+            lenient().when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            return draft;
+        }
+
+        @Test
+        @DisplayName("dépublié puis republié dans le MÊME mois, à la limite : passe, garde de limite non appelée, date inchangée")
+        void republishInTheSameMonth_atTheLimit_passesWithoutTheLimitGate() {
+            decide(com.yadony.api.travelerstatus.PublishingEligibilityReason.LIMIT_REACHED);
+            java.time.LocalDateTime earlierThisMonth = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)
+                    .withDayOfMonth(1).withHour(0).withMinute(0).withSecond(1).withNano(0);
+            AnnouncementEntity draft = unpublishedDraftPublishedAt(earlierThisMonth);
+
+            announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID);
+
+            assertThat(draft.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
+            assertThat(draft.getPublishedAt()).isEqualTo(earlierThisMonth);
+            verify(gate, never()).assertCanPublish(any());
+        }
+
+        @Test
+        @DisplayName("publié le mois précédent, republié ce mois-ci à la limite : compté et bloqué, date inchangée")
+        void republishInANewMonth_atTheLimit_isCountedAndBlocked() {
+            decide(com.yadony.api.travelerstatus.PublishingEligibilityReason.LIMIT_REACHED);
+            java.time.LocalDateTime lastMonth = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusMonths(1);
+            AnnouncementEntity draft = unpublishedDraftPublishedAt(lastMonth);
+
+            assertThatThrownBy(() -> announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("monthly-limit-reached"));
+            assertThat(draft.getStatus()).isEqualTo(AnnouncementStatus.DRAFT);
+            assertThat(draft.getPublishedAt()).isEqualTo(lastMonth);
+        }
+
+        @Test
+        @DisplayName("publié le mois précédent, republié ce mois-ci sous la limite : la date passe au mois courant")
+        void republishInANewMonth_underTheLimit_restampsPublishedAt() {
+            decide(com.yadony.api.travelerstatus.PublishingEligibilityReason.OK);
+            java.time.LocalDateTime lastMonth = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusMonths(1);
+            AnnouncementEntity draft = unpublishedDraftPublishedAt(lastMonth);
+
+            announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID);
+
+            assertThat(draft.getPublishedAt()).isAfter(lastMonth.plusDays(20));
+            assertThat(java.time.YearMonth.from(draft.getPublishedAt()))
+                    .isEqualTo(java.time.YearMonth.now(java.time.ZoneOffset.UTC));
+            verify(gate).assertCanPublish(any());
+        }
+
+        @Test
+        @DisplayName("republication dans le même mois : le contrôle KYC reste appliqué")
+        void republishInTheSameMonth_stillChecksKyc() {
+            decide(com.yadony.api.travelerstatus.PublishingEligibilityReason.LIMIT_REACHED);
+            org.springframework.test.util.ReflectionTestUtils.setField(announcementService, "enforceKyc", true);
+            AnnouncementEntity draft = unpublishedDraftPublishedAt(
+                    java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).withDayOfMonth(1).withHour(0).withNano(0));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenAnswer(inv -> {
+                UserEntity u = proUser();
+                u.setKycStatus(KycStatus.PENDING);
+                org.springframework.test.util.ReflectionTestUtils.setField(u, "id", draft.getTravelerId());
+                return Optional.of(u);
+            });
+
+            assertThatThrownBy(() -> announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("kyc-not-verified"));
+        }
+
+        @Test
+        @DisplayName("limite atteinte par un particulier → 403 monthly-limit-reached, aucun trajet enregistré")
+        void createAnnouncement_limitReached_isRefused() {
+            decide(com.yadony.api.travelerstatus.PublishingEligibilityReason.LIMIT_REACHED);
+            UserEntity user = verifiedProUser();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+
+            assertThatThrownBy(() -> announcementService.createAnnouncement(FIREBASE_UID, buildRequest()))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                        assertThat(e.getErrorCode()).isEqualTo("monthly-limit-reached");
+                    });
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("limite atteinte, demande GP Pro en attente → 403 gp-pro-pending, le brouillon reste brouillon")
+        void publishAnnouncement_gpProPending_isRefusedAndDraftStaysDraft() {
+            decide(com.yadony.api.travelerstatus.PublishingEligibilityReason.GP_PRO_PENDING);
+            UserEntity user = verifiedProUser();
+            AnnouncementEntity draft = draftEntityOwnedBy(user);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.findById(draft.getId())).thenReturn(Optional.of(draft));
+
+            assertThatThrownBy(() -> announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("gp-pro-pending"));
+            assertThat(draft.getStatus()).isEqualTo(AnnouncementStatus.DRAFT);
         }
 
         @Test
@@ -4980,7 +5109,7 @@ class AnnouncementServiceTest {
                     FIREBASE_UID, draftRequest(), UUID.randomUUID(), 1);
 
             assertThat(resp.status()).isEqualTo("DRAFT");
-            verify(gate, never()).assertDeclaredIfRequired(any());
+            verify(gate, never()).assertCanPublish(any());
         }
 
         @Test
@@ -4994,7 +5123,7 @@ class AnnouncementServiceTest {
             assertThatThrownBy(() -> announcementService.createAnnouncement(FIREBASE_UID, buildRequest()))
                     .isInstanceOfSatisfying(YadonyBusinessException.class,
                             e -> assertThat(e.getErrorCode()).isEqualTo("kyc-not-verified"));
-            verify(gate, never()).assertDeclaredIfRequired(any());
+            verify(gate, never()).assertCanPublish(any());
         }
     }
 

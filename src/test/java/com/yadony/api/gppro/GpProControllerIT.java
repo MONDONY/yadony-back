@@ -45,6 +45,7 @@ class GpProControllerIT {
     @Autowired UserRepository userRepository;
     @Autowired GpProApplicationRepository applicationRepository;
     @Autowired GpProDocumentRepository documentRepository;
+    @Autowired org.springframework.transaction.PlatformTransactionManager transactionManager;
     @SpyBean UserRepository spyUsers;
     @MockBean StorageService storageService;
 
@@ -99,6 +100,124 @@ class GpProControllerIT {
         mockMvc.perform(post("/gp-pro/applications").with(auth())
                         .contentType(MediaType.APPLICATION_JSON).content("{\"source\":\"PROFILE\"}"))
                 .andExpect(status().isUnprocessableEntity());
+    }
+
+    // ── Formulaire unifié et sortie en un clic ──
+
+    @Test
+    void applyAvecEntreprise_201_etNumeroChiffreRelisibleEnBase() throws Exception {
+        mockMvc.perform(post("/gp-pro/applications").with(auth()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"travelFrequency\":\"MONTHLY\",\"source\":\"PROFILE\",\"commercialName\":\"Acme Express\","
+                                + "\"businessRegistrationNumber\":\"SIREN 123 456 789\",\"businessCountry\":\"FR\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.state").value("PENDING"))
+                .andExpect(jsonPath("$.businessRegistrationNumber").doesNotExist());
+        GpProApplicationEntity saved = applicationRepository.findFirstByUserIdOrderByCreatedAtDesc(me().getId())
+                .orElseThrow();
+        org.assertj.core.api.Assertions.assertThat(saved.getBusinessRegistrationNumber())
+                .isEqualTo("SIREN 123 456 789");
+        org.assertj.core.api.Assertions.assertThat(saved.getBusinessCountry()).isEqualTo("FR");
+    }
+
+    @Test
+    void applyAvecNumeroSansPays_422_gpProBusinessIncomplete() throws Exception {
+        mockMvc.perform(post("/gp-pro/applications").with(auth()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"travelFrequency\":\"MONTHLY\",\"source\":\"PROFILE\",\"commercialName\":\"Acme\","
+                                + "\"businessRegistrationNumber\":\"SIREN 123 456 789\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("gp-pro-business-incomplete"));
+    }
+
+    @Test
+    void applyAvecUnSeulDesDeuxChampsEntreprise_memeVideOuBlanc_422_gpProBusinessIncomplete() throws Exception {
+        for (String extra : new String[]{
+                "\"businessCountry\":\"FR\",\"businessRegistrationNumber\":\"\"",
+                "\"businessCountry\":\"FR\",\"businessRegistrationNumber\":\"   \"",
+                "\"businessCountry\":\"FR\"",
+                "\"businessRegistrationNumber\":\"SIREN 123 456\",\"businessCountry\":\"\""}) {
+            mockMvc.perform(post("/gp-pro/applications").with(auth()).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"travelFrequency\":\"MONTHLY\",\"source\":\"PROFILE\",\"commercialName\":\"Acme\","
+                                    + extra + "}"))
+                    .andExpect(status().isUnprocessableEntity())
+                    .andExpect(jsonPath("$.code").value("gp-pro-business-incomplete"));
+        }
+    }
+
+    @Test
+    void applyAvecNumeroInvalideOuPaysEnMinuscules_422() throws Exception {
+        mockMvc.perform(post("/gp-pro/applications").with(auth()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"travelFrequency\":\"MONTHLY\",\"source\":\"PROFILE\",\"commercialName\":\"Acme\","
+                                + "\"businessRegistrationNumber\":\"AB1\",\"businessCountry\":\"FR\"}"))
+                .andExpect(status().isUnprocessableEntity());
+        mockMvc.perform(post("/gp-pro/applications").with(auth()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"travelFrequency\":\"MONTHLY\",\"source\":\"PROFILE\",\"commercialName\":\"Acme\","
+                                + "\"businessRegistrationNumber\":\"SIREN 123\",\"businessCountry\":\"fr\"}"))
+                .andExpect(status().isUnprocessableEntity());
+    }
+
+    @Test
+    void resignAvecBadgeProfessionnel_200_revoked_puisDeuxiemeClic409() throws Exception {
+        UserEntity u = me();
+        u.setGpPro(true);
+        u.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL);
+        u.setBusinessName("Acme Express");
+        u.setBusinessRegistrationNumber("SIREN 123 456 789");
+        u.setBusinessCountry("FR");
+        userRepository.save(u);
+
+        mockMvc.perform(post("/gp-pro/resign").with(auth()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("REVOKED"))
+                .andExpect(jsonPath("$.reason").value("SELF"));
+        UserEntity after = me();
+        org.assertj.core.api.Assertions.assertThat(after.isGpPro()).isFalse();
+        org.assertj.core.api.Assertions.assertThat(after.getTravelerStatus())
+                .isEqualTo(com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL);
+        org.assertj.core.api.Assertions.assertThat(after.getBusinessRegistrationNumber()).isNull();
+
+        mockMvc.perform(post("/gp-pro/resign").with(auth()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("gp-pro-not-active"));
+    }
+
+    @Test
+    void resignAvecDemandeEnAttente_200_etDemandeAnnulee() throws Exception {
+        mockMvc.perform(post("/gp-pro/applications").with(auth())
+                .contentType(MediaType.APPLICATION_JSON).content(BODY)).andExpect(status().isCreated());
+
+        mockMvc.perform(post("/gp-pro/resign").with(auth())).andExpect(status().isOk());
+
+        mockMvc.perform(get("/gp-pro/me").with(auth())).andExpect(jsonPath("$.state").value("NONE"));
+    }
+
+    @Test
+    void resignSansRien_409_etSansJeton_401() throws Exception {
+        mockMvc.perform(post("/gp-pro/resign").with(auth()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("gp-pro-not-active"));
+        mockMvc.perform(post("/gp-pro/resign")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void suppressionDuCompte_effaceNumeroEtPaysDesDemandes() {
+        GpProApplicationEntity a = new GpProApplicationEntity();
+        a.setUserId(me().getId());
+        a.setStatus(GpProApplicationStatus.REJECTED);
+        a.setSource(GpProApplicationSource.PROFILE);
+        a.setTravelFrequency(GpProTravelFrequency.MONTHLY);
+        a.setCommercialName("Acme");
+        a.setBusinessRegistrationNumber("SIREN 123 456 789");
+        a.setBusinessCountry("FR");
+        applicationRepository.saveAndFlush(a);
+
+        UUID userId = me().getId();
+        new org.springframework.transaction.support.TransactionTemplate(transactionManager)
+                .executeWithoutResult(status -> applicationRepository.clearPersonalTextByUserId(userId));
+
+        GpProApplicationEntity after = applicationRepository.findById(a.getId()).orElseThrow();
+        org.assertj.core.api.Assertions.assertThat(after.getCommercialName()).isNull();
+        org.assertj.core.api.Assertions.assertThat(after.getBusinessRegistrationNumber()).isNull();
+        org.assertj.core.api.Assertions.assertThat(after.getBusinessCountry()).isNull();
     }
 
     // ── Justificatifs : ajout et retrait tant que la demande est ouverte ──

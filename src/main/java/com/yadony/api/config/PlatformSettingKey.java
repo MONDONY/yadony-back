@@ -102,8 +102,7 @@ public enum PlatformSettingKey {
     PAYMENTS_PAYPAL_ENABLED("payments_paypal_enabled", PlatformSettingType.BOOLEAN),
     PAYMENTS_APPLE_PAY_ENABLED("payments_apple_pay_enabled", PlatformSettingType.BOOLEAN),
     PAYMENTS_GOOGLE_PAY_ENABLED("payments_google_pay_enabled", PlatformSettingType.BOOLEAN),
-    REMOTE_CONFIG_FETCH_MINUTES("remote_config_fetch_minutes", PlatformSettingType.INTEGER),
-    TRAVELER_STATUS_REQUIRED("traveler_status_required", PlatformSettingType.BOOLEAN);
+    REMOTE_CONFIG_FETCH_MINUTES("remote_config_fetch_minutes", PlatformSettingType.INTEGER);
 
     /**
      * Intervalle minimal, en minutes, entre deux relectures de Firebase Remote Config par l'application.

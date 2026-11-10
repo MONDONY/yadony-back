@@ -389,6 +389,25 @@ public class UserService {
         return user;
     }
 
+    /** Limite mensuelle de trajets publiés d'un utilisateur (null = aucune limite, sinon 1 à 100). */
+    @Transactional
+    public UserEntity setMonthlyTripLimit(UUID userId, Integer limit, UUID adminId) {
+        if (limit != null && (limit < 1 || limit > 100)) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-monthly-trip-limit",
+                    "Invalid Monthly Trip Limit", "La limite doit être comprise entre 1 et 100, ou vide (aucune limite)");
+        }
+        UserEntity user = userRepository.findById(userId)
+                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found",
+                        "Not Found", "Utilisateur introuvable"));
+        Integer previous = user.getMonthlyTripLimit();
+        user.setMonthlyTripLimit(limit);
+        userRepository.save(user);
+        auditService.log("USER", user.getId(), "USER_MONTHLY_TRIP_LIMIT_SET", adminId,
+                Map.of("previous", previous == null ? "none" : previous.toString(),
+                        "limit", limit == null ? "none" : limit.toString()));
+        return user;
+    }
+
     // Story 9.8 — Finalisation RGPD à J+30 (appelé par le scheduler)
     @Transactional
     public void finalizeGdprDeletion(UserEntity user) {

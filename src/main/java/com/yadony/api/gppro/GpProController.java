@@ -43,6 +43,12 @@ public class GpProController {
         return service.attachDocuments(requireUid(firebaseUid), request);
     }
 
+    /** Sortie en un clic : le voyageur quitte le statut GP Pro (retire le badge et la demande ouverte). */
+    @PostMapping("/resign")
+    public GpProStatusResponse resign(@AuthenticationPrincipal String firebaseUid) {
+        return service.resign(requireUid(firebaseUid));
+    }
+
     @DeleteMapping("/applications/current")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void cancel(@AuthenticationPrincipal String firebaseUid) {

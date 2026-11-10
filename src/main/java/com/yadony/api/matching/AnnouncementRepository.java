@@ -139,6 +139,18 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
     long countByTravelerIdAndCreatedAtBetweenAndStatusNot(
             UUID travelerId, LocalDateTime from, LocalDateTime to, AnnouncementStatus status);
 
+    /**
+     * Trajets du voyageur publiés dans la période [from, to[, pour la limite mensuelle : ceux dont la date de
+     * publication ({@code published_at}, V371) y tombe, quel que soit leur statut actuel. SQL natif, volontairement
+     * SANS le filtre {@code deleted_at} de l'entité : supprimer un trajet publié ne doit pas libérer le quota.
+     * Une modification, une offre acceptée ou un passage FULL ne changent rien ; un brouillon jamais publié
+     * (date nulle) n'est pas compté. Intervalle semi-ouvert : aucune seconde ne reste hors de tout mois.
+     */
+    @Query(value = "SELECT count(*) FROM announcements WHERE traveler_id = :travelerId "
+            + "AND published_at >= :from AND published_at < :to", nativeQuery = true)
+    long countPublishedInPeriod(@Param("travelerId") UUID travelerId,
+                                @Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
+
     long countByTravelerIdAndStatusAndCreatedAtBetween(
             UUID travelerId, AnnouncementStatus status, LocalDateTime from, LocalDateTime to);
 

@@ -20,6 +20,9 @@ import com.yadony.api.auth.UserStatus;
 import com.yadony.api.ratings.RatingEntity;
 import com.yadony.api.ratings.RatingRepository;
 import com.yadony.api.signalements.ReportRepository;
+import com.yadony.api.travelerstatus.TravelerStatus;
+import com.yadony.api.travelerstatus.TravelerStatusService;
+import com.yadony.api.travelerstatus.events.TravelerStatusChangedEvent;
 import com.yadony.api.signalements.ReportStatus;
 import com.yadony.api.signalements.ReportTargetType;
 import org.springframework.context.ApplicationEventPublisher;
@@ -139,7 +142,9 @@ public class GpProAdminService {
                 disputes.countByTravelerIdAndStatus(userId, "OPEN"),
                 reports.countByStatusAndTargetTypeAndTargetId(ReportStatus.OPEN, ReportTargetType.USER, userId),
                 user == null ? null : user.getCreatedAt(),
-                docs);
+                docs,
+                app.getBusinessRegistrationNumber(),
+                app.getBusinessCountry());
     }
 
     @Transactional(readOnly = true)
@@ -187,16 +192,24 @@ public class GpProAdminService {
 
     @Transactional
     public void approve(UUID applicationId, UUID adminId) {
-        UUID userId = applicationOf(applicationId).getUserId();
+        GpProApplicationEntity application = applicationOf(applicationId);
+        UUID userId = application.getUserId();
+        // Lu avant la décision : l'UPDATE de décision vide le contexte de persistance.
+        BusinessDetails business = BusinessDetails.of(application);
         assertEligible(lockedUser(userId));
         decideOrConflict(applicationId, GpProApplicationStatus.APPROVED, adminId, null);
         UserEntity user = lockedUser(userId);
         grantBadge(user);
+        boolean professional = applyBusinessDetails(user, business);
         users.save(user);
+        // Jamais la raison sociale, le numéro d'entreprise ni le pays dans l'audit (immuable).
         audit.log(ENTITY, applicationId, "GP_PRO_APPROVED", adminId, Map.of("userId", userId.toString()));
         purgeDocuments(applicationId, adminId);
         events.publishEvent(new GpProDecisionEvent(userId, GpProDecisionEvent.Kind.APPROVED, null));
         events.publishEvent(new GpProStatusChangedEvent(userId, true));
+        if (professional) {
+            events.publishEvent(new TravelerStatusChangedEvent(userId, TravelerStatus.PROFESSIONAL));
+        }
     }
 
     @Transactional
@@ -205,6 +218,11 @@ public class GpProAdminService {
         UUID userId = applicationOf(applicationId).getUserId();
         users.findByIdForUpdate(userId);
         decideOrConflict(applicationId, GpProApplicationStatus.REJECTED, adminId, reason);
+        // Minimisation : le numéro d'entreprise ne sert plus une fois la demande refusée.
+        applications.findById(applicationId).ifPresent(a -> {
+            a.clearBusinessDetails();
+            applications.save(a);
+        });
         audit.log(ENTITY, applicationId, "GP_PRO_REJECTED", adminId,
                 Map.of("userId", userId.toString(), "reason", reason));
         purgeDocuments(applicationId, adminId);
@@ -222,6 +240,9 @@ public class GpProAdminService {
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         String cleanNote = note == null || note.isBlank() ? null : note.trim();
         GpProApplicationEntity app = applications.findFirstByUserIdAndStatusIn(userId, OPEN).orElse(null);
+        // Octroi direct sans demande : le statut du voyageur ne change pas. Avec une demande ouverte qui porte
+        // l'entreprise, c'est une approbation : le statut professionnel suit.
+        BusinessDetails business = app == null ? null : BusinessDetails.of(app);
         if (app == null) {
             app = new GpProApplicationEntity();
             app.setUserId(userId);
@@ -233,11 +254,15 @@ public class GpProAdminService {
         app.setDecisionReason(cleanNote);
         app = applications.saveAndFlush(app);
         grantBadge(user);
+        boolean professional = applyBusinessDetails(user, business);
         users.save(user);
         audit.log(ENTITY, app.getId(), "GP_PRO_GRANTED_DIRECTLY", adminId, Map.of("userId", userId.toString()));
         purgeDocuments(app.getId(), adminId);
         events.publishEvent(new GpProDecisionEvent(userId, GpProDecisionEvent.Kind.APPROVED, null));
         events.publishEvent(new GpProStatusChangedEvent(userId, true));
+        if (professional) {
+            events.publishEvent(new TravelerStatusChangedEvent(userId, TravelerStatus.PROFESSIONAL));
+        }
     }
 
     @Transactional
@@ -252,6 +277,8 @@ public class GpProAdminService {
         user.setGpPro(false);
         user.setGpProRevokedAt(now);
         user.setGpProRevokedReason(reason);
+        // Le statut professionnel suit le badge : particulier, champs d'entreprise effacés (même écriture).
+        boolean statusChanged = user.revertProfessionalToIndividual();
         users.save(user);
         List<GpProReviewFlagEntity> active = flags.findByUserIdAndResolvedAtIsNull(userId);
         active.forEach(f -> f.setResolvedAt(now));
@@ -259,6 +286,35 @@ public class GpProAdminService {
         audit.log("USER", userId, "GP_PRO_REVOKED", adminId, Map.of("reason", reason));
         events.publishEvent(new GpProDecisionEvent(userId, GpProDecisionEvent.Kind.REVOKED, reason));
         events.publishEvent(new GpProStatusChangedEvent(userId, false));
+        if (statusChanged) {
+            events.publishEvent(new TravelerStatusChangedEvent(userId, TravelerStatus.INDIVIDUAL));
+        }
+    }
+
+    /** Raison sociale, numéro et pays d'une demande qui porte les trois (formulaire GP Pro unifié). */
+    private record BusinessDetails(String name, String registrationNumber, String country) {
+
+        static BusinessDetails of(GpProApplicationEntity application) {
+            return application.hasBusinessDetails()
+                    ? new BusinessDetails(application.getCommercialName(),
+                            application.getBusinessRegistrationNumber(), application.getBusinessCountry())
+                    : null;
+        }
+    }
+
+    /**
+     * Copie l'entreprise de la demande sur le voyageur et pose le statut professionnel. Sans les trois champs
+     * (ancienne app), le statut n'est pas touché.
+     *
+     * @return vrai si le statut professionnel a été posé
+     */
+    private static boolean applyBusinessDetails(UserEntity user, BusinessDetails business) {
+        if (business == null) {
+            return false;
+        }
+        user.becomeProfessional(business.name(), business.registrationNumber(), business.country(),
+                TravelerStatusService.TERMS_VERSION);
+        return true;
     }
 
     /** Gardes communes à la validation et à l'attribution directe, avant toute écriture. */

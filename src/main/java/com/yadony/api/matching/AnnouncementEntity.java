@@ -44,6 +44,16 @@ public class AnnouncementEntity extends BaseEntity {
     @Transient
     private AnnouncementStatus persistedStatus;
 
+    /**
+     * Date de la publication la plus récente faite dans un nouveau mois (V371) : posée à la création d'un trajet
+     * non brouillon ({@link #stampPublishedAtOnCreate}) ou au passage BROUILLON vers ACTIF
+     * ({@code publishAnnouncement}) ; inchangée par une modification, une offre ou un changement de statut, et
+     * quand un trajet dépublié est republié dans le même mois. Sert la limite mensuelle ; {@code null} = jamais
+     * publié.
+     */
+    @Column(name = "published_at")
+    private java.time.LocalDateTime publishedAt;
+
     @Column(name = "traveler_id", nullable = false)
     private UUID travelerId;
 
@@ -532,6 +542,17 @@ public class AnnouncementEntity extends BaseEntity {
     public void setPricePerKg(BigDecimal pricePerKg) { this.pricePerKg = pricePerKg; }
 
     public AnnouncementStatus getStatus() { return status; }
+
+    public java.time.LocalDateTime getPublishedAt() { return publishedAt; }
+    public void setPublishedAt(java.time.LocalDateTime publishedAt) { this.publishedAt = publishedAt; }
+
+    /** Couvre tous les chemins de création : un trajet qui naît non brouillon est publié à cet instant. */
+    @jakarta.persistence.PrePersist
+    void stampPublishedAtOnCreate() {
+        if (publishedAt == null && status != AnnouncementStatus.DRAFT) {
+            publishedAt = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC);
+        }
+    }
 
     AnnouncementStatus getPersistedStatus() { return persistedStatus; }
 

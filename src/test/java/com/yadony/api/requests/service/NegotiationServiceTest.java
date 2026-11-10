@@ -867,10 +867,9 @@ class NegotiationServiceTest {
                 request.getDesiredDate().atTime(8, 0).toInstant(java.time.ZoneOffset.UTC));
         }
 
-        private void requireTravelerStatus() {
-            var settings = mock(com.yadony.api.config.PlatformSettingsService.class);
-            when(settings.travelerStatusRequired()).thenReturn(true);
-            service.setTravelerStatusGate(new com.yadony.api.common.TravelerStatusGate(settings));
+        private void publishingDecision(com.yadony.api.travelerstatus.PublishingEligibilityReason reason) {
+            service.setPublishingLimitGate(
+                com.yadony.api.travelerstatus.PublishingLimitGateStubs.gateReturning(reason));
         }
 
         private void stubStartUntilDedicatedTrip() {
@@ -887,10 +886,10 @@ class NegotiationServiceTest {
         }
 
         @Test
-        @DisplayName("interrupteur actif, statut non déclaré : trajet dédié créé à l'offre refusé (403 traveler-status-required)")
-        void start_dedicatedTrip_travelerStatusRequiredAndMissing_isRefused() {
+        @DisplayName("limite atteinte, statut non déclaré : trajet dédié créé à l'offre refusé (403 traveler-status-required)")
+        void start_dedicatedTrip_statusRequired_isRefused() {
             stubStartUntilDedicatedTrip();
-            requireTravelerStatus();
+            publishingDecision(com.yadony.api.travelerstatus.PublishingEligibilityReason.STATUS_REQUIRED);
             NegotiationStartRequest req = new NegotiationStartRequest(
                 REQUEST_ID, new BigDecimal("80"), request.getDesiredDate(),
                 new BigDecimal("5"), null, null, true, dedicatedTripPayload(request.getDesiredDate())
@@ -906,11 +905,45 @@ class NegotiationServiceTest {
         }
 
         @Test
-        @DisplayName("interrupteur actif, statut déclaré : le garde laisse passer (la suite du contrôle s'exécute)")
-        void start_dedicatedTrip_travelerStatusRequiredAndDeclared_passesTheGate() {
+        @DisplayName("limite atteinte par un particulier : trajet dédié créé à l'offre refusé (403 monthly-limit-reached)")
+        void start_dedicatedTrip_limitReached_isRefused() {
             stubStartUntilDedicatedTrip();
-            requireTravelerStatus();
-            traveler.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL);
+            publishingDecision(com.yadony.api.travelerstatus.PublishingEligibilityReason.LIMIT_REACHED);
+            NegotiationStartRequest req = new NegotiationStartRequest(
+                REQUEST_ID, new BigDecimal("80"), request.getDesiredDate(),
+                new BigDecimal("5"), null, null, true, dedicatedTripPayload(request.getDesiredDate())
+            );
+
+            assertThatThrownBy(() -> service.start(TRAVELER_ID, req))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                    assertThat(e.getErrorCode()).isEqualTo("monthly-limit-reached");
+                });
+            verify(announcementRepo, never()).save(any());
+            verify(threadRepo, never()).save(any(NegotiationThreadEntity.class));
+        }
+
+        @Test
+        @DisplayName("limite atteinte, demande GP Pro en attente : trajet dédié créé à l'offre refusé (403 gp-pro-pending)")
+        void start_dedicatedTrip_gpProPending_isRefused() {
+            stubStartUntilDedicatedTrip();
+            publishingDecision(com.yadony.api.travelerstatus.PublishingEligibilityReason.GP_PRO_PENDING);
+            NegotiationStartRequest req = new NegotiationStartRequest(
+                REQUEST_ID, new BigDecimal("80"), request.getDesiredDate(),
+                new BigDecimal("5"), null, null, true, dedicatedTripPayload(request.getDesiredDate())
+            );
+
+            assertThatThrownBy(() -> service.start(TRAVELER_ID, req))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                    e -> assertThat(e.getErrorCode()).isEqualTo("gp-pro-pending"));
+            verify(announcementRepo, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("éligible : le garde laisse passer (la suite du contrôle s'exécute)")
+        void start_dedicatedTrip_eligible_passesTheGate() {
+            stubStartUntilDedicatedTrip();
+            publishingDecision(com.yadony.api.travelerstatus.PublishingEligibilityReason.OK);
             NegotiationStartRequest req = new NegotiationStartRequest(
                 REQUEST_ID, new BigDecimal("80"), request.getDesiredDate(),
                 new BigDecimal("5"), null, null, true, null
@@ -2898,11 +2931,10 @@ class NegotiationServiceTest {
         }
 
         @Test
-        @DisplayName("interrupteur actif, statut non déclaré : createDedicatedTrip refusé (403 traveler-status-required)")
-        void createDedicatedTrip_travelerStatusRequiredAndMissing_isRefused() {
-            var settings = mock(com.yadony.api.config.PlatformSettingsService.class);
-            when(settings.travelerStatusRequired()).thenReturn(true);
-            service.setTravelerStatusGate(new com.yadony.api.common.TravelerStatusGate(settings));
+        @DisplayName("limite atteinte : createDedicatedTrip refusé (403 monthly-limit-reached), rien d'écrit")
+        void createDedicatedTrip_limitReached_isRefused() {
+            service.setPublishingLimitGate(com.yadony.api.travelerstatus.PublishingLimitGateStubs.gateReturning(
+                com.yadony.api.travelerstatus.PublishingEligibilityReason.LIMIT_REACHED));
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
@@ -2911,18 +2943,17 @@ class NegotiationServiceTest {
                     buildRequest(request.getDesiredDate())))
                 .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
                     assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
-                    assertThat(e.getErrorCode()).isEqualTo("traveler-status-required");
+                    assertThat(e.getErrorCode()).isEqualTo("monthly-limit-reached");
                 });
             verifyNoInteractions(announcementRepo);
             assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_TRIP);
         }
 
         @Test
-        @DisplayName("interrupteur inactif : createDedicatedTrip non bloqué même sans statut")
-        void createDedicatedTrip_travelerStatusSwitchOff_neverBlocks() {
-            var settings = mock(com.yadony.api.config.PlatformSettingsService.class);
-            when(settings.travelerStatusRequired()).thenReturn(false);
-            service.setTravelerStatusGate(new com.yadony.api.common.TravelerStatusGate(settings));
+        @DisplayName("éligible : createDedicatedTrip non bloqué")
+        void createDedicatedTrip_eligible_neverBlocks() {
+            service.setPublishingLimitGate(com.yadony.api.travelerstatus.PublishingLimitGateStubs.gateReturning(
+                com.yadony.api.travelerstatus.PublishingEligibilityReason.OK));
             when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
             lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
             when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));

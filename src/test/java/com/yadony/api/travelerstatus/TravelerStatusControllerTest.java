@@ -89,33 +89,24 @@ class TravelerStatusControllerTest {
     }
 
     @Test
-    void professionnelComplet_200_etNumeroChiffreRelisible() throws Exception {
+    void professionnel_422_traveler_status_invalid_rienEcrit() throws Exception {
         mockMvc.perform(put(URL).with(auth()).contentType(MediaType.APPLICATION_JSON)
                         .content(pro("SIREN 123 456 789")))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("PROFESSIONAL"))
-                .andExpect(jsonPath("$.businessName").value("Acme Express"))
-                .andExpect(jsonPath("$.registrationNumber").value("SIREN 123 456 789"))
-                .andExpect(jsonPath("$.country").value("FR"));
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("traveler-status-invalid"));
         UserEntity u = me();
-        assertThat(u.getBusinessRegistrationNumber()).isEqualTo("SIREN 123 456 789");
-        assertThat(u.getBusinessCountry()).isEqualTo("FR");
+        assertThat(u.getTravelerStatus()).isNull();
+        assertThat(u.getBusinessRegistrationNumber()).isNull();
     }
 
     @Test
-    void numeroTropCourt_422_rienEcrit() throws Exception {
-        mockMvc.perform(put(URL).with(auth()).contentType(MediaType.APPLICATION_JSON).content(pro("AB1")))
-                .andExpect(status().isUnprocessableEntity());
-        assertThat(me().getTravelerStatus()).isNull();
-    }
-
-    @Test
-    void numeroAvecCaracteresInterdits_422_rienEcrit() throws Exception {
-        mockMvc.perform(put(URL).with(auth()).contentType(MediaType.APPLICATION_JSON).content(pro("AB12;DROP TABLE")))
-                .andExpect(status().isUnprocessableEntity());
-        mockMvc.perform(put(URL).with(auth()).contentType(MediaType.APPLICATION_JSON).content(pro("AB12\\n3456")))
-                .andExpect(status().isUnprocessableEntity());
-        assertThat(me().getTravelerStatus()).isNull();
+    void ancienCorpsAvecChampsProfessionnelsSurUnParticulier_ignoresSansErreur() throws Exception {
+        mockMvc.perform(put(URL).with(auth()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"INDIVIDUAL\",\"personalUseConfirmed\":true,"
+                                + "\"businessName\":\"Acme\",\"registrationNumber\":\"SIREN 123\",\"country\":\"FR\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("INDIVIDUAL"))
+                .andExpect(jsonPath("$.registrationNumber").doesNotExist());
         assertThat(me().getBusinessRegistrationNumber()).isNull();
     }
 

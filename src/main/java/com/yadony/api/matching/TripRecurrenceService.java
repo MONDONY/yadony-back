@@ -67,19 +67,19 @@ public class TripRecurrenceService {
     }
 
     /**
-     * Garde « statut du voyageur obligatoire », injecté par setter (constructeur inchangé) ; sans garde,
+     * Garde « limite mensuelle de trajets », injecté par setter (constructeur inchangé) ; sans garde,
      * aucun contrôle.
      */
-    private com.yadony.api.common.TravelerStatusGate travelerStatusGate;
+    private com.yadony.api.travelerstatus.PublishingLimitGate publishingLimitGate;
 
     @org.springframework.beans.factory.annotation.Autowired
-    void setTravelerStatusGate(com.yadony.api.common.TravelerStatusGate travelerStatusGate) {
-        this.travelerStatusGate = travelerStatusGate;
+    void setPublishingLimitGate(com.yadony.api.travelerstatus.PublishingLimitGate publishingLimitGate) {
+        this.publishingLimitGate = publishingLimitGate;
     }
 
-    private void assertTravelerStatusDeclared(UUID userId) {
-        if (travelerStatusGate != null) {
-            userRepository.findById(userId).ifPresent(travelerStatusGate::assertDeclaredIfRequired);
+    private void assertCanPublish(UUID userId) {
+        if (publishingLimitGate != null) {
+            userRepository.findById(userId).ifPresent(publishingLimitGate::assertCanPublish);
         }
     }
 
@@ -93,7 +93,7 @@ public class TripRecurrenceService {
         // Une récurrence active publie des trajets : même garde que la publication, à la source, pour que le
         // voyageur reçoive le 403 tout de suite au lieu d'un 200 sans aucun trajet généré.
         if (request.active()) {
-            assertTravelerStatusDeclared(userId);
+            assertCanPublish(userId);
         }
         TripRecurrenceEntity entity = new TripRecurrenceEntity();
         entity.setUserId(userId);
@@ -118,7 +118,7 @@ public class TripRecurrenceService {
         TripRecurrenceEntity entity = repository.findByUserIdAndId(userId, id)
                 .orElseThrow(() -> new YadonyNotFoundException("TripRecurrence", id));
         if (request.active()) {
-            assertTravelerStatusDeclared(userId);
+            assertCanPublish(userId);
         }
         // Devise absente : la récurrence garde la sienne.
         applyFields(entity, request, entity::getCurrency);
@@ -193,7 +193,8 @@ public class TripRecurrenceService {
         String firebaseUid = user.getFirebaseUid();
 
         int created = 0;
-        boolean statusMissing = false;
+        boolean publishingBlocked = false;
+        String blockedCode = null;
         for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
             int idx = d.getDayOfWeek().getValue() - 1; // Lundi=0 .. Dimanche=6
             if (rec.getWeekdays().charAt(idx) != '1') {
@@ -213,10 +214,12 @@ public class TripRecurrenceService {
                 }
                 log.info("TripRecurrence {} : trajet {} déjà publié", rec.getId(), d);
             } catch (YadonyBusinessException e) {
-                if ("traveler-status-required".equals(e.getErrorCode())) {
-                    // Le statut manque pour toutes les dates : inutile d'insister, et surtout ne pas avancer
+                if (isPublishingBlocked(e)) {
+                    // La publication est refusée pour toutes les dates (statut à déclarer, limite mensuelle
+                    // atteinte, demande GP Pro en attente) : inutile d'insister, et surtout ne pas avancer
                     // lastGeneratedDate, sinon les dates de l'horizon seraient perdues pour toujours.
-                    statusMissing = true;
+                    blockedCode = e.getErrorCode();
+                    publishingBlocked = true;
                     break;
                 }
                 log.warn("TripRecurrence {} : échec création trajet {} : {}", rec.getId(), d, e.getMessage());
@@ -225,14 +228,22 @@ public class TripRecurrenceService {
             }
         }
 
-        if (statusMissing) {
-            log.warn("TripRecurrence {} : génération différée, le voyageur n'a pas déclaré son statut", rec.getId());
+        if (publishingBlocked) {
+            log.warn("TripRecurrence {} : génération différée, publication refusée ({})", rec.getId(), blockedCode);
             return created;
         }
 
         rec.setLastGeneratedDate(end);
         repository.save(rec);
         return created;
+    }
+
+    /** Refus de publication qui vaut pour toutes les dates de l'horizon : à retenter plus tard, sans les perdre. */
+    private static boolean isPublishingBlocked(YadonyBusinessException e) {
+        String code = e.getErrorCode();
+        return com.yadony.api.travelerstatus.PublishingLimitGate.CODE_STATUS_REQUIRED.equals(code)
+                || com.yadony.api.travelerstatus.PublishingLimitGate.CODE_LIMIT_REACHED.equals(code)
+                || com.yadony.api.travelerstatus.PublishingLimitGate.CODE_GP_PRO_PENDING.equals(code);
     }
 
     /**
