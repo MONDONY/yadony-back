@@ -241,6 +241,117 @@ class FcmServiceTest {
         assertThat(headers).containsEntry("apns-collapse-id", "chat:conv_abc");
     }
 
+    // ── Relance de vérification d'identité ───────────────────────────────────
+    // KYC_ACTION_REQUIRED porte le drapeau reminder=true : c'est une relance, réglable par
+    // « Rappels et conseils » et comptée dans le plafond du jour. Sans drapeau, c'est une
+    // décision : toujours envoyée, hors plafond. Vrais réglages et vraies heures calmes ici,
+    // pour éprouver la chaîne réelle et pas seulement le type transmis aux bouchons.
+
+    private static final Map<String, String> RELANCE =
+            Map.of("type", "KYC_ACTION_REQUIRED", "reminder", "true", "reminderNumber", "1");
+    private static final Map<String, String> VRAI_REFUS = Map.of("type", "KYC_ACTION_REQUIRED");
+
+    @Test
+    void fcm_relance_couperParPushRemindersTips() throws Exception {
+        NotificationPrefsJpaRepository prefsRepository = mock(NotificationPrefsJpaRepository.class);
+        NotificationPrefsEntity coupe = new NotificationPrefsEntity();
+        coupe.setPushRemindersTips(false);
+        when(prefsRepository.findById(USER_ID)).thenReturn(Optional.of(coupe));
+        FcmService real = realChain(prefsRepository, new PushQuietHours(false));
+
+        assertThat(real.sendToUser(USER_ID, "Votre vérification vous attend", "Corps", RELANCE)).isFalse();
+        verifyNoInteractions(userRepository);
+
+        // Réglage rallumé : la relance part, et le payload garde le type que l'app sait ouvrir.
+        coupe.setPushRemindersTips(true);
+        stubUserWithToken();
+        FirebaseMessaging messaging = mock(FirebaseMessaging.class);
+        org.mockito.ArgumentCaptor<Message> sent = org.mockito.ArgumentCaptor.forClass(Message.class);
+        when(messaging.send(sent.capture())).thenReturn("msg-id");
+        try (MockedStatic<FirebaseMessaging> fcmStatic = mockStatic(FirebaseMessaging.class)) {
+            fcmStatic.when(FirebaseMessaging::getInstance).thenReturn(messaging);
+            assertThat(real.sendToUser(USER_ID, "Votre vérification vous attend", "Corps", RELANCE)).isTrue();
+        }
+        @SuppressWarnings("unchecked")
+        Map<String, String> payload = (Map<String, String>) ReflectionTestUtils.getField(sent.getValue(), "data");
+        assertThat(payload).containsEntry("type", "KYC_ACTION_REQUIRED").containsEntry("reminder", "true");
+    }
+
+    @Test
+    void fcm_relance_compteDansLePlafond() throws Exception {
+        // Bouchons : chaque garde reçoit le type effectif, une seule fois calculé.
+        UserEntity user = stubUserWithToken();
+        when(notificationPrefsService.isAllowed(USER_ID, "KYC_VERIFICATION_REMINDER")).thenReturn(true);
+        when(pushQuietHours.hold(user, "KYC_VERIFICATION_REMINDER")).thenReturn(true);
+
+        assertThat(service.sendToUser(USER_ID, "Titre", "Corps", RELANCE)).isFalse();
+        verify(pushThrottle).hold(USER_ID, "KYC_VERIFICATION_REMINDER", RELANCE);
+        verify(pushQuietHours).hold(user, "KYC_VERIFICATION_REMINDER");
+
+        // Chaîne réelle, en pleine journée : au-delà de 10 push, la relance reste dans le feed.
+        NotificationPrefsJpaRepository prefsRepository = mock(NotificationPrefsJpaRepository.class);
+        FcmService real = realChain(prefsRepository, middayQuietHours());
+        FirebaseMessaging messaging = mock(FirebaseMessaging.class);
+        when(messaging.send(any(Message.class))).thenReturn("msg-id");
+        int sentCount = 0;
+        try (MockedStatic<FirebaseMessaging> fcmStatic = mockStatic(FirebaseMessaging.class)) {
+            fcmStatic.when(FirebaseMessaging::getInstance).thenReturn(messaging);
+            for (int i = 0; i < PushQuietHours.DAILY_CAP + 1; i++) {
+                if (real.sendToUser(USER_ID, "Titre", "Corps", RELANCE)) sentCount++;
+            }
+        }
+        assertThat(sentCount).isEqualTo(PushQuietHours.DAILY_CAP);
+    }
+
+    @Test
+    void fcm_vraiRefus_resteToujoursActif() throws Exception {
+        // Tout coupé, plafond dépassé : un vrai refus de vérification part quand même.
+        NotificationPrefsJpaRepository prefsRepository = mock(NotificationPrefsJpaRepository.class);
+        NotificationPrefsEntity toutCoupe = new NotificationPrefsEntity();
+        toutCoupe.setPushRemindersTips(false);
+        toutCoupe.setPushActivityBids(false);
+        toutCoupe.setPushMyTrips(false);
+        toutCoupe.setPushPromo(false);
+        lenient().when(prefsRepository.findById(USER_ID)).thenReturn(Optional.of(toutCoupe));
+        stubUserWithToken();
+        FcmService real = realChain(prefsRepository, middayQuietHours());
+        FirebaseMessaging messaging = mock(FirebaseMessaging.class);
+        org.mockito.ArgumentCaptor<Message> sent = org.mockito.ArgumentCaptor.forClass(Message.class);
+        when(messaging.send(sent.capture())).thenReturn("msg-id");
+        int sentCount = 0;
+        try (MockedStatic<FirebaseMessaging> fcmStatic = mockStatic(FirebaseMessaging.class)) {
+            fcmStatic.when(FirebaseMessaging::getInstance).thenReturn(messaging);
+            for (int i = 0; i < PushQuietHours.DAILY_CAP + 2; i++) {
+                if (real.sendToUser(USER_ID, "Vérification à reprendre", "Corps", VRAI_REFUS)) sentCount++;
+            }
+        }
+        assertThat(sentCount).isEqualTo(PushQuietHours.DAILY_CAP + 2);
+        @SuppressWarnings("unchecked")
+        Map<String, String> payload = (Map<String, String>) ReflectionTestUtils.getField(sent.getValue(), "data");
+        assertThat(payload).containsEntry("type", "KYC_ACTION_REQUIRED").doesNotContainKey("reminder");
+    }
+
+    private FcmService realChain(NotificationPrefsJpaRepository prefsRepository, PushQuietHours quietHours) {
+        return new FcmService(userRepository, userDeviceRepository,
+                new NotificationPrefsService(prefsRepository, userRepository),
+                notificationRepository, new PushThrottle(), quietHours);
+    }
+
+    /** Heures calmes actives, à midi à Paris (pays par défaut) : seul le plafond peut retenir. */
+    private static PushQuietHours middayQuietHours() {
+        return new PushQuietHours(true,
+                java.time.Clock.fixed(java.time.Instant.parse("2026-11-10T11:00:00Z"), java.time.ZoneOffset.UTC));
+    }
+
+    private UserEntity stubUserWithToken() {
+        UserEntity user = new UserEntity();
+        ReflectionTestUtils.setField(user, "id", USER_ID);
+        user.setFcmToken("token-android");
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        lenient().when(userDeviceRepository.findByUserIdOrderByLastSeenAtDesc(USER_ID)).thenReturn(List.of());
+        return user;
+    }
+
     private static UserDeviceEntity device(String fcmToken) {
         UserDeviceEntity device = new UserDeviceEntity();
         ReflectionTestUtils.setField(device, "fcmToken", fcmToken);

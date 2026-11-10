@@ -181,8 +181,10 @@ public class ResendEmailService {
     }
 
     /**
-     * Variante avec désinscription en un clic (suggestions selon les recherches) : la ligne du
-     * bas explique pourquoi l'e-mail arrive et porte le lien, et les en-têtes
+     * Variante avec désinscription en un clic (suggestions selon les recherches, relances de
+     * vérification d'identité) : la ligne du bas, propre à la famille
+     * ({@code email.notif.why.<famille>}, {@code email.notif.unsubscribe.<famille>}), explique
+     * pourquoi l'e-mail arrive et porte le lien, et les en-têtes
      * {@code List-Unsubscribe} / {@code List-Unsubscribe-Post} (RFC 8058) donnent le bouton
      * « Se désabonner » des messageries. {@code unsubscribeUrl} nul = variante ordinaire.
      */
@@ -217,11 +219,13 @@ public class ResendEmailService {
             }
             String ctaUrl = cta != null ? cta.url() : (openUrl != null ? openUrl : APP_URL);
             String ctaLabel = m.get(cta != null ? cta.labelKey() : "email.notif.cta");
-            String unsubscribeLabel = unsubscribeUrl == null ? null : m.get("email.notif.unsubscribe.suggestion");
+            String kindKey = kind.name().toLowerCase(java.util.Locale.ROOT);
+            String unsubscribeLabel = unsubscribeUrl == null ? null : m.get("email.notif.unsubscribe." + kindKey);
+            String unsubscribeWhy = unsubscribeUrl == null ? null : m.get("email.notif.why." + kindKey);
             String text = String.join("\n\n", title, body == null ? "" : body, detail,
                     ctaLabel + " : " + ctaUrl);
             if (unsubscribeUrl != null) {
-                text = text + "\n\n" + m.get("email.notif.why.suggestion") + "\n"
+                text = text + "\n\n" + unsubscribeWhy + "\n"
                         + unsubscribeLabel + " : " + unsubscribeUrl;
             }
             Map<String, Object> payload = new java.util.LinkedHashMap<>();
@@ -229,7 +233,7 @@ public class ResendEmailService {
             payload.put("to", List.of(to));
             payload.put("subject", title);
             payload.put("html", renderNotificationHtml(kind, family, title, body, detail, ctaUrl, ctaLabel,
-                    unsubscribeUrl, unsubscribeLabel, m));
+                    unsubscribeUrl, unsubscribeLabel, unsubscribeWhy, m));
             payload.put("text", text);
             if (unsubscribeUrl != null) {
                 payload.put("headers", Map.of(
@@ -249,7 +253,8 @@ public class ResendEmailService {
 
     private String renderNotificationHtml(NotificationEmailPolicy.Kind kind, String family, String heading,
                                           String body, String detail, String ctaUrl, String ctaLabel,
-                                          String unsubscribeUrl, String unsubscribeLabel, Messages m) {
+                                          String unsubscribeUrl, String unsubscribeLabel,
+                                          String unsubscribeWhy, Messages m) {
         Context context = new Context(m.locale());
         context.setVariable("eyebrow", m.get(family + ".eyebrow"));
         context.setVariable("heading", heading);
@@ -260,6 +265,7 @@ public class ResendEmailService {
         context.setVariable("ctaLabel", ctaLabel);
         context.setVariable("unsubscribeUrl", unsubscribeUrl);
         context.setVariable("unsubscribeLabel", unsubscribeLabel);
+        context.setVariable("unsubscribeWhy", unsubscribeWhy);
         context.setVariable("lang", m.language().code());
         return templateEngine.process("email-notification", context);
     }

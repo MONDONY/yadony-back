@@ -38,7 +38,13 @@ public final class NotificationEmailPolicy {
          * Trajet publié sur un corridor cherché sans résultat, sans alerte posée (V362). Même
          * réglage que les alertes ; l'e-mail porte en plus un lien de désinscription en un clic.
          */
-        SUGGESTION("emailAlertsTips");
+        SUGGESTION("emailAlertsTips"),
+        /**
+         * Relance automatique de la vérification d'identité, laissée en plan. Même réglage que
+         * les alertes et conseils ; l'e-mail porte un lien de désinscription en un clic des
+         * relances. Le push part aussi : l'e-mail s'y ajoute, jamais à sa place.
+         */
+        REMINDER("emailAlertsTips");
 
         private final String pref;
 
@@ -78,7 +84,8 @@ public final class NotificationEmailPolicy {
             Map.entry("PARCEL_RETURN_TO_SENDER", Kind.RECAP),
             Map.entry("RETURN_DEADLINE_EXPIRED", Kind.RECAP),
             Map.entry("PARCEL_UNCLAIMED", Kind.RECAP),
-            Map.entry(SEARCH_SUGGESTION, Kind.SUGGESTION)
+            Map.entry(SEARCH_SUGGESTION, Kind.SUGGESTION),
+            Map.entry(NotificationTypes.KYC_VERIFICATION_REMINDER, Kind.REMINDER)
     );
 
     static final Map<String, Kind> INSTEAD_OF_PUSH = Map.of(
@@ -92,30 +99,43 @@ public final class NotificationEmailPolicy {
     static final String CORRIDOR_ALERT = "CORRIDOR_ALERT";
     static final String DIGEST_FLAG = "digest";
 
-    /** Types dont l'e-mail a une ligne propre en plus de celle de sa famille. */
-    static final Set<String> TYPE_DETAILS = Set.of("DELIVERY_CONFIRMED");
+    /**
+     * Types (effectifs, voir {@link NotificationTypes#effectiveType}) dont l'e-mail a une ligne
+     * propre en plus de celle de sa famille.
+     */
+    static final Set<String> TYPE_DETAILS = Set.of("DELIVERY_CONFIRMED", NotificationTypes.KYC_VERIFICATION_REMINDER);
 
     private NotificationEmailPolicy() {}
 
-    /** Le type a-t-il une ligne propre ({@code email.notif.type.<type>.detail}) ? */
+    /**
+     * Le type a-t-il une ligne propre ({@code email.notif.type.<type>.detail}) ? Attend le type
+     * effectif : c'est celui que {@link NotificationEmailService} transmet au gabarit.
+     */
     public static boolean hasTypeDetail(String type) {
         return type != null && TYPE_DETAILS.contains(type);
     }
 
+    /**
+     * Famille de l'e-mail, d'après le type effectif : une relance de vérification
+     * ({@code KYC_ACTION_REQUIRED} + {@code reminder=true}) est une {@link Kind#REMINDER}, le
+     * même type sans drapeau reste une {@link Kind#DECISION}.
+     */
     public static Optional<Kind> kindOf(String type, Map<String, String> data) {
-        if (type == null) {
+        String effective = NotificationTypes.effectiveType(type, data);
+        if (effective == null) {
             return Optional.empty();
         }
-        if (isCorridorDigest(type, data)) {
+        if (isCorridorDigest(effective, data)) {
             return Optional.of(Kind.ALERT);
         }
-        Kind kind = WITH_PUSH.get(type);
-        return Optional.ofNullable(kind != null ? kind : INSTEAD_OF_PUSH.get(type));
+        Kind kind = WITH_PUSH.get(effective);
+        return Optional.ofNullable(kind != null ? kind : INSTEAD_OF_PUSH.get(effective));
     }
 
     /** L'e-mail remplace-t-il le push, pour peu qu'il puisse partir ? */
     public static boolean replacesPush(String type, Map<String, String> data) {
-        return type != null && (INSTEAD_OF_PUSH.containsKey(type) || isCorridorDigest(type, data));
+        String effective = NotificationTypes.effectiveType(type, data);
+        return effective != null && (INSTEAD_OF_PUSH.containsKey(effective) || isCorridorDigest(effective, data));
     }
 
     private static boolean isCorridorDigest(String type, Map<String, String> data) {

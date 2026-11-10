@@ -2,6 +2,8 @@ package com.yadony.api.notifications;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class NotificationTypesTest {
@@ -39,5 +41,34 @@ class NotificationTypesTest {
         // Modification d'un colis : jamais de SMS de repli (voir BidAmendmentNotificationListenerTest#notCritical).
         assertThat(NotificationTypes.isCritical("BID_AMENDMENT_REQUESTED")).isFalse();
         assertThat(NotificationTypes.isCritical("")).isFalse();
+    }
+
+    // ── Relance de vérification d'identité ────────────────────────────────────
+    // Le push et le feed gardent KYC_ACTION_REQUIRED (l'app ouvre l'écran de vérification) ;
+    // seules les règles internes (réglages, plafonds, e-mail) suivent le type effectif.
+
+    @Test
+    void effectiveType_drapeauReminder_donneTypeRelance() {
+        assertThat(NotificationTypes.effectiveType("KYC_ACTION_REQUIRED",
+                Map.of("type", "KYC_ACTION_REQUIRED", "reminder", "true")))
+                .isEqualTo(NotificationTypes.KYC_VERIFICATION_REMINDER)
+                .isEqualTo("KYC_VERIFICATION_REMINDER");
+    }
+
+    @Test
+    void effectiveType_sansDrapeau_inchange() {
+        assertThat(NotificationTypes.effectiveType("KYC_ACTION_REQUIRED", Map.of("type", "KYC_ACTION_REQUIRED")))
+                .isEqualTo("KYC_ACTION_REQUIRED");
+        assertThat(NotificationTypes.effectiveType("KYC_ACTION_REQUIRED", Map.of("reminder", "false")))
+                .isEqualTo("KYC_ACTION_REQUIRED");
+        // Le drapeau ne vaut que pour la vérification d'identité.
+        assertThat(NotificationTypes.effectiveType("BID_CREATED", Map.of("reminder", "true")))
+                .isEqualTo("BID_CREATED");
+        assertThat(NotificationTypes.effectiveType(null, Map.of("reminder", "true"))).isNull();
+    }
+
+    @Test
+    void effectiveType_dataNull_inchange() {
+        assertThat(NotificationTypes.effectiveType("KYC_ACTION_REQUIRED", null)).isEqualTo("KYC_ACTION_REQUIRED");
     }
 }

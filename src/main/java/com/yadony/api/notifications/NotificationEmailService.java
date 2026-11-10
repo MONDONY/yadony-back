@@ -49,6 +49,7 @@ public class NotificationEmailService {
     private final MessagesResolver messagesResolver;
     private final Map<String, NotificationEmailLink> links;
     private final SearchSuggestionUnsubscribeLinks unsubscribeLinks;
+    private final KycReminderUnsubscribeLinks kycReminderUnsubscribeLinks;
     private final Clock clock;
     private final Cache<String, AtomicInteger> sentToday =
             Caffeine.newBuilder().maximumSize(200_000).expireAfterWrite(Duration.ofHours(26)).build();
@@ -61,10 +62,11 @@ public class NotificationEmailService {
                                     ResendEmailService emailService,
                                     MessagesResolver messagesResolver,
                                     ObjectProvider<NotificationEmailLink> emailLinks,
-                                    ObjectProvider<SearchSuggestionUnsubscribeLinks> unsubscribeLinks) {
+                                    ObjectProvider<SearchSuggestionUnsubscribeLinks> unsubscribeLinks,
+                                    ObjectProvider<KycReminderUnsubscribeLinks> kycReminderUnsubscribeLinks) {
         this(enabled, userRepository, firebaseContactService, prefsService, emailService,
                 messagesResolver, emailLinks.orderedStream().toList(), unsubscribeLinks.getIfAvailable(),
-                Clock.systemUTC());
+                kycReminderUnsubscribeLinks.getIfAvailable(), Clock.systemUTC());
     }
 
     NotificationEmailService(boolean enabled, UserRepository userRepository,
@@ -89,7 +91,18 @@ public class NotificationEmailService {
                              NotificationPrefsService prefsService, ResendEmailService emailService,
                              MessagesResolver messagesResolver, List<NotificationEmailLink> emailLinks,
                              SearchSuggestionUnsubscribeLinks unsubscribeLinks, Clock clock) {
+        this(enabled, userRepository, firebaseContactService, prefsService, emailService,
+                messagesResolver, emailLinks, unsubscribeLinks, null, clock);
+    }
+
+    NotificationEmailService(boolean enabled, UserRepository userRepository,
+                             FirebaseContactService firebaseContactService,
+                             NotificationPrefsService prefsService, ResendEmailService emailService,
+                             MessagesResolver messagesResolver, List<NotificationEmailLink> emailLinks,
+                             SearchSuggestionUnsubscribeLinks unsubscribeLinks,
+                             KycReminderUnsubscribeLinks kycReminderUnsubscribeLinks, Clock clock) {
         this.unsubscribeLinks = unsubscribeLinks;
+        this.kycReminderUnsubscribeLinks = kycReminderUnsubscribeLinks;
         this.enabled = enabled;
         this.userRepository = userRepository;
         this.firebaseContactService = firebaseContactService;
@@ -117,7 +130,13 @@ public class NotificationEmailService {
         }
     }
 
-    /** Envoie l'e-mail de la notification si son type en a un et qu'il peut partir. */
+    /**
+     * Envoie l'e-mail de la notification si son type en a un et qu'il peut partir.
+     *
+     * <p>Le gabarit reçoit le type effectif ({@link NotificationTypes#effectiveType}), pour la
+     * ligne propre d'une relance ; le bouton et le lien propre au type gardent le type
+     * d'origine, celui que l'app sait ouvrir.
+     */
     @Async
     public void send(UUID userId, String type, String title, String body, Map<String, String> data) {
         try {
@@ -125,17 +144,18 @@ public class NotificationEmailService {
             if (target.isEmpty() || !withinDailyCap(userId, target.get().kind())) {
                 return;
             }
+            String templateType = NotificationTypes.effectiveType(type, data);
             Optional<NotificationEmailLink.Cta> cta = ctaFor(userId, type);
             String unsubscribeUrl = unsubscribeUrlFor(userId, target.get().kind());
             if (unsubscribeUrl != null) {
-                emailService.sendNotification(target.get().email(), target.get().kind(), type,
+                emailService.sendNotification(target.get().email(), target.get().kind(), templateType,
                         title, body, NotificationOpenLink.urlFor(type, data), unsubscribeUrl,
                         messagesResolver.forUser(userId));
             } else if (cta.isPresent()) {
-                emailService.sendNotification(target.get().email(), target.get().kind(), type,
+                emailService.sendNotification(target.get().email(), target.get().kind(), templateType,
                         title, body, cta.get(), messagesResolver.forUser(userId));
             } else {
-                emailService.sendNotification(target.get().email(), target.get().kind(), type,
+                emailService.sendNotification(target.get().email(), target.get().kind(), templateType,
                         title, body, NotificationOpenLink.urlFor(type, data), messagesResolver.forUser(userId));
             }
         } catch (RuntimeException e) {
@@ -161,15 +181,19 @@ public class NotificationEmailService {
     }
 
     /**
-     * Lien de désinscription en un clic des suggestions selon les recherches, ou {@code null}
-     * pour les autres familles (elles renvoient aux Paramètres) ou sans origine d'API.
+     * Lien de désinscription en un clic : celui des suggestions selon les recherches, ou celui
+     * des relances de vérification d'identité. {@code null} pour les autres familles (elles
+     * renvoient aux Paramètres) ou sans origine d'API.
      */
     private String unsubscribeUrlFor(UUID userId, Kind kind) {
-        if (kind != Kind.SUGGESTION || unsubscribeLinks == null) {
-            return null;
-        }
         try {
-            return unsubscribeLinks.urlFor(userId).orElse(null);
+            if (kind == Kind.SUGGESTION && unsubscribeLinks != null) {
+                return unsubscribeLinks.urlFor(userId).orElse(null);
+            }
+            if (kind == Kind.REMINDER && kycReminderUnsubscribeLinks != null) {
+                return kycReminderUnsubscribeLinks.urlFor(userId).orElse(null);
+            }
+            return null;
         } catch (RuntimeException e) {
             log.warn("[Mail] Lien de désinscription indisponible : {}", e.getClass().getSimpleName());
             return null;

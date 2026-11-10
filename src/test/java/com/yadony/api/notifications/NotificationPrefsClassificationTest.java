@@ -60,6 +60,20 @@ class NotificationPrefsClassificationTest {
         assertThat(both).as("Un type toujours actif ne doit pas figurer dans TYPE_TO_PREF").isEmpty();
     }
 
+    /**
+     * Le type effectif d'une relance de vérification n'est jamais écrit dans un {@code Map.of}
+     * (le push garde {@code KYC_ACTION_REQUIRED}) : le scan ne le voit pas, d'où ce test dédié.
+     * Une relance se coupe par « Rappels et conseils » et n'est pas toujours active, sans quoi
+     * elle échapperait au plafond du jour ; le vrai refus, lui, le reste.
+     */
+    @Test
+    void relanceDeVerification_suitLesRappels_etLeVraiRefusResteToujoursActif() {
+        assertThat(NotificationPrefsService.TYPE_TO_PREF)
+                .containsEntry(NotificationTypes.KYC_VERIFICATION_REMINDER, "pushRemindersTips");
+        assertThat(NotificationPrefsService.isAlwaysOn(NotificationTypes.KYC_VERIFICATION_REMINDER)).isFalse();
+        assertThat(NotificationPrefsService.isAlwaysOn("KYC_ACTION_REQUIRED")).isTrue();
+    }
+
     @Test
     void scanFindsTheKnownEmitters() throws IOException {
         // Garde-fou du test lui-même : si le motif cessait de capter quoi que ce soit,

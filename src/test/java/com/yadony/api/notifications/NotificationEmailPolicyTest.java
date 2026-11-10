@@ -12,11 +12,12 @@ class NotificationEmailPolicyTest {
 
     /**
      * Plan validé : 22 types doublés par un e-mail, 4 où l'e-mail remplace le push, plus la
-     * suggestion selon les recherches (V362), doublée d'un e-mail avec désinscription.
+     * suggestion selon les recherches (V362) et la relance de vérification d'identité, doublées
+     * d'un e-mail avec désinscription.
      */
     @Test
     void planCounts() {
-        assertThat(NotificationEmailPolicy.WITH_PUSH).hasSize(23);
+        assertThat(NotificationEmailPolicy.WITH_PUSH).hasSize(24);
         assertThat(NotificationEmailPolicy.kindOf("SEARCH_SUGGESTION", Map.of())).contains(Kind.SUGGESTION);
         assertThat(NotificationEmailPolicy.replacesPush("SEARCH_SUGGESTION", Map.of())).isFalse();
         assertThat(Kind.SUGGESTION.pref()).contains("emailAlertsTips");
@@ -61,5 +62,28 @@ class NotificationEmailPolicyTest {
         for (String type : NotificationTypes.CRITICAL) {
             assertThat(NotificationEmailPolicy.INSTEAD_OF_PUSH).doesNotContainKey(type);
         }
+    }
+
+    private static final Map<String, String> RELANCE = Map.of("type", "KYC_ACTION_REQUIRED", "reminder", "true");
+
+    /** Une relance de vérification : famille des relances, e-mail en plus du push, jamais à la place. */
+    @Test
+    void policy_relance_estReminderAvecPush() {
+        assertThat(NotificationEmailPolicy.kindOf("KYC_ACTION_REQUIRED", RELANCE)).contains(Kind.REMINDER);
+        assertThat(NotificationEmailPolicy.replacesPush("KYC_ACTION_REQUIRED", RELANCE)).isFalse();
+        assertThat(Kind.REMINDER.pref()).contains("emailAlertsTips");
+        assertThat(NotificationEmailPolicy.WITH_PUSH)
+                .containsEntry(NotificationTypes.KYC_VERIFICATION_REMINDER, Kind.REMINDER);
+        assertThat(NotificationEmailPolicy.hasTypeDetail(NotificationTypes.KYC_VERIFICATION_REMINDER)).isTrue();
+    }
+
+    /** Sans drapeau, KYC_ACTION_REQUIRED reste une décision : toujours envoyée, sans ligne propre. */
+    @Test
+    void policy_vraiRefus_resteDecision() {
+        Map<String, String> refus = Map.of("type", "KYC_ACTION_REQUIRED");
+        assertThat(NotificationEmailPolicy.kindOf("KYC_ACTION_REQUIRED", refus)).contains(Kind.DECISION);
+        assertThat(NotificationEmailPolicy.kindOf("KYC_ACTION_REQUIRED", null)).contains(Kind.DECISION);
+        assertThat(NotificationEmailPolicy.replacesPush("KYC_ACTION_REQUIRED", refus)).isFalse();
+        assertThat(NotificationEmailPolicy.hasTypeDetail("KYC_ACTION_REQUIRED")).isFalse();
     }
 }
