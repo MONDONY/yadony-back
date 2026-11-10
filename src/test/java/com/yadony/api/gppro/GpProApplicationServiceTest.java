@@ -8,6 +8,10 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.gppro.dto.GpProApplyRequest;
 import com.yadony.api.gppro.dto.GpProAttachDocumentsRequest;
 import com.yadony.api.gppro.dto.GpProStatusResponse;
+import com.yadony.api.gppro.events.GpProStatusChangedEvent;
+import com.yadony.api.travelerstatus.TravelerStatus;
+import com.yadony.api.travelerstatus.events.TravelerStatusChangedEvent;
+import org.springframework.context.ApplicationEventPublisher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,6 +36,7 @@ import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -45,6 +50,8 @@ class GpProApplicationServiceTest {
     @Mock GpProDocumentService documentService;
     @Mock UserRepository users;
     @Mock AuditService audit;
+    @Mock GpProReviewFlagRepository flags;
+    @Mock ApplicationEventPublisher events;
 
     GpProApplicationService service;
     UserEntity user;
@@ -52,7 +59,7 @@ class GpProApplicationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new GpProApplicationService(applications, documents, documentService, users, audit);
+        service = new GpProApplicationService(applications, documents, documentService, users, audit, flags, events);
         user = new UserEntity();
         setId(user, userId);
         user.setKycStatus(KycStatus.VERIFIED);
@@ -407,5 +414,223 @@ class GpProApplicationServiceTest {
         assertCode(() -> service.removeDocument(UID, id), HttpStatus.SERVICE_UNAVAILABLE,
                 "gp-pro-document-storage-unavailable");
         verify(audit, never()).log(eq("GP_PRO_DOCUMENT"), any(), eq("GP_PRO_DOCUMENT_REMOVED"), any(), any());
+    }
+
+    // ── Formulaire GP Pro unifié : raison sociale, numéro d'entreprise, pays ──
+
+    private static final String NUMBER = "SIREN 123 456 789";
+
+    private GpProApplyRequest businessReq(String name, String number, String country) {
+        return new GpProApplyRequest(GpProTravelFrequency.MONTHLY, name, List.of(), GpProApplicationSource.PROFILE,
+                number, country);
+    }
+
+    private GpProApplicationEntity savedApplication() {
+        ArgumentCaptor<GpProApplicationEntity> c = ArgumentCaptor.forClass(GpProApplicationEntity.class);
+        verify(applications).saveAndFlush(c.capture());
+        return c.getValue();
+    }
+
+    @Test
+    void applyAvecEntreprise_stockeNumeroEtPaysSurLaDemande() {
+        GpProStatusResponse r = service.apply(UID, businessReq("Acme Express", NUMBER, "FR"));
+
+        assertThat(r.state()).isEqualTo("PENDING");
+        GpProApplicationEntity saved = savedApplication();
+        assertThat(saved.getCommercialName()).isEqualTo("Acme Express");
+        assertThat(saved.getBusinessRegistrationNumber()).isEqualTo(NUMBER);
+        assertThat(saved.getBusinessCountry()).isEqualTo("FR");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void applyAvecEntreprise_auditSansNumeroNiPaysNiNom() {
+        service.apply(UID, businessReq("Acme Express", NUMBER, "FR"));
+
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(audit).log(eq("GP_PRO_APPLICATION"), any(), eq("GP_PRO_APPLIED"), eq(userId), payload.capture());
+        assertThat(payload.getValue()).containsOnlyKeys("source", "frequency", "documentCount");
+        assertThat(payload.getValue().toString()).doesNotContain(NUMBER).doesNotContain("Acme").doesNotContain("FR");
+    }
+
+    @Test
+    void applySansChampsEntreprise_ancienneApp_comportementActuel() {
+        GpProStatusResponse r = service.apply(UID, req(GpProApplicationSource.PROFILE, List.of()));
+
+        assertThat(r.state()).isEqualTo("PENDING");
+        GpProApplicationEntity saved = savedApplication();
+        assertThat(saved.getBusinessRegistrationNumber()).isNull();
+        assertThat(saved.getBusinessCountry()).isNull();
+    }
+
+    @Test
+    void applyEntrepriseIncomplete_422_gpProBusinessIncomplete_rienEnregistre() {
+        assertCode(() -> service.apply(UID, businessReq("Acme", NUMBER, null)),
+                HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-business-incomplete");
+        assertCode(() -> service.apply(UID, businessReq("Acme", null, "FR")),
+                HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-business-incomplete");
+        assertCode(() -> service.apply(UID, businessReq(null, NUMBER, "FR")),
+                HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-business-incomplete");
+        assertCode(() -> service.apply(UID, businessReq("  ", NUMBER, "FR")),
+                HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-business-incomplete");
+        verify(applications, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void messageDErreurNeContientJamaisLeNumero() {
+        assertThatThrownBy(() -> service.apply(UID, businessReq(null, NUMBER, "FR")))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getMessage()).doesNotContain(NUMBER));
+    }
+
+    @Test
+    void cancelEffaceNumeroEtPaysDeLaDemande() {
+        GpProApplicationEntity a = app(GpProApplicationStatus.PENDING);
+        a.setCommercialName("Acme");
+        a.setBusinessRegistrationNumber(NUMBER);
+        a.setBusinessCountry("FR");
+        when(applications.findFirstByUserIdAndStatusIn(eq(userId), anyCollection())).thenReturn(Optional.of(a));
+
+        service.cancel(UID);
+
+        assertThat(a.getBusinessRegistrationNumber()).isNull();
+        assertThat(a.getBusinessCountry()).isNull();
+    }
+
+    // ── Sortie en un clic : POST /gp-pro/resign ──
+
+    private void activeProfessionalGpPro() {
+        user.setGpPro(true);
+        user.setGpProGrantedAt(LocalDateTime.now().minusDays(10));
+        user.setTravelerStatus(TravelerStatus.PROFESSIONAL);
+        user.setBusinessName("Acme Express");
+        user.setBusinessRegistrationNumber(NUMBER);
+        user.setBusinessCountry("FR");
+        when(users.findGpProById(userId)).thenReturn(Optional.of(true));
+        when(users.findByIdForUpdate(userId)).thenReturn(Optional.of(user));
+    }
+
+    @Test
+    void resign_gpProProfessionnel_retireBadgeEtStatutEtEffaceLesChampsEntreprise() {
+        activeProfessionalGpPro();
+
+        GpProStatusResponse r = service.resign(UID);
+
+        assertThat(user.isGpPro()).isFalse();
+        assertThat(user.getGpProRevokedAt()).isNotNull();
+        assertThat(user.getGpProRevokedReason()).isEqualTo("SELF");
+        assertThat(user.getTravelerStatus()).isEqualTo(TravelerStatus.INDIVIDUAL);
+        assertThat(user.getBusinessName()).isNull();
+        assertThat(user.getBusinessRegistrationNumber()).isNull();
+        assertThat(user.getBusinessCountry()).isNull();
+        verify(users).save(user);
+        assertThat(r.state()).isEqualTo("REVOKED");
+        assertThat(r.reason()).isEqualTo("SELF");
+        ArgumentCaptor<Object> published = ArgumentCaptor.forClass(Object.class);
+        verify(events, org.mockito.Mockito.times(2)).publishEvent(published.capture());
+        assertThat(published.getAllValues()).containsExactly(
+                new GpProStatusChangedEvent(userId, false),
+                new TravelerStatusChangedEvent(userId, TravelerStatus.INDIVIDUAL));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void resign_auditSansDonneeEntreprise() {
+        activeProfessionalGpPro();
+
+        service.resign(UID);
+
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(audit).log(eq("USER"), eq(userId), eq("GP_PRO_RESIGNED"), eq(userId), payload.capture());
+        assertThat(payload.getValue()).containsOnlyKeys("hadBadge", "cancelledApplication");
+        assertThat(payload.getValue().toString()).doesNotContain(NUMBER).doesNotContain("Acme").doesNotContain("FR");
+    }
+
+    @Test
+    void resign_ancienBadgeSansStatut_leStatutResteNonDeclare_pasDEvenementDeStatut() {
+        user.setGpPro(true);
+        when(users.findGpProById(userId)).thenReturn(Optional.of(true));
+        when(users.findByIdForUpdate(userId)).thenReturn(Optional.of(user));
+
+        service.resign(UID);
+
+        assertThat(user.isGpPro()).isFalse();
+        assertThat(user.getTravelerStatus()).isNull();
+        verify(events).publishEvent(new GpProStatusChangedEvent(userId, false));
+        verify(events, never()).publishEvent(any(TravelerStatusChangedEvent.class));
+    }
+
+    @Test
+    void resign_resoutLesSignalementsDeRevueOuverts() {
+        activeProfessionalGpPro();
+        GpProReviewFlagEntity flag = new GpProReviewFlagEntity();
+        when(flags.findByUserIdAndResolvedAtIsNull(userId)).thenReturn(List.of(flag));
+
+        service.resign(UID);
+
+        assertThat(flag.getResolvedAt()).isNotNull();
+        verify(flags).saveAll(List.of(flag));
+    }
+
+    @Test
+    void resign_demandeEnAttenteSeule_passeEnCancelled_numeroEfface_justificatifsPurges_pasDEvenementGpPro() {
+        GpProApplicationEntity a = app(GpProApplicationStatus.PENDING);
+        a.setBusinessRegistrationNumber(NUMBER);
+        a.setBusinessCountry("FR");
+        when(users.findGpProById(userId)).thenReturn(Optional.of(false));
+        when(applications.findFirstByUserIdAndStatusIn(eq(userId), anyCollection())).thenReturn(Optional.of(a));
+
+        service.resign(UID);
+
+        assertThat(a.getStatus()).isEqualTo(GpProApplicationStatus.CANCELLED);
+        assertThat(a.getBusinessRegistrationNumber()).isNull();
+        assertThat(a.getBusinessCountry()).isNull();
+        verify(documentService).purgeAll(a.getId());
+        assertThat(user.getGpProRevokedAt()).isNull();
+        verify(events, never()).publishEvent(any(GpProStatusChangedEvent.class));
+    }
+
+    @Test
+    void resign_badgeEtDemandeEnAttente_lesDeuxSontRetires() {
+        activeProfessionalGpPro();
+        GpProApplicationEntity a = app(GpProApplicationStatus.PENDING);
+        when(applications.findFirstByUserIdAndStatusIn(eq(userId), anyCollection())).thenReturn(Optional.of(a));
+
+        service.resign(UID);
+
+        assertThat(user.isGpPro()).isFalse();
+        assertThat(a.getStatus()).isEqualTo(GpProApplicationStatus.CANCELLED);
+    }
+
+    @Test
+    void resign_niBadgeNiDemande_409_gpProNotActive_etRienDEcrit() {
+        when(users.findGpProById(userId)).thenReturn(Optional.of(false));
+
+        assertCode(() -> service.resign(UID), HttpStatus.CONFLICT, "gp-pro-not-active");
+
+        verify(users, never()).save(any());
+        verify(audit, never()).log(eq("USER"), any(), eq("GP_PRO_RESIGNED"), any(), any());
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    void resign_doubleClic_lePremierReussit_lesecondEst409() {
+        activeProfessionalGpPro();
+        service.resign(UID);
+        // Le second appel relit le drapeau en base : le badge n'y est plus.
+        when(users.findGpProById(userId)).thenReturn(Optional.of(false));
+
+        assertCode(() -> service.resign(UID), HttpStatus.CONFLICT, "gp-pro-not-active");
+    }
+
+    @Test
+    void resign_lireLeDrapeauApresLeVerrou() {
+        activeProfessionalGpPro();
+
+        service.resign(UID);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(users);
+        order.verify(users).findByIdForUpdate(userId);
+        order.verify(users).findGpProById(userId);
     }
 }

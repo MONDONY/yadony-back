@@ -10,6 +10,9 @@ import com.yadony.api.disputes.DisputeRepository;
 import com.yadony.api.gppro.events.GpProDecisionEvent;
 import com.yadony.api.gppro.events.GpProStatusChangedEvent;
 import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.travelerstatus.TravelerStatus;
+import com.yadony.api.travelerstatus.TravelerStatusService;
+import com.yadony.api.travelerstatus.events.TravelerStatusChangedEvent;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
 import com.yadony.api.auth.UserStatus;
@@ -388,5 +391,135 @@ class GpProAdminServiceTest {
     void reviewQueueEmpty() {
         when(flags.findReviewUserIds(any())).thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
         assertThat(service.reviewQueue(0, 20).getContent()).isEmpty();
+    }
+
+    // ── GP Pro = professionnel : l'approbation d'une demande avec entreprise pose le statut ──
+
+    private static final String NUMBER = "SIREN 123 456 789";
+
+    private GpProApplicationEntity applicationWithBusiness() {
+        GpProApplicationEntity a = application(GpProApplicationStatus.PENDING);
+        a.setCommercialName("Acme Express");
+        a.setBusinessRegistrationNumber(NUMBER);
+        a.setBusinessCountry("FR");
+        when(applications.findById(appId)).thenReturn(Optional.of(a));
+        return a;
+    }
+
+    @Test
+    void approveAvecEntreprise_copieSurLeVoyageur_etPoseProfessional() {
+        applicationWithBusiness();
+
+        service.approve(appId, adminId);
+
+        assertThat(user.isGpPro()).isTrue();
+        assertThat(user.getTravelerStatus()).isEqualTo(TravelerStatus.PROFESSIONAL);
+        assertThat(user.getBusinessName()).isEqualTo("Acme Express");
+        assertThat(user.getBusinessRegistrationNumber()).isEqualTo(NUMBER);
+        assertThat(user.getBusinessCountry()).isEqualTo("FR");
+        assertThat(user.getTravelerStatusDeclaredAt()).isNotNull();
+        assertThat(user.getTravelerStatusTermsVersion()).isEqualTo(TravelerStatusService.TERMS_VERSION);
+        ArgumentCaptor<Object> published = ArgumentCaptor.forClass(Object.class);
+        verify(events, org.mockito.Mockito.times(3)).publishEvent(published.capture());
+        assertThat(published.getAllValues()).contains(
+                new GpProStatusChangedEvent(userId, true),
+                new TravelerStatusChangedEvent(userId, TravelerStatus.PROFESSIONAL));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void approveAvecEntreprise_auditSansNumeroNiNomNiPays() {
+        applicationWithBusiness();
+
+        service.approve(appId, adminId);
+
+        ArgumentCaptor<java.util.Map<String, Object>> payload = ArgumentCaptor.forClass(java.util.Map.class);
+        verify(audit, org.mockito.Mockito.atLeastOnce()).log(anyString(), any(), anyString(), any(), payload.capture());
+        for (java.util.Map<String, Object> p : payload.getAllValues()) {
+            assertThat(p.toString()).doesNotContain(NUMBER).doesNotContain("Acme").doesNotContain("FR");
+        }
+        verify(audit).log(eq("GP_PRO_APPLICATION"), eq(appId), eq("GP_PRO_APPROVED"), eq(adminId),
+                eq(java.util.Map.of("userId", userId.toString())));
+    }
+
+    @Test
+    void approveSansChampsEntreprise_ancienneApp_leStatutNePassePasAProfessional() {
+        service.approve(appId, adminId);
+
+        assertThat(user.isGpPro()).isTrue();
+        assertThat(user.getTravelerStatus()).isNull();
+        assertThat(user.getBusinessName()).isNull();
+        assertThat(user.getBusinessRegistrationNumber()).isNull();
+        verify(events, never()).publishEvent(any(TravelerStatusChangedEvent.class));
+    }
+
+    @Test
+    void approveSansChampsEntreprise_nEcrasePasUnStatutParticulierDejaDeclare() {
+        user.setTravelerStatus(TravelerStatus.INDIVIDUAL);
+
+        service.approve(appId, adminId);
+
+        assertThat(user.getTravelerStatus()).isEqualTo(TravelerStatus.INDIVIDUAL);
+    }
+
+    @Test
+    void approveAvecEntrepriseIncomplete_neTouchePasAuStatut() {
+        GpProApplicationEntity a = applicationWithBusiness();
+        a.setBusinessCountry(null);
+
+        service.approve(appId, adminId);
+
+        assertThat(user.getTravelerStatus()).isNull();
+        assertThat(user.getBusinessRegistrationNumber()).isNull();
+    }
+
+    @Test
+    void grantSansDemande_laisseLeStatutInchange() {
+        when(applications.findFirstByUserIdAndStatusIn(eq(userId), any())).thenReturn(Optional.empty());
+
+        service.grant(userId, adminId, "geste commercial");
+
+        assertThat(user.isGpPro()).isTrue();
+        assertThat(user.getTravelerStatus()).isNull();
+        verify(events, never()).publishEvent(any(TravelerStatusChangedEvent.class));
+    }
+
+    @Test
+    void grantQuiConsommeUneDemandeAvecEntreprise_poseLeStatutProfessionnel() {
+        GpProApplicationEntity a = applicationWithBusiness();
+        when(applications.findFirstByUserIdAndStatusIn(eq(userId), any())).thenReturn(Optional.of(a));
+
+        service.grant(userId, adminId, null);
+
+        assertThat(user.getTravelerStatus()).isEqualTo(TravelerStatus.PROFESSIONAL);
+        assertThat(user.getBusinessRegistrationNumber()).isEqualTo(NUMBER);
+    }
+
+    @Test
+    void revokeGpProProfessionnel_ramenerLeStatutAParticulier_etEffaceLesChampsEntreprise() {
+        user.setGpPro(true);
+        user.setTravelerStatus(TravelerStatus.PROFESSIONAL);
+        user.setBusinessName("Acme Express");
+        user.setBusinessRegistrationNumber(NUMBER);
+        user.setBusinessCountry("FR");
+
+        service.revoke(userId, adminId, "abus");
+
+        assertThat(user.isGpPro()).isFalse();
+        assertThat(user.getTravelerStatus()).isEqualTo(TravelerStatus.INDIVIDUAL);
+        assertThat(user.getBusinessName()).isNull();
+        assertThat(user.getBusinessRegistrationNumber()).isNull();
+        assertThat(user.getBusinessCountry()).isNull();
+        verify(events).publishEvent(new TravelerStatusChangedEvent(userId, TravelerStatus.INDIVIDUAL));
+    }
+
+    @Test
+    void revokeAncienBadgeSansStatut_leStatutResteNonDeclare() {
+        user.setGpPro(true);
+
+        service.revoke(userId, adminId, "abus");
+
+        assertThat(user.getTravelerStatus()).isNull();
+        verify(events, never()).publishEvent(any(TravelerStatusChangedEvent.class));
     }
 }

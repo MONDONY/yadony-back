@@ -36,6 +36,14 @@ public class GpProApplicationEntity extends BaseEntity {
     @Column(name = "commercial_name", length = 80)
     private String commercialName;
 
+    // Chiffré au repos comme users.business_registration_number. Jamais dans un WHERE, un journal ou un audit.
+    @Column(name = "business_registration_number", length = 255)
+    @jakarta.persistence.Convert(converter = com.yadony.api.common.EncryptedStringConverter.class)
+    private String businessRegistrationNumber;
+
+    @Column(name = "business_country", length = 2)
+    private String businessCountry;
+
     @Column(name = "decided_by")
     private UUID decidedBy;
 
@@ -59,6 +67,25 @@ public class GpProApplicationEntity extends BaseEntity {
 
     public String getCommercialName() { return commercialName; }
     public void setCommercialName(String commercialName) { this.commercialName = commercialName; }
+
+    public String getBusinessRegistrationNumber() { return businessRegistrationNumber; }
+    public void setBusinessRegistrationNumber(String businessRegistrationNumber) {
+        this.businessRegistrationNumber = businessRegistrationNumber;
+    }
+
+    public String getBusinessCountry() { return businessCountry; }
+    public void setBusinessCountry(String businessCountry) { this.businessCountry = businessCountry; }
+
+    /** Vrai si la demande porte raison sociale, numéro et pays (formulaire GP Pro unifié). */
+    public boolean hasBusinessDetails() {
+        return commercialName != null && businessRegistrationNumber != null && businessCountry != null;
+    }
+
+    /** Efface les données d'entreprise de la demande (annulée : elles ne servent plus). */
+    public void clearBusinessDetails() {
+        this.businessRegistrationNumber = null;
+        this.businessCountry = null;
+    }
 
     public UUID getDecidedBy() { return decidedBy; }
     public void setDecidedBy(UUID decidedBy) { this.decidedBy = decidedBy; }

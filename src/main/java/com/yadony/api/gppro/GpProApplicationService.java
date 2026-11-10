@@ -8,11 +8,17 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.gppro.dto.GpProApplyRequest;
 import com.yadony.api.gppro.dto.GpProAttachDocumentsRequest;
 import com.yadony.api.gppro.dto.GpProStatusResponse;
+import com.yadony.api.gppro.events.GpProStatusChangedEvent;
+import com.yadony.api.travelerstatus.TravelerStatus;
+import com.yadony.api.travelerstatus.events.TravelerStatusChangedEvent;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.EnumSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -20,6 +26,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /** Demande, statut et annulation du badge GP Pro côté utilisateur. */
 @Service
@@ -33,17 +40,29 @@ public class GpProApplicationService {
     private final GpProDocumentService documentService;
     private final UserRepository userRepository;
     private final AuditService auditService;
+    private final GpProReviewFlagRepository reviewFlags;
+    private final ApplicationEventPublisher events;
+
+    /** Motif enregistré quand le voyageur quitte lui-même le statut GP Pro. */
+    public static final String RESIGN_REASON = "SELF";
+
+    private static final Pattern REGISTRATION_NUMBER = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9 ./-]*$");
+    private static final Pattern COUNTRY = Pattern.compile("^[A-Z]{2}$");
 
     public GpProApplicationService(GpProApplicationRepository applicationRepository,
                                    GpProDocumentRepository documentRepository,
                                    GpProDocumentService documentService,
                                    UserRepository userRepository,
-                                   AuditService auditService) {
+                                   AuditService auditService,
+                                   GpProReviewFlagRepository reviewFlags,
+                                   ApplicationEventPublisher events) {
         this.applicationRepository = applicationRepository;
         this.documentRepository = documentRepository;
         this.documentService = documentService;
         this.userRepository = userRepository;
         this.auditService = auditService;
+        this.reviewFlags = reviewFlags;
+        this.events = events;
     }
 
     @Transactional
@@ -52,6 +71,7 @@ public class GpProApplicationService {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "gp-pro-invalid-source", "Invalid Source", "Source de demande invalide");
         }
+        Business business = validateBusiness(r);
         UserEntity user = findUser(firebaseUid);
         // Verrou par utilisateur : sérialise les demandes concurrentes avec l'index unique des demandes ouvertes.
         userRepository.findByIdForUpdate(user.getId());
@@ -80,6 +100,10 @@ public class GpProApplicationService {
         app.setSource(r.source());
         app.setTravelFrequency(r.travelFrequency());
         app.setCommercialName(blankToNull(r.commercialName()));
+        if (business != null) {
+            app.setBusinessRegistrationNumber(business.registrationNumber());
+            app.setBusinessCountry(business.country());
+        }
         try {
             app = applicationRepository.saveAndFlush(app);
         } catch (DataIntegrityViolationException e) {
@@ -89,7 +113,7 @@ public class GpProApplicationService {
             d.setApplicationId(app.getId());
         }
         documentRepository.saveAll(docs);
-        // Jamais le nom commercial dans l'audit.
+        // Jamais la raison sociale, le numéro d'entreprise ni le pays dans l'audit.
         auditService.log("GP_PRO_APPLICATION", app.getId(), "GP_PRO_APPLIED", user.getId(),
                 Map.of("source", r.source().name(), "frequency", r.travelFrequency().name(),
                         "documentCount", docs.size()));
@@ -208,10 +232,85 @@ public class GpProApplicationService {
         GpProApplicationEntity app = applicationRepository.findFirstByUserIdAndStatusIn(user.getId(), OPEN)
                 .orElseThrow(GpProApplicationService::applicationNotFound);
         app.setStatus(GpProApplicationStatus.CANCELLED);
+        app.clearBusinessDetails();
         applicationRepository.saveAndFlush(app);
         int purged = documentService.purgeAll(app.getId());
         auditService.log("GP_PRO_APPLICATION", app.getId(), "GP_PRO_APPLICATION_CANCELLED", user.getId(),
                 Map.of("purgedDocuments", purged));
+    }
+
+    /**
+     * Sortie en un clic : le voyageur quitte lui-même le statut GP Pro. Retire le badge (motif {@code SELF}),
+     * ramène un statut professionnel à particulier en effaçant les champs d'entreprise dans la même
+     * transaction, annule la demande ouverte, clôt les signalements de revue. 409 {@code gp-pro-not-active}
+     * quand il n'y a ni badge ni demande ouverte (un second clic ne produit donc aucune erreur 500).
+     */
+    @Transactional
+    public GpProStatusResponse resign(String firebaseUid) {
+        UserEntity found = findUser(firebaseUid);
+        // Verrou par utilisateur, puis le drapeau est relu en base : l'entité chargée avant le verrou peut être périmée.
+        UserEntity user = userRepository.findByIdForUpdate(found.getId()).orElse(found);
+        boolean hadBadge = userRepository.findGpProById(user.getId()).orElse(user.isGpPro());
+        Optional<GpProApplicationEntity> open = applicationRepository.findFirstByUserIdAndStatusIn(user.getId(), OPEN);
+        if (!hadBadge && open.isEmpty()) {
+            throw conflict("gp-pro-not-active", "Not Active", "Le statut GP Pro n'est pas actif");
+        }
+
+        boolean statusChanged = false;
+        if (hadBadge) {
+            LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+            user.setGpPro(false);
+            user.setGpProRevokedAt(now);
+            user.setGpProRevokedReason(RESIGN_REASON);
+            statusChanged = user.revertProfessionalToIndividual();
+            userRepository.save(user);
+            List<GpProReviewFlagEntity> flags = reviewFlags.findByUserIdAndResolvedAtIsNull(user.getId());
+            flags.forEach(f -> f.setResolvedAt(now));
+            reviewFlags.saveAll(flags);
+        }
+        if (open.isPresent()) {
+            GpProApplicationEntity app = open.get();
+            app.setStatus(GpProApplicationStatus.CANCELLED);
+            app.clearBusinessDetails();
+            applicationRepository.saveAndFlush(app);
+            documentService.purgeAll(app.getId());
+        }
+        // Jamais la raison sociale, le numéro d'entreprise ni le pays dans l'audit (immuable).
+        auditService.log("USER", user.getId(), "GP_PRO_RESIGNED", user.getId(),
+                Map.of("hadBadge", hadBadge, "cancelledApplication", open.isPresent()));
+        if (hadBadge) {
+            events.publishEvent(new GpProStatusChangedEvent(user.getId(), false));
+        }
+        if (statusChanged) {
+            events.publishEvent(new TravelerStatusChangedEvent(user.getId(), TravelerStatus.INDIVIDUAL));
+        }
+        return status(firebaseUid);
+    }
+
+    /** Données d'entreprise validées de la demande (numéro nettoyé, pays). */
+    private record Business(String registrationNumber, String country) {
+    }
+
+    /**
+     * Raison sociale, numéro et pays vont ensemble : sans numéro ni pays (ancienne app) rien n'est exigé ;
+     * dès que l'un des deux est présent, les trois sont obligatoires. Les messages ne citent jamais le numéro.
+     */
+    private static Business validateBusiness(GpProApplyRequest r) {
+        String number = blankToNull(r.businessRegistrationNumber());
+        String country = blankToNull(r.businessCountry());
+        if (number == null && country == null) {
+            return null;
+        }
+        String name = blankToNull(r.commercialName());
+        if (number == null || country == null || name == null || name.length() < 2
+                || name.codePoints().anyMatch(Character::isISOControl)
+                || number.length() < 4 || number.length() > 40 || !REGISTRATION_NUMBER.matcher(number).matches()
+                || !COUNTRY.matcher(country).matches()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-business-incomplete",
+                    "Business Details Incomplete",
+                    "Renseignez la raison sociale, le numéro d'entreprise et le pays.");
+        }
+        return new Business(number, country);
     }
 
     private UserEntity findUser(String firebaseUid) {

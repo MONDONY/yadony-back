@@ -15,17 +15,16 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.regex.Pattern;
 
-/** Déclaration, par le voyageur, de son statut légal (particulier ou professionnel). */
+/**
+ * Déclaration, par le voyageur, de son statut de particulier. Le statut professionnel n'est plus déclaratif :
+ * il vient de l'approbation d'une demande GP Pro ({@code GpProAdminService.approve}).
+ */
 @Service
 public class TravelerStatusService {
 
     /** Version des conditions que le voyageur accepte en déclarant son statut. */
     public static final String TERMS_VERSION = "2026-11-10";
-
-    private static final Pattern REGISTRATION_NUMBER = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9 ./-]*$");
-    private static final Pattern COUNTRY = Pattern.compile("^[A-Z]{2}$");
 
     private final UserRepository userRepository;
     private final AuditService auditService;
@@ -44,72 +43,45 @@ public class TravelerStatusService {
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
                         "user-not-found", "User Not Found", "Utilisateur introuvable"));
         // Les contrôles passent avant tout verrou et toute écriture : une déclaration refusée ne laisse rien.
-        Declaration d = validate(r);
+        validate(r);
         // Verrou par utilisateur, puis relecture : l'entité chargée avant le verrou peut être périmée.
         UserEntity user = userRepository.findByIdForUpdate(loaded.getId()).orElse(loaded);
+        if (user.isGpPro() && user.getTravelerStatus() == TravelerStatus.PROFESSIONAL) {
+            // Redevenir particulier se fait par la sortie GP Pro (POST /gp-pro/resign), qui retire le badge
+            // et le statut dans la même transaction : jamais un GP Pro avec un statut particulier.
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "gp-pro-active", "GP Pro Active",
+                    "Pour redevenir particulier, quittez le statut GP Pro.");
+        }
 
-        user.setTravelerStatus(d.status());
+        user.setTravelerStatus(TravelerStatus.INDIVIDUAL);
         user.setTravelerStatusDeclaredAt(Instant.now());
         user.setTravelerStatusTermsVersion(TERMS_VERSION);
         // Un particulier n'a aucune donnée d'entreprise : contrainte chk_users_traveler_status_pro_fields.
-        user.setBusinessName(d.businessName());
-        user.setBusinessRegistrationNumber(d.registrationNumber());
-        user.setBusinessCountry(d.country());
+        user.setBusinessName(null);
+        user.setBusinessRegistrationNumber(null);
+        user.setBusinessCountry(null);
         userRepository.save(user);
 
-        // Jamais le numéro ni la raison sociale dans l'audit (immuable) : le statut et le pays seulement.
+        // Le statut seul dans l'audit (immuable).
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("status", d.status().name());
-        if (d.country() != null) {
-            payload.put("country", d.country());
-        }
+        payload.put("status", TravelerStatus.INDIVIDUAL.name());
         auditService.log("USER", user.getId(), "TRAVELER_STATUS_DECLARED", user.getId(), payload);
-        events.publishEvent(new TravelerStatusChangedEvent(user.getId(), d.status()));
+        events.publishEvent(new TravelerStatusChangedEvent(user.getId(), TravelerStatus.INDIVIDUAL));
 
         return new TravelerStatusResponse(user.getTravelerStatus(), user.getTravelerStatusDeclaredAt(),
                 user.getBusinessName(), user.getBusinessRegistrationNumber(), user.getBusinessCountry());
     }
 
-    private record Declaration(TravelerStatus status, String businessName, String registrationNumber,
-                               String country) {
-    }
-
-    private static Declaration validate(TravelerStatusRequest r) {
+    private static void validate(TravelerStatusRequest r) {
         if (r == null || r.status() == null) {
             throw invalid("Le statut est obligatoire");
         }
-        if (r.status() == TravelerStatus.INDIVIDUAL) {
-            if (!Boolean.TRUE.equals(r.personalUseConfirmed())) {
-                throw invalid("Confirmez que vous voyagez à titre personnel");
-            }
-            return new Declaration(TravelerStatus.INDIVIDUAL, null, null, null);
+        if (r.status() == TravelerStatus.PROFESSIONAL) {
+            throw invalid("Utilisez la demande GP Pro");
         }
-        String name = clean(r.businessName());
-        String number = clean(r.registrationNumber());
-        String country = r.country();
-        if (name == null || name.length() < 2 || name.length() > 120 || hasControlChars(name)) {
-            throw invalid("Raison sociale invalide");
+        if (!Boolean.TRUE.equals(r.personalUseConfirmed())) {
+            throw invalid("Confirmez que vous voyagez à titre personnel");
         }
-        if (number == null || number.length() < 4 || number.length() > 40
-                || !REGISTRATION_NUMBER.matcher(number).matches()) {
-            throw invalid("Numéro d'immatriculation invalide");
-        }
-        if (country == null || !COUNTRY.matcher(country).matches()) {
-            throw invalid("Pays d'immatriculation invalide");
-        }
-        return new Declaration(TravelerStatus.PROFESSIONAL, name, number, country);
-    }
-
-    private static String clean(String s) {
-        if (s == null) {
-            return null;
-        }
-        String t = s.strip();
-        return t.isEmpty() ? null : t;
-    }
-
-    private static boolean hasControlChars(String s) {
-        return s.codePoints().anyMatch(Character::isISOControl);
     }
 
     private static YadonyBusinessException invalid(String detail) {

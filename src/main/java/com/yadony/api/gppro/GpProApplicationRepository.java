@@ -44,9 +44,9 @@ public interface GpProApplicationRepository extends JpaRepository<GpProApplicati
                @Param("reason") String reason,
                @Param("now") LocalDateTime now);
 
-    /** RGPD : efface le nom commercial et le motif de décision de toutes les demandes de l'utilisateur. */
+    /** RGPD : efface le nom commercial, le numéro d'entreprise, le pays et le motif de décision de toutes les demandes de l'utilisateur. */
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query(value = "UPDATE gp_pro_applications SET commercial_name = NULL, decision_reason = NULL, "
-            + "updated_at = CURRENT_TIMESTAMP WHERE user_id = :userId", nativeQuery = true)
+            + "business_registration_number = NULL, business_country = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = :userId", nativeQuery = true)
     int clearPersonalTextByUserId(@Param("userId") UUID userId);
 }
