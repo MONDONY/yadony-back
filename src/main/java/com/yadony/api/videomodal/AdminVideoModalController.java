@@ -1,6 +1,8 @@
 package com.yadony.api.videomodal;
 
 import com.yadony.api.admin.account.AdminPrincipal;
+import com.yadony.api.videomodal.dto.AudienceEstimateRequest;
+import com.yadony.api.videomodal.dto.AudienceEstimateResponse;
 import com.yadony.api.videomodal.dto.VideoModalActiveRequest;
 import com.yadony.api.videomodal.dto.VideoModalAdminResponse;
 import com.yadony.api.videomodal.dto.VideoModalRequest;
@@ -54,6 +56,15 @@ public class AdminVideoModalController {
     public ResponseEntity<VideoModalAdminResponse> create(@Valid @RequestBody VideoModalRequest request,
                                                           Authentication authentication) {
         return ResponseEntity.status(HttpStatus.CREATED).body(service.create(request, adminId(authentication)));
+    }
+
+    /**
+     * Estimation d'audience du ciblage en cours de saisie (moteur de la Diffusion) : comptes concernés
+     * puis après tirage. Lecture seule, jamais de donnée personnelle.
+     */
+    @PostMapping("/audience-estimate")
+    public AudienceEstimateResponse audienceEstimate(@RequestBody AudienceEstimateRequest request) {
+        return service.estimateAudience(request);
     }
 
     @PutMapping("/{id}")

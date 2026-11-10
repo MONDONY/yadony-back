@@ -39,6 +39,19 @@ public class RuleAudienceRepository {
         return countWhere("SELECT COUNT(*) FROM users u WHERE " + rule.where(), rule.params());
     }
 
+    /**
+     * Ce compte précis fait-il partie de l'audience de la règle ? Même clause que le comptage
+     * (compte actif compris), bornée à un identifiant : sert aux modals, qui jugent une personne à la fois.
+     */
+    public boolean matches(CompiledRule rule, UUID userId) {
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        params.addValues(rule.params().getValues());
+        params.addValue("matchUserId", userId);
+        Long total = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM users u WHERE (" + rule.where() + ") AND u.id = :matchUserId", params, Long.class);
+        return total != null && total > 0;
+    }
+
     /** Destinataires joignables en push : au moins un appareil avec un jeton FCM. */
     public long countPushReachable(CompiledRule rule) {
         return countWhere("SELECT COUNT(*) FROM users u WHERE " + rule.where() + " AND " + PUSH_REACHABLE,

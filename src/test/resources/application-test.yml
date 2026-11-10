@@ -52,6 +52,10 @@ stripe:
     billing-secret: whsec_test_billing
 
 yadony:
+  # Les tests existants rejouent un même modal pour un même compte : le plafond journalier est
+  # testé à part (VideoModalTargetingServiceTest, VideoModalTargetingPostgresIT), qui le réactivent.
+  video-modal:
+    daily-cap: 0
   # Les tests enchaînent des dizaines d'appels d'un même compte : le limiteur est testé à
   # part (ratelimit/*Test), activé explicitement.
   rate-limit:

@@ -22,7 +22,11 @@ import java.util.UUID;
  * <p>{@code GET /video-modals/eligible} est public (permitAll dans SecurityConfig) : le filtre
  * Firebase renseigne tout de même l'appelant quand un jeton valide est présent, et la liste est
  * alors filtrée pour lui. {@code caps=layout} (nouvelle app) autorise l'envoi des formats
- * autres que la feuille du bas et des images ; sans lui ces campagnes sont retenues. Un invité (session anonyme) est traité comme un visiteur.
+ * autres que la feuille du bas et des images ; {@code caps=targeting} celui des fréquences « à chaque
+ * ouverture » et « tous les N jours » et de la case « Ne plus afficher » ; sans eux ces campagnes sont
+ * retenues. {@code appVersion} ({@code 1.0.6}) et {@code platform} ({@code android} ou {@code ios})
+ * servent aux campagnes limitées à une version ou un système. Un invité (session anonyme) est traité
+ * comme un visiteur.
  * {@code POST /video-modals/{id}/events} retombe sur la règle finale : vrai compte exigé.
  */
 @RestController
@@ -38,8 +42,10 @@ public class VideoModalController {
     @GetMapping("/eligible")
     public List<VideoModalEligibleResponse> eligible(@RequestParam(name = "lang", required = false) String lang,
                                                      @RequestParam(name = "caps", required = false) String caps,
+                                                     @RequestParam(name = "appVersion", required = false) String appVersion,
+                                                     @RequestParam(name = "platform", required = false) String platform,
                                                      Authentication authentication) {
-        return service.eligible(accountUid(authentication), lang, caps);
+        return service.eligible(accountUid(authentication), lang, caps, appVersion, platform);
     }
 
     @PostMapping("/{id}/events")

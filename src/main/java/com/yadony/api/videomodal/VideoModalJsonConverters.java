@@ -59,6 +59,20 @@ final class VideoModalJsonConverters {
         }
     }
 
+    @Converter
+    static class Platforms extends JsonList<VideoModalPlatform> {
+        Platforms() {
+            super(new TypeReference<>() { });
+        }
+    }
+
+    @Converter
+    static class Situations extends JsonList<VideoModalSituation> {
+        Situations() {
+            super(new TypeReference<>() { });
+        }
+    }
+
     /** Action d'un bouton INFO ; colonne vide = pas d'action. */
     @Converter
     static class Action implements AttributeConverter<VideoModalAction, String> {

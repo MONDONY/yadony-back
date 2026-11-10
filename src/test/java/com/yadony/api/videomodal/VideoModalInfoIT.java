@@ -260,7 +260,8 @@ class VideoModalInfoIT {
                 .andExpect(jsonPath("$[0].durationSeconds").doesNotExist())
                 .andExpect(jsonPath("$[0].maxDisplays").value(2))
                 .andExpect(jsonPath("$[0].displays").value(0))
-                .andExpect(jsonPath("$[0].audience").value("NEVER_ANSWERED"))
+                // Une information créée sans « audience » vaut « tout le monde » (étape 1 : défaut voulu du type).
+                .andExpect(jsonPath("$[0].audience").value("EVERYONE"))
                 .andExpect(jsonPath("$[0].triggers[0]").value("APP_OPEN"))
                 .andExpect(jsonPath("$[1].id").value(video))
                 .andExpect(jsonPath("$[1].type").value("VIDEO"))

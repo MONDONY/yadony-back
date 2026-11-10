@@ -134,6 +134,18 @@ public class UserEntity extends BaseEntity {
     @Column(name = "last_seen_at", insertable = false, updatable = false)
     private java.time.LocalDateTime lastSeenAt;
 
+    /**
+     * Dernière visite avant la dernière pause d'au moins {@link UserRepository#ABSENCE_GAP_HOURS} h
+     * (V374). Écrite par {@link UserRepository#touchLastSeen} avec {@link #returnedAt}, en lecture
+     * seule ici. Sert à la situation « retour après une absence » des modals.
+     */
+    @Column(name = "absence_started_at", insertable = false, updatable = false)
+    private java.time.LocalDateTime absenceStartedAt;
+
+    /** Moment du retour qui a clos la dernière pause (V374), voir {@link #absenceStartedAt}. */
+    @Column(name = "returned_at", insertable = false, updatable = false)
+    private java.time.LocalDateTime returnedAt;
+
     /** Afficher ma dernière connexion sur mon profil public. Visible par défaut. */
     @org.hibernate.annotations.ColumnDefault("true")
     @Column(name = "show_last_seen", nullable = false)
@@ -541,6 +553,8 @@ public class UserEntity extends BaseEntity {
     public boolean isShowResidenceCountry() { return showResidenceCountry; }
     public void setShowResidenceCountry(boolean showResidenceCountry) { this.showResidenceCountry = showResidenceCountry; }
     public java.time.LocalDateTime getLastSeenAt() { return lastSeenAt; }
+    public java.time.LocalDateTime getAbsenceStartedAt() { return absenceStartedAt; }
+    public java.time.LocalDateTime getReturnedAt() { return returnedAt; }
     public boolean isShowLastSeen() { return showLastSeen; }
     public void setShowLastSeen(boolean showLastSeen) { this.showLastSeen = showLastSeen; }
 

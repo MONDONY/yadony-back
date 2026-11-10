@@ -51,6 +51,10 @@ public class VideoModalResponseEntity extends BaseEntity {
     @Column(name = "completed_at")
     private Instant completedAt;
 
+    /** « Ne plus afficher » : réponse définitive pour cette version (V374), sans toucher au statut. */
+    @Column(name = "dont_show_again_at")
+    private Instant dontShowAgainAt;
+
     protected VideoModalResponseEntity() {
         // Hibernate
     }
@@ -67,6 +71,11 @@ public class VideoModalResponseEntity extends BaseEntity {
      * OPENED/COMPLETED/DISMISSED ne change rien.
      */
     public void apply(VideoModalEvent event, Instant at) {
+        if (event == VideoModalEvent.DONT_SHOW_AGAIN) {
+            // Drapeau à part : ni statut, ni compteur d'affichages ; rejouer ne change rien.
+            if (dontShowAgainAt == null) dontShowAgainAt = at;
+            return;
+        }
         if (event == VideoModalEvent.SHOWN) {
             displays++;
             if (lastShownAt == null || at.isAfter(lastShownAt)) lastShownAt = at;
@@ -87,4 +96,6 @@ public class VideoModalResponseEntity extends BaseEntity {
     public Instant getAnsweredAt() { return answeredAt; }
     public Instant getOpenedAt() { return openedAt; }
     public Instant getCompletedAt() { return completedAt; }
+    public Instant getDontShowAgainAt() { return dontShowAgainAt; }
+    public boolean isDontShowAgain() { return dontShowAgainAt != null; }
 }

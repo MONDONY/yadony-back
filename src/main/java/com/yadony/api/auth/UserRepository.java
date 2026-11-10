@@ -453,11 +453,30 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
      * Transaction propre : l'appelant peut être dans une transaction en lecture seule,
      * où Postgres refuserait l'UPDATE.
      */
+    default int touchLastSeen(UUID id, java.time.LocalDateTime now) {
+        return touchLastSeen(id, now, now.minusHours(ABSENCE_GAP_HOURS));
+    }
+
+    /** Pause (en heures) au-delà de laquelle une visite est comptée comme un retour (modals). */
+    int ABSENCE_GAP_HOURS = 6;
+
+    /**
+     * Écrit la dernière visite et, si la précédente date d'avant {@code gapBefore}, garde cette
+     * précédente visite ({@code absence_started_at}) et l'heure du retour ({@code returned_at}) :
+     * {@code last_seen_at} étant réécrite dès l'ouverture de l'app, elle ne dit plus rien de
+     * l'absence quand les modals sont demandés.
+     */
     @org.springframework.transaction.annotation.Transactional(
             propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     @Modifying
-    @Query(value = "UPDATE users SET last_seen_at = :now WHERE id = :id", nativeQuery = true)
-    int touchLastSeen(@Param("id") UUID id, @Param("now") java.time.LocalDateTime now);
+    @Query(value = "UPDATE users SET "
+            + "absence_started_at = CASE WHEN last_seen_at IS NOT NULL AND last_seen_at < :gapBefore "
+            + "THEN last_seen_at ELSE absence_started_at END, "
+            + "returned_at = CASE WHEN last_seen_at IS NOT NULL AND last_seen_at < :gapBefore "
+            + "THEN :now ELSE returned_at END, "
+            + "last_seen_at = :now WHERE id = :id", nativeQuery = true)
+    int touchLastSeen(@Param("id") UUID id, @Param("now") java.time.LocalDateTime now,
+                      @Param("gapBefore") java.time.LocalDateTime gapBefore);
 
     /**
      * Envois menés à bien par un utilisateur (FLUTTER-NV) : colis livrés ({@code COMPLETED})
