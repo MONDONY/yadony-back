@@ -154,6 +154,14 @@ class TravelerTaxInfoServiceTest {
     }
 
     @Test
+    void put_corpsAbsent_422() {
+        assertThatThrownBy(() -> service.set(UID, null))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("tax-info-invalid"));
+        verify(users, never()).save(any());
+    }
+
+    @Test
     void put_nifNul_422() {
         assertThatThrownBy(() -> service.set(UID, new TaxInfoRequest(null, "FR", null)))
                 .isInstanceOf(YadonyBusinessException.class);

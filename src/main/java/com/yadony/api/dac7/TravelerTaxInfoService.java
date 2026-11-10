@@ -67,8 +67,10 @@ public class TravelerTaxInfoService {
     public TaxInfoResponse set(String firebaseUid, TaxInfoRequest request) {
         UserEntity user = load(firebaseUid);
         // Les contrôles passent avant toute écriture : une saisie refusée ne laisse rien.
-        String nif = identifier(request == null ? null : request.taxIdentificationNumber(), "taxIdentificationNumber",
-                true);
+        if (request == null) {
+            throw invalid("taxIdentificationNumber", "Le numéro d'identification fiscale est obligatoire.");
+        }
+        String nif = identifier(request.taxIdentificationNumber(), "taxIdentificationNumber", true);
         String country = country(request.taxCountry());
         String vat = identifier(request.vatNumber(), "vatNumber", false);
 
