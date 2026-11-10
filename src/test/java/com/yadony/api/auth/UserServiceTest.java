@@ -26,6 +26,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 
 import java.lang.reflect.Field;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -579,6 +580,82 @@ class UserServiceTest {
                         assertThat(((YadonyBusinessException) e).getErrorCode())
                                 .isEqualTo("user-not-found");
                     });
+        }
+    }
+
+    @Nested
+    @DisplayName("setMonthlyTripLimit()")
+    class SetMonthlyTripLimitTests {
+
+        @Test
+        @DisplayName("limite valide → enregistrée + audit sans autre donnée que l'ancienne et la nouvelle limite")
+        @SuppressWarnings("unchecked")
+        void validLimit_persistsAndAudits() {
+            user.setMonthlyTripLimit(3);
+            when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+            when(userRepository.save(any())).thenReturn(user);
+
+            userService.setMonthlyTripLimit(USER_ID, 5, ADMIN_ID);
+
+            assertThat(user.getMonthlyTripLimit()).isEqualTo(5);
+            verify(userRepository).save(user);
+            org.mockito.ArgumentCaptor<Map<String, Object>> payload = org.mockito.ArgumentCaptor.forClass(Map.class);
+            verify(auditService).log(eq("USER"), eq(USER_ID), eq("USER_MONTHLY_TRIP_LIMIT_SET"), eq(ADMIN_ID),
+                    payload.capture());
+            assertThat(payload.getValue()).containsOnlyKeys("previous", "limit")
+                    .containsEntry("previous", "3").containsEntry("limit", "5");
+        }
+
+        @Test
+        @DisplayName("bornes 1 et 100 acceptées")
+        void bounds_areAccepted() {
+            when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+            when(userRepository.save(any())).thenReturn(user);
+
+            userService.setMonthlyTripLimit(USER_ID, 1, ADMIN_ID);
+            assertThat(user.getMonthlyTripLimit()).isEqualTo(1);
+            userService.setMonthlyTripLimit(USER_ID, 100, ADMIN_ID);
+            assertThat(user.getMonthlyTripLimit()).isEqualTo(100);
+        }
+
+        @Test
+        @DisplayName("null → aucune limite (autorisé), audit « none »")
+        @SuppressWarnings("unchecked")
+        void nullLimit_clears() {
+            user.setMonthlyTripLimit(4);
+            when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+            when(userRepository.save(any())).thenReturn(user);
+
+            userService.setMonthlyTripLimit(USER_ID, null, ADMIN_ID);
+
+            assertThat(user.getMonthlyTripLimit()).isNull();
+            org.mockito.ArgumentCaptor<Map<String, Object>> payload = org.mockito.ArgumentCaptor.forClass(Map.class);
+            verify(auditService).log(eq("USER"), eq(USER_ID), eq("USER_MONTHLY_TRIP_LIMIT_SET"), eq(ADMIN_ID),
+                    payload.capture());
+            assertThat(payload.getValue()).containsEntry("limit", "none").containsEntry("previous", "4");
+        }
+
+        @Test
+        @DisplayName("0, négatif ou > 100 → 422 invalid-monthly-trip-limit, rien d'écrit")
+        void outOfBounds_throws422() {
+            for (int bad : new int[]{0, -1, 101, 1000}) {
+                assertThatThrownBy(() -> userService.setMonthlyTripLimit(USER_ID, bad, ADMIN_ID))
+                        .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                            assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                            assertThat(e.getErrorCode()).isEqualTo("invalid-monthly-trip-limit");
+                        });
+            }
+            verify(userRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("utilisateur inconnu → 404 user-not-found")
+        void unknownUser_throws404() {
+            when(userRepository.findById(USER_ID)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> userService.setMonthlyTripLimit(USER_ID, 3, ADMIN_ID))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("user-not-found"));
         }
     }
 

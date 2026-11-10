@@ -522,4 +522,26 @@ class GpProAdminServiceTest {
         assertThat(user.getTravelerStatus()).isNull();
         verify(events, never()).publishEvent(any(TravelerStatusChangedEvent.class));
     }
+
+    @Test
+    void detailPorteLeNumeroEtLePaysDeLaDemande_pourLaDecisionDeLAdmin() {
+        applicationWithBusiness();
+        when(users.findById(userId)).thenReturn(Optional.of(user));
+
+        var detail = service.detail(appId);
+
+        assertThat(detail.commercialName()).isEqualTo("Acme Express");
+        assertThat(detail.businessRegistrationNumber()).isEqualTo(NUMBER);
+        assertThat(detail.businessCountry()).isEqualTo("FR");
+    }
+
+    @Test
+    void detailDUneAncienneDemande_numeroEtPaysNuls() {
+        when(users.findById(userId)).thenReturn(Optional.of(user));
+
+        var detail = service.detail(appId);
+
+        assertThat(detail.businessRegistrationNumber()).isNull();
+        assertThat(detail.businessCountry()).isNull();
+    }
 }

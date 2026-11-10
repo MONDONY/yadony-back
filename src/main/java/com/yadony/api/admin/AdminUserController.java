@@ -54,6 +54,15 @@ public class AdminUserController {
     private final ProSubscriptionRepository proSubscriptionRepository;
     private final PayoutHoldService payoutHoldService;
 
+    /** Compteur « trajets publiés ce mois-ci » de la fiche ; injecté par setter (constructeur inchangé). */
+    private com.yadony.api.travelerstatus.PublishingEligibilityService publishingEligibilityService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setPublishingEligibilityService(
+            com.yadony.api.travelerstatus.PublishingEligibilityService publishingEligibilityService) {
+        this.publishingEligibilityService = publishingEligibilityService;
+    }
+
     public AdminUserController(UserService userService,
                                UserRepository userRepository,
                                FirebaseContactService firebaseContact,
@@ -198,6 +207,16 @@ public class AdminUserController {
                 adminId(authentication)));
     }
 
+    /** Limite mensuelle de trajets publiés (null = aucune limite) ; même droit que la surcharge de commission. */
+    @PreAuthorize("hasAuthority('USER_COMMISSION')")
+    @PutMapping("/{userId}/monthly-trip-limit")
+    public AdminUserDetailResponse setMonthlyTripLimit(
+            @PathVariable UUID userId,
+            @RequestBody @jakarta.validation.Valid MonthlyTripLimitRequest request,
+            Authentication authentication) {
+        return detail(userService.setMonthlyTripLimit(userId, request.limit(), adminId(authentication)));
+    }
+
     // Lot B — Coupure de messagerie. SUPPORT ne détient plus USER_SUSPEND, USER_BAN ni
     // USER_MESSAGE_MUTE (retirés pour la fiche utilisateur de l'admin) : ces gestes sont réservés
     // à ADMIN. Voir AdminRole.SUPPORT.
@@ -298,7 +317,8 @@ public class AdminUserController {
                 user,
                 firebaseContact.getContact(user.getFirebaseUid()),
                 proSubscriptionRepository.findByUserId(user.getId()).orElse(null),
-                payoutHoldService.summaryOf(user.getId()));
+                payoutHoldService.summaryOf(user.getId()),
+                publishingEligibilityService == null ? 0 : publishingEligibilityService.usedThisMonth(user));
     }
 
     /** Résout l'utilisateur ou lève le 404 métier standard — réutilisé partout où

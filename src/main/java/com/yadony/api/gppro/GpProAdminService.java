@@ -142,7 +142,9 @@ public class GpProAdminService {
                 disputes.countByTravelerIdAndStatus(userId, "OPEN"),
                 reports.countByStatusAndTargetTypeAndTargetId(ReportStatus.OPEN, ReportTargetType.USER, userId),
                 user == null ? null : user.getCreatedAt(),
-                docs);
+                docs,
+                app.getBusinessRegistrationNumber(),
+                app.getBusinessCountry());
     }
 
     @Transactional(readOnly = true)

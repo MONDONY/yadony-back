@@ -157,4 +157,20 @@ class AdminUserDetailResponseTest {
         assertThat(response.heldPaymentsCount()).isZero();
         assertThat(AdminUserDetailResponse.from(sampleUser(), sampleContact(), null, null).heldPaymentsCount()).isZero();
     }
+
+    @Test
+    @DisplayName("limite mensuelle et trajets utilisés ce mois-ci exposés ; sans limite : null")
+    void monthlyTripLimitAndUsed() {
+        UserEntity limited = sampleUser();
+        limited.setMonthlyTripLimit(4);
+
+        AdminUserDetailResponse r = AdminUserDetailResponse.from(
+                limited, sampleContact(), null, com.yadony.api.payments.hold.PayoutHoldSummary.NONE, 3);
+        assertThat(r.monthlyTripLimit()).isEqualTo(4);
+        assertThat(r.monthlyTripsUsed()).isEqualTo(3);
+
+        AdminUserDetailResponse none = AdminUserDetailResponse.from(sampleUser(), sampleContact(), null);
+        assertThat(none.monthlyTripLimit()).isNull();
+        assertThat(none.monthlyTripsUsed()).isZero();
+    }
 }
