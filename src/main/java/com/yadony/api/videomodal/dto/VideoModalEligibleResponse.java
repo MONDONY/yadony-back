@@ -1,15 +1,22 @@
 package com.yadony.api.videomodal.dto;
 
+import com.yadony.api.videomodal.VideoModalAction;
 import com.yadony.api.videomodal.VideoModalAudience;
 import com.yadony.api.videomodal.VideoModalIcon;
 import com.yadony.api.videomodal.VideoModalTrigger;
+import com.yadony.api.videomodal.VideoModalType;
 
 import java.util.List;
 import java.util.UUID;
 
-/** Modal éligible renvoyé à l'app, textes déjà dans la langue demandée. */
+/**
+ * Modal éligible renvoyé à l'app, textes déjà dans la langue demandée. Pour un VIDEO,
+ * {@code body}, {@code icon} et les actions sont null ; pour un INFO, {@code youtubeVideoId}
+ * et {@code durationSeconds} sont null et {@code highlights} est vide.
+ */
 public record VideoModalEligibleResponse(
         UUID id,
+        VideoModalType type,
         int version,
         List<VideoModalTrigger> triggers,
         String title,
@@ -19,6 +26,10 @@ public record VideoModalEligibleResponse(
         List<Highlight> highlights,
         String primaryLabel,
         String secondaryLabel,
+        String body,
+        VideoModalIcon icon,
+        VideoModalAction primaryAction,
+        VideoModalAction secondaryAction,
         int maxDisplays,
         int displays,
         VideoModalAudience audience) {

@@ -19,13 +19,35 @@ import java.util.List;
 @Where(clause = "deleted_at IS NULL")
 public class VideoModalCampaignEntity extends BaseEntity {
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "type", nullable = false, length = 10)
+    private VideoModalType type = VideoModalType.VIDEO;
+
+    @Column(name = "body_fr", length = 500)
+    private String bodyFr;
+
+    @Column(name = "body_en", length = 500)
+    private String bodyEn;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "icon", length = 20)
+    private VideoModalIcon icon;
+
+    @Convert(converter = VideoModalJsonConverters.Action.class)
+    @Column(name = "primary_action", columnDefinition = "TEXT")
+    private VideoModalAction primaryAction;
+
+    @Convert(converter = VideoModalJsonConverters.Action.class)
+    @Column(name = "secondary_action", columnDefinition = "TEXT")
+    private VideoModalAction secondaryAction;
+
     @Column(name = "name", nullable = false, length = 120)
     private String name;
 
-    @Column(name = "youtube_url", nullable = false, length = 500)
+    @Column(name = "youtube_url", length = 500)
     private String youtubeUrl;
 
-    @Column(name = "youtube_video_id", nullable = false, length = 11)
+    @Column(name = "youtube_video_id", length = 11)
     private String youtubeVideoId;
 
     @Column(name = "duration_seconds")
@@ -92,6 +114,18 @@ public class VideoModalCampaignEntity extends BaseEntity {
                 && (endsAt == null || endsAt.isAfter(now));
     }
 
+    public VideoModalType getType() { return type; }
+    public void setType(VideoModalType type) { this.type = type == null ? VideoModalType.VIDEO : type; }
+    public String getBodyFr() { return bodyFr; }
+    public void setBodyFr(String bodyFr) { this.bodyFr = bodyFr; }
+    public String getBodyEn() { return bodyEn; }
+    public void setBodyEn(String bodyEn) { this.bodyEn = bodyEn; }
+    public VideoModalIcon getIcon() { return icon; }
+    public void setIcon(VideoModalIcon icon) { this.icon = icon; }
+    public VideoModalAction getPrimaryAction() { return primaryAction; }
+    public void setPrimaryAction(VideoModalAction primaryAction) { this.primaryAction = primaryAction; }
+    public VideoModalAction getSecondaryAction() { return secondaryAction; }
+    public void setSecondaryAction(VideoModalAction secondaryAction) { this.secondaryAction = secondaryAction; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
     public String getYoutubeUrl() { return youtubeUrl; }

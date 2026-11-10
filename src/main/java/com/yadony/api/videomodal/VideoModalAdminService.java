@@ -26,6 +26,8 @@ public class VideoModalAdminService {
 
     static final String AUDIT_ENTITY = "VIDEO_MODAL";
     static final int DEFAULT_MAX_DISPLAYS = 3;
+    static final int MAX_BODY = 500;
+    static final int MAX_INFO_LABEL = 26;
 
     private final VideoModalCampaignRepository campaignRepository;
     private final VideoModalResponseRepository responseRepository;
@@ -90,7 +92,7 @@ public class VideoModalAdminService {
     @Transactional
     public VideoModalAdminResponse publishVersion(UUID id, VideoModalVersionRequest request, UUID adminId) {
         VideoModalCampaignEntity c = find(id);
-        if (request.youtubeUrl() != null && !request.youtubeUrl().isBlank()) {
+        if (c.getType() == VideoModalType.VIDEO && request.youtubeUrl() != null && !request.youtubeUrl().isBlank()) {
             String url = request.youtubeUrl().trim();
             String videoId = requireVideoId(url);
             c.setYoutubeUrl(url);
@@ -127,16 +129,30 @@ public class VideoModalAdminService {
         if (r.startsAt() != null && r.endsAt() != null && !r.endsAt().isAfter(r.startsAt())) {
             throw invalid("video-modal-invalid-period", "La date de fin doit être postérieure à la date de début");
         }
-        String url = r.youtubeUrl().trim();
-        c.setYoutubeVideoId(requireVideoId(url));
-        c.setYoutubeUrl(url);
+        VideoModalType type = r.type() == null ? VideoModalType.VIDEO : r.type();
         String titleFr = r.titleFr().trim();
+        c.setType(type);
         c.setName(blankToNull(r.name()) == null ? titleFr : r.name().trim());
-        c.setDurationSeconds(r.durationSeconds());
         c.setTitleFr(titleFr);
         c.setTitleEn(blankToNull(r.titleEn()));
         c.setSubtitleFr(blankToNull(r.subtitleFr()));
         c.setSubtitleEn(blankToNull(r.subtitleEn()));
+        c.setTriggers(r.triggers().stream().distinct().toList());
+        c.setMaxDisplays(r.maxDisplays() == null ? DEFAULT_MAX_DISPLAYS : r.maxDisplays());
+        c.setStartsAt(r.startsAt());
+        c.setEndsAt(r.endsAt());
+        if (type == VideoModalType.INFO) {
+            applyInfo(c, r);
+        } else {
+            applyVideo(c, r);
+        }
+    }
+
+    private void applyVideo(VideoModalCampaignEntity c, VideoModalRequest r) {
+        String url = r.youtubeUrl() == null ? "" : r.youtubeUrl().trim();
+        c.setYoutubeVideoId(requireVideoId(url));
+        c.setYoutubeUrl(url);
+        c.setDurationSeconds(r.durationSeconds());
         c.setPrimaryLabelFr(blankToNull(r.primaryLabelFr()));
         c.setPrimaryLabelEn(blankToNull(r.primaryLabelEn()));
         c.setSecondaryLabelFr(blankToNull(r.secondaryLabelFr()));
@@ -144,10 +160,93 @@ public class VideoModalAdminService {
         c.setHighlights(r.highlights() == null ? List.of() : r.highlights().stream()
                 .map(h -> new VideoModalHighlight(h.icon(), h.textFr().trim(), blankToNull(h.textEn())))
                 .toList());
-        c.setTriggers(r.triggers().stream().distinct().toList());
-        c.setMaxDisplays(r.maxDisplays() == null ? DEFAULT_MAX_DISPLAYS : r.maxDisplays());
-        c.setStartsAt(r.startsAt());
-        c.setEndsAt(r.endsAt());
+        c.setBodyFr(null);
+        c.setBodyEn(null);
+        c.setIcon(null);
+        c.setPrimaryAction(null);
+        c.setSecondaryAction(null);
+    }
+
+    /** Modal d'information : lien, durée et points forts sont ignorés. */
+    private void applyInfo(VideoModalCampaignEntity c, VideoModalRequest r) {
+        String bodyFr = blankToNull(r.bodyFr());
+        if (bodyFr == null) {
+            throw invalid("video-modal-body-required", "Le texte du modal (français) est obligatoire");
+        }
+        String bodyEn = blankToNull(r.bodyEn());
+        if (bodyFr.length() > MAX_BODY || (bodyEn != null && bodyEn.length() > MAX_BODY)) {
+            throw invalid("video-modal-body-too-long", "Le texte du modal ne peut pas dépasser " + MAX_BODY + " caractères");
+        }
+        if (r.primaryAction() == null) {
+            throw invalid("video-modal-primary-action-required", "L'action du bouton principal est obligatoire");
+        }
+        VideoModalAction primary = toAction(r.primaryAction(), "principal");
+        requireLabel(primary, r.primaryLabelFr(), r.primaryLabelEn(), "principal");
+        VideoModalAction secondary = r.secondaryAction() == null ? null : toAction(r.secondaryAction(), "secondaire");
+        if (secondary != null) requireLabel(secondary, r.secondaryLabelFr(), r.secondaryLabelEn(), "secondaire");
+
+        c.setYoutubeUrl(null);
+        c.setYoutubeVideoId(null);
+        c.setDurationSeconds(null);
+        c.setHighlights(List.of());
+        c.setBodyFr(bodyFr);
+        c.setBodyEn(bodyEn);
+        c.setIcon(r.icon() == null ? VideoModalIcon.INFO : r.icon());
+        c.setPrimaryAction(primary);
+        c.setSecondaryAction(secondary);
+        c.setPrimaryLabelFr(blankToNull(r.primaryLabelFr()));
+        c.setPrimaryLabelEn(blankToNull(r.primaryLabelEn()));
+        c.setSecondaryLabelFr(secondary == null ? null : blankToNull(r.secondaryLabelFr()));
+        c.setSecondaryLabelEn(secondary == null ? null : blankToNull(r.secondaryLabelEn()));
+    }
+
+    /** Action normalisée : seul le champ utile à son type est conservé. */
+    private static VideoModalAction toAction(VideoModalRequest.ActionRequest a, String button) {
+        VideoModalActionKind kind = parseEnum(VideoModalActionKind.class, a.kind());
+        if (kind == null) {
+            throw invalid("video-modal-invalid-action", "Type d'action inconnu pour le bouton " + button
+                    + " (SCREEN, URL ou CLOSE)");
+        }
+        return switch (kind) {
+            case CLOSE -> new VideoModalAction(VideoModalActionKind.CLOSE, null, null);
+            case SCREEN -> {
+                InfoScreen screen = parseEnum(InfoScreen.class, a.screen());
+                if (screen == null) {
+                    throw invalid("video-modal-invalid-screen", "Écran inconnu ou manquant pour le bouton " + button);
+                }
+                yield new VideoModalAction(VideoModalActionKind.SCREEN, screen, null);
+            }
+            case URL -> {
+                String url = ExternalUrls.requireHttps(a.url());
+                if (url == null) {
+                    throw invalid("video-modal-invalid-url", "Le lien du bouton " + button
+                            + " doit être une adresse https valide de " + ExternalUrls.MAX_LENGTH + " caractères au plus");
+                }
+                yield new VideoModalAction(VideoModalActionKind.URL, null, url);
+            }
+        };
+    }
+
+    /** Libellé FR obligatoire pour SCREEN et URL ; 26 caractères au plus (FR et EN). */
+    private static void requireLabel(VideoModalAction action, String labelFr, String labelEn, String button) {
+        String fr = blankToNull(labelFr);
+        String en = blankToNull(labelEn);
+        if (action.kind() != VideoModalActionKind.CLOSE && fr == null) {
+            throw invalid("video-modal-label-required", "Le libellé français du bouton " + button + " est obligatoire");
+        }
+        if ((fr != null && fr.length() > MAX_INFO_LABEL) || (en != null && en.length() > MAX_INFO_LABEL)) {
+            throw invalid("video-modal-label-too-long", "Le libellé du bouton " + button
+                    + " ne peut pas dépasser " + MAX_INFO_LABEL + " caractères");
+        }
+    }
+
+    private static <E extends Enum<E>> E parseEnum(Class<E> type, String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            return Enum.valueOf(type, raw.trim());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     private static String requireVideoId(String url) {
@@ -184,11 +283,12 @@ public class VideoModalAdminService {
     /** Clés choisies hors de la liste noire PII d'AuditService (pas de « name », « label »…). */
     private void audit(VideoModalCampaignEntity c, String action, UUID adminId) {
         Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("type", c.getType().name());
         payload.put("title", c.getTitleFr());
         payload.put("version", c.getVersion());
         payload.put("audience", c.getAudience().name());
         payload.put("active", c.isActive());
-        payload.put("youtubeVideoId", c.getYoutubeVideoId());
+        if (c.getYoutubeVideoId() != null) payload.put("youtubeVideoId", c.getYoutubeVideoId());
         payload.put("triggers", c.getTriggers().stream().map(Enum::name).toList());
         payload.put("maxDisplays", c.getMaxDisplays());
         auditService.log(AUDIT_ENTITY, c.getId(), action, adminId, payload);
@@ -196,9 +296,10 @@ public class VideoModalAdminService {
 
     static VideoModalAdminResponse toResponse(VideoModalCampaignEntity c, VideoModalAdminResponse.Stats stats) {
         return new VideoModalAdminResponse(
-                c.getId(), c.getName(), c.getYoutubeUrl(), c.getYoutubeVideoId(), c.getDurationSeconds(),
+                c.getId(), c.getType(), c.getName(), c.getYoutubeUrl(), c.getYoutubeVideoId(), c.getDurationSeconds(),
                 c.getTitleFr(), c.getTitleEn(), c.getSubtitleFr(), c.getSubtitleEn(),
                 c.getPrimaryLabelFr(), c.getPrimaryLabelEn(), c.getSecondaryLabelFr(), c.getSecondaryLabelEn(),
+                c.getBodyFr(), c.getBodyEn(), c.getIcon(), c.getPrimaryAction(), c.getSecondaryAction(),
                 c.getHighlights().stream()
                         .map(h -> new VideoModalAdminResponse.Highlight(h.icon(), h.textFr(), h.textEn()))
                         .toList(),

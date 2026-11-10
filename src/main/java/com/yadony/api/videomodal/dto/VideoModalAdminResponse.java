@@ -1,8 +1,10 @@
 package com.yadony.api.videomodal.dto;
 
+import com.yadony.api.videomodal.VideoModalAction;
 import com.yadony.api.videomodal.VideoModalAudience;
 import com.yadony.api.videomodal.VideoModalIcon;
 import com.yadony.api.videomodal.VideoModalTrigger;
+import com.yadony.api.videomodal.VideoModalType;
 
 import java.time.Instant;
 import java.util.List;
@@ -11,6 +13,7 @@ import java.util.UUID;
 /** Campagne vue par l'admin, avec les statistiques de la version courante. */
 public record VideoModalAdminResponse(
         UUID id,
+        VideoModalType type,
         String name,
         String youtubeUrl,
         String youtubeVideoId,
@@ -23,6 +26,11 @@ public record VideoModalAdminResponse(
         String primaryLabelEn,
         String secondaryLabelFr,
         String secondaryLabelEn,
+        String bodyFr,
+        String bodyEn,
+        VideoModalIcon icon,
+        VideoModalAction primaryAction,
+        VideoModalAction secondaryAction,
         List<Highlight> highlights,
         List<VideoModalTrigger> triggers,
         int maxDisplays,
