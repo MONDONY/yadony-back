@@ -174,4 +174,25 @@ class UserDataExportServiceTest {
         assertThat(export.recipients()).isEmpty();
         assertThat(export.searchInterests()).isEmpty();
     }
+
+    @Test
+    @DisplayName("export_kyc_porteRelancesEtDesinscription")
+    void export_kyc_porteRelancesEtDesinscription() {
+        UUID userId = UUID.randomUUID();
+        UserEntity user = makeUser(userId);
+        user.setKycReminderCount(2);
+        java.time.Instant desinscrit = java.time.Instant.parse("2026-11-09T08:30:00Z");
+        user.setKycRemindersOptedOutAt(desinscrit);
+        KycVerificationEntity kyc = new KycVerificationEntity();
+        kyc.setStatus(KycVerificationStatus.REJECTED);
+        kyc.setRejectionReason("DOCUMENT_EXPIRED");
+        when(kycRepository.findByUserId(userId)).thenReturn(Optional.of(kyc));
+
+        UserDataExportDto export = service().export(user);
+
+        assertThat(export.kyc().status()).isEqualTo("REJECTED");
+        assertThat(export.kyc().rejectionReason()).isEqualTo("DOCUMENT_EXPIRED");
+        assertThat(export.kyc().verificationRemindersSent()).isEqualTo(2);
+        assertThat(export.kyc().verificationRemindersOptedOutAt()).isEqualTo(desinscrit);
+    }
 }

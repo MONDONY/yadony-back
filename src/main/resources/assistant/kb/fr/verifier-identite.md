@@ -1,7 +1,7 @@
 ---
 id: verifier-identite
 title: Vérifier mon identité
-keywords: identité, vérification, vérifier mon identité, KYC, pièce d'identité, passeport, carte d'identité, permis de conduire, titre de séjour, documents acceptés, selfie, badge vérifié, obligatoire
+keywords: identité, vérification, vérifier mon identité, KYC, pièce d'identité, passeport, carte d'identité, permis de conduire, titre de séjour, documents acceptés, selfie, badge vérifié, obligatoire, rappel, relance
 routes:
   - path: /kyc/verify
     label: Vérifier mon identité
@@ -11,3 +11,4 @@ Pièces acceptées : carte nationale d'identité, permis de conduire, passeport,
 Si tout se passe bien, la validation est immédiate à la fin du parcours ; sinon l'app vous invite à recommencer.
 La vérification peut être exigée par nos partenaires de paiement et sert aussi à lutter contre la fraude.
 Une fois validée, un badge « Identité vérifiée » apparaît sur votre profil.
+Si vous commencez sans terminer, ou si la vérification échoue pour une raison qui se corrige (photo, document expiré), Yadony vous envoie jusqu'à 3 rappels, par notification et par e-mail, sous 7 jours. Le lien en bas de l'e-mail les coupe définitivement.

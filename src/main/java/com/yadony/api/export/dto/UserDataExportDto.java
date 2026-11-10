@@ -4,6 +4,7 @@ import com.yadony.api.addressbook.delivery.dto.DeliveryAddressDto;
 import com.yadony.api.addressbook.pickup.dto.PickupAddressDto;
 import com.yadony.api.addressbook.recipient.dto.RecipientDto;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -55,10 +56,15 @@ public record UserDataExportDto(
             LocalDateTime createdAt
     ) {}
 
-    /** Statut de vérification uniquement — jamais la pièce d'identité déchiffrée. */
+    /**
+     * Statut de vérification et état des relances automatiques uniquement, jamais la
+     * pièce d'identité déchiffrée.
+     */
     public record KycExport(
             String status,
-            String rejectionReason
+            String rejectionReason,
+            int verificationRemindersSent,
+            Instant verificationRemindersOptedOutAt
     ) {}
 
     public record FavoriteExport(
