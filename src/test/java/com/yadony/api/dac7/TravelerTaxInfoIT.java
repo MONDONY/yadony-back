@@ -191,6 +191,19 @@ class TravelerTaxInfoIT {
     }
 
     @Test
+    void put_sansCorps_400(CapturedOutput output) throws Exception {
+        mockMvc.perform(put(URL).with(as(me, "ROLE_TRAVELER")).contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type").value(org.hamcrest.Matchers.endsWith("malformed-request")));
+        // JSON mal formé (NIF tapé sans guillemets) : 400, et le jeton ne part jamais au journal.
+        mockMvc.perform(put(URL).with(as(me, "ROLE_TRAVELER")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"taxIdentificationNumber\": ZX98NIF76, \"taxCountry\": \"FR\"}"))
+                .andExpect(status().isBadRequest());
+        assertThat(output.getAll()).doesNotContain("ZX98NIF76");
+        assertThat(users.findById(me.getId()).orElseThrow().getTaxIdentificationNumber()).isNull();
+    }
+
+    @Test
     void unVoyageurNAgitQueSurLuiMeme() throws Exception {
         UserEntity other = traveler("BE");
         mockMvc.perform(put(URL).with(as(me, "ROLE_TRAVELER"))

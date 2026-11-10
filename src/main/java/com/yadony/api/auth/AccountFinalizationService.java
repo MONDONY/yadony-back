@@ -35,6 +35,8 @@ public class AccountFinalizationService {
     private final AuditService auditService;
     private final FirebaseContactService firebaseContact;
     private final AdminAlertService adminAlertService;
+    /** Réalisé par le paquet dac7 ; nul (tests) = aucune conservation, effacement comme avant. */
+    private final TaxInfoRetentionPort taxInfoRetention;
 
     public AccountFinalizationService(UserRepository userRepository,
                                       KycRepository kycRepository,
@@ -42,7 +44,8 @@ public class AccountFinalizationService {
                                       ApplicationEventPublisher eventPublisher,
                                       AuditService auditService,
                                       FirebaseContactService firebaseContact,
-                                      AdminAlertService adminAlertService) {
+                                      AdminAlertService adminAlertService,
+                                      TaxInfoRetentionPort taxInfoRetention) {
         this.userRepository = userRepository;
         this.kycRepository = kycRepository;
         this.storageService = storageService;
@@ -50,6 +53,7 @@ public class AccountFinalizationService {
         this.auditService = auditService;
         this.firebaseContact = firebaseContact;
         this.adminAlertService = adminAlertService;
+        this.taxInfoRetention = taxInfoRetention;
     }
 
     @Transactional
@@ -58,6 +62,9 @@ public class AccountFinalizationService {
         String uid = userId.toString();
         // Capturé avant toute pseudonymisation : sert au préfixe R2 de l'avatar.
         String firebaseUid = user.getFirebaseUid();
+
+        // 0. DAC7 : décidé AVANT tout effacement (le pays de l'entreprise d'un professionnel compte encore).
+        boolean retainTaxInfo = taxInfoRetention != null && taxInfoRetention.mustRetainTaxInfo(user);
 
         // 1. Pseudonymise personal data
         // Téléphone et email ne sont plus stockés ici : ils disparaissent avec le
@@ -85,13 +92,15 @@ public class AccountFinalizationService {
         user.setBusinessName(null);
         user.setBusinessRegistrationNumber(null);
         user.setBusinessCountry(null);
-        // DAC7 (lot 3a) : le NIF et le numéro de TVA identifient la personne comme le SIRET. Effacés avec le reste de
-        // l'identité. À revoir avec l'obligation de conservation DAC7 (le nom, l'adresse et la date de naissance
-        // sont déjà effacés ici) : décision du propriétaire, signalée dans le rapport du lot 3a.
-        user.setTaxIdentificationNumber(null);
-        user.setTaxCountry(null);
-        user.setVatNumber(null);
-        user.setTaxInfoProvidedAt(null);
+        // DAC7 : le NIF et le numéro de TVA identifient la personne comme le SIRET. Gardés seulement si une opération
+        // déclarable de l'année courante ou précédente reste à déclarer (yadony.dac7.retention-years, obligation
+        // légale, RGPD art. 17-3-b) ; sinon effacés avec le reste de l'identité. Plus aucun rappel dans tous les cas.
+        if (!retainTaxInfo) {
+            user.setTaxIdentificationNumber(null);
+            user.setTaxCountry(null);
+            user.setVatNumber(null);
+            user.setTaxInfoProvidedAt(null);
+        }
         user.setTaxInfoRequestedAt(null);
         user.setTaxReminderCount(0);
         // Lot C — un statut KYC VERIFIED survivant a la suppression rattache le compte
@@ -173,7 +182,7 @@ public class AccountFinalizationService {
 
         // 6. Immutable audit entry
         auditService.log("USER", userId, "USER_GDPR_DELETION", userId,
-                Map.of("reason", reason.name(), "pseudonymized", true));
+                Map.of("reason", reason.name(), "pseudonymized", true, "taxInfoRetained", retainTaxInfo));
         log.info("Account finalized for user {} (reason: {})", uid, reason);
     }
 

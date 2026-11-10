@@ -39,6 +39,7 @@ class AccountFinalizationServiceTest {
     @Mock private AuditService auditService;
     @Mock private FirebaseContactService firebaseContact;
     @Mock private com.yadony.api.common.stripe.AdminAlertService adminAlertService;
+    @Mock private TaxInfoRetentionPort taxInfoRetention;
 
     @InjectMocks private AccountFinalizationService service;
 
@@ -184,6 +185,44 @@ class AccountFinalizationServiceTest {
         assertThat(user.getTaxInfoProvidedAt()).isNull();
         assertThat(user.getTaxInfoRequestedAt()).isNull();
         assertThat(user.getTaxReminderCount()).isZero();
+    }
+
+    @Test
+    @DisplayName("DAC7 : NIF, pays d'émission et TVA gardés si une opération déclarable reste à déclarer")
+    void retainsDac7TaxInfoWhenStillDeclarable() {
+        UserEntity user = makeUser();
+        user.setTaxIdentificationNumber("3023217600053");
+        user.setTaxCountry("FR");
+        user.setVatNumber("FR40303265045");
+        java.time.Instant providedAt = java.time.Instant.parse("2026-03-01T10:00:00Z");
+        user.setTaxInfoProvidedAt(providedAt);
+        user.setTaxInfoRequestedAt(java.time.Instant.now());
+        user.setTaxReminderCount(2);
+        // La règle est évaluée AVANT l'effacement : le pays de l'entreprise d'un professionnel compte encore.
+        org.mockito.Mockito.when(taxInfoRetention.mustRetainTaxInfo(org.mockito.ArgumentMatchers.argThat(
+                u -> "FR".equals(u.getBusinessCountry())))).thenReturn(true);
+        com.google.firebase.auth.FirebaseAuth mockAuth = mock(com.google.firebase.auth.FirebaseAuth.class);
+
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class)) {
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockAuth);
+            service.finalize(user, FinalizationReason.HARD_IMMEDIATE);
+        }
+
+        assertThat(user.getTaxIdentificationNumber()).isEqualTo("3023217600053");
+        assertThat(user.getTaxCountry()).isEqualTo("FR");
+        assertThat(user.getVatNumber()).isEqualTo("FR40303265045");
+        assertThat(user.getTaxInfoProvidedAt()).isEqualTo(providedAt);
+        // Plus aucun rappel pour un compte supprimé ; le reste de l'identité est bien effacé.
+        assertThat(user.getTaxInfoRequestedAt()).isNull();
+        assertThat(user.getTaxReminderCount()).isZero();
+        assertThat(user.getBirthDate()).isNull();
+        assertThat(user.getResidenceStreet()).isNull();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).log(eq("USER"), eq(user.getId()), eq("USER_GDPR_DELETION"), eq(user.getId()),
+                payload.capture());
+        assertThat(payload.getValue()).containsEntry("taxInfoRetained", true);
+        assertThat(payload.getValue().toString()).doesNotContain("3023217600053").doesNotContain("FR4030");
     }
 
     @Test

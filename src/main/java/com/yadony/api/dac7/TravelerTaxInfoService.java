@@ -69,6 +69,8 @@ public class TravelerTaxInfoService {
     public TaxInfoResponse set(String firebaseUid, TaxInfoRequest request) {
         UserEntity user = load(firebaseUid);
         // Les contrôles passent avant toute écriture : une saisie refusée ne laisse rien.
+        // Par HTTP, un PUT sans corps n'arrive jamais ici : Spring répond 400 malformed-request avant. Garde pour les
+        // appels internes.
         if (request == null) {
             throw invalid("taxIdentificationNumber", "Le numéro d'identification fiscale est obligatoire.");
         }

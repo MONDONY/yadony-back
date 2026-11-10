@@ -416,6 +416,10 @@ yadony:
     # la liste de l'arrêté du 26/12/2022 reste à confirmer pays par pays (dont CI, SN, ML, CM) par l'expert-comptable.
     # Un code invalide empêche le démarrage (une faute de frappe ne doit pas retirer des résidents en silence).
     partner-jurisdictions: []
+    # Suppression de compte : le NIF d'un voyageur déclarable payé depuis le 1er janvier de l'année courante moins
+    # (retention-years − 1) est gardé pour la déclaration de janvier (2 = année courante et précédente). À confirmer
+    # par l'expert-comptable.
+    retention-years: 2
   billing:
     # Faux tant que le lot 2 (Stripe Checkout) n'est pas en production :
     # sans lui, les comptes en grâce n'ont aucun moyen de s'abonner.
