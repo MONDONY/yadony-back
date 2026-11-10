@@ -45,7 +45,7 @@ public class AnnouncementEntity extends BaseEntity {
     private AnnouncementStatus persistedStatus;
 
     /**
-     * Date de la publication la plus récente faite dans un nouveau mois (V370) : posée à la création d'un trajet
+     * Date de la publication la plus récente faite dans un nouveau mois (V371) : posée à la création d'un trajet
      * non brouillon ({@link #stampPublishedAtOnCreate}) ou au passage BROUILLON vers ACTIF
      * ({@code publishAnnouncement}) ; inchangée par une modification, une offre ou un changement de statut, et
      * quand un trajet dépublié est republié dans le même mois. Sert la limite mensuelle ; {@code null} = jamais

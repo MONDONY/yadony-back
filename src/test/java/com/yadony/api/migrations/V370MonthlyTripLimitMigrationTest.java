@@ -19,10 +19,10 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * V369 : limite mensuelle de trajets par utilisateur (NULL = aucune limite, 1 à 100 sinon) et champs
+ * V370 : limite mensuelle de trajets par utilisateur (NULL = aucune limite, 1 à 100 sinon) et champs
  * entreprise (numéro, pays) des demandes GP Pro.
  */
-class V369MonthlyTripLimitMigrationTest {
+class V370MonthlyTripLimitMigrationTest {
 
     private static EmbeddedPostgres postgres;
     private static DataSource dataSource;
@@ -47,13 +47,13 @@ class V369MonthlyTripLimitMigrationTest {
     }
 
     @Test
-    void v369_limiteNulleParDefaut_bornee1a100_etChampsEntrepriseDeLaDemande() throws Exception {
-        Flyway baseline = flywayUpTo("368");
+    void v370_limiteNulleParDefaut_bornee1a100_etChampsEntrepriseDeLaDemande() throws Exception {
+        Flyway baseline = flywayUpTo("369");
         baseline.clean();
         baseline.migrate();
         UUID existing = seedUser();
 
-        flywayUpTo("369").migrate();
+        flywayUpTo("370").migrate();
 
         // Aucune valeur par défaut : les comptes existants n'ont pas de limite.
         assertThat(limitOf(existing)).isNull();
@@ -95,8 +95,8 @@ class V369MonthlyTripLimitMigrationTest {
     private static UUID seedUser() throws Exception {
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         try (Connection c = dataSource.getConnection(); Statement s = c.createStatement();
-             ResultSet rs = s.executeQuery("INSERT INTO users (firebase_uid, username) VALUES ('v369-" + suffix
-                     + "', 'v369_" + suffix + "') RETURNING id")) {
+             ResultSet rs = s.executeQuery("INSERT INTO users (firebase_uid, username) VALUES ('v370-" + suffix
+                     + "', 'v370_" + suffix + "') RETURNING id")) {
             rs.next();
             return (UUID) rs.getObject(1);
         }

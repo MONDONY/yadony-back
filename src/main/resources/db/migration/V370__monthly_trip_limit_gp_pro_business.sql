@@ -1,4 +1,4 @@
--- V369 : lot 2b, GP Pro = professionnel (un seul badge) et limite mensuelle de trajets.
+-- V370 : lot 2b, GP Pro = professionnel (un seul badge) et limite mensuelle de trajets.
 --
 -- users.monthly_trip_limit : nombre maximal de trajets publiés par mois civil pour CET utilisateur,
 -- réglé dans l'admin. NULL = aucune limite (aucune valeur par défaut). Un GP Pro validé n'est jamais

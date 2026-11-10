@@ -16,10 +16,10 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * V370 : {@code announcements.published_at}, date de première publication. Rattrapage : les trajets existants
+ * V371 : {@code announcements.published_at}, date de première publication. Rattrapage : les trajets existants
  * qui ne sont pas des brouillons prennent leur date de création ; les brouillons restent à NULL.
  */
-class V370AnnouncementsPublishedAtMigrationTest {
+class V371AnnouncementsPublishedAtMigrationTest {
 
     private static EmbeddedPostgres postgres;
     private static DataSource dataSource;
@@ -44,8 +44,8 @@ class V370AnnouncementsPublishedAtMigrationTest {
     }
 
     @Test
-    void v370_rattrapeLesNonBrouillonsAvecLaDateDeCreation_etLaisseLesBrouillonsANull() throws Exception {
-        Flyway baseline = flywayUpTo("369");
+    void v371_rattrapeLesNonBrouillonsAvecLaDateDeCreation_etLaisseLesBrouillonsANull() throws Exception {
+        Flyway baseline = flywayUpTo("370");
         baseline.clean();
         baseline.migrate();
         UUID traveler = seedUser();
@@ -54,7 +54,7 @@ class V370AnnouncementsPublishedAtMigrationTest {
         UUID completed = seedAnnouncement(traveler, "COMPLETED", "2026-08-20 11:00:00+00");
         UUID draft = seedAnnouncement(traveler, "DRAFT", "2026-10-15 12:00:00+00");
 
-        flywayUpTo("370").migrate();
+        flywayUpTo("371").migrate();
 
         assertThat(publishedAt(active)).isEqualTo(createdAt(active));
         assertThat(publishedAt(full)).isEqualTo(createdAt(full));
@@ -80,8 +80,8 @@ class V370AnnouncementsPublishedAtMigrationTest {
     private static UUID seedUser() throws Exception {
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         try (Connection c = dataSource.getConnection(); Statement s = c.createStatement();
-             ResultSet rs = s.executeQuery("INSERT INTO users (firebase_uid, username) VALUES ('v370-" + suffix
-                     + "', 'v370_" + suffix + "') RETURNING id")) {
+             ResultSet rs = s.executeQuery("INSERT INTO users (firebase_uid, username) VALUES ('v371-" + suffix
+                     + "', 'v371_" + suffix + "') RETURNING id")) {
             rs.next();
             return (UUID) rs.getObject(1);
         }
