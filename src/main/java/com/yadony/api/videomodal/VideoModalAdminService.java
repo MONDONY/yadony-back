@@ -229,6 +229,55 @@ public class VideoModalAdminService {
         c.setPlatforms(r.platforms() == null ? List.of() : r.platforms().stream().filter(java.util.Objects::nonNull).distinct().toList());
         c.setSamplePercent(sample);
         c.setSituations(situations);
+        c.setTriggerOptions(parseTriggerOptions(r.triggerOptions()));
+        c.setCorridors(parseCorridors(r.corridors()));
+    }
+
+    /** Seuils des moments : bornes 1..20 et 2..10, défauts 2 et 3 si absents (422 hors bornes). */
+    private static VideoModalTriggerOptions parseTriggerOptions(VideoModalRequest.TriggerOptionsRequest raw) {
+        int few = raw == null || raw.fewResultsMax() == null
+                ? VideoModalTriggerOptions.DEFAULT_FEW_RESULTS_MAX : raw.fewResultsMax();
+        if (few < VideoModalTriggerOptions.MIN_FEW_RESULTS_MAX || few > VideoModalTriggerOptions.MAX_FEW_RESULTS_MAX) {
+            throw invalid("video-modal-invalid-few-results-max", "Le seuil « peu de résultats » doit être compris entre "
+                    + VideoModalTriggerOptions.MIN_FEW_RESULTS_MAX + " et " + VideoModalTriggerOptions.MAX_FEW_RESULTS_MAX);
+        }
+        int times = raw == null || raw.tripViewedTimes() == null
+                ? VideoModalTriggerOptions.DEFAULT_TRIP_VIEWED_TIMES : raw.tripViewedTimes();
+        if (times < VideoModalTriggerOptions.MIN_TRIP_VIEWED_TIMES || times > VideoModalTriggerOptions.MAX_TRIP_VIEWED_TIMES) {
+            throw invalid("video-modal-invalid-trip-viewed-times", "Le nombre de consultations doit être compris entre "
+                    + VideoModalTriggerOptions.MIN_TRIP_VIEWED_TIMES + " et " + VideoModalTriggerOptions.MAX_TRIP_VIEWED_TIMES);
+        }
+        return new VideoModalTriggerOptions(few, times);
+    }
+
+    /**
+     * Corridors : 10 entrées au plus, 80 caractères au plus par côté (texte libre rogné), un côté vide
+     * devient nul (« n'importe lequel »). Une entrée nulle ou sans aucun côté (départ et arrivée
+     * tous deux vides) est refusée en 422 ; un doublon est dédoublonné sans bruit.
+     */
+    private static List<VideoModalCorridor> parseCorridors(List<VideoModalRequest.CorridorRequest> raw) {
+        if (raw == null) return List.of();
+        if (raw.size() > VideoModalCorridor.MAX_ENTRIES) {
+            throw invalid("video-modal-too-many-corridors", "Une campagne ne peut cibler que "
+                    + VideoModalCorridor.MAX_ENTRIES + " corridors au plus");
+        }
+        List<VideoModalCorridor> out = new ArrayList<>();
+        for (VideoModalRequest.CorridorRequest item : raw) {
+            if (item == null) throw invalid("video-modal-invalid-corridor", "Corridor vide");
+            String from = blankToNull(item.from());
+            String to = blankToNull(item.to());
+            if ((from != null && from.length() > VideoModalCorridor.MAX_LENGTH)
+                    || (to != null && to.length() > VideoModalCorridor.MAX_LENGTH)) {
+                throw invalid("video-modal-corridor-too-long", "Chaque côté d'un corridor ne peut pas dépasser "
+                        + VideoModalCorridor.MAX_LENGTH + " caractères");
+            }
+            if (from == null && to == null) {
+                throw invalid("video-modal-invalid-corridor", "Un corridor doit avoir au moins un côté (départ ou arrivée)");
+            }
+            VideoModalCorridor corridor = new VideoModalCorridor(from, to);
+            if (!out.contains(corridor)) out.add(corridor);
+        }
+        return out;
     }
 
     private static String normalizeVersion(String raw, String which) {
@@ -475,6 +524,10 @@ public class VideoModalAdminService {
         payload.put("minAppVersion", c.getMinAppVersion());
         payload.put("maxAppVersion", c.getMaxAppVersion());
         payload.put("platforms", c.getPlatforms().stream().map(Enum::name).toList());
+        payload.put("triggerOptions", Map.of("fewResultsMax", c.getTriggerOptions().fewResultsMax(),
+                "tripViewedTimes", c.getTriggerOptions().tripViewedTimes()));
+        payload.put("corridors", c.getCorridors().stream()
+                .map(x -> (x.from() == null ? "*" : x.from()) + ">" + (x.to() == null ? "*" : x.to())).toList());
         payload.put("situations", c.getSituations().stream()
                 .map(x -> x.value() == null ? x.kind().name() : x.kind().name() + ":" + x.value()).toList());
         // Empreinte de la règle, jamais ses valeurs (même convention que la Diffusion).
@@ -503,7 +556,7 @@ public class VideoModalAdminService {
                 c.getPriority(), c.isConnectedOnly(),
                 c.hasConditions() ? VideoModalTargeting.readConditions(c.getConditions()) : null,
                 c.getMinAppVersion(), c.getMaxAppVersion(), c.getPlatforms(), c.getSamplePercent(),
-                c.getSituations(),
+                c.getSituations(), c.getTriggerOptions(), c.getCorridors(),
                 stats == null ? VideoModalAdminResponse.Stats.EMPTY : stats);
     }
 

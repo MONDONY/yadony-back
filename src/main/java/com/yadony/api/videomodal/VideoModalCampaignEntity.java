@@ -179,6 +179,18 @@ public class VideoModalCampaignEntity extends BaseEntity {
     @Column(name = "situations", nullable = false, columnDefinition = "TEXT")
     private List<VideoModalSituation> situations = new ArrayList<>();
 
+    // ── Moments d'action (V375) ────────────────────────────────────────────
+
+    /** Seuils des moments « peu de résultats » et « même trajet consulté N fois ». */
+    @Convert(converter = VideoModalJsonConverters.TriggerOptions.class)
+    @Column(name = "trigger_options", nullable = false, columnDefinition = "TEXT")
+    private VideoModalTriggerOptions triggerOptions = VideoModalTriggerOptions.DEFAULTS;
+
+    /** Corridors visés par les déclencheurs de recherche, favoris, formulaire…; vide = tous. */
+    @Convert(converter = VideoModalJsonConverters.Corridors.class)
+    @Column(name = "corridors", nullable = false, columnDefinition = "TEXT")
+    private List<VideoModalCorridor> corridors = new ArrayList<>();
+
     /** Condition(s) de ciblage fin : jamais envoyée à un visiteur sans compte. */
     public boolean needsAccount() {
         return connectedOnly || hasConditions() || !situations.isEmpty() || samplePercent < 100;
@@ -209,6 +221,25 @@ public class VideoModalCampaignEntity extends BaseEntity {
     public List<VideoModalTrigger> effectiveTriggers() {
         if (triggers.isEmpty() && !situations.isEmpty()) return List.of(VideoModalTrigger.APP_OPEN);
         return triggers;
+    }
+
+    /**
+     * Déclencheurs servis à l'app. Sans {@code caps=moments} (apps déjà installées), les moments
+     * d'action sont retirés : s'il n'en reste aucun, la campagne n'est pas envoyée.
+     */
+    public List<VideoModalTrigger> servedTriggers(boolean momentsCapable) {
+        List<VideoModalTrigger> all = effectiveTriggers();
+        if (momentsCapable) return all;
+        return all.stream().filter(t -> !t.needsMomentsCapability()).toList();
+    }
+
+    public VideoModalTriggerOptions getTriggerOptions() { return triggerOptions; }
+    public void setTriggerOptions(VideoModalTriggerOptions triggerOptions) {
+        this.triggerOptions = triggerOptions == null ? VideoModalTriggerOptions.DEFAULTS : triggerOptions;
+    }
+    public List<VideoModalCorridor> getCorridors() { return corridors; }
+    public void setCorridors(List<VideoModalCorridor> corridors) {
+        this.corridors = corridors == null ? new ArrayList<>() : new ArrayList<>(corridors);
     }
 
     public VideoModalFrequency getFrequency() { return frequency; }
