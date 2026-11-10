@@ -11,7 +11,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class KycReminderPropertiesTest {
 
     private static KycReminderProperties of(Duration first, int start, int end) {
-        return new KycReminderProperties(true, first, Duration.ofDays(3), Duration.ofDays(7), start, end, List.of());
+        return new KycReminderProperties(true, first, Duration.ofDays(3), Duration.ofDays(7), Duration.ofDays(10), start, end, List.of());
     }
 
     @Test
@@ -29,5 +29,21 @@ class KycReminderPropertiesTest {
     void delaiNulOuNegatif_refuse() {
         assertThatThrownBy(() -> of(Duration.ZERO, 10, 20)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> of(Duration.ofDays(-1), 10, 20)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void delaisNonCroissants_refuses() {
+        assertThatThrownBy(() -> new KycReminderProperties(true, Duration.ofDays(3), Duration.ofDays(3),
+                Duration.ofDays(7), Duration.ofDays(10), 10, 20, List.of())).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new KycReminderProperties(true, Duration.ofDays(1), Duration.ofDays(7),
+                Duration.ofDays(3), Duration.ofDays(10), 10, 20, List.of())).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void ageMaxDeLAncre_doitDepasserLeTroisiemeDelai() {
+        assertThatThrownBy(() -> new KycReminderProperties(true, Duration.ofDays(1), Duration.ofDays(3),
+                Duration.ofDays(7), Duration.ofDays(7), 10, 20, List.of())).isInstanceOf(IllegalArgumentException.class);
+        assertThat(new KycReminderProperties(true, Duration.ofDays(1), Duration.ofDays(3), Duration.ofDays(7),
+                Duration.ofDays(8), 10, 20, List.of()).maxAnchorAge()).isEqualTo(Duration.ofDays(8));
     }
 }

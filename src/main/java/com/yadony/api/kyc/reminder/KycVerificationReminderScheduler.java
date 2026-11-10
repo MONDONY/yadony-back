@@ -77,14 +77,16 @@ public class KycVerificationReminderScheduler {
         Duration first = properties.firstDelay();
         Duration second = properties.secondDelay();
         Duration third = properties.thirdDelay();
-        List<UUID> candidates = reminderRepository.findCandidates(
+        var due = new KycReminderRepository.Due(
                 now.minus(first), now.minus(second), now.minus(third),
-                now.minus(second.minus(first)), now.minus(third.minus(second)), retryableCodes);
+                now.minus(second.minus(first)), now.minus(third.minus(second)),
+                now.minus(properties.maxAnchorAge()));
+        List<UUID> candidates = reminderRepository.findCandidates(due, retryableCodes);
         int sent = 0;
         for (UUID id : candidates) {
             Reservation reservation;
             try {
-                reservation = transactions.execute(status -> reserve(id, now, retryableCodes));
+                reservation = transactions.execute(status -> reserve(id, now, due, retryableCodes));
             } catch (RuntimeException e) {
                 log.warn("KYC verification reminder reservation failed for user {}: {}", id, e.getMessage());
                 continue;
@@ -99,14 +101,16 @@ public class KycVerificationReminderScheduler {
     }
 
     /** Réserve la relance (compteur + horodatage) ; null si le compte est à ignorer. */
-    private Reservation reserve(UUID id, Instant now, List<String> retryableCodes) {
+    private Reservation reserve(UUID id, Instant now, KycReminderRepository.Due due,
+                                List<String> retryableCodes) {
         UserEntity user = userRepository.findById(id).orElse(null);
         if (user == null || !UserZones.isWithinWindow(user.getCountry(), now,
                 properties.windowStartHour(), properties.windowEndHour())) {
             return null;
         }
-        // La boucle peut durer : une nouvelle session ou un changement de statut annule la relance.
-        if (reminderRepository.isStillCandidate(id, retryableCodes) != 1) {
+        // La boucle peut durer : une nouvelle session (ancre remise à maintenant, compteur à 0) ou un
+        // changement de statut rend le compte non dû ; le SQL rejoue donc les mêmes échéances que la sélection.
+        if (reminderRepository.isStillCandidate(id, due, retryableCodes) != 1) {
             return null;
         }
         String reminderCase = reminderRepository.reminderCase(id);

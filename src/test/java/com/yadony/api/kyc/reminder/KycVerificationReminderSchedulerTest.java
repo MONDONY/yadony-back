@@ -62,7 +62,7 @@ class KycVerificationReminderSchedulerTest {
 
     private static KycReminderProperties props(boolean enabled, List<String> codes) {
         return new KycReminderProperties(enabled, Duration.ofDays(1), Duration.ofDays(3), Duration.ofDays(7),
-                10, 20, codes);
+                Duration.ofDays(10), 10, 20, codes);
     }
 
     private UserEntity user(String country, int count) {
@@ -71,13 +71,13 @@ class KycVerificationReminderSchedulerTest {
         u.setCountry(country);
         u.setKycReminderCount(count);
         lenient().when(userRepository.findById(u.getId())).thenReturn(Optional.of(u));
-        lenient().when(repository.isStillCandidate(eq(u.getId()), any())).thenReturn(1);
+        lenient().when(repository.isStillCandidate(eq(u.getId()), any(), any())).thenReturn(1);
         lenient().when(repository.reminderCase(u.getId())).thenReturn("incomplete");
         return u;
     }
 
     private void candidates(UserEntity... users) {
-        when(repository.findCandidates(any(), any(), any(), any(), any(), any()))
+        when(repository.findCandidates(any(), any()))
                 .thenReturn(java.util.Arrays.stream(users).map(UserEntity::getId).toList());
     }
 
@@ -107,11 +107,16 @@ class KycVerificationReminderSchedulerTest {
                 Map.of("attempt", 1, "case", "incomplete"));
     }
 
+    /**
+     * Le re-contrôle SQL (isStillCandidate) rejoue aussi les délais : une nouvelle session ouverte entre la
+     * sélection et la réservation remet l'ancre à maintenant, donc le compte n'est plus dû (0). Le SQL est
+     * prouvé par KycReminderRepositoryPostgresIT ; ici on vérifie que le planificateur obéit à ce 0.
+     */
     @Test
     void nouvelleSessionEntreSelectionEtEnvoi_rienNePart() {
         UserEntity u = user("ML", 0);
         candidates(u);
-        when(repository.isStillCandidate(eq(u.getId()), any())).thenReturn(0);
+        when(repository.isStillCandidate(eq(u.getId()), any(), any())).thenReturn(0);
 
         scheduler.remind();
 
@@ -119,6 +124,20 @@ class KycVerificationReminderSchedulerTest {
         assertThat(u.getKycReminderLastAt()).isNull();
         verify(userRepository, never()).save(any());
         verifyNoInteractions(dispatcher, auditService);
+    }
+
+    @Test
+    void recontrole_recoitLesMemesEcheancesQueLaSelection() {
+        UserEntity u = user("ML", 0);
+        candidates(u);
+
+        scheduler.remind();
+
+        var due = new KycReminderRepository.Due(MIDI_UTC.minus(Duration.ofDays(1)), MIDI_UTC.minus(Duration.ofDays(3)),
+                MIDI_UTC.minus(Duration.ofDays(7)), MIDI_UTC.minus(Duration.ofDays(2)),
+                MIDI_UTC.minus(Duration.ofDays(4)), MIDI_UTC.minus(Duration.ofDays(10)));
+        verify(repository).findCandidates(eq(due), any());
+        verify(repository).isStillCandidate(eq(u.getId()), eq(due), any());
     }
 
     @Test
@@ -228,15 +247,13 @@ class KycVerificationReminderSchedulerTest {
     @Test
     void requete_delaisSoustraitsDeMaintenant_etCodesEnMajuscules() {
         scheduler = scheduler(MIDI_UTC, props(true, List.of("image_too_blurry", "Document_Expired")));
-        when(repository.findCandidates(any(), any(), any(), any(), any(), any())).thenReturn(List.of());
+        when(repository.findCandidates(any(), any())).thenReturn(List.of());
 
         scheduler.remind();
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<java.util.Collection<String>> codes = ArgumentCaptor.forClass(java.util.Collection.class);
-        verify(repository).findCandidates(eq(MIDI_UTC.minus(Duration.ofDays(1))), eq(MIDI_UTC.minus(Duration.ofDays(3))),
-                eq(MIDI_UTC.minus(Duration.ofDays(7))), eq(MIDI_UTC.minus(Duration.ofDays(2))),
-                eq(MIDI_UTC.minus(Duration.ofDays(4))), codes.capture());
+        verify(repository).findCandidates(any(), codes.capture());
         assertThat(codes.getValue()).containsExactlyInAnyOrder("IMAGE_TOO_BLURRY", "DOCUMENT_EXPIRED");
         verifyNoInteractions(userRepository, dispatcher);
     }

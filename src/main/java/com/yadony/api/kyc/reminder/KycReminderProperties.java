@@ -15,7 +15,8 @@ import java.util.List;
  * (https://docs.didit.me/core-technology/id-verification/warnings-id-verification.md et
  * https://docs.didit.me/core-technology/liveness/warnings-liveness.md) : qualité d'image, document
  * expiré / non accepté / illisible, selfie raté. Âge, fraude, manipulation, doublon et liste noire
- * en sont exclus volontairement. Liste modifiable par configuration ; vide, aucun refus n'est relancé.
+ * en sont exclus volontairement. {@code maxAnchorAge} : on ne relance pas les parcours dont l'ancre est plus
+ * vieille (stock ancré à la migration, interrupteur allumé bien plus tard). Liste modifiable par configuration ; vide, aucun refus n'est relancé.
  */
 @ConfigurationProperties(prefix = "yadony.kyc.verification-reminders")
 public record KycReminderProperties(
@@ -23,6 +24,7 @@ public record KycReminderProperties(
         @DefaultValue("P1D") Duration firstDelay,
         @DefaultValue("P3D") Duration secondDelay,
         @DefaultValue("P7D") Duration thirdDelay,
+        @DefaultValue("P10D") Duration maxAnchorAge,
         @DefaultValue("10") int windowStartHour,
         @DefaultValue("20") int windowEndHour,
         @DefaultValue({
@@ -41,6 +43,15 @@ public record KycReminderProperties(
         if (firstDelay.isZero() || firstDelay.isNegative() || secondDelay.isZero() || secondDelay.isNegative()
                 || thirdDelay.isZero() || thirdDelay.isNegative()) {
             throw new IllegalArgumentException("yadony.kyc.verification-reminders : les délais doivent être positifs");
+        }
+        if (firstDelay.compareTo(secondDelay) >= 0 || secondDelay.compareTo(thirdDelay) >= 0) {
+            throw new IllegalArgumentException(
+                    "yadony.kyc.verification-reminders : les délais doivent être strictement croissants");
+        }
+        // Sans cela, la 3e relance ne serait jamais dans la borne d'âge de l'ancre.
+        if (maxAnchorAge.compareTo(thirdDelay) <= 0) {
+            throw new IllegalArgumentException(
+                    "yadony.kyc.verification-reminders : max-anchor-age doit dépasser third-delay");
         }
     }
 }

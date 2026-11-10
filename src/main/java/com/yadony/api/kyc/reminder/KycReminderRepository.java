@@ -28,7 +28,10 @@ public interface KycReminderRepository extends Repository<UserEntity, UUID> {
 
     String DUE = " AND ((u.kyc_reminder_count = 0 AND u.kyc_reminder_anchor_at <= :firstDue)"
             + " OR (u.kyc_reminder_count = 1 AND u.kyc_reminder_anchor_at <= :secondDue AND u.kyc_reminder_last_at <= :secondGap)"
-            + " OR (u.kyc_reminder_count = 2 AND u.kyc_reminder_anchor_at <= :thirdDue AND u.kyc_reminder_last_at <= :thirdGap))";
+            + " OR (u.kyc_reminder_count = 2 AND u.kyc_reminder_anchor_at <= :thirdDue AND u.kyc_reminder_last_at <= :thirdGap))"
+            // Borne d'âge : le stock ancré à la migration, dont l'interrupteur est allumé bien plus tard, ne
+            // doit pas relancer des parcours vieux de plusieurs mois.
+            + " AND u.kyc_reminder_anchor_at >= :oldestAnchor";
 
     String ORDER = " ORDER BY u.kyc_reminder_anchor_at ASC LIMIT 500";
 
@@ -36,7 +39,7 @@ public interface KycReminderRepository extends Repository<UserEntity, UUID> {
            nativeQuery = true)
     List<CandidateRow> findCandidateRows(@Param("firstDue") Instant firstDue, @Param("secondDue") Instant secondDue,
                                          @Param("thirdDue") Instant thirdDue, @Param("secondGap") Instant secondGap,
-                                         @Param("thirdGap") Instant thirdGap,
+                                         @Param("thirdGap") Instant thirdGap, @Param("oldestAnchor") Instant oldestAnchor,
                                          @Param("retryableCodes") Collection<String> retryableCodes);
 
     /** Variante sans refus : évite un {@code IN ()} invalide quand la liste des codes est vide. */
@@ -46,35 +49,53 @@ public interface KycReminderRepository extends Repository<UserEntity, UUID> {
                                                     @Param("secondDue") Instant secondDue,
                                                     @Param("thirdDue") Instant thirdDue,
                                                     @Param("secondGap") Instant secondGap,
-                                                    @Param("thirdGap") Instant thirdGap);
+                                                    @Param("thirdGap") Instant thirdGap,
+                                                    @Param("oldestAnchor") Instant oldestAnchor);
 
-    @Query(value = "SELECT COUNT(*)" + FROM_JOIN + COMMON + " AND u.id = :userId AND " + PENDING_OR_REJECTED,
+    @Query(value = "SELECT COUNT(*)" + FROM_JOIN + COMMON + " AND u.id = :userId AND " + PENDING_OR_REJECTED + DUE,
            nativeQuery = true)
-    int countStillCandidate(@Param("userId") UUID userId, @Param("retryableCodes") Collection<String> retryableCodes);
+    int countStillCandidate(@Param("userId") UUID userId, @Param("firstDue") Instant firstDue,
+                            @Param("secondDue") Instant secondDue, @Param("thirdDue") Instant thirdDue,
+                            @Param("secondGap") Instant secondGap, @Param("thirdGap") Instant thirdGap,
+                            @Param("oldestAnchor") Instant oldestAnchor,
+                            @Param("retryableCodes") Collection<String> retryableCodes);
 
-    @Query(value = "SELECT COUNT(*)" + FROM_JOIN + COMMON + " AND u.id = :userId AND " + PENDING,
+    @Query(value = "SELECT COUNT(*)" + FROM_JOIN + COMMON + " AND u.id = :userId AND " + PENDING + DUE,
            nativeQuery = true)
-    int countStillCandidatePendingOnly(@Param("userId") UUID userId);
+    int countStillCandidatePendingOnly(@Param("userId") UUID userId, @Param("firstDue") Instant firstDue,
+                                       @Param("secondDue") Instant secondDue, @Param("thirdDue") Instant thirdDue,
+                                       @Param("secondGap") Instant secondGap, @Param("thirdGap") Instant thirdGap,
+                                       @Param("oldestAnchor") Instant oldestAnchor);
 
     @Query(value = "SELECT CASE WHEN k.status = 'REJECTED' THEN 'rejected' ELSE 'incomplete' END"
             + " FROM kyc_schema.kyc_verifications k WHERE k.user_id = :userId AND k.deleted_at IS NULL",
            nativeQuery = true)
     String reminderCase(@Param("userId") UUID userId);
 
+    /**
+     * Échéances de la sélection, calculées une fois par le planificateur et rejouées au re-contrôle :
+     * un compte dont l'ancre a été remise à maintenant (nouvelle session) n'est plus dû.
+     */
+    record Due(Instant first, Instant second, Instant third, Instant secondGap, Instant thirdGap,
+               Instant oldestAnchor) {}
+
     /** Au plus 500 ids, ancre la plus ancienne d'abord. Codes attendus en majuscules. */
-    default List<UUID> findCandidates(Instant firstDue, Instant secondDue, Instant thirdDue, Instant secondGap,
-                                      Instant thirdGap, Collection<String> retryableCodes) {
+    default List<UUID> findCandidates(Due d, Collection<String> retryableCodes) {
         List<CandidateRow> rows = retryableCodes == null || retryableCodes.isEmpty()
-                ? findPendingOnlyCandidateRows(firstDue, secondDue, thirdDue, secondGap, thirdGap)
-                : findCandidateRows(firstDue, secondDue, thirdDue, secondGap, thirdGap, retryableCodes);
+                ? findPendingOnlyCandidateRows(d.first(), d.second(), d.third(), d.secondGap(), d.thirdGap(),
+                        d.oldestAnchor())
+                : findCandidateRows(d.first(), d.second(), d.third(), d.secondGap(), d.thirdGap(), d.oldestAnchor(),
+                        retryableCodes);
         return rows.stream().map(r -> UUID.fromString(r.getId())).toList();
     }
 
-    /** 1 si le compte remplit encore les conditions (hors délais), sinon 0. */
-    default int isStillCandidate(UUID userId, Collection<String> retryableCodes) {
+    /** 1 si le compte remplit encore les conditions, délais et borne d'âge compris, sinon 0. */
+    default int isStillCandidate(UUID userId, Due d, Collection<String> retryableCodes) {
         return retryableCodes == null || retryableCodes.isEmpty()
-                ? countStillCandidatePendingOnly(userId)
-                : countStillCandidate(userId, retryableCodes);
+                ? countStillCandidatePendingOnly(userId, d.first(), d.second(), d.third(), d.secondGap(),
+                        d.thirdGap(), d.oldestAnchor())
+                : countStillCandidate(userId, d.first(), d.second(), d.third(), d.secondGap(), d.thirdGap(),
+                        d.oldestAnchor(), retryableCodes);
     }
 
     interface CandidateRow {

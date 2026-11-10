@@ -87,10 +87,19 @@ class KycReminderRepositoryPostgresIT {
         return candidates(CODES);
     }
 
-    private List<UUID> candidates(List<String> codes) {
+    private static KycReminderRepository.Due due() {
         Instant d = NOW;
-        return repository.findCandidates(d.minus(1, ChronoUnit.DAYS), d.minus(3, ChronoUnit.DAYS),
-                d.minus(7, ChronoUnit.DAYS), d.minus(2, ChronoUnit.DAYS), d.minus(4, ChronoUnit.DAYS), codes);
+        return new KycReminderRepository.Due(d.minus(1, ChronoUnit.DAYS), d.minus(3, ChronoUnit.DAYS),
+                d.minus(7, ChronoUnit.DAYS), d.minus(2, ChronoUnit.DAYS), d.minus(4, ChronoUnit.DAYS),
+                d.minus(10, ChronoUnit.DAYS));
+    }
+
+    private List<UUID> candidates(List<String> codes) {
+        return repository.findCandidates(due(), codes);
+    }
+
+    private int stillCandidate(UUID id, List<String> codes) {
+        return repository.isStillCandidate(id, due(), codes);
     }
 
     @Test
@@ -98,7 +107,7 @@ class KycReminderRepositoryPostgresIT {
     void abandonDepuisPlusDUnJour_estCandidat() {
         UUID id = user(2);
         assertThat(candidates()).contains(id);
-        assertThat(repository.isStillCandidate(id, CODES)).isEqualTo(1);
+        assertThat(stillCandidate(id, CODES)).isEqualTo(1);
     }
 
     @Test
@@ -114,7 +123,7 @@ class KycReminderRepositoryPostgresIT {
         UUID id = user(5);
         kycSet(id, "submitted_at = NOW()");
         assertThat(candidates()).doesNotContain(id);
-        assertThat(repository.isStillCandidate(id, CODES)).isZero();
+        assertThat(stillCandidate(id, CODES)).isZero();
     }
 
     @Test
@@ -175,7 +184,7 @@ class KycReminderRepositoryPostgresIT {
         UUID id = user(5);
         kycSet(id, "status = 'REJECTED', rejection_code = 'document_expired'");
         assertThat(candidates()).contains(id);
-        assertThat(repository.isStillCandidate(id, CODES)).isEqualTo(1);
+        assertThat(stillCandidate(id, CODES)).isEqualTo(1);
         assertThat(repository.reminderCase(id)).isEqualTo("rejected");
     }
 
@@ -203,8 +212,8 @@ class KycReminderRepositoryPostgresIT {
         UUID abandon = user(5);
 
         assertThat(candidates(List.of())).contains(abandon).doesNotContain(refuse);
-        assertThat(repository.isStillCandidate(refuse, List.of())).isZero();
-        assertThat(repository.isStillCandidate(abandon, List.of())).isEqualTo(1);
+        assertThat(stillCandidate(refuse, List.of())).isZero();
+        assertThat(stillCandidate(abandon, List.of())).isEqualTo(1);
     }
 
     @Test
@@ -233,7 +242,7 @@ class KycReminderRepositoryPostgresIT {
         UUID id = user(30);
         userSet(id, "kyc_reminder_count = 3, kyc_reminder_last_at = ?", ts(NOW.minus(10, ChronoUnit.DAYS)));
         assertThat(candidates()).doesNotContain(id);
-        assertThat(repository.isStillCandidate(id, CODES)).isZero();
+        assertThat(stillCandidate(id, CODES)).isZero();
     }
 
     @Test
@@ -244,5 +253,38 @@ class KycReminderRepositoryPostgresIT {
         kycSet(refuse, "status = 'REJECTED'");
         assertThat(repository.reminderCase(incomplet)).isEqualTo("incomplete");
         assertThat(repository.reminderCase(refuse)).isEqualTo("rejected");
+    }
+
+    @Test
+    @DisplayName("nouvelle session après la sélection (ancre = maintenant, compteur 0) : le re-contrôle renvoie 0")
+    void nouvelleSession_ancreRemiseAMaintenant_recontroleZero() {
+        UUID id = user(2);
+        assertThat(stillCandidate(id, CODES)).isEqualTo(1);
+        userSet(id, "kyc_reminder_anchor_at = ?, kyc_reminder_count = 0", ts(NOW));
+        assertThat(stillCandidate(id, CODES)).isZero();
+        assertThat(candidates()).doesNotContain(id);
+    }
+
+    @Test
+    @DisplayName("compteur 3 remis à 0 avec une ancre neuve : le re-contrôle renvoie 0")
+    void compteurTroisRemisAZero_ancreNeuve_recontroleZero() {
+        UUID id = user(30);
+        userSet(id, "kyc_reminder_count = 3, kyc_reminder_last_at = ?", ts(NOW.minus(10, ChronoUnit.DAYS)));
+        assertThat(stillCandidate(id, CODES)).isZero();
+        userSet(id, "kyc_reminder_anchor_at = ?, kyc_reminder_count = 0, kyc_reminder_last_at = NULL", ts(NOW));
+        assertThat(stillCandidate(id, CODES)).isZero();
+        assertThat(candidates()).doesNotContain(id);
+    }
+
+    @Test
+    @DisplayName("ancre de 11 jours : pas candidat ; de 9 jours : candidat (borne d'âge)")
+    void ancreTropVieille_nonCandidat_ancreRecente_candidat() {
+        UUID vieille = user(11);
+        UUID recente = user(9);
+        assertThat(candidates()).contains(recente).doesNotContain(vieille);
+        assertThat(stillCandidate(vieille, CODES)).isZero();
+        assertThat(stillCandidate(recente, CODES)).isEqualTo(1);
+        assertThat(stillCandidate(vieille, List.of())).isZero();
+        assertThat(stillCandidate(recente, List.of())).isEqualTo(1);
     }
 }
