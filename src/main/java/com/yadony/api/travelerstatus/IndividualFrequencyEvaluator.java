@@ -27,7 +27,9 @@ import java.util.UUID;
  *   <li>ou il a demandé le badge GP Pro avec la fréquence « chaque semaine » dans la même fenêtre, demande refusée
  *       ou annulée (une demande encore ouverte est déjà examinée par l'équipe).</li>
  * </ul>
- * Un professionnel, un GP Pro validé ou un utilisateur sans statut déclaré n'est jamais retenu.
+ * Un professionnel, un GP Pro validé ou un utilisateur sans statut déclaré n'est jamais retenu, ni un compte
+ * suspendu, banni, en cours de suppression ({@code status != ACTIVE} ou {@code deletion_requested_at} posé) ou
+ * supprimé (soft delete). Un signalement ouvert d'un tel compte est donc résolu au passage suivant.
  */
 @Component
 public class IndividualFrequencyEvaluator {

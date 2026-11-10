@@ -63,4 +63,12 @@ class TravelerStatusConfirmationNotificationListenerTest {
                 .contains("yadony://profile/gp-pro");
         assertThat(NotificationCategory.fromType("TRAVELER_STATUS_CONFIRMATION")).isEqualTo(NotificationCategory.ANNONCE);
     }
+
+    /** Le push respecte les réglages (« Rappels et conseils ») ; la ligne du centre de notifications reste. */
+    @Test
+    void respecteLesPreferences_pasToujoursActive() {
+        assertThat(NotificationPrefsService.TYPE_TO_PREF)
+                .containsEntry("TRAVELER_STATUS_CONFIRMATION", "pushRemindersTips");
+        assertThat(NotificationPrefsService.isAlwaysOn("TRAVELER_STATUS_CONFIRMATION")).isFalse();
+    }
 }

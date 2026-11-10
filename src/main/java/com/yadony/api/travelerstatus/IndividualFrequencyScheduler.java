@@ -26,6 +26,11 @@ import java.util.UUID;
  *
  * <p>Un signalement écarté mais non clos bloque la recréation (index unique partiel) : la personne ne réapparaît
  * qu'après que la condition a cessé puis repris. La question au voyageur part une seule fois, à la création.
+ *
+ * <p><b>Premier passage en production</b> : tous les particuliers déjà au-dessus du seuil (ou déjà concernés par une
+ * demande GP Pro « chaque semaine » refusée ou annulée dans les 30 derniers jours) sont signalés ET reçoivent la
+ * question d'un coup, au premier 04:30 UTC qui suit le déploiement. Pour l'éviter ou le différer, couper le contrôle
+ * avec {@code YADONY_INDIVIDUAL_FREQUENCY_SCHEDULER_ENABLED=false} (ou relever le seuil dans l'admin avant).
  */
 @Component
 public class IndividualFrequencyScheduler {

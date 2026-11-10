@@ -24,7 +24,8 @@ public interface IndividualFrequencyFlagRepository extends JpaRepository<Individ
     Optional<IndividualFrequencyFlagEntity> findFirstByUserIdAndResolvedAtIsNullAndDismissedAtIsNull(UUID userId);
 
     /**
-     * Particuliers sans badge GP Pro et leurs trajets distincts ayant au moins une réservation dans
+     * Particuliers sans badge GP Pro, compte actif (ni suspendu, ni banni, ni en cours de suppression, ni supprimé),
+     * et leurs trajets distincts ayant au moins une réservation dans
      * {@code bidStatuses} créée depuis {@code since}, au-delà de {@code threshold} (strictement). Lecture seule.
      *
      * @return lignes {@code [travelerId (UUID), tripsCount (Long)]}
@@ -36,6 +37,7 @@ public interface IndividualFrequencyFlagRepository extends JpaRepository<Individ
           AND b.status IN :bidStatuses AND b.createdAt >= :since
           AND a.status NOT IN :excludedTripStatuses
           AND u.gpPro = false AND u.travelerStatus = com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL
+          AND u.status = com.yadony.api.auth.UserStatus.ACTIVE AND u.deletionRequestedAt IS NULL
           AND b.deletedAt IS NULL AND a.deletedAt IS NULL AND u.deletedAt IS NULL
         GROUP BY a.travelerId
         HAVING COUNT(DISTINCT a.id) > :threshold
@@ -61,7 +63,7 @@ public interface IndividualFrequencyFlagRepository extends JpaRepository<Individ
                               @Param("since") LocalDateTime since);
 
     /**
-     * Particuliers sans badge GP Pro ayant demandé le badge avec la fréquence {@code frequency} depuis {@code since},
+     * Particuliers sans badge GP Pro, compte actif (mêmes exclusions), ayant demandé le badge avec la fréquence {@code frequency} depuis {@code since},
      * demande close sans badge ({@code statuses} : refusée ou annulée). Lecture seule.
      */
     @Query("""
@@ -70,6 +72,7 @@ public interface IndividualFrequencyFlagRepository extends JpaRepository<Individ
         WHERE u.id = g.userId
           AND g.travelFrequency = :frequency AND g.status IN :statuses AND g.createdAt >= :since
           AND u.gpPro = false AND u.travelerStatus = com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL
+          AND u.status = com.yadony.api.auth.UserStatus.ACTIVE AND u.deletionRequestedAt IS NULL
           AND g.deletedAt IS NULL AND u.deletedAt IS NULL
     """)
     List<UUID> findIndividualsWithApplication(@Param("frequency") GpProTravelFrequency frequency,

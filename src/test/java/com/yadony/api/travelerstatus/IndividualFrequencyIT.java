@@ -200,6 +200,31 @@ class IndividualFrequencyIT {
     }
 
     @Test
+    void comptesSuspendusBannisEnSuppressionOuSupprimes_neSontJamaisSignales() {
+        UserEntity suspended = user(TravelerStatus.INDIVIDUAL, false);
+        UserEntity banned = user(TravelerStatus.INDIVIDUAL, false);
+        UserEntity pendingDeletion = user(TravelerStatus.INDIVIDUAL, false);
+        UserEntity deletionRequested = user(TravelerStatus.INDIVIDUAL, false);
+        UserEntity softDeleted = user(TravelerStatus.INDIVIDUAL, false);
+        UserEntity active = user(TravelerStatus.INDIVIDUAL, false);
+        for (UserEntity u : List.of(suspended, banned, pendingDeletion, deletionRequested, softDeleted, active)) {
+            acceptedTrips(u, 6, 2);
+            application(u, GpProTravelFrequency.WEEKLY, GpProApplicationStatus.REJECTED, now.minusDays(3));
+        }
+        jdbc.update("UPDATE users SET status = 'SUSPENDED' WHERE id = ?", suspended.getId());
+        jdbc.update("UPDATE users SET status = 'BANNED' WHERE id = ?", banned.getId());
+        jdbc.update("UPDATE users SET status = 'PENDING_DELETION' WHERE id = ?", pendingDeletion.getId());
+        jdbc.update("UPDATE users SET deletion_requested_at = CURRENT_TIMESTAMP WHERE id = ?",
+                deletionRequested.getId());
+        jdbc.update("UPDATE users SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?", softDeleted.getId());
+
+        Map<UUID, IndividualFrequencyEvaluator.Detection> result = detect();
+
+        assertThat(result).containsKey(active.getId()).doesNotContainKeys(suspended.getId(), banned.getId(),
+                pendingDeletion.getId(), deletionRequested.getId(), softDeleted.getId());
+    }
+
+    @Test
     void reservationsRefuseesAnnuleesExpireesOuNonAcceptees_neComptentPas() {
         UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
         UserEntity s = sender();
@@ -336,6 +361,19 @@ class IndividualFrequencyIT {
         scheduler.run();
 
         jdbc.update("UPDATE users SET gp_pro = TRUE WHERE id = ?", traveler.getId());
+        scheduler.run();
+
+        assertThat(flags.findAll().stream().filter(f -> f.getUserId().equals(traveler.getId())))
+                .singleElement().satisfies(f -> assertThat(f.getResolvedAt()).isNotNull());
+    }
+
+    @Test
+    void drapeauResolu_quandLeCompteEstSuspendu() {
+        UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
+        acceptedTrips(traveler, 5, 2);
+        scheduler.run();
+
+        jdbc.update("UPDATE users SET status = 'SUSPENDED' WHERE id = ?", traveler.getId());
         scheduler.run();
 
         assertThat(flags.findAll().stream().filter(f -> f.getUserId().equals(traveler.getId())))
