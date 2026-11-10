@@ -397,6 +397,11 @@ yadony:
     scheduler-enabled: ${YADONY_GP_PRO_SCHEDULER_ENABLED:true}
     review-cron: ${YADONY_GP_PRO_REVIEW_CRON:0 15 4 * * *}
     cleanup-cron: ${YADONY_GP_PRO_CLEANUP_CRON:0 45 4 * * *}
+  individual-frequency:
+    # Lot 4 : contrôle quotidien des particuliers qui voyagent comme des professionnels (signalement admin et
+    # question « Confirmez votre statut », jamais de blocage). Seuil réglé dans l'admin.
+    scheduler-enabled: ${YADONY_INDIVIDUAL_FREQUENCY_SCHEDULER_ENABLED:true}
+    cron: ${YADONY_INDIVIDUAL_FREQUENCY_CRON:0 30 4 * * *}
   billing:
     # Faux tant que le lot 2 (Stripe Checkout) n'est pas en production :
     # sans lui, les comptes en grâce n'ont aucun moyen de s'abonner.

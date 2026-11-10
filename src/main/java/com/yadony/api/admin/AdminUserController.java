@@ -63,6 +63,15 @@ public class AdminUserController {
         this.publishingEligibilityService = publishingEligibilityService;
     }
 
+    /** Bandeau « particulier à confirmer » de la fiche (lot 4) ; injecté par setter (constructeur inchangé). */
+    private com.yadony.api.travelerstatus.IndividualFrequencyAdminService individualFrequencyAdminService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setIndividualFrequencyAdminService(
+            com.yadony.api.travelerstatus.IndividualFrequencyAdminService individualFrequencyAdminService) {
+        this.individualFrequencyAdminService = individualFrequencyAdminService;
+    }
+
     public AdminUserController(UserService userService,
                                UserRepository userRepository,
                                FirebaseContactService firebaseContact,
@@ -318,7 +327,9 @@ public class AdminUserController {
                 firebaseContact.getContact(user.getFirebaseUid()),
                 proSubscriptionRepository.findByUserId(user.getId()).orElse(null),
                 payoutHoldService.summaryOf(user.getId()),
-                publishingEligibilityService == null ? 0 : publishingEligibilityService.usedThisMonth(user));
+                publishingEligibilityService == null ? 0 : publishingEligibilityService.usedThisMonth(user),
+                individualFrequencyAdminService == null ? null
+                        : individualFrequencyAdminService.openAlertFor(user.getId()));
     }
 
     /** Résout l'utilisateur ou lève le 404 métier standard — réutilisé partout où

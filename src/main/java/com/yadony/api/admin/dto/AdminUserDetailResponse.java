@@ -79,7 +79,12 @@ public record AdminUserDetailResponse(
         /** Limite mensuelle de trajets publiés ({@code null} = aucune limite). Un GP Pro validé n'est jamais limité. */
         Integer monthlyTripLimit,
         /** Trajets publiés (hors brouillons) ce mois-ci, la même mesure que la limite. */
-        int monthlyTripsUsed
+        int monthlyTripsUsed,
+        /**
+         * Lot 4 : particulier qui voyage comme un professionnel, signalement ouvert (ni résolu ni écarté).
+         * {@code null}, donc omis du JSON (NON_NULL), sans signalement ouvert.
+         */
+        com.yadony.api.travelerstatus.dto.IndividualFrequencyAlert individualFrequencyAlert
 ) {
     /**
      * Téléphone et email proviennent de Firebase : ils ne sont plus stockés en base.
@@ -98,6 +103,14 @@ public record AdminUserDetailResponse(
     public static AdminUserDetailResponse from(UserEntity u, FirebaseContactService.Contact contact,
                                                 ProSubscriptionEntity sub, PayoutHoldSummary payoutHold,
                                                 int monthlyTripsUsed) {
+        return from(u, contact, sub, payoutHold, monthlyTripsUsed, null);
+    }
+
+    public static AdminUserDetailResponse from(UserEntity u, FirebaseContactService.Contact contact,
+                                                ProSubscriptionEntity sub, PayoutHoldSummary payoutHold,
+                                                int monthlyTripsUsed,
+                                                com.yadony.api.travelerstatus.dto.IndividualFrequencyAlert
+                                                        individualFrequencyAlert) {
         PayoutHoldSummary hold = payoutHold != null ? payoutHold : PayoutHoldSummary.NONE;
         return new AdminUserDetailResponse(
                 u.getId(),
@@ -151,7 +164,8 @@ public record AdminUserDetailResponse(
                 u.getBusinessRegistrationNumber(),
                 u.getBusinessCountry(),
                 u.getMonthlyTripLimit(),
-                monthlyTripsUsed
+                monthlyTripsUsed,
+                individualFrequencyAlert
         );
     }
 
