@@ -62,7 +62,9 @@ public record AdminReportContextResponse(
      */
     public record HistoryEntry(String action, String detail, LocalDateTime at, String actorEmail, String note) {}
 
-    public record RelatedReport(UUID id, String reason, String status, LocalDateTime createdAt, String reporterName) {}
+    /** {@code source} (V365) : {@code USER} ou {@code SYSTEM} (détection automatique, sans signalant). */
+    public record RelatedReport(UUID id, String reason, String status, LocalDateTime createdAt, String reporterName,
+                                String source) {}
 
     /**
      * Les faits de la cible, déjà mis en forme en français (le back compose déjà « Paris → Dakar »).

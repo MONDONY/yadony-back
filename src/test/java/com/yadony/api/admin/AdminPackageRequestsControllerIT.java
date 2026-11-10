@@ -94,7 +94,8 @@ class AdminPackageRequestsControllerIT {
                         "Moussa Diop", NegotiationThreadStatus.OPEN, new BigDecimal("35.00"), "EUR",
                         LocalDateTime.of(2026, 9, 2, 9, 0))),
                 List.of(new AdminPackageRequestDetailResponse.Report(UUID.randomUUID(), UUID.randomUUID(),
-                        "Fatou Sow", "SCAM_ATTEMPT", "frauduleuse", "OPEN", LocalDateTime.of(2026, 9, 3, 8, 0))),
+                        "Fatou Sow", "SCAM_ATTEMPT", "frauduleuse", "OPEN", LocalDateTime.of(2026, 9, 3, 8, 0),
+                        "USER")),
                 true, null, false);
     }
 

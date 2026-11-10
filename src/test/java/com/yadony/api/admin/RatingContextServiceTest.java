@@ -159,7 +159,8 @@ class RatingContextServiceTest {
         lenient().when(userRepo.findById(ratedId)).thenReturn(Optional.empty());
         ReportEntity report = new ReportEntity();
         List<ReportEntity> reports = List.of(report);
-        var related = List.of(new RelatedReport(UUID.randomUUID(), "INAPPROPRIATE_CONTENT", "OPEN", null, "Fatou Kane"));
+        var related = List.of(new RelatedReport(UUID.randomUUID(), "INAPPROPRIATE_CONTENT", "OPEN", null, "Fatou Kane",
+                "USER"));
         var history = List.of(new HistoryEntry("RATING_EXCLUDED", "REINTEGRATED", null, "sira@yadony.com", null));
         when(reportRepo.findTop10ByTargetTypeAndTargetIdOrderByCreatedAtDesc(ReportTargetType.RATING, ratingId)).thenReturn(reports);
         when(reportContext.toRelated(reports)).thenReturn(related);
