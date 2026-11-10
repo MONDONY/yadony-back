@@ -4817,6 +4817,122 @@ class AnnouncementServiceTest {
         }
     }
 
+    // ─── Statut du voyageur obligatoire pour publier (lot 2) ───────────────────
+
+    @Nested
+    @DisplayName("garde « statut du voyageur obligatoire »")
+    class TravelerStatusGuardTests {
+
+        private com.yadony.api.config.PlatformSettingsService requiredSwitch;
+        private com.yadony.api.common.TravelerStatusGate gate;
+
+        @org.junit.jupiter.api.BeforeEach
+        void wireGate() {
+            requiredSwitch = org.mockito.Mockito.mock(com.yadony.api.config.PlatformSettingsService.class);
+            lenient().when(requiredSwitch.travelerStatusRequired()).thenReturn(true);
+            gate = org.mockito.Mockito.spy(new com.yadony.api.common.TravelerStatusGate(requiredSwitch));
+            announcementService.setTravelerStatusGate(gate);
+        }
+
+        @Test
+        @DisplayName("publication directe, interrupteur actif, statut non déclaré → 403 traveler-status-required, rien d'écrit")
+        void createAnnouncement_directPublish_statusMissing_isRefused() {
+            UserEntity user = verifiedProUser();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+
+            assertThatThrownBy(() -> announcementService.createAnnouncement(FIREBASE_UID, buildRequest()))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                        assertThat(e.getErrorCode()).isEqualTo("traveler-status-required");
+                    });
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("publication directe, interrupteur actif, statut déclaré → publiée")
+        void createAnnouncement_directPublish_statusDeclared_passes() {
+            UserEntity user = verifiedProUser();
+            user.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+
+            AnnouncementResponse resp = announcementService.createAnnouncement(FIREBASE_UID, buildRequest());
+
+            assertThat(resp.status()).isEqualTo("ACTIVE");
+            verify(gate).assertDeclaredIfRequired(user);
+        }
+
+        @Test
+        @DisplayName("brouillon : jamais bloqué, le garde n'est même pas consulté")
+        void createAnnouncement_draft_isNeverBlocked() {
+            UserEntity user = standardUser();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.countByTravelerIdAndStatus(user.getId(), AnnouncementStatus.DRAFT))
+                    .thenReturn(0L);
+            when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+
+            AnnouncementResponse resp = announcementService.createAnnouncement(FIREBASE_UID, draftRequest());
+
+            assertThat(resp.status()).isEqualTo("DRAFT");
+            verify(gate, never()).assertDeclaredIfRequired(any());
+        }
+
+        @Test
+        @DisplayName("publication d'un brouillon, interrupteur actif, statut non déclaré → 403, le brouillon reste brouillon")
+        void publishAnnouncement_statusMissing_isRefusedAndDraftStaysDraft() {
+            UserEntity user = verifiedProUser();
+            AnnouncementEntity draft = draftEntityOwnedBy(user);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.findById(draft.getId())).thenReturn(Optional.of(draft));
+
+            assertThatThrownBy(() -> announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("traveler-status-required"));
+            assertThat(draft.getStatus()).isEqualTo(AnnouncementStatus.DRAFT);
+        }
+
+        @Test
+        @DisplayName("publication d'un brouillon, statut déclaré → ACTIVE")
+        void publishAnnouncement_statusDeclared_becomesActive() {
+            UserEntity user = verifiedProUser();
+            user.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL);
+            AnnouncementEntity draft = draftEntityOwnedBy(user);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.findById(draft.getId())).thenReturn(Optional.of(draft));
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID);
+
+            assertThat(draft.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
+        }
+
+        @Test
+        @DisplayName("le contrôle KYC passe avant le garde : KYC manquant → kyc-not-verified")
+        void kycIsCheckedBeforeTheStatusGate() {
+            org.springframework.test.util.ReflectionTestUtils.setField(announcementService, "enforceKyc", true);
+            UserEntity user = proUser();
+            user.setKycStatus(KycStatus.PENDING);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+
+            assertThatThrownBy(() -> announcementService.createAnnouncement(FIREBASE_UID, buildRequest()))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("kyc-not-verified"));
+            verify(gate, never()).assertDeclaredIfRequired(any());
+        }
+    }
+
     private static List<Object[]> rows(Object[]... rows) {
         return java.util.Arrays.asList(rows);
     }

@@ -2095,6 +2095,17 @@ public class AnnouncementService {
     }
 
     /**
+     * Garde « statut du voyageur obligatoire », injecté par setter pour ne pas élargir le constructeur
+     * (construit à la main dans de nombreux tests) ; sans garde, aucun contrôle.
+     */
+    private com.yadony.api.common.TravelerStatusGate travelerStatusGate;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setTravelerStatusGate(com.yadony.api.common.TravelerStatusGate travelerStatusGate) {
+        this.travelerStatusGate = travelerStatusGate;
+    }
+
+    /**
      * Contrôles de publication partagés entre {@link #createAnnouncement} (chemin non-brouillon)
      * et {@link #publishAnnouncement} (DRAFT→ACTIVE) : suspension de publication, KYC vérifié,
      * limite mensuelle d'annonces (hors PRO, et seulement tant que l'offre PRO est ouverte —
@@ -2110,6 +2121,12 @@ public class AnnouncementService {
                     "KYC Not Verified",
                     "Vous devez compléter votre vérification d'identité pour effectuer cette action"
             );
+        }
+
+        // Après le KYC, avant la limite mensuelle. Jamais pour un brouillon : assertCanPublish n'est
+        // appelé que pour une publication (directe ou DRAFT vers ACTIVE).
+        if (travelerStatusGate != null) {
+            travelerStatusGate.assertDeclaredIfRequired(user);
         }
 
         if (!settings.hasProQuotas(user.isProAccount()) && config.limits() != null) {

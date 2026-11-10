@@ -162,6 +162,24 @@ public class NegotiationService {
         this.minPriceGuard = minPriceGuard;
     }
 
+    /**
+     * Garde « statut du voyageur obligatoire » : le trajet dédié créé ici contourne
+     * {@code AnnouncementService.assertCanPublish}, il passe donc par le même garde. Sans garde injectée
+     * (tests unitaires construits à la main), aucun contrôle.
+     */
+    private com.yadony.api.common.TravelerStatusGate travelerStatusGate;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setTravelerStatusGate(com.yadony.api.common.TravelerStatusGate travelerStatusGate) {
+        this.travelerStatusGate = travelerStatusGate;
+    }
+
+    private void assertTravelerStatusDeclared(UserEntity traveler) {
+        if (travelerStatusGate != null) {
+            travelerStatusGate.assertDeclaredIfRequired(traveler);
+        }
+    }
+
     private void assertAtLeastTravelerMinimum(NegotiationThreadEntity thread, PackageRequestEntity request,
                                               BigDecimal netPrice) {
         if (minPriceGuard == null) {
@@ -273,6 +291,7 @@ public class NegotiationService {
 
         if (req.createDedicatedTrip()) {
             assertPublishingNotSuspended(traveler);
+            assertTravelerStatusDeclared(traveler);
             if (req.dedicatedTrip() == null) {
                 throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "dedicated-trip-invalid");
             }
@@ -1064,6 +1083,7 @@ public class NegotiationService {
         UserEntity traveler = userRepository.findById(callerId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user/not-found"));
         assertPublishingNotSuspended(traveler);
+        assertTravelerStatusDeclared(traveler);
         java.util.Set<PaymentMethod> available = computeAvailableMethods(request, traveler);
         assertNonEmptyOrThrow(available, request.getAcceptedPaymentMethods());
 

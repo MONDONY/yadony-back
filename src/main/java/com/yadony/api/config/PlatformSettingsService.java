@@ -264,6 +264,15 @@ public class PlatformSettingsService {
                 : value;
     }
 
+    /**
+     * Vrai : un voyageur doit avoir déclaré son statut légal (particulier ou professionnel) pour
+     * publier un trajet. Ligne absente ou illisible : faux (déclaration facultative, rappelée à
+     * chaque publication). Voir {@link PlatformSettingKey#TRAVELER_STATUS_REQUIRED}.
+     */
+    public boolean travelerStatusRequired() {
+        return Boolean.parseBoolean(cache.all().get(PlatformSettingKey.TRAVELER_STATUS_REQUIRED.key()));
+    }
+
     /** Questions à l'assistant d'aide par utilisateur et par jour UTC. */
     public int assistantDailyQuota() {
         return intOr(PlatformSettingKey.ASSISTANT_DAILY_QUOTA, PlatformSettingKey.DEFAULT_ASSISTANT_DAILY_QUOTA);
@@ -364,6 +373,7 @@ public class PlatformSettingsService {
             case PAYMENTS_APPLE_PAY_ENABLED -> String.valueOf(applePayEnabled());
             case PAYMENTS_GOOGLE_PAY_ENABLED -> String.valueOf(googlePayEnabled());
             case REMOTE_CONFIG_FETCH_MINUTES -> String.valueOf(remoteConfigFetchMinutes());
+            case TRAVELER_STATUS_REQUIRED -> String.valueOf(travelerStatusRequired());
         };
     }
 
@@ -530,6 +540,8 @@ public class PlatformSettingsService {
                     PlatformSettingKey.MIN_REMOTE_CONFIG_FETCH_MINUTES,
                     PlatformSettingKey.MAX_REMOTE_CONFIG_FETCH_MINUTES,
                     "L'intervalle de relecture de Remote Config doit être un entier de minutes entre 5 et 1440");
+            case TRAVELER_STATUS_REQUIRED -> strictBoolean(value,
+                    "L'obligation de déclarer son statut attend true ou false");
         };
     }
 

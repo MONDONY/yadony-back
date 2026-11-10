@@ -65,6 +65,10 @@ class PlatformSettingsInitializerIT {
                     .get().extracting(PlatformSettingEntity::getSettingValue)
                     .isEqualTo("false");
         }
+        // Statut du voyageur : facultatif tant qu'un administrateur n'en fait pas une condition de publication.
+        assertThat(repository.findBySettingKey("traveler_status_required")).isPresent()
+                .get().extracting(PlatformSettingEntity::getSettingValue)
+                .isEqualTo("false");
         assertThat(repository.findBySettingKey("commission_rate")).isPresent()
                 .get().extracting(PlatformSettingEntity::getSettingValue)
                 .isEqualTo(config.commission().rate().toPlainString());
