@@ -57,6 +57,13 @@ class AccountFinalizationServiceTest {
         // Lot C : donnees re-identifiantes que l'anonymisation laissait intactes.
         u.setProAccount(true);
         u.setProSiret("81234567800012");
+        // Statut légal du voyageur (lot 2) : raison sociale et numéro d'immatriculation re-identifient.
+        u.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL);
+        u.setTravelerStatusDeclaredAt(java.time.Instant.now());
+        u.setTravelerStatusTermsVersion("2026-11-10");
+        u.setBusinessName("Acme Express");
+        u.setBusinessRegistrationNumber("SIREN 123 456 789");
+        u.setBusinessCountry("FR");
         u.setKycStatus(KycStatus.VERIFIED);
         u.setDeletionRequestedAt(java.time.Instant.now());
         return u;
@@ -133,6 +140,25 @@ class AccountFinalizationServiceTest {
         }
 
         assertThat(user.getProSiret()).isNull();
+    }
+
+    @Test
+    @DisplayName("efface le statut légal du voyageur : statut, date, version, raison sociale, numéro et pays")
+    void clearsTravelerStatusColumns() {
+        UserEntity user = makeUser();
+        com.google.firebase.auth.FirebaseAuth mockAuth = mock(com.google.firebase.auth.FirebaseAuth.class);
+
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class)) {
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockAuth);
+            service.finalize(user, FinalizationReason.HARD_IMMEDIATE);
+        }
+
+        assertThat(user.getTravelerStatus()).isNull();
+        assertThat(user.getTravelerStatusDeclaredAt()).isNull();
+        assertThat(user.getTravelerStatusTermsVersion()).isNull();
+        assertThat(user.getBusinessName()).isNull();
+        assertThat(user.getBusinessRegistrationNumber()).isNull();
+        assertThat(user.getBusinessCountry()).isNull();
     }
 
     @Test

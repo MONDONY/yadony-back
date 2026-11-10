@@ -1387,6 +1387,62 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("détail d'un trajet de professionnel → statut, raison sociale, numéro et pays ; particulier → statut seul")
+        void getDetail_travelerStatus_exposedByState() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findById(a.getTravelerId())).thenReturn(Optional.of(traveler));
+            when(bidRepository.countVisibleByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(0L);
+
+            assertThat(announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, FIREBASE_UID)
+                    .traveler().travelerStatus()).isNull();
+
+            traveler.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL);
+            var individual = announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, FIREBASE_UID).traveler();
+            assertThat(individual.travelerStatus()).isEqualTo("INDIVIDUAL");
+            assertThat(individual.businessRegistrationNumber()).isNull();
+
+            traveler.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL);
+            traveler.setBusinessName("Acme Express");
+            traveler.setBusinessRegistrationNumber("SIREN 123 456 789");
+            traveler.setBusinessCountry("FR");
+            var pro = announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, FIREBASE_UID).traveler();
+            assertThat(pro.travelerStatus()).isEqualTo("PROFESSIONAL");
+            assertThat(pro.businessName()).isEqualTo("Acme Express");
+            assertThat(pro.businessRegistrationNumber()).isEqualTo("SIREN 123 456 789");
+            assertThat(pro.businessCountry()).isEqualTo("FR");
+        }
+
+        @Test
+        @DisplayName("détail lu par un invité : statut et raison sociale servis, numéro et pays masqués")
+        void getDetail_guest_hidesRegistrationNumberAndCountry() {
+            UserEntity traveler = buildTraveler();
+            traveler.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL);
+            traveler.setBusinessName("Acme Express");
+            traveler.setBusinessRegistrationNumber("SIREN 123 456 789");
+            traveler.setBusinessCountry("FR");
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(bidRepository.countVisibleByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(0L);
+            when(userRepository.findById(a.getTravelerId())).thenReturn(Optional.of(traveler));
+            org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                    new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                            "uid-invite", null,
+                            List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_GUEST"))));
+            try {
+                var dto = announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, "uid-invite").traveler();
+
+                assertThat(dto.travelerStatus()).isEqualTo("PROFESSIONAL");
+                assertThat(dto.businessName()).isEqualTo("Acme Express");
+                assertThat(dto.businessRegistrationNumber()).isNull();
+                assertThat(dto.businessCountry()).isNull();
+            } finally {
+                org.springframework.security.core.context.SecurityContextHolder.clearContext();
+            }
+        }
+
+        @Test
         @DisplayName("lecteur EUR sur annonce XOF → prix affiché ET grille convertis « environ »")
         void getDetail_readerInEur_getsConvertedPricesAndGrid() {
             UserEntity traveler = buildTraveler();
@@ -1711,6 +1767,29 @@ class AnnouncementServiceTest {
             assertThat(result.departureCity()).isEqualTo("Lyon");
             assertThat(result.arrivalCity()).isEqualTo("Abidjan");
             verify(auditService).log(eq("USER"), any(), eq("ANNOUNCEMENT_UPDATED"), any(), any());
+        }
+
+        @Test
+        @DisplayName("mise à jour d'un trajet par un professionnel → le profil renvoyé porte le statut")
+        void update_professionalOwner_responseCarriesStatus() {
+            UserEntity traveler = buildTraveler();
+            traveler.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL);
+            traveler.setBusinessName("Acme Express");
+            traveler.setBusinessRegistrationNumber("SIREN 123 456 789");
+            traveler.setBusinessCountry("FR");
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+
+            AnnouncementDetailResponse result = announcementService.updateAnnouncement(
+                    ANNOUNCEMENT_ID, FIREBASE_UID, updateRequest("Lyon", "Abidjan", null, null));
+
+            assertThat(result.traveler().travelerStatus()).isEqualTo("PROFESSIONAL");
+            assertThat(result.traveler().businessName()).isEqualTo("Acme Express");
+            assertThat(result.traveler().businessRegistrationNumber()).isEqualTo("SIREN 123 456 789");
+            assertThat(result.traveler().businessCountry()).isEqualTo("FR");
         }
 
         private AnnouncementRequest updateRequest(String dep, String arr, String depCode, String arrCode) {
@@ -2754,6 +2833,30 @@ class AnnouncementServiceTest {
             var response = (com.yadony.api.matching.dto.AnnouncementSearchResponse) result.getContent().get(0);
             assertThat(response.traveler()).isNotNull();
             assertThat(response.traveler().avatarUrl()).isEqualTo("https://cdn.example.com/avatar.jpg");
+        }
+
+        @Test
+        @DisplayName("voyageur professionnel → statut, raison sociale, numéro et pays dans le profil de la liste")
+        void search_professionalTraveler_exposesBusinessFields() {
+            UserEntity traveler = buildTraveler();
+            traveler.setFirstName("Amara");
+            traveler.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL);
+            traveler.setBusinessName("Acme Express");
+            traveler.setBusinessRegistrationNumber("SIREN 123 456 789");
+            traveler.setBusinessCountry("FR");
+            AnnouncementEntity ann = buildAnnouncement(traveler);
+            when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
+                    .thenReturn(new PageImpl<>(List.of(ann)));
+            stubBatchSearch(traveler, 0L);
+
+            Page<?> result = announcementService.searchAnnouncements(
+                    null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, "date", "asc", PageRequest.of(0, 10), null, null);
+
+            var response = (com.yadony.api.matching.dto.AnnouncementSearchResponse) result.getContent().get(0);
+            assertThat(response.traveler().travelerStatus()).isEqualTo("PROFESSIONAL");
+            assertThat(response.traveler().businessName()).isEqualTo("Acme Express");
+            assertThat(response.traveler().businessRegistrationNumber()).isEqualTo("SIREN 123 456 789");
+            assertThat(response.traveler().businessCountry()).isEqualTo("FR");
         }
 
         @Test
@@ -4739,6 +4842,159 @@ class AnnouncementServiceTest {
             when(userRepository.findById(USER_ID)).thenReturn(Optional.empty());
 
             assertThat(announcementService.enableCardOnOpenAnnouncements(USER_ID)).isZero();
+        }
+    }
+
+    // ─── Statut du voyageur obligatoire pour publier (lot 2) ───────────────────
+
+    @Nested
+    @DisplayName("garde « statut du voyageur obligatoire »")
+    class TravelerStatusGuardTests {
+
+        private com.yadony.api.config.PlatformSettingsService requiredSwitch;
+        private com.yadony.api.common.TravelerStatusGate gate;
+
+        @org.junit.jupiter.api.BeforeEach
+        void wireGate() {
+            requiredSwitch = org.mockito.Mockito.mock(com.yadony.api.config.PlatformSettingsService.class);
+            lenient().when(requiredSwitch.travelerStatusRequired()).thenReturn(true);
+            gate = org.mockito.Mockito.spy(new com.yadony.api.common.TravelerStatusGate(requiredSwitch));
+            announcementService.setTravelerStatusGate(gate);
+        }
+
+        @Test
+        @DisplayName("publication directe, interrupteur actif, statut non déclaré → 403 traveler-status-required, rien d'écrit")
+        void createAnnouncement_directPublish_statusMissing_isRefused() {
+            UserEntity user = verifiedProUser();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+
+            assertThatThrownBy(() -> announcementService.createAnnouncement(FIREBASE_UID, buildRequest()))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                        assertThat(e.getErrorCode()).isEqualTo("traveler-status-required");
+                    });
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("publication directe, interrupteur actif, statut déclaré → publiée")
+        void createAnnouncement_directPublish_statusDeclared_passes() {
+            UserEntity user = verifiedProUser();
+            user.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+
+            AnnouncementResponse resp = announcementService.createAnnouncement(FIREBASE_UID, buildRequest());
+
+            assertThat(resp.status()).isEqualTo("ACTIVE");
+            verify(gate).assertDeclaredIfRequired(user);
+        }
+
+        @Test
+        @DisplayName("brouillon : jamais bloqué, le garde n'est même pas consulté")
+        void createAnnouncement_draft_isNeverBlocked() {
+            UserEntity user = standardUser();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.countByTravelerIdAndStatus(user.getId(), AnnouncementStatus.DRAFT))
+                    .thenReturn(0L);
+            when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+
+            AnnouncementResponse resp = announcementService.createAnnouncement(FIREBASE_UID, draftRequest());
+
+            assertThat(resp.status()).isEqualTo("DRAFT");
+            verify(gate, never()).assertDeclaredIfRequired(any());
+        }
+
+        @Test
+        @DisplayName("publication d'un brouillon, interrupteur actif, statut non déclaré → 403, le brouillon reste brouillon")
+        void publishAnnouncement_statusMissing_isRefusedAndDraftStaysDraft() {
+            UserEntity user = verifiedProUser();
+            AnnouncementEntity draft = draftEntityOwnedBy(user);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.findById(draft.getId())).thenReturn(Optional.of(draft));
+
+            assertThatThrownBy(() -> announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("traveler-status-required"));
+            assertThat(draft.getStatus()).isEqualTo(AnnouncementStatus.DRAFT);
+        }
+
+        @Test
+        @DisplayName("publication d'un brouillon, statut déclaré → ACTIVE")
+        void publishAnnouncement_statusDeclared_becomesActive() {
+            UserEntity user = verifiedProUser();
+            user.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL);
+            AnnouncementEntity draft = draftEntityOwnedBy(user);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.findById(draft.getId())).thenReturn(Optional.of(draft));
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID);
+
+            assertThat(draft.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
+        }
+
+        @Test
+        @DisplayName("trajet multi-étapes : une étape publiée sans statut déclaré → 403 traveler-status-required, rien d'enregistré")
+        void createTripLeg_statusMissing_isRefused() {
+            UserEntity user = verifiedProUser();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+
+            assertThatThrownBy(() -> announcementService.createTripLeg(
+                    FIREBASE_UID, buildRequest(), UUID.randomUUID(), 1))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                        assertThat(e.getErrorCode()).isEqualTo("traveler-status-required");
+                    });
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("trajet multi-étapes enregistré en brouillon : jamais bloqué")
+        void createTripLeg_draft_isNeverBlocked() {
+            UserEntity user = standardUser();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.countByTravelerIdAndStatus(user.getId(), AnnouncementStatus.DRAFT))
+                    .thenReturn(0L);
+            when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+
+            AnnouncementResponse resp = announcementService.createTripLeg(
+                    FIREBASE_UID, draftRequest(), UUID.randomUUID(), 1);
+
+            assertThat(resp.status()).isEqualTo("DRAFT");
+            verify(gate, never()).assertDeclaredIfRequired(any());
+        }
+
+        @Test
+        @DisplayName("le contrôle KYC passe avant le garde : KYC manquant → kyc-not-verified")
+        void kycIsCheckedBeforeTheStatusGate() {
+            org.springframework.test.util.ReflectionTestUtils.setField(announcementService, "enforceKyc", true);
+            UserEntity user = proUser();
+            user.setKycStatus(KycStatus.PENDING);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+
+            assertThatThrownBy(() -> announcementService.createAnnouncement(FIREBASE_UID, buildRequest()))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("kyc-not-verified"));
+            verify(gate, never()).assertDeclaredIfRequired(any());
         }
     }
 

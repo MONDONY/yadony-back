@@ -69,4 +69,13 @@ public final class GuestSession {
     public static BigDecimal travelerNetOrNull(BigDecimal net) {
         return isGuest() ? null : net;
     }
+
+    /**
+     * Une donnée d'entreprise du voyageur (numéro d'immatriculation, pays) telle qu'elle doit être servie
+     * au lecteur courant : {@code null} pour un invité. Décision du propriétaire : seuls les utilisateurs
+     * avec un compte voient le numéro ; le statut et la raison sociale restent servis à tous.
+     */
+    public static String businessDetailOrNull(String value) {
+        return isGuest() ? null : value;
+    }
 }

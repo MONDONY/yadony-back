@@ -205,6 +205,21 @@ class PublicAnnouncementCardTest {
     }
 
     @Test
+    void carteAnonymeNeLaissePasFuirLeStatutNiLeNumeroDEntreprise() throws Exception {
+        AnnouncementSearchResponse r = source(new BigDecimal("9.00"));
+        TravelerProfileDto pro = new TravelerProfileDto(
+                TRAVELER_ID, "Awa D.", 4.8, 12, false, true, true, true, null, true,
+                "PROFESSIONAL", "Acme Express", "SIREN 123 456 789", "FR");
+
+        PublicAnnouncementCard card = PublicAnnouncementCard.from(with(r, pro, r.capacityUnit(), r.pricingMode(),
+                r.acceptedContentTypes()));
+
+        String out = json.writeValueAsString(card);
+        assertThat(out).doesNotContain("SIREN").doesNotContain("123 456 789").doesNotContain("Acme")
+                .doesNotContain("registration").doesNotContain("businessName");
+    }
+
+    @Test
     void exposeLUniteDeCapaciteEtLeModeDePrix() {
         AnnouncementSearchResponse r = source(BigDecimal.ZERO);
         // Kilo libre : availableKg n'est qu'une valeur technique, le client lit capacityUnit.

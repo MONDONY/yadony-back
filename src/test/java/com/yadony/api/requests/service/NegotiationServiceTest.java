@@ -867,6 +867,61 @@ class NegotiationServiceTest {
                 request.getDesiredDate().atTime(8, 0).toInstant(java.time.ZoneOffset.UTC));
         }
 
+        private void requireTravelerStatus() {
+            var settings = mock(com.yadony.api.config.PlatformSettingsService.class);
+            when(settings.travelerStatusRequired()).thenReturn(true);
+            service.setTravelerStatusGate(new com.yadony.api.common.TravelerStatusGate(settings));
+        }
+
+        private void stubStartUntilDedicatedTrip() {
+            stubDedicatedTripRequestFields();
+            when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
+            when(config.threadsPerMinuteRateLimit()).thenReturn(1);
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findActiveByPackageRequestIdAndTravelerId(REQUEST_ID, TRAVELER_ID))
+                .thenReturn(Optional.empty());
+            when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
+                .thenReturn(0L);
+            when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
+        }
+
+        @Test
+        @DisplayName("interrupteur actif, statut non déclaré : trajet dédié créé à l'offre refusé (403 traveler-status-required)")
+        void start_dedicatedTrip_travelerStatusRequiredAndMissing_isRefused() {
+            stubStartUntilDedicatedTrip();
+            requireTravelerStatus();
+            NegotiationStartRequest req = new NegotiationStartRequest(
+                REQUEST_ID, new BigDecimal("80"), request.getDesiredDate(),
+                new BigDecimal("5"), null, null, true, dedicatedTripPayload(request.getDesiredDate())
+            );
+
+            assertThatThrownBy(() -> service.start(TRAVELER_ID, req))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                    assertThat(e.getErrorCode()).isEqualTo("traveler-status-required");
+                });
+            verify(announcementRepo, never()).save(any());
+            verify(threadRepo, never()).save(any(NegotiationThreadEntity.class));
+        }
+
+        @Test
+        @DisplayName("interrupteur actif, statut déclaré : le garde laisse passer (la suite du contrôle s'exécute)")
+        void start_dedicatedTrip_travelerStatusRequiredAndDeclared_passesTheGate() {
+            stubStartUntilDedicatedTrip();
+            requireTravelerStatus();
+            traveler.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL);
+            NegotiationStartRequest req = new NegotiationStartRequest(
+                REQUEST_ID, new BigDecimal("80"), request.getDesiredDate(),
+                new BigDecimal("5"), null, null, true, null
+            );
+
+            // Le garde est franchi : l'échec vient du contrôle suivant (payload du trajet absent).
+            assertThatThrownBy(() -> service.start(TRAVELER_ID, req))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("dedicated-trip-invalid");
+        }
+
         @Test
         @DisplayName("createDedicatedTrip=true sans dedicatedTrip → 422 dedicated-trip-invalid")
         void start_throws422_whenDedicatedTripPayloadMissing() {
@@ -2840,6 +2895,48 @@ class NegotiationServiceTest {
             verify(announcementRepo).save(annCaptor.capture());
             // La date du trajet dédié est celle choisie par le voyageur.
             assertThat(annCaptor.getValue().getDepartureDate()).isEqualTo(farDate);
+        }
+
+        @Test
+        @DisplayName("interrupteur actif, statut non déclaré : createDedicatedTrip refusé (403 traveler-status-required)")
+        void createDedicatedTrip_travelerStatusRequiredAndMissing_isRefused() {
+            var settings = mock(com.yadony.api.config.PlatformSettingsService.class);
+            when(settings.travelerStatusRequired()).thenReturn(true);
+            service.setTravelerStatusGate(new com.yadony.api.common.TravelerStatusGate(settings));
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+
+            assertThatThrownBy(() -> service.createDedicatedTrip(TRAVELER_ID, THREAD_ID,
+                    buildRequest(request.getDesiredDate())))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                    assertThat(e.getErrorCode()).isEqualTo("traveler-status-required");
+                });
+            verifyNoInteractions(announcementRepo);
+            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_TRIP);
+        }
+
+        @Test
+        @DisplayName("interrupteur inactif : createDedicatedTrip non bloqué même sans statut")
+        void createDedicatedTrip_travelerStatusSwitchOff_neverBlocks() {
+            var settings = mock(com.yadony.api.config.PlatformSettingsService.class);
+            when(settings.travelerStatusRequired()).thenReturn(false);
+            service.setTravelerStatusGate(new com.yadony.api.common.TravelerStatusGate(settings));
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(commissionRateResolver.globalRate()).thenReturn(new BigDecimal("0.12"));
+            when(announcementRepo.save(any())).thenAnswer(inv -> {
+                com.yadony.api.matching.AnnouncementEntity ann = inv.getArgument(0);
+                org.springframework.test.util.ReflectionTestUtils.setField(ann, "id", UUID.randomUUID());
+                return ann;
+            });
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(java.util.List.of());
+
+            var resp = service.createDedicatedTrip(TRAVELER_ID, THREAD_ID, buildRequest(request.getDesiredDate()));
+
+            assertThat(resp.status()).isEqualTo(NegotiationThreadStatus.AWAITING_PAYMENT);
         }
 
         @Test

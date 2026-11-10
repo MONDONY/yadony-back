@@ -42,6 +42,48 @@ class AdminUserDetailResponseTest {
     }
 
     @Test
+    @DisplayName("voyageur professionnel : statut, date, raison sociale, numéro et pays visibles de l'admin")
+    void professionalTravelerStatusIsExposedToAdmin() {
+        UserEntity user = sampleUser();
+        Instant declaredAt = Instant.parse("2026-11-10T09:00:00Z");
+        user.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL);
+        user.setTravelerStatusDeclaredAt(declaredAt);
+        user.setBusinessName("Acme Express");
+        user.setBusinessRegistrationNumber("SIREN 123 456 789");
+        user.setBusinessCountry("FR");
+
+        AdminUserDetailResponse response = AdminUserDetailResponse.from(user, sampleContact(), null);
+
+        assertThat(response.travelerStatus()).isEqualTo("PROFESSIONAL");
+        assertThat(response.travelerStatusDeclaredAt()).isEqualTo(java.time.LocalDateTime.of(2026, 11, 10, 9, 0));
+        assertThat(response.businessName()).isEqualTo("Acme Express");
+        assertThat(response.businessRegistrationNumber()).isEqualTo("SIREN 123 456 789");
+        assertThat(response.businessCountry()).isEqualTo("FR");
+    }
+
+    @Test
+    @DisplayName("voyageur particulier : statut et date seulement ; non déclaré : tout est nul")
+    void individualAndUndeclaredTravelerStatus() {
+        UserEntity individual = sampleUser();
+        individual.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL);
+        individual.setTravelerStatusDeclaredAt(Instant.parse("2026-11-10T09:00:00Z"));
+
+        AdminUserDetailResponse ind = AdminUserDetailResponse.from(individual, sampleContact(), null);
+        assertThat(ind.travelerStatus()).isEqualTo("INDIVIDUAL");
+        assertThat(ind.travelerStatusDeclaredAt()).isNotNull();
+        assertThat(ind.businessName()).isNull();
+        assertThat(ind.businessRegistrationNumber()).isNull();
+        assertThat(ind.businessCountry()).isNull();
+
+        AdminUserDetailResponse none = AdminUserDetailResponse.from(sampleUser(), sampleContact(), null);
+        assertThat(none.travelerStatus()).isNull();
+        assertThat(none.travelerStatusDeclaredAt()).isNull();
+        assertThat(none.businessName()).isNull();
+        assertThat(none.businessRegistrationNumber()).isNull();
+        assertThat(none.businessCountry()).isNull();
+    }
+
+    @Test
     @DisplayName("sans abonnement, le champ proSubscription est nul")
     void withoutSubscription() {
         AdminUserDetailResponse response =

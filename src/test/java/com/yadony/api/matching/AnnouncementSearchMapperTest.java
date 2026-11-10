@@ -120,6 +120,81 @@ class AnnouncementSearchMapperTest {
         }
     }
 
+    private static UserEntity travelerWithStatus(com.yadony.api.travelerstatus.TravelerStatus status) {
+        UserEntity traveler = new UserEntity();
+        traveler.setTravelerStatus(status);
+        if (status == com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL) {
+            traveler.setBusinessName("Acme Express");
+            traveler.setBusinessRegistrationNumber("SIREN 123 456 789");
+            traveler.setBusinessCountry("FR");
+        }
+        return traveler;
+    }
+
+    private java.util.List<AnnouncementSearchResponse> bothVariants(UserEntity traveler) {
+        when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
+        when(bidRepository.countVisibleByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(0L);
+        var unit = mapper.toSearchResponse(buildAnnouncement(), false);
+        var batch = mapper.toSearchResponse(buildAnnouncement(), false,
+                java.util.Map.of(TRAVELER_ID, traveler), java.util.Map.of(), java.util.Map.of());
+        return java.util.List.of(unit, batch);
+    }
+
+    @Test
+    @DisplayName("voyageur professionnel : statut, raison sociale, numéro et pays exposés (unitaire et batch)")
+    void searchResultTraveler_professional_exposesBusinessFields() {
+        for (var r : bothVariants(travelerWithStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL))) {
+            assertThat(r.traveler().travelerStatus()).isEqualTo("PROFESSIONAL");
+            assertThat(r.traveler().businessName()).isEqualTo("Acme Express");
+            assertThat(r.traveler().businessRegistrationNumber()).isEqualTo("SIREN 123 456 789");
+            assertThat(r.traveler().businessCountry()).isEqualTo("FR");
+        }
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void clearSecurityContext() {
+        org.springframework.security.core.context.SecurityContextHolder.clearContext();
+    }
+
+    @Test
+    @DisplayName("invité : statut et raison sociale servis, numéro et pays masqués (unitaire et batch)")
+    void searchResultTraveler_guest_hidesRegistrationNumberAndCountry() {
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                        "uid-invite", null,
+                        java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority(
+                                "ROLE_GUEST"))));
+
+        for (var r : bothVariants(travelerWithStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL))) {
+            assertThat(r.traveler().travelerStatus()).isEqualTo("PROFESSIONAL");
+            assertThat(r.traveler().businessName()).isEqualTo("Acme Express");
+            assertThat(r.traveler().businessRegistrationNumber()).isNull();
+            assertThat(r.traveler().businessCountry()).isNull();
+        }
+    }
+
+    @Test
+    @DisplayName("voyageur particulier : statut INDIVIDUAL, aucune donnée d'entreprise (unitaire et batch)")
+    void searchResultTraveler_individual_exposesStatusOnly() {
+        for (var r : bothVariants(travelerWithStatus(com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL))) {
+            assertThat(r.traveler().travelerStatus()).isEqualTo("INDIVIDUAL");
+            assertThat(r.traveler().businessName()).isNull();
+            assertThat(r.traveler().businessRegistrationNumber()).isNull();
+            assertThat(r.traveler().businessCountry()).isNull();
+        }
+    }
+
+    @Test
+    @DisplayName("voyageur non déclaré : les quatre champs sont null (unitaire et batch)")
+    void searchResultTraveler_undeclared_exposesNulls() {
+        for (var r : bothVariants(travelerWithStatus(null))) {
+            assertThat(r.traveler().travelerStatus()).isNull();
+            assertThat(r.traveler().businessName()).isNull();
+            assertThat(r.traveler().businessRegistrationNumber()).isNull();
+            assertThat(r.traveler().businessCountry()).isNull();
+        }
+    }
+
     @Test
     @DisplayName("toSearchResponse expose le drapeau negotiable (variante unitaire)")
     void toSearchResponse_exposesNegotiable() {

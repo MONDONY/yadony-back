@@ -122,10 +122,14 @@ class GuestDataExposureIT {
     /** Budget net de la demande seedee. Servi a TOUS, invites compris (decision A16). */
     private static final BigDecimal NET_COLIS = new BigDecimal("40.00");
 
+    /** Numéro d'immatriculation du voyageur seedé (professionnel) : réservé aux utilisateurs avec compte. */
+    private static final String NUMERO_ENTREPRISE = "SENTINELLE-123456";
+    private static final String RAISON_SOCIALE = "Acme Express";
+
     private static final List<String> VALEURS_SENTINELLES = List.of(
             TEL_DESTINATAIRE, NOM_DESTINATAIRE, VILLE_DESTINATAIRE,
             ADRESSE_RETRAIT_EXACTE, ADRESSE_LIVRAISON_EXACTE,
-            IP_SIGNATURE, CODE_PROMO, COMPTE_STRIPE, INSTRUCTIONS_ARRIVEE);
+            IP_SIGNATURE, CODE_PROMO, COMPTE_STRIPE, INSTRUCTIONS_ARRIVEE, NUMERO_ENTREPRISE);
 
     /**
      * Noms de champ REELS du depot, tous absents des quatre charges auditees.
@@ -162,6 +166,9 @@ class GuestDataExposureIT {
             "totalNetEur", "netEur", "commissionRate",
             // Net voyageur : ce que touche le transporteur. Le brut (*Display) reste servi.
             "pricePerKg", "unitPriceNet", "convertedPricePerKg",
+            // Numero et pays d'immatriculation du voyageur professionnel : visibles des seuls
+            // utilisateurs avec compte (statut et raison sociale restent servis aux invites).
+            "businessRegistrationNumber", "businessCountry",
             // Reserve au proprietaire
             "promoCode");
 
@@ -217,6 +224,9 @@ class GuestDataExposureIT {
             // TravelerProfileDto
             "displayName", "averageRating", "totalTrips", "kiloPro", "gpPro", "isProAccount",
             "kycVerified", "avatarUrl", "acceptsUnverified",
+            // Statut legal declare et raison sociale : l'expediteur doit les voir avant de
+            // decider, invite compris. Le numero et le pays d'immatriculation, eux, sont masques.
+            "travelerStatus", "businessName",
             // AnnouncementPriceGridItemResponse : seul le brut survit, comme pour pricePerKg.
             "unitPriceDisplay",
 
@@ -286,6 +296,10 @@ class GuestDataExposureIT {
         voyageur.setKycStatus(KycStatus.VERIFIED);
         voyageur.setRoles(new java.util.HashSet<>(List.of(Role.TRAVELER)));
         voyageur.setStripeAccountId(COMPTE_STRIPE);
+        voyageur.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL);
+        voyageur.setBusinessName(RAISON_SOCIALE);
+        voyageur.setBusinessRegistrationNumber(NUMERO_ENTREPRISE);
+        voyageur.setBusinessCountry("FR");
         voyageur = userRepository.save(voyageur);
 
         UserEntity expediteur = new UserEntity();
@@ -424,6 +438,44 @@ class GuestDataExposureIT {
         assertThat(corps.path("priceGridItems").get(0).path("unitPriceDisplay").decimalValue())
                 .as("le brut de chaque ligne de grille doit rester servi a un visiteur")
                 .isGreaterThan(BigDecimal.ZERO);
+    }
+
+    @Test
+    @DisplayName("recherche et detail : un invite voit le statut et la raison sociale, jamais le numero ni le pays")
+    void unInviteVoitLeStatutMaisPasLeNumeroDEntreprise() throws Exception {
+        JsonNode recherche = lire(get("/announcements").param("page", "0").param("size", "20"), "statut-recherche");
+        JsonNode detail = lire(get("/announcements/" + trajetId), "statut-detail");
+
+        for (JsonNode corps : List.of(recherche.path("content").get(0), detail)) {
+            JsonNode voyageur = corps.path("traveler");
+            assertThat(voyageur.path("travelerStatus").asText()).isEqualTo("PROFESSIONAL");
+            assertThat(voyageur.path("businessName").asText()).isEqualTo(RAISON_SOCIALE);
+            assertThat(voyageur.has("businessRegistrationNumber")).isFalse();
+            assertThat(voyageur.has("businessCountry")).isFalse();
+        }
+        assertThat(recherche.toString()).doesNotContain(NUMERO_ENTREPRISE);
+        assertThat(detail.toString()).doesNotContain(NUMERO_ENTREPRISE);
+    }
+
+    /**
+     * La recherche est mise en cache 5 minutes sur une cle qui contient le UID du lecteur : la reponse
+     * calculee pour un utilisateur connecte (qui porte le numero) ne doit jamais etre resservie a un invite.
+     */
+    @Test
+    @DisplayName("cache de recherche : la reponse d'un connecte, numero compris, n'est jamais resservie a un invite")
+    void leCacheNeResertPasLeNumeroAUnInvite() throws Exception {
+        var connecte = new UsernamePasswordAuthenticationToken(
+                "uid-expediteur-exposition", null, List.of(new SimpleGrantedAuthority("ROLE_SENDER")));
+        var reponseConnecte = mockMvc.perform(get("/announcements").param("page", "0").param("size", "20")
+                        .with(authentication(connecte))).andReturn().getResponse();
+        assertThat(reponseConnecte.getStatus()).isEqualTo(200);
+        assertThat(reponseConnecte.getContentAsString(StandardCharsets.UTF_8))
+                .as("le connecte, lui, voit le numero").contains(NUMERO_ENTREPRISE);
+
+        JsonNode invite = lire(get("/announcements").param("page", "0").param("size", "20"), "statut-cache");
+
+        assertThat(invite.toString()).doesNotContain(NUMERO_ENTREPRISE);
+        assertThat(invite.path("content").get(0).path("traveler").has("businessRegistrationNumber")).isFalse();
     }
 
     @Test

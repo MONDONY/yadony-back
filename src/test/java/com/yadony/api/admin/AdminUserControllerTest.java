@@ -124,6 +124,27 @@ class AdminUserControllerTest {
     }
 
     @Test
+    void getUser_returnsTravelerStatusFieldsForAdmin() {
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        when(firebaseContact.getContact(any())).thenReturn(
+                com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
+        UUID userId = UUID.randomUUID();
+        com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
+        user.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL);
+        user.setBusinessName("Acme Express");
+        user.setBusinessRegistrationNumber("SIREN 123 456 789");
+        user.setBusinessCountry("FR");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        var detail = controller.getUser(userId);
+
+        assertThat(detail.travelerStatus()).isEqualTo("PROFESSIONAL");
+        assertThat(detail.businessName()).isEqualTo("Acme Express");
+        assertThat(detail.businessRegistrationNumber()).isEqualTo("SIREN 123 456 789");
+        assertThat(detail.businessCountry()).isEqualTo("FR");
+    }
+
+    @Test
     void muteMessaging_delegatesToService_andReturnsDetail() {
         AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
         when(firebaseContact.getContact(any())).thenReturn(

@@ -24,6 +24,13 @@ import java.util.UUID;
  *        couleur de la coche d'identité (argent) sur l'onglet Moi, comme sur les autres écrans qui la
  *        reçoivent déjà ({@code TravelerProfileDto}, {@code BidResponse}). Absent chez un ancien back :
  *        l'app retombe sur faux.
+ * @param travelerStatus statut légal déclaré par le voyageur ({@code INDIVIDUAL} ou
+ *        {@code PROFESSIONAL}), {@code null} tant qu'il n'est pas déclaré. Absent chez un ancien back :
+ *        l'app n'affiche alors aucune pastille.
+ * @param businessName raison sociale d'un voyageur professionnel, {@code null} sinon
+ * @param businessRegistrationNumber numéro d'immatriculation d'un voyageur professionnel. Renvoyé à son
+ *        seul propriétaire (il le voit pour le relire) ; jamais journalisé, jamais dans un audit.
+ * @param businessCountry pays d'immatriculation (ISO 3166-1 alpha-2) d'un voyageur professionnel
  */
 public record UserResponse(
     UUID id,
@@ -54,8 +61,28 @@ public record UserResponse(
     String preferredLanguage,
     String messagingMutedUntil,
     boolean recetteMode,
-    boolean gpPro
+    boolean gpPro,
+    String travelerStatus,
+    String businessName,
+    String businessRegistrationNumber,
+    String businessCountry
 ) {
+    /** Forme d'avant le statut légal du voyageur (lot 2) : aucun statut déclaré. */
+    public UserResponse(UUID id, String username, String phoneNumber, String email, String firstName,
+                        String lastName, LocalDate birthDate, String city, Set<String> roles,
+                        String kycStatus, String status, int totalTrips, int totalShipments,
+                        Boolean isProAccount, StripeAccountStatus stripeAccountStatus, String country,
+                        String bio, Set<String> languages, String avatarUrl, Double averageRating,
+                        AdminInfo admin, String residenceStreet, String residenceLine2,
+                        String residencePostalCode, String onboardingSeenAt, String preferredLanguage,
+                        String messagingMutedUntil, boolean recetteMode, boolean gpPro) {
+        this(id, username, phoneNumber, email, firstName, lastName, birthDate, city, roles, kycStatus,
+                status, totalTrips, totalShipments, isProAccount, stripeAccountStatus, country, bio,
+                languages, avatarUrl, averageRating, admin, residenceStreet, residenceLine2,
+                residencePostalCode, onboardingSeenAt, preferredLanguage, messagingMutedUntil, recetteMode,
+                gpPro, null, null, null, null);
+    }
+
     /** Forme d'avant le mode recette (FLUTTER-FA/FB) : mode fermé. */
     public UserResponse(UUID id, String username, String phoneNumber, String email, String firstName,
                         String lastName, LocalDate birthDate, String city, Set<String> roles,
@@ -68,6 +95,7 @@ public record UserResponse(
         this(id, username, phoneNumber, email, firstName, lastName, birthDate, city, roles, kycStatus,
                 status, totalTrips, totalShipments, isProAccount, stripeAccountStatus, country, bio,
                 languages, avatarUrl, averageRating, admin, residenceStreet, residenceLine2,
-                residencePostalCode, onboardingSeenAt, preferredLanguage, messagingMutedUntil, false, false);
+                residencePostalCode, onboardingSeenAt, preferredLanguage, messagingMutedUntil, false, false,
+                null, null, null, null);
     }
 }

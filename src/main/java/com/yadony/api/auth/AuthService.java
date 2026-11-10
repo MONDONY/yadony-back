@@ -826,7 +826,11 @@ public class AuthService {
                 user.getPreferredLanguage().code(),
                 user.isMessagingMuted(Instant.now()) ? user.getMessagingMutedUntil().toString() : null,
                 recetteMode.appliesTo(user),
-                user.isGpPro()
+                user.isGpPro(),
+                user.getTravelerStatus() == null ? null : user.getTravelerStatus().name(),
+                user.getBusinessName(),
+                user.getBusinessRegistrationNumber(),
+                user.getBusinessCountry()
         );
     }
 

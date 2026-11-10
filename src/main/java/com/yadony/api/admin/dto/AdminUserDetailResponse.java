@@ -65,7 +65,17 @@ public record AdminUserDetailResponse(
          * UID Firebase du compte, pour que l'admin le copie (support, recherche
          * {@code GET /admin/users?query=}). Détail seulement : la liste ne l'expose pas.
          */
-        String firebaseUid
+        String firebaseUid,
+        /**
+         * Statut légal déclaré par le voyageur ({@code INDIVIDUAL} ou {@code PROFESSIONAL}), {@code null}
+         * s'il n'a rien déclaré. Sans rapport avec {@code isProAccount} (abonnement PRO).
+         */
+        String travelerStatus,
+        LocalDateTime travelerStatusDeclaredAt,
+        /** Raison sociale, numéro et pays d'un professionnel ; {@code null} sinon. L'admin voit le numéro (droit USER_VIEW). */
+        String businessName,
+        String businessRegistrationNumber,
+        String businessCountry
 ) {
     /**
      * Téléphone et email proviennent de Firebase : ils ne sont plus stockés en base.
@@ -124,7 +134,12 @@ public record AdminUserDetailResponse(
                 hold.reasons() == null ? List.of() : hold.reasons().stream().map(Enum::name).toList(),
                 hold.heldPaymentsCount(),
                 toUtc(com.yadony.api.auth.AccountDeletionScheduler.scheduledFinalization(u.getDeletionRequestedAt())),
-                u.getFirebaseUid()
+                u.getFirebaseUid(),
+                u.getTravelerStatus() != null ? u.getTravelerStatus().name() : null,
+                toUtc(u.getTravelerStatusDeclaredAt()),
+                u.getBusinessName(),
+                u.getBusinessRegistrationNumber(),
+                u.getBusinessCountry()
         );
     }
 
