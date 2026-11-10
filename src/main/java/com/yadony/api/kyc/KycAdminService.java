@@ -125,6 +125,7 @@ public class KycAdminService {
         // Les deux enums sont resynchronisés à la main à chaque transition : n'en toucher
         // qu'un ferait diverger les sources de vérité en silence.
         user.setKycStatus(KycStatus.NOT_STARTED);
+        user.clearKycReminderAnchor();
         userRepository.save(user);
 
         auditService.log("kyc_verification", kyc.getId(), "KYC_RESET_BY_ADMIN", adminId,

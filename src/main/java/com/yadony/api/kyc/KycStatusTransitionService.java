@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
@@ -152,6 +153,7 @@ public class KycStatusTransitionService {
         if (lockedByAdmin(kyc, "KYC_REJECTED", sessionId)) {
             return;
         }
+        user.touchKycReminderAnchor(Instant.now());
         applyRejected(kyc, user, code, reason);
         auditService.log("kyc_verification", kyc.getId(), "KYC_REJECTED",
                 user.getId(), Map.of("sessionId", sessionId, "reason", reason));
@@ -206,6 +208,7 @@ public class KycStatusTransitionService {
         // Parcours termine sans decision : la ligne quitte la file de revue.
         kyc.setSubmittedAt(null);
         user.setKycStatus(KycStatus.NOT_STARTED);
+        user.touchKycReminderAnchor(Instant.now());
         kycRepository.save(kyc);
         userRepository.save(user);
         auditService.log("kyc_verification", kyc.getId(), auditAction,

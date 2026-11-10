@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
 
@@ -93,7 +94,10 @@ public class KycService {
         }
 
         if (!lockedByAdmin && session.sessionId().equals(resumableSessionId)) {
-            // Session reprise telle quelle : rien a reecrire en base.
+            // Session reprise telle quelle : rien a reecrire sur la ligne KYC, mais l'utilisateur
+            // vient de revenir, donc les relances repartent de maintenant (compteur conserve).
+            user.touchKycReminderAnchor(Instant.now());
+            userRepository.save(user);
             return new KycSessionResponse(session.url(), session.sessionId(), "PENDING");
         }
 
@@ -112,6 +116,9 @@ public class KycService {
         // sur la session precedente.
         kyc.clearDecision();
         kycRepository.save(kyc);
+
+        // Entite geree dans la transaction : persistee au commit, sans second save.
+        user.startKycReminderCycle(Instant.now());
 
         if (refusedSessionId != null) {
             auditService.log("kyc_verification", kyc.getId(), "KYC_REFUSED_SESSION_NOT_REUSED",
@@ -133,6 +140,7 @@ public class KycService {
         if (user.getKycStatus() != KycStatus.PENDING) return;
 
         user.setKycStatus(KycStatus.NOT_STARTED);
+        user.touchKycReminderAnchor(Instant.now());
         userRepository.save(user);
 
         // Best-effort, et chez le fournisseur de la ligne : l'abandon local ne doit jamais

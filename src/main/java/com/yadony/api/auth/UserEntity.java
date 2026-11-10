@@ -277,6 +277,20 @@ public class UserEntity extends BaseEntity {
     @Column(name = "first_action_reminder_last_at")
     private Instant firstActionReminderLastAt;
 
+    /** Dernier geste de l'utilisateur dans le parcours de verification d'identite (base des relances). */
+    @Column(name = "kyc_reminder_anchor_at")
+    private Instant kycReminderAnchorAt;
+
+    @org.hibernate.annotations.ColumnDefault("0")
+    @Column(name = "kyc_reminder_count", nullable = false)
+    private int kycReminderCount;
+
+    @Column(name = "kyc_reminder_last_at")
+    private Instant kycReminderLastAt;
+
+    @Column(name = "kyc_reminders_opted_out_at")
+    private Instant kycRemindersOptedOutAt;
+
     @Column(name = "is_pro_account", nullable = false)
     private boolean isProAccount = false;
 
@@ -767,4 +781,30 @@ public class UserEntity extends BaseEntity {
 
     public Integer getCommissionCardExpYear() { return commissionCardExpYear; }
     public void setCommissionCardExpYear(Integer commissionCardExpYear) { this.commissionCardExpYear = commissionCardExpYear; }
+
+    public Instant getKycReminderAnchorAt() { return kycReminderAnchorAt; }
+    public void setKycReminderAnchorAt(Instant v) { this.kycReminderAnchorAt = v; }
+    public int getKycReminderCount() { return kycReminderCount; }
+    public void setKycReminderCount(int v) { this.kycReminderCount = v; }
+    public Instant getKycReminderLastAt() { return kycReminderLastAt; }
+    public void setKycReminderLastAt(Instant v) { this.kycReminderLastAt = v; }
+    public Instant getKycRemindersOptedOutAt() { return kycRemindersOptedOutAt; }
+    public void setKycRemindersOptedOutAt(Instant v) { this.kycRemindersOptedOutAt = v; }
+
+    /** Nouveau parcours de verification : l'ancre repart de {@code now}, le cycle de relances aussi. */
+    public void startKycReminderCycle(Instant now) {
+        this.kycReminderAnchorAt = now;
+        this.kycReminderCount = 0;
+        this.kycReminderLastAt = null;
+    }
+
+    /** Geste dans un parcours deja engage : l'ancre avance, le compteur est conserve. */
+    public void touchKycReminderAnchor(Instant now) {
+        this.kycReminderAnchorAt = now;
+    }
+
+    /** Plus de relance a prevoir (reinitialisation administrative). */
+    public void clearKycReminderAnchor() {
+        this.kycReminderAnchorAt = null;
+    }
 }
