@@ -370,6 +370,17 @@ public class UserEntity extends BaseEntity {
     @Column(name = "tax_info_provided_at")
     private Instant taxInfoProvidedAt;
 
+    /**
+     * Compte supprimé dont le NIF est gardé pour la déclaration : pays de résidence DAC7 et statut figés à la
+     * suppression (qui efface le statut et le pays de l'entreprise). Nuls pour un compte actif. Purgés avec le NIF.
+     */
+    @Column(name = "tax_residence_country", length = 2)
+    private String taxResidenceCountry;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "tax_seller_status", length = 15)
+    private com.yadony.api.travelerstatus.TravelerStatus taxSellerStatus;
+
     // Limite mensuelle de trajets publiés, réglée dans l'admin. null = aucune limite (aucune valeur par
     // défaut). Un GP Pro validé n'est jamais limité.
     @Column(name = "monthly_trip_limit")
@@ -810,6 +821,14 @@ public class UserEntity extends BaseEntity {
 
     public Instant getTaxInfoProvidedAt() { return taxInfoProvidedAt; }
     public void setTaxInfoProvidedAt(Instant taxInfoProvidedAt) { this.taxInfoProvidedAt = taxInfoProvidedAt; }
+
+    public String getTaxResidenceCountry() { return taxResidenceCountry; }
+    public void setTaxResidenceCountry(String taxResidenceCountry) { this.taxResidenceCountry = taxResidenceCountry; }
+
+    public com.yadony.api.travelerstatus.TravelerStatus getTaxSellerStatus() { return taxSellerStatus; }
+    public void setTaxSellerStatus(com.yadony.api.travelerstatus.TravelerStatus taxSellerStatus) {
+        this.taxSellerStatus = taxSellerStatus;
+    }
 
     public Integer getMonthlyTripLimit() { return monthlyTripLimit; }
     public void setMonthlyTripLimit(Integer monthlyTripLimit) { this.monthlyTripLimit = monthlyTripLimit; }

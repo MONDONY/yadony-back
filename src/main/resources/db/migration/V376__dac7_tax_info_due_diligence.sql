@@ -12,6 +12,17 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS tax_info_requested_at TIMESTAMP WITH 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tax_reminder_count INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tax_info_provided_at TIMESTAMP WITH TIME ZONE;
 
+-- Compte supprimé dont le NIF est gardé pour la déclaration (yadony.dac7.retention-years) : la suppression efface le
+-- statut et le pays de l'entreprise (contrainte chk_users_traveler_status_pro_fields). On fige donc, au moment de la
+-- suppression, le pays de résidence DAC7 retenu (pays de l'entreprise pour un professionnel, pays du profil sinon) et
+-- le statut, pour que le rapport ne reclasse pas ce voyageur. Purgés avec le NIF par Dac7TaxInfoPurgeScheduler.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tax_residence_country VARCHAR(2);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tax_seller_status VARCHAR(15);
+ALTER TABLE users DROP CONSTRAINT IF EXISTS chk_users_tax_seller_status;
+ALTER TABLE users ADD CONSTRAINT chk_users_tax_seller_status
+    CHECK (tax_seller_status IS NULL OR tax_seller_status IN ('INDIVIDUAL', 'PROFESSIONAL')) NOT VALID;
+ALTER TABLE users VALIDATE CONSTRAINT chk_users_tax_seller_status;
+
 ALTER TABLE users DROP CONSTRAINT IF EXISTS chk_users_tax_reminder_count;
 ALTER TABLE users ADD CONSTRAINT chk_users_tax_reminder_count CHECK (tax_reminder_count >= 0) NOT VALID;
 ALTER TABLE users VALIDATE CONSTRAINT chk_users_tax_reminder_count;
@@ -51,3 +62,8 @@ CREATE TRIGGER dac7_due_diligence_log_immutable
 
 COMMENT ON TABLE dac7_due_diligence_log IS
     'Registre DAC7 des diligences (demande, rappels, réponse, décision équipe). Immuable, sans donnée sensible.';
+
+-- « Déjà payé » (Dac7ReportReadModel.hasBeenPaidSince) part du voyageur : ces deux tables n'étaient indexées que par
+-- colis.
+CREATE INDEX IF NOT EXISTS idx_bid_supplements_traveler ON bid_supplements (traveler_id);
+CREATE INDEX IF NOT EXISTS idx_bid_amendments_traveler ON bid_amendments (traveler_id);

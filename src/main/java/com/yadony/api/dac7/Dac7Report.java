@@ -14,10 +14,10 @@ import java.util.UUID;
  *                                    l'année, triés par id
  * @param identityReviewTravelers     voyageurs déclarables dont l'identité est incomplète (compte supprimé, donnée
  *                                    manquante) : à revoir à la main, jamais déclarés en silence
- * @param outOfYearRefunds            remboursements AVANT versement dont l'opération et le remboursement ne tombent pas
- *                                    la même année civile : non déduits, ils appellent une déclaration rectificative
- * @param refundsToReconcile          remboursements à l'expéditeur APRÈS versement au voyageur : jamais déduits (le
- *                                    versement n'est pas repris), chacun daté de sa date, à réconcilier à la main
+ * @param refundsToReconcile          remboursements à l'expéditeur datés de CETTE année et liés à une opération versée
+ *                                    au voyageur (avant ou après le versement) : JAMAIS déduits, la contrepartie reste
+ *                                    le montant versé ; chacun une seule fois, dans le rapport de son année, à
+ *                                    réconcilier à la main (rectification éventuelle de l'année de l'opération)
  * @param pendingSplits               partages admin décidés dont le versement au voyageur n'est pas terminé : non
  *                                    comptés tant que le transfert n'est pas fait
  * @param unknownResidenceTravelers   voyageurs payés dont le pays de résidence est absent ou invalide (à obtenir)
@@ -26,7 +26,7 @@ import java.util.UUID;
  * @param anomalies                   lignes à vérifier à la main avant tout export
  */
 public record Dac7Report(int year, List<TravelerReport> travelers, List<TravelerReport> identityReviewTravelers,
-                         List<OutOfYearRefund> outOfYearRefunds, List<RefundToReconcile> refundsToReconcile,
+                         List<RefundToReconcile> refundsToReconcile,
                          List<PendingSplit> pendingSplits, List<UUID> unknownResidenceTravelers,
                          List<UUID> nonDeclarableTravelers, List<String> invalidPartnerJurisdictions,
                          List<Anomaly> anomalies) {
@@ -49,25 +49,24 @@ public record Dac7Report(int year, List<TravelerReport> travelers, List<Traveler
      *                           {@code COMMISSION_UNKNOWN}) : {@code commissionEur} est alors partielle
      */
     public record QuarterReport(int quarter, int operations, List<CurrencyAmounts> byCurrency, BigDecimal netEur,
-                                BigDecimal commissionEur, BigDecimal refundsDeductedEur, boolean eurComplete,
+                                BigDecimal commissionEur, boolean eurComplete,
                                 boolean commissionComplete) {
     }
 
-    /** Montants d'un trimestre dans une devise d'origine ({@code net} est déjà diminué de {@code refundsDeducted}). */
-    public record CurrencyAmounts(String currency, BigDecimal net, BigDecimal commission, BigDecimal refundsDeducted,
-                                  int operations) {
+    /** Montants d'un trimestre dans une devise d'origine. */
+    public record CurrencyAmounts(String currency, BigDecimal net, BigDecimal commission, int operations) {
     }
 
-    /** Remboursement à traiter par déclaration rectificative ({@code amountEur} au taux du jour de l'opération). */
-    public record OutOfYearRefund(UUID travelerId, Dac7Source source, UUID sourceId, String currency, BigDecimal amount,
-                                  Instant operationPaidAt, Instant refundedAt, int operationYear, int refundYear,
-                                  BigDecimal amountEur) {
-    }
-
-    /** Remboursement après versement ({@code amountEur} au taux du jour de l'opération, nul si inconnu). */
+    /**
+     * Remboursement à réconcilier ({@code amountEur} au taux du jour de l'opération, nul si inconnu).
+     *
+     * @param beforeRelease vrai si l'expéditeur a été remboursé alors que l'argent était encore en séquestre (le
+     *                      versement a pourtant eu lieu ensuite, du montant entier)
+     */
     public record RefundToReconcile(UUID travelerId, Dac7Source source, UUID sourceId, String currency,
-                                    BigDecimal amount, Instant operationPaidAt, Instant refundedAt,
-                                    boolean refundDateEstimated, BigDecimal amountEur) {
+                                    BigDecimal amount, Instant operationPaidAt, int operationYear, Instant refundedAt,
+                                    int refundYear, boolean beforeRelease, boolean refundDateEstimated,
+                                    BigDecimal amountEur) {
     }
 
     /** Partage admin décidé, versement au voyageur non terminé ({@code status} : CLAIMED ou SENDER_REFUNDED). */

@@ -92,9 +92,19 @@ public class Dac7ResidencyPolicy {
         return statusOf(residenceCountryOf(user));
     }
 
-    /** Pays de résidence fiscale du voyageur (code ISO en majuscules), {@code null} s'il est absent ou invalide. */
+    /**
+     * Pays de résidence fiscale du voyageur (code ISO en majuscules), {@code null} s'il est absent ou invalide. Pour un
+     * compte supprimé dont le NIF est gardé, le pays figé à la suppression ({@code tax_residence_country}) l'emporte.
+     */
     public static String residenceCountryOf(UserEntity user) {
-        return residenceCountryOf(user.getCountry(), user.getTravelerStatus(), user.getBusinessCountry());
+        return residenceCountryOf(user.getTaxResidenceCountry(), user.getCountry(), user.getTravelerStatus(),
+                user.getBusinessCountry());
+    }
+
+    public static String residenceCountryOf(String frozenResidenceCountry, String profileCountry, TravelerStatus status,
+                                            String businessCountry) {
+        String frozen = normalize(frozenResidenceCountry);
+        return frozen != null ? frozen : residenceCountryOf(profileCountry, status, businessCountry);
     }
 
     public static String residenceCountryOf(String profileCountry, TravelerStatus status, String businessCountry) {

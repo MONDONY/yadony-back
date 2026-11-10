@@ -52,8 +52,8 @@ class Dac7ReportServiceTest {
             Collection<UUID> ids = i.getArgument(0);
             return travelers.stream().filter(t -> ids.contains(t.travelerId())).toList();
         });
-        travelers.add(new TravelerRow(french, "FR", "INDIVIDUAL", null, true, true));
-        travelers.add(new TravelerRow(ivorian, "CI", "INDIVIDUAL", null, false, true));
+        travelers.add(new TravelerRow(french, "FR", "INDIVIDUAL", null, null, true, true));
+        travelers.add(new TravelerRow(ivorian, "CI", "INDIVIDUAL", null, null, false, true));
     }
 
     private UUID op(UUID traveler, Dac7Source source, String currency, String net, String commission, String paidAt) {
@@ -197,118 +197,82 @@ class Dac7ReportServiceTest {
         assertThat(q2.commissionEur()).isEqualByComparingTo("5.50");
     }
 
-    private RefundRow refund(UUID source, UUID traveler, String amount, String operationNet, String operationPaidAt,
-                             String refundedAt, boolean estimated, boolean afterRelease) {
+    private RefundRow refund(UUID source, UUID traveler, String amount, String operationPaidAt, String refundedAt,
+                             boolean estimated, boolean afterRelease) {
         return new RefundRow(Dac7Source.PAYMENT, source, traveler, "EUR", new BigDecimal(amount),
-                new BigDecimal(operationNet), Instant.parse(operationPaidAt), Instant.parse(refundedAt), estimated,
-                afterRelease);
+                Instant.parse(operationPaidAt), Instant.parse(refundedAt), estimated, afterRelease);
     }
 
     @Test
-    void remboursementAvantVersementMemeAnnee_deduitDuTrimestreDuVersement() {
+    void remboursementAvantVersement_jamaisDeduit_aReconcilier() {
         UUID payment = op(french, Dac7Source.PAYMENT, "EUR", "95.00", "5.00", "2026-04-10T10:00:00Z");
-        // Remboursé en partie le 25/03 (en séquestre), versé le 10/04 : c'est le deuxième trimestre qui baisse.
-        refunds.add(refund(payment, french, "30.00", "95.00", "2026-04-10T10:00:00Z", "2026-03-25T10:00:00Z",
-                false, false));
+        // Remboursé en partie le 25/03 (en séquestre) : le versement du 10/04 a pourtant porté sur le montant entier.
+        refunds.add(refund(payment, french, "30.00", "2026-04-10T10:00:00Z", "2026-03-25T10:00:00Z", false, false));
 
         Dac7Report report = service.annualReport(YEAR);
-        List<QuarterReport> quarters = only(report, french).quarters();
 
-        assertThat(quarters.get(1).netEur()).isEqualByComparingTo("65.00");
-        assertThat(quarters.get(1).refundsDeductedEur()).isEqualByComparingTo("30.00");
-        assertThat(quarters.get(1).operations()).isEqualTo(1);
-        assertThat(currency(quarters.get(1), "EUR").refundsDeducted()).isEqualByComparingTo("30.00");
-        assertThat(quarters.get(1).commissionEur()).isEqualByComparingTo("5.00");
-        assertThat(quarters.get(0).netEur()).isEqualByComparingTo("0");
-        assertThat(report.outOfYearRefunds()).isEmpty();
-        assertThat(report.refundsToReconcile()).isEmpty();
-    }
-
-    @Test
-    void remboursementAvantVersement_plafonneAuNetDeLOperation() {
-        UUID payment = op(french, Dac7Source.PAYMENT, "EUR", "95.00", "5.00", "2026-02-10T10:00:00Z");
-        refunds.add(refund(payment, french, "100.00", "95.00", "2026-02-10T10:00:00Z", "2026-02-01T10:00:00Z",
-                false, false));
-
-        QuarterReport q1 = only(service.annualReport(YEAR), french).quarters().get(0);
-
-        assertThat(q1.netEur()).isEqualByComparingTo("0.00");
-        assertThat(q1.refundsDeductedEur()).isEqualByComparingTo("95.00");
+        assertThat(only(report, french).quarters().get(1).netEur()).isEqualByComparingTo("95.00");
+        assertThat(only(report, french).quarters().get(1).operations()).isEqualTo(1);
+        assertThat(report.refundsToReconcile()).singleElement().satisfies(r -> {
+            assertThat(r.beforeRelease()).isTrue();
+            assertThat(r.amount()).isEqualByComparingTo("30.00");
+            assertThat(r.operationYear()).isEqualTo(2026);
+            assertThat(r.refundYear()).isEqualTo(2026);
+        });
     }
 
     @Test
     void remboursementApresVersement_jamaisDeduit_aReconcilier() {
         UUID payment = op(french, Dac7Source.PAYMENT, "EUR", "47.50", "2.50", "2026-06-10T12:00:00Z");
-        refunds.add(refund(payment, french, "10.00", "47.50", "2026-06-10T12:00:00Z", "2026-09-01T08:00:00Z",
-                false, true));
+        refunds.add(refund(payment, french, "10.00", "2026-06-10T12:00:00Z", "2026-09-01T08:00:00Z", false, true));
 
         Dac7Report report = service.annualReport(YEAR);
 
         // Le voyageur a gardé 47,50 : la contrepartie déclarée ne baisse pas.
         assertThat(only(report, french).quarters().get(1).netEur()).isEqualByComparingTo("47.50");
-        assertThat(only(report, french).quarters().get(1).refundsDeductedEur()).isEqualByComparingTo("0");
-        assertThat(report.outOfYearRefunds()).isEmpty();
         assertThat(report.refundsToReconcile()).singleElement().satisfies(r -> {
             assertThat(r.sourceId()).isEqualTo(payment);
             assertThat(r.travelerId()).isEqualTo(french);
             assertThat(r.amount()).isEqualByComparingTo("10.00");
             assertThat(r.operationPaidAt()).isEqualTo(Instant.parse("2026-06-10T12:00:00Z"));
+            assertThat(r.operationYear()).isEqualTo(2026);
             assertThat(r.refundedAt()).isEqualTo(Instant.parse("2026-09-01T08:00:00Z"));
+            assertThat(r.refundYear()).isEqualTo(2026);
+            assertThat(r.beforeRelease()).isFalse();
             assertThat(r.refundDateEstimated()).isFalse();
             assertThat(r.amountEur()).isEqualByComparingTo("10.00");
         });
     }
 
     @Test
-    void remboursementsPartielsSurDeuxAnnees_chacunASaDate() {
-        UUID payment = op(french, Dac7Source.PAYMENT, "EUR", "95.00", "5.00", "2026-12-01T10:00:00Z");
-        refunds.add(refund(payment, french, "10.00", "95.00", "2026-12-01T10:00:00Z", "2026-12-20T10:00:00Z",
-                false, true));
-        refunds.add(refund(payment, french, "5.00", "95.00", "2026-12-01T10:00:00Z", "2027-01-05T10:00:00Z",
-                false, true));
-
-        assertThat(service.annualReport(YEAR).refundsToReconcile())
-                .extracting(r -> r.refundedAt().toString(), r -> r.amount().toPlainString())
-                .containsExactly(org.assertj.core.groups.Tuple.tuple("2026-12-20T10:00:00Z", "10.00"),
-                        org.assertj.core.groups.Tuple.tuple("2027-01-05T10:00:00Z", "5.00"));
-    }
-
-    @Test
-    void remboursementAvantVersementDUneAutreAnnee_listeAPart() {
-        UUID payment = op(french, Dac7Source.PAYMENT, "EUR", "95.00", "5.00", "2026-01-05T10:00:00Z");
-        refunds.add(refund(payment, french, "30.00", "95.00", "2026-01-05T10:00:00Z", "2025-12-30T10:00:00Z",
-                false, false));
+    void remboursementCetteAnneeDUneOperationAnterieure_aReconcilierAvecLAnneeDeLOperation() {
+        UUID supplement = UUID.randomUUID();
+        refunds.add(new RefundRow(Dac7Source.SUPPLEMENT, supplement, french, "XOF", new BigDecimal("6559.57"),
+                Instant.parse("2025-12-30T10:00:00Z"), Instant.parse("2026-01-02T10:00:00Z"), false, true));
 
         Dac7Report report = service.annualReport(YEAR);
 
-        assertThat(only(report, french).quarters().get(0).netEur()).isEqualByComparingTo("95.00");
-        assertThat(report.outOfYearRefunds()).singleElement().satisfies(r -> {
-            assertThat(r.sourceId()).isEqualTo(payment);
-            assertThat(r.amount()).isEqualByComparingTo("30.00");
-            assertThat(r.operationYear()).isEqualTo(2026);
-            assertThat(r.refundYear()).isEqualTo(2025);
-            assertThat(r.amountEur()).isEqualByComparingTo("30.00");
+        assertThat(report.refundsToReconcile()).singleElement().satisfies(r -> {
+            assertThat(r.operationYear()).isEqualTo(2025);
+            assertThat(r.refundYear()).isEqualTo(2026);
+            assertThat(r.amountEur()).isEqualByComparingTo("10.00");
         });
+        // Aucune opération cette année : rien à déclarer pour 2026.
+        assertThat(report.travelers()).isEmpty();
     }
 
     @Test
     void remboursementDUnVoyageurNonDeclarable_ignore() {
         UUID payment = op(ivorian, Dac7Source.PAYMENT, "EUR", "95.00", "5.00", "2026-12-20T10:00:00Z");
-        refunds.add(refund(payment, ivorian, "30.00", "95.00", "2026-12-20T10:00:00Z", "2027-01-05T10:00:00Z",
-                false, true));
-        refunds.add(refund(payment, ivorian, "5.00", "95.00", "2026-12-20T10:00:00Z", "2026-12-10T10:00:00Z",
-                false, false));
+        refunds.add(refund(payment, ivorian, "30.00", "2026-12-20T10:00:00Z", "2026-12-28T10:00:00Z", false, true));
 
-        Dac7Report report = service.annualReport(YEAR);
-        assertThat(report.outOfYearRefunds()).isEmpty();
-        assertThat(report.refundsToReconcile()).isEmpty();
+        assertThat(service.annualReport(YEAR).refundsToReconcile()).isEmpty();
     }
 
     @Test
     void dateDeRemboursementEstimee_signalee() {
         UUID payment = op(french, Dac7Source.PAYMENT, "EUR", "95.00", "5.00", "2026-02-10T10:00:00Z");
-        refunds.add(refund(payment, french, "10.00", "95.00", "2026-02-10T10:00:00Z", "2026-02-11T10:00:00Z",
-                true, true));
+        refunds.add(refund(payment, french, "10.00", "2026-02-10T10:00:00Z", "2026-02-11T10:00:00Z", true, true));
 
         Dac7Report report = service.annualReport(YEAR);
         assertThat(report.anomalies())
@@ -368,7 +332,7 @@ class Dac7ReportServiceTest {
     @Test
     void identiteIncomplete_compteSupprime_revueHumaineJamaisDeclareEnSilence() {
         UUID deleted = UUID.randomUUID();
-        travelers.add(new TravelerRow(deleted, "FR", "INDIVIDUAL", null, true, false));
+        travelers.add(new TravelerRow(deleted, "FR", "INDIVIDUAL", null, null, true, false));
         op(deleted, Dac7Source.PAYMENT, "EUR", "95.00", "5.00", "2026-03-10T10:00:00Z");
         op(french, Dac7Source.PAYMENT, "EUR", "10.00", "1.00", "2026-03-10T10:00:00Z");
 
@@ -384,6 +348,22 @@ class Dac7ReportServiceTest {
     }
 
     @Test
+    void residenceFigeeALaSuppression_lEmporte() {
+        UUID deletedPro = UUID.randomUUID();
+        // Profil au Sénégal, statut et pays d'entreprise effacés : la résidence figée (BE) fait foi.
+        travelers.add(new TravelerRow(deletedPro, "SN", null, null, "BE", true, false));
+        op(deletedPro, Dac7Source.PAYMENT, "EUR", "10.00", "1.00", "2026-05-10T10:00:00Z");
+
+        Dac7Report report = service.annualReport(YEAR);
+
+        assertThat(report.nonDeclarableTravelers()).doesNotContain(deletedPro);
+        assertThat(report.identityReviewTravelers()).singleElement().satisfies(t -> {
+            assertThat(t.residenceCountry()).isEqualTo("BE");
+            assertThat(t.identityStatus()).isEqualTo(Dac7IdentityStatus.INCOMPLETE);
+        });
+    }
+
+    @Test
     void codesPartenairesInvalides_remontesDansLeRapport() {
         Dac7ReportService withBadConfig = new Dac7ReportService(readModel,
                 new Dac7ResidencyPolicy(new Dac7Properties(false, List.of("CIV"))), rates);
@@ -394,7 +374,7 @@ class Dac7ReportServiceTest {
     @Test
     void residenceInconnue_listeePourDiligence() {
         UUID unknown = UUID.randomUUID();
-        travelers.add(new TravelerRow(unknown, null, null, null, false, true));
+        travelers.add(new TravelerRow(unknown, null, null, null, null, false, true));
         op(unknown, Dac7Source.PAYMENT, "EUR", "10.00", "1.00", "2026-05-10T10:00:00Z");
 
         Dac7Report report = service.annualReport(YEAR);
@@ -415,7 +395,7 @@ class Dac7ReportServiceTest {
     @Test
     void professionnel_paysDeLEntreprise() {
         UUID pro = UUID.randomUUID();
-        travelers.add(new TravelerRow(pro, "CI", "PROFESSIONAL", "BE", true, true));
+        travelers.add(new TravelerRow(pro, "CI", "PROFESSIONAL", "BE", null, true, true));
         op(pro, Dac7Source.PAYMENT, "EUR", "10.00", "1.00", "2026-05-10T10:00:00Z");
 
         Dac7Report report = service.annualReport(YEAR);

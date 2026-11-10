@@ -182,18 +182,58 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
-    public ResponseEntity<ProblemDetail> handleNotReadable(HttpMessageNotReadableException ex) {
-        // Jamais ex.getMessage() ni la pile : Jackson y recopie le jeton fautif du corps (un NIF tapé sans guillemets,
-        // par exemple), qui partirait dans les journaux et Sentry. Une erreur du client, pas du serveur : WARN, avec
-        // les classes d'erreur seulement.
+    public ResponseEntity<ProblemDetail> handleNotReadable(HttpMessageNotReadableException ex,
+                                                           jakarta.servlet.http.HttpServletRequest request) {
+        // Jamais ex.getMessage(), la pile, la chaîne de requête ni un extrait du corps : Jackson y recopie le jeton
+        // fautif (un NIF tapé sans guillemets, par exemple), qui partirait dans les journaux et Sentry. Une erreur du
+        // client : WARN, avec de quoi la localiser (route, classes d'erreur, chemin du champ fautif sans sa valeur).
         Throwable cause = ex.getMostSpecificCause();
-        log.warn("Corps de requête illisible : {}{}", ex.getClass().getSimpleName(),
-                cause != null && cause != ex ? " (" + cause.getClass().getSimpleName() + ")" : "");
+        String field = jsonFieldPath(ex);
+        log.warn("Corps de requête illisible : {} {} : {}{}{}", request == null ? "?" : request.getMethod(),
+                routeOf(request), ex.getClass().getSimpleName(),
+                cause != null && cause != ex ? " (" + cause.getClass().getSimpleName() + ")" : "",
+                field == null ? "" : ", champ " + field);
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
                 HttpStatus.BAD_REQUEST, "Malformed request payload");
         problem.setType(URI.create(BASE_TYPE + "malformed-request"));
         problem.setTitle("Bad Request");
         return ResponseEntity.badRequest().body(problem);
+    }
+
+    /** Motif de route Spring s'il est connu ({@code /travelers/me/tax-info}), sinon le chemin, jamais la requête. */
+    private static String routeOf(jakarta.servlet.http.HttpServletRequest request) {
+        if (request == null) {
+            return "?";
+        }
+        Object pattern = request.getAttribute(
+                org.springframework.web.servlet.HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
+        return pattern != null ? pattern.toString() : request.getRequestURI();
+    }
+
+    /**
+     * Chemin Jackson du champ fautif ({@code items[2].weight}) : noms de champ et indices seulement, nettoyés et bornés,
+     * jamais la valeur ni le message de Jackson. {@code null} si l'erreur n'est pas rattachée à un champ.
+     */
+    private static String jsonFieldPath(Throwable ex) {
+        for (Throwable t = ex; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof com.fasterxml.jackson.databind.JsonMappingException mapping
+                    && !mapping.getPath().isEmpty()) {
+                StringBuilder path = new StringBuilder();
+                for (com.fasterxml.jackson.databind.JsonMappingException.Reference ref : mapping.getPath()) {
+                    if (ref.getFieldName() != null) {
+                        if (path.length() > 0) {
+                            path.append('.');
+                        }
+                        String name = ref.getFieldName().replaceAll("[^A-Za-z0-9_]", "_");
+                        path.append(name, 0, Math.min(name.length(), 64));
+                    } else if (ref.getIndex() >= 0) {
+                        path.append('[').append(ref.getIndex()).append(']');
+                    }
+                }
+                return path.length() == 0 ? null : path.toString();
+            }
+        }
+        return null;
     }
 
     @ExceptionHandler(TravelerNotEligibleForPaymentException.class)

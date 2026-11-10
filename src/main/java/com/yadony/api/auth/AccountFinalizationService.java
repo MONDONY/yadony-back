@@ -56,6 +56,30 @@ public class AccountFinalizationService {
         this.taxInfoRetention = taxInfoRetention;
     }
 
+    /**
+     * Filet : la réalisation du port ne lève pas (sa lecture vit dans sa propre transaction). Si elle levait quand
+     * même, la suppression continue et garde le NIF par prudence (purge mensuelle ensuite), sans aucune donnée au
+     * journal ; la résidence figée reprend la règle DAC7 (pays de l'entreprise pour un professionnel).
+     */
+    private java.util.Optional<TaxInfoRetentionPort.Retention> decideTaxRetention(UserEntity user) {
+        if (taxInfoRetention == null) {
+            return java.util.Optional.empty();
+        }
+        try {
+            return taxInfoRetention.retention(user);
+        } catch (RuntimeException e) {
+            log.warn("DAC7 : décision de conservation en échec pour le compte {} ({}) : NIF gardé par prudence",
+                    user.getId(), e.getClass().getSimpleName());
+            if (user.getTaxIdentificationNumber() == null) {
+                return java.util.Optional.empty();
+            }
+            boolean pro = user.getTravelerStatus() == com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL
+                    && user.getBusinessCountry() != null;
+            return java.util.Optional.of(new TaxInfoRetentionPort.Retention(
+                    pro ? user.getBusinessCountry() : user.getCountry(), user.getTravelerStatus()));
+        }
+    }
+
     @Transactional
     public void finalize(UserEntity user, FinalizationReason reason) {
         UUID userId = user.getId();
@@ -63,8 +87,10 @@ public class AccountFinalizationService {
         // Capturé avant toute pseudonymisation : sert au préfixe R2 de l'avatar.
         String firebaseUid = user.getFirebaseUid();
 
-        // 0. DAC7 : décidé AVANT tout effacement (le pays de l'entreprise d'un professionnel compte encore).
-        boolean retainTaxInfo = taxInfoRetention != null && taxInfoRetention.mustRetainTaxInfo(user);
+        // 0. DAC7 : décidé AVANT tout effacement (le pays de l'entreprise d'un professionnel compte encore). Ne lève
+        // jamais : la suppression ne dépend pas de DAC7.
+        java.util.Optional<TaxInfoRetentionPort.Retention> taxRetention = decideTaxRetention(user);
+        boolean retainTaxInfo = taxRetention.isPresent();
 
         // 1. Pseudonymise personal data
         // Téléphone et email ne sont plus stockés ici : ils disparaissent avec le
@@ -92,14 +118,21 @@ public class AccountFinalizationService {
         user.setBusinessName(null);
         user.setBusinessRegistrationNumber(null);
         user.setBusinessCountry(null);
-        // DAC7 : le NIF et le numéro de TVA identifient la personne comme le SIRET. Gardés seulement si une opération
-        // déclarable de l'année courante ou précédente reste à déclarer (yadony.dac7.retention-years, obligation
-        // légale, RGPD art. 17-3-b) ; sinon effacés avec le reste de l'identité. Plus aucun rappel dans tous les cas.
-        if (!retainTaxInfo) {
+        // DAC7 : le NIF et le numéro de TVA identifient la personne comme le SIRET. Gardés seulement si DAC7 est allumé
+        // et qu'une opération déclarable de l'année courante ou précédente reste à déclarer (yadony.dac7.retention-
+        // years, obligation légale, RGPD art. 17-3-b), puis purgés chaque mois hors fenêtre
+        // (Dac7TaxInfoPurgeScheduler) ; sinon effacés avec le reste de l'identité. Plus aucun rappel dans tous les cas.
+        if (retainTaxInfo) {
+            // Le statut et le pays de l'entreprise s'effacent juste au-dessus : la résidence DAC7 est figée à part.
+            user.setTaxResidenceCountry(taxRetention.get().residenceCountry());
+            user.setTaxSellerStatus(taxRetention.get().sellerStatus());
+        } else {
             user.setTaxIdentificationNumber(null);
             user.setTaxCountry(null);
             user.setVatNumber(null);
             user.setTaxInfoProvidedAt(null);
+            user.setTaxResidenceCountry(null);
+            user.setTaxSellerStatus(null);
         }
         user.setTaxInfoRequestedAt(null);
         user.setTaxReminderCount(0);

@@ -33,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * <p>Un voyageur par scénario (tous résidents français, identité complète, sauf mention) :
  * <ul>
  *   <li>{@code FRENCH} : carte au 31/03 23:59:59 UTC (T1) ; XOF au 01/04 00:00 (T2) ; espèces poids + grille et espèces
- *       à commission introuvable (T2) ; carte remboursée APRÈS versement (T2, non déduite) ; supplément carte (T3) ;
+ *       à commission introuvable (T2) ; carte remboursée APRÈS versement (T2, jamais déduite) ; supplément carte (T3) ;
  *       partage admin terminé (T4, daté de sa fin) et partage en attente (non compté) ; fil carte (T4) ; carte de
  *       décembre remboursée en deux fois, le 28/12 et le 05/01/2027 (T4, non déduite, deux lignes à réconcilier) ;</li>
  *   <li>{@code AMEND} : modification carte versée, modification espèces acceptée, modification espèces refusée (exclue),
@@ -41,9 +41,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *   <li>{@code VOUCHER} : bon de parrainage à 0,5 consommé sur un colis carte (T1) et sur le colis d'un fil (T2) ;</li>
  *   <li>{@code THREAD_CASH} : fil négocié en F CFA payé en espèces, commission seulement dans l'audit du fil (T2) ;</li>
  *   <li>{@code CURRENCY} : colis espèces en F CFA sur un trajet resté en euros, livraison non datée (T3, estimée) ;</li>
- *   <li>{@code BEFORE} : carte remboursée en partie AVANT versement (T3, déduite) ;</li>
- *   <li>{@code DELETED} : compte supprimé payé (revue d'identité) ; {@code PRO} : professionnel immatriculé en Belgique ;
- *       {@code IVORIAN} : hors périmètre.</li>
+ *   <li>{@code BEFORE} : carte remboursée en partie en séquestre puis versée entière (T3, jamais déduite) ;</li>
+ *   <li>{@code THREAD_NONET} : colis lié à un fil en F CFA sans net négocié (ancien) : montant et devise du colis ;</li>
+ *   <li>{@code SPLIT_ZERO} : partage tranché à 0 pour le voyageur : pas une opération ;</li>
+ *   <li>{@code DELETED} : compte supprimé payé (revue d'identité) ; {@code DELETED_PRO} : professionnel supprimé, NIF
+ *       gardé, résidence figée en France malgré un profil au Sénégal ; {@code PRO} : professionnel immatriculé en
+ *       Belgique ; {@code IVORIAN} : hors périmètre.</li>
  * </ul>
  * Hors calcul aussi : un colis espèces en transit, un paiement de 2025, un paiement supprimé.
  */
@@ -62,6 +65,9 @@ class Dac7ReportPostgresIT {
     private static final UUID CURRENCY = UUID.randomUUID();
     private static final UUID BEFORE = UUID.randomUUID();
     private static final UUID DELETED = UUID.randomUUID();
+    private static final UUID DELETED_PRO = UUID.randomUUID();
+    private static final UUID THREAD_NONET = UUID.randomUUID();
+    private static final UUID SPLIT_ZERO = UUID.randomUUID();
     private static final UUID IVORIAN = UUID.randomUUID();
     private static final UUID PRO = UUID.randomUUID();
     private static final UUID SENDER = UUID.randomUUID();
@@ -70,6 +76,7 @@ class Dac7ReportPostgresIT {
     private static UUID refundedTwice;
     private static UUID pendingSplit;
     private static UUID currencyBid;
+    private static UUID refundedBeforeRelease;
 
     @BeforeAll
     static void seed() throws Exception {
@@ -83,7 +90,8 @@ class Dac7ReportPostgresIT {
         jdbc = new JdbcTemplate(dataSource);
         readModel = new Dac7ReportReadModel(new NamedParameterJdbcTemplate(dataSource));
 
-        for (UUID id : List.of(FRENCH, AMEND, VOUCHER, THREAD_CASH, CURRENCY, BEFORE, DELETED, SENDER)) {
+        for (UUID id : List.of(FRENCH, AMEND, VOUCHER, THREAD_CASH, CURRENCY, BEFORE, DELETED, SENDER, THREAD_NONET,
+                SPLIT_ZERO)) {
             user(id, "FR");
         }
         user(IVORIAN, "CI");
@@ -98,6 +106,9 @@ class Dac7ReportPostgresIT {
         seedThreadCash();
         seedCurrencyAndEstimatedDate();
         seedRefundBeforeRelease();
+        seedThreadWithoutNegotiatedNet();
+        seedSplitAtZero();
+        seedDeletedProfessional();
 
         // Compte supprimé (identité effacée par la finalisation) mais payé dans l'année.
         payment(bid(trip(DELETED, "EUR", "10.00"), "COMPLETED", "STRIPE", "EUR"), null, "STRIPE", "EUR", "20.00",
@@ -238,11 +249,44 @@ class Dac7ReportPostgresIT {
                 + "updated_at = TIMESTAMPTZ '2026-07-10 10:00:00Z' WHERE id = ?", currencyBid);
     }
 
-    /** Remboursé de 20 en séquestre le 10/08, versé le 20/08 (libération forcée) : déduit du T3. */
+    /**
+     * Remboursé de 20 en séquestre le 10/08 (webhook entre la garde et le claim), puis versé le 20/08 : le versement
+     * part du montant entier, rien n'est déduit, le remboursement est à réconcilier.
+     */
     private static void seedRefundBeforeRelease() {
-        UUID paid = payment(bid(trip(BEFORE, "EUR", "10.00"), "COMPLETED", "STRIPE", "EUR"), null, "STRIPE", "EUR",
-                "60.00", "3.00", "2026-08-20T10:00:00Z", "20.00");
-        refundAudit(paid, "PAYMENT_PARTIALLY_REFUNDED", "20.00", "2026-08-10T10:00:00Z");
+        refundedBeforeRelease = payment(bid(trip(BEFORE, "EUR", "10.00"), "COMPLETED", "STRIPE", "EUR"), null,
+                "STRIPE", "EUR", "60.00", "3.00", "2026-08-20T10:00:00Z", "20.00");
+        refundAudit(refundedBeforeRelease, "PAYMENT_PARTIALLY_REFUNDED", "20.00", "2026-08-10T10:00:00Z");
+    }
+
+    /** Colis espèces lié à un fil XOF mais sans net négocié : 3 kg à 10 €/kg, en euros (devise du colis). */
+    private static void seedThreadWithoutNegotiatedNet() throws Exception {
+        UUID trip = trip(THREAD_NONET, "EUR", "10.00");
+        UUID thread = thread(THREAD_NONET, "XOF");
+        UUID cash = bid(trip, "COMPLETED", "CASH", "EUR");
+        jdbc.update("UPDATE bids SET linked_negotiation_thread_id = ?, weight_kg = 3.00, commission_status = 'CHARGED', "
+                + "cash_commission_charged_amount = 1.50, delivered_at = TIMESTAMP '2026-05-20 10:00:00' WHERE id = ?",
+                thread, cash);
+    }
+
+    /** Partage terminé à 0 pour le voyageur (paiement resté RELEASED, cas limite) : pas une opération. */
+    private static void seedSplitAtZero() {
+        UUID paid = payment(bid(trip(SPLIT_ZERO, "EUR", "10.00"), "COMPLETED", "STRIPE", "EUR"), null, "STRIPE",
+                "EUR", "50.00", "2.50", "2026-06-01T10:00:00Z", "47.50");
+        jdbc.update("INSERT INTO payment_splits (payment_id, sender_refund_amount, traveler_payout_amount, currency, "
+                + "mode, status, completed_at) VALUES (?, 47.50, 0.00, 'EUR', 'REFUND_TRANSFER', 'COMPLETED', "
+                + "TIMESTAMP '2026-06-02 10:00:00')", paid);
+    }
+
+    /** Professionnel immatriculé en France, profil au Sénégal, supprimé avec NIF gardé et résidence figée. */
+    private static void seedDeletedProfessional() {
+        user(DELETED_PRO, "SN");
+        payment(bid(trip(DELETED_PRO, "EUR", "10.00"), "COMPLETED", "STRIPE", "EUR"), null, "STRIPE", "EUR", "40.00",
+                "2.00", "2026-03-01T10:00:00Z", null);
+        jdbc.update("UPDATE users SET first_name = 'Utilisateur', last_name = 'supprimé', birth_date = NULL, "
+                + "residence_street = NULL, status = 'BANNED', deleted_at = now(), traveler_status = NULL, "
+                + "tax_identification_number = 'chiffre', tax_residence_country = 'FR', "
+                + "tax_seller_status = 'PROFESSIONAL' WHERE id = ?", DELETED_PRO);
     }
 
     @AfterAll
@@ -357,7 +401,7 @@ class Dac7ReportPostgresIT {
     @DisplayName("seuls les résidents déclarables à identité complète figurent ; l'ivoirien est justifié à part")
     void perimetre() {
         assertThat(report.travelers()).extracting(TravelerReport::travelerId)
-                .containsExactlyInAnyOrder(FRENCH, AMEND, VOUCHER, THREAD_CASH, CURRENCY, BEFORE, PRO);
+                .containsExactlyInAnyOrder(FRENCH, AMEND, VOUCHER, THREAD_CASH, CURRENCY, BEFORE, PRO, THREAD_NONET);
         assertThat(report.travelers()).allSatisfy(t -> assertThat(t.identityStatus())
                 .isEqualTo(Dac7IdentityStatus.COMPLETE));
         assertThat(report.nonDeclarableTravelers()).containsExactly(IVORIAN);
@@ -368,13 +412,43 @@ class Dac7ReportPostgresIT {
     }
 
     @Test
-    @DisplayName("compte supprimé payé dans l'année : jamais déclaré en silence, sort en revue d'identité")
+    @DisplayName("comptes supprimés payés dans l'année : jamais déclarés en silence, en revue d'identité")
     void compteSupprime_revueIdentite() {
-        assertThat(report.identityReviewTravelers()).singleElement().satisfies(t -> {
-            assertThat(t.travelerId()).isEqualTo(DELETED);
-            assertThat(t.identityStatus()).isEqualTo(Dac7IdentityStatus.INCOMPLETE);
-            assertThat(t.quarters().get(0).netEur()).isEqualByComparingTo("19.00");
-        });
+        assertThat(report.identityReviewTravelers()).extracting(TravelerReport::travelerId)
+                .containsExactlyInAnyOrder(DELETED, DELETED_PRO);
+        TravelerReport deleted = report.identityReviewTravelers().stream()
+                .filter(t -> t.travelerId().equals(DELETED)).findFirst().orElseThrow();
+        assertThat(deleted.identityStatus()).isEqualTo(Dac7IdentityStatus.INCOMPLETE);
+        assertThat(deleted.quarters().get(0).netEur()).isEqualByComparingTo("19.00");
+    }
+
+    @Test
+    @DisplayName("professionnel supprimé, NIF gardé : résidence figée (FR) malgré le profil au Sénégal, DÉCLARABLE")
+    void professionnelSupprime_resteDeclarable() {
+        TravelerReport pro = report.identityReviewTravelers().stream()
+                .filter(t -> t.travelerId().equals(DELETED_PRO)).findFirst().orElseThrow();
+        assertThat(pro.residenceCountry()).isEqualTo("FR");
+        assertThat(pro.identityStatus()).isEqualTo(Dac7IdentityStatus.INCOMPLETE);
+        assertThat(pro.taxInfoProvided()).isTrue();
+        assertThat(pro.quarters().get(0).netEur()).isEqualByComparingTo("38.00");
+        assertThat(report.nonDeclarableTravelers()).doesNotContain(DELETED_PRO);
+    }
+
+    @Test
+    @DisplayName("partage tranché à 0 pour le voyageur : ni opération, ni « déjà payé »")
+    void partageAZero_pasUneOperation() {
+        assertThat(report.travelers()).extracting(TravelerReport::travelerId).doesNotContain(SPLIT_ZERO);
+        assertThat(report.identityReviewTravelers()).extracting(TravelerReport::travelerId).doesNotContain(SPLIT_ZERO);
+        assertThat(readModel.hasBeenPaid(SPLIT_ZERO)).isFalse();
+    }
+
+    @Test
+    @DisplayName("colis lié à un fil sans net négocié : devise et montant du colis, pas du fil")
+    void filSansNetNegocie_deviseDuColis() {
+        QuarterReport q2 = quarter(THREAD_NONET, 2);
+        assertThat(q2.byCurrency()).extracting(CurrencyAmounts::currency).containsExactly("EUR");
+        assertThat(amounts(q2, "EUR").net()).isEqualByComparingTo("30.00");
+        assertThat(q2.netEur()).isEqualByComparingTo("30.00");
     }
 
     @Test
@@ -397,7 +471,7 @@ class Dac7ReportPostgresIT {
     }
 
     @Test
-    @DisplayName("T2 : XOF du 01/04 00:00, espèces, remboursement après versement NON déduit, commission incomplète")
+    @DisplayName("T2 : XOF du 01/04 00:00, espèces, remboursement après versement jamais déduit, commission incomplète")
     void deuxiemeTrimestre() {
         QuarterReport q2 = quarter(FRENCH, 2);
         // XOF 65 595,70 net ; espèces 35 + 20 ; carte 47,50 gardée par le voyageur malgré le remboursement.
@@ -406,7 +480,6 @@ class Dac7ReportPostgresIT {
         assertThat(amounts(q2, "XOF").commission()).isEqualByComparingTo("3279.79");
         assertThat(amounts(q2, "EUR").net()).isEqualByComparingTo("102.50");
         assertThat(amounts(q2, "EUR").commission()).isEqualByComparingTo("4.25");
-        assertThat(amounts(q2, "EUR").refundsDeducted()).isEqualByComparingTo("0");
         assertThat(q2.netEur()).isEqualByComparingTo("202.50");
         assertThat(q2.commissionEur()).isEqualByComparingTo("9.25");
         assertThat(q2.eurComplete()).isTrue();
@@ -433,7 +506,6 @@ class Dac7ReportPostgresIT {
         // 36 (partage terminé) + 57 (fil) + 38 (décembre, remboursements après versement non déduits).
         assertThat(q4.netEur()).isEqualByComparingTo("131.00");
         assertThat(q4.commissionEur()).isEqualByComparingTo("9.00");
-        assertThat(q4.refundsDeductedEur()).isEqualByComparingTo("0");
     }
 
     @Test
@@ -448,19 +520,23 @@ class Dac7ReportPostgresIT {
     }
 
     @Test
-    @DisplayName("remboursements après versement : à réconcilier, chacun à sa date, le partage n'y est pas")
+    @DisplayName("remboursements de 2026 : tous à réconcilier, une fois, avec leur année ; partages exclus")
     void remboursementsAReconcilier() {
         assertThat(report.refundsToReconcile())
-                .extracting(RefundToReconcile::sourceId, r -> r.amount().toPlainString(), RefundToReconcile::refundedAt)
+                .extracting(RefundToReconcile::sourceId, r -> r.amount().toPlainString(), RefundToReconcile::refundedAt,
+                        RefundToReconcile::beforeRelease)
                 .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple(refundedBeforeRelease, "20.00",
+                                Instant.parse("2026-08-10T10:00:00Z"), true),
                         org.assertj.core.groups.Tuple.tuple(refundedAfterRelease, "10.00",
-                                Instant.parse("2026-09-01T08:00:00Z")),
+                                Instant.parse("2026-09-01T08:00:00Z"), false),
                         org.assertj.core.groups.Tuple.tuple(refundedTwice, "10.00",
-                                Instant.parse("2026-12-28T10:00:00Z")),
-                        org.assertj.core.groups.Tuple.tuple(refundedTwice, "5.00",
-                                Instant.parse("2027-01-05T10:00:00Z")));
-        assertThat(report.refundsToReconcile()).allSatisfy(r -> assertThat(r.refundDateEstimated()).isFalse());
-        assertThat(report.outOfYearRefunds()).isEmpty();
+                                Instant.parse("2026-12-28T10:00:00Z"), false));
+        assertThat(report.refundsToReconcile()).allSatisfy(r -> {
+            assertThat(r.refundDateEstimated()).isFalse();
+            assertThat(r.refundYear()).isEqualTo(2026);
+            assertThat(r.operationYear()).isEqualTo(2026);
+        });
         assertThat(report.anomalies()).noneMatch(a -> a.type() == AnomalyType.REFUND_DATE_ESTIMATED);
     }
 
@@ -514,11 +590,10 @@ class Dac7ReportPostgresIT {
     }
 
     @Test
-    @DisplayName("remboursement en séquestre (avant versement) de la même année : déduit du trimestre du versement")
+    @DisplayName("remboursement en séquestre puis versement entier : jamais déduit, contrepartie = montant versé")
     void remboursementAvantVersement() {
         QuarterReport q3 = quarter(BEFORE, 3);
-        assertThat(q3.netEur()).isEqualByComparingTo("37.00");
-        assertThat(q3.refundsDeductedEur()).isEqualByComparingTo("20.00");
+        assertThat(q3.netEur()).isEqualByComparingTo("57.00");
         assertThat(q3.commissionEur()).isEqualByComparingTo("3.00");
     }
 
@@ -542,9 +617,10 @@ class Dac7ReportPostgresIT {
         // L'opération de 2026 entre dans la fenêtre de 2027 par son second remboursement (05/01/2027) seulement :
         // le premier (28/12/2026) appartient à 2026.
         assertThat(next.refundsToReconcile())
-                .extracting(RefundToReconcile::sourceId, r -> r.amount().toPlainString(), RefundToReconcile::refundedAt)
+                .extracting(RefundToReconcile::sourceId, r -> r.amount().toPlainString(), RefundToReconcile::refundedAt,
+                        RefundToReconcile::operationYear, RefundToReconcile::refundYear)
                 .containsExactly(org.assertj.core.groups.Tuple.tuple(refundedTwice, "5.00",
-                        Instant.parse("2027-01-05T10:00:00Z")));
+                        Instant.parse("2027-01-05T10:00:00Z"), 2026, 2027));
     }
 
     @Test

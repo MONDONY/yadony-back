@@ -56,13 +56,12 @@ public class Dac7ReportReadModel {
      * séparés, chacun à sa date).
      *
      * @param amount              montant de CE remboursement, dans la devise d'origine
-     * @param operationNet        net de l'opération remboursée (plafond d'une déduction)
      * @param refundDateEstimated vrai si la date vient de la dernière mise à jour du paiement, faute d'audit
      * @param afterRelease        vrai si le remboursement a eu lieu après le versement au voyageur
      */
     public record RefundRow(Dac7Source source, UUID sourceId, UUID travelerId, String currency, BigDecimal amount,
-                            BigDecimal operationNet, Instant operationPaidAt, Instant refundedAt,
-                            boolean refundDateEstimated, boolean afterRelease) {
+                            Instant operationPaidAt, Instant refundedAt, boolean refundDateEstimated,
+                            boolean afterRelease) {
     }
 
     /** Partage admin décidé dont le versement au voyageur n'est pas terminé. */
@@ -75,18 +74,19 @@ public class Dac7ReportReadModel {
      * présence.
      */
     public record TravelerRow(UUID travelerId, String country, String travelerStatus, String businessCountry,
-                              boolean taxInfoProvided, boolean identityComplete) {
+                              String frozenResidenceCountry, boolean taxInfoProvided, boolean identityComplete) {
     }
 
     /**
      * 1. Carte et mobile money : paiement RELEASED, daté de {@code escrow_released_at}. Net = montant moins commission,
      * plus la part de commission rendue par le bon de parrainage du VOYAGEUR ({@code commission_vouchers} consommé sur
      * le colis, comme {@code ReleaseNetCalculator}), qui n'est donc pas de la commission retenue. Partage admin : compté
-     * seulement une fois terminé (COMPLETED), daté de sa fin, net = part du voyageur, commission acquise, sans bon.
+     * seulement une fois terminé (COMPLETED) et si le voyageur reçoit quelque chose, daté de sa fin, net = part du
+     * voyageur, commission acquise, sans bon ; un partage tranché à 0 pour le voyageur n'est pas une opération.
      * Voyageur : celui du trajet du colis, ou celui du fil de négociation ; colis du bon : celui du paiement, sinon le
      * colis matérialisé du fil.
      * 2. Espèces : colis CASH livré (COMPLETED), daté de la livraison (repli signalé : dernière mise à jour). Devise du
-     * COLIS (celle du fil pour un colis négocié, où net et commission sont fixés). Net = net négocié, sinon poids × prix
+     * COLIS, sauf pour un colis au net négocié sur un fil : celle du fil, où ce net est fixé. Net = net négocié, sinon poids × prix
      * au kilo du trajet plus les articles de la grille (même base que {@code CashCommissionService}). Commission
      * prélevée au voyageur : {@code cash_commission_charged_amount}, sinon celle du fil (audit
      * {@code CASH_COMMISSION_CHARGED}, seule trace de ce montant), sinon brut moins net négociés, sinon inconnue.
@@ -121,10 +121,11 @@ public class Dac7ReportReadModel {
                            ORDER BY mb.created_at LIMIT 1))
                     ORDER BY cv.consumed_at LIMIT 1) vt ON TRUE
                 WHERE p.deleted_at IS NULL AND p.status = 'RELEASED' AND p.escrow_released_at IS NOT NULL
-                  AND (ps.id IS NULL OR ps.status = 'COMPLETED')
+                  AND (ps.id IS NULL OR (ps.status = 'COMPLETED' AND ps.traveler_payout_amount > 0))
                 UNION ALL
                 SELECT 'CASH', b.id, a.traveler_id, 'CASH',
-                       CASE WHEN nt.id IS NOT NULL THEN nt.currency ELSE b.currency END,
+                       CASE WHEN nt.id IS NOT NULL AND b.negotiated_net_eur IS NOT NULL THEN nt.currency
+                            ELSE b.currency END,
                        COALESCE(b.negotiated_net_eur,
                                 ROUND(COALESCE(b.weight_kg * a.price_per_kg, 0)
                                       + COALESCE((SELECT SUM(i.unit_price_net_snapshot * i.quantity)
@@ -181,13 +182,14 @@ public class Dac7ReportReadModel {
      * la différence avec l'audit précédent donne chaque remboursement, à sa date. Ce que l'audit n'explique pas
      * ({@code refunded_amount} au-delà du dernier cumul audité) sort en une ligne datée de la dernière mise à jour du
      * paiement, estimée, et comptée après versement par prudence. Supplément et modification en ligne : REFUNDED alors
-     * que {@code paid_out_at} est posé, après versement. Gardés si le remboursement OU l'opération tombe dans la
-     * fenêtre.
+     * que {@code paid_out_at} est posé, après versement. Seuls les paiements versés (RELEASED) sont lus : un paiement
+     * remboursé jamais versé n'est pas une opération. Fenêtre sur la date du REMBOURSEMENT seulement : chaque
+     * remboursement sort une seule fois, dans le rapport de son année.
      */
     private static final String REFUNDS_SQL = """
             WITH pay AS (
                 SELECT p.id, COALESCE(a.traveler_id, nt.traveler_id) AS traveler_id, p.currency, p.refunded_amount,
-                       p.amount - p.commission_amount AS operation_net, p.escrow_released_at, p.updated_at
+                       p.escrow_released_at, p.updated_at
                 FROM payments p
                 LEFT JOIN bids b ON b.id = p.bid_id
                 LEFT JOIN announcements a ON a.id = b.announcement_id
@@ -213,7 +215,7 @@ public class Dac7ReportReadModel {
             ),
             refunds AS (
                 SELECT 'PAYMENT' AS source, pay.id AS source_id, pay.traveler_id, pay.currency, s.amount,
-                       pay.operation_net, pay.escrow_released_at AS operation_paid_at, s.at AS refunded_at,
+                       pay.escrow_released_at AS operation_paid_at, s.at AS refunded_at,
                        FALSE AS estimated,
                        (s.action = 'REFUND_AFTER_RELEASE' OR s.at > pay.escrow_released_at) AS after_release
                 FROM steps s JOIN pay ON pay.id = s.payment_id
@@ -222,26 +224,25 @@ public class Dac7ReportReadModel {
                 SELECT 'PAYMENT', pay.id, pay.traveler_id, pay.currency,
                        pay.refunded_amount - COALESCE((SELECT MAX(e.cumulative) FROM events e
                                                        WHERE e.payment_id = pay.id), 0),
-                       pay.operation_net, pay.escrow_released_at, pay.updated_at, TRUE, TRUE
+                       pay.escrow_released_at, pay.updated_at, TRUE, TRUE
                 FROM pay
                 WHERE pay.refunded_amount > COALESCE((SELECT MAX(e.cumulative) FROM events e
                                                       WHERE e.payment_id = pay.id), 0)
                 UNION ALL
-                SELECT 'SUPPLEMENT', s.id, s.traveler_id, s.currency, s.net_amount, s.net_amount,
+                SELECT 'SUPPLEMENT', s.id, s.traveler_id, s.currency, s.net_amount,
                        s.paid_out_at AT TIME ZONE 'UTC', s.refunded_at AT TIME ZONE 'UTC', FALSE, TRUE
                 FROM bid_supplements s
                 WHERE s.deleted_at IS NULL AND s.rail <> 'CASH' AND s.status = 'REFUNDED'
                   AND s.paid_out_at IS NOT NULL AND s.refunded_at IS NOT NULL
                 UNION ALL
-                SELECT 'AMENDMENT', m.id, m.traveler_id, m.currency, m.net_amount, m.net_amount,
+                SELECT 'AMENDMENT', m.id, m.traveler_id, m.currency, m.net_amount,
                        m.paid_out_at AT TIME ZONE 'UTC', m.refunded_at AT TIME ZONE 'UTC', FALSE, TRUE
                 FROM bid_amendments m
                 WHERE m.deleted_at IS NULL AND m.rail <> 'CASH' AND m.status = 'REFUNDED'
                   AND m.paid_out_at IS NOT NULL AND m.refunded_at IS NOT NULL
             )
             SELECT * FROM refunds
-            WHERE (refunded_at >= :from AND refunded_at < :to)
-               OR (operation_paid_at >= :from AND operation_paid_at < :to)
+            WHERE refunded_at >= :from AND refunded_at < :to
             ORDER BY refunded_at, source_id
             """;
 
@@ -263,10 +264,10 @@ public class Dac7ReportReadModel {
     /**
      * Pays, statut et présence des données d'identité, jamais leur valeur ni le NIF. Identité complète : compte non
      * supprimé et, pour un professionnel, raison sociale et immatriculation ; sinon prénom, nom, date de naissance et
-     * adresse. Comptes supprimés compris (ils sortent incomplets).
+     * adresse. Comptes supprimés compris (ils sortent incomplets, avec leur résidence figée à la suppression).
      */
     private static final String TRAVELERS_SQL = """
-            SELECT u.id, u.country, u.traveler_status, u.business_country,
+            SELECT u.id, u.country, u.traveler_status, u.business_country, u.tax_residence_country,
                    u.tax_identification_number IS NOT NULL AS tax_provided,
                    (u.deleted_at IS NULL AND CASE
                         WHEN u.traveler_status = 'PROFESSIONAL'
@@ -281,7 +282,7 @@ public class Dac7ReportReadModel {
      * Le voyageur a-t-il reçu de l'argent depuis {@code :since} (tous rails) ? Mêmes prédicats que
      * {@link #OPERATIONS_SQL}, un {@code EXISTS} par chemin, chacun partant d'une colonne indexée
      * ({@code announcements.traveler_id}, {@code negotiation_threads.traveler_id}, {@code traveler_id} des suppléments
-     * et modifications). SQL portable : aussi exécuté sur H2 par les tests du contexte Spring.
+     * et modifications, indexés par V376). SQL portable : aussi exécuté sur H2 par les tests du contexte Spring.
      */
     private static final String HAS_BEEN_PAID_SQL = """
             SELECT CASE WHEN
@@ -289,11 +290,15 @@ public class Dac7ReportReadModel {
                         JOIN bids b ON b.announcement_id = a.id
                         JOIN payments p ON p.bid_id = b.id
                         WHERE a.traveler_id = :id AND p.deleted_at IS NULL AND p.status = 'RELEASED'
-                          AND p.escrow_released_at >= :since)
+                          AND p.escrow_released_at >= :since
+                          AND NOT EXISTS (SELECT 1 FROM payment_splits ps WHERE ps.payment_id = p.id
+                                          AND ps.deleted_at IS NULL AND ps.traveler_payout_amount = 0))
                 OR EXISTS (SELECT 1 FROM negotiation_threads nt
                            JOIN payments p ON p.negotiation_thread_id = nt.id
                            WHERE nt.traveler_id = :id AND p.deleted_at IS NULL AND p.status = 'RELEASED'
-                             AND p.escrow_released_at >= :since)
+                             AND p.escrow_released_at >= :since
+                             AND NOT EXISTS (SELECT 1 FROM payment_splits ps WHERE ps.payment_id = p.id
+                                             AND ps.deleted_at IS NULL AND ps.traveler_payout_amount = 0))
                 OR EXISTS (SELECT 1 FROM announcements a
                            JOIN bids b ON b.announcement_id = a.id
                            WHERE a.traveler_id = :id AND b.payment_method = 'CASH' AND b.status = 'COMPLETED'
@@ -326,7 +331,7 @@ public class Dac7ReportReadModel {
                 rs.getBoolean("date_estimated")));
     }
 
-    /** Remboursements datés dans {@code [from, to[}, ou dont l'opération l'est. */
+    /** Remboursements datés dans {@code [from, to[}. */
     public List<RefundRow> refunds(Instant from, Instant to) {
         return jdbc.query(REFUNDS_SQL, window(from, to), (rs, i) -> new RefundRow(
                 Dac7Source.valueOf(rs.getString("source")),
@@ -334,7 +339,6 @@ public class Dac7ReportReadModel {
                 uuid(rs, "traveler_id"),
                 rs.getString("currency"),
                 rs.getBigDecimal("amount"),
-                rs.getBigDecimal("operation_net"),
                 instant(rs, "operation_paid_at"),
                 instant(rs, "refunded_at"),
                 rs.getBoolean("estimated"),
@@ -366,6 +370,7 @@ public class Dac7ReportReadModel {
                     rs.getString("country"),
                     rs.getString("traveler_status"),
                     rs.getString("business_country"),
+                    rs.getString("tax_residence_country"),
                     rs.getBoolean("tax_provided"),
                     rs.getBoolean("identity_complete"))));
         }

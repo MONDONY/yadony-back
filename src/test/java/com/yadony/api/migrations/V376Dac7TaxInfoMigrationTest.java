@@ -76,6 +76,27 @@ class V376Dac7TaxInfoMigrationTest {
     }
 
     @Test
+    @DisplayName("résidence DAC7 figée : nulle par défaut, statut contrôlé")
+    void residenceFigee() {
+        Map<String, Object> row = jdbc.queryForMap(
+                "SELECT tax_residence_country, tax_seller_status FROM users WHERE id = ?", USER);
+        assertThat(row.get("tax_residence_country")).isNull();
+        assertThat(row.get("tax_seller_status")).isNull();
+        jdbc.update("UPDATE users SET tax_residence_country = 'BE', tax_seller_status = 'PROFESSIONAL' WHERE id = ?",
+                USER);
+        assertThatThrownBy(() -> jdbc.update("UPDATE users SET tax_seller_status = 'COMPANY' WHERE id = ?", USER))
+                .hasMessageContaining("chk_users_tax_seller_status");
+        jdbc.update("UPDATE users SET tax_residence_country = NULL, tax_seller_status = NULL WHERE id = ?", USER);
+    }
+
+    @Test
+    @DisplayName("suppléments et modifications indexés par voyageur")
+    void indexParVoyageur() {
+        assertThat(jdbc.queryForList("SELECT indexname FROM pg_indexes WHERE indexname IN "
+                + "('idx_bid_supplements_traveler', 'idx_bid_amendments_traveler')", String.class)).hasSize(2);
+    }
+
+    @Test
     @DisplayName("compteur de rappels négatif refusé")
     void compteurNegatifRefuse() {
         assertThatThrownBy(() -> jdbc.update("UPDATE users SET tax_reminder_count = -1 WHERE id = ?", USER))
