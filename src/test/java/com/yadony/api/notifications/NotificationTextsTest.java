@@ -663,7 +663,9 @@ class NotificationTextsTest {
 
     @Test
     void everyCatalogueEntryIsCoveredByTheWorstCase() {
-        Set<String> helpers = Set.of("corridor", "corridorFromLabel", "kg", "eur", "amount", "mobileMoneyAmount");
+        // kycVerificationReminder : textes produit plus longs que les caps push, testés à part (douze clés).
+        Set<String> helpers = Set.of("corridor", "corridorFromLabel", "kg", "eur", "amount", "mobileMoneyAmount",
+                "kycVerificationReminder");
         List<String> declared = new ArrayList<>();
         for (Method m : NotificationTexts.class.getDeclaredMethods()) {
             if (Modifier.isPublic(m.getModifiers()) && Modifier.isStatic(m.getModifiers())
@@ -702,5 +704,35 @@ class NotificationTextsTest {
         assertThat(sentinel.body()).isEqualTo("Prix accepté. Réglez la commission sous 1 h pour confirmer ce colis.");
         NotificationText blank = NotificationTexts.bidNegotiationCommissionDue(TestMessages.en(), " ", 3);
         assertThat(blank.body()).isEqualTo("Price agreed. Pay the service fee within 3 h to confirm this parcel.");
+    }
+
+    /** Relances de vérification d'identité : 12 libellés, au contenu défini par le produit (plus longs que les caps push). */
+    @ParameterizedTest
+    @MethodSource("deuxLangues")
+    void kycVerificationReminder_douzeCles_sansTiretCadratinNiReserver(Messages m) {
+        for (String reminderCase : new String[] {"incomplete", "rejected"}) {
+            for (int attempt = 1; attempt <= 3; attempt++) {
+                NotificationText t = NotificationTexts.kycVerificationReminder(m, reminderCase, attempt);
+                String label = reminderCase + "." + attempt;
+                assertThat(t.title()).as(label).isNotBlank().doesNotStartWith("notification.");
+                assertThat(t.body()).as(label).isNotBlank().doesNotStartWith("notification.");
+                for (String text : new String[] {t.title(), t.body()}) {
+                    assertThat(text).as(label).doesNotContain("\u2014").doesNotContain("{0}");
+                    assertThat(text.toLowerCase()).as(label).doesNotContain("réserv").doesNotContain("book");
+                }
+            }
+        }
+    }
+
+    @Test
+    void kycVerificationReminder_textesExacts() {
+        assertThat(NotificationTexts.kycVerificationReminder(TestMessages.fr(), "rejected", 2)).isEqualTo(
+                new NotificationText("Réessayez votre vérification",
+                        "Une fois vérifié, vous pouvez publier et recevoir vos paiements. Vos documents ne sont "
+                                + "jamais montrés aux autres membres."));
+        assertThat(NotificationTexts.kycVerificationReminder(TestMessages.en(), "incomplete", 3)).isEqualTo(
+                new NotificationText("Last reminder: your verification",
+                        "A few minutes are enough to publish your trips or parcels and get paid. Your documents "
+                                + "stay confidential."));
     }
 }

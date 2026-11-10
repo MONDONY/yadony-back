@@ -175,10 +175,22 @@ class NotificationEmailServiceTest {
         @SuppressWarnings("unchecked")
         org.springframework.beans.factory.ObjectProvider<SearchSuggestionUnsubscribeLinks> unsubscribe =
                 mock(org.springframework.beans.factory.ObjectProvider.class);
-        new NotificationEmailService(true, userRepository, contacts, prefs, resend, messages, provider, unsubscribe)
-                .send(userId, "STRIPE_ONBOARDING_INCOMPLETE", "t", "b", Map.of());
+        @SuppressWarnings("unchecked")
+        org.springframework.beans.factory.ObjectProvider<KycReminderUnsubscribeLinks> kycUnsubscribe =
+                mock(org.springframework.beans.factory.ObjectProvider.class);
+        KycReminderUnsubscribeLinks kycLinks = mock(KycReminderUnsubscribeLinks.class);
+        when(kycUnsubscribe.getIfAvailable()).thenReturn(kycLinks);
+        when(kycLinks.urlFor(userId)).thenReturn(Optional.of(KYC_UNSUBSCRIBE));
+        NotificationEmailService service = new NotificationEmailService(true, userRepository, contacts, prefs,
+                resend, messages, provider, unsubscribe, kycUnsubscribe);
+        service.send(userId, "STRIPE_ONBOARDING_INCOMPLETE", "t", "b", Map.of());
 
         verify(resend).sendNotification(anyString(), any(), anyString(), anyString(), anyString(), eq(cta), any());
+
+        // Le lien de désinscription des relances est bien branché par le constructeur Spring.
+        service.send(userId, "KYC_ACTION_REQUIRED", "t", "b", RELANCE);
+        verify(resend).sendNotification(anyString(), eq(Kind.REMINDER), anyString(), anyString(), anyString(),
+                nullable(String.class), eq(KYC_UNSUBSCRIBE), any());
     }
 
     @Test
@@ -222,6 +234,89 @@ class NotificationEmailServiceTest {
         verify(links, never()).urlFor(any());
         verify(resend).sendNotification(eq("awa@exemple.com"), eq(Kind.RECEIPT), eq("PAYMENT_RELEASED"),
                 eq("t"), eq("b"), eq("https://yadony.com/ouvrir?type=PAYMENT_RELEASED"), any());
+    }
+
+    // ── Relance de vérification d'identité ───────────────────────────────────
+
+    private static final Map<String, String> RELANCE =
+            Map.of("type", "KYC_ACTION_REQUIRED", "reminder", "true", "reminderNumber", "2");
+    private static final String KYC_UNSUBSCRIBE =
+            "https://api.yadony.com/api/v1/public/notifications/kyc-reminders/unsubscribe?t=abc";
+
+    private NotificationEmailService withKycLinks(KycReminderUnsubscribeLinks kycLinks) {
+        return new NotificationEmailService(true, userRepository, contacts, prefs, resend, messages,
+                java.util.List.of(), mock(SearchSuggestionUnsubscribeLinks.class), kycLinks, clock);
+    }
+
+    @Test
+    void email_relance_coupeeParEmailAlertsTips() {
+        KycReminderUnsubscribeLinks kycLinks = mock(KycReminderUnsubscribeLinks.class);
+        when(prefs.isEmailAllowed(userId, Kind.REMINDER)).thenReturn(false);
+
+        withKycLinks(kycLinks).send(userId, "KYC_ACTION_REQUIRED", "Votre vérification vous attend", "b", RELANCE);
+
+        verify(prefs).isEmailAllowed(userId, Kind.REMINDER);
+        verify(resend, never()).sendNotification(anyString(), any(), anyString(), anyString(), anyString(),
+                nullable(String.class), nullable(String.class), any());
+        verify(resend, never()).sendNotification(anyString(), any(), anyString(), anyString(), anyString(),
+                nullable(String.class), any());
+    }
+
+    @Test
+    void email_relance_porteListUnsubscribe() {
+        KycReminderUnsubscribeLinks kycLinks = mock(KycReminderUnsubscribeLinks.class);
+        when(kycLinks.urlFor(userId)).thenReturn(Optional.of(KYC_UNSUBSCRIBE));
+
+        withKycLinks(kycLinks).send(userId, "KYC_ACTION_REQUIRED", "Votre vérification vous attend", "b", RELANCE);
+
+        // Type effectif pour la ligne propre de l'e-mail ; le bouton garde le type que l'app ouvre.
+        verify(resend).sendNotification(eq("awa@exemple.com"), eq(Kind.REMINDER), eq("KYC_VERIFICATION_REMINDER"),
+                eq("Votre vérification vous attend"), eq("b"),
+                eq("https://yadony.com/ouvrir?type=KYC_ACTION_REQUIRED"), eq(KYC_UNSUBSCRIBE), any());
+    }
+
+    /** Sans lien de désinscription des relances (bean absent) : l'e-mail ordinaire part quand même. */
+    @Test
+    void email_relance_sansLienDeDesinscription_partSansLien() {
+        withKycLinks(null).send(userId, "KYC_ACTION_REQUIRED", "Votre vérification vous attend", "b", RELANCE);
+
+        verify(resend).sendNotification(eq("awa@exemple.com"), eq(Kind.REMINDER), eq("KYC_VERIFICATION_REMINDER"),
+                eq("Votre vérification vous attend"), eq("b"),
+                eq("https://yadony.com/ouvrir?type=KYC_ACTION_REQUIRED"), any());
+        verify(resend, never()).sendNotification(anyString(), any(), anyString(), anyString(), anyString(),
+                nullable(String.class), anyString(), any());
+    }
+
+    /** Une relance compte dans le plafond de 6 e-mails coupables par jour. */
+    @Test
+    void email_relance_compteDansLePlafond() {
+        NotificationEmailService service = withKycLinks(mock(KycReminderUnsubscribeLinks.class));
+        for (int i = 0; i < NotificationEmailService.DAILY_CAP + 1; i++) {
+            service.send(userId, "KYC_ACTION_REQUIRED", "t", "b", RELANCE);
+        }
+
+        verify(resend, times(NotificationEmailService.DAILY_CAP)).sendNotification(anyString(), eq(Kind.REMINDER),
+                anyString(), anyString(), anyString(), nullable(String.class), any());
+    }
+
+    @Test
+    void email_vraiRefus_sansDesinscription() {
+        KycReminderUnsubscribeLinks kycLinks = mock(KycReminderUnsubscribeLinks.class);
+        when(prefs.isEmailAllowed(userId, Kind.REMINDER)).thenReturn(false);
+
+        NotificationEmailService service = withKycLinks(kycLinks);
+        for (int i = 0; i < NotificationEmailService.DAILY_CAP + 1; i++) {
+            service.send(userId, "KYC_ACTION_REQUIRED", "Vérification à reprendre", "b",
+                    Map.of("type", "KYC_ACTION_REQUIRED"));
+        }
+
+        // Décision : jamais coupée, jamais plafonnée, jamais de lien de désinscription.
+        verify(kycLinks, never()).urlFor(any());
+        verify(resend, times(NotificationEmailService.DAILY_CAP + 1)).sendNotification(eq("awa@exemple.com"),
+                eq(Kind.DECISION), eq("KYC_ACTION_REQUIRED"), eq("Vérification à reprendre"), eq("b"),
+                eq("https://yadony.com/ouvrir?type=KYC_ACTION_REQUIRED"), any());
+        verify(resend, never()).sendNotification(anyString(), any(), anyString(), anyString(), anyString(),
+                nullable(String.class), anyString(), any());
     }
 
     private NotificationEmailService withLinks(NotificationEmailLink... links) {

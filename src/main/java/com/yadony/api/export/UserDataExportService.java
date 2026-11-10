@@ -76,7 +76,8 @@ public class UserDataExportService {
         );
 
         KycExport kyc = kycRepository.findByUserId(user.getId())
-                .map(k -> new KycExport(k.getStatus().name(), k.getRejectionReason()))
+                .map(k -> new KycExport(k.getStatus().name(), k.getRejectionReason(),
+                        user.getKycReminderCount(), user.getKycRemindersOptedOutAt()))
                 .orElse(null);
 
         List<RecipientDto> recipients = recipientRepository.findByUserIdOrderByUpdatedAtDesc(user.getId())

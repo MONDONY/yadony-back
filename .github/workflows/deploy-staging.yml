@@ -196,6 +196,8 @@ jobs:
           BID_SUPPLEMENT_ENABLED=${{ vars.BID_SUPPLEMENT_ENABLED || 'false' }}
           # Modification d'un colis accepté : éteinte par défaut, allumée par la variable d'environnement GitHub.
           BID_AMENDMENT_ENABLED=${{ vars.BID_AMENDMENT_ENABLED || 'false' }}
+          # Relances de vérification d'identité (J+1/J+3/J+7) : éteintes par défaut.
+          YADONY_KYC_VERIFICATION_REMINDERS_ENABLED=${{ vars.YADONY_KYC_VERIFICATION_REMINDERS_ENABLED || 'false' }}
           # Rail mobile money pawaPay : token API du dashboard SANDBOX (staging ne parle
           # jamais à la production pawaPay, PAWAPAY_BASE_URL garde son défaut sandbox).
           # Secret d environnement staging. Le rail reste fermé tant que PAWAPAY_ENABLED

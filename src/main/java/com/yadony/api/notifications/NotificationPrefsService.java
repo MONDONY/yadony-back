@@ -144,6 +144,10 @@ public class NotificationPrefsService {
             Map.entry("TRIP_DEPARTURE_PROMPT",        "pushRemindersTips"),
             Map.entry("TRIP_ARRIVAL_PROMPT",          "pushRemindersTips"),
             Map.entry("FIRST_ACTION_REMINDER",        "pushRemindersTips"),
+            // Relance automatique de la vérification d'identité (KYC_ACTION_REQUIRED portant
+            // reminder=true, voir NotificationTypes.effectiveType) : un rappel, pas une décision.
+            // Hors ALWAYS_ON à dessein, pour qu'elle compte dans le plafond de 10 push par jour.
+            Map.entry(NotificationTypes.KYC_VERIFICATION_REMINDER, "pushRemindersTips"),
             Map.entry("CALL_MISSED",                  "pushMissedCalls"),
             Map.entry("automation_capacity_free",     "pushTravelerAutomations"),
             Map.entry("automation_loyal_sender",      "pushTravelerAutomations"),
@@ -193,7 +197,8 @@ public class NotificationPrefsService {
             "REFERRAL_REWARD_AVAILABLE",
             // Décision de l'admin sur le badge GP Pro
             "GP_PRO_APPROVED", "GP_PRO_REJECTED", "GP_PRO_REVOKED",
-            // Vérification d'identité
+            // Vérification d'identité. KYC_ACTION_REQUIRED n'est toujours actif que sans le
+            // drapeau reminder : la relance prend le type effectif KYC_VERIFICATION_REMINDER.
             "KYC_VERIFIED", "KYC_ACTION_REQUIRED", "KYC_RESET",
             // Litiges et absences
             "DISPUTE_RESOLVED", "SENDER_NOSHOW_REPORTED", "SENDER_NOSHOW_WITHDRAWN", "NOSHOW_DECISION",

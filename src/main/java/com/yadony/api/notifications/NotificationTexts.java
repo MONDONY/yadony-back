@@ -779,6 +779,15 @@ public final class NotificationTexts {
         return new NotificationText(m.get(prefix + ".title"), body);
     }
 
+    /**
+     * Relance de vérification d'identité. reminderCase : incomplete ou rejected ; attempt : 1 à 3.
+     * Textes plus longs que les caps push : le contenu est celui validé par le produit.
+     */
+    public static NotificationText kycVerificationReminder(Messages m, String reminderCase, int attempt) {
+        String prefix = "notification.kyc-reminder." + reminderCase + "." + attempt;
+        return new NotificationText(m.get(prefix + ".title"), m.get(prefix + ".body"));
+    }
+
     public static NotificationText stripeOnboardingIncomplete(Messages m) {
         return new NotificationText(m.get("notification.stripe-onboarding-incomplete.title"),
                 m.get("notification.stripe-onboarding-incomplete.body"));

@@ -62,6 +62,9 @@ yadony:
   activation:
     first-action-reminders:
       enabled: ${YADONY_ACTIVATION_FIRST_ACTION_REMINDERS_ENABLED:true}
+  kyc:
+    verification-reminders:
+      enabled: ${YADONY_KYC_VERIFICATION_REMINDERS_ENABLED:false}
   stripe:
     connect:
       return-url: "https://api-staging.yadony.com/api/v1/payments/onboarding/return"

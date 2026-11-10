@@ -97,7 +97,7 @@
                 Vous recevez cet e-mail car il concerne votre compte Yadony.
               </p>
               <p th:if="${unsubscribeUrl != null}" class="muted" style="margin:0 0 4px; color:#54504A; font-size:12px; line-height:18px;">
-                <span th:text="#{email.notif.why.suggestion}">Vous recevez cet e-mail car vous avez cherché ce trajet sur Yadony.</span>
+                <span th:text="${unsubscribeWhy}">Vous recevez cet e-mail car vous avez cherché ce trajet sur Yadony.</span>
                 <a class="link" th:href="${unsubscribeUrl}" href="https://api.yadony.com" target="_blank" rel="noopener" style="color:#0A4DD9; font-weight:600; text-decoration:underline;" th:text="${unsubscribeLabel}">Ne plus recevoir ces suggestions</a>
               </p>
               <p class="muted" style="margin:0 0 4px; color:#54504A; font-size:12px; line-height:18px;" th:text="#{email.otp.no-reply}">

@@ -125,6 +125,8 @@ yadony:
       expire-check-cron: "-"
   kyc:
     enforce: false
+    verification-reminders:
+      cron: "-"
   stripe:
     enforce: false
     webhook:

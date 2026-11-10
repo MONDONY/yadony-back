@@ -84,7 +84,10 @@ public class FcmService {
     }
 
     public boolean sendToUser(UUID userId, String title, String body, Map<String, String> data) {
-        String notifType = data != null ? data.get("type") : null;
+        // Type effectif : une relance de vérification (KYC_ACTION_REQUIRED + reminder=true) suit
+        // les règles d'une relance (réglage, plafond du jour), pas celles d'une décision. Le
+        // payload envoyé à l'app, lui, garde le type d'origine : c'est lui qu'elle sait ouvrir.
+        String notifType = NotificationTypes.effectiveType(data != null ? data.get("type") : null, data);
         if (NotificationPrefsService.isFeedOnly(notifType)) {
             log.debug("[FCM] Type {} réservé au feed, pas de push user={}", notifType, userId);
             return false;

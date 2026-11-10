@@ -286,6 +286,79 @@ class ResendEmailServiceTest {
     }
 
     @Test
+    @DisplayName("sendNotification — relance de vérification : ligne propre, lien et en-têtes de désinscription des relances")
+    @SuppressWarnings("unchecked")
+    void notificationEmail_kycReminderCarriesItsOwnUnsubscribe() {
+        String open = "https://yadony.com/ouvrir?type=KYC_ACTION_REQUIRED";
+        String unsubscribe = "https://api.yadony.com/api/v1/public/notifications/kyc-reminders/unsubscribe?t=abc.def";
+        service.sendNotification("user@example.com", com.yadony.api.notifications.NotificationEmailPolicy.Kind.REMINDER,
+                "KYC_VERIFICATION_REMINDER", "Votre vérification vous attend", "Terminez-la en quelques minutes.",
+                open, unsubscribe, TestMessages.fr());
+
+        Map<String, Object> payload = lastPayload();
+        // Thymeleaf échappe l'apostrophe dans le HTML : on vérifie le HTML sans elle, le texte brut avec.
+        assertThat((String) payload.get("html"))
+                .contains("Vérification d&#39;identité")
+                .contains("Vos documents sont traités par Didit, spécialiste de la vérification")
+                .contains("Ne plus recevoir les rappels de vérification").contains(unsubscribe)
+                // Bouton propre à la relance, vers l'écran de vérification (ouvrir?type=KYC_ACTION_REQUIRED).
+                .contains("Terminer la vérification").contains("href=\"" + open + "\"")
+                .doesNotContain("Ouvrir Yadony")
+                .doesNotContain("cherché ce trajet").doesNotContain("Ne plus recevoir ces suggestions")
+                .doesNotContain("Vous pouvez couper ces e-mails")
+                .doesNotContain("??");
+        assertThat((String) payload.get("text"))
+                .contains("La vérification d'identité vous permet de publier un trajet ou une demande de colis")
+                .contains("Yadony n'en garde aucune copie")
+                .contains("Cela ne prend que quelques minutes dans l'application Yadony.")
+                .contains("Vous recevez cet e-mail car la vérification de votre identité sur Yadony n'est pas encore terminée.")
+                .contains("Ne plus recevoir les rappels de vérification : " + unsubscribe)
+                .contains("Terminer la vérification : " + open)
+                .doesNotContain("Ouvrir Yadony")
+                .doesNotContain("cherché ce trajet");
+        assertThat((Map<String, String>) payload.get("headers"))
+                .containsEntry("List-Unsubscribe", "<" + unsubscribe + ">")
+                .containsEntry("List-Unsubscribe-Post", "List-Unsubscribe=One-Click");
+
+        service.sendNotification("user@example.com", com.yadony.api.notifications.NotificationEmailPolicy.Kind.REMINDER,
+                "KYC_VERIFICATION_REMINDER", "Your verification is waiting", "b", open, unsubscribe, TestMessages.en());
+        Map<String, Object> en = lastPayload();
+        assertThat((String) en.get("html")).contains("Identity verification")
+                .contains("handled by Didit, an identity verification specialist")
+                .contains("Stop identity verification reminders").contains("Finish verification")
+                .doesNotContain("Open Yadony").doesNotContain("??");
+        assertThat((String) en.get("text")).contains("Stop identity verification reminders : " + unsubscribe)
+                .contains("Finish verification : " + open)
+                .contains("It only takes a few minutes in the Yadony app.")
+                .contains("your identity verification on Yadony is not finished yet");
+    }
+
+    @Test
+    @DisplayName("sendNotification — vrai refus de vérification : une décision, sans désinscription ni ligne des relances")
+    void notificationEmail_kycDecisionStaysADecision() {
+        service.sendNotification("user@example.com", com.yadony.api.notifications.NotificationEmailPolicy.Kind.DECISION,
+                "KYC_ACTION_REQUIRED", "Vérification à reprendre", "b",
+                "https://yadony.com/ouvrir?type=KYC_ACTION_REQUIRED", TestMessages.fr());
+
+        Map<String, Object> payload = lastPayload();
+        assertThat(payload).doesNotContainKey("headers");
+        assertThat((String) payload.get("html")).contains("Décision")
+                .contains("Vous recevez cet e-mail car il concerne votre compte Yadony.")
+                .contains("Ouvrir Yadony").doesNotContain("Terminer la vérification")
+                .doesNotContain("Didit").doesNotContain("rappels de vérification").doesNotContain("??");
+        assertThat((String) payload.get("text"))
+                .contains("Ouvrir Yadony : https://yadony.com/ouvrir?type=KYC_ACTION_REQUIRED")
+                .doesNotContain("Terminer la vérification");
+
+        service.sendNotification("user@example.com", com.yadony.api.notifications.NotificationEmailPolicy.Kind.DECISION,
+                "KYC_ACTION_REQUIRED", "Verification to redo", "b",
+                "https://yadony.com/ouvrir?type=KYC_ACTION_REQUIRED", TestMessages.en());
+        assertThat((String) lastPayload().get("text"))
+                .contains("Open Yadony : https://yadony.com/ouvrir?type=KYC_ACTION_REQUIRED")
+                .doesNotContain("Finish verification");
+    }
+
+    @Test
     @DisplayName("sendNotification — sans désinscription, ni en-têtes List-Unsubscribe ni ligne propre (anglais)")
     void notificationEmail_withoutUnsubscribe_hasNoListHeaders() {
         service.sendNotification("user@example.com", com.yadony.api.notifications.NotificationEmailPolicy.Kind.SUGGESTION,
