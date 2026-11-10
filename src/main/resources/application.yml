@@ -407,6 +407,22 @@ yadony:
     # transmis par deploy-prod.yml et deploy-staging.yml (vars.YADONY_INDIVIDUAL_FREQUENCY_SCHEDULER_ENABLED).
     scheduler-enabled: ${YADONY_INDIVIDUAL_FREQUENCY_SCHEDULER_ENABLED:false}
     cron: ${YADONY_INDIVIDUAL_FREQUENCY_CRON:0 30 4 * * *}
+  dac7:
+    # Lot 3a DAC7 : endpoints voyageur GET/PUT /travelers/me/tax-info (404 dac7-disabled tant qu'éteint). ÉTEINT par
+    # défaut, transmis par deploy-prod.yml et deploy-staging.yml (vars.YADONY_DAC7_ENABLED). Ne pas l'allumer avant la
+    # mise à jour de la politique de confidentialité et des CGU (préavis de 30 jours) : la collecte du NIF en dépend.
+    enabled: ${YADONY_DAC7_ENABLED:false}
+    # États ou territoires PARTENAIRES hors Union dont les résidents sont déclarables (codes ISO alpha-2). VIDE :
+    # la liste de l'arrêté du 26/12/2022 reste à confirmer pays par pays (dont CI, SN, ML, CM) par l'expert-comptable.
+    # Un code invalide empêche le démarrage (une faute de frappe ne doit pas retirer des résidents en silence).
+    partner-jurisdictions: []
+    # Suppression de compte, DAC7 allumé : le NIF d'un voyageur déclarable payé depuis le 1er janvier de l'année
+    # courante moins (retention-years − 1) est gardé pour la déclaration de janvier (2 = année courante et précédente),
+    # puis purgé par la tâche mensuelle dès qu'il sort de cette fenêtre. À confirmer par l'expert-comptable.
+    retention-years: 2
+    # Purge mensuelle des NIF gardés sur les comptes supprimés hors fenêtre (Dac7TaxInfoPurgeScheduler). TOUJOURS
+    # active, même DAC7 éteint : mesure de protection des données.
+    purge-cron: ${YADONY_DAC7_PURGE_CRON:0 0 5 1 * *}
   billing:
     # Faux tant que le lot 2 (Stripe Checkout) n'est pas en production :
     # sans lui, les comptes en grâce n'ont aucun moyen de s'abonner.

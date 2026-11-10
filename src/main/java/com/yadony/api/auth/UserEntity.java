@@ -342,6 +342,45 @@ public class UserEntity extends BaseEntity {
     @Column(name = "business_country", length = 2)
     private String businessCountry;
 
+    // DAC7 (lot 3a, V376) : numéro d'identification fiscale, pays d'émission du NIF et numéro de TVA facultatif.
+    // Chiffrés au repos (AES-256-GCM) comme pro_siret. Jamais dans un WHERE, un ORDER BY, un UNIQUE, un journal, un
+    // payload d'audit, une réponse publique ou invitée : seul TravelerTaxInfoService les lit, et ne les renvoie que
+    // masqués. Le pays de résidence fiscale n'est pas ici : c'est {@link #country} (ou le pays de l'entreprise).
+    @Column(name = "tax_identification_number", length = 255)
+    @jakarta.persistence.Convert(converter = com.yadony.api.common.EncryptedStringConverter.class)
+    private String taxIdentificationNumber;
+
+    @Column(name = "tax_country", length = 255)
+    @jakarta.persistence.Convert(converter = com.yadony.api.common.EncryptedStringConverter.class)
+    private String taxCountry;
+
+    @Column(name = "vat_number", length = 255)
+    @jakarta.persistence.Convert(converter = com.yadony.api.common.EncryptedStringConverter.class)
+    private String vatNumber;
+
+    /** Première demande du NIF (lot 3b), base des rappels. */
+    @Column(name = "tax_info_requested_at")
+    private Instant taxInfoRequestedAt;
+
+    @org.hibernate.annotations.ColumnDefault("0")
+    @Column(name = "tax_reminder_count", nullable = false)
+    private int taxReminderCount;
+
+    /** Dernière fois que le voyageur a fourni ou modifié ses informations fiscales. */
+    @Column(name = "tax_info_provided_at")
+    private Instant taxInfoProvidedAt;
+
+    /**
+     * Compte supprimé dont le NIF est gardé pour la déclaration : pays de résidence DAC7 et statut figés à la
+     * suppression (qui efface le statut et le pays de l'entreprise). Nuls pour un compte actif. Purgés avec le NIF.
+     */
+    @Column(name = "tax_residence_country", length = 2)
+    private String taxResidenceCountry;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "tax_seller_status", length = 15)
+    private com.yadony.api.travelerstatus.TravelerStatus taxSellerStatus;
+
     // Limite mensuelle de trajets publiés, réglée dans l'admin. null = aucune limite (aucune valeur par
     // défaut). Un GP Pro validé n'est jamais limité.
     @Column(name = "monthly_trip_limit")
@@ -763,6 +802,32 @@ public class UserEntity extends BaseEntity {
         this.businessRegistrationNumber = null;
         this.businessCountry = null;
         return true;
+    }
+
+    public String getTaxIdentificationNumber() { return taxIdentificationNumber; }
+    public void setTaxIdentificationNumber(String taxIdentificationNumber) { this.taxIdentificationNumber = taxIdentificationNumber; }
+
+    public String getTaxCountry() { return taxCountry; }
+    public void setTaxCountry(String taxCountry) { this.taxCountry = taxCountry; }
+
+    public String getVatNumber() { return vatNumber; }
+    public void setVatNumber(String vatNumber) { this.vatNumber = vatNumber; }
+
+    public Instant getTaxInfoRequestedAt() { return taxInfoRequestedAt; }
+    public void setTaxInfoRequestedAt(Instant taxInfoRequestedAt) { this.taxInfoRequestedAt = taxInfoRequestedAt; }
+
+    public int getTaxReminderCount() { return taxReminderCount; }
+    public void setTaxReminderCount(int taxReminderCount) { this.taxReminderCount = taxReminderCount; }
+
+    public Instant getTaxInfoProvidedAt() { return taxInfoProvidedAt; }
+    public void setTaxInfoProvidedAt(Instant taxInfoProvidedAt) { this.taxInfoProvidedAt = taxInfoProvidedAt; }
+
+    public String getTaxResidenceCountry() { return taxResidenceCountry; }
+    public void setTaxResidenceCountry(String taxResidenceCountry) { this.taxResidenceCountry = taxResidenceCountry; }
+
+    public com.yadony.api.travelerstatus.TravelerStatus getTaxSellerStatus() { return taxSellerStatus; }
+    public void setTaxSellerStatus(com.yadony.api.travelerstatus.TravelerStatus taxSellerStatus) {
+        this.taxSellerStatus = taxSellerStatus;
     }
 
     public Integer getMonthlyTripLimit() { return monthlyTripLimit; }

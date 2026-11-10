@@ -39,6 +39,7 @@ class AccountFinalizationServiceTest {
     @Mock private AuditService auditService;
     @Mock private FirebaseContactService firebaseContact;
     @Mock private com.yadony.api.common.stripe.AdminAlertService adminAlertService;
+    @Mock private TaxInfoRetentionPort taxInfoRetention;
 
     @InjectMocks private AccountFinalizationService service;
 
@@ -159,6 +160,119 @@ class AccountFinalizationServiceTest {
         assertThat(user.getBusinessName()).isNull();
         assertThat(user.getBusinessRegistrationNumber()).isNull();
         assertThat(user.getBusinessCountry()).isNull();
+    }
+
+    @Test
+    @DisplayName("efface les informations fiscales DAC7 : NIF, pays d'émission, TVA et leur suivi")
+    void clearsDac7TaxInfo() {
+        UserEntity user = makeUser();
+        user.setTaxIdentificationNumber("3023217600053");
+        user.setTaxCountry("FR");
+        user.setVatNumber("FR40303265045");
+        user.setTaxInfoProvidedAt(java.time.Instant.now());
+        user.setTaxInfoRequestedAt(java.time.Instant.now());
+        user.setTaxReminderCount(2);
+        com.google.firebase.auth.FirebaseAuth mockAuth = mock(com.google.firebase.auth.FirebaseAuth.class);
+
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class)) {
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockAuth);
+            service.finalize(user, FinalizationReason.HARD_IMMEDIATE);
+        }
+
+        assertThat(user.getTaxIdentificationNumber()).isNull();
+        assertThat(user.getTaxCountry()).isNull();
+        assertThat(user.getVatNumber()).isNull();
+        assertThat(user.getTaxInfoProvidedAt()).isNull();
+        assertThat(user.getTaxInfoRequestedAt()).isNull();
+        assertThat(user.getTaxReminderCount()).isZero();
+    }
+
+    private UserEntity userWithTaxInfo() {
+        UserEntity user = makeUser();
+        user.setTaxIdentificationNumber("3023217600053");
+        user.setTaxCountry("FR");
+        user.setVatNumber("FR40303265045");
+        user.setTaxInfoProvidedAt(java.time.Instant.parse("2026-03-01T10:00:00Z"));
+        user.setTaxInfoRequestedAt(java.time.Instant.now());
+        user.setTaxReminderCount(2);
+        return user;
+    }
+
+    private void finalizeWithFirebase(UserEntity user) {
+        com.google.firebase.auth.FirebaseAuth mockAuth = mock(com.google.firebase.auth.FirebaseAuth.class);
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class)) {
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockAuth);
+            service.finalize(user, FinalizationReason.HARD_IMMEDIATE);
+        }
+    }
+
+    @Test
+    @DisplayName("DAC7 : NIF, pays d'émission et TVA gardés, résidence et statut figés, si encore à déclarer")
+    void retainsDac7TaxInfoWhenStillDeclarable() {
+        UserEntity user = userWithTaxInfo();
+        // La règle est évaluée AVANT l'effacement : le pays de l'entreprise d'un professionnel compte encore.
+        org.mockito.Mockito.when(taxInfoRetention.retention(org.mockito.ArgumentMatchers.argThat(
+                        u -> "FR".equals(u.getBusinessCountry()))))
+                .thenReturn(java.util.Optional.of(new TaxInfoRetentionPort.Retention("FR",
+                        com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL)));
+
+        finalizeWithFirebase(user);
+
+        assertThat(user.getTaxIdentificationNumber()).isEqualTo("3023217600053");
+        assertThat(user.getTaxCountry()).isEqualTo("FR");
+        assertThat(user.getVatNumber()).isEqualTo("FR40303265045");
+        assertThat(user.getTaxInfoProvidedAt()).isEqualTo(java.time.Instant.parse("2026-03-01T10:00:00Z"));
+        assertThat(user.getTaxResidenceCountry()).isEqualTo("FR");
+        assertThat(user.getTaxSellerStatus()).isEqualTo(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL);
+        // Plus aucun rappel pour un compte supprimé ; le reste de l'identité est bien effacé.
+        assertThat(user.getTaxInfoRequestedAt()).isNull();
+        assertThat(user.getTaxReminderCount()).isZero();
+        assertThat(user.getBirthDate()).isNull();
+        assertThat(user.getResidenceStreet()).isNull();
+        assertThat(user.getBusinessCountry()).isNull();
+        assertThat(user.getTravelerStatus()).isNull();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).log(eq("USER"), eq(user.getId()), eq("USER_GDPR_DELETION"), eq(user.getId()),
+                payload.capture());
+        assertThat(payload.getValue()).containsEntry("taxInfoRetained", true);
+        assertThat(payload.getValue().toString()).doesNotContain("3023217600053").doesNotContain("FR4030");
+    }
+
+    @Test
+    @DisplayName("DAC7 : décision en échec, la suppression aboutit quand même et garde le NIF par prudence")
+    void dac7DecisionFailure_finalizationStillSucceedsAndRetains() {
+        UserEntity user = userWithTaxInfo();
+        org.mockito.Mockito.when(taxInfoRetention.retention(any()))
+                .thenThrow(new IllegalStateException("statement timeout"));
+
+        finalizeWithFirebase(user);
+
+        assertThat(user.getStatus()).isEqualTo(UserStatus.BANNED);
+        assertThat(user.getDeletedAt()).isNotNull();
+        assertThat(user.getFirstName()).isEqualTo("Utilisateur");
+        assertThat(user.getTaxIdentificationNumber()).isEqualTo("3023217600053");
+        // Repli : la règle DAC7 (pays de l'entreprise pour un professionnel) est figée.
+        assertThat(user.getTaxResidenceCountry()).isEqualTo("FR");
+        verify(auditService).log(eq("USER"), eq(user.getId()), eq("USER_GDPR_DELETION"), eq(user.getId()),
+                org.mockito.ArgumentMatchers.argThat(m -> Boolean.TRUE.equals(m.get("taxInfoRetained"))));
+    }
+
+    @Test
+    @DisplayName("DAC7 : rien à garder (ou DAC7 éteint) : tout est effacé comme avant le lot")
+    void dac7NothingToRetain_erasesEverything() {
+        UserEntity user = userWithTaxInfo();
+        user.setTaxResidenceCountry("FR");
+        org.mockito.Mockito.when(taxInfoRetention.retention(any())).thenReturn(java.util.Optional.empty());
+
+        finalizeWithFirebase(user);
+
+        assertThat(user.getTaxIdentificationNumber()).isNull();
+        assertThat(user.getTaxCountry()).isNull();
+        assertThat(user.getVatNumber()).isNull();
+        assertThat(user.getTaxInfoProvidedAt()).isNull();
+        assertThat(user.getTaxResidenceCountry()).isNull();
+        assertThat(user.getTaxSellerStatus()).isNull();
     }
 
     @Test
