@@ -10,7 +10,9 @@ import com.yadony.api.videomodal.VideoModalImageMode;
 import com.yadony.api.videomodal.VideoModalLayout;
 import com.yadony.api.videomodal.VideoModalPlatform;
 import com.yadony.api.videomodal.VideoModalSituation;
+import com.yadony.api.videomodal.VideoModalCorridor;
 import com.yadony.api.videomodal.VideoModalTrigger;
+import com.yadony.api.videomodal.VideoModalTriggerOptions;
 import com.yadony.api.videomodal.VideoModalType;
 
 import java.time.Instant;
@@ -71,6 +73,8 @@ public record VideoModalAdminResponse(
         List<VideoModalPlatform> platforms,
         int samplePercent,
         List<VideoModalSituation> situations,
+        VideoModalTriggerOptions triggerOptions,
+        List<VideoModalCorridor> corridors,
         Stats stats) {
 
     public record Highlight(VideoModalIcon icon, String textFr, String textEn) {

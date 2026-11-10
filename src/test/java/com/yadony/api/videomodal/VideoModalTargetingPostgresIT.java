@@ -561,4 +561,53 @@ class VideoModalTargetingPostgresIT {
         assertThat(service.eligible(uidOf(u), "fr", "targeting")).extracting(VideoModalEligibleResponse::id)
                 .containsExactlyInAnyOrder(shown.getId(), other.getId());
     }
+
+    @Test
+    @DisplayName("moments d'action sur Postgres (V375, ddl-auto=validate) : seuils et corridors persistés, relus, servis selon caps=moments")
+    void momentsDAction() {
+        UUID u = user();
+        VideoModalCampaignEntity c = new VideoModalCampaignEntity();
+        c.setName("Moment");
+        c.setYoutubeUrl("https://youtu.be/dQw4w9WgXcQ");
+        c.setYoutubeVideoId("dQw4w9WgXcQ");
+        c.setTitleFr("Bonjour");
+        c.setTriggers(List.of(VideoModalTrigger.SEARCH_TAB, VideoModalTrigger.SEARCH_FEW_RESULTS,
+                VideoModalTrigger.TRIP_VIEWED_REPEATEDLY));
+        c.setTriggerOptions(new VideoModalTriggerOptions(7, 4));
+        c.setCorridors(List.of(new VideoModalCorridor("Paris", "Abidjan"), new VideoModalCorridor(null, "Sénégal")));
+        c.setActive(true);
+        c.setVersionPublishedAt(Instant.now());
+        UUID id = campaignRepository.save(c).getId();
+        // Campagne qui n'a que des moments : jamais servie à une app sans caps=moments.
+        VideoModalCampaignEntity onlyMoments = new VideoModalCampaignEntity();
+        onlyMoments.setName("Seulement moment");
+        onlyMoments.setYoutubeUrl("https://youtu.be/dQw4w9WgXcQ");
+        onlyMoments.setYoutubeVideoId("dQw4w9WgXcQ");
+        onlyMoments.setTitleFr("Bonjour");
+        onlyMoments.setTriggers(List.of(VideoModalTrigger.PAYMENT_FAILED));
+        onlyMoments.setActive(true);
+        onlyMoments.setVersionPublishedAt(Instant.now());
+        UUID onlyId = campaignRepository.save(onlyMoments).getId();
+
+        assertThat(jdbc.queryForObject("SELECT trigger_options FROM video_modal_campaigns WHERE id = ?", String.class, id))
+                .isEqualTo("{\"fewResultsMax\":7,\"tripViewedTimes\":4}");
+        assertThat(jdbc.queryForObject("SELECT corridors FROM video_modal_campaigns WHERE id = ?", String.class, id))
+                .contains("\"Paris\"").contains("\"Sénégal\"");
+        // Colonnes par défaut de la seconde : seuils 2 et 3, aucun corridor.
+        VideoModalCampaignEntity reread = campaignRepository.findById(onlyId).orElseThrow();
+        assertThat(reread.getTriggerOptions()).isEqualTo(new VideoModalTriggerOptions(2, 3));
+        assertThat(reread.getCorridors()).isEmpty();
+
+        List<VideoModalEligibleResponse> modern = service.eligible(uidOf(u), "fr", "layout,targeting,moments");
+        assertThat(modern).extracting(VideoModalEligibleResponse::id).containsExactlyInAnyOrder(id, onlyId);
+        VideoModalEligibleResponse served = modern.stream().filter(r -> r.id().equals(id)).findFirst().orElseThrow();
+        assertThat(served.triggerOptions()).isEqualTo(new VideoModalTriggerOptions(7, 4));
+        assertThat(served.corridors()).containsExactly(new VideoModalCorridor("Paris", "Abidjan"),
+                new VideoModalCorridor(null, "Sénégal"));
+        assertThat(served.triggers()).hasSize(3);
+
+        List<VideoModalEligibleResponse> legacy = service.eligible(uidOf(u), "fr", "layout,targeting");
+        assertThat(legacy).extracting(VideoModalEligibleResponse::id).containsExactly(id);
+        assertThat(legacy.get(0).triggers()).containsExactly(VideoModalTrigger.SEARCH_TAB);
+    }
 }

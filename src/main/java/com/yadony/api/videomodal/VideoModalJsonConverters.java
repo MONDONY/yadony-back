@@ -73,6 +73,37 @@ final class VideoModalJsonConverters {
         }
     }
 
+    @Converter
+    static class Corridors extends JsonList<VideoModalCorridor> {
+        Corridors() {
+            super(new TypeReference<>() { });
+        }
+    }
+
+    /** Seuils des moments ; colonne vide = seuils par défaut. */
+    @Converter
+    static class TriggerOptions implements AttributeConverter<VideoModalTriggerOptions, String> {
+
+        @Override
+        public String convertToDatabaseColumn(VideoModalTriggerOptions value) {
+            try {
+                return MAPPER.writeValueAsString(value == null ? VideoModalTriggerOptions.DEFAULTS : value);
+            } catch (JsonProcessingException e) {
+                throw new IllegalStateException("Seuils non sérialisables", e);
+            }
+        }
+
+        @Override
+        public VideoModalTriggerOptions convertToEntityAttribute(String json) {
+            if (json == null || json.isBlank()) return VideoModalTriggerOptions.DEFAULTS;
+            try {
+                return MAPPER.readValue(json, VideoModalTriggerOptions.class);
+            } catch (JsonProcessingException e) {
+                throw new IllegalStateException("Colonne JSON illisible", e);
+            }
+        }
+    }
+
     /** Action d'un bouton INFO ; colonne vide = pas d'action. */
     @Converter
     static class Action implements AttributeConverter<VideoModalAction, String> {

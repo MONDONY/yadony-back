@@ -41,6 +41,10 @@ import java.util.List;
  * vides seulement s'il y a des situations (la campagne est alors servie avec {@code APP_OPEN}). {@code audience}
  * (facultatif) : public de la version courante ; sans lui, EVERYONE pour INFO et NEVER_ANSWERED pour VIDEO à la
  * création, inchangé à la modification. {@code priority} : -1000 à 1000.
+ *
+ * <p>Moments d'action (étape 2, facultatifs) : {@code triggerOptions} ({@code fewResultsMax} 1 à 20 défaut 2,
+ * {@code tripViewedTimes} 2 à 10 défaut 3) et {@code corridors} (0 à 10 entrées, 80 caractères au plus par
+ * côté ; un côté vide veut dire « n'importe lequel »). Bornes contrôlées par le service, toujours en 422.
  */
 public record VideoModalRequest(
         @Size(max = 120) String name,
@@ -83,7 +87,31 @@ public record VideoModalRequest(
         List<VideoModalPlatform> platforms,
         Integer samplePercent,
         List<SituationRequest> situations,
-        VideoModalAudience audience) {
+        VideoModalAudience audience,
+        TriggerOptionsRequest triggerOptions,
+        List<CorridorRequest> corridors) {
+
+    /** Sans moments d'action ({@code triggerOptions}, {@code corridors}) : seuils par défaut, tous les corridors. */
+    public VideoModalRequest(String name, VideoModalType type, String youtubeUrl, Integer durationSeconds,
+                             String titleFr, String titleEn, String subtitleFr, String subtitleEn,
+                             String primaryLabelFr, String primaryLabelEn, String secondaryLabelFr,
+                             String secondaryLabelEn, String bodyFr, String bodyEn, VideoModalIcon icon,
+                             ActionRequest primaryAction, ActionRequest secondaryAction,
+                             List<HighlightRequest> highlights, List<VideoModalTrigger> triggers,
+                             Integer maxDisplays, Instant startsAt, Instant endsAt, VideoModalLayout layout,
+                             Integer sizePercent, VideoModalImageMode imageMode, VideoModalImageFit imageFit,
+                             String imageAltFr, String imageAltEn, VideoModalFrequency frequency,
+                             Integer frequencyDays, Boolean stopAfterAnswer, Boolean allowDontShowAgain,
+                             Integer priority, Boolean connectedOnly, JsonNode conditions, String minAppVersion,
+                             String maxAppVersion, List<VideoModalPlatform> platforms, Integer samplePercent,
+                             List<SituationRequest> situations, VideoModalAudience audience) {
+        this(name, type, youtubeUrl, durationSeconds, titleFr, titleEn, subtitleFr, subtitleEn, primaryLabelFr,
+                primaryLabelEn, secondaryLabelFr, secondaryLabelEn, bodyFr, bodyEn, icon, primaryAction,
+                secondaryAction, highlights, triggers, maxDisplays, startsAt, endsAt, layout, sizePercent,
+                imageMode, imageFit, imageAltFr, imageAltEn, frequency, frequencyDays, stopAfterAnswer,
+                allowDontShowAgain, priority, connectedOnly, conditions, minAppVersion, maxAppVersion,
+                platforms, samplePercent, situations, audience, null, null);
+    }
 
     /** Sans {@code audience} : défaut selon le type à la création (EVERYONE pour INFO, NEVER_ANSWERED pour VIDEO), inchangé à la modification. */
     public VideoModalRequest(String name, VideoModalType type, String youtubeUrl, Integer durationSeconds,
@@ -104,7 +132,7 @@ public record VideoModalRequest(
                 secondaryAction, highlights, triggers, maxDisplays, startsAt, endsAt, layout, sizePercent,
                 imageMode, imageFit, imageAltFr, imageAltEn, frequency, frequencyDays, stopAfterAnswer,
                 allowDontShowAgain, priority, connectedOnly, conditions, minAppVersion, maxAppVersion,
-                platforms, samplePercent, situations, null);
+                platforms, samplePercent, situations, null, null, null);
     }
 
     /**
@@ -125,6 +153,14 @@ public record VideoModalRequest(
                 secondaryAction, highlights, triggers, maxDisplays, startsAt, endsAt, layout, sizePercent,
                 imageMode, imageFit, imageAltFr, imageAltEn,
                 null, null, null, null, null, null, null, null, null, null, null, null, null);
+    }
+
+    /** Seuils des moments ; une valeur absente reprend le défaut. */
+    public record TriggerOptionsRequest(Integer fewResultsMax, Integer tripViewedTimes) {
+    }
+
+    /** Corridor visé, en texte libre ; {@code from} ou {@code to} vide = n'importe lequel. */
+    public record CorridorRequest(String from, String to) {
     }
 
     /**
