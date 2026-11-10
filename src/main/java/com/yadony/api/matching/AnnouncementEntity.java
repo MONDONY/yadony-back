@@ -44,6 +44,14 @@ public class AnnouncementEntity extends BaseEntity {
     @Transient
     private AnnouncementStatus persistedStatus;
 
+    /**
+     * Date de première publication (V370) : posée une seule fois, à la création d'un trajet non brouillon
+     * ({@link #stampPublishedAtOnCreate}) ou au passage BROUILLON vers ACTIF ({@code publishAnnouncement}), jamais
+     * réécrite ensuite. Sert la limite mensuelle de trajets ; {@code null} = jamais publié.
+     */
+    @Column(name = "published_at")
+    private java.time.LocalDateTime publishedAt;
+
     @Column(name = "traveler_id", nullable = false)
     private UUID travelerId;
 
@@ -532,6 +540,17 @@ public class AnnouncementEntity extends BaseEntity {
     public void setPricePerKg(BigDecimal pricePerKg) { this.pricePerKg = pricePerKg; }
 
     public AnnouncementStatus getStatus() { return status; }
+
+    public java.time.LocalDateTime getPublishedAt() { return publishedAt; }
+    public void setPublishedAt(java.time.LocalDateTime publishedAt) { this.publishedAt = publishedAt; }
+
+    /** Couvre tous les chemins de création : un trajet qui naît non brouillon est publié à cet instant. */
+    @jakarta.persistence.PrePersist
+    void stampPublishedAtOnCreate() {
+        if (publishedAt == null && status != AnnouncementStatus.DRAFT) {
+            publishedAt = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC);
+        }
+    }
 
     AnnouncementStatus getPersistedStatus() { return persistedStatus; }
 

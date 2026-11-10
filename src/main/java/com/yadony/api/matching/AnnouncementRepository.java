@@ -140,14 +140,13 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
             UUID travelerId, LocalDateTime from, LocalDateTime to, AnnouncementStatus status);
 
     /**
-     * Trajets publiés (hors brouillons) du voyageur dans la période, pour la limite mensuelle. Aucune date de
-     * publication n'existe : un brouillon créé un mois et publié le suivant n'a que sa dernière mise à jour
-     * dans le bon mois, d'où {@code createdAt OR updatedAt}. Limite connue : un trajet publié le mois
-     * précédent puis modifié ce mois-ci (offre acceptée, changement de statut) compte aussi ce mois-ci.
+     * Trajets du voyageur publiés dans la période, pour la limite mensuelle : ceux dont la date de première
+     * publication ({@code published_at}, V370) tombe dans la période, quel que soit leur statut actuel. Une
+     * modification, une offre acceptée ou un passage FULL ne changent rien ; un brouillon jamais publié
+     * (date nulle) n'est pas compté.
      */
     @Query("SELECT count(a) FROM AnnouncementEntity a WHERE a.travelerId = :travelerId "
-            + "AND a.status <> com.yadony.api.matching.AnnouncementStatus.DRAFT "
-            + "AND ((a.createdAt BETWEEN :from AND :to) OR (a.updatedAt BETWEEN :from AND :to))")
+            + "AND a.publishedAt BETWEEN :from AND :to")
     long countPublishedInPeriod(@Param("travelerId") UUID travelerId,
                                 @Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
 

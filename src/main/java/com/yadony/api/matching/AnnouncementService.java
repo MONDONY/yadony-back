@@ -1847,6 +1847,10 @@ public class AnnouncementService {
         announcement.setTravelerIsPro(user.isProAccount());
         announcement.setTravelerIsGpPro(user.isGpPro());
         announcement.setStatus(AnnouncementStatus.ACTIVE);
+        // Première publication seulement : un trajet dépublié puis republié garde sa date (limite mensuelle).
+        if (announcement.getPublishedAt() == null) {
+            announcement.setPublishedAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+        }
         AnnouncementEntity saved = announcementRepository.save(announcement);
 
         auditService.log("USER", user.getId(), "ANNOUNCEMENT_PUBLISHED", saved.getId(),

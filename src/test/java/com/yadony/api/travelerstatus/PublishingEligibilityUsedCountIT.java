@@ -55,7 +55,7 @@ class PublishingEligibilityUsedCountIT {
         user = users.save(user);
     }
 
-    private UUID trip(AnnouncementStatus status, LocalDateTime createdAt, LocalDateTime updatedAt) {
+    private UUID trip(AnnouncementStatus status) {
         AnnouncementEntity a = new AnnouncementEntity();
         a.setTravelerId(user.getId());
         a.setDepartureCity("Paris");
@@ -73,40 +73,88 @@ class PublishingEligibilityUsedCountIT {
         a.setTotalKg(new BigDecimal("10.00"));
         a.setPricePerKg(new BigDecimal("5.00"));
         a.setStatus(status);
-        UUID id = announcements.saveAndFlush(a).getId();
-        jdbc.update("UPDATE announcements SET created_at = ?, updated_at = ? WHERE id = ?",
-                createdAt, updatedAt, id);
-        return id;
+        return announcements.saveAndFlush(a).getId();
+    }
+
+    /** Antidate la création et la publication (colonnes posées par la base, pas modifiables via l'entité). */
+    private void backdate(UUID id, LocalDateTime createdAt, LocalDateTime publishedAt) {
+        jdbc.update("UPDATE announcements SET created_at = ?, updated_at = ?, published_at = ? WHERE id = ?",
+                createdAt, createdAt, publishedAt, id);
+    }
+
+    private int used() {
+        return service.evaluate(users.findById(user.getId()).orElseThrow()).used();
     }
 
     @Test
-    void brouillonCreeLeMoisPrecedentEtPublieCeMoisCi_compteDansUsed() {
+    void brouillonCreeLeMoisPrecedentEtPublieCeMoisCi_compteCeMoisCi() {
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        UUID id = trip(AnnouncementStatus.DRAFT);
+        backdate(id, now.minusMonths(1).withDayOfMonth(15), null);
+        assertThat(used()).isZero();
+
+        // Ce que fait publishAnnouncement : DRAFT vers ACTIVE, date de publication posée.
+        AnnouncementEntity a = announcements.findById(id).orElseThrow();
+        a.setStatus(AnnouncementStatus.ACTIVE);
+        a.setPublishedAt(now);
+        announcements.saveAndFlush(a);
+
+        assertThat(used()).isEqualTo(1);
+    }
+
+    @Test
+    void trajetPublieLeMoisPrecedent_puisModifieAccepteOuComplet_neCompteJamaisCeMoisCi() {
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         LocalDateTime lastMonth = now.minusMonths(1).withDayOfMonth(15);
-        // Brouillon d'avant, publié maintenant : created_at ancien, updated_at ce mois-ci, statut ACTIVE.
-        trip(AnnouncementStatus.ACTIVE, lastMonth, now);
+        UUID id = trip(AnnouncementStatus.ACTIVE);
+        backdate(id, lastMonth, lastMonth);
 
-        assertThat(service.evaluate(users.findById(user.getId()).orElseThrow()).used()).isEqualTo(1);
+        // Modification, puis passage FULL, puis COMPLETED : updated_at est ce mois-ci à chaque fois.
+        AnnouncementEntity a = announcements.findById(id).orElseThrow();
+        a.setPricePerKg(new BigDecimal("6.00"));
+        announcements.saveAndFlush(a);
+        a = announcements.findById(id).orElseThrow();
+        a.setStatus(AnnouncementStatus.FULL);
+        announcements.saveAndFlush(a);
+        a = announcements.findById(id).orElseThrow();
+        a.setStatus(AnnouncementStatus.COMPLETED);
+        announcements.saveAndFlush(a);
+
+        assertThat(announcements.findById(id).orElseThrow().getUpdatedAt().getMonth()).isEqualTo(now.getMonth());
+        // Date inchangée : toujours le mois précédent (le JDBC brut écrit en fuseau local, d'où la comparaison au mois).
+        assertThat(announcements.findById(id).orElseThrow().getPublishedAt().getMonth()).isEqualTo(lastMonth.getMonth());
+        assertThat(used()).isZero();
     }
 
     @Test
-    void compteLesTrajetsPublies_pasLesBrouillons_pasLesTrajetsDuMoisPrecedent() {
-        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
-        LocalDateTime lastMonth = now.minusMonths(1).withDayOfMonth(15);
-        trip(AnnouncementStatus.ACTIVE, now, now);                  // publié directement ce mois-ci : compte
-        trip(AnnouncementStatus.DRAFT, now, now);                   // brouillon de ce mois-ci : ne compte pas
-        trip(AnnouncementStatus.DRAFT, lastMonth, now);             // brouillon retravaillé : ne compte pas
-        trip(AnnouncementStatus.ACTIVE, lastMonth, lastMonth);      // publié le mois dernier : ne compte pas
-        trip(AnnouncementStatus.ACTIVE, lastMonth, now);            // brouillon publié ce mois-ci : compte
+    void trajetCreeNonBrouillonCeMoisCi_estDatePuisCompteUneSeuleFois_quelQueSoitSonStatutEnsuite() {
+        UUID id = trip(AnnouncementStatus.ACTIVE);
+        AnnouncementEntity created = announcements.findById(id).orElseThrow();
+        assertThat(created.getPublishedAt()).isNotNull();
+        LocalDateTime stamp = created.getPublishedAt();
+        assertThat(used()).isEqualTo(1);
 
-        assertThat(service.evaluate(users.findById(user.getId()).orElseThrow()).used()).isEqualTo(2);
+        // Un changement de statut ne change ni la date ni le compte.
+        created.setStatus(AnnouncementStatus.FULL);
+        announcements.saveAndFlush(created);
+        assertThat(announcements.findById(id).orElseThrow().getPublishedAt()).isEqualTo(stamp);
+        assertThat(used()).isEqualTo(1);
     }
 
     @Test
-    void unTrajetCompteUneSeuleFois_creeEtMisAJourCeMois() {
-        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
-        trip(AnnouncementStatus.FULL, now, now);
+    void brouillonNonPublie_pasDeDate_neCompteJamais() {
+        UUID id = trip(AnnouncementStatus.DRAFT);
 
-        assertThat(service.evaluate(users.findById(user.getId()).orElseThrow()).used()).isEqualTo(1);
+        assertThat(announcements.findById(id).orElseThrow().getPublishedAt()).isNull();
+        assertThat(used()).isZero();
+    }
+
+    @Test
+    void plusieursTrajetsDuMois_brouillonsExclus() {
+        trip(AnnouncementStatus.ACTIVE);
+        trip(AnnouncementStatus.ACTIVE);
+        trip(AnnouncementStatus.DRAFT);
+
+        assertThat(used()).isEqualTo(2);
     }
 }

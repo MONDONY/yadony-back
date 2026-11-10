@@ -4950,6 +4950,46 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("publication d'un brouillon : la date de publication est posée une seule fois")
+        void publishAnnouncement_stampsPublishedAtOnce() {
+            decide(com.yadony.api.travelerstatus.PublishingEligibilityReason.OK);
+            UserEntity user = verifiedProUser();
+            AnnouncementEntity draft = draftEntityOwnedBy(user);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.findById(draft.getId())).thenReturn(Optional.of(draft));
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            assertThat(draft.getPublishedAt()).isNull();
+
+            announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID);
+
+            java.time.LocalDateTime first = draft.getPublishedAt();
+            assertThat(first).isNotNull();
+
+            // Une seconde publication est refusée (plus un brouillon) et ne touche pas à la date.
+            assertThatThrownBy(() -> announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("not-a-draft"));
+            assertThat(draft.getPublishedAt()).isEqualTo(first);
+        }
+
+        @Test
+        @DisplayName("brouillon déjà publié puis dépublié : republier ne réécrit pas la date de première publication")
+        void publishAnnouncement_neverOverwritesAnExistingPublishedAt() {
+            decide(com.yadony.api.travelerstatus.PublishingEligibilityReason.OK);
+            UserEntity user = verifiedProUser();
+            AnnouncementEntity draft = draftEntityOwnedBy(user);
+            java.time.LocalDateTime earlier = java.time.LocalDateTime.now().minusMonths(1);
+            draft.setPublishedAt(earlier);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.findById(draft.getId())).thenReturn(Optional.of(draft));
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID);
+
+            assertThat(draft.getPublishedAt()).isEqualTo(earlier);
+        }
+
+        @Test
         @DisplayName("limite atteinte par un particulier → 403 monthly-limit-reached, aucun trajet enregistré")
         void createAnnouncement_limitReached_isRefused() {
             decide(com.yadony.api.travelerstatus.PublishingEligibilityReason.LIMIT_REACHED);
