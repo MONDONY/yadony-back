@@ -2,10 +2,14 @@ package com.yadony.api.dac7;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.travelerstatus.TravelerStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
@@ -14,41 +18,64 @@ import java.util.Set;
  * par le profil (jamais recopié) : {@code users.country}, ou le pays d'immatriculation de l'entreprise pour un
  * professionnel (DAC7 retient le siège d'une entité).
  *
- * <p>Déclarable : les 27 États membres de l'Union (France comprise) et les États ou territoires partenaires listés
+ * <p>Déclarable : les 27 États membres de l'Union (France comprise), leurs territoires à code ISO propre et les États ou territoires partenaires listés
  * dans {@code yadony.dac7.partner-jurisdictions} (vide par défaut, voir {@link Dac7Properties}). Un code absent ou qui
  * n'est pas un code ISO 3166-1 alpha-2 donne {@link Dac7ResidencyStatus#RESIDENCE_INCONNUE}.
  */
 @Component
 public class Dac7ResidencyPolicy {
 
-    /**
-     * Les 27 États membres en codes ISO 3166-1 alpha-2 (la Grèce est {@code GR}, pas {@code EL} comme dans les textes
-     * européens). Les régions ultrapériphériques françaises (GP, MQ, GF, RE, YT, MF) ne sont pas proposées par le
-     * catalogue des pays de résidence : non listées ici.
-     */
+    private static final Logger log = LoggerFactory.getLogger(Dac7ResidencyPolicy.class);
+
+    /** Les 27 États membres en codes ISO 3166-1 alpha-2 (la Grèce est {@code GR}, pas {@code EL}). */
     public static final Set<String> EU_MEMBER_STATES = Set.of(
             "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU", "IE",
             "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE");
 
+    /**
+     * Territoires de l'Union qui ont leur propre code ISO : régions ultrapériphériques françaises (Guadeloupe,
+     * Martinique, Guyane, La Réunion, Mayotte, Saint-Martin) et Åland (Finlande). Le catalogue des pays de résidence ne
+     * les propose pas aujourd'hui ; listés en défense, pour qu'un tel code venu d'ailleurs (Stripe, évolution du
+     * catalogue) ne tombe jamais en « non déclarable » en silence.
+     */
+    public static final Set<String> EU_TERRITORIES = Set.of("GP", "MQ", "GF", "RE", "YT", "MF", "AX");
+
     private static final Set<String> ISO_COUNTRIES = Set.copyOf(Arrays.asList(Locale.getISOCountries()));
 
     private final Set<String> partners;
+    private final List<String> invalidPartners;
 
     /**
-     * @throws IllegalArgumentException au démarrage si un code partenaire n'est pas un code ISO alpha-2 : une faute de
-     *                                  frappe ne doit pas faire disparaître des résidents de la déclaration en silence.
+     * Codes partenaires invalides : DAC7 allumé, le démarrage échoue (une faute de frappe ne doit pas retirer des
+     * résidents de la déclaration en silence) ; DAC7 éteint, le code est ignoré avec un avertissement et reste visible
+     * dans {@link #invalidPartnerJurisdictions()} (le back démarre quand même).
      */
     public Dac7ResidencyPolicy(Dac7Properties properties) {
         Set<String> codes = new HashSet<>();
+        List<String> invalid = new ArrayList<>();
         for (String raw : properties.partnerJurisdictionsOrEmpty()) {
             String code = normalize(raw);
             if (code == null) {
-                throw new IllegalArgumentException("yadony.dac7.partner-jurisdictions : code pays invalide « " + raw
-                        + " » (attendu : ISO 3166-1 alpha-2, ex. CI)");
+                invalid.add(String.valueOf(raw));
+            } else {
+                codes.add(code);
             }
-            codes.add(code);
+        }
+        if (!invalid.isEmpty()) {
+            String message = "yadony.dac7.partner-jurisdictions : code(s) pays invalide(s) " + invalid
+                    + " (attendu : ISO 3166-1 alpha-2, ex. CI)";
+            if (properties.enabledOrDefault()) {
+                throw new IllegalArgumentException(message);
+            }
+            log.warn("{} : ignoré(s) tant que DAC7 est éteint", message);
         }
         this.partners = Set.copyOf(codes);
+        this.invalidPartners = List.copyOf(invalid);
+    }
+
+    /** Codes partenaires ignorés car invalides (DAC7 éteint) ; vide si la configuration est correcte. */
+    public List<String> invalidPartnerJurisdictions() {
+        return invalidPartners;
     }
 
     public Dac7ResidencyStatus statusOf(String residenceCountry) {
@@ -56,7 +83,7 @@ public class Dac7ResidencyPolicy {
         if (code == null) {
             return Dac7ResidencyStatus.RESIDENCE_INCONNUE;
         }
-        return EU_MEMBER_STATES.contains(code) || partners.contains(code)
+        return EU_MEMBER_STATES.contains(code) || EU_TERRITORIES.contains(code) || partners.contains(code)
                 ? Dac7ResidencyStatus.DECLARABLE
                 : Dac7ResidencyStatus.NON_DECLARABLE;
     }

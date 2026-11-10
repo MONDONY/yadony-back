@@ -50,10 +50,46 @@ class Dac7ResidencyPolicyTest {
     }
 
     @Test
-    void codePartenaireInvalide_refuseAuDemarrage() {
-        assertThatThrownBy(() -> new Dac7ResidencyPolicy(new Dac7Properties(false, List.of("CIV"))))
+    void codePartenaireInvalide_dac7Allume_refuseAuDemarrage() {
+        assertThatThrownBy(() -> new Dac7ResidencyPolicy(new Dac7Properties(true, List.of("CIV"))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("CIV");
+    }
+
+    @Test
+    void codePartenaireInvalide_dac7Eteint_ignoreSansEmpecherLeDemarrage() {
+        Dac7ResidencyPolicy policy = new Dac7ResidencyPolicy(new Dac7Properties(false, List.of("CIV", "SN")));
+        assertThat(policy.invalidPartnerJurisdictions()).containsExactly("CIV");
+        assertThat(policy.statusOf("SN")).isEqualTo(Dac7ResidencyStatus.DECLARABLE);
+        assertThat(defaults.invalidPartnerJurisdictions()).isEmpty();
+    }
+
+    @Test
+    void listeExacte_unionEtTerritoires() {
+        assertThat(Dac7ResidencyPolicy.EU_MEMBER_STATES).containsExactlyInAnyOrder(
+                "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU", "IE",
+                "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE");
+        assertThat(Dac7ResidencyPolicy.EU_TERRITORIES)
+                .containsExactlyInAnyOrder("GP", "MQ", "GF", "RE", "YT", "MF", "AX");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"GP", "MQ", "GF", "RE", "YT", "MF", "AX", "re"})
+    void territoiresDeLUnion_declarables(String country) {
+        assertThat(defaults.statusOf(country)).isEqualTo(Dac7ResidencyStatus.DECLARABLE);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"BL", "PF", "NC", "PM", "WF", "GL", "FO"})
+    void paysEtTerritoiresHorsUnion_nonDeclarables(String country) {
+        assertThat(defaults.statusOf(country)).isEqualTo(Dac7ResidencyStatus.NON_DECLARABLE);
+    }
+
+    @Test
+    void conservation_defautDeuxAnsEtMinimumUn() {
+        assertThat(new Dac7Properties(false, null).retentionYearsOrDefault()).isEqualTo(2);
+        assertThat(new Dac7Properties(false, null, 0).retentionYearsOrDefault()).isEqualTo(2);
+        assertThat(new Dac7Properties(false, null, 3).retentionYearsOrDefault()).isEqualTo(3);
     }
 
     @Test

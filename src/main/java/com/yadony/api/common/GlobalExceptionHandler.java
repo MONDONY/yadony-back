@@ -183,7 +183,12 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ProblemDetail> handleNotReadable(HttpMessageNotReadableException ex) {
-        log.error("HttpMessageNotReadableException: {}", ex.getMessage(), ex);
+        // Jamais ex.getMessage() ni la pile : Jackson y recopie le jeton fautif du corps (un NIF tapé sans guillemets,
+        // par exemple), qui partirait dans les journaux et Sentry. Une erreur du client, pas du serveur : WARN, avec
+        // les classes d'erreur seulement.
+        Throwable cause = ex.getMostSpecificCause();
+        log.warn("Corps de requête illisible : {}{}", ex.getClass().getSimpleName(),
+                cause != null && cause != ex ? " (" + cause.getClass().getSimpleName() + ")" : "");
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
                 HttpStatus.BAD_REQUEST, "Malformed request payload");
         problem.setType(URI.create(BASE_TYPE + "malformed-request"));
