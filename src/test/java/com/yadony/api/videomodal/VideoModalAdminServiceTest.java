@@ -30,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -47,7 +48,7 @@ class VideoModalAdminServiceTest {
     @BeforeEach
     void setUp() {
         service = new VideoModalAdminService(campaignRepository, responseRepository, auditService,
-                Clock.fixed(NOW, ZoneOffset.UTC));
+                mock(VideoModalImageUrls.class), Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     static VideoModalRequest request(String url, Instant startsAt, Instant endsAt) {
@@ -55,7 +56,7 @@ class VideoModalAdminServiceTest {
                 null, null, null, null, null, null, null, null, null,
                 List.of(new VideoModalRequest.HighlightRequest(VideoModalIcon.LOCK, " Paiement protégé ", " ")),
                 List.of(VideoModalTrigger.APP_OPEN, VideoModalTrigger.APP_OPEN, VideoModalTrigger.SEND_PARCEL),
-                null, startsAt, endsAt);
+                null, startsAt, endsAt, null, null, null, null, null, null);
     }
 
     private void savesItself() {

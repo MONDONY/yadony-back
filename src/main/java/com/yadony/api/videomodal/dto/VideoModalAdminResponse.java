@@ -3,6 +3,9 @@ package com.yadony.api.videomodal.dto;
 import com.yadony.api.videomodal.VideoModalAction;
 import com.yadony.api.videomodal.VideoModalAudience;
 import com.yadony.api.videomodal.VideoModalIcon;
+import com.yadony.api.videomodal.VideoModalImageFit;
+import com.yadony.api.videomodal.VideoModalImageMode;
+import com.yadony.api.videomodal.VideoModalLayout;
 import com.yadony.api.videomodal.VideoModalTrigger;
 import com.yadony.api.videomodal.VideoModalType;
 
@@ -42,6 +45,13 @@ public record VideoModalAdminResponse(
         Instant versionPublishedAt,
         Instant createdAt,
         Instant updatedAt,
+        VideoModalLayout layout,
+        Integer sizePercent,
+        VideoModalImageMode imageMode,
+        VideoModalImageFit imageFit,
+        String imageUrl,
+        String imageAltFr,
+        String imageAltEn,
         Stats stats) {
 
     public record Highlight(VideoModalIcon icon, String textFr, String textEn) {

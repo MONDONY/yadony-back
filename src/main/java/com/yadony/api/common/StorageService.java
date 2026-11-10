@@ -241,6 +241,27 @@ public class StorageService {
         }
     }
 
+    /**
+     * Image d'une campagne éditoriale (modals) : octets déjà validés par l'appelant, stockés tels
+     * quels (pas de ré-encodage : une affiche garde sa netteté et sa transparence) sous
+     * {@code {prefix}{horodatage}.{extension}}. Inscrit au registre ; envoi d'un admin, donc hors
+     * quota. Le dépôt reste privé : la lecture passe par une URL présignée.
+     */
+    public String storeAsset(byte[] bytes, String contentType, String extension, MediaUpload upload) {
+        validatePrefix(upload.prefix());
+        String key = upload.prefix() + Instant.now().toEpochMilli() + "." + extension;
+        MediaUploadEntity reservation = reserve(key, upload);
+        try {
+            putBytes(key, bytes, contentType);
+            finalizeSize(reservation, bytes.length);
+            log.info("storeAsset: key={} purpose={} {} octets", key, upload.purpose(), bytes.length);
+            return key;
+        } catch (RuntimeException e) {
+            release(reservation);
+            throw e;
+        }
+    }
+
     /** Clés d'une photo de messagerie : image redimensionnée et miniature carrée. */
     public record StoredImage(String mainKey, String thumbnailKey) {}
 

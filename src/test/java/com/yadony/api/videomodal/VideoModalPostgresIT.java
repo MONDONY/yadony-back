@@ -27,7 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * V366 et V369 (type INFO) sur Postgres embarqué, toutes migrations Flyway et ddl-auto=validate : les entités collent
+ * V366, V369 (type INFO) et V372 (format, taille, image) sur Postgres embarqué, toutes migrations Flyway et ddl-auto=validate : les entités collent
  * au schéma, les colonnes JSON (TEXT) se relisent, la contrainte d'unicité campagne/utilisateur/version
  * et les CHECK tiennent, la requête de statistiques passe.
  */
@@ -213,5 +213,72 @@ class VideoModalPostgresIT {
         assertThat(c.getPrimaryAction()).isNull();
         assertThat(c.getSecondaryAction()).isNull();
         assertThat(c.getIcon()).isNull();
+    }
+
+    @Test
+    @DisplayName("V372 : une ligne écrite comme avant prend les défauts (feuille du bas, sans image) ; CHECK et clé d'image")
+    void layoutAndImage() {
+        // Insertion « à l'ancienne » : aucune des colonnes de V372 n'est nommée.
+        String legacyId = jdbc.queryForObject("""
+                INSERT INTO video_modal_campaigns (name, youtube_url, youtube_video_id, title_fr, triggers)
+                VALUES ('Vidéo d''accueil', 'https://youtu.be/XLgkHom38_Y', 'XLgkHom38_Y', 'Bienvenue', '["APP_OPEN"]')
+                RETURNING id::text""", String.class);
+        VideoModalCampaignEntity legacy = campaignRepository.findById(UUID.fromString(legacyId)).orElseThrow();
+        assertThat(legacy.getLayout()).isEqualTo(VideoModalLayout.BOTTOM_SHEET);
+        assertThat(legacy.getSizePercent()).isNull();
+        assertThat(legacy.getImageMode()).isEqualTo(VideoModalImageMode.NONE);
+        assertThat(legacy.getImageFit()).isEqualTo(VideoModalImageFit.COVER);
+        assertThat(legacy.getImageKey()).isNull();
+        assertThat(legacy.needsLayoutCapability()).isFalse();
+
+        // INFO avec affiche : se relit, la requête de rapprochement la voit (supprimée comprise).
+        VideoModalCampaignEntity poster = new VideoModalCampaignEntity();
+        poster.setType(VideoModalType.INFO);
+        poster.setName("Concours");
+        poster.setTitleFr("Concours");
+        poster.setBodyFr("Gagnez");
+        poster.setPrimaryAction(new VideoModalAction(VideoModalActionKind.CLOSE, null, null));
+        poster.setTriggers(List.of(VideoModalTrigger.APP_OPEN));
+        poster.setVersionPublishedAt(Instant.now());
+        poster.setLayout(VideoModalLayout.CENTERED);
+        poster.setSizePercent(30);
+        poster.setImageMode(VideoModalImageMode.POSTER);
+        poster.setImageFit(VideoModalImageFit.CONTAIN);
+        poster.setImageKey("video-modals/abc/1700000000000.webp");
+        poster.setImageAltFr("Affiche");
+        VideoModalCampaignEntity saved = campaignRepository.saveAndFlush(poster);
+        VideoModalCampaignEntity reread = campaignRepository.findById(saved.getId()).orElseThrow();
+        assertThat(reread.getLayout()).isEqualTo(VideoModalLayout.CENTERED);
+        assertThat(reread.getSizePercent()).isEqualTo(30);
+        assertThat(reread.getImageMode()).isEqualTo(VideoModalImageMode.POSTER);
+        assertThat(reread.getImageKey()).isEqualTo("video-modals/abc/1700000000000.webp");
+        assertThat(reread.needsLayoutCapability()).isTrue();
+
+        reread.softDelete();
+        campaignRepository.saveAndFlush(reread);
+        assertThat(campaignRepository.findById(saved.getId())).isEmpty();
+        assertThat(campaignRepository.findImageKeysMatchingIncludingDeleted("video-modals/"))
+                .contains("video-modals/abc/1700000000000.webp");
+        assertThat(new VideoModalImageReferenceSource(campaignRepository).referencedKeys("video-modals/"))
+                .contains("video-modals/abc/1700000000000.webp");
+
+        String id = legacyId;
+        assertThatThrownBy(() -> jdbc.update("UPDATE video_modal_campaigns SET layout = 'MODAL' WHERE id = ?::uuid", id))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update("UPDATE video_modal_campaigns SET size_percent = 29 WHERE id = ?::uuid", id))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update("UPDATE video_modal_campaigns SET size_percent = 101 WHERE id = ?::uuid", id))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThat(jdbc.update("UPDATE video_modal_campaigns SET size_percent = 100 WHERE id = ?::uuid", id)).isEqualTo(1);
+        assertThatThrownBy(() -> jdbc.update("UPDATE video_modal_campaigns SET image_mode = 'FULL' WHERE id = ?::uuid", id))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update("UPDATE video_modal_campaigns SET image_fit = 'STRETCH' WHERE id = ?::uuid", id))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        // Mode d'image sans clé, ou sur une VIDEO : refusé.
+        assertThatThrownBy(() -> jdbc.update("UPDATE video_modal_campaigns SET image_mode = 'TOP' WHERE id = ?::uuid", id))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update(
+                "UPDATE video_modal_campaigns SET image_mode = 'TOP', image_key = 'video-modals/x/1.png' WHERE id = ?::uuid", id))
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 }

@@ -41,6 +41,32 @@ public class VideoModalCampaignEntity extends BaseEntity {
     @Column(name = "secondary_action", columnDefinition = "TEXT")
     private VideoModalAction secondaryAction;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "layout", nullable = false, length = 20)
+    private VideoModalLayout layout = VideoModalLayout.BOTTOM_SHEET;
+
+    /** Hauteur maximale en % de l'écran (30 à 100), null = taille automatique. */
+    @Column(name = "size_percent")
+    private Integer sizePercent;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "image_mode", nullable = false, length = 10)
+    private VideoModalImageMode imageMode = VideoModalImageMode.NONE;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "image_fit", nullable = false, length = 10)
+    private VideoModalImageFit imageFit = VideoModalImageFit.COVER;
+
+    /** Clé R2 de l'image envoyée (jamais une URL). */
+    @Column(name = "image_key", length = 500)
+    private String imageKey;
+
+    @Column(name = "image_alt_fr", length = 200)
+    private String imageAltFr;
+
+    @Column(name = "image_alt_en", length = 200)
+    private String imageAltEn;
+
     @Column(name = "name", nullable = false, length = 120)
     private String name;
 
@@ -112,6 +138,29 @@ public class VideoModalCampaignEntity extends BaseEntity {
         return active
                 && (startsAt == null || !startsAt.isAfter(now))
                 && (endsAt == null || endsAt.isAfter(now));
+    }
+
+    public VideoModalLayout getLayout() { return layout; }
+    public void setLayout(VideoModalLayout layout) { this.layout = layout == null ? VideoModalLayout.BOTTOM_SHEET : layout; }
+    public Integer getSizePercent() { return sizePercent; }
+    public void setSizePercent(Integer sizePercent) { this.sizePercent = sizePercent; }
+    public VideoModalImageMode getImageMode() { return imageMode; }
+    public void setImageMode(VideoModalImageMode imageMode) { this.imageMode = imageMode == null ? VideoModalImageMode.NONE : imageMode; }
+    public VideoModalImageFit getImageFit() { return imageFit; }
+    public void setImageFit(VideoModalImageFit imageFit) { this.imageFit = imageFit == null ? VideoModalImageFit.COVER : imageFit; }
+    public String getImageKey() { return imageKey; }
+    public void setImageKey(String imageKey) { this.imageKey = imageKey; }
+    public String getImageAltFr() { return imageAltFr; }
+    public void setImageAltFr(String imageAltFr) { this.imageAltFr = imageAltFr; }
+    public String getImageAltEn() { return imageAltEn; }
+    public void setImageAltEn(String imageAltEn) { this.imageAltEn = imageAltEn; }
+
+    /**
+     * Vrai si l'app doit connaître {@code caps=layout} pour rendre ce modal : format autre que la
+     * feuille du bas, ou image. Les anciennes apps ne les reçoivent pas.
+     */
+    public boolean needsLayoutCapability() {
+        return layout != VideoModalLayout.BOTTOM_SHEET || imageMode != VideoModalImageMode.NONE;
     }
 
     public VideoModalType getType() { return type; }

@@ -28,26 +28,32 @@ public class VideoModalAdminService {
     static final int DEFAULT_MAX_DISPLAYS = 3;
     static final int MAX_BODY = 500;
     static final int MAX_INFO_LABEL = 26;
+    static final int MIN_SIZE_PERCENT = 30;
+    static final int MAX_SIZE_PERCENT = 100;
 
     private final VideoModalCampaignRepository campaignRepository;
     private final VideoModalResponseRepository responseRepository;
     private final AuditService auditService;
+    private final VideoModalImageUrls imageUrls;
     private final Clock clock;
 
     @Autowired
     public VideoModalAdminService(VideoModalCampaignRepository campaignRepository,
                                   VideoModalResponseRepository responseRepository,
-                                  AuditService auditService) {
-        this(campaignRepository, responseRepository, auditService, Clock.systemUTC());
+                                  AuditService auditService,
+                                  VideoModalImageUrls imageUrls) {
+        this(campaignRepository, responseRepository, auditService, imageUrls, Clock.systemUTC());
     }
 
     VideoModalAdminService(VideoModalCampaignRepository campaignRepository,
                            VideoModalResponseRepository responseRepository,
                            AuditService auditService,
+                           VideoModalImageUrls imageUrls,
                            Clock clock) {
         this.campaignRepository = campaignRepository;
         this.responseRepository = responseRepository;
         this.auditService = auditService;
+        this.imageUrls = imageUrls;
         this.clock = clock;
     }
 
@@ -146,6 +152,32 @@ public class VideoModalAdminService {
         } else {
             applyVideo(c, r);
         }
+        applyLayout(c, r, type);
+    }
+
+    /**
+     * Format, taille et image. L'image elle-même est envoyée à part ({@code POST …/image}) : ici
+     * seul son usage se règle. VIDEO n'a jamais d'image (mode forcé NONE) ; un mode autre que
+     * NONE exige une image déjà envoyée, donc jamais à la création.
+     */
+    private static void applyLayout(VideoModalCampaignEntity c, VideoModalRequest r, VideoModalType type) {
+        Integer size = r.sizePercent();
+        if (size != null && (size < MIN_SIZE_PERCENT || size > MAX_SIZE_PERCENT)) {
+            throw invalid("video-modal-invalid-size", "La taille doit être comprise entre " + MIN_SIZE_PERCENT
+                    + " et " + MAX_SIZE_PERCENT + " % de la hauteur de l'écran");
+        }
+        VideoModalImageMode mode = type == VideoModalType.INFO && r.imageMode() != null
+                ? r.imageMode() : VideoModalImageMode.NONE;
+        if (mode != VideoModalImageMode.NONE && c.getImageKey() == null) {
+            throw invalid("video-modal-image-required", "Envoyez d'abord une image pour utiliser le mode "
+                    + mode.name() + " (enregistrez la campagne, puis ajoutez l'image)");
+        }
+        c.setLayout(r.layout());
+        c.setSizePercent(size);
+        c.setImageMode(mode);
+        c.setImageFit(r.imageFit());
+        c.setImageAltFr(type == VideoModalType.INFO ? blankToNull(r.imageAltFr()) : null);
+        c.setImageAltEn(type == VideoModalType.INFO ? blankToNull(r.imageAltEn()) : null);
     }
 
     private void applyVideo(VideoModalCampaignEntity c, VideoModalRequest r) {
@@ -291,10 +323,13 @@ public class VideoModalAdminService {
         if (c.getYoutubeVideoId() != null) payload.put("youtubeVideoId", c.getYoutubeVideoId());
         payload.put("triggers", c.getTriggers().stream().map(Enum::name).toList());
         payload.put("maxDisplays", c.getMaxDisplays());
+        payload.put("layout", c.getLayout().name());
+        payload.put("sizePercent", c.getSizePercent());
+        payload.put("imageMode", c.getImageMode().name());
         auditService.log(AUDIT_ENTITY, c.getId(), action, adminId, payload);
     }
 
-    static VideoModalAdminResponse toResponse(VideoModalCampaignEntity c, VideoModalAdminResponse.Stats stats) {
+    VideoModalAdminResponse toResponse(VideoModalCampaignEntity c, VideoModalAdminResponse.Stats stats) {
         return new VideoModalAdminResponse(
                 c.getId(), c.getType(), c.getName(), c.getYoutubeUrl(), c.getYoutubeVideoId(), c.getDurationSeconds(),
                 c.getTitleFr(), c.getTitleEn(), c.getSubtitleFr(), c.getSubtitleEn(),
@@ -306,6 +341,8 @@ public class VideoModalAdminService {
                 c.getTriggers(), c.getMaxDisplays(), c.getStartsAt(), c.getEndsAt(),
                 c.isActive(), c.getVersion(), c.getAudience(), c.getVersionPublishedAt(),
                 utc(c.getCreatedAt()), utc(c.getUpdatedAt()),
+                c.getLayout(), c.getSizePercent(), c.getImageMode(), c.getImageFit(),
+                imageUrls.urlOf(c.getImageKey()), c.getImageAltFr(), c.getImageAltEn(),
                 stats == null ? VideoModalAdminResponse.Stats.EMPTY : stats);
     }
 
