@@ -307,6 +307,29 @@ public class UserEntity extends BaseEntity {
     @jakarta.persistence.Convert(converter = com.yadony.api.common.EncryptedStringConverter.class)
     private String proSiret;
 
+    // Statut légal du voyageur (lot 2). Sans rapport avec is_pro_account (abonnement PRO).
+    @Enumerated(EnumType.STRING)
+    @Column(name = "traveler_status", length = 15)
+    private com.yadony.api.travelerstatus.TravelerStatus travelerStatus;
+
+    @Column(name = "traveler_status_declared_at")
+    private Instant travelerStatusDeclaredAt;
+
+    @Column(name = "traveler_status_terms_version", length = 20)
+    private String travelerStatusTermsVersion;
+
+    @Column(name = "business_name", length = 120)
+    private String businessName;
+
+    // Chiffré au repos (AES-256-GCM) comme pro_siret. Jamais dans un WHERE, un ORDER BY, un UNIQUE,
+    // ni dans un journal ou un payload d'audit.
+    @Column(name = "business_registration_number", length = 255)
+    @jakarta.persistence.Convert(converter = com.yadony.api.common.EncryptedStringConverter.class)
+    private String businessRegistrationNumber;
+
+    @Column(name = "business_country", length = 2)
+    private String businessCountry;
+
     @Column(name = "bio", length = 280)
     private String bio;
 
@@ -672,6 +695,24 @@ public class UserEntity extends BaseEntity {
 
     public String getProSiret() { return proSiret; }
     public void setProSiret(String proSiret) { this.proSiret = proSiret; }
+
+    public com.yadony.api.travelerstatus.TravelerStatus getTravelerStatus() { return travelerStatus; }
+    public void setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus travelerStatus) { this.travelerStatus = travelerStatus; }
+
+    public Instant getTravelerStatusDeclaredAt() { return travelerStatusDeclaredAt; }
+    public void setTravelerStatusDeclaredAt(Instant travelerStatusDeclaredAt) { this.travelerStatusDeclaredAt = travelerStatusDeclaredAt; }
+
+    public String getTravelerStatusTermsVersion() { return travelerStatusTermsVersion; }
+    public void setTravelerStatusTermsVersion(String travelerStatusTermsVersion) { this.travelerStatusTermsVersion = travelerStatusTermsVersion; }
+
+    public String getBusinessName() { return businessName; }
+    public void setBusinessName(String businessName) { this.businessName = businessName; }
+
+    public String getBusinessRegistrationNumber() { return businessRegistrationNumber; }
+    public void setBusinessRegistrationNumber(String businessRegistrationNumber) { this.businessRegistrationNumber = businessRegistrationNumber; }
+
+    public String getBusinessCountry() { return businessCountry; }
+    public void setBusinessCountry(String businessCountry) { this.businessCountry = businessCountry; }
 
     public String getBio() { return bio; }
     public void setBio(String bio) { this.bio = bio; }
