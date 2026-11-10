@@ -151,6 +151,28 @@ class AnnouncementSearchMapperTest {
         }
     }
 
+    @org.junit.jupiter.api.AfterEach
+    void clearSecurityContext() {
+        org.springframework.security.core.context.SecurityContextHolder.clearContext();
+    }
+
+    @Test
+    @DisplayName("invité : statut et raison sociale servis, numéro et pays masqués (unitaire et batch)")
+    void searchResultTraveler_guest_hidesRegistrationNumberAndCountry() {
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                        "uid-invite", null,
+                        java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority(
+                                "ROLE_GUEST"))));
+
+        for (var r : bothVariants(travelerWithStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL))) {
+            assertThat(r.traveler().travelerStatus()).isEqualTo("PROFESSIONAL");
+            assertThat(r.traveler().businessName()).isEqualTo("Acme Express");
+            assertThat(r.traveler().businessRegistrationNumber()).isNull();
+            assertThat(r.traveler().businessCountry()).isNull();
+        }
+    }
+
     @Test
     @DisplayName("voyageur particulier : statut INDIVIDUAL, aucune donnée d'entreprise (unitaire et batch)")
     void searchResultTraveler_individual_exposesStatusOnly() {

@@ -1415,6 +1415,34 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("détail lu par un invité : statut et raison sociale servis, numéro et pays masqués")
+        void getDetail_guest_hidesRegistrationNumberAndCountry() {
+            UserEntity traveler = buildTraveler();
+            traveler.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL);
+            traveler.setBusinessName("Acme Express");
+            traveler.setBusinessRegistrationNumber("SIREN 123 456 789");
+            traveler.setBusinessCountry("FR");
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(bidRepository.countVisibleByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(0L);
+            when(userRepository.findById(a.getTravelerId())).thenReturn(Optional.of(traveler));
+            org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                    new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                            "uid-invite", null,
+                            List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_GUEST"))));
+            try {
+                var dto = announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, "uid-invite").traveler();
+
+                assertThat(dto.travelerStatus()).isEqualTo("PROFESSIONAL");
+                assertThat(dto.businessName()).isEqualTo("Acme Express");
+                assertThat(dto.businessRegistrationNumber()).isNull();
+                assertThat(dto.businessCountry()).isNull();
+            } finally {
+                org.springframework.security.core.context.SecurityContextHolder.clearContext();
+            }
+        }
+
+        @Test
         @DisplayName("lecteur EUR sur annonce XOF → prix affiché ET grille convertis « environ »")
         void getDetail_readerInEur_getsConvertedPricesAndGrid() {
             UserEntity traveler = buildTraveler();

@@ -1392,8 +1392,8 @@ public class AnnouncementService {
                         !traveler.isContactKycOnly(),
                         traveler.publicTravelerStatus(),
                         traveler.publicBusinessName(),
-                        traveler.publicBusinessRegistrationNumber(),
-                        traveler.publicBusinessCountry())
+                        com.yadony.api.common.GuestSession.businessDetailOrNull(traveler.publicBusinessRegistrationNumber()),
+                        com.yadony.api.common.GuestSession.businessDetailOrNull(traveler.publicBusinessCountry()))
                 : null;
 
         List<com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse> gridItems =
@@ -1745,8 +1745,8 @@ public class AnnouncementService {
                 !user.isContactKycOnly(),
                 user.publicTravelerStatus(),
                 user.publicBusinessName(),
-                user.publicBusinessRegistrationNumber(),
-                user.publicBusinessCountry());
+                com.yadony.api.common.GuestSession.businessDetailOrNull(user.publicBusinessRegistrationNumber()),
+                com.yadony.api.common.GuestSession.businessDetailOrNull(user.publicBusinessCountry()));
 
         List<com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse> updatedGridItems =
                 saved.getPricingMode() == PricingMode.MIXED

@@ -93,8 +93,8 @@ public class AnnouncementSearchMapper {
                         !traveler.isContactKycOnly(),
                         traveler.publicTravelerStatus(),
                         traveler.publicBusinessName(),
-                        traveler.publicBusinessRegistrationNumber(),
-                        traveler.publicBusinessCountry())
+                        com.yadony.api.common.GuestSession.businessDetailOrNull(traveler.publicBusinessRegistrationNumber()),
+                        com.yadony.api.common.GuestSession.businessDetailOrNull(traveler.publicBusinessCountry()))
                 : null;
         Set<com.yadony.api.payments.cash.PaymentMethod> availablePaymentMethods =
                 AnnouncementPaymentRails.offerable(entity.getAcceptedPaymentMethods(), entity.getCurrency(),
@@ -168,8 +168,8 @@ public class AnnouncementSearchMapper {
                         !traveler.isContactKycOnly(),
                         traveler.publicTravelerStatus(),
                         traveler.publicBusinessName(),
-                        traveler.publicBusinessRegistrationNumber(),
-                        traveler.publicBusinessCountry())
+                        com.yadony.api.common.GuestSession.businessDetailOrNull(traveler.publicBusinessRegistrationNumber()),
+                        com.yadony.api.common.GuestSession.businessDetailOrNull(traveler.publicBusinessCountry()))
                 : null;
         Set<com.yadony.api.payments.cash.PaymentMethod> availablePaymentMethods =
                 AnnouncementPaymentRails.offerable(entity.getAcceptedPaymentMethods(), entity.getCurrency(),
