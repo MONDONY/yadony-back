@@ -33,6 +33,28 @@ final class VideoModalFixtures {
         return c;
     }
 
+    /** Campagne INFO : texte, icône, bouton principal SCREEN et bouton secondaire CLOSE. */
+    static VideoModalCampaignEntity infoCampaign(int version, VideoModalAudience audience) {
+        VideoModalCampaignEntity c = campaign(version, audience);
+        c.setType(VideoModalType.INFO);
+        c.setYoutubeUrl(null);
+        c.setYoutubeVideoId(null);
+        c.setDurationSeconds(null);
+        c.setHighlights(List.of());
+        c.setName("Info colis");
+        c.setTitleFr("Votre colis arrive");
+        c.setTitleEn("Your parcel is coming");
+        c.setSubtitleFr("Bonne nouvelle");
+        c.setBodyFr("Suivez-le en direct.");
+        c.setBodyEn("Follow it live.");
+        c.setIcon(VideoModalIcon.BELL);
+        c.setPrimaryLabelFr("Suivre");
+        c.setPrimaryLabelEn("Track");
+        c.setPrimaryAction(new VideoModalAction(VideoModalActionKind.SCREEN, InfoScreen.TRACKING, null));
+        c.setSecondaryAction(new VideoModalAction(VideoModalActionKind.CLOSE, null, null));
+        return c;
+    }
+
     static VideoModalResponseEntity response(VideoModalCampaignEntity c, int version, int displays, VideoModalEvent status) {
         VideoModalResponseEntity r = new VideoModalResponseEntity(c.getId(), UUID.randomUUID(), version);
         for (int i = 0; i < displays; i++) r.apply(VideoModalEvent.SHOWN, NOW);

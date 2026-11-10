@@ -51,8 +51,8 @@ class VideoModalAdminServiceTest {
     }
 
     static VideoModalRequest request(String url, Instant startsAt, Instant endsAt) {
-        return new VideoModalRequest(" ", url, 204, " Bienvenue ", "Welcome", "Sous-titre", "",
-                null, null, null, null,
+        return new VideoModalRequest(" ", null, url, 204, " Bienvenue ", "Welcome", "Sous-titre", "",
+                null, null, null, null, null, null, null, null, null,
                 List.of(new VideoModalRequest.HighlightRequest(VideoModalIcon.LOCK, " Paiement protégé ", " ")),
                 List.of(VideoModalTrigger.APP_OPEN, VideoModalTrigger.APP_OPEN, VideoModalTrigger.SEND_PARCEL),
                 null, startsAt, endsAt);

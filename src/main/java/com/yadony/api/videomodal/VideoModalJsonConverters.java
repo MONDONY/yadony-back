@@ -58,4 +58,29 @@ final class VideoModalJsonConverters {
             super(new TypeReference<>() { });
         }
     }
+
+    /** Action d'un bouton INFO ; colonne vide = pas d'action. */
+    @Converter
+    static class Action implements AttributeConverter<VideoModalAction, String> {
+
+        @Override
+        public String convertToDatabaseColumn(VideoModalAction value) {
+            if (value == null) return null;
+            try {
+                return MAPPER.writeValueAsString(value);
+            } catch (JsonProcessingException e) {
+                throw new IllegalStateException("Action non sérialisable", e);
+            }
+        }
+
+        @Override
+        public VideoModalAction convertToEntityAttribute(String json) {
+            if (json == null || json.isBlank()) return null;
+            try {
+                return MAPPER.readValue(json, VideoModalAction.class);
+            } catch (JsonProcessingException e) {
+                throw new IllegalStateException("Colonne JSON illisible", e);
+            }
+        }
+    }
 }

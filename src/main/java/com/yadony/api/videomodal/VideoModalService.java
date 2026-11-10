@@ -106,6 +106,8 @@ public class VideoModalService {
                     request.event(), request.version(), campaign.getVersion(), campaignId);
             return;
         }
+        // « Vue en entier » n'existe pas pour un INFO : accepté, jamais compté.
+        if (campaign.getType() == VideoModalType.INFO && request.event() == VideoModalEvent.COMPLETED) return;
         UUID userId = resolveUserId(firebaseUid);
         if (userId == null) return;
 
