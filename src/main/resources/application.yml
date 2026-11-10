@@ -435,6 +435,10 @@ yadony:
   kyc:
     return-url: ${YADONY_KYC_RETURN_URL:https://yadony.com/kyc/complete}
     verification-flow-id: ${YADONY_KYC_VERIFICATION_FLOW_ID:}
+    # Relances J+1/J+3/J+7 des comptes qui n'ont pas fini leur vérification d'identité.
+    # Coupées par défaut ; allumées par la variable d'environnement GitHub.
+    verification-reminders:
+      enabled: ${YADONY_KYC_VERIFICATION_REMINDERS_ENABLED:false}
     didit:
       # Valeur d'AMORCAGE seulement : une fois la ligne kyc_didit_enabled presente dans
       # platform_settings, c'est elle qui fait autorite et se bascule depuis le back-office.
