@@ -202,6 +202,9 @@ jobs:
           # « Confirmez votre statut ». Éteint par défaut : l'allumer est une décision du propriétaire (au premier
           # passage, tous les particuliers déjà concernés sont signalés et questionnés d'un coup).
           YADONY_INDIVIDUAL_FREQUENCY_SCHEDULER_ENABLED=${{ vars.YADONY_INDIVIDUAL_FREQUENCY_SCHEDULER_ENABLED || 'false' }}
+          # DAC7 (lot 3a) : endpoints voyageur des informations fiscales (NIF). Éteint par défaut : ne l'allumer
+          # qu'après la mise à jour de la politique de confidentialité et des CGU (préavis de 30 jours).
+          YADONY_DAC7_ENABLED=${{ vars.YADONY_DAC7_ENABLED || 'false' }}
           # Rail mobile money pawaPay : token API du dashboard SANDBOX (staging ne parle
           # jamais à la production pawaPay, PAWAPAY_BASE_URL garde son défaut sandbox).
           # Secret d environnement staging. Le rail reste fermé tant que PAWAPAY_ENABLED
