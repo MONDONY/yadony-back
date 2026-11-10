@@ -32,4 +32,15 @@ public record KycReminderProperties(
                 "DOCUMENT_OCCLUSION_DETECTED", "NO_FACE_DETECTED", "LOW_FACE_QUALITY",
                 "LOW_FACE_LUMINANCE", "HIGH_FACE_LUMINANCE", "MULTIPLE_FACES_DETECTED"
         }) List<String> retryableRejectionCodes) {
+
+    public KycReminderProperties {
+        if (windowStartHour < 0 || windowEndHour > 24 || windowStartHour >= windowEndHour) {
+            throw new IllegalArgumentException("yadony.kyc.verification-reminders : fenêtre horaire invalide ("
+                    + windowStartHour + "h-" + windowEndHour + "h)");
+        }
+        if (firstDelay.isZero() || firstDelay.isNegative() || secondDelay.isZero() || secondDelay.isNegative()
+                || thirdDelay.isZero() || thirdDelay.isNegative()) {
+            throw new IllegalArgumentException("yadony.kyc.verification-reminders : les délais doivent être positifs");
+        }
+    }
 }
