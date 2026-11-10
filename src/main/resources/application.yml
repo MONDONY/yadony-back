@@ -171,6 +171,10 @@ sentry:
 # Toutes les valeurs métier sont surchargeables par variable d'environnement
 # (${VAR:défaut}) — provisioning prod sans rebuild.
 yadony:
+  # Modals de l'app : nombre maximal de modals affichés par jour (calendaire, Europe/Paris) et par
+  # compte connecté, tous types confondus. 0 = plafond désactivé. Non réglable dans l'admin.
+  video-modal:
+    daily-cap: ${VIDEO_MODAL_DAILY_CAP:1}
   # Coûts des prestataires, pour le simulateur de marge de l'onglet Tarification UNIQUEMENT (jamais
   # le prix). Tarif public Stripe France vérifié le 18/10/2026 ; les frais pawaPay sont sous
   # yadony.pawapay.fees. Montants fixes en euros, convertis dans la devise du simulateur.

@@ -1,11 +1,15 @@
 package com.yadony.api.videomodal.dto;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.yadony.api.videomodal.VideoModalAction;
 import com.yadony.api.videomodal.VideoModalAudience;
+import com.yadony.api.videomodal.VideoModalFrequency;
 import com.yadony.api.videomodal.VideoModalIcon;
 import com.yadony.api.videomodal.VideoModalImageFit;
 import com.yadony.api.videomodal.VideoModalImageMode;
 import com.yadony.api.videomodal.VideoModalLayout;
+import com.yadony.api.videomodal.VideoModalPlatform;
+import com.yadony.api.videomodal.VideoModalSituation;
 import com.yadony.api.videomodal.VideoModalTrigger;
 import com.yadony.api.videomodal.VideoModalType;
 
@@ -13,7 +17,10 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
-/** Campagne vue par l'admin, avec les statistiques de la version courante. */
+/**
+ * Campagne vue par l'admin, avec les statistiques de la version courante. {@code conditions} est
+ * toujours un arbre de règles (groupe ET vide quand la campagne n'a aucune condition).
+ */
 public record VideoModalAdminResponse(
         UUID id,
         VideoModalType type,
@@ -52,13 +59,29 @@ public record VideoModalAdminResponse(
         String imageUrl,
         String imageAltFr,
         String imageAltEn,
+        VideoModalFrequency frequency,
+        Integer frequencyDays,
+        boolean stopAfterAnswer,
+        boolean allowDontShowAgain,
+        int priority,
+        boolean connectedOnly,
+        JsonNode conditions,
+        String minAppVersion,
+        String maxAppVersion,
+        List<VideoModalPlatform> platforms,
+        int samplePercent,
+        List<VideoModalSituation> situations,
         Stats stats) {
 
     public record Highlight(VideoModalIcon icon, String textFr, String textEn) {
     }
 
     /** Utilisateurs distincts de la version courante. */
-    public record Stats(long shown, long opened, long completed, long dismissed) {
-        public static final Stats EMPTY = new Stats(0, 0, 0, 0);
+    public record Stats(long shown, long opened, long completed, long dismissed, long dontShowAgain) {
+        public static final Stats EMPTY = new Stats(0, 0, 0, 0, 0);
+
+        public Stats(long shown, long opened, long completed, long dismissed) {
+            this(shown, opened, completed, dismissed, 0);
+        }
     }
 }

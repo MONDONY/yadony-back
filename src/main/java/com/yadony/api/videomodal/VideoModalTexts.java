@@ -2,6 +2,7 @@ package com.yadony.api.videomodal;
 
 import com.yadony.api.videomodal.dto.VideoModalEligibleResponse;
 
+import java.time.Instant;
 import java.util.List;
 
 /** Choix de la langue des textes d'une campagne, avec repli sur le français. */
@@ -12,14 +13,25 @@ final class VideoModalTexts {
 
     static VideoModalEligibleResponse toEligible(VideoModalCampaignEntity c, boolean english, int displays,
                                                  VideoModalImageUrls imageUrls) {
-        if (c.getType() == VideoModalType.INFO) {
-            return toEligibleInfo(c, english, displays, imageUrls);
-        }
+        return toEligible(c, english, displays, null, imageUrls);
+    }
+
+    /** {@code lastShownAt} : dernier affichage de la personne pour la version courante, nul sinon. */
+    static VideoModalEligibleResponse toEligible(VideoModalCampaignEntity c, boolean english, int displays,
+                                                 Instant lastShownAt, VideoModalImageUrls imageUrls) {
+        VideoModalEligibleResponse base = c.getType() == VideoModalType.INFO
+                ? toEligibleInfo(c, english, displays, imageUrls)
+                : toEligibleVideo(c, english, displays);
+        return base.withTargeting(c.getPriority(), c.getFrequency(), c.getFrequencyDays(),
+                c.isStopAfterAnswer(), c.isAllowDontShowAgain(), lastShownAt);
+    }
+
+    private static VideoModalEligibleResponse toEligibleVideo(VideoModalCampaignEntity c, boolean english, int displays) {
         return new VideoModalEligibleResponse(
                 c.getId(),
                 VideoModalType.VIDEO,
                 c.getVersion(),
-                c.getTriggers(),
+                c.effectiveTriggers(),
                 pick(english, c.getTitleFr(), c.getTitleEn()),
                 pick(english, c.getSubtitleFr(), c.getSubtitleEn()),
                 c.getYoutubeVideoId(),
@@ -47,7 +59,7 @@ final class VideoModalTexts {
                 c.getId(),
                 VideoModalType.INFO,
                 c.getVersion(),
-                c.getTriggers(),
+                c.effectiveTriggers(),
                 title,
                 pick(english, c.getSubtitleFr(), c.getSubtitleEn()),
                 null,

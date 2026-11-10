@@ -133,6 +133,113 @@ public class VideoModalCampaignEntity extends BaseEntity {
     @Column(name = "version_published_at", nullable = false)
     private Instant versionPublishedAt;
 
+    // ── Moment, ciblage et fréquence (V374) ────────────────────────────────
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "frequency", nullable = false, length = 20)
+    private VideoModalFrequency frequency = VideoModalFrequency.UP_TO_N;
+
+    /** Obligatoire (1 à 365) pour {@code EVERY_N_DAYS}, nul sinon. */
+    @Column(name = "frequency_days")
+    private Integer frequencyDays;
+
+    /** Après OPENED, COMPLETED ou DISMISSED de la version courante, ne plus afficher. */
+    @Column(name = "stop_after_answer", nullable = false)
+    private boolean stopAfterAnswer = true;
+
+    @Column(name = "allow_dont_show_again", nullable = false)
+    private boolean allowDontShowAgain = false;
+
+    @Column(name = "priority", nullable = false)
+    private int priority = 0;
+
+    @Column(name = "connected_only", nullable = false)
+    private boolean connectedOnly = false;
+
+    /** JSON canonique d'un {@code AudienceRule.Group} de la Diffusion ; nul = aucune condition. */
+    @Column(name = "conditions", columnDefinition = "TEXT")
+    private String conditions;
+
+    @Column(name = "min_app_version", length = 20)
+    private String minAppVersion;
+
+    @Column(name = "max_app_version", length = 20)
+    private String maxAppVersion;
+
+    /** Vide = toutes les plateformes. */
+    @Convert(converter = VideoModalJsonConverters.Platforms.class)
+    @Column(name = "platforms", nullable = false, columnDefinition = "TEXT")
+    private List<VideoModalPlatform> platforms = new ArrayList<>();
+
+    /** Tirage stable par personne, 1 à 100 (100 = tout le monde). */
+    @Column(name = "sample_percent", nullable = false)
+    private int samplePercent = 100;
+
+    @Convert(converter = VideoModalJsonConverters.Situations.class)
+    @Column(name = "situations", nullable = false, columnDefinition = "TEXT")
+    private List<VideoModalSituation> situations = new ArrayList<>();
+
+    /** Condition(s) de ciblage fin : jamais envoyée à un visiteur sans compte. */
+    public boolean needsAccount() {
+        return connectedOnly || hasConditions() || !situations.isEmpty() || samplePercent < 100;
+    }
+
+    public boolean hasConditions() {
+        return conditions != null && !conditions.isBlank();
+    }
+
+    /**
+     * Vrai si l'app doit connaître {@code caps=targeting} : fréquence « à chaque ouverture » ou
+     * « tous les N jours », ou case « Ne plus afficher ». Les apps déjà installées ne la reçoivent pas.
+     */
+    public boolean needsTargetingCapability() {
+        return frequency.needsTargetingCapability() || allowDontShowAgain;
+    }
+
+    /** Nombre d'affichages maximal de la version, ou {@code null} sans plafond (EVERY_OPEN, EVERY_N_DAYS). */
+    public Integer displayCap() {
+        return switch (frequency) {
+            case ONCE -> 1;
+            case UP_TO_N -> maxDisplays;
+            case EVERY_OPEN, EVERY_N_DAYS -> null;
+        };
+    }
+
+    /** Triggers servis à l'app : {@code APP_OPEN} pour une campagne à situations sans déclencheur. */
+    public List<VideoModalTrigger> effectiveTriggers() {
+        if (triggers.isEmpty() && !situations.isEmpty()) return List.of(VideoModalTrigger.APP_OPEN);
+        return triggers;
+    }
+
+    public VideoModalFrequency getFrequency() { return frequency; }
+    public void setFrequency(VideoModalFrequency frequency) { this.frequency = frequency == null ? VideoModalFrequency.UP_TO_N : frequency; }
+    public Integer getFrequencyDays() { return frequencyDays; }
+    public void setFrequencyDays(Integer frequencyDays) { this.frequencyDays = frequencyDays; }
+    public boolean isStopAfterAnswer() { return stopAfterAnswer; }
+    public void setStopAfterAnswer(boolean stopAfterAnswer) { this.stopAfterAnswer = stopAfterAnswer; }
+    public boolean isAllowDontShowAgain() { return allowDontShowAgain; }
+    public void setAllowDontShowAgain(boolean allowDontShowAgain) { this.allowDontShowAgain = allowDontShowAgain; }
+    public int getPriority() { return priority; }
+    public void setPriority(int priority) { this.priority = priority; }
+    public boolean isConnectedOnly() { return connectedOnly; }
+    public void setConnectedOnly(boolean connectedOnly) { this.connectedOnly = connectedOnly; }
+    public String getConditions() { return conditions; }
+    public void setConditions(String conditions) { this.conditions = conditions; }
+    public String getMinAppVersion() { return minAppVersion; }
+    public void setMinAppVersion(String minAppVersion) { this.minAppVersion = minAppVersion; }
+    public String getMaxAppVersion() { return maxAppVersion; }
+    public void setMaxAppVersion(String maxAppVersion) { this.maxAppVersion = maxAppVersion; }
+    public List<VideoModalPlatform> getPlatforms() { return platforms; }
+    public void setPlatforms(List<VideoModalPlatform> platforms) {
+        this.platforms = platforms == null ? new ArrayList<>() : new ArrayList<>(platforms);
+    }
+    public int getSamplePercent() { return samplePercent; }
+    public void setSamplePercent(int samplePercent) { this.samplePercent = samplePercent; }
+    public List<VideoModalSituation> getSituations() { return situations; }
+    public void setSituations(List<VideoModalSituation> situations) {
+        this.situations = situations == null ? new ArrayList<>() : new ArrayList<>(situations);
+    }
+
     /** Vrai si la campagne peut s'afficher à cet instant (active et dans sa période). */
     public boolean isLiveAt(Instant now) {
         return active

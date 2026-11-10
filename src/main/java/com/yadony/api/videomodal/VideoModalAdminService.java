@@ -2,6 +2,9 @@ package com.yadony.api.videomodal;
 
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.admin.broadcast.rule.AudienceRule;
+import com.yadony.api.videomodal.dto.AudienceEstimateRequest;
+import com.yadony.api.videomodal.dto.AudienceEstimateResponse;
 import com.yadony.api.videomodal.dto.VideoModalAdminResponse;
 import com.yadony.api.videomodal.dto.VideoModalRequest;
 import com.yadony.api.videomodal.dto.VideoModalVersionRequest;
@@ -14,6 +17,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,30 +34,47 @@ public class VideoModalAdminService {
     static final int MAX_INFO_LABEL = 26;
     static final int MIN_SIZE_PERCENT = 30;
     static final int MAX_SIZE_PERCENT = 100;
+    static final int MAX_PRIORITY = 1000;
+    static final int MIN_FREQUENCY_DAYS = 1;
+    static final int MAX_FREQUENCY_DAYS = 365;
 
     private final VideoModalCampaignRepository campaignRepository;
     private final VideoModalResponseRepository responseRepository;
     private final AuditService auditService;
     private final VideoModalImageUrls imageUrls;
+    private final VideoModalTargeting targeting;
     private final Clock clock;
 
     @Autowired
     public VideoModalAdminService(VideoModalCampaignRepository campaignRepository,
                                   VideoModalResponseRepository responseRepository,
                                   AuditService auditService,
-                                  VideoModalImageUrls imageUrls) {
-        this(campaignRepository, responseRepository, auditService, imageUrls, Clock.systemUTC());
+                                  VideoModalImageUrls imageUrls,
+                                  VideoModalTargeting targeting) {
+        this(campaignRepository, responseRepository, auditService, imageUrls, targeting, Clock.systemUTC());
+    }
+
+    /** Sans accès au moteur d'audience : suffit pour tout sauf l'estimation. */
+    VideoModalAdminService(VideoModalCampaignRepository campaignRepository,
+                           VideoModalResponseRepository responseRepository,
+                           AuditService auditService,
+                           VideoModalImageUrls imageUrls,
+                           Clock clock) {
+        this(campaignRepository, responseRepository, auditService, imageUrls,
+                new VideoModalTargeting(null, null, clock), clock);
     }
 
     VideoModalAdminService(VideoModalCampaignRepository campaignRepository,
                            VideoModalResponseRepository responseRepository,
                            AuditService auditService,
                            VideoModalImageUrls imageUrls,
+                           VideoModalTargeting targeting,
                            Clock clock) {
         this.campaignRepository = campaignRepository;
         this.responseRepository = responseRepository;
         this.auditService = auditService;
         this.imageUrls = imageUrls;
+        this.targeting = targeting;
         this.clock = clock;
     }
 
@@ -77,7 +98,10 @@ public class VideoModalAdminService {
         applyContent(c, request);
         c.setActive(false);
         c.setVersion(1);
-        c.setAudience(VideoModalAudience.NEVER_ANSWERED);
+        // Public de la v1 : celui demandé, sinon « tout le monde » pour une information et « jamais répondu »
+        // pour une vidéo (défaut voulu de chaque type).
+        c.setAudience(request.audience() != null ? request.audience()
+                : c.getType() == VideoModalType.INFO ? VideoModalAudience.EVERYONE : VideoModalAudience.NEVER_ANSWERED);
         c.setVersionPublishedAt(clock.instant());
         VideoModalCampaignEntity saved = campaignRepository.save(c);
         audit(saved, "VIDEO_MODAL_CREATED", adminId);
@@ -89,6 +113,7 @@ public class VideoModalAdminService {
     public VideoModalAdminResponse update(UUID id, VideoModalRequest request, UUID adminId) {
         VideoModalCampaignEntity c = find(id);
         applyContent(c, request);
+        if (request.audience() != null) c.setAudience(request.audience());
         VideoModalCampaignEntity saved = campaignRepository.save(c);
         audit(saved, "VIDEO_MODAL_UPDATED", adminId);
         return toResponse(saved, stats(List.of(id)).get(id));
@@ -143,7 +168,13 @@ public class VideoModalAdminService {
         c.setTitleEn(blankToNull(r.titleEn()));
         c.setSubtitleFr(blankToNull(r.subtitleFr()));
         c.setSubtitleEn(blankToNull(r.subtitleEn()));
-        c.setTriggers(r.triggers().stream().distinct().toList());
+        List<VideoModalSituation> situations = parseSituations(r.situations());
+        List<VideoModalTrigger> triggers = r.triggers() == null ? List.of() : r.triggers().stream().distinct().toList();
+        if (triggers.isEmpty() && situations.isEmpty()) {
+            throw invalid("video-modal-triggers-required",
+                    "Au moins un déclencheur est obligatoire (sauf si la campagne a des situations)");
+        }
+        c.setTriggers(triggers);
         c.setMaxDisplays(r.maxDisplays() == null ? DEFAULT_MAX_DISPLAYS : r.maxDisplays());
         c.setStartsAt(r.startsAt());
         c.setEndsAt(r.endsAt());
@@ -153,6 +184,114 @@ public class VideoModalAdminService {
             applyVideo(c, r);
         }
         applyLayout(c, r, type);
+        applyTargeting(c, r, situations);
+    }
+
+    /**
+     * Fréquence, priorité, public et ciblage. Tout est facultatif et retombe sur le comportement
+     * d'avant (jusqu'à N fois, arrêt après une réponse, aucune condition, toutes versions et systèmes).
+     */
+    private void applyTargeting(VideoModalCampaignEntity c, VideoModalRequest r, List<VideoModalSituation> situations) {
+        VideoModalFrequency frequency = r.frequency() == null ? VideoModalFrequency.UP_TO_N : r.frequency();
+        Integer days = r.frequencyDays();
+        if (days != null && (days < MIN_FREQUENCY_DAYS || days > MAX_FREQUENCY_DAYS)) {
+            throw invalid("video-modal-invalid-frequency-days", "Le nombre de jours doit être compris entre "
+                    + MIN_FREQUENCY_DAYS + " et " + MAX_FREQUENCY_DAYS);
+        }
+        if (frequency == VideoModalFrequency.EVERY_N_DAYS && days == null) {
+            throw invalid("video-modal-frequency-days-required",
+                    "Le nombre de jours est obligatoire pour une fréquence « tous les N jours »");
+        }
+        int sample = r.samplePercent() == null ? 100 : r.samplePercent();
+        if (sample < 1 || sample > 100) {
+            throw invalid("video-modal-invalid-sample", "Le tirage doit être compris entre 1 et 100 %");
+        }
+        if (r.priority() != null && (r.priority() < -MAX_PRIORITY || r.priority() > MAX_PRIORITY)) {
+            throw invalid("video-modal-invalid-priority", "La priorité doit être comprise entre -" + MAX_PRIORITY
+                    + " et " + MAX_PRIORITY);
+        }
+        String min = normalizeVersion(r.minAppVersion(), "minimale");
+        String max = normalizeVersion(r.maxAppVersion(), "maximale");
+        if (min != null && max != null && VideoModalAppVersions.compare(
+                VideoModalAppVersions.parseStrict(min).orElseThrow(), VideoModalAppVersions.parseStrict(max).orElseThrow()) > 0) {
+            throw invalid("video-modal-invalid-version-range",
+                    "La version minimale ne peut pas dépasser la version maximale");
+        }
+        c.setFrequency(frequency);
+        c.setFrequencyDays(frequency == VideoModalFrequency.EVERY_N_DAYS ? days : null);
+        c.setStopAfterAnswer(r.stopAfterAnswer() == null || r.stopAfterAnswer());
+        c.setAllowDontShowAgain(r.allowDontShowAgain() != null && r.allowDontShowAgain());
+        c.setPriority(r.priority() == null ? 0 : r.priority());
+        c.setConnectedOnly(r.connectedOnly() != null && r.connectedOnly());
+        c.setConditions(targeting.normalizeConditions(r.conditions()));
+        c.setMinAppVersion(min);
+        c.setMaxAppVersion(max);
+        c.setPlatforms(r.platforms() == null ? List.of() : r.platforms().stream().filter(java.util.Objects::nonNull).distinct().toList());
+        c.setSamplePercent(sample);
+        c.setSituations(situations);
+    }
+
+    private static String normalizeVersion(String raw, String which) {
+        String version = blankToNull(raw);
+        if (version == null) return null;
+        if (VideoModalAppVersions.parseStrict(version).isEmpty()) {
+            throw invalid("video-modal-invalid-version", "La version " + which
+                    + " doit s'écrire x.y.z (par exemple 1.0.6)");
+        }
+        return version;
+    }
+
+    /**
+     * Situations : genre connu, valeur dans les bornes de son unité (1 à 720 heures, 1 à 365 jours),
+     * valeur par défaut si absente, ignorée pour les genres sans valeur. Un genre répété avec la même
+     * valeur est dédoublonné ; avec deux valeurs différentes, refusé (une situation ne se dit qu'une fois).
+     */
+    private static List<VideoModalSituation> parseSituations(List<VideoModalRequest.SituationRequest> raw) {
+        if (raw == null) return List.of();
+        Map<VideoModalSituationKind, VideoModalSituation> byKind = new java.util.LinkedHashMap<>();
+        for (VideoModalRequest.SituationRequest item : raw) {
+            if (item == null) throw invalid("video-modal-invalid-situation", "Situation vide");
+            VideoModalSituationKind kind = parseEnum(VideoModalSituationKind.class, item.kind());
+            if (kind == null) {
+                throw invalid("video-modal-invalid-situation", "Situation inconnue : « " + item.kind() + " »");
+            }
+            Integer value = null;
+            if (kind.unit() != VideoModalSituationKind.Unit.NONE) {
+                value = item.value() == null ? kind.defaultValue() : item.value();
+                if (value < 1 || value > kind.maxValue()) {
+                    throw invalid("video-modal-invalid-situation-value", "La valeur de la situation " + kind.name()
+                            + " doit être comprise entre 1 et " + kind.maxValue()
+                            + (kind.unit() == VideoModalSituationKind.Unit.HOURS ? " heures" : " jours"));
+                }
+            }
+            VideoModalSituation situation = new VideoModalSituation(kind, value);
+            VideoModalSituation previous = byKind.putIfAbsent(kind, situation);
+            if (previous != null && !previous.equals(situation)) {
+                throw invalid("video-modal-duplicate-situation", "La situation " + kind.name()
+                        + " est indiquée deux fois avec des valeurs différentes");
+            }
+        }
+        return new ArrayList<>(byKind.values());
+    }
+
+    /**
+     * Combien de comptes le ciblage touche, avant d'enregistrer la campagne. Les mêmes contrôles que
+     * la création s'appliquent (conditions du moteur de la Diffusion, versions, tirage : 422). Lecture
+     * seule, aucune écriture, donc aucune entrée d'audit.
+     */
+    @Transactional(readOnly = true)
+    public AudienceEstimateResponse estimateAudience(AudienceEstimateRequest request) {
+        int sample = request.samplePercent() == null ? 100 : request.samplePercent();
+        if (sample < 1 || sample > 100) {
+            throw invalid("video-modal-invalid-sample", "Le tirage doit être compris entre 1 et 100 %");
+        }
+        normalizeVersion(request.minAppVersion(), "minimale");
+        normalizeVersion(request.maxAppVersion(), "maximale");
+        String conditions = targeting.normalizeConditions(request.conditions());
+        VideoModalTargeting.Estimate estimate = targeting.estimate(conditions,
+                request.platforms() == null ? List.of() : request.platforms().stream().filter(java.util.Objects::nonNull).distinct().toList(),
+                sample);
+        return new AudienceEstimateResponse(estimate.accounts(), estimate.afterSample());
     }
 
     /**
@@ -303,7 +442,7 @@ public class VideoModalAdminService {
         if (ids.isEmpty()) return out;
         for (Object[] row : responseRepository.currentVersionStats(ids)) {
             out.put((UUID) row[0], new VideoModalAdminResponse.Stats(
-                    toLong(row[1]), toLong(row[2]), toLong(row[3]), toLong(row[4])));
+                    toLong(row[1]), toLong(row[2]), toLong(row[3]), toLong(row[4]), row.length > 5 ? toLong(row[5]) : 0L));
         }
         return out;
     }
@@ -326,6 +465,23 @@ public class VideoModalAdminService {
         payload.put("layout", c.getLayout().name());
         payload.put("sizePercent", c.getSizePercent());
         payload.put("imageMode", c.getImageMode().name());
+        payload.put("frequency", c.getFrequency().name());
+        payload.put("frequencyDays", c.getFrequencyDays());
+        payload.put("stopAfterAnswer", c.isStopAfterAnswer());
+        payload.put("allowDontShowAgain", c.isAllowDontShowAgain());
+        payload.put("priority", c.getPriority());
+        payload.put("connectedOnly", c.isConnectedOnly());
+        payload.put("samplePercent", c.getSamplePercent());
+        payload.put("minAppVersion", c.getMinAppVersion());
+        payload.put("maxAppVersion", c.getMaxAppVersion());
+        payload.put("platforms", c.getPlatforms().stream().map(Enum::name).toList());
+        payload.put("situations", c.getSituations().stream()
+                .map(x -> x.value() == null ? x.kind().name() : x.kind().name() + ":" + x.value()).toList());
+        // Empreinte de la règle, jamais ses valeurs (même convention que la Diffusion).
+        AudienceRule.Group rule = c.hasConditions()
+                ? AudienceRule.parse(VideoModalTargeting.readConditions(c.getConditions())) : null;
+        payload.put("ruleHash", rule == null ? null : rule.hash());
+        payload.put("conditionCount", rule == null ? 0 : rule.conditionCount());
         auditService.log(AUDIT_ENTITY, c.getId(), action, adminId, payload);
     }
 
@@ -343,6 +499,11 @@ public class VideoModalAdminService {
                 utc(c.getCreatedAt()), utc(c.getUpdatedAt()),
                 c.getLayout(), c.getSizePercent(), c.getImageMode(), c.getImageFit(),
                 imageUrls.urlOf(c.getImageKey()), c.getImageAltFr(), c.getImageAltEn(),
+                c.getFrequency(), c.getFrequencyDays(), c.isStopAfterAnswer(), c.isAllowDontShowAgain(),
+                c.getPriority(), c.isConnectedOnly(),
+                c.hasConditions() ? VideoModalTargeting.readConditions(c.getConditions()) : null,
+                c.getMinAppVersion(), c.getMaxAppVersion(), c.getPlatforms(), c.getSamplePercent(),
+                c.getSituations(),
                 stats == null ? VideoModalAdminResponse.Stats.EMPTY : stats);
     }
 
