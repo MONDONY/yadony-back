@@ -61,6 +61,11 @@ public class ReportEntity extends BaseEntity {
     @Column(name = "support_ticket_id")
     private UUID supportTicketId;
 
+    /** Origine (V365) : utilisateur de l'app, ou détection automatique de Yadony (sans signalant). */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "source", nullable = false, length = 10)
+    private ReportSource source = ReportSource.USER;
+
     public ReportTargetType getTargetType() { return targetType; }
     public void setTargetType(ReportTargetType targetType) { this.targetType = targetType; }
 
@@ -72,6 +77,9 @@ public class ReportEntity extends BaseEntity {
 
     public UUID getReporterId() { return reporterId; }
     public void setReporterId(UUID reporterId) { this.reporterId = reporterId; }
+
+    public ReportSource getSource() { return source; }
+    public void setSource(ReportSource source) { this.source = source; }
 
     public ReportReason getReason() { return reason; }
     public void setReason(ReportReason reason) { this.reason = reason; }

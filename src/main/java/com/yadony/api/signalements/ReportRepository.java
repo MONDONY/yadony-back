@@ -113,6 +113,10 @@ public interface ReportRepository extends JpaRepository<ReportEntity, UUID> {
 
     boolean existsByTargetTypeAndTargetIdAndStatus(ReportTargetType targetType, UUID targetId, ReportStatus status);
 
+    /** Un signalement de cette origine est-il déjà ouvert sur cette cible ? (détection automatique, V365) */
+    boolean existsByTargetTypeAndTargetIdAndSourceAndStatus(ReportTargetType targetType, UUID targetId,
+                                                            ReportSource source, ReportStatus status);
+
     /** Nombre de signalements d'un statut donné sur une cible. */
     long countByStatusAndTargetTypeAndTargetId(ReportStatus status, ReportTargetType targetType, UUID targetId);
 

@@ -466,7 +466,8 @@ public class AdminReportsController {
                 author != null ? new AdminReportResponse.TargetAuthor(author.getId(), author.publicDisplayName()) : null,
                 r.getSupportTicketId(),
                 canReply(r, r.getReporterId() != null && users.containsKey(r.getReporterId()), authorities),
-                ratingPreview(target)
+                ratingPreview(target),
+                (r.getSource() != null ? r.getSource() : com.yadony.api.signalements.ReportSource.USER).name()
         );
     }
 

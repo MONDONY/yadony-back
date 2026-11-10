@@ -289,6 +289,44 @@ public class ReportService {
         return saved;
     }
 
+    /**
+     * Signalement créé par Yadony, sans signalant : la description d'un colis évoque l'envoi
+     * d'argent (terme repéré par {@code MoneyKeywordDetector}). Motif {@code PROHIBITED_ITEM},
+     * source {@code SYSTEM}. Un seul signalement système ouvert par cible : s'il en existe déjà
+     * un, rien n'est créé (l'index unique partiel de V365 couvre deux écritures simultanées).
+     *
+     * <p>Transaction propre : appelé après le commit de l'envoi du colis, jamais dans sa
+     * transaction, pour qu'un échec ici ne puisse pas annuler l'envoi.
+     *
+     * @return le signalement créé, ou vide s'il en existait déjà un ouvert
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public java.util.Optional<ReportEntity> recordMoneyKeywordReport(ReportTargetType targetType, UUID targetId,
+                                                                     String term) {
+        if (reportRepository.existsByTargetTypeAndTargetIdAndSourceAndStatus(
+                targetType, targetId, ReportSource.SYSTEM, ReportStatus.OPEN)) {
+            return java.util.Optional.empty();
+        }
+        ReportEntity report = new ReportEntity();
+        report.setTargetType(targetType);
+        report.setTargetId(targetId);
+        report.setReason(ReportReason.PROHIBITED_ITEM);
+        report.setSource(ReportSource.SYSTEM);
+        report.setDescription("Détection automatique : la description du colis contient « " + term
+                + " » (envoi d'argent interdit, CGU article 4).");
+        report.setStatus(ReportStatus.OPEN);
+        ReportEntity saved = reportRepository.save(report);
+        auditService.log("REPORT", saved.getId(), "REPORT_CREATED", null,
+                Map.of(
+                        "targetType", targetType.name(),
+                        "targetId", targetId.toString(),
+                        "reason", ReportReason.PROHIBITED_ITEM.name(),
+                        "source", ReportSource.SYSTEM.name(),
+                        "term", term
+                ));
+        return java.util.Optional.of(saved);
+    }
+
     /** Identifiant de message conservé pour la seule cible MESSAGE, vidé si blanc ; 400 si trop long. */
     static String normalizeMessageId(ReportTargetType targetType, String messageId) {
         if (targetType != ReportTargetType.MESSAGE || messageId == null || messageId.isBlank()) {

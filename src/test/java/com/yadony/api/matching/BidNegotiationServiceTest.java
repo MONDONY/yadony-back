@@ -291,6 +291,9 @@ class BidNegotiationServiceTest {
             verify(auditService).log(eq("BID"), eq(BID_ID), eq("BID_NEGOTIATION_PROPOSED"),
                     eq(SENDER_ID), anyMap());
             verify(eventPublisher).publishEvent(any(BidNegotiationMessagePostedEvent.class));
+            // Détection automatique d'envoi d'argent : la description part après le commit.
+            verify(eventPublisher).publishEvent(new com.yadony.api.matching.events.BidDescriptionSubmittedEvent(
+                    BID_ID, SENDER_ID, saved.getDescription()));
 
             assertThat(response.bidId()).isEqualTo(BID_ID);
             assertThat(response.status()).isEqualTo("NEGOTIATING");
