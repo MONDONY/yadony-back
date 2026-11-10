@@ -41,8 +41,9 @@ class TravelerTaxInfoServiceTest {
     private final AuditService audit = mock(AuditService.class);
     private final Dac7DueDiligenceService diligence = mock(Dac7DueDiligenceService.class);
     private final Dac7ResidencyPolicy policy = new Dac7ResidencyPolicy(new Dac7Properties(true, null));
+    private final Dac7ReportReadModel readModel = mock(Dac7ReportReadModel.class);
     private final TravelerTaxInfoService service = new TravelerTaxInfoService(users, audit, diligence, policy,
-            Clock.fixed(NOW, ZoneOffset.UTC));
+            new Dac7SolicitationPolicy(policy, readModel), Clock.fixed(NOW, ZoneOffset.UTC));
     private UserEntity user;
 
     @BeforeEach
@@ -65,6 +66,22 @@ class TravelerTaxInfoServiceTest {
         assertThat(r.providedAt()).isNull();
         assertThat(r.residenceCountry()).isEqualTo("FR");
         assertThat(r.dac7Status()).isEqualTo(Dac7ResidencyStatus.DECLARABLE);
+        // Jamais payé : aucune demande, même résident en France.
+        assertThat(r.solicitation()).isEqualTo(Dac7SolicitationStatus.NE_PAS_SOLLICITER);
+    }
+
+    @Test
+    void get_dejaPayeSansNif_solliciter() {
+        when(readModel.hasBeenPaid(user.getId())).thenReturn(true);
+        assertThat(service.get(UID).solicitation()).isEqualTo(Dac7SolicitationStatus.SOLLICITER);
+    }
+
+    @Test
+    void put_puisGet_dejaFourni() {
+        when(readModel.hasBeenPaid(user.getId())).thenReturn(true);
+        assertThat(service.set(UID, new TaxInfoRequest(NIF, "FR", null)).solicitation())
+                .isEqualTo(Dac7SolicitationStatus.DEJA_FOURNI);
+        assertThat(service.get(UID).solicitation()).isEqualTo(Dac7SolicitationStatus.DEJA_FOURNI);
     }
 
     @Test

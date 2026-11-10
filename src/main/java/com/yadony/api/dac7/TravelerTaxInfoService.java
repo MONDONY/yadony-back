@@ -43,14 +43,16 @@ public class TravelerTaxInfoService {
     private final AuditService audit;
     private final Dac7DueDiligenceService diligence;
     private final Dac7ResidencyPolicy residency;
+    private final Dac7SolicitationPolicy solicitation;
     private final Clock clock;
 
     public TravelerTaxInfoService(UserRepository users, AuditService audit, Dac7DueDiligenceService diligence,
-                                  Dac7ResidencyPolicy residency, Clock clock) {
+                                  Dac7ResidencyPolicy residency, Dac7SolicitationPolicy solicitation, Clock clock) {
         this.users = users;
         this.audit = audit;
         this.diligence = diligence;
         this.residency = residency;
+        this.solicitation = solicitation;
         this.clock = clock;
     }
 
@@ -107,7 +109,8 @@ public class TravelerTaxInfoService {
         String nif = user.getTaxIdentificationNumber();
         String vat = user.getVatNumber();
         return new TaxInfoResponse(nif != null, mask(nif), user.getTaxCountry(), vat != null, mask(vat),
-                user.getTaxInfoProvidedAt(), Dac7ResidencyPolicy.residenceCountryOf(user), residency.statusOf(user));
+                user.getTaxInfoProvidedAt(), Dac7ResidencyPolicy.residenceCountryOf(user), residency.statusOf(user),
+                solicitation.statusOf(user));
     }
 
     /**

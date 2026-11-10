@@ -182,6 +182,28 @@ public class Dac7ReportReadModel {
             WHERE u.id IN (:ids)
             """;
 
+    /**
+     * Le voyageur a-t-il déjà reçu de l'argent, tous rails et toutes dates confondus ? Mêmes prédicats que
+     * {@link #OPERATIONS_SQL} (paiement versé, colis en espèces livré, supplément ou modification versés), sans
+     * fenêtre. Écrit en SQL portable (aussi exécuté sur H2 par les tests du contexte Spring).
+     */
+    private static final String HAS_BEEN_PAID_SQL = """
+            SELECT CASE WHEN
+                EXISTS (SELECT 1 FROM payments p
+                        LEFT JOIN bids b ON b.id = p.bid_id
+                        LEFT JOIN announcements a ON a.id = b.announcement_id
+                        LEFT JOIN negotiation_threads nt ON nt.id = p.negotiation_thread_id
+                        WHERE p.deleted_at IS NULL AND p.status = 'RELEASED' AND p.escrow_released_at IS NOT NULL
+                          AND (a.traveler_id = :id OR nt.traveler_id = :id))
+                OR EXISTS (SELECT 1 FROM bids b JOIN announcements a ON a.id = b.announcement_id
+                           WHERE a.traveler_id = :id AND b.payment_method = 'CASH' AND b.status = 'COMPLETED')
+                OR EXISTS (SELECT 1 FROM bid_supplements s
+                           WHERE s.traveler_id = :id AND s.deleted_at IS NULL AND s.paid_out_at IS NOT NULL)
+                OR EXISTS (SELECT 1 FROM bid_amendments m
+                           WHERE m.traveler_id = :id AND m.deleted_at IS NULL AND m.paid_out_at IS NOT NULL)
+            THEN TRUE ELSE FALSE END
+            """;
+
     private final NamedParameterJdbcTemplate jdbc;
 
     public Dac7ReportReadModel(NamedParameterJdbcTemplate jdbc) {
@@ -226,6 +248,11 @@ public class Dac7ReportReadModel {
                 rs.getString("traveler_status"),
                 rs.getString("business_country"),
                 rs.getBoolean("tax_provided")));
+    }
+
+    public boolean hasBeenPaid(UUID travelerId) {
+        return Boolean.TRUE.equals(jdbc.queryForObject(HAS_BEEN_PAID_SQL,
+                new MapSqlParameterSource("id", travelerId), Boolean.class));
     }
 
     private static MapSqlParameterSource window(Instant from, Instant to) {

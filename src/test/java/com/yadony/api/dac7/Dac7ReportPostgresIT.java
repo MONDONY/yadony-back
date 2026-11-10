@@ -335,6 +335,39 @@ class Dac7ReportPostgresIT {
     }
 
     @Test
+    @DisplayName("« déjà payé » sur le vrai schéma : carte, fil de négociation, espèces seules ; jamais payé")
+    void dejaPaye() {
+        Dac7ReportReadModel readModel = new Dac7ReportReadModel(
+                new NamedParameterJdbcTemplate(postgres.getPostgresDatabase()));
+        assertThat(readModel.hasBeenPaid(FRENCH)).isTrue();
+        assertThat(readModel.hasBeenPaid(PRO)).isTrue();
+        assertThat(readModel.hasBeenPaid(SENDER)).isFalse();
+
+        UUID cashOnly = UUID.randomUUID();
+        user(cashOnly, "FR");
+        UUID trip = trip(cashOnly, "EUR", "10.00");
+        UUID inTransit = bid(trip, "IN_TRANSIT", "CASH", "EUR");
+        assertThat(readModel.hasBeenPaid(cashOnly)).as("espèces pas encore livrées").isFalse();
+        jdbc.update("UPDATE bids SET status = 'COMPLETED', delivered_at = TIMESTAMP '2026-06-01 10:00:00' WHERE id = ?",
+                inTransit);
+        assertThat(readModel.hasBeenPaid(cashOnly)).isTrue();
+
+        UUID threadOnly = UUID.randomUUID();
+        user(threadOnly, "FR");
+        UUID thread = UUID.randomUUID();
+        try {
+            withoutForeignKeys("INSERT INTO negotiation_threads (id, package_request_id, traveler_id, "
+                    + "traveler_travel_date, traveler_available_kg, current_price_eur, currency) VALUES ('" + thread
+                    + "', '" + UUID.randomUUID() + "', '" + threadOnly + "', DATE '2026-11-12', 10, 60.00, 'EUR')");
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        assertThat(readModel.hasBeenPaid(threadOnly)).isFalse();
+        payment(null, thread, "STRIPE", "EUR", "60.00", "3.00", "2026-11-11T10:00:00Z", null);
+        assertThat(readModel.hasBeenPaid(threadOnly)).isTrue();
+    }
+
+    @Test
     @DisplayName("registre des diligences : une ligne ajoutée ne se modifie ni ne se supprime")
     void registreImmuable() {
         Long id = jdbc.queryForObject("INSERT INTO dac7_due_diligence_log (user_id, action, channel) "

@@ -109,7 +109,9 @@ class TravelerTaxInfoIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.provided").value(false))
                 .andExpect(jsonPath("$.residenceCountry").value("FR"))
-                .andExpect(jsonPath("$.dac7Status").value("DECLARABLE"));
+                .andExpect(jsonPath("$.dac7Status").value("DECLARABLE"))
+                // Jamais payé : on ne lui demande rien.
+                .andExpect(jsonPath("$.solicitation").value("NE_PAS_SOLLICITER"));
     }
 
     @Test
@@ -130,6 +132,7 @@ class TravelerTaxInfoIT {
                 .andExpect(jsonPath("$.taxCountry").value("FR"))
                 .andExpect(jsonPath("$.vatNumberProvided").value(true))
                 .andExpect(jsonPath("$.maskedVatNumber").value("****5045"))
+                .andExpect(jsonPath("$.solicitation").value("DEJA_FOURNI"))
                 .andReturn().getResponse().getContentAsString();
         assertThat(response).doesNotContain(NIF).doesNotContain(VAT);
 

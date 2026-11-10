@@ -1,6 +1,7 @@
 package com.yadony.api.dac7.dto;
 
 import com.yadony.api.dac7.Dac7ResidencyStatus;
+import com.yadony.api.dac7.Dac7SolicitationStatus;
 
 import java.time.Instant;
 
@@ -11,6 +12,7 @@ import java.time.Instant;
  *
  * @param residenceCountry pays de résidence fiscale retenu (profil, ou pays de l'entreprise pour un professionnel)
  * @param dac7Status       déclarable, non déclarable ou résidence inconnue
+ * @param solicitation     faut-il demander le NIF : l'écran (lot 3d) ne s'affiche que pour {@code SOLLICITER}
  */
 public record TaxInfoResponse(
         boolean provided,
@@ -20,6 +22,7 @@ public record TaxInfoResponse(
         String maskedVatNumber,
         Instant providedAt,
         String residenceCountry,
-        Dac7ResidencyStatus dac7Status
+        Dac7ResidencyStatus dac7Status,
+        Dac7SolicitationStatus solicitation
 ) {
 }
