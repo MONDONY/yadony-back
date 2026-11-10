@@ -16,7 +16,7 @@ public final class PublishingLimitGateStubs {
 
     public static PublishingLimitGate gateReturning(PublishingEligibilityReason reason) {
         PublishingEligibilityService eligibility = Mockito.mock(PublishingEligibilityService.class);
-        lenient().when(eligibility.evaluate(any())).thenReturn(new PublishingEligibilityResponse(
+        lenient().when(eligibility.evaluateForPublishing(any())).thenReturn(new PublishingEligibilityResponse(
                 reason == PublishingEligibilityReason.OK, reason, reason == PublishingEligibilityReason.OK ? null : 2,
                 2, LocalDate.of(2026, 12, 1), null));
         return new PublishingLimitGate(eligibility);

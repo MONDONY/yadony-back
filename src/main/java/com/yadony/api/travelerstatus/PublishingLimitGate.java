@@ -10,7 +10,8 @@ import org.springframework.stereotype.Component;
  * Garde de publication : refuse (403) la publication d'un trajet quand la limite mensuelle de l'utilisateur
  * est atteinte. Partagé par tous les chemins qui créent ou activent un trajet visible des expéditeurs
  * ({@code AnnouncementService}, le trajet dédié créé par {@code NegotiationService}, les récurrences).
- * Ne s'applique jamais à un brouillon : l'appelant ne le consulte pas.
+ * Ne s'applique jamais à un brouillon : l'appelant ne le consulte pas. À appeler dans la transaction qui
+ * enregistre le trajet : le garde verrouille la ligne de l'utilisateur quand une limite s'applique.
  */
 @Component
 public class PublishingLimitGate {
@@ -30,7 +31,7 @@ public class PublishingLimitGate {
      *         {@code gp-pro-pending} quand la publication est refusée
      */
     public void assertCanPublish(UserEntity user) {
-        PublishingEligibilityResponse e = eligibility.evaluate(user);
+        PublishingEligibilityResponse e = eligibility.evaluateForPublishing(user);
         switch (e.reason()) {
             case OK -> { }
             case STATUS_REQUIRED -> throw new YadonyBusinessException(HttpStatus.FORBIDDEN,

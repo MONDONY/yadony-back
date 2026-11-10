@@ -27,7 +27,7 @@ class PublishingLimitGateTest {
     private final UserEntity user = new UserEntity();
 
     private PublishingLimitGate gate(PublishingEligibilityReason reason, Integer limit) {
-        when(eligibility.evaluate(user)).thenReturn(new PublishingEligibilityResponse(
+        when(eligibility.evaluateForPublishing(user)).thenReturn(new PublishingEligibilityResponse(
                 reason == PublishingEligibilityReason.OK, reason, limit, limit == null ? 0 : limit,
                 LocalDate.of(2026, 12, 1), null));
         return new PublishingLimitGate(eligibility);

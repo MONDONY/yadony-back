@@ -1,10 +1,10 @@
 package com.yadony.api.travelerstatus;
 
 import com.yadony.api.auth.UserEntity;
+import com.yadony.api.auth.UserRepository;
 import com.yadony.api.gppro.GpProApplicationEntity;
 import com.yadony.api.gppro.GpProApplicationRepository;
 import com.yadony.api.matching.AnnouncementRepository;
-import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.travelerstatus.dto.PublishingEligibilityResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,6 +39,7 @@ class PublishingEligibilityServiceTest {
 
     @Mock AnnouncementRepository announcements;
     @Mock GpProApplicationRepository applications;
+    @Mock UserRepository users;
 
     PublishingEligibilityService service;
     UserEntity user;
@@ -46,7 +47,7 @@ class PublishingEligibilityServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PublishingEligibilityService(announcements, applications, CLOCK);
+        service = new PublishingEligibilityService(announcements, applications, users, CLOCK);
         user = new UserEntity();
         ReflectionTestUtils.setField(user, "id", userId);
         used(0);
@@ -54,8 +55,8 @@ class PublishingEligibilityServiceTest {
     }
 
     private void used(long n) {
-        when(announcements.countByTravelerIdAndCreatedAtBetweenAndStatusNot(
-                eq(userId), any(), any(), eq(AnnouncementStatus.DRAFT))).thenReturn(n);
+        when(announcements.countPublishedInPeriod(eq(userId), any(), any())).thenReturn(n);
+        when(users.findByIdForUpdate(userId)).thenReturn(Optional.of(user));
     }
 
     @Test
@@ -157,17 +158,70 @@ class PublishingEligibilityServiceTest {
         assertThat(r.resetsOn()).isEqualTo(LocalDate.of(2026, 12, 1));
         ArgumentCaptor<LocalDateTime> from = ArgumentCaptor.forClass(LocalDateTime.class);
         ArgumentCaptor<LocalDateTime> to = ArgumentCaptor.forClass(LocalDateTime.class);
-        verify(announcements).countByTravelerIdAndCreatedAtBetweenAndStatusNot(
-                eq(userId), from.capture(), to.capture(), eq(AnnouncementStatus.DRAFT));
+        verify(announcements).countPublishedInPeriod(eq(userId), from.capture(), to.capture());
         assertThat(from.getValue()).isEqualTo(LocalDateTime.of(2026, 11, 1, 0, 0));
         assertThat(to.getValue()).isEqualTo(LocalDateTime.of(2026, 11, 30, 23, 59, 59));
     }
 
     @Test
     void resetsOn_findDAnnee_janvierSuivant() {
-        PublishingEligibilityService decembre = new PublishingEligibilityService(announcements, applications,
+        PublishingEligibilityService decembre = new PublishingEligibilityService(announcements, applications, users,
                 Clock.fixed(Instant.parse("2026-12-31T22:00:00Z"), ZoneId.of("UTC")));
 
         assertThat(decembre.evaluate(user).resetsOn()).isEqualTo(LocalDate.of(2027, 1, 1));
+    }
+
+    // ── Verrou de la ligne utilisateur (course entre deux publications simultanées) ──
+
+    @Test
+    void evaluateForPublishing_limiteApplicable_verrouilleLaLigneAvantDeCompter() {
+        user.setMonthlyTripLimit(2);
+        used(1);
+
+        PublishingEligibilityResponse r = service.evaluateForPublishing(user);
+
+        assertThat(r.reason()).isEqualTo(PublishingEligibilityReason.OK);
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(users, announcements);
+        order.verify(users).findByIdForUpdate(userId);
+        order.verify(announcements).countPublishedInPeriod(eq(userId), any(), any());
+    }
+
+    @Test
+    void evaluateForPublishing_limiteApplicable_decisionSurLeComptePrisApresLeVerrou() {
+        user.setMonthlyTripLimit(1);
+        used(1);
+
+        assertThat(service.evaluateForPublishing(user).reason())
+                .isEqualTo(PublishingEligibilityReason.STATUS_REQUIRED);
+        verify(users).findByIdForUpdate(userId);
+    }
+
+    @Test
+    void evaluateForPublishing_sansLimite_neVerrouillePas() {
+        used(3);
+
+        service.evaluateForPublishing(user);
+
+        org.mockito.Mockito.verify(users, org.mockito.Mockito.never()).findByIdForUpdate(any());
+    }
+
+    @Test
+    void evaluateForPublishing_gpProAvecLimiteSaisie_neVerrouillePas() {
+        user.setGpPro(true);
+        user.setMonthlyTripLimit(1);
+        used(5);
+
+        assertThat(service.evaluateForPublishing(user).reason()).isEqualTo(PublishingEligibilityReason.OK);
+        org.mockito.Mockito.verify(users, org.mockito.Mockito.never()).findByIdForUpdate(any());
+    }
+
+    @Test
+    void evaluate_pourLEcranOuL_admin_neVerrouillePasMemeAvecUneLimite() {
+        user.setMonthlyTripLimit(1);
+        used(1);
+
+        service.evaluate(user);
+
+        org.mockito.Mockito.verify(users, org.mockito.Mockito.never()).findByIdForUpdate(any());
     }
 }

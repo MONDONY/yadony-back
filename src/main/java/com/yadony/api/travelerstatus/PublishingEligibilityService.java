@@ -1,10 +1,10 @@
 package com.yadony.api.travelerstatus;
 
 import com.yadony.api.auth.UserEntity;
+import com.yadony.api.auth.UserRepository;
 import com.yadony.api.gppro.GpProApplicationRepository;
 import com.yadony.api.gppro.GpProApplicationStatus;
 import com.yadony.api.matching.AnnouncementRepository;
-import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.travelerstatus.dto.PublishingEligibilityResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,18 +37,41 @@ public class PublishingEligibilityService {
 
     private final AnnouncementRepository announcementRepository;
     private final GpProApplicationRepository applicationRepository;
+    private final UserRepository userRepository;
     private final Clock clock;
 
     public PublishingEligibilityService(AnnouncementRepository announcementRepository,
                                         GpProApplicationRepository applicationRepository,
+                                        UserRepository userRepository,
                                         Clock clock) {
         this.announcementRepository = announcementRepository;
         this.applicationRepository = applicationRepository;
+        this.userRepository = userRepository;
         this.clock = clock;
     }
 
+    /** Éligibilité en lecture seule (écran, admin) : ne verrouille rien. */
     @Transactional(readOnly = true)
     public PublishingEligibilityResponse evaluate(UserEntity user) {
+        return decide(user);
+    }
+
+    /**
+     * Éligibilité au moment de publier. À appeler DANS la transaction qui enregistre le trajet : quand une
+     * limite s'applique (limite non nulle et pas GP Pro), la ligne de l'utilisateur est verrouillée AVANT de
+     * compter et jusqu'à la validation du trajet, sinon deux publications simultanées passeraient toutes les
+     * deux sous la limite. Sans limite applicable (la grande majorité des utilisateurs), aucun verrou.
+     */
+    @Transactional
+    public PublishingEligibilityResponse evaluateForPublishing(UserEntity user) {
+        UserEntity subject = user;
+        if (!user.isGpPro() && user.getMonthlyTripLimit() != null) {
+            subject = userRepository.findByIdForUpdate(user.getId()).orElse(user);
+        }
+        return decide(subject);
+    }
+
+    private PublishingEligibilityResponse decide(UserEntity user) {
         YearMonth month = YearMonth.now(clock);
         LocalDate resetsOn = month.plusMonths(1).atDay(1);
         int used = usedThisMonth(user, month);
@@ -72,7 +95,7 @@ public class PublishingEligibilityService {
         return response(reason, limit, used, resetsOn, user);
     }
 
-    /** Trajets publiés (hors brouillons) créés dans le mois civil : même fenêtre que la limite PRO existante. */
+    /** Trajets publiés (hors brouillons) dans le mois civil, brouillons publiés ce mois-ci compris. */
     public int usedThisMonth(UserEntity user) {
         return usedThisMonth(user, YearMonth.now(clock));
     }
@@ -80,8 +103,7 @@ public class PublishingEligibilityService {
     private int usedThisMonth(UserEntity user, YearMonth month) {
         LocalDateTime from = month.atDay(1).atStartOfDay();
         LocalDateTime to = month.atEndOfMonth().atTime(23, 59, 59);
-        long count = announcementRepository.countByTravelerIdAndCreatedAtBetweenAndStatusNot(
-                user.getId(), from, to, AnnouncementStatus.DRAFT);
+        long count = announcementRepository.countPublishedInPeriod(user.getId(), from, to);
         return (int) Math.min(count, Integer.MAX_VALUE);
     }
 
