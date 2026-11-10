@@ -4,9 +4,12 @@ import com.yadony.api.dac7.Dac7Report.Anomaly;
 import com.yadony.api.dac7.Dac7Report.AnomalyType;
 import com.yadony.api.dac7.Dac7Report.CurrencyAmounts;
 import com.yadony.api.dac7.Dac7Report.OutOfYearRefund;
+import com.yadony.api.dac7.Dac7Report.PendingSplit;
 import com.yadony.api.dac7.Dac7Report.QuarterReport;
+import com.yadony.api.dac7.Dac7Report.RefundToReconcile;
 import com.yadony.api.dac7.Dac7Report.TravelerReport;
 import com.yadony.api.dac7.Dac7ReportReadModel.OperationRow;
+import com.yadony.api.dac7.Dac7ReportReadModel.PendingSplitRow;
 import com.yadony.api.dac7.Dac7ReportReadModel.RefundRow;
 import com.yadony.api.dac7.Dac7ReportReadModel.TravelerRow;
 import com.yadony.api.travelerstatus.TravelerStatus;
@@ -34,14 +37,23 @@ import java.util.UUID;
  * versée nette de la commission de Yadony, commission séparée, nombre d'opérations, par devise d'origine puis en
  * euros au taux de référence du jour du versement. Tous les rails : carte, mobile money, espèces.
  *
- * <p>Règles (hypothèses H4 à H8 de la conception provisoire, à confirmer par l'expert-comptable) :
+ * <p>Règles (hypothèses H4 à H8 de la conception provisoire, et décisions de la relecture n° 1, à confirmer par
+ * l'expert-comptable) :
  * <ul>
  *   <li>aucun seuil : une seule opération rend le voyageur déclarable ;</li>
- *   <li>date retenue : versement pour la carte et le mobile money, livraison pour les espèces ;</li>
- *   <li>un remboursement de la même année civile que l'opération est déduit du trimestre de l'opération (plafonné au
- *       net de l'opération, au taux du jour de l'opération) ; sinon il est listé à part pour une rectification ;</li>
+ *   <li>date retenue : versement pour la carte et le mobile money, fin du partage admin, livraison pour les espèces
+ *       (repli sur la dernière mise à jour du colis signalé, jamais silencieux) ;</li>
+ *   <li>un remboursement AVANT versement de la même année civile que le versement est déduit du trimestre du
+ *       versement (plafonné au net de l'opération, au taux du jour de l'opération) ; d'une autre année, il est listé
+ *       à part pour une rectification ;</li>
+ *   <li>un remboursement APRÈS versement n'est jamais déduit (le versement au voyageur n'est pas repris) : il est
+ *       listé à réconcilier, chacun à sa date ;</li>
+ *   <li>un partage admin dont le transfert n'est pas terminé n'est pas compté : il est listé en attente ;</li>
  *   <li>un supplément ou une modification ajoute au montant sans compter une opération de plus ;</li>
- *   <li>un taux inconnu ou une commission introuvable ne sont jamais devinés : la ligne est signalée.</li>
+ *   <li>un voyageur à l'identité incomplète (compte supprimé, donnée manquante) n'est jamais déclaré en silence : il
+ *       sort dans une liste à revue humaine ;</li>
+ *   <li>un taux inconnu ou une commission introuvable ne sont jamais devinés : la ligne est signalée et le trimestre
+ *       marqué incomplet.</li>
  * </ul>
  * Aucun endpoint : l'export (lot 3b) et l'écran admin (lot 3c) l'appelleront.
  */
@@ -78,6 +90,7 @@ public class Dac7ReportService {
         List<Anomaly> anomalies = new ArrayList<>();
         Map<UUID, Dac7ResidencyStatus> statuses = new HashMap<>();
         Map<UUID, String> countries = new HashMap<>();
+        Map<UUID, Dac7IdentityStatus> identities = new HashMap<>();
         for (UUID id : ids) {
             TravelerRow row = facts.get(id);
             String country = row == null ? null
@@ -85,6 +98,8 @@ public class Dac7ReportService {
                     row.businessCountry());
             countries.put(id, country);
             statuses.put(id, residency.statusOf(country));
+            identities.put(id, row != null && row.identityComplete()
+                    ? Dac7IdentityStatus.COMPLETE : Dac7IdentityStatus.INCOMPLETE);
         }
 
         Map<UUID, TravelerAcc> declarable = new TreeMap<>();
@@ -106,12 +121,17 @@ public class Dac7ReportService {
                 continue;
             }
             TravelerRow row = facts.get(op.travelerId());
+            if (op.dateEstimated()) {
+                anomalies.add(new Anomaly(AnomalyType.DELIVERY_DATE_ESTIMATED, op.travelerId(), op.source(),
+                        op.sourceId(), op.currency(), day(op.paidAt())));
+            }
             declarable.computeIfAbsent(op.travelerId(), id -> new TravelerAcc(id, countries.get(id),
-                            row != null && row.taxInfoProvided()))
+                            row != null && row.taxInfoProvided(), identities.get(id)))
                     .quarter(op.paidAt()).add(op, rate(op.currency(), op.paidAt()), anomalies);
         }
 
         List<OutOfYearRefund> outOfYear = new ArrayList<>();
+        List<RefundToReconcile> toReconcile = new ArrayList<>();
         for (RefundRow refund : refunds) {
             if (refund.travelerId() == null
                     || statuses.get(refund.travelerId()) != Dac7ResidencyStatus.DECLARABLE) {
@@ -121,9 +141,16 @@ public class Dac7ReportService {
                 anomalies.add(new Anomaly(AnomalyType.REFUND_DATE_ESTIMATED, refund.travelerId(), refund.source(),
                         refund.sourceId(), refund.currency(), day(refund.refundedAt())));
             }
+            Optional<BigDecimal> rate = rate(refund.currency(), refund.operationPaidAt());
+            if (refund.afterRelease()) {
+                // Le versement au voyageur n'est pas repris : jamais déduit, à réconcilier à la main.
+                toReconcile.add(new RefundToReconcile(refund.travelerId(), refund.source(), refund.sourceId(),
+                        refund.currency(), refund.amount(), refund.operationPaidAt(), refund.refundedAt(),
+                        refund.refundDateEstimated(), rate.map(r -> toEur(refund.amount(), r)).orElse(null)));
+                continue;
+            }
             int operationYear = year(refund.operationPaidAt());
             int refundYear = year(refund.refundedAt());
-            Optional<BigDecimal> rate = rate(refund.currency(), refund.operationPaidAt());
             if (operationYear == year && refundYear == year && declarable.containsKey(refund.travelerId())) {
                 declarable.get(refund.travelerId()).quarter(refund.operationPaidAt())
                         .deduct(refund, rate, anomalies);
@@ -134,9 +161,30 @@ public class Dac7ReportService {
             }
         }
 
-        List<TravelerReport> travelers = declarable.values().stream().map(TravelerAcc::report).toList();
-        return new Dac7Report(year, travelers, outOfYear, List.copyOf(unknown), List.copyOf(nonDeclarable),
-                anomalies);
+        List<PendingSplit> pendingSplits = new ArrayList<>();
+        List<PendingSplitRow> splitRows = readModel.pendingSplits();
+        Set<UUID> splitTravelers = new LinkedHashSet<>();
+        splitRows.stream().map(PendingSplitRow::travelerId).filter(java.util.Objects::nonNull)
+                .filter(id -> !statuses.containsKey(id)).forEach(splitTravelers::add);
+        if (!splitTravelers.isEmpty()) {
+            readModel.travelers(splitTravelers).forEach(t -> statuses.put(t.travelerId(), residency.statusOf(
+                    Dac7ResidencyPolicy.residenceCountryOf(t.country(), travelerStatus(t.travelerStatus()),
+                            t.businessCountry()))));
+        }
+        for (PendingSplitRow split : splitRows) {
+            if (split.travelerId() != null && statuses.get(split.travelerId()) == Dac7ResidencyStatus.DECLARABLE) {
+                pendingSplits.add(new PendingSplit(split.travelerId(), split.paymentId(), split.currency(),
+                        split.travelerPayout(), split.commission(), split.status(), split.decidedAt()));
+            }
+        }
+
+        List<TravelerReport> complete = new ArrayList<>();
+        List<TravelerReport> review = new ArrayList<>();
+        for (TravelerAcc acc : declarable.values()) {
+            (acc.identity == Dac7IdentityStatus.COMPLETE ? complete : review).add(acc.report());
+        }
+        return new Dac7Report(year, complete, review, outOfYear, toReconcile, pendingSplits, List.copyOf(unknown),
+                List.copyOf(nonDeclarable), residency.invalidPartnerJurisdictions(), anomalies);
     }
 
     private Optional<BigDecimal> rate(String currency, Instant at) {
@@ -172,13 +220,15 @@ public class Dac7ReportService {
         private final UUID travelerId;
         private final String country;
         private final boolean taxInfoProvided;
+        private final Dac7IdentityStatus identity;
         private final QuarterAcc[] quarters = {new QuarterAcc(1), new QuarterAcc(2), new QuarterAcc(3),
                 new QuarterAcc(4)};
 
-        TravelerAcc(UUID travelerId, String country, boolean taxInfoProvided) {
+        TravelerAcc(UUID travelerId, String country, boolean taxInfoProvided, Dac7IdentityStatus identity) {
             this.travelerId = travelerId;
             this.country = country;
             this.taxInfoProvided = taxInfoProvided;
+            this.identity = identity == null ? Dac7IdentityStatus.INCOMPLETE : identity;
         }
 
         /** Trimestre civil UTC : 31/03 23:59:59 est au 1er, 01/04 00:00:00 au 2e. */
@@ -191,7 +241,7 @@ public class Dac7ReportService {
             for (QuarterAcc q : quarters) {
                 list.add(q.report());
             }
-            return new TravelerReport(travelerId, country, taxInfoProvided, list);
+            return new TravelerReport(travelerId, country, taxInfoProvided, identity, list);
         }
     }
 
@@ -204,6 +254,7 @@ public class Dac7ReportService {
         private BigDecimal commissionEur = BigDecimal.ZERO;
         private BigDecimal refundsEur = BigDecimal.ZERO;
         private boolean eurComplete = true;
+        private boolean commissionComplete = true;
 
         QuarterAcc(int quarter) {
             this.quarter = quarter;
@@ -214,6 +265,7 @@ public class Dac7ReportService {
             if (commission == null) {
                 anomalies.add(new Anomaly(AnomalyType.COMMISSION_UNKNOWN, op.travelerId(), op.source(), op.sourceId(),
                         op.currency(), day(op.paidAt())));
+                commissionComplete = false;
                 commission = BigDecimal.ZERO;
             }
             CurrencyAcc acc = byCurrency.computeIfAbsent(op.currency(), c -> new CurrencyAcc());
@@ -256,7 +308,7 @@ public class Dac7ReportService {
                             e.getValue().refunds, e.getValue().operations))
                     .toList();
             return new QuarterReport(quarter, operations, amounts, round(netEur), round(commissionEur),
-                    round(refundsEur), eurComplete);
+                    round(refundsEur), eurComplete, commissionComplete);
         }
 
         private static BigDecimal round(BigDecimal eur) {

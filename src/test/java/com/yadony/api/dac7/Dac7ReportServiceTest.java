@@ -5,6 +5,7 @@ import com.yadony.api.dac7.Dac7Report.CurrencyAmounts;
 import com.yadony.api.dac7.Dac7Report.QuarterReport;
 import com.yadony.api.dac7.Dac7Report.TravelerReport;
 import com.yadony.api.dac7.Dac7ReportReadModel.OperationRow;
+import com.yadony.api.dac7.Dac7ReportReadModel.PendingSplitRow;
 import com.yadony.api.dac7.Dac7ReportReadModel.RefundRow;
 import com.yadony.api.dac7.Dac7ReportReadModel.TravelerRow;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +38,7 @@ class Dac7ReportServiceTest {
     private final List<OperationRow> operations = new ArrayList<>();
     private final List<RefundRow> refunds = new ArrayList<>();
     private final List<TravelerRow> travelers = new ArrayList<>();
+    private final List<PendingSplitRow> pendingSplits = new ArrayList<>();
 
     private final UUID french = UUID.randomUUID();
     private final UUID ivorian = UUID.randomUUID();
@@ -45,19 +47,20 @@ class Dac7ReportServiceTest {
     void setUp() {
         when(readModel.operations(FROM, TO)).thenReturn(operations);
         when(readModel.refunds(FROM, TO)).thenReturn(refunds);
+        when(readModel.pendingSplits()).thenReturn(pendingSplits);
         when(readModel.travelers(any())).thenAnswer(i -> {
             Collection<UUID> ids = i.getArgument(0);
             return travelers.stream().filter(t -> ids.contains(t.travelerId())).toList();
         });
-        travelers.add(new TravelerRow(french, "FR", "INDIVIDUAL", null, true));
-        travelers.add(new TravelerRow(ivorian, "CI", "INDIVIDUAL", null, false));
+        travelers.add(new TravelerRow(french, "FR", "INDIVIDUAL", null, true, true));
+        travelers.add(new TravelerRow(ivorian, "CI", "INDIVIDUAL", null, false, true));
     }
 
     private UUID op(UUID traveler, Dac7Source source, String currency, String net, String commission, String paidAt) {
         UUID id = UUID.randomUUID();
         operations.add(new OperationRow(source, id, traveler, source == Dac7Source.CASH ? "CASH" : "STRIPE", currency,
                 new BigDecimal(net), commission == null ? null : new BigDecimal(commission), Instant.parse(paidAt),
-                source == Dac7Source.PAYMENT || source == Dac7Source.CASH));
+                source == Dac7Source.PAYMENT || source == Dac7Source.CASH, false));
         return id;
     }
 
@@ -194,32 +197,38 @@ class Dac7ReportServiceTest {
         assertThat(q2.commissionEur()).isEqualByComparingTo("5.50");
     }
 
+    private RefundRow refund(UUID source, UUID traveler, String amount, String operationNet, String operationPaidAt,
+                             String refundedAt, boolean estimated, boolean afterRelease) {
+        return new RefundRow(Dac7Source.PAYMENT, source, traveler, "EUR", new BigDecimal(amount),
+                new BigDecimal(operationNet), Instant.parse(operationPaidAt), Instant.parse(refundedAt), estimated,
+                afterRelease);
+    }
+
     @Test
-    void remboursementMemeAnnee_deduitDuTrimestreDeLOperation() {
-        UUID payment = op(french, Dac7Source.PAYMENT, "EUR", "95.00", "5.00", "2026-02-10T10:00:00Z");
-        // Remboursé le 01/08, mais l'opération date du 10/02 : c'est le premier trimestre qui baisse.
-        refunds.add(new RefundRow(Dac7Source.PAYMENT, payment, french, "EUR", new BigDecimal("30.00"),
-                new BigDecimal("95.00"), Instant.parse("2026-02-10T10:00:00Z"), Instant.parse("2026-08-01T10:00:00Z"),
-                false));
+    void remboursementAvantVersementMemeAnnee_deduitDuTrimestreDuVersement() {
+        UUID payment = op(french, Dac7Source.PAYMENT, "EUR", "95.00", "5.00", "2026-04-10T10:00:00Z");
+        // Remboursé en partie le 25/03 (en séquestre), versé le 10/04 : c'est le deuxième trimestre qui baisse.
+        refunds.add(refund(payment, french, "30.00", "95.00", "2026-04-10T10:00:00Z", "2026-03-25T10:00:00Z",
+                false, false));
 
         Dac7Report report = service.annualReport(YEAR);
         List<QuarterReport> quarters = only(report, french).quarters();
 
-        assertThat(quarters.get(0).netEur()).isEqualByComparingTo("65.00");
-        assertThat(quarters.get(0).refundsDeductedEur()).isEqualByComparingTo("30.00");
-        assertThat(quarters.get(0).operations()).isEqualTo(1);
-        assertThat(currency(quarters.get(0), "EUR").refundsDeducted()).isEqualByComparingTo("30.00");
-        assertThat(quarters.get(0).commissionEur()).isEqualByComparingTo("5.00");
-        assertThat(quarters.get(2).netEur()).isEqualByComparingTo("0");
+        assertThat(quarters.get(1).netEur()).isEqualByComparingTo("65.00");
+        assertThat(quarters.get(1).refundsDeductedEur()).isEqualByComparingTo("30.00");
+        assertThat(quarters.get(1).operations()).isEqualTo(1);
+        assertThat(currency(quarters.get(1), "EUR").refundsDeducted()).isEqualByComparingTo("30.00");
+        assertThat(quarters.get(1).commissionEur()).isEqualByComparingTo("5.00");
+        assertThat(quarters.get(0).netEur()).isEqualByComparingTo("0");
         assertThat(report.outOfYearRefunds()).isEmpty();
+        assertThat(report.refundsToReconcile()).isEmpty();
     }
 
     @Test
-    void remboursementPlafonneAuNetDeLOperation() {
+    void remboursementAvantVersement_plafonneAuNetDeLOperation() {
         UUID payment = op(french, Dac7Source.PAYMENT, "EUR", "95.00", "5.00", "2026-02-10T10:00:00Z");
-        refunds.add(new RefundRow(Dac7Source.PAYMENT, payment, french, "EUR", new BigDecimal("100.00"),
-                new BigDecimal("95.00"), Instant.parse("2026-02-10T10:00:00Z"), Instant.parse("2026-03-01T10:00:00Z"),
-                false));
+        refunds.add(refund(payment, french, "100.00", "95.00", "2026-02-10T10:00:00Z", "2026-02-01T10:00:00Z",
+                false, false));
 
         QuarterReport q1 = only(service.annualReport(YEAR), french).quarters().get(0);
 
@@ -228,70 +237,96 @@ class Dac7ReportServiceTest {
     }
 
     @Test
-    void remboursementAnneeSuivante_listeAPart_nonDeduit() {
-        UUID payment = op(french, Dac7Source.PAYMENT, "EUR", "95.00", "5.00", "2026-12-20T10:00:00Z");
-        refunds.add(new RefundRow(Dac7Source.PAYMENT, payment, french, "EUR", new BigDecimal("30.00"),
-                new BigDecimal("95.00"), Instant.parse("2026-12-20T10:00:00Z"), Instant.parse("2027-01-05T10:00:00Z"),
-                false));
+    void remboursementApresVersement_jamaisDeduit_aReconcilier() {
+        UUID payment = op(french, Dac7Source.PAYMENT, "EUR", "47.50", "2.50", "2026-06-10T12:00:00Z");
+        refunds.add(refund(payment, french, "10.00", "47.50", "2026-06-10T12:00:00Z", "2026-09-01T08:00:00Z",
+                false, true));
 
         Dac7Report report = service.annualReport(YEAR);
 
-        assertThat(only(report, french).quarters().get(3).netEur()).isEqualByComparingTo("95.00");
+        // Le voyageur a gardé 47,50 : la contrepartie déclarée ne baisse pas.
+        assertThat(only(report, french).quarters().get(1).netEur()).isEqualByComparingTo("47.50");
+        assertThat(only(report, french).quarters().get(1).refundsDeductedEur()).isEqualByComparingTo("0");
+        assertThat(report.outOfYearRefunds()).isEmpty();
+        assertThat(report.refundsToReconcile()).singleElement().satisfies(r -> {
+            assertThat(r.sourceId()).isEqualTo(payment);
+            assertThat(r.travelerId()).isEqualTo(french);
+            assertThat(r.amount()).isEqualByComparingTo("10.00");
+            assertThat(r.operationPaidAt()).isEqualTo(Instant.parse("2026-06-10T12:00:00Z"));
+            assertThat(r.refundedAt()).isEqualTo(Instant.parse("2026-09-01T08:00:00Z"));
+            assertThat(r.refundDateEstimated()).isFalse();
+            assertThat(r.amountEur()).isEqualByComparingTo("10.00");
+        });
+    }
+
+    @Test
+    void remboursementsPartielsSurDeuxAnnees_chacunASaDate() {
+        UUID payment = op(french, Dac7Source.PAYMENT, "EUR", "95.00", "5.00", "2026-12-01T10:00:00Z");
+        refunds.add(refund(payment, french, "10.00", "95.00", "2026-12-01T10:00:00Z", "2026-12-20T10:00:00Z",
+                false, true));
+        refunds.add(refund(payment, french, "5.00", "95.00", "2026-12-01T10:00:00Z", "2027-01-05T10:00:00Z",
+                false, true));
+
+        assertThat(service.annualReport(YEAR).refundsToReconcile())
+                .extracting(r -> r.refundedAt().toString(), r -> r.amount().toPlainString())
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("2026-12-20T10:00:00Z", "10.00"),
+                        org.assertj.core.groups.Tuple.tuple("2027-01-05T10:00:00Z", "5.00"));
+    }
+
+    @Test
+    void remboursementAvantVersementDUneAutreAnnee_listeAPart() {
+        UUID payment = op(french, Dac7Source.PAYMENT, "EUR", "95.00", "5.00", "2026-01-05T10:00:00Z");
+        refunds.add(refund(payment, french, "30.00", "95.00", "2026-01-05T10:00:00Z", "2025-12-30T10:00:00Z",
+                false, false));
+
+        Dac7Report report = service.annualReport(YEAR);
+
+        assertThat(only(report, french).quarters().get(0).netEur()).isEqualByComparingTo("95.00");
         assertThat(report.outOfYearRefunds()).singleElement().satisfies(r -> {
             assertThat(r.sourceId()).isEqualTo(payment);
             assertThat(r.amount()).isEqualByComparingTo("30.00");
             assertThat(r.operationYear()).isEqualTo(2026);
-            assertThat(r.refundYear()).isEqualTo(2027);
+            assertThat(r.refundYear()).isEqualTo(2025);
             assertThat(r.amountEur()).isEqualByComparingTo("30.00");
         });
     }
 
     @Test
-    void remboursementCetteAnneeDUneOperationAnterieure_listeAPart() {
-        UUID payment = UUID.randomUUID();
-        refunds.add(new RefundRow(Dac7Source.SUPPLEMENT, payment, french, "XOF", new BigDecimal("6559.57"),
-                new BigDecimal("6559.57"), Instant.parse("2025-12-30T10:00:00Z"), Instant.parse("2026-01-02T10:00:00Z"),
-                false));
-
-        Dac7Report report = service.annualReport(YEAR);
-
-        assertThat(report.outOfYearRefunds()).singleElement().satisfies(r -> {
-            assertThat(r.operationYear()).isEqualTo(2025);
-            assertThat(r.refundYear()).isEqualTo(2026);
-            assertThat(r.amountEur()).isEqualByComparingTo("10.00");
-        });
-        // Aucune opération cette année : rien à déclarer pour 2026, seulement la rectification de 2025.
-        assertThat(report.travelers()).isEmpty();
-    }
-
-    @Test
     void remboursementDUnVoyageurNonDeclarable_ignore() {
         UUID payment = op(ivorian, Dac7Source.PAYMENT, "EUR", "95.00", "5.00", "2026-12-20T10:00:00Z");
-        refunds.add(new RefundRow(Dac7Source.PAYMENT, payment, ivorian, "EUR", new BigDecimal("30.00"),
-                new BigDecimal("95.00"), Instant.parse("2026-12-20T10:00:00Z"), Instant.parse("2027-01-05T10:00:00Z"),
-                false));
+        refunds.add(refund(payment, ivorian, "30.00", "95.00", "2026-12-20T10:00:00Z", "2027-01-05T10:00:00Z",
+                false, true));
+        refunds.add(refund(payment, ivorian, "5.00", "95.00", "2026-12-20T10:00:00Z", "2026-12-10T10:00:00Z",
+                false, false));
 
-        assertThat(service.annualReport(YEAR).outOfYearRefunds()).isEmpty();
+        Dac7Report report = service.annualReport(YEAR);
+        assertThat(report.outOfYearRefunds()).isEmpty();
+        assertThat(report.refundsToReconcile()).isEmpty();
     }
 
     @Test
     void dateDeRemboursementEstimee_signalee() {
         UUID payment = op(french, Dac7Source.PAYMENT, "EUR", "95.00", "5.00", "2026-02-10T10:00:00Z");
-        refunds.add(new RefundRow(Dac7Source.PAYMENT, payment, french, "EUR", new BigDecimal("10.00"),
-                new BigDecimal("95.00"), Instant.parse("2026-02-10T10:00:00Z"), Instant.parse("2026-02-11T10:00:00Z"),
-                true));
+        refunds.add(refund(payment, french, "10.00", "95.00", "2026-02-10T10:00:00Z", "2026-02-11T10:00:00Z",
+                true, true));
 
-        assertThat(service.annualReport(YEAR).anomalies())
+        Dac7Report report = service.annualReport(YEAR);
+        assertThat(report.anomalies())
                 .anySatisfy(a -> assertThat(a.type()).isEqualTo(AnomalyType.REFUND_DATE_ESTIMATED));
+        assertThat(report.refundsToReconcile()).singleElement()
+                .satisfies(r -> assertThat(r.refundDateEstimated()).isTrue());
     }
 
     @Test
-    void commissionInconnue_compteeZeroEtSignalee() {
+    void commissionInconnue_jamaisZeroSilencieux() {
         UUID cash = op(french, Dac7Source.CASH, "EUR", "40.00", null, "2026-07-03T12:00:00Z");
 
         Dac7Report report = service.annualReport(YEAR);
+        QuarterReport q3 = only(report, french).quarters().get(2);
 
-        assertThat(only(report, french).quarters().get(2).commissionEur()).isEqualByComparingTo("0");
+        assertThat(q3.commissionComplete()).isFalse();
+        assertThat(q3.commissionEur()).isEqualByComparingTo("0");
+        assertThat(only(report, french).quarters().get(0).commissionComplete()).isTrue();
         assertThat(report.anomalies()).anySatisfy(a -> {
             assertThat(a.type()).isEqualTo(AnomalyType.COMMISSION_UNKNOWN);
             assertThat(a.sourceId()).isEqualTo(cash);
@@ -299,9 +334,67 @@ class Dac7ReportServiceTest {
     }
 
     @Test
+    void dateDeLivraisonEstimee_signalee() {
+        UUID cash = UUID.randomUUID();
+        operations.add(new OperationRow(Dac7Source.CASH, cash, french, "CASH", "EUR", new BigDecimal("40.00"),
+                new BigDecimal("2.00"), Instant.parse("2026-07-03T12:00:00Z"), true, true));
+
+        Dac7Report report = service.annualReport(YEAR);
+
+        assertThat(only(report, french).quarters().get(2).netEur()).isEqualByComparingTo("40.00");
+        assertThat(report.anomalies()).anySatisfy(a -> {
+            assertThat(a.type()).isEqualTo(AnomalyType.DELIVERY_DATE_ESTIMATED);
+            assertThat(a.sourceId()).isEqualTo(cash);
+        });
+    }
+
+    @Test
+    void partageAdminEnAttente_listeAPart() {
+        UUID payment = UUID.randomUUID();
+        pendingSplits.add(new PendingSplitRow(payment, french, "EUR", new BigDecimal("36.00"),
+                new BigDecimal("4.00"), "CLAIMED", Instant.parse("2026-10-10T10:00:00Z")));
+        pendingSplits.add(new PendingSplitRow(UUID.randomUUID(), ivorian, "EUR", new BigDecimal("10.00"),
+                new BigDecimal("1.00"), "CLAIMED", Instant.parse("2026-10-10T10:00:00Z")));
+
+        Dac7Report report = service.annualReport(YEAR);
+
+        assertThat(report.pendingSplits()).singleElement().satisfies(p -> {
+            assertThat(p.paymentId()).isEqualTo(payment);
+            assertThat(p.travelerPayout()).isEqualByComparingTo("36.00");
+            assertThat(p.status()).isEqualTo("CLAIMED");
+        });
+    }
+
+    @Test
+    void identiteIncomplete_compteSupprime_revueHumaineJamaisDeclareEnSilence() {
+        UUID deleted = UUID.randomUUID();
+        travelers.add(new TravelerRow(deleted, "FR", "INDIVIDUAL", null, true, false));
+        op(deleted, Dac7Source.PAYMENT, "EUR", "95.00", "5.00", "2026-03-10T10:00:00Z");
+        op(french, Dac7Source.PAYMENT, "EUR", "10.00", "1.00", "2026-03-10T10:00:00Z");
+
+        Dac7Report report = service.annualReport(YEAR);
+
+        assertThat(report.travelers()).extracting(TravelerReport::travelerId).containsExactly(french);
+        assertThat(only(report, french).identityStatus()).isEqualTo(Dac7IdentityStatus.COMPLETE);
+        assertThat(report.identityReviewTravelers()).singleElement().satisfies(t -> {
+            assertThat(t.travelerId()).isEqualTo(deleted);
+            assertThat(t.identityStatus()).isEqualTo(Dac7IdentityStatus.INCOMPLETE);
+            assertThat(t.quarters().get(0).netEur()).isEqualByComparingTo("95.00");
+        });
+    }
+
+    @Test
+    void codesPartenairesInvalides_remontesDansLeRapport() {
+        Dac7ReportService withBadConfig = new Dac7ReportService(readModel,
+                new Dac7ResidencyPolicy(new Dac7Properties(false, List.of("CIV"))), rates);
+        assertThat(withBadConfig.annualReport(YEAR).invalidPartnerJurisdictions()).containsExactly("CIV");
+        assertThat(service.annualReport(YEAR).invalidPartnerJurisdictions()).isEmpty();
+    }
+
+    @Test
     void residenceInconnue_listeePourDiligence() {
         UUID unknown = UUID.randomUUID();
-        travelers.add(new TravelerRow(unknown, null, null, null, false));
+        travelers.add(new TravelerRow(unknown, null, null, null, false, true));
         op(unknown, Dac7Source.PAYMENT, "EUR", "10.00", "1.00", "2026-05-10T10:00:00Z");
 
         Dac7Report report = service.annualReport(YEAR);
@@ -313,7 +406,7 @@ class Dac7ReportServiceTest {
     @Test
     void voyageurIntrouvable_signale() {
         operations.add(new OperationRow(Dac7Source.PAYMENT, UUID.randomUUID(), null, "STRIPE", "EUR",
-                new BigDecimal("10.00"), new BigDecimal("1.00"), Instant.parse("2026-05-10T10:00:00Z"), true));
+                new BigDecimal("10.00"), new BigDecimal("1.00"), Instant.parse("2026-05-10T10:00:00Z"), true, false));
 
         assertThat(service.annualReport(YEAR).anomalies())
                 .anySatisfy(a -> assertThat(a.type()).isEqualTo(AnomalyType.TRAVELER_UNKNOWN));
@@ -322,7 +415,7 @@ class Dac7ReportServiceTest {
     @Test
     void professionnel_paysDeLEntreprise() {
         UUID pro = UUID.randomUUID();
-        travelers.add(new TravelerRow(pro, "CI", "PROFESSIONAL", "BE", true));
+        travelers.add(new TravelerRow(pro, "CI", "PROFESSIONAL", "BE", true, true));
         op(pro, Dac7Source.PAYMENT, "EUR", "10.00", "1.00", "2026-05-10T10:00:00Z");
 
         Dac7Report report = service.annualReport(YEAR);
