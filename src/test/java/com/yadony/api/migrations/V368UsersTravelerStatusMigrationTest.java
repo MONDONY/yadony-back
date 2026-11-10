@@ -80,6 +80,11 @@ class V368UsersTravelerStatusMigrationTest {
                 .isInstanceOf(SQLException.class)
                 .hasMessageContaining("chk_users_traveler_status_pro_fields");
 
+        // Statut NULL avec les trois champs professionnels renseignés : refusé (logique à trois valeurs).
+        assertThatThrownBy(() -> update(existing, null, "Acme", "SIREN-123", "FR"))
+                .isInstanceOf(SQLException.class)
+                .hasMessageContaining("chk_users_traveler_status_pro_fields");
+
         // Statut NULL avec un champ professionnel : refusé aussi.
         assertThatThrownBy(() -> update(existing, null, null, null, "FR"))
                 .isInstanceOf(SQLException.class)

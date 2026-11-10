@@ -21,11 +21,12 @@ ALTER TABLE users
 ALTER TABLE users VALIDATE CONSTRAINT chk_users_traveler_status;
 
 -- PROFESSIONAL : les trois champs business_* sont renseignés.
--- INDIVIDUAL ou non déclaré : aucun des trois.
+-- INDIVIDUAL ou non déclaré : aucun des trois. IS NOT DISTINCT FROM : avec un simple « = », un statut
+-- NULL rendrait le premier terme NULL et la CHECK laisserait passer des champs business_* orphelins.
 ALTER TABLE users DROP CONSTRAINT IF EXISTS chk_users_traveler_status_pro_fields;
 ALTER TABLE users
     ADD CONSTRAINT chk_users_traveler_status_pro_fields CHECK (
-        (traveler_status = 'PROFESSIONAL'
+        (traveler_status IS NOT DISTINCT FROM 'PROFESSIONAL'
             AND business_name IS NOT NULL
             AND business_registration_number IS NOT NULL
             AND business_country IS NOT NULL)
