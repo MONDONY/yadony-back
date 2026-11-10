@@ -28,6 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -47,7 +48,7 @@ class VideoModalInfoAdminServiceTest {
     @BeforeEach
     void setUp() {
         service = new VideoModalAdminService(campaignRepository, responseRepository, auditService,
-                Clock.fixed(NOW, ZoneOffset.UTC));
+                mock(VideoModalImageUrls.class), Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     private void savesItself() {
@@ -69,7 +70,7 @@ class VideoModalInfoAdminServiceTest {
                 primaryLabelFr, "Primary", secondaryLabelFr, "Secondary",
                 bodyFr, "Body", VideoModalIcon.BELL, primary, secondary,
                 List.of(new VideoModalRequest.HighlightRequest(VideoModalIcon.LOCK, "ignoré", null)),
-                List.of(VideoModalTrigger.APP_OPEN), 2, null, null);
+                List.of(VideoModalTrigger.APP_OPEN), 2, null, null, null, null, null, null, null, null);
     }
 
     private void assertInvalid(Runnable call, String code) {
@@ -112,7 +113,7 @@ class VideoModalInfoAdminServiceTest {
         savesItself();
         var req = new VideoModalRequest("Info", VideoModalType.INFO, null, null, "Titre", null, null, null,
                 null, null, "reste", "reste", "Texte", null, null, close(), null,
-                null, List.of(VideoModalTrigger.SEARCH_TAB), null, null, null);
+                null, List.of(VideoModalTrigger.SEARCH_TAB), null, null, null, null, null, null, null, null, null);
         var r = service.create(req, adminId);
         assertThat(r.icon()).isEqualTo(VideoModalIcon.INFO);
         assertThat(r.primaryAction()).isEqualTo(new VideoModalAction(VideoModalActionKind.CLOSE, null, null));
@@ -144,7 +145,7 @@ class VideoModalInfoAdminServiceTest {
         assertInvalidTwice(info("a".repeat(501), close(), null, null, null));
         var enTropLong = new VideoModalRequest("Info", VideoModalType.INFO, null, null, "Titre", null, null, null,
                 null, null, null, null, "Texte", "b".repeat(501), null, close(), null,
-                null, List.of(VideoModalTrigger.APP_OPEN), null, null, null);
+                null, List.of(VideoModalTrigger.APP_OPEN), null, null, null, null, null, null, null, null, null);
         assertInvalidTwice(enTropLong);
     }
 
@@ -195,7 +196,7 @@ class VideoModalInfoAdminServiceTest {
         // EN trop long
         var enLong = new VideoModalRequest("Info", VideoModalType.INFO, null, null, "Titre", null, null, null,
                 "Ouvrir", "y".repeat(27), null, null, "Texte", null, null, screen("HELP"), null,
-                null, List.of(VideoModalTrigger.APP_OPEN), null, null, null);
+                null, List.of(VideoModalTrigger.APP_OPEN), null, null, null, null, null, null, null, null, null);
         assertThatThrownBy(() -> service.create(enLong, adminId)).isInstanceOfSatisfying(YadonyBusinessException.class,
                 e -> assertThat(e.getErrorCode()).isEqualTo("video-modal-label-too-long"));
     }
@@ -216,7 +217,7 @@ class VideoModalInfoAdminServiceTest {
         savesItself();
         var video = new VideoModalRequest("V", null, "https://youtu.be/dQw4w9WgXcQ", 204, "Titre", null, null, null,
                 null, null, null, null, "ignoré", "ignoré", VideoModalIcon.BELL, close(), close(),
-                List.of(), List.of(VideoModalTrigger.APP_OPEN), null, null, null);
+                List.of(), List.of(VideoModalTrigger.APP_OPEN), null, null, null, null, null, null, null, null, null);
         var r = service.create(video, adminId);
         assertThat(r.type()).isEqualTo(VideoModalType.VIDEO);
         assertThat(r.youtubeVideoId()).isEqualTo("dQw4w9WgXcQ");
@@ -229,7 +230,7 @@ class VideoModalInfoAdminServiceTest {
         for (String bad : new String[]{null, "", "  ", "https://vimeo.com/1"}) {
             var sansLien = new VideoModalRequest("V", VideoModalType.VIDEO, bad, null, "Titre", null, null, null,
                     null, null, null, null, null, null, null, null, null,
-                    List.of(), List.of(VideoModalTrigger.APP_OPEN), null, null, null);
+                    List.of(), List.of(VideoModalTrigger.APP_OPEN), null, null, null, null, null, null, null, null, null);
             assertInvalid(() -> service.create(sansLien, adminId), "video-modal-invalid-youtube-url");
         }
     }

@@ -41,6 +41,7 @@ class VideoModalInfoTest {
     @Mock VideoModalCampaignRepository campaignRepository;
     @Mock VideoModalResponseRepository responseRepository;
     @Mock UserRepository userRepository;
+    @Mock VideoModalImageUrls imageUrls;
 
     private VideoModalService service;
     private final UUID userId = UUID.randomUUID();
@@ -48,7 +49,7 @@ class VideoModalInfoTest {
     @BeforeEach
     void setUp() {
         service = new VideoModalService(campaignRepository, responseRepository, userRepository,
-                new TransactionTemplate(mock(PlatformTransactionManager.class)), Clock.fixed(NOW, ZoneOffset.UTC));
+                new TransactionTemplate(mock(PlatformTransactionManager.class)), imageUrls, Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     private void knownUser(String uid) {

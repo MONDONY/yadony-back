@@ -19,7 +19,7 @@ public final class MediaKeys {
      * ALLOWED_PREFIXES. Un préfixe absent d'ici ferait passer toutes ses clés pour orphelines.
      */
     public static final List<String> KNOWN_PREFIXES = List.of(
-            "package_requests/", "requests/", "tracking/", "users/", "messaging/", "bids/", "reports/", "support/", "gp_pro/");
+            "package_requests/", "requests/", "tracking/", "users/", "messaging/", "bids/", "reports/", "support/", "gp_pro/", "video-modals/");
 
     private MediaKeys() {
     }
