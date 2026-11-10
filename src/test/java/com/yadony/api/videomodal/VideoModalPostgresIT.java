@@ -27,13 +27,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * V366 sur Postgres embarqué, toutes migrations Flyway et ddl-auto=validate : les entités collent
+ * V366 et V369 (type INFO) sur Postgres embarqué, toutes migrations Flyway et ddl-auto=validate : les entités collent
  * au schéma, les colonnes JSON (TEXT) se relisent, la contrainte d'unicité campagne/utilisateur/version
  * et les CHECK tiennent, la requête de statistiques passe.
  */
 @SpringBootTest
 @ActiveProfiles("e2e")
-@DisplayName("Modals vidéo : schéma V366 (Postgres)")
+@DisplayName("Modals vidéo : schéma V366 + V369 (Postgres)")
 class VideoModalPostgresIT {
 
     private static EmbeddedPostgres postgres;
@@ -152,5 +152,66 @@ class VideoModalPostgresIT {
                 .isInstanceOf(DataIntegrityViolationException.class);
         assertThatThrownBy(() -> jdbc.update("UPDATE video_modal_campaigns SET audience = 'VIP' WHERE id = ?::uuid", id))
                 .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    @DisplayName("V369 : une campagne INFO (sans vidéo) se relit avec ses actions JSON ; une VIDEO garde ses colonnes obligatoires")
+    void infoType() {
+        VideoModalCampaignEntity info = new VideoModalCampaignEntity();
+        info.setType(VideoModalType.INFO);
+        info.setName("Info");
+        info.setTitleFr("Titre");
+        info.setBodyFr("Texte");
+        info.setBodyEn("Text");
+        info.setIcon(VideoModalIcon.BELL);
+        info.setPrimaryAction(new VideoModalAction(VideoModalActionKind.SCREEN, InfoScreen.MY_MONEY, null));
+        info.setSecondaryAction(new VideoModalAction(VideoModalActionKind.URL, null, "https://yadony.com/aide"));
+        info.setTriggers(List.of(VideoModalTrigger.APP_OPEN));
+        info.setActive(true);
+        info.setVersionPublishedAt(Instant.now());
+        VideoModalCampaignEntity saved = campaignRepository.saveAndFlush(info);
+
+        VideoModalCampaignEntity reread = campaignRepository.findById(saved.getId()).orElseThrow();
+        assertThat(reread.getType()).isEqualTo(VideoModalType.INFO);
+        assertThat(reread.getYoutubeVideoId()).isNull();
+        assertThat(reread.getYoutubeUrl()).isNull();
+        assertThat(reread.getIcon()).isEqualTo(VideoModalIcon.BELL);
+        assertThat(reread.getPrimaryAction()).isEqualTo(new VideoModalAction(VideoModalActionKind.SCREEN, InfoScreen.MY_MONEY, null));
+        assertThat(reread.getSecondaryAction().url()).isEqualTo("https://yadony.com/aide");
+        assertThat(jdbc.queryForObject("SELECT primary_action FROM video_modal_campaigns WHERE id = ?::uuid",
+                String.class, saved.getId().toString())).contains("\"kind\":\"SCREEN\"").contains("\"screen\":\"MY_MONEY\"");
+
+        String id = saved.getId().toString();
+        // INFO : texte et bouton principal obligatoires.
+        assertThatThrownBy(() -> jdbc.update("UPDATE video_modal_campaigns SET body_fr = NULL WHERE id = ?::uuid", id))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update("UPDATE video_modal_campaigns SET primary_action = NULL WHERE id = ?::uuid", id))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update("UPDATE video_modal_campaigns SET type = 'AUTRE' WHERE id = ?::uuid", id))
+                .isInstanceOf(DataIntegrityViolationException.class);
+
+        // VIDEO : lien et identifiant obligatoires.
+        VideoModalCampaignEntity video = persistCampaign();
+        assertThat(campaignRepository.findById(video.getId()).orElseThrow().getType()).isEqualTo(VideoModalType.VIDEO);
+        String vid = video.getId().toString();
+        assertThatThrownBy(() -> jdbc.update("UPDATE video_modal_campaigns SET youtube_video_id = NULL WHERE id = ?::uuid", vid))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update("UPDATE video_modal_campaigns SET youtube_url = NULL WHERE id = ?::uuid", vid))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    @DisplayName("V369 : une ligne insérée sans les nouvelles colonnes (campagne vidéo existante) devient une VIDEO inchangée")
+    void existingRowsStayVideo() {
+        String id = UUID.randomUUID().toString();
+        jdbc.update("INSERT INTO video_modal_campaigns (id, name, youtube_url, youtube_video_id, title_fr, version_published_at) "
+                + "VALUES (?::uuid, 'Ancienne', 'https://youtu.be/XLgkHom38_Y', 'XLgkHom38_Y', 'Vidéo d''accueil', now())", id);
+        VideoModalCampaignEntity c = campaignRepository.findById(UUID.fromString(id)).orElseThrow();
+        assertThat(c.getType()).isEqualTo(VideoModalType.VIDEO);
+        assertThat(c.getYoutubeVideoId()).isEqualTo("XLgkHom38_Y");
+        assertThat(c.getBodyFr()).isNull();
+        assertThat(c.getPrimaryAction()).isNull();
+        assertThat(c.getSecondaryAction()).isNull();
+        assertThat(c.getIcon()).isNull();
     }
 }
