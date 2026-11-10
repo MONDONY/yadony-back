@@ -38,45 +38,73 @@ public class VideoModalService {
     private final VideoModalResponseRepository responseRepository;
     private final UserRepository userRepository;
     private final TransactionTemplate transactionTemplate;
+    private final VideoModalImageUrls imageUrls;
     private final Clock clock;
 
     @Autowired
     public VideoModalService(VideoModalCampaignRepository campaignRepository,
                              VideoModalResponseRepository responseRepository,
                              UserRepository userRepository,
-                             PlatformTransactionManager transactionManager) {
+                             PlatformTransactionManager transactionManager,
+                             VideoModalImageUrls imageUrls) {
         this(campaignRepository, responseRepository, userRepository,
-                new TransactionTemplate(transactionManager), Clock.systemUTC());
+                new TransactionTemplate(transactionManager), imageUrls, Clock.systemUTC());
     }
 
     VideoModalService(VideoModalCampaignRepository campaignRepository,
                       VideoModalResponseRepository responseRepository,
                       UserRepository userRepository,
                       TransactionTemplate transactionTemplate,
+                      VideoModalImageUrls imageUrls,
                       Clock clock) {
         this.campaignRepository = campaignRepository;
         this.responseRepository = responseRepository;
         this.userRepository = userRepository;
         this.transactionTemplate = transactionTemplate;
+        this.imageUrls = imageUrls;
         this.clock = clock;
+    }
+
+    /** Capacité envoyée par la nouvelle app : elle sait rendre les formats et les images. */
+    static final String CAP_LAYOUT = "layout";
+
+    /** Équivaut à {@code eligible(firebaseUid, lang, null)} : une app sans capacité déclarée. */
+    @Transactional(readOnly = true)
+    public List<VideoModalEligibleResponse> eligible(String firebaseUid, String lang) {
+        return eligible(firebaseUid, lang, null);
+    }
+
+    /** Vrai si la liste séparée par des virgules ({@code caps=layout,…}) contient {@code layout}. */
+    static boolean supportsLayout(String caps) {
+        if (caps == null) return false;
+        for (String cap : caps.split(",")) {
+            if (CAP_LAYOUT.equalsIgnoreCase(cap.trim())) return true;
+        }
+        return false;
     }
 
     /**
      * @param firebaseUid uid d'un vrai compte, ou {@code null} pour un visiteur
      * @param lang        {@code en} pour l'anglais, tout le reste donne le français
+     * @param caps        capacités de l'app (liste séparée par des virgules). Sans {@code layout}
+     *                    (apps déjà installées), les campagnes dont le format n'est pas la feuille
+     *                    du bas ou qui ont une image ne sont pas envoyées : elles seraient rendues
+     *                    de travers. Les campagnes ordinaires restent envoyées à tous.
      */
     @Transactional(readOnly = true)
-    public List<VideoModalEligibleResponse> eligible(String firebaseUid, String lang) {
+    public List<VideoModalEligibleResponse> eligible(String firebaseUid, String lang, String caps) {
+        boolean layoutCapable = supportsLayout(caps);
         boolean english = lang != null && lang.trim().toLowerCase().startsWith("en");
         Instant now = clock.instant();
         List<VideoModalCampaignEntity> live = campaignRepository.findActiveOrderByVersionPublishedAtDesc().stream()
                 .filter(c -> c.isLiveAt(now))
+                .filter(c -> layoutCapable || !c.needsLayoutCapability())
                 .toList();
         if (live.isEmpty()) return List.of();
 
         UUID userId = resolveUserId(firebaseUid);
         if (userId == null) {
-            return live.stream().map(c -> VideoModalTexts.toEligible(c, english, 0)).toList();
+            return live.stream().map(c -> VideoModalTexts.toEligible(c, english, 0, imageUrls)).toList();
         }
 
         Map<UUID, List<VideoModalResponseEntity>> byCampaign = responseRepository
@@ -88,7 +116,7 @@ public class VideoModalService {
                 .map(c -> {
                     List<VideoModalResponseEntity> responses = byCampaign.getOrDefault(c.getId(), List.of());
                     Integer displays = VideoModalEligibility.displaysIfEligible(c, responses);
-                    return displays == null ? null : VideoModalTexts.toEligible(c, english, displays);
+                    return displays == null ? null : VideoModalTexts.toEligible(c, english, displays, imageUrls);
                 })
                 .filter(java.util.Objects::nonNull)
                 .toList();

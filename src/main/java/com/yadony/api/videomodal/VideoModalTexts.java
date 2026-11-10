@@ -10,9 +10,10 @@ final class VideoModalTexts {
     private VideoModalTexts() {
     }
 
-    static VideoModalEligibleResponse toEligible(VideoModalCampaignEntity c, boolean english, int displays) {
+    static VideoModalEligibleResponse toEligible(VideoModalCampaignEntity c, boolean english, int displays,
+                                                 VideoModalImageUrls imageUrls) {
         if (c.getType() == VideoModalType.INFO) {
-            return toEligibleInfo(c, english, displays);
+            return toEligibleInfo(c, english, displays, imageUrls);
         }
         return new VideoModalEligibleResponse(
                 c.getId(),
@@ -33,17 +34,21 @@ final class VideoModalTexts {
                 null, null, null, null,
                 c.getMaxDisplays(),
                 displays,
-                c.getAudience());
+                c.getAudience(),
+                c.getLayout(), c.getSizePercent(), null, null, null, null);
     }
 
-    private static VideoModalEligibleResponse toEligibleInfo(VideoModalCampaignEntity c, boolean english, int displays) {
+    private static VideoModalEligibleResponse toEligibleInfo(VideoModalCampaignEntity c, boolean english, int displays,
+                                                             VideoModalImageUrls imageUrls) {
+        boolean withImage = c.getImageMode() != VideoModalImageMode.NONE && c.getImageKey() != null;
+        String title = pick(english, c.getTitleFr(), c.getTitleEn());
         VideoModalAction secondary = c.getSecondaryAction();
         return new VideoModalEligibleResponse(
                 c.getId(),
                 VideoModalType.INFO,
                 c.getVersion(),
                 c.getTriggers(),
-                pick(english, c.getTitleFr(), c.getTitleEn()),
+                title,
                 pick(english, c.getSubtitleFr(), c.getSubtitleEn()),
                 null,
                 null,
@@ -57,7 +62,13 @@ final class VideoModalTexts {
                 secondary,
                 c.getMaxDisplays(),
                 displays,
-                c.getAudience());
+                c.getAudience(),
+                c.getLayout(), c.getSizePercent(),
+                withImage ? c.getImageMode() : VideoModalImageMode.NONE,
+                c.getImageFit(),
+                withImage ? imageUrls.urlOf(c.getImageKey()) : null,
+                // Texte alternatif facultatif : repli sur le titre.
+                withImage ? orDefault(pick(english, c.getImageAltFr(), c.getImageAltEn()), title) : null);
     }
 
     /** Libellé du bouton ; « OK » par défaut pour CLOSE, jamais de défaut pour SCREEN et URL. */

@@ -7,6 +7,7 @@ import com.yadony.api.videomodal.dto.VideoModalRequest;
 import com.yadony.api.videomodal.dto.VideoModalVersionRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -18,7 +19,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.UUID;
@@ -30,9 +33,11 @@ import java.util.UUID;
 public class AdminVideoModalController {
 
     private final VideoModalAdminService service;
+    private final VideoModalImageService imageService;
 
-    public AdminVideoModalController(VideoModalAdminService service) {
+    public AdminVideoModalController(VideoModalAdminService service, VideoModalImageService imageService) {
         this.service = service;
+        this.imageService = imageService;
     }
 
     @GetMapping
@@ -68,6 +73,19 @@ public class AdminVideoModalController {
     public VideoModalAdminResponse setActive(@PathVariable UUID id, @Valid @RequestBody VideoModalActiveRequest request,
                                              Authentication authentication) {
         return service.setActive(id, request.active(), adminId(authentication));
+    }
+
+    /** Remplace l'image de la campagne (champ multipart {@code file}) : JPEG, PNG ou WebP, 3 Mo, 2400 px. */
+    @PostMapping(value = "/{id}/image", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public VideoModalAdminResponse uploadImage(@PathVariable UUID id, @RequestParam("file") MultipartFile file,
+                                               Authentication authentication) {
+        return imageService.upload(id, file, adminId(authentication));
+    }
+
+    /** Retire l'image (le mode d'image repasse à NONE). */
+    @DeleteMapping("/{id}/image")
+    public VideoModalAdminResponse removeImage(@PathVariable UUID id, Authentication authentication) {
+        return imageService.remove(id, adminId(authentication));
     }
 
     @DeleteMapping("/{id}")
