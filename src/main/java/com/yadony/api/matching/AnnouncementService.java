@@ -2726,11 +2726,13 @@ public class AnnouncementService {
     /**
      * Un voyageur vient de déclarer ou de changer son statut légal : la pastille est servie avec
      * les résultats de recherche, que le cache {@code announcements-search} garde 5 minutes. Sans
-     * cette éviction, les expéditeurs verraient l'ancien statut. Écouteur synchrone, comme
-     * {@link #onGpProStatusChanged} ; le profil du voyageur est relu en base à chaque affichage,
-     * rien d'autre à mettre à jour.
+     * cette éviction, les expéditeurs verraient l'ancien statut. L'éviction a lieu APRÈS le commit
+     * (hors transaction, tout de suite) : évincée avant, une recherche lancée avant le commit
+     * remettrait l'ancien statut en cache pour 5 minutes. Le profil du voyageur est relu en base à
+     * chaque affichage, rien d'autre à mettre à jour.
      */
-    @EventListener
+    @org.springframework.transaction.event.TransactionalEventListener(
+            phase = org.springframework.transaction.event.TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     @CacheEvict(value = "announcements-search", allEntries = true)
     public void onTravelerStatusChanged(com.yadony.api.travelerstatus.events.TravelerStatusChangedEvent event) {
         log.info("Traveler status change for user {} (status={}) — announcements search cache evicted",
