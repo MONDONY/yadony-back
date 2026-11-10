@@ -4947,6 +4947,43 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("trajet multi-étapes : une étape publiée sans statut déclaré → 403 traveler-status-required, rien d'enregistré")
+        void createTripLeg_statusMissing_isRefused() {
+            UserEntity user = verifiedProUser();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+
+            assertThatThrownBy(() -> announcementService.createTripLeg(
+                    FIREBASE_UID, buildRequest(), UUID.randomUUID(), 1))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                        assertThat(e.getErrorCode()).isEqualTo("traveler-status-required");
+                    });
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("trajet multi-étapes enregistré en brouillon : jamais bloqué")
+        void createTripLeg_draft_isNeverBlocked() {
+            UserEntity user = standardUser();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.countByTravelerIdAndStatus(user.getId(), AnnouncementStatus.DRAFT))
+                    .thenReturn(0L);
+            when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+
+            AnnouncementResponse resp = announcementService.createTripLeg(
+                    FIREBASE_UID, draftRequest(), UUID.randomUUID(), 1);
+
+            assertThat(resp.status()).isEqualTo("DRAFT");
+            verify(gate, never()).assertDeclaredIfRequired(any());
+        }
+
+        @Test
         @DisplayName("le contrôle KYC passe avant le garde : KYC manquant → kyc-not-verified")
         void kycIsCheckedBeforeTheStatusGate() {
             org.springframework.test.util.ReflectionTestUtils.setField(announcementService, "enforceKyc", true);
