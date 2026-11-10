@@ -197,6 +197,8 @@ public class NotificationPrefsService {
             "REFERRAL_REWARD_AVAILABLE",
             // Décision de l'admin sur le badge GP Pro
             "GP_PRO_APPROVED", "GP_PRO_REJECTED", "GP_PRO_REVOKED",
+            // Question « Confirmez votre statut » au particulier fréquent (lot 4), une seule par signalement
+            "TRAVELER_STATUS_CONFIRMATION",
             // Vérification d'identité. KYC_ACTION_REQUIRED n'est toujours actif que sans le
             // drapeau reminder : la relance prend le type effectif KYC_VERIFICATION_REMINDER.
             "KYC_VERIFIED", "KYC_ACTION_REQUIRED", "KYC_RESET",
