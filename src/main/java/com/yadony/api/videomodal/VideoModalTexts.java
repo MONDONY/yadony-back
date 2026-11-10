@@ -19,11 +19,19 @@ final class VideoModalTexts {
     /** {@code lastShownAt} : dernier affichage de la personne pour la version courante, nul sinon. */
     static VideoModalEligibleResponse toEligible(VideoModalCampaignEntity c, boolean english, int displays,
                                                  Instant lastShownAt, VideoModalImageUrls imageUrls) {
+        return toEligible(c, english, displays, lastShownAt, imageUrls, c.effectiveTriggers());
+    }
+
+    /** {@code triggers} : déclencheurs réellement servis (moments d'action retirés pour une app sans {@code caps=moments}). */
+    static VideoModalEligibleResponse toEligible(VideoModalCampaignEntity c, boolean english, int displays,
+                                                 Instant lastShownAt, VideoModalImageUrls imageUrls,
+                                                 List<VideoModalTrigger> triggers) {
         VideoModalEligibleResponse base = c.getType() == VideoModalType.INFO
                 ? toEligibleInfo(c, english, displays, imageUrls)
                 : toEligibleVideo(c, english, displays);
         return base.withTargeting(c.getPriority(), c.getFrequency(), c.getFrequencyDays(),
-                c.isStopAfterAnswer(), c.isAllowDontShowAgain(), lastShownAt);
+                        c.isStopAfterAnswer(), c.isAllowDontShowAgain(), lastShownAt)
+                .withMoments(triggers, c.getTriggerOptions(), List.copyOf(c.getCorridors()));
     }
 
     private static VideoModalEligibleResponse toEligibleVideo(VideoModalCampaignEntity c, boolean english, int displays) {

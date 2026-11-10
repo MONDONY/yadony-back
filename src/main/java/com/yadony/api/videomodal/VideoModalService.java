@@ -97,6 +97,9 @@ public class VideoModalService {
     /** Capacité envoyée par la nouvelle app : elle gère les fréquences, « ne plus afficher » et le plafond local. */
     static final String CAP_TARGETING = "targeting";
 
+    /** Capacité envoyée par la nouvelle app : elle sait déclencher les moments d'action (livraison, recherche, favoris…). */
+    static final String CAP_MOMENTS = "moments";
+
     /** Équivaut à {@code eligible(firebaseUid, lang, null)} : une app sans capacité déclarée. */
     @Transactional(readOnly = true)
     public List<VideoModalEligibleResponse> eligible(String firebaseUid, String lang) {
@@ -119,6 +122,11 @@ public class VideoModalService {
         return hasCap(caps, CAP_TARGETING);
     }
 
+    /** Vrai si la liste contient {@code moments}. */
+    static boolean supportsMoments(String caps) {
+        return hasCap(caps, CAP_MOMENTS);
+    }
+
     private static boolean hasCap(String caps, String wanted) {
         if (caps == null) return false;
         for (String cap : caps.split(",")) {
@@ -135,7 +143,9 @@ public class VideoModalService {
      *                    du bas ou qui ont une image ne sont pas envoyées : elles seraient rendues
      *                    de travers. Sans {@code targeting}, celles à fréquence « à chaque ouverture »
      *                    ou « tous les N jours » ou avec la case « Ne plus afficher » ne le sont pas
-     *                    non plus. Les campagnes ordinaires restent envoyées à tous.
+     *                    non plus. Sans {@code moments}, les déclencheurs « moments d'action » sont retirés
+     *                    de {@code triggers} et une campagne qui n'en garde aucun n'est pas envoyée. Les
+     *                    campagnes ordinaires restent envoyées à tous.
      * @param appVersion  version de l'app ({@code 1.0.6}), nulle si inconnue
      * @param platform    {@code android} ou {@code ios}, nul si inconnu
      */
@@ -144,6 +154,7 @@ public class VideoModalService {
                                                      String appVersion, String platform) {
         boolean layoutCapable = supportsLayout(caps);
         boolean targetingCapable = supportsTargeting(caps);
+        boolean momentsCapable = supportsMoments(caps);
         boolean english = lang != null && lang.trim().toLowerCase().startsWith("en");
         Instant now = clock.instant();
         int[] version = VideoModalAppVersions.parseLenient(appVersion).orElse(null);
@@ -152,6 +163,8 @@ public class VideoModalService {
                 .filter(c -> c.isLiveAt(now))
                 .filter(c -> layoutCapable || !c.needsLayoutCapability())
                 .filter(c -> targetingCapable || !c.needsTargetingCapability())
+                // Sans caps=moments, les nouveaux moments sont retirés ; plus aucun déclencheur : pas envoyée.
+                .filter(c -> !c.servedTriggers(momentsCapable).isEmpty())
                 .filter(c -> VideoModalEligibility.matchesClient(c, version, device))
                 .toList();
         if (live.isEmpty()) return List.of();
@@ -162,7 +175,7 @@ public class VideoModalService {
             return live.stream()
                     .filter(c -> !c.needsAccount())
                     .sorted(BY_PRIORITY)
-                    .map(c -> VideoModalTexts.toEligible(c, english, 0, imageUrls))
+                    .map(c -> VideoModalTexts.toEligible(c, english, 0, null, imageUrls, c.servedTriggers(momentsCapable)))
                     .toList();
         }
 
@@ -185,7 +198,8 @@ public class VideoModalService {
                     if (displays == null || !targetingHolds(c, userId, situationMemo)) return null;
                     Instant lastShownAt = VideoModalEligibility.current(c, responses)
                             .map(VideoModalResponseEntity::getLastShownAt).orElse(null);
-                    return new Ranked(c, VideoModalTexts.toEligible(c, english, displays, lastShownAt, imageUrls));
+                    return new Ranked(c, VideoModalTexts.toEligible(c, english, displays, lastShownAt, imageUrls,
+                            c.servedTriggers(momentsCapable)));
                 })
                 .filter(java.util.Objects::nonNull)
                 .sorted(Comparator.comparingInt((Ranked r) -> r.campaign().getPriority()).reversed())
