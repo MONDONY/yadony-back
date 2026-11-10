@@ -17,5 +17,17 @@ public record PublicTravelerProfileResponse(
         BigDecimal averageRating,
         int ratingCount,
         String memberSince,
-        List<String> badges
-) {}
+        List<String> badges,
+        /** Statut légal déclaré (INDIVIDUAL ou PROFESSIONAL) ; null si non déclaré. */
+        String travelerStatus,
+        /** Raison sociale d'un professionnel. Jamais le numéro d'immatriculation sur cette page anonyme. */
+        String businessName
+) {
+    /** Forme d'avant le statut légal du voyageur (lot 2) : aucun statut. */
+    public PublicTravelerProfileResponse(String displayName, boolean kycVerified, boolean isKiloPro,
+                                         boolean gpPro, int completedBidsCount, BigDecimal averageRating,
+                                         int ratingCount, String memberSince, List<String> badges) {
+        this(displayName, kycVerified, isKiloPro, gpPro, completedBidsCount, averageRating, ratingCount,
+                memberSince, badges, null, null);
+    }
+}

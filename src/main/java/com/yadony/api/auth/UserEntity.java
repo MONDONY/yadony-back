@@ -714,6 +714,34 @@ public class UserEntity extends BaseEntity {
     public String getBusinessCountry() { return businessCountry; }
     public void setBusinessCountry(String businessCountry) { this.businessCountry = businessCountry; }
 
+    /**
+     * Statut légal tel que le voient les expéditeurs : {@code "INDIVIDUAL"}, {@code "PROFESSIONAL"}
+     * ou {@code null} tant que le voyageur ne l'a pas déclaré. Un {@code String} (nom de l'enum) pour
+     * qu'un client qui ne connaît pas une future valeur ne casse pas au décodage.
+     */
+    public String publicTravelerStatus() {
+        return travelerStatus == null ? null : travelerStatus.name();
+    }
+
+    /** Raison sociale, visible des expéditeurs seulement pour un professionnel. */
+    public String publicBusinessName() {
+        return isProfessionalTraveler() ? businessName : null;
+    }
+
+    /** Numéro d'immatriculation, visible des expéditeurs connectés seulement pour un professionnel. */
+    public String publicBusinessRegistrationNumber() {
+        return isProfessionalTraveler() ? businessRegistrationNumber : null;
+    }
+
+    /** Pays d'immatriculation, visible des expéditeurs seulement pour un professionnel. */
+    public String publicBusinessCountry() {
+        return isProfessionalTraveler() ? businessCountry : null;
+    }
+
+    private boolean isProfessionalTraveler() {
+        return travelerStatus == com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL;
+    }
+
     public String getBio() { return bio; }
     public void setBio(String bio) { this.bio = bio; }
 

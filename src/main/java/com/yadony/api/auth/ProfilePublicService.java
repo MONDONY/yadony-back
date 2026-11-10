@@ -114,7 +114,11 @@ public class ProfilePublicService {
                 emailVerified,
                 residenceCountry,
                 measuredResponseMinutes,
-                lastSeenDaysAgo
+                lastSeenDaysAgo,
+                user.publicTravelerStatus(),
+                user.publicBusinessName(),
+                user.publicBusinessRegistrationNumber(),
+                user.publicBusinessCountry()
         );
     }
 
@@ -180,7 +184,9 @@ public class ProfilePublicService {
                 ratingSummary.averageRating(),
                 ratingSummary.ratingCount(),
                 buildMemberSince(user),
-                List.of()
+                List.of(),
+                user.publicTravelerStatus(),
+                user.publicBusinessName()
         );
     }
 

@@ -1387,6 +1387,34 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("détail d'un trajet de professionnel → statut, raison sociale, numéro et pays ; particulier → statut seul")
+        void getDetail_travelerStatus_exposedByState() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findById(a.getTravelerId())).thenReturn(Optional.of(traveler));
+            when(bidRepository.countVisibleByAnnouncementId(ANNOUNCEMENT_ID)).thenReturn(0L);
+
+            assertThat(announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, FIREBASE_UID)
+                    .traveler().travelerStatus()).isNull();
+
+            traveler.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL);
+            var individual = announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, FIREBASE_UID).traveler();
+            assertThat(individual.travelerStatus()).isEqualTo("INDIVIDUAL");
+            assertThat(individual.businessRegistrationNumber()).isNull();
+
+            traveler.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL);
+            traveler.setBusinessName("Acme Express");
+            traveler.setBusinessRegistrationNumber("SIREN 123 456 789");
+            traveler.setBusinessCountry("FR");
+            var pro = announcementService.getAnnouncementDetail(ANNOUNCEMENT_ID, FIREBASE_UID).traveler();
+            assertThat(pro.travelerStatus()).isEqualTo("PROFESSIONAL");
+            assertThat(pro.businessName()).isEqualTo("Acme Express");
+            assertThat(pro.businessRegistrationNumber()).isEqualTo("SIREN 123 456 789");
+            assertThat(pro.businessCountry()).isEqualTo("FR");
+        }
+
+        @Test
         @DisplayName("lecteur EUR sur annonce XOF → prix affiché ET grille convertis « environ »")
         void getDetail_readerInEur_getsConvertedPricesAndGrid() {
             UserEntity traveler = buildTraveler();
@@ -1711,6 +1739,29 @@ class AnnouncementServiceTest {
             assertThat(result.departureCity()).isEqualTo("Lyon");
             assertThat(result.arrivalCity()).isEqualTo("Abidjan");
             verify(auditService).log(eq("USER"), any(), eq("ANNOUNCEMENT_UPDATED"), any(), any());
+        }
+
+        @Test
+        @DisplayName("mise à jour d'un trajet par un professionnel → le profil renvoyé porte le statut")
+        void update_professionalOwner_responseCarriesStatus() {
+            UserEntity traveler = buildTraveler();
+            traveler.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL);
+            traveler.setBusinessName("Acme Express");
+            traveler.setBusinessRegistrationNumber("SIREN 123 456 789");
+            traveler.setBusinessCountry("FR");
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+
+            AnnouncementDetailResponse result = announcementService.updateAnnouncement(
+                    ANNOUNCEMENT_ID, FIREBASE_UID, updateRequest("Lyon", "Abidjan", null, null));
+
+            assertThat(result.traveler().travelerStatus()).isEqualTo("PROFESSIONAL");
+            assertThat(result.traveler().businessName()).isEqualTo("Acme Express");
+            assertThat(result.traveler().businessRegistrationNumber()).isEqualTo("SIREN 123 456 789");
+            assertThat(result.traveler().businessCountry()).isEqualTo("FR");
         }
 
         private AnnouncementRequest updateRequest(String dep, String arr, String depCode, String arrCode) {
@@ -2754,6 +2805,30 @@ class AnnouncementServiceTest {
             var response = (com.yadony.api.matching.dto.AnnouncementSearchResponse) result.getContent().get(0);
             assertThat(response.traveler()).isNotNull();
             assertThat(response.traveler().avatarUrl()).isEqualTo("https://cdn.example.com/avatar.jpg");
+        }
+
+        @Test
+        @DisplayName("voyageur professionnel → statut, raison sociale, numéro et pays dans le profil de la liste")
+        void search_professionalTraveler_exposesBusinessFields() {
+            UserEntity traveler = buildTraveler();
+            traveler.setFirstName("Amara");
+            traveler.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL);
+            traveler.setBusinessName("Acme Express");
+            traveler.setBusinessRegistrationNumber("SIREN 123 456 789");
+            traveler.setBusinessCountry("FR");
+            AnnouncementEntity ann = buildAnnouncement(traveler);
+            when(announcementRepository.findAll(ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class)))
+                    .thenReturn(new PageImpl<>(List.of(ann)));
+            stubBatchSearch(traveler, 0L);
+
+            Page<?> result = announcementService.searchAnnouncements(
+                    null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, "date", "asc", PageRequest.of(0, 10), null, null);
+
+            var response = (com.yadony.api.matching.dto.AnnouncementSearchResponse) result.getContent().get(0);
+            assertThat(response.traveler().travelerStatus()).isEqualTo("PROFESSIONAL");
+            assertThat(response.traveler().businessName()).isEqualTo("Acme Express");
+            assertThat(response.traveler().businessRegistrationNumber()).isEqualTo("SIREN 123 456 789");
+            assertThat(response.traveler().businessCountry()).isEqualTo("FR");
         }
 
         @Test

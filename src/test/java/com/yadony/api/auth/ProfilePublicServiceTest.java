@@ -196,6 +196,87 @@ class ProfilePublicServiceTest {
         assertThat(response.isKiloPro()).isFalse();
     }
 
+    private void proStatus() {
+        user.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL);
+        user.setBusinessName("Acme Express");
+        user.setBusinessRegistrationNumber("SIREN 123 456 789");
+        user.setBusinessCountry("FR");
+    }
+
+    @Test
+    @DisplayName("profil public (connecté) d'un professionnel : statut, raison sociale, numéro et pays")
+    void getProfilePublic_professional_exposesBusinessFields() {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID)))
+                .thenReturn(stubRatingSummary());
+        proStatus();
+
+        var response = profilePublicService.getProfilePublic(USER_ID, VIEWER_ID);
+
+        assertThat(response.travelerStatus()).isEqualTo("PROFESSIONAL");
+        assertThat(response.businessName()).isEqualTo("Acme Express");
+        assertThat(response.businessRegistrationNumber()).isEqualTo("SIREN 123 456 789");
+        assertThat(response.businessCountry()).isEqualTo("FR");
+    }
+
+    @Test
+    @DisplayName("profil public d'un particulier : INDIVIDUAL sans donnée d'entreprise ; non déclaré : tout null")
+    void getProfilePublic_individualAndUndeclared() {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(VIEWER_ID)))
+                .thenReturn(stubRatingSummary());
+
+        var undeclared = profilePublicService.getProfilePublic(USER_ID, VIEWER_ID);
+        assertThat(undeclared.travelerStatus()).isNull();
+        assertThat(undeclared.businessName()).isNull();
+        assertThat(undeclared.businessRegistrationNumber()).isNull();
+        assertThat(undeclared.businessCountry()).isNull();
+
+        user.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL);
+        var individual = profilePublicService.getProfilePublic(USER_ID, VIEWER_ID);
+        assertThat(individual.travelerStatus()).isEqualTo("INDIVIDUAL");
+        assertThat(individual.businessName()).isNull();
+        assertThat(individual.businessRegistrationNumber()).isNull();
+        assertThat(individual.businessCountry()).isNull();
+    }
+
+    @Test
+    @DisplayName("page publique anonyme : statut et raison sociale, jamais le numéro ni le pays")
+    void getPublicTravelerProfile_professional_neverExposesRegistrationNumber() throws Exception {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(null)))
+                .thenReturn(stubRatingSummary());
+        proStatus();
+
+        var response = profilePublicService.getPublicTravelerProfile(USER_ID, null);
+
+        assertThat(response.travelerStatus()).isEqualTo("PROFESSIONAL");
+        assertThat(response.businessName()).isEqualTo("Acme Express");
+        // Le type n'a même pas de champ pour le numéro, et le JSON réel n'en contient aucune trace.
+        assertThat(java.util.Arrays.stream(response.getClass().getRecordComponents())
+                .map(java.lang.reflect.RecordComponent::getName))
+                .noneMatch(n -> n.toLowerCase().contains("registration"));
+        String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(response);
+        assertThat(json).doesNotContain("SIREN").doesNotContain("123 456 789").doesNotContain("registration");
+    }
+
+    @Test
+    @DisplayName("page publique anonyme d'un particulier : INDIVIDUAL sans raison sociale ; non déclaré : null")
+    void getPublicTravelerProfile_individualAndUndeclared() {
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(ratingService.getUserRatings(eq(USER_ID), eq(0), eq(3), eq(null)))
+                .thenReturn(stubRatingSummary());
+
+        var undeclared = profilePublicService.getPublicTravelerProfile(USER_ID, null);
+        assertThat(undeclared.travelerStatus()).isNull();
+        assertThat(undeclared.businessName()).isNull();
+
+        user.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL);
+        var individual = profilePublicService.getPublicTravelerProfile(USER_ID, null);
+        assertThat(individual.travelerStatus()).isEqualTo("INDIVIDUAL");
+        assertThat(individual.businessName()).isNull();
+    }
+
     private static UserRepository.DecisionDelayStats delay(Double median, Long decisions) {
         return new UserRepository.DecisionDelayStats() {
             @Override public Double getMedianMinutes() { return median; }

@@ -1389,7 +1389,11 @@ public class AnnouncementService {
                         traveler.isProAccount(),
                         kycVerified,
                         storageService.avatarUrl(traveler.getAvatarUrl()),
-                        !traveler.isContactKycOnly())
+                        !traveler.isContactKycOnly(),
+                        traveler.publicTravelerStatus(),
+                        traveler.publicBusinessName(),
+                        traveler.publicBusinessRegistrationNumber(),
+                        traveler.publicBusinessCountry())
                 : null;
 
         List<com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse> gridItems =
@@ -1738,7 +1742,11 @@ public class AnnouncementService {
                 buildDisplayName(user),
                 null, null, false, user.isGpPro(), user.isProAccount(), kycVerified,
                 user.getAvatarUrl(),
-                !user.isContactKycOnly());
+                !user.isContactKycOnly(),
+                user.publicTravelerStatus(),
+                user.publicBusinessName(),
+                user.publicBusinessRegistrationNumber(),
+                user.publicBusinessCountry());
 
         List<com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse> updatedGridItems =
                 saved.getPricingMode() == PricingMode.MIXED
@@ -2696,6 +2704,20 @@ public class AnnouncementService {
         int updated = announcementRepository.updateTravelerGpProStatus(event.userId(), event.gpPro());
         log.info("GP Pro status change for user {} (gpPro={}) — {} open announcements updated",
                 event.userId(), event.gpPro(), updated);
+    }
+
+    /**
+     * Un voyageur vient de déclarer ou de changer son statut légal : la pastille est servie avec
+     * les résultats de recherche, que le cache {@code announcements-search} garde 5 minutes. Sans
+     * cette éviction, les expéditeurs verraient l'ancien statut. Écouteur synchrone, comme
+     * {@link #onGpProStatusChanged} ; le profil du voyageur est relu en base à chaque affichage,
+     * rien d'autre à mettre à jour.
+     */
+    @EventListener
+    @CacheEvict(value = "announcements-search", allEntries = true)
+    public void onTravelerStatusChanged(com.yadony.api.travelerstatus.events.TravelerStatusChangedEvent event) {
+        log.info("Traveler status change for user {} (status={}) — announcements search cache evicted",
+                event.userId(), event.status());
     }
 
     private Set<PaymentMethod> resolvePaymentMethods(Set<PaymentMethod> requested, UserEntity traveler,
