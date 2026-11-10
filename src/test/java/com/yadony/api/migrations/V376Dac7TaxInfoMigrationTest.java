@@ -18,11 +18,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * V375 (DAC7, lot 3a) : données fiscales du voyageur sur {@code users} et registre des diligences immuable.
+ * V376 (DAC7, lot 3a) : données fiscales du voyageur sur {@code users} et registre des diligences immuable.
  * Un compte existant traverse la migration sans donnée fiscale et avec un compteur de rappels à zéro.
  */
-@DisplayName("V375 : colonnes fiscales des voyageurs et registre DAC7 immuable")
-class V375Dac7TaxInfoMigrationTest {
+@DisplayName("V376 : colonnes fiscales des voyageurs et registre DAC7 immuable")
+class V376Dac7TaxInfoMigrationTest {
 
     private static EmbeddedPostgres postgres;
     private static JdbcTemplate jdbc;
@@ -36,10 +36,10 @@ class V375Dac7TaxInfoMigrationTest {
             s.execute("CREATE SCHEMA IF NOT EXISTS kyc_schema");
         }
         jdbc = new JdbcTemplate(dataSource);
-        flyway(dataSource, "374").migrate();
-        jdbc.update("INSERT INTO users (id, firebase_uid, username, country) VALUES (?, ?, ?, 'FR')",
-                USER, "uid-v375-" + USER, "v375_" + USER.toString().substring(0, 8));
         flyway(dataSource, "375").migrate();
+        jdbc.update("INSERT INTO users (id, firebase_uid, username, country) VALUES (?, ?, ?, 'FR')",
+                USER, "uid-v376-" + USER, "v376_" + USER.toString().substring(0, 8));
+        flyway(dataSource, "376").migrate();
     }
 
     @AfterAll

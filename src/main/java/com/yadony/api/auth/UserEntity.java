@@ -342,7 +342,7 @@ public class UserEntity extends BaseEntity {
     @Column(name = "business_country", length = 2)
     private String businessCountry;
 
-    // DAC7 (lot 3a, V375) : numéro d'identification fiscale, pays d'émission du NIF et numéro de TVA facultatif.
+    // DAC7 (lot 3a, V376) : numéro d'identification fiscale, pays d'émission du NIF et numéro de TVA facultatif.
     // Chiffrés au repos (AES-256-GCM) comme pro_siret. Jamais dans un WHERE, un ORDER BY, un UNIQUE, un journal, un
     // payload d'audit, une réponse publique ou invitée : seul TravelerTaxInfoService les lit, et ne les renvoie que
     // masqués. Le pays de résidence fiscale n'est pas ici : c'est {@link #country} (ou le pays de l'entreprise).

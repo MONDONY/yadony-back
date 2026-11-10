@@ -7,7 +7,7 @@ import java.util.UUID;
 
 /**
  * Registre en ajout seul : {@link Repository} et non {@code JpaRepository}, pour qu'aucune méthode de suppression ni
- * de mise à jour en masse n'existe côté Java (le trigger de V375 les refuse aussi côté base).
+ * de mise à jour en masse n'existe côté Java (le trigger de V376 les refuse aussi côté base).
  */
 public interface Dac7DueDiligenceLogRepository extends Repository<Dac7DueDiligenceLogEntity, Long> {
 

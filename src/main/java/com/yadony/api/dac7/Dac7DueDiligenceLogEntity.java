@@ -15,7 +15,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Une ligne du registre des diligences DAC7 ({@code dac7_due_diligence_log}, V375). En ajout seul comme
+ * Une ligne du registre des diligences DAC7 ({@code dac7_due_diligence_log}, V376). En ajout seul comme
  * {@code audit_log} : {@link Immutable} côté Hibernate, trigger côté PostgreSQL, et aucun setter après création.
  * N'étend pas {@code BaseEntity} : un registre immuable n'a ni mise à jour ni suppression, même logique.
  */

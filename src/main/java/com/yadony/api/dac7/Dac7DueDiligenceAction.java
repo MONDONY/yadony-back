@@ -1,6 +1,6 @@
 package com.yadony.api.dac7;
 
-/** Démarche inscrite au registre des diligences DAC7 (mêmes valeurs que le CHECK de V375). */
+/** Démarche inscrite au registre des diligences DAC7 (mêmes valeurs que le CHECK de V376). */
 public enum Dac7DueDiligenceAction {
     /** Première demande du NIF (au premier versement, lot 3b). */
     REQUEST,
