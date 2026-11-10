@@ -88,6 +88,13 @@ class VideoModalControllersIT {
     private static UsernamePasswordAuthenticationToken adminAuth() {
         return new UsernamePasswordAuthenticationToken(
                 new AdminPrincipal(ADMIN_ID, "admin@yadony.test", AdminRole.ADMIN, false, "uid-admin-video"),
+                null, List.of(new SimpleGrantedAuthority("ROLE_ADMIN"), new SimpleGrantedAuthority("NOTIFICATION_SEND")));
+    }
+
+    /** SUPPORT : AdminRole.SUPPORT n'inclut pas NOTIFICATION_SEND, il porte seulement ROLE_ADMIN. */
+    private static UsernamePasswordAuthenticationToken supportAuth() {
+        return new UsernamePasswordAuthenticationToken(
+                new AdminPrincipal(UUID.randomUUID(), "support@yadony.test", AdminRole.SUPPORT, false, "uid-support-video"),
                 null, List.of(new SimpleGrantedAuthority("ROLE_ADMIN")));
     }
 
@@ -165,6 +172,34 @@ class VideoModalControllersIT {
                 .andExpect(status().isForbidden());
         mockMvc.perform(get("/admin/video-modals")).andExpect(status().isUnauthorized());
         assertThat(campaignRepository.count()).isZero();
+    }
+
+    @Test
+    @DisplayName("SUPPORT (ROLE_ADMIN sans NOTIFICATION_SEND) : 403 sur toutes les routes admin, rien n'est créé ni modifié")
+    void adminForbiddenForSupport() throws Exception {
+        String id = createCampaign();
+        mockMvc.perform(get("/admin/video-modals").with(authentication(supportAuth())))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/admin/video-modals/{id}", id).with(authentication(supportAuth())))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/admin/video-modals").with(authentication(supportAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/admin/video-modals/audience-estimate").with(authentication(supportAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(put("/admin/video-modals/{id}", id).with(authentication(supportAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(patch("/admin/video-modals/{id}/active", id).with(authentication(supportAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"active\":true}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(delete("/admin/video-modals/{id}", id).with(authentication(supportAuth())))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(delete("/admin/video-modals/{id}/image", id).with(authentication(supportAuth())))
+                .andExpect(status().isForbidden());
+        assertThat(campaignRepository.count()).isEqualTo(1);
+        assertThat(campaignRepository.findById(UUID.fromString(id)).orElseThrow().isActive()).isFalse();
     }
 
     @Test

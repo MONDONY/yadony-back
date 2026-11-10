@@ -82,7 +82,7 @@ class VideoModalMomentsIT {
     private static UsernamePasswordAuthenticationToken adminAuth() {
         return new UsernamePasswordAuthenticationToken(
                 new AdminPrincipal(ADMIN_ID, "admin@yadony.test", AdminRole.ADMIN, false, "uid-admin-moments"),
-                null, List.of(new SimpleGrantedAuthority("ROLE_ADMIN")));
+                null, List.of(new SimpleGrantedAuthority("ROLE_ADMIN"), new SimpleGrantedAuthority("NOTIFICATION_SEND")));
     }
 
     private UsernamePasswordAuthenticationToken userAuth() {

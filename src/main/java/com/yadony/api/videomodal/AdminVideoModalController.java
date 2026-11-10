@@ -28,10 +28,14 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.List;
 import java.util.UUID;
 
-/** Back-office des modals vidéo. */
+/**
+ * Back-office des modals. Réservé à NOTIFICATION_SEND, comme les diffusions : SUPPORT ne la reçoit
+ * pas. {@code hasRole('ADMIN')} seul ne discrimine personne (tout compte admin le porte, SUPPORT
+ * compris) : seule l'authority filtre réellement.
+ */
 @RestController
 @RequestMapping("/admin/video-modals")
-@PreAuthorize("hasRole('ADMIN')")
+@PreAuthorize("hasRole('ADMIN') and hasAuthority('NOTIFICATION_SEND')")
 public class AdminVideoModalController {
 
     private final VideoModalAdminService service;
