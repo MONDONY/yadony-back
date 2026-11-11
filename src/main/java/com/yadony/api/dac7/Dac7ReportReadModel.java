@@ -310,6 +310,37 @@ public class Dac7ReportReadModel {
             THEN TRUE ELSE FALSE END
             """;
 
+    /**
+     * Version groupée de {@link #HAS_BEEN_PAID_SQL} (toutes dates) pour le planificateur des rappels : mêmes chemins et
+     * mêmes prédicats, une requête par paquet de voyageurs au lieu d'une par voyageur.
+     */
+    private static final String PAID_TRAVELERS_SQL = """
+            SELECT a.traveler_id AS id FROM announcements a
+            JOIN bids b ON b.announcement_id = a.id
+            JOIN payments p ON p.bid_id = b.id
+            WHERE a.traveler_id IN (:ids) AND p.deleted_at IS NULL AND p.status = 'RELEASED'
+              AND p.escrow_released_at IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM payment_splits ps WHERE ps.payment_id = p.id
+                              AND ps.deleted_at IS NULL AND ps.traveler_payout_amount = 0)
+            UNION
+            SELECT nt.traveler_id FROM negotiation_threads nt
+            JOIN payments p ON p.negotiation_thread_id = nt.id
+            WHERE nt.traveler_id IN (:ids) AND p.deleted_at IS NULL AND p.status = 'RELEASED'
+              AND p.escrow_released_at IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM payment_splits ps WHERE ps.payment_id = p.id
+                              AND ps.deleted_at IS NULL AND ps.traveler_payout_amount = 0)
+            UNION
+            SELECT a.traveler_id FROM announcements a
+            JOIN bids b ON b.announcement_id = a.id
+            WHERE a.traveler_id IN (:ids) AND b.payment_method = 'CASH' AND b.status = 'COMPLETED'
+            UNION
+            SELECT s.traveler_id FROM bid_supplements s
+            WHERE s.traveler_id IN (:ids) AND s.deleted_at IS NULL AND s.paid_out_at IS NOT NULL
+            UNION
+            SELECT m.traveler_id FROM bid_amendments m
+            WHERE m.traveler_id IN (:ids) AND m.deleted_at IS NULL AND m.paid_out_at IS NOT NULL
+            """;
+
     private final NamedParameterJdbcTemplate jdbc;
 
     public Dac7ReportReadModel(NamedParameterJdbcTemplate jdbc) {
@@ -375,6 +406,25 @@ public class Dac7ReportReadModel {
                     rs.getBoolean("identity_complete"))));
         }
         return rows;
+    }
+
+    /** Parmi {@code ids}, les voyageurs déjà payés au moins une fois (tous rails, toutes dates), par paquets. */
+    public java.util.Set<UUID> paidTravelers(Collection<UUID> ids) {
+        java.util.Set<UUID> paid = new java.util.HashSet<>();
+        if (ids == null || ids.isEmpty()) {
+            return paid;
+        }
+        List<UUID> all = new ArrayList<>(ids);
+        for (int start = 0; start < all.size(); start += IN_CHUNK) {
+            List<UUID> chunk = all.subList(start, Math.min(all.size(), start + IN_CHUNK));
+            jdbc.query(PAID_TRAVELERS_SQL, new MapSqlParameterSource("ids", chunk), rs -> {
+                UUID id = uuid(rs, "id");
+                if (id != null) {
+                    paid.add(id);
+                }
+            });
+        }
+        return paid;
     }
 
     /** Le voyageur a-t-il déjà reçu de l'argent, toutes dates confondues ? */

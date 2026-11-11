@@ -43,6 +43,8 @@
 		<lucene.version>10.5.2</lucene.version>
 		<!-- SDK officiel Claude (assistant IA in-app, fournisseur Anthropic natif) -->
 		<anthropic-java.version>2.34.0</anthropic-java.version>
+		<!-- DAC7 : chiffrement OpenPGP du fichier déposé à la DGFiP (clé publique de la DGFiP). -->
+		<bouncycastle.version>1.86</bouncycastle.version>
 	</properties>
 
 	<dependencyManagement>
@@ -142,6 +144,14 @@
 			<groupId>com.anthropic</groupId>
 			<artifactId>anthropic-java</artifactId>
 			<version>${anthropic-java.version}</version>
+		</dependency>
+
+		<!-- DAC7 (lot 3b) : chiffrement OpenPGP (.xml.gz.gpg) du fichier de déclaration avec la clé publique de la
+		     DGFiP, comme « gpg -e -r <clé> » du guide de chiffrement Télé-TD. API légère (Bc*), sans fournisseur JCE. -->
+		<dependency>
+			<groupId>org.bouncycastle</groupId>
+			<artifactId>bcpg-jdk18on</artifactId>
+			<version>${bouncycastle.version}</version>
 		</dependency>
 
 		<!-- Stripe -->

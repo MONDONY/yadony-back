@@ -1,0 +1,6 @@
+Schéma XSD de collecte DPI-DAC7, revenus 2026, publié par la DGFiP (fichier public, non modifié).
+Source : https://www.impots.gouv.fr/sites/default/files/media/1_metier/3_partenaire/tiers_declarants/cdc_td_bilateral/schema-xsd-de-collecte-dpi-dac7---revenus-2026.zip
+Page : https://www.impots.gouv.fr/transfert-dinformations-en-application-des-dispositifs-dpi-dac7-plateformes-deconomie-collaborative
+Téléchargé le 11/11/2026. SHA-256 de l'archive : d0c8234e9e03ce93b56c1f359b86c26524b1e9e0d289a37afe79ef6e9cdb76dc
+Cahier des charges associé : cdc-dac7-v.1.7.pdf (V1.7 du 09/11/26), qui cite le schéma en V1.1 du 02/11/26 alors que
+les fichiers de l'archive portent le suffixe v1.0 : vérifier qu'aucune nouvelle archive n'est publiée avant le dépôt.

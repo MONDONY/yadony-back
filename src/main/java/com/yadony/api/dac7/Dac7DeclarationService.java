@@ -1,0 +1,259 @@
+package com.yadony.api.dac7;
+
+import com.yadony.api.auth.UserEntity;
+import com.yadony.api.auth.UserRepository;
+import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.dac7.Dac7Report.QuarterReport;
+import com.yadony.api.dac7.Dac7Report.TravelerReport;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+/**
+ * Déclaration DAC7 d'une année (lot 3b) : le calcul du lot 3a ({@link Dac7ReportService}), l'identité résolue sur
+ * toutes les sources ({@link Dac7IdentityResolver}), les règles de la DGFiP ({@link Dac7DgfipRules}) et les blocages
+ * de l'export. Base commune des pages admin, de l'export XML, du CSV de contrôle et des récapitulatifs.
+ *
+ * <p>Avant le calcul, et hors de sa transaction, les taux BCE de l'année sont téléchargés s'ils manquent
+ * ({@link EcbExchangeRateProvider#ensureCoverage}) : aucun appel réseau pendant le calcul.
+ */
+@Service
+public class Dac7DeclarationService {
+
+    static final String DELETED_DISPLAY_NAME = "Compte supprimé";
+
+    /** Raisons d'exclusion d'un vendeur du fichier (et blocages de l'export complet). */
+    public static final String IDENTITY_INCOMPLETE = "IDENTITY_INCOMPLETE";
+    public static final String TAX_INFO_MISSING = "TAX_INFO_MISSING";
+    public static final String EUR_INCOMPLETE = "EUR_INCOMPLETE";
+    public static final String COMMISSION_INCOMPLETE = "COMMISSION_INCOMPLETE";
+    public static final String INVALID_PARTNER_JURISDICTION = "INVALID_PARTNER_JURISDICTION";
+    public static final String NO_SELLERS = "NO_SELLERS";
+    /** Ajout au contrat : SIREN, raison sociale ou ville du siège de Yadony absents de la configuration. */
+    public static final String OPERATOR_CONFIG_MISSING = "OPERATOR_CONFIG_MISSING";
+    /** Exclusion seulement : État de résidence non transmis par la DGFiP cette année (annexe 6.1). */
+    public static final String RESIDENCE_NOT_TRANSMITTED = "RESIDENCE_NOT_TRANSMITTED";
+    /** Exclusion seulement : contrepartie nulle une fois arrondie à l'euro (contrôle de second niveau n° 2). */
+    public static final String ZERO_CONSIDERATION = "ZERO_CONSIDERATION";
+
+    /**
+     * Un vendeur déclarable de l'année.
+     *
+     * @param identity     identité complète, seulement quand elle a été relue ({@code freshIdentity}), sinon nul
+     * @param exclusions   raisons qui l'écartent du fichier, vide s'il part
+     */
+    public record Seller(UUID userId, String displayName, String residenceCountry, boolean taxInfoProvided,
+                         Dac7IdentityStatus identityStatus, Dac7SellerIdentity identity, int remindersSent,
+                         Instant lastDiligenceAt, TravelerReport report, int operations, BigDecimal netEur,
+                         BigDecimal commissionEur, boolean eurComplete, boolean commissionComplete,
+                         List<String> exclusions) {
+    }
+
+    /** Voyageur payé dans l'année mais non déclaré (résidence inconnue ou hors périmètre). */
+    public record Other(UUID userId, String displayName, String residenceCountry, Dac7ResidencyStatus residency,
+                        boolean taxInfoProvided, Dac7IdentityStatus identityStatus, int remindersSent,
+                        Instant lastDiligenceAt) {
+    }
+
+    public record Declaration(int year, Dac7Report report, List<Seller> sellers, List<Other> others,
+                              List<String> invalidPartnerJurisdictions, List<String> blockers,
+                              Map<UUID, String> displayNames) {
+    }
+
+    private final Dac7ReportService reports;
+    private final EcbExchangeRateProvider rates;
+    private final Dac7IdentityResolver identities;
+    private final UserRepository users;
+    private final Dac7AdminReadModel adminReads;
+    private final Dac7ResidencyPolicy residency;
+    private final Dac7Properties properties;
+    private final Dac7ExportProperties exportProperties;
+    private final Clock clock;
+
+    @Autowired
+    public Dac7DeclarationService(Dac7ReportService reports, EcbExchangeRateProvider rates,
+                                  Dac7IdentityResolver identities, UserRepository users, Dac7AdminReadModel adminReads,
+                                  Dac7ResidencyPolicy residency, Dac7Properties properties,
+                                  Dac7ExportProperties exportProperties) {
+        this(reports, rates, identities, users, adminReads, residency, properties, exportProperties,
+                Clock.systemUTC());
+    }
+
+    Dac7DeclarationService(Dac7ReportService reports, EcbExchangeRateProvider rates, Dac7IdentityResolver identities,
+                           UserRepository users, Dac7AdminReadModel adminReads, Dac7ResidencyPolicy residency,
+                           Dac7Properties properties, Dac7ExportProperties exportProperties, Clock clock) {
+        this.reports = reports;
+        this.rates = rates;
+        this.identities = identities;
+        this.users = users;
+        this.adminReads = adminReads;
+        this.residency = residency;
+        this.properties = properties;
+        this.exportProperties = exportProperties;
+        this.clock = clock;
+    }
+
+    /** Année civile déclarable : de 2023 (premier millésime DAC7) à l'année en cours. */
+    public int requireYear(Integer year) {
+        int current = clock.instant().atZone(ZoneOffset.UTC).getYear();
+        if (year == null || year < 2023 || year > current) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-year-invalid",
+                    "Invalid Year", "L'année doit être comprise entre 2023 et " + current + ".");
+        }
+        return year;
+    }
+
+    /**
+     * @param freshIdentity relire l'identité complète de chaque vendeur (export, récapitulatifs) plutôt que le verdict
+     *                      en cache (pages admin)
+     */
+    public Declaration declaration(int year, boolean freshIdentity) {
+        rates.ensureCoverage(year);
+        Dac7Report report = reports.annualReport(year);
+
+        Set<UUID> ids = new LinkedHashSet<>();
+        report.travelers().forEach(t -> ids.add(t.travelerId()));
+        report.identityReviewTravelers().forEach(t -> ids.add(t.travelerId()));
+        ids.addAll(report.unknownResidenceTravelers());
+        ids.addAll(report.nonDeclarableTravelers());
+        report.refundsToReconcile().forEach(r -> ids.add(r.travelerId()));
+        report.anomalies().stream().map(Dac7Report.Anomaly::travelerId).filter(java.util.Objects::nonNull)
+                .forEach(ids::add);
+        Map<UUID, UserEntity> byId = users.findAllById(ids).stream()
+                .collect(Collectors.toMap(UserEntity::getId, Function.identity()));
+        Map<UUID, Instant> lastDiligence = ids.isEmpty() ? Map.of() : adminReads.lastDiligence(ids);
+        Map<UUID, String> names = new HashMap<>();
+        ids.forEach(id -> names.put(id, displayName(byId.get(id))));
+
+        List<String> invalidPartners = invalidPartners(year, report);
+        List<Seller> sellers = new ArrayList<>();
+        List<TravelerReport> declarable = new ArrayList<>(report.travelers());
+        declarable.addAll(report.identityReviewTravelers());
+        declarable.sort(java.util.Comparator.comparing(TravelerReport::travelerId));
+        for (TravelerReport traveler : declarable) {
+            sellers.add(seller(year, traveler, byId.get(traveler.travelerId()), names,
+                    lastDiligence.get(traveler.travelerId()), freshIdentity));
+        }
+
+        List<Other> others = new ArrayList<>();
+        for (UUID id : report.unknownResidenceTravelers()) {
+            others.add(other(id, byId.get(id), Dac7ResidencyStatus.RESIDENCE_INCONNUE, names, lastDiligence));
+        }
+        for (UUID id : report.nonDeclarableTravelers()) {
+            others.add(other(id, byId.get(id), Dac7ResidencyStatus.NON_DECLARABLE, names, lastDiligence));
+        }
+        return new Declaration(year, report, sellers, others, invalidPartners,
+                blockers(sellers, invalidPartners), names);
+    }
+
+    private Seller seller(int year, TravelerReport traveler, UserEntity user, Map<UUID, String> names,
+                          Instant lastDiligence, boolean freshIdentity) {
+        UUID id = traveler.travelerId();
+        Dac7SellerIdentity identity = null;
+        Dac7IdentityStatus status;
+        if (user == null) {
+            identity = identities.resolveMissing(id);
+            status = identity.status();
+        } else if (freshIdentity) {
+            identity = identities.resolve(user);
+            status = identity.status();
+        } else {
+            status = identities.status(user);
+        }
+        int operations = 0;
+        BigDecimal net = BigDecimal.ZERO;
+        BigDecimal commission = BigDecimal.ZERO;
+        long roundedConsideration = 0;
+        boolean eur = true;
+        boolean commissionComplete = true;
+        for (QuarterReport q : traveler.quarters()) {
+            operations += q.operations();
+            net = net.add(q.netEur());
+            commission = commission.add(q.commissionEur());
+            roundedConsideration += roundEuro(q.netEur());
+            eur &= q.eurComplete();
+            commissionComplete &= q.commissionComplete();
+        }
+        List<String> exclusions = new ArrayList<>();
+        if (status != Dac7IdentityStatus.COMPLETE) exclusions.add(IDENTITY_INCOMPLETE);
+        if (!traveler.taxInfoProvided()) exclusions.add(TAX_INFO_MISSING);
+        if (!eur) exclusions.add(EUR_INCOMPLETE);
+        if (!commissionComplete) exclusions.add(COMMISSION_INCOMPLETE);
+        if (!Dac7DgfipRules.transmitted(year, traveler.residenceCountry())) exclusions.add(RESIDENCE_NOT_TRANSMITTED);
+        if (eur && roundedConsideration <= 0) exclusions.add(ZERO_CONSIDERATION);
+        return new Seller(id, names.get(id), traveler.residenceCountry(), traveler.taxInfoProvided(), status, identity,
+                user == null ? 0 : user.getTaxReminderCount(), lastDiligence, traveler, operations,
+                net.setScale(2, RoundingMode.HALF_UP), commission.setScale(2, RoundingMode.HALF_UP), eur,
+                commissionComplete, List.copyOf(exclusions));
+    }
+
+    private Other other(UUID id, UserEntity user, Dac7ResidencyStatus status, Map<UUID, String> names,
+                        Map<UUID, Instant> lastDiligence) {
+        return new Other(id, names.get(id), user == null ? null : Dac7ResidencyPolicy.residenceCountryOf(user), status,
+                user != null && user.getTaxIdentificationNumber() != null,
+                user == null ? Dac7IdentityStatus.INCOMPLETE : identities.profileStatus(user),
+                user == null ? 0 : user.getTaxReminderCount(), lastDiligence.get(id));
+    }
+
+    /**
+     * Codes partenaires invalides du calcul, plus les partenaires configurés que la DGFiP ne transmet pas cette année
+     * (annexe 6.1 : aucun pour 2026). Un résident de ces États serait rejeté par le contrôle de second niveau n° 8.
+     */
+    private List<String> invalidPartners(int year, Dac7Report report) {
+        Set<String> invalid = new TreeSet<>(report.invalidPartnerJurisdictions());
+        for (String raw : properties.partnerJurisdictionsOrEmpty()) {
+            String code = Dac7ResidencyPolicy.normalize(raw);
+            if (code != null && !Dac7DgfipRules.transmitted(year, code)) {
+                invalid.add(code);
+            }
+        }
+        return List.copyOf(invalid);
+    }
+
+    private List<String> blockers(List<Seller> sellers, List<String> invalidPartners) {
+        List<String> blockers = new ArrayList<>();
+        if (sellers.stream().anyMatch(s -> s.identityStatus() != Dac7IdentityStatus.COMPLETE)) {
+            blockers.add(IDENTITY_INCOMPLETE);
+        }
+        if (sellers.stream().anyMatch(s -> !s.taxInfoProvided())) blockers.add(TAX_INFO_MISSING);
+        if (sellers.stream().anyMatch(s -> !s.eurComplete())) blockers.add(EUR_INCOMPLETE);
+        if (sellers.stream().anyMatch(s -> !s.commissionComplete())) blockers.add(COMMISSION_INCOMPLETE);
+        if (!invalidPartners.isEmpty()) blockers.add(INVALID_PARTNER_JURISDICTION);
+        if (sellers.isEmpty()) blockers.add(NO_SELLERS);
+        if (!exportProperties.operatorConfigured()) blockers.add(OPERATOR_CONFIG_MISSING);
+        return List.copyOf(blockers);
+    }
+
+    /** Euros entiers, la fraction de 0,50 ou plus comptée pour 1 (cahier des charges, zones ConsQ et FeesQ). */
+    public static long roundEuro(BigDecimal eur) {
+        return eur == null ? 0 : eur.setScale(0, RoundingMode.HALF_UP).longValueExact();
+    }
+
+    static String displayName(UserEntity user) {
+        return user == null ? DELETED_DISPLAY_NAME : user.adminDisplayName();
+    }
+
+    public boolean collectionEnabled() {
+        return properties.enabledOrDefault();
+    }
+
+    Dac7ResidencyPolicy residency() {
+        return residency;
+    }
+}

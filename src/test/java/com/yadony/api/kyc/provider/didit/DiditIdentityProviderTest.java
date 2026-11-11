@@ -217,6 +217,50 @@ class DiditIdentityProviderTest {
     }
 
     @Test
+    void fetchVerifiedIdentity_readsBirthDateAndParsedAddress_forDac7() {
+        when(client.retrieveDecision("sess_1")).thenReturn(Optional.of(json("""
+                {"status":"Approved","id_verifications":[{"first_name":"Awa","last_name":"Diallo",
+                 "date_of_birth":"1990-01-02","formatted_address":"1 rue de Paris, 69001 Lyon",
+                 "parsed_address":{"street_1":"1 rue de Paris","postal_code":"69001","city":"Lyon",
+                                   "country_code":"fr"}}]}
+                """)));
+
+        var details = provider.fetchVerifiedIdentity("sess_1").orElseThrow();
+
+        assertThat(details.givenName()).isEqualTo("Awa");
+        assertThat(details.birthDate()).isEqualTo(java.time.LocalDate.of(1990, 1, 2));
+        assertThat(details.street()).isEqualTo("1 rue de Paris");
+        assertThat(details.city()).isEqualTo("Lyon");
+        assertThat(details.countryCode()).isEqualTo("FR");
+        assertThat(details.freeAddress()).isEqualTo("1 rue de Paris, 69001 Lyon");
+        assertThat(details.toString()).doesNotContain("Awa").doesNotContain("Lyon");
+    }
+
+    @Test
+    void fetchVerifiedIdentity_withoutAddressOrReadableDate_keepsWhatIsThere() {
+        when(client.retrieveDecision("sess_1")).thenReturn(Optional.of(json("""
+                {"status":"Approved","id_verifications":[{"first_name":"Awa","date_of_birth":"02/01/1990",
+                 "parsed_address":{"country":"France"}}]}
+                """)));
+
+        var details = provider.fetchVerifiedIdentity("sess_1").orElseThrow();
+
+        assertThat(details.birthDate()).isNull();
+        assertThat(details.city()).isNull();
+        assertThat(details.countryCode()).isNull();
+        assertThat(details.freeAddress()).isNull();
+    }
+
+    @Test
+    void fetchVerifiedIdentity_isEmpty_whenNotApprovedOrNoSession() {
+        when(client.retrieveDecision("sess_1")).thenReturn(Optional.of(json("""
+                {"status":"Declined","id_verifications":[{"first_name":"Awa","date_of_birth":"1990-01-02"}]}
+                """)));
+        assertThat(provider.fetchVerifiedIdentity("sess_1")).isEmpty();
+        assertThat(provider.fetchVerifiedIdentity(null)).isEmpty();
+    }
+
+    @Test
     void fetchVerifiedName_isEmpty_whenNotApproved() {
         when(client.retrieveDecision("sess_1")).thenReturn(Optional.of(json("""
                 {"status":"In Review","id_verifications":[{"first_name":"Awa","last_name":"Diallo"}]}
