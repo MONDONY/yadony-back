@@ -13,7 +13,7 @@
     .status { text-align: center; justify-items: center; }
     .route { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; }
     .route .end { text-align: right; }
-    .route .plane { color: var(--subtle); font-size: 18px; }
+    .route .route-arrow { color: var(--subtle); font-size: 18px; }
     .city { font-family: var(--f-display); font-size: 20px; font-weight: 800; display: block; }
     .desc { margin: 0; white-space: pre-line; overflow-wrap: anywhere; color: var(--ink) !important; }
     .person { display: grid; }
@@ -45,7 +45,7 @@
       <div class="route">
         <div><span class="city" th:text="${parcel.departureCity}">Paris</span>
           <span class="muted" th:if="${!#strings.isEmpty(parcel.departureDate)}" th:text="'Départ ' + ${parcel.departureDate}">Départ</span></div>
-        <span class="plane" aria-hidden="true">✈</span>
+        <span class="route-arrow" aria-hidden="true">→</span>
         <div class="end"><span class="city" th:text="${parcel.arrivalCity}">Dakar</span>
           <span class="muted" th:if="${!#strings.isEmpty(parcel.arrivalDate)}" th:text="'Arrivée ' + ${parcel.arrivalDate}">Arrivée</span></div>
       </div>

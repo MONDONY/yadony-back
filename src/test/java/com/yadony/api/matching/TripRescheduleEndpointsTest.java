@@ -69,6 +69,17 @@ class TripRescheduleEndpointsTest {
     }
 
     @Test
+    void reschedule_withTransportCancelled_isAccepted() throws Exception {
+        when(rescheduleService.reschedule(eq(TRIP_ID), eq("uid-test"), any()))
+                .thenReturn(new TripRescheduleResponse(UUID.randomUUID(), 1, 1, 0, 0));
+
+        mockMvc.perform(post("/announcements/{id}/reschedule", TRIP_ID).with(authentication(user()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(BODY.replace("FLIGHT_CANCELLED", "TRANSPORT_CANCELLED")))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void reschedule_withoutReason_is422() throws Exception {
         mockMvc.perform(post("/announcements/{id}/reschedule", TRIP_ID).with(authentication(user()))
                         .contentType(MediaType.APPLICATION_JSON)

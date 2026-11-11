@@ -15,6 +15,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
@@ -35,7 +36,11 @@ class TripRescheduledConversationListenerTest {
     }
 
     private TripRescheduledEvent event(UUID bidA, UUID bidB) {
-        return new TripRescheduledEvent(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "POSTPONED",
+        return event(bidA, bidB, "POSTPONED");
+    }
+
+    private TripRescheduledEvent event(UUID bidA, UUID bidB, String reason) {
+        return new TripRescheduledEvent(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), reason,
                 LocalDate.of(2026, 10, 9), LocalDate.of(2026, 10, 13), LocalTime.of(22, 0),
                 List.of(new TripRescheduledEvent.Target(bidA, UUID.randomUUID(), true),
                         new TripRescheduledEvent.Target(bidB, UUID.randomUUID(), false)));
@@ -70,5 +75,19 @@ class TripRescheduledConversationListenerTest {
 
         verify(firestoreService).addSystemMessage(eq("conv-b"),
                 eq("Le voyageur a reporté le trajet au mardi 13 octobre (voyage repoussé)."));
+    }
+
+    @Test
+    void transportCancelledReasonIsWordedWithoutPlane() {
+        UUID bidA = UUID.randomUUID();
+        UUID bidB = UUID.randomUUID();
+        when(conversationRepository.findByBidId(bidA)).thenReturn(Optional.of(
+                new ConversationEntity(bidA, UUID.randomUUID(), UUID.randomUUID(), "conv-a")));
+        when(conversationRepository.findByBidId(bidB)).thenReturn(Optional.empty());
+
+        listener.handleTripRescheduled(event(bidA, bidB, "TRANSPORT_CANCELLED"));
+
+        verify(firestoreService).addSystemMessage(eq("conv-a"),
+                contains("(transport annulé ou panne)"));
     }
 }
