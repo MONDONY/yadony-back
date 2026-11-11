@@ -281,7 +281,11 @@ public class SecurityConfig {
                     "/package-requests",
                     "/favorites/ids",
                     "/favorites/trips",
-                    "/favorites/package-requests"
+                    "/favorites/package-requests",
+                    // Suggestions de villes du filtre des trajets : référentiel public en
+                    // lecture seule. Le @PreAuthorize de CityController.search ajoute GUEST ;
+                    // /cities/corridors/popular reste fermé aux invités (règle finale).
+                    "/cities/search"
                 ).authenticated()
                 .requestMatchers(uuidPath(HttpMethod.GET, "/announcements"))
                     .authenticated()
