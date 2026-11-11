@@ -42,6 +42,7 @@ public class Dac7AdminController {
 
     static final String EXCLUDED_HEADER = "X-Dac7-Excluded";
     static final String ENCRYPTED_HEADER = "X-Dac7-Encrypted";
+    static final String WARNINGS_HEADER = "X-Dac7-Warnings";
 
     private final Dac7AdminService admin;
     private final Dac7ExportService exports;
@@ -104,13 +105,14 @@ public class Dac7AdminController {
     @PostMapping("/exports")
     public ResponseEntity<byte[]> export(@RequestBody Dac7ExportRequest request, Authentication authentication) {
         Dac7ExportService.ExportFile file = exports.export(request.year(), request.mode(), request.sequence(),
-                AdminPrincipal.requireAdminId(authentication));
+                Boolean.TRUE.equals(request.includeAlreadyExported()), AdminPrincipal.requireAdminId(authentication));
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .header(HttpHeaders.CONTENT_DISPOSITION,
                         ContentDisposition.attachment().filename(file.fileName()).build().toString())
                 .header(EXCLUDED_HEADER, String.valueOf(file.excluded()))
                 .header(ENCRYPTED_HEADER, String.valueOf(file.encrypted()))
+                .header(WARNINGS_HEADER, String.valueOf(file.warnings()))
                 .body(file.content());
     }
 

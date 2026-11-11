@@ -53,19 +53,22 @@ class Dac7ExportServiceTest {
     private final UserRepository users = mock(UserRepository.class);
     private final AuditService audit = mock(AuditService.class);
     private final UUID admin = UUID.randomUUID();
+    private final Dac7AdminReadModel reads = mock(Dac7AdminReadModel.class);
 
     @BeforeEach
     void setUp() {
         when(declarations.requireYear(2026)).thenReturn(2026);
     }
 
+    /** Opérateur configuré ; export en clair autorisé (essais) seulement sans clé. */
     private static Dac7ExportProperties operator(String keyPath) {
         return new Dac7ExportProperties(keyPath, "123456789", "Yadony SAS", null, null, "10 rue de la Paix", "75002",
-                "Paris");
+                "Paris", keyPath == null);
     }
 
     private Dac7ExportService service(Dac7ExportProperties properties) {
-        return new Dac7ExportService(declarations, users, properties, audit, CLOCK);
+        return new Dac7ExportService(declarations, users, properties, audit, reads,
+                org.springframework.transaction.support.TransactionOperations.withoutTransaction(), CLOCK);
     }
 
     private static List<QuarterReport> quarters(String q1) {
@@ -76,6 +79,10 @@ class Dac7ExportServiceTest {
     }
 
     private Seller seller(List<String> exclusions) {
+        return seller(exclusions, false, null);
+    }
+
+    private Seller seller(List<String> exclusions, boolean alreadyExported, String line2) {
         UUID id = UUID.randomUUID();
         UserEntity user = new UserEntity();
         ReflectionTestUtils.setField(user, "id", id);
@@ -84,16 +91,16 @@ class Dac7ExportServiceTest {
         when(users.findAllById(any())).thenReturn(List.of(user));
         Dac7SellerIdentity identity = new Dac7SellerIdentity(id, Dac7SellerIdentity.SellerType.INDIVIDUAL,
                 Dac7IdentityStatus.COMPLETE, List.of(), "Awa", "Diallo", LocalDate.of(1990, 1, 2),
-                new Dac7Address("1 rue de Paris", null, "69001", "Lyon", "RE", null), null, null);
+                new Dac7Address("1 rue de Paris", line2, "69001", "Lyon", "RE", null), null, null);
         TravelerReport report = new TravelerReport(id, "RE", true, Dac7IdentityStatus.COMPLETE, quarters("95.50"));
         return new Seller(id, "Awa Diallo", "RE", true, Dac7IdentityStatus.COMPLETE, identity, 0, null, report, 3,
-                new BigDecimal("105.99"), new BigDecimal("6.00"), true, true, exclusions);
+                new BigDecimal("105.99"), new BigDecimal("6.00"), true, true, exclusions, alreadyExported);
     }
 
     private void declaration(List<Seller> sellers, List<String> blockers) {
-        when(declarations.declaration(2026, true)).thenReturn(new Declaration(2026,
+        when(declarations.declaration(2026, Dac7DeclarationService.IdentityMode.FRESH)).thenReturn(new Declaration(2026,
                 new Dac7Report(2026, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                        List.of()), sellers, List.of(), List.of(), blockers, Map.of()));
+                        List.of()), sellers, List.of(), List.of(), blockers, Map.of(), 3));
     }
 
     @SuppressWarnings("unchecked")
@@ -102,8 +109,8 @@ class Dac7ExportServiceTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"IDENTITY_INCOMPLETE", "TAX_INFO_MISSING", "EUR_INCOMPLETE", "COMMISSION_INCOMPLETE",
-            "INVALID_PARTNER_JURISDICTION", "NO_SELLERS"})
+    @ValueSource(strings = {"IDENTITY_INCOMPLETE", "IDENTITY_UNAVAILABLE", "TAX_INFO_MISSING", "EUR_INCOMPLETE",
+            "COMMISSION_INCOMPLETE", "PENDING_SPLITS", "INVALID_PARTNER_JURISDICTION", "NO_SELLERS"})
     @DisplayName("FULL refusé en 409 dac7-export-blocked avec chaque code de blocage")
     void fullBloque(String code) {
         declaration(List.of(seller(List.of(code))), List.of(code));
@@ -112,8 +119,10 @@ class Dac7ExportServiceTest {
                     assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
                     assertThat(e.getErrorCode()).isEqualTo("dac7-export-blocked");
                 })
-                .satisfies(e -> assertThat(blockersOf(e)).containsExactly(code));
+                .satisfies(e -> assertThat(blockersOf(e)).containsExactly(code))
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getProperties()).containsKey("travelerIds"));
         verify(audit, never()).log(any(), any(), any(), any(), any());
+        verify(reads, never()).recordExport(anyInt(), any(), anyInt(), any(), any(), any(), any());
     }
 
     @Test
@@ -125,8 +134,11 @@ class Dac7ExportServiceTest {
             assertThatThrownBy(() -> service(none).export(2026, mode, null, admin))
                     .satisfies(e -> assertThat(blockersOf(e)).containsExactly("OPERATOR_CONFIG_MISSING"));
         }
+        // Vérifiée AVANT le calcul : aucun téléchargement BCE ni lecture Didit pour un fichier impossible.
+        verify(declarations, never()).declaration(anyInt(), any(Dac7DeclarationService.IdentityMode.class));
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     @DisplayName("PARTIAL : seuls les complets partent, les autres comptés exclus ; aucun complet : NO_SELLERS")
     void partiel() {
@@ -143,6 +155,7 @@ class Dac7ExportServiceTest {
 
         assertThat(file.sellers()).isEqualTo(1);
         assertThat(file.excluded()).isEqualTo(1);
+        assertThat(file.warnings()).isEqualTo(3);
         assertThat(file.encrypted()).isFalse();
         assertThat(file.fileName()).isEqualTo("DPIDAC7_2026_123456789_001_20270115103005.xml");
         String xml = new String(file.content(), StandardCharsets.UTF_8);
@@ -153,7 +166,17 @@ class Dac7ExportServiceTest {
                 .contains("<dpi:FeesQ4 currCode=\"EUR\">1</dpi:FeesQ4>")
                 // La Réunion est déclarée FR (annexe 6.4).
                 .contains("<dpi:ResCountryCode>FR</dpi:ResCountryCode>")
-                .contains("<dpi:TIN issuedBy=\"FR\">" + NIF + "</dpi:TIN>");
+                .contains("<dpi:TIN issuedBy=\"FR\">" + NIF + "</dpi:TIN>")
+                // DocRefId déterministe : identifiant interne du voyageur + ordre.
+                .contains("<stf:DocRefId>OP_2026_123456789_" + ok.userId().toString().replace("-", "")
+                        + "_001</stf:DocRefId>")
+                .contains("<stf:DocRefId>OP_2026_123456789_OP001</stf:DocRefId>");
+        ArgumentCaptor<List<Dac7AdminReadModel.ExportSellerRow>> rows = ArgumentCaptor.forClass(List.class);
+        verify(reads).recordExport(eq(2026), any(), eq(1), eq("PARTIAL"), eq(admin), any(), rows.capture());
+        assertThat(rows.getValue()).containsExactlyInAnyOrder(
+                new Dac7AdminReadModel.ExportSellerRow(ok.userId(), true,
+                        "OP_2026_123456789_" + ok.userId().toString().replace("-", "") + "_001", null),
+                new Dac7AdminReadModel.ExportSellerRow(missing.userId(), false, null, "TAX_INFO_MISSING"));
 
         declaration(List.of(missing), List.of("TAX_INFO_MISSING"));
         assertThatThrownBy(() -> service(operator(null)).export(2026, "PARTIAL", null, admin))
@@ -168,7 +191,8 @@ class Dac7ExportServiceTest {
         service(operator(null)).export(2026, "FULL", null, admin);
         ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
         verify(audit).log(eq("DAC7_EXPORT"), any(), eq("DAC7_EXPORT_GENERATED"), eq(admin), payload.capture());
-        assertThat(payload.getValue()).containsOnlyKeys("year", "mode", "sellers", "excluded", "encrypted")
+        assertThat(payload.getValue()).containsOnlyKeys("year", "mode", "sequence", "sellers", "excluded", "encrypted",
+                        "warnings")
                 .containsEntry("mode", "FULL").containsEntry("encrypted", false);
         assertThat(payload.getValue().toString()).doesNotContain(NIF).doesNotContain("Diallo");
     }
@@ -184,6 +208,8 @@ class Dac7ExportServiceTest {
         assertThat(file.encrypted()).isTrue();
         assertThat(file.fileName()).isEqualTo("DPIDAC7_2026_123456789_000_20270115103005.xml.gz.gpg");
         assertThat(new String(file.content(), StandardCharsets.ISO_8859_1)).doesNotContain(NIF);
+        assertThat(Dac7TestPgpKeys.recipientKeyId(file.content()))
+                .isEqualTo(Dac7TestPgpKeys.standard().subkeys().get(0).getKeyID());
         Dac7TestPgpKeys.Decrypted clear = Dac7TestPgpKeys.decrypt(file.content());
         assertThat(clear.literalName()).isEqualTo("DPIDAC7_2026_123456789_000_20270115103005.xml.gz");
         assertThat(new String(clear.xml(), StandardCharsets.UTF_8)).contains(NIF);
@@ -194,25 +220,78 @@ class Dac7ExportServiceTest {
                         e -> assertThat(e.getErrorCode()).isEqualTo("dac7-export-key-unavailable"));
     }
 
+    @SuppressWarnings("unchecked")
     @Test
-    @DisplayName("fichier refusé par le XSD : 422, ni le NIF ni la valeur fautive dans la réponse ou les journaux")
-    void nonConformeSansFuite(org.springframework.boot.test.system.CapturedOutput output) {
-        Seller s = seller(List.of());
-        UserEntity user = new UserEntity();
-        ReflectionTestUtils.setField(user, "id", s.userId());
-        String tooLong = NIF + "X".repeat(200);
-        user.setTaxIdentificationNumber(tooLong);
-        user.setTaxCountry("FR");
-        when(users.findAllById(any())).thenReturn(List.of(user));
-        declaration(List.of(s), List.of());
+    @DisplayName("valeur refusée par le XSD : voyageur identifié (identifiant seul) ; FULL 409, PARTIAL l'exclut ; aucune fuite")
+    void nonConformeIdentifieSansFuite(org.springframework.boot.test.system.CapturedOutput output) {
+        Seller bad = seller(List.of());
+        Seller good = seller(List.of());
+        UserEntity badUser = new UserEntity();
+        ReflectionTestUtils.setField(badUser, "id", bad.userId());
+        badUser.setTaxIdentificationNumber(NIF + "X".repeat(200));
+        badUser.setTaxCountry("FR");
+        UserEntity goodUser = new UserEntity();
+        ReflectionTestUtils.setField(goodUser, "id", good.userId());
+        goodUser.setTaxIdentificationNumber(NIF);
+        goodUser.setTaxCountry("FR");
+        when(users.findAllById(any())).thenReturn(List.of(badUser, goodUser));
+        declaration(List.of(bad, good), List.of());
 
         assertThatThrownBy(() -> service(operator(null)).export(2026, "FULL", null, admin))
                 .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
-                    assertThat(e.getErrorCode()).isEqualTo("dac7-export-invalid");
+                    assertThat(e.getErrorCode()).isEqualTo("dac7-export-blocked");
+                    assertThat(e.getProperties()).containsEntry("blockers", List.of("XSD_INVALID"))
+                            .containsEntry("travelerIds", List.of(bad.userId().toString()));
                     assertThat(e.getMessage() + e.getProperties()).doesNotContain(NIF);
                 });
-        assertThat(output.getAll()).contains("non conforme").doesNotContain(NIF).doesNotContain("Diallo");
-        verify(audit, never()).log(any(), any(), any(), any(), any());
+
+        Dac7ExportService.ExportFile file = service(operator(null)).export(2026, "PARTIAL", null, admin);
+        assertThat(file.sellers()).isEqualTo(1);
+        assertThat(new String(file.content(), StandardCharsets.UTF_8)).doesNotContain("XXXX");
+        ArgumentCaptor<List<Dac7AdminReadModel.ExportSellerRow>> rows = ArgumentCaptor.forClass(List.class);
+        verify(reads).recordExport(eq(2026), any(), eq(0), eq("PARTIAL"), eq(admin), any(), rows.capture());
+        assertThat(rows.getValue()).contains(new Dac7AdminReadModel.ExportSellerRow(bad.userId(), false, null,
+                "XSD_INVALID"));
+        assertThat(output.getAll()).doesNotContain(NIF).doesNotContain("Diallo");
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    @DisplayName("second PARTIAL : les voyageurs déjà retenus sont écartés (ALREADY_EXPORTED), sauf option explicite")
+    void dejaExportes() {
+        Seller done = seller(List.of(), true, null);
+        declaration(List.of(done), List.of());
+        assertThatThrownBy(() -> service(operator(null)).export(2026, "PARTIAL", 1, admin))
+                .satisfies(e -> assertThat(blockersOf(e)).contains("NO_SELLERS"));
+        ArgumentCaptor<List<Dac7AdminReadModel.ExportSellerRow>> rows = ArgumentCaptor.forClass(List.class);
+
+        Dac7ExportService.ExportFile file = service(operator(null)).export(2026, "PARTIAL", 1, true, admin);
+        assertThat(file.sellers()).isEqualTo(1);
+        verify(reads).recordExport(eq(2026), any(), eq(1), eq("PARTIAL"), eq(admin), any(), rows.capture());
+        assertThat(rows.getValue()).singleElement().satisfies(r -> assertThat(r.included()).isTrue());
+    }
+
+    @Test
+    @DisplayName("complément d'adresse : l'adresse part entière dans la zone libre (AddressFree), jamais en BuildingIdentifier")
+    void complementDAdresse() {
+        declaration(List.of(seller(List.of(), false, "chez M. Koné")), List.of());
+        String xml = new String(service(operator(null)).export(2026, "FULL", null, admin).content(),
+                StandardCharsets.UTF_8);
+        assertThat(xml).contains("<dpi:AddressFree>1 rue de Paris, chez M. Koné, 69001 Lyon</dpi:AddressFree>")
+                .doesNotContain("BuildingIdentifier");
+    }
+
+    @Test
+    @DisplayName("sans clé et sans autorisation explicite : 409 dac7-unencrypted-not-allowed, rien calculé")
+    void clairRefuseParDefaut() {
+        Dac7ExportProperties noKey = new Dac7ExportProperties(null, "123456789", "Yadony SAS", null, null, null, null,
+                "Paris");
+        assertThatThrownBy(() -> service(noKey).export(2026, "FULL", null, admin))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getErrorCode()).isEqualTo("dac7-unencrypted-not-allowed");
+                });
+        verify(declarations, never()).declaration(anyInt(), any(Dac7DeclarationService.IdentityMode.class));
     }
 
     @Test
@@ -224,6 +303,7 @@ class Dac7ExportServiceTest {
         assertThatThrownBy(() -> service(operator(null)).export(2026, "FULL", 1000, admin))
                 .isInstanceOf(YadonyBusinessException.class);
         verify(declarations, never()).declaration(anyInt(), anyBoolean());
+        verify(declarations, never()).declaration(anyInt(), any(Dac7DeclarationService.IdentityMode.class));
     }
 
     @Test
@@ -232,19 +312,21 @@ class Dac7ExportServiceTest {
     void csvDeControle() {
         Seller s = seller(List.of("TAX_INFO_MISSING"));
         Seller evil = new Seller(UUID.randomUUID(), "=HYPERLINK(\"x\")", "FR", false, Dac7IdentityStatus.INCOMPLETE,
-                null, 1, null, s.report(), 3, s.netEur(), s.commissionEur(), true, true, List.of("TAX_INFO_MISSING"));
-        when(declarations.declaration(2026, false)).thenReturn(new Declaration(2026,
+                null, 1, null, s.report(), 3, s.netEur(), s.commissionEur(), true, true, List.of("TAX_INFO_MISSING"),
+                false);
+        when(declarations.declaration(2026, Dac7DeclarationService.IdentityMode.CACHED)).thenReturn(new Declaration(2026,
                 new Dac7Report(2026, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
                         List.of()), List.of(s, evil),
                 List.of(new Dac7DeclarationService.Other(UUID.randomUUID(), "Koffi", "CI",
                         Dac7ResidencyStatus.NON_DECLARABLE, false, Dac7IdentityStatus.COMPLETE, 0, null)),
-                List.of(), List.of(), Map.of()));
+                List.of(), List.of(), Map.of(), 0));
 
         String csv = service(operator(null)).controlCsv(2026, admin);
 
         String[] lines = csv.split("\r\n");
         assertThat(lines).hasSize(4);
         assertThat(lines[0]).startsWith("﻿userId;voyageur;pays;residence;nifFourni;identite;t1NetEur");
+        assertThat(lines[0]).contains(";dejaExporte;exclusions");
         assertThat(csv).doesNotContain(NIF).contains(";oui;").contains("TAX_INFO_MISSING").contains("NON_DECLARE")
                 .contains("\"'=HYPERLINK(\"\"x\"\")\"");
         assertThat(lines[1].split(";", -1)).hasSize(lines[0].split(";", -1).length);

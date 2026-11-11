@@ -1,6 +1,7 @@
 package com.yadony.api.dac7.export;
 
 import org.bouncycastle.bcpg.SymmetricKeyAlgorithmTags;
+import org.bouncycastle.bcpg.sig.KeyFlags;
 import org.bouncycastle.openpgp.PGPEncryptedDataGenerator;
 import org.bouncycastle.openpgp.PGPException;
 import org.bouncycastle.openpgp.PGPLiteralData;
@@ -8,6 +9,8 @@ import org.bouncycastle.openpgp.PGPLiteralDataGenerator;
 import org.bouncycastle.openpgp.PGPPublicKey;
 import org.bouncycastle.openpgp.PGPPublicKeyRing;
 import org.bouncycastle.openpgp.PGPPublicKeyRingCollection;
+import org.bouncycastle.openpgp.PGPSignature;
+import org.bouncycastle.openpgp.PGPSignatureSubpacketVector;
 import org.bouncycastle.openpgp.PGPUtil;
 import org.bouncycastle.openpgp.operator.bc.BcKeyFingerprintCalculator;
 import org.bouncycastle.openpgp.operator.bc.BcPGPDataEncryptorBuilder;
@@ -79,24 +82,76 @@ public final class Dac7FileEncryptor {
         return out.toByteArray();
     }
 
-    /** Première clé de chiffrement valide du fichier (armure ASCII ou binaire). */
-    public static PGPPublicKey readEncryptionKey(Path path) {
+    /**
+     * Clé destinataire, comme GnuPG la choisit : une SOUS-CLÉ dont la signature de liaison porte le drapeau de
+     * chiffrement ({@code ENCRYPT_COMMS} ou {@code ENCRYPT_STORAGE}), ni révoquée ni expirée à {@code now} (la plus
+     * récente s'il y en a plusieurs) ; la clé primaire seulement si sa propre signature porte ce drapeau. Jamais une
+     * primaire de certification ou de signature. Trousseau révoqué ou expiré : ignoré. Fichier en armure ASCII ou
+     * binaire. Les erreurs ne citent jamais le contenu de la clé.
+     */
+    public static PGPPublicKey readEncryptionKey(Path path, java.time.Instant now) {
         if (path == null || !Files.isReadable(path)) {
             throw new KeyUnavailableException("Clé publique DAC7 introuvable ou illisible");
         }
+        PGPPublicKeyRingCollection rings;
         try (InputStream raw = Files.newInputStream(path); InputStream in = PGPUtil.getDecoderStream(raw)) {
-            PGPPublicKeyRingCollection rings = new PGPPublicKeyRingCollection(in, new BcKeyFingerprintCalculator());
-            for (Iterator<PGPPublicKeyRing> it = rings.getKeyRings(); it.hasNext(); ) {
-                for (Iterator<PGPPublicKey> keys = it.next().getPublicKeys(); keys.hasNext(); ) {
-                    PGPPublicKey key = keys.next();
-                    if (key.isEncryptionKey() && !key.hasRevocation()) {
-                        return key;
-                    }
-                }
-            }
+            rings = new PGPPublicKeyRingCollection(in, new BcKeyFingerprintCalculator());
         } catch (IOException | PGPException | RuntimeException e) {
             throw new KeyUnavailableException("Clé publique DAC7 illisible : " + e.getClass().getSimpleName());
         }
-        throw new KeyUnavailableException("Aucune clé de chiffrement dans le fichier de clé publique DAC7");
+        for (Iterator<PGPPublicKeyRing> it = rings.getKeyRings(); it.hasNext(); ) {
+            PGPPublicKeyRing ring = it.next();
+            PGPPublicKey master = ring.getPublicKey();
+            if (!usable(master, now)) {
+                continue;
+            }
+            PGPPublicKey chosen = null;
+            for (Iterator<PGPPublicKey> keys = ring.getPublicKeys(); keys.hasNext(); ) {
+                PGPPublicKey key = keys.next();
+                if (key.isMasterKey() || !usable(key, now) || !key.isEncryptionKey()
+                        || (flags(key) & ENCRYPTION_FLAGS) == 0) {
+                    continue;
+                }
+                if (chosen == null || key.getCreationTime().after(chosen.getCreationTime())) {
+                    chosen = key;
+                }
+            }
+            if (chosen == null && master.isEncryptionKey() && (flags(master) & ENCRYPTION_FLAGS) != 0) {
+                chosen = master;
+            }
+            if (chosen != null) {
+                return chosen;
+            }
+        }
+        throw new KeyUnavailableException("Aucune clé de chiffrement valide (sous-clé marquée chiffrement, non "
+                + "révoquée et non expirée) dans le fichier de clé publique DAC7");
+    }
+
+    static final int ENCRYPTION_FLAGS = KeyFlags.ENCRYPT_COMMS | KeyFlags.ENCRYPT_STORAGE;
+
+    private static boolean usable(PGPPublicKey key, java.time.Instant now) {
+        if (key.hasRevocation()) {
+            return false;
+        }
+        long valid = key.getValidSeconds();
+        return valid <= 0 || key.getCreationTime().toInstant().plusSeconds(valid).isAfter(now);
+    }
+
+    /** Drapeaux portés par les auto-signatures : liaison pour une sous-clé, certification de la primaire sinon. */
+    private static int flags(PGPPublicKey key) {
+        int flags = 0;
+        Iterator<PGPSignature> signatures = key.isMasterKey() ? key.getSignatures()
+                : key.getSignaturesOfType(PGPSignature.SUBKEY_BINDING);
+        while (signatures.hasNext()) {
+            PGPSignature signature = signatures.next();
+            if (key.isMasterKey() && signature.getKeyID() != key.getKeyID()) {
+                continue;
+            }
+            PGPSignatureSubpacketVector hashed = signature.getHashedSubPackets();
+            if (hashed != null) {
+                flags |= hashed.getKeyFlags();
+            }
+        }
+        return flags;
     }
 }

@@ -83,7 +83,7 @@ class Dac7DeclarationServiceTest {
                 List.of(), List.of(), List.of(), List.of(ivorian), List.of(), List.of()));
         when(users.findAllById(any())).thenReturn(List.of(user(ok, true), user(tiny, true), user(ivorian, false)));
         when(reads.lastDiligence(any())).thenReturn(Map.of(ok, Instant.parse("2026-12-01T00:00:00Z")));
-        when(port.verifiedIdentity(any())).thenReturn(Optional.empty());
+        when(port.verifiedIdentity(any())).thenReturn(Dac7VerifiedIdentityPort.Lookup.none());
 
         Declaration d = service(new Dac7Properties(false, List.of("SN", "zz")), configured()).declaration(2026, true);
 
@@ -106,6 +106,58 @@ class Dac7DeclarationServiceTest {
         // « zz » n'est pas un code ISO : ignoré par la politique éteinte et listé invalide par le calcul (mock ici).
         assertThat(d.invalidPartnerJurisdictions()).containsExactly("SN");
         assertThat(d.blockers()).containsExactly("IDENTITY_INCOMPLETE", "INVALID_PARTNER_JURISDICTION");
+    }
+
+    @Test
+    @DisplayName("Didit en panne : IDENTITY_UNAVAILABLE (jamais INCOMPLETE) ; partage en attente ; déjà exporté ; avertissements")
+    void indisponiblePartagesEtAvertissements() {
+        UUID down = UUID.randomUUID();
+        UUID split = UUID.randomUUID();
+        when(reports.annualReport(2026)).thenReturn(new Dac7Report(2026,
+                List.of(new TravelerReport(down, "FR", true, Dac7IdentityStatus.COMPLETE, quarters("95.00")),
+                        new TravelerReport(split, "FR", true, Dac7IdentityStatus.COMPLETE, quarters("95.00"))),
+                List.of(),
+                List.of(new Dac7Report.RefundToReconcile(split, Dac7Source.PAYMENT, UUID.randomUUID(), "EUR",
+                        BigDecimal.TEN, Instant.now(), 2026, Instant.now(), 2026, false, false, BigDecimal.TEN)),
+                List.of(new Dac7Report.PendingSplit(split, UUID.randomUUID(), "EUR", BigDecimal.TEN, BigDecimal.ONE,
+                        "CLAIMED", Instant.now())),
+                List.of(), List.of(), List.of(),
+                List.of(new Dac7Report.Anomaly(Dac7Report.AnomalyType.RATE_DATE_ESTIMATED, down, Dac7Source.PAYMENT,
+                        UUID.randomUUID(), "USD", LocalDate.of(2026, 3, 7)))));
+        // Profil sans date de naissance : seule la pièce la donnerait, et Didit ne répond pas.
+        UserEntity downUser = user(down, false);
+        when(users.findAllById(any())).thenReturn(List.of(downUser, user(split, true)));
+        when(port.verifiedIdentity(down)).thenReturn(Dac7VerifiedIdentityPort.Lookup.unavailable());
+        when(port.verifiedIdentity(split)).thenReturn(Dac7VerifiedIdentityPort.Lookup.none());
+        when(reads.exportedTravelers(2026)).thenReturn(java.util.Set.of(split));
+
+        Declaration d = service(new Dac7Properties(false, null), configured()).declaration(2026, true);
+
+        var byId = new java.util.HashMap<UUID, Dac7DeclarationService.Seller>();
+        d.sellers().forEach(s -> byId.put(s.userId(), s));
+        assertThat(byId.get(down).identityStatus()).isEqualTo(Dac7IdentityStatus.UNAVAILABLE);
+        assertThat(byId.get(down).exclusions()).containsExactly("IDENTITY_UNAVAILABLE");
+        assertThat(byId.get(split).exclusions()).containsExactly("PENDING_SPLITS");
+        assertThat(byId.get(split).alreadyExported()).isTrue();
+        assertThat(d.blockers()).containsExactly("IDENTITY_UNAVAILABLE", "PENDING_SPLITS");
+        // Remboursements à réconcilier et anomalies : comptés, jamais bloquants.
+        assertThat(d.warnings()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("année close : 2026 refusée le 20/12/2026 (422 dac7-year-not-closed), acceptée le 05/01/2027")
+    void anneeClose() {
+        Dac7Properties p = new Dac7Properties(false, null);
+        Dac7DeclarationService december = new Dac7DeclarationService(reports, rates, new Dac7IdentityResolver(port),
+                users, reads, new Dac7ResidencyPolicy(p), p, configured(),
+                Clock.fixed(Instant.parse("2026-12-20T10:00:00Z"), ZoneOffset.UTC));
+        assertThatThrownBy(() -> december.requireClosedYear(2026)).isInstanceOfSatisfying(
+                YadonyBusinessException.class, e -> assertThat(e.getErrorCode()).isEqualTo("dac7-year-not-closed"));
+        Dac7DeclarationService january = new Dac7DeclarationService(reports, rates, new Dac7IdentityResolver(port),
+                users, reads, new Dac7ResidencyPolicy(p), p, configured(),
+                Clock.fixed(Instant.parse("2027-01-05T10:00:00Z"), ZoneOffset.UTC));
+        assertThat(january.requireClosedYear(2026)).isEqualTo(2026);
+        assertThatThrownBy(() -> january.requireClosedYear(2027)).isInstanceOf(YadonyBusinessException.class);
     }
 
     @Test

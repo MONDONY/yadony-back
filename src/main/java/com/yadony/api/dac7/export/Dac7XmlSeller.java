@@ -17,7 +17,10 @@ public record Dac7XmlSeller(boolean entity, String resCountryCode, String tin, S
                             String firstName, String lastName, LocalDate birthDate, String businessName,
                             String registrationNumber, Address address, List<Quarter> quarters) {
 
-    /** Adresse détaillée ({@code city} non nul ; {@code building} : complément d'adresse) ou libre ({@code free}). */
+    /**
+     * Adresse détaillée ({@code city} non nul) ou libre ({@code free}). Le champ {@code building} est gardé pour la
+     * forme mais n'est plus écrit : un complément d'adresse part dans la zone libre (voir {@code Dac7ExportService}).
+     */
     public record Address(String countryCode, String street, String building, String postCode, String city,
                           String free) {
         @Override

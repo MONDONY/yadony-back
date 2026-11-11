@@ -47,10 +47,24 @@ public class Dac7DeclarationService {
     public static final String NO_SELLERS = "NO_SELLERS";
     /** Ajout au contrat : SIREN, raison sociale ou ville du siège de Yadony absents de la configuration. */
     public static final String OPERATOR_CONFIG_MISSING = "OPERATOR_CONFIG_MISSING";
+    /** Tour 1 : prestataire de vérification injoignable et profil insuffisant ; réessayable. */
+    public static final String IDENTITY_UNAVAILABLE = "IDENTITY_UNAVAILABLE";
+    /** Tour 1 : partage admin décidé mais transfert non terminé : le montant déclaré serait sous-évalué. */
+    public static final String PENDING_SPLITS = "PENDING_SPLITS";
     /** Exclusion seulement : État de résidence non transmis par la DGFiP cette année (annexe 6.1). */
     public static final String RESIDENCE_NOT_TRANSMITTED = "RESIDENCE_NOT_TRANSMITTED";
     /** Exclusion seulement : contrepartie nulle une fois arrondie à l'euro (contrôle de second niveau n° 2). */
     public static final String ZERO_CONSIDERATION = "ZERO_CONSIDERATION";
+    /** Exclusion seulement (export PARTIAL) : déjà retenu dans un fichier généré pour cette année. */
+    public static final String ALREADY_EXPORTED = "ALREADY_EXPORTED";
+    /** Exclusion seulement : ses données ne passent pas le XSD de la DGFiP (valeur jamais rapportée). */
+    public static final String XSD_INVALID = "XSD_INVALID";
+
+    /**
+     * Profondeur de la lecture d'identité : aucune (listes qui n'ont besoin que des noms : profil seul), verdict en
+     * cache (pages admin), ou relecture en direct de la pièce (export, récapitulatifs).
+     */
+    public enum IdentityMode { NONE, CACHED, FRESH }
 
     /**
      * Un vendeur déclarable de l'année.
@@ -62,7 +76,7 @@ public class Dac7DeclarationService {
                          Dac7IdentityStatus identityStatus, Dac7SellerIdentity identity, int remindersSent,
                          Instant lastDiligenceAt, TravelerReport report, int operations, BigDecimal netEur,
                          BigDecimal commissionEur, boolean eurComplete, boolean commissionComplete,
-                         List<String> exclusions) {
+                         List<String> exclusions, boolean alreadyExported) {
     }
 
     /** Voyageur payé dans l'année mais non déclaré (résidence inconnue ou hors périmètre). */
@@ -71,9 +85,13 @@ public class Dac7DeclarationService {
                         Instant lastDiligenceAt) {
     }
 
+    /**
+     * @param warnings remboursements à réconcilier + anomalies de l'année : jamais bloquants (décision du lot 3a :
+     *                 rien n'est déduit, le montant déclaré reste le montant versé), montrés avant l'export
+     */
     public record Declaration(int year, Dac7Report report, List<Seller> sellers, List<Other> others,
                               List<String> invalidPartnerJurisdictions, List<String> blockers,
-                              Map<UUID, String> displayNames) {
+                              Map<UUID, String> displayNames, int warnings) {
     }
 
     private final Dac7ReportService reports;
@@ -120,10 +138,25 @@ public class Dac7DeclarationService {
     }
 
     /**
-     * @param freshIdentity relire l'identité complète de chaque vendeur (export, récapitulatifs) plutôt que le verdict
-     *                      en cache (pages admin)
+     * Année close : avant le 1er janvier suivant, les montants de l'année sont forcément partiels (récapitulatifs :
+     * 422 {@code dac7-year-not-closed}).
      */
+    public int requireClosedYear(Integer year) {
+        int checked = requireYear(year);
+        if (checked >= clock.instant().atZone(ZoneOffset.UTC).getYear()) {
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-year-not-closed",
+                    "Year Not Closed", "L'année " + checked + " n'est pas terminée : les récapitulatifs ne peuvent "
+                    + "être envoyés qu'à partir du 1er janvier " + (checked + 1) + ".");
+        }
+        return checked;
+    }
+
+    /** Compatibilité : {@code true} = identité relue en direct, {@code false} = verdict en cache. */
     public Declaration declaration(int year, boolean freshIdentity) {
+        return declaration(year, freshIdentity ? IdentityMode.FRESH : IdentityMode.CACHED);
+    }
+
+    public Declaration declaration(int year, IdentityMode mode) {
         rates.ensureCoverage(year);
         Dac7Report report = reports.annualReport(year);
 
@@ -142,13 +175,20 @@ public class Dac7DeclarationService {
         ids.forEach(id -> names.put(id, displayName(byId.get(id))));
 
         List<String> invalidPartners = invalidPartners(year, report);
-        List<Seller> sellers = new ArrayList<>();
         List<TravelerReport> declarable = new ArrayList<>(report.travelers());
         declarable.addAll(report.identityReviewTravelers());
         declarable.sort(java.util.Comparator.comparing(TravelerReport::travelerId));
+        Map<UUID, Dac7IdentityStatus> cached = mode == IdentityMode.CACHED
+                ? identities.statuses(declarable.stream().map(t -> byId.get(t.travelerId()))
+                        .filter(java.util.Objects::nonNull).toList())
+                : Map.of();
+        Set<UUID> pendingSplit = new java.util.HashSet<>();
+        report.pendingSplits().forEach(p -> pendingSplit.add(p.travelerId()));
+        Set<UUID> exported = adminReads.exportedTravelers(year);
+        List<Seller> sellers = new ArrayList<>();
         for (TravelerReport traveler : declarable) {
             sellers.add(seller(year, traveler, byId.get(traveler.travelerId()), names,
-                    lastDiligence.get(traveler.travelerId()), freshIdentity));
+                    lastDiligence.get(traveler.travelerId()), mode, cached, pendingSplit, exported));
         }
 
         List<Other> others = new ArrayList<>();
@@ -159,22 +199,26 @@ public class Dac7DeclarationService {
             others.add(other(id, byId.get(id), Dac7ResidencyStatus.NON_DECLARABLE, names, lastDiligence));
         }
         return new Declaration(year, report, sellers, others, invalidPartners,
-                blockers(sellers, invalidPartners), names);
+                blockers(sellers, invalidPartners), names,
+                report.refundsToReconcile().size() + report.anomalies().size());
     }
 
     private Seller seller(int year, TravelerReport traveler, UserEntity user, Map<UUID, String> names,
-                          Instant lastDiligence, boolean freshIdentity) {
+                          Instant lastDiligence, IdentityMode mode, Map<UUID, Dac7IdentityStatus> cached,
+                          Set<UUID> pendingSplit, Set<UUID> exported) {
         UUID id = traveler.travelerId();
         Dac7SellerIdentity identity = null;
         Dac7IdentityStatus status;
         if (user == null) {
             identity = identities.resolveMissing(id);
             status = identity.status();
-        } else if (freshIdentity) {
+        } else if (mode == IdentityMode.FRESH) {
             identity = identities.resolve(user);
             status = identity.status();
+        } else if (mode == IdentityMode.CACHED) {
+            status = cached.getOrDefault(id, Dac7IdentityStatus.UNAVAILABLE);
         } else {
-            status = identities.status(user);
+            status = identities.profileStatus(user);
         }
         int operations = 0;
         BigDecimal net = BigDecimal.ZERO;
@@ -191,16 +235,18 @@ public class Dac7DeclarationService {
             commissionComplete &= q.commissionComplete();
         }
         List<String> exclusions = new ArrayList<>();
-        if (status != Dac7IdentityStatus.COMPLETE) exclusions.add(IDENTITY_INCOMPLETE);
+        if (status == Dac7IdentityStatus.UNAVAILABLE) exclusions.add(IDENTITY_UNAVAILABLE);
+        else if (status != Dac7IdentityStatus.COMPLETE) exclusions.add(IDENTITY_INCOMPLETE);
         if (!traveler.taxInfoProvided()) exclusions.add(TAX_INFO_MISSING);
         if (!eur) exclusions.add(EUR_INCOMPLETE);
         if (!commissionComplete) exclusions.add(COMMISSION_INCOMPLETE);
         if (!Dac7DgfipRules.transmitted(year, traveler.residenceCountry())) exclusions.add(RESIDENCE_NOT_TRANSMITTED);
         if (eur && roundedConsideration <= 0) exclusions.add(ZERO_CONSIDERATION);
+        if (pendingSplit.contains(id)) exclusions.add(PENDING_SPLITS);
         return new Seller(id, names.get(id), traveler.residenceCountry(), traveler.taxInfoProvided(), status, identity,
                 user == null ? 0 : user.getTaxReminderCount(), lastDiligence, traveler, operations,
                 net.setScale(2, RoundingMode.HALF_UP), commission.setScale(2, RoundingMode.HALF_UP), eur,
-                commissionComplete, List.copyOf(exclusions));
+                commissionComplete, List.copyOf(exclusions), exported.contains(id));
     }
 
     private Other other(UUID id, UserEntity user, Dac7ResidencyStatus status, Map<UUID, String> names,
@@ -228,12 +274,16 @@ public class Dac7DeclarationService {
 
     private List<String> blockers(List<Seller> sellers, List<String> invalidPartners) {
         List<String> blockers = new ArrayList<>();
-        if (sellers.stream().anyMatch(s -> s.identityStatus() != Dac7IdentityStatus.COMPLETE)) {
+        if (sellers.stream().anyMatch(s -> s.exclusions().contains(IDENTITY_INCOMPLETE))) {
             blockers.add(IDENTITY_INCOMPLETE);
+        }
+        if (sellers.stream().anyMatch(s -> s.exclusions().contains(IDENTITY_UNAVAILABLE))) {
+            blockers.add(IDENTITY_UNAVAILABLE);
         }
         if (sellers.stream().anyMatch(s -> !s.taxInfoProvided())) blockers.add(TAX_INFO_MISSING);
         if (sellers.stream().anyMatch(s -> !s.eurComplete())) blockers.add(EUR_INCOMPLETE);
         if (sellers.stream().anyMatch(s -> !s.commissionComplete())) blockers.add(COMMISSION_INCOMPLETE);
+        if (sellers.stream().anyMatch(s -> s.exclusions().contains(PENDING_SPLITS))) blockers.add(PENDING_SPLITS);
         if (!invalidPartners.isEmpty()) blockers.add(INVALID_PARTNER_JURISDICTION);
         if (sellers.isEmpty()) blockers.add(NO_SELLERS);
         if (!exportProperties.operatorConfigured()) blockers.add(OPERATOR_CONFIG_MISSING);

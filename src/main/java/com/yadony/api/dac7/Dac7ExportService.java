@@ -19,6 +19,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionOperations;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.bouncycastle.openpgp.PGPPublicKey;
 
 import java.nio.file.Path;
 import java.time.Clock;
@@ -53,31 +57,49 @@ public class Dac7ExportService {
 
     public enum Mode { FULL, PARTIAL }
 
-    public record ExportFile(String fileName, byte[] content, boolean encrypted, int sellers, int excluded) {
+    /** @param warnings remboursements à réconcilier + anomalies de l'année (non bloquants, en-tête X-Dac7-Warnings) */
+    public record ExportFile(String fileName, byte[] content, boolean encrypted, int sellers, int excluded,
+                             int warnings) {
     }
 
     private final Dac7DeclarationService declarations;
     private final UserRepository users;
     private final Dac7ExportProperties properties;
     private final AuditService audit;
+    private final Dac7AdminReadModel reads;
+    private final TransactionOperations transactions;
     private final Clock clock;
 
     @Autowired
     public Dac7ExportService(Dac7DeclarationService declarations, UserRepository users,
-                             Dac7ExportProperties properties, AuditService audit) {
-        this(declarations, users, properties, audit, Clock.systemUTC());
+                             Dac7ExportProperties properties, AuditService audit, Dac7AdminReadModel reads,
+                             PlatformTransactionManager transactionManager) {
+        this(declarations, users, properties, audit, reads, new TransactionTemplate(transactionManager),
+                Clock.systemUTC());
     }
 
     Dac7ExportService(Dac7DeclarationService declarations, UserRepository users, Dac7ExportProperties properties,
-                      AuditService audit, Clock clock) {
+                      AuditService audit, Dac7AdminReadModel reads, TransactionOperations transactions, Clock clock) {
         this.declarations = declarations;
         this.users = users;
         this.properties = properties;
         this.audit = audit;
+        this.reads = reads;
+        this.transactions = transactions;
         this.clock = clock;
     }
 
+    /** Compatibilité : sans ré-export des voyageurs déjà retenus. */
     public ExportFile export(Integer yearValue, String modeValue, Integer sequenceValue, UUID adminId) {
+        return export(yearValue, modeValue, sequenceValue, false, adminId);
+    }
+
+    /**
+     * @param includeAlreadyExported PARTIAL : reprendre aussi les voyageurs déjà retenus dans un fichier généré pour
+     *                               cette année (faux par défaut : ils sont écartés, raison {@code ALREADY_EXPORTED})
+     */
+    public ExportFile export(Integer yearValue, String modeValue, Integer sequenceValue,
+                             boolean includeAlreadyExported, UUID adminId) {
         int year = declarations.requireYear(yearValue);
         Mode mode = mode(modeValue);
         int sequence = sequenceValue == null ? 0 : sequenceValue;
@@ -85,80 +107,143 @@ public class Dac7ExportService {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-export-invalid-request",
                     "Invalid Export Request", "Le numéro d'ordre doit être compris entre 0 et 999.");
         }
-        Declaration declaration = declarations.declaration(year, true);
+        // Configuration d'abord : rien ne sert de calculer (taux BCE, lectures Didit) pour un fichier impossible.
         if (!properties.operatorConfigured()) {
-            throw blocked(List.of(Dac7DeclarationService.OPERATOR_CONFIG_MISSING));
+            throw blocked(List.of(Dac7DeclarationService.OPERATOR_CONFIG_MISSING), List.of());
         }
+        boolean encrypted = properties.encryptionConfigured();
+        if (!encrypted && !properties.unencryptedAllowed()) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-unencrypted-not-allowed",
+                    "Unencrypted Export Not Allowed", "Aucune clé publique de la DGFiP n'est configurée et l'export en "
+                    + "clair n'est pas autorisé.");
+        }
+        PGPPublicKey key = encrypted ? key() : null;
+
+        Declaration declaration = declarations.declaration(year, Dac7DeclarationService.IdentityMode.FRESH);
         if (mode == Mode.FULL && !declaration.blockers().isEmpty()) {
-            throw blocked(declaration.blockers());
+            throw blocked(declaration.blockers(), declaration.sellers().stream()
+                    .filter(s -> !s.exclusions().isEmpty()).map(Seller::userId).toList());
         }
-        List<Seller> included = declaration.sellers().stream().filter(s -> s.exclusions().isEmpty()).toList();
-        int excluded = declaration.sellers().size() - included.size();
-        if (included.isEmpty()) {
+        String siren = properties.declarantSiren().strip();
+        LocalDateTime createdAt = LocalDateTime.now(clock.withZone(PARIS)).withNano(0);
+        String unique = createdAt.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss")) + "_"
+                + shortId();
+        Dac7XmlDocument.Operator operator = operator(siren, sequence);
+
+        Map<UUID, UserEntity> byId = users.findAllById(declaration.sellers().stream()
+                        .filter(s -> s.exclusions().isEmpty()).map(Seller::userId).toList()).stream()
+                .collect(Collectors.toMap(UserEntity::getId, Function.identity()));
+        List<Dac7XmlDocument.Seller> sellers = new ArrayList<>();
+        List<Dac7AdminReadModel.ExportSellerRow> rows = new ArrayList<>();
+        List<UUID> invalid = new ArrayList<>();
+        for (Seller seller : declaration.sellers()) {
+            List<String> reasons = new ArrayList<>(seller.exclusions());
+            if (reasons.isEmpty() && mode == Mode.PARTIAL && seller.alreadyExported() && !includeAlreadyExported) {
+                reasons.add(Dac7DeclarationService.ALREADY_EXPORTED);
+            }
+            UserEntity user = byId.get(seller.userId());
+            if (reasons.isEmpty() && (user == null || seller.identity() == null)) {
+                // Compte supprimé entre le calcul et la lecture : jamais déclaré à moitié.
+                reasons.add(Dac7DeclarationService.IDENTITY_INCOMPLETE);
+            }
+            if (!reasons.isEmpty()) {
+                rows.add(new Dac7AdminReadModel.ExportSellerRow(seller.userId(), false, null,
+                        String.join(",", reasons)));
+                continue;
+            }
+            Dac7XmlDocument.Seller entry = new Dac7XmlDocument.Seller(xmlSeller(seller, user),
+                    docRefUniquePart(seller.userId(), sequence));
+            if (!validAlone(year, createdAt, unique, operator, entry)) {
+                invalid.add(seller.userId());
+                rows.add(new Dac7AdminReadModel.ExportSellerRow(seller.userId(), false, null,
+                        Dac7DeclarationService.XSD_INVALID));
+                continue;
+            }
+            sellers.add(entry);
+            rows.add(new Dac7AdminReadModel.ExportSellerRow(seller.userId(), true,
+                    Dac7XmlWriter.reference(year, siren, entry.docRefUniquePart()), null));
+        }
+        if (mode == Mode.FULL && !invalid.isEmpty()) {
+            log.warn("Export DAC7 {} : {} voyageur(s) non conformes au schéma DGFiP", year, invalid.size());
+            throw blocked(List.of(Dac7DeclarationService.XSD_INVALID), invalid);
+        }
+        if (sellers.isEmpty()) {
             List<String> blockers = new ArrayList<>(declaration.blockers());
             if (!blockers.contains(Dac7DeclarationService.NO_SELLERS)) {
                 blockers.add(Dac7DeclarationService.NO_SELLERS);
             }
-            throw blocked(blockers);
+            throw blocked(blockers, rows.stream().map(Dac7AdminReadModel.ExportSellerRow::userId).toList());
         }
 
-        Map<UUID, UserEntity> byId = users.findAllById(included.stream().map(Seller::userId).toList()).stream()
-                .collect(Collectors.toMap(UserEntity::getId, Function.identity()));
-        LocalDateTime createdAt = LocalDateTime.now(clock.withZone(PARIS)).withNano(0);
-        String unique = createdAt.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss")) + "_"
-                + shortId();
-        List<Dac7XmlDocument.Seller> sellers = new ArrayList<>();
-        for (Seller seller : included) {
-            UserEntity user = byId.get(seller.userId());
-            if (user == null || seller.identity() == null) {
-                // Compte supprimé entre le calcul et la lecture : jamais déclaré à moitié.
-                throw blocked(List.of(Dac7DeclarationService.IDENTITY_INCOMPLETE));
-            }
-            sellers.add(new Dac7XmlDocument.Seller(xmlSeller(seller, user), shortId()));
-        }
-        Dac7XmlDocument document = new Dac7XmlDocument(year, createdAt, unique, operator(), sellers);
-        byte[] xml = Dac7XmlWriter.write(document);
+        byte[] xml = Dac7XmlWriter.write(new Dac7XmlDocument(year, createdAt, unique, operator, sellers));
         try {
             Dac7XsdValidator.validate(xml);
         } catch (Dac7XsdValidator.InvalidFileException e) {
-            // Ligne et colonne seulement : le message du validateur recopierait la valeur fautive.
+            // Chaque vendeur a passé seul : l'erreur ne peut venir que de l'assemblage. Position seulement.
             log.warn("Export DAC7 {} non conforme au schéma DGFiP (ligne {}, colonne {})", year, e.line(), e.column());
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-export-invalid",
-                    "Invalid Export", "Le fichier généré n'est pas conforme au schéma de la DGFiP (ligne " + e.line()
-                    + "). Vérifiez les identités des voyageurs concernés.");
+                    "Invalid Export", "Le fichier généré n'est pas conforme au schéma de la DGFiP.");
         }
+        String fileName = Dac7FileNaming.fileName(year, siren, sequence, createdAt, encrypted);
+        byte[] content = encrypted
+                ? Dac7FileEncryptor.gzipAndEncrypt(xml, key, fileName.substring(0, fileName.length() - ".gpg".length()))
+                : xml;
 
-        boolean encrypted = properties.encryptionConfigured();
-        String fileName = Dac7FileNaming.fileName(year, properties.declarantSiren().strip(), sequence, createdAt,
-                encrypted);
-        byte[] content = xml;
-        if (encrypted) {
-            try {
-                content = Dac7FileEncryptor.gzipAndEncrypt(xml,
-                        Dac7FileEncryptor.readEncryptionKey(Path.of(properties.publicKeyPath().strip())),
-                        fileName.substring(0, fileName.length() - ".gpg".length()));
-            } catch (Dac7FileEncryptor.KeyUnavailableException e) {
-                log.warn("Export DAC7 {} : {}", year, e.getMessage());
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-export-key-unavailable",
-                        "Encryption Key Unavailable",
-                        "La clé publique de chiffrement de la DGFiP configurée est introuvable ou illisible.");
-            }
-        }
-
+        int excluded = declaration.sellers().size() - sellers.size();
+        UUID runId = UUID.randomUUID();
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("year", year);
         payload.put("mode", mode.name());
-        payload.put("sellers", included.size());
+        payload.put("sequence", sequence);
+        payload.put("sellers", sellers.size());
         payload.put("excluded", excluded);
         payload.put("encrypted", encrypted);
-        audit.log("DAC7_EXPORT", UUID.randomUUID(), "DAC7_EXPORT_GENERATED", adminId, payload);
-        return new ExportFile(fileName, content, encrypted, included.size(), excluded);
+        payload.put("warnings", declaration.warnings());
+        transactions.executeWithoutResult(status -> {
+            reads.recordExport(year, runId, sequence, mode.name(), adminId, clock.instant(), rows);
+            audit.log("DAC7_EXPORT", runId, "DAC7_EXPORT_GENERATED", adminId, payload);
+        });
+        return new ExportFile(fileName, content, encrypted, sellers.size(), excluded, declaration.warnings());
+    }
+
+    private PGPPublicKey key() {
+        try {
+            return Dac7FileEncryptor.readEncryptionKey(Path.of(properties.publicKeyPath().strip()), clock.instant());
+        } catch (Dac7FileEncryptor.KeyUnavailableException e) {
+            log.warn("Export DAC7 : {}", e.getMessage());
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-export-key-unavailable",
+                    "Encryption Key Unavailable",
+                    "La clé publique de chiffrement de la DGFiP configurée est introuvable, illisible ou sans "
+                    + "sous-clé de chiffrement valide.");
+        }
+    }
+
+    /** Le vendeur passe-t-il seul le XSD (document minimal : opérateur + lui) ? Aucune valeur rapportée. */
+    private static boolean validAlone(int year, LocalDateTime createdAt, String unique,
+                                      Dac7XmlDocument.Operator operator, Dac7XmlDocument.Seller seller) {
+        try {
+            Dac7XsdValidator.validate(Dac7XmlWriter.write(new Dac7XmlDocument(year, createdAt, unique, operator,
+                    List.of(seller))));
+            return true;
+        } catch (Dac7XsdValidator.InvalidFileException | IllegalStateException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Partie unique du DocRefId, DÉTERMINISTE (recalculable pour une rectificative) : identifiant interne du voyageur
+     * (32 caractères hexadécimaux, aucune donnée personnelle) et numéro d'ordre de la déclaration. Avec
+     * {@code OP_<année>_<SIREN>_}, la référence ne se répète jamais d'un fichier déposé à l'autre tant que l'ordre
+     * change (contrôle de second niveau 14-2).
+     */
+    static String docRefUniquePart(UUID userId, int sequence) {
+        return userId.toString().replace("-", "") + "_" + String.format("%03d", sequence);
     }
 
     /** CSV de contrôle (séparateur « ; », UTF-8 avec BOM pour les tableurs). Jamais le NIF : seulement oui/non. */
     public String controlCsv(Integer yearValue, UUID adminId) {
         int year = declarations.requireYear(yearValue);
-        Declaration declaration = declarations.declaration(year, false);
+        Declaration declaration = declarations.declaration(year, Dac7DeclarationService.IdentityMode.CACHED);
         StringBuilder csv = new StringBuilder("﻿");
         List<String> header = new ArrayList<>(List.of("userId", "voyageur", "pays", "residence", "nifFourni",
                 "identite"));
@@ -166,7 +251,7 @@ public class Dac7ExportService {
             header.addAll(List.of("t" + q + "NetEur", "t" + q + "CommissionEur", "t" + q + "Operations"));
         }
         header.addAll(List.of("operations", "netEur", "commissionEur", "eurComplet", "commissionComplete",
-                "exclusions"));
+                "dejaExporte", "exclusions"));
         line(csv, header);
         for (Seller s : declaration.sellers()) {
             List<String> row = new ArrayList<>(List.of(s.userId().toString(), s.displayName(),
@@ -178,14 +263,14 @@ public class Dac7ExportService {
             }
             row.addAll(List.of(String.valueOf(s.operations()), s.netEur().toPlainString(),
                     s.commissionEur().toPlainString(), yesNo(s.eurComplete()), yesNo(s.commissionComplete()),
-                    String.join(",", s.exclusions())));
+                    yesNo(s.alreadyExported()), String.join(",", s.exclusions())));
             line(csv, row);
         }
         for (Other o : declaration.others()) {
             List<String> row = new ArrayList<>(List.of(o.userId().toString(), o.displayName(),
                     nullToEmpty(o.residenceCountry()), o.residency().name(), yesNo(o.taxInfoProvided()),
                     o.identityStatus().name()));
-            for (int i = 0; i < 12 + 5; i++) {
+            for (int i = 0; i < 12 + 6; i++) {
                 row.add("");
             }
             row.add("NON_DECLARE");
@@ -203,8 +288,12 @@ public class Dac7ExportService {
         String resCountry = Dac7DgfipRules.resCountryCode(seller.residenceCountry());
         String tinCountry = user.getTaxCountry() == null ? resCountry : user.getTaxCountry();
         Dac7Address a = id.address();
-        Dac7XmlSeller.Address address = new Dac7XmlSeller.Address(Dac7DgfipRules.resCountryCode(a.countryCode()),
-                a.street(), a.line2(), a.postCode(), a.city(), a.free());
+        String country = Dac7DgfipRules.resCountryCode(a.countryCode());
+        // Un complément (« chez M. X », « BP 12 », « Bât. B ») n'a pas de zone sûre dans AddressFix : l'adresse part
+        // alors entière dans la zone libre du XSD (AddressFree).
+        Dac7XmlSeller.Address address = a.line2() != null && !a.line2().isBlank() && a.detailed()
+                ? new Dac7XmlSeller.Address(country, null, null, null, null, freeLine(a))
+                : new Dac7XmlSeller.Address(country, a.street(), null, a.postCode(), a.city(), a.free());
         List<Dac7XmlSeller.Quarter> quarters = seller.report().quarters().stream()
                 .map(q -> new Dac7XmlSeller.Quarter(Dac7DeclarationService.roundEuro(q.netEur()), q.operations(),
                         Dac7DeclarationService.roundEuro(q.commissionEur())))
@@ -215,10 +304,22 @@ public class Dac7ExportService {
                 id.registrationNumber(), address, quarters);
     }
 
-    private Dac7XmlDocument.Operator operator() {
-        return new Dac7XmlDocument.Operator(properties.declarantSiren().strip(), properties.operatorName().strip(),
+    private static String freeLine(Dac7Address a) {
+        StringBuilder line = new StringBuilder();
+        for (String part : new String[]{a.street(), a.line2()}) {
+            if (part != null && !part.isBlank()) {
+                line.append(line.length() == 0 ? "" : ", ").append(part.strip());
+            }
+        }
+        String town = ((a.postCode() == null ? "" : a.postCode().strip() + " ") + a.city().strip()).strip();
+        return line.append(line.length() == 0 ? "" : ", ").append(town).toString();
+    }
+
+    private Dac7XmlDocument.Operator operator(String siren, int sequence) {
+        return new Dac7XmlDocument.Operator(siren, properties.operatorName().strip(),
                 properties.businessNameOrDefault(), properties.operatorVat(), properties.operatorStreet(),
-                properties.operatorPostCode(), properties.operatorCity().strip(), shortId());
+                properties.operatorPostCode(), properties.operatorCity().strip(),
+                "OP" + String.format("%03d", sequence));
     }
 
     private static Mode mode(String value) {
@@ -230,10 +331,13 @@ public class Dac7ExportService {
         }
     }
 
-    static YadonyBusinessException blocked(List<String> blockers) {
+    /** 409 avec les codes et les identifiants internes des voyageurs en cause (jamais une valeur). */
+    static YadonyBusinessException blocked(List<String> blockers, List<UUID> travelerIds) {
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put("blockers", List.copyOf(blockers));
+        properties.put("travelerIds", travelerIds.stream().map(UUID::toString).toList());
         return new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-export-blocked", "Export Blocked",
-                "L'export DAC7 est bloqué : " + String.join(", ", blockers) + ".",
-                Map.of("blockers", List.copyOf(blockers)));
+                "L'export DAC7 est bloqué : " + String.join(", ", blockers) + ".", properties);
     }
 
     /** Partie unique d'une référence DGFiP (caractères autorisés par le motif du DocRefId). */

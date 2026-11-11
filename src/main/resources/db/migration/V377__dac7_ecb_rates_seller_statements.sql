@@ -38,3 +38,31 @@ CREATE TABLE dac7_seller_statements (
 
 COMMENT ON TABLE dac7_seller_statements IS
     'Récapitulatifs DAC7 envoyés aux voyageurs : un par voyageur et par année, envoi décidé par l''équipe.';
+
+-- Voyageurs de chaque fichier DPI-DAC7 GÉNÉRÉ (le dépôt Télé-TD reste un geste humain) : une ligne par voyageur et par
+-- génération, retenu (INCLUDED, avec sa référence DocRefId déterministe, recalculable pour une rectificative) ou écarté
+-- (EXCLUDED, avec sa raison). Un second export PARTIAL de la même année écarte par défaut les voyageurs déjà retenus.
+-- Aucune donnée personnelle : identifiant, codes et références seulement.
+CREATE TABLE dac7_export_sellers (
+    id             BIGSERIAL                NOT NULL,
+    reporting_year INTEGER                  NOT NULL,
+    user_id        UUID                     NOT NULL,
+    export_run_id  UUID                     NOT NULL,
+    status         VARCHAR(10)              NOT NULL,
+    doc_ref_id     VARCHAR(200),
+    reason         VARCHAR(40),
+    sequence       INTEGER                  NOT NULL,
+    export_mode    VARCHAR(10)              NOT NULL,
+    exported_by    UUID,
+    exported_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    CONSTRAINT pk_dac7_export_sellers PRIMARY KEY (id),
+    CONSTRAINT chk_dac7_export_sellers_status CHECK (status IN ('INCLUDED', 'EXCLUDED')),
+    CONSTRAINT chk_dac7_export_sellers_mode CHECK (export_mode IN ('FULL', 'PARTIAL')),
+    CONSTRAINT chk_dac7_export_sellers_year CHECK (reporting_year BETWEEN 2023 AND 2100),
+    CONSTRAINT chk_dac7_export_sellers_ref CHECK (status = 'EXCLUDED' OR doc_ref_id IS NOT NULL)
+);
+
+CREATE INDEX idx_dac7_export_sellers_year_user ON dac7_export_sellers (reporting_year, user_id);
+
+COMMENT ON TABLE dac7_export_sellers IS
+    'Voyageurs de chaque fichier DAC7 généré (retenus avec DocRefId, ou écartés avec raison). Sans donnée personnelle.';

@@ -437,6 +437,7 @@ yadony:
       first-reminder-delay: P14D
       second-reminder-delay: P30D
       manual-min-interval: P7D
+      min-gap-between-reminders: P7D
     # Lot 3b : export du fichier DPI-DAC7 (jamais envoyé par le système : dépôt Télé-TD par un humain). Tant que le
     # SIREN, la raison sociale et la ville du siège manquent, l'export refuse (OPERATOR_CONFIG_MISSING). La clé
     # publique OpenPGP de la DGFiP (test ou production) est un fichier hors dépôt, JAMAIS commité ; sans elle le XML
@@ -450,6 +451,9 @@ yadony:
       operator-street: ${YADONY_DAC7_OPERATOR_STREET:}
       operator-post-code: ${YADONY_DAC7_OPERATOR_POST_CODE:}
       operator-city: ${YADONY_DAC7_OPERATOR_CITY:}
+      # Export en clair (sans chiffrement) : REFUSÉ par défaut (409 dac7-unencrypted-not-allowed). Seulement pour un
+      # essai hors production. En production, monter la clé de la DGFiP en lecture seule (voir rapport du lot 3b).
+      allow-unencrypted: ${YADONY_DAC7_EXPORT_ALLOW_UNENCRYPTED:false}
   billing:
     # Faux tant que le lot 2 (Stripe Checkout) n'est pas en production :
     # sans lui, les comptes en grâce n'ont aucun moyen de s'abonner.

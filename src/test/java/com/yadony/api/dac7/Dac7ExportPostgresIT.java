@@ -110,7 +110,7 @@ class Dac7ExportPostgresIT {
 
     private static Dac7ExportProperties operator() {
         return new Dac7ExportProperties(null, "123456789", "Yadony SAS", null, null, "10 rue de la Paix", "75002",
-                "Paris");
+                "Paris", true);
     }
 
     private static UserRepository repository() {
@@ -133,7 +133,7 @@ class Dac7ExportPostgresIT {
         EcbExchangeRateProvider rates = new EcbExchangeRateProvider(new FixedParityExchangeRateProvider(), named,
                 new EcbHistoricalRatesClient(RestClient.create(), new Dac7EcbProperties(false, null)),
                 new Dac7EcbProperties(false, null), CLOCK);
-        Dac7VerifiedIdentityPort port = id -> Optional.empty();
+        Dac7VerifiedIdentityPort port = id -> Dac7VerifiedIdentityPort.Lookup.none();
         return new Dac7DeclarationService(new Dac7ReportService(readModel, residency, rates),
                 rates, new Dac7IdentityResolver(port), repository(), new Dac7AdminReadModel(named), residency,
                 properties, operator(), CLOCK);
@@ -175,7 +175,10 @@ class Dac7ExportPostgresIT {
     @DisplayName("FULL refusé en 409 avec les blocages ; PARTIAL : XML valide contre le XSD, un seul voyageur")
     void exportPartiel() {
         AuditService audit = mock(AuditService.class);
-        Dac7ExportService exports = new Dac7ExportService(declarations(), repository(), operator(), audit, CLOCK);
+        Dac7ExportService exports = new Dac7ExportService(declarations(), repository(), operator(), audit,
+                new Dac7AdminReadModel(named),
+                org.springframework.transaction.support.TransactionOperations.withoutTransaction(), CLOCK);
+        jdbc.update("DELETE FROM dac7_export_sellers");
 
         assertThatThrownBy(() -> exports.export(2026, "FULL", null, ADMIN))
                 .isInstanceOfSatisfying(YadonyBusinessException.class, e -> assertThat(e.getProperties())
@@ -192,7 +195,19 @@ class Dac7ExportPostgresIT {
                 .contains("<dpi:ConsQ1 currCode=\"EUR\">95</dpi:ConsQ1>")
                 .contains("<dpi:ConsQ2 currCode=\"EUR\">95</dpi:ConsQ2>")
                 .contains("<dpi:NumbQ4>1</dpi:NumbQ4>")
-                .doesNotContain(USD_NO_RATE.toString());
+                .doesNotContain(USD_NO_RATE.toString())
+                .contains("OP_2026_123456789_" + COMPLETE.toString().replace("-", "") + "_000");
+        assertThat(jdbc.queryForList("SELECT status || ':' || COALESCE(reason, doc_ref_id) FROM dac7_export_sellers "
+                + "WHERE user_id = ?", String.class, NO_TAX)).containsExactly("EXCLUDED:TAX_INFO_MISSING");
+        assertThat(new Dac7AdminReadModel(named).exportedTravelers(2026)).containsExactly(COMPLETE);
+
+        // Second PARTIAL : le voyageur déjà retenu est écarté, il ne reste personne.
+        assertThatThrownBy(() -> exports.export(2026, "PARTIAL", 1, ADMIN))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> assertThat(e.getProperties())
+                        .containsEntry("blockers", List.of("TAX_INFO_MISSING", "EUR_INCOMPLETE", "NO_SELLERS")));
+        assertThat(exports.export(2026, "PARTIAL", 1, true, ADMIN).sellers()).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM dac7_export_sellers WHERE status = 'INCLUDED'",
+                Integer.class)).isEqualTo(2);
     }
 
     @Test

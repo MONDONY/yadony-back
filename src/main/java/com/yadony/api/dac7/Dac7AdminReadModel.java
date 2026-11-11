@@ -105,6 +105,37 @@ public class Dac7AdminReadModel {
                         rs.getString("tax_residence_country")));
     }
 
+    /** Une ligne à inscrire pour un voyageur d'un export : retenu (référence) ou écarté (raison). */
+    public record ExportSellerRow(UUID userId, boolean included, String docRefId, String reason) {
+    }
+
+    private static final String EXPORTED_SQL = "SELECT DISTINCT user_id FROM dac7_export_sellers "
+            + "WHERE reporting_year = :year AND status = 'INCLUDED'";
+    private static final String RECORD_EXPORT_SQL = """
+            INSERT INTO dac7_export_sellers (reporting_year, user_id, export_run_id, status, doc_ref_id, reason,
+              sequence, export_mode, exported_by, exported_at)
+            VALUES (:year, :userId, :runId, :status, :docRefId, :reason, :sequence, :mode, :adminId, :now)
+            """;
+
+    /** Voyageurs déjà retenus dans un fichier généré pour cette année. */
+    public java.util.Set<UUID> exportedTravelers(int year) {
+        return new java.util.HashSet<>(jdbc.query(EXPORTED_SQL, new MapSqlParameterSource("year", year),
+                (rs, i) -> uuid(rs, "user_id")));
+    }
+
+    /** Inscrit chaque voyageur d'une génération, dans la transaction de l'appelant. */
+    public void recordExport(int year, UUID runId, int sequence, String mode, UUID adminId, Instant now,
+                             List<ExportSellerRow> rows) {
+        for (ExportSellerRow row : rows) {
+            jdbc.update(RECORD_EXPORT_SQL, new MapSqlParameterSource()
+                    .addValue("year", year).addValue("userId", row.userId()).addValue("runId", runId)
+                    .addValue("status", row.included() ? "INCLUDED" : "EXCLUDED")
+                    .addValue("docRefId", row.docRefId()).addValue("reason", row.reason())
+                    .addValue("sequence", sequence).addValue("mode", mode).addValue("adminId", adminId)
+                    .addValue("now", OffsetDateTime.ofInstant(now, ZoneOffset.UTC)));
+        }
+    }
+
     /** Le compte existe-t-il, supprimé compris (le registre survit à la suppression) ? */
     public boolean userExists(UUID userId) {
         Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE id = :id",

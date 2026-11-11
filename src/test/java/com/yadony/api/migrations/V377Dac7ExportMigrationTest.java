@@ -72,4 +72,25 @@ class V377Dac7ExportMigrationTest {
         assertThat(jdbc.queryForObject("SELECT sent_at IS NOT NULL FROM dac7_seller_statements WHERE user_id = ? "
                 + "AND reporting_year = 2026", Boolean.class, user)).isTrue();
     }
+
+    @Test
+    @DisplayName("voyageurs d'un export : retenu avec sa référence, écarté avec sa raison")
+    void voyageursExportes() {
+        UUID run = UUID.randomUUID();
+        UUID user = UUID.randomUUID();
+        jdbc.update("INSERT INTO dac7_export_sellers (reporting_year, user_id, export_run_id, status, doc_ref_id, "
+                + "sequence, export_mode) VALUES (2026, ?, ?, 'INCLUDED', 'OP_2026_123456789_x_000', 0, 'PARTIAL')",
+                user, run);
+        jdbc.update("INSERT INTO dac7_export_sellers (reporting_year, user_id, export_run_id, status, reason, "
+                + "sequence, export_mode) VALUES (2026, ?, ?, 'EXCLUDED', 'TAX_INFO_MISSING', 0, 'PARTIAL')",
+                UUID.randomUUID(), run);
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO dac7_export_sellers (reporting_year, user_id, export_run_id,"
+                + " status, sequence, export_mode) VALUES (2026, ?, ?, 'INCLUDED', 0, 'FULL')", user, run))
+                .hasMessageContaining("chk_dac7_export_sellers_ref");
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO dac7_export_sellers (reporting_year, user_id, export_run_id,"
+                + " status, doc_ref_id, sequence, export_mode) VALUES (2026, ?, ?, 'SENT', 'x', 0, 'FULL')", user, run))
+                .hasMessageContaining("chk_dac7_export_sellers_status");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM dac7_export_sellers WHERE export_run_id = ?",
+                Integer.class, run)).isEqualTo(2);
+    }
 }

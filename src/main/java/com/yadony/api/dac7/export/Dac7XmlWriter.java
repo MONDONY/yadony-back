@@ -56,7 +56,7 @@ public final class Dac7XmlWriter {
     }
 
     /** {@code OP_<millésime>_<SIREN>_<partie unique>} : forme des MessageRefId et DocRefId du cahier des charges. */
-    static String reference(int year, String siren, String unique) {
+    public static String reference(int year, String siren, String unique) {
         return "OP_" + year + "_" + siren + "_" + unique;
     }
 
@@ -179,7 +179,6 @@ public final class Dac7XmlWriter {
         if (a.city() != null && !a.city().isBlank()) {
             w.writeStartElement("dpi", "AddressFix", DPI);
             optional(w, "Street", a.street());
-            optional(w, "BuildingIdentifier", a.building());
             optional(w, "PostCode", a.postCode());
             text(w, "City", a.city());
             w.writeEndElement();

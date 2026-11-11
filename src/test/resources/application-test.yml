@@ -59,6 +59,9 @@ yadony:
     # Aucun appel réseau dans les tests : les taux BCE sont posés en base par chaque test qui en a besoin.
     ecb:
       fetch-enabled: false
+    # Les tests produisent le XML en clair (sans clé de la DGFiP) : autorisé ici seulement.
+    export:
+      allow-unencrypted: true
   # Les tests existants rejouent un même modal pour un même compte : le plafond journalier est
   # testé à part (VideoModalTargetingServiceTest, VideoModalTargetingPostgresIT), qui le réactivent.
   video-modal:
