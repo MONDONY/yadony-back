@@ -130,6 +130,25 @@ class KnowledgeBaseFichesTest {
     }
 
     @Test
+    void laFicheInformationsFiscales_memeIdFrEn_routeTaxInfo_jamaisBloquante() {
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        for (String locale : List.of("fr", "en")) {
+            KbArticle fiche = corpus.articles(locale).stream()
+                    .filter(x -> x.id().equals("informations-fiscales")).findFirst().orElseThrow();
+            assertThat(fiche.routes()).as(locale).extracting(KbRoute::path).containsExactly("/profile/tax-info");
+            assertThat(fiche.body().length()).as(locale).isBetween(200, 2000);
+            assertThat(fiche.body()).doesNotContain("\u2014").contains("DAC7");
+        }
+        String fr = corpus.articles("fr").stream().filter(x -> x.id().equals("informations-fiscales"))
+                .findFirst().orElseThrow().body();
+        String en = corpus.articles("en").stream().filter(x -> x.id().equals("informations-fiscales"))
+                .findFirst().orElseThrow().body();
+        // Prudence : l'écran n'existe qu'avec le lot 3d de l'app, et rien n'est jamais obligatoire pour agir.
+        assertThat(fr).contains("Si cette fonction est disponible", "Rien n'est bloqué", "deux rappels");
+        assertThat(en).contains("If this feature is available", "Nothing is blocked", "two reminders");
+    }
+
+    @Test
     void laFicheGpProNeSeContredisPasSurLaLimiteDeTrajets() {
         KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
         String fr = corpus.articles("fr").stream().filter(x -> x.id().equals("gp-pro")).findFirst().orElseThrow().body();
