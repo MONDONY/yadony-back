@@ -163,9 +163,20 @@ public class Dac7AdminService {
         audit.log("USER", userId, "DAC7_TEAM_DECISION", adminId, Map.of("noteLength", cleaned.length()));
     }
 
-    /** 9 chiffres ou plus d'affilée, séparateurs usuels (espace, point, tiret, barre oblique) ignorés. */
+    /**
+     * Refusée si elle contient 9 chiffres CONSÉCUTIFS ou plus (NIF, numéro de compte), ou un jeton alphanumérique d'au
+     * moins 9 caractères qui contient des chiffres (TVA FR…, IBAN). Dates et heures avec séparateurs acceptées.
+     */
     static boolean looksSensitive(String note) {
-        return note.replaceAll("[\\s./-]", "").matches("(?s).*\\d{9,}.*");
+        if (note.matches("(?s).*\\d{9,}.*")) {
+            return true;
+        }
+        for (String token : note.split("[^A-Za-z0-9]+")) {
+            if (token.length() >= 9 && token.chars().anyMatch(Character::isDigit)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public List<Dac7RefundRow> refunds(Integer yearValue) {

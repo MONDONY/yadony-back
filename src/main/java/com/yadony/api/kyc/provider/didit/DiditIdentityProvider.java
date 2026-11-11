@@ -185,11 +185,16 @@ public class DiditIdentityProvider implements IdentityVerificationProvider {
     public Optional<VerifiedIdentityDetails> fetchVerifiedIdentity(String providerSessionId) {
         if (providerSessionId == null) return Optional.empty();
 
-        // DiditClient rend vide sur toute erreur (réseau, délai, 429, corps illisible) : c'est une panne, à
-        // réessayer, jamais une identité absente.
-        JsonNode decision = client.retrieveDecision(providerSessionId)
-                .orElseThrow(() -> new com.yadony.api.kyc.IdentityProviderUnavailableException(
-                        "Décision Didit indisponible"));
+        // Panne passagère (429, 5xx, délai, connexion) : à réessayer. Erreur permanente (404 session effacée, 401,
+        // 403, corps illisible) : la pièce ne sera jamais relue, revue humaine.
+        DiditClient.DecisionLookup lookup = client.lookupDecision(providerSessionId);
+        if (lookup.outcome() == DiditClient.DecisionLookup.Outcome.UNAVAILABLE) {
+            throw new com.yadony.api.kyc.IdentityProviderUnavailableException("Décision Didit indisponible");
+        }
+        if (lookup.outcome() == DiditClient.DecisionLookup.Outcome.UNREADABLE) {
+            throw new com.yadony.api.kyc.IdentitySourceUnreadableException("Décision Didit illisible");
+        }
+        JsonNode decision = lookup.decision();
         return Optional.of(decision)
                 .filter(d -> APPROVED.equalsIgnoreCase(text(d, "status")))
                 .map(d -> d.path("id_verifications"))

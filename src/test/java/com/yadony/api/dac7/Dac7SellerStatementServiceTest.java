@@ -46,8 +46,9 @@ class Dac7SellerStatementServiceTest {
     private final AuditService audit = mock(AuditService.class);
     private final UUID admin = UUID.randomUUID();
     private final Set<String> reserved = new HashSet<>();
+    private final Dac7EmailReachabilityPort emails = mock(Dac7EmailReachabilityPort.class);
     private final Dac7SellerStatementService service = new Dac7SellerStatementService(declarations, reads, events,
-            audit, TransactionOperations.withoutTransaction(),
+            audit, TransactionOperations.withoutTransaction(), emails,
             Clock.fixed(Instant.parse("2027-01-20T10:00:00Z"), ZoneOffset.UTC));
 
     private static Seller seller(List<String> exclusions) {
@@ -66,6 +67,7 @@ class Dac7SellerStatementServiceTest {
     void setUp() {
         when(declarations.requireClosedYear(2026)).thenReturn(2026);
         when(declarations.collectionEnabled()).thenReturn(true);
+        when(emails.hasEmail(any())).thenReturn(true);
         when(reads.reserveStatement(any(), anyInt(), any(), any()))
                 .thenAnswer(inv -> reserved.add(inv.getArgument(0) + "/" + inv.getArgument(1)));
     }
@@ -87,6 +89,27 @@ class Dac7SellerStatementServiceTest {
         assertThat(event.getValue().quarters().get(0)).isEqualTo(new Dac7TaxStatementEvent.Quarter(1, 96, 1, 5));
         verify(reads, never()).reserveStatement(eq(excluded.userId()), anyInt(), any(), any());
         verify(audit, times(2)).log(eq("DAC7_STATEMENTS"), any(), eq("DAC7_STATEMENTS_SENT"), eq(admin), any());
+    }
+
+    @Test
+    @DisplayName("voyageur sans e-mail : ni envoyé ni réservé, listé à part, envoyable plus tard")
+    void sansEmail() {
+        Seller phoneOnly = seller(List.of());
+        when(declarations.declaration(2026, true)).thenReturn(new Declaration(2026, null, List.of(phoneOnly),
+                List.of(), List.of(), List.of(), Map.of(), 0));
+        when(emails.hasEmail(phoneOnly.userId())).thenReturn(false);
+
+        Dac7StatementsResponse response = service.send(2026, admin);
+
+        assertThat(response.sent()).isZero();
+        assertThat(response.skippedNoEmail()).isEqualTo(1);
+        assertThat(response.skippedNoEmailTravelerIds()).containsExactly(phoneOnly.userId());
+        verify(reads, never()).reserveStatement(any(), anyInt(), any(), any());
+        verify(events, never()).publishEvent(any());
+
+        // Une adresse ajoutée ensuite : le récapitulatif part.
+        when(emails.hasEmail(phoneOnly.userId())).thenReturn(true);
+        assertThat(service.send(2026, admin).sent()).isEqualTo(1);
     }
 
     @Test

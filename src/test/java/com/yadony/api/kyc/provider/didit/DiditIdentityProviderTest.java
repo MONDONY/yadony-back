@@ -54,6 +54,18 @@ class DiditIdentityProviderTest {
         ReflectionTestUtils.setField(user, "id", UUID.randomUUID());
     }
 
+    private static DiditClient.DecisionLookup read(JsonNode decision) {
+        return new DiditClient.DecisionLookup(DiditClient.DecisionLookup.Outcome.READ, decision);
+    }
+
+    @Test
+    void fetchVerifiedIdentity_permanentError_isUnreadableNotAnOutage() {
+        when(client.lookupDecision("sess_1")).thenReturn(new DiditClient.DecisionLookup(
+                DiditClient.DecisionLookup.Outcome.UNREADABLE, null));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> provider.fetchVerifiedIdentity("sess_1"))
+                .isInstanceOf(com.yadony.api.kyc.IdentitySourceUnreadableException.class);
+    }
+
     private static JsonNode json(String raw) {
         try {
             return MAPPER.readTree(raw);
@@ -218,7 +230,7 @@ class DiditIdentityProviderTest {
 
     @Test
     void fetchVerifiedIdentity_readsBirthDateAndParsedAddress_forDac7() {
-        when(client.retrieveDecision("sess_1")).thenReturn(Optional.of(json("""
+        when(client.lookupDecision("sess_1")).thenReturn(read(json("""
                 {"status":"Approved","id_verifications":[{"first_name":"Awa","last_name":"Diallo",
                  "date_of_birth":"1990-01-02","formatted_address":"1 rue de Paris, 69001 Lyon",
                  "parsed_address":{"street_1":"1 rue de Paris","postal_code":"69001","city":"Lyon",
@@ -238,7 +250,7 @@ class DiditIdentityProviderTest {
 
     @Test
     void fetchVerifiedIdentity_withoutAddressOrReadableDate_keepsWhatIsThere() {
-        when(client.retrieveDecision("sess_1")).thenReturn(Optional.of(json("""
+        when(client.lookupDecision("sess_1")).thenReturn(read(json("""
                 {"status":"Approved","id_verifications":[{"first_name":"Awa","date_of_birth":"02/01/1990",
                  "parsed_address":{"country":"France"}}]}
                 """)));
@@ -253,14 +265,15 @@ class DiditIdentityProviderTest {
 
     @Test
     void fetchVerifiedIdentity_decisionUnreadable_isAnOutageNotAnAbsence() {
-        when(client.retrieveDecision("sess_1")).thenReturn(Optional.empty());
+        when(client.lookupDecision("sess_1")).thenReturn(new DiditClient.DecisionLookup(
+                DiditClient.DecisionLookup.Outcome.UNAVAILABLE, null));
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> provider.fetchVerifiedIdentity("sess_1"))
                 .isInstanceOf(com.yadony.api.kyc.IdentityProviderUnavailableException.class);
     }
 
     @Test
     void fetchVerifiedIdentity_isEmpty_whenNotApprovedOrNoSession() {
-        when(client.retrieveDecision("sess_1")).thenReturn(Optional.of(json("""
+        when(client.lookupDecision("sess_1")).thenReturn(read(json("""
                 {"status":"Declined","id_verifications":[{"first_name":"Awa","date_of_birth":"1990-01-02"}]}
                 """)));
         assertThat(provider.fetchVerifiedIdentity("sess_1")).isEmpty();

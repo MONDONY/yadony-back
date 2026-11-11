@@ -51,6 +51,16 @@ class Dac7SolicitationPolicyTest {
     }
 
     @Test
+    void horlogeInjectee_anneeDeLaRegleDeTransmission() {
+        Dac7SolicitationPolicy atNewYear = new Dac7SolicitationPolicy(
+                new Dac7ResidencyPolicy(new Dac7Properties(false, null)), readModel,
+                java.time.Clock.fixed(java.time.Instant.parse("2027-01-01T00:00:00Z"), java.time.ZoneOffset.UTC));
+        user.setCountry("FR");
+        when(readModel.hasBeenPaid(user.getId())).thenReturn(true);
+        assertThat(atNewYear.statusOf(user)).isEqualTo(Dac7SolicitationStatus.SOLLICITER);
+    }
+
+    @Test
     void horsPerimetre_neRienDemander() {
         user.setCountry("CI");
         when(readModel.hasBeenPaid(user.getId())).thenReturn(true);

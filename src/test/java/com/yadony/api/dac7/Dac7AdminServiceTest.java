@@ -105,14 +105,18 @@ class Dac7AdminServiceTest {
     @DisplayName("note de décision avec 9 chiffres ou plus (NIF, compte) : 422 dac7-note-sensitive, jamais inscrite")
     void noteSensible() {
         UUID admin = UUID.randomUUID();
-        for (String note : List.of("NIF 302321760", "Appelé au 06 12 34 56 78", "IBAN FR76 3000 1007 9412")) {
+        for (String note : List.of("NIF 302321760", "TVA FR40303265045", "compte FR7630001007941234")) {
             assertThatThrownBy(() -> service.decision(withTax, admin, note))
                     .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
                         assertThat(e.getErrorCode()).isEqualTo("dac7-note-sensitive");
                         assertThat(e.getMessage()).doesNotContain("302321760");
                     });
         }
+        // Dates et heures avec séparateurs : acceptées.
         assertThat(Dac7AdminService.looksSensitive("Rappel le 12/01/2027, 3 colis")).isFalse();
+        assertThat(Dac7AdminService.looksSensitive("Appel le 12.11.2026 10 30")).isFalse();
+        assertThat(Dac7AdminService.looksSensitive("Joint au 06 12 34 56 78, il complète cette semaine")).isFalse();
+        assertThat(Dac7AdminService.looksSensitive("Rencontré au bureau de Montparnasse")).isFalse();
         verifyNoInteractions(diligence);
     }
 

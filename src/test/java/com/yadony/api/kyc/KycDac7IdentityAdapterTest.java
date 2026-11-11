@@ -83,6 +83,15 @@ class KycDac7IdentityAdapterTest {
     }
 
     @Test
+    void erreurPermanente_illisible_revueHumaine() {
+        when(repository.findByUserId(user)).thenReturn(Optional.of(verification(KycVerificationStatus.VERIFIED, "s1")));
+        when(resolver.forRecord(VerificationProviderKind.DIDIT)).thenReturn(Optional.of(provider));
+        when(provider.fetchVerifiedIdentity("s1")).thenThrow(new IdentitySourceUnreadableException("404"));
+        assertThat(adapter.verifiedIdentity(user).status())
+                .isEqualTo(com.yadony.api.dac7.Dac7VerifiedIdentityPort.Status.UNREADABLE);
+    }
+
+    @Test
     void sansFournisseurDeLaLigne_aucuneIdentite() {
         when(repository.findByUserId(user)).thenReturn(Optional.of(verification(KycVerificationStatus.VERIFIED, "s1")));
         when(resolver.forRecord(VerificationProviderKind.DIDIT)).thenReturn(Optional.empty());

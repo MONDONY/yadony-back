@@ -41,23 +41,26 @@ public class Dac7SellerStatementService {
     private final ApplicationEventPublisher events;
     private final AuditService audit;
     private final TransactionOperations transactions;
+    private final Dac7EmailReachabilityPort emails;
     private final Clock clock;
 
     @Autowired
     public Dac7SellerStatementService(Dac7DeclarationService declarations, Dac7AdminReadModel reads,
                                       ApplicationEventPublisher events, AuditService audit,
-                                      PlatformTransactionManager transactionManager) {
-        this(declarations, reads, events, audit, new TransactionTemplate(transactionManager), Clock.systemUTC());
+                                      PlatformTransactionManager transactionManager, Dac7EmailReachabilityPort emails) {
+        this(declarations, reads, events, audit, new TransactionTemplate(transactionManager), emails,
+                Clock.systemUTC());
     }
 
     Dac7SellerStatementService(Dac7DeclarationService declarations, Dac7AdminReadModel reads,
                                ApplicationEventPublisher events, AuditService audit, TransactionOperations transactions,
-                               Clock clock) {
+                               Dac7EmailReachabilityPort emails, Clock clock) {
         this.declarations = declarations;
         this.reads = reads;
         this.events = events;
         this.audit = audit;
         this.transactions = transactions;
+        this.emails = emails;
         this.clock = clock;
     }
 
@@ -71,10 +74,16 @@ public class Dac7SellerStatementService {
         Declaration declaration = declarations.declaration(year, true);
         int sent = 0;
         int skipped = 0;
+        List<UUID> noEmail = new java.util.ArrayList<>();
         Instant now = clock.instant();
         for (Seller seller : declaration.sellers()) {
             if (!seller.exclusions().isEmpty()) {
                 skipped++;
+                continue;
+            }
+            // Les montants ne partent que par e-mail : sans adresse, rien n'est envoyé ni réservé.
+            if (!emails.hasEmail(seller.userId())) {
+                noEmail.add(seller.userId());
                 continue;
             }
             try {
@@ -100,8 +109,9 @@ public class Dac7SellerStatementService {
         payload.put("year", year);
         payload.put("sent", sent);
         payload.put("skipped", skipped);
+        payload.put("skippedNoEmail", noEmail.size());
         audit.log("DAC7_STATEMENTS", UUID.randomUUID(), "DAC7_STATEMENTS_SENT", adminId, payload);
-        return new Dac7StatementsResponse(sent, skipped);
+        return new Dac7StatementsResponse(sent, skipped, noEmail.size(), List.copyOf(noEmail));
     }
 
     private static List<Dac7TaxStatementEvent.Quarter> quarters(Seller seller) {

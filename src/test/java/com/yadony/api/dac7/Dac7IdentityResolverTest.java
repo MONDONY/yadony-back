@@ -114,6 +114,50 @@ class Dac7IdentityResolverTest {
     }
 
     @Test
+    @DisplayName("erreur permanente du prestataire (404, 403) : INCOMPLETE avec IDENTITY_SOURCE_UNREADABLE, jamais UNAVAILABLE")
+    void illisible() {
+        UserEntity u = user("FR");
+        when(port.verifiedIdentity(u.getId())).thenReturn(Lookup.unreadable());
+        Dac7SellerIdentity id = resolver.resolve(u);
+        assertThat(id.status()).isEqualTo(Dac7IdentityStatus.INCOMPLETE);
+        assertThat(id.missing()).containsExactly("BIRTH_DATE", "ADDRESS", "IDENTITY_SOURCE_UNREADABLE");
+    }
+
+    @Test
+    @DisplayName("pages admin : budget total dépassé, UNAVAILABLE sans attendre ; les lectures en file n'appellent pas le prestataire")
+    void budgetTotal() {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        Dac7VerifiedIdentityPort slow = id -> {
+            calls.incrementAndGet();
+            try {
+                Thread.sleep(1_500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return Lookup.none();
+        };
+        Dac7IdentityResolver bounded = new Dac7IdentityResolver(slow, java.time.Duration.ofMillis(200));
+        List<UserEntity> users = new java.util.ArrayList<>();
+        for (int i = 0; i < 10; i++) users.add(user("FR"));
+
+        long start = System.nanoTime();
+        Map<UUID, Dac7IdentityStatus> result = bounded.statuses(users);
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+
+        assertThat(result).hasSize(10).containsValue(Dac7IdentityStatus.UNAVAILABLE);
+        assertThat(result.values()).allMatch(v -> v == Dac7IdentityStatus.UNAVAILABLE);
+        assertThat(elapsedMs).isLessThan(1_200);
+        // Seules les 4 lectures déjà commencées ont appelé le prestataire ; les 6 en file sont sorties sans appel.
+        try {
+            Thread.sleep(1_800);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        assertThat(calls.get()).isLessThanOrEqualTo(Dac7IdentityResolver.PARALLEL_LOOKUPS);
+        bounded.destroy();
+    }
+
+    @Test
     @DisplayName("prestataire en panne mais profil complet : complet, le profil suffit")
     void panneProfilComplet() {
         UserEntity u = user("FR");

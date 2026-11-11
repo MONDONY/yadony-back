@@ -111,6 +111,34 @@ class DiditClientTest {
         server.verify();
     }
 
+    private DiditClient.DecisionLookup.Outcome lookupWith(org.springframework.test.web.client.ResponseCreator response) {
+        MockRestServiceServer local;
+        RestClient.Builder b = RestClient.builder();
+        local = MockRestServiceServer.bindTo(b).build();
+        DiditClient c = new DiditClient(b.build(),
+                new DiditProperties("https://verification.didit.me", "cle", "wf_1", "secret", "live"));
+        local.expect(requestTo("https://verification.didit.me/v3/session/sess_1/decision/")).andRespond(response);
+        return c.lookupDecision("sess_1").outcome();
+    }
+
+    @Test
+    void lookupDecision_permanentErrorsAreUnreadable_transientOnesUnavailable() {
+        var unreadable = DiditClient.DecisionLookup.Outcome.UNREADABLE;
+        var unavailable = DiditClient.DecisionLookup.Outcome.UNAVAILABLE;
+        // Session effacée ou inconnue, accès refusé : réessayer n'y changera rien.
+        assertThat(lookupWith(withStatus(HttpStatus.NOT_FOUND))).isEqualTo(unreadable);
+        assertThat(lookupWith(withStatus(HttpStatus.UNAUTHORIZED))).isEqualTo(unreadable);
+        assertThat(lookupWith(withStatus(HttpStatus.FORBIDDEN))).isEqualTo(unreadable);
+        assertThat(lookupWith(withSuccess("{pas du json", MediaType.APPLICATION_JSON))).isEqualTo(unreadable);
+        // Panne passagère : à réessayer.
+        assertThat(lookupWith(withStatus(HttpStatus.SERVICE_UNAVAILABLE))).isEqualTo(unavailable);
+        assertThat(lookupWith(withServerError())).isEqualTo(unavailable);
+        assertThat(lookupWith(withStatus(HttpStatus.TOO_MANY_REQUESTS))).isEqualTo(unavailable);
+        assertThat(lookupWith(withException(new java.net.SocketTimeoutException("timeout")))).isEqualTo(unavailable);
+        assertThat(lookupWith(withSuccess("{\"status\":\"Approved\"}", MediaType.APPLICATION_JSON)))
+                .isEqualTo(DiditClient.DecisionLookup.Outcome.READ);
+    }
+
     @Test
     void retrieveDecision_returnsEmpty_whenDiditFails() {
         server.expect(requestTo("https://verification.didit.me/v3/session/sess_1/decision/"))

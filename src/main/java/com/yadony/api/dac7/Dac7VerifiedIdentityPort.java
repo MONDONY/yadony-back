@@ -19,8 +19,10 @@ public interface Dac7VerifiedIdentityPort {
         FOUND,
         /** Aucune vérification aboutie, ou rien de lisible sur la pièce. */
         NONE,
-        /** Prestataire injoignable, délai dépassé ou réponse illisible : à réessayer. */
-        UNAVAILABLE
+        /** Prestataire injoignable pour l'instant (429, 5xx, délai, connexion) : à réessayer. */
+        UNAVAILABLE,
+        /** Erreur permanente (session effacée, accès refusé, réponse illisible) : revue humaine. */
+        UNREADABLE
     }
 
     record Lookup(Status status, Dac7VerifiedIdentity identity) {
@@ -35,6 +37,10 @@ public interface Dac7VerifiedIdentityPort {
 
         public static Lookup unavailable() {
             return new Lookup(Status.UNAVAILABLE, null);
+        }
+
+        public static Lookup unreadable() {
+            return new Lookup(Status.UNREADABLE, null);
         }
     }
 }

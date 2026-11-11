@@ -42,8 +42,6 @@ public class EcbExchangeRateProvider implements ExchangeRateProvider {
     private static final Logger log = LoggerFactory.getLogger(EcbExchangeRateProvider.class);
 
     static final int MAX_LOOKBACK_DAYS = 7;
-    /** Marge de fin d'année : du 24/12 au 31/12, la BCE peut ne publier que deux ou trois jours. */
-    private static final int END_TOLERANCE_DAYS = 4;
     private static final Duration RETRY_AFTER = Duration.ofHours(1);
 
     private static final String RATES_SQL =
@@ -151,9 +149,12 @@ public class EcbExchangeRateProvider implements ExchangeRateProvider {
                 .addValue("from", first).addValue("to", neededEnd));
         LocalDate firstDay = day(bounds.get("first_day"));
         LocalDate lastDay = day(bounds.get("last_day"));
+        // Couverte jusqu'au dernier jour ouvré attendu (week-end exclu) : un jour publié (29, 30, 31/12 compris) n'est
+        // jamais converti au taux d'un jour antérieur faute de téléchargement. Les fériés TARGET relancent au plus un
+        // essai par heure, sans effet.
         return firstDay != null && lastDay != null
                 && !firstDay.isAfter(first.plusDays(MAX_LOOKBACK_DAYS))
-                && !lastDay.isBefore(neededEnd.minusDays(END_TOLERANCE_DAYS));
+                && !lastDay.isBefore(lastWeekday(neededEnd));
     }
 
     private int insert(String currency, LocalDate day, BigDecimal rate, Instant now) {
@@ -187,6 +188,14 @@ public class EcbExchangeRateProvider implements ExchangeRateProvider {
             return d.toLocalDate();
         }
         return LocalDate.parse(value.toString());
+    }
+
+    static LocalDate lastWeekday(LocalDate day) {
+        LocalDate d = day;
+        while (d.getDayOfWeek() == java.time.DayOfWeek.SATURDAY || d.getDayOfWeek() == java.time.DayOfWeek.SUNDAY) {
+            d = d.minusDays(1);
+        }
+        return d;
     }
 
     private static LocalDate min(LocalDate a, LocalDate b) {

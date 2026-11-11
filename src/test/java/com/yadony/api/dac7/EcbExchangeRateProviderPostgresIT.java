@@ -137,6 +137,28 @@ class EcbExchangeRateProviderPostgresIT {
     }
 
     @Test
+    @DisplayName("fin d'année : table jusqu'au 28/12, les 29, 30 et 31/12 publiés sont téléchargés et gardent LEUR taux")
+    void finDAnnee() {
+        rate("USD", "2026-01-02", "1.03");
+        rate("USD", "2026-12-28", "1.10");
+        client.add("2026-12-29", "USD", "1.11");
+        client.add("2026-12-30", "USD", "1.12");
+        client.add("2026-12-31", "USD", "1.13");
+        EcbExchangeRateProvider p = provider(true, "2027-01-10T10:00:00Z");
+
+        p.ensureCoverage(2026);
+
+        assertThat(client.calls).hasSize(1);
+        for (String day : new String[]{"2026-12-29", "2026-12-30", "2026-12-31"}) {
+            assertThat(p.rate("USD", LocalDate.parse(day))).get()
+                    .satisfies(r -> assertThat(r.rateDate()).isEqualTo(LocalDate.parse(day)));
+        }
+        // Couverture attendue jusqu'au dernier jour ouvré : 31/12/2028 est un dimanche, vendredi 29/12 suffit.
+        assertThat(EcbExchangeRateProvider.lastWeekday(LocalDate.parse("2028-12-31")))
+                .isEqualTo(LocalDate.parse("2028-12-29"));
+    }
+
+    @Test
     @DisplayName("échec ou flux vide : un seul essai par heure, rien n'est écrit")
     void echecLimiteParHeure() {
         EcbExchangeRateProvider p = provider(true, "2027-01-15T10:00:00Z");

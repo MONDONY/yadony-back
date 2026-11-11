@@ -148,6 +148,48 @@ public class DiditClient {
         }
     }
 
+    /** Issue d'une lecture de décision pour DAC7 : lue, illisible pour de bon, ou indisponible pour l'instant. */
+    public record DecisionLookup(Outcome outcome, JsonNode decision) {
+        public enum Outcome { READ, UNREADABLE, UNAVAILABLE }
+    }
+
+    /**
+     * Comme {@link #retrieveDecision}, mais distingue une erreur PERMANENTE (404 session inconnue ou effacée, 400, 401,
+     * 403, corps illisible : {@code UNREADABLE}) d'une erreur PASSAGÈRE (429, 5xx, délai dépassé, connexion
+     * impossible : {@code UNAVAILABLE}, à réessayer). Seul appelant : la déclaration DAC7. Contenu jamais journalisé.
+     */
+    public DecisionLookup lookupDecision(String sessionId) {
+        try {
+            JsonNode decision = restClient.get()
+                    .uri(properties.baseUrl() + "/v3/session/" + sessionId + "/decision/")
+                    .header("x-api-key", properties.apiKey())
+                    .retrieve()
+                    .body(JsonNode.class);
+            return decision == null || decision.isNull()
+                    ? new DecisionLookup(DecisionLookup.Outcome.UNREADABLE, null)
+                    : new DecisionLookup(DecisionLookup.Outcome.READ, decision);
+        } catch (org.springframework.web.client.HttpStatusCodeException e) {
+            int status = e.getStatusCode().value();
+            boolean transientError = status == 429 || status >= 500;
+            log.warn("Décision Didit (DAC7) en erreur {} pour la session {}", status, sessionId);
+            return new DecisionLookup(transientError ? DecisionLookup.Outcome.UNAVAILABLE
+                    : DecisionLookup.Outcome.UNREADABLE, null);
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            log.warn("Décision Didit (DAC7) injoignable pour la session {} ({})", sessionId,
+                    e.getClass().getSimpleName());
+            return new DecisionLookup(DecisionLookup.Outcome.UNAVAILABLE, null);
+        } catch (org.springframework.web.client.RestClientException e) {
+            // Corps reçu mais illisible (JSON invalide) : réessayer n'y changera rien.
+            log.warn("Décision Didit (DAC7) illisible pour la session {} ({})", sessionId,
+                    e.getClass().getSimpleName());
+            return new DecisionLookup(DecisionLookup.Outcome.UNREADABLE, null);
+        } catch (RuntimeException e) {
+            log.warn("Décision Didit (DAC7) indisponible pour la session {} ({})", sessionId,
+                    e.getClass().getSimpleName());
+            return new DecisionLookup(DecisionLookup.Outcome.UNAVAILABLE, null);
+        }
+    }
+
     /**
      * Efface une session chez Didit, pieces d'identite et gabarits biometriques compris
      * ({@code DELETE /v3/session/{id}/delete/}, instruction {@code privacy_erasure}). La cle API

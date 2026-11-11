@@ -46,7 +46,9 @@ import java.util.concurrent.TimeUnit;
 public class Dac7IdentityResolver implements DisposableBean {
 
     static final int PARALLEL_LOOKUPS = 4;
-    private static final long LOOKUP_TIMEOUT_SECONDS = 20;
+    /** Lectures nouvelles au plus par page : au-delà, UNAVAILABLE sans appeler le prestataire (cache au prochain passage). */
+    static final int MAX_LOOKUPS_PER_REQUEST = 40;
+    static final Duration DEFAULT_BUDGET = Duration.ofSeconds(8);
 
     private final Dac7VerifiedIdentityPort verified;
     private final Cache<UUID, Dac7IdentityStatus> verdicts = Caffeine.newBuilder()
@@ -57,8 +59,16 @@ public class Dac7IdentityResolver implements DisposableBean {
         return thread;
     });
 
+    private final Duration budget;
+
+    @org.springframework.beans.factory.annotation.Autowired
     public Dac7IdentityResolver(Dac7VerifiedIdentityPort verified) {
+        this(verified, DEFAULT_BUDGET);
+    }
+
+    Dac7IdentityResolver(Dac7VerifiedIdentityPort verified, Duration budget) {
         this.verified = verified;
+        this.budget = budget;
     }
 
     @Override
@@ -72,26 +82,37 @@ public class Dac7IdentityResolver implements DisposableBean {
         return cached != null ? cached : resolve(user).status();
     }
 
-    /** Verdicts de plusieurs voyageurs (pages admin) : cache d'abord, puis au plus 4 lectures en parallèle. */
+    /**
+     * Verdicts de plusieurs voyageurs (pages admin) : cache d'abord, puis au plus {@value #PARALLEL_LOOKUPS} lectures
+     * en parallèle et {@value #MAX_LOOKUPS_PER_REQUEST} par appel, dans un budget TOTAL (8 s par défaut). Ce qui n'a
+     * pas répondu à temps, ou dépasse la file, vaut UNAVAILABLE ; une lecture pas encore commencée à l'échéance
+     * n'appelle jamais le prestataire (annulation coopérative). Une lecture commencée finit dans le délai du client
+     * HTTP (10 s) et remplit le cache pour l'affichage suivant.
+     */
     public Map<UUID, Dac7IdentityStatus> statuses(Collection<UserEntity> users) {
+        long deadline = System.nanoTime() + budget.toNanos();
         Map<UUID, Dac7IdentityStatus> result = new HashMap<>();
         Map<UUID, CompletableFuture<Dac7IdentityStatus>> pending = new HashMap<>();
         for (UserEntity user : users) {
             Dac7IdentityStatus cached = verdicts.getIfPresent(user.getId());
             if (cached != null) {
                 result.put(user.getId(), cached);
+            } else if (pending.size() >= MAX_LOOKUPS_PER_REQUEST) {
+                result.put(user.getId(), Dac7IdentityStatus.UNAVAILABLE);
             } else {
-                pending.put(user.getId(), CompletableFuture.supplyAsync(() -> resolve(user).status(), lookups));
+                pending.put(user.getId(), CompletableFuture.supplyAsync(() -> System.nanoTime() > deadline
+                        ? Dac7IdentityStatus.UNAVAILABLE : resolve(user).status(), lookups));
             }
         }
         pending.forEach((id, future) -> {
+            long remaining = deadline - System.nanoTime();
             try {
-                result.put(id, future.get(LOOKUP_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+                result.put(id, remaining <= 0 && !future.isDone() ? Dac7IdentityStatus.UNAVAILABLE
+                        : future.get(Math.max(remaining, 0), TimeUnit.NANOSECONDS));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 result.put(id, Dac7IdentityStatus.UNAVAILABLE);
             } catch (Exception e) {
-                future.cancel(true);
                 result.put(id, Dac7IdentityStatus.UNAVAILABLE);
             }
         });
@@ -153,6 +174,9 @@ public class Dac7IdentityResolver implements DisposableBean {
         if (blank(first) || blank(last)) missing.add("NAME");
         if (birth == null) missing.add("BIRTH_DATE");
         if (address == null) missing.add("ADDRESS");
+        if (!missing.isEmpty() && lookup != null && lookup.status() == Dac7VerifiedIdentityPort.Status.UNREADABLE) {
+            missing.add("IDENTITY_SOURCE_UNREADABLE");
+        }
         Dac7IdentityStatus status = missing.isEmpty() ? Dac7IdentityStatus.COMPLETE
                 : unavailable ? Dac7IdentityStatus.UNAVAILABLE : Dac7IdentityStatus.INCOMPLETE;
         return new Dac7SellerIdentity(user.getId(), Dac7SellerIdentity.SellerType.INDIVIDUAL, status,

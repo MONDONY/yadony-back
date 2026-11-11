@@ -47,6 +47,11 @@ public class KycDac7IdentityAdapter implements Dac7VerifiedIdentityPort {
                     .map(KycDac7IdentityAdapter::toDac7)
                     .map(Lookup::found)
                     .orElseGet(Lookup::none);
+        } catch (IdentitySourceUnreadableException e) {
+            // Erreur permanente (session effacée, accès refusé, réponse illisible) : revue humaine, jamais
+            // « indisponible » pour toujours.
+            log.warn("Identité vérifiée illisible pour DAC7 (utilisateur {})", userId);
+            return Lookup.unreadable();
         } catch (RuntimeException e) {
             // Panne du prestataire ou de la base : réessayable, jamais « identité absente ».
             log.warn("Identité vérifiée indisponible pour DAC7 (utilisateur {}) : {}", userId,
