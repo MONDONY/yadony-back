@@ -39,6 +39,28 @@ class Dac7SolicitationPolicyTest {
     }
 
     @Test
+    void etatPartenaireConfigureMaisNonTransmisParLaDgfip_neRienDemander() {
+        // Annexe 6.1 (revenus 2026) : seuls les 27 États membres sont transmis ; un partenaire configuré (SN) ne
+        // serait jamais déclaré : aucune demande.
+        Dac7SolicitationPolicy withPartner = new Dac7SolicitationPolicy(
+                new Dac7ResidencyPolicy(new Dac7Properties(false, java.util.List.of("SN"))), readModel);
+        user.setCountry("SN");
+        when(readModel.hasBeenPaid(user.getId())).thenReturn(true);
+        assertThat(withPartner.statusOf(user)).isEqualTo(Dac7SolicitationStatus.NE_PAS_SOLLICITER);
+        verify(readModel, never()).hasBeenPaid(any());
+    }
+
+    @Test
+    void horlogeInjectee_anneeDeLaRegleDeTransmission() {
+        Dac7SolicitationPolicy atNewYear = new Dac7SolicitationPolicy(
+                new Dac7ResidencyPolicy(new Dac7Properties(false, null)), readModel,
+                java.time.Clock.fixed(java.time.Instant.parse("2027-01-01T00:00:00Z"), java.time.ZoneOffset.UTC));
+        user.setCountry("FR");
+        when(readModel.hasBeenPaid(user.getId())).thenReturn(true);
+        assertThat(atNewYear.statusOf(user)).isEqualTo(Dac7SolicitationStatus.SOLLICITER);
+    }
+
+    @Test
     void horsPerimetre_neRienDemander() {
         user.setCountry("CI");
         when(readModel.hasBeenPaid(user.getId())).thenReturn(true);

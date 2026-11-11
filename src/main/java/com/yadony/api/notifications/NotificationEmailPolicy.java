@@ -44,7 +44,14 @@ public final class NotificationEmailPolicy {
          * les alertes et conseils ; l'e-mail porte un lien de désinscription en un clic des
          * relances. Le push part aussi : l'e-mail s'y ajoute, jamais à sa place.
          */
-        REMINDER("emailAlertsTips");
+        REMINDER("emailAlertsTips"),
+        /**
+         * DAC7 : demande ou rappel du numéro fiscal. Même réglage que les alertes et conseils (préférences
+         * respectées) ; le push part aussi.
+         */
+        TAX_REQUEST("emailAlertsTips"),
+        /** DAC7 : récapitulatif annuel des montants transmis, information légale qui part toujours. */
+        TAX_STATEMENT(null);
 
         private final String pref;
 
@@ -85,7 +92,9 @@ public final class NotificationEmailPolicy {
             Map.entry("RETURN_DEADLINE_EXPIRED", Kind.RECAP),
             Map.entry("PARCEL_UNCLAIMED", Kind.RECAP),
             Map.entry(SEARCH_SUGGESTION, Kind.SUGGESTION),
-            Map.entry(NotificationTypes.KYC_VERIFICATION_REMINDER, Kind.REMINDER)
+            Map.entry(NotificationTypes.KYC_VERIFICATION_REMINDER, Kind.REMINDER),
+            Map.entry("TAX_INFO_REQUEST", Kind.TAX_REQUEST),
+            Map.entry("TAX_STATEMENT", Kind.TAX_STATEMENT)
     );
 
     static final Map<String, Kind> INSTEAD_OF_PUSH = Map.of(

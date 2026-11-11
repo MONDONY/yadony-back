@@ -54,6 +54,18 @@ class DiditIdentityProviderTest {
         ReflectionTestUtils.setField(user, "id", UUID.randomUUID());
     }
 
+    private static DiditClient.DecisionLookup read(JsonNode decision) {
+        return new DiditClient.DecisionLookup(DiditClient.DecisionLookup.Outcome.READ, decision);
+    }
+
+    @Test
+    void fetchVerifiedIdentity_permanentError_isUnreadableNotAnOutage() {
+        when(client.lookupDecision("sess_1")).thenReturn(new DiditClient.DecisionLookup(
+                DiditClient.DecisionLookup.Outcome.UNREADABLE, null));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> provider.fetchVerifiedIdentity("sess_1"))
+                .isInstanceOf(com.yadony.api.kyc.IdentitySourceUnreadableException.class);
+    }
+
     private static JsonNode json(String raw) {
         try {
             return MAPPER.readTree(raw);
@@ -214,6 +226,58 @@ class DiditIdentityProviderTest {
 
         assertThat(provider.fetchVerifiedName("sess_1"))
                 .contains(new VerifiedIdentitySnapshot("Awa", "Diallo"));
+    }
+
+    @Test
+    void fetchVerifiedIdentity_readsBirthDateAndParsedAddress_forDac7() {
+        when(client.lookupDecision("sess_1")).thenReturn(read(json("""
+                {"status":"Approved","id_verifications":[{"first_name":"Awa","last_name":"Diallo",
+                 "date_of_birth":"1990-01-02","formatted_address":"1 rue de Paris, 69001 Lyon",
+                 "parsed_address":{"street_1":"1 rue de Paris","postal_code":"69001","city":"Lyon",
+                                   "country_code":"fr"}}]}
+                """)));
+
+        var details = provider.fetchVerifiedIdentity("sess_1").orElseThrow();
+
+        assertThat(details.givenName()).isEqualTo("Awa");
+        assertThat(details.birthDate()).isEqualTo(java.time.LocalDate.of(1990, 1, 2));
+        assertThat(details.street()).isEqualTo("1 rue de Paris");
+        assertThat(details.city()).isEqualTo("Lyon");
+        assertThat(details.countryCode()).isEqualTo("FR");
+        assertThat(details.freeAddress()).isEqualTo("1 rue de Paris, 69001 Lyon");
+        assertThat(details.toString()).doesNotContain("Awa").doesNotContain("Lyon");
+    }
+
+    @Test
+    void fetchVerifiedIdentity_withoutAddressOrReadableDate_keepsWhatIsThere() {
+        when(client.lookupDecision("sess_1")).thenReturn(read(json("""
+                {"status":"Approved","id_verifications":[{"first_name":"Awa","date_of_birth":"02/01/1990",
+                 "parsed_address":{"country":"France"}}]}
+                """)));
+
+        var details = provider.fetchVerifiedIdentity("sess_1").orElseThrow();
+
+        assertThat(details.birthDate()).isNull();
+        assertThat(details.city()).isNull();
+        assertThat(details.countryCode()).isNull();
+        assertThat(details.freeAddress()).isNull();
+    }
+
+    @Test
+    void fetchVerifiedIdentity_decisionUnreadable_isAnOutageNotAnAbsence() {
+        when(client.lookupDecision("sess_1")).thenReturn(new DiditClient.DecisionLookup(
+                DiditClient.DecisionLookup.Outcome.UNAVAILABLE, null));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> provider.fetchVerifiedIdentity("sess_1"))
+                .isInstanceOf(com.yadony.api.kyc.IdentityProviderUnavailableException.class);
+    }
+
+    @Test
+    void fetchVerifiedIdentity_isEmpty_whenNotApprovedOrNoSession() {
+        when(client.lookupDecision("sess_1")).thenReturn(read(json("""
+                {"status":"Declined","id_verifications":[{"first_name":"Awa","date_of_birth":"1990-01-02"}]}
+                """)));
+        assertThat(provider.fetchVerifiedIdentity("sess_1")).isEmpty();
+        assertThat(provider.fetchVerifiedIdentity(null)).isEmpty();
     }
 
     @Test

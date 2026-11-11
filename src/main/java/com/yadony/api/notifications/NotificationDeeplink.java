@@ -104,6 +104,8 @@ public final class NotificationDeeplink {
 
             case "GP_PRO_APPROVED", "GP_PRO_REJECTED", "GP_PRO_REVOKED",
                  "TRAVELER_STATUS_CONFIRMATION" -> Optional.of("profile/gp-pro");
+            // DAC7 (lot 3b) : écran « Informations fiscales » (lot 3d de l'app).
+            case "TAX_INFO_REQUEST", "TAX_STATEMENT" -> Optional.of("profile/tax-info");
             case "KYC_VERIFIED" -> Optional.of("kyc/status");
             case "KYC_ACTION_REQUIRED" -> Optional.of("kyc/verify");
             case "DISPUTE_RESOLVED" -> Optional.of("disputes");

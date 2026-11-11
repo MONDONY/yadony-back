@@ -136,6 +136,19 @@ public class NotificationDispatcher {
         }
     }
 
+    /**
+     * Comme {@link #notifyUser}, mais l'e-mail porte un corps distinct, plus long ({@code emailBody}), que ni le push ni
+     * la boîte de l'app ne montrent : pour une information qui ne doit jamais s'afficher sur un écran verrouillé
+     * (récapitulatif fiscal DAC7, ses montants).
+     */
+    public void notifyUserWithEmailDetail(UUID userId, String title, String body, String emailBody,
+                                          Map<String, String> data) {
+        String type = data.getOrDefault("type", "");
+        var saved = notificationService.persist(userId, type, title, body, data, false);
+        sendEmail(userId, type, title, emailBody, data);
+        fcmService.sendToUser(userId, title, body, withNotificationId(data, saved.getId()));
+    }
+
     private void sendEmail(UUID userId, String type, String title, String body, Map<String, String> data) {
         if (notificationEmails == null) {
             return;

@@ -90,8 +90,9 @@ class Dac7TaxInfoRetentionTest {
     void fenetreConfigurable() {
         retention(true, 3).retention(user);
         verify(readModel).hasBeenPaidSince(eq(user.getId()), eq(Instant.parse("2024-01-01T00:00:00Z")));
-        retention(true, 1).retention(user);
-        verify(readModel).hasBeenPaidSince(eq(user.getId()), eq(Instant.parse("2026-01-01T00:00:00Z")));
+        // Plancher de 2 ans (lot 3b) : 1 refuse le démarrage DAC7 allumé (Dac7PropertiesTest) ; 2 = année précédente.
+        retention(true, 2).retention(user);
+        verify(readModel).hasBeenPaidSince(eq(user.getId()), eq(Instant.parse("2025-01-01T00:00:00Z")));
     }
 
     @Test

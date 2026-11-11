@@ -3,6 +3,7 @@ package com.yadony.api.kyc.provider.didit;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.auth.UserEntity;
+import com.yadony.api.kyc.VerifiedIdentityDetails;
 import com.yadony.api.kyc.VerifiedIdentitySnapshot;
 import com.yadony.api.kyc.provider.IdentityVerificationProvider;
 import com.yadony.api.kyc.provider.ProviderAdminView;
@@ -172,6 +173,78 @@ public class DiditIdentityProvider implements IdentityVerificationProvider {
                 .map(first -> new VerifiedIdentitySnapshot(
                         text(first, "first_name"), text(first, "last_name")))
                 .filter(snapshot -> snapshot.givenName() != null || snapshot.surname() != null);
+    }
+
+    /**
+     * DAC7 seulement (obligation légale de la plateforme) : nom, date de naissance et adresse de la pièce d'une session
+     * aboutie, lus à la demande au moment de la déclaration, jamais journalisés ni persistés. L'adresse détaillée
+     * ({@code parsed_address}) est préférée ; à défaut l'adresse en une ligne ; beaucoup de pièces (passeport, carte
+     * d'identité récente) n'en portent aucune.
+     */
+    @Override
+    public Optional<VerifiedIdentityDetails> fetchVerifiedIdentity(String providerSessionId) {
+        if (providerSessionId == null) return Optional.empty();
+
+        // Panne passagère (429, 5xx, délai, connexion) : à réessayer. Erreur permanente (404 session effacée, 401,
+        // 403, corps illisible) : la pièce ne sera jamais relue, revue humaine.
+        DiditClient.DecisionLookup lookup = client.lookupDecision(providerSessionId);
+        if (lookup.outcome() == DiditClient.DecisionLookup.Outcome.UNAVAILABLE) {
+            throw new com.yadony.api.kyc.IdentityProviderUnavailableException("Décision Didit indisponible");
+        }
+        if (lookup.outcome() == DiditClient.DecisionLookup.Outcome.UNREADABLE) {
+            throw new com.yadony.api.kyc.IdentitySourceUnreadableException("Décision Didit illisible");
+        }
+        JsonNode decision = lookup.decision();
+        return Optional.of(decision)
+                .filter(d -> APPROVED.equalsIgnoreCase(text(d, "status")))
+                .map(d -> d.path("id_verifications"))
+                .filter(JsonNode::isArray)
+                .filter(verifications -> !verifications.isEmpty())
+                .map(verifications -> verifications.get(0))
+                .map(DiditIdentityProvider::details);
+    }
+
+    static VerifiedIdentityDetails details(JsonNode verification) {
+        JsonNode parsed = verification.path("parsed_address");
+        String free = firstNonBlank(text(verification, "formatted_address"), text(verification, "address"));
+        String country = parsed.isObject() ? isoAlpha2(firstNonBlank(text(parsed, "country_code"),
+                text(parsed, "country"))) : null;
+        return new VerifiedIdentityDetails(
+                blankToNull(text(verification, "first_name")),
+                blankToNull(text(verification, "last_name")),
+                birthDate(text(verification, "date_of_birth")),
+                parsed.isObject() ? blankToNull(firstNonBlank(text(parsed, "street_1"), text(parsed, "address_line_1")))
+                        : null,
+                parsed.isObject() ? blankToNull(firstNonBlank(text(parsed, "street_2"), text(parsed, "address_line_2")))
+                        : null,
+                parsed.isObject() ? blankToNull(text(parsed, "postal_code")) : null,
+                parsed.isObject() ? blankToNull(text(parsed, "city")) : null,
+                country,
+                blankToNull(free));
+    }
+
+    private static java.time.LocalDate birthDate(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            return java.time.LocalDate.parse(raw.strip().length() > 10 ? raw.strip().substring(0, 10) : raw.strip());
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
+    }
+
+    private static String isoAlpha2(String raw) {
+        if (raw == null) return null;
+        String code = raw.strip().toUpperCase(java.util.Locale.ROOT);
+        return code.length() == 2 && java.util.Arrays.asList(java.util.Locale.getISOCountries()).contains(code)
+                ? code : null;
+    }
+
+    private static String firstNonBlank(String a, String b) {
+        return a != null && !a.isBlank() ? a : b;
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.strip();
     }
 
     @Override

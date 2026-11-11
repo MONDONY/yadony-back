@@ -423,6 +423,37 @@ yadony:
     # Purge mensuelle des NIF gardés sur les comptes supprimés hors fenêtre (Dac7TaxInfoPurgeScheduler). TOUJOURS
     # active, même DAC7 éteint : mesure de protection des données.
     purge-cron: ${YADONY_DAC7_PURGE_CRON:0 0 5 1 * *}
+    # Lot 3b : taux de référence historiques de la BCE (eurofxref-hist.xml), copiés dans ecb_exchange_rates quand une
+    # page admin DAC7 ou un export en a besoin (aucune tâche planifiée, au plus un essai par heure). Flux public.
+    ecb:
+      fetch-enabled: ${YADONY_DAC7_ECB_FETCH_ENABLED:true}
+      hist-url: https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.xml
+    # Lot 3b : rappels du numéro fiscal (demande, puis rappels à 14 et 30 jours, jamais de troisième), aux seuls
+    # voyageurs « à solliciter ». ÉTEINTS par défaut (deploy-prod.yml et deploy-staging.yml), et sans effet tant que
+    # la collecte (enabled) est éteinte. Fenêtre 10 h-20 h heure locale, au plus un message par jour.
+    reminders:
+      enabled: ${YADONY_DAC7_REMINDERS_ENABLED:false}
+      cron: ${YADONY_DAC7_REMINDERS_CRON:0 15 * * * *}
+      first-reminder-delay: P14D
+      second-reminder-delay: P30D
+      manual-min-interval: P7D
+      min-gap-between-reminders: P7D
+    # Lot 3b : export du fichier DPI-DAC7 (jamais envoyé par le système : dépôt Télé-TD par un humain). Tant que le
+    # SIREN, la raison sociale et la ville du siège manquent, l'export refuse (OPERATOR_CONFIG_MISSING). La clé
+    # publique OpenPGP de la DGFiP (test ou production) est un fichier hors dépôt, JAMAIS commité ; sans elle le XML
+    # sort en clair (X-Dac7-Encrypted: false).
+    export:
+      public-key-path: ${YADONY_DAC7_EXPORT_PUBLIC_KEY_PATH:}
+      declarant-siren: ${YADONY_DAC7_DECLARANT_SIREN:}
+      operator-name: ${YADONY_DAC7_OPERATOR_NAME:}
+      operator-business-name: ${YADONY_DAC7_OPERATOR_BUSINESS_NAME:Yadony}
+      operator-vat: ${YADONY_DAC7_OPERATOR_VAT:}
+      operator-street: ${YADONY_DAC7_OPERATOR_STREET:}
+      operator-post-code: ${YADONY_DAC7_OPERATOR_POST_CODE:}
+      operator-city: ${YADONY_DAC7_OPERATOR_CITY:}
+      # Export en clair (sans chiffrement) : REFUSÉ par défaut (409 dac7-unencrypted-not-allowed). Seulement pour un
+      # essai hors production. En production, monter la clé de la DGFiP en lecture seule (voir rapport du lot 3b).
+      allow-unencrypted: ${YADONY_DAC7_EXPORT_ALLOW_UNENCRYPTED:false}
   billing:
     # Faux tant que le lot 2 (Stripe Checkout) n'est pas en production :
     # sans lui, les comptes en grâce n'ont aucun moyen de s'abonner.

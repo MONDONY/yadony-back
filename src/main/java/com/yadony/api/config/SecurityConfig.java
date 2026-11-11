@@ -63,8 +63,11 @@ public class SecurityConfig {
         config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Internal-Secret", "X-Device-Id",
                 "X-Bootstrap-Secret", RequestCorrelationFilter.HEADER));
         // Sans exposition explicite, un navigateur (portails admin/pro) ne peut pas lire
-        // l'identifiant de corrélation renvoyé par RequestCorrelationFilter.
-        config.setExposedHeaders(List.of(RequestCorrelationFilter.HEADER));
+        // l'identifiant de corrélation renvoyé par RequestCorrelationFilter, ni, pour l'export
+        // DAC7 de l'admin, le nom du fichier imposé par la DGFiP (Content-Disposition), le
+        // nombre de voyageurs exclus et l'état du chiffrement.
+        config.setExposedHeaders(List.of(RequestCorrelationFilter.HEADER, "Content-Disposition",
+                "X-Dac7-Excluded", "X-Dac7-Encrypted", "X-Dac7-Warnings", "X-Dac7-Run-Id"));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
 

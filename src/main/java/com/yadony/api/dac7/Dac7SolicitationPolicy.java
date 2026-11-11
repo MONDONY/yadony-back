@@ -14,9 +14,17 @@ public class Dac7SolicitationPolicy {
     private final Dac7ResidencyPolicy residency;
     private final Dac7ReportReadModel readModel;
 
+    private final java.time.Clock clock;
+
+    @org.springframework.beans.factory.annotation.Autowired
     public Dac7SolicitationPolicy(Dac7ResidencyPolicy residency, Dac7ReportReadModel readModel) {
+        this(residency, readModel, java.time.Clock.systemUTC());
+    }
+
+    Dac7SolicitationPolicy(Dac7ResidencyPolicy residency, Dac7ReportReadModel readModel, java.time.Clock clock) {
         this.residency = residency;
         this.readModel = readModel;
+        this.clock = clock;
     }
 
     /** Ne lit les paiements que si la réponse en dépend (résident déclarable sans NIF). */
@@ -26,6 +34,12 @@ public class Dac7SolicitationPolicy {
         }
         Dac7ResidencyStatus status = residency.statusOf(user);
         if (status != Dac7ResidencyStatus.DECLARABLE) {
+            return Dac7SolicitationStatus.NE_PAS_SOLLICITER;
+        }
+        // Lot 3b : un résident d'un État partenaire configuré que la DGFiP ne transmet pas cette année (annexe 6.1 :
+        // UE27 seulement en 2026) ne serait jamais déclaré : on ne lui demande rien.
+        if (!Dac7DgfipRules.transmitted(clock.instant().atZone(java.time.ZoneOffset.UTC).getYear(),
+                Dac7ResidencyPolicy.residenceCountryOf(user))) {
             return Dac7SolicitationStatus.NE_PAS_SOLLICITER;
         }
         return decide(status, readModel.hasBeenPaid(user.getId()), false);

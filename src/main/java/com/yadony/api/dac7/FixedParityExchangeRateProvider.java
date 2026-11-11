@@ -10,8 +10,8 @@ import java.util.Optional;
 /**
  * Taux fixes, seuls connus sans source historique : l'euro (1) et le franc CFA (XOF et XAF, parité fixe de 655,957
  * par accord monétaire, que la BCE ne publie pas). Toute devise flottante (USD, CAD, GBP, CHF) rend un taux inconnu
- * jusqu'au branchement des taux de référence historiques de la BCE (lot 3b) : jamais un taux du jour appliqué à une
- * date passée.
+ * ici : {@link EcbExchangeRateProvider}, qui passe d'abord par cette classe, la cherche ensuite dans les taux de
+ * référence historiques de la BCE. Jamais un taux du jour appliqué à une date passée.
  */
 @Component
 public class FixedParityExchangeRateProvider implements ExchangeRateProvider {

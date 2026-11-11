@@ -204,6 +204,9 @@ class NotificationTextsTest {
         map.put("gpProRejected", NotificationTexts.gpProRejected(m));
         map.put("gpProRevoked", NotificationTexts.gpProRevoked(m));
         map.put("travelerStatusConfirmation", NotificationTexts.travelerStatusConfirmation(m));
+        map.put("taxInfoRequest", NotificationTexts.taxInfoRequest(m));
+        map.put("taxInfoReminder", NotificationTexts.taxInfoReminder(m));
+        map.put("taxStatement", NotificationTexts.taxStatement(m, 2026));
         map.put("kycVerified", NotificationTexts.kycVerified(m));
         map.put("kycActionRequired", NotificationTexts.kycActionRequired(m));
         map.put("kycReset", NotificationTexts.kycReset(m));
@@ -677,6 +680,26 @@ class NotificationTextsTest {
         Set<String> couverts = new java.util.HashSet<>();
         for (String k : pireCas(TestMessages.fr()).keySet()) couverts.add(k.split(" ")[0]);
         assertThat(couverts).containsAll(declared);
+    }
+
+    @ParameterizedTest
+    @MethodSource("deuxLangues")
+    void taxStatementDetail_quatreTrimestresEtTotal_sansTiretNiMenace(Messages m) {
+        String detail = NotificationTexts.taxStatementDetail(m, 2026, List.of(new long[]{95, 1, 5},
+                new long[]{0, 0, 0}, new long[]{1250, 3, 63}, new long[]{12500, 12, 625}));
+        assertThat(detail).contains("2026").contains("1250").contains("12500").contains("13845").contains("16")
+                .contains("693").doesNotContain("—").doesNotContain("{");
+        assertThat(detail).doesNotContainIgnoringCase("amende").doesNotContainIgnoringCase("penalty")
+                .doesNotContainIgnoringCase("bloqu").doesNotContainIgnoringCase("block");
+    }
+
+    @Test
+    void taxTexts_textesExacts() {
+        assertThat(NotificationTexts.taxInfoRequest(TestMessages.fr())).isEqualTo(new NotificationText(
+                "Informations fiscales", "Ajoutez votre numéro fiscal dans votre profil. Obligation légale."));
+        assertThat(NotificationTexts.taxStatement(TestMessages.en(), 2026).title()).isEqualTo("Tax summary 2026");
+        assertThat(NotificationTexts.taxStatement(TestMessages.fr(), 2026).title())
+                .isEqualTo("Récapitulatif fiscal 2026");
     }
 
     @Test

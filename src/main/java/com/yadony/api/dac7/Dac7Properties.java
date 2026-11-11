@@ -17,15 +17,27 @@ import java.util.List;
  *                              ajouté par supposition.
  * @param retentionYears        années civiles pendant lesquelles le NIF d'un compte supprimé est gardé s'il a une
  *                              opération déclarable (défaut 2 : année courante et précédente, ce qu'exige la
- *                              déclaration de janvier). À confirmer par l'expert-comptable.
+ *                              déclaration de janvier). Au moins 2 : sous ce plancher, DAC7 allumé
+ *                              refuse de démarrer, éteint la valeur est ramenée à 2. Durée à confirmer par
+ *                              l'expert-comptable.
  */
 @ConfigurationProperties(prefix = "yadony.dac7")
 public record Dac7Properties(Boolean enabled, List<String> partnerJurisdictions, Integer retentionYears) {
 
     static final int DEFAULT_RETENTION_YEARS = 2;
+    /**
+     * Plancher : avec 1, la fenêtre se réduit à l'année courante et la purge du 1er janvier effacerait le NIF d'un
+     * compte supprimé payé l'année précédente, avant la déclaration de fin janvier.
+     */
+    static final int MIN_RETENTION_YEARS = 2;
 
+    /** DAC7 allumé, une conservation sous {@link #MIN_RETENTION_YEARS} ans refuse le démarrage. */
     @ConstructorBinding
     public Dac7Properties {
+        if (Boolean.TRUE.equals(enabled) && retentionYears != null && retentionYears < MIN_RETENTION_YEARS) {
+            throw new IllegalArgumentException("yadony.dac7.retention-years : au moins " + MIN_RETENTION_YEARS
+                    + " années civiles quand DAC7 est allumé (valeur reçue : " + retentionYears + ")");
+        }
     }
 
     public Dac7Properties(Boolean enabled, List<String> partnerJurisdictions) {
@@ -40,8 +52,8 @@ public record Dac7Properties(Boolean enabled, List<String> partnerJurisdictions,
         return partnerJurisdictions == null ? List.of() : partnerJurisdictions;
     }
 
-    /** Au moins 1 (l'année courante) ; défaut 2. */
+    /** Au moins 2 (année courante et précédente, ce qu'exige la déclaration de janvier) ; défaut 2. */
     public int retentionYearsOrDefault() {
-        return retentionYears == null || retentionYears < 1 ? DEFAULT_RETENTION_YEARS : retentionYears;
+        return retentionYears == null || retentionYears < MIN_RETENTION_YEARS ? DEFAULT_RETENTION_YEARS : retentionYears;
     }
 }

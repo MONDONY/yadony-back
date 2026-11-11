@@ -749,6 +749,50 @@ public final class NotificationTexts {
                 m.get("notification.traveler-status-confirmation.body"));
     }
 
+    /** DAC7 : première demande du numéro fiscal (neutre, sans menace, jamais bloquante). */
+    public static NotificationText taxInfoRequest(Messages m) {
+        return new NotificationText(m.get("notification.tax-info-request.title"),
+                m.get("notification.tax-info-request.body"));
+    }
+
+    /** DAC7 : rappel 1 ou 2 du numéro fiscal (jamais de troisième). */
+    public static NotificationText taxInfoReminder(Messages m) {
+        return new NotificationText(m.get("notification.tax-info-reminder.title"),
+                m.get("notification.tax-info-reminder.body"));
+    }
+
+    /**
+     * DAC7 : récapitulatif annuel, titre et phrase courte SANS montant (push, écran verrouillé) ; le détail par
+     * trimestre ({@link #taxStatementDetail}) ne part que par e-mail.
+     */
+    public static NotificationText taxStatement(Messages m, int year) {
+        return new NotificationText(m.get("notification.tax-statement.title", year),
+                m.get("notification.tax-statement.body", year));
+    }
+
+    /**
+     * Détail du récapitulatif annuel DAC7 (corps complet, gardé en entier dans la boîte Annonces et repris par
+     * l'e-mail) : une phrase par trimestre, puis le total, en euros entiers tels que transmis.
+     *
+     * @param quarters pour chaque trimestre, dans l'ordre : {net, opérations, frais}
+     */
+    public static String taxStatementDetail(Messages m, int year, java.util.List<long[]> quarters) {
+        StringBuilder text = new StringBuilder(m.get("notification.tax-statement.detail.intro", year));
+        long net = 0;
+        long operations = 0;
+        long fees = 0;
+        for (int i = 0; i < quarters.size(); i++) {
+            long[] q = quarters.get(i);
+            text.append(' ').append(m.get("notification.tax-statement.detail.quarter", i + 1, q[0], q[1], q[2]));
+            net += q[0];
+            operations += q[1];
+            fees += q[2];
+        }
+        text.append(' ').append(m.get("notification.tax-statement.detail.total", year, net, operations, fees));
+        text.append(' ').append(m.get("notification.tax-statement.detail.outro"));
+        return text.toString();
+    }
+
     public static NotificationText gpProRevoked(Messages m) {
         return new NotificationText(m.get("notification.gp-pro-revoked.title"), m.get("notification.gp-pro-revoked.body"));
     }
