@@ -177,6 +177,10 @@ jobs:
           # allumée par la variable d'environnement GitHub. Manquait ici alors que staging
           # la transmettait : la variable posée en production restait sans effet.
           BID_AMENDMENT_ENABLED=${{ vars.BID_AMENDMENT_ENABLED || 'false' }}
+          # Modes de transport route et bateau (l'avion reste toujours ouvert) : éteints par défaut.
+          # Valeurs d'amorçage : une fois les lignes transport_*_enabled en base, c'est l'admin (Paramètres) qui décide.
+          YADONY_TRANSPORT_ROAD_ENABLED=${{ vars.YADONY_TRANSPORT_ROAD_ENABLED || 'false' }}
+          YADONY_TRANSPORT_BOAT_ENABLED=${{ vars.YADONY_TRANSPORT_BOAT_ENABLED || 'false' }}
           # Relances de vérification d'identité (J+1/J+3/J+7) : éteintes par défaut.
           YADONY_KYC_VERIFICATION_REMINDERS_ENABLED=${{ vars.YADONY_KYC_VERIFICATION_REMINDERS_ENABLED || 'false' }}
           # Alerte « particuliers à confirmer » (lot 4) : contrôle quotidien, signalement admin ET question
