@@ -1,5 +1,6 @@
 package com.yadony.api.common;
 
+import com.yadony.api.common.i18n.Messages;
 import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.payments.cash.exception.CommissionChargeFailedException;
 import com.yadony.api.payments.cash.exception.CommissionMethodMissingException;
@@ -132,10 +133,12 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(YadonyBusinessException.class)
     public ResponseEntity<ProblemDetail> handleBusiness(YadonyBusinessException ex) {
+        // Exception localisée : titre et détail suivent l'Accept-Language de la requête (FR par défaut).
+        Messages messages = messagesResolver.forRequest();
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
-                ex.getStatus(), ex.getMessage());
+                ex.getStatus(), ex.getDetail(messages));
         problem.setType(URI.create(BASE_TYPE + ex.getErrorCode()));
-        problem.setTitle(ex.getTitle());
+        problem.setTitle(ex.getTitle(messages));
         problem.setProperty("code", ex.getErrorCode());
         ex.getProperties().forEach(problem::setProperty);
         ResponseEntity.BodyBuilder response = ResponseEntity.status(ex.getStatus());

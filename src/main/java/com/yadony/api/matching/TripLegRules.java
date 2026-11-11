@@ -72,8 +72,7 @@ public final class TripLegRules {
     static YadonyBusinessException withLegIndex(YadonyBusinessException e, int legIndex) {
         Map<String, Object> props = new java.util.HashMap<>(e.getProperties());
         props.put("legIndex", legIndex);
-        return new YadonyBusinessException(e.getStatus(), e.getErrorCode(), e.getTitle(),
-                e.getMessage(), Map.copyOf(props));
+        return e.withProperties(Map.copyOf(props));
     }
 
     static boolean sameCity(String a, String b) {
