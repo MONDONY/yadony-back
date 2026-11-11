@@ -88,6 +88,19 @@ class Dac7ReminderServiceTest {
     }
 
     @Test
+    @DisplayName("rappel 2 jamais moins de 7 jours après le rappel 1, même après une pause du planificateur")
+    void ecartMinimal() {
+        // Demande il y a 35 jours, rappel 1 parti en retard il y a 3 jours (planificateur arrêté).
+        user.setTaxInfoRequestedAt(NOW.minus(Duration.ofDays(35)));
+        user.setTaxReminderCount(1);
+        when(reads.lastOutgoing(user.getId())).thenReturn(Optional.of(NOW.minus(Duration.ofDays(3))));
+        assertThat(service.remindIfDue(user.getId(), NOW)).isEqualTo(Dac7ReminderService.Outcome.NOT_DUE);
+        when(reads.lastOutgoing(user.getId())).thenReturn(Optional.of(NOW.minus(Duration.ofDays(7))));
+        assertThat(service.remindIfDue(user.getId(), NOW)).isEqualTo(Dac7ReminderService.Outcome.SENT);
+        assertThat(user.getTaxReminderCount()).isEqualTo(2);
+    }
+
+    @Test
     @DisplayName("jamais de troisième rappel, même un an plus tard, ni par l'équipe")
     void jamaisDeTroisieme() {
         requestedDaysAgo(365, 2);

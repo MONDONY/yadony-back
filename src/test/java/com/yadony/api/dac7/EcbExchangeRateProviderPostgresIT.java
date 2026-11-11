@@ -89,8 +89,13 @@ class EcbExchangeRateProviderPostgresIT {
         assertThat(p.unitsPerEur("USD", LocalDate.parse("2026-03-02"))).get().isEqualTo(new BigDecimal("1.081200"));
         assertThat(p.unitsPerEur("USD", LocalDate.parse("2026-03-07"))).get()
                 .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("1.0905"));
-        // Aucun taux publié après le 09/03 : rien ne prouve que le 10/03 est un jour sans publication.
-        assertThat(p.unitsPerEur("USD", LocalDate.parse("2026-03-10"))).isEmpty();
+        // Jour non publié : dernier taux publié AVANT lui (au plus 7 jours), avec sa vraie date (signalée).
+        assertThat(p.rate("USD", LocalDate.parse("2026-03-10"))).get()
+                .satisfies(r -> assertThat(r.rateDate()).isEqualTo(LocalDate.parse("2026-03-09")));
+        assertThat(p.rate("USD", LocalDate.parse("2026-03-09"))).get()
+                .satisfies(r -> assertThat(r.rateDate()).isEqualTo(LocalDate.parse("2026-03-09")));
+        assertThat(p.rate("XOF", LocalDate.parse("2026-03-07"))).get()
+                .satisfies(r -> assertThat(r.rateDate()).isEqualTo(LocalDate.parse("2026-03-07")));
         // Avant le premier taux connu.
         assertThat(p.unitsPerEur("USD", LocalDate.parse("2026-02-27"))).isEmpty();
         assertThat(p.unitsPerEur("CAD", LocalDate.parse("2026-03-02"))).isEmpty();

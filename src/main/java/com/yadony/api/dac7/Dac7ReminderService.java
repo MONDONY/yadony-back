@@ -17,7 +17,8 @@ import java.util.UUID;
  * {@code tax_reminder_count}. Règles du propriétaire :
  * <ul>
  *   <li>seulement un voyageur {@link Dac7SolicitationStatus#SOLLICITER}, revérifié au moment d'écrire ;</li>
- *   <li>demande initiale, rappel 1 à 14 jours de la demande, rappel 2 à 30 jours, JAMAIS de troisième ;</li>
+ *   <li>demande initiale, rappel 1 à 14 jours de la demande, rappel 2 à 30 jours et au moins 7 jours après le
+ *       rappel 1, JAMAIS de troisième ;</li>
  *   <li>un seul message par voyageur sur 24 heures (planificateur et relance manuelle confondus) ;</li>
  *   <li>une ligne de registre par envoi, dans la même transaction que le compteur ; la notification part après
  *       validation ({@link Dac7TaxInfoRequestedEvent}) et respecte les préférences de l'utilisateur.</li>
@@ -113,7 +114,16 @@ public class Dac7ReminderService {
         }
         Duration delay = next == Dac7DueDiligenceAction.REMINDER_1
                 ? properties.firstReminderDelay() : properties.secondReminderDelay();
-        return user.getTaxInfoRequestedAt().plus(delay).isAfter(now) ? null : next;
+        if (user.getTaxInfoRequestedAt().plus(delay).isAfter(now)) {
+            return null;
+        }
+        // Rappel 2 : jamais moins de minGapBetweenReminders après le message précédent, même si le planificateur a
+        // été arrêté et que les deux échéances sont passées.
+        if (next == Dac7DueDiligenceAction.REMINDER_2
+                && sentWithin(user.getId(), now, properties.minGapBetweenReminders())) {
+            return null;
+        }
+        return next;
     }
 
     private boolean sentWithin(UUID userId, Instant now, Duration window) {

@@ -59,12 +59,12 @@ class Dac7SellerStatementServiceTest {
                 new QuarterReport(4, 0, List.of(), BigDecimal.ZERO, BigDecimal.ZERO, true, true));
         return new Seller(id, "Awa", "FR", true, Dac7IdentityStatus.COMPLETE, null, 0, null,
                 new TravelerReport(id, "FR", true, Dac7IdentityStatus.COMPLETE, q), 1, new BigDecimal("95.50"),
-                new BigDecimal("5.00"), true, true, exclusions);
+                new BigDecimal("5.00"), true, true, exclusions, false);
     }
 
     @BeforeEach
     void setUp() {
-        when(declarations.requireYear(2026)).thenReturn(2026);
+        when(declarations.requireClosedYear(2026)).thenReturn(2026);
         when(declarations.collectionEnabled()).thenReturn(true);
         when(reads.reserveStatement(any(), anyInt(), any(), any()))
                 .thenAnswer(inv -> reserved.add(inv.getArgument(0) + "/" + inv.getArgument(1)));
@@ -76,7 +76,7 @@ class Dac7SellerStatementServiceTest {
         Seller ok = seller(List.of());
         Seller excluded = seller(List.of("TAX_INFO_MISSING"));
         when(declarations.declaration(2026, true)).thenReturn(new Declaration(2026, null, List.of(ok, excluded),
-                List.of(), List.of(), List.of(), Map.of()));
+                List.of(), List.of(), List.of(), Map.of(), 0));
 
         assertThat(service.send(2026, admin)).isEqualTo(new Dac7StatementsResponse(1, 1));
         assertThat(service.send(2026, admin)).isEqualTo(new Dac7StatementsResponse(0, 2));
@@ -87,6 +87,16 @@ class Dac7SellerStatementServiceTest {
         assertThat(event.getValue().quarters().get(0)).isEqualTo(new Dac7TaxStatementEvent.Quarter(1, 96, 1, 5));
         verify(reads, never()).reserveStatement(eq(excluded.userId()), anyInt(), any(), any());
         verify(audit, times(2)).log(eq("DAC7_STATEMENTS"), any(), eq("DAC7_STATEMENTS_SENT"), eq(admin), any());
+    }
+
+    @Test
+    @DisplayName("année non close (le 20/12 pour l'année en cours) : 422 dac7-year-not-closed, rien n'est réservé")
+    void anneeNonClose() {
+        when(declarations.requireClosedYear(2027)).thenThrow(new YadonyBusinessException(
+                org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY, "dac7-year-not-closed", "x", "x"));
+        assertThatThrownBy(() -> service.send(2027, admin)).isInstanceOfSatisfying(YadonyBusinessException.class,
+                e -> assertThat(e.getErrorCode()).isEqualTo("dac7-year-not-closed"));
+        verify(reads, never()).reserveStatement(any(), anyInt(), any(), any());
     }
 
     @Test

@@ -51,7 +51,7 @@ class Dac7AdminServiceTest {
 
     private Seller seller(UUID id, boolean tax, Dac7IdentityStatus identity, boolean eur) {
         return new Seller(id, "Voyageur " + id.toString().substring(0, 4), "FR", tax, identity, null, tax ? 0 : 1,
-                null, null, 2, new BigDecimal("100.00"), new BigDecimal("5.00"), eur, true, List.of());
+                null, null, 2, new BigDecimal("100.00"), new BigDecimal("5.00"), eur, true, List.of(), false);
     }
 
     @BeforeEach
@@ -74,8 +74,9 @@ class Dac7AdminServiceTest {
                         new Other(ivorian, "Koffi", "CI", Dac7ResidencyStatus.NON_DECLARABLE, false,
                                 Dac7IdentityStatus.COMPLETE, 0, null)),
                 List.of(), List.of("IDENTITY_INCOMPLETE", "TAX_INFO_MISSING", "EUR_INCOMPLETE"),
-                Map.of(withTax, "Awa D.", withoutTax, "Moussa K."));
+                Map.of(withTax, "Awa D.", withoutTax, "Moussa K."), 3);
         when(declarations.declaration(2026, false)).thenReturn(d);
+        when(declarations.declaration(2026, Dac7DeclarationService.IdentityMode.NONE)).thenReturn(d);
     }
 
     @Test
@@ -97,6 +98,22 @@ class Dac7AdminServiceTest {
         assertThat(o.enabled()).isTrue();
         assertThat(o.remindersEnabled()).isTrue();
         assertThat(o.blockers()).containsExactly("IDENTITY_INCOMPLETE", "TAX_INFO_MISSING", "EUR_INCOMPLETE");
+        assertThat(o.warnings()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("note de décision avec 9 chiffres ou plus (NIF, compte) : 422 dac7-note-sensitive, jamais inscrite")
+    void noteSensible() {
+        UUID admin = UUID.randomUUID();
+        for (String note : List.of("NIF 302321760", "Appelé au 06 12 34 56 78", "IBAN FR76 3000 1007 9412")) {
+            assertThatThrownBy(() -> service.decision(withTax, admin, note))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getErrorCode()).isEqualTo("dac7-note-sensitive");
+                        assertThat(e.getMessage()).doesNotContain("302321760");
+                    });
+        }
+        assertThat(Dac7AdminService.looksSensitive("Rappel le 12/01/2027, 3 colis")).isFalse();
+        verifyNoInteractions(diligence);
     }
 
     @ParameterizedTest

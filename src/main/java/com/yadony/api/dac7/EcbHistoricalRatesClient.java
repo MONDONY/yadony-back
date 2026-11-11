@@ -58,7 +58,11 @@ public class EcbHistoricalRatesClient {
     public Map<LocalDate, Map<String, BigDecimal>> fetchSince(LocalDate from) {
         final byte[] body;
         try {
-            body = restClient.get().uri(properties.histUrlOrDefault()).retrieve().body(byte[].class);
+            body = restClient.get().uri(properties.histUrlOrDefault())
+                    .exchange((request, response) -> readBounded(response.getBody()));
+        } catch (ResponseTooLargeException e) {
+            log.warn("Taux historiques BCE : réponse de plus de {} octets abandonnée", MAX_BYTES);
+            return Map.of();
         } catch (RuntimeException e) {
             log.warn("Taux historiques BCE injoignables : {}", e.getClass().getSimpleName());
             return Map.of();
@@ -68,6 +72,27 @@ public class EcbHistoricalRatesClient {
             return Map.of();
         }
         return parse(new ByteArrayInputStream(body), from);
+    }
+
+    /** Plafond de la réponse : eurofxref-hist pèse quelques mégaoctets ; au-delà, la réponse est anormale. */
+    static final int MAX_BYTES = 10 * 1024 * 1024;
+
+    static final class ResponseTooLargeException extends RuntimeException {
+        ResponseTooLargeException() {
+            super("Réponse BCE trop volumineuse");
+        }
+    }
+
+    /** Lit au plus {@link #MAX_BYTES} octets ; au-delà, abandonne sans tout charger. */
+    static byte[] readBounded(InputStream in) throws java.io.IOException {
+        if (in == null) {
+            return new byte[0];
+        }
+        byte[] data = in.readNBytes(MAX_BYTES + 1);
+        if (data.length > MAX_BYTES) {
+            throw new ResponseTooLargeException();
+        }
+        return data;
     }
 
     static Map<LocalDate, Map<String, BigDecimal>> parse(InputStream xml, LocalDate from) {

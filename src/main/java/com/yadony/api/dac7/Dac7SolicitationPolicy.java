@@ -28,6 +28,12 @@ public class Dac7SolicitationPolicy {
         if (status != Dac7ResidencyStatus.DECLARABLE) {
             return Dac7SolicitationStatus.NE_PAS_SOLLICITER;
         }
+        // Lot 3b : un résident d'un État partenaire configuré que la DGFiP ne transmet pas cette année (annexe 6.1 :
+        // UE27 seulement en 2026) ne serait jamais déclaré : on ne lui demande rien.
+        if (!Dac7DgfipRules.transmitted(java.time.LocalDate.now(java.time.ZoneOffset.UTC).getYear(),
+                Dac7ResidencyPolicy.residenceCountryOf(user))) {
+            return Dac7SolicitationStatus.NE_PAS_SOLLICITER;
+        }
         return decide(status, readModel.hasBeenPaid(user.getId()), false);
     }
 

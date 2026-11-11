@@ -140,7 +140,8 @@ public class Dac7ReportService {
                         refund.sourceId(), refund.currency(), day(refund.refundedAt())));
             }
             // Jamais déduit : la contrepartie reste le montant versé. À réconcilier à la main.
-            Optional<BigDecimal> rate = rate(refund.currency(), refund.operationPaidAt());
+            Optional<BigDecimal> rate = rate(refund.currency(), refund.operationPaidAt())
+                    .map(ExchangeRateProvider.Rate::unitsPerEur);
             toReconcile.add(new RefundToReconcile(refund.travelerId(), refund.source(), refund.sourceId(),
                     refund.currency(), refund.amount(), refund.operationPaidAt(), year(refund.operationPaidAt()),
                     refund.refundedAt(), year(refund.refundedAt()), !refund.afterRelease(),
@@ -173,8 +174,8 @@ public class Dac7ReportService {
                 List.copyOf(nonDeclarable), residency.invalidPartnerJurisdictions(), anomalies);
     }
 
-    private Optional<BigDecimal> rate(String currency, Instant at) {
-        return rates.unitsPerEur(currency, day(at));
+    private Optional<ExchangeRateProvider.Rate> rate(String currency, Instant at) {
+        return rates.rate(currency, day(at));
     }
 
     private static BigDecimal toEur(BigDecimal amount, BigDecimal unitsPerEur) {
@@ -245,7 +246,7 @@ public class Dac7ReportService {
             this.quarter = quarter;
         }
 
-        void add(OperationRow op, Optional<BigDecimal> rate, List<Anomaly> anomalies) {
+        void add(OperationRow op, Optional<ExchangeRateProvider.Rate> rate, List<Anomaly> anomalies) {
             BigDecimal commission = op.commission();
             if (commission == null) {
                 anomalies.add(new Anomaly(AnomalyType.COMMISSION_UNKNOWN, op.travelerId(), op.source(), op.sourceId(),
@@ -261,8 +262,13 @@ public class Dac7ReportService {
                 operations++;
             }
             if (rate.isPresent()) {
-                netEur = netEur.add(op.net().divide(rate.get(), RATE_SCALE, RoundingMode.HALF_UP));
-                commissionEur = commissionEur.add(commission.divide(rate.get(), RATE_SCALE, RoundingMode.HALF_UP));
+                BigDecimal units = rate.get().unitsPerEur();
+                netEur = netEur.add(op.net().divide(units, RATE_SCALE, RoundingMode.HALF_UP));
+                commissionEur = commissionEur.add(commission.divide(units, RATE_SCALE, RoundingMode.HALF_UP));
+                if (!rate.get().rateDate().equals(day(op.paidAt()))) {
+                    anomalies.add(new Anomaly(AnomalyType.RATE_DATE_ESTIMATED, op.travelerId(), op.source(),
+                            op.sourceId(), op.currency(), day(op.paidAt())));
+                }
             } else {
                 eurComplete = false;
                 anomalies.add(new Anomaly(AnomalyType.EXCHANGE_RATE_MISSING, op.travelerId(), op.source(),

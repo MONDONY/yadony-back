@@ -28,8 +28,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *       pas) ;</li>
  *   <li>table {@code ecb_exchange_rates} (copie de {@code eurofxref-hist.xml}) : le taux du jour, ou, un jour sans
  *       publication (week-end, jour férié TARGET), celui du dernier jour publié dans les {@value #MAX_LOOKBACK_DAYS}
- *       jours qui précèdent, à condition qu'un taux PLUS RÉCENT existe déjà (preuve que le jour manquant n'a pas été
- *       publié, et non un téléchargement en retard).</li>
+ *       jours qui précèdent, signalé par sa vraie date ({@link Rate#rateDate()}).</li>
  * </ol>
  * Sinon : vide, jamais deviné ; le calcul signale la ligne ({@code EXCHANGE_RATE_MISSING}, {@code eurComplete=false}).
  *
@@ -83,22 +82,29 @@ public class EcbExchangeRateProvider implements ExchangeRateProvider {
 
     @Override
     public Optional<BigDecimal> unitsPerEur(String currency, LocalDate day) {
+        return rate(currency, day).map(Rate::unitsPerEur);
+    }
+
+    /**
+     * Taux du jour ; un jour non publié (week-end, jour férié TARGET, 31/12 non publié) prend le dernier taux publié
+     * AVANT ce jour, au plus {@value #MAX_LOOKBACK_DAYS} jours en arrière, avec sa vraie date ({@code rateDate}) :
+     * le calcul le signale ({@code RATE_DATE_ESTIMATED}). Au-delà : vide, jamais deviné.
+     */
+    @Override
+    public Optional<Rate> rate(String currency, LocalDate day) {
         if (currency == null || day == null) {
             return Optional.empty();
         }
         Optional<BigDecimal> parity = fixed.unitsPerEur(currency, day);
         if (parity.isPresent()) {
-            return parity;
+            return Optional.of(new Rate(parity.get(), day));
         }
         NavigableMap<LocalDate, BigDecimal> rates = cache.computeIfAbsent(currency, this::load);
         Map.Entry<LocalDate, BigDecimal> floor = rates.floorEntry(day);
         if (floor == null || floor.getKey().isBefore(day.minusDays(MAX_LOOKBACK_DAYS))) {
             return Optional.empty();
         }
-        if (!floor.getKey().equals(day) && rates.higherKey(day) == null) {
-            return Optional.empty();
-        }
-        return Optional.of(floor.getValue());
+        return Optional.of(new Rate(floor.getValue(), floor.getKey()));
     }
 
     /**

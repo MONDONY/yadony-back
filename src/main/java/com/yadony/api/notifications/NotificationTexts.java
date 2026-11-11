@@ -761,7 +761,10 @@ public final class NotificationTexts {
                 m.get("notification.tax-info-reminder.body"));
     }
 
-    /** DAC7 : récapitulatif annuel, titre et résumé ; le détail par trimestre est {@link #taxStatementDetail}. */
+    /**
+     * DAC7 : récapitulatif annuel, titre et phrase courte SANS montant (push, écran verrouillé) ; le détail par
+     * trimestre ({@link #taxStatementDetail}) ne part que par e-mail.
+     */
     public static NotificationText taxStatement(Messages m, int year) {
         return new NotificationText(m.get("notification.tax-statement.title", year),
                 m.get("notification.tax-statement.body", year));

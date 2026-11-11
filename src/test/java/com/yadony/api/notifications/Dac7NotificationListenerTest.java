@@ -54,15 +54,22 @@ class Dac7NotificationListenerTest {
         listener.onTaxStatement(new Dac7TaxStatementEvent(user, 2026, List.of(
                 new Dac7TaxStatementEvent.Quarter(1, 95, 1, 5), new Dac7TaxStatementEvent.Quarter(2, 0, 0, 0),
                 new Dac7TaxStatementEvent.Quarter(3, 0, 0, 0), new Dac7TaxStatementEvent.Quarter(4, 10, 1, 1))));
-        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
-        verify(dispatcher).notifyUser(eq(user), eq("Récapitulatif fiscal 2026"), body.capture(), any());
-        assertThat(body.getValue()).contains("Trimestre 1 : 95 €").contains("Total 2026 : 105 €");
+        ArgumentCaptor<String> push = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> email = ArgumentCaptor.forClass(String.class);
+        verify(dispatcher).notifyUserWithEmailDetail(eq(user), eq("Récapitulatif fiscal 2026"), push.capture(),
+                email.capture(), any());
+        // Push : court, aucun montant ; e-mail : le détail.
+        assertThat(push.getValue()).hasSizeLessThanOrEqualTo(NotificationCaps.BODY_MAX)
+                .isEqualTo("Votre récapitulatif fiscal 2026 est disponible.").doesNotContain("€").doesNotContain("95");
+        assertThat(email.getValue()).contains("Trimestre 1 : 95 €").contains("Total 2026 : 105 €");
     }
 
     @Test
     void echecDEnvoi_avale() {
         when(dispatcher.messagesFor(user)).thenReturn(TestMessages.fr());
         doThrow(new IllegalStateException("x")).when(dispatcher).notifyUser(any(), any(), any(), any());
+        doThrow(new IllegalStateException("x")).when(dispatcher).notifyUserWithEmailDetail(any(), any(), any(), any(),
+                any());
         listener.onTaxInfoRequested(new Dac7TaxInfoRequestedEvent(user, "REQUEST"));
         listener.onTaxStatement(new Dac7TaxStatementEvent(user, 2026, List.of()));
     }

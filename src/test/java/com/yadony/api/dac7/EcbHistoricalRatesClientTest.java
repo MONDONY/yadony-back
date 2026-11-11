@@ -52,6 +52,22 @@ class EcbHistoricalRatesClientTest {
     }
 
     @Test
+    @DisplayName("réponse bornée à 10 Mo : au-delà, abandonnée sans tout charger")
+    void reponseBornee() throws Exception {
+        byte[] small = EcbHistoricalRatesClient.readBounded(new ByteArrayInputStream(new byte[]{1, 2, 3}));
+        assertThat(small).containsExactly(1, 2, 3);
+        java.io.InputStream endless = new java.io.InputStream() {
+            @Override
+            public int read() {
+                return 'x';
+            }
+        };
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> EcbHistoricalRatesClient.readBounded(endless))
+                .isInstanceOf(EcbHistoricalRatesClient.ResponseTooLargeException.class);
+        assertThat(EcbHistoricalRatesClient.readBounded(null)).isEmpty();
+    }
+
+    @Test
     @DisplayName("flux illisible : vide, jamais d'exception")
     void illisible() {
         assertThat(parse("<Cube><Cube time=", "2026-01-01")).isEmpty();

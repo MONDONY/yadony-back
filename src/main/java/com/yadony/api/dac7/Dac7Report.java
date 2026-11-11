@@ -92,6 +92,11 @@ public record Dac7Report(int year, List<TravelerReport> travelers, List<Traveler
         /** Date de livraison absente : dernière mise à jour du colis retenue, qui peut encore bouger. */
         DELIVERY_DATE_ESTIMATED,
         /** Paiement versé sans voyageur retrouvé (colis ou fil de négociation absent). */
-        TRAVELER_UNKNOWN
+        TRAVELER_UNKNOWN,
+        /**
+         * Lot 3b : jour du versement non publié par la BCE (week-end, férié) : taux du dernier jour publié avant lui
+         * (au plus 7 jours). Signalé, non bloquant.
+         */
+        RATE_DATE_ESTIMATED
     }
 }

@@ -11,7 +11,8 @@ import java.time.Duration;
  * que le voyageur devient « à solliciter », rappel 1 à {@code firstReminderDelay} de la demande, rappel 2 à
  * {@code secondReminderDelay}, jamais de troisième. Détecté par {@code @ConfigurationPropertiesScan}.
  *
- * @param manualMinInterval délai minimal entre deux messages quand l'équipe relance à la main
+ * @param manualMinInterval      délai minimal entre deux messages quand l'équipe relance à la main
+ * @param minGapBetweenReminders écart minimal entre le rappel 1 et le rappel 2, même après une pause du planificateur
  */
 @ConfigurationProperties(prefix = "yadony.dac7.reminders")
 public record Dac7ReminderProperties(
@@ -19,6 +20,7 @@ public record Dac7ReminderProperties(
         @DefaultValue("P14D") Duration firstReminderDelay,
         @DefaultValue("P30D") Duration secondReminderDelay,
         @DefaultValue("P7D") Duration manualMinInterval,
+        @DefaultValue("P7D") Duration minGapBetweenReminders,
         @DefaultValue("10") int windowStartHour,
         @DefaultValue("20") int windowEndHour) {
 
@@ -34,7 +36,7 @@ public record Dac7ReminderProperties(
 
     /** Valeurs par défaut, pour les tests sans Spring. */
     public static Dac7ReminderProperties defaults(boolean enabled) {
-        return new Dac7ReminderProperties(enabled, Duration.ofDays(14), Duration.ofDays(30), Duration.ofDays(7), 10,
-                20);
+        return new Dac7ReminderProperties(enabled, Duration.ofDays(14), Duration.ofDays(30), Duration.ofDays(7),
+                Duration.ofDays(7), 10, 20);
     }
 }

@@ -76,7 +76,7 @@ public class Dac7AdminService {
                 d.report().pendingSplits().size(), d.report().anomalies().size(), d.invalidPartnerJurisdictions(),
                 new Dac7OverviewResponse.Totals(operations, net, commission),
                 sellers.stream().allMatch(Seller::eurComplete), sellers.stream().allMatch(Seller::commissionComplete),
-                d.blockers().isEmpty(), d.blockers());
+                d.blockers().isEmpty(), d.blockers(), d.warnings());
     }
 
     public List<Dac7SellerRow> sellers(Integer yearValue, String filterValue) {
@@ -91,11 +91,15 @@ public class Dac7AdminService {
                 default -> false;
             };
             if (keep) {
+                // Résident d'un État partenaire non transmis cette année : jamais sollicité (règle de sollicitation).
+                Dac7SolicitationStatus solicitation = s.exclusions().contains(
+                        Dac7DeclarationService.RESIDENCE_NOT_TRANSMITTED) && !s.taxInfoProvided()
+                        ? Dac7SolicitationStatus.NE_PAS_SOLLICITER
+                        : Dac7SolicitationPolicy.decide(Dac7ResidencyStatus.DECLARABLE, true, s.taxInfoProvided());
                 rows.add(new Dac7SellerRow(s.userId(), s.displayName(), s.residenceCountry(),
                         Dac7ResidencyStatus.DECLARABLE.name(), s.taxInfoProvided(), s.identityStatus().name(),
-                        Dac7SolicitationPolicy.decide(Dac7ResidencyStatus.DECLARABLE, true, s.taxInfoProvided()).name(),
-                        s.remindersSent(), s.lastDiligenceAt(), s.operations(), s.netEur(), s.commissionEur(),
-                        s.eurComplete(), s.commissionComplete()));
+                        solicitation.name(), s.remindersSent(), s.lastDiligenceAt(), s.operations(), s.netEur(),
+                        s.commissionEur(), s.eurComplete(), s.commissionComplete(), s.alreadyExported()));
             }
         }
         for (Other o : d.others()) {
@@ -106,7 +110,7 @@ public class Dac7AdminService {
                 rows.add(new Dac7SellerRow(o.userId(), o.displayName(), o.residenceCountry(), o.residency().name(),
                         o.taxInfoProvided(), o.identityStatus().name(),
                         Dac7SolicitationPolicy.decide(o.residency(), true, o.taxInfoProvided()).name(),
-                        o.remindersSent(), o.lastDiligenceAt(), null, null, null, null, null));
+                        o.remindersSent(), o.lastDiligenceAt(), null, null, null, null, null, null));
             }
         }
         return rows;
@@ -144,6 +148,12 @@ public class Dac7AdminService {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-note-invalid", "Invalid Note",
                     "La note doit compter de 1 à " + Dac7DueDiligenceService.MAX_NOTE_LENGTH + " caractères.");
         }
+        if (looksSensitive(cleaned)) {
+            // Jamais recopiée : elle pourrait contenir un NIF ou un numéro de compte.
+            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-note-sensitive",
+                    "Sensitive Note", "La note semble contenir un numéro (9 chiffres ou plus) : ni NIF, ni numéro de "
+                    + "TVA, ni numéro de compte dans le registre.");
+        }
         if (!reads.userExists(userId)) {
             throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found", "User Not Found",
                     "Utilisateur introuvable");
@@ -153,14 +163,21 @@ public class Dac7AdminService {
         audit.log("USER", userId, "DAC7_TEAM_DECISION", adminId, Map.of("noteLength", cleaned.length()));
     }
 
+    /** 9 chiffres ou plus d'affilée, séparateurs usuels (espace, point, tiret, barre oblique) ignorés. */
+    static boolean looksSensitive(String note) {
+        return note.replaceAll("[\\s./-]", "").matches("(?s).*\\d{9,}.*");
+    }
+
     public List<Dac7RefundRow> refunds(Integer yearValue) {
-        Declaration d = declarations.declaration(declarations.requireYear(yearValue), false);
+        Declaration d = declarations.declaration(declarations.requireYear(yearValue),
+                Dac7DeclarationService.IdentityMode.NONE);
         return d.report().refundsToReconcile().stream()
                 .map(r -> Dac7RefundRow.of(r, d.displayNames().get(r.travelerId()))).toList();
     }
 
     public List<Dac7AnomalyRow> anomalies(Integer yearValue) {
-        Declaration d = declarations.declaration(declarations.requireYear(yearValue), false);
+        Declaration d = declarations.declaration(declarations.requireYear(yearValue),
+                Dac7DeclarationService.IdentityMode.NONE);
         return d.report().anomalies().stream()
                 .map(a -> Dac7AnomalyRow.of(a, a.travelerId() == null ? null : d.displayNames().get(a.travelerId())))
                 .toList();

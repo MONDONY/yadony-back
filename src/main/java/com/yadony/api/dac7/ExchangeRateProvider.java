@@ -15,4 +15,15 @@ import java.util.Optional;
 public interface ExchangeRateProvider {
 
     Optional<BigDecimal> unitsPerEur(String currency, LocalDate day);
+
+    /**
+     * Taux et jour de publication réellement retenu ; {@code rateDate} diffère de {@code day} quand ce jour n'a pas été
+     * publié (week-end, jour férié) et que le dernier taux publié avant lui a été pris (lot 3b, signalé).
+     */
+    default Optional<Rate> rate(String currency, LocalDate day) {
+        return unitsPerEur(currency, day).map(units -> new Rate(units, day));
+    }
+
+    record Rate(BigDecimal unitsPerEur, LocalDate rateDate) {
+    }
 }
