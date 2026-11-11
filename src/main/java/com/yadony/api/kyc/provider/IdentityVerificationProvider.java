@@ -45,6 +45,9 @@ public interface IdentityVerificationProvider {
      * Nom, date de naissance et adresse lus sur la pièce vérifiée, pour la seule déclaration DAC7. Best-effort : vide
      * si la session n'est pas aboutie, illisible, ou si le fournisseur ne sait pas les relire (Stripe Identity, ancien
      * fournisseur, par défaut). Jamais journalisé ni persisté.
+     *
+     * @throws com.yadony.api.kyc.IdentityProviderUnavailableException si le fournisseur ne répond pas : une panne
+     *         n'est jamais une absence de donnée
      */
     default Optional<VerifiedIdentityDetails> fetchVerifiedIdentity(String providerSessionId) {
         return Optional.empty();

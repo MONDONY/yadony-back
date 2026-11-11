@@ -39,7 +39,9 @@ class KycDac7IdentityAdapterTest {
         when(provider.fetchVerifiedIdentity("s1")).thenReturn(Optional.of(new VerifiedIdentityDetails("Awa", "Diallo",
                 LocalDate.of(1990, 1, 2), "1 rue de Paris", null, "69001", "Lyon", "FR", null)));
 
-        Dac7VerifiedIdentity identity = adapter.verifiedIdentity(user).orElseThrow();
+        var lookup = adapter.verifiedIdentity(user);
+        assertThat(lookup.status()).isEqualTo(com.yadony.api.dac7.Dac7VerifiedIdentityPort.Status.FOUND);
+        Dac7VerifiedIdentity identity = lookup.identity();
 
         assertThat(identity.birthDate()).isEqualTo(LocalDate.of(1990, 1, 2));
         assertThat(identity.address().city()).isEqualTo("Lyon");
@@ -53,23 +55,38 @@ class KycDac7IdentityAdapterTest {
         when(resolver.forRecord(VerificationProviderKind.DIDIT)).thenReturn(Optional.of(provider));
         when(provider.fetchVerifiedIdentity("s1")).thenReturn(Optional.of(new VerifiedIdentityDetails("Awa", "Diallo",
                 LocalDate.of(1990, 1, 2), null, null, null, null, null, null)));
-        assertThat(adapter.verifiedIdentity(user).orElseThrow().address()).isNull();
+        assertThat(adapter.verifiedIdentity(user).identity().address()).isNull();
     }
 
     @Test
     void nonVerifieOuSansSession_rienDemandeAuFournisseur() {
+        var none = com.yadony.api.dac7.Dac7VerifiedIdentityPort.Status.NONE;
         when(repository.findByUserId(user)).thenReturn(Optional.of(verification(KycVerificationStatus.PENDING, "s1")));
-        assertThat(adapter.verifiedIdentity(user)).isEmpty();
+        assertThat(adapter.verifiedIdentity(user).status()).isEqualTo(none);
         when(repository.findByUserId(user)).thenReturn(Optional.of(verification(KycVerificationStatus.VERIFIED, null)));
-        assertThat(adapter.verifiedIdentity(user)).isEmpty();
+        assertThat(adapter.verifiedIdentity(user).status()).isEqualTo(none);
         when(repository.findByUserId(user)).thenReturn(Optional.empty());
-        assertThat(adapter.verifiedIdentity(user)).isEmpty();
+        assertThat(adapter.verifiedIdentity(user).status()).isEqualTo(none);
         verifyNoInteractions(resolver);
     }
 
     @Test
-    void erreur_vide() {
+    void panne_indisponible_jamaisAbsente() {
+        when(repository.findByUserId(user)).thenReturn(Optional.of(verification(KycVerificationStatus.VERIFIED, "s1")));
+        when(resolver.forRecord(VerificationProviderKind.DIDIT)).thenReturn(Optional.of(provider));
+        when(provider.fetchVerifiedIdentity("s1")).thenThrow(new IdentityProviderUnavailableException("timeout"));
+        assertThat(adapter.verifiedIdentity(user).status())
+                .isEqualTo(com.yadony.api.dac7.Dac7VerifiedIdentityPort.Status.UNAVAILABLE);
         when(repository.findByUserId(user)).thenThrow(new IllegalStateException("db"));
-        assertThat(adapter.verifiedIdentity(user)).isEmpty();
+        assertThat(adapter.verifiedIdentity(user).status())
+                .isEqualTo(com.yadony.api.dac7.Dac7VerifiedIdentityPort.Status.UNAVAILABLE);
+    }
+
+    @Test
+    void sansFournisseurDeLaLigne_aucuneIdentite() {
+        when(repository.findByUserId(user)).thenReturn(Optional.of(verification(KycVerificationStatus.VERIFIED, "s1")));
+        when(resolver.forRecord(VerificationProviderKind.DIDIT)).thenReturn(Optional.empty());
+        assertThat(adapter.verifiedIdentity(user).status())
+                .isEqualTo(com.yadony.api.dac7.Dac7VerifiedIdentityPort.Status.NONE);
     }
 }

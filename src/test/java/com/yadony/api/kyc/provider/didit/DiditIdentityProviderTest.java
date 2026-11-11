@@ -252,6 +252,13 @@ class DiditIdentityProviderTest {
     }
 
     @Test
+    void fetchVerifiedIdentity_decisionUnreadable_isAnOutageNotAnAbsence() {
+        when(client.retrieveDecision("sess_1")).thenReturn(Optional.empty());
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> provider.fetchVerifiedIdentity("sess_1"))
+                .isInstanceOf(com.yadony.api.kyc.IdentityProviderUnavailableException.class);
+    }
+
+    @Test
     void fetchVerifiedIdentity_isEmpty_whenNotApprovedOrNoSession() {
         when(client.retrieveDecision("sess_1")).thenReturn(Optional.of(json("""
                 {"status":"Declined","id_verifications":[{"first_name":"Awa","date_of_birth":"1990-01-02"}]}

@@ -3,6 +3,7 @@ package com.yadony.api.kyc;
 import com.yadony.api.dac7.Dac7Address;
 import com.yadony.api.dac7.Dac7VerifiedIdentity;
 import com.yadony.api.dac7.Dac7VerifiedIdentityPort;
+import com.yadony.api.kyc.provider.IdentityVerificationProvider;
 import com.yadony.api.kyc.provider.IdentityProviderResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,21 +32,26 @@ public class KycDac7IdentityAdapter implements Dac7VerifiedIdentityPort {
     }
 
     @Override
-    public Optional<Dac7VerifiedIdentity> verifiedIdentity(UUID userId) {
+    public Lookup verifiedIdentity(UUID userId) {
         try {
             Optional<KycVerificationEntity> verification = kycRepository.findByUserId(userId);
             if (verification.isEmpty() || verification.get().getVerificationSessionId() == null
                     || verification.get().getStatus() != KycVerificationStatus.VERIFIED) {
-                return Optional.empty();
+                return Lookup.none();
             }
-            return providers.forRecord(verification.get().getProvider())
-                    .flatMap(provider -> provider.fetchVerifiedIdentity(
-                            verification.get().getVerificationSessionId()))
-                    .map(KycDac7IdentityAdapter::toDac7);
+            Optional<IdentityVerificationProvider> provider = providers.forRecord(verification.get().getProvider());
+            if (provider.isEmpty()) {
+                return Lookup.none();
+            }
+            return provider.get().fetchVerifiedIdentity(verification.get().getVerificationSessionId())
+                    .map(KycDac7IdentityAdapter::toDac7)
+                    .map(Lookup::found)
+                    .orElseGet(Lookup::none);
         } catch (RuntimeException e) {
-            log.warn("Identité vérifiée illisible pour DAC7 (utilisateur {}) : {}", userId,
+            // Panne du prestataire ou de la base : réessayable, jamais « identité absente ».
+            log.warn("Identité vérifiée indisponible pour DAC7 (utilisateur {}) : {}", userId,
                     e.getClass().getSimpleName());
-            return Optional.empty();
+            return Lookup.unavailable();
         }
     }
 

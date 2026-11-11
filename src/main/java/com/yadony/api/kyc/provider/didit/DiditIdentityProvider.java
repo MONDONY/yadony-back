@@ -185,9 +185,14 @@ public class DiditIdentityProvider implements IdentityVerificationProvider {
     public Optional<VerifiedIdentityDetails> fetchVerifiedIdentity(String providerSessionId) {
         if (providerSessionId == null) return Optional.empty();
 
-        return client.retrieveDecision(providerSessionId)
-                .filter(decision -> APPROVED.equalsIgnoreCase(text(decision, "status")))
-                .map(decision -> decision.path("id_verifications"))
+        // DiditClient rend vide sur toute erreur (réseau, délai, 429, corps illisible) : c'est une panne, à
+        // réessayer, jamais une identité absente.
+        JsonNode decision = client.retrieveDecision(providerSessionId)
+                .orElseThrow(() -> new com.yadony.api.kyc.IdentityProviderUnavailableException(
+                        "Décision Didit indisponible"));
+        return Optional.of(decision)
+                .filter(d -> APPROVED.equalsIgnoreCase(text(d, "status")))
+                .map(d -> d.path("id_verifications"))
                 .filter(JsonNode::isArray)
                 .filter(verifications -> !verifications.isEmpty())
                 .map(verifications -> verifications.get(0))
