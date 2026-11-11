@@ -100,13 +100,7 @@ public class GuestUserProvisioner {
         return userRepository.findByFirebaseUidIncludingDeleted(firebaseUid)
                 .map(deleted -> {
                     if (!deleted.getRoles().isEmpty()) {
-                        throw new YadonyBusinessException(
-                                HttpStatus.FORBIDDEN,
-                                "account-reactivation-denied",
-                                "Compte supprimé",
-                                "Ce compte a été supprimé ou banni. Il ne peut pas être réactivé "
-                                        + "par cette action : reconnectez-vous pour créer un nouveau "
-                                        + "compte.");
+                        throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "account-reactivation-denied", "problem.account-reactivation-denied");
                     }
                     userRepository.reactivateByFirebaseUid(firebaseUid, UserStatus.ACTIVE.name());
                     return userRepository.findByFirebaseUid(firebaseUid).orElseThrow().getId();
@@ -130,11 +124,7 @@ public class GuestUserProvisioner {
             // l'erreur, l'INSERT partant au commit (500). saveAndFlush la fait surgir ici,
             // et un 409 explicite annule proprement la transaction : la requête gagnante a
             // créé l'invité, un nouvel essai de celle-ci le retrouvera.
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT,
-                    "guest-provisioning-conflict",
-                    "Requête concurrente",
-                    "Une autre requête vient de créer ce compte invité. Réessayez.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "guest-provisioning-conflict", "problem.guest-provisioning-conflict");
         }
     }
 }

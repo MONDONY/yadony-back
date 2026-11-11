@@ -188,8 +188,7 @@ public class BidService {
     public BidQuoteResponse quote(String firebaseUid, BidQuoteRequest request) {
         UserEntity sender = findUserByFirebaseUid(firebaseUid);
         AnnouncementEntity ann = announcementRepository.findById(request.announcementId())
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         // Même détermination de mode que createBid/checkout : au moins poids OU article.
         List<BidGridItemRequest> gridItems = request.gridItems() != null ? request.gridItems() : List.of();
@@ -197,9 +196,7 @@ public class BidService {
         boolean hasKg   = request.weightKg() != null && request.weightKg().compareTo(BigDecimal.ZERO) > 0;
 
         if (!hasGrid && !hasKg) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "bid-empty", "Bid Empty",
-                    "Au moins un article ou un poids doit être renseigné");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "bid-empty", "problem.bid-empty");
         }
 
         // Net grille : Σ (prix unitaire net × quantité), articles bornés à CETTE annonce.
@@ -207,9 +204,7 @@ public class BidService {
         for (BidGridItemRequest g : gridItems) {
             AnnouncementPriceGridItemEntity annItem = annGridItemRepository.findById(g.announcementGridItemId())
                     .filter(i -> i.getAnnouncementId().equals(ann.getId()))
-                    .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                            "invalid-grid-item", "Invalid Grid Item",
-                            "Article hors grille de cette annonce : " + g.announcementGridItemId()));
+                    .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-grid-item", "problem.invalid-grid-item", g.announcementGridItemId()));
             gridNet = gridNet.add(annItem.getUnitPriceNet().multiply(BigDecimal.valueOf(g.quantity())));
         }
         gridNet = gridNet.setScale(2, java.math.RoundingMode.HALF_UP);
@@ -218,9 +213,7 @@ public class BidService {
         BigDecimal kgNet = BigDecimal.ZERO;
         if (hasKg) {
             if (ann.getPricePerKg() == null) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "invalid-bid-params", "Invalid Bid Parameters",
-                        "Le prix au kilo est requis pour calculer le devis au poids");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-bid-params", "problem.invalid-bid-params");
             }
             kgNet = ann.getPricePerKg().multiply(request.weightKg()).setScale(2, java.math.RoundingMode.HALF_UP);
         }
@@ -288,8 +281,7 @@ public class BidService {
         SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(ann.getCurrency());
         if (netEur.setScale(currency.minorUnit(), java.math.RoundingMode.HALF_UP).signum() <= 0) {
             // Même refus que les rails : la grille ne tarife pas un net nul.
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "invalid-amount", "Invalid Amount", "Le montant calculé est invalide (≤ 0)");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-amount", "problem.invalid-amount");
         }
         boolean withCode = promoCode != null && !promoCode.isBlank();
         CommissionReductions reductions = commissionRateResolver.reductions(ann.getTravelerId(), senderId,
@@ -321,9 +313,7 @@ public class BidService {
         // (AnnouncementService#assertCanPublish), où personne d'autre ne consent.
 
         AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(announcementId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found",
-                        "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         String normalizedContentCategory =
                 assertCanBidOn(sender, announcement, request.contentCategory());
@@ -331,15 +321,11 @@ public class BidService {
         boolean isKgFreeCreate = announcement.getCapacityUnit() == CapacityUnit.KG_FREE;
         if (!isKgFreeCreate && request.weightKg() != null
                 && request.weightKg().compareTo(announcement.getAvailableKg()) > 0) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY, "weight-exceeds-capacity", "Weight Exceeds Capacity",
-                    "Poids demandé supérieur à la capacité disponible");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "weight-exceeds-capacity", "problem.weight-exceeds-capacity");
         }
 
         if (Boolean.FALSE.equals(request.disclaimerSigned())) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY, "disclaimer-not-signed", "Disclaimer Not Signed",
-                    "Le disclaimer légal doit être accepté");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "disclaimer-not-signed", "problem.disclaimer-not-signed");
         }
 
         List<BidGridItemRequest> gridItems = request.gridItems() != null ? request.gridItems() : List.of();
@@ -347,9 +333,7 @@ public class BidService {
         boolean hasKg   = request.weightKg() != null && request.weightKg().compareTo(BigDecimal.ZERO) > 0;
 
         if (!hasGrid && !hasKg) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                "bid-empty", "Bid Empty",
-                "Au moins un article ou un poids doit être renseigné");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "bid-empty", "problem.bid-empty");
         }
 
         BidPricingMode bidMode = hasGrid && hasKg ? BidPricingMode.MIXED
@@ -404,9 +388,7 @@ public class BidService {
                 AnnouncementPriceGridItemEntity annItem = annGridItemRepository
                     .findById(gReq.announcementGridItemId())
                     .filter(i -> i.getAnnouncementId().equals(announcement.getId()))
-                    .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "invalid-grid-item", "Invalid Grid Item",
-                        "Article hors grille de cette annonce : " + gReq.announcementGridItemId()));
+                    .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-grid-item", "problem.invalid-grid-item", gReq.announcementGridItemId()));
                 BidGridItemEntity bgi = new BidGridItemEntity();
                 bgi.setBidId(saved.getId());
                 bgi.setAnnouncementGridItemId(gReq.announcementGridItemId());
@@ -463,9 +445,7 @@ public class BidService {
      */
     String assertCanBidOn(UserEntity sender, AnnouncementEntity announcement, String contentCategory) {
         if (announcement.getStatus() != AnnouncementStatus.ACTIVE) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT, "announcement-not-active", "Announcement Not Active",
-                    "Cette annonce n'est plus disponible");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement-not-active", "problem.announcement-not-active");
         }
 
         // Date limite de remise atteinte : le voyageur n'attend plus de colis. Sans cette
@@ -483,24 +463,18 @@ public class BidService {
         // sender paid). The weight cap is enforced by the weight-exceeds-capacity
         // check below since availableKg == surplus once published.
         if (announcement.isClosedToThirdPartyBids()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "surplus-not-open",
-                    "Surplus Not Open",
-                    "La capacité supplémentaire de ce trajet n'est pas ouverte aux autres expéditeurs");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "surplus-not-open", "problem.surplus-not-open");
         }
 
         // Le sender réservé (celui pour qui le trajet dédié a été créé) a déjà son
         // colis dessus : il ne peut pas bidder sur le surplus de son propre trajet,
         // même une fois le surplus publié (sinon deux colis du même sender sur un trajet).
         if (announcement.isReservedSender(sender.getId())) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT, "reserved-sender-cannot-bid", "Reserved Sender Cannot Bid",
-                    "Vous avez déjà un colis réservé sur ce trajet");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "reserved-sender-cannot-bid", "problem.reserved-sender-cannot-bid");
         }
 
         if (announcement.getTravelerId().equals(sender.getId())) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT, "cannot-bid-own-announcement", "Cannot Bid Own Announcement",
-                    "Vous ne pouvez pas faire une demande sur votre propre annonce");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "cannot-bid-own-announcement", "problem.cannot-bid-own-announcement");
         }
 
         // Normalisé AVANT le contrôle de refus (C2) : announcement.refusedTypes est déjà
@@ -514,9 +488,7 @@ public class BidService {
 
         // Confidentialité v2 — blocage : 404 masque délibérément le blocage
         if (blockService.isBlockedEitherWay(sender.getId(), travelerId)) {
-            throw new YadonyBusinessException(
-                    HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found",
-                    "Annonce introuvable");
+            throw YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found");
         }
 
         // Seule garde KYC de la création d'offre : le voyageur décide. Tant qu'il
@@ -533,9 +505,7 @@ public class BidService {
                 List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
                         BidStatus.NEGOTIATING));
         if (alreadyHasBid) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT, "already-bid", "Demande existante",
-                    "Vous avez déjà une demande en cours ou acceptée pour ce trajet");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "already-bid", "problem.already-bid.demande-cours-acceptee-trajet");
         }
 
         return normalizedContentCategory;
@@ -555,9 +525,7 @@ public class BidService {
         UserEntity traveler = userRepository.findById(travelerId).orElse(null);
         // traveler null (suppression/race) => on laisse passer : la FK garantit normalement sa présence.
         if (traveler != null && traveler.isContactKycOnly()) {
-            throw new YadonyBusinessException(
-                    HttpStatus.FORBIDDEN, "contact-kyc-required", "KYC Required",
-                    "Cet utilisateur n'accepte que les profils vérifiés");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "contact-kyc-required", "problem.contact-kyc-required");
         }
     }
 
@@ -578,9 +546,7 @@ public class BidService {
         }
         BidEntity unpaid = awaiting.get();
         if (unpaid.getPaymentMethod() == PaymentMethod.MOBILE_MONEY) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT, "already-bid", "Demande existante",
-                    "Vous avez déjà une demande en attente de paiement mobile money pour ce trajet");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "already-bid", "problem.already-bid.demande-attente-paiement-mobile");
         }
         String paymentIntentId = unpaid.getPaymentIntentId();
         if (paymentIntentId != null) {
@@ -591,9 +557,7 @@ public class BidService {
                 // webhook Stripe la promeut. On ne touche à rien.
                 log.warn("Bid {} : PaymentIntent {} non annulable ({}), demande conservée",
                         unpaid.getId(), paymentIntentId, e.getMessage());
-                throw new YadonyBusinessException(
-                        HttpStatus.CONFLICT, "already-bid", "Demande existante",
-                        "Votre demande carte sur ce trajet est déjà en cours de paiement");
+                throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "already-bid", "problem.already-bid.demande-carte-trajet-cours");
             }
         }
         unpaid.softDelete();
@@ -623,9 +587,7 @@ public class BidService {
             try {
                 bid.setMobileMoneyPhone(com.yadony.api.common.Msisdn.normalize(payer));
             } catch (IllegalArgumentException e) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "mobile-money-invalid-phone", "Mobile Money Invalid Phone",
-                        "Numéro de téléphone invalide pour le paiement mobile money.");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-invalid-phone", "problem.mobile-money-invalid-phone");
             }
         }
         bid.setMobileMoneyCountryCode(countryCode);
@@ -644,16 +606,11 @@ public class BidService {
                     ? PaymentMethod.valueOf(rawPaymentMethod.toUpperCase())
                     : PaymentMethod.STRIPE;
         } catch (IllegalArgumentException e) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "invalid-payment-method", "Invalid Payment Method",
-                    "Méthode de paiement inconnue : " + rawPaymentMethod);
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-payment-method", "problem.invalid-payment-method", rawPaymentMethod);
         }
 
         if (pm == PaymentMethod.WAVE || pm == PaymentMethod.ORANGE_MONEY) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "mobile-money-bid-payment-retired", "Mobile Money Bid Payment Retired",
-                    "Le paiement mobile money direct par l'expéditeur n'est plus disponible "
-                    + "pour les nouveaux envois. Choisissez Cash ou Carte bancaire.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-bid-payment-retired", "problem.mobile-money-bid-payment-retired");
         }
 
         if (pm == PaymentMethod.MOBILE_MONEY) {
@@ -665,28 +622,20 @@ public class BidService {
             // message de devise, jamais par « ce voyageur n'accepte pas » — la vraie cause
             // est la devise, même si le voyageur n'a par ailleurs aucun compte de versement.
             if (!CurrencyPaymentRails.allowsCode(announcement.getCurrency(), pm)) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "payment-method-unavailable-for-currency", "Payment Method Unavailable For Currency",
-                        "La zone CFA n'accepte pas ce moyen de paiement pour un colis. "
-                        + "Choisissez Cash.");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "payment-method-unavailable-for-currency", "problem.payment-method-unavailable-for-currency");
             }
             // Le rail n'existe que si le voyageur a activé son compte de versement : sans
             // lui, l'argent encaissé n'aurait aucune destination à la livraison.
             UserEntity traveler = userRepository.findById(announcement.getTravelerId()).orElse(null);
             if (traveler == null || !traveler.hasActiveMobileMoney()) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "mobile-money-not-available", "Mobile Money Not Available",
-                        "Ce voyageur n'accepte pas le paiement mobile money.");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-not-available", "problem.mobile-money-not-available");
             }
             // Le compte de versement a sa propre devise, figée à son activation
             // (MobileMoneyAccountService#activate). Si elle ne correspond pas à celle de
             // l'annonce, le versement à la livraison serait rejeté par pawaPay une fois
             // l'argent déjà encaissé auprès de l'expéditeur — donc bloqué ici, en amont.
             if (!traveler.canReceiveMobileMoney(announcement.getCurrency())) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "mobile-money-currency-mismatch", "Mobile Money Currency Mismatch",
-                        "Le compte de versement mobile money de ce voyageur ne correspond pas "
-                        + "à la devise de ce trajet.");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-currency-mismatch", "problem.mobile-money-currency-mismatch");
             }
         }
 
@@ -695,24 +644,17 @@ public class BidService {
         // de regarder les préférences de paiement de l'annonce. WAVE/ORANGE_MONEY sont
         // déjà tranchés au-dessus (retirés globalement, pas une question de devise).
         if (!CurrencyPaymentRails.allowsCode(announcement.getCurrency(), pm)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "payment-method-unavailable-for-currency", "Payment Method Unavailable For Currency",
-                    "La zone CFA n'accepte pas ce moyen de paiement pour un colis. "
-                    + "Choisissez Cash.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "payment-method-unavailable-for-currency", "problem.payment-method-unavailable-for-currency");
         }
 
         if (pm == PaymentMethod.CASH
                 && !announcement.getAcceptedPaymentMethods().contains(pm)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "cash-not-accepted", "Cash Not Accepted",
-                    "Cette annonce n'accepte pas le paiement en espèces");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "cash-not-accepted", "problem.cash-not-accepted");
         }
 
         if (pm == PaymentMethod.STRIPE
                 && !announcement.getAcceptedPaymentMethods().contains(pm)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "card-not-accepted", "Card Not Accepted",
-                    "Cette annonce n'accepte pas le paiement par carte");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "card-not-accepted", "problem.card-not-accepted");
         }
 
         return pm;
@@ -723,8 +665,7 @@ public class BidService {
         BidEntity bid = findBid(bidId);
         UserEntity user = findUserByFirebaseUid(firebaseUid);
         if (!bid.getSenderId().equals(user.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Seul l'expéditeur peut confirmer le paiement");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.seul-expediteur-confirmer-paiement");
         }
     }
 
@@ -757,8 +698,7 @@ public class BidService {
         boolean isSender = bid.getSenderId().equals(requester.getId());
 
         if (!isTraveler && !isSender) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Accès non autorisé à ce bid");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.acces-autorise");
         }
 
         // Confidentialité v2 — si la contrepartie est masquée (blocage dans un sens ou dans
@@ -766,8 +706,7 @@ public class BidService {
         // qu'un bid inexistant, jamais un 403 : un code distinct trahirait le blocage.
         UUID counterpartyId = isSender ? announcement.getTravelerId() : bid.getSenderId();
         if (applyBlockVisibility && blockVisibility.isHidden(requester.getId(), counterpartyId)) {
-            throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "bid-not-found",
-                    "Bid Not Found", "Demande introuvable");
+            throw YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found");
         }
 
         // FLUTTER-HS — une demande que l'appelant a retirée de sa liste (DELETE /bids/{id}/me)
@@ -775,8 +714,7 @@ public class BidService {
         // comme getMyBids qui la filtre déjà. Le retrait est propre à chaque participant :
         // l'autre partie continue de voir le colis.
         if (applyBlockVisibility && isHiddenFor(bid, isSender, isTraveler)) {
-            throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "bid-not-found",
-                    "Bid Not Found", "Demande introuvable");
+            throw YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found");
         }
 
         UserEntity sender = userRepository.findById(bid.getSenderId()).orElse(null);
@@ -810,31 +748,25 @@ public class BidService {
         boolean isTraveler = announcement.getTravelerId().equals(requester.getId());
         boolean isSender = bid.getSenderId().equals(requester.getId());
         if (!isTraveler && !isSender) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Accès non autorisé à ce colis");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.acces-autorise-colis");
         }
         // Retour d'un colis annulé après remise : l'expéditeur doit pouvoir joindre le voyageur
         // pour le récupérer, et inversement (FLUTTER-FM).
         if (!ContactWindow.phoneVisible(bid, LocalDateTime.now(ZoneOffset.UTC))) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "phone-not-revealable",
-                    "Phone Not Revealable",
-                    "Le numéro n'est communiqué qu'une fois le colis accepté");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "phone-not-revealable", "problem.phone-not-revealable");
         }
 
         // La contrepartie : l'expéditeur voit le voyageur, le voyageur voit l'expéditeur.
         UUID counterpartyId = isSender ? announcement.getTravelerId() : bid.getSenderId();
         UserEntity counterparty = userRepository.findById(counterpartyId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found",
-                        "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
 
         // Réglage de confidentialité de la contrepartie : elle a choisi de n'être
         // joignable que par la messagerie Yadony. Vérifié ici, et pas seulement via le
         // booléen des DTO de liste, car cet endpoint est la seule autorité — un
         // client qui appellerait l'URL directement ne doit pas obtenir le numéro.
         if (counterparty.isHidePhoneNumber()) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "phone-hidden-by-user",
-                    "Phone Hidden",
-                    "Ce membre préfère échanger par la messagerie Yadony");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "phone-hidden-by-user", "problem.phone-hidden-by-user");
         }
 
         String phone = firebaseContact.getContact(counterparty.getFirebaseUid()).phoneNumber();
@@ -853,8 +785,7 @@ public class BidService {
         UserEntity traveler = findUserByFirebaseUid(firebaseUid);
 
         if (!announcement.getTravelerId().equals(traveler.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas autorisé à voir ces demandes");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.autorise-voir-demandes");
         }
 
         // Confidentialité v2 — les colis des expéditeurs bloqués (dans un sens ou dans
@@ -988,11 +919,9 @@ public class BidService {
     @CacheEvict(value = {"announcements-search", "traveler-bids-me", "bids-me"}, allEntries = true)
     public BidResponse acceptBid(UUID bidId, String firebaseUid) {
         BidEntity bid = bidRepository.findByIdForUpdate(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "bid-not-found", "Bid Not Found", "Demande introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found"));
         AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
         UserEntity traveler = findUserByFirebaseUid(firebaseUid);
 
         requireTravelerOwnsAnnouncement(traveler, announcement);
@@ -1009,11 +938,9 @@ public class BidService {
     @CacheEvict(value = "announcements-search", allEntries = true)
     public BidResponse acceptBidBySystem(UUID bidId, UUID travelerId) {
         BidEntity bid = bidRepository.findByIdForUpdate(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "bid-not-found", "Bid Not Found", "Demande introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found"));
         AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
         if (!announcement.getTravelerId().equals(travelerId)) {
             throw new IllegalStateException(
                     "Automation travelerId mismatch for announcement " + announcement.getId());
@@ -1028,9 +955,7 @@ public class BidService {
             // Le parcours mobile money accepte par POST /bids/{id}/mobile-money/accept, qui
             // crée le paiement en attente dans la même transaction (comme accept-with-commission
             // pour le cash). Ce chemin exigerait PAYMENT_ESCROWED, que ce bid n'atteint jamais.
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "mobile-money-accept-endpoint", "Mobile Money Accept Endpoint",
-                    "Acceptez ce colis via le parcours mobile money.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-accept-endpoint", "problem.mobile-money-accept-endpoint");
         }
 
         requireBidStatus(bid, BidStatus.PAYMENT_ESCROWED);
@@ -1045,17 +970,13 @@ public class BidService {
                 || announcement.getStatus() == AnnouncementStatus.COMPLETED
                 || announcement.getStatus() == AnnouncementStatus.CANCELLED
                 || announcement.getStatus() == AnnouncementStatus.REMOVED_BY_ADMIN) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "announcement-not-accepting", "Announcement Not Accepting",
-                    "Le voyageur est déjà parti, ce trajet n'accepte plus de colis");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement-not-accepting", "problem.announcement-not-accepting");
         }
 
         boolean isKgFree = announcement.getCapacityUnit() == CapacityUnit.KG_FREE;
         if (!isKgFree && bid.getWeightKg() != null
                 && bid.getWeightKg().compareTo(announcement.getAvailableKg()) > 0) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT, "capacity-insufficient", "Insufficient Capacity",
-                    "Capacité insuffisante pour accepter cette demande");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "capacity-insufficient", "problem.capacity-insufficient");
         }
 
         bid.setStatus(BidStatus.ACCEPTED);
@@ -1171,8 +1092,7 @@ public class BidService {
         requireTravelerOwnsAnnouncement(traveler, announcement);
 
         if (bid.getStatus() != BidStatus.ACCEPTED) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "bid-not-accepted", "Bid Not Accepted",
-                    "Confirmation de présence uniquement pour les bids acceptés");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "bid-not-accepted", "problem.bid-not-accepted");
         }
 
         bid.setVoyageurConfirmed(true);
@@ -1203,14 +1123,12 @@ public class BidService {
         boolean isTraveler = announcement != null
                 && announcement.getTravelerId().equals(caller.getId());
         if (!isSender && !isTraveler) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas autorisé à annuler ce bid");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.autorise-annuler");
         }
 
         if (bid.getStatus() == BidStatus.CANCELLED || bid.getStatus() == BidStatus.REJECTED
                 || bid.getStatus() == BidStatus.COMPLETED || bid.getStatus() == BidStatus.ARRIVED) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "invalid-status", "Invalid Status",
-                    "Impossible d'annuler un bid déjà terminé");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "invalid-status", "problem.invalid-status.impossible-annuler-termine");
         }
 
         // Verrou D3 : pas d'annulation en transit ni après le départ réel (colis remis).
@@ -1336,8 +1254,7 @@ public class BidService {
         UserEntity sender = findUserByFirebaseUid(firebaseUid);
 
         if (!bid.getSenderId().equals(sender.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas autorisé à masquer ce bid");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.autorise-masquer");
         }
 
         bid.setDeletedBySender(true);
@@ -1353,13 +1270,11 @@ public class BidService {
         UserEntity traveler = findUserByFirebaseUid(firebaseUid);
 
         if (!announcement.getTravelerId().equals(traveler.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas autorisé à effectuer cette action");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.autorise-effectuer-action");
         }
 
         if (bid.getStatus() != BidStatus.REJECTED && bid.getStatus() != BidStatus.CANCELLED) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "invalid-bid-status", "Invalid Bid Status",
-                    "Seules les demandes refusées ou annulées peuvent être supprimées");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "invalid-bid-status", "problem.invalid-bid-status.seules-demandes-refusees-annulees");
         }
 
         bid.setDeletedByTraveler(true);
@@ -1380,15 +1295,13 @@ public class BidService {
         requireTravelerOwnsAnnouncement(traveler, announcement);
 
         if (bid.getStatus() != BidStatus.ACCEPTED && bid.getStatus() != BidStatus.HANDED_OVER) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-bid-status",
-                    "Unprocessable", "Le refus de colis n'est possible que sur un envoi accepté ou remis");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-bid-status", "problem.invalid-bid-status.refus-colis-possible-envoi");
         }
         // Le refus sert à l'inspection au moment de la remise. Le scan TRANSIT, qui
         // le fermait, est facultatif : même fenêtre que l'annulation, fermée au départ.
         if (bid.getStatus() == BidStatus.HANDED_OVER
                 && com.yadony.api.cancellation.CancellationGuard.hasDeparted(announcement)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "parcel-refusal-locked",
-                    "Parcel Refusal Locked", "Le trajet est parti : le colis ne peut plus être refusé");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "parcel-refusal-locked", "problem.parcel-refusal-locked");
         }
 
         // Le colis refusé rend sa place au trajet, comme une annulation (restoreCapacityIfNeeded) :
@@ -1446,33 +1359,28 @@ public class BidService {
 
     private UserEntity findUserByFirebaseUid(String firebaseUid) {
         return userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
     }
 
     private AnnouncementEntity findAnnouncement(UUID id) {
         return announcementRepository.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
     }
 
     private BidEntity findBid(UUID id) {
         return bidRepository.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Bid Not Found", "Demande introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found"));
     }
 
     private void requireTravelerOwnsAnnouncement(UserEntity traveler, AnnouncementEntity announcement) {
         if (!announcement.getTravelerId().equals(traveler.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas autorisé à effectuer cette action");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.autorise-effectuer-action");
         }
     }
 
     private void requireBidStatus(BidEntity bid, BidStatus expected) {
         if (bid.getStatus() != expected) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "invalid-bid-status", "Invalid Bid Status",
-                    "Cette action n'est pas possible pour un bid en statut " + bid.getStatus());
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "invalid-bid-status", "problem.invalid-bid-status.action-possible-statut", bid.getStatus());
         }
     }
 

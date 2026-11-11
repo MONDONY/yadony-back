@@ -111,11 +111,7 @@ public class GuestClaimService {
         // 2. ... et il doit être ANONYME. Accepter un jeton de compte réel transformerait cet
         //    endpoint en aspirateur à favoris pour quiconque intercepte un jeton.
         if (!FirebaseSignInProvider.isAnonymous(decoded)) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY,
-                    "guest-claim-not-anonymous",
-                    "Session non anonyme",
-                    "Le jeton présenté n'est pas celui d'une session visiteur.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "guest-claim-not-anonymous", "problem.guest-claim-not-anonymous");
         }
 
         String guestUid = decoded.getUid();
@@ -123,11 +119,7 @@ public class GuestClaimService {
         // 3. ... et il ne peut pas être celui de l'appelant : il n'y aurait rien à transférer,
         //    et la suppression de « la ligne invitée » supprimerait son propre compte.
         if (guestUid.equals(callerFirebaseUid)) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY,
-                    "guest-claim-self",
-                    "Session identique à l'appelant",
-                    "Le jeton présenté est celui de la session appelante : il n'y a rien à transférer.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "guest-claim-self", "problem.guest-claim-self");
         }
 
         // 3 bis. Barrière A — l'état COURANT du compte Firebase, pas le claim figé.
@@ -153,20 +145,12 @@ public class GuestClaimService {
         //    porteuse du moindre rôle n'en est donc jamais une. Même garde que celle du
         //    provisioner sur la réactivation, et elle ne coûte rien.
         if (!guest.getRoles().isEmpty()) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY,
-                    "guest-claim-has-roles",
-                    "Compte réel",
-                    "La session désignée appartient à un compte inscrit, pas à un visiteur.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "guest-claim-has-roles", "problem.guest-claim-has-roles");
         }
 
         // 5. La ligne de l'appelant, elle, doit exister : il est authentifié sur un vrai compte.
         UserEntity caller = userRepository.findByFirebaseUid(callerFirebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND,
-                        "user-not-found",
-                        "User Not Found",
-                        "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
 
         // 6. Transfert des favoris, doublons écartés.
         TransferResult favorites = transferFavorites(guest.getId(), caller.getId());
@@ -203,20 +187,11 @@ public class GuestClaimService {
         try {
             record = firebaseAuth.getUser(guestUid);
         } catch (FirebaseAuthException | IllegalArgumentException e) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNAUTHORIZED,
-                    "guest-claim-invalid-token",
-                    "Jeton visiteur invalide",
-                    "Le jeton de la session visiteur est invalide ou a expiré.");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "guest-claim-invalid-token", "problem.guest-claim-invalid-token");
         }
         UserInfo[] providers = record.getProviderData();
         if (providers != null && providers.length > 0) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY,
-                    "guest-claim-promoted-account",
-                    "Session déjà promue",
-                    "Cette session visiteur est devenue un compte inscrit : ses données ne "
-                            + "peuvent plus être réclamées.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "guest-claim-promoted-account", "problem.guest-claim-promoted-account");
         }
     }
 
@@ -232,11 +207,7 @@ public class GuestClaimService {
         } catch (FirebaseAuthException | IllegalArgumentException e) {
             // Jeton expiré, révoqué, malformé ou vide. Aucun détail renvoyé au client : le
             // message distinguerait « jeton d'une session qui existe » de « jeton inventé ».
-            throw new YadonyBusinessException(
-                    HttpStatus.UNAUTHORIZED,
-                    "guest-claim-invalid-token",
-                    "Jeton visiteur invalide",
-                    "Le jeton de la session visiteur est invalide ou a expiré.");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "guest-claim-invalid-token", "problem.guest-claim-invalid-token");
         }
     }
 

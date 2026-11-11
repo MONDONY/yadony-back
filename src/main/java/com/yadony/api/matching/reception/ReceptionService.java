@@ -229,8 +229,7 @@ public class ReceptionService {
 
     private void withdraw(BidRecipientLinkEntity link, BidEntity bid, UserEntity user) {
         if (!BidStatus.IN_FLIGHT.contains(bid.getStatus())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "reception-not-withdrawable",
-                    "Reception Not Withdrawable", "Ce colis est déjà livré ou n'est plus en cours");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "reception-not-withdrawable", "problem.reception-not-withdrawable");
         }
         link.respond(ReceptionLinkStatus.DECLINED, OffsetDateTime.now(clock));
         linkRepository.save(link);
@@ -327,12 +326,10 @@ public class ReceptionService {
 
     private UserEntity currentUser(String firebaseUid) {
         return userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNAUTHORIZED, "user-not-found",
-                        "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.user-not-found"));
     }
 
     private static YadonyBusinessException notFound() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "reception-not-found",
-                "Reception Not Found", "Colis introuvable");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "reception-not-found", "problem.rating.reception-not-found");
     }
 }

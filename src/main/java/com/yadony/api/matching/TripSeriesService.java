@@ -70,8 +70,7 @@ public class TripSeriesService {
         TripSeriesStart start = announcementService.startSeries(firebaseUid, sourceId);
         TreeSet<LocalDate> dates = new TreeSet<>(request.dates());
         if (dates.contains(start.sourceDate())) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "series-invalid-dates",
-                    "Dates invalides", "La date du trajet d'origine ne peut pas être répétée.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "series-invalid-dates", "problem.series-invalid-dates");
         }
 
         List<AnnouncementResponse> created = new ArrayList<>();

@@ -62,9 +62,8 @@ public final class HandoverDeadlineRules {
 
     public static void assertNotPassed(AnnouncementEntity announcement, Instant now) {
         if (announcement != null && announcement.isHandoverDeadlinePassed(now)) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT, PROBLEM_CODE, "Handover Deadline Passed",
-                    "La date limite de remise des colis pour ce trajet est passée");
+            throw YadonyBusinessException.localized(
+                    HttpStatus.CONFLICT, PROBLEM_CODE, "problem.handover-deadline-passed");
         }
     }
 }

@@ -61,11 +61,7 @@ public class PublishCommitmentService {
         if (!CURRENT_VERSION.equals(version)) {
             // L'app a affiché un texte périmé : son acceptation ne prouve rien du texte
             // en vigueur. L'app recharge et affiche le bon.
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT,
-                    "publish-commitment-outdated",
-                    "Publish Commitment Outdated",
-                    "Les engagements ont été mis à jour : relisez-les avant de continuer");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "publish-commitment-outdated", "problem.publish-commitment-outdated");
         }
         UserEntity user = requireUser(userId);
         Instant now = clock.instant();
@@ -95,10 +91,6 @@ public class PublishCommitmentService {
 
     private UserEntity requireUser(UUID userId) {
         return userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND,
-                        "user-not-found",
-                        "User Not Found",
-                        "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
     }
 }

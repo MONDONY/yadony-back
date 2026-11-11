@@ -39,7 +39,11 @@ class MessagesBundleTest {
             "tracking.step.departed",
             // Messages de retour de colis repris mot pour mot (le français existant ne change pas).
             "problem.code-expired.detail",
-            "problem.too-many-attempts.detail"
+            "problem.too-many-attempts.detail",
+            // Refus auth repris mot pour mot (paquet i18n serveur n° 3).
+            "problem.active-transactions.detail",
+            "problem.active-transactions.impossible-utilisateur-transactions-cours.detail",
+            "problem.active-stripe-subscription.detail"
     );
 
     private static final Pattern PLACEHOLDER = Pattern.compile("\\{(\\d+)[,}]?");

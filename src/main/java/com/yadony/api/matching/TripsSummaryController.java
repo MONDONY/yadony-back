@@ -69,15 +69,10 @@ public class TripsSummaryController {
         String firebaseUid = requireFirebaseUid();
 
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found",
-                        "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
 
         if (!user.getRoles().contains(Role.TRAVELER)) {
-            throw new YadonyBusinessException(
-                    HttpStatus.FORBIDDEN, "traveler-required",
-                    "Traveler role required",
-                    "Réservé aux voyageurs.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "traveler-required", "problem.traveler-required");
         }
         return user;
     }
@@ -85,9 +80,7 @@ public class TripsSummaryController {
     private String requireFirebaseUid() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || auth.getName() == null) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNAUTHORIZED, "unauthenticated",
-                    "Unauthenticated", "Authentification requise");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthenticated", "problem.unauthenticated");
         }
         return auth.getName();
     }

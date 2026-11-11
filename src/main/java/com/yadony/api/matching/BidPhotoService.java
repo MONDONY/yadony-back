@@ -48,18 +48,14 @@ public class BidPhotoService {
             return;
         }
         if (photoKeys.size() > MAX_PHOTOS) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "too-many-photos", "Too Many Photos",
-                    "Maximum " + MAX_PHOTOS + " photos par colis");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "too-many-photos", "problem.too-many-photos", MAX_PHOTOS);
         }
         String ownerPrefix = PHOTO_PREFIX + senderId + "/";
         List<BidPhotoEntity> rows = new ArrayList<>();
         int position = 0;
         for (String key : photoKeys) {
             if (!StorageKeys.isOwnedKey(key, ownerPrefix)) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "invalid-photo-key", "Invalid Photo Key",
-                        "Clé photo invalide");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-photo-key", "problem.invalid-photo-key");
             }
             rows.add(new BidPhotoEntity(bidId, key, position++));
         }

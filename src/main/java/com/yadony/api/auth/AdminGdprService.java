@@ -64,8 +64,7 @@ public class AdminGdprService {
     @Transactional
     public void executeDeletion(UUID userId, UUID adminId, String reason, boolean withoutUserRequest) {
         UserEntity user = userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
 
         // Garde le plus important de cette méthode, et le premier à s'exécuter : le geste est
         // irréversible. La file GET /gdpr-requests ne liste que les comptes portant un
@@ -73,15 +72,11 @@ public class AdminGdprService {
         // acceptait n'importe quel identifiant. Une demande reçue par courrier ou par mail
         // reste possible : elle exige seulement un aveu explicite, consigné dans l'audit.
         if (user.getDeletionRequestedAt() == null && !withoutUserRequest) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "gdpr-no-request",
-                    "Unprocessable",
-                    "Cet utilisateur n'a pas demandé la suppression de son compte. Si la demande "
-                            + "a été reçue hors application, confirmez-le explicitement.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "gdpr-no-request", "problem.gdpr-no-request");
         }
 
         if (userService.hasActiveEscrow(user.getId())) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "active-transactions",
-                    "Unprocessable", "Impossible — cet utilisateur a des transactions en cours");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "active-transactions", "problem.active-transactions.impossible-utilisateur-transactions-cours");
         }
         userService.settleWalletsForDeletion(user.getId());
 

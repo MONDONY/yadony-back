@@ -74,13 +74,10 @@ public class TravelerStatsController {
         String firebaseUid = requireFirebaseUid();
 
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
 
         if (!user.getRoles().contains(Role.TRAVELER) || !user.isProAccount()) {
-            throw new YadonyBusinessException(
-                    HttpStatus.FORBIDDEN, "pro-required",
-                    "PRO account required", "Les statistiques sont réservées aux voyageurs PRO.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "pro-required", "problem.pro-required");
         }
 
         return ResponseEntity.ok(statsService.computeStats(user));
@@ -91,17 +88,12 @@ public class TravelerStatsController {
             @RequestParam(defaultValue = "month") String period) {
         String firebaseUid = requireFirebaseUid();
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         if (!user.getRoles().contains(Role.TRAVELER) || !user.isProAccount()) {
-            throw new YadonyBusinessException(
-                    HttpStatus.FORBIDDEN, "pro-required",
-                    "PRO account required", "Analytics réservés aux voyageurs PRO.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "pro-required", "problem.pro-required.analytics-reserves-voyageurs");
         }
         if (!List.of("month", "quarter", "year").contains(period)) {
-            throw new YadonyBusinessException(
-                    HttpStatus.BAD_REQUEST, "invalid-period",
-                    "Invalid period", "Période invalide. Valeurs acceptées: month, quarter, year.");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "invalid-period", "problem.invalid-period");
         }
         return ResponseEntity.ok(analyticsService.computeAnalytics(user, period));
     }
@@ -110,12 +102,9 @@ public class TravelerStatsController {
     public ResponseEntity<CalendarStatsResponse> getMyCalendar() {
         String firebaseUid = requireFirebaseUid();
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         if (!user.getRoles().contains(Role.TRAVELER) || !user.isProAccount()) {
-            throw new YadonyBusinessException(
-                    HttpStatus.FORBIDDEN, "pro-required",
-                    "PRO account required", "Calendrier réservé aux voyageurs PRO.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "pro-required", "problem.pro-required.calendrier-reserve-voyageurs");
         }
         YearMonth current = YearMonth.now();
         LocalDateTime from = current.atDay(1).atStartOfDay();
@@ -136,12 +125,9 @@ public class TravelerStatsController {
     public ResponseEntity<List<MatchingRequestDto>> getMatchingRequests() {
         String firebaseUid = requireFirebaseUid();
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         if (!user.getRoles().contains(Role.TRAVELER)) {
-            throw new YadonyBusinessException(
-                    HttpStatus.FORBIDDEN, "traveler-required",
-                    "Traveler role required", "Réservé aux voyageurs.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "traveler-required", "problem.traveler-required");
         }
         return ResponseEntity.ok(matchingService.findMatchingRequests(user.getId()));
     }
@@ -150,32 +136,21 @@ public class TravelerStatsController {
     public ResponseEntity<Void> inviteSender(@Valid @RequestBody InviteRequest body) {
         String firebaseUid = requireFirebaseUid();
         UserEntity traveler = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         if (!traveler.getRoles().contains(Role.TRAVELER) || !traveler.isProAccount()) {
-            throw new YadonyBusinessException(
-                    HttpStatus.FORBIDDEN, "pro-required",
-                    "PRO account required", "Invitations réservées aux voyageurs PRO.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "pro-required", "problem.pro-required.invitations-reservees-voyageurs");
         }
 
         AnnouncementEntity announcement = announcementRepository.findById(body.announcementId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "announcement-not-found",
-                        "Announcement Not Found", "Annonce introuvable."));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found.annonce-introuvable"));
         if (!announcement.getTravelerId().equals(traveler.getId())) {
-            throw new YadonyBusinessException(
-                    HttpStatus.FORBIDDEN, "not-your-announcement",
-                    "Forbidden", "Cette annonce ne vous appartient pas.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "not-your-announcement", "problem.not-your-announcement");
         }
 
         PackageRequestEntity request = packageRequestRepository.findById(body.requestId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "request-not-found",
-                        "Request Not Found", "Demande introuvable."));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "request-not-found", "problem.request-not-found"));
         if (request.getStatus() != PackageRequestStatus.OPEN) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT, "request-not-open",
-                    "Request Not Open", "Cette demande n'est plus disponible.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "request-not-open", "problem.request-not-open");
         }
 
         var text = com.yadony.api.notifications.NotificationTexts.travelerInvite(
@@ -236,8 +211,7 @@ public class TravelerStatsController {
     private String requireFirebaseUid() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || auth.getName() == null) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNAUTHORIZED, "unauthenticated", "Unauthenticated", "Authentification requise");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthenticated", "problem.unauthenticated");
         }
         return auth.getName();
     }
