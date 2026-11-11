@@ -56,7 +56,14 @@ class AdminPermissionsLotDTest {
     }
 
     @Test
-    void enumHolds39Permissions() {
+    void dac7Report_grantedToAdminAndSuperAdmin_neverToSupport() {
+        assertThat(AdminPermissions.effective(AdminRole.ADMIN, Map.of())).contains(AdminPermission.DAC7_REPORT);
+        assertThat(AdminPermissions.effective(AdminRole.SUPER_ADMIN, Map.of())).contains(AdminPermission.DAC7_REPORT);
+        assertThat(AdminPermissions.effective(AdminRole.SUPPORT, Map.of())).doesNotContain(AdminPermission.DAC7_REPORT);
+    }
+
+    @Test
+    void enumHolds40Permissions() {
         // USER_DELETE ajoutee en tache 3 (feature/suppression-compte-admin) — 29 → 30.
         // USER_PRO_GRANT ajoutee en tache 2 du lot billing (feature/pro-saas-abonnement) — 30 → 31.
         // SUPPORT_TICKET_VIEW + SUPPORT_TICKET_MANAGE (messagerie support) — 31 → 33.
@@ -65,7 +72,7 @@ class AdminPermissionsLotDTest {
         // KYC_DECIDE (décisions de la file KYC, admin-kyc-file-decisions) — 35 → 36.
         // TOPUP_CODE_MANAGE (codes de recharge du solde) — 36 → 37.
         // ASSISTANT_MANAGE (fournisseurs d'IA de l'assistant) — 37 → 38.
-        // GP_PRO_REVIEW — 38 → 39.
-        assertThat(AdminPermission.values()).hasSize(39);
+        // GP_PRO_REVIEW — 38 → 39. DAC7_REPORT (déclaration DAC7, lot 3b) — 39 → 40.
+        assertThat(AdminPermission.values()).hasSize(40);
     }
 }

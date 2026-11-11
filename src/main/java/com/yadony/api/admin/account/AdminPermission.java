@@ -113,6 +113,12 @@ public enum AdminPermission {
      * support : le badge est un signal de confiance affiché aux expéditeurs.
      */
     GP_PRO_REVIEW,
+    /**
+     * Déclaration DAC7 (lot 3b) : vue d'ensemble, voyageurs, registre des diligences, relance, décision de l'équipe,
+     * export du fichier pour la DGFiP et CSV de contrôle, récapitulatifs annuels. Jamais accordée au support : l'export
+     * porte les NIF en clair.
+     */
+    DAC7_REPORT,
     AUDIT_VIEW,
     EXPORT_RUN
 }
