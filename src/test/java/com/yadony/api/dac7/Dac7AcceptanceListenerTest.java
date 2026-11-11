@@ -68,4 +68,17 @@ class Dac7AcceptanceListenerTest {
         listener(true).onBidAccepted(new BidAcceptedEvent(UUID.randomUUID(), UUID.randomUUID(), null, null));
         verifyNoInteractions(reminders);
     }
+
+    @Test
+    @DisplayName("demande de colis négociée acceptée : même invite ; éteint, rien")
+    void demandeNegociee() {
+        com.yadony.api.requests.event.PackageRequestAcceptedEvent accepted =
+                new com.yadony.api.requests.event.PackageRequestAcceptedEvent(UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), traveler, java.math.BigDecimal.TEN, null, java.math.BigDecimal.ONE, null,
+                        null, null, null, null, null, null, null, java.util.List.of(), null, null, null);
+        listener(false).onPackageRequestAccepted(accepted);
+        verifyNoInteractions(reminders);
+        listener(true).onPackageRequestAccepted(accepted);
+        verify(reminders).requestAtAcceptance(traveler, NOW);
+    }
 }

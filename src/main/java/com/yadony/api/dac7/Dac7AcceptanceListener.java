@@ -1,6 +1,7 @@
 package com.yadony.api.dac7;
 
 import com.yadony.api.matching.events.BidAcceptedEvent;
+import com.yadony.api.requests.event.PackageRequestAcceptedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,7 +14,8 @@ import java.time.Clock;
 import java.time.Instant;
 
 /**
- * Collecte ciblée DAC7 (arbitrage R1) : après une acceptation de réservation (carte, espèces ou mobile money), invite
+ * Collecte ciblée DAC7 (arbitrage R1) : après une acceptation de réservation (colis sur un trajet : carte, espèces ou
+ * mobile money, {@link BidAcceptedEvent} ; demande de colis négociée, {@link PackageRequestAcceptedEvent}), invite
  * NON bloquante à compléter les informations fiscales ({@link Dac7ReminderService#requestAtAcceptance}). Après
  * validation de l'acceptation et sur un autre fil : une panne de DAC7 ou du prestataire de vérification ne retarde ni
  * n'annule jamais l'acceptation, et ne remonte jamais au voyageur (journal de la classe d'erreur seulement).
@@ -44,13 +46,23 @@ public class Dac7AcceptanceListener {
     @Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onBidAccepted(BidAcceptedEvent event) {
-        if (!properties.enabledOrDefault() || !promptEnabled || event.getTravelerId() == null) {
+        prompt(event.getTravelerId());
+    }
+
+    @Async
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onPackageRequestAccepted(PackageRequestAcceptedEvent event) {
+        prompt(event.travelerId());
+    }
+
+    private void prompt(java.util.UUID travelerId) {
+        if (!properties.enabledOrDefault() || !promptEnabled || travelerId == null) {
             return;
         }
         try {
-            reminders.requestAtAcceptance(event.getTravelerId(), Instant.now(clock));
+            reminders.requestAtAcceptance(travelerId, Instant.now(clock));
         } catch (RuntimeException e) {
-            log.warn("DAC7 : invite après acceptation non envoyée (voyageur {}) : {}", event.getTravelerId(),
+            log.warn("DAC7 : invite après acceptation non envoyée (voyageur {}) : {}", travelerId,
                     e.getClass().getSimpleName());
         }
     }
