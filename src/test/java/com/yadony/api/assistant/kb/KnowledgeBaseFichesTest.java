@@ -36,6 +36,33 @@ class KnowledgeBaseFichesTest {
         return hits.get(0).article().id();
     }
 
+    /**
+     * L'écran d'accueil s'ouvre avec son explication : il ne doit pas porter le bouton « Mes alertes »,
+     * que son texte ne mentionne pas. Le bouton vient de la fiche alertes-trajets, quand l'utilisateur pose la
+     * question suggérée.
+     */
+    @Test
+    void ecranAccueilNaPlusDeRoute_etLeBoutonAlertesVientDeAlertesTrajets() {
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        KnowledgeBase kb = productionKb();
+        for (String locale : List.of("fr", "en")) {
+            KbArticle accueil = corpus.articles(locale).stream()
+                    .filter(a -> a.id().equals("ecran-accueil")).findFirst().orElseThrow();
+            assertThat(accueil.routes()).as(locale).isEmpty();
+            assertThat(accueil.screens()).as(locale).containsExactly("/home");
+            KbArticle alertes = corpus.articles(locale).stream()
+                    .filter(a -> a.id().equals("alertes-trajets")).findFirst().orElseThrow();
+            assertThat(alertes.routes()).as(locale).extracting(KbRoute::path).containsExactly("/corridor-alerts");
+            KbArticle activites = corpus.articles(locale).stream()
+                    .filter(a -> a.id().equals("ecran-activites")).findFirst().orElseThrow();
+            assertThat(activites.routes()).as(locale).extracting(KbRoute::path).contains("/corridor-alerts");
+            assertThat(kb.screen(locale, "/home")).as(locale).map(KbArticle::id).contains("ecran-accueil");
+        }
+        assertThat(kb.routeWhitelist()).contains("/corridor-alerts");
+        assertThat(firstHit(kb, "fr", "Comment être prévenu d'un nouveau trajet ?")).isEqualTo("alertes-trajets");
+        assertThat(firstHit(kb, "en", "How do I get notified of a new trip?")).isEqualTo("alertes-trajets");
+    }
+
     @Test
     void lesFichesDuDepotSontValides() {
         KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
