@@ -56,6 +56,9 @@ yadony:
   # application.yml, est couvert par TravelerTaxInfoControllerTest sans contexte Spring de plus.
   dac7:
     enabled: true
+    # Invite après acceptation (collecte ciblée) éteinte dans le contexte partagé : sinon chaque test qui accepte une
+    # réservation recevrait une notification de plus, sur un fil asynchrone. TravelerTaxInfoIT l'appelle directement.
+    acceptance-prompt-enabled: false
     # Aucun appel réseau dans les tests : les taux BCE sont posés en base par chaque test qui en a besoin.
     ecb:
       fetch-enabled: false

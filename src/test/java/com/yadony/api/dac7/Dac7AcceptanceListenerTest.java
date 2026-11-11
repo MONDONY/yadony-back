@@ -29,7 +29,7 @@ class Dac7AcceptanceListenerTest {
 
     private Dac7AcceptanceListener listener(Boolean enabled) {
         return new Dac7AcceptanceListener(new Dac7Properties(enabled, null), reminders,
-                Clock.fixed(NOW, ZoneOffset.UTC));
+                Clock.fixed(NOW, ZoneOffset.UTC), true);
     }
 
     @Test
@@ -37,6 +37,14 @@ class Dac7AcceptanceListenerTest {
     void eteint_rien() {
         listener(null).onBidAccepted(event);
         listener(false).onBidAccepted(event);
+        verifyNoInteractions(reminders);
+    }
+
+    @Test
+    @DisplayName("DAC7 allumé mais invite éteinte seule (profil de test) : rien")
+    void inviteEteinte_rien() {
+        new Dac7AcceptanceListener(new Dac7Properties(true, null), reminders, Clock.fixed(NOW, ZoneOffset.UTC), false)
+                .onBidAccepted(event);
         verifyNoInteractions(reminders);
     }
 

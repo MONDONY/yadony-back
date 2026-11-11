@@ -3,6 +3,7 @@ package com.yadony.api.dac7;
 import com.yadony.api.matching.events.BidAcceptedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
@@ -18,6 +19,9 @@ import java.time.Instant;
  * n'annule jamais l'acceptation, et ne remonte jamais au voyageur (journal de la classe d'erreur seulement).
  *
  * <p>DAC7 éteint ({@code yadony.dac7.enabled}, défaut) : rien n'est lu ni écrit, comportement inchangé.
+ * {@code yadony.dac7.acceptance-prompt-enabled} (vrai par défaut, donc gouverné par {@code yadony.dac7.enabled}) ne
+ * sert qu'à l'éteindre seul : le profil de test le fait, pour que les autres tests d'acceptation ne reçoivent pas une
+ * notification de plus sur un fil asynchrone.
  */
 @Component
 public class Dac7AcceptanceListener {
@@ -27,17 +31,20 @@ public class Dac7AcceptanceListener {
     private final Dac7Properties properties;
     private final Dac7ReminderService reminders;
     private final Clock clock;
+    private final boolean promptEnabled;
 
-    public Dac7AcceptanceListener(Dac7Properties properties, Dac7ReminderService reminders, Clock clock) {
+    public Dac7AcceptanceListener(Dac7Properties properties, Dac7ReminderService reminders, Clock clock,
+                                  @Value("${yadony.dac7.acceptance-prompt-enabled:true}") boolean promptEnabled) {
         this.properties = properties;
         this.reminders = reminders;
         this.clock = clock;
+        this.promptEnabled = promptEnabled;
     }
 
     @Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onBidAccepted(BidAcceptedEvent event) {
-        if (!properties.enabledOrDefault() || event.getTravelerId() == null) {
+        if (!properties.enabledOrDefault() || !promptEnabled || event.getTravelerId() == null) {
             return;
         }
         try {
