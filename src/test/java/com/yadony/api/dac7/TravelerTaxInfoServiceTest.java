@@ -463,4 +463,15 @@ class TravelerTaxInfoServiceTest {
         assertThat(r.missingFields()).containsExactly(Dac7CollectionField.TAX_IDENTIFICATION_NUMBER);
         assertThat(r.identity()).isNull();
     }
+
+    @Test
+    void dto_jamaisDeValeurDansToString() {
+        TaxInfoRequest.AddressInput address = new TaxInfoRequest.AddressInput("5 avenue Foch", null, "75116", "Paris");
+        assertThat(address.toString()).doesNotContain("Foch");
+        assertThat(new TaxInfoRequest("1234567890123", "FR", null, "Awa", "Diallo", "1990-04-12", "Dakar", address)
+                .toString()).doesNotContain("1234567890123").doesNotContain("Dakar").doesNotContain("Awa");
+        assertThat(new com.yadony.api.dac7.dto.TaxInfoResponse.TaxAddress("5 avenue Foch", null, "75116", "Paris",
+                "FR").toString()).doesNotContain("Foch");
+        assertThat(new Dac7VerifiedIdentity("Awa", "Diallo", BIRTH, null).verificationRef()).isNull();
+    }
 }
