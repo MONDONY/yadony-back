@@ -188,6 +188,60 @@ class MatchingServiceTest {
             assertThat(dto.weightKg()).isEqualTo(5.0);
         }
 
+        @Test
+        void findMatchingRequests_excludesRequestOfOtherMode() throws Exception {
+            PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
+            request.setTransportMode(TransportMode.BOAT);
+            activeAnnouncement.setTransportMode(TransportMode.PLANE);
+            when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
+                    .thenReturn(List.of(activeAnnouncement));
+            when(packageRequestRepository.findOpenByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(request));
+
+            assertThat(matchingService.findMatchingRequests(TRAVELER_ID)).isEmpty();
+        }
+
+        @Test
+        void findMatchingRequests_includesAnyModeRequest() throws Exception {
+            PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
+            request.setTransportMode(null);
+            activeAnnouncement.setTransportMode(TransportMode.BOAT);
+            when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
+                    .thenReturn(List.of(activeAnnouncement));
+            when(packageRequestRepository.findOpenByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(request));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+
+            assertThat(matchingService.findMatchingRequests(TRAVELER_ID)).hasSize(1);
+        }
+
+        @Test
+        void findMatchingRequests_includesRoadRequestOnInterchangeableRoadMode() throws Exception {
+            PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
+            request.setTransportMode(TransportMode.CAR);
+            activeAnnouncement.setTransportMode(TransportMode.BUS);
+            when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
+                    .thenReturn(List.of(activeAnnouncement));
+            when(packageRequestRepository.findOpenByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(request));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+
+            assertThat(matchingService.findMatchingRequests(TRAVELER_ID)).hasSize(1);
+        }
+
+        @Test
+        void findBestMatchByRequestId_excludesRequestOfOtherMode() throws Exception {
+            PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
+            request.setTransportMode(TransportMode.BOAT);
+            activeAnnouncement.setTransportMode(TransportMode.PLANE);
+            when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
+                    .thenReturn(List.of(activeAnnouncement));
+            when(packageRequestRepository.findOpenOrNegotiatingByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(request));
+
+            assertThat(matchingService.findBestMatchByRequestId(TRAVELER_ID)).isEmpty();
+        }
+
         /**
          * Budget en XOF face à un prix en EUR : sans conversion, 5000 F CFA/kg
          * « couvrait » 5 EUR/kg (5000 >= 5 → 35/35). Le score doit comparer sur le

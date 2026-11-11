@@ -1,5 +1,6 @@
 package com.yadony.api.requests.dto;
 
+import com.yadony.api.matching.TransportMode;
 import com.yadony.api.matching.dto.AddressDto;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import jakarta.validation.Valid;
@@ -53,14 +54,18 @@ public record NegotiationCreateDedicatedTripRequest(
 
         // Date d'arrivée si différente du départ (vol de nuit) ; absente = même jour
         // (FLUTTER-4E).
-        LocalDate arrivalDate
+        LocalDate arrivalDate,
+
+        // Mode du trajet dédié quand la demande de colis ne fixe pas le sien (« peu importe ») ;
+        // ignoré dès que la demande en porte un. Absent : avion.
+        TransportMode transportMode
 ) {
     public NegotiationCreateDedicatedTripRequest(
             LocalDate departureDate, LocalTime departureTime, LocalTime arrivalTime,
             AddressDto pickupAddress, AddressDto deliveryAddress, String description,
             List<String> acceptedContentTypes, List<String> refusedTypes) {
         this(departureDate, departureTime, arrivalTime, pickupAddress, deliveryAddress,
-             description, acceptedContentTypes, refusedTypes, false, null);
+             description, acceptedContentTypes, refusedTypes, false, null, null);
     }
 
     public NegotiationCreateDedicatedTripRequest(
@@ -69,6 +74,15 @@ public record NegotiationCreateDedicatedTripRequest(
             List<String> acceptedContentTypes, List<String> refusedTypes,
             boolean useCardForCommission) {
         this(departureDate, departureTime, arrivalTime, pickupAddress, deliveryAddress,
-             description, acceptedContentTypes, refusedTypes, useCardForCommission, null);
+             description, acceptedContentTypes, refusedTypes, useCardForCommission, null, null);
+    }
+
+    public NegotiationCreateDedicatedTripRequest(
+            LocalDate departureDate, LocalTime departureTime, LocalTime arrivalTime,
+            AddressDto pickupAddress, AddressDto deliveryAddress, String description,
+            List<String> acceptedContentTypes, List<String> refusedTypes,
+            boolean useCardForCommission, LocalDate arrivalDate) {
+        this(departureDate, departureTime, arrivalTime, pickupAddress, deliveryAddress,
+             description, acceptedContentTypes, refusedTypes, useCardForCommission, arrivalDate, null);
     }
 }

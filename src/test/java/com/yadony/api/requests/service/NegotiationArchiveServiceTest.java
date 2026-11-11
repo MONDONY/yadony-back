@@ -103,7 +103,8 @@ class NegotiationArchiveServiceTest {
         service = new NegotiationService(requestRepo, threadRepo, messageRepo, userRepository,
                 announcementRepo, eventPublisher, auditService, config, negotiationProperties,
                 cashGatePort, escrowPort, storageService, photoService,
-                commissionRateResolver, exchangeRateService, mobileMoneyPort, TestMessages.resolver());
+                commissionRateResolver, exchangeRateService, mobileMoneyPort, TestMessages.resolver(),
+                org.mockito.Mockito.mock(com.yadony.api.matching.TransportModeGuard.class));
     }
 
     @AfterEach

@@ -212,14 +212,20 @@ public class MatchingService {
     /**
      * Règle de match commune à {@link #findMatchingRequests} et
      * {@link #findBestMatchByRequestId} : corridor déjà filtré en SQL, restent le
-     * poids et la fenêtre de date. Point d'extension unique — ajouter un critère
+     * mode de transport, le poids et la fenêtre de date. Point d'extension unique — ajouter un critère
      * ici le propage aux deux chemins.
      */
     /** Score de date d'une demande sans date (« Date flexible ») : exacte = 25, proche = 15. */
     static final int FLEXIBLE_DATE_SCORE = 20;
 
     private boolean matches(PackageRequestEntity request, AnnouncementEntity announcement) {
-        return fitsWeight(request, announcement) && fitsDate(request, announcement);
+        return fitsMode(request, announcement)
+                && fitsWeight(request, announcement) && fitsDate(request, announcement);
+    }
+
+    /** Mode choisi par l'expéditeur ; une demande « peu importe » (mode nul) accepte tout trajet. */
+    private boolean fitsMode(PackageRequestEntity request, AnnouncementEntity announcement) {
+        return TransportMode.accepts(request.getTransportMode(), announcement.getTransportMode());
     }
 
     private boolean fitsWeight(PackageRequestEntity request, AnnouncementEntity announcement) {
