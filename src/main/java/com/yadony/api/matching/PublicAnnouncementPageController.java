@@ -105,6 +105,21 @@ public class PublicAnnouncementPageController {
     @Value("${app.store.ios:}")
     private String storeUrlIos;
 
+    /** « Ville, Pays » (pays en français) ; la ville seule si le code pays est absent ou inconnu. */
+    static String placeLabel(String city, String countryCode) {
+        if (city == null || city.isBlank()) {
+            return null;
+        }
+        if (countryCode == null || countryCode.isBlank()) {
+            return city;
+        }
+        String country = Locale.of("", countryCode.trim()).getDisplayCountry(Locale.FRENCH);
+        if (country.isBlank() || country.equalsIgnoreCase(countryCode.trim())) {
+            return city;
+        }
+        return city + ", " + country;
+    }
+
     /**
      * Bouton principal orienté store selon l'appareil, plutôt que le lien
      * {@code yadony://}. Faux par défaut : l'application n'est pas encore
@@ -188,9 +203,12 @@ public class PublicAnnouncementPageController {
                 formatDecimal(cheapestGridPrice(announcement)));
         model.addAttribute("currency", SupportedCurrency.symbolOf(announcement.getCurrency()));
         model.addAttribute("serviceFeeExtra", priceGridService.displaysPriceBeforeServiceFee());
-        // Lieux de remise et de récupération, tels que le voyageur les a saisis.
-        model.addAttribute("pickupAddress", announcement.getPickupAddressLabel());
-        model.addAttribute("deliveryAddress", announcement.getDeliveryAddressLabel());
+        // Confidentialité : page ouverte à tout visiteur anonyme, donc ville et pays seulement.
+        // L'adresse précise (rue, lieu de remise) n'est jamais placée dans le modèle.
+        model.addAttribute("pickupPlace",
+                placeLabel(announcement.getDepartureCity(), announcement.getDepartureCountryCode()));
+        model.addAttribute("deliveryPlace",
+                placeLabel(announcement.getArrivalCity(), announcement.getArrivalCountryCode()));
         model.addAttribute("deepLink", "yadony://annonce/" + announcementId);
         model.addAttribute("shareUrl", buildShareUrl(announcementId));
         applyPrimaryCta(model, announcementId, request);

@@ -90,13 +90,13 @@
           <dt>Place disponible</dt>
           <dd th:text="${capacity}">12 kg</dd>
         </div>
-        <div class="row" th:if="${pickupAddress != null}">
+        <div class="row" th:if="${pickupPlace != null}">
           <dt>Remise du colis</dt>
-          <dd class="address" th:text="${pickupAddress}">12 rue de Tombouctou, 75018 Paris</dd>
+          <dd class="address" th:text="${pickupPlace}">Paris, France</dd>
         </div>
-        <div class="row" th:if="${deliveryAddress != null}">
+        <div class="row" th:if="${deliveryPlace != null}">
           <dt>Récupération</dt>
-          <dd class="address" th:text="${deliveryAddress}">Sacré-Cœur 3, Dakar</dd>
+          <dd class="address" th:text="${deliveryPlace}">Dakar, Sénégal</dd>
         </div>
       </dl>
     </section>
