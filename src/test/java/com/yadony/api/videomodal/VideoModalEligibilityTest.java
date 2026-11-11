@@ -54,12 +54,29 @@ class VideoModalEligibilityTest {
     }
 
     @Test
-    @DisplayName("NEVER_ANSWERED : exclu si une version précédente a reçu une réponse, pas si elle a seulement été vue")
+    @DisplayName("NEVER_ANSWERED : exclu si la version précédente a reçu une réponse, pas si elle a seulement été vue")
     void neverAnswered() {
         var c = campaign(3, NEVER_ANSWERED);
         assertThat(VideoModalEligibility.displaysIfEligible(c, List.of(response(c, 1, 3, SHOWN)))).isZero();
-        assertThat(VideoModalEligibility.displaysIfEligible(c, List.of(response(c, 1, 1, DISMISSED)))).isNull();
         assertThat(VideoModalEligibility.displaysIfEligible(c, List.of(response(c, 2, 1, OPENED)))).isNull();
+        assertThat(VideoModalEligibility.displaysIfEligible(c, List.of(response(c, 2, 1, DISMISSED)))).isNull();
+    }
+
+    @Test
+    @DisplayName("NEVER_ANSWERED regarde la version précédente seule : répondu à la v1 mais pas à la v2 => revoit la v3")
+    void neverAnsweredVersionPrecedenteSeule() {
+        var c = campaign(3, NEVER_ANSWERED);
+        assertThat(VideoModalEligibility.displaysIfEligible(c,
+                List.of(response(c, 1, 1, COMPLETED), response(c, 2, 2, SHOWN)))).isZero();
+        assertThat(VideoModalEligibility.displaysIfEligible(c, List.of(response(c, 1, 1, DISMISSED)))).isZero();
+    }
+
+    @Test
+    @DisplayName("NEVER_ANSWERED : répondu à la v2 => ne revoit pas la v3, même sans réponse à la v1")
+    void neverAnsweredRepondu_v2() {
+        var c = campaign(3, NEVER_ANSWERED);
+        assertThat(VideoModalEligibility.displaysIfEligible(c,
+                List.of(response(c, 1, 1, SHOWN), response(c, 2, 1, DISMISSED)))).isNull();
     }
 
     @Test

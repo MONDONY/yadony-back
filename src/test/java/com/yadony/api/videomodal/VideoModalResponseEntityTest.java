@@ -77,4 +77,14 @@ class VideoModalResponseEntityTest {
         assertThat(OPENED.rank()).isGreaterThan(DISMISSED.rank());
         assertThat(DISMISSED.rank()).isGreaterThan(SHOWN.rank());
     }
+
+    @Test
+    @DisplayName("answeredAt reste la PREMIÈRE réponse : une réponse ultérieure ne la remplace pas")
+    void answeredAtPremiereReponse() {
+        var r = fresh();
+        r.apply(DISMISSED, T1);
+        r.apply(COMPLETED, T2);
+        assertThat(r.getAnsweredAt()).isEqualTo(T1);
+        assertThat(r.getStatus()).isEqualTo(COMPLETED);
+    }
 }
