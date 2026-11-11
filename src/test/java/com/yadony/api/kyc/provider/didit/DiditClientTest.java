@@ -139,6 +139,35 @@ class DiditClientTest {
                 .isEqualTo(DiditClient.DecisionLookup.Outcome.READ);
     }
 
+    /**
+     * Relecture n° 3, finding 4 : une coupure APRÈS les en-têtes (lecture du corps) et un 408 sont des pannes
+     * passagères ; RestClient enveloppe l'IOException du corps dans une simple RestClientException.
+     */
+    @Test
+    void lookupDecision_bodyCutOrRequestTimeout_isTransient() {
+        var unavailable = DiditClient.DecisionLookup.Outcome.UNAVAILABLE;
+        assertThat(lookupWith(request -> {
+            org.springframework.mock.http.client.MockClientHttpResponse response =
+                    new org.springframework.mock.http.client.MockClientHttpResponse(new java.io.InputStream() {
+                        private int sent;
+
+                        @Override
+                        public int read() throws IOException {
+                            if (sent < 12) {
+                                return "{\"status\":\"A".charAt(sent++);
+                            }
+                            throw new java.net.SocketException("Connection reset");
+                        }
+                    }, HttpStatus.OK);
+            response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+            return response;
+        })).isEqualTo(unavailable);
+        assertThat(lookupWith(withStatus(HttpStatus.REQUEST_TIMEOUT))).isEqualTo(unavailable);
+        // Corps complet mais invalide, ou tronqué proprement : réessayer n'y changera rien.
+        assertThat(lookupWith(withSuccess("{\"status\":\"Appr", MediaType.APPLICATION_JSON)))
+                .isEqualTo(DiditClient.DecisionLookup.Outcome.UNREADABLE);
+    }
+
     @Test
     void retrieveDecision_returnsEmpty_whenDiditFails() {
         server.expect(requestTo("https://verification.didit.me/v3/session/sess_1/decision/"))
