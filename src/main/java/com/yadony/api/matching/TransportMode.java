@@ -37,8 +37,8 @@ public enum TransportMode {
     public static TransportMode parse(String raw) {
         TransportMode mode = parseOrNull(raw);
         if (mode == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-transport-mode",
-                    "Mode de transport invalide", "Ce mode de transport n'existe pas.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-transport-mode",
+                    "problem.invalid-transport-mode");
         }
         return mode;
     }

@@ -17,7 +17,6 @@ import org.springframework.stereotype.Component;
 public class TransportModeGuard {
 
     static final String ERROR_CODE = "transport-mode-disabled";
-    private static final String TITLE = "Mode de transport indisponible";
 
     private final PlatformSettingsService settings;
 
@@ -41,13 +40,13 @@ public class TransportModeGuard {
             throw boatClosed();
         }
         if ((mode == TransportMode.CAR || mode == TransportMode.BUS) && !settings.transportRoadEnabled()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, ERROR_CODE, TITLE,
-                    "Le transport par la route n'est pas encore ouvert.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, ERROR_CODE,
+                    "problem.transport-mode-disabled-road");
         }
     }
 
     private static YadonyBusinessException boatClosed() {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, ERROR_CODE, TITLE,
-                "Le transport par bateau n'est pas encore ouvert.");
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, ERROR_CODE,
+                "problem.transport-mode-disabled-boat");
     }
 }
