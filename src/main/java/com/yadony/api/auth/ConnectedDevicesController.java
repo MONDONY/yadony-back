@@ -9,7 +9,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.server.ResponseStatusException;
+import com.yadony.api.common.LocalizedResponseStatusException;
 
 import java.util.List;
 import java.util.UUID;
@@ -65,7 +65,7 @@ public class ConnectedDevicesController {
     private String requireDeviceId(HttpServletRequest request) {
         String deviceId = request.getHeader("X-Device-Id");
         if (deviceId == null || deviceId.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "X-Device-Id header requis");
+            throw new LocalizedResponseStatusException(HttpStatus.BAD_REQUEST, "problem.devices.header-required");
         }
         return deviceId;
     }

@@ -94,7 +94,6 @@ public class AnnouncementViewService {
     }
 
     private static YadonyBusinessException notFound() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "announcement-not-found",
-                "Announcement Not Found", "Annonce introuvable");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found");
     }
 }

@@ -68,8 +68,7 @@ public class ProfilePublicService {
         blockVisibility.assertVisible(viewerId, userId);
 
         UserEntity user = userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
 
         String displayName = buildDisplayName(user);
         boolean kycVerified = user.getKycStatus() == KycStatus.VERIFIED;
@@ -169,8 +168,7 @@ public class ProfilePublicService {
         blockVisibility.assertVisible(viewerId, userId);
 
         UserEntity user = userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
 
         UserRatingsSummaryResponse ratingSummary = ratingService.getUserRatings(userId, 0, 3, viewerId);
 

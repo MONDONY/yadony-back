@@ -28,9 +28,7 @@ public final class TripStops {
             return null;
         }
         if (stopsCount < 0 || stopsCount > TWO_OR_MORE) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "invalid-stops-count", "Nombre d'escales invalide",
-                    "Le nombre d'escales doit valoir 0 (direct), 1 ou 2 (deux escales ou plus)");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-stops-count", "problem.invalid-stops-count");
         }
         return transportMode == TransportMode.PLANE ? stopsCount : null;
     }

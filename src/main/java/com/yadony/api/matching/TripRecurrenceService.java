@@ -399,9 +399,7 @@ public class TripRecurrenceService {
                 ? SupportedCurrency.fromCodeOrDefault(fallbackCurrency.get())
                 : SupportedCurrency.fromCode(r.currency());
         if (currency == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "currency-unsupported", "Currency Unsupported",
-                    "Cette devise n'est pas prise en charge par yadony.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "currency-unsupported", "problem.currency-unsupported");
         }
         // Bornes du prix au kilo dans la devise de la récurrence (FLUTTER-GK), comme pour un
         // trajet simple : plancher 1 €/kg et plafond 500 €/kg mis à l'échelle. Le DTO ne garde
@@ -414,9 +412,7 @@ public class TripRecurrenceService {
         // l'espèce doit rester cochée sans elle, comme sur un trajet simple où elle est imposée.
         if (r.declinesCard() && !r.cashAccepted()
                 && CurrencyPaymentRails.allowsCode(e.getCurrency(), PaymentMethod.STRIPE)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "payment-method-required", "Payment Method Required",
-                    "Choisissez au moins un moyen de paiement pour ce trajet.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "payment-method-required", "problem.payment-method-required");
         }
         e.setCardDeclined(r.declinesCard());
     }

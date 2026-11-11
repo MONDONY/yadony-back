@@ -4,7 +4,7 @@ Recette conformité 1.14 : « textes serveur en français quand l'app est en ang
 
 Inventaire généré par lecture des sources de `origin/main` (avant le paquet 1) : tout `new XxxException(...)`, `ResponseStatusException(...)`, `setDetail(...)` ou `ProblemDetail.forStatusAndDetail(...)` dont un littéral a l'air français (accents ou mots français courants). Détection heuristique, donc quelques faux positifs possibles. Les numéros de ligne sont ceux de `origin/main` avant migration.
 
-**Bilan** : 1324 occurrences repérées. Paquet 1 : **78 migrées** (58 clés `problem.*`, titre et détail, `messages_fr` / `messages_en`). Paquet 2 (`cancellation` côté utilisateur, `kyc` côté utilisateur, `ratings`) : **112 migrées** (116 sites de lancer au total : quelques refus sans accent, non repérés par l'heuristique, ont été migrés avec les autres, 68 clés `problem.*` à titre + détail et 3 clés à valeur unique `problem.kyc.*`). **1134 restent** (les `IllegalStateException` / `IllegalArgumentException` et les services d'administration compris).
+**Bilan** : 1324 occurrences repérées. Paquet 1 : **78 migrées** (58 clés `problem.*`, titre et détail, `messages_fr` / `messages_en`). Paquet 2 (`cancellation` côté utilisateur, `kyc` côté utilisateur, `ratings`) : **112 migrées** (116 sites de lancer au total : quelques refus sans accent, non repérés par l'heuristique, ont été migrés avec les autres, 68 clés `problem.*` à titre + détail et 3 clés à valeur unique `problem.kyc.*`). Paquet 3 (reste de `matching` et `auth`) : **218 migrées** (81 clés `problem.*` à titre + détail côté `matching`, 37 côté `auth`, et 7 clés à valeur unique : `problem.price-grid.*`, `problem.devices.*` ; les refus déjà couverts par une clé existante, comme « Utilisateur introuvable », la réutilisent). **916 restent** (les `IllegalStateException` / `IllegalArgumentException` et les services d'administration compris), dont 11 lignes de `matching` et `auth` laissées volontairement (voir « Laissé tel quel » plus bas).
 
 ## Mode d'emploi (nouvelle erreur ou migration)
 
@@ -22,9 +22,9 @@ Priorité 1 : erreurs qui remontent jusqu'à l'écran de l'app (paiement, réser
 | Priorité | Package | Reste | Fichiers principaux |
 |---|---|---|---|
 | P1 | `payments` | 318 | `PaymentService.java` (46), `cash/CashCommissionService.java` (24), `mobilemoney/MobileMoneyBidPaymentService.java` (17), `pawapay/PawapaySignatureVerifier.java` (14) |
-| P1 | `matching` | 147 | `BidService.java` (57), `BidCheckoutService.java` (22), `TravelerStatsController.java` (15), `TripRescheduleService.java` (9) |
+| P1 | `matching` | 0 | migré (paquet 3), sauf 5 `IllegalArgumentException` de calcul / configuration jamais rendues (`BidNegotiationPricing.java` (4), `ranking/TripRankingProperties.java` (1)) et les messages anglais de la recherche publique (`PublicAnnouncement*`, `AnnouncementInsightController` : `user/not-found`) |
 | P1 | `cancellation` | 14 | `NoShowArbitrationService.java` (5, admin), `CancellationService.java` (6 `IllegalStateException` jamais rendues telles quelles : réponse 500 générique), `AdminBidCancellationService.java` (2, admin), `job/ReturnDeadlineScheduler.java` (1, alerte lue par l'équipe) ; non listés : `AdminBidCancellationService.conflict(...)` et `AdminNoShowQueryService` (admin) |
-| P1 | `auth` | 82 | `AuthService.java` (29), `UserService.java` (21), `GuestClaimService.java` (8), `ConnectedDevicesService.java` (4) |
+| P1 | `auth` | 0 | migré (paquet 3), sauf 6 `IllegalStateException` d'environnement ou de développement (`DevTokenController.java` (3), `FirebaseTokenFilter.java` (1), `GuestClaimService.java` (1), `GuestUserProvisioner.java` (1)) et `FirebaseContactService.java` (1, détail technique Firebase) |
 | P1 | `tracking` | 63 | `TrackingService.java` (56), `TripPositionService.java` (3), `PickupCodeRequestService.java` (3), `RecipientController.java` (1) |
 | P1 | `ratings` | 0 | migré (paquet 2) |
 | P1 | `kyc` | 11 | `KycAdminReviewService.java` (4, admin), `KycAdminService.java` (2, admin), `reminder/KycReminderProperties.java` (4, validation de configuration au démarrage), `DiditIdentityProvider.java` (1 `IllegalStateException`, journal) |
@@ -62,9 +62,17 @@ Priorité 1 : erreurs qui remontent jusqu'à l'écran de l'app (paiement, réser
 | P3 | `automation` | 8 | `AutomationHistoryController.java` (4), `AutomationRuleController.java` (3), `AutomationRuleService.java` (1) |
 | P3 | `toolkit` | 1 | `ToolsCompletionController.java` (1) |
 
-Ordre conseillé pour les paquets suivants : (2, fait) `cancellation` côté utilisateur, `kyc` côté utilisateur, `ratings` ; (3) `matching` restant (`BidService`, `BidCheckoutService`, `TravelerStatsController`, `TripRescheduleService`) et `auth` (`AuthService`, `UserService`, `GuestClaimService`, `ConnectedDevicesService`, reporté du paquet 2 pour garder une PR relisible) ; (4) `payments` (`PaymentService`, `cash`, `mobilemoney`, `supplement`, `amendment`) ; (5) `tracking` ; (6) priorité 2 ; (7) priorité 3 (dont les services d'administration `cancellation` et `kyc` restants).
+Ordre conseillé pour les paquets suivants : (2, fait) `cancellation` côté utilisateur, `kyc` côté utilisateur, `ratings` ; (3, fait) `matching` restant et `auth` ; (4, prochain) `payments` (`PaymentService`, `cash`, `mobilemoney`, `supplement`, `amendment`) ; (5) `tracking` ; (6) priorité 2 ; (7) priorité 3 (dont les services d'administration `cancellation` et `kyc` restants).
 
 Les `IllegalStateException`, `IllegalArgumentException`, `LlmCallException`, `PawapaySignatureException` etc. ne sont pas rendus tels quels par `GlobalExceptionHandler` (réponse générique ou webhook) : colonne « exposition » = `indirect`, à vérifier au cas par cas (un contrôleur qui les attrape et recopie le message les expose).
+
+## Laissé tel quel (paquet 3)
+
+- `matching/BidNegotiationPricing.java` (4) et `matching/ranking/TripRankingProperties.java` (1) : `IllegalArgumentException` de garde de calcul ou de configuration au démarrage, jamais rendues à l'utilisateur (les montants sont validés avant en 422 localisés).
+- `auth/DevTokenController.java` (3, contrôleur de développement), `auth/FirebaseTokenFilter.java` (1), `auth/GuestClaimService.java` (1) et `auth/GuestUserProvisioner.java` (1) : `IllegalStateException` d'environnement ou de programmation (réponse 500 générique). Les deux dernières sont tolérées par `ServerMessagesGuardTest` (liste `INDIRECT_ILLEGAL_STATE_ALLOWED`).
+- `auth/FirebaseContactService.java` (1) : détail technique d'une erreur Firebase (variable `errorDetail`, journal et diagnostic), pas un texte français en dur.
+- `matching/PublicAnnouncementQuery.java`, `PublicAnnouncementSearchController.java`, `AnnouncementInsightController` (`user/not-found`) : codes ou textes anglais déjà neutres, hors périmètre de la traduction ; `AnnouncementInsightController.java` n'est donc pas dans `MIGRATED` (son refus d'authentification est migré).
+- `YadonyNotFoundException("TripRecurrence", id)` (`TripRecurrenceService`) : forme technique anglaise à deux arguments ; le garde-fou ne flague plus que la forme à un seul littéral.
 
 ## Détail des occurrences
 
@@ -148,88 +156,88 @@ Les `IllegalStateException`, `IllegalArgumentException`, `LlmCallException`, `Pa
 | migré | écran | matching | `matching/BidNegotiationService.java:843` | YadonyBusinessException | C'est à la contrepartie de répondre |
 | migré | écran | matching | `matching/BidNegotiationService.java:899` | YadonyBusinessException | Article hors grille de cette annonce :  |
 | migré | écran | matching | `matching/BidNegotiationService.java:1103` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/AdminGdprService.java:67` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/AdminGdprService.java:76` | YadonyBusinessException | Cet utilisateur n'a pas demandé la suppression de son compte. Si la demande  / a été reçue hors application, c |
-| reste | écran | auth | `auth/AdminGdprService.java:83` | YadonyBusinessException | Impossible — cet utilisateur a des transactions en cours |
-| reste | écran | auth | `auth/AuthController.java:237` | YadonyBusinessException | Un token Firebase valide est requis |
-| reste | écran | auth | `auth/AuthService.java:103` | YadonyBusinessException | Mode d'authentification non supporté |
-| reste | écran | auth | `auth/AuthService.java:128` | YadonyBusinessException | Compte supprimé / Ce compte a été supprimé ou banni et ne peut pas être réactivé. |
-| reste | écran | auth | `auth/AuthService.java:203` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/AuthService.java:218` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/AuthService.java:262` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/AuthService.java:283` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/AuthService.java:295` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/AuthService.java:333` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/AuthService.java:376` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/AuthService.java:393` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/AuthService.java:425` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/AuthService.java:451` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/AuthService.java:472` | ResponseStatusException | Utilisateur introuvable |
-| reste | écran | auth | `auth/AuthService.java:496` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/AuthService.java:515` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/AuthService.java:519` | YadonyBusinessException | Ce compte est banni et ne peut pas être supprimé |
-| reste | écran | auth | `auth/AuthService.java:524` | YadonyBusinessException | Impossible — vous avez des transactions en cours |
-| reste | écran | auth | `auth/AuthService.java:558` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/AuthService.java:571` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/AuthService.java:574` | YadonyBusinessException | Ce compte n'est pas un compte PRO |
-| reste | écran | auth | `auth/AuthService.java:611` | YadonyBusinessException | Le numéro de téléphone est requis |
-| reste | écran | auth | `auth/AuthService.java:624` | YadonyBusinessException | L'email est introuvable dans le token Firebase |
-| reste | écran | auth | `auth/AuthService.java:641` | YadonyBusinessException | Le numéro de téléphone est introuvable |
-| reste | écran | auth | `auth/AuthService.java:655` | YadonyBusinessException | L'adresse email est introuvable |
-| reste | écran | auth | `auth/AuthService.java:670` | YadonyBusinessException | L'adresse email est requise |
-| reste | écran | auth | `auth/AuthService.java:675` | YadonyBusinessException | L'email fourni ne correspond pas au token Firebase |
-| reste | écran | auth | `auth/AuthService.java:688` | YadonyBusinessException | Mode d'authentification non supporté |
-| reste | écran | auth | `auth/AuthService.java:748` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/AuthService.java:761` | YadonyBusinessException | Image trop volumineuse (max 5 Mo) |
-| reste | écran | auth | `auth/BlockService.java:55` | YadonyBusinessException | Action invalide |
-| reste | écran | auth | `auth/BlockService.java:133` | YadonyBusinessException | Ressource introuvable |
-| reste | écran | auth | `auth/ConnectedDevicesService.java:52` | ResponseStatusException | Impossible de révoquer l'appareil courant |
-| reste | écran | auth | `auth/ConnectedDevicesService.java:57` | ResponseStatusException | Appareil introuvable |
-| reste | écran | auth | `auth/ConnectedDevicesService.java:64` | ResponseStatusException | Utilisateur introuvable |
-| reste | écran | auth | `auth/ConnectedDevicesService.java:71` | ResponseStatusException | Erreur lors de la révocation Firebase |
+| migré | écran | auth | `auth/AdminGdprService.java:67` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/AdminGdprService.java:76` | YadonyBusinessException | Cet utilisateur n'a pas demandé la suppression de son compte. Si la demande  / a été reçue hors application, c |
+| migré | écran | auth | `auth/AdminGdprService.java:83` | YadonyBusinessException | Impossible — cet utilisateur a des transactions en cours |
+| migré | écran | auth | `auth/AuthController.java:237` | YadonyBusinessException | Un token Firebase valide est requis |
+| migré | écran | auth | `auth/AuthService.java:103` | YadonyBusinessException | Mode d'authentification non supporté |
+| migré | écran | auth | `auth/AuthService.java:128` | YadonyBusinessException | Compte supprimé / Ce compte a été supprimé ou banni et ne peut pas être réactivé. |
+| migré | écran | auth | `auth/AuthService.java:203` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/AuthService.java:218` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/AuthService.java:262` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/AuthService.java:283` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/AuthService.java:295` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/AuthService.java:333` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/AuthService.java:376` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/AuthService.java:393` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/AuthService.java:425` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/AuthService.java:451` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/AuthService.java:472` | ResponseStatusException | Utilisateur introuvable |
+| migré | écran | auth | `auth/AuthService.java:496` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/AuthService.java:515` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/AuthService.java:519` | YadonyBusinessException | Ce compte est banni et ne peut pas être supprimé |
+| migré | écran | auth | `auth/AuthService.java:524` | YadonyBusinessException | Impossible — vous avez des transactions en cours |
+| migré | écran | auth | `auth/AuthService.java:558` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/AuthService.java:571` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/AuthService.java:574` | YadonyBusinessException | Ce compte n'est pas un compte PRO |
+| migré | écran | auth | `auth/AuthService.java:611` | YadonyBusinessException | Le numéro de téléphone est requis |
+| migré | écran | auth | `auth/AuthService.java:624` | YadonyBusinessException | L'email est introuvable dans le token Firebase |
+| migré | écran | auth | `auth/AuthService.java:641` | YadonyBusinessException | Le numéro de téléphone est introuvable |
+| migré | écran | auth | `auth/AuthService.java:655` | YadonyBusinessException | L'adresse email est introuvable |
+| migré | écran | auth | `auth/AuthService.java:670` | YadonyBusinessException | L'adresse email est requise |
+| migré | écran | auth | `auth/AuthService.java:675` | YadonyBusinessException | L'email fourni ne correspond pas au token Firebase |
+| migré | écran | auth | `auth/AuthService.java:688` | YadonyBusinessException | Mode d'authentification non supporté |
+| migré | écran | auth | `auth/AuthService.java:748` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/AuthService.java:761` | YadonyBusinessException | Image trop volumineuse (max 5 Mo) |
+| migré | écran | auth | `auth/BlockService.java:55` | YadonyBusinessException | Action invalide |
+| migré | écran | auth | `auth/BlockService.java:133` | YadonyBusinessException | Ressource introuvable |
+| migré | écran | auth | `auth/ConnectedDevicesService.java:52` | ResponseStatusException | Impossible de révoquer l'appareil courant |
+| migré | écran | auth | `auth/ConnectedDevicesService.java:57` | ResponseStatusException | Appareil introuvable |
+| migré | écran | auth | `auth/ConnectedDevicesService.java:64` | ResponseStatusException | Utilisateur introuvable |
+| migré | écran | auth | `auth/ConnectedDevicesService.java:71` | ResponseStatusException | Erreur lors de la révocation Firebase |
 | reste | indirect | auth | `auth/DevTokenController.java:66` | IllegalStateException | Firebase non initialisé — vérifiez firebase.service-account-path dans application-dev.yml |
 | reste | indirect | auth | `auth/DevTokenController.java:70` | IllegalStateException | Variable FIREBASE_API_KEY manquante dans .env.dev (Web API Key Firebase console > Paramètres du projet > Génér |
 | reste | indirect | auth | `auth/DevTokenController.java:117` | IllegalStateException | Échec de l'échange du custom token Firebase — vérifiez FIREBASE_WEB_API_KEY |
 | reste | indirect | auth | `auth/FirebaseTokenFilter.java:82` | IllegalStateException | yadony.dev.auth-bypass=true est interdit en profil prod — backdoor d'authentification |
-| reste | écran | auth | `auth/GuestClaimService.java:114` | YadonyBusinessException | Le jeton présenté n'est pas celui d'une session visiteur. |
-| reste | écran | auth | `auth/GuestClaimService.java:126` | YadonyBusinessException | Session identique à l'appelant / Le jeton présenté est celui de la session appelante : il n'y a rien à transfé |
-| reste | écran | auth | `auth/GuestClaimService.java:156` | YadonyBusinessException | Compte réel / La session désignée appartient à un compte inscrit, pas à un visiteur. |
-| reste | écran | auth | `auth/GuestClaimService.java:165` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/GuestClaimService.java:206` | YadonyBusinessException | Jeton visiteur invalide / Le jeton de la session visiteur est invalide ou a expiré. |
-| reste | écran | auth | `auth/GuestClaimService.java:214` | YadonyBusinessException | Session déjà promue / Cette session visiteur est devenue un compte inscrit : ses données ne  / peuvent plus êt |
+| migré | écran | auth | `auth/GuestClaimService.java:114` | YadonyBusinessException | Le jeton présenté n'est pas celui d'une session visiteur. |
+| migré | écran | auth | `auth/GuestClaimService.java:126` | YadonyBusinessException | Session identique à l'appelant / Le jeton présenté est celui de la session appelante : il n'y a rien à transfé |
+| migré | écran | auth | `auth/GuestClaimService.java:156` | YadonyBusinessException | Compte réel / La session désignée appartient à un compte inscrit, pas à un visiteur. |
+| migré | écran | auth | `auth/GuestClaimService.java:165` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/GuestClaimService.java:206` | YadonyBusinessException | Jeton visiteur invalide / Le jeton de la session visiteur est invalide ou a expiré. |
+| migré | écran | auth | `auth/GuestClaimService.java:214` | YadonyBusinessException | Session déjà promue / Cette session visiteur est devenue un compte inscrit : ses données ne  / peuvent plus êt |
 | reste | indirect | auth | `auth/GuestClaimService.java:226` | IllegalStateException | FirebaseAuth indisponible dans cet environnement : impossible de vérifier  |
-| reste | écran | auth | `auth/GuestClaimService.java:235` | YadonyBusinessException | Jeton visiteur invalide / Le jeton de la session visiteur est invalide ou a expiré. |
+| migré | écran | auth | `auth/GuestClaimService.java:235` | YadonyBusinessException | Jeton visiteur invalide / Le jeton de la session visiteur est invalide ou a expiré. |
 | reste | indirect | auth | `auth/GuestUserProvisioner.java:58` | IllegalStateException | GuestUserProvisioner.resolveOrProvision ne doit jamais être appelé depuis  / d'écriture. |
-| reste | écran | auth | `auth/GuestUserProvisioner.java:103` | YadonyBusinessException | Compte supprimé / Ce compte a été supprimé ou banni. Il ne peut pas être réactivé  / par cette action : reconn |
-| reste | écran | auth | `auth/GuestUserProvisioner.java:133` | YadonyBusinessException | Requête concurrente / Une autre requête vient de créer ce compte invité. Réessayez. |
-| reste | écran | auth | `auth/PhoneOwnershipService.java:147` | YadonyBusinessException | Ce numéro appartient à un compte en cours de suppression.  / Connectez-vous avec ce numéro pour annuler la sup |
-| reste | écran | auth | `auth/PhoneOwnershipService.java:155` | YadonyBusinessException | Ce numéro a déjà son propre compte Yadony : connectez-vous avec ce numéro,  |
-| reste | écran | auth | `auth/ProfilePublicService.java:71` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/ProfilePublicService.java:172` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/PublishCommitmentService.java:64` | YadonyBusinessException | Les engagements ont été mis à jour : relisez-les avant de continuer |
-| reste | écran | auth | `auth/PublishCommitmentService.java:98` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/UserLanguageService.java:44` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/UserService.java:221` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/UserService.java:294` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/UserService.java:302` | YadonyBusinessException | Impossible — vous avez des transactions en cours |
-| reste | écran | auth | `auth/UserService.java:319` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/UserService.java:323` | YadonyBusinessException | Ce compte n'est pas en cours de suppression |
-| reste | écran | auth | `auth/UserService.java:351` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/UserService.java:354` | YadonyBusinessException | Ce compte n'a pas de demande de suppression en cours, ou sa suppression est déjà finalisée |
-| reste | écran | auth | `auth/UserService.java:379` | YadonyBusinessException | Le taux doit être dans [0, 1[ ou null (taux global) |
-| reste | écran | auth | `auth/UserService.java:383` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/UserService.java:396` | YadonyBusinessException | La limite doit être comprise entre 1 et 100, ou vide (aucune limite) |
-| reste | écran | auth | `auth/UserService.java:400` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/UserService.java:437` | YadonyBusinessException | Le numéro SIRET doit contenir exactement 14 chiffres |
-| reste | écran | auth | `auth/UserService.java:479` | YadonyBusinessException | Vous avez un abonnement PRO payant en cours — gérez sa résiliation  / depuis la gestion de votre abonnement (p |
-| reste | écran | auth | `auth/UserService.java:501` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/UserService.java:515` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/UserService.java:539` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/UserService.java:544` | YadonyBusinessException | Ce compte n'est ni suspendu ni banni : il n'y a rien à lever |
-| reste | écran | auth | `auth/UserService.java:569` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/UserService.java:586` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/UserService.java:611` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | auth | `auth/UserService.java:643` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/GuestUserProvisioner.java:103` | YadonyBusinessException | Compte supprimé / Ce compte a été supprimé ou banni. Il ne peut pas être réactivé  / par cette action : reconn |
+| migré | écran | auth | `auth/GuestUserProvisioner.java:133` | YadonyBusinessException | Requête concurrente / Une autre requête vient de créer ce compte invité. Réessayez. |
+| migré | écran | auth | `auth/PhoneOwnershipService.java:147` | YadonyBusinessException | Ce numéro appartient à un compte en cours de suppression.  / Connectez-vous avec ce numéro pour annuler la sup |
+| migré | écran | auth | `auth/PhoneOwnershipService.java:155` | YadonyBusinessException | Ce numéro a déjà son propre compte Yadony : connectez-vous avec ce numéro,  |
+| migré | écran | auth | `auth/ProfilePublicService.java:71` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/ProfilePublicService.java:172` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/PublishCommitmentService.java:64` | YadonyBusinessException | Les engagements ont été mis à jour : relisez-les avant de continuer |
+| migré | écran | auth | `auth/PublishCommitmentService.java:98` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/UserLanguageService.java:44` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/UserService.java:221` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/UserService.java:294` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/UserService.java:302` | YadonyBusinessException | Impossible — vous avez des transactions en cours |
+| migré | écran | auth | `auth/UserService.java:319` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/UserService.java:323` | YadonyBusinessException | Ce compte n'est pas en cours de suppression |
+| migré | écran | auth | `auth/UserService.java:351` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/UserService.java:354` | YadonyBusinessException | Ce compte n'a pas de demande de suppression en cours, ou sa suppression est déjà finalisée |
+| migré | écran | auth | `auth/UserService.java:379` | YadonyBusinessException | Le taux doit être dans [0, 1[ ou null (taux global) |
+| migré | écran | auth | `auth/UserService.java:383` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/UserService.java:396` | YadonyBusinessException | La limite doit être comprise entre 1 et 100, ou vide (aucune limite) |
+| migré | écran | auth | `auth/UserService.java:400` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/UserService.java:437` | YadonyBusinessException | Le numéro SIRET doit contenir exactement 14 chiffres |
+| migré | écran | auth | `auth/UserService.java:479` | YadonyBusinessException | Vous avez un abonnement PRO payant en cours — gérez sa résiliation  / depuis la gestion de votre abonnement (p |
+| migré | écran | auth | `auth/UserService.java:501` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/UserService.java:515` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/UserService.java:539` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/UserService.java:544` | YadonyBusinessException | Ce compte n'est ni suspendu ni banni : il n'y a rien à lever |
+| migré | écran | auth | `auth/UserService.java:569` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/UserService.java:586` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/UserService.java:611` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | auth | `auth/UserService.java:643` | YadonyBusinessException | Utilisateur introuvable |
 | reste | écran | cancellation | `cancellation/AdminBidCancellationService.java:87` | YadonyBusinessException | Précisez le motif « Autre » en 10 caractères au moins. |
 | reste | écran | cancellation | `cancellation/AdminBidCancellationService.java:94` | YadonyBusinessException | Colis introuvable |
 | migré | écran | cancellation | `cancellation/CancellationController.java:191` | YadonyBusinessException | Utilisateur introuvable |
@@ -340,153 +348,153 @@ Les `IllegalStateException`, `IllegalArgumentException`, `LlmCallException`, `Pa
 | reste | indirect | kyc | `kyc/reminder/KycReminderProperties.java:45` | IllegalArgumentException | yadony.kyc.verification-reminders : les délais doivent être positifs |
 | reste | indirect | kyc | `kyc/reminder/KycReminderProperties.java:48` | IllegalArgumentException | yadony.kyc.verification-reminders : les délais doivent être strictement croissants |
 | reste | indirect | kyc | `kyc/reminder/KycReminderProperties.java:53` | IllegalArgumentException | yadony.kyc.verification-reminders : max-anchor-age doit dépasser third-delay |
-| reste | écran | matching | `matching/AnnouncementController.java:309` | YadonyBusinessException | Un token Firebase valide est requis |
-| reste | écran | matching | `matching/AnnouncementInsightController.java:49` | YadonyBusinessException | Un token Firebase valide est requis |
-| reste | écran | matching | `matching/AnnouncementViewService.java:97` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | matching | `matching/ArrivalRules.java:30` | YadonyBusinessException | Arrivée avant le départ / La date d'arrivée ne peut pas précéder la date de départ |
-| reste | écran | matching | `matching/ArrivalRules.java:35` | YadonyBusinessException | Arrivée trop tardive / La date d'arrivée doit être au plus  /  jours après le départ |
-| reste | écran | matching | `matching/ArrivalRules.java:42` | YadonyBusinessException | Heure d'arrivée avant le départ / Le même jour, l'heure d'arrivée doit suivre l'heure de départ |
-| reste | écran | matching | `matching/BidCheckoutService.java:81` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | matching | `matching/BidCheckoutService.java:97` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | matching | `matching/BidCheckoutService.java:101` | YadonyBusinessException | Cette annonce n'est plus disponible |
-| reste | écran | matching | `matching/BidCheckoutService.java:116` | YadonyBusinessException | La zone CFA n'accepte pas le paiement par carte pour un colis. |
-| reste | écran | matching | `matching/BidCheckoutService.java:123` | YadonyBusinessException | Cette annonce n'accepte pas le paiement par carte |
-| reste | écran | matching | `matching/BidCheckoutService.java:133` | YadonyBusinessException | La capacité supplémentaire de ce trajet n'est pas ouverte aux autres expéditeurs |
-| reste | écran | matching | `matching/BidCheckoutService.java:141` | YadonyBusinessException | Vous avez déjà un colis réservé sur ce trajet |
-| reste | écran | matching | `matching/BidCheckoutService.java:147` | YadonyBusinessException | Vous ne pouvez pas faire une demande sur votre propre annonce |
-| reste | écran | matching | `matching/BidCheckoutService.java:167` | YadonyBusinessException | Vous avez déjà une demande en attente de paiement mobile money pour ce trajet |
-| reste | écran | matching | `matching/BidCheckoutService.java:196` | YadonyBusinessException | Vous avez déjà une demande en cours pour ce trajet |
-| reste | écran | matching | `matching/BidCheckoutService.java:208` | YadonyBusinessException | Poids demandé supérieur à la capacité disponible |
-| reste | écran | matching | `matching/BidCheckoutService.java:218` | YadonyBusinessException | Au moins un article ou un poids doit être renseigné |
-| reste | écran | matching | `matching/BidCheckoutService.java:258` | YadonyBusinessException | Article hors grille de cette annonce :  |
-| reste | écran | matching | `matching/BidCheckoutService.java:327` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | matching | `matching/BidCheckoutService.java:331` | YadonyBusinessException | Demande introuvable |
-| reste | écran | matching | `matching/BidCheckoutService.java:336` | YadonyBusinessException | Cette demande ne vous appartient pas |
-| reste | écran | matching | `matching/BidCheckoutService.java:341` | YadonyBusinessException | Cette demande n'est pas issue d'une négociation de prix |
-| reste | écran | matching | `matching/BidCheckoutService.java:351` | YadonyBusinessException | Cette demande se règle par mobile money, pas par carte. |
-| reste | écran | matching | `matching/BidCheckoutService.java:360` | YadonyBusinessException | La zone CFA n'accepte pas le paiement par carte pour un colis. |
-| reste | écran | matching | `matching/BidCheckoutService.java:371` | YadonyBusinessException | Cette demande n'attend pas de paiement (statut :  |
-| reste | écran | matching | `matching/BidCheckoutService.java:383` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | matching | `matching/BidCheckoutService.java:386` | YadonyBusinessException | Cette annonce n'est plus disponible |
-| reste | écran | matching | `matching/BidContentRules.java:30` | YadonyBusinessException | Le voyageur n'accepte pas :  |
-| reste | écran | matching | `matching/BidController.java:245` | YadonyBusinessException | Un token Firebase valide est requis |
-| reste | écran | matching | `matching/BidNegotiationController.java:154` | YadonyBusinessException | Un token Firebase valide est requis |
+| migré | écran | matching | `matching/AnnouncementController.java:309` | YadonyBusinessException | Un token Firebase valide est requis |
+| migré | écran | matching | `matching/AnnouncementInsightController.java:49` | YadonyBusinessException | Un token Firebase valide est requis |
+| migré | écran | matching | `matching/AnnouncementViewService.java:97` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | matching | `matching/ArrivalRules.java:30` | YadonyBusinessException | Arrivée avant le départ / La date d'arrivée ne peut pas précéder la date de départ |
+| migré | écran | matching | `matching/ArrivalRules.java:35` | YadonyBusinessException | Arrivée trop tardive / La date d'arrivée doit être au plus  /  jours après le départ |
+| migré | écran | matching | `matching/ArrivalRules.java:42` | YadonyBusinessException | Heure d'arrivée avant le départ / Le même jour, l'heure d'arrivée doit suivre l'heure de départ |
+| migré | écran | matching | `matching/BidCheckoutService.java:81` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | matching | `matching/BidCheckoutService.java:97` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | matching | `matching/BidCheckoutService.java:101` | YadonyBusinessException | Cette annonce n'est plus disponible |
+| migré | écran | matching | `matching/BidCheckoutService.java:116` | YadonyBusinessException | La zone CFA n'accepte pas le paiement par carte pour un colis. |
+| migré | écran | matching | `matching/BidCheckoutService.java:123` | YadonyBusinessException | Cette annonce n'accepte pas le paiement par carte |
+| migré | écran | matching | `matching/BidCheckoutService.java:133` | YadonyBusinessException | La capacité supplémentaire de ce trajet n'est pas ouverte aux autres expéditeurs |
+| migré | écran | matching | `matching/BidCheckoutService.java:141` | YadonyBusinessException | Vous avez déjà un colis réservé sur ce trajet |
+| migré | écran | matching | `matching/BidCheckoutService.java:147` | YadonyBusinessException | Vous ne pouvez pas faire une demande sur votre propre annonce |
+| migré | écran | matching | `matching/BidCheckoutService.java:167` | YadonyBusinessException | Vous avez déjà une demande en attente de paiement mobile money pour ce trajet |
+| migré | écran | matching | `matching/BidCheckoutService.java:196` | YadonyBusinessException | Vous avez déjà une demande en cours pour ce trajet |
+| migré | écran | matching | `matching/BidCheckoutService.java:208` | YadonyBusinessException | Poids demandé supérieur à la capacité disponible |
+| migré | écran | matching | `matching/BidCheckoutService.java:218` | YadonyBusinessException | Au moins un article ou un poids doit être renseigné |
+| migré | écran | matching | `matching/BidCheckoutService.java:258` | YadonyBusinessException | Article hors grille de cette annonce :  |
+| migré | écran | matching | `matching/BidCheckoutService.java:327` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | matching | `matching/BidCheckoutService.java:331` | YadonyBusinessException | Demande introuvable |
+| migré | écran | matching | `matching/BidCheckoutService.java:336` | YadonyBusinessException | Cette demande ne vous appartient pas |
+| migré | écran | matching | `matching/BidCheckoutService.java:341` | YadonyBusinessException | Cette demande n'est pas issue d'une négociation de prix |
+| migré | écran | matching | `matching/BidCheckoutService.java:351` | YadonyBusinessException | Cette demande se règle par mobile money, pas par carte. |
+| migré | écran | matching | `matching/BidCheckoutService.java:360` | YadonyBusinessException | La zone CFA n'accepte pas le paiement par carte pour un colis. |
+| migré | écran | matching | `matching/BidCheckoutService.java:371` | YadonyBusinessException | Cette demande n'attend pas de paiement (statut :  |
+| migré | écran | matching | `matching/BidCheckoutService.java:383` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | matching | `matching/BidCheckoutService.java:386` | YadonyBusinessException | Cette annonce n'est plus disponible |
+| migré | écran | matching | `matching/BidContentRules.java:30` | YadonyBusinessException | Le voyageur n'accepte pas :  |
+| migré | écran | matching | `matching/BidController.java:245` | YadonyBusinessException | Un token Firebase valide est requis |
+| migré | écran | matching | `matching/BidNegotiationController.java:154` | YadonyBusinessException | Un token Firebase valide est requis |
 | reste | indirect | matching | `matching/BidNegotiationPricing.java:25` | IllegalArgumentException | Le montant négocié doit être strictement positif |
 | reste | indirect | matching | `matching/BidNegotiationPricing.java:28` | IllegalArgumentException | Le taux de commission ne peut pas être négatif |
 | reste | indirect | matching | `matching/BidNegotiationPricing.java:51` | IllegalArgumentException | Le net demandé doit être strictement positif |
 | reste | indirect | matching | `matching/BidNegotiationPricing.java:54` | IllegalArgumentException | Le taux de commission ne peut pas être négatif |
-| reste | écran | matching | `matching/BidPhotoService.java:51` | YadonyBusinessException |  photos par colis |
-| reste | écran | matching | `matching/BidPhotoService.java:60` | YadonyBusinessException | Clé photo invalide |
-| reste | écran | matching | `matching/BidService.java:191` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | matching | `matching/BidService.java:200` | YadonyBusinessException | Au moins un article ou un poids doit être renseigné |
-| reste | écran | matching | `matching/BidService.java:210` | YadonyBusinessException | Article hors grille de cette annonce :  |
-| reste | écran | matching | `matching/BidService.java:221` | YadonyBusinessException | Le prix au kilo est requis pour calculer le devis au poids |
-| reste | écran | matching | `matching/BidService.java:291` | YadonyBusinessException | Le montant calculé est invalide (≤ 0) |
-| reste | écran | matching | `matching/BidService.java:324` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | matching | `matching/BidService.java:334` | YadonyBusinessException | Poids demandé supérieur à la capacité disponible |
-| reste | écran | matching | `matching/BidService.java:340` | YadonyBusinessException | Le disclaimer légal doit être accepté |
-| reste | écran | matching | `matching/BidService.java:350` | YadonyBusinessException | Au moins un article ou un poids doit être renseigné |
-| reste | écran | matching | `matching/BidService.java:407` | YadonyBusinessException | Article hors grille de cette annonce :  |
-| reste | écran | matching | `matching/BidService.java:466` | YadonyBusinessException | Cette annonce n'est plus disponible |
-| reste | écran | matching | `matching/BidService.java:486` | YadonyBusinessException | La capacité supplémentaire de ce trajet n'est pas ouverte aux autres expéditeurs |
-| reste | écran | matching | `matching/BidService.java:495` | YadonyBusinessException | Vous avez déjà un colis réservé sur ce trajet |
-| reste | écran | matching | `matching/BidService.java:501` | YadonyBusinessException | Vous ne pouvez pas faire une demande sur votre propre annonce |
-| reste | écran | matching | `matching/BidService.java:517` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | matching | `matching/BidService.java:536` | YadonyBusinessException | Vous avez déjà une demande en cours ou acceptée pour ce trajet |
-| reste | écran | matching | `matching/BidService.java:558` | YadonyBusinessException | Cet utilisateur n'accepte que les profils vérifiés |
-| reste | écran | matching | `matching/BidService.java:581` | YadonyBusinessException | Vous avez déjà une demande en attente de paiement mobile money pour ce trajet |
-| reste | écran | matching | `matching/BidService.java:594` | YadonyBusinessException | Votre demande carte sur ce trajet est déjà en cours de paiement |
-| reste | écran | matching | `matching/BidService.java:626` | YadonyBusinessException | Numéro de téléphone invalide pour le paiement mobile money. |
-| reste | écran | matching | `matching/BidService.java:647` | YadonyBusinessException | Méthode de paiement inconnue :  |
-| reste | écran | matching | `matching/BidService.java:653` | YadonyBusinessException | Le paiement mobile money direct par l'expéditeur n'est plus disponible  |
-| reste | écran | matching | `matching/BidService.java:668` | YadonyBusinessException | La zone CFA n'accepte pas ce moyen de paiement pour un colis.  |
-| reste | écran | matching | `matching/BidService.java:677` | YadonyBusinessException | Ce voyageur n'accepte pas le paiement mobile money. |
-| reste | écran | matching | `matching/BidService.java:686` | YadonyBusinessException | Le compte de versement mobile money de ce voyageur ne correspond pas  / à la devise de ce trajet. |
-| reste | écran | matching | `matching/BidService.java:698` | YadonyBusinessException | La zone CFA n'accepte pas ce moyen de paiement pour un colis.  |
-| reste | écran | matching | `matching/BidService.java:706` | YadonyBusinessException | Cette annonce n'accepte pas le paiement en espèces |
-| reste | écran | matching | `matching/BidService.java:713` | YadonyBusinessException | Cette annonce n'accepte pas le paiement par carte |
-| reste | écran | matching | `matching/BidService.java:726` | YadonyBusinessException | Seul l'expéditeur peut confirmer le paiement |
-| reste | écran | matching | `matching/BidService.java:760` | YadonyBusinessException | Accès non autorisé à ce bid |
-| reste | écran | matching | `matching/BidService.java:769` | YadonyBusinessException | Demande introuvable |
-| reste | écran | matching | `matching/BidService.java:778` | YadonyBusinessException | Demande introuvable |
-| reste | écran | matching | `matching/BidService.java:813` | YadonyBusinessException | Accès non autorisé à ce colis |
-| reste | écran | matching | `matching/BidService.java:819` | YadonyBusinessException | Le numéro n'est communiqué qu'une fois le colis accepté |
-| reste | écran | matching | `matching/BidService.java:827` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | matching | `matching/BidService.java:835` | YadonyBusinessException | Ce membre préfère échanger par la messagerie Yadony |
-| reste | écran | matching | `matching/BidService.java:856` | YadonyBusinessException | Vous n'êtes pas autorisé à voir ces demandes |
-| reste | écran | matching | `matching/BidService.java:991` | YadonyBusinessException | Demande introuvable |
-| reste | écran | matching | `matching/BidService.java:994` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | matching | `matching/BidService.java:1012` | YadonyBusinessException | Demande introuvable |
-| reste | écran | matching | `matching/BidService.java:1015` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | matching | `matching/BidService.java:1031` | YadonyBusinessException | Acceptez ce colis via le parcours mobile money. |
-| reste | écran | matching | `matching/BidService.java:1048` | YadonyBusinessException | Le voyageur est déjà parti, ce trajet n'accepte plus de colis |
-| reste | écran | matching | `matching/BidService.java:1056` | YadonyBusinessException | Capacité insuffisante pour accepter cette demande |
-| reste | écran | matching | `matching/BidService.java:1174` | YadonyBusinessException | Confirmation de présence uniquement pour les bids acceptés |
-| reste | écran | matching | `matching/BidService.java:1206` | YadonyBusinessException | Vous n'êtes pas autorisé à annuler ce bid |
-| reste | écran | matching | `matching/BidService.java:1212` | YadonyBusinessException | Impossible d'annuler un bid déjà terminé |
-| reste | écran | matching | `matching/BidService.java:1339` | YadonyBusinessException | Vous n'êtes pas autorisé à masquer ce bid |
-| reste | écran | matching | `matching/BidService.java:1356` | YadonyBusinessException | Vous n'êtes pas autorisé à effectuer cette action |
-| reste | écran | matching | `matching/BidService.java:1361` | YadonyBusinessException | Seules les demandes refusées ou annulées peuvent être supprimées |
-| reste | écran | matching | `matching/BidService.java:1383` | YadonyBusinessException | Le refus de colis n'est possible que sur un envoi accepté ou remis |
-| reste | écran | matching | `matching/BidService.java:1390` | YadonyBusinessException | Le trajet est parti : le colis ne peut plus être refusé |
-| reste | écran | matching | `matching/BidService.java:1449` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | matching | `matching/BidService.java:1455` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | matching | `matching/BidService.java:1461` | YadonyBusinessException | Demande introuvable |
-| reste | écran | matching | `matching/BidService.java:1467` | YadonyBusinessException | Vous n'êtes pas autorisé à effectuer cette action |
-| reste | écran | matching | `matching/BidService.java:1474` | YadonyBusinessException | Cette action n'est pas possible pour un bid en statut  |
-| reste | écran | matching | `matching/HandoverDeadlineRules.java:65` | YadonyBusinessException | La date limite de remise des colis pour ce trajet est passée |
-| reste | écran | matching | `matching/PriceGridController.java:97` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | matching | `matching/PriceGridController.java:106` | YadonyBusinessException | Un token Firebase valide est requis |
-| reste | écran | matching | `matching/PriceGridService.java:62` | ResponseStatusException | price-grid-limit: maximum 20 articles autorisés |
-| reste | écran | matching | `matching/TravelerStatsController.java:77` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | matching | `matching/TravelerStatsController.java:81` | YadonyBusinessException | Les statistiques sont réservées aux voyageurs PRO. |
-| reste | écran | matching | `matching/TravelerStatsController.java:94` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | matching | `matching/TravelerStatsController.java:97` | YadonyBusinessException | Analytics réservés aux voyageurs PRO. |
-| reste | écran | matching | `matching/TravelerStatsController.java:102` | YadonyBusinessException | Période invalide. Valeurs acceptées: month, quarter, year. |
-| reste | écran | matching | `matching/TravelerStatsController.java:113` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | matching | `matching/TravelerStatsController.java:116` | YadonyBusinessException | Calendrier réservé aux voyageurs PRO. |
-| reste | écran | matching | `matching/TravelerStatsController.java:139` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | matching | `matching/TravelerStatsController.java:142` | YadonyBusinessException | Réservé aux voyageurs. |
-| reste | écran | matching | `matching/TravelerStatsController.java:153` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | matching | `matching/TravelerStatsController.java:156` | YadonyBusinessException | Invitations réservées aux voyageurs PRO. |
-| reste | écran | matching | `matching/TravelerStatsController.java:162` | YadonyBusinessException | Annonce introuvable. |
-| reste | écran | matching | `matching/TravelerStatsController.java:166` | YadonyBusinessException | Cette annonce ne vous appartient pas. |
-| reste | écran | matching | `matching/TravelerStatsController.java:172` | YadonyBusinessException | Demande introuvable. |
-| reste | écran | matching | `matching/TravelerStatsController.java:176` | YadonyBusinessException | Cette demande n'est plus disponible. |
-| reste | écran | matching | `matching/TripGroupService.java:156` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | matching | `matching/TripLegRules.java:36` | YadonyBusinessException | Nombre d'étapes invalide / Un voyage compte de  /  étapes |
-| reste | écran | matching | `matching/TripRecurrenceController.java:61` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | matching | `matching/TripRecurrenceService.java:392` | YadonyBusinessException | Cette devise n'est pas prise en charge par yadony. |
-| reste | écran | matching | `matching/TripRecurrenceService.java:407` | YadonyBusinessException | Choisissez au moins un moyen de paiement pour ce trajet. |
-| reste | écran | matching | `matching/TripRescheduleController.java:41` | YadonyBusinessException | Un token Firebase valide est requis |
-| reste | écran | matching | `matching/TripRescheduleService.java:68` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | matching | `matching/TripRescheduleService.java:71` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | matching | `matching/TripRescheduleService.java:74` | YadonyBusinessException | Vous n'êtes pas autorisé à reporter ce trajet |
-| reste | écran | matching | `matching/TripRescheduleService.java:143` | YadonyBusinessException | Reschedule Impossible / Seul un trajet publié et pas encore terminé peut être reporté |
-| reste | écran | matching | `matching/TripRescheduleService.java:149` | YadonyBusinessException | Reschedule Impossible / Un colis est déjà en route : le trajet ne peut plus être reporté |
-| reste | écran | matching | `matching/TripRescheduleService.java:154` | YadonyBusinessException | Ce trajet a déjà été reporté  /  fois. Annulez-le et publiez un nouveau trajet. |
-| reste | écran | matching | `matching/TripRescheduleService.java:164` | YadonyBusinessException | Choisissez une date ou une heure de départ différente de l'actuelle |
-| reste | écran | matching | `matching/TripRescheduleService.java:170` | YadonyBusinessException | La nouvelle date de départ doit être dans le futur |
-| reste | écran | matching | `matching/TripRescheduleService.java:178` | YadonyBusinessException | La date limite de remise doit être dans le futur |
-| reste | écran | matching | `matching/TripSeriesService.java:73` | YadonyBusinessException | La date du trajet d'origine ne peut pas être répétée. |
-| reste | écran | matching | `matching/TripStops.java:31` | YadonyBusinessException | Nombre d'escales invalide / Le nombre d'escales doit valoir 0 (direct), 1 ou 2 (deux escales ou plus) |
-| reste | écran | matching | `matching/TripsSummaryController.java:72` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | matching | `matching/TripsSummaryController.java:77` | YadonyBusinessException | Réservé aux voyageurs. |
+| migré | écran | matching | `matching/BidPhotoService.java:51` | YadonyBusinessException |  photos par colis |
+| migré | écran | matching | `matching/BidPhotoService.java:60` | YadonyBusinessException | Clé photo invalide |
+| migré | écran | matching | `matching/BidService.java:191` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | matching | `matching/BidService.java:200` | YadonyBusinessException | Au moins un article ou un poids doit être renseigné |
+| migré | écran | matching | `matching/BidService.java:210` | YadonyBusinessException | Article hors grille de cette annonce :  |
+| migré | écran | matching | `matching/BidService.java:221` | YadonyBusinessException | Le prix au kilo est requis pour calculer le devis au poids |
+| migré | écran | matching | `matching/BidService.java:291` | YadonyBusinessException | Le montant calculé est invalide (≤ 0) |
+| migré | écran | matching | `matching/BidService.java:324` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | matching | `matching/BidService.java:334` | YadonyBusinessException | Poids demandé supérieur à la capacité disponible |
+| migré | écran | matching | `matching/BidService.java:340` | YadonyBusinessException | Le disclaimer légal doit être accepté |
+| migré | écran | matching | `matching/BidService.java:350` | YadonyBusinessException | Au moins un article ou un poids doit être renseigné |
+| migré | écran | matching | `matching/BidService.java:407` | YadonyBusinessException | Article hors grille de cette annonce :  |
+| migré | écran | matching | `matching/BidService.java:466` | YadonyBusinessException | Cette annonce n'est plus disponible |
+| migré | écran | matching | `matching/BidService.java:486` | YadonyBusinessException | La capacité supplémentaire de ce trajet n'est pas ouverte aux autres expéditeurs |
+| migré | écran | matching | `matching/BidService.java:495` | YadonyBusinessException | Vous avez déjà un colis réservé sur ce trajet |
+| migré | écran | matching | `matching/BidService.java:501` | YadonyBusinessException | Vous ne pouvez pas faire une demande sur votre propre annonce |
+| migré | écran | matching | `matching/BidService.java:517` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | matching | `matching/BidService.java:536` | YadonyBusinessException | Vous avez déjà une demande en cours ou acceptée pour ce trajet |
+| migré | écran | matching | `matching/BidService.java:558` | YadonyBusinessException | Cet utilisateur n'accepte que les profils vérifiés |
+| migré | écran | matching | `matching/BidService.java:581` | YadonyBusinessException | Vous avez déjà une demande en attente de paiement mobile money pour ce trajet |
+| migré | écran | matching | `matching/BidService.java:594` | YadonyBusinessException | Votre demande carte sur ce trajet est déjà en cours de paiement |
+| migré | écran | matching | `matching/BidService.java:626` | YadonyBusinessException | Numéro de téléphone invalide pour le paiement mobile money. |
+| migré | écran | matching | `matching/BidService.java:647` | YadonyBusinessException | Méthode de paiement inconnue :  |
+| migré | écran | matching | `matching/BidService.java:653` | YadonyBusinessException | Le paiement mobile money direct par l'expéditeur n'est plus disponible  |
+| migré | écran | matching | `matching/BidService.java:668` | YadonyBusinessException | La zone CFA n'accepte pas ce moyen de paiement pour un colis.  |
+| migré | écran | matching | `matching/BidService.java:677` | YadonyBusinessException | Ce voyageur n'accepte pas le paiement mobile money. |
+| migré | écran | matching | `matching/BidService.java:686` | YadonyBusinessException | Le compte de versement mobile money de ce voyageur ne correspond pas  / à la devise de ce trajet. |
+| migré | écran | matching | `matching/BidService.java:698` | YadonyBusinessException | La zone CFA n'accepte pas ce moyen de paiement pour un colis.  |
+| migré | écran | matching | `matching/BidService.java:706` | YadonyBusinessException | Cette annonce n'accepte pas le paiement en espèces |
+| migré | écran | matching | `matching/BidService.java:713` | YadonyBusinessException | Cette annonce n'accepte pas le paiement par carte |
+| migré | écran | matching | `matching/BidService.java:726` | YadonyBusinessException | Seul l'expéditeur peut confirmer le paiement |
+| migré | écran | matching | `matching/BidService.java:760` | YadonyBusinessException | Accès non autorisé à ce bid |
+| migré | écran | matching | `matching/BidService.java:769` | YadonyBusinessException | Demande introuvable |
+| migré | écran | matching | `matching/BidService.java:778` | YadonyBusinessException | Demande introuvable |
+| migré | écran | matching | `matching/BidService.java:813` | YadonyBusinessException | Accès non autorisé à ce colis |
+| migré | écran | matching | `matching/BidService.java:819` | YadonyBusinessException | Le numéro n'est communiqué qu'une fois le colis accepté |
+| migré | écran | matching | `matching/BidService.java:827` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | matching | `matching/BidService.java:835` | YadonyBusinessException | Ce membre préfère échanger par la messagerie Yadony |
+| migré | écran | matching | `matching/BidService.java:856` | YadonyBusinessException | Vous n'êtes pas autorisé à voir ces demandes |
+| migré | écran | matching | `matching/BidService.java:991` | YadonyBusinessException | Demande introuvable |
+| migré | écran | matching | `matching/BidService.java:994` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | matching | `matching/BidService.java:1012` | YadonyBusinessException | Demande introuvable |
+| migré | écran | matching | `matching/BidService.java:1015` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | matching | `matching/BidService.java:1031` | YadonyBusinessException | Acceptez ce colis via le parcours mobile money. |
+| migré | écran | matching | `matching/BidService.java:1048` | YadonyBusinessException | Le voyageur est déjà parti, ce trajet n'accepte plus de colis |
+| migré | écran | matching | `matching/BidService.java:1056` | YadonyBusinessException | Capacité insuffisante pour accepter cette demande |
+| migré | écran | matching | `matching/BidService.java:1174` | YadonyBusinessException | Confirmation de présence uniquement pour les bids acceptés |
+| migré | écran | matching | `matching/BidService.java:1206` | YadonyBusinessException | Vous n'êtes pas autorisé à annuler ce bid |
+| migré | écran | matching | `matching/BidService.java:1212` | YadonyBusinessException | Impossible d'annuler un bid déjà terminé |
+| migré | écran | matching | `matching/BidService.java:1339` | YadonyBusinessException | Vous n'êtes pas autorisé à masquer ce bid |
+| migré | écran | matching | `matching/BidService.java:1356` | YadonyBusinessException | Vous n'êtes pas autorisé à effectuer cette action |
+| migré | écran | matching | `matching/BidService.java:1361` | YadonyBusinessException | Seules les demandes refusées ou annulées peuvent être supprimées |
+| migré | écran | matching | `matching/BidService.java:1383` | YadonyBusinessException | Le refus de colis n'est possible que sur un envoi accepté ou remis |
+| migré | écran | matching | `matching/BidService.java:1390` | YadonyBusinessException | Le trajet est parti : le colis ne peut plus être refusé |
+| migré | écran | matching | `matching/BidService.java:1449` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | matching | `matching/BidService.java:1455` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | matching | `matching/BidService.java:1461` | YadonyBusinessException | Demande introuvable |
+| migré | écran | matching | `matching/BidService.java:1467` | YadonyBusinessException | Vous n'êtes pas autorisé à effectuer cette action |
+| migré | écran | matching | `matching/BidService.java:1474` | YadonyBusinessException | Cette action n'est pas possible pour un bid en statut  |
+| migré | écran | matching | `matching/HandoverDeadlineRules.java:65` | YadonyBusinessException | La date limite de remise des colis pour ce trajet est passée |
+| migré | écran | matching | `matching/PriceGridController.java:97` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | matching | `matching/PriceGridController.java:106` | YadonyBusinessException | Un token Firebase valide est requis |
+| migré | écran | matching | `matching/PriceGridService.java:62` | ResponseStatusException | price-grid-limit: maximum 20 articles autorisés |
+| migré | écran | matching | `matching/TravelerStatsController.java:77` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | matching | `matching/TravelerStatsController.java:81` | YadonyBusinessException | Les statistiques sont réservées aux voyageurs PRO. |
+| migré | écran | matching | `matching/TravelerStatsController.java:94` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | matching | `matching/TravelerStatsController.java:97` | YadonyBusinessException | Analytics réservés aux voyageurs PRO. |
+| migré | écran | matching | `matching/TravelerStatsController.java:102` | YadonyBusinessException | Période invalide. Valeurs acceptées: month, quarter, year. |
+| migré | écran | matching | `matching/TravelerStatsController.java:113` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | matching | `matching/TravelerStatsController.java:116` | YadonyBusinessException | Calendrier réservé aux voyageurs PRO. |
+| migré | écran | matching | `matching/TravelerStatsController.java:139` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | matching | `matching/TravelerStatsController.java:142` | YadonyBusinessException | Réservé aux voyageurs. |
+| migré | écran | matching | `matching/TravelerStatsController.java:153` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | matching | `matching/TravelerStatsController.java:156` | YadonyBusinessException | Invitations réservées aux voyageurs PRO. |
+| migré | écran | matching | `matching/TravelerStatsController.java:162` | YadonyBusinessException | Annonce introuvable. |
+| migré | écran | matching | `matching/TravelerStatsController.java:166` | YadonyBusinessException | Cette annonce ne vous appartient pas. |
+| migré | écran | matching | `matching/TravelerStatsController.java:172` | YadonyBusinessException | Demande introuvable. |
+| migré | écran | matching | `matching/TravelerStatsController.java:176` | YadonyBusinessException | Cette demande n'est plus disponible. |
+| migré | écran | matching | `matching/TripGroupService.java:156` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | matching | `matching/TripLegRules.java:36` | YadonyBusinessException | Nombre d'étapes invalide / Un voyage compte de  /  étapes |
+| migré | écran | matching | `matching/TripRecurrenceController.java:61` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | matching | `matching/TripRecurrenceService.java:392` | YadonyBusinessException | Cette devise n'est pas prise en charge par yadony. |
+| migré | écran | matching | `matching/TripRecurrenceService.java:407` | YadonyBusinessException | Choisissez au moins un moyen de paiement pour ce trajet. |
+| migré | écran | matching | `matching/TripRescheduleController.java:41` | YadonyBusinessException | Un token Firebase valide est requis |
+| migré | écran | matching | `matching/TripRescheduleService.java:68` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | matching | `matching/TripRescheduleService.java:71` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | matching | `matching/TripRescheduleService.java:74` | YadonyBusinessException | Vous n'êtes pas autorisé à reporter ce trajet |
+| migré | écran | matching | `matching/TripRescheduleService.java:143` | YadonyBusinessException | Reschedule Impossible / Seul un trajet publié et pas encore terminé peut être reporté |
+| migré | écran | matching | `matching/TripRescheduleService.java:149` | YadonyBusinessException | Reschedule Impossible / Un colis est déjà en route : le trajet ne peut plus être reporté |
+| migré | écran | matching | `matching/TripRescheduleService.java:154` | YadonyBusinessException | Ce trajet a déjà été reporté  /  fois. Annulez-le et publiez un nouveau trajet. |
+| migré | écran | matching | `matching/TripRescheduleService.java:164` | YadonyBusinessException | Choisissez une date ou une heure de départ différente de l'actuelle |
+| migré | écran | matching | `matching/TripRescheduleService.java:170` | YadonyBusinessException | La nouvelle date de départ doit être dans le futur |
+| migré | écran | matching | `matching/TripRescheduleService.java:178` | YadonyBusinessException | La date limite de remise doit être dans le futur |
+| migré | écran | matching | `matching/TripSeriesService.java:73` | YadonyBusinessException | La date du trajet d'origine ne peut pas être répétée. |
+| migré | écran | matching | `matching/TripStops.java:31` | YadonyBusinessException | Nombre d'escales invalide / Le nombre d'escales doit valoir 0 (direct), 1 ou 2 (deux escales ou plus) |
+| migré | écran | matching | `matching/TripsSummaryController.java:72` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | matching | `matching/TripsSummaryController.java:77` | YadonyBusinessException | Réservé aux voyageurs. |
 | reste | indirect | matching | `matching/ranking/TripRankingProperties.java:39` | IllegalArgumentException | Les poids du classement ne peuvent pas être négatifs |
-| reste | écran | matching | `matching/reception/ReceptionService.java:232` | YadonyBusinessException | Ce colis est déjà livré ou n'est plus en cours |
-| reste | écran | matching | `matching/reception/ReceptionService.java:330` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | matching | `matching/reception/ReceptionService.java:335` | YadonyBusinessException | Colis introuvable |
-| reste | écran | matching | `matching/reception/RecipientChangeService.java:107` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | matching | `matching/reception/RecipientChangeService.java:110` | YadonyBusinessException | Bid introuvable |
-| reste | écran | matching | `matching/reception/RecipientChangeService.java:113` | YadonyBusinessException | Seul l'expéditeur peut modifier le destinataire |
-| reste | écran | matching | `matching/reception/RecipientChangeService.java:117` | YadonyBusinessException | Le colis a déjà été remis ou n'est plus en cours : le destinataire ne peut plus changer |
-| reste | écran | matching | `matching/reception/RecipientChangeService.java:150` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | matching | `matching/reception/RecipientReplacementService.java:90` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | matching | `matching/reception/RecipientReplacementService.java:93` | YadonyBusinessException | Bid introuvable |
-| reste | écran | matching | `matching/reception/RecipientReplacementService.java:99` | YadonyBusinessException | Seul le voyageur du colis peut demander un autre destinataire |
-| reste | écran | matching | `matching/reception/RecipientReplacementService.java:103` | YadonyBusinessException | Le colis a déjà été remis ou n'est plus en cours : le destinataire ne peut plus changer |
-| reste | écran | matching | `matching/reception/RecipientReplacementService.java:109` | YadonyBusinessException | Le destinataire n'a pas refusé ce colis |
-| reste | écran | matching | `matching/reception/RecipientReplacementService.java:116` | YadonyBusinessException | Vous avez déjà prévenu l'expéditeur. Nouvelle demande possible 12 h après la précédente. |
+| migré | écran | matching | `matching/reception/ReceptionService.java:232` | YadonyBusinessException | Ce colis est déjà livré ou n'est plus en cours |
+| migré | écran | matching | `matching/reception/ReceptionService.java:330` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | matching | `matching/reception/ReceptionService.java:335` | YadonyBusinessException | Colis introuvable |
+| migré | écran | matching | `matching/reception/RecipientChangeService.java:107` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | matching | `matching/reception/RecipientChangeService.java:110` | YadonyBusinessException | Bid introuvable |
+| migré | écran | matching | `matching/reception/RecipientChangeService.java:113` | YadonyBusinessException | Seul l'expéditeur peut modifier le destinataire |
+| migré | écran | matching | `matching/reception/RecipientChangeService.java:117` | YadonyBusinessException | Le colis a déjà été remis ou n'est plus en cours : le destinataire ne peut plus changer |
+| migré | écran | matching | `matching/reception/RecipientChangeService.java:150` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | matching | `matching/reception/RecipientReplacementService.java:90` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | matching | `matching/reception/RecipientReplacementService.java:93` | YadonyBusinessException | Bid introuvable |
+| migré | écran | matching | `matching/reception/RecipientReplacementService.java:99` | YadonyBusinessException | Seul le voyageur du colis peut demander un autre destinataire |
+| migré | écran | matching | `matching/reception/RecipientReplacementService.java:103` | YadonyBusinessException | Le colis a déjà été remis ou n'est plus en cours : le destinataire ne peut plus changer |
+| migré | écran | matching | `matching/reception/RecipientReplacementService.java:109` | YadonyBusinessException | Le destinataire n'a pas refusé ce colis |
+| migré | écran | matching | `matching/reception/RecipientReplacementService.java:116` | YadonyBusinessException | Vous avez déjà prévenu l'expéditeur. Nouvelle demande possible 12 h après la précédente. |
 | reste | écran | payments | `payments/ConnectDashboardController.java:41` | YadonyBusinessException | Un token Firebase valide est requis |
 | reste | écran | payments | `payments/ConnectDashboardLinkService.java:46` | YadonyBusinessException | Utilisateur introuvable |
 | reste | écran | payments | `payments/ConnectDashboardLinkService.java:97` | YadonyBusinessException | Aucun compte de paiement n'est relié à votre profil. |

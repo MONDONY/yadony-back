@@ -33,9 +33,7 @@ public final class TripLegRules {
 
     public static void validate(List<AnnouncementRequest> legs) {
         if (legs == null || legs.size() < MIN_LEGS || legs.size() > MAX_LEGS) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "trip-legs-count", "Nombre d'étapes invalide",
-                    "Un voyage compte de " + MIN_LEGS + " à " + MAX_LEGS + " étapes");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "trip-legs-count", "problem.trip-legs-count", MIN_LEGS, MAX_LEGS);
         }
         boolean draft = legs.get(0).isDraft();
         for (int i = 1; i < legs.size(); i++) {
@@ -44,13 +42,11 @@ public final class TripLegRules {
             int legIndex = i + 1;
 
             if (leg.isDraft() != draft) {
-                throw refusal(legIndex, "trip-legs-draft-mismatch", "Étapes incohérentes",
-                        "Toutes les étapes d'un voyage sont publiées ensemble, ou toutes en brouillon");
+                throw refusal(legIndex, "trip-legs-draft-mismatch", "problem.trip-legs-draft-mismatch");
             }
             if (!sameCity(previous.arrivalCity(), leg.departureCity())) {
-                throw refusal(legIndex, "trip-leg-city-mismatch", "Étape non chaînée",
-                        "L'étape " + legIndex + " doit partir de " + previous.arrivalCity()
-                                + ", la ville d'arrivée de l'étape précédente");
+                throw refusal(legIndex, "trip-leg-city-mismatch", "problem.trip-leg-city-mismatch",
+                        legIndex, previous.arrivalCity());
             }
             LocalDate previousArrival = previous.arrivalDate() != null
                     ? previous.arrivalDate() : previous.departureDate();
@@ -61,8 +57,8 @@ public final class TripLegRules {
                             && previous.arrivalTime() != null && leg.departureTime() != null
                             && leg.departureTime().isBefore(previous.arrivalTime()));
                 if (before) {
-                    throw refusal(legIndex, "trip-leg-date-before-previous", "Étape trop tôt",
-                            "L'étape " + legIndex + " ne peut pas partir avant l'arrivée de l'étape précédente");
+                    throw refusal(legIndex, "trip-leg-date-before-previous", "problem.trip-leg-date-before-previous",
+                            legIndex);
                 }
             }
         }
@@ -85,8 +81,8 @@ public final class TripLegRules {
         return stripped.replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
     }
 
-    private static YadonyBusinessException refusal(int legIndex, String code, String title, String detail) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, code, title, detail,
-                Map.of("legIndex", legIndex));
+    private static YadonyBusinessException refusal(int legIndex, String code, String messageKey, Object... args) {
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, code, messageKey,
+                Map.of("legIndex", legIndex), args);
     }
 }

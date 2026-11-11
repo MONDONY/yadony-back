@@ -27,9 +27,7 @@ final class BidContentRules {
         for (String raw : contentCategory.split(",")) {
             String item = raw.toLowerCase(Locale.ROOT).strip();
             if (!item.isEmpty() && refusedLower.contains(item)) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "content-type-refused", "Content Type Refused",
-                        "Le voyageur n'accepte pas : " + raw.strip());
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "content-type-refused", "problem.content-type-refused", raw.strip());
             }
         }
     }

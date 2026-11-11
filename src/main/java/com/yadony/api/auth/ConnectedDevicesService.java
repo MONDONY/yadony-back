@@ -8,7 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
+import com.yadony.api.common.LocalizedResponseStatusException;
 
 import java.util.List;
 import java.util.Objects;
@@ -49,27 +49,27 @@ public class ConnectedDevicesService {
     @Transactional
     public void revokeDevice(UUID userId, String deviceId, String currentDeviceId) {
         if (deviceId.equals(currentDeviceId)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Impossible de révoquer l'appareil courant");
+            throw new LocalizedResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "problem.devices.cannot-revoke-current");
         }
         int deleted = deviceRepo.deleteByUserIdAndDeviceId(userId, deviceId);
         if (deleted == 0) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Appareil introuvable");
+            throw new LocalizedResponseStatusException(HttpStatus.NOT_FOUND, "problem.devices.not-found");
         }
     }
 
     @Transactional
     public void revokeOthers(UUID userId, String currentDeviceId) {
         UserEntity user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Utilisateur introuvable"));
+                .orElseThrow(() -> new LocalizedResponseStatusException(HttpStatus.NOT_FOUND, "problem.kyc.user-not-found"));
         if (firebaseAuth.isEmpty()) {
             log.warn("FirebaseAuth non disponible — révocation des tokens Firebase ignorée pour userId={}", userId);
         } else {
             try {
                 firebaseAuth.get().revokeRefreshTokens(user.getFirebaseUid());
             } catch (FirebaseAuthException e) {
-                throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
-                        "Erreur lors de la révocation Firebase");
+                throw new LocalizedResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                        "problem.devices.firebase-revoke-failed");
             }
         }
         deviceRepo.deleteByUserIdAndDeviceIdNot(userId, currentDeviceId);

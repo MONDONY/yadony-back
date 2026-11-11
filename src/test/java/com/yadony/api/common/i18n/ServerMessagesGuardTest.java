@@ -30,7 +30,8 @@ class ServerMessagesGuardTest {
 
     /**
      * Sources dont tous les refus métier sont localisés (paquet 1 : matching ; paquet 2 : annulation côté
-     * utilisateur, KYC côté utilisateur, avis). Les services d'administration restent en français.
+     * utilisateur, KYC côté utilisateur, avis ; paquet 3 : reste de matching et auth). Les services
+     * d'administration des autres packages restent en français.
      */
     private static final List<String> MIGRATED = List.of(
             "matching/AnnouncementService.java",
@@ -47,10 +48,50 @@ class ServerMessagesGuardTest {
             "kyc/provider/didit/DiditIdentityProvider.java",
             "kyc/provider/stripe/StripeIdentityProvider.java",
             "ratings/RatingService.java",
-            "ratings/ReceptionRatingService.java");
+            "ratings/ReceptionRatingService.java",
+            // Paquet 3 : reste de matching (réservation, paiement, statistiques, report, réception) et auth.
+            "auth/AdminGdprService.java",
+            "auth/AuthController.java",
+            "auth/AuthService.java",
+            "auth/BlockService.java",
+            "auth/ConnectedDevicesController.java",
+            "auth/ConnectedDevicesService.java",
+            "auth/GuestClaimService.java",
+            "auth/GuestUserProvisioner.java",
+            "auth/PhoneOwnershipService.java",
+            "auth/ProfilePublicService.java",
+            "auth/PublishCommitmentService.java",
+            "auth/UserLanguageService.java",
+            "auth/UserService.java",
+            "matching/AnnouncementController.java",
+            "matching/AnnouncementViewService.java",
+            "matching/ArrivalRules.java",
+            "matching/BidCheckoutService.java",
+            "matching/BidContentRules.java",
+            "matching/BidController.java",
+            "matching/BidNegotiationController.java",
+            "matching/BidPhotoService.java",
+            "matching/BidService.java",
+            "matching/HandoverDeadlineRules.java",
+            "matching/PriceGridController.java",
+            "matching/PriceGridService.java",
+            "matching/TravelerStatsController.java",
+            "matching/TripGroupService.java",
+            "matching/TripLegRules.java",
+            "matching/TripRecurrenceController.java",
+            "matching/TripRecurrenceService.java",
+            "matching/TripRescheduleController.java",
+            "matching/TripRescheduleService.java",
+            "matching/TripSeriesService.java",
+            "matching/TripStops.java",
+            "matching/TripsSummaryController.java",
+            "matching/reception/ReceptionService.java",
+            "matching/reception/RecipientChangeService.java",
+            "matching/reception/RecipientReplacementService.java");
 
     private static final Pattern HARDCODED_BUSINESS = Pattern.compile(
-            "new\\s+(?:YadonyBusinessException\\s*\\(|ResponseStatusException\\s*\\(|YadonyNotFoundException\\s*\\(\\s*\")");
+            "new\\s+(?:YadonyBusinessException\\s*\\(|ResponseStatusException\\s*\\("
+                    + "|YadonyNotFoundException\\s*\\(\\s*\"(?:[^\"\\\\]|\\\\.)*\"\\s*\\))");
     private static final Pattern FRENCH_IN_EXCEPTION = Pattern.compile(
             "new\\s+(?:Yadony\\w*|IllegalState|IllegalArgument|ResponseStatus)Exception\\s*\\(\\s*\"[^\"]*"
                     + "(?:[àâçéèêëîïôûùü]|\\b(?:Vous|Votre|introuvable|impossible)\\b)");
@@ -60,7 +101,9 @@ class ServerMessagesGuardTest {
      */
     private static final List<String> INDIRECT_ILLEGAL_STATE_ALLOWED = List.of(
             "cancellation/CancellationService.java",
-            "kyc/provider/didit/DiditIdentityProvider.java");
+            "kyc/provider/didit/DiditIdentityProvider.java",
+            "auth/GuestClaimService.java",
+            "auth/GuestUserProvisioner.java");
     private static final Pattern FRENCH_IN_BUSINESS_EXCEPTION = Pattern.compile(
             "new\\s+(?:Yadony\\w*|ResponseStatus)Exception\\s*\\(\\s*\"[^\"]*"
                     + "(?:[àâçéèêëîïôûùü]|\\b(?:Vous|Votre|introuvable|impossible)\\b)");

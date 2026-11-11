@@ -52,8 +52,7 @@ public class BlockService implements BlockVisibility {
     @Transactional
     public void block(UUID blockerId, UUID blockedId) {
         if (blockerId.equals(blockedId)) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "invalid-block",
-                    "Invalid Block", "Action invalide");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "invalid-block", "problem.invalid-block");
         }
         if (blockRepo.existsByBlockerIdAndBlockedId(blockerId, blockedId)) {
             return; // idempotent
@@ -130,8 +129,7 @@ public class BlockService implements BlockVisibility {
     @Transactional(readOnly = true)
     public void assertVisible(UUID viewerId, UUID targetId) {
         if (isHidden(viewerId, targetId)) {
-            throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "not-found",
-                    "Not Found", "Ressource introuvable");
+            throw YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "not-found", "problem.not-found");
         }
     }
 

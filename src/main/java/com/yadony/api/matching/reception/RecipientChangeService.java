@@ -104,19 +104,14 @@ public class RecipientChangeService {
     @Transactional
     public BidResponse changeRecipient(UUID bidId, String firebaseUid, ChangeRecipientRequest request) {
         UserEntity caller = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         BidEntity bid = bidRepository.findByIdForUpdate(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Bid Not Found", "Bid introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found.introuvable"));
         if (!caller.getId().equals(bid.getSenderId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Seul l'expéditeur peut modifier le destinataire");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.seul-expediteur-modifier-destinataire");
         }
         if (!CHANGEABLE.contains(bid.getStatus())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "recipient-change-not-allowed",
-                    "Recipient Change Not Allowed",
-                    "Le colis a déjà été remis ou n'est plus en cours : le destinataire ne peut plus changer");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "recipient-change-not-allowed", "problem.recipient-change-not-allowed");
         }
 
         String newName = request.recipientName().trim();
@@ -147,9 +142,7 @@ public class RecipientChangeService {
         boolean codeRegenerated = bid.getConfirmationCode() != null;
         if (codeRegenerated) {
             AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                    .orElseThrow(() -> new YadonyBusinessException(
-                            HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found",
-                            "Annonce introuvable"));
+                    .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
             bid.setConfirmationCode(PickupCodes.newCode());
             bid.setConfirmationCodeAttempts(0);
             bid.setConfirmationCodeExpiry(ArrivalRules.renewedPickupCodeExpiry(announcement));
