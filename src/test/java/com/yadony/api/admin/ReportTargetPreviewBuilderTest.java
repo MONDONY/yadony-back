@@ -192,6 +192,37 @@ class ReportTargetPreviewBuilderTest {
         assertThat(fact(preview, "Poids")).isNull();
     }
 
+    private String budget(String currency, String montant) {
+        PackageRequestEntity p = new PackageRequestEntity();
+        p.setDepartureCity("Paris");
+        p.setArrivalCity("Abidjan");
+        p.setCurrency(currency);
+        p.setTargetPriceEur(new BigDecimal(montant));
+        p.setNegotiable(false);
+        when(packageRequestRepo.findById(targetId)).thenReturn(Optional.of(p));
+        return fact(builder.build(report(ReportTargetType.PACKAGE_REQUEST, targetId)), "Budget").value();
+    }
+
+    @Test
+    void demandeDEnvoi_budgetDansLaDeviseDeLaDemande() {
+        assertThat(budget("XOF", "25000")).isEqualTo("25000 XOF");
+    }
+
+    @Test
+    void demandeDEnvoi_budgetEnDollars() {
+        assertThat(budget("USD", "112.19")).isEqualTo("112,19 USD");
+    }
+
+    @Test
+    void demandeDEnvoi_budgetEnEuros() {
+        assertThat(budget("EUR", "37.38")).isEqualTo("37,38 EUR");
+    }
+
+    @Test
+    void demandeDEnvoi_deviseAbsente_replieSurEuro() {
+        assertThat(budget(null, "40")).isEqualTo("40 EUR");
+    }
+
     // ---- offre ----
 
     @Test
