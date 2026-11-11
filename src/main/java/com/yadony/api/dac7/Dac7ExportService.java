@@ -20,19 +20,24 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionOperations;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.bouncycastle.openpgp.PGPPublicKey;
 
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -48,6 +53,21 @@ import java.util.stream.Collectors;
  * </ul>
  * Le NIF et la TVA ne sont lus en clair qu'ici, le temps d'écrire le XML ; ils ne vont dans aucun journal, aucun audit
  * ni aucun message d'erreur (le validateur ne rapporte que la ligne et la colonne).
+ *
+ * <p><b>Concurrence</b> (relecture n° 3, finding 1). Le calcul (taux BCE, rapport annuel en lecture répétable,
+ * lectures Didit) se fait HORS de toute transaction : aucune connexion n'est tenue pendant les appels réseau, les taux
+ * BCE téléchargés sont validés aussitôt (jamais annulés avec un export refusé), et la lecture répétable de
+ * {@link Dac7ReportService#annualReport} s'applique vraiment (une transaction englobante la ferait ignorer). Ensuite,
+ * une transaction COURTE, en lecture validée (READ COMMITTED : chaque requête prise APRÈS le verrou voit ce que l'export
+ * précédent a validé ; une lecture répétable photographierait la base avant), prend le verrou de l'année sans attendre
+ * (409 {@code dac7-export-in-progress} s'il est pris), relit les voyageurs des fichiers DÉPOSÉS, attribue l'ordre
+ * DGFiP, écrit le XML et inscrit le run, ses voyageurs et l'audit.
+ *
+ * <p><b>Déjà déposé</b> (finding 2). Un voyageur retenu dans un fichier DÉPOSÉ de l'année n'est jamais réémis en
+ * déclaration initiale (DPI401/OECD1) : en FULL comme en PARTIAL, il est écarté avec la raison
+ * {@code ALREADY_DEPOSITED} et ne bloque pas l'export complet. Le reprendre ({@code includeAlreadyExported}) exigerait
+ * une déclaration rectificative (DPI402/OECD2, nouveau DocRefId et {@code CorrDocRefId}) : hors lot, refusé en 409
+ * {@code dac7-already-deposited-conflict}.
  */
 @Service
 public class Dac7ExportService {
@@ -79,8 +99,14 @@ public class Dac7ExportService {
     public Dac7ExportService(Dac7DeclarationService declarations, UserRepository users,
                              Dac7ExportProperties properties, AuditService audit, Dac7AdminReadModel reads,
                              PlatformTransactionManager transactionManager) {
-        this(declarations, users, properties, audit, reads, new TransactionTemplate(transactionManager),
-                Clock.systemUTC());
+        this(declarations, users, properties, audit, reads, lockTransactions(transactionManager), Clock.systemUTC());
+    }
+
+    /** Transaction courte de l'inscription, en lecture validée (voir la Javadoc de la classe). */
+    static TransactionTemplate lockTransactions(PlatformTransactionManager transactionManager) {
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        template.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+        return template;
     }
 
     Dac7ExportService(Dac7DeclarationService declarations, UserRepository users, Dac7ExportProperties properties,
@@ -94,7 +120,7 @@ public class Dac7ExportService {
         this.clock = clock;
     }
 
-    /** Compatibilité : sans ré-export des voyageurs déjà retenus. */
+    /** Compatibilité : sans ré-export des voyageurs déjà déposés. */
     public ExportFile export(Integer yearValue, String modeValue, Integer sequenceValue, UUID adminId) {
         return export(yearValue, modeValue, sequenceValue, false, adminId);
     }
@@ -102,8 +128,9 @@ public class Dac7ExportService {
     /**
      * @param sequenceValue          ordre DGFiP voulu ; nul : le suivant de l'année (0 pour le premier fichier). Un
      *                               ordre déjà employé pour l'année est refusé (409 {@code dac7-sequence-used})
-     * @param includeAlreadyExported PARTIAL : reprendre aussi les voyageurs retenus dans un fichier DÉPOSÉ de cette
-     *                               année (faux par défaut : ils sont écartés, raison {@code ALREADY_EXPORTED})
+     * @param includeAlreadyExported reprendre les voyageurs d'un fichier DÉPOSÉ de l'année : refusé (409
+     *                               {@code dac7-already-deposited-conflict}) dès qu'il y en a, car ce serait les
+     *                               redéclarer en déclaration initiale (voir la Javadoc de la classe)
      */
     public ExportFile export(Integer yearValue, String modeValue, Integer sequenceValue,
                              boolean includeAlreadyExported, UUID adminId) {
@@ -124,34 +151,52 @@ public class Dac7ExportService {
                     + "clair n'est pas autorisé.");
         }
         PGPPublicKey key = encrypted ? key() : null;
-        // Une seule génération à la fois pour une année (verrou de transaction), du calcul à l'inscription du run :
-        // l'ordre DGFiP et la liste des déjà déposés sont lus et écrits sous le même verrou.
+        // 1. Calcul HORS transaction (réseau, lecture répétable du rapport).
+        Declaration declaration = declarations.declaration(year, Dac7DeclarationService.IdentityMode.FRESH);
+        // 2. Inscription : transaction courte sous le verrou de l'année, jamais d'attente.
         return transactions.execute(status -> {
-            reads.lockYear(year);
-            int sequence;
-            if (sequenceValue == null) {
-                sequence = reads.nextSequence(year);
-            } else if (reads.sequenceUsed(year, sequenceValue)) {
-                throw new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-sequence-used", "Sequence Already Used",
-                        "Le numéro d'ordre " + sequenceValue + " a déjà servi pour " + year + ".");
-            } else {
-                sequence = sequenceValue;
+            if (!reads.tryLockYear(year)) {
+                throw inProgress(year);
             }
-            if (sequence > 999) {
-                throw new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-sequence-used", "Sequence Exhausted",
-                        "Les 1 000 numéros d'ordre de " + year + " sont épuisés.");
+            Set<UUID> deposited = reads.exportedTravelers(year);
+            List<UUID> redeclared = declaration.sellers().stream().map(Seller::userId).filter(deposited::contains)
+                    .toList();
+            if (includeAlreadyExported && !redeclared.isEmpty()) {
+                throw alreadyDeposited(year, redeclared);
             }
-            return generate(year, mode, sequence, includeAlreadyExported, encrypted, key, adminId);
+            List<Seller> pending = declaration.sellers().stream().filter(s -> !deposited.contains(s.userId()))
+                    .toList();
+            List<String> blockers = Dac7DeclarationService.blockers(pending,
+                    declaration.invalidPartnerJurisdictions(), properties.operatorConfigured());
+            if (mode == Mode.FULL && !blockers.isEmpty()) {
+                throw blocked(blockers, pending.stream().filter(s -> !s.exclusions().isEmpty())
+                        .map(Seller::userId).toList());
+            }
+            int sequence = sequence(year, sequenceValue);
+            return generate(declaration, deposited, blockers, year, mode, sequence, encrypted, key, adminId);
         });
     }
 
-    private ExportFile generate(int year, Mode mode, int sequence, boolean includeAlreadyExported, boolean encrypted,
-                                PGPPublicKey key, UUID adminId) {
-        Declaration declaration = declarations.declaration(year, Dac7DeclarationService.IdentityMode.FRESH);
-        if (mode == Mode.FULL && !declaration.blockers().isEmpty()) {
-            throw blocked(declaration.blockers(), declaration.sellers().stream()
-                    .filter(s -> !s.exclusions().isEmpty()).map(Seller::userId).toList());
+    /** Ordre DGFiP, lu sous le verrou : le suivant de l'année, ou celui demandé s'il est libre. */
+    private int sequence(int year, Integer sequenceValue) {
+        int sequence;
+        if (sequenceValue == null) {
+            sequence = reads.nextSequence(year);
+        } else if (reads.sequenceUsed(year, sequenceValue)) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-sequence-used", "Sequence Already Used",
+                    "Le numéro d'ordre " + sequenceValue + " a déjà servi pour " + year + ".");
+        } else {
+            sequence = sequenceValue;
         }
+        if (sequence > 999) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-sequence-used", "Sequence Exhausted",
+                    "Les 1 000 numéros d'ordre de " + year + " sont épuisés.");
+        }
+        return sequence;
+    }
+
+    private ExportFile generate(Declaration declaration, Set<UUID> deposited, List<String> pendingBlockers, int year,
+                                Mode mode, int sequence, boolean encrypted, PGPPublicKey key, UUID adminId) {
         String siren = properties.declarantSiren().strip();
         LocalDateTime createdAt = LocalDateTime.now(clock.withZone(PARIS)).withNano(0);
         String unique = createdAt.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss")) + "_"
@@ -159,15 +204,16 @@ public class Dac7ExportService {
         Dac7XmlDocument.Operator operator = operator(siren, sequence);
 
         Map<UUID, UserEntity> byId = users.findAllById(declaration.sellers().stream()
-                        .filter(s -> s.exclusions().isEmpty()).map(Seller::userId).toList()).stream()
+                        .filter(s -> s.exclusions().isEmpty() && !deposited.contains(s.userId()))
+                        .map(Seller::userId).toList()).stream()
                 .collect(Collectors.toMap(UserEntity::getId, Function.identity()));
         List<Dac7XmlDocument.Seller> sellers = new ArrayList<>();
         List<Dac7AdminReadModel.ExportSellerRow> rows = new ArrayList<>();
         List<UUID> invalid = new ArrayList<>();
         for (Seller seller : declaration.sellers()) {
             List<String> reasons = new ArrayList<>(seller.exclusions());
-            if (reasons.isEmpty() && mode == Mode.PARTIAL && seller.alreadyExported() && !includeAlreadyExported) {
-                reasons.add(Dac7DeclarationService.ALREADY_EXPORTED);
+            if (deposited.contains(seller.userId())) {
+                reasons.add(Dac7DeclarationService.ALREADY_DEPOSITED);
             }
             UserEntity user = byId.get(seller.userId());
             if (reasons.isEmpty() && (user == null || seller.identity() == null)) {
@@ -196,11 +242,12 @@ public class Dac7ExportService {
             throw blocked(List.of(Dac7DeclarationService.XSD_INVALID), invalid);
         }
         if (sellers.isEmpty()) {
-            List<String> blockers = new ArrayList<>(declaration.blockers());
+            List<String> blockers = new ArrayList<>(pendingBlockers);
             if (!blockers.contains(Dac7DeclarationService.NO_SELLERS)) {
                 blockers.add(Dac7DeclarationService.NO_SELLERS);
             }
-            throw blocked(blockers, rows.stream().map(Dac7AdminReadModel.ExportSellerRow::userId).toList());
+            throw blocked(blockers, rows.stream().filter(r -> !deposited.contains(r.userId()))
+                    .map(Dac7AdminReadModel.ExportSellerRow::userId).toList());
         }
 
         byte[] xml = Dac7XmlWriter.write(new Dac7XmlDocument(year, createdAt, unique, operator, sellers));
@@ -236,20 +283,52 @@ public class Dac7ExportService {
     }
 
     /**
-     * L'équipe confirme avoir déposé ce fichier sur Télé-TD : ses voyageurs retenus seront écartés par défaut des exports
-     * PARTIAL suivants de l'année. Idempotent (un second appel ne change rien et n'audite pas) ; 404 si inconnu.
+     * L'équipe confirme avoir déposé ce fichier sur Télé-TD : ses voyageurs retenus seront écartés des exports suivants
+     * de l'année (raison {@code ALREADY_DEPOSITED}). Relecture n° 3, finding 3 : refusé (409
+     * {@code dac7-year-not-closed}) pour un fichier généré avant le 1er janvier suivant (montants forcément partiels) ;
+     * sinon, dans UNE transaction sous le verrou de l'année (409 {@code dac7-export-in-progress} s'il est pris), le
+     * statut passe DEPOSITED et l'audit est écrit avec lui (un audit en échec annule le dépôt). Idempotent : un second
+     * appel ne change rien et n'audite pas ; 404 si inconnu.
      */
     public void markDeposited(UUID runId, UUID adminId) {
         Dac7AdminReadModel.ExportRun run = reads.run(runId).orElseThrow(() -> new YadonyBusinessException(
                 HttpStatus.NOT_FOUND, "dac7-export-run-not-found", "Export Run Not Found",
                 "Fichier DAC7 introuvable."));
-        if (reads.markDeposited(runId, adminId, clock.instant())) {
-            Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("year", run.year());
-            payload.put("sequence", run.sequence());
-            payload.put("sellers", run.sellers());
-            audit.log("DAC7_EXPORT", runId, "DAC7_EXPORT_MARKED_DEPOSITED", adminId, payload);
+        Instant yearEnd = LocalDate.of(run.year() + 1, 1, 1).atStartOfDay(ZoneOffset.UTC).toInstant();
+        if (run.generatedAt() == null || run.generatedAt().isBefore(yearEnd)) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-year-not-closed", "Year Not Closed",
+                    "Ce fichier a été généré avant la fin de l'année " + run.year() + " : ses montants sont partiels, "
+                    + "il ne peut pas être confirmé déposé. Générez le fichier à partir du 1er janvier "
+                    + (run.year() + 1) + ".");
         }
+        transactions.executeWithoutResult(status -> {
+            if (!reads.tryLockYear(run.year())) {
+                throw inProgress(run.year());
+            }
+            if (reads.markDeposited(runId, adminId, clock.instant())) {
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("year", run.year());
+                payload.put("sequence", run.sequence());
+                payload.put("sellers", run.sellers());
+                audit.log("DAC7_EXPORT", runId, "DAC7_EXPORT_MARKED_DEPOSITED", adminId, payload);
+            }
+        });
+    }
+
+    /** 409 immédiat : un autre export (ou dépôt) de la même année tient le verrou ; jamais d'attente. */
+    private static YadonyBusinessException inProgress(int year) {
+        return new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-export-in-progress", "Export In Progress",
+                "Un export DAC7 " + year + " est déjà en cours : réessayez dans quelques instants.");
+    }
+
+    /** 409 : reprendre un voyageur déjà déposé serait le redéclarer (rectificative hors lot). Identifiants seuls. */
+    private static YadonyBusinessException alreadyDeposited(int year, List<UUID> travelerIds) {
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put("travelerIds", travelerIds.stream().map(UUID::toString).toList());
+        return new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-already-deposited-conflict",
+                "Already Deposited", travelerIds.size() + " voyageur(s) figurent déjà dans un fichier " + year
+                + " déposé : les reprendre demanderait une déclaration rectificative, que ce fichier ne sait pas "
+                + "produire.", properties);
     }
 
     /** Raisons dédoublonnées, tenant dans la colonne (255) : seules des raisons entières sont gardées. */

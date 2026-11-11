@@ -180,12 +180,25 @@ class Dac7AdminControllerIT {
     }
 
     @Test
-    @DisplayName("dépôt confirmé : 404 si inconnu, 204 idempotent, statut DEPOSITED, audit sans donnée ; SUPPORT 403")
+    @DisplayName("dépôt confirmé : 404 si inconnu, 204 idempotent, statut DEPOSITED, audit sans donnée ; SUPPORT 403 ; "
+            + "année non close 409")
     void depot() throws Exception {
+        // Ordre et année FIXES, hors de portée des autres tests du contexte partagé (jamais de collision aléatoire) :
+        // 2025 est close, le fichier généré « maintenant » peut être confirmé déposé.
+        jdbc.update("DELETE FROM dac7_export_runs WHERE reporting_year IN (2025, 2026) AND sequence = 998");
         UUID run = UUID.randomUUID();
         jdbc.update("INSERT INTO dac7_export_runs (id, reporting_year, sequence, export_mode, status, file_name, "
-                + "sellers, generated_at) VALUES (?, 2026, ?, 'PARTIAL', 'GENERATED', 'f.xml', 2, CURRENT_TIMESTAMP)",
-                run, (int) (Math.random() * 900) + 50);
+                + "sellers, generated_at) VALUES (?, 2025, 998, 'PARTIAL', 'GENERATED', 'f.xml', 2, CURRENT_TIMESTAMP)",
+                run);
+        // Fichier de l'année en cours : montants partiels, jamais confirmé déposé.
+        UUID open = UUID.randomUUID();
+        int currentYear = java.time.LocalDate.now(java.time.ZoneOffset.UTC).getYear();
+        jdbc.update("INSERT INTO dac7_export_runs (id, reporting_year, sequence, export_mode, status, file_name, "
+                + "sellers, generated_at) VALUES (?, ?, 998, 'PARTIAL', 'GENERATED', 'g.xml', 2, CURRENT_TIMESTAMP)",
+                open, currentYear);
+        mockMvc.perform(post("/admin/dac7/exports/{id}/deposited", open).with(admin(AdminRole.ADMIN)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("dac7-year-not-closed"));
         mockMvc.perform(post("/admin/dac7/exports/{id}/deposited", UUID.randomUUID()).with(admin(AdminRole.ADMIN)))
                 .andExpect(status().isNotFound());
         mockMvc.perform(post("/admin/dac7/exports/{id}/deposited", run).with(admin(AdminRole.SUPPORT)))
