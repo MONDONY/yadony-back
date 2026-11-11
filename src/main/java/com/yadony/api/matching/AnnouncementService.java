@@ -211,6 +211,9 @@ public class AnnouncementService {
     /** Net estimé des colis en possession du voyageur (implémenté dans {@code payments/}). */
     private final TravelerParcelsNetPort travelerParcelsNet;
 
+    /** Interrupteurs des modes de transport (bateau fermé tant qu'il n'est pas ouvert depuis l'admin). */
+    private final TransportModeGuard transportModeGuard;
+
     @Value("${yadony.kyc.enforce:true}")
     private boolean enforceKyc;
 
@@ -240,7 +243,8 @@ public class AnnouncementService {
             TravelerPayoutNetworksPort travelerPayoutNetworks,
             TripRankingProperties rankingProperties,
             TripScoreCalculator tripScoreCalculator,
-            TravelerParcelsNetPort travelerParcelsNet
+            TravelerParcelsNetPort travelerParcelsNet,
+            TransportModeGuard transportModeGuard
     ) {
         this.announcementRepository = announcementRepository;
         this.bidRepository = bidRepository;
@@ -265,6 +269,7 @@ public class AnnouncementService {
         this.rankingProperties = rankingProperties;
         this.tripScoreCalculator = tripScoreCalculator;
         this.travelerParcelsNet = travelerParcelsNet;
+        this.transportModeGuard = transportModeGuard;
     }
 
     // La clé porte la taille de page en plus du numéro : l'app compte les résultats
@@ -984,6 +989,9 @@ public class AnnouncementService {
                         "Utilisateur introuvable"
                 ));
 
+        // Bateau fermé tant que l'interrupteur est éteint : avant toute écriture, brouillon compris.
+        transportModeGuard.assertTripModeAllowed(request.transportMode(), null);
+
         // D4 : voyageur suspendu de publication (retour de colis non rendu, décision admin).
         // S'applique aussi bien à un brouillon qu'à une publication directe.
         assertPublishingNotSuspended(user);
@@ -1583,6 +1591,8 @@ public class AnnouncementService {
         }
 
         final com.yadony.api.matching.TransportMode oldTransportMode = announcement.getTransportMode();
+        // Un trajet bateau déjà en base reste modifiable interrupteur éteint ; y passer ne l'est pas.
+        transportModeGuard.assertTripModeAllowed(request.transportMode(), oldTransportMode);
         final String oldCurrency = announcement.getCurrency();
         final String newCurrency = resolveCurrencyOnUpdate(announcement, request.currency(), user.getId());
         final boolean currencyChanged = !newCurrency.equalsIgnoreCase(oldCurrency);

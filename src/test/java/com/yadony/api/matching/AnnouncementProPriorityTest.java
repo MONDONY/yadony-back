@@ -98,7 +98,8 @@ class AnnouncementProPriorityTest {
                 new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0),
                 new com.yadony.api.matching.ranking.TripScoreCalculator(
                         new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)),
-                org.mockito.Mockito.mock(TravelerParcelsNetPort.class));
+                org.mockito.Mockito.mock(TravelerParcelsNetPort.class),
+                org.mockito.Mockito.mock(com.yadony.api.matching.TransportModeGuard.class));
     }
 
     private static void setId(Object entity, UUID id) {

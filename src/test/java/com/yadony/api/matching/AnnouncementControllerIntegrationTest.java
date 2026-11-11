@@ -3,6 +3,9 @@ package com.yadony.api.matching;
 import com.yadony.api.auth.UserRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.yadony.api.config.PlatformSettingKey;
+import com.yadony.api.config.PlatformSettingsService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +20,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
@@ -36,6 +40,7 @@ class AnnouncementControllerIntegrationTest {
     @Autowired AnnouncementRepository announcementRepository;
     @Autowired UserRepository userRepository;
     @Autowired ObjectMapper objectMapper;
+    @Autowired PlatformSettingsService platformSettings;
 
     /**
      * Reuse the same traveler UUID across all tests (no UserEntity needed;
@@ -57,6 +62,13 @@ class AnnouncementControllerIntegrationTest {
     void cleanDb() {
         announcementRepository.deleteAll();
         userRepository.deleteAll();
+        // Le bateau est fermé par défaut : ces tests créent des trajets BOAT, il faut l'ouvrir.
+        platformSettings.update(Map.of(PlatformSettingKey.TRANSPORT_BOAT_ENABLED, "true"), UUID.randomUUID());
+    }
+
+    @AfterEach
+    void closeBoat() {
+        platformSettings.update(Map.of(PlatformSettingKey.TRANSPORT_BOAT_ENABLED, "false"), UUID.randomUUID());
     }
 
     // ─── Radius filter tests ──────────────────────────────────────────────────
@@ -298,6 +310,19 @@ class AnnouncementControllerIntegrationTest {
                 .content(validBodyWithMode("TRAIN")))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.transportMode").value("TRAIN"));
+    }
+
+    @Test
+    void createAnnouncement_boatWhenSwitchOff_returns422() throws Exception {
+        seedTraveler("uid-test-traveler");
+        platformSettings.update(Map.of(PlatformSettingKey.TRANSPORT_BOAT_ENABLED, "false"), UUID.randomUUID());
+
+        mockMvc.perform(post("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(validBodyWithMode("BOAT")))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.code").value("transport-mode-disabled"));
     }
 
     @Test
