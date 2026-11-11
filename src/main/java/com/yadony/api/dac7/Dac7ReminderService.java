@@ -99,9 +99,12 @@ public class Dac7ReminderService {
     }
 
     private Outcome recordAtAcceptance(UUID userId, Dac7Collection evaluated, Instant now) {
-        // Ligne verrouillée : deux acceptations simultanées ne demandent jamais deux fois (la branche « pays inconnu »
-        // n'écrit pas dans users, le verrou optimiste ne la protégerait pas).
-        UserEntity user = users.findByIdForUpdate(userId).orElse(null);
+        // Ligne verrouillée (UPDATE neutre, sans toucher à la version) : deux acceptations simultanées ne demandent
+        // jamais deux fois (la branche « pays inconnu » n'écrit pas dans users, le verrou optimiste ne la protège pas).
+        if (users.lockForUpdate(userId) == 0) {
+            return Outcome.NOT_FOUND;
+        }
+        UserEntity user = users.findById(userId).orElse(null);
         if (user == null) {
             return Outcome.NOT_FOUND;
         }

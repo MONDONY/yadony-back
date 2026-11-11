@@ -45,7 +45,7 @@ class Dac7ReminderServiceTest {
         user = new UserEntity();
         ReflectionTestUtils.setField(user, "id", UUID.randomUUID());
         when(users.findById(user.getId())).thenReturn(Optional.of(user));
-        when(users.findByIdForUpdate(user.getId())).thenReturn(Optional.of(user));
+        when(users.lockForUpdate(user.getId())).thenReturn(1);
         when(solicitation.statusOf(user)).thenReturn(Dac7SolicitationStatus.SOLLICITER);
         when(reads.lastOutgoing(any())).thenReturn(Optional.empty());
     }
@@ -279,7 +279,7 @@ class Dac7ReminderServiceTest {
     void acceptation_compteDisparuAvantEcriture() {
         when(collection.evaluate(user)).thenReturn(Dac7Collection.withoutIdentity(Dac7CollectionStatus.INFO_REQUIRED,
                 java.util.List.of(Dac7CollectionField.TAX_IDENTIFICATION_NUMBER), "FR"));
-        when(users.findByIdForUpdate(user.getId())).thenReturn(Optional.empty());
+        when(users.lockForUpdate(user.getId())).thenReturn(0);
         assertThat(service.requestAtAcceptance(user.getId(), NOW)).isEqualTo(Dac7ReminderService.Outcome.NOT_FOUND);
         verify(events, never()).publishEvent(any());
     }
@@ -298,6 +298,8 @@ class Dac7ReminderServiceTest {
     void acceptation_ligneVerrouillee() {
         collection(Dac7CollectionStatus.RESIDENCE_INCONNUE, Dac7CollectionField.RESIDENCE_COUNTRY);
         service.requestAtAcceptance(user.getId(), NOW);
-        verify(users).findByIdForUpdate(user.getId());
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(users, diligence);
+        order.verify(users).lockForUpdate(user.getId());
+        order.verify(diligence).record(any(), any(), any(), any(), any());
     }
 }
