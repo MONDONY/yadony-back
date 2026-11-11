@@ -49,14 +49,23 @@ public class Dac7DeclarationService {
     public static final String OPERATOR_CONFIG_MISSING = "OPERATOR_CONFIG_MISSING";
     /** Tour 1 : prestataire de vérification injoignable et profil insuffisant ; réessayable. */
     public static final String IDENTITY_UNAVAILABLE = "IDENTITY_UNAVAILABLE";
+    /**
+     * Relecture n° 3, finding 6 : pages admin et CSV seulement. Identité pas encore lue (voir
+     * {@link Dac7IdentityStatus#NOT_CHECKED}) ; jamais produit par l'export, qui relit chaque pièce.
+     */
+    public static final String IDENTITY_NOT_CHECKED = "IDENTITY_NOT_CHECKED";
     /** Tour 1 : partage admin décidé mais transfert non terminé : le montant déclaré serait sous-évalué. */
     public static final String PENDING_SPLITS = "PENDING_SPLITS";
     /** Exclusion seulement : État de résidence non transmis par la DGFiP cette année (annexe 6.1). */
     public static final String RESIDENCE_NOT_TRANSMITTED = "RESIDENCE_NOT_TRANSMITTED";
     /** Exclusion seulement : contrepartie nulle une fois arrondie à l'euro (contrôle de second niveau n° 2). */
     public static final String ZERO_CONSIDERATION = "ZERO_CONSIDERATION";
-    /** Exclusion seulement (export PARTIAL) : déjà retenu dans un fichier généré pour cette année. */
-    public static final String ALREADY_EXPORTED = "ALREADY_EXPORTED";
+    /**
+     * Exclusion seulement (export FULL comme PARTIAL, relecture n° 3, finding 2) : déjà retenu dans un fichier DÉPOSÉ
+     * de cette année. Jamais réémis en déclaration initiale (DPI401/OECD1) : ce serait un doublon à la DGFiP ; une
+     * rectification de montants déjà déposés est hors lot.
+     */
+    public static final String ALREADY_DEPOSITED = "ALREADY_DEPOSITED";
     /** Exclusion seulement : ses données ne passent pas le XSD de la DGFiP (valeur jamais rapportée). */
     public static final String XSD_INVALID = "XSD_INVALID";
 
@@ -199,7 +208,7 @@ public class Dac7DeclarationService {
             others.add(other(id, byId.get(id), Dac7ResidencyStatus.NON_DECLARABLE, names, lastDiligence));
         }
         return new Declaration(year, report, sellers, others, invalidPartners,
-                blockers(sellers, invalidPartners), names,
+                blockers(sellers, invalidPartners, exportProperties.operatorConfigured()), names,
                 report.refundsToReconcile().size() + report.anomalies().size());
     }
 
@@ -216,7 +225,7 @@ public class Dac7DeclarationService {
             identity = identities.resolve(user);
             status = identity.status();
         } else if (mode == IdentityMode.CACHED) {
-            status = cached.getOrDefault(id, Dac7IdentityStatus.UNAVAILABLE);
+            status = cached.getOrDefault(id, Dac7IdentityStatus.NOT_CHECKED);
         } else {
             status = identities.profileStatus(user);
         }
@@ -236,6 +245,7 @@ public class Dac7DeclarationService {
         }
         List<String> exclusions = new ArrayList<>();
         if (status == Dac7IdentityStatus.UNAVAILABLE) exclusions.add(IDENTITY_UNAVAILABLE);
+        else if (status == Dac7IdentityStatus.NOT_CHECKED) exclusions.add(IDENTITY_NOT_CHECKED);
         else if (status != Dac7IdentityStatus.COMPLETE) exclusions.add(IDENTITY_INCOMPLETE);
         if (!traveler.taxInfoProvided()) exclusions.add(TAX_INFO_MISSING);
         if (!eur) exclusions.add(EUR_INCOMPLETE);
@@ -272,7 +282,11 @@ public class Dac7DeclarationService {
         return List.copyOf(invalid);
     }
 
-    private List<String> blockers(List<Seller> sellers, List<String> invalidPartners) {
+    /**
+     * Blocages de l'export complet pour ces vendeurs, lus sur leurs exclusions (même règle partout : vue d'ensemble,
+     * et export sur les seuls vendeurs pas encore déposés).
+     */
+    static List<String> blockers(List<Seller> sellers, List<String> invalidPartners, boolean operatorConfigured) {
         List<String> blockers = new ArrayList<>();
         if (sellers.stream().anyMatch(s -> s.exclusions().contains(IDENTITY_INCOMPLETE))) {
             blockers.add(IDENTITY_INCOMPLETE);
@@ -280,13 +294,15 @@ public class Dac7DeclarationService {
         if (sellers.stream().anyMatch(s -> s.exclusions().contains(IDENTITY_UNAVAILABLE))) {
             blockers.add(IDENTITY_UNAVAILABLE);
         }
-        if (sellers.stream().anyMatch(s -> !s.taxInfoProvided())) blockers.add(TAX_INFO_MISSING);
-        if (sellers.stream().anyMatch(s -> !s.eurComplete())) blockers.add(EUR_INCOMPLETE);
-        if (sellers.stream().anyMatch(s -> !s.commissionComplete())) blockers.add(COMMISSION_INCOMPLETE);
-        if (sellers.stream().anyMatch(s -> s.exclusions().contains(PENDING_SPLITS))) blockers.add(PENDING_SPLITS);
+        if (sellers.stream().anyMatch(s -> s.exclusions().contains(IDENTITY_NOT_CHECKED))) {
+            blockers.add(IDENTITY_NOT_CHECKED);
+        }
+        for (String code : List.of(TAX_INFO_MISSING, EUR_INCOMPLETE, COMMISSION_INCOMPLETE, PENDING_SPLITS)) {
+            if (sellers.stream().anyMatch(s -> s.exclusions().contains(code))) blockers.add(code);
+        }
         if (!invalidPartners.isEmpty()) blockers.add(INVALID_PARTNER_JURISDICTION);
         if (sellers.isEmpty()) blockers.add(NO_SELLERS);
-        if (!exportProperties.operatorConfigured()) blockers.add(OPERATOR_CONFIG_MISSING);
+        if (!operatorConfigured) blockers.add(OPERATOR_CONFIG_MISSING);
         return List.copyOf(blockers);
     }
 

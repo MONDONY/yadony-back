@@ -151,8 +151,7 @@ public class Dac7AdminService {
         if (looksSensitive(cleaned)) {
             // Jamais recopiée : elle pourrait contenir un NIF ou un numéro de compte.
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-note-sensitive",
-                    "Sensitive Note", "La note semble contenir un numéro (9 chiffres ou plus) : ni NIF, ni numéro de "
-                    + "TVA, ni numéro de compte dans le registre.");
+                    "Sensitive Note", NOTE_SENSITIVE_MESSAGE);
         }
         if (!reads.userExists(userId)) {
             throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found", "User Not Found",
@@ -163,16 +162,36 @@ public class Dac7AdminService {
         audit.log("USER", userId, "DAC7_TEAM_DECISION", adminId, Map.of("noteLength", cleaned.length()));
     }
 
+    static final String NOTE_SENSITIVE_MESSAGE = "La note semble contenir un numéro ou un identifiant sensible "
+            + "(9 chiffres consécutifs ou plus, un mot de 9 caractères ou plus mêlant lettres et chiffres, ou un IBAN "
+            + "écrit par groupes de 4) : ni NIF, ni numéro de TVA, ni numéro de compte dans le registre. Un UUID ou un "
+            + "identifiant Stripe (pi_…, acct_…) reste accepté.";
+
+    /** UUID (identifiant interne, session Didit) : collé par l'équipe, jamais une donnée fiscale. */
+    private static final java.util.regex.Pattern UUID_TOKEN = java.util.regex.Pattern.compile(
+            "(?<![A-Za-z0-9])[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}(?![A-Za-z0-9])");
+    /** Identifiant Stripe : préfixe connu, tiret bas, puis un corps qui contient au moins une lettre. */
+    private static final java.util.regex.Pattern STRIPE_TOKEN = java.util.regex.Pattern.compile(
+            "(?<![A-Za-z0-9_])(?:acct|ba|card|ch|cs|cus|evt|fee|ich|in|ipi|pi|pm|po|pr|py|pyr|re|req|seti|si|src|sub"
+            + "|tr|trr|txn)_(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{8,}(?![A-Za-z0-9_])");
+    private static final java.util.regex.Pattern DIGITS_RUN = java.util.regex.Pattern.compile("\\d{9,}");
+    /** IBAN écrit par groupes de 4 : 2 lettres et 2 chiffres, puis au moins deux groupes séparés par une espace. */
+    private static final java.util.regex.Pattern IBAN_GROUPS = java.util.regex.Pattern.compile(
+            "(?<![A-Za-z0-9])[A-Za-z]{2}\\d{2}(?: [A-Za-z0-9]{4}){2,}");
+
     /**
-     * Refusée si elle contient 9 chiffres CONSÉCUTIFS ou plus (NIF, numéro de compte), ou un jeton alphanumérique d'au
-     * moins 9 caractères qui contient des chiffres (TVA FR…, IBAN). Dates et heures avec séparateurs acceptées.
+     * Refusée (relecture n° 3, finding 7) si, une fois retirés les UUID et les identifiants Stripe, elle contient :
+     * 9 chiffres CONSÉCUTIFS ou plus (NIF, numéro de compte) ; un jeton alphanumérique SANS tiret d'au moins 9
+     * caractères qui contient des chiffres (TVA FR…, IBAN collé) ; un IBAN écrit par groupes de 4 avec des espaces.
+     * Dates et heures avec séparateurs, numéros de téléphone par paires, références avec tirets : acceptés.
      */
     static boolean looksSensitive(String note) {
-        if (note.matches("(?s).*\\d{9,}.*")) {
+        String text = STRIPE_TOKEN.matcher(UUID_TOKEN.matcher(note).replaceAll(" ")).replaceAll(" ");
+        if (DIGITS_RUN.matcher(text).find() || IBAN_GROUPS.matcher(text).find()) {
             return true;
         }
-        for (String token : note.split("[^A-Za-z0-9]+")) {
-            if (token.length() >= 9 && token.chars().anyMatch(Character::isDigit)) {
+        for (String token : text.split("[^A-Za-z0-9-]+")) {
+            if (token.indexOf('-') < 0 && token.length() >= 9 && token.chars().anyMatch(Character::isDigit)) {
                 return true;
             }
         }

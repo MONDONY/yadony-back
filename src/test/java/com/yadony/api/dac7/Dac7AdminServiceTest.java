@@ -120,6 +120,34 @@ class Dac7AdminServiceTest {
         verifyNoInteractions(diligence);
     }
 
+    @Test
+    @DisplayName("note : IBAN par groupes de 4 refusé, message complet ; UUID et identifiants Stripe acceptés")
+    void noteIdentifiants() {
+        UUID admin = UUID.randomUUID();
+        for (String note : List.of("IBAN FR76 3000 6000 0112 3456 7890 189", "iban fr76 3000 6000 0112 3456 789",
+                "jeton ab12cd34ef", "NIF:302321760", "TVA (FR40303265045)")) {
+            assertThatThrownBy(() -> service.decision(withTax, admin, note))
+                    .as(note)
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getErrorCode()).isEqualTo("dac7-note-sensitive");
+                        assertThat(e.getMessage()).contains("9 chiffres consécutifs")
+                                .contains("9 caractères ou plus mêlant lettres et chiffres").contains("IBAN")
+                                .doesNotContain("3000 6000");
+                    });
+        }
+        // Identifiants collés par l'équipe : jamais refusés à tort (le dernier groupe d'un UUID peut compter 12
+        // chiffres d'affilée).
+        assertThat(Dac7AdminService.looksSensitive("Voyageur 550e8400-e29b-41d4-a716-446655440000 rappelé")).isFalse();
+        assertThat(Dac7AdminService.looksSensitive("Session Didit 0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0")).isFalse();
+        assertThat(Dac7AdminService.looksSensitive("Paiement pi_3NxYz8LkdQ0aBc1d2EfG remboursé")).isFalse();
+        assertThat(Dac7AdminService.looksSensitive("Compte acct_1Nv0FGQ9RKHgCVdK, transfert tr_1P2q3R4s5T6u7V8w"))
+                .isFalse();
+        assertThat(Dac7AdminService.looksSensitive("Réf. 3f2a-91bc-7d04, vol AF718 du 12/01")).isFalse();
+        // Mais un NIF reste refusé, même collé à un identifiant ou déguisé en préfixe.
+        assertThat(Dac7AdminService.looksSensitive("nif_302321760")).isTrue();
+        assertThat(Dac7AdminService.looksSensitive("302321760-01")).isTrue();
+    }
+
     @ParameterizedTest
     @CsvSource({"ALL,4", "MISSING_TAX_INFO,1", "IDENTITY_REVIEW,1", "UNKNOWN_RESIDENCE,1", "NON_DECLARABLE,1",
             "missing_tax_info,1"})

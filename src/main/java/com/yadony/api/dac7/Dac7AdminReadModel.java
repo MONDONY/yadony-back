@@ -125,8 +125,9 @@ public class Dac7AdminReadModel {
             WHERE id = :id AND status = 'GENERATED'
             """;
 
-    /** Un fichier généré : année, ordre, mode, nombre de voyageurs retenus, statut. */
-    public record ExportRun(UUID id, int year, int sequence, String mode, String status, int sellers) {
+    /** Un fichier généré : année, ordre, mode, nombre de voyageurs retenus, statut, date de génération. */
+    public record ExportRun(UUID id, int year, int sequence, String mode, String status, int sellers,
+                            Instant generatedAt) {
     }
 
     /** Ordre DGFiP suivant pour l'année (0 pour le premier fichier), jamais réemployé. */
@@ -144,17 +145,26 @@ public class Dac7AdminReadModel {
     }
 
     /**
-     * Verrou de transaction par année (PostgreSQL : {@code pg_advisory_xact_lock}) : deux exports de la même année ne
-     * se chevauchent pas. Sans effet sur une autre base (H2 des tests de contexte).
+     * Verrou de transaction par année, SANS attente (PostgreSQL : {@code pg_try_advisory_xact_lock}, une clé par
+     * année, libérée à la fin de la transaction, succès ou échec) : faux s'il est déjà pris par un autre export ou
+     * dépôt de la même année. À appeler dans une transaction (sinon le verrou serait relâché aussitôt). Toujours vrai
+     * sur une autre base (H2 des tests de contexte).
      */
-    public void lockYear(int year) {
+    public boolean tryLockYear(int year) {
+        if (!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("Le verrou d'export DAC7 se prend dans une transaction.");
+        }
         Boolean postgres = jdbc.getJdbcTemplate().execute((java.sql.Connection c) ->
                 c.getMetaData().getDatabaseProductName().toLowerCase(java.util.Locale.ROOT).contains("postgres"));
-        if (Boolean.TRUE.equals(postgres)) {
-            jdbc.queryForObject("SELECT pg_advisory_xact_lock(:key) IS NULL",
-                    new MapSqlParameterSource("key", 7_000_000_000L + year), Boolean.class);
+        if (!Boolean.TRUE.equals(postgres)) {
+            return true;
         }
+        return Boolean.TRUE.equals(jdbc.queryForObject("SELECT pg_try_advisory_xact_lock(:key)",
+                new MapSqlParameterSource("key", LOCK_KEY_BASE + year), Boolean.class));
     }
+
+    /** Clés {@code 7 000 000 000 + année} : sans collision avec le verrou de la grille de commission. */
+    static final long LOCK_KEY_BASE = 7_000_000_000L;
 
     public void insertRun(UUID id, int year, int sequence, String mode, String fileName, int sellers, UUID adminId,
                           Instant now) {
@@ -165,10 +175,11 @@ public class Dac7AdminReadModel {
     }
 
     public Optional<ExportRun> run(UUID id) {
-        List<ExportRun> runs = jdbc.query("SELECT id, reporting_year, sequence, export_mode, status, sellers "
-                + "FROM dac7_export_runs WHERE id = :id", new MapSqlParameterSource("id", id), (rs, i) ->
+        List<ExportRun> runs = jdbc.query("SELECT id, reporting_year, sequence, export_mode, status, sellers, "
+                + "generated_at FROM dac7_export_runs WHERE id = :id", new MapSqlParameterSource("id", id), (rs, i) ->
                 new ExportRun(uuid(rs, "id"), rs.getInt("reporting_year"), rs.getInt("sequence"),
-                        rs.getString("export_mode"), rs.getString("status"), rs.getInt("sellers")));
+                        rs.getString("export_mode"), rs.getString("status"), rs.getInt("sellers"),
+                        instant(rs, "generated_at")));
         return runs.stream().findFirst();
     }
 
@@ -183,7 +194,7 @@ public class Dac7AdminReadModel {
             VALUES (:year, :userId, :runId, :status, :docRefId, :reason, :sequence, :mode, :adminId, :now)
             """;
 
-    /** Voyageurs déjà retenus dans un fichier généré pour cette année. */
+    /** Voyageurs retenus dans un fichier DÉPOSÉ de cette année (à relire sous le verrou avant une inscription). */
     public java.util.Set<UUID> exportedTravelers(int year) {
         return new java.util.HashSet<>(jdbc.query(EXPORTED_SQL, new MapSqlParameterSource("year", year),
                 (rs, i) -> uuid(rs, "user_id")));

@@ -124,7 +124,7 @@ class Dac7IdentityResolverTest {
     }
 
     @Test
-    @DisplayName("pages admin : budget total dépassé, UNAVAILABLE sans attendre ; les lectures en file n'appellent pas le prestataire")
+    @DisplayName("pages admin : budget total dépassé, NOT_CHECKED (jamais lu) sans attendre ; les lectures en file n'appellent pas le prestataire")
     void budgetTotal() {
         java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
         Dac7VerifiedIdentityPort slow = id -> {
@@ -144,8 +144,9 @@ class Dac7IdentityResolverTest {
         Map<UUID, Dac7IdentityStatus> result = bounded.statuses(users);
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
 
-        assertThat(result).hasSize(10).containsValue(Dac7IdentityStatus.UNAVAILABLE);
-        assertThat(result.values()).allMatch(v -> v == Dac7IdentityStatus.UNAVAILABLE);
+        // Aucune lecture n'a abouti dans le budget : « non vérifié », jamais une panne du prestataire inventée.
+        assertThat(result).hasSize(10);
+        assertThat(result.values()).allMatch(v -> v == Dac7IdentityStatus.NOT_CHECKED);
         assertThat(elapsedMs).isLessThan(1_200);
         // Seules les 4 lectures déjà commencées ont appelé le prestataire ; les 6 en file sont sorties sans appel.
         try {
@@ -154,6 +155,31 @@ class Dac7IdentityResolverTest {
             Thread.currentThread().interrupt();
         }
         assertThat(calls.get()).isLessThanOrEqualTo(Dac7IdentityResolver.PARALLEL_LOOKUPS);
+        bounded.destroy();
+    }
+
+    @Test
+    @DisplayName("au-delà de 40 lectures nouvelles : NOT_CHECKED sans appel ; une vraie panne du prestataire reste UNAVAILABLE")
+    void auDelaDuPlafond() {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        UserEntity down = user("FR");
+        Dac7VerifiedIdentityPort fast = id -> {
+            calls.incrementAndGet();
+            return id.equals(down.getId()) ? Lookup.unavailable() : Lookup.none();
+        };
+        Dac7IdentityResolver bounded = new Dac7IdentityResolver(fast, java.time.Duration.ofSeconds(5));
+        List<UserEntity> users = new java.util.ArrayList<>(List.of(down));
+        for (int i = 0; i < 49; i++) users.add(user("FR"));
+
+        Map<UUID, Dac7IdentityStatus> result = bounded.statuses(users);
+
+        assertThat(result).hasSize(50).containsEntry(down.getId(), Dac7IdentityStatus.UNAVAILABLE);
+        assertThat(result.values().stream().filter(v -> v == Dac7IdentityStatus.NOT_CHECKED).count())
+                .isEqualTo(50 - Dac7IdentityResolver.MAX_LOOKUPS_PER_REQUEST);
+        assertThat(calls.get()).isEqualTo(Dac7IdentityResolver.MAX_LOOKUPS_PER_REQUEST);
+        // Passage suivant : les verdicts en cache servent, les 10 restants sont lus.
+        Map<UUID, Dac7IdentityStatus> next = bounded.statuses(users);
+        assertThat(next.values()).doesNotContain(Dac7IdentityStatus.NOT_CHECKED);
         bounded.destroy();
     }
 

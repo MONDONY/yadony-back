@@ -58,6 +58,7 @@ class Dac7ExportServiceTest {
     @BeforeEach
     void setUp() {
         when(declarations.requireYear(2026)).thenReturn(2026);
+        when(reads.tryLockYear(anyInt())).thenReturn(true);
     }
 
     /** Opérateur configuré ; export en clair autorisé (essais) seulement sans clé. */
@@ -98,9 +99,20 @@ class Dac7ExportServiceTest {
     }
 
     private void declaration(List<Seller> sellers, List<String> blockers) {
+        List<String> invalidPartners = blockers.contains("INVALID_PARTNER_JURISDICTION") ? List.of("SN") : List.of();
         when(declarations.declaration(2026, Dac7DeclarationService.IdentityMode.FRESH)).thenReturn(new Declaration(2026,
                 new Dac7Report(2026, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                        List.of()), sellers, List.of(), List.of(), blockers, Map.of(), 3));
+                        List.of()), sellers, List.of(), invalidPartners, blockers, Map.of(), 3));
+    }
+
+    private Seller cleanSeller(UserEntity[] holder) {
+        Seller s = seller(List.of());
+        UserEntity user = new UserEntity();
+        ReflectionTestUtils.setField(user, "id", s.userId());
+        user.setTaxIdentificationNumber(NIF);
+        user.setTaxCountry("FR");
+        holder[0] = user;
+        return s;
     }
 
     @SuppressWarnings("unchecked")
@@ -257,18 +269,156 @@ class Dac7ExportServiceTest {
 
     @SuppressWarnings("unchecked")
     @Test
-    @DisplayName("second PARTIAL : les voyageurs déjà retenus sont écartés (ALREADY_EXPORTED), sauf option explicite")
-    void dejaExportes() {
-        Seller done = seller(List.of(), true, null);
-        declaration(List.of(done), List.of());
-        assertThatThrownBy(() -> service(operator(null)).export(2026, "PARTIAL", 1, admin))
-                .satisfies(e -> assertThat(blockersOf(e)).contains("NO_SELLERS"));
-        ArgumentCaptor<List<Dac7AdminReadModel.ExportSellerRow>> rows = ArgumentCaptor.forClass(List.class);
+    @DisplayName("déjà déposé : écarté (ALREADY_DEPOSITED) en PARTIAL comme en FULL, jamais redéclaré ni bloquant ; le reprendre : 409")
+    void dejaDeposes() {
+        UserEntity[] a = new UserEntity[1];
+        UserEntity[] b = new UserEntity[1];
+        Seller done = cleanSeller(a);
+        Seller fresh = cleanSeller(b);
+        // Déposé, et devenu incomplet depuis : il ne bloque pas pour autant l'export complet des autres.
+        Seller doneMissing = seller(List.of("TAX_INFO_MISSING"));
+        when(users.findAllById(any())).thenReturn(List.of(a[0], b[0]));
+        declaration(List.of(done, fresh, doneMissing), List.of("TAX_INFO_MISSING"));
+        // Lue SOUS le verrou : la liste du calcul (alreadyExported) peut être périmée.
+        when(reads.exportedTravelers(2026)).thenReturn(java.util.Set.of(done.userId(), doneMissing.userId()));
+        String doneRef = done.userId().toString().replace("-", "");
 
-        Dac7ExportService.ExportFile file = service(operator(null)).export(2026, "PARTIAL", 1, true, admin);
-        assertThat(file.sellers()).isEqualTo(1);
-        verify(reads).recordExport(eq(2026), any(), eq(1), eq("PARTIAL"), eq(admin), any(), rows.capture());
-        assertThat(rows.getValue()).singleElement().satisfies(r -> assertThat(r.included()).isTrue());
+        for (String mode : List.of("PARTIAL", "FULL")) {
+            org.mockito.Mockito.clearInvocations(reads);
+            Dac7ExportService.ExportFile file = service(operator(null)).export(2026, mode, null, admin);
+            assertThat(file.sellers()).as(mode).isEqualTo(1);
+            assertThat(file.excluded()).isEqualTo(2);
+            assertThat(new String(file.content(), StandardCharsets.UTF_8)).doesNotContain(doneRef)
+                    .contains(fresh.userId().toString().replace("-", ""));
+            ArgumentCaptor<List<Dac7AdminReadModel.ExportSellerRow>> rows = ArgumentCaptor.forClass(List.class);
+            verify(reads).recordExport(eq(2026), any(), anyInt(), eq(mode), eq(admin), any(), rows.capture());
+            assertThat(rows.getValue()).containsExactlyInAnyOrder(
+                    new Dac7AdminReadModel.ExportSellerRow(done.userId(), false, null, "ALREADY_DEPOSITED"),
+                    new Dac7AdminReadModel.ExportSellerRow(doneMissing.userId(), false, null,
+                            "TAX_INFO_MISSING,ALREADY_DEPOSITED"),
+                    new Dac7AdminReadModel.ExportSellerRow(fresh.userId(), true,
+                            "OP_2026_123456789_" + fresh.userId().toString().replace("-", "") + "_000", null));
+        }
+
+        org.mockito.Mockito.clearInvocations(reads, audit);
+        for (String mode : List.of("PARTIAL", "FULL")) {
+            assertThatThrownBy(() -> service(operator(null)).export(2026, mode, null, true, admin))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(e.getErrorCode()).isEqualTo("dac7-already-deposited-conflict");
+                        assertThat((List<String>) e.getProperties().get("travelerIds")).containsExactlyInAnyOrder(
+                                done.userId().toString(), doneMissing.userId().toString());
+                        assertThat(e.getMessage()).doesNotContain(NIF).doesNotContain("Diallo");
+                    });
+        }
+        verify(reads, never()).insertRun(any(), anyInt(), anyInt(), any(), any(), anyInt(), any(), any());
+        verify(reads, never()).nextSequence(anyInt());
+        verify(audit, never()).log(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("FULL : tous déposés, plus personne à déclarer : 409 NO_SELLERS, rien inscrit")
+    void fullToutDepose() {
+        UserEntity[] a = new UserEntity[1];
+        Seller done = cleanSeller(a);
+        when(users.findAllById(any())).thenReturn(List.of(a[0]));
+        declaration(List.of(done), List.of());
+        when(reads.exportedTravelers(2026)).thenReturn(java.util.Set.of(done.userId()));
+        assertThatThrownBy(() -> service(operator(null)).export(2026, "FULL", null, admin))
+                .satisfies(e -> assertThat(blockersOf(e)).containsExactly("NO_SELLERS"));
+        verify(reads, never()).insertRun(any(), anyInt(), anyInt(), any(), any(), anyInt(), any(), any());
+    }
+
+    @Test
+    @DisplayName("verrou de l'année déjà pris : 409 dac7-export-in-progress immédiat, ni ordre ni inscription")
+    void verrouPris() {
+        declaration(List.of(seller(List.of())), List.of());
+        when(reads.tryLockYear(2026)).thenReturn(false);
+        assertThatThrownBy(() -> service(operator(null)).export(2026, "PARTIAL", null, admin))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getErrorCode()).isEqualTo("dac7-export-in-progress");
+                });
+        verify(reads, never()).exportedTravelers(anyInt());
+        verify(reads, never()).nextSequence(anyInt());
+        verify(reads, never()).insertRun(any(), anyInt(), anyInt(), any(), any(), anyInt(), any(), any());
+        verify(audit, never()).log(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("calcul (BCE, Didit, rapport) HORS transaction ; verrou, relecture des déposés et ordre DANS la transaction")
+    void calculHorsTransaction() {
+        java.util.concurrent.atomic.AtomicBoolean inTransaction = new java.util.concurrent.atomic.AtomicBoolean();
+        org.springframework.transaction.support.TransactionOperations tracking =
+                new org.springframework.transaction.support.TransactionOperations() {
+                    @Override
+                    public <T> T execute(org.springframework.transaction.support.TransactionCallback<T> action) {
+                        inTransaction.set(true);
+                        try {
+                            return action.doInTransaction(
+                                    new org.springframework.transaction.support.SimpleTransactionStatus());
+                        } finally {
+                            inTransaction.set(false);
+                        }
+                    }
+                };
+        declaration(List.of(seller(List.of())), List.of());
+        List<String> seen = new java.util.ArrayList<>();
+        when(declarations.declaration(2026, Dac7DeclarationService.IdentityMode.FRESH)).thenAnswer(inv -> {
+            seen.add("calcul:" + inTransaction.get());
+            return new Declaration(2026, new Dac7Report(2026, List.of(), List.of(), List.of(), List.of(), List.of(),
+                    List.of(), List.of(), List.of()), List.of(seller(List.of())), List.of(), List.of(), List.of(),
+                    Map.of(), 0);
+        });
+        when(reads.tryLockYear(2026)).thenAnswer(inv -> {
+            seen.add("verrou:" + inTransaction.get());
+            return true;
+        });
+        when(reads.nextSequence(2026)).thenAnswer(inv -> {
+            seen.add("ordre:" + inTransaction.get());
+            return 0;
+        });
+        new Dac7ExportService(declarations, users, operator(null), audit, reads, tracking, CLOCK)
+                .export(2026, "FULL", null, admin);
+        assertThat(seen).containsExactly("calcul:false", "verrou:true", "ordre:true");
+    }
+
+    @Test
+    @DisplayName("dépôt : fichier généré avant la fin de l'année refusé (409), verrou pris avant l'écriture, audit une seule fois")
+    void depot() {
+        UUID december = UUID.randomUUID();
+        UUID january = UUID.randomUUID();
+        when(reads.run(december)).thenReturn(java.util.Optional.of(new Dac7AdminReadModel.ExportRun(december, 2026, 0,
+                "PARTIAL", "GENERATED", 1, Instant.parse("2026-12-31T22:59:59Z"))));
+        when(reads.run(january)).thenReturn(java.util.Optional.of(new Dac7AdminReadModel.ExportRun(january, 2026, 1,
+                "PARTIAL", "GENERATED", 1, Instant.parse("2027-01-02T08:00:00Z"))));
+        Dac7ExportService service = service(operator(null));
+
+        assertThatThrownBy(() -> service.markDeposited(december, admin))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getErrorCode()).isEqualTo("dac7-year-not-closed");
+                });
+        verify(reads, never()).markDeposited(any(), any(), any());
+
+        when(reads.tryLockYear(2026)).thenReturn(false);
+        assertThatThrownBy(() -> service.markDeposited(january, admin))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("dac7-export-in-progress"));
+        verify(reads, never()).markDeposited(any(), any(), any());
+
+        when(reads.tryLockYear(2026)).thenReturn(true);
+        when(reads.markDeposited(eq(january), eq(admin), any())).thenReturn(true, false);
+        service.markDeposited(january, admin);
+        service.markDeposited(january, admin);
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(reads, audit);
+        order.verify(reads).tryLockYear(2026);
+        order.verify(reads).markDeposited(eq(january), eq(admin), any());
+        order.verify(audit).log(eq("DAC7_EXPORT"), eq(january), eq("DAC7_EXPORT_MARKED_DEPOSITED"), eq(admin), any());
+        verify(audit, org.mockito.Mockito.times(1)).log(any(), any(), eq("DAC7_EXPORT_MARKED_DEPOSITED"), any(), any());
+        assertThatThrownBy(() -> service.markDeposited(UUID.randomUUID(), admin))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("dac7-export-run-not-found"));
     }
 
     @Test
@@ -294,9 +444,21 @@ class Dac7ExportServiceTest {
         assertThat(file.sequence()).isEqualTo(4);
         assertThat(file.fileName()).contains("_004_");
         assertThat(file.runId()).isNotNull();
-        verify(reads, org.mockito.Mockito.times(2)).lockYear(2026);
-        verify(reads).insertRun(eq(file.runId()), eq(2026), eq(4), eq("FULL"), eq(file.fileName()), eq(1), eq(admin),
-                any());
+        // Ordre vérifié (relecture n° 3, finding 8 c) : calcul, PUIS verrou, PUIS déposés et numéro d'ordre, PUIS
+        // inscription ; le refus de l'ordre déjà employé passe lui aussi par le verrou d'abord.
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(declarations, reads, audit);
+        order.verify(declarations).declaration(2026, Dac7DeclarationService.IdentityMode.FRESH);
+        order.verify(reads).tryLockYear(2026);
+        order.verify(reads).exportedTravelers(2026);
+        order.verify(reads).sequenceUsed(2026, 0);
+        order.verify(declarations).declaration(2026, Dac7DeclarationService.IdentityMode.FRESH);
+        order.verify(reads).tryLockYear(2026);
+        order.verify(reads).exportedTravelers(2026);
+        order.verify(reads).nextSequence(2026);
+        order.verify(reads).insertRun(eq(file.runId()), eq(2026), eq(4), eq("FULL"), eq(file.fileName()), eq(1),
+                eq(admin), any());
+        order.verify(reads).recordExport(eq(2026), eq(file.runId()), eq(4), eq("FULL"), eq(admin), any(), any());
+        order.verify(audit).log(eq("DAC7_EXPORT"), eq(file.runId()), eq("DAC7_EXPORT_GENERATED"), eq(admin), any());
     }
 
     @Test
@@ -342,9 +504,9 @@ class Dac7ExportServiceTest {
     @SuppressWarnings("unchecked")
     void csvDeControle() {
         Seller s = seller(List.of("TAX_INFO_MISSING"));
-        Seller evil = new Seller(UUID.randomUUID(), "=HYPERLINK(\"x\")", "FR", false, Dac7IdentityStatus.INCOMPLETE,
-                null, 1, null, s.report(), 3, s.netEur(), s.commissionEur(), true, true, List.of("TAX_INFO_MISSING"),
-                false);
+        Seller evil = new Seller(UUID.randomUUID(), "=HYPERLINK(\"x\")", "FR", false, Dac7IdentityStatus.NOT_CHECKED,
+                null, 1, null, s.report(), 3, s.netEur(), s.commissionEur(), true, true,
+                List.of("IDENTITY_NOT_CHECKED", "TAX_INFO_MISSING"), false);
         when(declarations.declaration(2026, Dac7DeclarationService.IdentityMode.CACHED)).thenReturn(new Declaration(2026,
                 new Dac7Report(2026, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
                         List.of()), List.of(s, evil),
@@ -359,7 +521,10 @@ class Dac7ExportServiceTest {
         assertThat(lines[0]).startsWith("﻿userId;voyageur;pays;residence;nifFourni;identite;t1NetEur");
         assertThat(lines[0]).contains(";dejaExporte;exclusions");
         assertThat(csv).doesNotContain(NIF).contains(";oui;").contains("TAX_INFO_MISSING").contains("NON_DECLARE")
-                .contains("\"'=HYPERLINK(\"\"x\"\")\"");
+                .contains("\"'=HYPERLINK(\"\"x\"\")\"")
+                // Pas encore lu (au-delà de 40 lectures) : « non vérifié », jamais une panne inventée.
+                .contains(";NOT_CHECKED;").contains("IDENTITY_NOT_CHECKED,TAX_INFO_MISSING")
+                .doesNotContain("UNAVAILABLE");
         assertThat(lines[1].split(";", -1)).hasSize(lines[0].split(";", -1).length);
         assertThat(lines[3].split(";", -1)).hasSize(lines[0].split(";", -1).length);
         ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);

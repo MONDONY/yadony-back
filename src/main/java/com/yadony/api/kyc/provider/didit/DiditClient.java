@@ -155,8 +155,9 @@ public class DiditClient {
 
     /**
      * Comme {@link #retrieveDecision}, mais distingue une erreur PERMANENTE (404 session inconnue ou effacée, 400, 401,
-     * 403, corps illisible : {@code UNREADABLE}) d'une erreur PASSAGÈRE (429, 5xx, délai dépassé, connexion
-     * impossible : {@code UNAVAILABLE}, à réessayer). Seul appelant : la déclaration DAC7. Contenu jamais journalisé.
+     * 403, JSON invalide : {@code UNREADABLE}) d'une erreur PASSAGÈRE (408, 429, 5xx, délai dépassé, connexion
+     * impossible ou coupée pendant la lecture du corps : {@code UNAVAILABLE}, à réessayer). Seul appelant : la
+     * déclaration DAC7. Contenu jamais journalisé.
      */
     public DecisionLookup lookupDecision(String sessionId) {
         try {
@@ -170,7 +171,7 @@ public class DiditClient {
                     : new DecisionLookup(DecisionLookup.Outcome.READ, decision);
         } catch (org.springframework.web.client.HttpStatusCodeException e) {
             int status = e.getStatusCode().value();
-            boolean transientError = status == 429 || status >= 500;
+            boolean transientError = status == 408 || status == 429 || status >= 500;
             log.warn("Décision Didit (DAC7) en erreur {} pour la session {}", status, sessionId);
             return new DecisionLookup(transientError ? DecisionLookup.Outcome.UNAVAILABLE
                     : DecisionLookup.Outcome.UNREADABLE, null);
@@ -179,7 +180,13 @@ public class DiditClient {
                     e.getClass().getSimpleName());
             return new DecisionLookup(DecisionLookup.Outcome.UNAVAILABLE, null);
         } catch (org.springframework.web.client.RestClientException e) {
-            // Corps reçu mais illisible (JSON invalide) : réessayer n'y changera rien.
+            // RestClient enveloppe TOUTE erreur de lecture du corps dans une simple RestClientException : seul un corps
+            // reçu mais invalide (JSON, type de contenu) est permanent ; une coupure pendant la lecture est passagère.
+            if (!bodyInvalid(e)) {
+                log.warn("Décision Didit (DAC7) coupée pendant la lecture pour la session {} ({})", sessionId,
+                        e.getClass().getSimpleName());
+                return new DecisionLookup(DecisionLookup.Outcome.UNAVAILABLE, null);
+            }
             log.warn("Décision Didit (DAC7) illisible pour la session {} ({})", sessionId,
                     e.getClass().getSimpleName());
             return new DecisionLookup(DecisionLookup.Outcome.UNREADABLE, null);
@@ -188,6 +195,21 @@ public class DiditClient {
                     e.getClass().getSimpleName());
             return new DecisionLookup(DecisionLookup.Outcome.UNAVAILABLE, null);
         }
+    }
+
+    /**
+     * Le corps a-t-il été reçu en entier mais refusé (JSON invalide, type de contenu inattendu) ? Une autre cause
+     * (IOException : connexion coupée, délai dépassé pendant la lecture) est une panne passagère.
+     */
+    private static boolean bodyInvalid(Throwable error) {
+        for (Throwable t = error; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof org.springframework.http.converter.HttpMessageNotReadableException
+                    || t instanceof com.fasterxml.jackson.core.JsonProcessingException
+                    || t instanceof org.springframework.web.client.UnknownContentTypeException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
