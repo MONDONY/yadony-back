@@ -28,14 +28,41 @@ class ServerMessagesGuardTest {
 
     private static final Path MAIN = Path.of("src/main/java/com/yadony/api");
 
-    /** Sources dont tous les refus métier sont localisés (paquet 1). */
+    /**
+     * Sources dont tous les refus métier sont localisés (paquet 1 : matching ; paquet 2 : annulation côté
+     * utilisateur, KYC côté utilisateur, avis). Les services d'administration restent en français.
+     */
     private static final List<String> MIGRATED = List.of(
             "matching/AnnouncementService.java",
-            "matching/BidNegotiationService.java");
+            "matching/BidNegotiationService.java",
+            "cancellation/CancellationController.java",
+            "cancellation/CancellationGuard.java",
+            "cancellation/CancellationService.java",
+            "cancellation/DeliveryNoShowProcedureService.java",
+            "cancellation/PrePaymentCancellationController.java",
+            "cancellation/PrePaymentCancellationService.java",
+            "cancellation/RescheduleDecisionService.java",
+            "kyc/KycService.java",
+            "kyc/provider/IdentityProviderResolver.java",
+            "kyc/provider/didit/DiditIdentityProvider.java",
+            "kyc/provider/stripe/StripeIdentityProvider.java",
+            "ratings/RatingService.java",
+            "ratings/ReceptionRatingService.java");
 
-    private static final Pattern HARDCODED_BUSINESS = Pattern.compile("new\\s+YadonyBusinessException\\s*\\(");
+    private static final Pattern HARDCODED_BUSINESS = Pattern.compile(
+            "new\\s+(?:YadonyBusinessException\\s*\\(|ResponseStatusException\\s*\\(|YadonyNotFoundException\\s*\\(\\s*\")");
     private static final Pattern FRENCH_IN_EXCEPTION = Pattern.compile(
             "new\\s+(?:Yadony\\w*|IllegalState|IllegalArgument|ResponseStatus)Exception\\s*\\(\\s*\"[^\"]*"
+                    + "(?:[àâçéèêëîïôûùü]|\\b(?:Vous|Votre|introuvable|impossible)\\b)");
+    /**
+     * Sources migrées qui gardent des {@code IllegalStateException} françaises : elles ne sont jamais rendues
+     * telles quelles (réponse 500 générique, voir l'inventaire), seul le texte du journal est en français.
+     */
+    private static final List<String> INDIRECT_ILLEGAL_STATE_ALLOWED = List.of(
+            "cancellation/CancellationService.java",
+            "kyc/provider/didit/DiditIdentityProvider.java");
+    private static final Pattern FRENCH_IN_BUSINESS_EXCEPTION = Pattern.compile(
+            "new\\s+(?:Yadony\\w*|ResponseStatus)Exception\\s*\\(\\s*\"[^\"]*"
                     + "(?:[àâçéèêëîïôûùü]|\\b(?:Vous|Votre|introuvable|impossible)\\b)");
     private static final Pattern KEY = Pattern.compile("\"(problem\\.[a-z0-9.\\-]+)\"");
 
@@ -51,7 +78,9 @@ class ServerMessagesGuardTest {
             assertThat(HARDCODED_BUSINESS.matcher(src).find())
                     .as("%s : utiliser YadonyBusinessException.localized(...) et une clé i18n", file)
                     .isFalse();
-            assertThat(FRENCH_IN_EXCEPTION.matcher(src).find())
+            Pattern french = INDIRECT_ILLEGAL_STATE_ALLOWED.contains(file)
+                    ? FRENCH_IN_BUSINESS_EXCEPTION : FRENCH_IN_EXCEPTION;
+            assertThat(french.matcher(src).find())
                     .as("%s : message français en dur dans une exception", file)
                     .isFalse();
         }
@@ -67,14 +96,18 @@ class ServerMessagesGuardTest {
             Matcher m = KEY.matcher(source(file));
             while (m.find()) {
                 String key = m.group(1);
-                for (String suffix : List.of(".title", ".detail")) {
+                // Clé à titre + détail (YadonyBusinessException) ou clé à valeur unique (KYC : raison d'un
+                // ResponseStatusException ou détail d'un introuvable).
+                boolean single = fr.find(key).isPresent();
+                List<String> suffixes = single ? List.of("") : List.of(".title", ".detail");
+                for (String suffix : suffixes) {
                     assertThat(fr.find(key + suffix)).as("%s%s absente de messages_fr (%s)", key, suffix, file).isPresent();
                     assertThat(en.find(key + suffix)).as("%s%s absente de messages_en (%s)", key, suffix, file).isPresent();
                 }
                 checked++;
             }
         }
-        assertThat(checked).as("aucune clé repérée : le garde-fou ne vérifie plus rien").isGreaterThan(30);
+        assertThat(checked).as("aucune clé repérée : le garde-fou ne vérifie plus rien").isGreaterThan(100);
     }
 
     @Test

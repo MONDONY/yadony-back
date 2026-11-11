@@ -111,28 +111,24 @@ public class DeliveryNoShowProcedureService {
      */
     public ReportPreconditions checkReportPreconditions(BidEntity bid, UUID travelerId, boolean contactConfirmed) {
         if (bid.getStatus() != BidStatus.ARRIVED) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "delivery-noshow-arrival-not-declared",
-                    "Arrival Not Declared",
-                    "Déclarez d'abord votre arrivée à destination avant de signaler le destinataire absent.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "delivery-noshow-arrival-not-declared",
+                    "problem.delivery-noshow-arrival-not-declared");
         }
         Eligibility e = evaluate(bid, travelerId);
         if (!e.waitElapsed()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "delivery-noshow-wait-not-elapsed",
-                    "Waiting Time Not Elapsed",
-                    "Attendez le destinataire au moins " + properties.minWaitMinutes()
-                            + " minutes après votre arrivée avant de le signaler absent.",
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "delivery-noshow-wait-not-elapsed",
+                    "problem.delivery-noshow-wait-not-elapsed",
                     Map.of("availableAt", e.availableAt().toString(),
-                            "minWaitMinutes", properties.minWaitMinutes()));
+                            "minWaitMinutes", properties.minWaitMinutes()),
+                    properties.minWaitMinutes());
         }
         if (e.contactProof() == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "delivery-noshow-contact-required",
-                    "Contact Attempt Required",
-                    "Appelez ou écrivez au destinataire ou à l'expéditeur depuis l'app avant de signaler l'absence.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "delivery-noshow-contact-required",
+                    "problem.delivery-noshow-contact-required");
         }
         if (!contactConfirmed) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "delivery-noshow-confirmation-required", "Confirmation Required",
-                    "Confirmez avoir attendu sur place et tenté de joindre le destinataire.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "delivery-noshow-confirmation-required",
+                    "problem.delivery-noshow-confirmation-required");
         }
         OffsetDateTime now = OffsetDateTime.now(clock);
         return new ReportPreconditions(e.contactProof(), now, now.plusDays(properties.holdDays()));
@@ -168,8 +164,8 @@ public class DeliveryNoShowProcedureService {
         boolean isSender = bid.getSenderId().equals(callerId);
         boolean isTraveler = travelerId != null && travelerId.equals(callerId);
         if (!isSender && !isTraveler) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes ni l'expéditeur ni le voyageur de ce colis.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden",
+                    "problem.forbidden.not-sender-nor-traveler-of-parcel");
         }
 
         Optional<CancellationEntity> report = cancellationRepository
@@ -216,25 +212,21 @@ public class DeliveryNoShowProcedureService {
                                                                OffsetDateTime appointmentAt, String note) {
         BidEntity bid = loadBid(bidId);
         if (!bid.getSenderId().equals(senderId)) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas l'expéditeur de ce colis.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden",
+                    "problem.forbidden.not-sender-of-parcel");
         }
         CancellationEntity c = cancellationRepository.findByBidIdAndScope(bidId, CancellationScope.DELIVERY)
                 .filter(found -> DeliveryNoShowTypes.isRecipientNoShow(found.getReason()))
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "delivery-noshow-not-found", "Not Found",
-                        "Aucun signalement de destinataire absent pour ce colis."));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "delivery-noshow-not-found",
+                        "problem.delivery-noshow-not-found"));
         if (!retryAppointmentOpen(c, bid)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "retry-appointment-closed",
-                    "Retry Appointment Closed",
-                    "Le colis n'est plus en garde : un nouveau rendez-vous ne peut plus être fixé.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "retry-appointment-closed",
+                    "problem.retry-appointment-closed");
         }
         OffsetDateTime now = OffsetDateTime.now(clock);
         if (!appointmentAt.isAfter(now) || appointmentAt.isAfter(c.getHoldUntil())) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "retry-appointment-out-of-hold",
-                    "Appointment Outside Hold",
-                    "Choisissez un rendez-vous à venir, avant la fin de la garde du colis.",
-                    Map.of("holdUntil", c.getHoldUntil().toString()));
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "retry-appointment-out-of-hold",
+                    "problem.retry-appointment-out-of-hold", Map.of("holdUntil", c.getHoldUntil().toString()));
         }
         String trimmedNote = note == null || note.isBlank() ? null : note.trim();
         c.setRetryAppointmentAt(appointmentAt);
@@ -264,13 +256,13 @@ public class DeliveryNoShowProcedureService {
 
     private BidEntity loadBid(UUID bidId) {
         return bidRepository.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Bid introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found",
+                        "problem.not-found.bid"));
     }
 
     private AnnouncementEntity loadAnnouncement(BidEntity bid) {
         return announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "announcement-not-found", "Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found",
+                        "problem.not-found.announcement"));
     }
 }

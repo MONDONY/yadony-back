@@ -15,7 +15,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.server.ResponseStatusException;
+import com.yadony.api.common.LocalizedResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -95,8 +95,8 @@ public class DiditIdentityProvider implements IdentityVerificationProvider {
             if (isOutOfCredits(e)) {
                 raiseCreditsAlert(user);
             }
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "Impossible de créer la session de vérification");
+            throw new LocalizedResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "problem.kyc.session-creation-failed");
         }
         closeCreditsAlert();
         return session;

@@ -4,7 +4,7 @@ Recette conformité 1.14 : « textes serveur en français quand l'app est en ang
 
 Inventaire généré par lecture des sources de `origin/main` (avant le paquet 1) : tout `new XxxException(...)`, `ResponseStatusException(...)`, `setDetail(...)` ou `ProblemDetail.forStatusAndDetail(...)` dont un littéral a l'air français (accents ou mots français courants). Détection heuristique, donc quelques faux positifs possibles. Les numéros de ligne sont ceux de `origin/main` avant migration.
 
-**Bilan** : 1324 occurrences repérées. Paquet 1 : **78 migrées** (58 clés `problem.*`, titre et détail, `messages_fr` / `messages_en`), **1246 restent**.
+**Bilan** : 1324 occurrences repérées. Paquet 1 : **78 migrées** (58 clés `problem.*`, titre et détail, `messages_fr` / `messages_en`). Paquet 2 (`cancellation` côté utilisateur, `kyc` côté utilisateur, `ratings`) : **112 migrées** (116 sites de lancer au total : quelques refus sans accent, non repérés par l'heuristique, ont été migrés avec les autres, 68 clés `problem.*` à titre + détail et 3 clés à valeur unique `problem.kyc.*`). **1134 restent** (les `IllegalStateException` / `IllegalArgumentException` et les services d'administration compris).
 
 ## Mode d'emploi (nouvelle erreur ou migration)
 
@@ -13,6 +13,7 @@ Inventaire généré par lecture des sources de `origin/main` (avant le paquet 1
 3. Ajouter le fichier migré à `MIGRATED` dans `ServerMessagesGuardTest` : il échouera si un `new YadonyBusinessException(` ou un message français en dur y réapparaît, ou si une clé manque en FR ou EN. `MessagesBundleTest` garantit déjà les mêmes clés dans les deux fichiers.
 4. Hors requête HTTP (notification, tâche planifiée), ne pas utiliser `forRequest()` : passer par `messagesResolver.forUser(userId)` ou `dispatcher.messagesFor(userId)` (voir `GpProNotificationListener`).
 5. Cocher « migré » ci-dessous.
+6. Variantes (paquet 2) : une `ResponseStatusException` à texte français se remplace par `new LocalizedResponseStatusException(status, "problem.<clé>")` et une `YadonyNotFoundException("…")` par `YadonyNotFoundException.localized("problem.<clé>")` ; ces deux formes prennent une clé à valeur unique (pas de `.title` / `.detail`), le type et le titre de la réponse restent ceux d'avant (`generic` / `Not Found`). Le garde-fou accepte les deux formes de clé.
 
 ## Reste à migrer, par priorité
 
@@ -22,11 +23,11 @@ Priorité 1 : erreurs qui remontent jusqu'à l'écran de l'app (paiement, réser
 |---|---|---|---|
 | P1 | `payments` | 318 | `PaymentService.java` (46), `cash/CashCommissionService.java` (24), `mobilemoney/MobileMoneyBidPaymentService.java` (17), `pawapay/PawapaySignatureVerifier.java` (14) |
 | P1 | `matching` | 147 | `BidService.java` (57), `BidCheckoutService.java` (22), `TravelerStatsController.java` (15), `TripRescheduleService.java` (9) |
-| P1 | `cancellation` | 91 | `CancellationService.java` (55), `DeliveryNoShowProcedureService.java` (11), `RescheduleDecisionService.java` (7), `PrePaymentCancellationService.java` (6) |
+| P1 | `cancellation` | 14 | `NoShowArbitrationService.java` (5, admin), `CancellationService.java` (6 `IllegalStateException` jamais rendues telles quelles : réponse 500 générique), `AdminBidCancellationService.java` (2, admin), `job/ReturnDeadlineScheduler.java` (1, alerte lue par l'équipe) ; non listés : `AdminBidCancellationService.conflict(...)` et `AdminNoShowQueryService` (admin) |
 | P1 | `auth` | 82 | `AuthService.java` (29), `UserService.java` (21), `GuestClaimService.java` (8), `ConnectedDevicesService.java` (4) |
 | P1 | `tracking` | 63 | `TrackingService.java` (56), `TripPositionService.java` (3), `PickupCodeRequestService.java` (3), `RecipientController.java` (1) |
-| P1 | `ratings` | 27 | `RatingService.java` (21), `ReceptionRatingService.java` (6) |
-| P1 | `kyc` | 19 | `KycService.java` (5), `KycAdminReviewService.java` (4), `reminder/KycReminderProperties.java` (4), `KycAdminService.java` (2) |
+| P1 | `ratings` | 0 | migré (paquet 2) |
+| P1 | `kyc` | 11 | `KycAdminReviewService.java` (4, admin), `KycAdminService.java` (2, admin), `reminder/KycReminderProperties.java` (4, validation de configuration au démarrage), `DiditIdentityProvider.java` (1 `IllegalStateException`, journal) |
 | P2 | `common` | 31 | `StorageController.java` (7), `ImageProcessingService.java` (6), `commission/CommissionGridService.java` (4), `StorageService.java` (3) |
 | P2 | `gppro` | 23 | `GpProAdminService.java` (11), `GpProApplicationService.java` (8), `GpProDocumentController.java` (2), `GpProController.java` (1) |
 | P2 | `smsotp` | 20 | `SmsOtpService.java` (19), `SmsOtpController.java` (1) |
@@ -61,7 +62,7 @@ Priorité 1 : erreurs qui remontent jusqu'à l'écran de l'app (paiement, réser
 | P3 | `automation` | 8 | `AutomationHistoryController.java` (4), `AutomationRuleController.java` (3), `AutomationRuleService.java` (1) |
 | P3 | `toolkit` | 1 | `ToolsCompletionController.java` (1) |
 
-Ordre conseillé pour les paquets suivants : (2) `matching` restant (`BidService`, `BidCheckoutService`, `TravelerStatsController`) et `cancellation` ; (3) `payments` (`PaymentService`, `cash`, `mobilemoney`, `supplement`, `amendment`) ; (4) `tracking`, `auth`, `kyc`, `ratings` ; (5) priorité 2 ; (6) priorité 3.
+Ordre conseillé pour les paquets suivants : (2, fait) `cancellation` côté utilisateur, `kyc` côté utilisateur, `ratings` ; (3) `matching` restant (`BidService`, `BidCheckoutService`, `TravelerStatsController`, `TripRescheduleService`) et `auth` (`AuthService`, `UserService`, `GuestClaimService`, `ConnectedDevicesService`, reporté du paquet 2 pour garder une PR relisible) ; (4) `payments` (`PaymentService`, `cash`, `mobilemoney`, `supplement`, `amendment`) ; (5) `tracking` ; (6) priorité 2 ; (7) priorité 3 (dont les services d'administration `cancellation` et `kyc` restants).
 
 Les `IllegalStateException`, `IllegalArgumentException`, `LlmCallException`, `PawapaySignatureException` etc. ne sont pas rendus tels quels par `GlobalExceptionHandler` (réponse générique ou webhook) : colonne « exposition » = `indirect`, à vérifier au cas par cas (un contrôleur qui les attrape et recopie le message les expose).
 
@@ -231,94 +232,94 @@ Les `IllegalStateException`, `IllegalArgumentException`, `LlmCallException`, `Pa
 | reste | écran | auth | `auth/UserService.java:643` | YadonyBusinessException | Utilisateur introuvable |
 | reste | écran | cancellation | `cancellation/AdminBidCancellationService.java:87` | YadonyBusinessException | Précisez le motif « Autre » en 10 caractères au moins. |
 | reste | écran | cancellation | `cancellation/AdminBidCancellationService.java:94` | YadonyBusinessException | Colis introuvable |
-| reste | écran | cancellation | `cancellation/CancellationController.java:191` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | cancellation | `cancellation/CancellationController.java:198` | YadonyBusinessException | Un token Firebase valide est requis |
-| reste | écran | cancellation | `cancellation/CancellationGuard.java:54` | YadonyBusinessException | Le colis est en transit (ou le départ est dépassé) : annulation impossible. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:101` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | cancellation | `cancellation/CancellationService.java:105` | YadonyBusinessException | Vous n'êtes pas autorisé à annuler cette annonce |
-| reste | écran | cancellation | `cancellation/CancellationService.java:110` | YadonyBusinessException | Ce trajet est déjà annulé |
-| reste | écran | cancellation | `cancellation/CancellationService.java:114` | YadonyBusinessException | Seul un trajet ACTIVE peut être annulé |
-| reste | écran | cancellation | `cancellation/CancellationService.java:126` | YadonyBusinessException | Un expéditeur a accepté votre offre sur ce trajet et procède au paiement :  / vous ne pouvez pas l'annuler pen |
-| reste | écran | cancellation | `cancellation/CancellationService.java:352` | YadonyBusinessException | Annulation introuvable |
-| reste | écran | cancellation | `cancellation/CancellationService.java:356` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | cancellation | `cancellation/CancellationService.java:360` | YadonyBusinessException | Bid introuvable |
-| reste | écran | cancellation | `cancellation/CancellationService.java:363` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | cancellation | `cancellation/CancellationService.java:370` | YadonyBusinessException | Vous n'êtes pas concerné par cette annulation |
-| reste | écran | cancellation | `cancellation/CancellationService.java:440` | YadonyBusinessException | Bid introuvable |
-| reste | écran | cancellation | `cancellation/CancellationService.java:445` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | cancellation | `cancellation/CancellationService.java:448` | YadonyBusinessException | Vous n'êtes pas le voyageur de ce bid. |
+| migré | écran | cancellation | `cancellation/CancellationController.java:191` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | cancellation | `cancellation/CancellationController.java:198` | YadonyBusinessException | Un token Firebase valide est requis |
+| migré | écran | cancellation | `cancellation/CancellationGuard.java:54` | YadonyBusinessException | Le colis est en transit (ou le départ est dépassé) : annulation impossible. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:101` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | cancellation | `cancellation/CancellationService.java:105` | YadonyBusinessException | Vous n'êtes pas autorisé à annuler cette annonce |
+| migré | écran | cancellation | `cancellation/CancellationService.java:110` | YadonyBusinessException | Ce trajet est déjà annulé |
+| migré | écran | cancellation | `cancellation/CancellationService.java:114` | YadonyBusinessException | Seul un trajet ACTIVE peut être annulé |
+| migré | écran | cancellation | `cancellation/CancellationService.java:126` | YadonyBusinessException | Un expéditeur a accepté votre offre sur ce trajet et procède au paiement :  / vous ne pouvez pas l'annuler pen |
+| migré | écran | cancellation | `cancellation/CancellationService.java:352` | YadonyBusinessException | Annulation introuvable |
+| migré | écran | cancellation | `cancellation/CancellationService.java:356` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | cancellation | `cancellation/CancellationService.java:360` | YadonyBusinessException | Bid introuvable |
+| migré | écran | cancellation | `cancellation/CancellationService.java:363` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | cancellation | `cancellation/CancellationService.java:370` | YadonyBusinessException | Vous n'êtes pas concerné par cette annulation |
+| migré | écran | cancellation | `cancellation/CancellationService.java:440` | YadonyBusinessException | Bid introuvable |
+| migré | écran | cancellation | `cancellation/CancellationService.java:445` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | cancellation | `cancellation/CancellationService.java:448` | YadonyBusinessException | Vous n'êtes pas le voyageur de ce bid. |
 | reste | indirect | cancellation | `cancellation/CancellationService.java:452` | IllegalStateException | Le bid doit être en statut ACCEPTED. |
 | reste | indirect | cancellation | `cancellation/CancellationService.java:455` | IllegalStateException | Vous ne pouvez signaler qu'après l'heure de remise prévue. |
 | reste | indirect | cancellation | `cancellation/CancellationService.java:459` | IllegalStateException | Une annulation est déjà en cours pour ce bid. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:464` | YadonyBusinessException | Une déclaration d'absence existe déjà pour ce bid. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:507` | YadonyBusinessException | Bid introuvable |
-| reste | écran | cancellation | `cancellation/CancellationService.java:510` | YadonyBusinessException | Vous n'êtes pas l'expéditeur de ce bid. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:464` | YadonyBusinessException | Une déclaration d'absence existe déjà pour ce bid. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:507` | YadonyBusinessException | Bid introuvable |
+| migré | écran | cancellation | `cancellation/CancellationService.java:510` | YadonyBusinessException | Vous n'êtes pas l'expéditeur de ce bid. |
 | reste | indirect | cancellation | `cancellation/CancellationService.java:514` | IllegalStateException | Le bid doit être en statut ACCEPTED. |
 | reste | indirect | cancellation | `cancellation/CancellationService.java:517` | IllegalStateException | Vous ne pouvez signaler qu'après l'heure de remise prévue. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:533` | YadonyBusinessException | Bid introuvable |
-| reste | écran | cancellation | `cancellation/CancellationService.java:537` | YadonyBusinessException | Vous n'êtes pas le voyageur de ce bid. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:571` | YadonyBusinessException | Bid introuvable |
-| reste | écran | cancellation | `cancellation/CancellationService.java:574` | YadonyBusinessException | Vous n'êtes pas l'expéditeur de ce bid. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:612` | YadonyBusinessException | Le colis doit avoir été récupéré par le voyageur. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:616` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | cancellation | `cancellation/CancellationService.java:620` | YadonyBusinessException | Le trajet n'est pas encore parti. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:625` | YadonyBusinessException | Un signalement d'absence à la livraison est déjà en cours pour ce bid. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:632` | YadonyBusinessException | Un signalement d'absence à la livraison a déjà été tranché pour ce bid. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:645` | YadonyBusinessException | Aucun signalement d'absence à la livraison pour ce bid |
-| reste | écran | cancellation | `cancellation/CancellationService.java:650` | YadonyBusinessException | Le délai de contestation est dépassé. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:660` | YadonyBusinessException | Vous n'êtes pas l'expéditeur de ce bid. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:665` | YadonyBusinessException | Vous n'êtes pas le voyageur de ce bid. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:692` | YadonyBusinessException | Bid introuvable |
-| reste | écran | cancellation | `cancellation/CancellationService.java:703` | YadonyBusinessException | Vous n'êtes pas partie prenante de ce bid. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:708` | YadonyBusinessException | L'annulation après remise n'est possible que sur un colis remis (HANDED_OVER). |
-| reste | écran | cancellation | `cancellation/CancellationService.java:724` | YadonyBusinessException | Une annulation existe déjà pour ce bid. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:845` | YadonyBusinessException | Bid introuvable |
-| reste | écran | cancellation | `cancellation/CancellationService.java:848` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | cancellation | `cancellation/CancellationService.java:853` | YadonyBusinessException | Seul le voyageur peut confirmer le retour du colis. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:857` | YadonyBusinessException | Aucun retour de colis en attente pour ce bid. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:861` | YadonyBusinessException | Le colis a déjà été marqué comme rendu. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:866` | YadonyBusinessException | Le code de retour a expiré — contactez le support. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:899` | YadonyBusinessException | Bid introuvable |
-| reste | écran | cancellation | `cancellation/CancellationService.java:902` | YadonyBusinessException | Seul l'expéditeur peut consulter le code de retour. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:930` | YadonyBusinessException | Cette déclaration d'absence est déjà tranchée |
-| reste | écran | cancellation | `cancellation/CancellationService.java:957` | YadonyBusinessException | Bid introuvable |
-| reste | écran | cancellation | `cancellation/CancellationService.java:960` | YadonyBusinessException | Vous n'êtes pas l'expéditeur de ce bid. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:977` | YadonyBusinessException | Bid introuvable |
-| reste | écran | cancellation | `cancellation/CancellationService.java:980` | YadonyBusinessException | Vous n'êtes pas l'expéditeur de ce bid. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:985` | YadonyBusinessException | Aucune déclaration d'absence pour ce bid |
-| reste | écran | cancellation | `cancellation/CancellationService.java:989` | YadonyBusinessException | Cette déclaration d'absence est déjà tranchée |
+| migré | écran | cancellation | `cancellation/CancellationService.java:533` | YadonyBusinessException | Bid introuvable |
+| migré | écran | cancellation | `cancellation/CancellationService.java:537` | YadonyBusinessException | Vous n'êtes pas le voyageur de ce bid. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:571` | YadonyBusinessException | Bid introuvable |
+| migré | écran | cancellation | `cancellation/CancellationService.java:574` | YadonyBusinessException | Vous n'êtes pas l'expéditeur de ce bid. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:612` | YadonyBusinessException | Le colis doit avoir été récupéré par le voyageur. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:616` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | cancellation | `cancellation/CancellationService.java:620` | YadonyBusinessException | Le trajet n'est pas encore parti. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:625` | YadonyBusinessException | Un signalement d'absence à la livraison est déjà en cours pour ce bid. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:632` | YadonyBusinessException | Un signalement d'absence à la livraison a déjà été tranché pour ce bid. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:645` | YadonyBusinessException | Aucun signalement d'absence à la livraison pour ce bid |
+| migré | écran | cancellation | `cancellation/CancellationService.java:650` | YadonyBusinessException | Le délai de contestation est dépassé. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:660` | YadonyBusinessException | Vous n'êtes pas l'expéditeur de ce bid. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:665` | YadonyBusinessException | Vous n'êtes pas le voyageur de ce bid. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:692` | YadonyBusinessException | Bid introuvable |
+| migré | écran | cancellation | `cancellation/CancellationService.java:703` | YadonyBusinessException | Vous n'êtes pas partie prenante de ce bid. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:708` | YadonyBusinessException | L'annulation après remise n'est possible que sur un colis remis (HANDED_OVER). |
+| migré | écran | cancellation | `cancellation/CancellationService.java:724` | YadonyBusinessException | Une annulation existe déjà pour ce bid. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:845` | YadonyBusinessException | Bid introuvable |
+| migré | écran | cancellation | `cancellation/CancellationService.java:848` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | cancellation | `cancellation/CancellationService.java:853` | YadonyBusinessException | Seul le voyageur peut confirmer le retour du colis. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:857` | YadonyBusinessException | Aucun retour de colis en attente pour ce bid. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:861` | YadonyBusinessException | Le colis a déjà été marqué comme rendu. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:866` | YadonyBusinessException | Le code de retour a expiré — contactez le support. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:899` | YadonyBusinessException | Bid introuvable |
+| migré | écran | cancellation | `cancellation/CancellationService.java:902` | YadonyBusinessException | Seul l'expéditeur peut consulter le code de retour. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:930` | YadonyBusinessException | Cette déclaration d'absence est déjà tranchée |
+| migré | écran | cancellation | `cancellation/CancellationService.java:957` | YadonyBusinessException | Bid introuvable |
+| migré | écran | cancellation | `cancellation/CancellationService.java:960` | YadonyBusinessException | Vous n'êtes pas l'expéditeur de ce bid. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:977` | YadonyBusinessException | Bid introuvable |
+| migré | écran | cancellation | `cancellation/CancellationService.java:980` | YadonyBusinessException | Vous n'êtes pas l'expéditeur de ce bid. |
+| migré | écran | cancellation | `cancellation/CancellationService.java:985` | YadonyBusinessException | Aucune déclaration d'absence pour ce bid |
+| migré | écran | cancellation | `cancellation/CancellationService.java:989` | YadonyBusinessException | Cette déclaration d'absence est déjà tranchée |
 | reste | indirect | cancellation | `cancellation/CancellationService.java:994` | IllegalStateException | Le délai de contestation est dépassé. |
-| reste | écran | cancellation | `cancellation/CancellationService.java:1008` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:114` | YadonyBusinessException | Déclarez d'abord votre arrivée à destination avant de signaler le destinataire absent. |
-| reste | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:120` | YadonyBusinessException |  minutes après votre arrivée avant de le signaler absent. |
-| reste | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:128` | YadonyBusinessException | Appelez ou écrivez au destinataire ou à l'expéditeur depuis l'app avant de signaler l'absence. |
-| reste | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:133` | YadonyBusinessException | Confirmez avoir attendu sur place et tenté de joindre le destinataire. |
-| reste | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:171` | YadonyBusinessException | Vous n'êtes ni l'expéditeur ni le voyageur de ce colis. |
-| reste | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:219` | YadonyBusinessException | Vous n'êtes pas l'expéditeur de ce colis. |
-| reste | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:224` | YadonyBusinessException | Aucun signalement de destinataire absent pour ce colis. |
-| reste | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:228` | YadonyBusinessException | Le colis n'est plus en garde : un nouveau rendez-vous ne peut plus être fixé. |
-| reste | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:234` | YadonyBusinessException | Choisissez un rendez-vous à venir, avant la fin de la garde du colis. |
-| reste | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:267` | YadonyBusinessException | Bid introuvable |
-| reste | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:273` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | cancellation | `cancellation/CancellationService.java:1008` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:114` | YadonyBusinessException | Déclarez d'abord votre arrivée à destination avant de signaler le destinataire absent. |
+| migré | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:120` | YadonyBusinessException |  minutes après votre arrivée avant de le signaler absent. |
+| migré | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:128` | YadonyBusinessException | Appelez ou écrivez au destinataire ou à l'expéditeur depuis l'app avant de signaler l'absence. |
+| migré | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:133` | YadonyBusinessException | Confirmez avoir attendu sur place et tenté de joindre le destinataire. |
+| migré | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:171` | YadonyBusinessException | Vous n'êtes ni l'expéditeur ni le voyageur de ce colis. |
+| migré | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:219` | YadonyBusinessException | Vous n'êtes pas l'expéditeur de ce colis. |
+| migré | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:224` | YadonyBusinessException | Aucun signalement de destinataire absent pour ce colis. |
+| migré | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:228` | YadonyBusinessException | Le colis n'est plus en garde : un nouveau rendez-vous ne peut plus être fixé. |
+| migré | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:234` | YadonyBusinessException | Choisissez un rendez-vous à venir, avant la fin de la garde du colis. |
+| migré | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:267` | YadonyBusinessException | Bid introuvable |
+| migré | écran | cancellation | `cancellation/DeliveryNoShowProcedureService.java:273` | YadonyBusinessException | Annonce introuvable |
 | reste | écran | cancellation | `cancellation/NoShowArbitrationService.java:122` | YadonyBusinessException | Le colis a déjà été remis au voyageur ( /  l'expéditeur ne peut plus être confirmée. Rejetez la déclaration. |
 | reste | écran | cancellation | `cancellation/NoShowArbitrationService.java:140` | YadonyBusinessException | Annonce introuvable pour ce bid |
 | reste | écran | cancellation | `cancellation/NoShowArbitrationService.java:177` | YadonyBusinessException | Déclaration d'absence introuvable |
 | reste | écran | cancellation | `cancellation/NoShowArbitrationService.java:182` | YadonyBusinessException | Cette déclaration d'absence est déjà tranchée |
 | reste | écran | cancellation | `cancellation/NoShowArbitrationService.java:193` | YadonyBusinessException | Bid introuvable |
-| reste | écran | cancellation | `cancellation/PrePaymentCancellationController.java:36` | YadonyBusinessException | Un token Firebase valide est requis |
-| reste | écran | cancellation | `cancellation/PrePaymentCancellationService.java:106` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | cancellation | `cancellation/PrePaymentCancellationService.java:109` | YadonyBusinessException | Cette demande n'existe plus. |
-| reste | écran | cancellation | `cancellation/PrePaymentCancellationService.java:112` | YadonyBusinessException | Seul l'expéditeur peut annuler cette demande. |
-| reste | écran | cancellation | `cancellation/PrePaymentCancellationService.java:215` | YadonyBusinessException | Cette demande n'attend plus de paiement. |
-| reste | écran | cancellation | `cancellation/PrePaymentCancellationService.java:220` | YadonyBusinessException | Un paiement est en cours de validation. Réessayez dans quelques minutes. |
-| reste | écran | cancellation | `cancellation/PrePaymentCancellationService.java:225` | YadonyBusinessException | Votre paiement vient d'être validé. Rouvrez le colis pour l'annuler avec remboursement. |
-| reste | écran | cancellation | `cancellation/RescheduleDecisionService.java:69` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | cancellation | `cancellation/RescheduleDecisionService.java:72` | YadonyBusinessException | Bid introuvable |
-| reste | écran | cancellation | `cancellation/RescheduleDecisionService.java:75` | YadonyBusinessException | Vous n'êtes pas l'expéditeur de ce colis. |
-| reste | écran | cancellation | `cancellation/RescheduleDecisionService.java:79` | YadonyBusinessException | Aucun report de trajet n'attend votre réponse. |
-| reste | écran | cancellation | `cancellation/RescheduleDecisionService.java:83` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | cancellation | `cancellation/RescheduleDecisionService.java:86` | YadonyBusinessException | Le délai pour répondre au report est dépassé : votre colis reste sur le trajet. |
-| reste | écran | cancellation | `cancellation/RescheduleDecisionService.java:109` | YadonyBusinessException | Une annulation existe déjà pour ce colis. |
+| migré | écran | cancellation | `cancellation/PrePaymentCancellationController.java:36` | YadonyBusinessException | Un token Firebase valide est requis |
+| migré | écran | cancellation | `cancellation/PrePaymentCancellationService.java:106` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | cancellation | `cancellation/PrePaymentCancellationService.java:109` | YadonyBusinessException | Cette demande n'existe plus. |
+| migré | écran | cancellation | `cancellation/PrePaymentCancellationService.java:112` | YadonyBusinessException | Seul l'expéditeur peut annuler cette demande. |
+| migré | écran | cancellation | `cancellation/PrePaymentCancellationService.java:215` | YadonyBusinessException | Cette demande n'attend plus de paiement. |
+| migré | écran | cancellation | `cancellation/PrePaymentCancellationService.java:220` | YadonyBusinessException | Un paiement est en cours de validation. Réessayez dans quelques minutes. |
+| migré | écran | cancellation | `cancellation/PrePaymentCancellationService.java:225` | YadonyBusinessException | Votre paiement vient d'être validé. Rouvrez le colis pour l'annuler avec remboursement. |
+| migré | écran | cancellation | `cancellation/RescheduleDecisionService.java:69` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | cancellation | `cancellation/RescheduleDecisionService.java:72` | YadonyBusinessException | Bid introuvable |
+| migré | écran | cancellation | `cancellation/RescheduleDecisionService.java:75` | YadonyBusinessException | Vous n'êtes pas l'expéditeur de ce colis. |
+| migré | écran | cancellation | `cancellation/RescheduleDecisionService.java:79` | YadonyBusinessException | Aucun report de trajet n'attend votre réponse. |
+| migré | écran | cancellation | `cancellation/RescheduleDecisionService.java:83` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | cancellation | `cancellation/RescheduleDecisionService.java:86` | YadonyBusinessException | Le délai pour répondre au report est dépassé : votre colis reste sur le trajet. |
+| migré | écran | cancellation | `cancellation/RescheduleDecisionService.java:109` | YadonyBusinessException | Une annulation existe déjà pour ce colis. |
 | reste | écran | cancellation | `cancellation/job/ReturnDeadlineScheduler.java:88` | .setDetail |  annulé après remise : le voyageur ne l'a pas rendu à  / l'expéditeur avant l'échéance du  |
 | reste | écran | kyc | `kyc/KycAdminReviewService.java:454` | YadonyBusinessException | Utilisateur introuvable |
 | reste | écran | kyc | `kyc/KycAdminReviewService.java:474` | YadonyBusinessException | Aucune session de vérification chez le fournisseur pour cet utilisateur |
@@ -326,15 +327,15 @@ Les `IllegalStateException`, `IllegalArgumentException`, `LlmCallException`, `Pa
 | reste | écran | kyc | `kyc/KycAdminReviewService.java:484` | YadonyBusinessException | L'identité de cet utilisateur n'est pas vérifiée |
 | reste | écran | kyc | `kyc/KycAdminService.java:104` | YadonyBusinessException | Cet utilisateur n'a jamais démarré de vérification d'identité |
 | reste | écran | kyc | `kyc/KycAdminService.java:151` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | kyc | `kyc/KycService.java:50` | YadonyNotFoundException | Utilisateur introuvable |
-| reste | écran | kyc | `kyc/KycService.java:53` | ResponseStatusException | KYC déjà vérifié |
-| reste | écran | kyc | `kyc/KycService.java:91` | ResponseStatusException | Impossible de créer la session de vérification |
-| reste | écran | kyc | `kyc/KycService.java:138` | YadonyNotFoundException | Utilisateur introuvable |
-| reste | écran | kyc | `kyc/KycService.java:160` | YadonyNotFoundException | Utilisateur introuvable |
-| reste | écran | kyc | `kyc/provider/IdentityProviderResolver.java:45` | ResponseStatusException | Impossible de créer la session de vérification |
+| migré | écran | kyc | `kyc/KycService.java:50` | YadonyNotFoundException | Utilisateur introuvable |
+| migré | écran | kyc | `kyc/KycService.java:53` | ResponseStatusException | KYC déjà vérifié |
+| migré | écran | kyc | `kyc/KycService.java:91` | ResponseStatusException | Impossible de créer la session de vérification |
+| migré | écran | kyc | `kyc/KycService.java:138` | YadonyNotFoundException | Utilisateur introuvable |
+| migré | écran | kyc | `kyc/KycService.java:160` | YadonyNotFoundException | Utilisateur introuvable |
+| migré | écran | kyc | `kyc/provider/IdentityProviderResolver.java:45` | ResponseStatusException | Impossible de créer la session de vérification |
 | reste | indirect | kyc | `kyc/provider/didit/DiditIdentityProvider.java:89` | IllegalStateException | réponse Didit sans session_id ni url |
-| reste | écran | kyc | `kyc/provider/didit/DiditIdentityProvider.java:98` | ResponseStatusException | Impossible de créer la session de vérification |
-| reste | écran | kyc | `kyc/provider/stripe/StripeIdentityProvider.java:112` | ResponseStatusException | Impossible de créer la session de vérification |
+| migré | écran | kyc | `kyc/provider/didit/DiditIdentityProvider.java:98` | ResponseStatusException | Impossible de créer la session de vérification |
+| migré | écran | kyc | `kyc/provider/stripe/StripeIdentityProvider.java:112` | ResponseStatusException | Impossible de créer la session de vérification |
 | reste | indirect | kyc | `kyc/reminder/KycReminderProperties.java:40` | IllegalArgumentException | yadony.kyc.verification-reminders : fenêtre horaire invalide ( |
 | reste | indirect | kyc | `kyc/reminder/KycReminderProperties.java:45` | IllegalArgumentException | yadony.kyc.verification-reminders : les délais doivent être positifs |
 | reste | indirect | kyc | `kyc/reminder/KycReminderProperties.java:48` | IllegalArgumentException | yadony.kyc.verification-reminders : les délais doivent être strictement croissants |
@@ -804,33 +805,33 @@ Les `IllegalStateException`, `IllegalArgumentException`, `LlmCallException`, `Pa
 | reste | écran | payments | `payments/wallet/topupcode/WalletTopupCodeAdminService.java:195` | YadonyBusinessException | Code de recharge introuvable |
 | reste | écran | payments | `payments/wallet/topupcode/WalletTopupCodeController.java:47` | YadonyBusinessException | Utilisateur introuvable |
 | reste | indirect | payments | `payments/wallet/topupcode/WalletTopupCodeRedemptionService.java:141` | IllegalStateException | Crédit du code introuvable :  |
-| reste | écran | ratings | `ratings/RatingService.java:105` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | ratings | `ratings/RatingService.java:109` | YadonyBusinessException | Envoi introuvable |
-| reste | écran | ratings | `ratings/RatingService.java:113` | YadonyBusinessException | Vous n'êtes pas l'expéditeur de cet envoi |
-| reste | écran | ratings | `ratings/RatingService.java:118` | YadonyBusinessException | La livraison n'a pas encore été confirmée pour cet envoi |
-| reste | écran | ratings | `ratings/RatingService.java:123` | YadonyBusinessException | La fenêtre de notation est expirée |
-| reste | écran | ratings | `ratings/RatingService.java:128` | YadonyBusinessException | Vous avez déjà noté ce voyageur pour cet envoi |
-| reste | écran | ratings | `ratings/RatingService.java:157` | YadonyBusinessException | Lien de suivi invalide |
-| reste | écran | ratings | `ratings/RatingService.java:161` | YadonyBusinessException | La livraison n'a pas encore été confirmée |
-| reste | écran | ratings | `ratings/RatingService.java:166` | YadonyBusinessException | Vous avez déjà noté ce voyageur |
-| reste | écran | ratings | `ratings/RatingService.java:195` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | ratings | `ratings/RatingService.java:199` | YadonyBusinessException | Envoi introuvable |
-| reste | écran | ratings | `ratings/RatingService.java:203` | YadonyBusinessException | Annonce introuvable pour cet envoi |
-| reste | écran | ratings | `ratings/RatingService.java:208` | YadonyBusinessException | Vous n'êtes pas le voyageur de cet envoi |
-| reste | écran | ratings | `ratings/RatingService.java:213` | YadonyBusinessException | La livraison n'a pas encore été confirmée pour cet envoi |
-| reste | écran | ratings | `ratings/RatingService.java:218` | YadonyBusinessException | La fenêtre de notation est expirée |
-| reste | écran | ratings | `ratings/RatingService.java:223` | YadonyBusinessException | Vous avez déjà noté cet expéditeur pour cet envoi |
-| reste | écran | ratings | `ratings/RatingService.java:251` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | ratings | `ratings/RatingService.java:277` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | ratings | `ratings/RatingService.java:347` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | ratings | `ratings/RatingService.java:356` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | ratings | `ratings/RatingService.java:408` | YadonyBusinessException | Annonce introuvable pour cet envoi |
-| reste | écran | ratings | `ratings/ReceptionRatingService.java:73` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | ratings | `ratings/ReceptionRatingService.java:78` | YadonyBusinessException | Vous n'êtes pas le destinataire confirmé de ce colis |
-| reste | écran | ratings | `ratings/ReceptionRatingService.java:83` | YadonyBusinessException | Colis introuvable |
-| reste | écran | ratings | `ratings/ReceptionRatingService.java:87` | YadonyBusinessException | Le voyageur se note une fois le colis livré |
-| reste | écran | ratings | `ratings/ReceptionRatingService.java:97` | YadonyBusinessException | Annonce introuvable pour cet envoi |
-| reste | écran | ratings | `ratings/ReceptionRatingService.java:131` | YadonyBusinessException | Vous avez déjà noté le voyageur pour ce colis |
+| migré | écran | ratings | `ratings/RatingService.java:105` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | ratings | `ratings/RatingService.java:109` | YadonyBusinessException | Envoi introuvable |
+| migré | écran | ratings | `ratings/RatingService.java:113` | YadonyBusinessException | Vous n'êtes pas l'expéditeur de cet envoi |
+| migré | écran | ratings | `ratings/RatingService.java:118` | YadonyBusinessException | La livraison n'a pas encore été confirmée pour cet envoi |
+| migré | écran | ratings | `ratings/RatingService.java:123` | YadonyBusinessException | La fenêtre de notation est expirée |
+| migré | écran | ratings | `ratings/RatingService.java:128` | YadonyBusinessException | Vous avez déjà noté ce voyageur pour cet envoi |
+| migré | écran | ratings | `ratings/RatingService.java:157` | YadonyBusinessException | Lien de suivi invalide |
+| migré | écran | ratings | `ratings/RatingService.java:161` | YadonyBusinessException | La livraison n'a pas encore été confirmée |
+| migré | écran | ratings | `ratings/RatingService.java:166` | YadonyBusinessException | Vous avez déjà noté ce voyageur |
+| migré | écran | ratings | `ratings/RatingService.java:195` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | ratings | `ratings/RatingService.java:199` | YadonyBusinessException | Envoi introuvable |
+| migré | écran | ratings | `ratings/RatingService.java:203` | YadonyBusinessException | Annonce introuvable pour cet envoi |
+| migré | écran | ratings | `ratings/RatingService.java:208` | YadonyBusinessException | Vous n'êtes pas le voyageur de cet envoi |
+| migré | écran | ratings | `ratings/RatingService.java:213` | YadonyBusinessException | La livraison n'a pas encore été confirmée pour cet envoi |
+| migré | écran | ratings | `ratings/RatingService.java:218` | YadonyBusinessException | La fenêtre de notation est expirée |
+| migré | écran | ratings | `ratings/RatingService.java:223` | YadonyBusinessException | Vous avez déjà noté cet expéditeur pour cet envoi |
+| migré | écran | ratings | `ratings/RatingService.java:251` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | ratings | `ratings/RatingService.java:277` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | ratings | `ratings/RatingService.java:347` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | ratings | `ratings/RatingService.java:356` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | ratings | `ratings/RatingService.java:408` | YadonyBusinessException | Annonce introuvable pour cet envoi |
+| migré | écran | ratings | `ratings/ReceptionRatingService.java:73` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | ratings | `ratings/ReceptionRatingService.java:78` | YadonyBusinessException | Vous n'êtes pas le destinataire confirmé de ce colis |
+| migré | écran | ratings | `ratings/ReceptionRatingService.java:83` | YadonyBusinessException | Colis introuvable |
+| migré | écran | ratings | `ratings/ReceptionRatingService.java:87` | YadonyBusinessException | Le voyageur se note une fois le colis livré |
+| migré | écran | ratings | `ratings/ReceptionRatingService.java:97` | YadonyBusinessException | Annonce introuvable pour cet envoi |
+| migré | écran | ratings | `ratings/ReceptionRatingService.java:131` | YadonyBusinessException | Vous avez déjà noté le voyageur pour ce colis |
 | reste | écran | tracking | `tracking/PickupCodeRequestService.java:96` | YadonyBusinessException | Utilisateur introuvable |
 | reste | écran | tracking | `tracking/PickupCodeRequestService.java:100` | YadonyBusinessException | Transaction introuvable |
 | reste | écran | tracking | `tracking/PickupCodeRequestService.java:107` | YadonyBusinessException | Seul le voyageur du colis peut demander un nouveau code de retrait |

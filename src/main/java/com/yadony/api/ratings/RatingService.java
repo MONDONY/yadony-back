@@ -102,31 +102,31 @@ public class RatingService {
     @Transactional
     public RatingResponse createRating(String firebaseUid, RatingRequest request) {
         UserEntity sender = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.UNAUTHORIZED, "unauthorized", "Unauthorized", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthorized",
+                        "problem.auth.user-not-found"));
 
         BidEntity bid = bidRepository.findById(request.bidId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Envoi introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found",
+                        "problem.not-found.shipment"));
 
         if (!bid.getSenderId().equals(sender.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas l'expéditeur de cet envoi");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden",
+                    "problem.forbidden.rating-not-sender");
         }
 
         if (!senderMayRate(bid)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "bid-not-delivered",
-                    "Unprocessable", "La livraison n'a pas encore été confirmée pour cet envoi");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "bid-not-delivered",
+                    "problem.rating.not-delivered");
         }
 
         if (bid.getUpdatedAt().isBefore(LocalDateTime.now(ZoneOffset.UTC).minusDays(RATING_WINDOW_DAYS))) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "rating-window-expired",
-                    "Unprocessable", "La fenêtre de notation est expirée");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "rating-window-expired",
+                    "problem.rating.window-expired");
         }
 
         if (ratingRepository.existsByBidIdAndRaterId(bid.getId(), sender.getId())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "already-rated", "Conflict",
-                    "Vous avez déjà noté ce voyageur pour cet envoi");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "already-rated",
+                    "problem.rating.already-rated-traveler-shipment");
         }
 
         UUID travelerId = resolveTravelerId(bid);
@@ -154,17 +154,17 @@ public class RatingService {
     @Transactional
     public RatingResponse createRecipientRating(RecipientRatingRequest request) {
         BidEntity bid = bidRepository.findByTrackingToken(request.trackingToken())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Lien de suivi invalide"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found",
+                        "problem.not-found.tracking-link"));
 
         if (bid.getStatus() != BidStatus.COMPLETED) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "bid-not-delivered",
-                    "Unprocessable", "La livraison n'a pas encore été confirmée");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "bid-not-delivered",
+                    "problem.rating.not-delivered-short");
         }
 
         if (ratingRepository.existsByBidIdAndTrackingToken(bid.getId(), request.trackingToken())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "already-rated", "Conflict",
-                    "Vous avez déjà noté ce voyageur");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "already-rated",
+                    "problem.rating.already-rated-traveler");
         }
 
         UUID travelerId = resolveTravelerId(bid);
@@ -192,36 +192,35 @@ public class RatingService {
     @Transactional
     public RatingResponse createTravelerRating(String firebaseUid, TravelerRatingRequest request) {
         UserEntity traveler = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.UNAUTHORIZED, "unauthorized", "Unauthorized", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthorized",
+                        "problem.auth.user-not-found"));
 
         BidEntity bid = bidRepository.findById(request.bidId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Envoi introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found",
+                        "problem.not-found.shipment"));
 
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.INTERNAL_SERVER_ERROR, "data-inconsistency", "Error",
-                        "Annonce introuvable pour cet envoi"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.INTERNAL_SERVER_ERROR, "data-inconsistency",
+                        "problem.data-inconsistency.announcement-shipment"));
 
         if (!announcement.getTravelerId().equals(traveler.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas le voyageur de cet envoi");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden",
+                    "problem.forbidden.rating-not-traveler");
         }
 
         if (!travelerMayRate(bid)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "bid-not-delivered",
-                    "Unprocessable", "La livraison n'a pas encore été confirmée pour cet envoi");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "bid-not-delivered",
+                    "problem.rating.not-delivered");
         }
 
         if (bid.getUpdatedAt().isBefore(LocalDateTime.now(ZoneOffset.UTC).minusDays(RATING_WINDOW_DAYS))) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "rating-window-expired",
-                    "Unprocessable", "La fenêtre de notation est expirée");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "rating-window-expired",
+                    "problem.rating.window-expired");
         }
 
         if (ratingRepository.existsByBidIdAndRaterId(bid.getId(), traveler.getId())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "already-rated", "Conflict",
-                    "Vous avez déjà noté cet expéditeur pour cet envoi");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "already-rated",
+                    "problem.rating.already-rated-sender");
         }
 
         UUID senderId = bid.getSenderId();
@@ -248,8 +247,8 @@ public class RatingService {
     @Transactional(readOnly = true)
     public UserRatingsSummaryResponse getMyReceivedRatings(String firebaseUid, int page, int size) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.UNAUTHORIZED, "unauthorized", "Unauthorized", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthorized",
+                        "problem.auth.user-not-found"));
         // Ses propres notes : l'utilisateur est son propre viewer, aucun masquage possible.
         return getUserRatings(user.getId(), page, size, user.getId());
     }
@@ -274,8 +273,8 @@ public class RatingService {
         blockVisibility.assertVisible(viewerId, userId);
 
         UserEntity user = userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found",
+                        "problem.not-found.user"));
 
         Page<RatingEntity> ratingsPage = ratingRepository.findByRatedUserId(
                 userId, PageRequest.of(page, size, Sort.by("createdAt").descending()));
@@ -344,8 +343,8 @@ public class RatingService {
 
     public Optional<PendingRatingResponse> getPendingRating(String firebaseUid) {
         UserEntity caller = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.UNAUTHORIZED, "unauthorized", "Unauthorized", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthorized",
+                        "problem.auth.user-not-found"));
 
         Optional<BidEntity> maybeBid = bidRepository.findPendingRatingForUser(
                 caller.getId(), LocalDateTime.now(ZoneOffset.UTC).minusDays(RATING_WINDOW_DAYS));
@@ -353,9 +352,8 @@ public class RatingService {
 
         BidEntity bid = maybeBid.get();
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.INTERNAL_SERVER_ERROR, "data-inconsistency", "Error",
-                        "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.INTERNAL_SERVER_ERROR, "data-inconsistency",
+                        "problem.data-inconsistency.announcement"));
 
         boolean isTravelerRating = announcement.getTravelerId().equals(caller.getId());
         UUID otherPartyId = isTravelerRating ? bid.getSenderId() : announcement.getTravelerId();
@@ -405,9 +403,8 @@ public class RatingService {
     // Traveler is the owner of the announcement this bid is placed on
     private UUID resolveTravelerId(BidEntity bid) {
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.INTERNAL_SERVER_ERROR, "data-inconsistency", "Error",
-                        "Annonce introuvable pour cet envoi"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.INTERNAL_SERVER_ERROR, "data-inconsistency",
+                        "problem.data-inconsistency.announcement-shipment"));
         return announcement.getTravelerId();
     }
 

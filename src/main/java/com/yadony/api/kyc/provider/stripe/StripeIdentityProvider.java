@@ -14,7 +14,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
-import org.springframework.web.server.ResponseStatusException;
+import com.yadony.api.common.LocalizedResponseStatusException;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -109,8 +109,8 @@ public class StripeIdentityProvider implements IdentityVerificationProvider {
 
         } catch (Exception e) {
             log.error("Failed to create Stripe Identity session for user {}", user.getId(), e);
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "Impossible de créer la session de vérification");
+            throw new LocalizedResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "problem.kyc.session-creation-failed");
         }
     }
 

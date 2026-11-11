@@ -51,10 +51,6 @@ public final class CancellationGuard {
     }
 
     private static YadonyBusinessException locked() {
-        return new YadonyBusinessException(
-                HttpStatus.CONFLICT,
-                "cancel-locked",
-                "Cancellation locked",
-                "Le colis est en transit (ou le départ est dépassé) : annulation impossible.");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "cancel-locked", "problem.cancel-locked");
     }
 }

@@ -125,7 +125,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(YadonyNotFoundException.class)
     public ResponseEntity<ProblemDetail> handleNotFound(YadonyNotFoundException ex) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
-                HttpStatus.NOT_FOUND, ex.getMessage());
+                HttpStatus.NOT_FOUND, ex.getDetail(messagesResolver.forRequest()));
         problem.setType(URI.create(BASE_TYPE + "not-found"));
         problem.setTitle("Not Found");
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(problem);
@@ -152,7 +152,10 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(ResponseStatusException.class)
     public ResponseEntity<ProblemDetail> handleResponseStatus(ResponseStatusException ex) {
-        String reason = ex.getReason();
+        // Raison localisée : suit l'Accept-Language de la requête (FR par défaut).
+        String reason = ex instanceof LocalizedResponseStatusException localized
+                ? localized.getReason(messagesResolver.forRequest())
+                : ex.getReason();
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
                 ex.getStatusCode(), reason != null ? reason : ex.getMessage());
 
