@@ -10,6 +10,10 @@ import java.util.UUID;
  * Calcul DAC7 d'une année civile (lot 3a), base de l'export XML du lot 3b. Ne contient aucune donnée d'identité
  * (nom, NIF, adresse) : seulement des identifiants et des montants.
  *
+ * <p>{@code identityStatus} ne regarde que le profil ({@code users}). Le lot 3b ({@code Dac7DeclarationService})
+ * résout l'identité sur toutes les sources (profil, puis identité vérifiée par le prestataire KYC) et c'est son
+ * verdict qui décide de l'export : un voyageur listé ici en revue d'identité peut s'y révéler complet.
+ *
  * @param travelers                   voyageurs DÉCLARABLES à identité complète ayant au moins une opération dans
  *                                    l'année, triés par id
  * @param identityReviewTravelers     voyageurs déclarables dont l'identité est incomplète (compte supprimé, donnée
@@ -41,9 +45,9 @@ public record Dac7Report(int year, List<TravelerReport> travelers, List<Traveler
      *
      * @param operations         nombre d'opérations (colis payés ; un supplément ou une modification n'en ajoute pas)
      * @param byCurrency         montants par devise d'origine, triés par code
-     * @param netEur             contrepartie versée, nette de la commission et des remboursements déduits, en euros
+     * @param netEur             contrepartie versée, nette de la commission de Yadony, en euros (aucun remboursement
+     *                           n'est jamais déduit : ils sont listés à part, à réconcilier)
      * @param commissionEur      commission de Yadony, déclarée séparément, en euros
-     * @param refundsDeductedEur remboursements avant versement déduits de {@code netEur}, en euros
      * @param eurComplete        faux si au moins une ligne n'a pas de taux : les montants en euros sont alors partiels
      * @param commissionComplete faux si la commission d'au moins une ligne est introuvable (anomalie
      *                           {@code COMMISSION_UNKNOWN}) : {@code commissionEur} est alors partielle

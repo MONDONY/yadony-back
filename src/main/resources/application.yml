@@ -423,6 +423,11 @@ yadony:
     # Purge mensuelle des NIF gardés sur les comptes supprimés hors fenêtre (Dac7TaxInfoPurgeScheduler). TOUJOURS
     # active, même DAC7 éteint : mesure de protection des données.
     purge-cron: ${YADONY_DAC7_PURGE_CRON:0 0 5 1 * *}
+    # Lot 3b : taux de référence historiques de la BCE (eurofxref-hist.xml), copiés dans ecb_exchange_rates quand une
+    # page admin DAC7 ou un export en a besoin (aucune tâche planifiée, au plus un essai par heure). Flux public.
+    ecb:
+      fetch-enabled: ${YADONY_DAC7_ECB_FETCH_ENABLED:true}
+      hist-url: https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.xml
   billing:
     # Faux tant que le lot 2 (Stripe Checkout) n'est pas en production :
     # sans lui, les comptes en grâce n'ont aucun moyen de s'abonner.

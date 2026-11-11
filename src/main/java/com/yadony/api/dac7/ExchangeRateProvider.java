@@ -9,8 +9,8 @@ import java.util.Optional;
  * unités de la devise pour un euro. Vide si le taux de ce jour n'est pas connu : le calcul ne devine jamais un taux,
  * il signale la ligne ({@code EXCHANGE_RATE_MISSING}).
  *
- * <p>La source réelle des taux historiques de la BCE n'est pas encore branchée (la table {@code exchange_rates} ne
- * garde que le taux courant) : seule {@link FixedParityExchangeRateProvider} existe en production.
+ * <p>En production : {@link EcbExchangeRateProvider} (parités fixes, puis taux de référence historiques de la BCE
+ * copiés dans {@code ecb_exchange_rates}, lot 3b).
  */
 public interface ExchangeRateProvider {
 
