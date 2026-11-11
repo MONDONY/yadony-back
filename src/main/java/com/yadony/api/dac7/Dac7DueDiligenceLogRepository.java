@@ -14,4 +14,10 @@ public interface Dac7DueDiligenceLogRepository extends Repository<Dac7DueDiligen
     Dac7DueDiligenceLogEntity save(Dac7DueDiligenceLogEntity entry);
 
     List<Dac7DueDiligenceLogEntity> findByUserIdOrderByCreatedAtAscIdAsc(java.util.UUID userId);
+
+    /** Une démarche précise a-t-elle déjà été inscrite (ex. demande du seul pays à l'acceptation) ? */
+    boolean existsByUserIdAndActionAndNote(UUID userId, Dac7DueDiligenceAction action, String note);
+
+    /** La preuve d'une même vérification Didit est-elle déjà au registre ? */
+    boolean existsByUserIdAndSourceAndVerificationRef(UUID userId, Dac7DiligenceSource source, String verificationRef);
 }

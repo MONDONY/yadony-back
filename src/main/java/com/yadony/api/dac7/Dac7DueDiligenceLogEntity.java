@@ -48,6 +48,15 @@ public class Dac7DueDiligenceLogEntity {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    /** V378 : origine de l'information fournie (saisie ou pièce vérifiée), nulle pour une démarche. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "source", length = 10, updatable = false)
+    private Dac7DiligenceSource source;
+
+    /** V378 : identifiant de la session de vérification Didit, preuve de fiabilité (CGI 1649 ter D). */
+    @Column(name = "verification_ref", length = 255, updatable = false)
+    private String verificationRef;
+
     protected Dac7DueDiligenceLogEntity() {
         // JPA
     }
@@ -59,6 +68,13 @@ public class Dac7DueDiligenceLogEntity {
         this.channel = channel;
         this.actorId = actorId;
         this.note = note;
+    }
+
+    Dac7DueDiligenceLogEntity(UUID userId, Dac7DueDiligenceAction action, Dac7DueDiligenceChannel channel,
+                              UUID actorId, String note, Dac7DiligenceSource source, String verificationRef) {
+        this(userId, action, channel, actorId, note);
+        this.source = source;
+        this.verificationRef = verificationRef;
     }
 
     @PrePersist
@@ -75,4 +91,6 @@ public class Dac7DueDiligenceLogEntity {
     public UUID getActorId() { return actorId; }
     public String getNote() { return note; }
     public Instant getCreatedAt() { return createdAt; }
+    public Dac7DiligenceSource getSource() { return source; }
+    public String getVerificationRef() { return verificationRef; }
 }

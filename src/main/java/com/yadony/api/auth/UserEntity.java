@@ -358,6 +358,14 @@ public class UserEntity extends BaseEntity {
     @jakarta.persistence.Convert(converter = com.yadony.api.common.EncryptedStringConverter.class)
     private String vatNumber;
 
+    /**
+     * DAC7 (V378) : lieu de naissance, demandé seulement à un résident de l'Union SANS numéro fiscal, effacé dès qu'un
+     * NIF est enregistré. Chiffré au repos comme le NIF ; même règles (jamais dans un WHERE, un journal ni un audit).
+     */
+    @Column(name = "tax_birth_place", length = 512)
+    @jakarta.persistence.Convert(converter = com.yadony.api.common.EncryptedStringConverter.class)
+    private String taxBirthPlace;
+
     /** Première demande du NIF (lot 3b), base des rappels. */
     @Column(name = "tax_info_requested_at")
     private Instant taxInfoRequestedAt;
@@ -812,6 +820,9 @@ public class UserEntity extends BaseEntity {
 
     public String getVatNumber() { return vatNumber; }
     public void setVatNumber(String vatNumber) { this.vatNumber = vatNumber; }
+
+    public String getTaxBirthPlace() { return taxBirthPlace; }
+    public void setTaxBirthPlace(String taxBirthPlace) { this.taxBirthPlace = taxBirthPlace; }
 
     public Instant getTaxInfoRequestedAt() { return taxInfoRequestedAt; }
     public void setTaxInfoRequestedAt(Instant taxInfoRequestedAt) { this.taxInfoRequestedAt = taxInfoRequestedAt; }
