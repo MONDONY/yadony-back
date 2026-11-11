@@ -205,6 +205,9 @@ jobs:
           # DAC7 (lot 3a) : endpoints voyageur des informations fiscales (NIF). Éteint par défaut : ne l'allumer
           # qu'après la mise à jour de la politique de confidentialité et des CGU (préavis de 30 jours).
           YADONY_DAC7_ENABLED=${{ vars.YADONY_DAC7_ENABLED || 'false' }}
+          # DAC7 (lot 3b) : demande du numéro fiscal et deux rappels (14 et 30 jours) aux seuls voyageurs à solliciter.
+          # Éteint par défaut ; sans effet tant que YADONY_DAC7_ENABLED est éteint.
+          YADONY_DAC7_REMINDERS_ENABLED=${{ vars.YADONY_DAC7_REMINDERS_ENABLED || 'false' }}
           # Rail mobile money pawaPay : token API du dashboard SANDBOX (staging ne parle
           # jamais à la production pawaPay, PAWAPAY_BASE_URL garde son défaut sandbox).
           # Secret d environnement staging. Le rail reste fermé tant que PAWAPAY_ENABLED

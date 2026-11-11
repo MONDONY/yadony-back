@@ -151,6 +151,9 @@ public class NotificationPrefsService {
             // Question « Confirmez votre statut » au particulier fréquent (lot 4) : elle respecte les réglages
             // (« Rappels et conseils »), la ligne reste lisible dans la boîte Annonces dans tous les cas.
             Map.entry("TRAVELER_STATUS_CONFIRMATION", "pushRemindersTips"),
+            // DAC7 (lot 3b) : demande et rappels du numéro fiscal, réglables par « Rappels et conseils » (règle du
+            // propriétaire : préférences respectées). L'entrée de la boîte Annonces reste dans tous les cas.
+            Map.entry("TAX_INFO_REQUEST",             "pushRemindersTips"),
             Map.entry("CALL_MISSED",                  "pushMissedCalls"),
             Map.entry("automation_capacity_free",     "pushTravelerAutomations"),
             Map.entry("automation_loyal_sender",      "pushTravelerAutomations"),
@@ -200,6 +203,9 @@ public class NotificationPrefsService {
             "REFERRAL_REWARD_AVAILABLE",
             // Décision de l'admin sur le badge GP Pro
             "GP_PRO_APPROVED", "GP_PRO_REJECTED", "GP_PRO_REVOKED",
+            // Récapitulatif annuel DAC7 : information légale (art. 1649 ter D, III du CGI), envoyé une fois par an
+            // et seulement sur décision de l'équipe
+            "TAX_STATEMENT",
             // Vérification d'identité. KYC_ACTION_REQUIRED n'est toujours actif que sans le
             // drapeau reminder : la relance prend le type effectif KYC_VERIFICATION_REMINDER.
             "KYC_VERIFIED", "KYC_ACTION_REQUIRED", "KYC_RESET",

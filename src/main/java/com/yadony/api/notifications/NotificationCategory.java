@@ -27,7 +27,9 @@ public enum NotificationCategory {
     private static final Set<String> ANNONCES = Set.of(
             "ADMIN_BROADCAST", "SYSTEM", "ADMIN_WARNING", "MESSAGING_MUTED",
             "ACCOUNT_DELETION_CANCELLED", "REPORT_RESOLVED",
-            "GP_PRO_APPROVED", "GP_PRO_REJECTED", "GP_PRO_REVOKED", "TRAVELER_STATUS_CONFIRMATION");
+            "GP_PRO_APPROVED", "GP_PRO_REJECTED", "GP_PRO_REVOKED", "TRAVELER_STATUS_CONFIRMATION",
+            // DAC7 (lot 3b) : demande du numéro fiscal et récapitulatif annuel, gardés en entier (fullBody).
+            "TAX_INFO_REQUEST", "TAX_STATEMENT");
 
     private static final Set<String> PAIEMENTS_TYPES = Set.of(
             "PAYMENT_RELEASED", "MM_PAYMENT_PENDING", "MOBILE_MONEY_PAYMENT_CONFIRMED",
