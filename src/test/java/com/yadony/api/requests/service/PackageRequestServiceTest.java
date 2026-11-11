@@ -2597,6 +2597,7 @@ class PackageRequestServiceTest {
 
             service.publish(SENDER_ID, id);
 
+            verify(transportModeGuard).assertRequestModeAllowed(e.getTransportMode());
             assertThat(e.getStatus()).isEqualTo(PackageRequestStatus.OPEN);
             assertThat(e.getDisclaimerSignedAt()).isNotNull();
             verify(eventPublisher).publishEvent(any(PackageRequestCreatedEvent.class));
@@ -2604,6 +2605,26 @@ class PackageRequestServiceTest {
                     com.yadony.api.requests.event.PackageRequestDescriptionSubmittedEvent.class));
             verify(auditService).log(eq("PACKAGE_REQUEST"), eq(id), eq("PUBLISHED"),
                     eq(SENDER_ID), any());
+        }
+
+        @Test @DisplayName("brouillon BOAT, bateau éteint → le garde lève 422, le brouillon reste DRAFT")
+        void publish_boatDraft_whenGuardRefuses_throws422_andStaysDraft() {
+            UUID id = UUID.randomUUID();
+            PackageRequestEntity e = draft(id);
+            e.setTransportMode(TransportMode.BOAT);
+            when(repository.findByIdForUpdate(id)).thenReturn(Optional.of(e));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            doThrow(new com.yadony.api.common.YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                "transport-mode-disabled", "Mode de transport indisponible", "bateau"))
+                .when(transportModeGuard).assertRequestModeAllowed(TransportMode.BOAT);
+
+            assertThatThrownBy(() -> service.publish(SENDER_ID, id))
+                .isInstanceOfSatisfying(com.yadony.api.common.YadonyBusinessException.class,
+                    ex -> assertThat(ex.getErrorCode()).isEqualTo("transport-mode-disabled"));
+
+            assertThat(e.getStatus()).isEqualTo(PackageRequestStatus.DRAFT);
+            verify(repository, never()).save(any());
+            verifyNoInteractions(eventPublisher);
         }
 
         @Test @DisplayName("brouillon sans date → publié tel quel (« Date flexible »)")

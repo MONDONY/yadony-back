@@ -610,6 +610,8 @@ public class PackageRequestService {
         if (entity.getDesiredDate() != null && entity.getDesiredDate().isAfter(LocalDate.now().plusDays(90))) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "request/date-too-far");
         }
+        // Un brouillon bateau ou route créé interrupteur allumé ne sort pas une fois l'interrupteur éteint.
+        transportModeGuard.assertRequestModeAllowed(entity.getTransportMode());
         requireTargetPrice(entity.getTargetPriceEur());
         long openCount = repository.countBySenderIdAndStatusIn(callerUid,
             List.of(PackageRequestStatus.OPEN, PackageRequestStatus.NEGOTIATING));
