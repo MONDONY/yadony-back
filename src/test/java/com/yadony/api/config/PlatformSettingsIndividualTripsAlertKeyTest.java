@@ -104,7 +104,7 @@ class PlatformSettingsIndividualTripsAlertKeyTest {
     @Test
     void amorcage_seme4_sansEcraserUneValeurExistante() {
         PlatformSettingsInitializer initializer = new PlatformSettingsInitializer(repository, config,
-                false, false, "", false, "20", "30", "", "", "", "true", "3", "30", "150", "");
+                false, false, false, false, "", false, "20", "30", "", "", "", "true", "3", "30", "150", "");
         when(repository.findBySettingKey(any())).thenReturn(Optional.empty());
         when(repository.findBySettingKey(KEY)).thenReturn(Optional.empty());
 
