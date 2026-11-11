@@ -41,6 +41,7 @@ class MatchingServiceTest {
     @Mock private UserRepository userRepository;
     @Mock private com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
     @Mock private com.yadony.api.common.BlockVisibility blockVisibility;
+    @Mock private com.yadony.api.config.PlatformSettingsService platformSettingsService;
 
     @InjectMocks private MatchingService matchingService;
 
@@ -193,6 +194,7 @@ class MatchingServiceTest {
             PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
             request.setTransportMode(TransportMode.BOAT);
             activeAnnouncement.setTransportMode(TransportMode.PLANE);
+            when(platformSettingsService.transportBoatEnabled()).thenReturn(true);
             when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
                     .thenReturn(List.of(activeAnnouncement));
             when(packageRequestRepository.findOpenByCorridor("Paris", "Dakar"))
@@ -220,6 +222,7 @@ class MatchingServiceTest {
             PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
             request.setTransportMode(TransportMode.CAR);
             activeAnnouncement.setTransportMode(TransportMode.BUS);
+            when(platformSettingsService.transportRoadEnabled()).thenReturn(true);
             when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
                     .thenReturn(List.of(activeAnnouncement));
             when(packageRequestRepository.findOpenByCorridor("Paris", "Dakar"))
@@ -230,10 +233,53 @@ class MatchingServiceTest {
         }
 
         @Test
+        void planeRequest_matchesBusTrip_whenAllSwitchesOff() throws Exception {
+            PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
+            request.setTransportMode(TransportMode.PLANE);
+            activeAnnouncement.setTransportMode(TransportMode.BUS);
+            when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
+                    .thenReturn(List.of(activeAnnouncement));
+            when(packageRequestRepository.findOpenByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(request));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+
+            assertThat(matchingService.findMatchingRequests(TRAVELER_ID)).hasSize(1);
+        }
+
+        @Test
+        void planeRequest_excludesBusTrip_whenRoadOn() throws Exception {
+            PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
+            request.setTransportMode(TransportMode.PLANE);
+            activeAnnouncement.setTransportMode(TransportMode.BUS);
+            when(platformSettingsService.transportRoadEnabled()).thenReturn(true);
+            when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
+                    .thenReturn(List.of(activeAnnouncement));
+            when(packageRequestRepository.findOpenByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(request));
+
+            assertThat(matchingService.findMatchingRequests(TRAVELER_ID)).isEmpty();
+        }
+
+        @Test
+        void findBestMatchByRequestId_ignoresMode_whenAllSwitchesOff() throws Exception {
+            PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
+            request.setTransportMode(TransportMode.PLANE);
+            activeAnnouncement.setTransportMode(TransportMode.BUS);
+            when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
+                    .thenReturn(List.of(activeAnnouncement));
+            when(packageRequestRepository.findOpenOrNegotiatingByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(request));
+            when(userRepository.findAllById(any())).thenReturn(List.of(sender));
+
+            assertThat(matchingService.findBestMatchByRequestId(TRAVELER_ID)).containsKey(REQUEST_ID);
+        }
+
+        @Test
         void findBestMatchByRequestId_excludesRequestOfOtherMode() throws Exception {
             PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
             request.setTransportMode(TransportMode.BOAT);
             activeAnnouncement.setTransportMode(TransportMode.PLANE);
+            when(platformSettingsService.transportBoatEnabled()).thenReturn(true);
             when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
                     .thenReturn(List.of(activeAnnouncement));
             when(packageRequestRepository.findOpenOrNegotiatingByCorridor("Paris", "Dakar"))
@@ -408,6 +454,31 @@ class MatchingServiceTest {
             List<UUID> travelers = matchingService.findTravelersMatchingPackage(REQUEST_ID);
 
             assertThat(travelers).containsExactly(TRAVELER_ID);
+        }
+
+        @Test
+        void excludesTrip_whenModeDiffersAndASwitchIsOn() throws Exception {
+            PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
+            request.setTransportMode(TransportMode.PLANE);
+            activeAnnouncement.setTransportMode(TransportMode.BUS);
+            when(platformSettingsService.transportRoadEnabled()).thenReturn(true);
+            when(packageRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(announcementRepository.findActiveByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(activeAnnouncement));
+
+            assertThat(matchingService.findTravelersMatchingPackage(REQUEST_ID)).isEmpty();
+        }
+
+        @Test
+        void ignoresMode_whenAllSwitchesOff() throws Exception {
+            PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
+            request.setTransportMode(TransportMode.PLANE);
+            activeAnnouncement.setTransportMode(TransportMode.BUS);
+            when(packageRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(announcementRepository.findActiveByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(activeAnnouncement));
+
+            assertThat(matchingService.findTravelersMatchingPackage(REQUEST_ID)).containsExactly(TRAVELER_ID);
         }
 
         @Test
