@@ -90,6 +90,44 @@ class PublicAnnouncementPageControllerIntegrationTest {
     }
 
     /**
+     * Confidentialité : un visiteur anonyme ne voit que la ville et le pays des lieux de remise et de
+     * récupération, jamais la rue ni le lieu précis saisis par le voyageur.
+     */
+    @Test
+    void activeAnnouncement_neverExposesPreciseAddressesToAnonymousVisitors() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+        a.setDepartureCountryCode("FR");
+        a.setArrivalCountryCode("SN");
+        a.setPickupAddressLabel("12 rue de Tombouctou, 75018 Paris");
+        a.setDeliveryAddressLabel("Sacré-Cœur 3, Dakar");
+        announcementRepository.saveAndFlush(a);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(model().attributeDoesNotExist("pickupAddress", "deliveryAddress"))
+                .andExpect(model().attribute("pickupPlace", "Paris, France"))
+                .andExpect(model().attribute("deliveryPlace", "Dakar, Sénégal"))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("Tombouctou"))))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("Sacré-Cœur"))))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("Paris, France")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("Dakar, Sénégal")));
+    }
+
+    @Test
+    void activeAnnouncement_withoutCountryCode_fallsBackToCityOnly() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(model().attribute("pickupPlace", "Paris"))
+                .andExpect(model().attribute("deliveryPlace", "Dakar"))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("Paris 18e"))));
+    }
+
+    /**
      * Le bouton d'ouverture doit porter le schéma applicatif, et l'URL de partage
      * doit rester la forme {@code https://} servie ici. C'est cette stabilité qui
      * permettra d'activer les App Links plus tard sans invalider les affiches
@@ -447,17 +485,22 @@ class PublicAnnouncementPageControllerIntegrationTest {
                                 org.hamcrest.Matchers.containsString("12 kg"))));
     }
 
-    /** Les lieux de remise et de récupération sont ce qui décide l'expéditeur. */
+    /** Les lieux de remise et de récupération restent affichés, au niveau ville et pays seulement. */
     @Test
-    void publicPage_showsHandoverAndCollectionPlaces() throws Exception {
+    void publicPage_showsHandoverAndCollectionPlacesAtCityLevel() throws Exception {
         AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+        a.setDepartureCountryCode("FR");
+        a.setArrivalCountryCode("SN");
+        announcementRepository.saveAndFlush(a);
 
         mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
                 .andExpect(status().isOk())
                 .andExpect(content().string(
-                        org.hamcrest.Matchers.containsString("Paris 18e")))
+                        org.hamcrest.Matchers.containsString("Remise du colis")))
                 .andExpect(content().string(
-                        org.hamcrest.Matchers.containsString("Dakar Plateau")));
+                        org.hamcrest.Matchers.containsString("Paris, France")))
+                .andExpect(content().string(
+                        org.hamcrest.Matchers.containsString("Dakar, Sénégal")));
     }
 
     /** Le logo réel, pas un mot-logo en texte : la page circule hors de l'app. */
