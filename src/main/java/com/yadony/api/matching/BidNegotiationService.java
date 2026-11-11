@@ -134,13 +134,10 @@ public class BidNegotiationService {
                                           HttpServletRequest httpRequest) {
         UserEntity sender = findUser(firebaseUid);
         AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(announcementId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         if (!announcement.isNegotiable()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "announcement-not-negotiable", "Announcement Not Negotiable",
-                    "Ce trajet n'accepte pas les propositions de prix");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "announcement-not-negotiable", "problem.announcement-not-negotiable");
         }
         assertTripNotDeparted(announcement);
 
@@ -149,9 +146,7 @@ public class BidNegotiationService {
                 bidService.assertCanBidOn(sender, announcement, request.contentCategory());
 
         if (Boolean.FALSE.equals(request.disclaimerSigned())) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "disclaimer-not-signed", "Disclaimer Not Signed",
-                    "Le disclaimer légal doit être accepté");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "disclaimer-not-signed", "problem.disclaimer-not-signed");
         }
 
         List<BidGridItemRequest> gridItems =
@@ -162,18 +157,14 @@ public class BidNegotiationService {
         boolean hasItems = !gridItems.isEmpty() || !customItems.isEmpty();
 
         if (!hasKg && !hasItems) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "bid-empty", "Bid Empty",
-                    "Au moins un article ou un poids doit être renseigné");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "bid-empty", "problem.bid-empty");
         }
 
         if (announcement.getCapacityUnit() != CapacityUnit.KG_FREE
                 && request.weightKg() != null
                 && announcement.getAvailableKg() != null
                 && request.weightKg().compareTo(announcement.getAvailableKg()) > 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "weight-exceeds-capacity", "Weight Exceeds Capacity",
-                    "Poids demandé supérieur à la capacité disponible");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "weight-exceeds-capacity", "problem.weight-exceeds-capacity");
         }
 
         PaymentMethod paymentMethod =
@@ -262,18 +253,14 @@ public class BidNegotiationService {
         assertMyTurn(last, ctx.userId());
 
         if (ctx.bid().getNegotiationRound() >= config.maxRounds()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "negotiation-round-limit-reached", "Negotiation Round Limit Reached",
-                    "Le nombre maximum de propositions échangées est atteint");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "negotiation-round-limit-reached", "problem.negotiation-round-limit-reached");
         }
 
         GridPricing grid = gridPricing(ctx.bid());
         BigDecimal proposedGross = counterGross(ctx, request, grid);
         if (last != null && last.getProposedGrossEur() != null
                 && last.getProposedGrossEur().compareTo(proposedGross) == 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "counter-same-amount", "Counter Same Amount",
-                    "Ta contre-proposition est identique à la dernière proposition : accepte-la ou change le montant.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "counter-same-amount", "problem.counter-same-amount");
         }
 
         // Côté expéditeur seulement : le voyageur fixe lui-même ses contre-offres, son
@@ -319,22 +306,16 @@ public class BidNegotiationService {
         BigDecimal gross = request.proposedTotalEur();
         BigDecimal net = request.proposedNetEur();
         if (gross != null && net != null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "counter-amount-ambiguous", "Counter Amount Ambiguous",
-                    "Indique soit le montant payé par l'expéditeur, soit ton net, pas les deux.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "counter-amount-ambiguous", "problem.counter-amount-ambiguous");
         }
         if (net == null) {
             if (gross == null) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "counter-amount-required", "Counter Amount Required",
-                        "Indique le montant de ta contre-proposition.");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "counter-amount-required", "problem.counter-amount-required");
             }
             return gross;
         }
         if (!ctx.viewerIsTraveler()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "counter-net-traveler-only", "Counter Net Traveler Only",
-                    "Seul le voyageur propose un montant net.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "counter-net-traveler-only", "problem.counter-net-traveler-only");
         }
         if (grid != null) {
             return grid.grossForNet(net);
@@ -359,9 +340,7 @@ public class BidNegotiationService {
 
         BigDecimal gross = last != null ? last.getProposedGrossEur() : null;
         if (gross == null) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "negotiation-closed", "Negotiation Closed",
-                    "Aucune proposition de prix à accepter sur ce fil");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "negotiation-closed", "problem.negotiation-closed");
         }
 
         // Le taux (ou la grille et ses réductions) vient du bid, jamais d'une nouvelle
@@ -676,8 +655,7 @@ public class BidNegotiationService {
     }
 
     private static YadonyBusinessException negotiationNotFound() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "negotiation-not-found",
-                "Negotiation Not Found", "Discussion de prix introuvable");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "negotiation-not-found", "problem.negotiation-not-found");
     }
 
     /**
@@ -691,10 +669,8 @@ public class BidNegotiationService {
     private static void assertNegotiationTerminal(Participant ctx) {
         BidStatus status = ctx.bid().getStatus();
         if (OPEN_NEGOTIATION_STATUSES.contains(status)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "negotiation-still-open",
-                    "Negotiation Still Open",
-                    "Seule une discussion de prix terminée peut être archivée ou supprimée.",
-                    Map.of("negotiationStatus", status.name()));
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "negotiation-still-open",
+                    "problem.negotiation-still-open", Map.of("negotiationStatus", status.name()));
         }
     }
 
@@ -800,26 +776,21 @@ public class BidNegotiationService {
     private Participant loadParticipant(UUID bidId, String firebaseUid) {
         UserEntity user = findUser(firebaseUid);
         BidEntity bid = bidRepository.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "bid-not-found", "Bid Not Found", "Demande introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found"));
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         boolean isSender = bid.getSenderId().equals(user.getId());
         boolean isTraveler = announcement.getTravelerId().equals(user.getId());
         if (!isSender && !isTraveler) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous ne participez pas à cette discussion");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.a-cette-discussion");
         }
         return new Participant(bid, announcement, user.getId(), isTraveler);
     }
 
     private void assertThreadOpen(Participant ctx) {
         if (ctx.bid().getStatus() != BidStatus.NEGOTIATING) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "negotiation-closed", "Negotiation Closed",
-                    "Cette discussion de prix est terminée");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "negotiation-closed", "problem.negotiation-closed.prix-est-terminee");
         }
         assertTripNotDeparted(ctx.announcement());
     }
@@ -832,17 +803,13 @@ public class BidNegotiationService {
     private void assertTripNotDeparted(AnnouncementEntity announcement) {
         LocalDate departure = announcement.getDepartureDate();
         if (departure != null && departure.isBefore(LocalDate.now(ZoneOffset.UTC))) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "negotiation-closed", "Negotiation Closed",
-                    "Ce trajet est déjà parti");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "negotiation-closed", "problem.negotiation-closed.est-deja-parti");
         }
     }
 
     private void assertMyTurn(BidNegotiationMessageEntity last, UUID callerId) {
         if (!isMyTurn(last, callerId)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "not-your-turn", "Not Your Turn",
-                    "C'est à la contrepartie de répondre");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "not-your-turn", "problem.not-your-turn");
         }
     }
 
@@ -896,9 +863,8 @@ public class BidNegotiationService {
             AnnouncementPriceGridItemEntity annItem = annGridItemRepository
                     .findById(req.announcementGridItemId())
                     .filter(i -> i.getAnnouncementId().equals(announcement.getId()))
-                    .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                            "invalid-grid-item", "Invalid Grid Item",
-                            "Article hors grille de cette annonce : " + req.announcementGridItemId()));
+                    .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY,
+                            "invalid-grid-item", "problem.invalid-grid-item", req.announcementGridItemId()));
             BidGridItemEntity entity = new BidGridItemEntity();
             entity.setBidId(bid.getId());
             entity.setAnnouncementGridItemId(req.announcementGridItemId());
@@ -1100,7 +1066,6 @@ public class BidNegotiationService {
 
     private UserEntity findUser(String firebaseUid) {
         return userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
     }
 }
