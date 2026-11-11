@@ -21,21 +21,21 @@ class ArrivalRulesTest {
     @Test
     @DisplayName("vol de nuit : arrivée le lendemain à 06:30 → accepté")
     void overnight_nextDay_ok() {
-        assertThatCode(() -> ArrivalRules.validate(DEP, T22, DEP.plusDays(1), T0630))
+        assertThatCode(() -> ArrivalRules.validate(DEP, T22, DEP.plusDays(1), T0630, TransportMode.PLANE))
                 .doesNotThrowAnyException();
     }
 
     @Test
     @DisplayName("sans date d'arrivée (ancienne app) : jamais bloqué")
     void noArrivalDate_tolerated() {
-        assertThatCode(() -> ArrivalRules.validate(DEP, T22, null, T0630))
+        assertThatCode(() -> ArrivalRules.validate(DEP, T22, null, T0630, TransportMode.PLANE))
                 .doesNotThrowAnyException();
     }
 
     @Test
     @DisplayName("arrivée avant le départ → 422 arrival-before-departure")
     void arrivalBeforeDeparture_rejected() {
-        assertThatThrownBy(() -> ArrivalRules.validate(DEP, T22, DEP.minusDays(1), T0630))
+        assertThatThrownBy(() -> ArrivalRules.validate(DEP, T22, DEP.minusDays(1), T0630, TransportMode.PLANE))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
                         .isEqualTo("arrival-before-departure"));
@@ -44,7 +44,7 @@ class ArrivalRulesTest {
     @Test
     @DisplayName("plus de 3 jours après le départ → 422 arrival-too-far")
     void arrivalTooFar_rejected() {
-        assertThatThrownBy(() -> ArrivalRules.validate(DEP, T22, DEP.plusDays(4), T0630))
+        assertThatThrownBy(() -> ArrivalRules.validate(DEP, T22, DEP.plusDays(4), T0630, TransportMode.PLANE))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
                         .isEqualTo("arrival-too-far"));
@@ -95,14 +95,6 @@ class ArrivalRulesTest {
     }
 
     @Test
-    @DisplayName("ancienne signature à 4 arguments : se comporte comme l'avion (J+4 rejeté)")
-    void legacyFourArgValidate_behavesAsPlane() {
-        assertTooFar(() -> ArrivalRules.validate(DEP, T22, DEP.plusDays(4), null));
-        assertThatCode(() -> ArrivalRules.validate(DEP, T22, DEP.plusDays(3), null))
-                .doesNotThrowAnyException();
-    }
-
-    @Test
     @DisplayName("le message d'erreur cite la durée du mode, pas 3 jours en dur")
     void tooFarMessage_citesModeLimit() {
         assertThatThrownBy(() -> ArrivalRules.validate(DEP, T22, DEP.plusDays(15), null, TransportMode.CAR))
@@ -119,7 +111,7 @@ class ArrivalRulesTest {
     @Test
     @DisplayName("même jour, heure d'arrivée avant le départ → 422")
     void sameDayArrivalTimeBeforeDeparture_rejected() {
-        assertThatThrownBy(() -> ArrivalRules.validate(DEP, T22, DEP, T0630))
+        assertThatThrownBy(() -> ArrivalRules.validate(DEP, T22, DEP, T0630, TransportMode.PLANE))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
                         .isEqualTo("arrival-time-before-departure"));

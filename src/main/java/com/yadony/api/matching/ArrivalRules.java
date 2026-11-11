@@ -41,12 +41,6 @@ public final class ArrivalRules {
         };
     }
 
-    /** Ancienne signature : se comporte comme l'avion. */
-    public static void validate(LocalDate departureDate, LocalTime departureTime,
-                                LocalDate arrivalDate, LocalTime arrivalTime) {
-        validate(departureDate, departureTime, arrivalDate, arrivalTime, TransportMode.PLANE);
-    }
-
     public static void validate(LocalDate departureDate, LocalTime departureTime,
                                 LocalDate arrivalDate, LocalTime arrivalTime, TransportMode mode) {
         if (arrivalDate == null || departureDate == null) {
