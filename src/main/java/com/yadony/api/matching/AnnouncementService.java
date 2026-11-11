@@ -160,8 +160,7 @@ public class AnnouncementService {
             return current;
         }
         if (isCurrencyLocked(announcement.getId())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "currency-locked", "Currency Locked",
-                    "La devise ne peut plus changer : ce trajet a déjà reçu une demande ou une offre.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "currency-locked", "problem.currency-locked");
         }
         return requested;
     }
@@ -173,9 +172,7 @@ public class AnnouncementService {
         com.yadony.api.payments.currency.SupportedCurrency validated =
                 com.yadony.api.payments.currency.SupportedCurrency.fromCode(requestedCurrency);
         if (validated == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "currency-unsupported", "Currency Unsupported",
-                    "Cette devise n'est pas prise en charge par yadony.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "currency-unsupported", "problem.currency-unsupported");
         }
         return validated.code().toUpperCase(java.util.Locale.ROOT);
     }
@@ -906,20 +903,15 @@ public class AnnouncementService {
     @Transactional
     public TripSeriesStart startSeries(String firebaseUid, UUID sourceId) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found",
-                        "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         AnnouncementEntity source = announcementRepository.findById(sourceId)
                 .filter(a -> user.getId().equals(a.getTravelerId()))
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "announcement-not-found",
-                        "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
         if (source.getTripGroupId() != null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "series-multi-leg-trip",
-                    "Trajet à étapes",
-                    "Seul un trajet direct peut être répété à d'autres dates.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "series-multi-leg-trip", "problem.series-multi-leg-trip");
         }
         if (source.getStatus() == AnnouncementStatus.REMOVED_BY_ADMIN) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "series-source-removed",
-                    "Trajet retiré", "Ce trajet a été retiré par la modération.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "series-source-removed", "problem.series-source-removed");
         }
         UUID seriesId = source.getSeriesId() != null ? source.getSeriesId() : source.getId();
         if (source.getSeriesId() == null) {
@@ -982,12 +974,7 @@ public class AnnouncementService {
             UUID seriesId
     ) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND,
-                        "user-not-found",
-                        "User Not Found",
-                        "Utilisateur introuvable"
-                ));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
 
         // Bateau fermé tant que l'interrupteur est éteint : avant toute écriture, brouillon compris.
         // Une occurrence générée par une récurrence déjà enregistrée n'est pas une nouvelle ouverture
@@ -1010,10 +997,7 @@ public class AnnouncementService {
             long draftCount = announcementRepository.countByTravelerIdAndStatus(user.getId(), AnnouncementStatus.DRAFT)
                     + packageRequestRepository.countBySenderIdAndStatus(user.getId(), PackageRequestStatus.DRAFT);
             if (draftCount >= maxDrafts) {
-                throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "draft-limit-reached",
-                        "Draft Limit Reached",
-                        "Limite de " + maxDrafts + " brouillon(s) atteinte."
-                                + (proQuotas ? "" : " Passez en PRO pour en créer davantage."));
+                throw draftLimitReached(maxDrafts, proQuotas);
             }
         }
 
@@ -1092,21 +1076,11 @@ public class AnnouncementService {
         announcement.setPricingMode(pricingMode);
         if (pricingMode == PricingMode.KG &&
                 (request.pricePerKg() == null || request.pricePerKg().compareTo(java.math.BigDecimal.ZERO) <= 0)) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY,
-                    "invalid-price",
-                    "Prix invalide",
-                    "Le prix par kg est obligatoire en mode KG"
-            );
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-price", "problem.invalid-price");
         }
         if (request.departureDate() != null && request.departureDate().isBefore(
                 LocalDate.now(TripTimezones.zoneOf(announcement.getTimezone())))) {
-            throw new YadonyBusinessException(
-                HttpStatus.UNPROCESSABLE_ENTITY,
-                "invalid-departure-date",
-                "Date invalide",
-                "La date de départ ne peut pas être dans le passé"
-            );
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-departure-date", "problem.invalid-departure-date");
         }
 
         validateHandoverDeadline(request.handoverDeadline(),
@@ -1196,7 +1170,7 @@ public class AnnouncementService {
             LocalDate date, LocalDate dateFrom, LocalDate dateTo,
             String departure, String arrival, Pageable pageable) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
 
         String qParam         = (q         != null && !q.isBlank())         ? q.trim()         : null;
         String departureParam = (departure != null && !departure.isBlank()) ? departure.trim() : null;
@@ -1230,7 +1204,7 @@ public class AnnouncementService {
 
     public List<com.yadony.api.matching.dto.CorridorDto> getMyCorridors(String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         return announcementRepository
                 .findTopDestinationsForTraveler(user.getId(), PageRequest.of(0, 100))
                 .stream()
@@ -1349,7 +1323,7 @@ public class AnnouncementService {
     @Transactional(readOnly = true)
     public AnnouncementDetailResponse getAnnouncementDetail(UUID id, String firebaseUid) {
         AnnouncementEntity announcement = announcementRepository.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         // Un viewer anonyme (pas de token, ou uid inconnu) reste résolu à null : il n'a pas
         // d'identité à confronter aux blocages et continue donc de voir l'annonce.
@@ -1360,16 +1334,14 @@ public class AnnouncementService {
         // annonce absente, et non un 403 : un code distinct rendrait le blocage
         // détectable par celui qui en fait l'objet.
         if (blockVisibility.isHidden(viewerId, announcement.getTravelerId())) {
-            throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "announcement-not-found",
-                    "Announcement Not Found", "Annonce introuvable");
+            throw YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found");
         }
 
         // Un brouillon est invisible des tiers : même erreur que si l'annonce n'existait
         // pas, pour ne pas révéler son existence à un utilisateur non-propriétaire.
         if (announcement.getStatus() == AnnouncementStatus.DRAFT
                 && (viewerId == null || !viewerId.equals(announcement.getTravelerId()))) {
-            throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "announcement-not-found",
-                    "Announcement Not Found", "Annonce introuvable");
+            throw YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found");
         }
 
         long bidsCount = bidRepository.countVisibleByAnnouncementId(id);
@@ -1571,13 +1543,13 @@ public class AnnouncementService {
         // l'ancienne devise.
         announcementRepository.lockForUpdate(id);
         AnnouncementEntity announcement = announcementRepository.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
         
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
 
         if (!announcement.getTravelerId().equals(user.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden", "Vous n'êtes pas autorisé à modifier cette annonce");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.modifier-cette-annonce");
         }
 
         // ARRIVED inclus : un colis arrivé mais pas encore retiré est toujours un
@@ -1585,12 +1557,7 @@ public class AnnouncementService {
         boolean hasAcceptedBids = bidRepository.existsByAnnouncementIdAndStatusIn(
                 id, List.copyOf(BidStatus.IN_FLIGHT));
         if (hasAcceptedBids) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT,
-                    "modification-impossible",
-                    "Modification Impossible",
-                    "Modification impossible : des colis sont déjà acceptés pour ce trajet"
-            );
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "modification-impossible", "problem.modification-impossible");
         }
 
         final com.yadony.api.matching.TransportMode oldTransportMode = announcement.getTransportMode();
@@ -1604,12 +1571,7 @@ public class AnnouncementService {
         PricingMode updatePricingMode = request.pricingMode() != null ? request.pricingMode() : previousPricingMode;
         if (updatePricingMode == PricingMode.KG &&
                 (request.pricePerKg() == null || request.pricePerKg().compareTo(java.math.BigDecimal.ZERO) <= 0)) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY,
-                    "invalid-price",
-                    "Prix invalide",
-                    "Le prix par kg est obligatoire en mode KG"
-            );
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-price", "problem.invalid-price");
         }
 
         ArrivalRules.validate(request.departureDate(), request.departureTime(),
@@ -1826,22 +1788,18 @@ public class AnnouncementService {
     @CacheEvict(value = "announcements-search", allEntries = true)
     public AnnouncementDetailResponse publishAnnouncement(UUID id, String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
 
         AnnouncementEntity announcement = announcementRepository.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         if (!announcement.getTravelerId().equals(user.getId())) {
             // Même pattern d'ownership que updateAnnouncement (statut + code identiques).
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas autorisé à publier cette annonce");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.publier-cette-annonce");
         }
 
         if (announcement.getStatus() != AnnouncementStatus.DRAFT) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "not-a-draft",
-                    "Not A Draft", "Seul un brouillon peut être publié");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "not-a-draft", "problem.not-a-draft");
         }
 
         // Dépublié puis republié dans le mois de sa publication : déjà compté ce mois-ci, la limite ne s'applique
@@ -1856,9 +1814,7 @@ public class AnnouncementService {
         if (announcement.getDepartureDate() != null
                 && announcement.getDepartureDate().isBefore(
                         LocalDate.now(TripTimezones.zoneOf(announcement.getTimezone())))) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "departure-date-passed",
-                    "Departure Date Passed",
-                    "La date de départ est passée. Modifiez le trajet avant de le publier.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "departure-date-passed", "problem.departure-date-passed");
         }
 
         // Les mises à jour de badge ne touchent que les trajets ACTIVE/FULL : un brouillon garde
@@ -1895,28 +1851,22 @@ public class AnnouncementService {
     @CacheEvict(value = "announcements-search", allEntries = true)
     public AnnouncementDetailResponse unpublishAnnouncement(UUID id, String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
 
         AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(id)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         if (!announcement.getTravelerId().equals(user.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas autorisé à dépublier cette annonce");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.depublier-cette-annonce");
         }
         if (announcement.getStatus() != AnnouncementStatus.ACTIVE) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "announcement/not-unpublishable",
-                    "Not Unpublishable", "Seul un trajet actif peut être dépublié");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement/not-unpublishable", "problem.announcement-not-unpublishable");
         }
         if (bidRepository.countVisibleByAnnouncementId(id) > 0) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "announcement/has-bids",
-                    "Has Bids", "Ce trajet a déjà reçu des demandes et ne peut plus être dépublié");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement/has-bids", "problem.announcement-has-bids");
         }
         if (negotiationThreadRepository.existsActiveByTravelerAnnouncementId(id)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "announcement/has-negotiations",
-                    "Has Negotiations", "Ce trajet est lié à une négociation et ne peut plus être dépublié");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement/has-negotiations", "problem.announcement-has-negotiations");
         }
 
         YadonyConfigProperties.Limits limits = config.limits() != null
@@ -1927,10 +1877,7 @@ public class AnnouncementService {
         long draftCount = announcementRepository.countByTravelerIdAndStatus(user.getId(), AnnouncementStatus.DRAFT)
                 + packageRequestRepository.countBySenderIdAndStatus(user.getId(), PackageRequestStatus.DRAFT);
         if (draftCount >= maxDrafts) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "draft-limit-reached",
-                    "Draft Limit Reached",
-                    "Limite de " + maxDrafts + " brouillon(s) atteinte."
-                            + (proQuotas ? "" : " Passez en PRO pour en créer davantage."));
+            throw draftLimitReached(maxDrafts, proQuotas);
         }
 
         announcement.setStatus(AnnouncementStatus.DRAFT);
@@ -1990,16 +1937,13 @@ public class AnnouncementService {
      */
     private OwnedAnnouncement loadOwnedAnnouncementForUpdate(UUID id, String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
 
         AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(id)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         if (!announcement.getTravelerId().equals(user.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas autorisé à modifier ce trajet");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.modifier-ce-trajet");
         }
 
         return new OwnedAnnouncement(user, announcement);
@@ -2024,17 +1968,14 @@ public class AnnouncementService {
         List<BidEntity> activeBids = bidRepository.findByAnnouncementIdAndStatusNotIn(id, INACTIVE_BID_STATUSES);
 
         if (activeBids.isEmpty()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "trip/no-active-parcel",
-                    "No Active Parcel", "Aucun colis n'est actuellement pris en charge sur ce trajet");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "trip/no-active-parcel", "problem.trip-no-active-parcel");
         }
 
         List<BidEntity> enRoute = activeBids.stream()
                 .filter(b -> b.getStatus() == BidStatus.HANDED_OVER || b.getStatus() == BidStatus.IN_TRANSIT)
                 .toList();
         if (enRoute.isEmpty()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "trip/no-parcel-departed",
-                    "No Parcel Departed",
-                    "Aucun colis n'a été récupéré : scannez le départ avant de marquer l'arrivée");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "trip/no-parcel-departed", "problem.trip-no-parcel-departed");
         }
 
         announcement.setArrivalInstructions(arrivalInstructions);
@@ -2077,8 +2018,7 @@ public class AnnouncementService {
 
         List<BidEntity> activeBids = bidRepository.findByAnnouncementIdAndStatusNotIn(id, INACTIVE_BID_STATUSES);
         if (activeBids.isEmpty()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "trip/already-delivered",
-                    "Already Delivered", "Ce trajet est totalement soldé, les instructions ne peuvent plus être modifiées");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "trip/already-delivered", "problem.trip-already-delivered");
         }
 
         // Le trajet doit réellement être arrivé : sans cette garde, un voyageur
@@ -2089,9 +2029,7 @@ public class AnnouncementService {
         boolean hasArrived = bidRepository.existsByAnnouncementIdAndStatusIn(
                 id, List.of(BidStatus.ARRIVED, BidStatus.COMPLETED));
         if (!hasArrived) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "trip/not-arrived-yet",
-                    "Not Arrived Yet",
-                    "Marquez d'abord le trajet comme arrivé avant de modifier les instructions de retrait");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "trip/not-arrived-yet", "problem.trip-not-arrived-yet");
         }
 
         boolean changed = !java.util.Objects.equals(
@@ -2147,12 +2085,7 @@ public class AnnouncementService {
         assertPublishingNotSuspended(user);
 
         if (enforceKyc && user.getKycStatus() != KycStatus.VERIFIED) {
-            throw new YadonyBusinessException(
-                    HttpStatus.FORBIDDEN,
-                    "kyc-not-verified",
-                    "KYC Not Verified",
-                    "Vous devez compléter votre vérification d'identité pour effectuer cette action"
-            );
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "kyc-not-verified", "problem.kyc-not-verified");
         }
 
         // Après le KYC, avant la limite PRO. Jamais pour un brouillon : assertCanPublish n'est
@@ -2168,13 +2101,8 @@ public class AnnouncementService {
             long count = announcementRepository.countByTravelerIdAndCreatedAtBetweenAndStatusNot(
                     user.getId(), from, to, AnnouncementStatus.DRAFT);
             if (count >= config.limits().monthlyAnnouncements()) {
-                throw new YadonyBusinessException(
-                        HttpStatus.FORBIDDEN,
-                        "pro-limit-reached",
-                        "Monthly announcement limit reached",
-                        "Vous avez atteint votre limite de " + config.limits().monthlyAnnouncements()
-                                + " annonces ce mois-ci. Passez en PRO pour continuer."
-                );
+                throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "pro-limit-reached",
+                        "problem.pro-limit-reached", config.limits().monthlyAnnouncements());
             }
         }
     }
@@ -2188,21 +2116,20 @@ public class AnnouncementService {
         if (enforceStripeOnboarding
                 && methods.contains(PaymentMethod.STRIPE)
                 && !user.hasActiveStripeConnect()) {
-            throw new YadonyBusinessException(
-                    HttpStatus.FORBIDDEN,
-                    "stripe-onboarding-incomplete",
-                    "Stripe Onboarding Incomplete",
-                    "Connectez votre compte bancaire pour accepter la carte, "
-                    + "ou publiez votre trajet en espèces uniquement");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "stripe-onboarding-incomplete", "problem.stripe-onboarding-incomplete");
         }
+    }
+
+    /** Limite de brouillons atteinte ; la suite « Passez en PRO » n'est proposée qu'aux comptes non PRO. */
+    private static YadonyBusinessException draftLimitReached(int maxDrafts, boolean proQuotas) {
+        return YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "draft-limit-reached",
+                proQuotas ? "problem.draft-limit-reached" : "problem.draft-limit-reached.upgrade", maxDrafts);
     }
 
     /** D4 : voyageur suspendu de publication (retour de colis non rendu, décision admin). */
     private void assertPublishingNotSuspended(UserEntity user) {
         if (user.isPublishingSuspended()) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "publishing-suspended",
-                    "Publishing Suspended",
-                    "La publication de trajets est suspendue. Contactez le support.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "publishing-suspended", "problem.publishing-suspended");
         }
     }
 
@@ -2256,13 +2183,10 @@ public class AnnouncementService {
         // expirePendingBids ne balaie que les annonces ACTIVE/FULL.
         // Aucune inversion d'ordre possible : cette methode ne verrouille aucun bid.
         AnnouncementEntity ann = announcementRepository.findByIdForUpdate(announcementId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         if (bidRepository.existsByAnnouncementIdAndStatusIn(announcementId, List.copyOf(BidStatus.IN_FLIGHT))) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "announcement-has-accepted-bids", "Announcement Has Accepted Bids",
-                    "Des colis acceptés sont en cours sur cette annonce.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement-has-accepted-bids", "problem.announcement-has-accepted-bids");
         }
 
         // Lot C — mémorisé AVANT l'écrasement, et seulement si l'annonce n'était pas déjà
@@ -2331,13 +2255,10 @@ public class AnnouncementService {
     @CacheEvict(value = "announcements-search", allEntries = true)
     public AnnouncementEntity restoreByAdmin(UUID announcementId, UUID adminId) {
         AnnouncementEntity ann = announcementRepository.findById(announcementId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         if (ann.getStatus() != AnnouncementStatus.REMOVED_BY_ADMIN) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "announcement-not-removed", "Announcement Not Removed",
-                    "Cette annonce n'a pas été retirée par la modération.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement-not-removed", "problem.announcement-not-removed");
         }
 
         // Lot C — restitution du statut d'origine. Forcer ACTIVE remettait sur le marché
@@ -2361,13 +2282,13 @@ public class AnnouncementService {
     @CacheEvict(value = "announcements-search", allEntries = true)
     public void deleteAnnouncement(UUID id, String firebaseUid) {
         AnnouncementEntity announcement = announcementRepository.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
 
         if (!announcement.getTravelerId().equals(user.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden", "Vous n'êtes pas autorisé à supprimer cette annonce");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.supprimer-cette-annonce");
         }
 
         if (announcement.getStatus() == AnnouncementStatus.CANCELLED) {
@@ -2406,24 +2327,20 @@ public class AnnouncementService {
         }
 
         if (announcement.getStatus() != AnnouncementStatus.ACTIVE) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "deletion-impossible", "Deletion Impossible",
-                    "Seuls les trajets actifs ou annulés peuvent être supprimés");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "deletion-impossible", "problem.deletion-impossible");
         }
 
         // FLUTTER-F9 : un expéditeur a accepté l'offre liée à ce trajet et paie. Supprimer
         // le trajet retirerait l'offre sous ses pieds (paiement sur un trajet disparu).
         if (negotiationThreadRepository.existsAwaitingPaymentByTravelerAnnouncementId(id)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "offer-accepted-awaiting-payment",
-                    "Offer Accepted Awaiting Payment",
-                    "Un expéditeur a accepté votre offre sur ce trajet et procède au paiement : "
-                            + "vous ne pouvez pas le supprimer pendant le délai de paiement.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "offer-accepted-awaiting-payment", "problem.offer-accepted-awaiting-payment");
         }
 
         // ARRIVED inclus : le colis est arrivé mais pas encore retiré, la
         // transaction n'est pas soldée — supprimer le trajet la ferait disparaître.
         if (bidRepository.existsByAnnouncementIdAndStatusIn(
                 id, List.copyOf(BidStatus.IN_FLIGHT))) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "deletion-impossible", "Deletion Impossible", "Suppression impossible : des colis sont déjà acceptés pour ce trajet");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "deletion-impossible", "problem.deletion-impossible.pour-ce-trajet");
         }
 
         // Correction round 4 (revue) : alignée sur removeByAdmin — PENDING/PAYMENT_ESCROWED
@@ -2777,17 +2694,12 @@ public class AnnouncementService {
         // qu'un filtrage silencieux qui laissait croire au client que le choix était pris.
         if (requested != null
                 && (requested.contains(PaymentMethod.WAVE) || requested.contains(PaymentMethod.ORANGE_MONEY))) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "mobile-money-payment-retired", "Mobile Money Payment Retired",
-                    "Wave et Orange Money ne sont plus proposés. Le mobile money passe par le compte "
-                    + "de versement du voyageur.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-payment-retired", "problem.mobile-money-payment-retired");
         }
         // Liste explicitement vide : au moins un moyen de paiement doit rester actif
         // (FLUTTER-FT, la carte devient décochable). Absente (null) = défaut historique.
         if (requested != null && requested.isEmpty()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "payment-method-required", "Payment Method Required",
-                    "Choisissez au moins un moyen de paiement pour ce trajet.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "payment-method-required", "problem.payment-method-required");
         }
         Set<PaymentMethod> chosen;
         if (requested == null) {
@@ -2838,15 +2750,11 @@ public class AnnouncementService {
                                          Instant now) {
         if (departureDate != null && departureTime != null
                 && !departureDate.atTime(departureTime).atZone(zone).toInstant().isAfter(now)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "departure-time-passed", "Heure de départ passée",
-                    "L'heure de départ de ce trajet est déjà passée");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "departure-time-passed", "problem.departure-time-passed");
         }
         if (utcHandoverDeadline != null
                 && !HandoverDeadlineRules.deadlineInstant(utcHandoverDeadline).isAfter(now)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "handover-deadline-in-past", "Date limite passée",
-                    "La date limite de dépôt est déjà passée");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "handover-deadline-in-past", "problem.handover-deadline-in-past");
         }
     }
 
@@ -2867,9 +2775,7 @@ public class AnnouncementService {
                                           LocalTime departureTime,
                                           String timezone) {
         if (utcDeadline == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "handover-deadline-required", "Date limite requise",
-                    "La date limite de dépôt est obligatoire");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "handover-deadline-required", "problem.handover-deadline-required");
         }
         LocalDateTime localBound = departureTime != null
                 ? departureDate.atTime(departureTime)
@@ -2878,9 +2784,7 @@ public class AnnouncementService {
                 .withZoneSameInstant(java.time.ZoneOffset.UTC).toLocalDateTime();
         LocalDateTime deadline = utcDeadline;
         if (deadline.isAfter(departureBound)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "handover-after-departure", "Date limite après le départ",
-                    "La date limite de dépôt doit précéder le départ du voyageur");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "handover-after-departure", "problem.handover-after-departure");
         }
     }
 }

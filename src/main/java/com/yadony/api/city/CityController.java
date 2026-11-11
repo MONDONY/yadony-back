@@ -24,6 +24,12 @@ public class CityController {
         this.corridorService = corridorService;
     }
 
+    /**
+     * Ouverte aussi aux invités (session Firebase anonyme) : un visiteur sans compte doit avoir des
+     * suggestions de villes dans le filtre des trajets. Lecture seule d'un référentiel public ; sans
+     * jeton, la requête reste refusée (401).
+     */
+    @PreAuthorize("hasAnyRole('GUEST', 'SENDER', 'TRAVELER')")
     @GetMapping("/search")
     public ResponseEntity<List<CitySearchResponse>> search(
             @RequestParam String q,

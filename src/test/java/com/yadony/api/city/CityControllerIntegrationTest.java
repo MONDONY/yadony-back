@@ -70,4 +70,39 @@ class CityControllerIntegrationTest {
         mockMvc.perform(get("/cities/search").param("q", "Dakar"))
             .andExpect(status().isUnauthorized());
     }
+
+    private static UsernamePasswordAuthenticationToken authenticatedAsGuest() {
+        return new UsernamePasswordAuthenticationToken(
+            "uid-test-guest", null,
+            List.of(new SimpleGrantedAuthority("ROLE_GUEST")));
+    }
+
+    @Test
+    void search_asGuest_returns200WithSuggestions() throws Exception {
+        when(cityService.search(eq("Dak"), anyInt()))
+            .thenReturn(List.of(
+                new CitySearchResponse("Dakar", "SN", "Sénégal", 14.71, -17.47)
+            ));
+
+        mockMvc.perform(get("/cities/search")
+                .param("q", "Dak")
+                .with(authentication(authenticatedAsGuest())))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].name").value("Dakar"));
+    }
+
+    @Test
+    void search_asGuestWithOneCharQuery_returns422() throws Exception {
+        mockMvc.perform(get("/cities/search")
+                .param("q", "D")
+                .with(authentication(authenticatedAsGuest())))
+            .andExpect(status().isUnprocessableEntity());
+    }
+
+    @Test
+    void popularCorridors_asGuest_staysForbidden() throws Exception {
+        mockMvc.perform(get("/cities/corridors/popular")
+                .with(authentication(authenticatedAsGuest())))
+            .andExpect(status().isForbidden());
+    }
 }

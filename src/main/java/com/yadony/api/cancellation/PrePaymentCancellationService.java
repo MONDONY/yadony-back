@@ -103,14 +103,14 @@ public class PrePaymentCancellationService {
     @CacheEvict(value = {"announcements-search", "traveler-bids-me", "bids-me"}, allEntries = true)
     public PrePaymentCancellationResponse cancel(String firebaseUid, UUID bidId) {
         UserEntity sender = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNAUTHORIZED,
-                        "unauthorized", "Unauthorized", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthorized",
+                        "problem.auth.user-not-found"));
         BidEntity bid = bidRepository.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "bid-not-found", "Bid Not Found", "Cette demande n'existe plus."));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found",
+                        "problem.prepay.request-gone"));
         if (!sender.getId().equals(bid.getSenderId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Seul l'expéditeur peut annuler cette demande.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden",
+                    "problem.forbidden.prepay-sender-only");
         }
         // Verrou du colis D'ABORD, puis celui du paiement (dans le port) : même ordre que la
         // livraison (TrackingService.confirmDelivery) et l'annulation admin. Relu sous verrou :
@@ -212,19 +212,18 @@ public class PrePaymentCancellationService {
         if (PAID_STATUSES.contains(status)) {
             throw alreadyPaid();
         }
-        throw new YadonyBusinessException(HttpStatus.CONFLICT, "bid-not-awaiting-payment",
-                "Bid Not Awaiting Payment", "Cette demande n'attend plus de paiement.");
+        throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "bid-not-awaiting-payment",
+                "problem.bid-not-awaiting-payment");
     }
 
     private static YadonyBusinessException paymentInProgress() {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "payment-in-progress", "Payment In Progress",
-                "Un paiement est en cours de validation. Réessayez dans quelques minutes.");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "payment-in-progress",
+                "problem.payment-in-progress");
     }
 
     private static YadonyBusinessException alreadyPaid() {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "payment-already-authorized",
-                "Payment Already Authorized",
-                "Votre paiement vient d'être validé. Rouvrez le colis pour l'annuler avec remboursement.");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "payment-already-authorized",
+                "problem.payment-already-authorized");
     }
 
     private static PrePaymentCancellationResponse alreadyCancelled(BidEntity bid) {

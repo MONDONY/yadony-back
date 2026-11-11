@@ -66,26 +66,25 @@ public class RescheduleDecisionService {
     @Transactional
     public void decide(String firebaseUid, UUID bidId, RescheduleDecision decision) {
         UserEntity sender = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found",
-                        "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found",
+                        "problem.not-found.user"));
         BidEntity bid = bidRepository.findByIdForUpdate(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "bid-not-found",
-                        "Not Found", "Bid introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found",
+                        "problem.not-found.bid"));
         if (!bid.getSenderId().equals(sender.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas l'expéditeur de ce colis.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden",
+                    "problem.forbidden.not-sender-of-parcel");
         }
         if (bid.getPendingRescheduleId() == null || !TripRescheduleRules.DECISION_STATUSES.contains(bid.getStatus())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "no-reschedule-pending",
-                    "No Reschedule Pending", "Aucun report de trajet n'attend votre réponse.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "no-reschedule-pending",
+                    "problem.no-reschedule-pending");
         }
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "announcement-not-found",
-                        "Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found",
+                        "problem.not-found.announcement"));
         if (!TripRescheduleRules.decisionOpen(bid, announcement)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "reschedule-decision-closed",
-                    "Decision Closed",
-                    "Le délai pour répondre au report est dépassé : votre colis reste sur le trajet.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "reschedule-decision-closed",
+                    "problem.reschedule-decision-closed");
         }
 
         UUID rescheduleId = bid.getPendingRescheduleId();
@@ -106,8 +105,8 @@ public class RescheduleDecisionService {
     /** @return vrai si le colis était déjà remis et qu'une procédure de retour est ouverte. */
     private boolean withdraw(BidEntity bid, AnnouncementEntity announcement, UserEntity sender, UUID rescheduleId) {
         if (cancellationRepository.findByBidId(bid.getId()).isPresent()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "already-cancelled",
-                    "Already Cancelled", "Une annulation existe déjà pour ce colis.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "already-cancelled",
+                    "problem.already-cancelled.parcel");
         }
         boolean handedOver = bid.getStatus() == BidStatus.HANDED_OVER;
 

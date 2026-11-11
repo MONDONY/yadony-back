@@ -77,7 +77,7 @@ public class ReportTargetPreviewBuilder {
         add(facts, "Poids", p.getWeightKg() != null ? kg(p.getWeightKg()) : null);
         add(facts, "Contenu", p.getContentCategory());
         if (p.getTargetPriceEur() != null) {
-            add(facts, "Budget", money(p.getTargetPriceEur(), "EUR") + (p.isNegotiable() ? " (négociable)" : ""));
+            add(facts, "Budget", money(p.getTargetPriceEur(), p.getCurrency()) + (p.isNegotiable() ? " (négociable)" : ""));
         }
         return new TargetPreview("PACKAGE_REQUEST", name(p.getStatus()), facts, shorten(p.getDescription()));
     }

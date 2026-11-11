@@ -3,7 +3,7 @@ package com.yadony.api.kyc.provider;
 import com.yadony.api.config.PlatformSettingsService;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
-import org.springframework.web.server.ResponseStatusException;
+import com.yadony.api.common.LocalizedResponseStatusException;
 
 import java.util.EnumMap;
 import java.util.List;
@@ -42,8 +42,8 @@ public class IdentityProviderResolver {
                 : VerificationProviderKind.STRIPE;
         IdentityVerificationProvider provider = providers.get(kind);
         if (provider == null) {
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "Impossible de créer la session de vérification");
+            throw new LocalizedResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "problem.kyc.session-creation-failed");
         }
         return provider;
     }

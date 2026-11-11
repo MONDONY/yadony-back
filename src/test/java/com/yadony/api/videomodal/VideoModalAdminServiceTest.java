@@ -106,6 +106,44 @@ class VideoModalAdminServiceTest {
     }
 
     @Test
+    @DisplayName("lien http:// refusé à la création et à la nouvelle version (https seulement)")
+    void httpRefuse() {
+        assertThatThrownBy(() -> service.create(request("http://youtu.be/dQw4w9WgXcQ", null, null), adminId))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(e.getErrorCode()).isEqualTo("video-modal-invalid-youtube-url");
+                });
+        var c = campaign(1, VideoModalAudience.NEVER_ANSWERED);
+        ReflectionTestUtils.setField(c, "id", UUID.randomUUID());
+        when(campaignRepository.findById(c.getId())).thenReturn(Optional.of(c));
+        assertThatThrownBy(() -> service.publishVersion(c.getId(), new VideoModalVersionRequest(
+                VideoModalAudience.EVERYONE, "http://www.youtube.com/watch?v=abcdefghijk"), adminId))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("video-modal-invalid-youtube-url"));
+        assertThat(c.getVersion()).isEqualTo(1);
+        verify(campaignRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("un modal VIDÉO accepte EVERY_OPEN et EVERY_N_DAYS (création)")
+    void frequencesPourUneVideo() {
+        savesItself();
+        var open = new VideoModalRequest(" ", VideoModalType.VIDEO, "https://youtu.be/dQw4w9WgXcQ", 204, "Titre",
+                null, null, null, null, null, null, null, null, null, null, null, null, List.of(),
+                List.of(VideoModalTrigger.APP_OPEN), null, null, null, null, null, null, null, null, null,
+                VideoModalFrequency.EVERY_OPEN, null, null, null, null, null, null, null, null, null, null, null);
+        assertThat(service.create(open, adminId).frequency()).isEqualTo(VideoModalFrequency.EVERY_OPEN);
+
+        var days = new VideoModalRequest(" ", VideoModalType.VIDEO, "https://youtu.be/dQw4w9WgXcQ", 204, "Titre",
+                null, null, null, null, null, null, null, null, null, null, null, null, List.of(),
+                List.of(VideoModalTrigger.APP_OPEN), null, null, null, null, null, null, null, null, null,
+                VideoModalFrequency.EVERY_N_DAYS, 7, null, null, null, null, null, null, null, null, null, null);
+        var r = service.create(days, adminId);
+        assertThat(r.frequency()).isEqualTo(VideoModalFrequency.EVERY_N_DAYS);
+        assertThat(r.frequencyDays()).isEqualTo(7);
+    }
+
+    @Test
     @DisplayName("endsAt <= startsAt : 422")
     void periodeInvalide() {
         assertThatThrownBy(() -> service.create(request("https://youtu.be/dQw4w9WgXcQ", NOW, NOW), adminId))
