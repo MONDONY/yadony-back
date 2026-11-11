@@ -43,8 +43,9 @@ public class KycDac7IdentityAdapter implements Dac7VerifiedIdentityPort {
             if (provider.isEmpty()) {
                 return Lookup.none();
             }
-            return provider.get().fetchVerifiedIdentity(verification.get().getVerificationSessionId())
-                    .map(KycDac7IdentityAdapter::toDac7)
+            String sessionId = verification.get().getVerificationSessionId();
+            return provider.get().fetchVerifiedIdentity(sessionId)
+                    .map(details -> toDac7(details, sessionId))
                     .map(Lookup::found)
                     .orElseGet(Lookup::none);
         } catch (IdentitySourceUnreadableException e) {
@@ -60,10 +61,12 @@ public class KycDac7IdentityAdapter implements Dac7VerifiedIdentityPort {
         }
     }
 
-    static Dac7VerifiedIdentity toDac7(VerifiedIdentityDetails details) {
+    /** {@code sessionId} : identifiant de la session de vérification, preuve de fiabilité au registre DAC7. */
+    static Dac7VerifiedIdentity toDac7(VerifiedIdentityDetails details, String sessionId) {
         Dac7Address address = details.city() == null && details.freeAddress() == null ? null
                 : new Dac7Address(details.street(), details.line2(), details.postalCode(), details.city(),
                 details.countryCode(), details.freeAddress());
-        return new Dac7VerifiedIdentity(details.givenName(), details.surname(), details.birthDate(), address);
+        return new Dac7VerifiedIdentity(details.givenName(), details.surname(), details.birthDate(), address,
+                sessionId);
     }
 }

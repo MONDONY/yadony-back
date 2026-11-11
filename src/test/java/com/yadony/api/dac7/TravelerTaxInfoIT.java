@@ -51,6 +51,20 @@ class TravelerTaxInfoIT {
     @Autowired UserRepository users;
     @Autowired Dac7DueDiligenceLogRepository diligenceLog;
     @Autowired JdbcTemplate jdbc;
+    @Autowired Dac7ReminderService reminders;
+    @Autowired Dac7Properties dac7Properties;
+    @Autowired java.time.Clock clock;
+
+    /**
+     * Écouteur d'acceptation avec les messages DAC7 allumés (le profil de test laisse
+     * {@code yadony.dac7.reminders.enabled} éteint, donc l'écouteur du contexte partagé ne fait rien), construit autour
+     * des vrais beans, exécuté sur le fil du test.
+     */
+    private void accepted(UUID travelerId) {
+        new Dac7AcceptanceListener(dac7Properties, Dac7ReminderProperties.defaults(true), reminders, clock,
+                Runnable::run).onBidAccepted(new com.yadony.api.matching.events.BidAcceptedEvent(UUID.randomUUID(),
+                UUID.randomUUID(), travelerId, UUID.randomUUID()));
+    }
 
     private UserEntity me;
 
@@ -110,8 +124,16 @@ class TravelerTaxInfoIT {
                 .andExpect(jsonPath("$.provided").value(false))
                 .andExpect(jsonPath("$.residenceCountry").value("FR"))
                 .andExpect(jsonPath("$.dac7Status").value("DECLARABLE"))
-                // Jamais payé : on ne lui demande rien.
-                .andExpect(jsonPath("$.solicitation").value("NE_PAS_SOLLICITER"));
+                // Jamais payé : l'ancien contrat ne lui demande rien.
+                .andExpect(jsonPath("$.solicitation").value("NE_PAS_SOLLICITER"))
+                // Collecte ciblée : résident de l'Union, tout manque, invite non bloquante.
+                .andExpect(jsonPath("$.collectionStatus").value("INFO_REQUIRED"))
+                .andExpect(jsonPath("$.missingFields[0]").value("NAME"))
+                .andExpect(jsonPath("$.missingFields[3]").value("TAX_IDENTIFICATION_NUMBER"))
+                .andExpect(jsonPath("$.actionRequired").value(true))
+                .andExpect(jsonPath("$.readOnlyFields").isEmpty())
+                .andExpect(jsonPath("$.identity.birthPlaceProvided").value(false))
+                .andExpect(jsonPath("$.requestedAt").doesNotExist());
     }
 
     @Test
@@ -119,7 +141,12 @@ class TravelerTaxInfoIT {
         UserEntity ivorian = traveler("CI");
         mockMvc.perform(get(URL).with(as(ivorian, "ROLE_TRAVELER")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.dac7Status").value("NON_DECLARABLE"));
+                .andExpect(jsonPath("$.dac7Status").value("NON_DECLARABLE"))
+                // Test 1 de la spec : jamais d'écran fiscal, aucune identité renvoyée.
+                .andExpect(jsonPath("$.collectionStatus").value("NE_PAS_SOLLICITER"))
+                .andExpect(jsonPath("$.actionRequired").value(false))
+                .andExpect(jsonPath("$.missingFields").isEmpty())
+                .andExpect(jsonPath("$.identity").doesNotExist());
     }
 
     @Test
@@ -212,5 +239,160 @@ class TravelerTaxInfoIT {
         assertThat(users.findById(other.getId()).orElseThrow().getTaxIdentificationNumber()).isNull();
         mockMvc.perform(get(URL).with(as(other, "ROLE_TRAVELER")))
                 .andExpect(jsonPath("$.provided").value(false));
+    }
+
+    // ---- Collecte ciblée (spec du 11/11/2026) ----
+
+    @Test
+    void test2_paysInconnu_seulLePaysEstDemande() throws Exception {
+        UserEntity unknown = traveler(null);
+        mockMvc.perform(get(URL).with(as(unknown, "ROLE_TRAVELER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.collectionStatus").value("RESIDENCE_INCONNUE"))
+                .andExpect(jsonPath("$.missingFields.length()").value(1))
+                .andExpect(jsonPath("$.missingFields[0]").value("RESIDENCE_COUNTRY"))
+                .andExpect(jsonPath("$.identity").doesNotExist());
+    }
+
+    @Test
+    void test4_nifFrancais_douzeChiffres422_treizeAccepte() throws Exception {
+        mockMvc.perform(put(URL).with(as(me, "ROLE_TRAVELER"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body("302321760005", "FR", null)))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.type").value(org.hamcrest.Matchers.endsWith("tax-info-invalid")))
+                .andExpect(jsonPath("$.field").value("taxIdentificationNumber"));
+        assertThat(users.findById(me.getId()).orElseThrow().getTaxIdentificationNumber()).isNull();
+        mockMvc.perform(put(URL).with(as(me, "ROLE_TRAVELER"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body(NIF, "FR", null)))
+                .andExpect(status().isOk())
+                // Le NIF ne manque plus ; nom, naissance et adresse restent à fournir.
+                .andExpect(jsonPath("$.missingFields.length()").value(3))
+                .andExpect(jsonPath("$.missingFields[2]").value("ADDRESS"))
+                .andExpect(jsonPath("$.collectionStatus").value("INFO_REQUIRED"));
+    }
+
+    @Test
+    void identiteSaisie_profilEtLieuDeNaissanceChiffre_sansFuite(CapturedOutput output) throws Exception {
+        String identity = "{\"firstName\":\"Jeanne\",\"lastName\":\"Martin\",\"birthDate\":\"1988-07-14\","
+                + "\"birthPlace\":\"Saint-Louis du Sénégal\",\"address\":{\"street\":\"12 rue des Lilas\","
+                + "\"postalCode\":\"13001\",\"city\":\"Marseille\"}}";
+        String response = mockMvc.perform(put(URL).with(as(me, "ROLE_TRAVELER"))
+                        .contentType(MediaType.APPLICATION_JSON).content(identity))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.collectionStatus").value("INFO_REQUIRED"))
+                .andExpect(jsonPath("$.missingFields.length()").value(1))
+                .andExpect(jsonPath("$.missingFields[0]").value("TAX_IDENTIFICATION_NUMBER"))
+                .andExpect(jsonPath("$.identity.nameSource").value("PROFILE"))
+                .andExpect(jsonPath("$.identity.birthDate").value("1988-07-14"))
+                .andExpect(jsonPath("$.identity.address.city").value("Marseille"))
+                .andExpect(jsonPath("$.identity.address.country").value("FR"))
+                .andExpect(jsonPath("$.identity.addressReplaceable").value(false))
+                .andExpect(jsonPath("$.identity.birthPlaceProvided").value(true))
+                .andReturn().getResponse().getContentAsString();
+        // Le lieu de naissance ne ressort jamais, et il est chiffré en base.
+        assertThat(response).doesNotContain("Saint-Louis");
+        String stored = jdbc.queryForObject("SELECT tax_birth_place FROM users WHERE id = ?", String.class,
+                me.getId());
+        assertThat(stored).isNotBlank().doesNotContain("Saint-Louis");
+        UserEntity reloaded = users.findById(me.getId()).orElseThrow();
+        assertThat(reloaded.getTaxBirthPlace()).isEqualTo("Saint-Louis du Sénégal");
+        assertThat(reloaded.getResidenceStreet()).isEqualTo("12 rue des Lilas");
+        assertThat(reloaded.getBirthDate()).isEqualTo(java.time.LocalDate.of(1988, 7, 14));
+        assertThat(diligenceLog.findByUserIdOrderByCreatedAtAscIdAsc(me.getId()))
+                .extracting(Dac7DueDiligenceLogEntity::getSource, Dac7DueDiligenceLogEntity::getNote)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(Dac7DiligenceSource.USER,
+                        "NAME,BIRTH_DATE,ADDRESS,BIRTH_PLACE"));
+        assertThat(taxAudits(me.getId())).singleElement().asString().contains("ADDRESS")
+                .doesNotContain("Lilas").doesNotContain("Saint-Louis").doesNotContain("1988");
+
+        // Le NIF arrive : COMPLETE, le lieu de naissance (devenu inutile) est effacé.
+        mockMvc.perform(put(URL).with(as(me, "ROLE_TRAVELER"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body(NIF, "FR", null)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.collectionStatus").value("COMPLETE"))
+                .andExpect(jsonPath("$.actionRequired").value(false))
+                .andExpect(jsonPath("$.identity.birthPlaceProvided").value(false));
+        assertThat(jdbc.queryForObject("SELECT tax_birth_place FROM users WHERE id = ?", String.class, me.getId()))
+                .isNull();
+        assertThat(output.getAll()).doesNotContain("Saint-Louis").doesNotContain("Lilas").doesNotContain(NIF);
+    }
+
+    @Test
+    void residentHorsUnion_identite422_rienEcrit() throws Exception {
+        UserEntity senegalese = traveler("SN");
+        mockMvc.perform(put(URL).with(as(senegalese, "ROLE_TRAVELER")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"birthDate\":\"1990-01-01\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.type").value(org.hamcrest.Matchers.endsWith("tax-info-not-applicable")));
+        assertThat(users.findById(senegalese.getId()).orElseThrow().getBirthDate()).isNull();
+        assertThat(diligenceLog.findByUserIdOrderByCreatedAtAscIdAsc(senegalese.getId())).isEmpty();
+    }
+
+    @Test
+    void dateDeNaissanceMalFormee_422SansRecopie(CapturedOutput output) throws Exception {
+        mockMvc.perform(put(URL).with(as(me, "ROLE_TRAVELER")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"birthDate\":\"14/07/1988\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.field").value("birthDate"));
+        assertThat(output.getAll()).doesNotContain("14/07/1988");
+    }
+
+    @Test
+    void acceptation_premiereDemandeNonBloquante_puisVisibleDansLeGet() throws Exception {
+        accepted(me.getId());
+
+        List<Dac7DueDiligenceLogEntity> rows = diligenceLog.findByUserIdOrderByCreatedAtAscIdAsc(me.getId());
+        assertThat(rows).extracting(Dac7DueDiligenceLogEntity::getAction, Dac7DueDiligenceLogEntity::getNote)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(Dac7DueDiligenceAction.REQUEST,
+                        "ACCEPTANCE:NAME,BIRTH_DATE,ADDRESS,TAX_IDENTIFICATION_NUMBER"));
+        mockMvc.perform(get(URL).with(as(me, "ROLE_TRAVELER")))
+                .andExpect(jsonPath("$.requestedAt").isNotEmpty())
+                .andExpect(jsonPath("$.actionRequired").value(true));
+    }
+
+    @Test
+    void acceptation_paysInconnu_demandeDuSeulPays() throws Exception {
+        UserEntity unknown = traveler(null);
+        accepted(unknown.getId());
+
+        assertThat(diligenceLog.findByUserIdOrderByCreatedAtAscIdAsc(unknown.getId()))
+                .extracting(Dac7DueDiligenceLogEntity::getAction, Dac7DueDiligenceLogEntity::getNote)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(Dac7DueDiligenceAction.REQUEST,
+                        "ACCEPTANCE:RESIDENCE_COUNTRY"));
+        assertThat(users.findById(unknown.getId()).orElseThrow().getTaxInfoRequestedAt()).isNull();
+        // Une seule fois : une deuxième acceptation ne redemande pas le pays.
+        accepted(unknown.getId());
+        assertThat(diligenceLog.findByUserIdOrderByCreatedAtAscIdAsc(unknown.getId())).hasSize(1);
+    }
+
+    @Test
+    void acceptation_residentHorsUnion_rien() throws Exception {
+        UserEntity ivorian = traveler("CI");
+        accepted(ivorian.getId());
+        assertThat(diligenceLog.findByUserIdOrderByCreatedAtAscIdAsc(ivorian.getId())).isEmpty();
+        assertThat(users.findById(ivorian.getId()).orElseThrow().getTaxInfoRequestedAt()).isNull();
+    }
+
+    @Test
+    void paysDeResidence_sueDeclareSansToucherAuProfil() throws Exception {
+        UserEntity unknown = traveler(null);
+        mockMvc.perform(get(URL).with(as(unknown, "ROLE_TRAVELER")))
+                .andExpect(jsonPath("$.collectionStatus").value("RESIDENCE_INCONNUE"))
+                .andExpect(jsonPath("$.residenceCountryChoices").value(org.hamcrest.Matchers.hasItems("SE", "FR", "CI")));
+        mockMvc.perform(put(URL).with(as(unknown, "ROLE_TRAVELER")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"residenceCountry\":\"SE\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.residenceCountry").value("SE"))
+                .andExpect(jsonPath("$.collectionStatus").value("INFO_REQUIRED"))
+                .andExpect(jsonPath("$.residenceCountryChoices").doesNotExist())
+                .andExpect(jsonPath("$.identity").exists());
+        UserEntity reloaded = users.findById(unknown.getId()).orElseThrow();
+        assertThat(reloaded.getCountry()).isNull();
+        assertThat(reloaded.getTaxDeclaredResidenceCountry()).isEqualTo("SE");
+        // Profil renseigné : le pays se change dans le profil, pas ici.
+        mockMvc.perform(put(URL).with(as(me, "ROLE_TRAVELER")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"residenceCountry\":\"SE\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.field").value("residenceCountry"));
     }
 }

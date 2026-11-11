@@ -146,6 +146,14 @@ class KnowledgeBaseFichesTest {
         // Prudence : l'écran n'existe qu'avec le lot 3d de l'app, et rien n'est jamais obligatoire pour agir.
         assertThat(fr).contains("Si cette fonction est disponible", "Rien n'est bloqué", "deux rappels");
         assertThat(en).contains("If this feature is available", "Nothing is blocked", "two reminders");
+        // Collecte ciblée (11/11/2026) : plus de condition « déjà payé », seul le pays si inconnu, seulement ce qui
+        // manque, NIF français à 13 chiffres, lieu de naissance seulement sans NIF.
+        assertThat(fr).doesNotContain("déjà été payé").doesNotContain("jamais redemandés")
+                .contains("seul ce pays", "seulement ce qui manque", "13 chiffres", "lieu de naissance",
+                        "Ce n'est plus mon adresse");
+        assertThat(en).doesNotContain("already been paid").doesNotContain("never asked again")
+                .contains("only that country", "only what is missing", "13 digits", "place of birth",
+                        "This is no longer my address");
     }
 
     @Test

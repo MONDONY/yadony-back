@@ -240,4 +240,121 @@ class Dac7IdentityResolverTest {
         assertThat(resolver.profileStatus(a)).isEqualTo(Dac7IdentityStatus.INCOMPLETE);
         resolver.destroy();
     }
+
+    // ---- Collecte ciblée : lecture en cache pour l'écran du voyageur et l'invite (relecture I2/I3) ----
+
+    @Test
+    @DisplayName("N lectures rapprochées (même en parallèle) : un seul appel au prestataire")
+    void cachedLookup_unSeulAppel() throws Exception {
+        UUID id = UUID.randomUUID();
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        Dac7VerifiedIdentityPort counting = userId -> {
+            calls.incrementAndGet();
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return Lookup.none();
+        };
+        Dac7IdentityResolver cached = new Dac7IdentityResolver(counting);
+        java.util.concurrent.ExecutorService callers = java.util.concurrent.Executors.newFixedThreadPool(8);
+        try {
+            List<java.util.concurrent.Future<Lookup>> results = new java.util.ArrayList<>();
+            for (int i = 0; i < 20; i++) {
+                results.add(callers.submit(() -> cached.cachedLookup(id)));
+            }
+            for (java.util.concurrent.Future<Lookup> r : results) {
+                assertThat(r.get().status()).isEqualTo(Dac7VerifiedIdentityPort.Status.NONE);
+            }
+            for (int i = 0; i < 10; i++) {
+                cached.cachedLookup(id);
+            }
+        } finally {
+            callers.shutdownNow();
+            cached.destroy();
+        }
+        assertThat(calls.get()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("panne lente du prestataire : réponse dégradée dans le délai maximal, puis tout de suite (cache court)")
+    void cachedLookup_panneRapide() throws InterruptedException {
+        UUID id = UUID.randomUUID();
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        Dac7VerifiedIdentityPort slow = userId -> {
+            calls.incrementAndGet();
+            try {
+                Thread.sleep(400);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return Lookup.unavailable();
+        };
+        Dac7IdentityResolver bounded = new Dac7IdentityResolver(slow, java.time.Duration.ofSeconds(8),
+                java.time.Duration.ofMillis(100));
+        try {
+            long start = System.nanoTime();
+            assertThat(bounded.cachedLookup(id).status()).isEqualTo(Dac7VerifiedIdentityPort.Status.UNAVAILABLE);
+            assertThat(java.time.Duration.ofNanos(System.nanoTime() - start)).isLessThan(java.time.Duration.ofMillis(350));
+            // La lecture finit en fond : la panne est gardée une minute, plus aucun appel.
+            Thread.sleep(600);
+            long again = System.nanoTime();
+            bounded.cachedLookup(id);
+            assertThat(java.time.Duration.ofNanos(System.nanoTime() - again)).isLessThan(java.time.Duration.ofMillis(50));
+            assertThat(calls.get()).isEqualTo(1);
+        } finally {
+            bounded.destroy();
+        }
+    }
+
+    @Test
+    @DisplayName("réponse nulle ou exception du prestataire : indisponible, jamais d'exception")
+    void cachedLookup_nulOuException() {
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+        when(port.verifiedIdentity(a)).thenReturn(null);
+        when(port.verifiedIdentity(b)).thenThrow(new IllegalStateException("x"));
+        assertThat(resolver.cachedLookup(a).status()).isEqualTo(Dac7VerifiedIdentityPort.Status.UNAVAILABLE);
+        assertThat(resolver.cachedLookup(b).status()).isEqualTo(Dac7VerifiedIdentityPort.Status.UNAVAILABLE);
+    }
+
+    @Test
+    @DisplayName("KYC vérifié ou retiré : la pièce est relue au passage suivant")
+    void cachedLookup_oublieAuChangementKyc() {
+        UUID id = UUID.randomUUID();
+        when(port.verifiedIdentity(id)).thenReturn(Lookup.none());
+        resolver.cachedLookup(id);
+        resolver.cachedLookup(id);
+        verify(port, times(1)).verifiedIdentity(id);
+
+        resolver.onKycVerified(new com.yadony.api.kyc.events.UserKycVerifiedEvent(id));
+        resolver.cachedLookup(id);
+        verify(port, times(2)).verifiedIdentity(id);
+
+        resolver.onKycRevoked(new com.yadony.api.kyc.events.UserKycRevokedEvent(id, "X"));
+        resolver.cachedLookup(id);
+        verify(port, times(3)).verifiedIdentity(id);
+    }
+
+    @Test
+    @DisplayName("pool arrêté : indisponible, jamais d'exception")
+    void cachedLookup_poolArrete() {
+        Dac7IdentityResolver stopped = new Dac7IdentityResolver(port);
+        stopped.destroy();
+        assertThat(stopped.cachedLookup(UUID.randomUUID()).status())
+                .isEqualTo(Dac7VerifiedIdentityPort.Status.UNAVAILABLE);
+    }
+
+    @Test
+    @DisplayName("identityFrom : mêmes règles que resolve, sans relire la pièce ni toucher au cache")
+    void identityFrom_reglesPartagees() {
+        UserEntity u = user("FR");
+        Dac7SellerIdentity identity = resolver.identityFrom(u, Lookup.none());
+        assertThat(identity.status()).isEqualTo(Dac7IdentityStatus.INCOMPLETE);
+        assertThat(identity.missing()).contains("BIRTH_DATE", "ADDRESS");
+        u.setDeletedAt(java.time.LocalDateTime.now());
+        assertThat(resolver.identityFrom(u, Lookup.none()).missing()).containsExactly("ACCOUNT_DELETED");
+        verify(port, never()).verifiedIdentity(any());
+    }
 }

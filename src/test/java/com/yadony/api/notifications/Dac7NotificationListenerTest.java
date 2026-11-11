@@ -41,6 +41,23 @@ class Dac7NotificationListenerTest {
     }
 
     @Test
+    void paysInconnu_seulLePaysEstDemande() {
+        when(dispatcher.messagesFor(user)).thenReturn(TestMessages.fr());
+        listener.onTaxInfoRequested(new Dac7TaxInfoRequestedEvent(user, "REQUEST",
+                Dac7TaxInfoRequestedEvent.SCOPE_RESIDENCE_COUNTRY));
+        assertThat(sentData("Votre pays de résidence")).containsEntry("type", "TAX_INFO_REQUEST")
+                .containsEntry("route", "/profile/tax-info").containsEntry("scope", "RESIDENCE_COUNTRY")
+                .containsEntry("reminder", "false");
+    }
+
+    @Test
+    void porteeAbsente_informationsFiscales() {
+        when(dispatcher.messagesFor(user)).thenReturn(TestMessages.fr());
+        listener.onTaxInfoRequested(new Dac7TaxInfoRequestedEvent(user, "REQUEST", null));
+        assertThat(sentData("Informations fiscales")).containsEntry("scope", "TAX_INFO");
+    }
+
+    @Test
     void rappel_texteDeRappel() {
         when(dispatcher.messagesFor(user)).thenReturn(TestMessages.en());
         listener.onTaxInfoRequested(new Dac7TaxInfoRequestedEvent(user, "REMINDER_2"));

@@ -52,6 +52,10 @@ class PublicDisplayNameCallersTest {
             // Identité fiscale légale de la déclaration DAC7 (export DGFiP seulement) : prénom et nom partent dans deux
             // zones distinctes du XML (FirstName / LastName), jamais recomposés ni affichés.
             "com/yadony/api/dac7/Dac7IdentityResolver",
+            // Collecte ciblée DAC7 : le voyageur voit et complète SA propre identité légale (prénom et nom dans deux
+            // champs distincts, repris de la pièce vérifiée ou du profil), jamais recomposée ni montrée à un tiers.
+            "com/yadony/api/dac7/Dac7CollectionPolicy",
+            "com/yadony/api/dac7/TravelerTaxInfoService",
             "com/yadony/api/kyc/provider/stripe/StripeIdentityProvider",
             "com/yadony/api/referral/ReferralService",
             // Invitation acceptée (lot 4) : l'invité consent à ce que l'inviteur voie son nom ;

@@ -46,7 +46,9 @@ class KycDac7IdentityAdapterTest {
         assertThat(identity.birthDate()).isEqualTo(LocalDate.of(1990, 1, 2));
         assertThat(identity.address().city()).isEqualTo("Lyon");
         assertThat(identity.address().countryCode()).isEqualTo("FR");
-        assertThat(identity.toString()).doesNotContain("Awa");
+        assertThat(identity.toString()).doesNotContain("Awa").doesNotContain("s1");
+        // Collecte ciblée : l'identifiant de la session vérifiée accompagne l'identité (preuve au registre DAC7).
+        assertThat(identity.verificationRef()).isEqualTo("s1");
     }
 
     @Test

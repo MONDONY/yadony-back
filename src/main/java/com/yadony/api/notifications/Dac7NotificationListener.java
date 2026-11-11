@@ -43,9 +43,11 @@ public class Dac7NotificationListener {
         try {
             Messages m = dispatcher.messagesFor(event.userId());
             boolean reminder = !"REQUEST".equals(event.action());
-            NotificationText text = reminder ? NotificationTexts.taxInfoReminder(m) : NotificationTexts.taxInfoRequest(m);
+            NotificationText text = event.residenceCountryOnly() ? NotificationTexts.taxResidenceRequest(m)
+                    : reminder ? NotificationTexts.taxInfoReminder(m) : NotificationTexts.taxInfoRequest(m);
+            String scope = event.scope() == null ? Dac7TaxInfoRequestedEvent.SCOPE_TAX_INFO : event.scope();
             dispatcher.notifyUser(event.userId(), text.title(), text.body(), Map.of("type", REQUEST_TYPE,
-                    "route", ROUTE, "reminder", String.valueOf(reminder), "step", event.action()));
+                    "route", ROUTE, "reminder", String.valueOf(reminder), "step", event.action(), "scope", scope));
         } catch (RuntimeException e) {
             log.warn("Demande DAC7 {} non envoyée (utilisateur {}) : {}", event.action(), event.userId(),
                     e.getClass().getSimpleName());

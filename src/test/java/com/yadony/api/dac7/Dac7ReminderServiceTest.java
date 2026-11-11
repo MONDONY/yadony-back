@@ -34,8 +34,10 @@ class Dac7ReminderServiceTest {
     private final Dac7DueDiligenceService diligence = mock(Dac7DueDiligenceService.class);
     private final Dac7AdminReadModel reads = mock(Dac7AdminReadModel.class);
     private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
+    private final Dac7CollectionPolicy collection = mock(Dac7CollectionPolicy.class);
     private final Dac7ReminderService service = new Dac7ReminderService(users, solicitation, diligence, reads,
-            Dac7ReminderProperties.defaults(true), events);
+            Dac7ReminderProperties.defaults(true), events, collection,
+            org.springframework.transaction.support.TransactionOperations.withoutTransaction());
     private UserEntity user;
 
     @BeforeEach
@@ -43,6 +45,7 @@ class Dac7ReminderServiceTest {
         user = new UserEntity();
         ReflectionTestUtils.setField(user, "id", UUID.randomUUID());
         when(users.findById(user.getId())).thenReturn(Optional.of(user));
+        when(users.lockForUpdate(user.getId())).thenReturn(1);
         when(solicitation.statusOf(user)).thenReturn(Dac7SolicitationStatus.SOLLICITER);
         when(reads.lastOutgoing(any())).thenReturn(Optional.empty());
     }
@@ -163,5 +166,140 @@ class Dac7ReminderServiceTest {
         assertThat(service.remindIfDue(other, NOW)).isEqualTo(Dac7ReminderService.Outcome.NOT_FOUND);
         assertThat(service.remindByAdmin(other, UUID.randomUUID(), NOW))
                 .isEqualTo(Dac7ReminderService.Outcome.NOT_FOUND);
+    }
+
+    // ---- Collecte ciblée : invite non bloquante après une acceptation de réservation (R1) ----
+
+    private void collection(Dac7CollectionStatus status, Dac7CollectionField... missing) {
+        when(collection.evaluate(user)).thenReturn(Dac7Collection.withoutIdentity(status,
+                java.util.List.of(missing), "FR"));
+    }
+
+    @Test
+    @DisplayName("acceptation, pays inconnu : seul le pays est demandé, une fois, sans poser la date de demande")
+    void acceptation_paysInconnu() {
+        collection(Dac7CollectionStatus.RESIDENCE_INCONNUE, Dac7CollectionField.RESIDENCE_COUNTRY);
+
+        assertThat(service.requestAtAcceptance(user.getId(), NOW)).isEqualTo(Dac7ReminderService.Outcome.SENT);
+
+        assertThat(user.getTaxInfoRequestedAt()).isNull();
+        verify(diligence).record(user.getId(), Dac7DueDiligenceAction.REQUEST, Dac7DueDiligenceChannel.IN_APP, null,
+                "ACCEPTANCE:RESIDENCE_COUNTRY");
+        verify(events).publishEvent(new Dac7TaxInfoRequestedEvent(user.getId(), "REQUEST",
+                Dac7TaxInfoRequestedEvent.SCOPE_RESIDENCE_COUNTRY));
+        verify(users, never()).save(any());
+
+        when(diligence.alreadyRecorded(user.getId(), Dac7DueDiligenceAction.REQUEST, "ACCEPTANCE:RESIDENCE_COUNTRY"))
+                .thenReturn(true);
+        assertThat(service.requestAtAcceptance(user.getId(), NOW)).isEqualTo(Dac7ReminderService.Outcome.NOT_DUE);
+    }
+
+    @Test
+    @DisplayName("acceptation, résident de l'Union incomplet : première demande avec les champs manquants, une fois")
+    void acceptation_infosManquantes() {
+        collection(Dac7CollectionStatus.INFO_REQUIRED, Dac7CollectionField.ADDRESS,
+                Dac7CollectionField.TAX_IDENTIFICATION_NUMBER);
+
+        assertThat(service.requestAtAcceptance(user.getId(), NOW)).isEqualTo(Dac7ReminderService.Outcome.SENT);
+
+        assertThat(user.getTaxInfoRequestedAt()).isEqualTo(NOW);
+        verify(users).save(user);
+        verify(diligence).record(user.getId(), Dac7DueDiligenceAction.REQUEST, Dac7DueDiligenceChannel.IN_APP, null,
+                "ACCEPTANCE:ADDRESS,TAX_IDENTIFICATION_NUMBER");
+        verify(events).publishEvent(new Dac7TaxInfoRequestedEvent(user.getId(), "REQUEST",
+                Dac7TaxInfoRequestedEvent.SCOPE_TAX_INFO));
+        // Déjà demandé : les acceptations suivantes ne redemandent rien (les rappels prennent le relais).
+        assertThat(service.requestAtAcceptance(user.getId(), NOW)).isEqualTo(Dac7ReminderService.Outcome.NOT_DUE);
+    }
+
+    @Test
+    @DisplayName("acceptation : un seul message par 24 heures, comme les rappels")
+    void acceptation_unMessageParJour() {
+        when(reads.lastOutgoing(user.getId())).thenReturn(Optional.of(NOW.minus(Duration.ofHours(3))));
+        collection(Dac7CollectionStatus.INFO_REQUIRED, Dac7CollectionField.TAX_IDENTIFICATION_NUMBER);
+        assertThat(service.requestAtAcceptance(user.getId(), NOW)).isEqualTo(Dac7ReminderService.Outcome.TOO_SOON);
+        collection(Dac7CollectionStatus.RESIDENCE_INCONNUE, Dac7CollectionField.RESIDENCE_COUNTRY);
+        assertThat(service.requestAtAcceptance(user.getId(), NOW)).isEqualTo(Dac7ReminderService.Outcome.TOO_SOON);
+        verify(events, never()).publishEvent(any());
+        assertThat(user.getTaxInfoRequestedAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("acceptation : hors Union ou complet, rien n'est demandé ; preuve Didit inscrite si elle existe")
+    void acceptation_horsUnionOuComplet() {
+        collection(Dac7CollectionStatus.NE_PAS_SOLLICITER);
+        assertThat(service.requestAtAcceptance(user.getId(), NOW))
+                .isEqualTo(Dac7ReminderService.Outcome.NOT_SOLICITABLE);
+        collection(Dac7CollectionStatus.COMPLETE);
+        assertThat(service.requestAtAcceptance(user.getId(), NOW)).isEqualTo(Dac7ReminderService.Outcome.NOT_DUE);
+        verify(events, never()).publishEvent(any());
+        verify(diligence, org.mockito.Mockito.times(2)).recordVerifiedSource(eq(user.getId()), any());
+        verify(diligence, never()).record(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("acceptation : compte introuvable ou supprimé, rien")
+    void acceptation_compteAbsent() {
+        UUID absent = UUID.randomUUID();
+        when(users.findById(absent)).thenReturn(Optional.empty());
+        assertThat(service.requestAtAcceptance(absent, NOW)).isEqualTo(Dac7ReminderService.Outcome.NOT_FOUND);
+        user.setDeletedAt(java.time.LocalDateTime.now());
+        assertThat(service.requestAtAcceptance(user.getId(), NOW)).isEqualTo(Dac7ReminderService.Outcome.NOT_FOUND);
+        verifyNoInteractions(collection);
+    }
+
+    @Test
+    @DisplayName("acceptation : la collecte (relecture Didit) est évaluée avant la transaction d'écriture")
+    void acceptation_evaluationHorsTransaction() {
+        java.util.concurrent.atomic.AtomicBoolean inTransaction = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.List<Boolean> evaluationsInTransaction = new java.util.ArrayList<>();
+        when(collection.evaluate(user)).thenAnswer(i -> {
+            evaluationsInTransaction.add(inTransaction.get());
+            return Dac7Collection.withoutIdentity(Dac7CollectionStatus.COMPLETE, java.util.List.of(), "FR");
+        });
+        Dac7ReminderService tracked = new Dac7ReminderService(users, solicitation, diligence, reads,
+                Dac7ReminderProperties.defaults(true), events, collection,
+                new org.springframework.transaction.support.TransactionOperations() {
+                    @Override
+                    public <T> T execute(org.springframework.transaction.support.TransactionCallback<T> action) {
+                        inTransaction.set(true);
+                        try {
+                            return action.doInTransaction(null);
+                        } finally {
+                            inTransaction.set(false);
+                        }
+                    }
+                });
+        assertThat(tracked.requestAtAcceptance(user.getId(), NOW)).isEqualTo(Dac7ReminderService.Outcome.NOT_DUE);
+        assertThat(evaluationsInTransaction).containsExactly(false);
+    }
+
+    @Test
+    @DisplayName("acceptation : compte disparu entre la lecture et l'écriture, rien")
+    void acceptation_compteDisparuAvantEcriture() {
+        when(collection.evaluate(user)).thenReturn(Dac7Collection.withoutIdentity(Dac7CollectionStatus.INFO_REQUIRED,
+                java.util.List.of(Dac7CollectionField.TAX_IDENTIFICATION_NUMBER), "FR"));
+        when(users.lockForUpdate(user.getId())).thenReturn(0);
+        assertThat(service.requestAtAcceptance(user.getId(), NOW)).isEqualTo(Dac7ReminderService.Outcome.NOT_FOUND);
+        verify(events, never()).publishEvent(any());
+    }
+
+    @Test
+    @DisplayName("acceptation : professionnel dont seule l'identité d'entreprise manque, aucune invite")
+    void acceptation_rienDeSaisissable() {
+        collection(Dac7CollectionStatus.INFO_REQUIRED, Dac7CollectionField.BUSINESS_IDENTITY);
+        assertThat(service.requestAtAcceptance(user.getId(), NOW)).isEqualTo(Dac7ReminderService.Outcome.NOT_DUE);
+        verify(events, never()).publishEvent(any());
+        assertThat(user.getTaxInfoRequestedAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("acceptation : la ligne du voyageur est verrouillée avant d'écrire (pas de double demande)")
+    void acceptation_ligneVerrouillee() {
+        collection(Dac7CollectionStatus.RESIDENCE_INCONNUE, Dac7CollectionField.RESIDENCE_COUNTRY);
+        service.requestAtAcceptance(user.getId(), NOW);
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(users, diligence);
+        order.verify(users).lockForUpdate(user.getId());
+        order.verify(diligence).record(any(), any(), any(), any(), any());
     }
 }

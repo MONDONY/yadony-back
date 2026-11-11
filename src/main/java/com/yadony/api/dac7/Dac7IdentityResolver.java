@@ -1,10 +1,15 @@
 package com.yadony.api.dac7;
 
+import com.github.benmanes.caffeine.cache.AsyncCache;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Expiry;
 import com.yadony.api.auth.UserEntity;
+import com.yadony.api.kyc.events.UserKycRevokedEvent;
+import com.yadony.api.kyc.events.UserKycVerifiedEvent;
 import com.yadony.api.travelerstatus.TravelerStatus;
 import org.springframework.beans.factory.DisposableBean;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -41,6 +46,13 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>Rien n'est persisté. Les pages admin lisent un VERDICT gardé 6 heures en mémoire (jamais un verdict obtenu sur
  * panne), calculé au plus {@value #PARALLEL_LOOKUPS} à la fois ; l'export relit toujours la pièce en direct.
+ *
+ * <p>Collecte ciblée (écran du voyageur, invite après acceptation) : {@link #cachedLookup(UUID)}, seule porte vers le
+ * prestataire hors export. Même pool dédié, une relecture au plus par voyageur et par période (15 minutes, 1 minute
+ * après une panne : la clé du prestataire, partagée avec le KYC, n'est jamais consommée par des appels répétés),
+ * appels simultanés regroupés, réponse dans un délai maximal (sinon « indisponible », la lecture finit en fond et
+ * remplit le cache). Données d'identité gardées en mémoire seulement, jamais persistées ni journalisées ; oubliées dès
+ * que le KYC du voyageur change.
  */
 @Component
 public class Dac7IdentityResolver implements DisposableBean {
@@ -49,6 +61,10 @@ public class Dac7IdentityResolver implements DisposableBean {
     /** Lectures nouvelles au plus par page : au-delà, NOT_CHECKED sans appeler le prestataire (cache au prochain passage). */
     static final int MAX_LOOKUPS_PER_REQUEST = 40;
     static final Duration DEFAULT_BUDGET = Duration.ofSeconds(8);
+    /** Délai maximal d'une lecture pour l'écran du voyageur ou l'invite : au-delà, réponse dégradée. */
+    static final Duration DEFAULT_INTERACTIVE_BUDGET = Duration.ofSeconds(2);
+    static final Duration LOOKUP_TTL = Duration.ofMinutes(15);
+    static final Duration FAILED_LOOKUP_TTL = Duration.ofMinutes(1);
 
     private final Dac7VerifiedIdentityPort verified;
     private final Cache<UUID, Dac7IdentityStatus> verdicts = Caffeine.newBuilder()
@@ -60,20 +76,102 @@ public class Dac7IdentityResolver implements DisposableBean {
     });
 
     private final Duration budget;
+    private final Duration interactiveBudget;
+    private final AsyncCache<UUID, Dac7VerifiedIdentityPort.Lookup> recentLookups = Caffeine.newBuilder()
+            .maximumSize(20_000)
+            .executor(lookups)
+            .expireAfter(new Expiry<UUID, Dac7VerifiedIdentityPort.Lookup>() {
+                @Override
+                public long expireAfterCreate(UUID key, Dac7VerifiedIdentityPort.Lookup value, long currentTime) {
+                    return ttl(value).toNanos();
+                }
+
+                @Override
+                public long expireAfterUpdate(UUID key, Dac7VerifiedIdentityPort.Lookup value, long currentTime,
+                                              long currentDuration) {
+                    return ttl(value).toNanos();
+                }
+
+                @Override
+                public long expireAfterRead(UUID key, Dac7VerifiedIdentityPort.Lookup value, long currentTime,
+                                            long currentDuration) {
+                    return currentDuration;
+                }
+            })
+            .buildAsync();
 
     @org.springframework.beans.factory.annotation.Autowired
     public Dac7IdentityResolver(Dac7VerifiedIdentityPort verified) {
-        this(verified, DEFAULT_BUDGET);
+        this(verified, DEFAULT_BUDGET, DEFAULT_INTERACTIVE_BUDGET);
     }
 
     Dac7IdentityResolver(Dac7VerifiedIdentityPort verified, Duration budget) {
+        this(verified, budget, DEFAULT_INTERACTIVE_BUDGET);
+    }
+
+    Dac7IdentityResolver(Dac7VerifiedIdentityPort verified, Duration budget, Duration interactiveBudget) {
         this.verified = verified;
         this.budget = budget;
+        this.interactiveBudget = interactiveBudget;
     }
 
     @Override
     public void destroy() {
         lookups.shutdownNow();
+    }
+
+    private static Duration ttl(Dac7VerifiedIdentityPort.Lookup lookup) {
+        return lookup.status() == Dac7VerifiedIdentityPort.Status.UNAVAILABLE ? FAILED_LOOKUP_TTL : LOOKUP_TTL;
+    }
+
+    /**
+     * Pièce vérifiée pour la collecte ciblée : en cache, sinon lue sur le pool dédié dans le délai maximal interactif.
+     * Jamais d'exception : délai dépassé, panne ou interruption donnent {@link Dac7VerifiedIdentityPort.Lookup#unavailable()}
+     * tout de suite (la lecture commencée finit en fond et remplit le cache).
+     */
+    public Dac7VerifiedIdentityPort.Lookup cachedLookup(UUID userId) {
+        CompletableFuture<Dac7VerifiedIdentityPort.Lookup> future;
+        try {
+            future = recentLookups.get(userId, (id, executor) -> CompletableFuture.supplyAsync(() -> {
+                Dac7VerifiedIdentityPort.Lookup lookup = verified.verifiedIdentity(id);
+                return lookup == null ? Dac7VerifiedIdentityPort.Lookup.unavailable() : lookup;
+            }, lookups));
+        } catch (RuntimeException e) {
+            // Pool arrêté (fermeture du contexte) : dégradé, jamais d'exception vers l'écran.
+            return Dac7VerifiedIdentityPort.Lookup.unavailable();
+        }
+        try {
+            return future.get(interactiveBudget.toNanos(), TimeUnit.NANOSECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Dac7VerifiedIdentityPort.Lookup.unavailable();
+        } catch (java.util.concurrent.TimeoutException | java.util.concurrent.ExecutionException e) {
+            return Dac7VerifiedIdentityPort.Lookup.unavailable();
+        }
+    }
+
+    /** Le KYC du voyageur a changé : sa pièce et son verdict sont relus au prochain passage. */
+    public void forget(UUID userId) {
+        recentLookups.synchronous().invalidate(userId);
+        verdicts.invalidate(userId);
+    }
+
+    @EventListener
+    public void onKycVerified(UserKycVerifiedEvent event) {
+        forget(event.getUserId());
+    }
+
+    @EventListener
+    public void onKycRevoked(UserKycRevokedEvent event) {
+        forget(event.userId());
+    }
+
+    /**
+     * Identité selon les règles de la déclaration, à partir d'une lecture de la pièce déjà faite : source unique de
+     * « complet » partagée avec la collecte ciblée ({@link Dac7CollectionPolicy}). Ne touche pas au cache des verdicts.
+     */
+    public Dac7SellerIdentity identityFrom(UserEntity user, Dac7VerifiedIdentityPort.Lookup lookup) {
+        return user.getDeletedAt() != null ? resolveMissing(user.getId()) : compute(user, lookup);
     }
 
     /** Verdict seul, en cache (pages admin). */
@@ -152,6 +250,13 @@ public class Dac7IdentityResolver implements DisposableBean {
 
     private Dac7SellerIdentity compute(UserEntity user, boolean readPiece) {
         TravelerStatus seller = user.getTaxSellerStatus() != null ? user.getTaxSellerStatus() : user.getTravelerStatus();
+        // Entité : la pièce d'une personne physique ne sert pas, jamais d'appel au prestataire.
+        boolean read = readPiece && seller != TravelerStatus.PROFESSIONAL;
+        return compute(user, read ? verified.verifiedIdentity(user.getId()) : Dac7VerifiedIdentityPort.Lookup.none());
+    }
+
+    private Dac7SellerIdentity compute(UserEntity user, Dac7VerifiedIdentityPort.Lookup lookup) {
+        TravelerStatus seller = user.getTaxSellerStatus() != null ? user.getTaxSellerStatus() : user.getTravelerStatus();
         String residence = Dac7ResidencyPolicy.residenceCountryOf(user);
         if (seller == TravelerStatus.PROFESSIONAL) {
             List<String> missing = new ArrayList<>();
@@ -163,8 +268,6 @@ public class Dac7IdentityResolver implements DisposableBean {
                     Dac7IdentityStatus.INCOMPLETE, List.copyOf(missing), null, null, null, null,
                     trim(user.getBusinessName()), trim(user.getBusinessRegistrationNumber()));
         }
-        Dac7VerifiedIdentityPort.Lookup lookup = readPiece ? verified.verifiedIdentity(user.getId())
-                : Dac7VerifiedIdentityPort.Lookup.none();
         boolean unavailable = lookup == null || lookup.status() == Dac7VerifiedIdentityPort.Status.UNAVAILABLE;
         Dac7VerifiedIdentity piece = lookup != null && lookup.status() == Dac7VerifiedIdentityPort.Status.FOUND
                 ? lookup.identity() : null;

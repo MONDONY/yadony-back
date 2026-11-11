@@ -206,6 +206,7 @@ class NotificationTextsTest {
         map.put("travelerStatusConfirmation", NotificationTexts.travelerStatusConfirmation(m));
         map.put("taxInfoRequest", NotificationTexts.taxInfoRequest(m));
         map.put("taxInfoReminder", NotificationTexts.taxInfoReminder(m));
+        map.put("taxResidenceRequest", NotificationTexts.taxResidenceRequest(m));
         map.put("taxStatement", NotificationTexts.taxStatement(m, 2026));
         map.put("kycVerified", NotificationTexts.kycVerified(m));
         map.put("kycActionRequired", NotificationTexts.kycActionRequired(m));
@@ -696,7 +697,11 @@ class NotificationTextsTest {
     @Test
     void taxTexts_textesExacts() {
         assertThat(NotificationTexts.taxInfoRequest(TestMessages.fr())).isEqualTo(new NotificationText(
-                "Informations fiscales", "Ajoutez votre numéro fiscal dans votre profil. Obligation légale."));
+                "Informations fiscales",
+                "Complétez vos informations fiscales dans le profil. Obligation légale."));
+        // Pays inconnu : seul le pays est demandé, sans parler d'impôt.
+        assertThat(NotificationTexts.taxResidenceRequest(TestMessages.fr())).isEqualTo(new NotificationText(
+                "Votre pays de résidence", "Indiquez dans votre profil le pays où vous habitez."));
         assertThat(NotificationTexts.taxStatement(TestMessages.en(), 2026).title()).isEqualTo("Tax summary 2026");
         assertThat(NotificationTexts.taxStatement(TestMessages.fr(), 2026).title())
                 .isEqualTo("Récapitulatif fiscal 2026");

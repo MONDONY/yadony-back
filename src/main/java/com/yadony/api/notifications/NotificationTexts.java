@@ -755,6 +755,12 @@ public final class NotificationTexts {
                 m.get("notification.tax-info-request.body"));
     }
 
+    /** DAC7, collecte ciblée : pays de résidence inconnu, on ne demande QUE le pays (sans parler d'impôt). */
+    public static NotificationText taxResidenceRequest(Messages m) {
+        return new NotificationText(m.get("notification.tax-residence-request.title"),
+                m.get("notification.tax-residence-request.body"));
+    }
+
     /** DAC7 : rappel 1 ou 2 du numéro fiscal (jamais de troisième). */
     public static NotificationText taxInfoReminder(Messages m) {
         return new NotificationText(m.get("notification.tax-info-reminder.title"),

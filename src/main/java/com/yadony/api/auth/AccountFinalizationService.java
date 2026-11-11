@@ -134,6 +134,10 @@ public class AccountFinalizationService {
             user.setTaxResidenceCountry(null);
             user.setTaxSellerStatus(null);
         }
+        // Lieu de naissance DAC7 (V378) : n'existe que sans NIF, donc jamais gardé (la conservation suit le NIF).
+        user.setTaxBirthPlace(null);
+        // Pays déclaré pour DAC7 (V378) : la résidence retenue est figée juste au-dessus si le NIF est gardé.
+        user.setTaxDeclaredResidenceCountry(null);
         user.setTaxInfoRequestedAt(null);
         user.setTaxReminderCount(0);
         // Lot C — un statut KYC VERIFIED survivant a la suppression rattache le compte

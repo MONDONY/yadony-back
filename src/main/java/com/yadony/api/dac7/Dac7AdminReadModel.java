@@ -49,10 +49,12 @@ public class Dac7AdminReadModel {
     private static final String LAST_OUTGOING_SQL = "SELECT MAX(created_at) FROM dac7_due_diligence_log "
             + "WHERE user_id = :id AND action IN (:actions)";
     private static final String CANDIDATES_SQL = """
-            SELECT u.id, u.country, u.traveler_status, u.business_country, u.tax_residence_country
+            SELECT u.id, COALESCE(u.country, u.tax_declared_residence_country) AS country, u.traveler_status,
+                   u.business_country, u.tax_residence_country
             FROM users u
             WHERE u.deleted_at IS NULL AND u.tax_identification_number IS NULL AND u.tax_reminder_count < 2
-              AND (u.country IS NOT NULL OR u.business_country IS NOT NULL)
+              AND (u.country IS NOT NULL OR u.business_country IS NOT NULL
+                   OR u.tax_declared_residence_country IS NOT NULL)
               AND (u.tax_info_requested_at IS NULL
                    OR (u.tax_reminder_count = 0 AND u.tax_info_requested_at <= :firstDue)
                    OR (u.tax_reminder_count = 1 AND u.tax_info_requested_at <= :secondDue))
