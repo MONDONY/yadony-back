@@ -102,4 +102,32 @@ class Dac7DueDiligenceServiceTest {
         assertThat(service.recordVerifiedSourceOnce(null, "s2", "NAME")).isFalse();
         verify(repository).save(any());
     }
+
+    @Test
+    void preuveDidit_depuisUneEvaluation() {
+        when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
+        Dac7Collection fromPiece = new Dac7Collection(Dac7CollectionStatus.INFO_REQUIRED,
+                java.util.List.of(Dac7CollectionField.TAX_IDENTIFICATION_NUMBER), "FR", true, "Awa", "Diallo",
+                Dac7FieldSource.DIDIT, null, null, null, null, false, "s9");
+
+        assertThat(service.recordVerifiedSource(userId, fromPiece)).isTrue();
+        ArgumentCaptor<Dac7DueDiligenceLogEntity> saved = ArgumentCaptor.forClass(Dac7DueDiligenceLogEntity.class);
+        verify(repository).save(saved.capture());
+        assertThat(saved.getValue().getNote()).isEqualTo("NAME");
+        assertThat(saved.getValue().getVerificationRef()).isEqualTo("s9");
+
+        assertThat(service.recordVerifiedSource(userId, null)).isFalse();
+        assertThat(service.recordVerifiedSource(userId, Dac7Collection.withoutIdentity(
+                Dac7CollectionStatus.NE_PAS_SOLLICITER, java.util.List.of(), "CI"))).isFalse();
+        assertThat(service.recordVerifiedSource(userId, new Dac7Collection(Dac7CollectionStatus.COMPLETE,
+                java.util.List.of(), "FR", true, "A", "B", Dac7FieldSource.PROFILE, null, null, null, null, false,
+                "s9"))).isFalse();
+    }
+
+    @Test
+    void dejaInscrit_interrogeLeRegistre() {
+        when(repository.existsByUserIdAndActionAndNote(userId, Dac7DueDiligenceAction.REQUEST, "N")).thenReturn(true);
+        assertThat(service.alreadyRecorded(userId, Dac7DueDiligenceAction.REQUEST, "N")).isTrue();
+        assertThat(service.alreadyRecorded(userId, Dac7DueDiligenceAction.REQUEST, "M")).isFalse();
+    }
 }

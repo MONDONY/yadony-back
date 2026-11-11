@@ -72,6 +72,25 @@ public class Dac7DueDiligenceService {
         return true;
     }
 
+    /**
+     * Preuve de fiabilité pour une évaluation de la collecte : si des valeurs retenues viennent de la pièce vérifiée,
+     * inscrit (une fois par session) l'identifiant de vérification et les codes des champs concernés.
+     */
+    @Transactional
+    public boolean recordVerifiedSource(UUID userId, Dac7Collection evaluated) {
+        if (evaluated == null || evaluated.verificationRef() == null || evaluated.readOnlyFields().isEmpty()) {
+            return false;
+        }
+        return recordVerifiedSourceOnce(userId, evaluated.verificationRef(),
+                String.join(",", evaluated.readOnlyFields().stream().map(Enum::name).toList()));
+    }
+
+    /** Une démarche avec cette note exacte figure-t-elle déjà au registre ? */
+    @Transactional(readOnly = true)
+    public boolean alreadyRecorded(UUID userId, Dac7DueDiligenceAction action, String note) {
+        return repository.existsByUserIdAndActionAndNote(userId, action, note);
+    }
+
     private static String note(String fields) {
         if (fields == null || fields.isBlank()) {
             return null;

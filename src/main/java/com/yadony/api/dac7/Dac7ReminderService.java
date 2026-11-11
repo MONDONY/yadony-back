@@ -31,6 +31,9 @@ public class Dac7ReminderService {
     public enum Outcome { SENT, NOT_SOLICITABLE, NOT_DUE, TOO_SOON, EXHAUSTED, NOT_FOUND }
 
     private static final Duration ONE_PER_DAY = Duration.ofHours(24);
+    static final String ACCEPTANCE_NOTE_PREFIX = "ACCEPTANCE:";
+    /** Note de la demande du seul pays : marque qu'elle a été faite (une seule fois par voyageur). */
+    static final String ACCEPTANCE_COUNTRY_NOTE = ACCEPTANCE_NOTE_PREFIX + "RESIDENCE_COUNTRY";
 
     private final UserRepository users;
     private final Dac7SolicitationPolicy solicitation;
@@ -38,16 +41,82 @@ public class Dac7ReminderService {
     private final Dac7AdminReadModel reads;
     private final Dac7ReminderProperties properties;
     private final ApplicationEventPublisher events;
+    private final Dac7CollectionPolicy collection;
 
     public Dac7ReminderService(UserRepository users, Dac7SolicitationPolicy solicitation,
                                Dac7DueDiligenceService diligence, Dac7AdminReadModel reads,
-                               Dac7ReminderProperties properties, ApplicationEventPublisher events) {
+                               Dac7ReminderProperties properties, ApplicationEventPublisher events,
+                               Dac7CollectionPolicy collection) {
         this.users = users;
         this.solicitation = solicitation;
         this.diligence = diligence;
         this.reads = reads;
         this.properties = properties;
         this.events = events;
+        this.collection = collection;
+    }
+
+    /**
+     * Collecte ciblée (spec du 11/11/2026, § 3.2 corrigé par R1) : invite NON bloquante après une acceptation de
+     * réservation, une seule fois. Appelée après validation de l'acceptation ({@link Dac7AcceptanceListener}) : rien
+     * de l'acceptation n'en dépend.
+     * <ul>
+     *   <li>pays de résidence inconnu : demande du SEUL pays (note {@value #ACCEPTANCE_COUNTRY_NOTE}), une fois ;
+     *       le suivi {@code tax_info_requested_at} n'est pas posé (il servira à la vraie demande si le pays est dans
+     *       l'Union) ;</li>
+     *   <li>résident de l'Union aux informations incomplètes : première demande ({@code REQUEST}, base des rappels)
+     *       si aucune n'a encore été faite, avec les codes des champs manquants en note ;</li>
+     *   <li>hors périmètre : rien ; complet : rien à demander.</li>
+     * </ul>
+     * Dans tous les cas, la preuve Didit est inscrite au registre si des valeurs retenues viennent de la pièce. Même
+     * règle d'un message par 24 heures que les rappels.
+     */
+    @Transactional
+    public Outcome requestAtAcceptance(UUID userId, Instant now) {
+        Optional<UserEntity> found = users.findById(userId);
+        if (found.isEmpty() || found.get().getDeletedAt() != null) {
+            return Outcome.NOT_FOUND;
+        }
+        UserEntity user = found.get();
+        Dac7Collection evaluated = collection.evaluate(user);
+        diligence.recordVerifiedSource(userId, evaluated);
+        switch (evaluated.status()) {
+            case RESIDENCE_INCONNUE -> {
+                if (diligence.alreadyRecorded(userId, Dac7DueDiligenceAction.REQUEST, ACCEPTANCE_COUNTRY_NOTE)) {
+                    return Outcome.NOT_DUE;
+                }
+                if (sentWithin(userId, now, ONE_PER_DAY)) {
+                    return Outcome.TOO_SOON;
+                }
+                diligence.record(userId, Dac7DueDiligenceAction.REQUEST, Dac7DueDiligenceChannel.IN_APP, null,
+                        ACCEPTANCE_COUNTRY_NOTE);
+                events.publishEvent(new Dac7TaxInfoRequestedEvent(userId, Dac7DueDiligenceAction.REQUEST.name(),
+                        Dac7TaxInfoRequestedEvent.SCOPE_RESIDENCE_COUNTRY));
+                return Outcome.SENT;
+            }
+            case INFO_REQUIRED -> {
+                if (user.getTaxInfoRequestedAt() != null) {
+                    return Outcome.NOT_DUE;
+                }
+                if (sentWithin(userId, now, ONE_PER_DAY)) {
+                    return Outcome.TOO_SOON;
+                }
+                user.setTaxInfoRequestedAt(now);
+                users.save(user);
+                diligence.record(userId, Dac7DueDiligenceAction.REQUEST, Dac7DueDiligenceChannel.IN_APP, null,
+                        ACCEPTANCE_NOTE_PREFIX + String.join(",",
+                                evaluated.missing().stream().map(Enum::name).toList()));
+                events.publishEvent(new Dac7TaxInfoRequestedEvent(userId, Dac7DueDiligenceAction.REQUEST.name(),
+                        Dac7TaxInfoRequestedEvent.SCOPE_TAX_INFO));
+                return Outcome.SENT;
+            }
+            case NE_PAS_SOLLICITER -> {
+                return Outcome.NOT_SOLICITABLE;
+            }
+            default -> {
+                return Outcome.NOT_DUE;
+            }
+        }
     }
 
     /** Planificateur : envoie la démarche due à {@code now}, s'il y en a une. */

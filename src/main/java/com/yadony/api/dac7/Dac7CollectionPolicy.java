@@ -47,7 +47,16 @@ public class Dac7CollectionPolicy {
 
     /** Évaluation complète : relit la pièce vérifiée seulement si la réponse en dépend (résident transmis, particulier). */
     public Dac7Collection evaluate(UserEntity user) {
-        return evaluate(user, needsVerifiedIdentity(user) ? verified.verifiedIdentity(user.getId()) : null);
+        return evaluate(user, lookup(user));
+    }
+
+    /**
+     * Relit la pièce vérifiée si la réponse en dépend, sinon {@link Dac7VerifiedIdentityPort.Lookup#none()} sans appel
+     * au prestataire. Pour évaluer deux fois (avant et après une saisie) sans relire la pièce deux fois.
+     */
+    public Dac7VerifiedIdentityPort.Lookup lookup(UserEntity user) {
+        return needsVerifiedIdentity(user) ? verified.verifiedIdentity(user.getId())
+                : Dac7VerifiedIdentityPort.Lookup.none();
     }
 
     /**
