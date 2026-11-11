@@ -79,6 +79,7 @@ class PackageRequestServiceTest {
     @Mock private PackageRequestInsightService insightService;
     @Mock private TravelerNegotiationLookup negotiationLookup;
     @Mock private com.yadony.api.common.commission.CommissionGridService commissionGridService;
+    @Mock private com.yadony.api.matching.TransportModeGuard transportModeGuard;
     /** Real record (not mocked) — threshold-days=3 mirrors application-test.yml (yadony.urgency.threshold-days). */
     private final YadonyConfigProperties yadonyConfig =
             new YadonyConfigProperties(null, null, new YadonyConfigProperties.Urgency(3), null);
@@ -147,7 +148,7 @@ class PackageRequestServiceTest {
                 yadonyConfig, announcementRepository, commissionRateResolver,
                 com.yadony.api.config.PlatformSettingsTestFactory.withProEnabled(proEnabled),
                 blockVisibility, TestMessages.resolver(), insightService, negotiationLookup,
-                commissionGridService);
+                commissionGridService, transportModeGuard);
     }
 
     // ========== Task 12: create() tests ==========
@@ -562,6 +563,63 @@ class PackageRequestServiceTest {
             assertThat(saved.getTransportMode()).isEqualTo(TransportMode.PLANE);
             assertThat(saved.getTargetPriceEur()).isEqualByComparingTo("35.00"); // 39.20 / 1.12
             assertThat(saved.isNegotiable()).isTrue();
+        }
+
+        private void stubCreateSaves() {
+            when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+            when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
+        }
+
+        @Test @DisplayName("sans mode (anciennes apps) → PLANE")
+        void create_withoutMode_isPlane() {
+            stubCreateSaves();
+
+            PackageRequestEntity saved = service.createAndReturnEntity(SENDER_ID, requestWithMode(null));
+
+            assertThat(saved.getTransportMode()).isEqualTo(TransportMode.PLANE);
+            verify(transportModeGuard).assertRequestModeAllowed(TransportMode.PLANE);
+        }
+
+        @Test @DisplayName("« ANY » (peu importe) → mode nul en base")
+        void create_any_storesNull() {
+            stubCreateSaves();
+
+            PackageRequestEntity saved = service.createAndReturnEntity(SENDER_ID, requestWithMode("ANY"));
+
+            assertThat(saved.getTransportMode()).isNull();
+            verify(transportModeGuard).assertRequestModeAllowed(null);
+        }
+
+        @Test @DisplayName("BOAT avec le bateau éteint → le garde lève 422, rien n'est enregistré")
+        void create_boat_whenBoatDisabled_throws422() {
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            doThrow(new com.yadony.api.common.YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+                "transport-mode-disabled", "Mode de transport indisponible", "bateau"))
+                .when(transportModeGuard).assertRequestModeAllowed(TransportMode.BOAT);
+
+            assertThatThrownBy(() -> service.createAndReturnEntity(SENDER_ID, requestWithMode("BOAT")))
+                .isInstanceOfSatisfying(com.yadony.api.common.YadonyBusinessException.class,
+                    ex -> assertThat(ex.getErrorCode()).isEqualTo("transport-mode-disabled"));
+            verify(repository, never()).save(any());
+        }
+
+        @Test @DisplayName("CAR avec la route ouverte → mode CAR enregistré")
+        void create_car_whenRoadEnabled_storesCar() {
+            stubCreateSaves();
+
+            PackageRequestEntity saved = service.createAndReturnEntity(SENDER_ID, requestWithMode("CAR"));
+
+            assertThat(saved.getTransportMode()).isEqualTo(TransportMode.CAR);
+            verify(transportModeGuard).assertRequestModeAllowed(TransportMode.CAR);
+        }
+
+        @Test @DisplayName("resolveRequestedMode : null → PLANE, ANY → null, sinon valueOf")
+        void resolveRequestedMode_rules() {
+            assertThat(PackageRequestService.resolveRequestedMode(null)).isEqualTo(TransportMode.PLANE);
+            assertThat(PackageRequestService.resolveRequestedMode("ANY")).isNull();
+            assertThat(PackageRequestService.resolveRequestedMode("TRAIN")).isEqualTo(TransportMode.TRAIN);
         }
 
         @Test @DisplayName("grille en vigueur → son id est figé sur la demande à la création")
@@ -1167,6 +1225,54 @@ class PackageRequestServiceTest {
             verify(eventPublisher).publishEvent(
                 new com.yadony.api.requests.event.PackageRequestDescriptionSubmittedEvent(
                     entity.getId(), SENDER_ID, "desc"));
+        }
+
+        private PackageRequestEntity stubUpdatableEntity(TransportMode current) {
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            entity.setTransportMode(current);
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+            when(threadRepository.findByPackageRequestId(entity.getId())).thenReturn(List.of());
+            when(repository.save(any(PackageRequestEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+            return entity;
+        }
+
+        @Test @DisplayName("mode fourni → mode modifié, garde appelé")
+        void update_changesMode_whenProvided() {
+            PackageRequestEntity entity = stubUpdatableEntity(TransportMode.PLANE);
+
+            service.update(SENDER_ID, entity.getId(), requestWithMode("BUS"));
+
+            assertThat(entity.getTransportMode()).isEqualTo(TransportMode.BUS);
+            verify(transportModeGuard).assertRequestModeAllowed(TransportMode.BUS);
+        }
+
+        @Test @DisplayName("« ANY » fourni → mode remis à nul (peu importe)")
+        void update_any_setsNull() {
+            PackageRequestEntity entity = stubUpdatableEntity(TransportMode.PLANE);
+
+            service.update(SENDER_ID, entity.getId(), requestWithMode("ANY"));
+
+            assertThat(entity.getTransportMode()).isNull();
+        }
+
+        @Test @DisplayName("mode absent → mode existant conservé, garde non appelé")
+        void update_withoutMode_keepsExistingMode() {
+            PackageRequestEntity entity = stubUpdatableEntity(TransportMode.BOAT);
+
+            service.update(SENDER_ID, entity.getId(), requestWithMode(null));
+
+            assertThat(entity.getTransportMode()).isEqualTo(TransportMode.BOAT);
+            verifyNoInteractions(transportModeGuard);
+        }
+
+        @Test @DisplayName("mode inchangé fourni → le garde n'est pas rejoué (demande bateau déjà en base)")
+        void update_sameMode_doesNotRecheckGuard() {
+            PackageRequestEntity entity = stubUpdatableEntity(TransportMode.BOAT);
+
+            service.update(SENDER_ID, entity.getId(), requestWithMode("BOAT"));
+
+            assertThat(entity.getTransportMode()).isEqualTo(TransportMode.BOAT);
+            verifyNoInteractions(transportModeGuard);
         }
 
         @Test @DisplayName("update() qui retire la date → « Date flexible », tolérance nulle")
@@ -2216,6 +2322,17 @@ class PackageRequestServiceTest {
             "10e arr", "Plateau",
             true, EnumSet.of(PaymentMethod.STRIPE)
         , List.of(), null);
+    }
+
+    /** Demande valide avec le mode de transport brut donné (null = champ absent, « ANY » = peu importe). */
+    private PackageRequestCreateRequest requestWithMode(String transportMode) {
+        return new PackageRequestCreateRequest(
+            "Paris", "Dakar",
+            LocalDate.now().plusDays(7), 2,
+            new BigDecimal("5"), "vetements",
+            "Cadeau pour ma mère", new BigDecimal("28.00"), null,
+            "10e arr", "Plateau",
+            true, EnumSet.of(PaymentMethod.STRIPE), List.of(), null, null, null, transportMode);
     }
 
     private PackageRequestCreateRequest requestWithCurrency(String currency) {

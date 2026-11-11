@@ -126,7 +126,8 @@ class PackageRequestServicePublishingSuspensionTest {
                 com.yadony.api.config.PlatformSettingsTestFactory.defaults(),
                 blockVisibility, null, org.mockito.Mockito.mock(PackageRequestInsightService.class),
                 org.mockito.Mockito.mock(TravelerNegotiationLookup.class),
-                org.mockito.Mockito.mock(com.yadony.api.common.commission.CommissionGridService.class));
+                org.mockito.Mockito.mock(com.yadony.api.common.commission.CommissionGridService.class),
+                org.mockito.Mockito.mock(com.yadony.api.matching.TransportModeGuard.class));
         lenient().when(activeCurrencyResolver.resolve(any())).thenReturn("EUR");
         lenient().when(activeCurrencyResolver.resolveDisplay(any())).thenReturn("EUR");
     }

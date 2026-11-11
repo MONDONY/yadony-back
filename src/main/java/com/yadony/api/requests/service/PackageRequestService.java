@@ -86,6 +86,7 @@ public class PackageRequestService {
     private final PackageRequestInsightService insightService;
     private final TravelerNegotiationLookup negotiationLookup;
     private final CommissionGridService commissionGridService;
+    private final com.yadony.api.matching.TransportModeGuard transportModeGuard;
 
     public PackageRequestService(PackageRequestRepository repository,
                                   UserRepository userRepository,
@@ -109,7 +110,8 @@ public class PackageRequestService {
                                   MessagesResolver messagesResolver,
                                   PackageRequestInsightService insightService,
                                   TravelerNegotiationLookup negotiationLookup,
-                                  CommissionGridService commissionGridService) {
+                                  CommissionGridService commissionGridService,
+                                  com.yadony.api.matching.TransportModeGuard transportModeGuard) {
         this.repository = repository;
         this.userRepository = userRepository;
         this.eventPublisher = eventPublisher;
@@ -133,6 +135,7 @@ public class PackageRequestService {
         this.insightService = insightService;
         this.negotiationLookup = negotiationLookup;
         this.commissionGridService = commissionGridService;
+        this.transportModeGuard = transportModeGuard;
     }
 
     /**
@@ -256,7 +259,9 @@ public class PackageRequestService {
      *
      * <p>Business rules applied here:
      * <ul>
-     *   <li>Transport mode is always {@code PLANE} (avion-only).</li>
+     *   <li>Transport mode: absent → {@code PLANE} (anciennes apps), {@code "ANY"} → {@code null}
+     *       (« peu importe »), sinon le mode demandé, soumis aux interrupteurs route/bateau
+     *       ({@link com.yadony.api.matching.TransportModeGuard}).</li>
      *   <li>{@link ParcelSize} is derived from {@code weightKg} via
      *       {@link ParcelSize#fromWeightKg}.</li>
      *   <li>The caller supplies a <em>gross</em> budget (including the commission, rate from {@code yadony.commission.rate}).
@@ -317,6 +322,20 @@ public class PackageRequestService {
         return validated.code().toUpperCase(java.util.Locale.ROOT);
     }
 
+    /**
+     * Mode de transport brut du DTO : absent/null → avion (anciennes apps qui ne l'envoient pas),
+     * « ANY » → {@code null} (peu importe), sinon le mode nommé.
+     */
+    static com.yadony.api.matching.TransportMode resolveRequestedMode(String raw) {
+        if (raw == null) {
+            return com.yadony.api.matching.TransportMode.PLANE;
+        }
+        if ("ANY".equals(raw)) {
+            return null;
+        }
+        return com.yadony.api.matching.TransportMode.valueOf(raw);
+    }
+
     @Transactional
     public PackageRequestEntity createAndReturnEntity(UUID senderId, PackageRequestCreateRequest req) {
         UserEntity sender = userRepository.findById(senderId)
@@ -340,6 +359,8 @@ public class PackageRequestService {
             assertPublishingNotSuspended(sender);
         }
         rejectMobileMoneyMethods(req.acceptedPaymentMethods());
+        com.yadony.api.matching.TransportMode requestedMode = resolveRequestedMode(req.transportMode());
+        transportModeGuard.assertRequestModeAllowed(requestedMode);
         if (req.departureCity().equalsIgnoreCase(req.arrivalCity())) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "request/invalid-corridor");
         }
@@ -376,7 +397,7 @@ public class PackageRequestService {
         entity.setDateToleranceDays(resolveDateTolerance(req.desiredDate(), req.dateToleranceDays()));
         entity.setWeightKg(req.weightKg());
         entity.setParcelSize(ParcelSize.fromWeightKg(req.weightKg()));
-        entity.setTransportMode(com.yadony.api.matching.TransportMode.PLANE);
+        entity.setTransportMode(requestedMode);
         // Normalisé à l'écriture (C2) — cf. ContentCategoryNormalizer javadoc.
         entity.setContentCategory(ContentCategoryNormalizer.normalizeJoined(req.contentCategory()));
         entity.setDescription(req.description());
@@ -464,6 +485,15 @@ public class PackageRequestService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "request/not-editable");
         }
         rejectMobileMoneyMethods(req.acceptedPaymentMethods());
+        // Le mode ne change que si le champ est présent : une app qui ne l'envoie pas ne doit pas
+        // écraser le choix de l'expéditeur. Le garde n'est rejoué que sur un vrai changement, pour
+        // qu'une demande bateau déjà enregistrée reste modifiable quand l'interrupteur est éteint.
+        boolean modeProvided = req.transportMode() != null;
+        com.yadony.api.matching.TransportMode newMode = modeProvided
+            ? resolveRequestedMode(req.transportMode()) : entity.getTransportMode();
+        if (modeProvided && newMode != entity.getTransportMode()) {
+            transportModeGuard.assertRequestModeAllowed(newMode);
+        }
         if (req.departureCity().equalsIgnoreCase(req.arrivalCity())) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "request/invalid-corridor");
         }
@@ -497,6 +527,7 @@ public class PackageRequestService {
         entity.setDateToleranceDays(resolveDateTolerance(req.desiredDate(), req.dateToleranceDays()));
         entity.setWeightKg(req.weightKg());
         entity.setParcelSize(ParcelSize.fromWeightKg(req.weightKg()));
+        entity.setTransportMode(newMode);
         // Normalisé à l'écriture (C2) — cf. ContentCategoryNormalizer javadoc.
         entity.setContentCategory(ContentCategoryNormalizer.normalizeJoined(req.contentCategory()));
         entity.setDescription(req.description());
