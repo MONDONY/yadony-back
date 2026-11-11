@@ -70,22 +70,22 @@ public class ReceptionRatingService {
     @Transactional
     public RatingResponse rate(UUID bidId, String firebaseUid, ReceptionRatingRequest request) {
         UserEntity recipient = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNAUTHORIZED, "user-not-found",
-                        "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found",
+                        "problem.rating.reception-user-not-found"));
 
         if (!linkRepository.existsByBidIdAndRecipientUserIdAndStatus(
                 bidId, recipient.getId(), ReceptionLinkStatus.CONFIRMED)) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "reception-not-recipient",
-                    "Forbidden", "Vous n'êtes pas le destinataire confirmé de ce colis");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "reception-not-recipient",
+                    "problem.rating.reception-not-recipient");
         }
 
         BidEntity bid = bidRepository.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "reception-not-found",
-                        "Reception Not Found", "Colis introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "reception-not-found",
+                        "problem.rating.reception-not-found"));
 
         if (bid.getStatus() != BidStatus.COMPLETED) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "reception-rating-not-allowed",
-                    "Reception Rating Not Allowed", "Le voyageur se note une fois le colis livré");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "reception-rating-not-allowed",
+                    "problem.rating.reception-not-allowed");
         }
 
         if (ratingRepository.recipientHasRated(bid.getId(), recipient.getId(), bid.getTrackingToken())) {
@@ -94,8 +94,8 @@ public class ReceptionRatingService {
 
         UUID travelerId = announcementRepository.findById(bid.getAnnouncementId())
                 .map(AnnouncementEntity::getTravelerId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.INTERNAL_SERVER_ERROR,
-                        "data-inconsistency", "Error", "Annonce introuvable pour cet envoi"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.INTERNAL_SERVER_ERROR, "data-inconsistency",
+                        "problem.data-inconsistency.announcement-shipment"));
 
         RatingEntity rating = new RatingEntity();
         rating.setRaterId(recipient.getId());
@@ -128,7 +128,7 @@ public class ReceptionRatingService {
     }
 
     private static YadonyBusinessException alreadyRated() {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "reception-already-rated",
-                "Reception Already Rated", "Vous avez déjà noté le voyageur pour ce colis");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "reception-already-rated",
+                "problem.rating.reception-already-rated");
     }
 }

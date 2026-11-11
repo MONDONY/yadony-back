@@ -50,6 +50,45 @@ class GlobalExceptionHandlerLocalizedBusinessIT {
                     "problem.forbidden.publier-cette-annonce");
         }
 
+        @GetMapping("/t/cancel-locked")
+        void cancelLocked() {
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "cancel-locked", "problem.cancel-locked");
+        }
+
+        @GetMapping("/t/token-required")
+        void tokenRequired() {
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthorized",
+                    "problem.auth.token-required");
+        }
+
+        @GetMapping("/t/wait-not-elapsed")
+        void waitNotElapsed() {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "delivery-noshow-wait-not-elapsed", "problem.delivery-noshow-wait-not-elapsed",
+                    Map.of("minWaitMinutes", 30), 30);
+        }
+
+        @GetMapping("/t/rating-window")
+        void ratingWindow() {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "rating-window-expired",
+                    "problem.rating.window-expired");
+        }
+
+        @GetMapping("/t/kyc-verified")
+        void kycVerified() {
+            throw new LocalizedResponseStatusException(HttpStatus.CONFLICT, "problem.kyc.already-verified");
+        }
+
+        @GetMapping("/t/kyc-user")
+        void kycUser() {
+            throw YadonyNotFoundException.localized("problem.kyc.user-not-found");
+        }
+
+        @GetMapping("/t/legacy-not-found")
+        void legacyNotFound() {
+            throw new YadonyNotFoundException("Texte fixe");
+        }
+
         @GetMapping("/t/legacy")
         void legacy() {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "legacy", "Titre fixe", "Texte fixe");
@@ -136,5 +175,84 @@ class GlobalExceptionHandlerLocalizedBusinessIT {
         mvc.perform(getJson("/t/legacy").header("Accept-Language", "en"))
                 .andExpect(jsonPath("$.detail").value("Texte fixe"))
                 .andExpect(jsonPath("$.title").value("Titre fixe"));
+    }
+
+    @Test
+    @DisplayName("annulation refusée (colis en transit) : FR par défaut, EN avec Accept-Language: en")
+    void cancelLocked_bothLanguages() throws Exception {
+        mvc.perform(getJson("/t/cancel-locked"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("cancel-locked"))
+                .andExpect(jsonPath("$.detail")
+                        .value("Le colis est en transit (ou le départ est dépassé) : annulation impossible."));
+        mvc.perform(getJson("/t/cancel-locked").header("Accept-Language", "en"))
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("cancel-locked"))
+                .andExpect(jsonPath("$.detail")
+                        .value("The parcel is in transit (or its departure date has passed): it can no longer be cancelled."));
+    }
+
+    @Test
+    @DisplayName("authentification requise : FR et EN, code et statut inchangés")
+    void tokenRequired_bothLanguages() throws Exception {
+        mvc.perform(getJson("/t/token-required").header("Accept-Language", "fr"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.detail").value("Un token Firebase valide est requis"));
+        mvc.perform(getJson("/t/token-required").header("Accept-Language", "en"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("unauthorized"))
+                .andExpect(jsonPath("$.detail").value("A valid sign-in token is required"));
+    }
+
+    @Test
+    @DisplayName("attente du destinataire : l'argument est inséré dans les deux langues, la propriété est conservée")
+    void waitNotElapsed_argumentAndProperty() throws Exception {
+        mvc.perform(getJson("/t/wait-not-elapsed"))
+                .andExpect(jsonPath("$.detail").value(
+                        "Attendez le destinataire au moins 30 minutes après votre arrivée avant de le signaler absent."))
+                .andExpect(jsonPath("$.minWaitMinutes").value(30));
+        mvc.perform(getJson("/t/wait-not-elapsed").header("Accept-Language", "en-US"))
+                .andExpect(jsonPath("$.detail").value(
+                        "Wait for the recipient for at least 30 minutes after your arrival before reporting them absent."))
+                .andExpect(jsonPath("$.minWaitMinutes").value(30));
+    }
+
+    @Test
+    @DisplayName("avis : fenêtre de notation expirée en FR et EN")
+    void ratingWindowExpired_bothLanguages() throws Exception {
+        mvc.perform(getJson("/t/rating-window"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.detail").value("La fenêtre de notation est expirée"))
+                .andExpect(jsonPath("$.title").value("Unprocessable"));
+        mvc.perform(getJson("/t/rating-window").header("Accept-Language", "en"))
+                .andExpect(jsonPath("$.detail").value("The rating window has expired"))
+                .andExpect(jsonPath("$.code").value("rating-window-expired"));
+    }
+
+    @Test
+    @DisplayName("KYC déjà vérifié (ResponseStatusException localisée) : détail et titre suivent la langue, type inchangé")
+    void kycAlreadyVerified_bothLanguages() throws Exception {
+        mvc.perform(getJson("/t/kyc-verified"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value("KYC déjà vérifié"))
+                .andExpect(jsonPath("$.title").value("KYC déjà vérifié"))
+                .andExpect(jsonPath("$.type").value("https://yadony.app/errors/generic"));
+        mvc.perform(getJson("/t/kyc-verified").header("Accept-Language", "en"))
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.detail").value("Identity already verified"))
+                .andExpect(jsonPath("$.type").value("https://yadony.app/errors/generic"));
+    }
+
+    @Test
+    @DisplayName("KYC utilisateur introuvable (YadonyNotFoundException localisée) : FR et EN ; l'ancienne forme reste telle quelle")
+    void kycUserNotFound_bothLanguages() throws Exception {
+        mvc.perform(getJson("/t/kyc-user"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.detail").value("Utilisateur introuvable"))
+                .andExpect(jsonPath("$.title").value("Not Found"));
+        mvc.perform(getJson("/t/kyc-user").header("Accept-Language", "en"))
+                .andExpect(jsonPath("$.detail").value("User not found"));
+        mvc.perform(getJson("/t/legacy-not-found").header("Accept-Language", "en"))
+                .andExpect(jsonPath("$.detail").value("Texte fixe"));
     }
 }

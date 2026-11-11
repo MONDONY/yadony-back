@@ -15,7 +15,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
+import com.yadony.api.common.LocalizedResponseStatusException;
 
 import java.time.Instant;
 import java.util.Map;
@@ -47,10 +47,10 @@ public class KycService {
     @Transactional
     public KycSessionResponse createSession(String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyNotFoundException("Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyNotFoundException.localized("problem.kyc.user-not-found"));
 
         if (user.getKycStatus() == KycStatus.VERIFIED) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "KYC déjà vérifié");
+            throw new LocalizedResponseStatusException(HttpStatus.CONFLICT, "problem.kyc.already-verified");
         }
 
         IdentityVerificationProvider provider = providers.forCreation();
@@ -88,8 +88,8 @@ public class KycService {
             if (refusedSessions.isRefused(session.sessionId())) {
                 log.error("Provider {} keeps serving refused session {} for user {}",
                         provider.kind(), session.sessionId(), user.getId());
-                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
-                        "Impossible de créer la session de vérification");
+                throw new LocalizedResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "problem.kyc.session-creation-failed");
             }
         }
 
@@ -135,7 +135,7 @@ public class KycService {
     @Transactional
     public void abandonSession(String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyNotFoundException("Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyNotFoundException.localized("problem.kyc.user-not-found"));
 
         if (user.getKycStatus() != KycStatus.PENDING) return;
 
@@ -157,7 +157,7 @@ public class KycService {
     @Transactional(readOnly = true)
     public KycStatusResponse getStatus(String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyNotFoundException("Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyNotFoundException.localized("problem.kyc.user-not-found"));
 
         Optional<KycVerificationEntity> kyc = kycRepository.findByUserId(user.getId());
 

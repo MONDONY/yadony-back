@@ -98,21 +98,21 @@ public class CancellationService {
         UserEntity traveler = findUserByFirebaseUid(firebaseUid);
 
         AnnouncementEntity announcement = announcementRepository.findById(request.announcementId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "announcement-not-found", "Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found",
+                        "problem.not-found.announcement"));
 
         if (!announcement.getTravelerId().equals(traveler.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas autorisé à annuler cette annonce");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden",
+                    "problem.forbidden.annuler-cette-annonce");
         }
 
         if (announcement.getStatus() == AnnouncementStatus.CANCELLED) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "already-cancelled", "Already Cancelled",
-                    "Ce trajet est déjà annulé");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "already-cancelled",
+                    "problem.already-cancelled.trip");
         }
         if (announcement.getStatus() != AnnouncementStatus.ACTIVE) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "invalid-status", "Invalid Status",
-                    "Seul un trajet ACTIVE peut être annulé");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "invalid-status",
+                    "problem.invalid-status.trip-active-only");
         }
 
         // FLUTTER-F9 : un expéditeur a accepté l'offre liée à ce trajet et paie. Annuler le
@@ -123,11 +123,8 @@ public class CancellationService {
         List<NegotiationThreadStatus> awaitingPayment = negotiationThreadRepository
                 .findAwaitingPaymentStatusesByTravelerAnnouncementId(announcement.getId());
         if (!awaitingPayment.isEmpty()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, OFFER_ACCEPTED_AWAITING_PAYMENT,
-                    "Offer Accepted Awaiting Payment",
-                    "Un expéditeur a accepté votre offre sur ce trajet et procède au paiement : "
-                            + "vous ne pouvez pas l'annuler pendant le délai de paiement.",
-                    Map.of("negotiationStatus", awaitingPayment.get(0).name()));
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, OFFER_ACCEPTED_AWAITING_PAYMENT,
+                    "problem.offer-accepted-awaiting-payment", Map.of("negotiationStatus", awaitingPayment.get(0).name()));
         }
 
         // Cancel the announcement
@@ -349,27 +346,26 @@ public class CancellationService {
     @Transactional(readOnly = true)
     public List<RematchSuggestionDto> getRematchSuggestions(UUID cancellationId, String firebaseUid) {
         CancellationEntity cancellation = cancellationRepository.findById(cancellationId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "cancellation-not-found", "Not Found", "Annulation introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "cancellation-not-found",
+                        "problem.not-found.cancellation"));
 
         UserEntity caller = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.UNAUTHORIZED, "unauthorized", "Unauthorized", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthorized",
+                        "problem.auth.user-not-found"));
 
         BidEntity bid = bidRepository.findById(cancellation.getBidId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Bid introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found",
+                        "problem.not-found.bid"));
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "announcement-not-found", "Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found",
+                        "problem.not-found.announcement"));
 
         boolean isParticipant = caller.getId().equals(bid.getSenderId())
                 || caller.getId().equals(announcement.getTravelerId())
                 || caller.getId().equals(cancellation.getCancelledBy());
         if (!isParticipant) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                    "not-participant", "Forbidden",
-                    "Vous n'êtes pas concerné par cette annulation");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "not-participant",
+                    "problem.forbidden.not-participant");
         }
 
         return buildRematchSuggestionDtos(cancellationId);
@@ -437,16 +433,16 @@ public class CancellationService {
         // passait le colis HANDED_OVER, et une déclaration ouverte restait sur un colis parti.
         bidRepository.lockForUpdate(bidId);
         BidEntity bid = bidRepository.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Bid introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found",
+                        "problem.not-found.bid"));
         // Seul le voyageur du trajet peut déclarer l'expéditeur absent : le rôle TRAVELER est
         // attribué à tout compte, il ne prouve pas la participation au bid.
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "announcement-not-found", "Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found",
+                        "problem.not-found.announcement"));
         if (!travelerId.equals(announcement.getTravelerId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas le voyageur de ce bid.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden",
+                    "problem.forbidden.not-traveler-of-bid");
         }
         if (bid.getStatus() != BidStatus.ACCEPTED) {
             throw new IllegalStateException("Le bid doit être en statut ACCEPTED.");
@@ -461,8 +457,8 @@ public class CancellationService {
         // Une ligne HANDOVER déjà tranchée (contestée, rejetée par l'admin, litige résolu)
         // violerait UNIQUE(bid_id, scope) : 409 lisible plutôt qu'une erreur SQL en 500.
         if (cancellationRepository.findByBidId(bidId).isPresent()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "noshow-already-reported",
-                    "No-show Already Reported", "Une déclaration d'absence existe déjà pour ce bid.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "noshow-already-reported",
+                    "problem.noshow-already-reported");
         }
         int contestationHours = commissionProperties.noShowContestationHours();
         CancellationEntity c = new CancellationEntity();
@@ -504,11 +500,11 @@ public class CancellationService {
     @Transactional
     public void reportTravelerNoShow(UUID bidId, UUID senderId) {
         BidEntity bid = bidRepository.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Bid introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found",
+                        "problem.not-found.bid"));
         if (!bid.getSenderId().equals(senderId)) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas l'expéditeur de ce bid.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden",
+                    "problem.forbidden.not-sender-of-bid");
         }
         if (bid.getStatus() != BidStatus.ACCEPTED) {
             throw new IllegalStateException("Le bid doit être en statut ACCEPTED.");
@@ -530,12 +526,12 @@ public class CancellationService {
     @Transactional
     public CancellationEntity reportDeliveryNoShow(UUID bidId, UUID travelerId, boolean contactConfirmed) {
         BidEntity bid = bidRepository.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Bid introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found",
+                        "problem.not-found.bid"));
         AnnouncementEntity announcement = assertDeliveryReportable(bid);
         if (!announcement.getTravelerId().equals(travelerId)) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas le voyageur de ce bid.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden",
+                    "problem.forbidden.not-traveler-of-bid");
         }
 
         DeliveryNoShowProcedureService.ReportPreconditions procedure =
@@ -568,11 +564,11 @@ public class CancellationService {
     @Transactional
     public CancellationEntity reportTravelerDeliveryNoShow(UUID bidId, UUID senderId) {
         BidEntity bid = bidRepository.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Bid introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found",
+                        "problem.not-found.bid"));
         if (!bid.getSenderId().equals(senderId)) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas l'expéditeur de ce bid.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden",
+                    "problem.forbidden.not-sender-of-bid");
         }
         AnnouncementEntity announcement = assertDeliveryReportable(bid);
 
@@ -609,28 +605,27 @@ public class CancellationService {
         if (bid.getStatus() != BidStatus.HANDED_OVER
                 && bid.getStatus() != BidStatus.IN_TRANSIT
                 && bid.getStatus() != BidStatus.ARRIVED) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "bid-not-in-transit", "Invalid Status",
-                    "Le colis doit avoir été récupéré par le voyageur.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "bid-not-in-transit",
+                    "problem.bid-not-in-transit");
         }
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "announcement-not-found", "Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found",
+                        "problem.not-found.announcement"));
         if (announcement.getDepartureDate() == null
                 || !announcement.getDepartureDate().isBefore(LocalDate.now().plusDays(1))) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "trip-not-departed", "Invalid Status",
-                    "Le trajet n'est pas encore parti.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "trip-not-departed",
+                    "problem.trip-not-departed");
         }
         if (cancellationRepository.existsByBidIdAndScopeAndNoShowStatusIn(bid.getId(), CancellationScope.DELIVERY,
                 List.of(CancellationStatus.PENDING_CONFIRMATION, CancellationStatus.CONTESTED))) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "delivery-noshow-in-progress",
-                    "Already In Progress",
-                    "Un signalement d'absence à la livraison est déjà en cours pour ce bid.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "delivery-noshow-in-progress",
+                    "problem.delivery-noshow-in-progress");
         }
         // Signalement DELIVERY déjà tranché (confirmé, rejeté, résolu) : UNIQUE(bid_id, scope)
         // interdit une seconde ligne, 409 lisible plutôt qu'une erreur SQL en 500.
         if (cancellationRepository.findByBidIdAndScope(bid.getId(), CancellationScope.DELIVERY).isPresent()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "delivery-noshow-already-decided",
-                    "Already Decided", "Un signalement d'absence à la livraison a déjà été tranché pour ce bid.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "delivery-noshow-already-decided",
+                    "problem.delivery-noshow-already-decided");
         }
         return announcement;
     }
@@ -642,13 +637,12 @@ public class CancellationService {
     @Transactional
     public void contestDeliveryNoShow(UUID bidId, UUID callerId) {
         CancellationEntity c = cancellationRepository.findByBidIdAndScope(bidId, CancellationScope.DELIVERY)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "cancellation-not-found", "Not Found",
-                        "Aucun signalement d'absence à la livraison pour ce bid"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "cancellation-not-found",
+                        "problem.not-found.delivery-noshow-bid"));
         if (c.getContestationDeadline() == null
                 || OffsetDateTime.now().isAfter(c.getContestationDeadline())) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "contestation-deadline-passed",
-                    "Contestation Deadline Passed", "Le délai de contestation est dépassé.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "contestation-deadline-passed",
+                    "problem.contestation-deadline-passed");
         }
 
         BidEntity bid = bidRepository.findById(bidId).orElseThrow();
@@ -657,13 +651,13 @@ public class CancellationService {
         boolean isRecipientNoShow = DeliveryNoShowTypes.isRecipientNoShow(c.getReason());
         if (isRecipientNoShow) {
             if (!bid.getSenderId().equals(callerId)) {
-                throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                        "Vous n'êtes pas l'expéditeur de ce bid.");
+                throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden",
+                        "problem.forbidden.not-sender-of-bid");
             }
         } else {
             if (!announcement.getTravelerId().equals(callerId)) {
-                throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                        "Vous n'êtes pas le voyageur de ce bid.");
+                throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden",
+                        "problem.forbidden.not-traveler-of-bid");
             }
         }
 
@@ -689,8 +683,8 @@ public class CancellationService {
     public void cancelAfterHandover(String firebaseUid, UUID bidId) {
         UserEntity caller = findUserByFirebaseUid(firebaseUid);
         BidEntity bid = bidRepository.findByIdForUpdate(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Bid introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found",
+                        "problem.not-found.bid"));
 
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
                 .orElse(null);
@@ -700,13 +694,13 @@ public class CancellationService {
                 && announcement.getTravelerId() != null
                 && announcement.getTravelerId().equals(caller.getId());
         if (!isSender && !isTraveler) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas partie prenante de ce bid.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden",
+                    "problem.forbidden.not-party-of-bid");
         }
 
         if (bid.getStatus() != BidStatus.HANDED_OVER) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "invalid-status", "Invalid Status",
-                    "L'annulation après remise n'est possible que sur un colis remis (HANDED_OVER).");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "invalid-status",
+                    "problem.invalid-status.after-handover");
         }
 
         CancellationGuard.assertCancellable(bid, announcement);
@@ -721,8 +715,8 @@ public class CancellationService {
                             && existing.getNoShowStatus() == CancellationStatus.RESOLVED) {
                         return existing;
                     }
-                    throw new YadonyBusinessException(HttpStatus.CONFLICT, "already-cancelled",
-                            "Already Cancelled", "Une annulation existe déjà pour ce bid.");
+                    throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "already-cancelled",
+                            "problem.already-cancelled.bid");
                 })
                 .orElse(null);
 
@@ -842,39 +836,39 @@ public class CancellationService {
     public ReturnCodeResponse confirmReturn(String firebaseUid, UUID bidId, String code) {
         UserEntity caller = findUserByFirebaseUid(firebaseUid);
         BidEntity bid = bidRepository.findByIdForUpdate(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Bid introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found",
+                        "problem.not-found.bid"));
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "announcement-not-found", "Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found",
+                        "problem.not-found.announcement"));
 
         if (announcement.getTravelerId() == null
                 || !announcement.getTravelerId().equals(caller.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Seul le voyageur peut confirmer le retour du colis.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden",
+                    "problem.forbidden.return-traveler-only");
         }
         if (bid.getReturnCode() == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "code-not-generated",
-                    "Code Not Generated", "Aucun retour de colis en attente pour ce bid.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "code-not-generated",
+                    "problem.code-not-generated");
         }
         if (bid.getReturnedAt() != null) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "already-returned",
-                    "Already Returned", "Le colis a déjà été marqué comme rendu.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "already-returned",
+                    "problem.already-returned");
         }
         if (bid.getReturnCodeExpiry() != null
                 && LocalDateTime.now().isAfter(bid.getReturnCodeExpiry())) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "code-expired",
-                    "Code Expired", "Le code de retour a expiré — contactez le support.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "code-expired",
+                    "problem.code-expired");
         }
         if (bid.getReturnCodeAttempts() >= MAX_RETURN_CODE_ATTEMPTS) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "too-many-attempts",
-                    "Too Many Attempts", "Trop de tentatives — contactez le support.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "too-many-attempts",
+                    "problem.too-many-attempts");
         }
         if (!bid.getReturnCode().equals(code)) {
             bid.setReturnCodeAttempts(bid.getReturnCodeAttempts() + 1);
             bidRepository.save(bid);
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "code-incorrect",
-                    "Code Incorrect", "Code de retour incorrect.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "code-incorrect",
+                    "problem.code-incorrect");
         }
 
         bid.setReturnedAt(LocalDateTime.now());
@@ -896,11 +890,11 @@ public class CancellationService {
     public ReturnCodeResponse getReturnCode(String firebaseUid, UUID bidId) {
         UserEntity caller = findUserByFirebaseUid(firebaseUid);
         BidEntity bid = bidRepository.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Bid introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found",
+                        "problem.not-found.bid"));
         if (!bid.getSenderId().equals(caller.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Seul l'expéditeur peut consulter le code de retour.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden",
+                    "problem.forbidden.return-code-sender-only");
         }
         return new ReturnCodeResponse(bid.getReturnCode(), bid.getReturnDeadline(), bid.getReturnedAt());
     }
@@ -921,14 +915,13 @@ public class CancellationService {
      */
     private Optional<CancellationEntity> applySenderNoShowConfirmation(UUID bidId, UUID actorId) {
         CancellationEntity c = cancellationRepository.findByBidId(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "cancellation-not-found", "Not Found",
-                        "Aucune annulation en attente pour ce bid"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "cancellation-not-found",
+                        "problem.not-found.pending-cancellation"));
         // Déclaration déjà levée (par le scan de remise ou l'équipe), contestée ou confirmée : 409,
         // comme la contestation. Un 200 sans effet faisait afficher « absence confirmée » par l'app.
         if (c.getNoShowStatus() != CancellationStatus.PENDING_CONFIRMATION) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "noshow-already-decided",
-                    "No-show Already Decided", "Cette déclaration d'absence est déjà tranchée");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "noshow-already-decided",
+                    "problem.noshow-already-decided");
         }
 
         Optional<BidEntity> bid = bidRepository.findById(bidId);
@@ -954,11 +947,11 @@ public class CancellationService {
     public void confirmSenderNoShow(UUID bidId, UUID senderId) {
         bidRepository.lockForUpdate(bidId);
         BidEntity bid = bidRepository.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Bid introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found",
+                        "problem.not-found.bid"));
         if (!bid.getSenderId().equals(senderId)) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas l'expéditeur de ce bid.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden",
+                    "problem.forbidden.not-sender-of-bid");
         }
         applySenderNoShowConfirmation(bidId, senderId);
     }
@@ -974,20 +967,19 @@ public class CancellationService {
     public void contestSenderNoShow(UUID bidId, UUID senderId) {
         bidRepository.lockForUpdate(bidId);
         BidEntity bid = bidRepository.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Bid introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found",
+                        "problem.not-found.bid"));
         if (!bid.getSenderId().equals(senderId)) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas l'expéditeur de ce bid.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden",
+                    "problem.forbidden.not-sender-of-bid");
         }
 
         CancellationEntity c = cancellationRepository.findByBidId(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "cancellation-not-found", "Not Found",
-                        "Aucune déclaration d'absence pour ce bid"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "cancellation-not-found",
+                        "problem.not-found.noshow-bid"));
         if (c.getNoShowStatus() != CancellationStatus.PENDING_CONFIRMATION) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "noshow-already-decided",
-                    "No-show Already Decided", "Cette déclaration d'absence est déjà tranchée");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "noshow-already-decided",
+                    "problem.noshow-already-decided");
         }
         if (c.getContestationDeadline() == null
                 || OffsetDateTime.now().isAfter(c.getContestationDeadline())) {
@@ -1005,7 +997,7 @@ public class CancellationService {
 
     private UserEntity findUserByFirebaseUid(String firebaseUid) {
         return userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found",
+                        "problem.not-found.user"));
     }
 }

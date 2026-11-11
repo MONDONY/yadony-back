@@ -36,7 +36,10 @@ class MessagesBundleTest {
             "tracking.step.payment-escrowed",
             "tracking.step.accepted",
             "tracking.step.payment-secured",
-            "tracking.step.departed"
+            "tracking.step.departed",
+            // Messages de retour de colis repris mot pour mot (le français existant ne change pas).
+            "problem.code-expired.detail",
+            "problem.too-many-attempts.detail"
     );
 
     private static final Pattern PLACEHOLDER = Pattern.compile("\\{(\\d+)[,}]?");
