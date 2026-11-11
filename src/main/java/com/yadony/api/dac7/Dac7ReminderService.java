@@ -5,7 +5,10 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.dac7.events.Dac7TaxInfoRequestedEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionOperations;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -42,11 +45,23 @@ public class Dac7ReminderService {
     private final Dac7ReminderProperties properties;
     private final ApplicationEventPublisher events;
     private final Dac7CollectionPolicy collection;
+    private final TransactionOperations writes;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public Dac7ReminderService(UserRepository users, Dac7SolicitationPolicy solicitation,
                                Dac7DueDiligenceService diligence, Dac7AdminReadModel reads,
                                Dac7ReminderProperties properties, ApplicationEventPublisher events,
-                               Dac7CollectionPolicy collection) {
+                               Dac7CollectionPolicy collection, PlatformTransactionManager transactionManager) {
+        this(users, solicitation, diligence, reads, properties, events, collection,
+                new TransactionTemplate(transactionManager));
+    }
+
+    /** Tests : transaction fournie (ou {@link TransactionOperations#withoutTransaction()}). */
+    Dac7ReminderService(UserRepository users, Dac7SolicitationPolicy solicitation, Dac7DueDiligenceService diligence,
+                        Dac7AdminReadModel reads, Dac7ReminderProperties properties,
+                        ApplicationEventPublisher events, Dac7CollectionPolicy collection,
+                        TransactionOperations writes) {
+        this.writes = writes;
         this.users = users;
         this.solicitation = solicitation;
         this.diligence = diligence;
@@ -70,15 +85,24 @@ public class Dac7ReminderService {
      * </ul>
      * Dans tous les cas, la preuve Didit est inscrite au registre si des valeurs retenues viennent de la pièce. Même
      * règle d'un message par 24 heures que les rappels.
+     *
+     * <p>La pièce vérifiée est relue chez le prestataire AVANT la transaction d'écriture, sans tenir de connexion JDBC
+     * (YADONY-BACK-STAGING-W).
      */
-    @Transactional
     public Outcome requestAtAcceptance(UUID userId, Instant now) {
         Optional<UserEntity> found = users.findById(userId);
         if (found.isEmpty() || found.get().getDeletedAt() != null) {
             return Outcome.NOT_FOUND;
         }
-        UserEntity user = found.get();
-        Dac7Collection evaluated = collection.evaluate(user);
+        Dac7Collection evaluated = collection.evaluate(found.get());
+        return writes.execute(status -> recordAtAcceptance(userId, evaluated, now));
+    }
+
+    private Outcome recordAtAcceptance(UUID userId, Dac7Collection evaluated, Instant now) {
+        UserEntity user = users.findById(userId).orElse(null);
+        if (user == null) {
+            return Outcome.NOT_FOUND;
+        }
         diligence.recordVerifiedSource(userId, evaluated);
         switch (evaluated.status()) {
             case RESIDENCE_INCONNUE -> {

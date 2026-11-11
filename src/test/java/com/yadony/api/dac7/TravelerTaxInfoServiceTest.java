@@ -45,7 +45,8 @@ class TravelerTaxInfoServiceTest {
     private final Dac7VerifiedIdentityPort port = mock(Dac7VerifiedIdentityPort.class);
     private final Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
     private final TravelerTaxInfoService service = new TravelerTaxInfoService(users, audit, diligence, policy,
-            new Dac7SolicitationPolicy(policy, readModel), new Dac7CollectionPolicy(policy, port, clock), clock);
+            new Dac7SolicitationPolicy(policy, readModel), new Dac7CollectionPolicy(policy, port, clock), clock,
+            org.springframework.transaction.support.TransactionOperations.withoutTransaction());
     private UserEntity user;
 
     @BeforeEach
@@ -473,5 +474,35 @@ class TravelerTaxInfoServiceTest {
         assertThat(new com.yadony.api.dac7.dto.TaxInfoResponse.TaxAddress("5 avenue Foch", null, "75116", "Paris",
                 "FR").toString()).doesNotContain("Foch");
         assertThat(new Dac7VerifiedIdentity("Awa", "Diallo", BIRTH, null).verificationRef()).isNull();
+    }
+
+    @Test
+    void pieceVerifieeRelueHorsTransaction() {
+        java.util.concurrent.atomic.AtomicBoolean inTransaction = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.List<Boolean> lookupsInTransaction = new java.util.ArrayList<>();
+        when(port.verifiedIdentity(user.getId())).thenAnswer(i -> {
+            lookupsInTransaction.add(inTransaction.get());
+            return Dac7VerifiedIdentityPort.Lookup.none();
+        });
+        org.springframework.transaction.support.TransactionOperations tracking =
+                new org.springframework.transaction.support.TransactionOperations() {
+                    @Override
+                    public <T> T execute(org.springframework.transaction.support.TransactionCallback<T> action) {
+                        inTransaction.set(true);
+                        try {
+                            return action.doInTransaction(null);
+                        } finally {
+                            inTransaction.set(false);
+                        }
+                    }
+                };
+        TravelerTaxInfoService tracked = new TravelerTaxInfoService(users, audit, diligence, policy,
+                new Dac7SolicitationPolicy(policy, readModel), new Dac7CollectionPolicy(policy, port, clock), clock,
+                tracking);
+
+        tracked.set(UID, new TaxInfoRequest("1234567890123", "FR", null));
+        tracked.get(UID);
+
+        assertThat(lookupsInTransaction).containsExactly(false, false);
     }
 }

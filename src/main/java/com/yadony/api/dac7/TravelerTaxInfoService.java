@@ -6,9 +6,12 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.dac7.dto.TaxInfoRequest;
 import com.yadony.api.dac7.dto.TaxInfoResponse;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionOperations;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -33,6 +36,9 @@ import java.util.regex.Pattern;
  * {@code tax-info-read-only}), sauf l'adresse, qu'une saisie remplace (« Ce n'est plus mon adresse »). Nom, date de
  * naissance et adresse saisis vont dans les colonnes du profil (mêmes données, une seule version) ; le lieu de
  * naissance, demandé seulement sans NIF, est chiffré. Jamais bloquant : rien d'autre ne dépend de cette saisie.
+ *
+ * <p>Transactions : la pièce vérifiée est relue chez le prestataire AVANT la transaction d'écriture, jamais en tenant une
+ * connexion JDBC (YADONY-BACK-STAGING-W, {@code open-in-view: false}) ; la lecture n'a pas de transaction englobante.
  *
  * <p>Confidentialité : le NIF, le pays d'émission, le numéro de TVA et le lieu de naissance sont chiffrés au repos ;
  * aucune valeur ne va dans l'audit, un journal, le registre, une exception ni une réponse en clair (le NIF et la TVA
@@ -65,10 +71,21 @@ public class TravelerTaxInfoService {
     private final Dac7SolicitationPolicy solicitation;
     private final Dac7CollectionPolicy collection;
     private final Clock clock;
+    private final TransactionOperations writes;
 
+    @Autowired
     public TravelerTaxInfoService(UserRepository users, AuditService audit, Dac7DueDiligenceService diligence,
                                   Dac7ResidencyPolicy residency, Dac7SolicitationPolicy solicitation,
-                                  Dac7CollectionPolicy collection, Clock clock) {
+                                  Dac7CollectionPolicy collection, Clock clock,
+                                  PlatformTransactionManager transactionManager) {
+        this(users, audit, diligence, residency, solicitation, collection, clock,
+                new TransactionTemplate(transactionManager));
+    }
+
+    /** Tests : transaction fournie (ou {@link TransactionOperations#withoutTransaction()}). */
+    TravelerTaxInfoService(UserRepository users, AuditService audit, Dac7DueDiligenceService diligence,
+                           Dac7ResidencyPolicy residency, Dac7SolicitationPolicy solicitation,
+                           Dac7CollectionPolicy collection, Clock clock, TransactionOperations writes) {
         this.users = users;
         this.audit = audit;
         this.diligence = diligence;
@@ -76,9 +93,10 @@ public class TravelerTaxInfoService {
         this.solicitation = solicitation;
         this.collection = collection;
         this.clock = clock;
+        this.writes = writes;
     }
 
-    @Transactional(readOnly = true)
+    /** Sans transaction englobante : la pièce vérifiée peut être relue chez le prestataire. */
     public TaxInfoResponse get(String firebaseUid) {
         UserEntity user = load(firebaseUid);
         return toResponse(user, collection.evaluate(user));
@@ -87,16 +105,21 @@ public class TravelerTaxInfoService {
     /**
      * Enregistre les informations envoyées (seulement celles-là). Idempotent : les mêmes valeurs (après normalisation)
      * une seconde fois (double clic, nouvel envoi) ne réécrivent rien, n'auditent rien et n'ajoutent rien au registre.
+     * La pièce vérifiée est relue d'abord, hors transaction ; contrôles et écritures suivent dans une seule transaction.
      */
-    @Transactional
     public TaxInfoResponse set(String firebaseUid, TaxInfoRequest request) {
-        UserEntity user = load(firebaseUid);
-        // Les contrôles passent avant toute écriture : une saisie refusée ne laisse rien.
         // Par HTTP, un PUT sans corps n'arrive jamais ici : Spring répond 400 malformed-request avant. Garde pour les
         // appels internes.
         if (request == null) {
             throw invalid("taxIdentificationNumber", "Le numéro d'identification fiscale est obligatoire.");
         }
+        Dac7VerifiedIdentityPort.Lookup lookup = collection.lookup(load(firebaseUid));
+        return writes.execute(status -> write(firebaseUid, request, lookup));
+    }
+
+    private TaxInfoResponse write(String firebaseUid, TaxInfoRequest request, Dac7VerifiedIdentityPort.Lookup lookup) {
+        UserEntity user = load(firebaseUid);
+        // Les contrôles passent avant toute écriture : une saisie refusée ne laisse rien (la transaction est annulée).
         boolean tinGiven = !blank(request.taxIdentificationNumber());
         boolean nothingElse = !request.hasIdentityFields() && request.vatNumber() == null;
         if (!tinGiven && (nothingElse || !blank(request.taxCountry()))) {
@@ -114,7 +137,6 @@ public class TravelerTaxInfoService {
             vat = identifier(request.vatNumber(), "vatNumber", false);
         }
 
-        Dac7VerifiedIdentityPort.Lookup lookup = collection.lookup(user);
         Dac7Collection before = collection.evaluate(user, lookup);
         Identity identity = request.hasIdentityFields() ? identity(request, before, nif) : null;
 

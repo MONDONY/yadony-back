@@ -36,7 +36,8 @@ class Dac7ReminderServiceTest {
     private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
     private final Dac7CollectionPolicy collection = mock(Dac7CollectionPolicy.class);
     private final Dac7ReminderService service = new Dac7ReminderService(users, solicitation, diligence, reads,
-            Dac7ReminderProperties.defaults(true), events, collection);
+            Dac7ReminderProperties.defaults(true), events, collection,
+            org.springframework.transaction.support.TransactionOperations.withoutTransaction());
     private UserEntity user;
 
     @BeforeEach
@@ -244,5 +245,41 @@ class Dac7ReminderServiceTest {
         user.setDeletedAt(java.time.LocalDateTime.now());
         assertThat(service.requestAtAcceptance(user.getId(), NOW)).isEqualTo(Dac7ReminderService.Outcome.NOT_FOUND);
         verifyNoInteractions(collection);
+    }
+
+    @Test
+    @DisplayName("acceptation : la collecte (relecture Didit) est évaluée avant la transaction d'écriture")
+    void acceptation_evaluationHorsTransaction() {
+        java.util.concurrent.atomic.AtomicBoolean inTransaction = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.List<Boolean> evaluationsInTransaction = new java.util.ArrayList<>();
+        when(collection.evaluate(user)).thenAnswer(i -> {
+            evaluationsInTransaction.add(inTransaction.get());
+            return Dac7Collection.withoutIdentity(Dac7CollectionStatus.COMPLETE, java.util.List.of(), "FR");
+        });
+        Dac7ReminderService tracked = new Dac7ReminderService(users, solicitation, diligence, reads,
+                Dac7ReminderProperties.defaults(true), events, collection,
+                new org.springframework.transaction.support.TransactionOperations() {
+                    @Override
+                    public <T> T execute(org.springframework.transaction.support.TransactionCallback<T> action) {
+                        inTransaction.set(true);
+                        try {
+                            return action.doInTransaction(null);
+                        } finally {
+                            inTransaction.set(false);
+                        }
+                    }
+                });
+        assertThat(tracked.requestAtAcceptance(user.getId(), NOW)).isEqualTo(Dac7ReminderService.Outcome.NOT_DUE);
+        assertThat(evaluationsInTransaction).containsExactly(false);
+    }
+
+    @Test
+    @DisplayName("acceptation : compte disparu entre la lecture et l'écriture, rien")
+    void acceptation_compteDisparuAvantEcriture() {
+        when(collection.evaluate(user)).thenReturn(Dac7Collection.withoutIdentity(Dac7CollectionStatus.INFO_REQUIRED,
+                java.util.List.of(Dac7CollectionField.TAX_IDENTIFICATION_NUMBER), "FR"));
+        when(users.findById(user.getId())).thenReturn(Optional.of(user), Optional.empty());
+        assertThat(service.requestAtAcceptance(user.getId(), NOW)).isEqualTo(Dac7ReminderService.Outcome.NOT_FOUND);
+        verify(events, never()).publishEvent(any());
     }
 }
