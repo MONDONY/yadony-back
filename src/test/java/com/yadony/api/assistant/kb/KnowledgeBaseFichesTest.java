@@ -75,15 +75,44 @@ class KnowledgeBaseFichesTest {
     }
 
     @Test
-    void laFicheStatutVoyageurExisteEnFrancaisEtEnAnglaisSansRouteNiEcran() {
+    void laFicheStatutVoyageurExisteEnFrancaisEtEnAnglaisAvecLaRouteGpProSansEcran() {
         KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
         for (String locale : List.of("fr", "en")) {
             KbArticle fiche = corpus.articles(locale).stream()
                     .filter(x -> x.id().equals("statut-voyageur")).findFirst().orElseThrow();
-            assertThat(fiche.routes()).as(locale).isEmpty();
+            assertThat(fiche.routes()).as(locale).extracting(KbRoute::path).containsExactly("/profile/gp-pro");
             assertThat(fiche.screens()).as(locale).isEmpty();
             assertThat(fiche.body().length()).as(locale).isBetween(200, 2000);
             assertThat(fiche.body()).doesNotContain("\u2014");
+        }
+    }
+
+    @Test
+    void redevenirParticulier_listeBlancheContientGpPro_memeIdFrEn_etFicheLaPlusPertinente() {
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        assertThat(corpus.articles("en")).extracting(KbArticle::id)
+                .containsExactlyInAnyOrderElementsOf(corpus.articles("fr").stream().map(KbArticle::id).toList());
+        KnowledgeBase kb = productionKb();
+        assertThat(kb.routeWhitelist()).contains("/profile/gp-pro");
+        for (String question : List.of("Comment redevenir particulier ?", "Comment quitter GP Pro ?")) {
+            List<KbHit> hits = kb.search("fr", question, null, 4);
+            assertThat(hits).as(question).isNotEmpty();
+            assertThat(hits).as(question).anySatisfy(h -> assertThat(h.article().id()).isEqualTo("statut-voyageur"));
+            assertThat(hits.get(0).article().routes()).as(question).extracting(KbRoute::path).contains("/profile/gp-pro");
+        }
+        List<KbHit> en = kb.search("en", "How do I become an individual again?", null, 4);
+        assertThat(en).isNotEmpty();
+        assertThat(en.get(0).article().routes()).extracting(KbRoute::path).contains("/profile/gp-pro");
+    }
+
+    @Test
+    void laLimiteMensuelle_precise_queLesBrouillonsRestentEnregistrables() {
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        for (String id : List.of("statut-voyageur")) {
+            String fr = corpus.articles("fr").stream().filter(x -> x.id().equals(id)).findFirst().orElseThrow().body();
+            String en = corpus.articles("en").stream().filter(x -> x.id().equals(id)).findFirst().orElseThrow().body();
+            assertThat(fr).as("fr/" + id).contains("brouillon").contains("Publier").doesNotContain("\u2014");
+            assertThat(en).as("en/" + id).containsIgnoringCase("draft").contains("Publish").doesNotContain("\u2014");
         }
     }
 
