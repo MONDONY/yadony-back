@@ -118,6 +118,8 @@ class Dac7ExportPostgresIT {
         payment(trip(NO_TAX, "EUR"), "EUR", "40.00", "2.00", "2026-03-01T10:00:00Z");
         payment(trip(IVORIAN, "EUR"), "EUR", "70.00", "3.50", "2026-03-01T10:00:00Z");
         payment(trip(MULTI, "USD"), "USD", "30.00", "1.50", "2026-08-04T10:00:00Z");
+        // Deux devises dans l'année : tout est déclaré en euros, et le taux du dollar manque (EUR_INCOMPLETE).
+        payment(trip(MULTI, "EUR"), "EUR", "10.00", "0.50", "2026-08-05T10:00:00Z");
         // Samedi 09/05/2026 : jour non publié par la BCE, taux du vendredi 08/05 (RATE_DATE_ESTIMATED).
         payment(trip(NO_TAX, "USD"), "USD", "21.80", "1.09", "2026-05-09T10:00:00Z");
         // Taux BCE du 04/05/2026 : 1,08 USD pour 1 € ; aucun taux autour du 03/08/2026.
@@ -201,10 +203,13 @@ class Dac7ExportPostgresIT {
         assertThat(complete.identityStatus()).isEqualTo(Dac7IdentityStatus.COMPLETE);
         assertThat(complete.exclusions()).isEmpty();
 
+        // Dollars seuls et aucun taux : euros indicatifs incomplets, mais déclaré en USD sans conversion (§ 280).
         Seller noRate = seller(d, USD_NO_RATE);
         assertThat(noRate.eurComplete()).isFalse();
-        assertThat(noRate.exclusions()).contains(Dac7DeclarationService.EUR_INCOMPLETE);
-        assertThat(d.report().anomalies()).anyMatch(a -> a.type() == Dac7Report.AnomalyType.EXCHANGE_RATE_MISSING
+        assertThat(noRate.currency()).isEqualTo("USD");
+        assertThat(noRate.declaredComplete()).isTrue();
+        assertThat(noRate.exclusions()).doesNotContain(Dac7DeclarationService.EUR_INCOMPLETE);
+        assertThat(d.report().anomalies()).noneMatch(a -> a.type() == Dac7Report.AnomalyType.EXCHANGE_RATE_MISSING
                 && USD_NO_RATE.equals(a.travelerId()));
 
         assertThat(seller(d, NO_TAX).exclusions()).containsExactly(Dac7DeclarationService.TAX_INFO_MISSING);
@@ -251,8 +256,9 @@ class Dac7ExportPostgresIT {
 
         Dac7ExportService.ExportFile file = exports.export(2026, "PARTIAL", null, ADMIN);
 
-        assertThat(file.sellers()).isEqualTo(1);
-        assertThat(file.excluded()).isEqualTo(3);
+        // USD_NO_RATE (dollars seuls, aucun taux) part en USD sans conversion ; les trois autres restent exclus.
+        assertThat(file.sellers()).isEqualTo(2);
+        assertThat(file.excluded()).isEqualTo(2);
         assertThat(file.sequence()).isZero();
         assertThat(file.fileName()).isEqualTo("DPIDAC7_2026_123456789_000_20270115100000.xml");
         Dac7XsdValidator.validate(file.content());
@@ -260,6 +266,8 @@ class Dac7ExportPostgresIT {
         assertThat(xml).contains("<dpi:TIN issuedBy=\"FR\">" + NIF + "</dpi:TIN>")
                 .contains("<dpi:ConsQ1 currCode=\"EUR\">95</dpi:ConsQ1>")
                 .contains("<dpi:ConsQ2 currCode=\"EUR\">95</dpi:ConsQ2>")
+                .contains("<dpi:ConsQ3 currCode=\"USD\">48</dpi:ConsQ3>")
+                .contains("<dpi:FeesQ3 currCode=\"USD\">0</dpi:FeesQ3>")
                 .contains("<dpi:NumbQ4>1</dpi:NumbQ4>")
                 .doesNotContain(USD_NO_RATE.toString())
                 .contains("OP_2026_123456789_" + COMPLETE.toString().replace("-", "") + "_000");
@@ -273,7 +281,7 @@ class Dac7ExportPostgresIT {
         // Généré mais pas déposé : personne n'est « déjà exporté », le PARTIAL suivant reprend le voyageur (ordre 001).
         assertThat(reads.exportedTravelers(2026)).isEmpty();
         Dac7ExportService.ExportFile second = exports.export(2026, "PARTIAL", null, ADMIN);
-        assertThat(second.sellers()).isEqualTo(1);
+        assertThat(second.sellers()).isEqualTo(2);
         assertThat(second.sequence()).isEqualTo(1);
 
         // Dépôt confirmé du premier : idempotent, audité une fois.
@@ -281,7 +289,7 @@ class Dac7ExportPostgresIT {
         exports.markDeposited(file.runId(), ADMIN);
         org.mockito.Mockito.verify(audit, org.mockito.Mockito.times(1)).log(eq("DAC7_EXPORT"), eq(file.runId()),
                 eq("DAC7_EXPORT_MARKED_DEPOSITED"), eq(ADMIN), any());
-        assertThat(reads.exportedTravelers(2026)).containsExactly(COMPLETE);
+        assertThat(reads.exportedTravelers(2026)).containsExactlyInAnyOrder(COMPLETE, USD_NO_RATE);
         assertThatThrownBy(() -> exports.markDeposited(UUID.randomUUID(), ADMIN))
                 .isInstanceOfSatisfying(YadonyBusinessException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo("dac7-export-run-not-found"));
@@ -301,7 +309,9 @@ class Dac7ExportPostgresIT {
                     .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
                         assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
                         assertThat(e.getErrorCode()).isEqualTo("dac7-already-deposited-conflict");
-                        assertThat(e.getProperties()).containsEntry("travelerIds", List.of(COMPLETE.toString()));
+                        assertThat(((List<?>) e.getProperties().get("travelerIds")).stream().map(Object::toString).toList())
+                                .containsExactlyInAnyOrder(
+                                COMPLETE.toString(), USD_NO_RATE.toString());
                     });
         }
         // FULL après le dépôt : le déposé n'est ni redéclaré ni cause de blocage ; seuls les autres bloquent.
@@ -310,7 +320,8 @@ class Dac7ExportPostgresIT {
                     assertThat(e.getErrorCode()).isEqualTo("dac7-export-blocked");
                     assertThat(e.getProperties()).containsEntry("blockers",
                             List.of("IDENTITY_INCOMPLETE", "TAX_INFO_MISSING", "EUR_INCOMPLETE"));
-                    assertThat(String.valueOf(e.getProperties().get("travelerIds"))).doesNotContain(COMPLETE.toString());
+                    assertThat(String.valueOf(e.getProperties().get("travelerIds"))).doesNotContain(COMPLETE.toString())
+                            .doesNotContain(USD_NO_RATE.toString());
                 });
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM dac7_export_runs WHERE reporting_year = 2026",
                 Integer.class)).isEqualTo(2);

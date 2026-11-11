@@ -19,9 +19,10 @@ import java.util.UUID;
  * @param identityReviewTravelers     voyageurs déclarables dont l'identité est incomplète (compte supprimé, donnée
  *                                    manquante) : à revoir à la main, jamais déclarés en silence
  * @param refundsToReconcile          remboursements à l'expéditeur datés de CETTE année et liés à une opération versée
- *                                    au voyageur (avant ou après le versement) : JAMAIS déduits, la contrepartie reste
- *                                    le montant versé ; chacun une seule fois, dans le rapport de son année, à
- *                                    réconcilier à la main (rectification éventuelle de l'année de l'opération)
+ *                                    au voyageur, chacun une seule fois, dans le rapport de son année, avec son
+ *                                    traitement ({@link RefundTreatment}) : déduit (même année, argent repris au
+ *                                    voyageur), année de l'opération à rectifier (année suivante, rectificative hors
+ *                                    périmètre) ou rien (le voyageur garde l'argent)
  * @param pendingSplits               partages admin décidés dont le versement au voyageur n'est pas terminé : non
  *                                    comptés tant que le transfert n'est pas fait
  * @param unknownResidenceTravelers   voyageurs payés dont le pays de résidence est absent ou invalide (à obtenir)
@@ -35,9 +36,20 @@ public record Dac7Report(int year, List<TravelerReport> travelers, List<Traveler
                          List<UUID> nonDeclarableTravelers, List<String> invalidPartnerJurisdictions,
                          List<Anomaly> anomalies) {
 
-    /** Un voyageur déclarable : toujours quatre trimestres (1 à 4), vides compris. */
+    /**
+     * Un voyageur déclarable : toujours quatre trimestres (1 à 4), vides compris.
+     *
+     * @param currency devise des montants déclarés ({@link QuarterReport#net}) : la devise des paiements, sans
+     *                 conversion, quand le voyageur n'a reçu qu'une devise dans l'année (BOI-INT-AEA-30-40 § 280) ;
+     *                 sinon l'euro (taux de référence du jour de chaque opération)
+     */
     public record TravelerReport(UUID travelerId, String residenceCountry, boolean taxInfoProvided,
-                                 Dac7IdentityStatus identityStatus, List<QuarterReport> quarters) {
+                                 Dac7IdentityStatus identityStatus, List<QuarterReport> quarters, String currency) {
+
+        public TravelerReport(UUID travelerId, String residenceCountry, boolean taxInfoProvided,
+                              Dac7IdentityStatus identityStatus, List<QuarterReport> quarters) {
+            this(travelerId, residenceCountry, taxInfoProvided, identityStatus, quarters, "EUR");
+        }
     }
 
     /**
@@ -51,26 +63,58 @@ public record Dac7Report(int year, List<TravelerReport> travelers, List<Traveler
      * @param eurComplete        faux si au moins une ligne n'a pas de taux : les montants en euros sont alors partiels
      * @param commissionComplete faux si la commission d'au moins une ligne est introuvable (anomalie
      *                           {@code COMMISSION_UNKNOWN}) : {@code commissionEur} est alors partielle
+     * @param net                MONTANT DÉCLARÉ du trimestre, dans {@link TravelerReport#currency}, net des
+     *                           remboursements déduits (le voyageur reçoit 100 % du prix : aucun frais retenu)
+     * @param declaredComplete   faux si une conversion en euros était nécessaire et que le taux manque
      */
     public record QuarterReport(int quarter, int operations, List<CurrencyAmounts> byCurrency, BigDecimal netEur,
                                 BigDecimal commissionEur, boolean eurComplete,
-                                boolean commissionComplete) {
+                                boolean commissionComplete, BigDecimal net, boolean declaredComplete) {
+
+        /** Compatibilité : montant déclaré = montant en euros. */
+        public QuarterReport(int quarter, int operations, List<CurrencyAmounts> byCurrency, BigDecimal netEur,
+                             BigDecimal commissionEur, boolean eurComplete, boolean commissionComplete) {
+            this(quarter, operations, byCurrency, netEur, commissionEur, eurComplete, commissionComplete, netEur,
+                    eurComplete);
+        }
     }
 
     /** Montants d'un trimestre dans une devise d'origine. */
     public record CurrencyAmounts(String currency, BigDecimal net, BigDecimal commission, int operations) {
     }
 
+    /** Ce que le rapport fait d'un remboursement (BOI-INT-AEA-30-40 § 260). */
+    public enum RefundTreatment {
+        /** Même année civile que l'opération et argent repris au voyageur : retiré du trimestre de l'opération. */
+        DEDUCTED,
+        /** Année suivante : l'année de l'opération est à rectifier (rectificative hors périmètre), rien ne bouge. */
+        TO_RECTIFY,
+        /** Yadony a remboursé l'expéditeur sans rien reprendre au voyageur : le voyageur a gardé l'argent. */
+        KEPT_BY_TRAVELER
+    }
+
     /**
      * Remboursement à réconcilier ({@code amountEur} au taux du jour de l'opération, nul si inconnu).
      *
-     * @param beforeRelease vrai si l'expéditeur a été remboursé alors que l'argent était encore en séquestre (le
-     *                      versement a pourtant eu lieu ensuite, du montant entier)
+     * @param beforeRelease  vrai si l'expéditeur a été remboursé alors que l'argent était encore en séquestre (le
+     *                       versement a pourtant eu lieu ensuite, du montant entier)
+     * @param treatment      déduit, année à rectifier ou rien
+     * @param deductedAmount montant retiré du déclaré, dans la devise du voyageur ; zéro hors {@code DEDUCTED}
      */
     public record RefundToReconcile(UUID travelerId, Dac7Source source, UUID sourceId, String currency,
                                     BigDecimal amount, Instant operationPaidAt, int operationYear, Instant refundedAt,
                                     int refundYear, boolean beforeRelease, boolean refundDateEstimated,
-                                    BigDecimal amountEur) {
+                                    BigDecimal amountEur, RefundTreatment treatment, BigDecimal deductedAmount) {
+
+        /** Compatibilité : le voyageur garde l'argent, rien n'est déduit. */
+        public RefundToReconcile(UUID travelerId, Dac7Source source, UUID sourceId, String currency,
+                                 BigDecimal amount, Instant operationPaidAt, int operationYear, Instant refundedAt,
+                                 int refundYear, boolean beforeRelease, boolean refundDateEstimated,
+                                 BigDecimal amountEur) {
+            this(travelerId, source, sourceId, currency, amount, operationPaidAt, operationYear, refundedAt,
+                    refundYear, beforeRelease, refundDateEstimated, amountEur, RefundTreatment.KEPT_BY_TRAVELER,
+                    BigDecimal.ZERO);
+        }
     }
 
     /** Partage admin décidé, versement au voyageur non terminé ({@code status} : CLAIMED ou SENDER_REFUNDED). */
@@ -89,8 +133,23 @@ public record Dac7Report(int year, List<TravelerReport> travelers, List<Traveler
         COMMISSION_UNKNOWN,
         /** Date de remboursement estimée (dernière mise à jour du paiement, faute de trace d'audit). */
         REFUND_DATE_ESTIMATED,
-        /** Date de livraison absente : dernière mise à jour du colis retenue, qui peut encore bouger. */
+        /** Ni remise ni livraison connues : dernière mise à jour du colis retenue, qui peut encore bouger. */
         DELIVERY_DATE_ESTIMATED,
+        /**
+         * Colis en espèces sans remise confirmée dans l'app (scan de départ) : date de livraison retenue à la place.
+         * Choix tracé, non bloquant.
+         */
+        CASH_DATE_FROM_DELIVERY,
+        /**
+         * Colis en espèces remis dans l'année (scan de remise) mais pas encore livré : il n'est compté qu'une fois
+         * terminé, daté de sa remise. À attendre avant de générer le fichier de l'année, sinon il manquera.
+         */
+        CASH_NOT_COMPLETED_YET,
+        /**
+         * Remboursement à déduire dont la conversion en euros manque, ou dont l'opération n'est pas dans le rapport :
+         * rien n'est déduit, à traiter à la main.
+         */
+        REFUND_DEDUCTION_UNAVAILABLE,
         /** Paiement versé sans voyageur retrouvé (colis ou fil de négociation absent). */
         TRAVELER_UNKNOWN,
         /**

@@ -778,23 +778,31 @@ public final class NotificationTexts {
 
     /**
      * Détail du récapitulatif annuel DAC7 (corps complet, gardé en entier dans la boîte Annonces et repris par
-     * l'e-mail) : une phrase par trimestre, puis le total, en euros entiers tels que transmis.
+     * l'e-mail) : une phrase par trimestre, puis le total, en montants entiers tels que transmis.
      *
      * @param quarters pour chaque trimestre, dans l'ordre : {net, opérations, frais}
      */
     public static String taxStatementDetail(Messages m, int year, java.util.List<long[]> quarters) {
+        return taxStatementDetail(m, year, quarters, "EUR");
+    }
+
+    /** Idem, dans la devise transmise à l'administration (code ISO : EUR, XOF...). */
+    public static String taxStatementDetail(Messages m, int year, java.util.List<long[]> quarters, String currency) {
+        String unit = "EUR".equals(currency) ? "€" : currency;
         StringBuilder text = new StringBuilder(m.get("notification.tax-statement.detail.intro", year));
         long net = 0;
         long operations = 0;
         long fees = 0;
         for (int i = 0; i < quarters.size(); i++) {
             long[] q = quarters.get(i);
-            text.append(' ').append(m.get("notification.tax-statement.detail.quarter", i + 1, q[0], q[1], q[2]));
+            text.append(' ').append(m.get("notification.tax-statement.detail.quarter", i + 1, q[0], q[1], q[2],
+                    unit));
             net += q[0];
             operations += q[1];
             fees += q[2];
         }
-        text.append(' ').append(m.get("notification.tax-statement.detail.total", year, net, operations, fees));
+        text.append(' ').append(m.get("notification.tax-statement.detail.total", year, net, operations, fees,
+                unit));
         text.append(' ').append(m.get("notification.tax-statement.detail.outro"));
         return text.toString();
     }

@@ -153,6 +153,9 @@ public class Dac7ExportService {
         PGPPublicKey key = encrypted ? key() : null;
         // 1. Calcul HORS transaction (réseau, lecture répétable du rapport).
         Declaration declaration = declarations.declaration(year, Dac7DeclarationService.IdentityMode.FRESH);
+        if (declaration.sellers().isEmpty()) {
+            throw noSellerToDeclare(declaration, adminId);
+        }
         // 2. Inscription : transaction courte sous le verrou de l'année, jamais d'attente.
         return transactions.execute(status -> {
             if (!reads.tryLockYear(year)) {
@@ -175,6 +178,42 @@ public class Dac7ExportService {
             int sequence = sequence(year, sequenceValue);
             return generate(declaration, deposited, blockers, year, mode, sequence, encrypted, key, adminId);
         });
+    }
+
+    /**
+     * Personne à déclarer cette année : aucun fichier (pas de fichier vide), mais un rapport « aucun vendeur à
+     * déclarer » : trace au registre (audit) et chiffres dans la réponse 409 (même contrat {@code dac7-export-blocked},
+     * code {@code NO_SELLERS}, rétro-compatible). Une déclaration néant est une décision humaine, hors périmètre.
+     */
+    private YadonyBusinessException noSellerToDeclare(Declaration declaration, UUID adminId) {
+        Map<String, Object> report = noSellerReport(declaration, "NO_SELLER_TO_DECLARE");
+        audit.log("DAC7_EXPORT", UUID.randomUUID(), "DAC7_NO_SELLER_REPORT", adminId, new LinkedHashMap<>(report));
+        List<String> blockers = new ArrayList<>(declaration.blockers());
+        if (!blockers.contains(Dac7DeclarationService.NO_SELLERS)) {
+            blockers.add(Dac7DeclarationService.NO_SELLERS);
+        }
+        return blocked(blockers, List.of(), report);
+    }
+
+    /**
+     * Chiffres du rapport « aucun vendeur » (jamais une identité) : {@code NO_SELLER_TO_DECLARE} quand personne n'est
+     * déclarable, {@code ALL_SELLERS_EXCLUDED} quand des voyageurs le sont mais qu'aucun ne peut partir (voir les
+     * blocages et les voyageurs en anomalie de collecte).
+     */
+    private static Map<String, Object> noSellerReport(Declaration declaration, String reason) {
+        Map<String, Object> report = new LinkedHashMap<>();
+        report.put("report", reason);
+        report.put("year", declaration.year());
+        report.put("declarableTravelers", declaration.sellers().size());
+        report.put("nonDeclarableTravelers", (int) declaration.others().stream()
+                .filter(o -> o.residency() == Dac7ResidencyStatus.NON_DECLARABLE).count());
+        report.put("unknownResidenceTravelers", (int) declaration.others().stream()
+                .filter(o -> o.residency() == Dac7ResidencyStatus.RESIDENCE_INCONNUE).count());
+        report.put("collectionAnomalies", declaration.collectionAnomalies().size());
+        Map<String, Integer> byReason = new java.util.TreeMap<>();
+        declaration.sellers().forEach(s -> s.exclusions().forEach(r -> byReason.merge(r, 1, Integer::sum)));
+        report.put("excludedByReason", byReason);
+        return report;
     }
 
     /** Ordre DGFiP, lu sous le verrou : le suivant de l'année, ou celui demandé s'il est libre. */
@@ -246,8 +285,10 @@ public class Dac7ExportService {
             if (!blockers.contains(Dac7DeclarationService.NO_SELLERS)) {
                 blockers.add(Dac7DeclarationService.NO_SELLERS);
             }
+            // Pas d'audit ici : la transaction est annulée par l'exception. Les chiffres partent dans la réponse.
             throw blocked(blockers, rows.stream().filter(r -> !deposited.contains(r.userId()))
-                    .map(Dac7AdminReadModel.ExportSellerRow::userId).toList());
+                    .map(Dac7AdminReadModel.ExportSellerRow::userId).toList(),
+                    noSellerReport(declaration, "ALL_SELLERS_EXCLUDED"));
         }
 
         byte[] xml = Dac7XmlWriter.write(new Dac7XmlDocument(year, createdAt, unique, operator, sellers));
@@ -389,7 +430,8 @@ public class Dac7ExportService {
             header.addAll(List.of("t" + q + "NetEur", "t" + q + "CommissionEur", "t" + q + "Operations"));
         }
         header.addAll(List.of("operations", "netEur", "commissionEur", "eurComplet", "commissionComplete",
-                "dejaExporte", "exclusions"));
+                "dejaExporte", "exclusions", "devise", "montantDeclare", "declareComplet", "t1Declare", "t2Declare",
+                "t3Declare", "t4Declare"));
         line(csv, header);
         for (Seller s : declaration.sellers()) {
             List<String> row = new ArrayList<>(List.of(s.userId().toString(), s.displayName(),
@@ -401,7 +443,12 @@ public class Dac7ExportService {
             }
             row.addAll(List.of(String.valueOf(s.operations()), s.netEur().toPlainString(),
                     s.commissionEur().toPlainString(), yesNo(s.eurComplete()), yesNo(s.commissionComplete()),
-                    yesNo(s.alreadyExported()), String.join(",", s.exclusions())));
+                    yesNo(s.alreadyExported()), String.join(",", s.exclusions()), s.currency(),
+                    s.declaredNet().toPlainString(), yesNo(s.declaredComplete())));
+            // Montant tel qu'il part dans le XML : entier, par trimestre (le total non arrondi peut différer de leur somme).
+            for (QuarterReport q : s.report().quarters()) {
+                row.add(String.valueOf(Dac7DeclarationService.roundAmount(q.net())));
+            }
             line(csv, row);
         }
         for (Other o : declaration.others()) {
@@ -412,6 +459,7 @@ public class Dac7ExportService {
                 row.add("");
             }
             row.add("NON_DECLARE");
+            row.addAll(List.of("", "", "", "", "", "", ""));
             line(csv, row);
         }
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -432,14 +480,15 @@ public class Dac7ExportService {
         Dac7XmlSeller.Address address = a.line2() != null && !a.line2().isBlank() && a.detailed()
                 ? new Dac7XmlSeller.Address(country, null, null, null, null, freeLine(a))
                 : new Dac7XmlSeller.Address(country, a.street(), null, a.postCode(), a.city(), a.free());
+        // Montant déclaré dans la devise du voyageur, sans conversion quand il n'a reçu qu'une devise. Frais retenus
+        // sur le voyageur : zéro (l'expéditeur paie la commission en plus du prix, BOI-INT-AEA-30-40 § 250).
         List<Dac7XmlSeller.Quarter> quarters = seller.report().quarters().stream()
-                .map(q -> new Dac7XmlSeller.Quarter(Dac7DeclarationService.roundEuro(q.netEur()), q.operations(),
-                        Dac7DeclarationService.roundEuro(q.commissionEur())))
+                .map(q -> new Dac7XmlSeller.Quarter(Dac7DeclarationService.roundAmount(q.net()), q.operations(), 0L))
                 .toList();
         boolean entity = id.type() == Dac7SellerIdentity.SellerType.ENTITY;
         return new Dac7XmlSeller(entity, resCountry, user.getTaxIdentificationNumber(), tinCountry,
                 user.getVatNumber(), id.firstName(), id.lastName(), id.birthDate(), id.businessName(),
-                id.registrationNumber(), address, quarters);
+                id.registrationNumber(), address, quarters, seller.currency());
     }
 
     private static String freeLine(Dac7Address a) {
@@ -471,7 +520,12 @@ public class Dac7ExportService {
 
     /** 409 avec les codes et les identifiants internes des voyageurs en cause (jamais une valeur). */
     static YadonyBusinessException blocked(List<String> blockers, List<UUID> travelerIds) {
-        Map<String, Object> properties = new LinkedHashMap<>();
+        return blocked(blockers, travelerIds, Map.of());
+    }
+
+    /** Idem, avec des chiffres de rapport en plus (jamais une donnée d'identité). */
+    static YadonyBusinessException blocked(List<String> blockers, List<UUID> travelerIds, Map<String, Object> extra) {
+        Map<String, Object> properties = new LinkedHashMap<>(extra);
         properties.put("blockers", List.copyOf(blockers));
         properties.put("travelerIds", travelerIds.stream().map(UUID::toString).toList());
         return new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-export-blocked", "Export Blocked",

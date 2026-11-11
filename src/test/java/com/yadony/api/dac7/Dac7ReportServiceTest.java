@@ -154,12 +154,16 @@ class Dac7ReportServiceTest {
     }
 
     @Test
-    void tauxInconnu_euroIncompletEtAnomalie_jamaisDevine() {
+    void tauxInconnu_devisesMelangees_declareIncompletEtAnomalie_jamaisDevine() {
+        // Deux devises dans l'année : tout est déclaré en euros, et le taux GBP manque (jamais deviné).
+        op(french, Dac7Source.PAYMENT, "EUR", "10.00", "1.00", "2026-02-10T10:00:00Z");
         UUID id = op(french, Dac7Source.PAYMENT, "GBP", "50.00", "2.00", "2026-05-10T10:00:00Z");
 
         Dac7Report report = service.annualReport(YEAR);
         QuarterReport q2 = only(report, french).quarters().get(1);
 
+        assertThat(only(report, french).currency()).isEqualTo("EUR");
+        assertThat(q2.declaredComplete()).isFalse();
         assertThat(q2.eurComplete()).isFalse();
         assertThat(q2.netEur()).isEqualByComparingTo("0");
         assertThat(currency(q2, "GBP").net()).isEqualByComparingTo("50.00");

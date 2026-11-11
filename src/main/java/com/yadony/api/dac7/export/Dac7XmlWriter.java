@@ -151,14 +151,15 @@ public final class Dac7XmlWriter {
         w.writeStartElement("dpi", "RelevantActivities", DPI);
         w.writeStartElement("dpi", "PersonalServices", DPI);
         List<Dac7XmlSeller.Quarter> q = s.quarters();
-        amounts(w, "Consideration", "ConsQ", q.stream().map(Dac7XmlSeller.Quarter::consideration).toList());
+        String currency = s.currency() == null ? "EUR" : s.currency();
+        amounts(w, "Consideration", "ConsQ", currency, q.stream().map(Dac7XmlSeller.Quarter::consideration).toList());
         w.writeStartElement("dpi", "NumberOfActivities", DPI);
         for (int i = 0; i < 4; i++) {
             text(w, "NumbQ" + (i + 1), String.valueOf(q.get(i).operations()));
         }
         w.writeEndElement();
-        amounts(w, "Fees", "FeesQ", q.stream().map(Dac7XmlSeller.Quarter::fees).toList());
-        amounts(w, "Taxes", "TaxesQ", List.of(0L, 0L, 0L, 0L));
+        amounts(w, "Fees", "FeesQ", currency, q.stream().map(Dac7XmlSeller.Quarter::fees).toList());
+        amounts(w, "Taxes", "TaxesQ", currency, List.of(0L, 0L, 0L, 0L));
         w.writeEndElement();
         w.writeEndElement();
         docSpec(w, reference(year, siren, seller.docRefUniquePart()));
@@ -188,12 +189,12 @@ public final class Dac7XmlWriter {
         w.writeEndElement();
     }
 
-    private static void amounts(XMLStreamWriter w, String block, String prefix, List<Long> values)
+    private static void amounts(XMLStreamWriter w, String block, String prefix, String currency, List<Long> values)
             throws XMLStreamException {
         w.writeStartElement("dpi", block, DPI);
         for (int i = 0; i < 4; i++) {
             w.writeStartElement("dpi", prefix + (i + 1), DPI);
-            w.writeAttribute("currCode", "EUR");
+            w.writeAttribute("currCode", currency);
             w.writeCharacters(String.valueOf(values.get(i)));
             w.writeEndElement();
         }
