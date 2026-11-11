@@ -192,7 +192,7 @@ class Dac7ExportServiceTest {
         ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
         verify(audit).log(eq("DAC7_EXPORT"), any(), eq("DAC7_EXPORT_GENERATED"), eq(admin), payload.capture());
         assertThat(payload.getValue()).containsOnlyKeys("year", "mode", "sequence", "sellers", "excluded", "encrypted",
-                        "warnings")
+                        "warnings", "runId")
                 .containsEntry("mode", "FULL").containsEntry("encrypted", false);
         assertThat(payload.getValue().toString()).doesNotContain(NIF).doesNotContain("Diallo");
     }
@@ -279,6 +279,37 @@ class Dac7ExportServiceTest {
                 StandardCharsets.UTF_8);
         assertThat(xml).contains("<dpi:AddressFree>1 rue de Paris, chez M. Koné, 69001 Lyon</dpi:AddressFree>")
                 .doesNotContain("BuildingIdentifier");
+    }
+
+    @Test
+    @DisplayName("ordre déjà employé pour l'année : 409 dac7-sequence-used ; ordre par défaut = suivant de l'année")
+    void ordre() {
+        declaration(List.of(seller(List.of())), List.of());
+        when(reads.sequenceUsed(2026, 0)).thenReturn(true);
+        assertThatThrownBy(() -> service(operator(null)).export(2026, "FULL", 0, admin))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("dac7-sequence-used"));
+        when(reads.nextSequence(2026)).thenReturn(4);
+        Dac7ExportService.ExportFile file = service(operator(null)).export(2026, "FULL", null, admin);
+        assertThat(file.sequence()).isEqualTo(4);
+        assertThat(file.fileName()).contains("_004_");
+        assertThat(file.runId()).isNotNull();
+        verify(reads, org.mockito.Mockito.times(2)).lockYear(2026);
+        verify(reads).insertRun(eq(file.runId()), eq(2026), eq(4), eq("FULL"), eq(file.fileName()), eq(1), eq(admin),
+                any());
+    }
+
+    @Test
+    @DisplayName("raisons : dédoublonnées, jamais plus de 255 caractères, toujours des codes entiers")
+    void raisons() {
+        assertThat(Dac7ExportService.reasonText(List.of("TAX_INFO_MISSING", "TAX_INFO_MISSING", "EUR_INCOMPLETE")))
+                .isEqualTo("TAX_INFO_MISSING,EUR_INCOMPLETE");
+        List<String> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 40; i++) many.add("RAISON_NUMERO_" + i);
+        String text = Dac7ExportService.reasonText(many);
+        assertThat(text.length()).isLessThanOrEqualTo(255);
+        assertThat(text).startsWith("RAISON_NUMERO_0,").doesNotEndWith(",");
+        assertThat(text.split(",")).allMatch(code -> code.matches("RAISON_NUMERO_\\d+"));
     }
 
     @Test

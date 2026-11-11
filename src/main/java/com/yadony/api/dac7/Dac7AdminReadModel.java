@@ -109,8 +109,74 @@ public class Dac7AdminReadModel {
     public record ExportSellerRow(UUID userId, boolean included, String docRefId, String reason) {
     }
 
-    private static final String EXPORTED_SQL = "SELECT DISTINCT user_id FROM dac7_export_sellers "
-            + "WHERE reporting_year = :year AND status = 'INCLUDED'";
+    /** Retenus dans un run DÉPOSÉ de l'année : un fichier généré mais jamais déposé n'écarte personne. */
+    private static final String EXPORTED_SQL = """
+            SELECT DISTINCT s.user_id FROM dac7_export_sellers s
+            JOIN dac7_export_runs r ON r.id = s.export_run_id
+            WHERE s.reporting_year = :year AND s.status = 'INCLUDED' AND r.status = 'DEPOSITED'
+            """;
+    private static final String INSERT_RUN_SQL = """
+            INSERT INTO dac7_export_runs (id, reporting_year, sequence, export_mode, status, file_name, sellers,
+              generated_by, generated_at)
+            VALUES (:id, :year, :sequence, :mode, 'GENERATED', :fileName, :sellers, :adminId, :now)
+            """;
+    private static final String MARK_DEPOSITED_SQL = """
+            UPDATE dac7_export_runs SET status = 'DEPOSITED', deposited_by = :adminId, deposited_at = :now
+            WHERE id = :id AND status = 'GENERATED'
+            """;
+
+    /** Un fichier généré : année, ordre, mode, nombre de voyageurs retenus, statut. */
+    public record ExportRun(UUID id, int year, int sequence, String mode, String status, int sellers) {
+    }
+
+    /** Ordre DGFiP suivant pour l'année (0 pour le premier fichier), jamais réemployé. */
+    public int nextSequence(int year) {
+        Integer max = jdbc.queryForObject("SELECT MAX(sequence) FROM dac7_export_runs WHERE reporting_year = :year",
+                new MapSqlParameterSource("year", year), Integer.class);
+        return max == null ? 0 : max + 1;
+    }
+
+    public boolean sequenceUsed(int year, int sequence) {
+        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM dac7_export_runs WHERE reporting_year = :year "
+                + "AND sequence = :sequence", new MapSqlParameterSource().addValue("year", year)
+                .addValue("sequence", sequence), Integer.class);
+        return count != null && count > 0;
+    }
+
+    /**
+     * Verrou de transaction par année (PostgreSQL : {@code pg_advisory_xact_lock}) : deux exports de la même année ne
+     * se chevauchent pas. Sans effet sur une autre base (H2 des tests de contexte).
+     */
+    public void lockYear(int year) {
+        Boolean postgres = jdbc.getJdbcTemplate().execute((java.sql.Connection c) ->
+                c.getMetaData().getDatabaseProductName().toLowerCase(java.util.Locale.ROOT).contains("postgres"));
+        if (Boolean.TRUE.equals(postgres)) {
+            jdbc.queryForObject("SELECT pg_advisory_xact_lock(:key) IS NULL",
+                    new MapSqlParameterSource("key", 7_000_000_000L + year), Boolean.class);
+        }
+    }
+
+    public void insertRun(UUID id, int year, int sequence, String mode, String fileName, int sellers, UUID adminId,
+                          Instant now) {
+        jdbc.update(INSERT_RUN_SQL, new MapSqlParameterSource().addValue("id", id).addValue("year", year)
+                .addValue("sequence", sequence).addValue("mode", mode).addValue("fileName", fileName)
+                .addValue("sellers", sellers).addValue("adminId", adminId)
+                .addValue("now", OffsetDateTime.ofInstant(now, ZoneOffset.UTC)));
+    }
+
+    public Optional<ExportRun> run(UUID id) {
+        List<ExportRun> runs = jdbc.query("SELECT id, reporting_year, sequence, export_mode, status, sellers "
+                + "FROM dac7_export_runs WHERE id = :id", new MapSqlParameterSource("id", id), (rs, i) ->
+                new ExportRun(uuid(rs, "id"), rs.getInt("reporting_year"), rs.getInt("sequence"),
+                        rs.getString("export_mode"), rs.getString("status"), rs.getInt("sellers")));
+        return runs.stream().findFirst();
+    }
+
+    /** Vrai si le run vient de passer DEPOSITED, faux s'il l'était déjà (idempotent). */
+    public boolean markDeposited(UUID id, UUID adminId, Instant now) {
+        return jdbc.update(MARK_DEPOSITED_SQL, new MapSqlParameterSource().addValue("id", id)
+                .addValue("adminId", adminId).addValue("now", OffsetDateTime.ofInstant(now, ZoneOffset.UTC))) == 1;
+    }
     private static final String RECORD_EXPORT_SQL = """
             INSERT INTO dac7_export_sellers (reporting_year, user_id, export_run_id, status, doc_ref_id, reason,
               sequence, export_mode, exported_by, exported_at)

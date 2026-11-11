@@ -39,10 +39,36 @@ CREATE TABLE dac7_seller_statements (
 COMMENT ON TABLE dac7_seller_statements IS
     'Récapitulatifs DAC7 envoyés aux voyageurs : un par voyageur et par année, envoi décidé par l''équipe.';
 
--- Voyageurs de chaque fichier DPI-DAC7 GÉNÉRÉ (le dépôt Télé-TD reste un geste humain) : une ligne par voyageur et par
--- génération, retenu (INCLUDED, avec sa référence DocRefId déterministe, recalculable pour une rectificative) ou écarté
--- (EXCLUDED, avec sa raison). Un second export PARTIAL de la même année écarte par défaut les voyageurs déjà retenus.
--- Aucune donnée personnelle : identifiant, codes et références seulement.
+-- Fichiers DPI-DAC7 GÉNÉRÉS (le dépôt Télé-TD reste un geste humain) : un run par génération. Le numéro d'ordre DGFiP
+-- ne se réemploie jamais pour une même année (UNIQUE). Un run devient DEPOSITED seulement quand l'équipe confirme
+-- l'avoir déposé : un fichier jamais reçu (504) ou jamais déposé n'écarte aucun voyageur des exports suivants.
+CREATE TABLE dac7_export_runs (
+    id             UUID                     NOT NULL,
+    reporting_year INTEGER                  NOT NULL,
+    sequence       INTEGER                  NOT NULL,
+    export_mode    VARCHAR(10)              NOT NULL,
+    status         VARCHAR(10)              NOT NULL,
+    file_name      VARCHAR(120)             NOT NULL,
+    sellers        INTEGER                  NOT NULL,
+    generated_by   UUID,
+    generated_at   TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    deposited_by   UUID,
+    deposited_at   TIMESTAMP WITH TIME ZONE,
+    CONSTRAINT pk_dac7_export_runs PRIMARY KEY (id),
+    CONSTRAINT uq_dac7_export_runs_year_sequence UNIQUE (reporting_year, sequence),
+    CONSTRAINT chk_dac7_export_runs_status CHECK (status IN ('GENERATED', 'DEPOSITED')),
+    CONSTRAINT chk_dac7_export_runs_mode CHECK (export_mode IN ('FULL', 'PARTIAL')),
+    CONSTRAINT chk_dac7_export_runs_year CHECK (reporting_year BETWEEN 2023 AND 2100),
+    CONSTRAINT chk_dac7_export_runs_sequence CHECK (sequence BETWEEN 0 AND 999),
+    CONSTRAINT chk_dac7_export_runs_deposit CHECK (status = 'GENERATED' OR deposited_at IS NOT NULL)
+);
+
+COMMENT ON TABLE dac7_export_runs IS
+    'Fichiers DAC7 générés (ordre DGFiP unique par année) ; DEPOSITED seulement après confirmation de l''équipe.';
+
+-- Voyageurs de chaque run : retenu (INCLUDED, avec sa référence DocRefId déterministe, recalculable pour une
+-- rectificative) ou écarté (EXCLUDED, avec ses raisons, codes séparés par des virgules). Un export PARTIAL écarte par
+-- défaut les voyageurs retenus dans un run DÉPOSÉ de l'année. Aucune donnée personnelle.
 CREATE TABLE dac7_export_sellers (
     id             BIGSERIAL                NOT NULL,
     reporting_year INTEGER                  NOT NULL,
@@ -50,12 +76,13 @@ CREATE TABLE dac7_export_sellers (
     export_run_id  UUID                     NOT NULL,
     status         VARCHAR(10)              NOT NULL,
     doc_ref_id     VARCHAR(200),
-    reason         VARCHAR(40),
+    reason         VARCHAR(255),
     sequence       INTEGER                  NOT NULL,
     export_mode    VARCHAR(10)              NOT NULL,
     exported_by    UUID,
     exported_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
     CONSTRAINT pk_dac7_export_sellers PRIMARY KEY (id),
+    CONSTRAINT fk_dac7_export_sellers_run FOREIGN KEY (export_run_id) REFERENCES dac7_export_runs (id),
     CONSTRAINT chk_dac7_export_sellers_status CHECK (status IN ('INCLUDED', 'EXCLUDED')),
     CONSTRAINT chk_dac7_export_sellers_mode CHECK (export_mode IN ('FULL', 'PARTIAL')),
     CONSTRAINT chk_dac7_export_sellers_year CHECK (reporting_year BETWEEN 2023 AND 2100),
@@ -63,6 +90,7 @@ CREATE TABLE dac7_export_sellers (
 );
 
 CREATE INDEX idx_dac7_export_sellers_year_user ON dac7_export_sellers (reporting_year, user_id);
+CREATE INDEX idx_dac7_export_sellers_run ON dac7_export_sellers (export_run_id);
 
 COMMENT ON TABLE dac7_export_sellers IS
-    'Voyageurs de chaque fichier DAC7 généré (retenus avec DocRefId, ou écartés avec raison). Sans donnée personnelle.';
+    'Voyageurs de chaque fichier DAC7 généré (retenus avec DocRefId, ou écartés avec raisons). Sans donnée personnelle.';

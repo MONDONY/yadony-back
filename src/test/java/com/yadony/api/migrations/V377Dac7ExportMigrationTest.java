@@ -78,6 +78,20 @@ class V377Dac7ExportMigrationTest {
     void voyageursExportes() {
         UUID run = UUID.randomUUID();
         UUID user = UUID.randomUUID();
+        jdbc.update("INSERT INTO dac7_export_runs (id, reporting_year, sequence, export_mode, status, file_name, sellers)"
+                + " VALUES (?, 2026, 0, 'PARTIAL', 'GENERATED', 'DPIDAC7_2026_123456789_000_x.xml', 1)", run);
+        // Ordre DGFiP jamais réemployé dans une année ; DEPOSITED exige sa date.
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO dac7_export_runs (id, reporting_year, sequence, export_mode,"
+                + " status, file_name, sellers) VALUES (?, 2026, 0, 'FULL', 'GENERATED', 'f.xml', 0)", UUID.randomUUID()))
+                .hasMessageContaining("uq_dac7_export_runs_year_sequence");
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO dac7_export_runs (id, reporting_year, sequence, export_mode,"
+                + " status, file_name, sellers) VALUES (?, 2026, 1, 'FULL', 'DEPOSITED', 'f.xml', 0)", UUID.randomUUID()))
+                .hasMessageContaining("chk_dac7_export_runs_deposit");
+        // Raisons cumulées : la colonne tient au moins quatre codes.
+        jdbc.update("INSERT INTO dac7_export_sellers (reporting_year, user_id, export_run_id, status, reason, "
+                + "sequence, export_mode) VALUES (2026, ?, ?, 'EXCLUDED', "
+                + "'IDENTITY_INCOMPLETE,COMMISSION_INCOMPLETE,TAX_INFO_MISSING,RESIDENCE_NOT_TRANSMITTED', 0, 'PARTIAL')",
+                UUID.randomUUID(), run);
         jdbc.update("INSERT INTO dac7_export_sellers (reporting_year, user_id, export_run_id, status, doc_ref_id, "
                 + "sequence, export_mode) VALUES (2026, ?, ?, 'INCLUDED', 'OP_2026_123456789_x_000', 0, 'PARTIAL')",
                 user, run);
@@ -91,6 +105,9 @@ class V377Dac7ExportMigrationTest {
                 + " status, doc_ref_id, sequence, export_mode) VALUES (2026, ?, ?, 'SENT', 'x', 0, 'FULL')", user, run))
                 .hasMessageContaining("chk_dac7_export_sellers_status");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM dac7_export_sellers WHERE export_run_id = ?",
-                Integer.class, run)).isEqualTo(2);
+                Integer.class, run)).isEqualTo(3);
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO dac7_export_sellers (reporting_year, user_id, export_run_id,"
+                + " status, reason, sequence, export_mode) VALUES (2026, ?, ?, 'EXCLUDED', 'x', 0, 'FULL')",
+                UUID.randomUUID(), UUID.randomUUID())).hasMessageContaining("fk_dac7_export_sellers_run");
     }
 }

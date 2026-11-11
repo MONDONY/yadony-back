@@ -174,6 +174,31 @@ class Dac7AdminControllerIT {
                 .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS,
                         org.hamcrest.Matchers.allOf(org.hamcrest.Matchers.containsString("Content-Disposition"),
                                 org.hamcrest.Matchers.containsString("X-Dac7-Excluded"),
-                                org.hamcrest.Matchers.containsString("X-Dac7-Encrypted"))));
+                                org.hamcrest.Matchers.containsString("X-Dac7-Encrypted"),
+                                org.hamcrest.Matchers.containsString("X-Dac7-Warnings"),
+                                org.hamcrest.Matchers.containsString("X-Dac7-Run-Id"))));
+    }
+
+    @Test
+    @DisplayName("dépôt confirmé : 404 si inconnu, 204 idempotent, statut DEPOSITED, audit sans donnée ; SUPPORT 403")
+    void depot() throws Exception {
+        UUID run = UUID.randomUUID();
+        jdbc.update("INSERT INTO dac7_export_runs (id, reporting_year, sequence, export_mode, status, file_name, "
+                + "sellers, generated_at) VALUES (?, 2026, ?, 'PARTIAL', 'GENERATED', 'f.xml', 2, CURRENT_TIMESTAMP)",
+                run, (int) (Math.random() * 900) + 50);
+        mockMvc.perform(post("/admin/dac7/exports/{id}/deposited", UUID.randomUUID()).with(admin(AdminRole.ADMIN)))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/admin/dac7/exports/{id}/deposited", run).with(admin(AdminRole.SUPPORT)))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/admin/dac7/exports/{id}/deposited", run).with(admin(AdminRole.ADMIN)))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(post("/admin/dac7/exports/{id}/deposited", run).with(admin(AdminRole.ADMIN)))
+                .andExpect(status().isNoContent());
+        assertThat(jdbc.queryForObject("SELECT status FROM dac7_export_runs WHERE id = ?", String.class, run))
+                .isEqualTo("DEPOSITED");
+        List<String> audits = jdbc.queryForList("SELECT CAST(payload AS VARCHAR) FROM audit_log WHERE entity_id = ? "
+                + "AND action = 'DAC7_EXPORT_MARKED_DEPOSITED'", String.class, run);
+        assertThat(audits).hasSize(1);
+        assertThat(audits.get(0)).contains("sellers").doesNotContain("Awa");
     }
 }

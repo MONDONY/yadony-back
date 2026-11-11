@@ -49,6 +49,9 @@ class PublicDisplayNameCallersTest {
             "com/yadony/api/export/",
             "com/yadony/api/payments/FiscalExportService",
             "com/yadony/api/payments/StripeV2AccountProvisioner",
+            // Identité fiscale légale de la déclaration DAC7 (export DGFiP seulement) : prénom et nom partent dans deux
+            // zones distinctes du XML (FirstName / LastName), jamais recomposés ni affichés.
+            "com/yadony/api/dac7/Dac7IdentityResolver",
             "com/yadony/api/kyc/provider/stripe/StripeIdentityProvider",
             "com/yadony/api/referral/ReferralService",
             // Invitation acceptée (lot 4) : l'invité consent à ce que l'inviteur voie son nom ;

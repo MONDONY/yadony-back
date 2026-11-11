@@ -43,6 +43,7 @@ public class Dac7AdminController {
     static final String EXCLUDED_HEADER = "X-Dac7-Excluded";
     static final String ENCRYPTED_HEADER = "X-Dac7-Encrypted";
     static final String WARNINGS_HEADER = "X-Dac7-Warnings";
+    static final String RUN_ID_HEADER = "X-Dac7-Run-Id";
 
     private final Dac7AdminService admin;
     private final Dac7ExportService exports;
@@ -113,7 +114,16 @@ public class Dac7AdminController {
                 .header(EXCLUDED_HEADER, String.valueOf(file.excluded()))
                 .header(ENCRYPTED_HEADER, String.valueOf(file.encrypted()))
                 .header(WARNINGS_HEADER, String.valueOf(file.warnings()))
+                .header(RUN_ID_HEADER, file.runId().toString())
                 .body(file.content());
+    }
+
+    /** L'équipe confirme le dépôt Télé-TD de ce fichier. Idempotent ; 404 si le fichier est inconnu. */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('DAC7_REPORT')")
+    @PostMapping("/exports/{runId}/deposited")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void markDeposited(@PathVariable UUID runId, Authentication authentication) {
+        exports.markDeposited(runId, AdminPrincipal.requireAdminId(authentication));
     }
 
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('DAC7_REPORT')")

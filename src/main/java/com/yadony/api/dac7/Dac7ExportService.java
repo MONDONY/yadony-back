@@ -57,9 +57,14 @@ public class Dac7ExportService {
 
     public enum Mode { FULL, PARTIAL }
 
-    /** @param warnings remboursements à réconcilier + anomalies de l'année (non bloquants, en-tête X-Dac7-Warnings) */
+    static final int REASON_MAX = 255;
+
+    /**
+     * @param warnings remboursements à réconcilier + anomalies de l'année (non bloquants, en-tête X-Dac7-Warnings)
+     * @param runId    identifiant du fichier généré (en-tête X-Dac7-Run-Id), à confirmer déposé
+     */
     public record ExportFile(String fileName, byte[] content, boolean encrypted, int sellers, int excluded,
-                             int warnings) {
+                             int warnings, UUID runId, int sequence) {
     }
 
     private final Dac7DeclarationService declarations;
@@ -95,15 +100,16 @@ public class Dac7ExportService {
     }
 
     /**
-     * @param includeAlreadyExported PARTIAL : reprendre aussi les voyageurs déjà retenus dans un fichier généré pour
-     *                               cette année (faux par défaut : ils sont écartés, raison {@code ALREADY_EXPORTED})
+     * @param sequenceValue          ordre DGFiP voulu ; nul : le suivant de l'année (0 pour le premier fichier). Un
+     *                               ordre déjà employé pour l'année est refusé (409 {@code dac7-sequence-used})
+     * @param includeAlreadyExported PARTIAL : reprendre aussi les voyageurs retenus dans un fichier DÉPOSÉ de cette
+     *                               année (faux par défaut : ils sont écartés, raison {@code ALREADY_EXPORTED})
      */
     public ExportFile export(Integer yearValue, String modeValue, Integer sequenceValue,
                              boolean includeAlreadyExported, UUID adminId) {
         int year = declarations.requireYear(yearValue);
         Mode mode = mode(modeValue);
-        int sequence = sequenceValue == null ? 0 : sequenceValue;
-        if (sequence < 0 || sequence > 999) {
+        if (sequenceValue != null && (sequenceValue < 0 || sequenceValue > 999)) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-export-invalid-request",
                     "Invalid Export Request", "Le numéro d'ordre doit être compris entre 0 et 999.");
         }
@@ -118,7 +124,29 @@ public class Dac7ExportService {
                     + "clair n'est pas autorisé.");
         }
         PGPPublicKey key = encrypted ? key() : null;
+        // Une seule génération à la fois pour une année (verrou de transaction), du calcul à l'inscription du run :
+        // l'ordre DGFiP et la liste des déjà déposés sont lus et écrits sous le même verrou.
+        return transactions.execute(status -> {
+            reads.lockYear(year);
+            int sequence;
+            if (sequenceValue == null) {
+                sequence = reads.nextSequence(year);
+            } else if (reads.sequenceUsed(year, sequenceValue)) {
+                throw new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-sequence-used", "Sequence Already Used",
+                        "Le numéro d'ordre " + sequenceValue + " a déjà servi pour " + year + ".");
+            } else {
+                sequence = sequenceValue;
+            }
+            if (sequence > 999) {
+                throw new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-sequence-used", "Sequence Exhausted",
+                        "Les 1 000 numéros d'ordre de " + year + " sont épuisés.");
+            }
+            return generate(year, mode, sequence, includeAlreadyExported, encrypted, key, adminId);
+        });
+    }
 
+    private ExportFile generate(int year, Mode mode, int sequence, boolean includeAlreadyExported, boolean encrypted,
+                                PGPPublicKey key, UUID adminId) {
         Declaration declaration = declarations.declaration(year, Dac7DeclarationService.IdentityMode.FRESH);
         if (mode == Mode.FULL && !declaration.blockers().isEmpty()) {
             throw blocked(declaration.blockers(), declaration.sellers().stream()
@@ -148,7 +176,7 @@ public class Dac7ExportService {
             }
             if (!reasons.isEmpty()) {
                 rows.add(new Dac7AdminReadModel.ExportSellerRow(seller.userId(), false, null,
-                        String.join(",", reasons)));
+                        reasonText(reasons)));
                 continue;
             }
             Dac7XmlDocument.Seller entry = new Dac7XmlDocument.Seller(xmlSeller(seller, user),
@@ -199,11 +227,42 @@ public class Dac7ExportService {
         payload.put("excluded", excluded);
         payload.put("encrypted", encrypted);
         payload.put("warnings", declaration.warnings());
-        transactions.executeWithoutResult(status -> {
-            reads.recordExport(year, runId, sequence, mode.name(), adminId, clock.instant(), rows);
-            audit.log("DAC7_EXPORT", runId, "DAC7_EXPORT_GENERATED", adminId, payload);
-        });
-        return new ExportFile(fileName, content, encrypted, sellers.size(), excluded, declaration.warnings());
+        payload.put("runId", runId.toString());
+        reads.insertRun(runId, year, sequence, mode.name(), fileName, sellers.size(), adminId, clock.instant());
+        reads.recordExport(year, runId, sequence, mode.name(), adminId, clock.instant(), rows);
+        audit.log("DAC7_EXPORT", runId, "DAC7_EXPORT_GENERATED", adminId, payload);
+        return new ExportFile(fileName, content, encrypted, sellers.size(), excluded, declaration.warnings(), runId,
+                sequence);
+    }
+
+    /**
+     * L'équipe confirme avoir déposé ce fichier sur Télé-TD : ses voyageurs retenus seront écartés par défaut des exports
+     * PARTIAL suivants de l'année. Idempotent (un second appel ne change rien et n'audite pas) ; 404 si inconnu.
+     */
+    public void markDeposited(UUID runId, UUID adminId) {
+        Dac7AdminReadModel.ExportRun run = reads.run(runId).orElseThrow(() -> new YadonyBusinessException(
+                HttpStatus.NOT_FOUND, "dac7-export-run-not-found", "Export Run Not Found",
+                "Fichier DAC7 introuvable."));
+        if (reads.markDeposited(runId, adminId, clock.instant())) {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("year", run.year());
+            payload.put("sequence", run.sequence());
+            payload.put("sellers", run.sellers());
+            audit.log("DAC7_EXPORT", runId, "DAC7_EXPORT_MARKED_DEPOSITED", adminId, payload);
+        }
+    }
+
+    /** Raisons dédoublonnées, tenant dans la colonne (255) : seules des raisons entières sont gardées. */
+    static String reasonText(List<String> reasons) {
+        StringBuilder text = new StringBuilder();
+        for (String reason : new java.util.LinkedHashSet<>(reasons)) {
+            int extra = (text.length() == 0 ? 0 : 1) + reason.length();
+            if (text.length() + extra > REASON_MAX) {
+                break;
+            }
+            text.append(text.length() == 0 ? "" : ",").append(reason);
+        }
+        return text.toString();
     }
 
     private PGPPublicKey key() {

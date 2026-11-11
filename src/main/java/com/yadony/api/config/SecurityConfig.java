@@ -67,7 +67,7 @@ public class SecurityConfig {
         // DAC7 de l'admin, le nom du fichier imposé par la DGFiP (Content-Disposition), le
         // nombre de voyageurs exclus et l'état du chiffrement.
         config.setExposedHeaders(List.of(RequestCorrelationFilter.HEADER, "Content-Disposition",
-                "X-Dac7-Excluded", "X-Dac7-Encrypted", "X-Dac7-Warnings"));
+                "X-Dac7-Excluded", "X-Dac7-Encrypted", "X-Dac7-Warnings", "X-Dac7-Run-Id"));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
 

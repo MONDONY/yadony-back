@@ -20,7 +20,8 @@ import java.util.UUID;
 @Entity
 @Immutable
 @Table(name = "dac7_export_sellers",
-        indexes = @Index(name = "idx_dac7_export_sellers_year_user", columnList = "reporting_year, user_id"))
+        indexes = {@Index(name = "idx_dac7_export_sellers_year_user", columnList = "reporting_year, user_id"),
+                @Index(name = "idx_dac7_export_sellers_run", columnList = "export_run_id")})
 public class Dac7ExportSellerEntity {
 
     @Id
@@ -42,7 +43,7 @@ public class Dac7ExportSellerEntity {
     @Column(name = "doc_ref_id", length = 200, updatable = false)
     private String docRefId;
 
-    @Column(name = "reason", length = 40, updatable = false)
+    @Column(name = "reason", length = 255, updatable = false)
     private String reason;
 
     @Column(name = "sequence", nullable = false, updatable = false)

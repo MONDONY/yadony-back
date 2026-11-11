@@ -15,6 +15,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestClient;
 
@@ -37,6 +39,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -63,6 +66,8 @@ class Dac7ExportPostgresIT {
     private static final UUID USD_NO_RATE = UUID.randomUUID();
     private static final UUID NO_TAX = UUID.randomUUID();
     private static final UUID IVORIAN = UUID.randomUUID();
+    /** Sans NIF, sans date de naissance, USD sans taux : trois raisons d'exclusion cumulées. */
+    private static final UUID MULTI = UUID.randomUUID();
     private static final UUID SENDER = UUID.randomUUID();
     private static final UUID ADMIN = UUID.randomUUID();
     private static final String NIF = "1234567890123";
@@ -86,6 +91,9 @@ class Dac7ExportPostgresIT {
         user(NO_TAX, "FR", false);
         user(IVORIAN, "CI", false);
         user(SENDER, "FR", false);
+        user(MULTI, "FR", false);
+        jdbc.update("UPDATE users SET birth_date = NULL WHERE id = ?", MULTI);
+        ENTITIES.get(MULTI).setBirthDate(null);
 
         payment(trip(COMPLETE, "EUR"), "EUR", "100.00", "5.00", "2026-02-10T10:00:00Z");
         payment(trip(COMPLETE, "USD"), "USD", "108.00", "5.40", "2026-05-04T10:00:00Z");
@@ -93,9 +101,12 @@ class Dac7ExportPostgresIT {
         payment(trip(USD_NO_RATE, "USD"), "USD", "50.00", "2.50", "2026-08-03T10:00:00Z");
         payment(trip(NO_TAX, "EUR"), "EUR", "40.00", "2.00", "2026-03-01T10:00:00Z");
         payment(trip(IVORIAN, "EUR"), "EUR", "70.00", "3.50", "2026-03-01T10:00:00Z");
+        payment(trip(MULTI, "USD"), "USD", "30.00", "1.50", "2026-08-04T10:00:00Z");
+        // Samedi 09/05/2026 : jour non publié par la BCE, taux du vendredi 08/05 (RATE_DATE_ESTIMATED).
+        payment(trip(NO_TAX, "USD"), "USD", "21.80", "1.09", "2026-05-09T10:00:00Z");
         // Taux BCE du 04/05/2026 : 1,08 USD pour 1 € ; aucun taux autour du 03/08/2026.
         jdbc.update("INSERT INTO ecb_exchange_rates (currency, rate_date, units_per_eur) VALUES "
-                + "('USD', DATE '2026-05-04', 1.08), ('USD', DATE '2026-05-05', 1.09)");
+                + "('USD', DATE '2026-05-04', 1.08), ('USD', DATE '2026-05-05', 1.09), ('USD', DATE '2026-05-08', 1.09)");
         jdbc.update("INSERT INTO admin_users (id, firebase_uid, email, role, status, must_change_password, "
                 + "created_at, updated_at) VALUES (?, 'uid-admin-dac7', 'equipe@yadony.test', 'ADMIN', 'ACTIVE', "
                 + "false, now(), now())", ADMIN);
@@ -167,27 +178,44 @@ class Dac7ExportPostgresIT {
                 && USD_NO_RATE.equals(a.travelerId()));
 
         assertThat(seller(d, NO_TAX).exclusions()).containsExactly(Dac7DeclarationService.TAX_INFO_MISSING);
+        // Vrai calcul : le versement du samedi prend le taux du vendredi et le signale (non bloquant).
+        assertThat(seller(d, NO_TAX).eurComplete()).isTrue();
+        assertThat(d.report().anomalies()).anyMatch(a -> a.type() == Dac7Report.AnomalyType.RATE_DATE_ESTIMATED
+                && NO_TAX.equals(a.travelerId()) && a.day().equals(java.time.LocalDate.of(2026, 5, 9)));
+        assertThat(d.report().anomalies()).noneMatch(a -> a.type() == Dac7Report.AnomalyType.RATE_DATE_ESTIMATED
+                && COMPLETE.equals(a.travelerId()));
+        assertThat(seller(d, MULTI).exclusions()).containsExactly("IDENTITY_INCOMPLETE", "TAX_INFO_MISSING",
+                "EUR_INCOMPLETE");
         assertThat(d.others()).extracting(Dac7DeclarationService.Other::userId).containsExactly(IVORIAN);
-        assertThat(d.blockers()).containsExactly("TAX_INFO_MISSING", "EUR_INCOMPLETE");
+        assertThat(d.blockers()).containsExactly("IDENTITY_INCOMPLETE", "TAX_INFO_MISSING", "EUR_INCOMPLETE");
+    }
+
+    private static Dac7ExportService exports(AuditService audit) {
+        DataSourceTransactionManager manager = new DataSourceTransactionManager(named.getJdbcTemplate().getDataSource());
+        return new Dac7ExportService(declarations(), repository(), operator(), audit, new Dac7AdminReadModel(named),
+                new TransactionTemplate(manager), CLOCK);
     }
 
     @Test
-    @DisplayName("FULL refusé en 409 avec les blocages ; PARTIAL : XML valide contre le XSD, un seul voyageur")
-    void exportPartiel() {
-        AuditService audit = mock(AuditService.class);
-        Dac7ExportService exports = new Dac7ExportService(declarations(), repository(), operator(), audit,
-                new Dac7AdminReadModel(named),
-                org.springframework.transaction.support.TransactionOperations.withoutTransaction(), CLOCK);
+    @DisplayName("FULL 409 ; PARTIAL valide contre le XSD, raisons cumulées inscrites ; déposé seulement sur confirmation")
+    void exportPartielEtDepot() {
         jdbc.update("DELETE FROM dac7_export_sellers");
+        jdbc.update("DELETE FROM dac7_export_runs");
+        AuditService audit = mock(AuditService.class);
+        Dac7ExportService exports = exports(audit);
+        Dac7AdminReadModel reads = new Dac7AdminReadModel(named);
 
         assertThatThrownBy(() -> exports.export(2026, "FULL", null, ADMIN))
                 .isInstanceOfSatisfying(YadonyBusinessException.class, e -> assertThat(e.getProperties())
-                        .containsEntry("blockers", List.of("TAX_INFO_MISSING", "EUR_INCOMPLETE")));
+                        .containsEntry("blockers", List.of("IDENTITY_INCOMPLETE", "TAX_INFO_MISSING", "EUR_INCOMPLETE")));
+        // Refusé : rien n'est inscrit, l'ordre 000 reste libre.
+        assertThat(reads.nextSequence(2026)).isZero();
 
         Dac7ExportService.ExportFile file = exports.export(2026, "PARTIAL", null, ADMIN);
 
         assertThat(file.sellers()).isEqualTo(1);
-        assertThat(file.excluded()).isEqualTo(2);
+        assertThat(file.excluded()).isEqualTo(3);
+        assertThat(file.sequence()).isZero();
         assertThat(file.fileName()).isEqualTo("DPIDAC7_2026_123456789_000_20270115100000.xml");
         Dac7XsdValidator.validate(file.content());
         String xml = new String(file.content(), StandardCharsets.UTF_8);
@@ -197,16 +225,58 @@ class Dac7ExportPostgresIT {
                 .contains("<dpi:NumbQ4>1</dpi:NumbQ4>")
                 .doesNotContain(USD_NO_RATE.toString())
                 .contains("OP_2026_123456789_" + COMPLETE.toString().replace("-", "") + "_000");
+        // Trois raisons cumulées tiennent dans la colonne (VARCHAR 255), sans doublon.
+        assertThat(jdbc.queryForList("SELECT reason FROM dac7_export_sellers WHERE user_id = ?", String.class, MULTI))
+                .containsExactly("IDENTITY_INCOMPLETE,TAX_INFO_MISSING,EUR_INCOMPLETE");
         assertThat(jdbc.queryForList("SELECT status || ':' || COALESCE(reason, doc_ref_id) FROM dac7_export_sellers "
                 + "WHERE user_id = ?", String.class, NO_TAX)).containsExactly("EXCLUDED:TAX_INFO_MISSING");
-        assertThat(new Dac7AdminReadModel(named).exportedTravelers(2026)).containsExactly(COMPLETE);
+        assertThat(jdbc.queryForObject("SELECT status FROM dac7_export_runs WHERE id = ?", String.class, file.runId()))
+                .isEqualTo("GENERATED");
+        // Généré mais pas déposé : personne n'est « déjà exporté », le PARTIAL suivant reprend le voyageur (ordre 001).
+        assertThat(reads.exportedTravelers(2026)).isEmpty();
+        Dac7ExportService.ExportFile second = exports.export(2026, "PARTIAL", null, ADMIN);
+        assertThat(second.sellers()).isEqualTo(1);
+        assertThat(second.sequence()).isEqualTo(1);
 
-        // Second PARTIAL : le voyageur déjà retenu est écarté, il ne reste personne.
-        assertThatThrownBy(() -> exports.export(2026, "PARTIAL", 1, ADMIN))
+        // Dépôt confirmé du premier : idempotent, audité une fois.
+        exports.markDeposited(file.runId(), ADMIN);
+        exports.markDeposited(file.runId(), ADMIN);
+        org.mockito.Mockito.verify(audit, org.mockito.Mockito.times(1)).log(eq("DAC7_EXPORT"), eq(file.runId()),
+                eq("DAC7_EXPORT_MARKED_DEPOSITED"), eq(ADMIN), any());
+        assertThat(reads.exportedTravelers(2026)).containsExactly(COMPLETE);
+        assertThatThrownBy(() -> exports.markDeposited(UUID.randomUUID(), ADMIN))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("dac7-export-run-not-found"));
+
+        // Désormais déposé : écarté par défaut, repris sur demande ; un ordre déjà employé est refusé.
+        assertThatThrownBy(() -> exports.export(2026, "PARTIAL", null, ADMIN))
                 .isInstanceOfSatisfying(YadonyBusinessException.class, e -> assertThat(e.getProperties())
-                        .containsEntry("blockers", List.of("TAX_INFO_MISSING", "EUR_INCOMPLETE", "NO_SELLERS")));
-        assertThat(exports.export(2026, "PARTIAL", 1, true, ADMIN).sellers()).isEqualTo(1);
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM dac7_export_sellers WHERE status = 'INCLUDED'",
+                        .containsEntry("blockers", List.of("IDENTITY_INCOMPLETE", "TAX_INFO_MISSING", "EUR_INCOMPLETE",
+                                "NO_SELLERS")));
+        assertThat(exports.export(2026, "PARTIAL", null, true, ADMIN).sequence()).isEqualTo(2);
+        assertThatThrownBy(() -> exports.export(2026, "PARTIAL", 1, true, ADMIN))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("dac7-sequence-used"));
+    }
+
+    @Test
+    @DisplayName("deux exports simultanés de la même année : verrou par année, deux ordres distincts")
+    void exportsSimultanes() throws Exception {
+        jdbc.update("DELETE FROM dac7_export_sellers");
+        jdbc.update("DELETE FROM dac7_export_runs");
+        Dac7ExportService exports = exports(mock(AuditService.class));
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.Callable<Integer> task = () -> {
+            start.await();
+            return exports.export(2026, "PARTIAL", null, ADMIN).sequence();
+        };
+        var first = pool.submit(task);
+        var second = pool.submit(task);
+        start.countDown();
+        assertThat(java.util.Set.of(first.get(), second.get())).containsExactlyInAnyOrder(0, 1);
+        pool.shutdown();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM dac7_export_runs WHERE reporting_year = 2026",
                 Integer.class)).isEqualTo(2);
     }
 
