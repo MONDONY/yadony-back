@@ -81,6 +81,8 @@ public class VideoModalResponseEntity extends BaseEntity {
             if (lastShownAt == null || at.isAfter(lastShownAt)) lastShownAt = at;
             return;
         }
+        // answeredAt = date de la PREMIÈRE réponse (OPENED, COMPLETED ou DISMISSED) ; une réponse
+        // ultérieure ne la remplace pas (le statut, lui, monte jusqu'à la réponse la plus avancée).
         if (answeredAt == null) answeredAt = at;
         if (event.isWatched() && openedAt == null) openedAt = at;
         if (event == VideoModalEvent.COMPLETED && completedAt == null) completedAt = at;

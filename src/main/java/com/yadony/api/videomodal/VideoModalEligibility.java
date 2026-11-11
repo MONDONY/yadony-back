@@ -51,9 +51,14 @@ final class VideoModalEligibility {
         List<VideoModalResponseEntity> previous = responses.stream()
                 .filter(r -> r.getVersion() < version)
                 .toList();
+        // « Jamais répondu » ne regarde que la version juste avant (N-1) : qui a répondu à la v1 mais
+        // pas à la v2 revoit la v3.
+        List<VideoModalResponseEntity> immediatelyPrevious = responses.stream()
+                .filter(r -> r.getVersion() == version - 1)
+                .toList();
         boolean matches = switch (campaign.getAudience()) {
             case EVERYONE -> true;
-            case NEVER_ANSWERED -> previous.stream().noneMatch(r -> r.getStatus().isAnswer());
+            case NEVER_ANSWERED -> immediatelyPrevious.stream().noneMatch(r -> r.getStatus().isAnswer());
             case NOT_WATCHED_PREVIOUS -> previous.stream().noneMatch(r -> r.getStatus().isWatched());
         };
         return matches ? displays : null;

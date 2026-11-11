@@ -16,7 +16,6 @@ class YoutubeUrlsTest {
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             "https://youtube.com/watch?feature=share&v=dQw4w9WgXcQ&t=10",
             "https://m.youtube.com/watch?v=dQw4w9WgXcQ",
-            "http://www.youtube.com/shorts/dQw4w9WgXcQ",
             "https://www.youtube.com/shorts/dQw4w9WgXcQ?feature=share",
             "https://www.youtube.com/embed/dQw4w9WgXcQ",
             "  https://www.youtube.com/embed/dQw4w9WgXcQ/  "
@@ -36,6 +35,10 @@ class YoutubeUrlsTest {
             "https://www.youtube.com/watch",
             "https://www.youtube.com/channel/dQw4w9WgXcQ",
             "https://notyoutube.com/watch?v=dQw4w9WgXcQ",
+            "http://youtu.be/dQw4w9WgXcQ",
+            "http://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "http://www.youtube.com/shorts/dQw4w9WgXcQ",
+            "http://www.youtube.com/embed/dQw4w9WgXcQ",
             "ftp://youtu.be/dQw4w9WgXcQ",
             "https://youtu.be/dQw4w9W$XcQ",
             "https://youtu.be/ dQw4w9WgXcQ",

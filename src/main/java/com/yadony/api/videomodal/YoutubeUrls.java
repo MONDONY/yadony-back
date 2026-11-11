@@ -8,7 +8,8 @@ import java.util.regex.Pattern;
 /**
  * Extraction de l'identifiant d'une vidéo YouTube depuis le lien collé dans l'admin.
  * Formes reconnues : youtu.be/ID, youtube.com/watch?v=ID, youtube.com/shorts/ID,
- * youtube.com/embed/ID (avec ou sans www., m., music.). ID = 11 caractères [A-Za-z0-9_-].
+ * youtube.com/embed/ID (avec ou sans www., m., music.). Seul https est accepté (un lien http://
+ * est refusé ; un lien sans schéma est lu comme https). ID = 11 caractères [A-Za-z0-9_-].
  */
 final class YoutubeUrls {
 
@@ -27,7 +28,7 @@ final class YoutubeUrls {
             return Optional.empty();
         }
         String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
-        if (!scheme.equals("https") && !scheme.equals("http")) return Optional.empty();
+        if (!scheme.equals("https")) return Optional.empty();
         String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
         String path = uri.getPath() == null ? "" : uri.getPath();
 
